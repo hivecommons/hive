@@ -6,18 +6,22 @@ Sessions are interactive, named CLI-agent terminals. Each runs as its own unpriv
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/sessions` | Dashboard auth/session | Sessions, vendors and limits | `pkg/dashboard/api_sessions.go:120` |
-| `POST` | `/api/sessions` | Owner or read-write | Create a session `{name, group, vendor, shared?}` (201) | `pkg/dashboard/api_sessions.go:121` |
-| `PATCH` | `/api/sessions/{id}` | Session creator or owner | Rename, regroup or (un)share `{name?, group?, shared?}` | `pkg/dashboard/api_sessions.go:122` |
-| `DELETE` | `/api/sessions/{id}` | Session creator or owner | Close a running session (metadata kept, marked `ended`); on an ended session, remove its metadata and delete its sandbox files | `pkg/dashboard/api_sessions.go:123` |
-| `GET` | `/api/sessions/{id}/log` | Dashboard auth/session | Redacted scrollback `?lines=N` (capped at 5000) | `pkg/dashboard/api_sessions.go:124` |
-| `POST` | `/api/sessions/{id}/input` | Owner or read-write | Type `{text, submit}` into the pane (size-capped, audited without the text) | `pkg/dashboard/api_sessions.go:125` |
-| `POST` | `/api/sessions/{id}/upload` | Owner or read-write | Multipart `file`; returns the absolute path inside the session directory | `pkg/dashboard/api_sessions.go:126` |
-| `POST` | `/api/sessions/{id}/resume` | Owner or read-write | Reopen an ended session's last conversation where the vendor supports it (409 otherwise) | `pkg/dashboard/api_sessions.go:127` |
+| `GET` | `/api/sessions` | Dashboard auth/session | Sessions, vendors and limits | `pkg/dashboard/api_sessions.go:130` |
+| `POST` | `/api/sessions` | Owner or read-write | Create a session `{name, group, vendor, shared?}` (201) | `pkg/dashboard/api_sessions.go:131` |
+| `PATCH` | `/api/sessions/{id}` | Session creator or owner | Rename, regroup or (un)share `{name?, group?, shared?}` | `pkg/dashboard/api_sessions.go:132` |
+| `DELETE` | `/api/sessions/{id}` | Session creator or owner | Close a running session (metadata kept, marked `ended`); on an ended session, remove its metadata and delete its sandbox files | `pkg/dashboard/api_sessions.go:133` |
+| `GET` | `/api/sessions/{id}/log` | Dashboard auth/session | Redacted scrollback `?lines=N` (capped at 5000) | `pkg/dashboard/api_sessions.go:134` |
+| `POST` | `/api/sessions/{id}/input` | Owner or read-write | Type `{text, submit}` into the pane (size-capped, audited without the text) | `pkg/dashboard/api_sessions.go:135` |
+| `POST` | `/api/sessions/{id}/upload` | Owner or read-write | Multipart `file`; returns the absolute path inside the session directory | `pkg/dashboard/api_sessions.go:136` |
+| `POST` | `/api/sessions/{id}/resume` | Owner or read-write | Reopen an ended session's last conversation where the vendor supports it (409 otherwise) | `pkg/dashboard/api_sessions.go:137` |
 
 ## Session object
 
-`{id, name, group, vendor, creator, created_at, last_activity, status, attached, tmux_name, resumable, shared}` where `status` is `running` or `ended`, `attached` is the number of attached tmux clients and `tmux_name` is `hive-sess-<id>`. `resumable` and `shared` are additive. `GET /api/sessions` lists only sessions the caller created, owners (all) and `shared` sessions; the log, input, upload, resume and terminal routes answer 404 for a session the caller cannot see and 403 when it is visible but not usable.
+`{id, name, group, vendor, creator, created_at, last_activity, status, attached, tmux_name, resumable, shared, workspace_repo, workspace}` where `status` is `running` or `ended`, `attached` is the number of attached tmux clients and `tmux_name` is `hive-sess-<id>`. `resumable`, `shared`, `workspace_repo` and `workspace` are additive. `GET /api/sessions` lists only sessions the caller created, owners (all) and `shared` sessions; the log, input, upload, resume and terminal routes answer 404 for a session the caller cannot see and 403 when it is visible but not usable.
+
+## Workspace
+
+Every session's CLI starts inside the hive's **session workspace**: one persistent clone per repository, `<HIVE_SESSIONS_WORKSPACE_DIR>/<org>/<repo>` (default `/data/session-sandbox/workspace/...`), shared by every session on the hive the way one checkout is shared by several people at one machine (two sessions editing the same file see each other's edits; `git fetch` is never run for you). The repository is `dashboard.sessions.workspace_repo` (`HIVE_SESSIONS_WORKSPACE_REPO`), defaulting to the hive's own `project.org/primary_repo`; with neither set, a session opens in its own empty directory. The hive clones once, with a short-lived App token in a one-shot credential helper that is deleted afterwards, so the clone's config and `origin` carry no credential: pushing from a session uses the person's own login. On every start the hive runs `spektacular init <vendor>` in the workspace once per vendor spek supports (`claude`, `bob`, `codex`, `copilot`, `omp`) when `/usr/local/bin/spektacular` (`runs.spektacular.binary`) is installed; a missing binary or a failed init is logged and the session still starts. `GET /api/sessions` reports the configured workspace as `workspace: {repo, path}`; each session carries the `workspace_repo` and `workspace` it was created in and a resume reopens that one. Uploads stay under the session's own directory (`/upload` returns their path).
 
 ## Attaching a terminal
 

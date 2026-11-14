@@ -38453,7 +38453,7 @@
           "Sessions"
         ],
         "summary": "List sessions, vendors and limits",
-        "description": "Any role. While the feature is off returns enabled=false with empty lists.",
+        "description": "Any role. While the feature is off returns enabled=false with empty lists. Also reports workspace {repo, path}: the shared checkout new sessions open in; each session carries workspace_repo and workspace.",
         "responses": {
           "200": {
             "description": "OK"
@@ -38465,7 +38465,7 @@
           "Sessions"
         ],
         "summary": "Create a session (owner or read-write)",
-        "description": "Starts a named CLI session. Vendor must be a known, allowed, installed backend; never a shell, never a bypass-permissions launch.",
+        "description": "Starts a named CLI session in the hive's shared workspace checkout (spektacular init run for the vendor). Vendor must be a known, allowed, installed backend; never a shell, never a bypass-permissions launch.",
         "responses": {
           "201": {
             "description": "OK"
