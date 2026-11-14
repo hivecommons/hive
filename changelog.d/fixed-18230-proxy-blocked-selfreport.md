@@ -1,0 +1,1 @@
+- GitHub proxy policy refusals (`proxy request blocked`) no longer trigger unclassified runtime-error self-reports; the per-refusal WARN, violation counter and write-refusal audit are unchanged.

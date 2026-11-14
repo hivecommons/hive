@@ -980,6 +980,27 @@ func TestIsBenignMessagePolicySeedDivergence(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#18230: the GitHub proxy refusing a forbidden request is
+// sandbox policy working as designed; proxy transport failures and anything
+// that merely mentions a blocked request stay reportable.
+func TestIsBenignMessageProxyRequestBlocked(t *testing.T) {
+	for _, msg := range []string{"proxy request blocked", "  Proxy Request Blocked  "} {
+		if !IsBenignMessage(msg) {
+			t.Errorf("proxy policy refusal %q not benign", msg)
+		}
+	}
+	for _, msg := range []string{
+		"proxy upstream dial failed",
+		"proxy forge cert failed",
+		"proxy client TLS handshake failed",
+		"proxy request blocked: denial body write failed",
+	} {
+		if IsBenignMessage(msg) {
+			t.Errorf("failure %q wrongly benign", msg)
+		}
+	}
+}
+
 func TestIsBenignMessageForwardMergeGuard(t *testing.T) {
 	if !IsBenignMessage("forward-merge guard: refusing to squash, forcing merge commit") {
 		t.Error("forward-merge squash refusal not benign")

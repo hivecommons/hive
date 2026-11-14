@@ -84,6 +84,28 @@ func TestSignedCommitOwnershipSkipStaysInLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#18230: the proxy warns once per distinct (agent, method,
+// path) it refuses, so one agent probing several forbidden endpoints crossed
+// the repeat threshold. The refusals stay in local logs; proxy transport
+// failures remain reportable.
+func TestProxyRequestBlockedStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "proxy request blocked"
+	for i := range 6 {
+		logger.Warn(msg, "agent", "quality", "method", "PUT", "path", fmt.Sprintf("/repos/o/r/pulls/%d/update-branch", 700+i))
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("proxy policy refusals produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), msg); n != 6 || !strings.Contains(out.String(), "/repos/o/r/pulls/705/update-branch") {
+		t.Fatalf("local logs lost the warning or its path: %s", out.String())
+	}
+	logger.Warn("proxy client TLS handshake failed", "agent", "quality", "error", "unexpected failure")
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("proxy transport failures must remain reportable: %+v", *seen)
+	}
+}
+
 func TestClaudeCredentialRebridgeStaysInLogsWithoutFleetReport(t *testing.T) {
 	logger, seen, out := newFeed(t)
 	for range 6 {
