@@ -132,16 +132,6 @@ func (f *fakePriv) run(_ context.Context, user string, stdin io.Reader, argv ...
 	return nil, nil
 }
 
-func (f *fakePriv) scripts() []string {
-	var out []string
-	for _, c := range f.calls {
-		if len(c.argv) >= 3 && c.argv[0] == "sh" {
-			out = append(out, c.argv[2])
-		}
-	}
-	return out
-}
-
 func newTestSessionRuntime(t *testing.T, f *fakeTmux, environ []string) *UserSessionRuntime {
 	r, _ := newTestSessionRuntimeWithPriv(t, f, environ)
 	return r
@@ -164,12 +154,10 @@ func newTestSessionRuntimeWithPriv(t *testing.T, f *fakeTmux, environ []string) 
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
 		run:    f.run,
 		priv:   p.run,
-		statUID: func(path string) (int, error) {
-			if _, err := os.Stat(path); err != nil {
-				return 0, err
-			}
-			return testSessionUID, nil
-		},
+		// The fake sandbox has no real ownership; every session home reads as
+		// the test session uid (tests that need a missing or foreign owner
+		// override this).
+		statUID:  func(string) (int, error) { return testSessionUID, nil },
 		lookPath: func(name string) (string, error) { return "/usr/bin/" + name, nil },
 		environ:  func() []string { return environ },
 		now:      time.Now,

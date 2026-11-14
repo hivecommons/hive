@@ -188,7 +188,8 @@ func TestExecUserSessionTmuxGoesThroughSuExec(t *testing.T) {
 		}
 	}
 	t.Setenv("PATH", binDir+":/bin:/usr/bin")
-	env := []string{"PATH=/bin:/usr/bin"}
+	// The fake su-exec resolves tmux through the CHILD env's PATH.
+	env := []string{"PATH=" + binDir + ":/bin:/usr/bin"}
 
 	out, err := execUserSessionTmux(context.Background(), testSessionSpecUser, env, "typed text", "hive-sess-x", "load-buffer", "-")
 	if err != nil {

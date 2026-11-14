@@ -1091,6 +1091,10 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_ttyd_default_socket_uid.sh
 
+      - name: ttyd refuses a user-session attach without its per-session token
+        working-directory: .
+        run: bash src/deploy/test_ttyd_session_attach_token.sh
+
       # #5435: hive-discord.service ran `node bot.js` with
       # WorkingDirectory=/tmp/hive/discord, resolving the executed code out of a
       # world-writable parent that is cleared on every reboot — a local user who

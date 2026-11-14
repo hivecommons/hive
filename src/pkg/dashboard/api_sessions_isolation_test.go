@@ -432,8 +432,9 @@ func TestTerminalProxyAppendsAttachTokenOnlyForSessions(t *testing.T) {
 	t.Setenv("HIVE_TTYD_PORT", bu.Port())
 	t.Setenv("HIVE_TTYD_CREDENTIAL", "")
 	t.Setenv("HIVE_DASHBOARD_TOKEN", "")
+	// NewServer registers the /terminal proxy itself, resolving the ttyd port
+	// and credential from the environment set above.
 	e := handoffEnv(t)
-	e.s.registerTerminalProxy()
 	id := e.create(t, callerRW, "tok")
 	name := sessionTmuxPrefix + id
 
