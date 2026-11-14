@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -76,6 +77,10 @@ func (s *Server) handleReferenceReposPut(w http.ResponseWriter, r *http.Request)
 	// echoing one back is dropped here; the derived set is merged back in
 	// after the save.
 	prevRepos := cfg.Project.ReferenceRepos
+	if err := rejectDerivedReferenceRepoEdits(*body.ReferenceRepos, prevRepos); err != nil {
+		jsonError(w, err.Error(), http.StatusConflict)
+		return
+	}
 	next := normalizeReferenceRepos(config.HandWrittenReferenceRepos(*body.ReferenceRepos))
 	if err := rejectDashboardTokenFiles(next, config.HandWrittenReferenceRepos(prevRepos)); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
@@ -136,6 +141,57 @@ func (s *Server) handleReferenceReposPut(w http.ResponseWriter, r *http.Request)
 			"repos", len(next), "previous_repos", previous, "write_mode", writable)
 	}
 	jsonResponse(w, referenceReposSection(cfg))
+}
+
+// rejectDerivedReferenceRepoEdits compares the incoming list with the live
+// derived set (hivecommons/hive#18161): a derived entry is the request
+// issue's grant, so the editor may only echo it back unchanged. Changing its
+// write set, leaving it out, sending one the hive did not derive, or adding a
+// hand-written entry for the same repo (which would override the grant's
+// tier) is a 409 that names the issue to change instead.
+func rejectDerivedReferenceRepoEdits(incoming, live []config.ReferenceRepo) error {
+	key := func(repo string) string { return strings.ToLower(strings.TrimSpace(repo)) }
+	liveDerived := map[string]config.ReferenceRepo{}
+	for _, rr := range live {
+		if rr.Derived() {
+			liveDerived[key(rr.Repo)] = rr
+		}
+	}
+	conflict := func(rr config.ReferenceRepo, what string) error {
+		return fmt.Errorf("reference repo %q is derived from request issue %s and cannot be %s here; edit or close that issue instead", rr.Repo, rr.DerivedFrom, what)
+	}
+	seen := map[string]bool{}
+	for _, in := range normalizeReferenceRepos(incoming) {
+		k := key(in.Repo)
+		cur, isLive := liveDerived[k]
+		switch {
+		case !in.Derived() && isLive:
+			return conflict(cur, "replaced by a hand-written entry")
+		case in.Derived() && !isLive:
+			return fmt.Errorf("reference repo %q is not derived from %s on this hive; a derived entry can only be echoed back as the hive serves it", in.Repo, in.DerivedFrom)
+		case in.Derived() && (in.DerivedFrom != cur.DerivedFrom || writeSetKey(in.Write) != writeSetKey(cur.Write)):
+			return conflict(cur, "edited")
+		}
+		if in.Derived() {
+			seen[k] = true
+		}
+	}
+	for k, cur := range liveDerived {
+		if !seen[k] {
+			return conflict(cur, "removed")
+		}
+	}
+	return nil
+}
+
+// writeSetKey is the write opt-ins as an order-free comparable string.
+func writeSetKey(write []string) string {
+	kinds := make([]string, 0, len(write))
+	for _, w := range write {
+		kinds = append(kinds, strings.ToLower(strings.TrimSpace(w)))
+	}
+	sort.Strings(kinds)
+	return strings.Join(kinds, "+")
 }
 
 // rejectDashboardTokenFiles refuses a write_token_file the dashboard would

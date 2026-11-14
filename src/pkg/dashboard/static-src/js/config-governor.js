@@ -1227,6 +1227,21 @@
       return node;
     }
 
+    /* referenceRepoDerivedLink is the "from owner/repo#N" link to the request
+       issue a derived entry came from (#18161), on the hive's GitHub host. A
+       ref that does not parse is shown as text. */
+    function referenceRepoDerivedLink(ref) {
+      const m = /^([^\/#\s]+\/[^\/#\s]+)#(\d+)$/.exec(String(ref || '').trim());
+      if (!m) return referenceRepoNode('span', 'text-muted fs-sm cfg-reference-repo-source', 'from ' + ref);
+      const base = ((typeof window !== 'undefined' && window._githubBaseUrl) || 'https://github.com').replace(/\/+$/, '');
+      const a = referenceRepoNode('a', 'fs-sm cfg-reference-repo-source', 'from ' + m[1] + '#' + m[2]);
+      a.href = base + '/' + m[1] + '/issues/' + m[2];
+      a.target = '_blank';
+      a.rel = 'noopener';
+      a.title = 'The accepted request issue this entry is derived from';
+      return a;
+    }
+
     /* referenceRepoYamlHint is yamlHint() as a DOM node. */
     function referenceRepoYamlHint(path) {
       const hint = referenceRepoNode('span', 'settings-yaml-hint', 'YAML ');
@@ -1241,7 +1256,7 @@
       /* derived_from is carried through so the server can tell a derived
          entry (rebuilt from its request issue, never saved) from an
          operator's. */
-      entries = entries.map(e => ({ repo: e.repo || '', write: (e.write || []).slice(), write_token_file: e.write_token_file || '', derived_from: e.derived_from || '' }));
+      entries = entries.map(e => ({ repo: e.repo || '', write: (e.write || []).slice(), write_token_file: e.write_token_file || '', derived_from: e.derived_from || '', credential_state: e.credential_state || '', credential_reason: e.credential_reason || '' }));
       host.textContent = '';
       host.appendChild(referenceRepoNode('p', 'config-help',
         'Read-only by default: agents clone and read these repos and are never told they are out of scope, but every write is refused. ' +
@@ -1258,6 +1273,25 @@
         if (!entries.length) list.appendChild(referenceRepoNode('div', 'fs-sm text-muted mb-3', 'No reference repos configured'));
         entries.forEach((entry, i) => {
           const row = referenceRepoNode('div', 'config-list-item config-repo-row');
+          if (entry.derived_from) {
+            /* Derived entry (#18161): the request issue's grant, shown but
+               never edited here. A lock, the source issue link, the credential
+               state chip and its reason; no checkboxes, no remove button. */
+            row.className += ' cfg-reference-repo-derived';
+            const lock = referenceRepoNode('span', 'cfg-reference-repo-lock', '🔒');
+            lock.title = 'Derived from ' + entry.derived_from + ': edit or close that issue to change it.';
+            row.appendChild(lock);
+            row.appendChild(referenceRepoNode('span', 'config-repo-name', entry.repo));
+            row.appendChild(referenceRepoDerivedLink(entry.derived_from));
+            const state = entry.credential_state || 'read-only';
+            const chip = referenceRepoNode('span', 'rt-inherit cfg-reference-repo-state cfg-reference-repo-state-' + state,
+              (entry.write.length ? entry.write.join('+') : 'read-only') + ' · ' + state);
+            chip.title = entry.credential_reason || (state === 'write-tier' ? 'The GitHub App is installed on the repo\'s org; issues and PRs may be opened there.' : 'No credential covers this repo; served read-only.');
+            row.appendChild(chip);
+            if (entry.credential_reason) row.appendChild(referenceRepoNode('span', 'text-muted fs-sm cfg-reference-repo-reason', entry.credential_reason));
+            list.appendChild(row);
+            return;
+          }
           row.appendChild(referenceRepoNode('span', 'config-repo-name', entry.repo));
           kinds.forEach(kind => {
             const label = referenceRepoNode('label', 'rt-check');
@@ -1345,7 +1379,13 @@
             headers: _inceptionAuthHeaders(),
             body: JSON.stringify({ reference_repos: body })
           });
-          if (!res.ok) throw new Error(await saveErrorMessage(res));
+          if (!res.ok) {
+            const msg = await saveErrorMessage(res);
+            /* 409: the list touched a derived entry (#18161); the message
+               names the request issue to change instead. */
+            if (res.status === 409) showToast(msg, 'error');
+            throw new Error(msg);
+          }
           const d = await res.json();
           renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || kinds);
           showToast('Reference repos saved', 'success');

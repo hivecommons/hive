@@ -3684,6 +3684,9 @@
           "400": {
             "description": "Invalid list; nothing was stored"
           },
+          "409": {
+            "description": "The list edits, removes or replaces an entry derived from a request issue (derived_from); the message names the issue to change instead. Nothing was stored"
+          },
           "500": {
             "description": "The config file could not be written; the previous list is restored on the proxy and nothing changed"
           }

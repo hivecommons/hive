@@ -296,3 +296,56 @@ func TestReferenceReposPut_DerivedEntriesStrippedAndRemerged(t *testing.T) {
 		t.Fatalf("saved config must hold the hand-written entries:\n%s", data)
 	}
 }
+
+// A derived entry (hivecommons/hive#18161) is the request issue's grant: the
+// editor may echo it back as served but any edit, removal, replacement by a
+// hand-written entry or unknown derived entry is a 409 naming the issue, and
+// nothing changes. Hand-written entries stay editable next to it.
+func TestReferenceReposPut_DerivedEntriesConflict(t *testing.T) {
+	s := covApiServer(t)
+	cfg := s.deps.Config
+	derived := config.ReferenceRepo{Repo: "acme/docs", Write: []string{config.ReferenceWriteIssues, config.ReferenceWritePRs}, DerivedFrom: "cncf/techdocs#395", CredentialState: config.ReferenceCredentialWriteTier}
+	live := []config.ReferenceRepo{{Repo: "keep/me"}, derived}
+	cfg.Project.ReferenceRepos = append([]config.ReferenceRepo{}, live...)
+	applied := 0
+	s.deps.ApplyReferenceRepos = func(context.Context, []config.ReferenceRepo) error { applied++; return nil }
+
+	echo := map[string]any{"repo": derived.Repo, "write": derived.Write, "derived_from": derived.DerivedFrom}
+	cases := []struct {
+		name string
+		body []map[string]any
+	}{
+		{"removed", []map[string]any{{"repo": "keep/me"}}},
+		{"write set edited", []map[string]any{{"repo": "keep/me"}, {"repo": derived.Repo, "write": []string{"issues"}, "derived_from": derived.DerivedFrom}}},
+		{"source changed", []map[string]any{{"repo": "keep/me"}, {"repo": derived.Repo, "write": derived.Write, "derived_from": "cncf/techdocs#1"}}},
+		{"replaced by a hand-written entry", []map[string]any{{"repo": "keep/me"}, {"repo": "ACME/docs", "write": []string{"issues"}}}},
+		{"unknown derived entry", []map[string]any{{"repo": "keep/me"}, echo, {"repo": "zeta/site", "derived_from": "cncf/techdocs#396"}}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doPut(s, referenceReposPath, map[string]any{"reference_repos": tc.body})
+			if rec.Code != http.StatusConflict {
+				t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "cncf/techdocs#") {
+				t.Fatalf("409 must name the request issue: %s", rec.Body.String())
+			}
+			if !reflect.DeepEqual(cfg.Project.ReferenceRepos, live) || applied != 0 {
+				t.Fatalf("a refused PUT changed state: %+v applied=%d", cfg.Project.ReferenceRepos, applied)
+			}
+		})
+	}
+
+	// Hand-written edits around the echoed derived entry still save.
+	rec := doPut(s, referenceReposPath, map[string]any{"reference_repos": []map[string]any{{"repo": "keep/me", "write": []string{"issues"}}, echo, {"repo": "new/one"}}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if applied != 1 {
+		t.Fatalf("proxy hook calls = %d, want 1", applied)
+	}
+	want := []config.ReferenceRepo{{Repo: "keep/me", Write: []string{config.ReferenceWriteIssues}}, {Repo: "new/one"}}
+	if !reflect.DeepEqual(cfg.Project.ReferenceRepos, want) {
+		t.Fatalf("config holds %+v, want %+v (no remerge hook in this test)", cfg.Project.ReferenceRepos, want)
+	}
+}
