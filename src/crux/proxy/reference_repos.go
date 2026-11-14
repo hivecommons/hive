@@ -31,6 +31,14 @@ import (
 // allowed — there is no mode, capability or relay that widens this. The write
 // credential is the policy's own Token source (the hive owner's connected
 // GitHub account, or an operator-supplied file), never the hive's token.
+//
+// A PR needs a branch the credential can push, and the owner cannot push to
+// a repo they do not own, so a prs-tier entry also allows the fork path
+// (hivecommons/hive#18198): fork the reference repo into the owner's account
+// (POST /repos/{o}/{r}/forks), push topic branches to that fork
+// ({login}/{name}, default branch still protected), and open the PR against
+// the reference repo with head {login}:{branch}. Nothing else is allowed on
+// the fork.
 
 // DenyReasonReferenceRepo is the 403 reason code for a refused reference-repo
 // write (see denial_message.go for the vocabulary).
@@ -46,8 +54,35 @@ type ReferenceRepoPolicy struct {
 	Token func() (string, bool)
 	// Login is the GitHub login the Token acts as (the hive owner's login, or
 	// the write_token_file's user); own-item checks compare an item's author
-	// against it.
+	// against it, and Login/<name> is the fork a PR is pushed through.
 	Login string
+	// Fork is set only on the copy referenceRepoFor returns for a request
+	// bound to Login's fork of Repo (hivecommons/hive#18198): the fork's own
+	// "login/name" slug. The installed policy never carries it.
+	Fork string
+}
+
+// target is the repository a request under this policy actually names: the
+// fork when the request is bound to it, else the reference repo itself.
+func (r ReferenceRepoPolicy) target() string {
+	if r.Fork != "" {
+		return r.Fork
+	}
+	return r.Repo
+}
+
+// forkSlug is the slug of Login's fork of Repo ("" when either half is
+// unknown). GitHub forks keep the upstream name unless renamed; a renamed
+// fork is not recognised and its pushes are refused like any other repo.
+func (r ReferenceRepoPolicy) forkSlug() string {
+	if r.Login == "" {
+		return ""
+	}
+	_, name, ok := strings.Cut(r.Repo, "/")
+	if !ok || name == "" {
+		return ""
+	}
+	return r.Login + "/" + name
 }
 
 func (r ReferenceRepoPolicy) readOnly() bool { return !r.Issues && !r.PRs }
@@ -78,6 +113,7 @@ const (
 var (
 	refIssuesPath        = regexp.MustCompile(`^/repos/[^/]+/[^/]+/issues$`)
 	refPullsPath         = regexp.MustCompile(`^/repos/[^/]+/[^/]+/pulls$`)
+	refForksPath         = regexp.MustCompile(`^/repos/[^/]+/[^/]+/forks$`)
 	refItemCommentsPath  = regexp.MustCompile(`^/repos/[^/]+/[^/]+/(?:issues|pulls)/(\d+)/comments$`)
 	refGitReceivePackRe  = regexp.MustCompile(`\.git/git-receive-pack$`)
 	refGitInfoRefsRe     = regexp.MustCompile(`\.git/info/refs$`)
@@ -96,12 +132,30 @@ func ReferenceRepoDecision(pol ReferenceRepoPolicy, method, path, rawQuery strin
 	if pol.readOnly() {
 		return referenceDeny, 0, referenceRepoRefusal(pol, "it is listed as READ-ONLY")
 	}
+	if pol.Fork != "" {
+		// The owner's fork of a prs-tier entry (hivecommons/hive#18198): the
+		// one place an agent may push, since the reference repo itself is not
+		// the owner's. Nothing else is done on the fork — the issue, the PR
+		// and the comments all belong on the reference repo.
+		switch {
+		case !pol.PRs:
+			return referenceDeny, 0, referenceRepoRefusal(pol, "pushing to the owner's fork needs write: [prs]")
+		case push:
+			return referencePush, 0, ""
+		}
+		return referenceDeny, 0, referenceRepoRefusal(pol, "on the owner's fork only pushing a topic branch is allowed — open the PR against "+pol.Repo+" with --head "+pol.Login+":<branch>")
+	}
 	switch {
 	case push:
 		if !pol.PRs {
 			return referenceDeny, 0, referenceRepoRefusal(pol, "pushing needs write: [prs]")
 		}
 		return referencePush, 0, ""
+	case method == "POST" && refForksPath.MatchString(path):
+		if !pol.PRs {
+			return referenceDeny, 0, referenceRepoRefusal(pol, "forking needs write: [prs]")
+		}
+		return referenceAllow, 0, ""
 	case method == "POST" && refIssuesPath.MatchString(path):
 		if !pol.Issues {
 			return referenceDeny, 0, referenceRepoRefusal(pol, "opening an issue needs write: [issues]")
@@ -117,11 +171,15 @@ func ReferenceRepoDecision(pol ReferenceRepoPolicy, method, path, rawQuery strin
 		n, _ := strconv.Atoi(m[1])
 		return referenceOwnItem, n, ""
 	}
-	return referenceDeny, 0, referenceRepoRefusal(pol, "only opening an issue or PR and commenting on the hive's own items are ever allowed there — never merge, push to the default branch, label, assign, close or review")
+	return referenceDeny, 0, referenceRepoRefusal(pol, "only opening an issue or PR, forking it, pushing to the owner's fork and commenting on the hive's own items are ever allowed there — never merge, push to the default branch, label, assign, close or review")
 }
 
 func referenceRepoRefusal(pol ReferenceRepoPolicy, why string) string {
-	return "repository " + pol.Repo + " is a REFERENCE repo (project.reference_repos, tier " + pol.tier() + "): " + why + ". Reads — clone, fetch, GET — still work. Put findings about it into the deliverable in your AUTHORIZED repo instead. Do NOT retry, do NOT route around this with another CLI, the hive relays or the GitHub MCP, and do NOT file an issue about it: this is how the operator scoped the hive, not an outage."
+	subject := "repository " + pol.Repo + " is a REFERENCE repo (project.reference_repos, tier " + pol.tier() + ")"
+	if pol.Fork != "" {
+		subject = "repository " + pol.Fork + " is the hive owner's fork of REFERENCE repo " + pol.Repo + " (project.reference_repos, tier " + pol.tier() + ")"
+	}
+	return subject + ": " + why + ". Reads — clone, fetch, GET — still work. Put findings about it into the deliverable in your AUTHORIZED repo instead. Do NOT retry, do NOT route around this with another CLI, the hive relays or the GitHub MCP, and do NOT file an issue about it: this is how the operator scoped the hive, not an outage."
 }
 
 // SetReferenceRepos installs the reference-repo policies (#18015). Replaces
@@ -152,7 +210,11 @@ func (p *GitHubProxy) ReferenceRepoPolicyFor(repo string) (ReferenceRepoPolicy, 
 	return pol, ok
 }
 
-// referenceRepoFor returns the policy covering the repo a path names.
+// referenceRepoFor returns the policy covering the repo a path names: the
+// reference repo itself, or — with Fork set on the returned copy — the hive
+// owner's fork of a prs-tier reference repo (hivecommons/hive#18198). A slug
+// that is an authorized repo or a reference repo in its own right is never
+// read as a fork.
 func (p *GitHubProxy) referenceRepoFor(path string) (ReferenceRepoPolicy, bool) {
 	p.referenceMu.RLock()
 	defer p.referenceMu.RUnlock()
@@ -166,8 +228,20 @@ func (p *GitHubProxy) referenceRepoFor(path string) (ReferenceRepoPolicy, bool) 
 	if repo == "" {
 		return ReferenceRepoPolicy{}, false
 	}
-	pol, ok := p.referenceRepos[strings.ToLower(repo)]
-	return pol, ok
+	key := strings.ToLower(repo)
+	if pol, ok := p.referenceRepos[key]; ok {
+		return pol, true
+	}
+	if p.allowedRepos[key] {
+		return ReferenceRepoPolicy{}, false
+	}
+	for _, pol := range p.referenceRepos {
+		if pol.PRs && strings.EqualFold(pol.forkSlug(), repo) {
+			pol.Fork = repo
+			return pol, true
+		}
+	}
+	return ReferenceRepoPolicy{}, false
 }
 
 // referenceRepoRefusal is the per-request gate the MITM loop calls. It returns
@@ -312,14 +386,14 @@ func (p *GitHubProxy) referenceItemAuthor(req *http.Request, pol ReferenceRepoPo
 const referenceDefaultBranchTTL = 10 * time.Minute
 
 func (p *GitHubProxy) referenceDefaultBranch(req *http.Request, pol ReferenceRepoPolicy) (string, error) {
-	key := strings.ToLower(pol.Repo)
+	key := strings.ToLower(pol.target())
 	p.referenceMu.RLock()
 	cached, ok := p.referenceDefaults[key]
 	p.referenceMu.RUnlock()
 	if ok && time.Now().Before(cached.until) {
 		return cached.branch, nil
 	}
-	body, err := p.referenceLookupOrDefault()(referenceAPIBase(req)+"/repos/"+pol.Repo, p.referenceToken(pol))
+	body, err := p.referenceLookupOrDefault()(referenceAPIBase(req)+"/repos/"+pol.target(), p.referenceToken(pol))
 	if err != nil {
 		return "", err
 	}
@@ -405,13 +479,13 @@ func peekReceivePackRefs(req *http.Request) ([]string, error) {
 // referenceWriteAllowedByMode applies the agent's ACMM mode to an opt-in
 // reference write: the per-repo opt-in widens WHERE an agent may write, never
 // WHAT a mode lets it do. Opening an issue or commenting needs ISSUES_ONLY;
-// pushing a branch or opening a PR needs ISSUES_AND_PRS, exactly as on a
+// forking, pushing a branch or opening a PR needs ISSUES_AND_PRS, exactly as on a
 // managed repo (the PR hard-deny that routes managed-repo PRs through
 // hive-open-pr does not apply — the relay cannot act on a foreign repo, and
 // the reference credential is the hive owner's own account).
 func referenceWriteAllowedByMode(mode agent.AgentMode, method, path string) bool {
 	switch {
-	case refGitReceivePackRe.MatchString(path), refGitInfoRefsRe.MatchString(path), refPullsPath.MatchString(path):
+	case refGitReceivePackRe.MatchString(path), refGitInfoRefsRe.MatchString(path), refPullsPath.MatchString(path), refForksPath.MatchString(path):
 		return mode >= agent.ModeIssuesAndPRs
 	}
 	return mode >= agent.ModeIssuesOnly
