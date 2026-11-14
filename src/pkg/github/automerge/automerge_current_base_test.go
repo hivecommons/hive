@@ -40,6 +40,9 @@ func TestCurrentBaseGate(t *testing.T) {
 			var mu sync.Mutex
 			compares, updates := 0, 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
@@ -120,6 +123,9 @@ func TestCurrentBaseGateUpdateUnavailableFallback(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls/7":
 					_ = json.NewEncoder(w).Encode(map[string]any{"number": 7, "state": "open", "head": map[string]string{"sha": head}, "base": map[string]string{"ref": "main", "sha": "base1"}})
@@ -203,6 +209,9 @@ func TestCurrentBaseGateLeavesDependencyBotBranchToTheBot(t *testing.T) {
 			var mu sync.Mutex
 			updates := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
@@ -264,6 +273,9 @@ func TestUpdateBranchAndSkipLeavesDependencyBotBranchToTheBot(t *testing.T) {
 			var mu sync.Mutex
 			updates := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				mu.Lock()
 				defer mu.Unlock()
 				switch {
@@ -327,6 +339,9 @@ func newCurrentBaseLaneServer(t *testing.T, a *currentBaseLaneAPI) *httptest.Ser
 	t.Helper()
 	const head = "sha7"
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		a.mu.Lock()
 		defer a.mu.Unlock()
 		switch {
