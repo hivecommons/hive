@@ -376,7 +376,10 @@ headers are always set. The metrics endpoint is off unless
 images are pinned by digest. Tools such as tmux, ttyd, `gh`, goose and
 `su-exec` are checksum-verified at build. Third-party Actions are pinned to
 commit SHAs. CI runs `govulncheck`, `gosec` and `golangci-lint` as separate
-jobs, OpenSSF Scorecard, Dependabot, an Action-pin check, a setuid inventory
+jobs; the agent image ships the same pinned `govulncheck` and `gosec` so the
+sec-check lane runs them on Go targets inside the pod without downloading
+anything (`GOVULNCHECK_VERSION`, `GOSEC_VERSION` in `src/Dockerfile`).
+CI also runs OpenSSF Scorecard, Dependabot, an Action-pin check, a setuid inventory
 check, DCO trailer checks, a documentation link check and formal-model
 checks. Image attestations are turned off because they broke
 multi-architecture manifests, and a guard workflow keeps them off. An SPDX
