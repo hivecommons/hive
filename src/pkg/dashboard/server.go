@@ -1245,6 +1245,11 @@ type FrontendReferenceRepo struct {
 	// DerivedFrom is the "owner/repo#N" request issue a derived entry came
 	// from (hivecommons/hive#18139); empty for a hand-written entry.
 	DerivedFrom string `json:"derived_from,omitempty"`
+	// DerivedFromURL is the web link to that request issue on the hive's
+	// GitHub host, so the dashboard links "from owner/repo#N" without
+	// re-deriving the host (hivecommons/hive#18161); empty when DerivedFrom
+	// is empty or not an "owner/repo#N" reference.
+	DerivedFromURL string `json:"derived_from_url,omitempty"`
 	// CredentialState is a derived entry's resolved credential:
 	// "write-tier", "read-only" or "unresolved" (hivecommons/hive#18158);
 	// CredentialReason says why when it is not write-tier.
