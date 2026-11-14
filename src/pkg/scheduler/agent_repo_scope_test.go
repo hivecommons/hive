@@ -285,7 +285,40 @@ const referenceReposGolden = "📚 REFERENCE REPOS (outside this project — stu
 	"Findings about a reference repo belong in the deliverable inside the AUTHORIZED repo (the assessment document, the report), " +
 	"never as issues or PRs on the reference repo itself — unless its tier above says issues/prs, in which case you may ONLY open an issue, " +
 	"open a PR from your own branch, or comment on an issue/PR you opened; the proxy refuses merges, default-branch pushes, labels, assignments, " +
-	"reviews and closing others' items deterministically, so retrying cannot succeed.\n"
+	"reviews and closing others' items deterministically, so retrying cannot succeed.\n" +
+	referenceReposForkFlowGolden
+
+// referenceReposForkFlowGolden is the fork-and-PR paragraph a prs-tier entry
+// adds (hivecommons/hive#18198).
+const referenceReposForkFlowGolden = "   A PR on a reference repo whose tier says prs goes through the hive owner's FORK — you cannot push to the reference repo itself. " +
+	"The exact flow: (1) gh repo fork <owner>/<name> --clone=false — it forks into the hive owner's GitHub account and reports the fork as <ownerlogin>/<name>; " +
+	"(2) push your topic branch to the fork: git push https://github.com/<ownerlogin>/<name>.git HEAD:refs/heads/<branch> (never the fork's default branch); " +
+	"(3) gh pr create --repo <owner>/<name> --head <ownerlogin>:<branch>. " +
+	"The PR is authored by <ownerlogin>, the hive owner's account, not by the hive. Every other write on the fork is refused.\n"
+
+// The fork flow is told only when some entry can open PRs: an issues-only or
+// read-only hive never sees it.
+func TestBuildReposSectionFor_ReferenceReposForkFlow(t *testing.T) {
+	for _, tc := range []struct {
+		write []string
+		want  bool
+	}{
+		{nil, false},
+		{[]string{"issues"}, false},
+		{[]string{"prs"}, true},
+		{[]string{"issues", "prs"}, true},
+	} {
+		s := scopeScheduler(t, map[string]config.AgentConfig{"scanner": {Backend: "claude"}})
+		s.cfg.Project.ReferenceRepos = []config.ReferenceRepo{{Repo: "hivecommons/docs"}, {Repo: "cncf/landscape", Write: tc.write}}
+		section := s.buildReposSectionFor("scanner")
+		if got := strings.Contains(section, referenceReposForkFlowGolden); got != tc.want {
+			t.Errorf("write=%v: fork flow present=%v want %v:\n%s", tc.write, got, tc.want, section)
+		}
+		if n := strings.Count(section, "goes through the hive owner's FORK"); tc.want && n != 1 {
+			t.Errorf("write=%v: fork flow told %d times, want once", tc.write, n)
+		}
+	}
+}
 
 func TestBuildReposSectionFor_ReferenceReposGolden(t *testing.T) {
 	s := scopeScheduler(t, map[string]config.AgentConfig{"scanner": {Backend: "claude"}})

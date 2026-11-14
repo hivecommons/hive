@@ -75,6 +75,11 @@ func TestReferenceRepoDecision_Matrix(t *testing.T) {
 		{"prs api ref", prs, "POST", "/repos/hivecommons/docs/git/refs", "", referenceDeny},
 		{"prs delete ref", prs, "DELETE", "/repos/hivecommons/docs/git/refs/heads/x", "", referenceDeny},
 		{"prs contents", prs, "PUT", "/repos/hivecommons/docs/contents/x.md", "", referenceDeny},
+		{"prs fork", prs, "POST", "/repos/hivecommons/docs/forks", "", referenceAllow},
+		{"issues fork", issues, "POST", "/repos/hivecommons/docs/forks", "", referenceDeny},
+		{"prs label", prs, "POST", "/repos/hivecommons/docs/issues/9/labels", "", referenceDeny},
+		{"prs assign", prs, "POST", "/repos/hivecommons/docs/issues/9/assignees", "", referenceDeny},
+		{"prs close", prs, "PATCH", "/repos/hivecommons/docs/issues/9", "", referenceDeny},
 		// both.
 		{"both issue", both, "POST", "/repos/hivecommons/docs/issues", "", referenceAllow},
 		{"both pr", both, "POST", "/repos/hivecommons/docs/pulls", "", referenceAllow},
@@ -233,5 +238,168 @@ func TestReferenceWriteAllowedByMode(t *testing.T) {
 	}
 	if !referenceWriteAllowedByMode(agent.ModeIssuesAndPRs, "POST", "/o/r.git/git-receive-pack") {
 		t.Error("ISSUES_AND_PRS may push a topic branch")
+	}
+}
+
+// hivecommons/hive#18198: "<Login>/<name>" is the owner's fork of a prs-tier
+// reference repo. Pushes to it are allowed; every other write is refused with
+// a reason that names the fork flow; reads pass.
+func TestReferenceRepoDecision_Fork(t *testing.T) {
+	pol := ReferenceRepoPolicy{Repo: "hivecommons/docs", PRs: true, Login: "octo-owner", Token: func() (string, bool) { return "owner-tok", true }}
+	p := newReferenceTestProxy(t, pol, nil)
+
+	fork, ok := p.referenceRepoFor("/repos/Octo-Owner/Docs/pulls")
+	if !ok || !fork.isFork() || fork.forkOf != "hivecommons/docs" || !strings.EqualFold(fork.Repo, "octo-owner/docs") {
+		t.Fatalf("fork not recognised case-insensitively: ok=%v %+v", ok, fork)
+	}
+
+	cases := []struct {
+		name, method, path, query string
+		want                      referenceDecision
+	}{
+		{"fork read", "GET", "/repos/octo-owner/docs/contents/README.md", "", referenceNotReference},
+		{"fork fetch", "POST", "/octo-owner/docs.git/git-upload-pack", "", referenceNotReference},
+		{"fork push adv", "GET", "/octo-owner/docs.git/info/refs", "service=git-receive-pack", referencePush},
+		{"fork push", "POST", "/octo-owner/docs.git/git-receive-pack", "", referencePush},
+		{"fork open pr", "POST", "/repos/octo-owner/docs/pulls", "", referenceDeny},
+		{"fork open issue", "POST", "/repos/octo-owner/docs/issues", "", referenceDeny},
+		{"fork comment", "POST", "/repos/octo-owner/docs/issues/1/comments", "", referenceDeny},
+		{"fork merge", "PUT", "/repos/octo-owner/docs/pulls/1/merge", "", referenceDeny},
+		{"fork contents", "PUT", "/repos/octo-owner/docs/contents/x.md", "", referenceDeny},
+		{"fork delete", "DELETE", "/repos/octo-owner/docs", "", referenceDeny},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, _, reason := ReferenceRepoDecision(fork, tc.method, tc.path, tc.query)
+			if got != tc.want {
+				t.Fatalf("decision=%v want %v (reason %q)", got, tc.want, reason)
+			}
+			if got == referenceDeny {
+				for _, want := range []string{"FORK of reference repo hivecommons/docs", "reference_repos", "gh pr create --repo hivecommons/docs --head octo-owner:<branch>"} {
+					if !strings.Contains(reason, want) {
+						t.Fatalf("fork refusal lacks %q: %q", want, reason)
+					}
+				}
+			}
+		})
+	}
+
+	// Writes the fork allows carry the owner token; reads go out bare.
+	if !referenceWriteCredential(fork, "POST", "/octo-owner/docs.git/git-receive-pack", "") {
+		t.Error("fork push must carry the owner credential")
+	}
+	if referenceWriteCredential(fork, "GET", "/repos/octo-owner/docs", "") {
+		t.Error("fork read must not carry a credential")
+	}
+}
+
+func TestReferenceRepoFor_ForkRecognition(t *testing.T) {
+	tok := func() (string, bool) { return "owner-tok", true }
+	for _, tc := range []struct {
+		name    string
+		pols    []ReferenceRepoPolicy
+		allowed map[string]bool
+		path    string
+		fork    bool
+	}{
+		{"prs entry", []ReferenceRepoPolicy{{Repo: "hivecommons/docs", PRs: true, Login: "octo-owner", Token: tok}}, nil, "/octo-owner/docs.git/git-receive-pack", true},
+		{"issues-only entry has no fork", []ReferenceRepoPolicy{{Repo: "hivecommons/docs", Issues: true, Login: "octo-owner", Token: tok}}, nil, "/octo-owner/docs.git/git-receive-pack", false},
+		{"read-only entry has no fork", []ReferenceRepoPolicy{{Repo: "hivecommons/docs"}}, nil, "/octo-owner/docs.git/git-receive-pack", false},
+		{"no login, no fork", []ReferenceRepoPolicy{{Repo: "hivecommons/docs", PRs: true, Token: tok}}, nil, "/octo-owner/docs.git/git-receive-pack", false},
+		{"other owner", []ReferenceRepoPolicy{{Repo: "hivecommons/docs", PRs: true, Login: "octo-owner", Token: tok}}, nil, "/someone/docs.git/git-receive-pack", false},
+		{"other name", []ReferenceRepoPolicy{{Repo: "hivecommons/docs", PRs: true, Login: "octo-owner", Token: tok}}, nil, "/octo-owner/site.git/git-receive-pack", false},
+		{"authorized slug is never a fork", []ReferenceRepoPolicy{{Repo: "hivecommons/docs", PRs: true, Login: "octo-owner", Token: tok}}, map[string]bool{"Octo-Owner/docs": true}, "/octo-owner/docs.git/git-receive-pack", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := newReferenceTestProxy(t, ReferenceRepoPolicy{}, nil)
+			p.SetReferenceRepos(tc.pols)
+			p.allowedRepos = tc.allowed
+			pol, ok := p.referenceRepoFor(tc.path)
+			if got := ok && pol.isFork(); got != tc.fork {
+				t.Fatalf("fork=%v want %v (%+v)", got, tc.fork, pol)
+			}
+		})
+	}
+
+	// A slug that is itself a reference repo is that repo, not a fork.
+	p := newReferenceTestProxy(t, ReferenceRepoPolicy{}, nil)
+	p.SetReferenceRepos([]ReferenceRepoPolicy{
+		{Repo: "hivecommons/docs", PRs: true, Login: "octo-owner", Token: tok},
+		{Repo: "octo-owner/docs"},
+	})
+	if pol, ok := p.referenceRepoFor("/octo-owner/docs.git/git-receive-pack"); !ok || pol.isFork() || pol.Repo != "octo-owner/docs" {
+		t.Fatalf("an explicit reference entry must win over fork recognition: ok=%v %+v", ok, pol)
+	}
+}
+
+func TestReferenceRepoRefusal_ForkPushGuardsForkDefaultBranch(t *testing.T) {
+	pol := ReferenceRepoPolicy{Repo: "hivecommons/docs", PRs: true, Login: "octo-owner", Token: func() (string, bool) { return "owner-tok", true }}
+	var gotURL, gotToken string
+	p := newReferenceTestProxy(t, pol, func(url, token string) ([]byte, error) {
+		gotURL, gotToken = url, token
+		return []byte(`{"default_branch":"trunk"}`), nil
+	})
+	zero := strings.Repeat("0", 40)
+	sha := strings.Repeat("a", 40)
+
+	topic := pktLine(zero+" "+sha+" refs/heads/hive/fix\x00report-status") + "0000PACK"
+	if reason, refused := p.referenceRepoRefusal(refReq("POST", "/octo-owner/docs.git/git-receive-pack", "", []byte(topic))); refused {
+		t.Fatalf("topic-branch push to the fork refused: %s", reason)
+	}
+	if gotURL != "https://api.github.com/repos/octo-owner/docs" || gotToken != "owner-tok" {
+		t.Fatalf("default branch must be resolved on the fork: url=%q token=%q", gotURL, gotToken)
+	}
+
+	def := pktLine(sha+" "+sha+" refs/heads/trunk\x00caps") + "0000PACK"
+	reason, refused := p.referenceRepoRefusal(refReq("POST", "/octo-owner/docs.git/git-receive-pack", "", []byte(def)))
+	if !refused || !strings.Contains(reason, "default branch (trunk)") || !strings.Contains(reason, "FORK") {
+		t.Fatalf("default-branch push to the fork must be refused, got refused=%v %q", refused, reason)
+	}
+
+	if reason, refused := p.referenceRepoRefusal(refReq("POST", "/repos/octo-owner/docs/pulls", "", nil)); !refused || !strings.Contains(reason, "--head octo-owner:<branch>") {
+		t.Fatalf("a non-push write on the fork must be refused naming the fork flow, got refused=%v %q", refused, reason)
+	}
+	if _, refused := p.referenceRepoRefusal(refReq("POST", "/repos/hivecommons/docs/forks", "", nil)); refused {
+		t.Fatal("forking a prs-tier reference repo must be allowed")
+	}
+	if _, refused := p.referenceRepoRefusal(refReq("POST", "/repos/hivecommons/docs/pulls", "", nil)); refused {
+		t.Fatal("opening the PR on the remote must stay allowed")
+	}
+}
+
+func TestReferenceRepoAuth_ForkInjectsOwnerTokenOnWrites(t *testing.T) {
+	pol := ReferenceRepoPolicy{Repo: "hivecommons/docs", PRs: true, Login: "octo-owner", Token: func() (string, bool) { return "owner-tok", true }}
+	p := newReferenceTestProxy(t, pol, nil)
+	p.injectGHAuth = true
+	p.agentTokenSource = func(string) (string, bool) { return "hive-app-token", true }
+
+	forkCreate := refReq("POST", "/repos/hivecommons/docs/forks", "", nil)
+	forkCreate.Header.Set("Authorization", "token agent-held")
+	p.rewriteGitHubAuth(forkCreate, "scanner")
+	if got := forkCreate.Header.Get("Authorization"); got != "token owner-tok" {
+		t.Fatalf("fork creation must carry the owner credential, got %q", got)
+	}
+
+	push := refReq("GET", "/octo-owner/docs.git/info/refs", "service=git-receive-pack", nil)
+	p.rewriteGitHubAuth(push, "scanner")
+	want := "Basic " + base64.StdEncoding.EncodeToString([]byte(gitInjectBasicUser+":owner-tok"))
+	if got := push.Header.Get("Authorization"); got != want {
+		t.Fatalf("fork push must carry the owner credential, got %q", got)
+	}
+
+	read := refReq("GET", "/repos/octo-owner/docs/contents/README.md", "", nil)
+	read.Header.Set("Authorization", "token agent-held")
+	p.rewriteGitHubAuth(read, "scanner")
+	if got := read.Header.Get("Authorization"); got != "" {
+		t.Fatalf("fork read must go out unauthenticated, got %q", got)
+	}
+}
+
+func TestReferenceWriteAllowedByMode_Fork(t *testing.T) {
+	if referenceWriteAllowedByMode(agent.ModeIssuesOnly, "POST", "/repos/o/r/forks") {
+		t.Error("ISSUES_ONLY may not fork a reference repo")
+	}
+	if !referenceWriteAllowedByMode(agent.ModeIssuesAndPRs, "POST", "/repos/o/r/forks") {
+		t.Error("ISSUES_AND_PRS may fork a reference repo")
 	}
 }

@@ -857,6 +857,15 @@ func (s *Scheduler) buildReposSectionFor(agentName string) string {
 			b.WriteString(fmt.Sprintf("  %s/%s  [reference · %s]%s\n", strings.TrimRight(host, "/"), rr.Repo, rr.WriteLabel(), referenceRepoProvenance(rr)))
 		}
 		b.WriteString("   You MAY clone them (public, unauthenticated), read their files, and GET their issues/PRs/API. An authorized-repo item whose deliverables name a reference repo is IN SCOPE, not a scope violation: do NOT classify it out-of-scope, critical, or a security concern. Findings about a reference repo belong in the deliverable inside the AUTHORIZED repo (the assessment document, the report), never as issues or PRs on the reference repo itself — unless its tier above says issues/prs, in which case you may ONLY open an issue, open a PR from your own branch, or comment on an issue/PR you opened; the proxy refuses merges, default-branch pushes, labels, assignments, reviews and closing others' items deterministically, so retrying cannot succeed.\n")
+		// A PR on a prs-tier reference repo goes through the hive owner's
+		// fork (hivecommons/hive#18198): the owner cannot push to a repo they
+		// do not own, and the proxy only accepts pushes to that fork.
+		for _, rr := range refs {
+			if rr.WritesPRs() {
+				b.WriteString(fmt.Sprintf("   A PR on a reference repo whose tier says prs goes through the hive owner's FORK — you cannot push to the reference repo itself. The exact flow: (1) gh repo fork <owner>/<name> --clone=false — it forks into the hive owner's GitHub account and reports the fork as <ownerlogin>/<name>; (2) push your topic branch to the fork: git push %s/<ownerlogin>/<name>.git HEAD:refs/heads/<branch> (never the fork's default branch); (3) gh pr create --repo <owner>/<name> --head <ownerlogin>:<branch>. The PR is authored by <ownerlogin>, the hive owner's account, not by the hive. Every other write on the fork is refused.\n", strings.TrimRight(host, "/")))
+				break
+			}
+		}
 	}
 	b.WriteString("⛔ NEVER access, search, list, file issues in, or open PRs on repos not listed above.\n")
 	b.WriteString(fmt.Sprintf("⛔ Every repo above is on %s. This hive is single-host — never touch a repo on a different GitHub host.\n", host))
