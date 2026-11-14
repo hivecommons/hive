@@ -260,13 +260,17 @@ names repos *outside* the project an agent may study. They are not part of
 the write surface at all by default: the proxy strips the hive's App token
 from every request to them and refuses every non-GET with a message naming
 `reference_repos`. A per-entry `write: [issues, prs]` opt-in unlocks exactly
-three direct writes on that repo — open an issue, open a PR / push a topic
-branch, comment on the hive's own issue or PR — sent with a credential valid
-for *that* repo (the App installed on the target org, or `write_token_file`).
-Merge, default-branch push, labels, assignees, reviews and closing others'
-items stay refused. The relays never act on a reference repo, so a lane under
-`write_surface.enforce` cannot write to one. See the
-[operator reference](operator-reference/README.md#configuration-blocks).
+the direct writes an assessor needs on that repo — open an issue, fork it and
+push a topic branch to the owner's fork, open a PR from that fork, comment on
+the hive's own issue or PR — sent as the hive owner's own GitHub account
+(connected once in Settings, [#18197](https://github.com/hivecommons/hive/issues/18197))
+or, on a hand-written entry, a `write_token_file`; never as the hive's App.
+Merge, default-branch push, labels, assignees, reviews, closing others'
+items and anything on the fork other than a push stay refused. The relays
+never act on a reference repo, so a lane under `write_surface.enforce` cannot
+write to one. See the
+[operator reference](operator-reference/README.md#configuration-blocks) and
+[Writing to repos you do not manage](agent-configuration.md#writing-to-repos-you-do-not-manage-the-two-lanes).
 
 ## Enforcing the write surface
 

@@ -1262,6 +1262,9 @@ type FrontendReferenceRepo struct {
 	// CredentialReason says why when it is not write-tier.
 	CredentialState  string `json:"credential_state,omitempty"`
 	CredentialReason string `json:"credential_reason,omitempty"`
+	// CredentialLogin is the GitHub login the writes appear under
+	// (hivecommons/hive#18197): the hive owner's, or a write_token_file's.
+	CredentialLogin string `json:"credential_login,omitempty"`
 }
 
 type FrontendRepo struct {
