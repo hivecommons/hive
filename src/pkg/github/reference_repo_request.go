@@ -5,6 +5,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
+
+	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -114,4 +117,150 @@ func (c *Client) CommentDerivedReadOnly(ctx context.Context, issueRepo string, n
 			WriteTarget{Repo: c.qualifiedRepo(issueRepo), Number: number}, "repos", strings.Join(repos, derivedReadOnlyRepoSeparator))
 	}
 	return res.Created, nil
+}
+
+// Request-issue discovery for derived reference repos (hivecommons/hive#18159).
+//
+// The hive derives reference repos from open issues in its authorized repos
+// that carry refderive.GrantLabel. Listing is one call per repo; the
+// accepter (who applied the label, and with what permission) costs a
+// timeline read and a permission lookup per issue, so the caller caches
+// those by (issue, updated_at) and only asks again when the issue moved.
+
+// RequestIssueCandidate is one open issue carrying a grant label, as listed.
+// UpdatedAt is GitHub's last-activity timestamp: the caller's cache key.
+type RequestIssueCandidate struct {
+	Repo      string
+	Number    int
+	Title     string
+	Body      string
+	Closed    bool
+	Labels    []string
+	UpdatedAt time.Time
+}
+
+// RequestIssueAccepter is who applied the grant label to a request issue,
+// read from the latest "labeled" timeline event for that label.
+type RequestIssueAccepter struct {
+	// Login is the applier; empty when the timeline names no labeled event
+	// for the label (the label was there before the timeline window, or the
+	// event carries no actor).
+	Login string
+	// IsBot reports a bot or GitHub App account.
+	IsBot bool
+	// Permission is Login's permission on the issue's repo as GitHub reports
+	// it ("admin", "maintain", "write", "triage", "read", "none"); empty when
+	// Login is empty.
+	Permission string
+}
+
+// ListRequestIssueCandidates lists the open issues (never pull requests) in
+// repo ("owner/name" or bare) that carry label, newest activity first, at
+// most limit of them. limit <= 0 means one page.
+func (c *Client) ListRequestIssueCandidates(ctx context.Context, repo, label string, limit int) ([]RequestIssueCandidate, error) {
+	if c == nil || c.client == nil {
+		return nil, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	full := owner + "/" + name
+	perPage := requestIssueListPageSize
+	if limit > 0 && limit < perPage {
+		perPage = limit
+	}
+	opts := &gh.IssueListByRepoOptions{
+		State:       "open",
+		Labels:      []string{label},
+		Sort:        "updated",
+		Direction:   "desc",
+		ListOptions: gh.ListOptions{PerPage: perPage},
+	}
+	var out []RequestIssueCandidate
+	for {
+		issues, resp, err := c.client.Issues.ListByRepo(ctx, owner, name, opts)
+		if err != nil {
+			return nil, fmt.Errorf("listing %s issues labelled %q: %w", full, label, err)
+		}
+		for _, is := range issues {
+			if is == nil || is.IsPullRequest() {
+				continue
+			}
+			cand := RequestIssueCandidate{
+				Repo:   full,
+				Number: is.GetNumber(),
+				Title:  is.GetTitle(),
+				Body:   is.GetBody(),
+				Closed: !strings.EqualFold(is.GetState(), "open"),
+				Labels: labelNames(is.Labels),
+			}
+			if is.UpdatedAt != nil {
+				cand.UpdatedAt = is.UpdatedAt.Time
+			}
+			out = append(out, cand)
+			if limit > 0 && len(out) >= limit {
+				return out, nil
+			}
+		}
+		if limit <= 0 || resp == nil || resp.NextPage == 0 {
+			return out, nil
+		}
+		opts.ListOptions.Page = resp.NextPage
+	}
+}
+
+// requestIssueListPageSize is GitHub's largest issue page.
+const requestIssueListPageSize = 100
+
+// RequestIssueAccepterFor reads who applied label to repo#number from the
+// issue's timeline (the latest "labeled" event for that label wins) and that
+// login's permission on repo. An issue whose timeline shows no such event
+// yields an empty Login and no error: the caller treats it as an
+// unattributed grant.
+func (c *Client) RequestIssueAccepterFor(ctx context.Context, repo string, number int, label string) (RequestIssueAccepter, error) {
+	if c == nil || c.client == nil {
+		return RequestIssueAccepter{}, ErrNoGitHubClient
+	}
+	events, err := c.IssueTimelineSince(ctx, repo, number, time.Time{})
+	if err != nil {
+		return RequestIssueAccepter{}, fmt.Errorf("reading %s#%d timeline: %w", c.qualifiedRepo(repo), number, err)
+	}
+	var acc RequestIssueAccepter
+	for _, ev := range events {
+		if ev.Event != timelineEventLabeled || !strings.EqualFold(strings.TrimSpace(ev.Label), label) {
+			continue
+		}
+		// Oldest first: the last match is the latest application.
+		acc = RequestIssueAccepter{Login: strings.TrimSpace(ev.Actor), IsBot: ev.ActorIsBot}
+	}
+	if acc.Login == "" {
+		return acc, nil
+	}
+	owner, name := c.splitRepo(repo)
+	perm, err := c.RepoPermission(ctx, owner, name, acc.Login)
+	if err != nil {
+		return RequestIssueAccepter{}, err
+	}
+	acc.Permission = perm
+	return acc, nil
+}
+
+// timelineEventLabeled is GitHub's timeline event name for a label applied.
+const timelineEventLabeled = "labeled"
+
+// RepoPermission returns login's permission level on owner/repo as GitHub
+// reports it: "admin", "maintain", "write", "triage", "read" or "none". It
+// is the same call reporterHasWriteAccess makes, exported for callers that
+// need the level rather than a verdict.
+func (c *Client) RepoPermission(ctx context.Context, owner, repo, login string) (string, error) {
+	if c == nil || c.client == nil {
+		return "", ErrNoGitHubClient
+	}
+	login = strings.TrimSpace(login)
+	if login == "" {
+		return "", fmt.Errorf("repo permission on %s/%s: empty login", owner, repo)
+	}
+	perm, _, err := c.client.Repositories.GetPermissionLevel(ctx, owner, repo, login)
+	if err != nil {
+		return "", fmt.Errorf("reading %s's permission on %s/%s: %w", login, owner, repo, err)
+	}
+	return strings.ToLower(strings.TrimSpace(perm.GetPermission())), nil
 }
