@@ -122,6 +122,9 @@ type Provider struct {
 	version int // latest key version seen, for KeyID
 
 	renewCancel context.CancelFunc
+	// renewDone is closed when the renewal goroutine has returned, so Close
+	// can join it rather than leave it mid-request.
+	renewDone chan struct{}
 	// onRenewed, when set, observes each renewal attempt's outcome (tests).
 	onRenewed func(leaseInfo, error)
 }
@@ -285,15 +288,19 @@ func (p *Provider) KeyID() string {
 	return p.cfg.Key + "@v" + strconv.Itoa(p.version)
 }
 
-// Close stops token renewal. The provider is unusable afterwards only in
-// the sense that the token may expire; nothing else is torn down.
+// Close stops token renewal and waits for the renewal goroutine to return.
+// The provider is unusable afterwards only in the sense that the token may
+// expire; nothing else is torn down. Safe to call more than once.
 func (p *Provider) Close() {
 	p.mu.Lock()
-	cancel := p.renewCancel
-	p.renewCancel = nil
+	cancel, done := p.renewCancel, p.renewDone
+	p.renewCancel, p.renewDone = nil, nil
 	p.mu.Unlock()
 	if cancel != nil {
 		cancel()
+	}
+	if done != nil {
+		<-done
 	}
 }
 
@@ -520,10 +527,14 @@ func (p *Provider) startRenewal(lease leaseInfo) {
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
 	p.mu.Lock()
-	p.renewCancel = cancel
+	p.renewCancel, p.renewDone = cancel, done
 	p.mu.Unlock()
-	go p.renewLoop(ctx, lease)
+	go func() {
+		defer close(done)
+		p.renewLoop(ctx, lease)
+	}()
 }
 
 func (p *Provider) renewLoop(ctx context.Context, lease leaseInfo) {
