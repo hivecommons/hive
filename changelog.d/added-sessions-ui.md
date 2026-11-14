@@ -1,0 +1,1 @@
+- Dashboard: a new Sessions section (when sessions are enabled) with tabbed, named, grouped, shared CLI terminals, a send/attach input bar and a read-only scrollback view for the read role; it replaces the Inception wizard UI and keeps Campaigns and Jam on a tab.

@@ -1045,8 +1045,12 @@ type HubServer struct {
 	hubGitBranch    string
 	sharedAgentPool *sharedAgentPool
 	hubSecret       string
-	myHivesCacheMu  sync.Mutex
-	myHivesCache    map[string]myHivesSnapshot
+	// selfService holds owner-registered (byo-) hives and the hashes of their
+	// random heartbeat keys (#18060). Nil on bare test literals; every method
+	// is nil-safe and answers "nothing registered".
+	selfService    *selfServiceStore
+	myHivesCacheMu sync.Mutex
+	myHivesCache   map[string]myHivesSnapshot
 	// keyGenerations is the ordered set of master generations this hub accepts
 	// (hub_generations.go). Until a rotation happens it holds exactly ONE
 	// generation whose secret IS hubSecret, so every derived key is
@@ -1575,6 +1579,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		saveLoopStop:    make(chan struct{}),
 		saveLoopDone:    make(chan struct{}),
 		registryPath:    registryPath,
+		selfService:     newSelfServiceStore(selfServiceStorePath),
 		hubGitHash:      gitHash,
 		hubGitBranch:    gitBranch,
 		sharedAgentPool: newSharedAgentPool(),
@@ -1701,6 +1706,13 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	}
 
 	s.loadRegistry()
+	if err := s.selfService.load(); err != nil {
+		// Fail closed: an unreadable store means no self-service hive
+		// authenticates until an operator fixes the file.
+		logger.Warn("self-service registry not loaded; byo- hives will not authenticate", "path", selfServiceStorePath, "error", err)
+	} else if n := len(s.selfService.list()); n > 0 {
+		logger.Info("self-service registry loaded", "hives", n)
+	}
 	logHubGitHubIdentityMode(logger)
 	// Rebuild the in-memory upgrade-delivery map from the durable registry
 	// BEFORE the server takes its first heartbeat, so a hub restart can never
@@ -1930,6 +1942,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// retained to back GET /api/saas/admin/auth-rollout, where an operator can
 		// confirm no hive regressed after the cutover.
 		s.noteHeartbeatAuthPath(payload.HiveID, s.heartbeatBearerIsPerHive(presentedBearer, payload.HiveID))
+		// A self-service hive's accepted heartbeat is the liveness signal its
+		// registration expiry reads (#18060). Stamped only after the bearer
+		// bound this beat to the claimed ID.
+		if IsSelfServiceHiveID(payload.HiveID) {
+			if err := s.selfService.noteAcceptedHeartbeat(payload.HiveID, time.Now()); err != nil {
+				s.logger.Warn("self-service heartbeat stamp not persisted", "hive", payload.HiveID, "error", err)
+			}
+		}
 	}
 	// Adopt the spoke's reported dashboard-token hash into the hub's stored
 	// record — the reference spoke-relayed upgrade requests verify their proof

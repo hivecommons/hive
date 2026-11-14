@@ -199,6 +199,17 @@ func (s *HubServer) verifyHeartbeatBearerGeneration(presented, hiveID string) (i
 	if s == nil || presented == "" {
 		return 0, false
 	}
+	// Self-service (byo-) hives (#18060): the ONLY accepted credential is the
+	// random key the hub minted for exactly this ID, checked against its stored
+	// hash. The master-derived paths below are never tried for a byo- ID, so no
+	// holder of HIVE_HUB_SECRET or a master-derived key can beat as one, and a
+	// self-service key is never compared against any other hive's record.
+	if IsSelfServiceHiveID(hiveID) {
+		if s.selfService.verify(hiveID, presented) {
+			return selfServiceBearerGeneration, true
+		}
+		return 0, false
+	}
 	if s.keyGenerations != nil {
 		return verifyHeartbeatBearerAcrossGenerations(s.keyGenerations, presented, hiveID, time.Now())
 	}
@@ -299,6 +310,10 @@ func verifyHeartbeatBearerAcrossGenerations(gs *generationSet, presented, hiveID
 func (s *HubServer) heartbeatBearerIsPerHive(presented, hiveID string) bool {
 	if s == nil {
 		return false
+	}
+	// A self-service key is bound to one hive ID by construction (#18060).
+	if IsSelfServiceHiveID(hiveID) {
+		return s.selfService.verify(hiveID, presented)
 	}
 	if s.keyGenerations != nil {
 		_, ok := verifyHeartbeatBearerAcrossGenerations(s.keyGenerations, presented, hiveID, time.Now())

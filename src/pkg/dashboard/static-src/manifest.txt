@@ -37,11 +37,13 @@ css/responsive.css
 css/recipes-utilities.css
 css/welcome.css
 css/review-campaigns.css
+css/sessions.css
 css/kiosk.css
 css/popout.css
 css/reader.css
 css/variables.css
 glue/style-close-body-open.html
+js/auth-headers.js
 js/reader.js
 js/boot.js
 glue/boot-script-close.html
@@ -129,8 +131,10 @@ js/review-queue.js
 js/contributors.js
 js/refresh.js
 js/scroll-stabilizer.js
+js/campaigns.js
 js/inception.js
 js/subscription-gauge.js
+js/sessions.js
 js/debug-logs.js
 js/tooltips-dialogs.js
 js/plan-agent-controls.js

@@ -312,6 +312,71 @@ func issueStageTestClient(t *testing.T, srv *httptest.Server, enabled bool) *Cli
 
 func stageNow() time.Time { return time.Date(2026, 10, 20, 12, 0, 0, 0, time.UTC) }
 
+// TestIssueDiscussionSignal pins the 018 discussion signal
+// (hivecommons/hive#17150, hivecommons/hive#18141): the most specific
+// discussion label wins and is reported as the issue spells it; an
+// unlabelled issue whose title opens with "[RFC]" / "RFC:" (after any
+// leading emoji) reads "rfc title"; anything else is "".
+func TestIssueDiscussionSignal(t *testing.T) {
+	cases := []struct {
+		name   string
+		labels []string
+		title  string
+		want   string
+	}{
+		{"no signal", []string{"Epic", "help wanted"}, "v6 design: agent runtime", ""},
+		{"proposal", []string{"proposal"}, "", "proposal"},
+		{"kind/design as spelled", []string{"Kind/Design"}, "", "Kind/Design"},
+		{"architecture discussion", []string{"Epic", "architecture discussion"}, "Hold: v6 runtime", "architecture discussion"},
+		{"architecture discussion case-insensitive", []string{"Architecture Discussion"}, "", "Architecture Discussion"},
+		{"most specific label wins over order", []string{"architecture discussion", "proposal"}, "", "proposal"},
+		{"label outranks rfc title", []string{"kind/design"}, "[RFC] v6 agent runtime", "kind/design"},
+		{"[RFC] title", nil, "[RFC] v6 agent runtime", rfcTitleDiscussionReason},
+		{"RFC: title", nil, "RFC: v6 agent runtime", rfcTitleDiscussionReason},
+		{"lower-case rfc title", nil, "[rfc] v6 agent runtime", rfcTitleDiscussionReason},
+		{"emoji-prefixed RFC title", []string{"Epic"}, "📝 [RFC] v6 agent runtime", rfcTitleDiscussionReason},
+		{"emoji and spaces before RFC:", nil, "  🧭  RFC: v6 agent runtime", rfcTitleDiscussionReason},
+		{"rfc word without marker", nil, "RFC process cleanup", ""},
+		{"rfc mid-title", nil, "Implement the [RFC] runtime", ""},
+		{"empty title", nil, "", ""},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := issueDiscussionSignal(tc.labels, tc.title); got != tc.want {
+				t.Fatalf("issueDiscussionSignal(%q, %q) = %q; want %q", tc.labels, tc.title, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestIssueStageFor_DiscussionSignals pins the 018 derivation end to end
+// for the hivecommons/hive#18141 shapes: an unclaimed issue with only
+// `architecture discussion`, an unclaimed `[RFC]`-titled issue with no
+// discussion label, and the same issues once claimed (020 / 030).
+func TestIssueStageFor_DiscussionSignals(t *testing.T) {
+	cases := []struct {
+		name       string
+		in         IssueStageInput
+		want       stagelabels.Stage
+		wantReason string
+	}{
+		{"architecture discussion unclaimed", IssueStageInput{Labels: []string{"Epic", "architecture discussion"}, Title: "Hold: v6 agent runtime"}, stagelabels.OpenForDiscussion, "open for discussion: architecture discussion"},
+		{"[RFC] title, no discussion label", IssueStageInput{Labels: []string{"Epic", "help wanted"}, Title: "📝 [RFC] v6 agent runtime"}, stagelabels.OpenForDiscussion, "open for discussion: rfc title"},
+		{"RFC: title, no labels", IssueStageInput{Title: "RFC: v6 agent runtime"}, stagelabels.OpenForDiscussion, "open for discussion: rfc title"},
+		{"[RFC] title claimed by a person", IssueStageInput{Title: "[RFC] v6 agent runtime", Bucket: workBucketClaimed, ClaimKind: "human", ClaimedBy: "alice"}, stagelabels.Claimed, "live issue claim"},
+		{"architecture discussion claimed with a PR under way", IssueStageInput{Labels: []string{"architecture discussion"}, Title: "Hold: v6 agent runtime", Bucket: workBucketClaimed, ClaimKind: string(claims.KindAgent), ClaimedBy: "scanner", PRStarted: true}, stagelabels.PRInProgress, "live claim with a PR under way"},
+		{"plain title stays 010", IssueStageInput{Labels: []string{"Epic", "help wanted"}, Title: "v6 agent runtime"}, stagelabels.Actionable, "actionable"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stage, covered, reason := IssueStageFor(tc.in, nil)
+			if stage != tc.want || covered || reason != tc.wantReason {
+				t.Fatalf("got stage=%v covered=%v reason=%q; want stage=%v reason=%q", stage, covered, reason, tc.want, tc.wantReason)
+			}
+		})
+	}
+}
+
 func TestIssueStageFor(t *testing.T) {
 	prStage := func(repo string, number int) stagelabels.Stage {
 		if repo == "acme/widgets" && number == 99 {
