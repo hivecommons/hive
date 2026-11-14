@@ -854,7 +854,7 @@ func (s *Scheduler) buildReposSectionFor(agentName string) string {
 	if refs := s.cfg.Project.ReferenceRepos; len(refs) > 0 {
 		b.WriteString("📚 REFERENCE REPOS (outside this project — study them, do not work them):\n")
 		for _, rr := range refs {
-			b.WriteString(fmt.Sprintf("  %s/%s  [reference · %s]\n", strings.TrimRight(host, "/"), rr.Repo, rr.WriteLabel()))
+			b.WriteString(fmt.Sprintf("  %s/%s  [reference · %s]%s\n", strings.TrimRight(host, "/"), rr.Repo, rr.WriteLabel(), referenceRepoProvenance(rr)))
 		}
 		b.WriteString("   You MAY clone them (public, unauthenticated), read their files, and GET their issues/PRs/API. An authorized-repo item whose deliverables name a reference repo is IN SCOPE, not a scope violation: do NOT classify it out-of-scope, critical, or a security concern. Findings about a reference repo belong in the deliverable inside the AUTHORIZED repo (the assessment document, the report), never as issues or PRs on the reference repo itself — unless its tier above says issues/prs, in which case you may ONLY open an issue, open a PR from your own branch, or comment on an issue/PR you opened; the proxy refuses merges, default-branch pushes, labels, assignments, reviews and closing others' items deterministically, so retrying cannot succeed.\n")
 	}
@@ -909,4 +909,26 @@ Your workdir is, at most, a checkout of the primary repo — never of the others
 `, len(active), config.QualifyRepo(org, primary), strings.TrimRight(host, "/")))
 	}
 	return b.String()
+}
+
+// derivedReadOnlyNoReason is the kick's fallback when a read-only derived
+// reference repo carries no CredentialReason.
+const derivedReadOnlyNoReason = "no write credential for this repository"
+
+// referenceRepoProvenance is the suffix the REFERENCE REPOS block appends
+// for an entry derived from an accepted request issue
+// (hivecommons/hive#18159): where the grant came from, and for one served
+// read-only, why. Empty for a hand-written entry.
+func referenceRepoProvenance(rr config.ReferenceRepo) string {
+	if !rr.Derived() {
+		return ""
+	}
+	if !rr.DerivedReadOnly() {
+		return " (from " + rr.DerivedFrom + ")"
+	}
+	reason := strings.TrimSpace(rr.CredentialReason)
+	if reason == "" {
+		reason = derivedReadOnlyNoReason
+	}
+	return " (from " + rr.DerivedFrom + "; read-only: " + reason + ")"
 }

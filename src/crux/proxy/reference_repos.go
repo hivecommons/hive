@@ -140,6 +140,17 @@ func (p *GitHubProxy) SetReferenceRepos(policies []ReferenceRepoPolicy) {
 	p.referenceMu.Unlock()
 }
 
+// ReferenceRepoPolicyFor returns the installed policy for repo ("owner/name",
+// case-insensitive) and whether one exists. Boot tests read it to show that
+// a derived entry whose grant ended no longer has a policy
+// (hivecommons/hive#18159); the request path uses referenceRepoFor.
+func (p *GitHubProxy) ReferenceRepoPolicyFor(repo string) (ReferenceRepoPolicy, bool) {
+	p.referenceMu.RLock()
+	defer p.referenceMu.RUnlock()
+	pol, ok := p.referenceRepos[strings.ToLower(strings.TrimSpace(repo))]
+	return pol, ok
+}
+
 // referenceRepoFor returns the policy covering the repo a path names.
 func (p *GitHubProxy) referenceRepoFor(path string) (ReferenceRepoPolicy, bool) {
 	p.referenceMu.RLock()

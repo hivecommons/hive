@@ -3878,6 +3878,10 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 
 		// Re-sync subsystems that cache config values
 		b.ghClient.SetRepos(b.cfg.Project.Repos)
+		// project.reference_repos: the file carries only the hand-written
+		// entries, so the derived ones are merged back now and re-listed
+		// from the request issues in the background (hivecommons/hive#18159).
+		b.reconcileReferenceReposAfterReload()
 		b.observeWritebackRepos()
 		if b.metricsCollector != nil {
 			b.metricsCollector.SetProjectScope(b.cfg.Project.Org, metricsPrimaryRepo(b.cfg.Project), b.cfg.Project.Repos, b.cfg.EffectiveAIAuthor())
