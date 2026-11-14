@@ -13,7 +13,7 @@ Choose how to obtain a running hive **before** configuring its agents:
 | Your situation | Start here | Expected result |
 |---|---|---|
 | You want a hosted hive, without running a cluster | [Hosted onboarding](hosted-hub.md); request at [hive.hivecommons.dev/get-started](https://hive.hivecommons.dev/get-started) | After admin approval and provisioning, **My Hives** links to your dashboard. |
-| You want to run one hive yourself | [Docker Compose](quickstart-docker-compose.md), [Podman](quickstart-podman.md), or [Kubernetes](kubernetes-deployment.md) | Your own running container and dashboard, with storage and authentication configured. |
+| You want to run one hive yourself | [Docker Compose](quickstart-docker-compose.md), [Podman](quickstart-podman.md), or [Kubernetes](kubernetes-deployment.md) | Your own running container and dashboard, with storage and authentication configured. To list it on a hub afterwards, see [Register a self-hosted hive](register-self-hosted-hive.md). |
 | Someone has already given you dashboard access | [Getting started](getting-started.md#step-0--before-you-start-do-this-first) | Connect the GitHub App, authenticate a model backend, set a budget, then enable agents conservatively. |
 
 You need a GitHub identity and a repository on GitHub.com or GitHub Enterprise.
