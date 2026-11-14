@@ -1,1 +1,0 @@
-- Review verdicts discarded for lacking a head SHA and a dispatch are now logged at INFO instead of WARN, so they no longer trigger repeated-error self-reports.
