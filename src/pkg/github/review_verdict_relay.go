@@ -385,12 +385,13 @@ func maintainerCallQuestion(body string) string {
 	return ""
 }
 
-// logVerdictDispatchRefusal reports a discarded verdict. A self-approval
-// refusal is the guard working as designed, not a runtime fault, so it is
-// logged at INFO to keep it out of the fleet's repeated-error reports.
+// logVerdictDispatchRefusal reports a discarded verdict. A self-approval or
+// missing-head-SHA refusal is the guard working as designed, not a runtime
+// fault, so it is logged at INFO to keep it out of the fleet's
+// repeated-error reports.
 func (c *Client) logVerdictDispatchRefusal(ctx context.Context, req ReviewRequest, report review.PerspectiveReport, reason string) {
 	level := slog.LevelWarn
-	if reason == "author_self_approval" {
+	if reason == "author_self_approval" || reason == "missing_head_sha_without_dispatch" {
 		level = slog.LevelInfo
 	}
 	c.logger.Log(ctx, level, "review-request watcher: verdict does not match a review dispatch, discarded",
