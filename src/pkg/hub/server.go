@@ -940,7 +940,10 @@ func validateSingleRepoHost(spokeHost, primaryRepo string, repos []string) error
 
 // isValidRepoRef validates a repo entry, which may be a bare name ("repo")
 // or a cross-org "owner/repo" reference. Both segments must be safe names
-// (no path traversal); at most one slash is allowed. Cross-org repos are a
+// (no path traversal); at most one slash is allowed. "." and ".." pass the
+// safe-name charset but are dot segments that url.JoinPath and friends
+// resolve (owner/.. would become a request for /repos), and GitHub allows
+// neither as a repo or owner name, so both are refused (#18166). Cross-org repos are a
 // supported hive config (e.g. a primary repo in one org plus a secondary in
 // another), so the heartbeat must not 400-reject them — doing so silently
 // took a whole hive offline (no heartbeats → no upgrades, shows offline).
@@ -953,7 +956,7 @@ func isValidRepoRef(s string) bool {
 		return false
 	}
 	for _, p := range parts {
-		if !isValidName(p) {
+		if !isValidName(p) || p == "." || p == ".." {
 			return false
 		}
 	}
