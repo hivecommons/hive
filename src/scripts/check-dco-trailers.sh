@@ -67,7 +67,9 @@ Environment:
                          SHAs with a recorded maintainer DCO disposition. A waived commit
                          is reported as WAIVED instead of FAIL and does not fail the run.
                          Abbreviated SHAs are rejected. Empty by default.
-  DCO_SKIP_BOT_AUTHORS   true/false; skip bot-authored commits by default.
+  DCO_SKIP_BOT_AUTHORS   true/false; skip the sign-off identity match for bot-authored
+                         commits by default. A bot commit with NO Signed-off-by is
+                         still reported as missing-signoff.
   DCO_GITHUB_REPOSITORY  Optional owner/repo used for GitHub noreply author
                          lookups. Defaults to GITHUB_REPOSITORY or origin.
   DCO_AUTHOR_LOGIN_MAP   Optional comma/space/newline-separated SHA=login map
@@ -334,6 +336,15 @@ while IFS= read -r sha; do
   author_name=$(git log -1 --format=%an "$sha")
   author_email=$(git log -1 --format=%ae "$sha")
   if [ "$skip_bots" = "true" ] && is_bot_author "$author_name" "$author_email"; then
+    # The skip covers the bot-address MATCHING edge cases only. A bot commit
+    # with no Signed-off-by at all is still a hole in the DCO trail: the
+    # hive's squash of #18079 landed f33758f5a on v5 that way and nothing
+    # saw it until a forward merge failed DCO (#18203).
+    if [ -z "$(extract_signoff_emails "$sha")" ]; then
+      checked=$((checked + 1))
+      record_failure "$sha" "missing-signoff bot-author=${author_name} <${author_email}>"
+      continue
+    fi
     skipped_bots=$((skipped_bots + 1))
     continue
   fi
