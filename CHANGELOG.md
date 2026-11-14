@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.263.3)
+
+### Fixed
+
+- Provider quota and spending-limit kick-withholding notices no longer trigger unclassified runtime-error self-reports; the per-cycle WARN and the probe-kick schedule are unchanged.
+
 ## 2026-11-14 (v5.263.2)
 
 ### Fixed
