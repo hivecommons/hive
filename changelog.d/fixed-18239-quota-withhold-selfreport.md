@@ -1,0 +1,1 @@
+- Provider quota and spending-limit kick-withholding notices no longer trigger unclassified runtime-error self-reports; the per-cycle WARN and the probe-kick schedule are unchanged.

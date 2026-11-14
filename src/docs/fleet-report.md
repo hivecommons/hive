@@ -270,6 +270,17 @@ forbidden endpoints is not a repeated runtime defect
 (hivecommons/hive#18230). The WARN and its `agent` / `method` / `path` stay in
 local logs; proxy dial, certificate and TLS failures remain reportable.
 
+It also skips the exact WARNs `provider quota exhausted: withholding agent
+kicks`, `provider spending limit: withholding agent kicks` and `provider
+spending limit: withholding all but the probe kick` (`runEvalCycle`,
+`src/cmd/hive/main_eval_cycle.go`): withholding kicks from an agent whose
+provider quota is exhausted (hivecommons/hive#18112) or while the spending
+limit is clipped (#15809) is backpressure working as designed. The notice
+repeats every eval cycle until the quota resets and a probe kick clears the
+hold, so a long hold crossed the repeat threshold on its own
+(hivecommons/hive#18239). The WARNs and their `withheld` / `probe` fields stay
+in local logs; failures to gate, probe or deliver kicks remain reportable.
+
 The re-engagement sweep logs `re-engagement kick undeliverable; budget not
 charged` at INFO rather than WARN when the cause is `shared session pool is
 busy` (`deliverReEngagement`, `src/cmd/hive/main_sweeps.go`): a saturated shared CLI
