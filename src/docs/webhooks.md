@@ -13,6 +13,85 @@ The priority order throughout is **accuracy → latency → API thrift**. A
 delivery is a free hint; every outbound GitHub call is budgeted. The rules
 below exist so that the hive never trades the first for the third.
 
+## Setting up webhooks (owner guide)
+
+Webhooks are optional. Without them a hive polls GitHub every
+`governor.eval_interval_s` (default 300 s) and finds out about a review, a red
+check or a new comment at the next tick. With them the hive is told at once:
+the governor wakes early, CI-failure and review kicks land within seconds
+instead of minutes, the base tick stretches to `governor.eval_interval_webhook_s`
+(default 900 s), and the outbound API budget drops because each delivery costs
+one confirming `GET` instead of a full re-list. Open ⚙ Settings → **Forge App**
+→ **GitHub webhooks** on your hive, or click the **webhooks** tile on the
+Governor card, to see which of the two cases below applies to you.
+
+Hive never shares its own webhook secret. Every hive verifies deliveries with
+a key that belongs to it alone.
+
+### Hosted hive (hub-managed)
+
+Nothing to do. GitHub sends App deliveries to the hub, the hub verifies them
+and relays each one to every hive that manages that repository, signed with
+the relay key it minted for your hive when it was provisioned. The Settings
+section reports **Receiver: hub relay** and the events/hour count; the
+Governor tile reads `N/1h`. If it stays at **no events yet** for an hour of
+activity, confirm the hivecommons GitHub App is installed on the organization
+or repositories your hive tracks (Settings → Forge App → Installation) — the
+hub can only relay what GitHub sends it.
+
+### Self-hosted hive
+
+Your hive needs an org- or repo-level webhook in GitHub that points at it and
+uses a secret only you hold.
+
+1. **Generate the secret.** Settings → Forge App → GitHub webhooks →
+   **Generate secret**. The hive writes it to `/data/github-webhook-secret.key`
+   (0600) and shows it once with a copy button; it is never shown again
+   (regenerate to rotate). If you prefer to manage it yourself, set
+   `GITHUB_WEBHOOK_SECRET` in the hive's environment instead — the button then
+   reports that the environment variable is in charge.
+2. **Create the webhook.** If the section offers **Create webhook for me**,
+   click it: the hive's GitHub App installation holds `organization_hooks` or
+   `repository_hooks` write permission and the hive creates the hook with the
+   right URL, secret and events. Clicking it again is safe: when a hook for
+   this hive's payload URL already exists it is reported, not duplicated.
+   Otherwise do it by hand in GitHub:
+   organization (or repository) → Settings → Webhooks → **Add webhook**.
+   - Payload URL: the value shown in the section, i.e.
+     `https://<your-hive>/api/webhook/github`
+   - Content type: `application/json`
+   - Secret: the value from step 1
+   - SSL verification: enabled
+   - Events: *Let me select individual events* → `check_run`, `check_suite`,
+     `issue_comment`, `issues`, `pull_request`, `pull_request_review`,
+     `pull_request_review_comment`, `push`, `status`, `workflow_run`
+     (optionally `workflow_job`, and `projects_v2_item` if your work source is
+     GitHub Projects).
+3. **Verify.** GitHub sends a `ping` immediately; the section's **Receiver**
+   card should read **github-signed** with a fresh *last event*, and the
+   Governor tile moves from **set up →** to `N/1h` after the first real event.
+
+The payload URL comes from `dashboard.public_url`; if the section shows no URL
+or the wrong one, set that key (or the hub-reported dashboard URL) to the
+address GitHub can reach.
+
+### Troubleshooting
+
+| Symptom (GitHub → Settings → Webhooks → Recent deliveries) | Cause | Fix |
+| --- | --- | --- |
+| `401 invalid signature` | Secret in GitHub differs from the hive's | Paste the current secret into the GitHub hook (Edit → Secret), or regenerate in Settings and update GitHub. `GITHUB_WEBHOOK_SECRET` overrides the generated file — check which one the section says is active. |
+| `503 webhooks disabled: no secret configured` | Hive has neither a generated/env secret nor a hub relay key | Step 1 above. |
+| `404` | Wrong path | The path is `/api/webhook/github` on the spoke (the hub's App endpoint is `/api/github/webhook` — do not point an org hook there). |
+| `200` but **no events yet** | Deliveries are for repos the hive does not manage | Check `project.repos`; deliveries for other repos are acknowledged and dropped. |
+| Hosted hive, no events | App not installed on the repo / relay rejected | Install the App on the org or repo; the hub relays to the dashboard URL your hive reports, which must be reachable from the hub. |
+| Deliveries time out | Hive not reachable from GitHub (private network, redirects) | GitHub (and the hub relay) follow no redirects and need a public HTTPS endpoint. |
+
+Hub relay vs direct: a hive registered with the hub whose repos carry the
+hivecommons App receives relays as well as any direct hook you add; both are
+accepted, duplicates are dropped by delivery id. Only one is needed. A
+self-hosted hive with a private dashboard URL cannot receive relays and must
+use a direct hook.
+
 ## Polling cadence vs webhook patch vs reconcile
 
 Three writers feed one snapshot per repository. A fourth path writes PR

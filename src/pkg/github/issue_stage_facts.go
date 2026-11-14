@@ -29,6 +29,7 @@ func issueFactsFrom(in IssueStageInput, prStage func(repo string, number int) st
 	f := stageengine.Facts{
 		Ref:    stageengine.Ref{Owner: owner, Repo: repo, Number: in.Number, Kind: stagelabels.IssueItem},
 		Labels: append([]string(nil), in.Labels...),
+		Title:  in.Title,
 		Open:   true,
 		Author: stageengine.AuthorFacts{Kind: in.AuthorKind},
 		Issue: &stageengine.IssueFacts{
@@ -110,7 +111,7 @@ func resolveIssueLabelFacts(in IssueStageInput, f *stageengine.Facts) {
 		is.ApprovedDirectionLabel = HumanAckLabel
 	}
 	is.UmbrellaLabel = issueUmbrellaLabel(in.Labels, in.SpekUmbrella)
-	is.DiscussionLabel = issueDiscussionLabel(in.Labels)
+	is.DiscussionLabel = issueDiscussionSignal(in.Labels, in.Title)
 	is.BlockedReason = ""
 	if hasBlockedLabel(in.Labels) {
 		is.BlockedReason = blockedStageReason(in)
@@ -137,7 +138,7 @@ var issueBlockerLookup = func(repo string, number int) (itemblocker.Blocker, boo
 // resolution applies to it as to an enumerated issue. An un-park fact is
 // resolved without the park labels it lifts (unparkDerivationLabels).
 func issueInputFrom(f stageengine.Facts) IssueStageInput {
-	in := IssueStageInput{Repo: f.Ref.FullRepo(), Number: f.Ref.Number, Labels: unparkDerivationLabels(f), AuthorKind: f.Author.Kind}
+	in := IssueStageInput{Repo: f.Ref.FullRepo(), Number: f.Ref.Number, Labels: unparkDerivationLabels(f), Title: f.Title, AuthorKind: f.Author.Kind}
 	if f.Issue != nil {
 		if f.Issue.Bucket != stageengine.BucketActionable {
 			in.Bucket = string(f.Issue.Bucket)

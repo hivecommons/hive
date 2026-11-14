@@ -106,7 +106,7 @@ func TestStageTrackerCuesWiring(t *testing.T) {
 		`stageTrackerNoteEvents(data); stageTrackerResultToastsSync(data); stageTrackerPendingExpire(data);`,
 		`stageTrackerCueAgeSync(el, nowMs);`,
 		`function celebrateRow(rowEl, opts) {`,
-		`const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: stageTrackerHeaderHtml(stages) }]`,
+		`const rows = stageTrackerPinnedRows(el, [{ key: STAGE_TRACKER_HEADER_KEY, html: headHtml }]`,
 		`if (!visible.length && !Object.keys(_stageTrackerCelebrating).length) {`,
 		`data-change-action="stageTrackerCelebrateChange"`,
 	} {

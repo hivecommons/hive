@@ -66,6 +66,7 @@
       const repaintTracker = hiveAuthResolved();
       if (username) window._hiveUser = username;
       if (role) window._hiveRole = role;
+      if (typeof subscriptionGaugeRefresh === 'function') subscriptionGaugeRefresh();
       const banner = document.getElementById('gh-auth-banner');
       const topBtn = document.getElementById('oc-gh-login-btn');
       const avatarWrap = document.getElementById('oc-gh-avatar-wrap');

@@ -877,6 +877,24 @@
         options.map(o => { const v = Array.isArray(o) ? o[0] : o, l = Array.isArray(o) ? o[1] : (o || '\u2014'); return `<option value="${esc(v)}" ${v === value ? 'selected' : ''}>${esc(l)}</option>`; }).join('') + '</select>';
     }
 
+    // The column's chevron icon (hivecommons/hive#18033): a preview of what
+    // the Activity Monitor draws, a pick-list of the allowlisted ids with
+    // the label's default first, and a box for a single emoji. Both write
+    // spec.columns[id].icon through wfEdSetColumnIcon, which refuses
+    // anything outside the allowlist.
+    function wfEdColumnIconField(c, base, dis) {
+      if (typeof stageIconFor !== 'function') return '';
+      const cur = String(c.icon == null ? '' : c.icon).trim();
+      const def = stageIconIdForName(c.label || c.id);
+      const isEmoji = !!cur && !stageIconIsId(cur);
+      const ids = Object.keys(STAGE_ICON_SET);
+      const options = [['', 'default \u00b7 ' + def]].concat(ids.map(id => [id, id]));
+      const preview = `<span class="wf-ed-icon-preview" title="${esc('as drawn in the Activity Monitor')}">${stageIconHtml(stageIconFor(c), 'ham-ico ham-stage-ico')}</span>`;
+      const select = `<select data-change-action="wfEdSetColumnIcon" data-arg0="${esc(base + '.icon')}" data-arg-types="s,v" ${dis}>${options.map(o => `<option value="${esc(o[0])}" ${!isEmoji && o[0] === cur ? 'selected' : ''}>${esc(o[1])}</option>`).join('')}${isEmoji ? `<option value="${esc(cur)}" selected>${esc(cur)} (emoji)</option>` : ''}</select>`;
+      const emoji = `<input type="text" class="wf-ed-icon-emoji" maxlength="16" placeholder="or an emoji" value="${esc(isEmoji ? cur : '')}" data-change-action="wfEdSetColumnIcon" data-arg0="${esc(base + '.icon')}" data-arg-types="s,v" ${dis}>`;
+      return wfEdField('Icon', `<div class="wf-ed-inline wf-ed-icon-row">${preview}${select}${emoji}</div>`, 'drawn in this column\u2019s chevrons; blank = by label');
+    }
+
     function renderWfEdInspector(st) {
       const m = st.model, spec = m.spec, sel = st.selection;
       const can = wfEdCanEdit();
@@ -927,6 +945,7 @@
           wfEdField('Id', `<div class="wf-ed-inline"><input type="text" value="${esc(c.id)}" readonly><button type="button" class="hv-btn btn-secondary btn-sm" data-action="wfEdRenameColumnAction" data-arg0="${esc(c.id)}" ${dis}>Rename\u2026</button></div>`) +
           wfEdField('Label', wfEdText(base + '.label', c.label, dis)) +
           wfEdField('Hint', wfEdText(base + '.hint', c.hint, dis), 'shown as the lane\u2019s tooltip in the Activity Monitor') +
+          wfEdColumnIconField(c, base, dis) +
           `<div class="config-field wf-ed-field"><label><input type="checkbox" ${c.terminal ? 'checked' : ''} data-change-action="wfEdFieldSetBool" data-arg0="${esc(base + '.terminal')}" data-arg-types="s,c" ${dis}> Terminal column</label><span class="text-muted fs-xs">states here need no exit</span></div>` +
           wfEdField('Width', `<input type="range" min="${WF_ED.minColW}" max="${WF_ED.maxColW}" step="${WF_ED.grid}" value="${st.view.laneWidths[c.id] || WF_ED.colW}" data-input-action="wfEdLaneWidth" data-arg0="${esc(c.id)}" data-arg-types="s,v">`) +
           `<p class="text-muted fs-sm">${(c.states || []).length} state${(c.states || []).length === 1 ? '' : 's'}</p>` +
@@ -1498,6 +1517,19 @@
       wfEdCommit(wfEdUpdate(_wfEd.model, path, isNaN(n) || n <= 0 ? '' : n));
     }
     function wfEdFieldSetBool(path, checked) { wfEdCommit(wfEdUpdate(_wfEd.model, path, checked ? true : '')); }
+    // An icon is '' (by label), an allowlisted id or one emoji; anything
+    // else is refused with a toast and the inspector redraws the last good
+    // value, so no markup ever reaches a chevron (hivecommons/hive#18033).
+    function wfEdSetColumnIcon(path, value) {
+      if (!_wfEd.model) return;
+      const v = String(value == null ? '' : value).trim();
+      if (typeof stageIconIsValid === 'function' && !stageIconIsValid(v)) {
+        if (typeof showToast === 'function') showToast('Icon must be one of the built-in icon ids or a single emoji.', 'error');
+        wfEdRefresh(['inspector']);
+        return;
+      }
+      wfEdCommit(wfEdUpdate(_wfEd.model, path, v), { parts: ['canvas', 'inspector', 'drawer'] });
+    }
     function wfEdSetList(path, value) { wfEdCommit(wfEdUpdate(_wfEd.model, path, String(value || '').split(/[,\s]+/).map(s => s.trim()).filter(Boolean))); }
     function wfEdSetStateColumn(id, columnId) { wfEdCommit(wfEdMoveState(_wfEd.model, id, columnId === WF_ED_UNASSIGNED ? '' : columnId)); }
     function wfEdSetInitial(id) { wfEdCommit(wfEdUpdate(_wfEd.model, 'spec.initial', id)); }

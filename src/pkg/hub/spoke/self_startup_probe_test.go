@@ -20,7 +20,10 @@ func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
 			{"stale", `,"startupProbe":{"httpGet":{"path":"/api/health","port":3002},"failureThreshold":30,"periodSeconds":5}`, true},
 			{"current", `,"startupProbe":{"failureThreshold":118}`, false},
 			{"larger", `,"startupProbe":{"failureThreshold":200}`, false},
-			{"absent", ``, false},
+			// No probe at all: install the template's full probe. The port
+			// follows the existing readiness probe when one is present.
+			{"absent", ``, true},
+			{"absent-with-readiness", `,"readinessProbe":{"httpGet":{"path":"/api/health","port":4100}}`, true},
 		} {
 			t.Run(operation+"/"+probe.name, func(t *testing.T) {
 				probeJSON := probe.json
@@ -105,8 +108,21 @@ func TestSelfUpgradeBackfillsStartupProbe(t *testing.T) {
 				for _, c := range patch.Spec.Template.Spec.Containers {
 					if c.Name == "hive" {
 						found = c.Probe != nil
-						if found && (len(c.Probe) != 1 || c.Probe["failureThreshold"] != float64(118)) {
+						if found && c.Probe["failureThreshold"] != float64(118) {
 							t.Errorf("unexpected probe patch: %v", c.Probe)
+						}
+						if found && strings.HasPrefix(probe.name, "absent") {
+							wantPort := float64(3002)
+							if probe.name == "absent-with-readiness" {
+								wantPort = 4100
+							}
+							hg, _ := c.Probe["httpGet"].(map[string]any)
+							if hg == nil || hg["path"] != "/api/health" || hg["port"] != wantPort ||
+								c.Probe["periodSeconds"] != float64(5) || c.Probe["initialDelaySeconds"] != float64(10) {
+								t.Errorf("missing probe must be installed in full (port %v): %v", wantPort, c.Probe)
+							}
+						} else if found && len(c.Probe) != 1 {
+							t.Errorf("existing probe must only have its threshold raised: %v", c.Probe)
 						}
 						if operation == "image" && c.Image != "ghcr.io/hivecommons/hive:candidate" {
 							t.Error("lost image update")

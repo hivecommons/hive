@@ -237,7 +237,7 @@ func (p *GitHubProxy) handleTransparentTLS(conn net.Conn, peeked []byte) {
 // an allocated agent UID) is named internalCallerName so a hive-originated
 // write is attributed rather than mistaken for a UID-attribution failure.
 func (p *GitHubProxy) attributeTransparentConn(conn net.Conn) string {
-	if p.uidMap == nil {
+	if p.loadedUIDMap() == nil {
 		return ""
 	}
 	_, portStr, splitErr := net.SplitHostPort(conn.RemoteAddr().String())
@@ -257,7 +257,7 @@ func (p *GitHubProxy) attributeTransparentConn(conn net.Conn) string {
 	if lookupErr != nil {
 		return ""
 	}
-	if name := p.uidMap.LookupByUID(uid); name != "" {
+	if name := p.lookupAgentByUID(uid); name != "" {
 		return name
 	}
 	// The hive's own control plane is not an agent, so the lookup above
@@ -266,7 +266,7 @@ func (p *GitHubProxy) attributeTransparentConn(conn net.Conn) string {
 	// like an unattributable agent, which the mode gate blocks. Name it
 	// explicitly so it is attributed rather than mistaken for a
 	// UID-attribution failure.
-	if p.uidMap.IsInternalUID(uid) {
+	if p.loadedUIDMap().IsInternalUID(uid) {
 		return internalCallerName
 	}
 	return ""

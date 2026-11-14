@@ -96,11 +96,105 @@ func TestTranslatorAgentName_UnmappedRefusedUnlessAdvisoryOK(t *testing.T) {
 func TestTranslatorAgentName_InternalUIDKeepsHeader(t *testing.T) {
 	fakeProcNetTCPUID(t, 0)
 	p := &GitHubProxy{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
-	// Root is the control plane; the separate proxy UID is not trusted.
+	// Root is the control plane whatever the private-forward setting.
 	p.uidMap = &agent.UIDMap{BaseUID: 2001, ProxyUID: 2003, Agents: map[string]int{"quality": 2002}}
 
 	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "supervisor" {
 		t.Fatalf("internal uid: got (%q,%v), want (supervisor,true)", name, ok)
+	}
+	// Lifting the private-forward guard refuses only the proxy UID, never root.
+	p.allowPrivateForward = true
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "supervisor" {
+		t.Fatalf("root, private forward allowed: got (%q,%v), want (supervisor,true)", name, ok)
+	}
+}
+
+// TestTranslatorAgentName_ProxyUIDTrustedOnlyWhileForwardGuarded pins #18061:
+// on v5 pods the hive drops to the proxy UID (dev, 1001) and agents without a
+// per-agent UID run as it, so the proxy UID keeps its header name — but only
+// while the private-forward guard stops the proxy relaying agent requests to
+// this loopback port (#14448). With the guard lifted it is refused again.
+func TestTranslatorAgentName_ProxyUIDTrustedOnlyWhileForwardGuarded(t *testing.T) {
+	fakeProcNetTCP(t)
+	var buf strings.Builder
+	p := &GitHubProxy{logger: slog.New(slog.NewTextHandler(&buf, nil))}
+	p.uidMap = &agent.UIDMap{BaseUID: 2001, ProxyUID: 2003, Agents: map[string]int{"quality": 2002}}
+
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "supervisor" {
+		t.Fatalf("proxy uid, forward guarded: got (%q,%v), want (supervisor,true)", name, ok)
+	}
+
+	p.allowPrivateForward = true
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); ok || name != "" {
+		t.Fatalf("proxy uid, private forward allowed: got (%q,%v), want refused", name, ok)
+	}
+	p.inferenceTranslatorHandler().ServeHTTP(httptest.NewRecorder(), translatorReq("127.0.0.1:43210", "supervisor"))
+	if !strings.Contains(buf.String(), "reason=proxy_uid_private_forward") {
+		t.Errorf("refusal log %q lacks reason=proxy_uid_private_forward", buf.String())
+	}
+
+	// An agent allocated the proxy UID is never internal: its own name wins.
+	p.allowPrivateForward = false
+	p.uidMap = &agent.UIDMap{BaseUID: 2001, ProxyUID: 2003, Agents: map[string]int{"scanner": 2003}}
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "scanner" {
+		t.Fatalf("agent at proxy uid: got (%q,%v), want (scanner,true)", name, ok)
+	}
+}
+
+// TestTranslatorAgentName_ProxyUIDCannotClaimIsolatedAgent pins #18115: the
+// proxy UID is shared by the hive process and every UID-less agent, so a
+// caller at that UID may only assert a name that has NO per-agent UID. A
+// claim on an agent that owns a UID (which would have arrived from that UID)
+// is refused, whatever the private-forward setting; root is still trusted.
+func TestTranslatorAgentName_ProxyUIDCannotClaimIsolatedAgent(t *testing.T) {
+	fakeProcNetTCP(t)
+	var buf strings.Builder
+	p := &GitHubProxy{logger: slog.New(slog.NewTextHandler(&buf, nil)), inference: newInferenceRouter()}
+	p.uidMap = &agent.UIDMap{BaseUID: 2001, ProxyUID: 2003, Agents: map[string]int{"quality": 2002}}
+	// The victim has a real route; the spoofed request must never reach it.
+	p.inference.Set("quality", &InferenceRoute{Backend: "vllm", Endpoint: "http://127.0.0.1:1", Model: "m", APIKey: "victim-secret"})
+
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "quality")); ok || name != "" {
+		t.Fatalf("proxy uid claiming isolated agent: got (%q,%v), want refused", name, ok)
+	}
+
+	rec := httptest.NewRecorder()
+	p.inferenceTranslatorHandler().ServeHTTP(rec, translatorReq("127.0.0.1:43210", "quality"))
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401; body %s", rec.Code, rec.Body.String())
+	}
+	for _, want := range []string{"reason=proxy_uid_claims_isolated_agent", "uid=2003", "claimed=quality"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("refusal log %q missing %q", buf.String(), want)
+		}
+	}
+	for _, leak := range []string{"inference forward", "victim-secret", "sk-hive-"} {
+		if strings.Contains(buf.String(), leak) {
+			t.Errorf("log %q contains %q: the victim's route was used or the key leaked", buf.String(), leak)
+		}
+	}
+
+	// A name with no per-agent UID is the legitimate shape of a UID-less
+	// agent (#18061) and is still accepted from the proxy UID.
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "supervisor" {
+		t.Fatalf("proxy uid claiming uid-less agent: got (%q,%v), want (supervisor,true)", name, ok)
+	}
+
+	// HIVE_PROXY_ADVISORY_OK accepts self-asserted identity only where the
+	// socket proves nothing; a socket that proves the claim false still wins.
+	p.proxyAdvisoryOK = true
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "quality")); ok || name != "" {
+		t.Fatalf("advisory-ok proxy uid claiming isolated agent: got (%q,%v), want refused", name, ok)
+	}
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "supervisor")); !ok || name != "supervisor" {
+		t.Fatalf("advisory-ok proxy uid claiming uid-less agent: got (%q,%v), want (supervisor,true)", name, ok)
+	}
+	p.proxyAdvisoryOK = false
+
+	// Root is the control plane that issues the keys: it may still name any agent.
+	fakeProcNetTCPUID(t, 0)
+	if name, ok := p.translatorAgentName(translatorReq("127.0.0.1:43210", "quality")); !ok || name != "quality" {
+		t.Fatalf("root claiming isolated agent: got (%q,%v), want (quality,true)", name, ok)
 	}
 }
 

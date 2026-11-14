@@ -136,6 +136,10 @@ type Server struct {
 	matrix      *matrixSource
 	matrixNudge stageTrackerNudger
 
+	// knowledgeConnectorsRTMu guards deps.KnowledgeConnectors, which a
+	// dashboard connector edit can swap at runtime (#18091).
+	knowledgeConnectorsRTMu sync.RWMutex
+
 	port         int
 	authToken    string
 	sweepMu      sync.RWMutex
@@ -430,6 +434,11 @@ type Server struct {
 	// (see EnableSessionPersistence). Guarded by sessionMu.
 	sessionStorePath string
 
+	// Sessions (api_sessions.go): lazily opened metadata store and the mutex
+	// serialising create/resume so the per-spoke and per-user caps hold.
+	sessionsOnce      sync.Once
+	sessionStore      *sessionStore
+	sessionsMu        sync.Mutex
 	terminalHandoffMu sync.Mutex
 	terminalHandoffs  map[string]terminalHandoff
 
@@ -733,10 +742,14 @@ type StatusPayload struct {
 	YourTurn *FrontendYourTurn `json:"yourTurn,omitempty"`
 	Tokens   FrontendTokens    `json:"tokens"`
 	Repos    []FrontendRepo    `json:"repos"`
-	Swarm    SwarmStatus       `json:"swarm"`
-	Beads    FrontendBeads     `json:"beads"`
-	Planning FrontendPlanning  `json:"planning"`
-	Runs     []RunSummary      `json:"runs"`
+	// ReferenceRepos are project.reference_repos (hivecommons/hive#18015):
+	// studied, not worked. Kept apart from Repos so no queue, ACMM or
+	// work-item consumer ever treats one as managed.
+	ReferenceRepos []FrontendReferenceRepo `json:"referenceRepos,omitempty"`
+	Swarm          SwarmStatus             `json:"swarm"`
+	Beads          FrontendBeads           `json:"beads"`
+	Planning       FrontendPlanning        `json:"planning"`
+	Runs           []RunSummary            `json:"runs"`
 	// RunHistory is the bounded public run block (#8349): live runs plus the
 	// most recent finished ones, titles scrubbed. Omitted (nil) when the run
 	// registry is unavailable so snapshot consumers render unknown, not zero.
@@ -872,6 +885,10 @@ type FrontendFeatures struct {
 	//
 	// Deprecated: read experiment_lab instead.
 	StrategyLab bool `json:"strategy_lab"`
+	// SubscriptionGaugeHeader adds the owner-only Claude subscription usage
+	// chip to the header (the Overview gauge needs no flag). Only the flag
+	// travels here; owners fetch readings from /api/providers/headroom.
+	SubscriptionGaugeHeader bool `json:"subscription_gauge_header"`
 }
 
 // FrontendSecurity summarizes the effective operator security posture for compact dashboard display.
@@ -1124,6 +1141,11 @@ type FrontendAgent struct {
 	// token, false = a human must log in. Absent for backends with no
 	// verified refresh semantics.
 	BackendAuthRefreshable *bool `json:"backendAuthRefreshable,omitempty"`
+	// QuotaExhausted mirrors crux.Process.QuotaExhausted (#18111): the pane
+	// poll saw a provider quota refusal (e.g. Copilot "exceeded your monthly
+	// quota"). Unlike BackendAuthStatus "quota" it covers every backend, so
+	// the dashboard can paint the agent "out of quota" instead of green.
+	QuotaExhausted bool `json:"quotaExhausted,omitempty"`
 	// InferenceLastError is the full text of the most recent inference error
 	// hive's proxy returned to this agent (#11761), shown while Claude Code's
 	// own retry line is still clipped to one pane row. Empty when unknown,
@@ -1343,6 +1365,30 @@ type FrontendRestartRefresh struct {
 	// fresh read this process; ReposTotal is the unpaused configured count.
 	ReposScanned int `json:"reposScanned"`
 	ReposTotal   int `json:"reposTotal"`
+}
+
+// FrontendReferenceRepo is one project.reference_repos entry for the repos
+// card: the slug and its tier ("read-only", "issues", "prs", "issues+prs").
+// It deliberately carries no ACMM, work-item or pause fields (#18021).
+type FrontendReferenceRepo struct {
+	Full string `json:"full"`
+	Tier string `json:"tier"`
+	// ReferenceTier repeats Tier under the name API consumers key on to tell
+	// a reference entry from a managed repo row (hivecommons/hive#18021).
+	ReferenceTier string `json:"reference_tier"`
+	// DerivedFrom is the "owner/repo#N" request issue a derived entry came
+	// from (hivecommons/hive#18139); empty for a hand-written entry.
+	DerivedFrom string `json:"derived_from,omitempty"`
+	// DerivedFromURL is the web link to that request issue on the hive's
+	// GitHub host, so the dashboard links "from owner/repo#N" without
+	// re-deriving the host (hivecommons/hive#18161); empty when DerivedFrom
+	// is empty or not an "owner/repo#N" reference.
+	DerivedFromURL string `json:"derived_from_url,omitempty"`
+	// CredentialState is a derived entry's resolved credential:
+	// "write-tier", "read-only" or "unresolved" (hivecommons/hive#18158);
+	// CredentialReason says why when it is not write-tier.
+	CredentialState  string `json:"credential_state,omitempty"`
+	CredentialReason string `json:"credential_reason,omitempty"`
 }
 
 type FrontendRepo struct {
@@ -1984,6 +2030,8 @@ func (s *Server) Start() error {
 	s.StartRebaseMergeFollowThrough(followCtx)
 	// Hourly anonymized benchmark push to the hub (hivecommons/hive#17694).
 	s.StartBenchmarksPublisher(followCtx)
+	// Sessions: reconcile after a restart, then close idle sessions.
+	s.StartSessionSweeper(followCtx)
 	return srv.Serve(ln)
 }
 
@@ -3477,6 +3525,16 @@ func (s *Server) UpdateGitHubClient(client *github.Client, auth *github.AppAuth)
 	}
 }
 
+// UpdateGitHubAppAuth swaps only the App credential the installation-discovery
+// loop polls with, leaving the client untouched. Used when a hub delivery names
+// a new App (or forge) whose installation is not known yet, so discovery asks
+// the right forge instead of the one the pod booted against.
+func (s *Server) UpdateGitHubAppAuth(auth *github.AppAuth) {
+	if s.deps != nil {
+		s.deps.GHAppAuth = auth
+	}
+}
+
 // SetGoodFirstIssueStats installs the provider of good-first-issue curation
 // counters; nil removes it.
 func (s *Server) SetGoodFirstIssueStats(fn func() any) {
@@ -3979,6 +4037,13 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 		if lastAttempt, ok := spoke.LastHeartbeatAttempt(); ok {
 			hbCheck["last_attempt"] = lastAttempt.UTC().Format(time.RFC3339)
 			hbCheck["last_attempt_age"] = time.Since(lastAttempt).Round(time.Second).String()
+		}
+		// Report-only mirror to a second hub (#18148): visibility only. A
+		// failing mirror never degrades this check, because the mirror has no
+		// role in liveness or in managing the hive; the owner reads it here to
+		// confirm the mirror is receiving beats (host only, never the key).
+		if mirror, ok := spoke.MirrorHubStatusSnapshot(); ok {
+			hbCheck["mirror"] = mirror
 		}
 		if hbCheck["status"] == "warn" && overall == "ok" {
 			overall = "degraded"

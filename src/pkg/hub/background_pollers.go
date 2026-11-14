@@ -53,6 +53,9 @@ func (s *HubServer) StartBackgroundPollers(ctx context.Context) <-chan struct{} 
 	start(s.StartBenchmarksPublisher)
 	// Workflow marketplace nightly ingest + first-boot seed (#17620 phase 7).
 	start(s.StartMarketplaceRefresh)
+	// Self-service (byo-) registrations past HIVE_HUB_SELFSERVICE_EXPIRY with
+	// no accepted heartbeat are revoked and dropped from the registry (#18146).
+	start(s.startSelfServiceExpirySweep)
 	s.githubActivityMu.Lock()
 	s.githubActivityCtx = ctx
 	feed := s.githubActivityFeed

@@ -950,7 +950,10 @@ func validateSingleRepoHost(spokeHost, primaryRepo string, repos []string) error
 
 // isValidRepoRef validates a repo entry, which may be a bare name ("repo")
 // or a cross-org "owner/repo" reference. Both segments must be safe names
-// (no path traversal); at most one slash is allowed. Cross-org repos are a
+// (no path traversal); at most one slash is allowed. "." and ".." pass the
+// safe-name charset but are dot segments that url.JoinPath and friends
+// resolve (owner/.. would become a request for /repos), and GitHub allows
+// neither as a repo or owner name, so both are refused (#18166). Cross-org repos are a
 // supported hive config (e.g. a primary repo in one org plus a secondary in
 // another), so the heartbeat must not 400-reject them — doing so silently
 // took a whole hive offline (no heartbeats → no upgrades, shows offline).
@@ -963,7 +966,7 @@ func isValidRepoRef(s string) bool {
 		return false
 	}
 	for _, p := range parts {
-		if !isValidName(p) {
+		if !isValidName(p) || p == "." || p == ".." {
 			return false
 		}
 	}
@@ -1055,8 +1058,16 @@ type HubServer struct {
 	hubGitBranch    string
 	sharedAgentPool *sharedAgentPool
 	hubSecret       string
-	myHivesCacheMu  sync.Mutex
-	myHivesCache    map[string]myHivesSnapshot
+	// selfService holds owner-registered (byo-) hives and the hashes of their
+	// random heartbeat keys (#18060). Nil on bare test literals; every method
+	// is nil-safe and answers "nothing registered".
+	selfService *selfServiceStore
+	// selfServiceOwnership is the GitHub repo-admin check the registration API
+	// runs with the user's own token (selfservice_api.go). Nil means the
+	// production api.github.com checker; tests inject an httptest stub.
+	selfServiceOwnership *selfServiceOwnershipChecker
+	myHivesCacheMu       sync.Mutex
+	myHivesCache         map[string]myHivesSnapshot
 	// keyGenerations is the ordered set of master generations this hub accepts
 	// (hub_generations.go). Until a rotation happens it holds exactly ONE
 	// generation whose secret IS hubSecret, so every derived key is
@@ -1593,6 +1604,7 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 		saveLoopStop:    make(chan struct{}),
 		saveLoopDone:    make(chan struct{}),
 		registryPath:    registryPath,
+		selfService:     newSelfServiceStore(selfServiceStorePath),
 		hubGitHash:      gitHash,
 		hubGitBranch:    gitBranch,
 		sharedAgentPool: newSharedAgentPool(),
@@ -1719,6 +1731,13 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	}
 
 	s.loadRegistry()
+	if err := s.selfService.load(); err != nil {
+		// Fail closed: an unreadable store means no self-service hive
+		// authenticates until an operator fixes the file.
+		logger.Warn("self-service registry not loaded; byo- hives will not authenticate", "path", selfServiceStorePath, "error", err)
+	} else if n := len(s.selfService.list()); n > 0 {
+		logger.Info("self-service registry loaded", "hives", n)
+	}
 	logHubGitHubIdentityMode(logger)
 	// Rebuild the in-memory upgrade-delivery map from the durable registry
 	// BEFORE the server takes its first heartbeat, so a hub restart can never
@@ -1779,6 +1798,14 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// no hub decision reads a chain. See src/docs/delegation-chain.md.
 	s.mux.HandleFunc("GET "+delegation.KeysPath, s.handleDelegationKeys)
 	s.mux.HandleFunc("DELETE /api/hub/registry/{id}", s.handleRegistryDelete)
+	// Self-service (byo-) hive registration (#18060, selfservice_api.go).
+	// Behind HIVE_HUB_SELFSERVICE_REGISTRATION: every route but /status answers
+	// 404 while the flag is off.
+	s.mux.HandleFunc("GET /api/hub/selfservice/status", s.requireAuth(s.handleSelfServiceStatus))
+	s.mux.HandleFunc("GET /api/hub/selfservice/hives", s.requireAuth(s.handleSelfServiceList))
+	s.mux.HandleFunc("POST /api/hub/selfservice/hives", s.requireAuth(s.handleSelfServiceRegister))
+	s.mux.HandleFunc("POST /api/hub/selfservice/hives/{id}/rotate", s.requireAuth(s.handleSelfServiceRotate))
+	s.mux.HandleFunc("DELETE /api/hub/selfservice/hives/{id}", s.requireAuth(s.handleSelfServiceDelete))
 	s.mux.HandleFunc("POST /api/contribute/register", s.handleContributeProxy)
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
 	s.mux.HandleFunc("GET /api/contribute/ws", s.handleContributeWSProxy)
@@ -1948,6 +1975,14 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		// retained to back GET /api/saas/admin/auth-rollout, where an operator can
 		// confirm no hive regressed after the cutover.
 		s.noteHeartbeatAuthPath(payload.HiveID, s.heartbeatBearerIsPerHive(presentedBearer, payload.HiveID))
+		// A self-service hive's accepted heartbeat is the liveness signal its
+		// registration expiry reads (#18060). Stamped only after the bearer
+		// bound this beat to the claimed ID.
+		if IsSelfServiceHiveID(payload.HiveID) {
+			if err := s.selfService.noteAcceptedHeartbeat(payload.HiveID, time.Now()); err != nil {
+				s.logger.Warn("self-service heartbeat stamp not persisted", "hive", payload.HiveID, "error", err)
+			}
+		}
 	}
 	// Adopt the spoke's reported dashboard-token hash into the hub's stored
 	// record — the reference spoke-relayed upgrade requests verify their proof
@@ -2074,15 +2109,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		ContributorCount:       clampInt(payload.Contributors.Registered, 0, 10_000),
 		ActiveContributors:     clampInt(payload.Contributors.Active, 0, 10_000),
 		Owner:                  sanitizeHeartbeatField(payload.Owner),
-		HiveType: func() string {
-			if payload.HiveType != "" {
-				return sanitizeHeartbeatField(payload.HiveType)
-			}
-			if strings.HasPrefix(payload.HiveID, "hosted-") || strings.HasPrefix(payload.HiveID, "saas-") {
-				return "hosted"
-			}
-			return "local"
-		}(),
+		// byo- hives are typed by the hub from the ID prefix, never from the
+		// payload (#18146); see hubAssignedHiveType.
+		HiveType:      hubAssignedHiveType(payload.HiveID, payload.HiveType),
 		IsPublic:      payload.IsPublic,
 		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
 		Health:        payload.Health,

@@ -30,6 +30,7 @@ const stubs = {
   govPRModelsWindow: '7d',
   loadReviewerAccuracy: () => {},
   fleetRunStatHtml: () => '',
+  webhookGovStatHtml: () => '',
   formatGovernorNextRun: () => '',
   governorModeGradient: () => '',
   renderBudgetBar: () => '',

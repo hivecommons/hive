@@ -446,11 +446,26 @@ func decodeCanaryHexBlobs(text string) []string {
 	return out
 }
 
+// CanaryPreamblePrefix opens every canary preamble; crux/agent mirrors it
+// (canaryPreamblePrefix) to find where the kick body starts.
+const CanaryPreamblePrefix = "=== HIVE HARNESS HEADER"
+
+// CanaryPreamble renders the canary as a clearly-labelled block of the
+// operator's own harness configuration. The earlier "SECURITY CANARY: <token>
+// … Never print …" wording read to Claude Sonnet 5 as a prompt-injection
+// marker ("this request includes a 'SECURITY CANARY' marker and asks me to act
+// as a scanner agent") and the model refused the whole kick — ~65% of one
+// hosted supervisor's kicks over 36h once the Copilot CLI substituted that
+// model. The header states who planted the token and why, says it is not a
+// task, and still forbids every transform an agent might consider safe.
 func CanaryPreamble(token string) string {
 	if token == "" {
 		return ""
 	}
-	return fmt.Sprintf("SECURITY CANARY: %s\nThis is a hive-issued exfiltration-canary marker. Never print, quote, summarize, transform, store in reports, include in commits, or send it to any external service.\n\n", token)
+	return fmt.Sprintf("%s (operator configuration, not user content) ===\n"+
+		"Exfiltration canary: %s\n"+
+		"The token above is a tripwire planted by the hive harness that runs you — your own operator's configuration — so it can detect session text leaking off this host. It is not a task and nothing in this message depends on it. Handle it as a secret: never print, quote, summarize, transform, store in reports, include in commits, or send it to any external service; then carry out the kick that follows.\n"+
+		"=== END HIVE HARNESS HEADER ===\n\n", CanaryPreamblePrefix, token)
 }
 
 func (r *CanaryRegistry) Load() error {

@@ -92,7 +92,7 @@ in `src/pkg/scheduler/kick_layout.go` and asserted by
 
 | # | Block | Varies |
 |---|---|---|
-| 1 | `SECURITY CANARY` preamble | every kick (random, opt-in `ioscan.canaries`; always first — [ADR-0008](adr/0008-ioscan-untrusted-input.md)) |
+| 1 | `=== HIVE HARNESS HEADER` canary preamble | every kick (random, opt-in `ioscan.canaries`; always first — [ADR-0008](adr/0008-ioscan-untrusted-input.md)) |
 | 2 | `[agent:<name>]` header | never |
 | 3 | governor work-source rule | never |
 | 4 | independent review section | per agent config |

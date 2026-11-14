@@ -97,6 +97,7 @@ type RetroRecord struct {
 	AdvisorDecisions            int
 	AdvisorDelivered            int
 	AdvisorHeldOut              int
+	AdvisorRateLimited          int
 	DriftPauses                 int
 	PlanRevisionsBeforeApproval int
 	PRReworkCommitsAfterReview  int
@@ -551,10 +552,17 @@ func Reconstruct(b *beads.Bead, tl *timeline.Store, attempts AttemptReader) Retr
 	return r
 }
 
+// AdvisorOutcomeRateLimited is the decision outcome recorded when the model
+// endpoint answered 429 (hivecommons/hive#18151). The agent received nothing
+// and no budget was spent, so it is counted but assigns no arm: it is neither
+// a delivery nor a holdout.
+const AdvisorOutcomeRateLimited = "rate-limited"
+
 // ApplyAdvisorDecisions fills the advisor arm counters from the decisions
 // recorded for the record's issue. Holdout kicks are held-out, shadow-mode
-// kicks are the shadow arm, every other rank-mode decision is the deliver arm;
-// kicks in more than one arm make the bead mixed.
+// kicks are the shadow arm, every other rank-mode decision is the deliver arm
+// except rate-limited ones, which are counted and excluded; kicks in more than
+// one arm make the bead mixed.
 func ApplyAdvisorDecisions(r *RetroRecord, reader AdvisorDecisionReader) {
 	r.AdvisorArm = AdvisorArmNone
 	if reader == nil || r.IssueRef == "" {
@@ -564,6 +572,8 @@ func ApplyAdvisorDecisions(r *RetroRecord, reader AdvisorDecisionReader) {
 	for _, d := range reader.AdvisorDecisions(r.IssueRef) {
 		r.AdvisorDecisions++
 		switch d.Outcome {
+		case AdvisorOutcomeRateLimited:
+			r.AdvisorRateLimited++
 		case "held-out":
 			r.AdvisorHeldOut++
 			arms[AdvisorArmHoldout] = true

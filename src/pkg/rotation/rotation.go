@@ -256,6 +256,8 @@ func sanitizeProbeError(msg string) string {
 }
 
 // MarshalJSON includes the probe error text alongside the exported fields.
+// PlanType is emitted only when a probe reported one, so readings without a
+// plan (Claude's today) serialize exactly as before.
 func (h Headroom) MarshalJSON() ([]byte, error) {
 	type alias struct {
 		Provider      string        `json:"provider"`
@@ -268,6 +270,7 @@ func (h Headroom) MarshalJSON() ([]byte, error) {
 		ProbeErr      string        `json:"probe_error,omitempty"`
 		Error         string        `json:"error,omitempty"`
 		ProbeErrCause string        `json:"probe_error_cause,omitempty"`
+		PlanType      string        `json:"plan_type,omitempty"`
 	}
 	return json.Marshal(alias{
 		Provider:      h.Provider,
@@ -280,6 +283,7 @@ func (h Headroom) MarshalJSON() ([]byte, error) {
 		ProbeErr:      h.ProbeError(),
 		Error:         h.ProbeError(),
 		ProbeErrCause: string(h.ProbeErrCause),
+		PlanType:      h.PlanType,
 	})
 }
 

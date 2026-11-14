@@ -107,6 +107,13 @@ type DashboardConfig struct {
 	//
 	// Deprecated: set dashboard.experiment_lab instead.
 	StrategyLab bool `yaml:"strategy_lab,omitempty" json:"strategy_lab,omitempty"`
+	// SubscriptionGaugeHeader also shows the owner the Claude subscription
+	// usage gauge as a chip in the dashboard header; the gauge is on the
+	// Overview by default and needs no config. It is display-only: it reads
+	// the usage readings hive already makes (provider rotation or the default
+	// publish-only manager) and never starts, stops or changes any
+	// measurement, rotation or agent.
+	SubscriptionGaugeHeader bool `yaml:"subscription_gauge_header,omitempty" json:"subscription_gauge_header,omitempty"`
 	// IssueBands configures the Repositories card's display-only issue taxonomy.
 	// It is intentionally separate from governor/project eligibility labels:
 	// queue policy decides what agents may work; these labels only decide which
@@ -115,6 +122,8 @@ type DashboardConfig struct {
 	// StageTracker tunes the Hive activity monitor's server-side payload cache
 	// (hivecommons/hive#12682).
 	StageTracker DashboardStageTrackerConfig `yaml:"stage_tracker,omitempty" json:"stage_tracker,omitempty"`
+	// Sessions configures the interactive Sessions terminals (default off).
+	Sessions DashboardSessionsConfig `yaml:"sessions,omitempty" json:"sessions,omitempty"`
 }
 
 type DashboardIssueBandsConfig struct {

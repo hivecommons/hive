@@ -49,8 +49,22 @@ const inferenceAPIKeyPrefix = "sk-hive-"
 //   - a UID mapped to an agent is authoritative; a header naming someone else
 //     is logged and overridden;
 //   - the root control plane keeps the header name — the hive is the party
-//     that issues these keys; the proxy UID cannot assert a name because its
-//     upstream sockets can relay agent-controlled requests;
+//     that issues these keys;
+//   - the proxy UID keeps the header name only while the private-forward
+//     guard is in place. On v5 pods the hive drops to `dev`, which IS the
+//     proxy UID, and every agent without its own UID runs as it, so refusing
+//     that UID outright refused the hive's own agents (#18061). The reason it
+//     was refused (#14448) is that the proxy's plain-forward and uninspected
+//     tunnel legs can relay an agent-controlled request to this loopback
+//     port from the proxy's own socket; those legs dial only globally
+//     routable addresses unless HIVE_PROXY_ALLOW_PRIVATE_FORWARD lifts the
+//     guard, so with the guard lifted the proxy UID is still refused. Even
+//     with the guard in place the proxy UID is a SHARED identity: every
+//     UID-less agent runs as it, so one such agent could claim another
+//     agent's key. A caller at that UID may therefore only assert a name
+//     that has no per-agent UID: an agent that owns a UID always arrives
+//     from that UID, so a proxy-UID socket claiming it is refused, and
+//     HIVE_PROXY_ADVISORY_OK does not lift that refusal (#18115);
 //   - an unmapped UID, or no UID map at all, accepts the header only under
 //     HIVE_PROXY_ADVISORY_OK, the same operator escape hatch the GitHub path
 //     honours for deployments without per-agent UID separation.
@@ -59,7 +73,7 @@ const inferenceAPIKeyPrefix = "sk-hive-"
 // request must be refused.
 func (p *GitHubProxy) translatorAgentName(r *http.Request) (string, bool) {
 	claimed := strings.TrimPrefix(r.Header.Get("x-api-key"), inferenceAPIKeyPrefix)
-	if p.uidMap == nil {
+	if p.loadedUIDMap() == nil {
 		if p.proxyAdvisoryOK {
 			return claimed, true
 		}
@@ -67,18 +81,20 @@ func (p *GitHubProxy) translatorAgentName(r *http.Request) (string, bool) {
 	}
 	uid, err := uidForRemoteAddr(r.RemoteAddr)
 	if err == nil {
-		if name := p.uidMap.LookupByUID(uid); name != "" {
+		if name := p.lookupAgentByUID(uid); name != "" {
 			if claimed != "" && claimed != name {
 				p.logger.Warn("inference identity: x-api-key names another agent; using the socket owner",
 					"agent", name, "claimed", claimed, "uid", uid)
 			}
 			return name, true
 		}
-		if uid == 0 && p.uidMap.IsInternalUID(uid) {
+		if p.internalTranslatorUID(uid) && !p.sharedUIDClaimsIsolatedAgent(uid, claimed) {
 			return claimed, true
 		}
 	}
-	if p.proxyAdvisoryOK {
+	// Advisory-ok accepts self-asserted identity where the socket proves
+	// nothing; it does not override a socket that proves the claim false.
+	if p.proxyAdvisoryOK && !(err == nil && p.sharedUIDClaimsIsolatedAgent(uid, claimed)) {
 		return claimed, true
 	}
 	return "", false

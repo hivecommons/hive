@@ -177,14 +177,22 @@ func TestBackfillCoveredByLedger_HealsRecordBelow040(t *testing.T) {
 	c.SetIssueStageLabels(func() IssueStagePolicy { return IssueStagePolicy{Enabled: true} })
 	store := stagelabels.Shared()
 	issue := c.IssueStageRef("o/r", 7)
-	store.Observe(issue.Key(), stagelabels.Actionable, "actionable")
 	covered := c.IssueStageRef("o/r", 9)
-	store.Observe(covered.Key(), stagelabels.CoveredByPR, "open PR covers it")
-	t.Cleanup(func() {
+	unseen := c.IssueStageRef("o/r", 11)
+	// The store is process-wide and other tests in this package drive stage
+	// facts for o/r#9 / o/r#11 without forgetting them; under -shuffle a
+	// leaked sub-040 record for the "never seen" #11 made the backfill count
+	// it too (checked=2). Start from a clean slate for every key we assert on.
+	forget := func() {
 		store.Forget(issue.Key())
 		store.Forget(covered.Key())
+		store.Forget(unseen.Key())
 		store.Forget(c.PRStageRef("o/r", 8).Key())
-	})
+	}
+	forget()
+	t.Cleanup(forget)
+	store.Observe(issue.Key(), stagelabels.Actionable, "actionable")
+	store.Observe(covered.Key(), stagelabels.CoveredByPR, "open PR covers it")
 	ledger := backfillLedger(t,
 		IssueClaim{Repo: "r", Issue: 7, PRNumber: 8, PRRepo: "r", Closing: true},
 		IssueClaim{Repo: "r", Issue: 9, PRNumber: 8, PRRepo: "r", Closing: true},

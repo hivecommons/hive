@@ -22,6 +22,7 @@ css/cost.css
 css/alerts-toasts.css
 css/feedback-faq.css
 css/config-dialog.css
+css/config-webhooks.css
 css/workflows.css
 css/workflows-editor.css
 css/workflows-ingest.css
@@ -36,11 +37,13 @@ css/responsive.css
 css/recipes-utilities.css
 css/welcome.css
 css/review-campaigns.css
+css/sessions.css
 css/kiosk.css
 css/popout.css
 css/reader.css
 css/variables.css
 glue/style-close-body-open.html
+js/auth-headers.js
 js/reader.js
 js/boot.js
 glue/boot-script-close.html
@@ -80,6 +83,7 @@ js/tracker-words-gate.js
 js/tracker-words.js
 js/tracker-row-anchor.js
 js/tracker-row.js
+js/tracker-stage-icons.js
 js/tracker-row-strip.js
 js/tracker-workflows.js
 js/tracker-row-acted.js
@@ -127,7 +131,10 @@ js/review-queue.js
 js/contributors.js
 js/refresh.js
 js/scroll-stabilizer.js
+js/campaigns.js
 js/inception.js
+js/subscription-gauge.js
+js/sessions.js
 js/debug-logs.js
 js/tooltips-dialogs.js
 js/plan-agent-controls.js
@@ -138,6 +145,7 @@ js/config-state.js
 js/settings-search.js
 js/config-dialog.js
 js/config-tabs.js
+js/config-webhooks.js
 js/config-hub.js
 js/config-agent.js
 js/config-governor.js

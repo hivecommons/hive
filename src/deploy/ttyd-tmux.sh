@@ -28,6 +28,19 @@ else
   SESSION_FROM_ARG=0
 fi
 
+# User sessions (dashboard Sessions feature): hive-sess-<id> runs on its OWN
+# tmux server whose socket is named after the session. Reject any other
+# hive-sess-* shape so ?arg= cannot reach a glob or a path.
+USER_SESSION_RE='^hive-sess-[a-f0-9]{8,32}$'
+case "$SESSION" in
+  hive-sess-*)
+    if ! [[ "$SESSION" =~ $USER_SESSION_RE ]]; then
+      echo "error: invalid user session name" >&2
+      exit 1
+    fi
+    ;;
+esac
+
 TTYD_WAIT_SEC="${HIVE_TTYD_WAIT_SEC:-900}"
 TTYD_POLL_SEC="${HIVE_TTYD_POLL_SEC:-2}"
 if ! [[ "$TTYD_WAIT_SEC" =~ ^[0-9]+$ ]]; then

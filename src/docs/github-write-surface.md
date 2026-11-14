@@ -182,6 +182,7 @@ writes no entry.
 | Fleet report recovery | `fleet_report.go` | yes (`fleet_report_recovered`, with `closed`) | yes / issue number |
 | Legacy standalone `Fleet report:` close (hourly sweep in the hive watching the report repo, #13470) | `fleet_report_legacy_sweep.go` | yes (`fleet_report_recovered`, `reason=legacy_standalone`) | yes / issue number |
 | Reporter-trust wait notice/comment and owned label cleanup | `client.go` / `reporter_trust_wait.go` (`fetchIssues` reporter-trust reject/admit paths) | yes (`reporter_trust_wait_noticed`, `reporter_trust_wait_cleared`; label adds also record `hive_label_applied` with `reason=reporter_trust_wait`) | yes / issue number |
+| Derived reference repos read-only notice (one `hive:reference-repos-read-only` comment per request issue and repo set, #18158) | `reference_repo_request.go` (`CommentDerivedReadOnly`) | yes (`reference_repos_read_only_noticed`, with `repos`) | yes / issue number |
 
 The open-time signed rewrite in `pr_request_signed.go` is part of `open_pr`
 and is covered by that operation's `agent_pr_created` entry. Creating a
@@ -271,6 +272,21 @@ A refused request is handled like every other policy denial:
   `outcome=refused`.
 
 Refusals are not counted as output activity.
+
+## Reference repos
+
+`project.reference_repos` ([#18015](https://github.com/hivecommons/hive/issues/18015))
+names repos *outside* the project an agent may study. They are not part of
+the write surface at all by default: the proxy strips the hive's App token
+from every request to them and refuses every non-GET with a message naming
+`reference_repos`. A per-entry `write: [issues, prs]` opt-in unlocks exactly
+three direct writes on that repo — open an issue, open a PR / push a topic
+branch, comment on the hive's own issue or PR — sent with a credential valid
+for *that* repo (the App installed on the target org, or `write_token_file`).
+Merge, default-branch push, labels, assignees, reviews and closing others'
+items stay refused. The relays never act on a reference repo, so a lane under
+`write_surface.enforce` cannot write to one. See the
+[operator reference](operator-reference/README.md#configuration-blocks).
 
 ## Enforcing the write surface
 

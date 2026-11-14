@@ -41,6 +41,11 @@ func TestIssueDeriverReproducesIssueStageFor(t *testing.T) {
 		{"hive-filed untriaged (015)", IssueStageInput{AuthorKind: authorkind.Hive}},
 		{"hive-filed accepted (010)", IssueStageInput{AuthorKind: authorkind.Hive, Labels: []string{"triage/accepted"}}},
 		{"human-filed needs-triage (015)", IssueStageInput{AuthorKind: authorkind.Human, Labels: []string{"needs-triage"}}},
+		// hivecommons/hive#18141: the discussion signal travels through Facts
+		// (labels and title) so the adapter derives 018 exactly as the shim.
+		{"architecture discussion unclaimed (018)", IssueStageInput{Labels: []string{"Epic", "architecture discussion"}, Title: "Hold: v6 agent runtime"}},
+		{"[RFC] title unclaimed (018)", IssueStageInput{Labels: []string{"Epic"}, Title: "📝 [RFC] v6 agent runtime"}},
+		{"[RFC] title claimed (020)", IssueStageInput{Title: "[RFC] v6 agent runtime", Bucket: workBucketClaimed, ClaimKind: "human", ClaimedBy: "alice"}},
 	}
 	deriver := IssueDeriver()
 	if deriver.Kind() != stagelabels.IssueItem {

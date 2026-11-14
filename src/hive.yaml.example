@@ -39,6 +39,22 @@ project:
   #   - repo: repo-two
   #     by: your-github-login
   #     reason: release freeze until Friday
+  # Optional: repos OUTSIDE the project that agents may study but not work
+  # (src/docs/agent-configuration.md#reference-repos-what-agents-may-study-projectreference_repos).
+  # Always owner/name; never also in `repos`. No queue, ACMM or work items.
+  # String form = read-only: clone/fetch and API GETs, sent unauthenticated
+  # (the hive token is stripped, so private repos are unreadable); every
+  # non-GET is refused with a 403 naming reference_repos. `write` opts in to
+  # ONLY: open an issue, open a PR / push a topic branch, comment on the hive's
+  # own issue/PR — never merge, default-branch push, labels, assignees, reviews
+  # or closing others' items. Writes use the App installed on that org (minted
+  # for the one repo) or write_token_file; boot exits 22 with neither. Kicks
+  # list them as 📚 REFERENCE REPOS; the dashboard shows a `reference · <tier>` chip.
+  # reference_repos:
+  #   - hivecommons/docs                          # read-only
+  #   - repo: hivecommons/hive
+  #     write: [issues, prs]                      # issues, prs, or both
+  #     write_token_file: /data/secrets/ref-pat   # optional; only with write
 
 # Optional opt-in "clanker-requested" policy, under project.issue_filter.reporter_trust.
 # Off by default. While on, a PR carrying the label below is treated as held.
@@ -1040,6 +1056,15 @@ governor:
 #   combined_perspectives: true # RECOMMENDED (#12126): one session + one comment covering every
 #                               # perspective; shared review boilerplate is sent once instead of once
 #                               # per perspective. Verdicts stay per-perspective. Default false.
+#   perspectives_source:  # optional; live-link the perspective names + focus text to a
+#     owner: my-org       # kind: ReviewPerspectives file in GitHub (#17975). When it resolves it
+#     repo: my-repo       # wins over perspectives/perspective_prompts, which stay the fallback.
+#     path: .hive/review-perspectives.yaml
+#     ref: main           # optional; default branch otherwise
+#                         # The repo must be on variables.security.github_prompt_allowlist (seed-only).
+#                         # File: "kind: ReviewPerspectives" + "perspectives: [{name, focus}]". Names and
+#                         # focus only; combined_perspectives, plan_match and max_perspectives_per_pr stay
+#                         # here. Format: src/docs/review-swarm.md, "Live-linked perspectives".
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
 #   fixer_fallback_agents: [] # opt-in ordered repair lanes, e.g. [fixer, scanner-2]
 #   fixer_fallback_after_undeliverable: 3 # consecutive refusals before rerouting;
@@ -1191,6 +1216,11 @@ dashboard:
   # hub_proxied: false                    # True when trusted hub nginx injects identity headers
   # agent_poll_interval_s: 5
   # kick_failure_threshold: 3             # Consecutive failed deliveries before agent health fails
+  # sessions:                           # Interactive named CLI terminals in the dashboard (default off)
+  #   enabled: false                    # env HIVE_SESSIONS_ENABLED overrides; owner/read-write only, no bypass-permissions flags
+  #   max_sessions: 12                  # live sessions per spoke (env HIVE_SESSIONS_MAX)
+  #   max_per_user: 4                   # live sessions per creator (env HIVE_SESSIONS_MAX_PER_USER)
+  #   idle_ttl_hours: 72                # close after this idle time (env HIVE_SESSIONS_IDLE_TTL_HOURS)
   # stage_tracker:
   #   cache_ttl_s: 300                    # Hive activity monitor payload cache; default = governor.eval_interval_s
   # theme: hive                         # Built-in theme id from /api/themes (for example hive, hive-dark, hive-light, star-wars, dungeons-and-dragons, star-trek, cyberpunk, terminal, solarized-dark, nord); or custom

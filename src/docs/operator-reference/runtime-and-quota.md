@@ -498,7 +498,11 @@ and each agent's effective cap under `agent_github_api_hourly_caps`.
 
 See [GitHub webhooks: cadence, patch and reconcile](../webhooks.md) for the
 cadence keys, the fallback to polling when deliveries degrade, and the
-accuracy guarantees of the ForgeState contract.
+accuracy guarantees of the ForgeState contract. Hive owners (not cluster
+operators) should start at the
+[owner guide](../webhooks.md#setting-up-webhooks-owner-guide): it covers the
+⚙ Settings → **Forge App** → **GitHub webhooks** section, which shows the
+payload URL, generates a per-hive secret and can create the org/repo hook.
 
 A spoke accepts GitHub App webhooks on the public `POST /api/webhook/github`,
 either delivered directly by GitHub or relayed by the hub (the hub forwards the
@@ -511,10 +515,13 @@ Deliveries for repositories the hive does not manage are ignored.
 
 #### What the operator configures
 
-1. **Secret (self-hosted only).** Set `GITHUB_WEBHOOK_SECRET` in the spoke's
-   environment (a Secret mount on Kubernetes; never in `hive.yaml`) to the
-   App's webhook secret. A hosted spoke needs nothing here: it never holds the
-   App secret and verifies relays with its hub relay key instead (item 3).
+1. **Secret (self-hosted only).** Either press **Generate secret** in
+   ⚙ Settings → Forge App → GitHub webhooks (the hive writes
+   `/data/github-webhook-secret.key`, mode 0600, and shows the value once), or
+   set `GITHUB_WEBHOOK_SECRET` in the spoke's environment (a Secret mount on
+   Kubernetes; never in `hive.yaml`). The environment variable wins when both
+   exist. A hosted spoke needs nothing here: it never holds a GitHub secret and
+   verifies relays with its hub relay key instead (item 3).
 2. **GitHub App webhook.** Point the App's webhook URL at the hub
    (`POST /api/github/webhook`) for hosted spokes, or at the spoke's own
    `/api/webhook/github` for a stand-alone hive (a repository or organization

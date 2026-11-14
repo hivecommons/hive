@@ -99,10 +99,25 @@ function membersForGroup(entries, group) {
   return members;
 }
 
+// Name the condition that tripped: every one of these is a per-PR state the
+// author or an operator must change, never a shared CI incident. An opaque
+// "moved, draft, closed, or held" verdict across several held or draft PRs
+// reads like a broken workflow and gets filed as one (#18128).
+function ineligibleReason(pr, head, base) {
+  if (pr.state !== 'open') return `is ${pr.state}, not open`;
+  if (pr.draft) return 'is a draft';
+  if (pr.head?.sha !== head) return `head moved to ${pr.head?.sha} (event head ${head})`;
+  if (pr.base?.ref !== base) return `base moved to ${pr.base?.ref} (event base ${base})`;
+  const held = (pr.labels ?? []).filter(l => BLOCKED_LABEL.test(l.name)).map(l => l.name);
+  if (held.length) return `is held by label ${held.join(', ')}`;
+  return null;
+}
+
 function assertEligible(pr, head, base) {
-  if (pr.state !== 'open' || pr.draft || pr.head?.sha !== head ||
-      pr.base?.ref !== base || pr.labels?.some(l => BLOCKED_LABEL.test(l.name))) {
-    throw new Error(`#${pr.number}: head/base moved, draft, closed, or held`);
+  const reason = ineligibleReason(pr, head, base);
+  if (reason) {
+    throw new Error(`#${pr.number} ${reason}; not eligible for admission ` +
+      '(PR state, not a CI failure: re-evaluated on the next synchronize, ready_for_review or hold-label change)');
   }
 }
 

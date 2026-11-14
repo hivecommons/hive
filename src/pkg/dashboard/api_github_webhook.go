@@ -8,7 +8,6 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -20,7 +19,8 @@ import (
 const (
 	// githubWebhookPath is the PUBLIC path GitHub (or the hub relay) posts App
 	// webhooks to. Not actually open: the handler fails closed without
-	// GITHUB_WEBHOOK_SECRET or a hub relay key, and verifies
+	// a webhook secret (GITHUB_WEBHOOK_SECRET or the dashboard-generated
+	// secret file, github.WebhookSecret) or a hub relay key, and verifies
 	// X-Hub-Signature-256 or the hub relay signature over the raw body.
 	githubWebhookPath = "/api/webhook/github"
 
@@ -61,12 +61,12 @@ func (s *Server) handleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "failed to read body", http.StatusBadRequest)
 		return
 	}
-	secret := strings.TrimSpace(os.Getenv(githubWebhookSecretEnvVar))
+	secret := github.WebhookSecret()
 	// A hosted spoke holds no App webhook secret; it verifies the hub's relay
 	// signature with this hive's own relay key instead (#17911).
 	relayKey := github.WebhookRelayKey()
 	if secret == "" && relayKey == "" {
-		const msg = "github webhook rejected: no webhook secret configured (set GITHUB_WEBHOOK_SECRET to enable signed webhooks)"
+		const msg = "github webhook rejected: no webhook secret configured (set GITHUB_WEBHOOK_SECRET or generate one under Settings → Forge App → GitHub webhooks)"
 		warned := false
 		s.webhookNoSecretOnce.Do(func() {
 			warned = true

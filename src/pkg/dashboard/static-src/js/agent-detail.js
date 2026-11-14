@@ -238,6 +238,8 @@
     }
     function ocNavigate(section, skipScroll) {
       section = dashboardAliasSectionId(section);
+      // Sessions replaces Inception when enabled: old links and the welcome checklist land there.
+      if (section === 'inception-section' && window._sessionsEnabled === true) section = 'sessions-section';
       if (dashboardFeatureSectionHidden(section)) return;
       if (dashboardSectionHidden(section)) dashboardSetSectionHidden(section,false);
       _ocSelectedAgent = null;

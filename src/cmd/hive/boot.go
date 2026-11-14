@@ -35,6 +35,7 @@ import (
 	"github.com/hivecommons/hive/pkg/mention"
 	"github.com/hivecommons/hive/pkg/mergelane"
 	"github.com/hivecommons/hive/pkg/notify"
+	"github.com/hivecommons/hive/pkg/perspsrc"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/priorart"
 	"github.com/hivecommons/hive/pkg/promptsrc"
@@ -212,6 +213,7 @@ type boot struct {
 	promptFetcher              promptsrc.Fetcher
 	defFetcher                 defsrc.Fetcher
 	definitionResolver         *defsrc.Resolver
+	perspectivesResolver       *perspsrc.Resolver
 	pendingTokenSeed           []dashboard.TokenSparklineEntry
 	pendingFactSeed            []dashboard.FactHistoryEntry
 	pendingCostSeed            []dashboard.CostHistoryEntry
@@ -236,14 +238,19 @@ type boot struct {
 	saved *snapshot.PersistedState
 
 	// bootKnowledge
-	gitSyncer            *knowledge.GitSyncer
-	knowledgeConnectors  *connector.Syncer
-	inboxSvc             *inbox.Service
-	knowledgePublish     *connector.Mirror
-	promotionScheduler   *knowledge.PromotionScheduler
-	quotaAccount         string
-	quotaPoolDir         string
-	explicitQuotaPoolDir bool
+	gitSyncer           *knowledge.GitSyncer
+	knowledgeConnectors *connector.Syncer
+	// knowledgeConnectorsMu guards knowledgeConnectors once the dashboard
+	// can hot-load it (#18091); startConnectorSyncer is the boot starter
+	// reused for a syncer first built after boot.
+	knowledgeConnectorsMu sync.Mutex
+	startConnectorSyncer  func(ctx context.Context, s *connector.Syncer)
+	inboxSvc              *inbox.Service
+	knowledgePublish      *connector.Mirror
+	promotionScheduler    *knowledge.PromotionScheduler
+	quotaAccount          string
+	quotaPoolDir          string
+	explicitQuotaPoolDir  bool
 	// knowledgeAPIFallback records that knowledgeAPI is the file-only API
 	// bootKnowledge auto-enables when knowledge.enabled is false, not one
 	// built from the configured layers/engine/curator (#9231).
@@ -261,6 +268,10 @@ type boot struct {
 
 	// bootProxy
 	githubProxy *proxy.GitHubProxy
+	// referenceRepos keeps the derived reference-repo state between the
+	// boot pass, config reloads and the periodic re-derive
+	// (hivecommons/hive#18159); nil until wireReferenceRepos ran.
+	referenceRepos *referenceRepoRuntime
 	// inferenceSink is the one per-agent inference usage ledger; the proxy
 	// records into it in-process and the hive callback's usage capability
 	// records into it for a sidecar runtime (#14138 stage 4).
