@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"testing"
 )
 
 // Environment variables that select and key the active provider.
@@ -214,11 +215,18 @@ func buildEnv(getenv func(string) string, readFile func(string) ([]byte, error))
 // from the real environment on first use, so the configuration loader and
 // the CLIs open envelopes without boot wiring; a build error there leaves no
 // provider active and is reported by InitError.
+//
+// Inside a test binary the lazy path is OFF: a provider is active only when
+// the test installed one with SetActive or Init. Hive's test suites set
+// HIVE_HEARTBEAT_KEY and friends freely (the hub credential tests, say), and
+// under `go test -shuffle` whichever test ran first would otherwise decide
+// whether every later secret-file write in the process is sealed, making
+// tests that read a key file back fail depending on order.
 func Active() Provider {
 	activeMu.RLock()
 	set := activeSet
 	activeMu.RUnlock()
-	if !set {
+	if !set && !testing.Testing() {
 		_, _ = Init(context.Background(), nil, nil)
 	}
 	activeMu.RLock()

@@ -162,7 +162,10 @@ func contains(xs []string, s string) bool {
 	return false
 }
 
-func TestLazyActiveInitialisesFromEnvironment(t *testing.T) {
+// In a test binary Active never initialises itself from the environment:
+// key material another test exported must not decide, by run order, whether
+// this process seals its secret files. Init with the same environment does.
+func TestActiveDoesNotLazilyInitialiseUnderTest(t *testing.T) {
 	ResetForTest()
 	t.Cleanup(ResetForTest)
 	t.Setenv(EnvProviderName, "")
@@ -171,12 +174,18 @@ func TestLazyActiveInitialisesFromEnvironment(t *testing.T) {
 	t.Setenv(EnvSecretsKeyPrevious, "")
 	t.Setenv(EnvHeartbeatKey, "")
 	t.Setenv(EnvHeartbeatKeyPrevious, "")
-	p := Active()
-	if p == nil || p.Name() != ProviderEnv {
-		t.Fatalf("lazy Active = %v", p)
+	if p := Active(); p != nil {
+		t.Fatalf("Active under test built %v from the environment", p)
 	}
 	if InitError() != nil {
 		t.Fatal(InitError())
+	}
+	st, err := Init(context.Background(), nil, nil)
+	if err != nil || st.Provider != ProviderEnv || st.Source != "env:"+EnvSecretsKey {
+		t.Fatalf("Init from the process environment = %+v, %v", st, err)
+	}
+	if p := Active(); p == nil || p.Name() != ProviderEnv {
+		t.Fatalf("Active after Init = %v", p)
 	}
 }
 
