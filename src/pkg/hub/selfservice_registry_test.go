@@ -2,12 +2,15 @@ package hub
 
 import (
 	"bytes"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -337,5 +340,43 @@ func TestSelfServiceStoreStampPersistIsDebounced(t *testing.T) {
 	}
 	if err := st.noteAcceptedHeartbeat("byo-unknown", third); err != nil {
 		t.Fatalf("unknown ID stamp returned an error: %v", err)
+	}
+}
+
+// TestSelfServiceStoreRegisterCappedConcurrent pins #18166 at the store: many
+// concurrent registrations by one owner never exceed maxPerOwner, and another
+// owner's hives do not count against it.
+func TestSelfServiceStoreRegisterCappedConcurrent(t *testing.T) {
+	st := newSelfServiceStore(filepath.Join(t.TempDir(), "hub-selfservice.json"))
+	if _, err := st.registerCapped(SelfServiceHive{ID: "byo-bob--lab", Owner: "bob"}, 3); err != nil {
+		t.Fatal(err)
+	}
+	const attempts, limit = 10, 3
+	errs := make([]error, attempts)
+	var wg sync.WaitGroup
+	for i := 0; i < attempts; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = st.registerCapped(SelfServiceHive{ID: fmt.Sprintf("byo-alice--h%d", i), Owner: "alice"}, limit)
+		}(i)
+	}
+	wg.Wait()
+	ok, capped := 0, 0
+	for _, err := range errs {
+		switch {
+		case err == nil:
+			ok++
+		case errors.Is(err, errSelfServiceCapReached):
+			capped++
+		default:
+			t.Fatalf("unexpected error: %v", err)
+		}
+	}
+	if ok != limit || capped != attempts-limit {
+		t.Fatalf("registered %d, capped %d; want %d and %d", ok, capped, limit, attempts-limit)
+	}
+	if n := len(st.list()); n != limit+1 {
+		t.Fatalf("store holds %d hives, want %d", n, limit+1)
 	}
 }

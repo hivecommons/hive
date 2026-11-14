@@ -1242,6 +1242,14 @@ type FrontendReferenceRepo struct {
 	// ReferenceTier repeats Tier under the name API consumers key on to tell
 	// a reference entry from a managed repo row (hivecommons/hive#18021).
 	ReferenceTier string `json:"reference_tier"`
+	// DerivedFrom is the "owner/repo#N" request issue a derived entry came
+	// from (hivecommons/hive#18139); empty for a hand-written entry.
+	DerivedFrom string `json:"derived_from,omitempty"`
+	// CredentialState is a derived entry's resolved credential:
+	// "write-tier", "read-only" or "unresolved" (hivecommons/hive#18158);
+	// CredentialReason says why when it is not write-tier.
+	CredentialState  string `json:"credential_state,omitempty"`
+	CredentialReason string `json:"credential_reason,omitempty"`
 }
 
 type FrontendRepo struct {

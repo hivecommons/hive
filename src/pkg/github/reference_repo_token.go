@@ -66,7 +66,9 @@ func ReferenceRepoTokenSource(rr config.ReferenceRepo, auth func() *AppAuth, log
 	if rr.ReadOnly() {
 		return nil
 	}
-	if rr.WriteTokenFile != "" {
+	// A derived entry never reads write_token_file (hivecommons/hive#18158):
+	// its only credential is the App installation on the target org.
+	if rr.WriteTokenFile != "" && !rr.Derived() {
 		return func() (string, bool) {
 			tok, err := readTokenFile(rr.WriteTokenFile)
 			if err != nil {
@@ -168,6 +170,71 @@ func VerifyReferenceRepoWriteCredential(ctx context.Context, rr config.Reference
 		return "", fmt.Errorf("%w: project.reference_repos %s: App bot login unknown, cannot attribute the hive's own items", ErrReferenceRepoNoCredential, rr.Repo)
 	}
 	return botLogin, nil
+}
+
+// Derived read-only reasons (hivecommons/hive#18158). They are shown to the
+// requesting project on its request issue, so they name the cure, not the
+// hive's internals.
+const (
+	// derivedReadOnlyNoInstallationFmt is used when the App is not installed
+	// on the target org; the argument is the owner.
+	derivedReadOnlyNoInstallationFmt = "the hive's GitHub App is not installed on %s"
+	// DerivedReadOnlyNoAppAuth is used when the hive runs without App auth at
+	// all, so no installation can ever be found.
+	DerivedReadOnlyNoAppAuth = "this hive has no GitHub App auth"
+	// DerivedReadOnlyBotLoginUnknown is used when an installation exists but
+	// the hive cannot name its own bot login, so it could not tell its own
+	// items from others' and must not write.
+	DerivedReadOnlyBotLoginUnknown = "the hive's App bot login is unknown"
+)
+
+// DerivedReadOnlyReason is the reason recorded on a derived entry whose
+// target org has no installation of the App.
+func DerivedReadOnlyReason(rr config.ReferenceRepo) string {
+	return fmt.Sprintf(derivedReadOnlyNoInstallationFmt, rr.Owner())
+}
+
+// ResolveDerivedReferenceRepo resolves the credential for an entry derived
+// from a request issue (hivecommons/hive#18158). Unlike a hand-written entry,
+// a derived one is not the operator's mistake, so it never yields
+// ErrReferenceRepoNoCredential: when the App has an installation on the
+// target org the entry is returned unchanged with CredentialState write-tier
+// and the bot login the credential acts as; when there is none the entry
+// comes back with Write cleared, CredentialState read-only and the reason.
+// write_token_file is never consulted for a derived entry. A transient
+// discovery failure (network, 5xx) is returned as an error so the caller
+// keeps its last good state instead of downgrading on a blip. A hand-written
+// entry is returned unchanged with no login; use
+// VerifyReferenceRepoWriteCredential for it.
+func ResolveDerivedReferenceRepo(ctx context.Context, rr config.ReferenceRepo, botLogin string, discover func(ctx context.Context, org string) (int64, error)) (config.ReferenceRepo, string, error) {
+	if !rr.Derived() {
+		return rr, "", nil
+	}
+	rr.WriteTokenFile = ""
+	readOnly := func(reason string) (config.ReferenceRepo, string, error) {
+		rr.Write = nil
+		rr.CredentialState = config.ReferenceCredentialReadOnly
+		rr.CredentialReason = reason
+		return rr, "", nil
+	}
+	if rr.ReadOnly() {
+		return readOnly(rr.CredentialReason)
+	}
+	if discover == nil {
+		return readOnly(DerivedReadOnlyNoAppAuth)
+	}
+	if _, err := discover(ctx, rr.Owner()); err != nil {
+		if errors.Is(err, ErrNoInstallationForOrg) {
+			return readOnly(DerivedReadOnlyReason(rr))
+		}
+		return rr, "", fmt.Errorf("resolving derived reference repo %s (from %s): %w", rr.Repo, rr.DerivedFrom, err)
+	}
+	if botLogin == "" {
+		return readOnly(DerivedReadOnlyBotLoginUnknown)
+	}
+	rr.CredentialState = config.ReferenceCredentialWriteTier
+	rr.CredentialReason = ""
+	return rr, botLogin, nil
 }
 
 // TokenUserLogin resolves the login a user token acts as (GET /user).

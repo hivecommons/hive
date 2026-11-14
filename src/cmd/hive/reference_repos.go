@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 
 	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/config"
@@ -19,6 +20,11 @@ import (
 // write_token_file", not "bug".
 const referenceRepoCredentialExitCode = 22
 
+// derivedReadOnlyPoster posts the one-shot read-only notice on a request
+// issue (hivecommons/hive#18158). Production is
+// github.Client.CommentDerivedReadOnly; tests stub it.
+type derivedReadOnlyPoster func(ctx context.Context, issueRepo string, number int, readOnly []config.ReferenceRepo) (bool, error)
+
 // referenceRepoDeps are the seams buildReferenceRepoPolicies needs: App
 // installation discovery on a foreign org and token-identity resolution.
 // Either may be nil when the hive has no GitHub App auth, in which case a
@@ -30,35 +36,113 @@ type referenceRepoDeps struct {
 	auth     func() *github.AppAuth
 }
 
+// referenceRepoResolution is what buildReferenceRepoPolicies produces: the
+// proxy policies and the entries as resolved, with each derived entry's
+// CredentialState filled in (and its Write cleared when it was downgraded),
+// so the kick and the status payload describe what the proxy enforces.
+type referenceRepoResolution struct {
+	policies []proxy.ReferenceRepoPolicy
+	repos    []config.ReferenceRepo
+}
+
 // buildReferenceRepoPolicies turns the config list into proxy policies. A
-// read-only entry needs nothing; a write-mode entry is verified now so the
-// failure is a boot-time config error naming the repo.
-func buildReferenceRepoPolicies(ctx context.Context, refs []config.ReferenceRepo, deps referenceRepoDeps, logger *slog.Logger) ([]proxy.ReferenceRepoPolicy, error) {
-	out := make([]proxy.ReferenceRepoPolicy, 0, len(refs))
+// read-only entry needs nothing; a hand-written write-mode entry is verified
+// now so the failure is a boot-time config error naming the repo. A derived
+// entry (hivecommons/hive#18158) is resolved instead: write tier when the App
+// is installed on its org, read-only otherwise, never an error (a transient
+// discovery failure keeps the entry read-only for this load and is logged).
+func buildReferenceRepoPolicies(ctx context.Context, refs []config.ReferenceRepo, deps referenceRepoDeps, logger *slog.Logger) (referenceRepoResolution, error) {
+	res := referenceRepoResolution{
+		policies: make([]proxy.ReferenceRepoPolicy, 0, len(refs)),
+		repos:    make([]config.ReferenceRepo, 0, len(refs)),
+	}
 	for _, rr := range refs {
+		login := ""
+		if rr.Derived() {
+			resolved, derivedLogin, err := github.ResolveDerivedReferenceRepo(ctx, rr, deps.botLogin, deps.discover)
+			if err != nil {
+				// A blip, not a verdict: serve read-only this load but do not
+				// tell the request issue the App is missing when it may not be.
+				logger.Warn("derived reference repo: credential discovery failed, serving read-only this load", "repo", rr.Repo, "from", rr.DerivedFrom, "error", err.Error())
+				resolved.Write = nil
+				resolved.CredentialState = config.ReferenceCredentialUnresolved
+				resolved.CredentialReason = err.Error()
+			}
+			rr, login = resolved, derivedLogin
+		} else if !rr.ReadOnly() {
+			l, err := github.VerifyReferenceRepoWriteCredential(ctx, rr, deps.botLogin, deps.discover, deps.whoAmI)
+			if err != nil {
+				return referenceRepoResolution{}, err
+			}
+			login = l
+		}
 		pol := proxy.ReferenceRepoPolicy{Repo: rr.Repo, Issues: rr.WritesIssues(), PRs: rr.WritesPRs()}
 		if !rr.ReadOnly() {
-			login, err := github.VerifyReferenceRepoWriteCredential(ctx, rr, deps.botLogin, deps.discover, deps.whoAmI)
-			if err != nil {
-				return nil, err
-			}
 			pol.Login = login
 			pol.Token = github.ReferenceRepoTokenSource(rr, deps.auth, logger)
 		}
-		out = append(out, pol)
+		res.policies = append(res.policies, pol)
+		res.repos = append(res.repos, rr)
 	}
-	return out, nil
+	return res, nil
+}
+
+// derivedReadOnlyByRequest groups the downgraded derived entries by the
+// request issue that granted them, in a stable order of issue refs.
+func derivedReadOnlyByRequest(repos []config.ReferenceRepo) (refs []string, byRef map[string][]config.ReferenceRepo) {
+	byRef = map[string][]config.ReferenceRepo{}
+	for _, rr := range repos {
+		if !rr.DerivedReadOnly() {
+			continue
+		}
+		if _, ok := byRef[rr.DerivedFrom]; !ok {
+			refs = append(refs, rr.DerivedFrom)
+		}
+		byRef[rr.DerivedFrom] = append(byRef[rr.DerivedFrom], rr)
+	}
+	sort.Strings(refs)
+	return refs, byRef
+}
+
+// notifyDerivedReadOnly posts the read-only notice for every request issue
+// whose derived entries were downgraded. The poster is idempotent per
+// (issue, repo set), so calling this on every reload posts at most once.
+func notifyDerivedReadOnly(ctx context.Context, repos []config.ReferenceRepo, post derivedReadOnlyPoster, logger *slog.Logger) {
+	if post == nil {
+		return
+	}
+	refs, byRef := derivedReadOnlyByRequest(repos)
+	for _, ref := range refs {
+		readOnly := byRef[ref]
+		issueRepo, number, ok := readOnly[0].DerivedFromIssue()
+		if !ok {
+			logger.Warn("derived reference repo: malformed request issue ref, notice skipped", "from", ref)
+			continue
+		}
+		posted, err := post(ctx, issueRepo, number, readOnly)
+		if err != nil {
+			logger.Warn("derived reference repo: read-only notice not posted", "from", ref, "error", err.Error())
+			continue
+		}
+		if posted {
+			logger.Info("derived reference repos served read-only, request issue notified", "from", ref, "count", len(readOnly))
+		}
+	}
 }
 
 // wireReferenceRepos installs project.reference_repos on the proxy, refusing
-// to boot when a write-mode entry has no usable credential.
+// to boot when a hand-written write-mode entry has no usable credential. A
+// derived entry never refuses boot: it is downgraded to read-only and the
+// request issue is told once (hivecommons/hive#18158).
 func (b *boot) wireReferenceRepos() {
 	refs := b.cfg.Project.ReferenceRepos
 	if len(refs) == 0 || b.githubProxy == nil {
 		return
 	}
 	deps := referenceRepoDeps{auth: func() *github.AppAuth { return nil }}
+	var post derivedReadOnlyPoster
 	if b.ghClient != nil {
+		post = b.ghClient.CommentDerivedReadOnly
 		if auth := b.ghClient.AppAuth(); auth != nil {
 			apiURL := auth.APIURL()
 			deps.botLogin = auth.BotLogin()
@@ -74,7 +158,7 @@ func (b *boot) wireReferenceRepos() {
 			}
 		}
 	}
-	policies, err := buildReferenceRepoPolicies(b.ctx, refs, deps, b.logger)
+	res, err := buildReferenceRepoPolicies(b.ctx, refs, deps, b.logger)
 	if err != nil {
 		b.logger.Error("refusing to start: project.reference_repos write-mode entry has no usable credential (#18015)", "error", err.Error())
 		if errors.Is(err, github.ErrReferenceRepoNoCredential) {
@@ -82,6 +166,13 @@ func (b *boot) wireReferenceRepos() {
 		}
 		os.Exit(referenceRepoCredentialExitCode)
 	}
-	b.githubProxy.SetReferenceRepos(policies)
-	b.logger.Info("reference repos wired", "count", len(policies), "repos", b.cfg.ReferenceRepoSlugs())
+	// The resolved entries replace the list in memory only: a derived entry
+	// is never written back to any config file, and its credential state is
+	// what the kick and /api/status read.
+	b.cfg.Project.ReferenceRepos = res.repos
+	b.githubProxy.SetReferenceRepos(res.policies)
+	b.logger.Info("reference repos wired", "count", len(res.policies), "repos", b.cfg.ReferenceRepoSlugs())
+	// Off the boot path: the notice is a GitHub write and must not delay
+	// the proxy coming up.
+	go notifyDerivedReadOnly(b.ctx, res.repos, post, b.logger)
 }

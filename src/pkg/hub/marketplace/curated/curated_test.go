@@ -2,6 +2,7 @@ package curated_test
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -52,8 +53,79 @@ func TestLoadEmbedded(t *testing.T) {
 			t.Fatalf("%s: tier %q", e.Path, b.Tier)
 		}
 	}
-	if !seen["cncf-techdocs-assessment@curated-2026.11.1"] {
-		t.Fatalf("techdocs model missing: %v", seen)
+	for _, key := range []string{techdocsKey2026_11_1, techdocsKey2026_11_2} {
+		if !seen[key] {
+			t.Fatalf("techdocs model %s missing: %v", key, seen)
+		}
+	}
+}
+
+const (
+	techdocsKey2026_11_1 = "cncf-techdocs-assessment@curated-2026.11.1"
+	techdocsKey2026_11_2 = "cncf-techdocs-assessment@curated-2026.11.2"
+)
+
+// techdocsVersion returns the embedded cncf-techdocs-assessment model at one
+// spec.meta.version.
+func techdocsVersion(t *testing.T, version string) *workflowmodel.Model {
+	t.Helper()
+	entries, errs := curated.Load()
+	if len(errs) != 0 {
+		t.Fatal(errs)
+	}
+	for _, e := range entries {
+		if e.Model.Metadata.Name == "cncf-techdocs-assessment" && e.Model.Spec.Meta.Version == version {
+			return e.Model
+		}
+	}
+	t.Fatalf("cncf-techdocs-assessment@%s not embedded", version)
+	return nil
+}
+
+// TestTechDocsIntakeHook pins hivecommons/hive#18139 step 4: curated-2026.11.2
+// declares the intake hook with the rendered assessment-request.yml headings,
+// curated-2026.11.1 stays as first published and declares nothing, and the
+// two versions differ in nothing else.
+func TestTechDocsIntakeHook(t *testing.T) {
+	v1 := techdocsVersion(t, "curated-2026.11.1")
+	v2 := techdocsVersion(t, "curated-2026.11.2")
+	if v1.Spec.Intake.DerivesReferenceRepos() || len(v1.Spec.Intake.OutOfScopeFields) != 0 {
+		t.Fatalf("2026.11.1 must declare no intake fields (never edited in place): %+v", v1.Spec.Intake)
+	}
+	if !v2.Spec.Intake.DerivesReferenceRepos() {
+		t.Fatalf("2026.11.2 must declare intake.referenceRepoFields: %+v", v2.Spec.Intake)
+	}
+	wantRefs := []string{"Website or documentation repository", "Other repositories or sites in scope"}
+	wantOut := []string{"Out of scope"}
+	if !reflect.DeepEqual(v2.Spec.Intake.ReferenceRepoFields, wantRefs) || !reflect.DeepEqual(v2.Spec.Intake.OutOfScopeFields, wantOut) {
+		t.Fatalf("2026.11.2 intake = %+v; want refs %v out %v", v2.Spec.Intake, wantRefs, wantOut)
+	}
+	if _, ok := v2.Metadata.Annotations["workflow.hivecommons.dev/changes"]; !ok {
+		t.Fatal("2026.11.2 must carry a workflow.hivecommons.dev/changes annotation")
+	}
+	// Everything but the version, the changes annotation and the intake block
+	// is identical, so a hive moving from 11.1 to 11.2 changes nothing in its
+	// lifecycle.
+	a, b := *v1, *v2
+	a.Spec.Meta.Version, b.Spec.Meta.Version = "", ""
+	a.Spec.Intake, b.Spec.Intake = workflowmodel.Intake{}, workflowmodel.Intake{}
+	a.Metadata.Annotations, b.Metadata.Annotations = nil, nil
+	if a.Hash() != b.Hash() {
+		t.Fatal("2026.11.2 must differ from 2026.11.1 only in version, annotations and intake")
+	}
+	if !reflect.DeepEqual(a.Metadata, b.Metadata) {
+		t.Fatalf("metadata differs beyond annotations:\n%+v\n%+v", a.Metadata, b.Metadata)
+	}
+	// The rules evaluator derives the same stages from both versions.
+	for _, m := range []*workflowmodel.Model{v1, v2} {
+		p, diags, err := workflowmodel.Compile(m)
+		if err != nil || len(diags) != 0 {
+			t.Fatalf("%s: compile err=%v diags=%+v", m.Spec.Meta.Version, err, diags)
+		}
+		got := stageengine.DeriveFromModel(p, stagelabels.IssueItem).Derive(issue("triage/accepted"))
+		if got.Abstain || got.Stage != stagelabels.Claimed {
+			t.Fatalf("%s: accepted issue derived %+v", m.Spec.Meta.Version, got)
+		}
 	}
 }
 
@@ -82,23 +154,15 @@ func TestDecodeRejects(t *testing.T) {
 	}
 }
 
+// techdocs compiles the latest embedded cncf-techdocs-assessment version;
+// TestTechDocsIntakeHook pins that every version derives the same stages.
 func techdocs(t *testing.T) *workflowmodel.Profile {
 	t.Helper()
-	entries, errs := curated.Load()
-	if len(errs) != 0 {
-		t.Fatal(errs)
+	p, _, err := workflowmodel.Compile(techdocsVersion(t, "curated-2026.11.2"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	for _, e := range entries {
-		if e.Model.Metadata.Name == "cncf-techdocs-assessment" {
-			p, _, err := workflowmodel.Compile(e.Model)
-			if err != nil {
-				t.Fatal(err)
-			}
-			return p
-		}
-	}
-	t.Fatal("cncf-techdocs-assessment not embedded")
-	return nil
+	return p
 }
 
 func issue(labels ...string) stageengine.Facts {
