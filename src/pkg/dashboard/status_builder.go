@@ -2388,10 +2388,31 @@ func buildReferenceRepos(cfg *config.Config) []FrontendReferenceRepo {
 		tier := rr.WriteLabel()
 		out = append(out, FrontendReferenceRepo{
 			Full: rr.Repo, Tier: tier, ReferenceTier: tier,
-			DerivedFrom: rr.DerivedFrom, CredentialState: rr.CredentialState, CredentialReason: rr.CredentialReason,
+			DerivedFrom: rr.DerivedFrom, DerivedFromURL: referenceRepoSourceURL(rr.DerivedFrom, cfg.GitHub.ResolvedBaseURL()),
+			CredentialState: rr.CredentialState, CredentialReason: rr.CredentialReason,
 		})
 	}
 	return out
+}
+
+// referenceRepoSourceURL turns a derived entry's "owner/repo#N" provenance
+// into the request issue's web URL on base (hivecommons/hive#18161). Anything
+// that is not exactly owner/repo#N with a positive N yields "" so the
+// dashboard shows the bare reference rather than a guessed link.
+func referenceRepoSourceURL(derivedFrom, base string) string {
+	repo, num, ok := strings.Cut(strings.TrimSpace(derivedFrom), "#")
+	if !ok {
+		return ""
+	}
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return ""
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil || n <= 0 {
+		return ""
+	}
+	return overviewItemURL("", repo, n, "issue", base)
 }
 
 func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult, govState governor.State, forge forgeOpenCounter) []FrontendRepo {

@@ -370,12 +370,41 @@
         const tip = tier === 'read-only'
           ? 'Reference repo: agents may clone and read it; every write is refused by the proxy.'
           : `Reference repo: agents may clone and read it, and may open ${tier.replace('+', ' and ')} (never merge, push to the default branch, label, assign, review, or close others' items).`;
-        return `<div class="repo-card repo-card-reference" data-repo="${esc(full)}">
+        const derived = renderReferenceRepoDerived(rr);
+        return `<div class="repo-card repo-card-reference${derived ? ' repo-card-reference-derived' : ''}" data-repo="${esc(full)}">
           <div class="repo-provider-label repo-reference-provider" title="This repo lives on ${esc(hostLabel)} and is outside this project">${esc(hostLabel)}</div>
           <div class="repo-name"><a class="repo-reference-link" href="${esc(base + '/' + full)}" target="_blank" rel="noopener" title="${esc(full)}">${esc(full)}</a><span class="repo-header-badges"><span class="repo-reference-pill" title="${esc(tip)}">📚 reference · ${esc(tier)}</span></span></div>
-          <div class="repo-reference-note">Outside this project — studied, not worked. No work items, no ACMM evaluation.</div>
+          ${derived}<div class="repo-reference-note">Outside this project — studied, not worked. No work items, no ACMM evaluation.</div>
         </div>`;
       }).join('');
+    }
+
+    /**
+     * A reference repo derived from an accepted request issue (#18139, #18161)
+     * is read-only here: a lock, a "from owner/repo#N" link to the request
+     * issue and its credential chip. It is rebuilt from the issue on every
+     * config load, so the dashboard never offers to edit or remove it; closing
+     * the issue or removing triage/accepted drops it. '' for hand-written.
+     */
+    function renderReferenceRepoDerived(rr) {
+      const from = String((rr && rr.derived_from) || '');
+      if (!from) return '';
+      const url = String(rr.derived_from_url || '');
+      const src = url
+        ? `<a class="repo-reference-source" href="${esc(url)}" target="_blank" rel="noopener" title="Open the request issue this entry is derived from">${esc(from)}</a>`
+        : `<span class="repo-reference-source">${esc(from)}</span>`;
+      const state = String(rr.credential_state || '');
+      const reason = String(rr.credential_reason || '');
+      const chips = {
+        'write-tier': ['ok', '🔑 App installation', 'The hive\'s GitHub App is installed on this org; writes use a token minted for this repo only.'],
+        'read-only': ['ro', 'read-only', reason || 'No App installation on this org, so the entry was downgraded to read-only.'],
+        'unresolved': ['warn', 'unresolved', reason || 'Installation discovery failed; served read-only until the next reload resolves it.'],
+      };
+      const chip = chips[state];
+      const chipHTML = chip
+        ? ` <span class="repo-reference-cred repo-reference-cred-${chip[0]}" data-credential-state="${esc(state)}" title="${esc(chip[2])}">${esc(chip[1])}</span>`
+        : '';
+      return `<div class="repo-reference-derived" title="Derived from an accepted request issue: read-only here, rebuilt on every config load. Close the issue or remove triage/accepted to drop it.">🔒 from ${src}${chipHTML}</div>`;
     }
 
     /**
