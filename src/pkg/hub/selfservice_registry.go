@@ -69,6 +69,9 @@ var (
 	errSelfServiceNotFound   = errors.New("self-service hive not found")
 	errSelfServiceNilStore   = errors.New("self-service store not configured")
 	errSelfServiceEmptyOwner = errors.New("self-service hive owner required")
+	// errSelfServiceCapReached is returned by registerCapped when the owner
+	// already holds the maximum number of hives (#18166).
+	errSelfServiceCapReached = errors.New("self-service per-owner cap reached")
 )
 
 // SelfServiceHive is one owner-registered hive. Only hashes of its keys are
@@ -207,11 +210,22 @@ func hashSelfServiceKey(raw string) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// register adds a new self-service hive and returns its raw key ONCE. The ID
-// must already be in the byo- namespace; callers (the registration API) build
-// it as byo-<login>-<name> and run the registry-collision and validNamePattern
-// checks before calling.
+// register adds a new self-service hive with no per-owner cap and returns its
+// raw key ONCE. See registerCapped.
 func (st *selfServiceStore) register(h SelfServiceHive) (string, error) {
+	return st.registerCapped(h, 0)
+}
+
+// registerCapped adds a new self-service hive and returns its raw key ONCE.
+// The ID must already be in the byo- namespace; callers (the registration API)
+// build it with selfServiceBuildID and run the registry-collision and
+// validNamePattern checks before calling.
+//
+// When maxPerOwner > 0, the owner's existing hives are counted under the same
+// write lock that inserts the new one, so concurrent registrations by one
+// owner can never exceed the cap (#18166): the handler's earlier count is only
+// a fast refusal before the GitHub ownership calls, and it races.
+func (st *selfServiceStore) registerCapped(h SelfServiceHive, maxPerOwner int) (string, error) {
 	if st == nil {
 		return "", errSelfServiceNilStore
 	}
@@ -230,6 +244,17 @@ func (st *selfServiceStore) register(h SelfServiceHive) (string, error) {
 	defer st.mu.Unlock()
 	if _, exists := st.hives[h.ID]; exists {
 		return "", errSelfServiceExists
+	}
+	if maxPerOwner > 0 {
+		owned := 0
+		for _, existing := range st.hives {
+			if selfServiceOwns(*existing, h.Owner) {
+				owned++
+			}
+		}
+		if owned >= maxPerOwner {
+			return "", errSelfServiceCapReached
+		}
 	}
 	h.KeyHash = hash
 	h.PrevKeyHash = ""

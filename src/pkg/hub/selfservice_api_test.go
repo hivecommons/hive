@@ -36,6 +36,9 @@ type selfServiceTestEnv struct {
 	// stub owner answers admin=false; unknown repos answer 404.
 	adminRepos map[string]bool
 	now        *time.Time
+	// repoCheckGate, when set, runs inside the GitHub stub before it answers,
+	// so a test can hold concurrent registrations inside the ownership proof.
+	repoCheckGate func()
 }
 
 type lockedBuffer struct {
@@ -78,6 +81,9 @@ func newSelfServiceTestEnv(t *testing.T) *selfServiceTestEnv {
 		if r.Header.Get("Authorization") != "Bearer "+selfServiceTestToken {
 			w.WriteHeader(http.StatusUnauthorized)
 			return
+		}
+		if env.repoCheckGate != nil {
+			env.repoCheckGate()
 		}
 		repo := strings.TrimPrefix(r.URL.Path, "/repos/")
 		admin, known := env.adminRepos[repo]
@@ -215,8 +221,8 @@ func TestSelfServiceAPIUnauthenticated(t *testing.T) {
 		"status":   env.status(t, ""),
 		"list":     env.list(t, ""),
 		"register": env.register(t, "", selfServiceHappyBody),
-		"rotate":   env.rotate(t, "", "byo-alice-lab"),
-		"delete":   env.remove(t, "", "byo-alice-lab"),
+		"rotate":   env.rotate(t, "", "byo-alice--lab"),
+		"delete":   env.remove(t, "", "byo-alice--lab"),
 	}
 	for name, rec := range cases {
 		if rec.Code != http.StatusUnauthorized {
@@ -234,8 +240,8 @@ func TestSelfServiceAPIFlagOffIsNotFound(t *testing.T) {
 	cases := map[string]*httptest.ResponseRecorder{
 		"list":     env.list(t, selfServiceTestUser),
 		"register": env.register(t, selfServiceTestUser, selfServiceHappyBody),
-		"rotate":   env.rotate(t, selfServiceTestUser, "byo-alice-lab"),
-		"delete":   env.remove(t, selfServiceTestUser, "byo-alice-lab"),
+		"rotate":   env.rotate(t, selfServiceTestUser, "byo-alice--lab"),
+		"delete":   env.remove(t, selfServiceTestUser, "byo-alice--lab"),
 	}
 	for name, rec := range cases {
 		if rec.Code != http.StatusNotFound {
@@ -276,8 +282,8 @@ func TestSelfServiceAPIRegisterHappyPath(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatal(err)
 	}
-	if resp.Hive.ID != "byo-alice-lab" {
-		t.Fatalf("id = %q, want byo-alice-lab", resp.Hive.ID)
+	if resp.Hive.ID != "byo-alice--lab" {
+		t.Fatalf("id = %q, want byo-alice--lab", resp.Hive.ID)
 	}
 	if resp.Hive.Owner != selfServiceTestUser || resp.Hive.Org != "alice" || len(resp.Hive.Repos) != 2 || resp.Hive.DashboardURL != "https://lab.example.org/" {
 		t.Fatalf("view = %+v", resp.Hive)
@@ -295,17 +301,17 @@ func TestSelfServiceAPIRegisterHappyPath(t *testing.T) {
 
 	// The store holds only the hash, and the hub accepts the raw key as this
 	// hive's heartbeat bearer and no other hive's.
-	stored, ok := env.s.selfService.get("byo-alice-lab")
+	stored, ok := env.s.selfService.get("byo-alice--lab")
 	if !ok {
 		t.Fatal("hive not stored")
 	}
 	if stored.KeyHash != hashSelfServiceKey(resp.Key) || stored.KeyHash == resp.Key {
 		t.Fatal("store does not hold exactly the hash of the returned key")
 	}
-	if gen, ok := env.s.verifyHeartbeatBearerGeneration(resp.Key, "byo-alice-lab"); !ok || gen != selfServiceBearerGeneration {
+	if gen, ok := env.s.verifyHeartbeatBearerGeneration(resp.Key, "byo-alice--lab"); !ok || gen != selfServiceBearerGeneration {
 		t.Fatalf("raw key does not authenticate the hive: gen=%d ok=%v", gen, ok)
 	}
-	if _, ok := env.s.verifyHeartbeatBearerGeneration(resp.Key, "byo-alice-other"); ok {
+	if _, ok := env.s.verifyHeartbeatBearerGeneration(resp.Key, "byo-alice--other"); ok {
 		t.Fatal("raw key authenticated a different hive")
 	}
 	if !strings.Contains(env.logs.String(), "audit: selfservice_hive_registered") {
@@ -323,7 +329,7 @@ func TestSelfServiceAPIRegisterHappyPath(t *testing.T) {
 	if err := json.Unmarshal(listRec.Body.Bytes(), &listed); err != nil {
 		t.Fatal(err)
 	}
-	if len(listed.Hives) != 1 || listed.Hives[0].ID != "byo-alice-lab" {
+	if len(listed.Hives) != 1 || listed.Hives[0].ID != "byo-alice--lab" {
 		t.Fatalf("list = %+v", listed.Hives)
 	}
 	for _, forbidden := range []string{resp.Key, stored.KeyHash, "key_hash", grantableTestSecret} {
@@ -341,7 +347,7 @@ func TestSelfServiceAPIRegisterHappyPath(t *testing.T) {
 func TestSelfServiceAPIRegisterRefusals(t *testing.T) {
 	env := newSelfServiceTestEnv(t)
 	// Pre-existing registry entry for the duplicate case.
-	env.s.registry.Hives = []RegistryEntry{{ID: "byo-alice-taken"}}
+	env.s.registry.Hives = []RegistryEntry{{ID: "byo-alice--taken"}}
 	cases := []struct {
 		name   string
 		body   string
@@ -358,6 +364,10 @@ func TestSelfServiceAPIRegisterRefusals(t *testing.T) {
 		{"duplicate registry id", `{"name":"taken","repos":["alice/lab"]}`, http.StatusConflict, selfServiceRefusedDuplicateID},
 		{"no repos", `{"name":"lab","repos":[]}`, http.StatusBadRequest, selfServiceRefusedInvalidRepos},
 		{"bare org repo", `{"name":"lab","repos":["alice"]}`, http.StatusBadRequest, selfServiceRefusedInvalidRepos},
+		{"dot-dot repo segment", `{"name":"lab","repos":["alice/.."]}`, http.StatusBadRequest, selfServiceRefusedInvalidRepos},
+		{"dot repo segment", `{"name":"lab","repos":["alice/."]}`, http.StatusBadRequest, selfServiceRefusedInvalidRepos},
+		{"dot-dot owner segment", `{"name":"lab","repos":["../lab"]}`, http.StatusBadRequest, selfServiceRefusedInvalidRepos},
+		{"leading hyphen name", `{"name":"-lab","repos":["alice/lab"]}`, http.StatusBadRequest, selfServiceRefusedInvalidName},
 		{"http dashboard", `{"name":"lab","repos":["alice/lab"],"dashboard_url":"http://lab.example.org"}`, http.StatusBadRequest, selfServiceRefusedInvalidURL},
 		{"private dashboard", `{"name":"lab","repos":["alice/lab"],"dashboard_url":"https://10.0.0.5/"}`, http.StatusBadRequest, selfServiceRefusedInvalidURL},
 		{"bad json", `{`, http.StatusBadRequest, ""},
@@ -459,6 +469,135 @@ func TestSelfServiceAPIPerUserCap(t *testing.T) {
 	}
 }
 
+// TestSelfServiceAPIPerUserCapConcurrent pins #18166: the handler's cap count
+// runs before the GitHub ownership calls, so two POSTs from one user at cap-1
+// can both pass it. The stub holds both requests inside the ownership proof
+// until each has passed the handler's count; the store's own check under its
+// lock must still let exactly one through.
+func TestSelfServiceAPIPerUserCapConcurrent(t *testing.T) {
+	env := newSelfServiceTestEnv(t)
+	t.Setenv(selfServiceMaxPerUserEnv, "2")
+	if rec := env.register(t, selfServiceTestUser, `{"name":"one","repos":["alice/lab"]}`); rec.Code != http.StatusCreated {
+		t.Fatalf("register one: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var arrived sync.WaitGroup
+	arrived.Add(2)
+	env.repoCheckGate = func() {
+		arrived.Done()
+		all := make(chan struct{})
+		go func() { arrived.Wait(); close(all) }()
+		select {
+		case <-all:
+		case <-time.After(10 * time.Second):
+			// A request never reached the stub; the counts below report it.
+		}
+	}
+	codes := make([]int, 2)
+	var done sync.WaitGroup
+	for i, name := range []string{"two", "three"} {
+		done.Add(1)
+		go func(i int, name string) {
+			defer done.Done()
+			codes[i] = env.register(t, selfServiceTestUser, fmt.Sprintf(`{"name":%q,"repos":["alice/lab"]}`, name)).Code
+		}(i, name)
+	}
+	done.Wait()
+
+	created, capped := 0, 0
+	for _, c := range codes {
+		switch c {
+		case http.StatusCreated:
+			created++
+		case http.StatusTooManyRequests:
+			capped++
+		}
+	}
+	if created != 1 || capped != 1 {
+		t.Fatalf("concurrent registers at cap-1: codes %v, want exactly one 201 and one 429", codes)
+	}
+	if n := env.s.selfServiceCount(selfServiceTestUser); n != 2 {
+		t.Fatalf("store holds %d of alice's hives, want 2 (the cap)", n)
+	}
+	if !strings.Contains(env.logs.String(), "reason="+selfServiceRefusedCap) {
+		t.Fatal("no cap audit line for the store-level refusal")
+	}
+}
+
+// TestSelfServiceAPIHyphenLoginsDoNotCollide pins #18166: with a single '-'
+// separator, login a-b + name c and login a + name b-c both produced
+// byo-a-b-c, so one user could squat the other's ID. The "--" separator keeps
+// them apart.
+func TestSelfServiceAPIHyphenLoginsDoNotCollide(t *testing.T) {
+	env := newSelfServiceTestEnv(t)
+	encrypted, err := encryptToken(selfServiceTestToken)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, login := range []string{"a", "a-b"} {
+		if err := saveSaaSUser(&SaaSUser{GitHubUsername: login, EncryptedToken: encrypted}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	ids := map[string]string{}
+	for _, tc := range []struct{ login, name, want string }{
+		{"a", "b-c", "byo-a--b-c"},
+		{"a-b", "c", "byo-a-b--c"},
+	} {
+		rec := env.register(t, tc.login, fmt.Sprintf(`{"name":%q,"repos":["alice/lab"]}`, tc.name))
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("%s/%s: status %d body %s", tc.login, tc.name, rec.Code, rec.Body.String())
+		}
+		var resp struct {
+			Hive selfServiceHiveView `json:"hive"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatal(err)
+		}
+		if resp.Hive.ID != tc.want {
+			t.Fatalf("%s/%s: id = %q, want %q", tc.login, tc.name, resp.Hive.ID, tc.want)
+		}
+		ids[tc.login] = resp.Hive.ID
+	}
+	for login, id := range ids {
+		if h, ok := env.s.selfService.get(id); !ok || !selfServiceOwns(h, login) {
+			t.Fatalf("%s does not own %s: %+v", login, id, h)
+		}
+	}
+}
+
+func TestSelfServiceBuildIDRefusesAmbiguousInput(t *testing.T) {
+	for _, tc := range []struct {
+		login, name, reason string
+	}{
+		{"a--b", "lab", selfServiceRefusedInvalidLogin},
+		{"a-", "lab", selfServiceRefusedInvalidLogin},
+		{"-a", "lab", selfServiceRefusedInvalidLogin},
+		{"a/b", "lab", selfServiceRefusedInvalidLogin},
+		{"alice", "-lab", selfServiceRefusedInvalidName},
+	} {
+		if id, reason, err := selfServiceBuildID(tc.login, tc.name); err == nil || reason != tc.reason {
+			t.Errorf("selfServiceBuildID(%q, %q) = %q, %q, %v; want refusal %s", tc.login, tc.name, id, reason, err, tc.reason)
+		}
+	}
+	if id, _, err := selfServiceBuildID("Alice-Smith", "Lab--Two"); err != nil || id != "byo-alice-smith--lab--two" {
+		t.Fatalf("selfServiceBuildID(Alice-Smith, Lab--Two) = %q, %v", id, err)
+	}
+}
+
+func TestIsValidRepoRefRefusesDotSegments(t *testing.T) {
+	for _, ref := range []string{".", "..", "owner/.", "owner/..", "./repo", "../repo"} {
+		if isValidRepoRef(ref) {
+			t.Errorf("isValidRepoRef(%q) = true, want false", ref)
+		}
+	}
+	for _, ref := range []string{"owner/.github", "owner/a.b", "owner/...", ".github"} {
+		if !isValidRepoRef(ref) {
+			t.Errorf("isValidRepoRef(%q) = false, want true", ref)
+		}
+	}
+}
+
 func TestSelfServiceAPIRotateInvalidatesOldKey(t *testing.T) {
 	env := newSelfServiceTestEnv(t)
 	id, oldKey := env.registerHappy(t)
@@ -535,7 +674,7 @@ func TestSelfServiceAPIAnotherUsersHiveIsNotFound(t *testing.T) {
 	if rec := env.remove(t, selfServiceTestOther, id); rec.Code != http.StatusNotFound {
 		t.Fatalf("delete by other user: %d, want 404", rec.Code)
 	}
-	if rec := env.rotate(t, selfServiceTestUser, "byo-alice-nope"); rec.Code != http.StatusNotFound {
+	if rec := env.rotate(t, selfServiceTestUser, "byo-alice--nope"); rec.Code != http.StatusNotFound {
 		t.Fatalf("rotate of missing hive: %d, want 404", rec.Code)
 	}
 	if _, ok := env.s.verifyHeartbeatBearerGeneration(key, id); !ok {
