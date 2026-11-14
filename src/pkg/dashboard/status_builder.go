@@ -2386,7 +2386,10 @@ func buildReferenceRepos(cfg *config.Config) []FrontendReferenceRepo {
 	out := make([]FrontendReferenceRepo, 0, len(cfg.Project.ReferenceRepos))
 	for _, rr := range cfg.Project.ReferenceRepos {
 		tier := rr.WriteLabel()
-		out = append(out, FrontendReferenceRepo{Full: rr.Repo, Tier: tier, ReferenceTier: tier})
+		out = append(out, FrontendReferenceRepo{
+			Full: rr.Repo, Tier: tier, ReferenceTier: tier,
+			DerivedFrom: rr.DerivedFrom, CredentialState: rr.CredentialState, CredentialReason: rr.CredentialReason,
+		})
 	}
 	return out
 }

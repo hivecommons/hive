@@ -184,3 +184,57 @@ func TestReferenceRepoDerivedFromNeverSerializesToYAML(t *testing.T) {
 		t.Fatalf("JSON must carry derived_from for the dashboard:\n%s", js)
 	}
 }
+
+// hivecommons/hive#18158: the resolved credential state is in-memory only,
+// like the provenance it belongs to; JSON carries it for the dashboard.
+func TestReferenceRepoCredentialStateNeverSerializesToYAML(t *testing.T) {
+	rr := ReferenceRepo{Repo: "acme/docs", DerivedFrom: "cncf/techdocs#395", CredentialState: ReferenceCredentialReadOnly, CredentialReason: "the hive's GitHub App is not installed on acme"}
+	if !rr.DerivedReadOnly() {
+		t.Fatal("read-only derived entry must read as DerivedReadOnly")
+	}
+	if (ReferenceRepo{Repo: "acme/docs", CredentialState: ReferenceCredentialReadOnly}).DerivedReadOnly() {
+		t.Fatal("a hand-written entry is never DerivedReadOnly")
+	}
+	if (ReferenceRepo{Repo: "acme/docs", DerivedFrom: "x/y#1", CredentialState: ReferenceCredentialWriteTier}).DerivedReadOnly() {
+		t.Fatal("a write-tier entry is not DerivedReadOnly")
+	}
+	for _, entry := range []ReferenceRepo{rr, {Repo: "acme/docs", Write: []string{ReferenceWriteIssues}, DerivedFrom: "cncf/techdocs#395", CredentialState: ReferenceCredentialWriteTier}} {
+		out, err := yaml.Marshal(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(string(out), "credential") || strings.Contains(string(out), "installed") {
+			t.Fatalf("credential state leaked into YAML:\n%s", out)
+		}
+	}
+	js, err := json.Marshal(rr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(js), `"credential_state":"read-only"`) || !strings.Contains(string(js), `"credential_reason":`) {
+		t.Fatalf("JSON must carry the credential state:\n%s", js)
+	}
+}
+
+func TestReferenceRepoDerivedFromIssue(t *testing.T) {
+	cases := []struct {
+		from   string
+		repo   string
+		number int
+		ok     bool
+	}{
+		{"cncf/techdocs#395", "cncf/techdocs", 395, true},
+		{" cncf/techdocs#7 ", "cncf/techdocs", 7, true},
+		{"", "", 0, false},
+		{"cncf/techdocs", "", 0, false},
+		{"techdocs#395", "", 0, false},
+		{"cncf/techdocs#0", "", 0, false},
+		{"cncf/techdocs#abc", "", 0, false},
+	}
+	for _, tc := range cases {
+		repo, number, ok := (ReferenceRepo{DerivedFrom: tc.from}).DerivedFromIssue()
+		if repo != tc.repo || number != tc.number || ok != tc.ok {
+			t.Errorf("DerivedFromIssue(%q) = %q, %d, %v; want %q, %d, %v", tc.from, repo, number, ok, tc.repo, tc.number, tc.ok)
+		}
+	}
+}
