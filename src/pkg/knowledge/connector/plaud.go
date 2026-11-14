@@ -326,18 +326,55 @@ type plaudFile struct {
 	Serial     string
 }
 
+// plaudEnvelopeMarker opens the wrapper @plaud-ai/mcp (0.3.14+) puts around
+// every tool reply: a prose preamble, an <untrusted-user-data-…> tag, the JSON
+// payload, and a closing tag AFTER the JSON. json.Unmarshal rejects that
+// closing tag as trailing data, so every reply has to be decoded as "the first
+// JSON value in the text".
+const plaudEnvelopeMarker = "<untrusted-user-data"
+
+// plaudJSONPayload returns the first JSON value found in a Plaud MCP reply,
+// skipping any prose or envelope before it and ignoring anything after it. ok
+// is false when no JSON value decodes anywhere in the text.
+func plaudJSONPayload(text string) (raw any, ok bool) {
+	text = strings.TrimSpace(text)
+	for i := 0; i < len(text); i++ {
+		if text[i] != '{' && text[i] != '[' {
+			continue
+		}
+		var v any
+		if err := json.NewDecoder(strings.NewReader(text[i:])).Decode(&v); err == nil {
+			return v, true
+		}
+	}
+	return nil, false
+}
+
+// plaudStructuredReply is plaudJSONPayload for replies that may legitimately
+// be plain text (notes, transcripts): it only looks for JSON when the text is
+// JSON to begin with or carries the MCP envelope, so prose never gets mined
+// for a stray brace.
+func plaudStructuredReply(text string) (raw any, ok bool) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, false
+	}
+	if !strings.HasPrefix(text, "{") && !strings.HasPrefix(text, "[") && !strings.Contains(text, plaudEnvelopeMarker) {
+		return nil, false
+	}
+	return plaudJSONPayload(text)
+}
+
 // decodePlaudFiles accepts a JSON array of recordings, or an object wrapping
-// one under files/items/data/results/recordings.
+// one under files/items/data/results/recordings, with or without the MCP's
+// prose/envelope around it.
 func decodePlaudFiles(text string) ([]plaudFile, error) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil, nil
 	}
-	var raw any
-	if err := json.Unmarshal([]byte(text), &raw); err != nil {
-		if i := strings.IndexAny(text, "[{"); i > 0 {
-			return decodePlaudFiles(text[i:])
-		}
+	raw, ok := plaudJSONPayload(text)
+	if !ok {
 		return nil, fmt.Errorf("plaud: list_files returned non-JSON output: %s", firstLine(text))
 	}
 	var items []any
