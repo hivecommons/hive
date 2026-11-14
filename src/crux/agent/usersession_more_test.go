@@ -166,7 +166,7 @@ func TestUserSessionLaunchArgv(t *testing.T) {
 func TestUserSessionEnvironmentCommandsStripThenSet(t *testing.T) {
 	r := newTestSessionRuntime(t, &fakeTmux{}, nil)
 	session := UserSessionTmuxName(testSessionID)
-	args := r.environmentCommands(testSessionID, session)
+	args := r.environmentCommands(testSessionID, session, "")
 	if len(args) == 0 || args[len(args)-1] == ";" {
 		t.Fatalf("command list must not end with a separator: tail %v", args[len(args)-2:])
 	}
@@ -213,7 +213,7 @@ func TestUserSessionScrubScriptDiscovery(t *testing.T) {
 	if got := r.scrubScript(); got != script {
 		t.Fatalf("scrubScript() = %q, want %q", got, script)
 	}
-	joined := strings.Join(r.environmentCommands(testSessionID, UserSessionTmuxName(testSessionID)), " ")
+	joined := strings.Join(r.environmentCommands(testSessionID, UserSessionTmuxName(testSessionID), ""), " ")
 	if !strings.Contains(joined, "BASH_ENV "+script) || !strings.Contains(joined, "ENV "+script) {
 		t.Errorf("scrub script not wired into BASH_ENV/ENV: %s", joined)
 	}
@@ -268,13 +268,13 @@ func TestUserSessionSupportsResume(t *testing.T) {
 
 func TestUserSessionResumeInfo(t *testing.T) {
 	r := newTestSessionRuntime(t, &fakeTmux{}, nil)
-	if _, ok := r.ResumeInfo("../x", "claude"); ok {
+	if _, ok := r.ResumeInfo("../x", "claude", ""); ok {
 		t.Error("invalid id produced resume info")
 	}
-	if _, ok := r.ResumeInfo(testSessionID, "bash"); ok {
+	if _, ok := r.ResumeInfo(testSessionID, "bash", ""); ok {
 		t.Error("unsupported vendor produced resume info")
 	}
-	if _, ok := r.ResumeInfo(testSessionID, "claude"); ok {
+	if _, ok := r.ResumeInfo(testSessionID, "claude", ""); ok {
 		t.Error("session without transcripts produced resume info")
 	}
 	dir := filepath.Join(userSessionHome(testSessionID), ".claude", "projects", "proj")
@@ -284,12 +284,12 @@ func TestUserSessionResumeInfo(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, testResumeUUID+".jsonl"), []byte("{}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	got, ok := r.ResumeInfo(testSessionID, "claude")
+	got, ok := r.ResumeInfo(testSessionID, "claude", "")
 	if !ok || got.SessionID != testResumeUUID || got.Command != "claude --resume "+testResumeUUID {
 		t.Fatalf("ResumeInfo = %+v, %v", got, ok)
 	}
 	// Another session's transcripts are invisible: homes are per session.
-	if _, ok := r.ResumeInfo("fedcba987654", "claude"); ok {
+	if _, ok := r.ResumeInfo("fedcba987654", "claude", ""); ok {
 		t.Error("resume info leaked across session homes")
 	}
 }

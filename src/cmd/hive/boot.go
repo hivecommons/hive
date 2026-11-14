@@ -9,6 +9,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/proxy"
+	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/crux/trajectory"
 	"github.com/hivecommons/hive/crux/watchdog"
@@ -125,15 +126,19 @@ type boot struct {
 	integrationPreparationEligibility automerge.IntegrationEligibilityGate
 
 	// bootConfig
-	startTime                     time.Time
-	configPath                    string
-	logger                        *slog.Logger
-	cfg                           *config.Config
-	ctx                           context.Context
-	preShutdownHooks              shutdownHooks
-	ghAuth                        githubAuth
-	ghClient                      *github.Client
-	appAuth                       *github.AppAuth
+	startTime        time.Time
+	configPath       string
+	logger           *slog.Logger
+	cfg              *config.Config
+	ctx              context.Context
+	preShutdownHooks shutdownHooks
+	ghAuth           githubAuth
+	ghClient         *github.Client
+	appAuth          *github.AppAuth
+	// userSessions is the one Sessions runtime behind /api/sessions; the
+	// dashboard dependencies are rebuilt, the runtime (and its workspace
+	// lock) is not. See userSessionRuntime.
+	userSessions                  *cruxruntime.UserSessions
 	ciFailureKicker               *ciFailureKicker
 	gov                           *governor.Governor
 	sched                         *scheduler.Scheduler

@@ -25,7 +25,9 @@ const (
 // testSessionUID is the uid slot testSessionSlot maps to with the default base.
 const testSessionUID = defaultUserSessionUIDBase + testSessionSlot - 1
 
-var testSessionSpecUser = strconv.Itoa(testSessionUID) + ":" + strconv.Itoa(testSessionUID)
+// testSessionSpecUser is the su-exec identity: the session uid with the
+// sessions-only shared group as its single group.
+var testSessionSpecUser = strconv.Itoa(testSessionUID) + ":" + strconv.Itoa(defaultUserSessionGID)
 
 type fakeTmuxCall struct {
 	user   string
@@ -149,6 +151,8 @@ func newTestSessionRuntimeWithPriv(t *testing.T, f *fakeTmux, environ []string) 
 	t.Setenv(userSessionUIDSlotsEnv, "")
 	t.Setenv(agentUIDBaseEnv, "")
 	t.Setenv(userSessionEnvPassthroughEnv, "")
+	t.Setenv(userSessionGIDEnv, "")
+	t.Setenv(userSessionWorkspaceDirEnv, "")
 	p := &fakePriv{}
 	return &UserSessionRuntime{
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
@@ -161,6 +165,9 @@ func newTestSessionRuntimeWithPriv(t *testing.T, f *fakeTmux, environ []string) 
 		lookPath: func(name string) (string, error) { return "/usr/bin/" + name, nil },
 		environ:  func() []string { return environ },
 		now:      time.Now,
+		git: func(context.Context, string, []string, ...string) ([]byte, error) {
+			return nil, errors.New("no git in this test")
+		},
 	}, p
 }
 

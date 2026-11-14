@@ -75,12 +75,17 @@ type SessionRuntime interface {
 	Vendors() []crux.UserSessionVendor
 	SupportsResume(vendor string) bool
 	WorkDir(id string) string
+	// WorkspaceDir is the path sessions of the "org/repo" workspace open in
+	// ("" for an empty or malformed repo). Start clones it on first use.
+	WorkspaceDir(repo string) string
 	Start(spec crux.UserSessionSpec) error
 	Probe(id string) crux.UserSessionProbe
 	Kill(id string) error
 	Capture(id string, lines int) (string, error)
 	SendText(id, text string, submit bool) error
-	ResumeInfo(id, vendor string) (crux.UserSessionResume, bool)
+	// ResumeInfo captures the vendor's newest conversation for the session;
+	// workDir is where the CLI ran ("" = the session's own work dir).
+	ResumeInfo(id, vendor, workDir string) (crux.UserSessionResume, bool)
 	// StoreUpload writes src as the named file under the session's uploads
 	// directory, as the session's own uid, and returns its absolute path.
 	StoreUpload(id, fileName string, src io.Reader, maxBytes int64, maxFiles int) (string, int64, error)
@@ -114,6 +119,11 @@ type sessionView struct {
 	// Shared (additive) is true when every read-write user may type into the
 	// session and every role may watch it; false means creator + owners only.
 	Shared bool `json:"shared"`
+	// WorkspaceRepo and Workspace (additive) are the "org/repo" and path of the
+	// hive's shared checkout the session runs in; empty when it runs in its
+	// own empty work dir.
+	WorkspaceRepo string `json:"workspace_repo"`
+	Workspace     string `json:"workspace"`
 }
 
 func (s *Server) registerSessionRoutes() {
@@ -225,6 +235,7 @@ func (st sessionRecord) view(p *crux.UserSessionProbe, rt SessionRuntime) sessio
 		ID: st.ID, Name: st.Name, Group: st.Group, Vendor: st.Vendor, Creator: st.Creator,
 		CreatedAt: st.CreatedAt, LastActivity: st.LastActivity, Status: st.Status,
 		TmuxName: sessionTmuxPrefix + st.ID, Shared: st.Shared,
+		WorkspaceRepo: st.WorkspaceRepo, Workspace: st.Workspace,
 	}
 	if st.Status == sessionStatusRunning && p != nil {
 		v.Attached = p.Attached
@@ -261,7 +272,7 @@ func (s *Server) reconcileSessions(rt SessionRuntime, st *sessionStore) map[stri
 
 func (s *Server) markSessionEnded(rt SessionRuntime, st *sessionStore, rec sessionRecord, now string) {
 	resume := ""
-	if info, ok := rt.ResumeInfo(rec.ID, rec.Vendor); ok {
+	if info, ok := rt.ResumeInfo(rec.ID, rec.Vendor, rec.Workspace); ok {
 		resume = info.Command
 	}
 	if _, _, err := st.update(rec.ID, func(r *sessionRecord) {
@@ -303,7 +314,29 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	jsonResponse(w, map[string]any{"enabled": true, "sessions": views, "vendors": vendors, "limits": s.sessionLimits()})
+	repo := s.sessionsWorkspaceRepo(rt)
+	jsonResponse(w, map[string]any{"enabled": true, "sessions": views, "vendors": vendors, "limits": s.sessionLimits(),
+		"workspace": map[string]string{"repo": repo, "path": rt.WorkspaceDir(repo)}})
+}
+
+// sessionsWorkspaceRepo is the "org/repo" new sessions open in: the
+// configured override, else the hive's project repo. "" when the repo is
+// unset or malformed, in which case sessions open in their own empty dir.
+func (s *Server) sessionsWorkspaceRepo(rt SessionRuntime) string {
+	repo := s.deps.Config.SessionsWorkspaceRepo()
+	if repo == "" || rt.WorkspaceDir(repo) == "" {
+		return ""
+	}
+	return repo
+}
+
+// sessionsSpektacularBinary is the spektacular executable sessions init their
+// workspace with (runs.spektacular.binary, default resolved through PATH).
+func (s *Server) sessionsSpektacularBinary() string {
+	if bin := strings.TrimSpace(s.deps.Config.Runs.Spektacular.Binary); bin != "" {
+		return bin
+	}
+	return config.DefaultSpektacularBinary
 }
 
 // sessionsGate answers 404 when the feature is off or unwired.
@@ -411,8 +444,10 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	rec := sessionRecord{ID: id, Name: body.Name, Group: body.Group, Vendor: vendor.ID, Creator: actor.user, CreatedAt: now, LastActivity: now, Status: sessionStatusRunning, UIDSlot: st.freeSlot(), Shared: body.Shared}
-	if err := rt.Start(crux.UserSessionSpec{ID: id, Vendor: vendor.ID, UIDSlot: rec.UIDSlot}); err != nil {
+	repo := s.sessionsWorkspaceRepo(rt)
+	rec := sessionRecord{ID: id, Name: body.Name, Group: body.Group, Vendor: vendor.ID, Creator: actor.user, CreatedAt: now, LastActivity: now, Status: sessionStatusRunning, UIDSlot: st.freeSlot(), Shared: body.Shared,
+		WorkspaceRepo: repo, Workspace: rt.WorkspaceDir(repo)}
+	if err := rt.Start(crux.UserSessionSpec{ID: id, Vendor: vendor.ID, UIDSlot: rec.UIDSlot, WorkspaceRepo: repo, SpektacularBinary: s.sessionsSpektacularBinary()}); err != nil {
 		if s.logger != nil {
 			s.logger.Warn("sessions: start failed", "id", id, "vendor", vendor.ID, "error", err)
 		}
@@ -696,7 +731,7 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 	}
 	cmd := rec.ResumeCommand
 	if cmd == "" {
-		if info, ok := rt.ResumeInfo(rec.ID, rec.Vendor); ok {
+		if info, ok := rt.ResumeInfo(rec.ID, rec.Vendor, rec.Workspace); ok {
 			cmd = info.Command
 		}
 	}
@@ -713,7 +748,10 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 	if !s.checkSessionCapacity(w, st, actor.user) {
 		return
 	}
-	if err := rt.Start(crux.UserSessionSpec{ID: rec.ID, Vendor: rec.Vendor, UIDSlot: rec.UIDSlot, ResumeCommand: cmd}); err != nil {
+	// A resume reopens the workspace the session was created in (or its own
+	// work dir for a record without one), never a repo configured since.
+	if err := rt.Start(crux.UserSessionSpec{ID: rec.ID, Vendor: rec.Vendor, UIDSlot: rec.UIDSlot, ResumeCommand: cmd,
+		WorkspaceRepo: rec.WorkspaceRepo, SpektacularBinary: s.sessionsSpektacularBinary()}); err != nil {
 		if s.logger != nil {
 			s.logger.Warn("sessions: resume failed", "id", rec.ID, "error", err)
 		}
