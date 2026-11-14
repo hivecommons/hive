@@ -1,6 +1,7 @@
 package config
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -148,5 +149,38 @@ func TestReferenceRepoTierEmptyAndNilGuards(t *testing.T) {
 	}
 	if got := c.ReferenceRepoSlugs(); len(got) != 1 || got[0] != "hivecommons/docs" {
 		t.Fatalf("slugs: %v", got)
+	}
+}
+
+func TestReferenceRepoDerivedFromNeverSerializesToYAML(t *testing.T) {
+	entries := []ReferenceRepo{
+		{Repo: "hivecommons/docs", Write: []string{ReferenceWriteIssues, ReferenceWritePRs}, DerivedFrom: "cncf/techdocs#395"},
+		{Repo: "hivecommons/hive", DerivedFrom: "cncf/techdocs#395"},
+	}
+	if !entries[0].Derived() || (ReferenceRepo{Repo: "x/y"}).Derived() {
+		t.Fatal("Derived must follow DerivedFrom")
+	}
+	out, err := yaml.Marshal(entries)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "395") || strings.Contains(string(out), "derived") {
+		t.Fatalf("derived provenance leaked into YAML:\n%s", out)
+	}
+	var back []ReferenceRepo
+	if err := yaml.Unmarshal(out, &back); err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range back {
+		if r.Derived() {
+			t.Fatalf("round-tripped entry must not read as derived: %+v", r)
+		}
+	}
+	js, err := json.Marshal(entries[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(js), `"derived_from":"cncf/techdocs#395"`) {
+		t.Fatalf("JSON must carry derived_from for the dashboard:\n%s", js)
 	}
 }

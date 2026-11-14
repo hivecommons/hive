@@ -112,7 +112,28 @@ type Spec struct {
 	Labels      LabelSet     `json:"labels,omitzero"`
 	Pipelines   []Pipeline   `json:"pipelines,omitempty"`
 	Coverage    Coverage     `json:"coverage"`
+	Intake      Intake       `json:"intake,omitzero"`
 }
+
+// Intake declares how the model's request form is read beyond the state
+// rules (hivecommons/hive#18139). A request issue created from an issue
+// form renders each field as a "### <label>" heading followed by its
+// value; the lists below name those headings, not the form's field ids.
+// Omitted on every model that has no assessment-style intake, so the hash
+// of an existing model does not change.
+type Intake struct {
+	// ReferenceRepoFields are the headings whose values name repositories
+	// the hive may study and write to once the request is accepted; they
+	// become derived project.reference_repos entries.
+	ReferenceRepoFields []string `json:"referenceRepoFields,omitempty"`
+	// OutOfScopeFields are the headings whose repositories are excluded
+	// even when another field names them.
+	OutOfScopeFields []string `json:"outOfScopeFields,omitempty"`
+}
+
+// DerivesReferenceRepos reports whether the model declares any field that
+// yields reference repos; a model without them derives nothing.
+func (i Intake) DerivesReferenceRepos() bool { return len(i.ReferenceRepoFields) > 0 }
 
 // Scope is the repository identity the model applies to. Forge is the
 // forge instance (github.com, a GHES host, a GitLab host), never implied
