@@ -57,13 +57,13 @@ func (g *fakeGit) run(_ context.Context, dir string, env []string, args ...strin
 	return nil, os.WriteFile(filepath.Join(dest, ".git", "config"), []byte(cfg), 0o644)
 }
 
-type fakeMinter struct {
+type fakeWorkspaceMinter struct {
 	token string
 	err   error
 	repos []string
 }
 
-func (m *fakeMinter) MintPushToken(_ context.Context, repo string) (string, error) {
+func (m *fakeWorkspaceMinter) MintPushToken(_ context.Context, repo string) (string, error) {
 	m.repos = append(m.repos, repo)
 	return m.token, m.err
 }
@@ -80,7 +80,7 @@ func workspaceRuntime(t *testing.T) (*UserSessionRuntime, *fakeTmux, *fakePriv, 
 	r, p := newTestSessionRuntimeWithPriv(t, f, sessionSecretEnv)
 	g := &fakeGit{}
 	r.git = g.run
-	r.cloneMinter = &fakeMinter{token: testWorkspaceToken}
+	r.cloneMinter = &fakeWorkspaceMinter{token: testWorkspaceToken}
 	p.handler = func(c fakePrivCall) (bool, []byte, error) {
 		if len(c.argv) >= 7 && c.argv[0] == "sh" && c.argv[2] == userSessionWorkspaceOwnScript {
 			return true, nil, os.Rename(c.argv[4], c.argv[5])
@@ -398,7 +398,7 @@ func TestUserSessionWorkspaceCloneFailureFailsStart(t *testing.T) {
 }
 
 func TestUserSessionWorkspaceClonesAnonymouslyWithoutToken(t *testing.T) {
-	for name, minter := range map[string]*fakeMinter{"no minter": nil, "mint fails": {err: errors.New("no app auth")}, "empty token": {token: " "}} {
+	for name, minter := range map[string]*fakeWorkspaceMinter{"no minter": nil, "mint fails": {err: errors.New("no app auth")}, "empty token": {token: " "}} {
 		t.Run(name, func(t *testing.T) {
 			r, _, _, g := workspaceRuntime(t)
 			if minter == nil {

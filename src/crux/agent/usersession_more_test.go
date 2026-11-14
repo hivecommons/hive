@@ -213,7 +213,7 @@ func TestUserSessionScrubScriptDiscovery(t *testing.T) {
 	if got := r.scrubScript(); got != script {
 		t.Fatalf("scrubScript() = %q, want %q", got, script)
 	}
-	joined := strings.Join(r.environmentCommands(testSessionID, UserSessionTmuxName(testSessionID)), " ")
+	joined := strings.Join(r.environmentCommands(testSessionID, UserSessionTmuxName(testSessionID), ""), " ")
 	if !strings.Contains(joined, "BASH_ENV "+script) || !strings.Contains(joined, "ENV "+script) {
 		t.Errorf("scrub script not wired into BASH_ENV/ENV: %s", joined)
 	}
