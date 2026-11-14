@@ -494,6 +494,17 @@ rotation, never strands a sealed file.
 | `HIVE_SECRETS_KEY` | No | none | Key material for the `env` provider, inline. Used when no key file is set. |
 | `HIVE_SECRETS_KEY_PREVIOUS` | No | none | Retired key material, decrypt-only. Set it beside the new key for one boot after a rotation; files sealed under the old generation are re-sealed under the new one as they are read, and the boot sweep covers the ones nothing reads. |
 | `HIVE_HEARTBEAT_KEY_PREVIOUS` | No | none | The previous hub-provisioned heartbeat key, decrypt-only, for a spoke whose default key material changed with a hub master-key rotation. |
+| `HIVE_OPENBAO_ADDR` | With `openbao` | none | OpenBao (or Vault-API compatible) server URL for the `openbao` provider, e.g. `https://openbao.openbao.svc:8200`. See [integrations/openbao.md](integrations/openbao.md). |
+| `HIVE_OPENBAO_TOKEN` | One of token, token file or role | none | Client token for the `openbao` provider. Prefer the file or Kubernetes auth. |
+| `HIVE_OPENBAO_TOKEN_FILE` | One of token, token file or role | none | File holding the client token (a mounted Secret). |
+| `HIVE_OPENBAO_K8S_ROLE` | One of token, token file or role | none | Kubernetes auth role: the pod's projected ServiceAccount JWT is exchanged for a client token at `/v1/auth/<mount>/login`, renewed ahead of its lease and re-obtained when a renewal is refused. |
+| `HIVE_OPENBAO_K8S_MOUNT` | No | `kubernetes` | Kubernetes auth mount. |
+| `HIVE_OPENBAO_K8S_JWT_FILE` | No | `/var/run/secrets/kubernetes.io/serviceaccount/token` | Where the ServiceAccount JWT is read from. |
+| `HIVE_OPENBAO_TRANSIT_MOUNT` | No | `transit` | Transit engine mount. |
+| `HIVE_OPENBAO_KEY` | No | `hive-<hive id>` | Transit key name; created as `aes256-gcm96` when missing and the token may create it. |
+| `HIVE_OPENBAO_NAMESPACE` | No | none | Sent as `X-Vault-Namespace` on every request. |
+| `HIVE_OPENBAO_CA_FILE` | No | system roots | PEM bundle that verifies the server certificate. |
+| `HIVE_OPENBAO_TIMEOUT` | No | `10s` | Per-request timeout (Go duration). |
 
 With `env` selected (the default) and none of these set, the hub-provisioned
 `HIVE_HEARTBEAT_KEY` is the key material, derived through HKDF with a
