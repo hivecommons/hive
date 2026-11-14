@@ -1,1 +1,0 @@
-- The egress proxy now reloads `uid-map.json` when a UID or agent name is not in its copy, so an agent added at runtime is identified from its own socket and protected by the proxy-UID name-claim check ([#18133](https://github.com/hivecommons/hive/issues/18133)) without restarting the hive ([#18184](https://github.com/hivecommons/hive/issues/18184)).
