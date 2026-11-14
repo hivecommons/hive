@@ -1897,6 +1897,11 @@ func postHeartbeatToHub(ctx context.Context, hubURL string, payload *HeartbeatPa
 	// record it even if the response body below fails to decode.
 	recordHeartbeatSuccess()
 
+	// Report-only mirror to a second hub (#18148): a reduced copy of this
+	// accepted beat goes out in its own goroutine with its own timeout. Its
+	// response is never applied, and nothing below depends on it.
+	mirrorHeartbeatAsync(ctx, hubURL, payload, logger)
+
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxPayloadBytes))
 	if err != nil {
 		logger.Warn("hub heartbeat response read failed", "error", err)
