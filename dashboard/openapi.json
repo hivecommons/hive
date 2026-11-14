@@ -3595,6 +3595,98 @@
         }
       }
     },
+    "/api/config/reference-repos": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Reference repos",
+        "description": "Returns project.reference_repos and the write vocabulary the editor offers. Owner only.",
+        "responses": {
+          "200": {
+            "description": "Current reference repos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reference_repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "write_kinds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Replace reference repos",
+        "description": "Replaces project.reference_repos after the same validation boot applies. Send an empty array to clear. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "reference_repos"
+                ],
+                "properties": {
+                  "reference_repos": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current reference repos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reference_repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "write_kinds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid list; nothing was stored"
+          }
+        }
+      }
+    },
     "/api/config/stat-sources": {
       "get": {
         "tags": [
