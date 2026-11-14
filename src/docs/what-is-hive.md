@@ -183,10 +183,10 @@ ACMM level, and hive-profile actions. See
 Hive drives Claude Code, GitHub Copilot CLI, Codex, Goose, Antigravity and
 OpenAI-compatible gateways; reads work from GitHub Issues, GitHub Projects,
 Linear and Jira; runs on GitHub today with GitLab and Gitea/Forgejo
-planned; and can sandbox agents with rootless Podman or Kubernetes Jobs, with
-OpenShell and Agent Substrate sandboxes and an opt-in OpenBao keystore in
-progress. See the [integrations page](integrations.md) for the full logo grid
-with status.
+planned; can sandbox agents with rootless Podman or Kubernetes Jobs, with
+OpenShell and Agent Substrate sandboxes in progress; and encrypts its secrets
+at rest, with OpenBao Transit as the opt-in key manager. See the
+[integrations page](integrations.md) for the full logo grid with status.
 
 ## Related projects
 

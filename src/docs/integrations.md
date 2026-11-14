@@ -101,17 +101,17 @@ per-backend confinement matrix.
 ## Secrets and keys
 
 Spoke secrets on the `/data` volume (API keys, the backup key, the owner's
-GitHub token, the Copilot login, `github.token`) are being moved behind one
-small keystore interface so the volume on its own no longer yields them. The
-default provider needs no new infrastructure; OpenBao Transit is the opt-in
-alternative for operators who already run a key manager. The
-[#18214](https://github.com/hivecommons/hive/issues/18214) tracker lists what
-is left.
+GitHub token, the Copilot login, `github.token`) sit behind one small keystore
+interface so the volume on its own no longer yields them
+([security-model.md](security-model.md#5-network-and-credentials),
+[#18214](https://github.com/hivecommons/hive/issues/18214)). The default
+provider needs no new infrastructure; OpenBao Transit is the opt-in
+alternative for operators who already run a key manager.
 
 <table>
 <tr><th>Logo</th><th>Integration</th><th>Status</th><th>Docs</th></tr>
-<tr><td><img src="assets/logos/keystore-badge.svg" height="40" alt="Keystore"></td><td>Built-in keystore (<code>env</code> provider, AES-256-GCM keyed from the hub-provisioned per-hive key)</td><td>In progress (default)</td><td><a href="https://github.com/hivecommons/hive/issues/18215">#18215</a></td></tr>
-<tr><td><img src="assets/logos/openbao.svg" height="40" alt="OpenBao logo"></td><td>OpenBao Transit keystore provider</td><td>In progress (opt-in)</td><td><a href="https://github.com/hivecommons/hive/issues/18216">#18216</a></td></tr>
+<tr><td><img src="assets/logos/keystore-badge.svg" height="40" alt="Keystore"></td><td>Built-in keystore (<code>env</code> provider, AES-256-GCM keyed from the hub-provisioned per-hive key or <code>HIVE_SECRETS_KEY</code>)</td><td>Supported (default)</td><td><a href="env-vars.md#secrets-at-rest-keystore">env-vars.md</a></td></tr>
+<tr><td><img src="assets/logos/openbao.svg" height="40" alt="OpenBao logo"></td><td>OpenBao Transit keystore provider (Vault-API compatible)</td><td>Opt-in</td><td><a href="integrations/openbao.md">integrations/openbao.md</a></td></tr>
 </table>
 
 ## Ecosystem and upstream
