@@ -108,6 +108,12 @@
     .wf-ed-field input[readonly] { color: var(--muted); }
     .wf-ed-inline { display: flex; gap: var(--sp-2); align-items: center; }
     .wf-ed-inline input { flex: 1 1 auto; min-width: 0; }
+    /* Column icon row (hivecommons/hive#18033): preview glyph, id pick-list, emoji box. */
+    .wf-ed-icon-row .wf-ed-icon-preview { display: inline-flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex: 0 0 auto; border-radius: var(--r-sm, 4px); background: var(--panel-strong); color: var(--text); }
+    .wf-ed-icon-row .wf-ed-icon-preview .ham-ico { width: 14px; height: 14px; }
+    .wf-ed-icon-row .wf-ed-icon-preview .ham-emoji-ico { width: 14px; height: 14px; font-size: var(--fs-sm); line-height: 14px; }
+    .wf-ed-icon-row select { flex: 1 1 auto; min-width: 0; }
+    .wf-ed-icon-row .wf-ed-icon-emoji { flex: 0 0 7em; }
     .wf-ed-checks { display: flex; gap: var(--sp-4); align-items: center; flex-wrap: wrap; }
     .wf-ed-warn { color: var(--status-warn); }
     .wf-ed-translist { margin: var(--sp-0); padding-left: var(--sp-5); font-size: var(--fs-xs); }

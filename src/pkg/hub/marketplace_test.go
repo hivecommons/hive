@@ -598,6 +598,11 @@ func TestMarketplaceRefreshRoutesAndStatus(t *testing.T) {
 	}
 	rf.mu.Lock()
 	rf.running = false
+	// The single-repo refresh above already left an "on-demand:" result in
+	// rf.last, and rf.running stays false until the background goroutine
+	// starts — so waiting on those alone can pass before the full run even
+	// begins. Wait for the full run to replace this result instead.
+	previous := rf.last
 	rf.mu.Unlock()
 	t.Setenv(hubMarketplaceExtraReposEnv, "konflux-ci/konflux-ci")
 	if rec = mktDo(s, admin("/api/marketplace/refresh")); rec.Code != 202 {
@@ -606,7 +611,7 @@ func TestMarketplaceRefreshRoutesAndStatus(t *testing.T) {
 	testutil.Eventually(t, 5*time.Second, func() bool {
 		rf.mu.Lock()
 		defer rf.mu.Unlock()
-		return !rf.running && rf.last != nil && strings.HasPrefix(rf.last.Trigger, "on-demand:")
+		return !rf.running && rf.last != nil && rf.last != previous && strings.HasPrefix(rf.last.Trigger, "on-demand:")
 	}, "background refresh did not finish")
 
 	rec = mktDo(s, httptest.NewRequest(http.MethodGet, "/api/marketplace/status", nil))

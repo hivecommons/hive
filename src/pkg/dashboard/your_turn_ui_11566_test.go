@@ -273,7 +273,7 @@ const location = { search: '', hash: '' };
 function getComputedStyle() { return { getPropertyValue() { return ''; } }; }
 const historyData = []; function getHistoryTimes() { return []; } function sparkSvg() { return ''; }
 let _yourTurnMenu = null;
-let _repoResizeDrag = null, _repoOrderDrag = null, _overviewProjectFilterKey = '', _overviewProjectFilterCount = null, _overviewLastRepos = [];
+let _repoResizeDrag = null, _repoOrderDrag = null, _overviewProjectFilterKey = '', _overviewProjectFilterCount = null, _overviewLastRepos = [], _repoHoldLayoutSig = null, _repoHoldShiftAt = 0;
 function marker(repo, kind, number, variant, tip) {
   const el = mkEl('marker-' + variant + '-' + repo + number, 'button');
   el.dataset = { ytRepo: repo, ytKind: kind, ytNumber: String(number), ytVariant: variant, ytTip: tip };

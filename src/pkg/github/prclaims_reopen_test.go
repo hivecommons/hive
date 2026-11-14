@@ -233,8 +233,13 @@ func TestReconcileReopenedIssuesVoidsClaimFromTimeline(t *testing.T) {
 }
 
 func TestReopenedClaimPersistsAcrossLoad(t *testing.T) {
+	// Pin the clock near the fixture dates: with the wall clock, the merged
+	// claim ages past settledClaimRetention 30 days after reopenTestMerged and
+	// the reload prunes it, which is retention working, not a reopen bug.
+	now := func() time.Time { return reopenTestReopened.Add(time.Hour) }
 	path := filepath.Join(t.TempDir(), "ledger.json")
 	ledger := NewClaimLedger(path, testLogger())
+	ledger.SetClock(now)
 	ledger.Reconcile([]IssueClaim{reopenTestClaim()}, true)
 	if !ledger.MarkIssueReopened("r", 7, reopenTestReopened) {
 		t.Fatal("setup: reopen not recorded")
@@ -242,10 +247,7 @@ func TestReopenedClaimPersistsAcrossLoad(t *testing.T) {
 	if err := ledger.Save(); err != nil {
 		t.Fatal(err)
 	}
-	// Load with a clock fixed just after the reopen: the fixture's merge date
-	// is fixed, so on the wall clock the settled claim's retention runs out
-	// and the load drops the claim this test is about.
-	reloaded, err := loadClaimLedgerAt(path, testLogger(), func() time.Time { return reopenTestReopened.Add(time.Hour) })
+	reloaded, err := loadClaimLedgerAt(path, testLogger(), now)
 	if err != nil {
 		t.Fatal(err)
 	}

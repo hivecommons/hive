@@ -522,6 +522,45 @@ fixture under `pkg/workflowmodel/ingest/testdata/techdocs` carries both.
 - Branch protection needs `administration:read`; without it the rulesets endpoint is used, which
   omits legacy protection settings such as `enforce_admins`.
 
+### Intake hook: reference repos from a request issue
+
+A model may declare, in `spec.intake`, which issue-form headings name repositories the work is
+*about* ([#18139](https://github.com/hivecommons/hive/issues/18139)). This is a model capability,
+not a hive setting: binding a model that declares it is what turns derivation on for that repo.
+
+```yaml
+spec:
+  intake:
+    referenceRepoFields:          # headings whose values name repositories in scope
+      - "Website or documentation repository"
+      - "Other repositories or sites in scope"
+    outOfScopeFields:             # headings whose repositories are excluded
+      - "Out of scope"
+```
+
+`Intake{ReferenceRepoFields, OutOfScopeFields}` (`json:"intake,omitzero"`, `pkg/workflowmodel/model.go`)
+is omitted on every existing model, so stored hashes are unchanged and the strict curated decoder
+keeps accepting the current files; setting it changes the spec hash. The entries are the rendered
+`### <label>` headings as they appear in a request issue body, not the form's field ids, because the
+hive only ever sees the body. CamelCase follows the rest of the model (`guardRef`, `workTypes`).
+
+The pure parser lives in `pkg/refderive`: `ParseIssueForm` reads the body into heading/value
+fields, `ReposInText` extracts `owner/repo` from URLs on the hive's host anywhere in the text and
+from bare slugs only when the slug is a whole line or list item, and `Derive` returns one
+`issues+prs` `config.ReferenceRepo` per in-scope repo with `DerivedFrom: owner/repo#N`. It refuses
+with a typed error when the issue is closed, lacks `triage/accepted`, the label's applier is
+unknown, lacks write access or is a bot, or the model declares no intake fields. Everything that
+talks to GitHub (listing candidates, reading the label applier from the timeline, resolving the
+credential) is in `cmd/hive` and `pkg/github`; the operator view is in
+[agent-configuration.md](../agent-configuration.md#reference-repos-derived-from-an-accepted-request).
+
+TechDocs is the first model to declare the hook: `cncf-techdocs-assessment@curated-2026.11.2`
+([techdocs-assessment.md](../workflows/techdocs-assessment.md#reference-repos-from-the-request)).
+Curated files are never edited in place, so `curated-2026.11.1` stays without the block and a hive
+bound to it derives nothing. The fixture `pkg/refderive/testdata/techdocs-395.md` (trimmed
+`cncf/techdocs#395`) yields `hivecommons/docs`, `hivecommons/hivecommons.github.io` and
+`hivecommons/hive`.
+
 ## Label GC and model commands (RFC phase 4, follow-up)
 
 Two of the phase-4 backend gaps close here: stale model labels are now reclaimed, and a bound

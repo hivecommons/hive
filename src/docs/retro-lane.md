@@ -27,7 +27,9 @@ built from the advisor's decision records and joined by the issue ref:
 - `AdvisorArm`: `none` (no decisions), `shadow` (shadow mode, delivery unchanged),
   `deliver` (rank mode, advice delivered), `holdout` (every kick was held out:
   the model ranked but nothing was typed), or `mixed` (kicks in more than one arm).
-- `AdvisorDecisions`, `AdvisorDelivered`, `AdvisorHeldOut`: counters over those decisions.
+- `AdvisorDecisions`, `AdvisorDelivered`, `AdvisorHeldOut`, `AdvisorRateLimited`: counters over
+  those decisions. A `rate-limited` decision (the model endpoint answered 429) is counted but
+  assigns no arm, so a throttled hour does not move a bead into `deliver`.
 
 Only these counters reach the analysis model; the advisor's reasons and pane text never do.
 

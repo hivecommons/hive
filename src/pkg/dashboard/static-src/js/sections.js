@@ -14,7 +14,7 @@
     // keeps the historical all-expanded default forever) or is new ('v1').
     const DASHBOARD_DEFAULT_COLLAPSED_SECTIONS = Object.freeze([
       'pr-throughput-section', 'token-panel', 'cost-panel', 'advisory-section', 'knowledge-section', 'inbox-section',
-      'contributors-section', 'inception-section', 'acmm-eval-section', 'debug-section', 'audit-section',
+      'contributors-section', 'inception-section', 'sessions-section', 'acmm-eval-section', 'debug-section', 'audit-section',
       'logs-section', 'nous-section', 'faq-section', 'runs-section', 'search-section'
     ]);
     const DASHBOARD_COLLAPSE_DEFAULTS_KEY = 'hive.dashboard.collapseDefaults';
@@ -50,6 +50,7 @@
       needs_attention: { label: 'needs attention', status: 'attention' },
       needs_context: { label: 'needs context', status: 'warn' },
       needs_login: { label: 'needs login', status: 'attention' },
+      out_of_quota: { label: 'out of quota', status: 'error' },
       on_demand: { label: 'on demand', status: 'info' },
       active: { label: 'active', status: 'info' },
       initializing: { label: 'initializing', status: 'info' },
@@ -127,6 +128,7 @@
       'review-queue-subsection': { title: 'Queue', summary: '—' },
       'nous-section': { title: '🧪 Experiment Lab (nous)', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },
       'inception-section': { title: '💡 Inception (spektacular)', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
+      'sessions-section': { title: '💻 Sessions', summary: '0 running · 0 total', badgeHtml: '<span class="dash-card-badge">shared terminals</span>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'search-section': { title: '🔍 Search', summary: 'search' },
       'inbox-section': { title: '📥 Inbox', summary: '0 to triage' },
@@ -165,6 +167,7 @@
       'review-pipeline-subsection': { heading: 'Review Pipeline', help: 'Each open PR in the stage the review pipeline derived for it (GET /api/review/pipeline), with reviewers, P0–P3 findings, the fix-loop counter and the next action.' },
       'review-queue-subsection': { heading: 'Queue', help: 'Every open PR across the governed repos in one deterministic rank order (GET /api/review/queue), regardless of author type, with the reasons for each position.' },
       'nous-section': { heading: 'Experiment Lab', help: 'An experimental planner that tries out code changes in your repositories and records what it learned.' },
+      'sessions-section': { heading: 'Sessions', help: 'Named terminal sessions running command-line AI tools inside Hive. Everyone on this hive can watch, and people with write access can type.' },
       'inception-section': { heading: 'Inception', help: 'A step-by-step guide that turns a new project idea into a first set of files and planned work.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'search-section': { heading: 'Search', help: 'Find past pull requests, issues, review records and findings across your projects by keyword, with a link to each one.' },
@@ -775,6 +778,8 @@
         return reviewQueueCollapsedSummary(text);
       } else if (sectionId === 'inception-section') {
         inner = miniBar([{ label: 'proposals', value: n0, color: 'var(--blue)' }, { label: 'in progress', value: nums[1] || 0, color: 'var(--green)' }], text);
+      } else if (sectionId === 'sessions-section') {
+        inner = miniBar([{ label: 'running', value: n0, color: 'var(--green)' }], text);
       } else if (sectionId === 'contributors-section') {
         inner = miniAvatarDots((typeof _cachedContributors === 'undefined' ? [] : _cachedContributors), n0, text);
       } else if (sectionId === 'debug-section') {
@@ -978,6 +983,11 @@
       const text = String((a && (a.backendAuthStatus || a.backendAuthLastError || a.statusEvidence)) || '').toLowerCase();
       if (text.includes('expired') || text.includes('token_expired')) return { label: 'expired', status: 'error', needsLogin: true };
       if (_agentNeedsLogin(a || {}, isDown)) return { label: 'logged out', status: 'error', needsLogin: true };
+      // #18111: out of provider quota is red, but never "logged out" — re-login
+      // does not help. agentOutOfQuotaShown applies the card's exclusions
+      // (disabled, paused, held off by mode, starting, stopped); a down tile
+      // already reads "stopped".
+      if (!isDown && agentOutOfQuotaShown(a)) return { label: 'out of quota', status: 'error', needsLogin: false, quota: true };
       return { label: 'authenticated', status: 'ok', needsLogin: false };
     }
     function agentCollapsedTimestampDetail(ms, fallback) {
@@ -997,7 +1007,8 @@
       return [
         name,
         `power: ${power}`,
-        `login: ${auth.label}`,
+        `login: ${auth.quota ? 'authenticated' : auth.label}`,
+        ...(auth.quota ? ['provider: out of quota'] : []),
         `next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextKick))}`,
         `last kick: ${agentCollapsedTimestampDetail(Number.isFinite(lastMs) ? lastMs : null, a && a.lastKick)}`,
       ].join('\n');
@@ -1006,6 +1017,7 @@
       if (disabled) return 'disabled';
       if (auth && auth.needsLogin) return auth.label;
       if (isDown) return 'stopped';
+      if (auth && auth.quota) return auth.label;
       return '';
     }
     function agentTileLabelHtml(label) {
@@ -1067,7 +1079,7 @@
       const state = agentCollapsedStateLabel(disabled, isDown, auth);
       const sortKey = tileState.sortKey || agentCollapsedSortKey(a, 0, nowMs);
       const label = tileState.label || null;
-      const classes = ['agent-collapsed-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', disabled ? 'disabled' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
+      const classes = ['agent-collapsed-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', disabled ? 'disabled' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', auth.quota ? 'out-of-quota' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
       const title = agentCollapsedTileTitle(a || {}, agentTileTitleName(name, replica), power, auth, nextMs);
       const labelHtml = agentTileLabelHtml(label);
       const stateHtml = state ? `<span class="agent-tile-state"> · ${esc(state)}</span>` : '<span class="agent-tile-state"></span>';
@@ -1132,9 +1144,9 @@
       const nextMs = Number.isFinite(tileState.nextMs) ? tileState.nextMs : agentCollapsedNextKickMs(a, nowMs);
       const countdown = tileState.countdown || (active ? agentTileRunningLabel(a, nowMs) : agentTileCadenceLabel(a, nowMs));
       const label = tileState.label || null;
-      const classes = ['agent-navbar-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
+      const classes = ['agent-navbar-tile', active ? 'active' : '', label === 'running' ? 'running-now' : '', isDown && !disabled ? 'stopped' : '', auth.needsLogin ? 'needs-login' : '', auth.quota ? 'out-of-quota' : '', label === 'next' ? 'up-next' : ''].filter(Boolean).join(' ');
       const replica = agentTileReplicaInfo(a);
-      const title = `${agentTileTitleName(name, replica)}
+      const title = `${agentTileTitleName(name, replica)}${auth.quota ? '\nprovider: out of quota' : ''}
 next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextKick))}`;
       const labelHtml = agentTileLabelHtml(label);
       return `<button type="button" class="${classes}" data-action="openAgentsUpNextPanel" data-agent-key="${esc(key)}" data-agent-next-kick-ms="${Number.isFinite(nextMs) ? String(nextMs) : ''}" data-agent-running="${active ? '1' : ''}" data-agent-running-since="${esc((a && (a.busySince || a.runningSince || a.startedAt)) || '')}" data-agent-can-up-next="${tileState.canBeNext ? '1' : ''}" data-agent-tile-label="${esc(label || '')}" data-agent-active="${active ? '1' : ''}" data-stop="1" title="${esc(title)}" aria-label="${esc(title)}">${agentTileNameHtml(name, replica)}<span class="agent-tile-dot" data-status="${auth.status}" aria-hidden="true"></span><span class="agent-tile-next"><span class="agent-tile-countdown">${esc(countdown)}</span></span>${labelHtml}</button>`;
@@ -1254,14 +1266,52 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       wrap.dataset.upNextKey = nextItem ? nextItem.id : '';
       animateAgentNavbarReorder(wrap, beforeRects);
     }
+    function agentNavbarSummaryLabel(count) {
+      return String(count) + (count === 1 ? ' agent' : ' agents');
+    }
+    // The narrow-strip summary is a real button (not a CSS pseudo-element) so
+    // it can carry data-action and receive clicks and keyboard activation. It
+    // stays the strip's LAST child so renderAgentNavbarTileDiff's index-based
+    // insertBefore always places tiles ahead of it.
+    function renderAgentNavbarSummary(wrap, count) {
+      let btn = wrap.querySelector('.agent-navbar-summary');
+      if (!count) {
+        if (btn) btn.remove();
+        return null;
+      }
+      if (!btn) {
+        btn = document.createElement('button');
+        btn.setAttribute('type', 'button');
+        btn.className = 'agent-navbar-summary';
+        btn.setAttribute('data-action', 'openAgentsUpNextPanel');
+        btn.setAttribute('data-stop', '1');
+        const full = document.createElement('span');
+        full.className = 'agent-navbar-summary-full';
+        const short = document.createElement('span');
+        short.className = 'agent-navbar-summary-short';
+        short.textContent = 'Next';
+        btn.appendChild(full);
+        btn.appendChild(short);
+      }
+      const label = agentNavbarSummaryLabel(count);
+      const title = label + ' in the run order — open the Agents section';
+      const full = btn.querySelector('.agent-navbar-summary-full');
+      if (full && full.textContent !== label) full.textContent = label;
+      btn.setAttribute('title', title);
+      btn.setAttribute('aria-label', title);
+      if (wrap.lastElementChild !== btn) wrap.appendChild(btn);
+      return btn;
+    }
     function renderAgentNavbarUpNext(agents, nowMs) {
       const wrap = document.getElementById('agent-navbar-upnext');
       if (!wrap) return;
       const now = Number.isFinite(nowMs) ? nowMs : Date.now();
-      const list = agentTileStates(agents, now, window._lastStatus && window._lastStatus.governor).filter(item => agentNavbarHasSchedule(item.agent, now)).slice(0, 3);
+      const scheduled = agentTileStates(agents, now, window._lastStatus && window._lastStatus.governor).filter(item => agentNavbarHasSchedule(item.agent, now));
+      const list = scheduled.slice(0, 3);
       wrap.hidden = list.length === 0;
-      wrap.dataset.agentSummary = list.length ? String(list.length) + ' agents ▾' : '';
+      const summary = renderAgentNavbarSummary(wrap, scheduled.length);
       renderAgentNavbarTileDiff(wrap, list, now);
+      if (summary && wrap.lastElementChild !== summary) wrap.appendChild(summary);
       fitAgentNavbarTiles(wrap);
       ensureAgentNavbarFitObserver(wrap);
       if (list.length) ensureAgentsCollapsedCountdownTicker();

@@ -64,9 +64,13 @@ type Citation struct {
 
 // Column is one Activity Monitor column; several states may share it.
 type Column struct {
-	ID       string   `json:"id"`
-	Label    string   `json:"label"`
-	Hint     string   `json:"hint,omitempty"`
+	ID    string `json:"id"`
+	Label string `json:"label"`
+	Hint  string `json:"hint,omitempty"`
+	// Icon overrides the glyph the Activity Monitor draws in this column's
+	// chevrons: an allowlisted id from ColumnIconIDs or a single emoji;
+	// empty picks the icon by the column's label (hivecommons/hive#18033).
+	Icon     string   `json:"icon,omitempty"`
 	States   []string `json:"states"`
 	Terminal bool     `json:"terminal,omitempty"`
 }

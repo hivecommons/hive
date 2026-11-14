@@ -529,6 +529,7 @@
       // Update Light health badge with hover detail
       renderNavbarHealthBadge(document.getElementById('oc-health'), data);
       renderProviderStrip(document.getElementById('oc-providers'), data.providers);
+      if (typeof subscriptionGaugeRefresh === 'function') subscriptionGaugeRefresh();
       renderGhRateLimits(data.ghRateLimits || {});
       renderGitHubAppBanner(data);
       renderRepoTargetBanner(data);
@@ -573,7 +574,7 @@
         'runs-section', 'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
         'advisory-section', 'advisory-digest-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
         'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
-        'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section',
+        'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section', 'sessions-section',
         'knowledge-section', 'search-section', 'inbox-section', 'contributors-section', 'debug-section', 'logs-section',
         'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'
       ];

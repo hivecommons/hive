@@ -481,7 +481,8 @@ The sections:
   `question_autoclose`, `question_autoclose_schedule`,
   `fleet_report`, `work_source`, `project_observability`, `general_advanced`,
   `cadence_scope`, `threshold_scaling`, `backup`, `bob`, `inference_auth`,
-  `gateways`, `backends`, `variables`, `write_surface`, `stat_sources`.
+  `gateways`, `backends`, `variables`, `write_surface`, `stat_sources`,
+  `reference_repos`.
 - **Knowledge:** `knowledge_pipeline`, `knowledge_connectors`,
   `knowledge_connectors_status`, `knowledge_agent_scopes`, `knowledge_public`.
 - **Panels the tabs load:** `upstream_watch`, `linear_agent`,
@@ -495,6 +496,9 @@ Not reachable:
   credentials (`config_effective_read` is the vetted view of the effective
   configuration and its provenance);
 - an agent's export bundle (the `agent` and `agent_prompt` sections hold it);
+- the GitHub webhook setup card, which probes the GitHub App's hook
+  permissions live on every read (webhook verification and health are in
+  `/api/status`);
 - the theme and sidebar, which are purely presentational.
 
 A test fails when the dashboard serves a new `GET /api/config` route that is

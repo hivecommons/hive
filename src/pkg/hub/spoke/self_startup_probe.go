@@ -13,12 +13,24 @@ const (
 	HostedStartupProbeInitialDelaySeconds = 10
 	HostedStartupProbePeriodSeconds       = 5
 	HostedStartupProbeFailureThreshold    = (int(HostedStartupBudget/time.Second) - HostedStartupProbeInitialDelaySeconds) / HostedStartupProbePeriodSeconds
+
+	// HostedStartupProbePath and HostedDashboardPort are the hosted template's
+	// startupProbe handler, used when a hive container has NO startupProbe at
+	// all and the whole probe has to be installed (not just its threshold).
+	HostedStartupProbePath = "/api/health"
+	HostedDashboardPort    = 3002
 )
 
 // k8sUpgradePatch backfills the startup budget in the SAME template update as
-// the image/restart annotation, avoiding a second rollout. Only raise an existing
-// hive probe: sidecars, init containers and deployments without a probe keep
-// their configuration. Strategic merge preserves the handler and other timings.
+// the image/restart annotation, avoiding a second rollout. Only the hive
+// container is touched: sidecars and init containers keep their configuration.
+// An existing hive probe is raised to the template budget (strategic merge
+// preserves its handler and other timings). A hive container with NO
+// startupProbe gets the template's full probe: pre-#9692 deployments on
+// pull-only clusters (where the hub cannot reach the Deployment itself) were
+// left with only the 3×30s livenessProbe, so a boot stalled >90s behind forge
+// timeouts was SIGTERMed before the dashboard bound and the spoke crash-looped
+// for the length of the forge outage.
 // A nil body requests only a probe backfill and skips PATCH when none is needed.
 func k8sUpgradePatch(path string, body []byte) error {
 	current, err := k8sAPIGet(path)
@@ -41,6 +53,8 @@ func k8sUpgradePatchWithDeployment(path string, body, current []byte) error {
 						StartupProbe *struct {
 							FailureThreshold int `json:"failureThreshold"`
 						} `json:"startupProbe"`
+						ReadinessProbe *probeHandler `json:"readinessProbe"`
+						LivenessProbe  *probeHandler `json:"livenessProbe"`
 					} `json:"containers"`
 				} `json:"spec"`
 			} `json:"template"`
@@ -51,7 +65,7 @@ func k8sUpgradePatchWithDeployment(path string, body, current []byte) error {
 	}
 	probeOnly := body == nil
 	for _, c := range dep.Spec.Template.Spec.Containers {
-		if c.Name != selfUpgradeDeployName || c.StartupProbe == nil || c.StartupProbe.FailureThreshold >= HostedStartupProbeFailureThreshold {
+		if c.Name != selfUpgradeDeployName || (c.StartupProbe != nil && c.StartupProbe.FailureThreshold >= HostedStartupProbeFailureThreshold) {
 			continue
 		}
 		if probeOnly {
@@ -82,7 +96,11 @@ func k8sUpgradePatchWithDeployment(path string, body, current []byte) error {
 			target = map[string]any{"name": c.Name}
 			containers = append(containers, target)
 		}
-		target["startupProbe"] = map[string]any{"failureThreshold": HostedStartupProbeFailureThreshold}
+		if c.StartupProbe == nil {
+			target["startupProbe"] = fullStartupProbe(startupProbePort(c.ReadinessProbe, c.LivenessProbe))
+		} else {
+			target["startupProbe"] = map[string]any{"failureThreshold": HostedStartupProbeFailureThreshold}
+		}
 		spec["containers"] = containers
 		body, err = json.Marshal(patch)
 		if err != nil {
@@ -94,4 +112,40 @@ func k8sUpgradePatchWithDeployment(path string, body, current []byte) error {
 		return nil
 	}
 	return k8sAPIPatch(path, body)
+}
+
+// probeHandler is the slice of a Kubernetes probe the backfill needs: the
+// httpGet port the dashboard already answers on.
+type probeHandler struct {
+	HTTPGet *struct {
+		Port json.Number `json:"port"`
+	} `json:"httpGet"`
+}
+
+// startupProbePort picks the port for a newly installed startupProbe: the
+// port the existing readiness or liveness probe already targets (the dashboard
+// is proven to answer there), else the hosted template default.
+func startupProbePort(probes ...*probeHandler) any {
+	for _, p := range probes {
+		if p == nil || p.HTTPGet == nil || p.HTTPGet.Port == "" {
+			continue
+		}
+		if n, err := p.HTTPGet.Port.Int64(); err == nil && n > 0 {
+			return n
+		}
+		return p.HTTPGet.Port.String()
+	}
+	return HostedDashboardPort
+}
+
+// fullStartupProbe renders the hosted template's startupProbe for a container
+// that has none, so the self-upgrade path converges exactly what provisioning
+// would have written.
+func fullStartupProbe(port any) map[string]any {
+	return map[string]any{
+		"httpGet":             map[string]any{"path": HostedStartupProbePath, "port": port},
+		"initialDelaySeconds": HostedStartupProbeInitialDelaySeconds,
+		"periodSeconds":       HostedStartupProbePeriodSeconds,
+		"failureThreshold":    HostedStartupProbeFailureThreshold,
+	}
 }

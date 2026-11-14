@@ -12,7 +12,7 @@ func TestTwitchLiveStreamLinkInDashboardShell(t *testing.T) {
 	for _, want := range []string{
 		`<a class="oc-nav-item" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener"`,
 		`<span class="oc-nav-text">Watch live on Twitch</span>`,
-		`Watch the hive live on Twitch</a>.</p>`,
+		`Watch the hive live on Twitch</a>.`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Fatalf("index.html missing %q", want)

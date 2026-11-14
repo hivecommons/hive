@@ -26,6 +26,7 @@ var settingsReadExcludedRoutes = map[string]string{
 	"/api/config/agent/{name}/export": "a download bundle of the agent and agent_prompt sections",
 	"/api/config/dashboard/theme":     "purely presentational (the exclusion of presentational endpoints)",
 	"/api/config/sidebar":             "purely presentational (the exclusion of presentational endpoints)",
+	"/api/config/github/webhooks":     "an owner setup card that probes the GitHub App's hook permissions live on every read; webhook verification and health are in /api/status.webhooks",
 }
 
 // settingsPageOtherRoutes are the GET routes outside /api/config that Settings

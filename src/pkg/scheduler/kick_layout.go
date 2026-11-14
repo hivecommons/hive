@@ -26,6 +26,9 @@ import (
 //	8. <resolved policy body>                static text, then ${ISSUE_LIST}/${PR_LIST}/… where the template puts them
 //	9. REPO-SCOPED CADENCE TARGET            semi-static (repo-scoped kicks only)
 //	10. AUTHORIZED REPOS                     semi-static (include_repos)
+//	10a. 📚 REFERENCE REPOS                  semi-static (project.reference_repos; rendered inside 10, after
+//	                                         the authorized/paused lists and before its ⛔ scope lines, so
+//	                                         "repos not listed above" covers them — #18015/#18020)
 //	11. hold-gated PR coordination           dynamic (held PR snapshot)
 //	12. red-PR fix-before-new                dynamic (ci-failing.json)
 //	13. review-thread fix-before-new         dynamic (review-threads.json)

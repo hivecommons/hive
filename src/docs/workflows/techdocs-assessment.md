@@ -1,8 +1,8 @@
 # CNCF TechDocs AI-assisted assessment — curated workflow model
 
-`cncf-techdocs-assessment@curated-2026.11.1` is the first curated model in the hub
-marketplace (https://hive.hivecommons.dev → Settings → Workflows → Marketplace on any
-hive). It encodes the CNCF TechDocs team's AI-assisted documentation assessment process
+`cncf-techdocs-assessment@curated-2026.11.2` is the current version of the first curated
+model in the hub marketplace (https://hive.hivecommons.dev → Settings → Workflows →
+Marketplace on any hive); `curated-2026.11.1` stays in the catalogue unchanged. It encodes the CNCF TechDocs team's AI-assisted documentation assessment process
 so a hive bound to `cncf/techdocs` runs intake, drafting, verification, stakeholder review
 and approval as a visible lifecycle, with every agent action followed by a human gate.
 
@@ -18,10 +18,12 @@ annotations and in each element's `citations`):
   `pkg/workflowmodel/ingest/testdata/techdocs/`.
 
 The model's scope is `github.com cncf/techdocs` — the upstream repository where the
-process runs; the fork above is where the spec was written. Model file:
-`pkg/hub/marketplace/curated/cncf-techdocs-assessment.yaml`
+process runs; the fork above is where the spec was written. Model files:
+`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.2.yaml` (current) and
+`pkg/hub/marketplace/curated/cncf-techdocs-assessment.yaml` (`curated-2026.11.1`)
 (`apiVersion: workflow.hivecommons.dev/v1alpha1`, `derivation.mode: rules`,
-`meta.provenance: curated`). The same repository is also in the ingest corpus
+`meta.provenance: curated`). Curated files are never edited in place: a change is a new
+file with a new `meta.version`, and the catalogue keeps every version. The same repository is also in the ingest corpus
 (`pkg/workflowmodel/ingest/corpus/extra.json`), so an `ingested-unreviewed` version built
 from the pipeline files alone sits next to this one in the catalogue.
 
@@ -131,6 +133,63 @@ moving-levels → assessment metadata; website/docs/repo/other-scope/out-of-scop
 domains → the agent's egress allowlist; contacts → the frozen stakeholder set (validated
 at `/accept`); tooling/context → drafter input; the HC-6 disclosure acknowledgement is
 required.
+
+#### Reference repos from the request
+
+`curated-2026.11.2` adds a `spec.intake` block
+([hivecommons/hive#18139](https://github.com/hivecommons/hive/issues/18139)):
+
+```yaml
+intake:
+  referenceRepoFields:
+    - "Website or documentation repository"
+    - "Other repositories or sites in scope"
+  outOfScopeFields:
+    - "Out of scope"
+```
+
+The entries are the rendered `### <label>` headings of `assessment-request.yml` as they
+appear in a request issue's body, not the form's field ids. A hive bound to this version
+derives one write-tier (`issues+prs`) `project.reference_repos` entry per repository named
+under a `referenceRepoFields` heading and not under an `outOfScopeFields` heading, once a
+maintainer with write access to `cncf/techdocs` applies `triage/accepted` to the request.
+The derived entries carry the request as provenance (`cncf/techdocs#395` style), are
+rebuilt on every config load and never written to the overlay or runtime config, and
+disappear when the issue closes or the label is removed. `curated-2026.11.1` is unchanged
+and declares no intake fields, so a hive that stays bound to it derives nothing.
+
+#### Operator walkthrough: the Hive Commons pilot
+
+The first request through this path is
+[cncf/techdocs#395](https://github.com/cncf/techdocs/issues/395), the Hive Commons assessment.
+What the operator of the TechDocs hive (authorized repo `cncf/techdocs`) does and sees:
+
+1. **Rebind to 11.2.** Settings → Workflows → Marketplace, bind `cncf/techdocs` to
+   `cncf-techdocs-assessment@curated-2026.11.2`. This step is required: a hive still bound to
+   `curated-2026.11.1` derives nothing, however many requests are accepted. No
+   `reference_repos` entry is written by hand.
+2. **A maintainer accepts the request.** Someone with write access to `cncf/techdocs` applies
+   `triage/accepted` to #395. A label applied by a bot grants nothing.
+3. **Three derived entries appear** on the next pass (boot, config reload or every
+   `HIVE_REFERENCE_REPOS_DERIVE_INTERVAL`, default `10m`): `hivecommons/docs`,
+   `hivecommons/hivecommons.github.io` and `hivecommons/hive`, each at the `issues+prs` tier with
+   `derived_from: cncf/techdocs#395`. The kick's `📚 REFERENCE REPOS` block lists them with
+   `(from cncf/techdocs#395)`. Settings → Reference repos shows them read-only with the source
+   link and `credential_state: write-tier`, because hivecommons has the App installed on every
+   repo. Had it not, the entries would read `read-only` with a reason, #395 would carry one
+   `hive:reference-repos-read-only` comment, and the hive would keep running.
+4. **What the hive may do there.** Clone and read the three repos, read their issues and PRs,
+   open an issue, open a PR or push a topic branch, and comment on an issue or PR it opened
+   itself. The assessment deliverable still lives in `cncf/techdocs`.
+5. **What it may not do.** Merge, push to a default branch, label or assign other people's
+   items, review, or close other people's issues. The proxy refuses each of these and logs
+   `reference_repo` in the violations log. `hivecommons` repos get no queue, no ACMM evaluation
+   and no work items.
+6. **Closing #395 removes them.** When the request issue closes, or `triage/accepted` is
+   removed, the three entries, their proxy policies and their kick lines are gone on the next
+   pass. Nothing was ever written to the overlay or runtime config, so there is nothing to clean
+   up. A hand-written entry for one of the repos, if the operator adds one, takes precedence and
+   stays.
 
 ## Not representable today
 

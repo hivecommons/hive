@@ -115,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) {
+	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -141,6 +141,23 @@ func (h *Handler) feed(r slog.Record) {
 // skips across PRs are not a runtime defect.
 func signedCommitOwnershipSkip(r slog.Record) bool {
 	return r.Level == slog.LevelWarn && strings.TrimSpace(r.Message) == "signed-commit reconciler: skipped; the PR keeps an unsigned commit"
+}
+
+// claudeCredentialRebridgedMessage is the WARN crux/agent logs after it has
+// SUCCESSFULLY restored a per-agent Claude credential symlink that a token
+// refresh replaced (src/crux/agent/claude_credential_bridge.go). Keep the two
+// strings in sync.
+const claudeCredentialRebridgedMessage = "claude credential bridge: a private credential file had replaced the shared-login symlink; re-bridged"
+
+// claudeCredentialRebridged is the credential bridge's completed repair. Claude
+// Code renames a fresh file over the shared-login symlink on every token
+// refresh, every agent shares one access token and so refreshes within the same
+// minute or two, and the watchdog checks each link every 5s: a burst of one
+// re-bridge per agent is the designed recovery, already recorded in the audit
+// log, not a defect (hivecommons/hive#18107). The WARN stays in local logs; a
+// failed or refused repair logs a different message and stays reportable.
+func claudeCredentialRebridged(r slog.Record) bool {
+	return r.Level == slog.LevelWarn && strings.TrimSpace(r.Message) == claudeCredentialRebridgedMessage
 }
 
 // canceledError applies the existing cancellation exclusion to structured

@@ -195,6 +195,9 @@ func TestAgentTilesMarkReplicas(t *testing.T) {
 	script := `const assert = require('node:assert/strict');
 function agentIsDisabled(a) { return !!a && a.enabled === false; }
 function _agentNeedsLogin() { return false; }
+// The merged agentCollapsedAuthInfo also consults the card's out-of-quota
+// predicate (#18111); quota is out of scope for the replica marker.
+function agentOutOfQuotaShown() { return false; }
 function formatDashboardDateTime() { return 'local time'; }
 ` + jsFunc(t, html, "esc") + `
 ` + html[start:start+end] + `

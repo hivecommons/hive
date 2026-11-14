@@ -6,7 +6,7 @@
         <p class="faq-intro">Short answers to the questions people ask once a hive is running. Everything below describes what this hive
         actually does today — where behaviour is surprising, it is called out rather than smoothed over. Each answer links to the
         source doc, so this panel stays a map, not a second source of truth.</p>
-        <p class="faq-intro">Need help from humans? <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>; the Hive Commons community can help you pick the right next step. Want to see a hive at work? <a class="text-accent fw-semibold" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener">Watch the hive live on Twitch</a>.</p>
+        <p class="faq-intro">Need help from humans? <a class="text-accent fw-semibold" href="https://hivecommons.dev/discord" target="_blank" rel="noopener">Join our Discord</a>; the Hive Commons community can help you pick the right next step. Want to see a hive at work? <a class="text-accent fw-semibold" href="https://www.twitch.tv/hivecommons" target="_blank" rel="noopener">Watch the hive live on Twitch</a>. Wondering which model to run? <a class="text-accent fw-semibold" href="https://hivecommons.dev/benchmarks/" target="_blank" rel="noopener">Compare models on real fleet PR outcomes</a> (merge rate, CI first-try, estimated cost).</p>
 
         <div class="faq-filter-row">
           <label for="faq-filter" class="faq-filter-label">Filter</label>
@@ -130,6 +130,11 @@
         <details class="faq-q" id="faq-spek-l1">
           <summary>How does Spek fit with L1?</summary>
           <p>Inception is the L1 human-and-brainstorm workflow for turning an idea into facts and a scaffold. Spek is the optional runner for staged speks and plans once you are using long-running runs. Both keep authority in Hive: Spek status can advance a lease, but implement still lands through the existing PR flow. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spek</a>.</p>
+        </details>
+
+        <details class="faq-q" id="faq-sessions">
+          <summary>What are Sessions, and where did Inception go?</summary>
+          <p>When sessions are enabled on your hive, the dashboard shows a <strong>Sessions</strong> section instead of Inception: named terminal tabs where a command-line AI agent runs inside Hive, shared with everyone on the hive. People with the <code>read</code> role see a read-only scrollback. Typing in a terminal is shared and not attributed to individual people. Campaigns and Jam moved to a Campaigns tab. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections/workflow-and-agents.md#sessions" target="_blank" rel="noopener noreferrer">Sessions</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-external-engines">

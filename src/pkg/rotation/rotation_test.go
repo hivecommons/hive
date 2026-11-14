@@ -2,10 +2,13 @@ package rotation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
@@ -233,5 +236,38 @@ func TestManager_UnknownBackend(t *testing.T) {
 	}
 	if m.Exhausted("unmapped-backend") {
 		t.Error("Exhausted = true for unmapped backend, want false")
+	}
+}
+
+// TestHeadroomMarshalJSONPlanType checks plan_type is emitted only when a
+// probe reported one, and that a reading without one serializes exactly as
+// it did before the field existed.
+func TestHeadroomMarshalJSONPlanType(t *testing.T) {
+	at := time.Date(2026, 11, 13, 17, 0, 0, 0, time.UTC)
+	reset := time.Date(2026, 11, 20, 2, 0, 0, 0, time.UTC)
+	h := Headroom{
+		Provider:     "anthropic",
+		Available:    true,
+		PctRemaining: 62,
+		ResetAt:      reset,
+		CapturedAt:   at,
+		Limits:       []LimitWindow{{ID: "weekly_all", Kind: "weekly", PercentUsed: 38, PctRemaining: 62, ResetAt: reset, DurationMins: 10080}},
+	}
+	data, err := json.Marshal(h)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	want := `{"provider":"anthropic","available":true,"pct_remaining":62,"reset_at":"2026-11-20T02:00:00Z","limits":[{"id":"weekly_all","kind":"weekly","percent_used":38,"pct_remaining":62,"resets_at":"2026-11-20T02:00:00Z","duration_mins":10080}],"captured_at":"2026-11-13T17:00:00Z"}`
+	if string(data) != want {
+		t.Fatalf("reading without a plan changed shape:\n got %s\nwant %s", data, want)
+	}
+
+	h.PlanType = "pro"
+	data, err = json.Marshal(h)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if !strings.Contains(string(data), `"plan_type":"pro"`) {
+		t.Fatalf("plan_type missing from reading with a plan: %s", data)
 	}
 }

@@ -1,10 +1,12 @@
 package sessionprune
 
 import (
+	"bytes"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -280,5 +282,42 @@ func TestPruneCountsFailedRemovals(t *testing.T) {
 	}
 	if _, err := os.Lstat(dir); err != nil {
 		t.Errorf("session directory reported as present but is gone: %v", err)
+	}
+}
+
+// TestPruneWarnsOncePerPermissionDeniedPath ensures a path that keeps failing
+// with a permission error is warned about once, not on every prune pass.
+func TestPruneWarnsOncePerPermissionDeniedPath(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: permission bits do not deny removal")
+	}
+	root := t.TempDir()
+	old := time.Now().Add(-30 * 24 * time.Hour)
+	session := mkSession(t, root, "bbbbbbbb-bbbb-cccc-dddd-eeeeeeeeeeee", old, old)
+	// Lock the session directory too: otherwise RemoveAll deletes its contents
+	// before the final unlink fails, which bumps the directory mtime and makes
+	// later passes skip it instead of failing again.
+	if err := os.Chmod(session, 0o500); err != nil {
+		t.Fatalf("chmod session: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(session, 0o755) })
+	if err := os.Chmod(root, 0o500); err != nil {
+		t.Fatalf("chmod root: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(root, 0o755) })
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	for i := 0; i < 3; i++ {
+		res, err := Prune(root, 7*24*time.Hour, time.Now(), logger)
+		if err != nil {
+			t.Fatalf("Prune: %v", err)
+		}
+		if res.Failed != 1 {
+			t.Fatalf("pass %d: Failed = %d, want 1", i, res.Failed)
+		}
+	}
+	if n := strings.Count(buf.String(), "remove failed"); n != 1 {
+		t.Errorf("warnings = %d, want 1; log:\n%s", n, buf.String())
 	}
 }

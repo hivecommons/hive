@@ -1564,6 +1564,13 @@ func (c *Engine) evaluateContributorLanePR(ctx context.Context, displayRepo, own
 		approver, humanApproved = c.contributorLaneReviewHoldRelease(ctx, displayRepo, owner, repo, number, headSHA, verdict)
 	}
 	files, err := ListChangedFiles(caller, c.gh, owner, repo, pr)
+	if errors.Is(err, hgithub.ErrIncompletePRFileList) {
+		// More changed files than GitHub's files API will ever return: the
+		// diff fences cannot be read on any tick, so this is a standing
+		// verdict (fail closed, nil error) like adoptionDiffRefusal's, not a
+		// transient fault re-WARNed every sweep (hivecommons/hive#18121).
+		return eval, contributorLaneReasonFilesEvidence, nil
+	}
 	if err != nil {
 		return eval, contributorLaneReasonFilesEvidence, err
 	}

@@ -85,6 +85,10 @@
       "description": "Repo swarm mode status, lifecycle, and history"
     },
     {
+      "name": "Sessions",
+      "description": "Interactive named CLI terminals"
+    },
+    {
       "name": "Workflows",
       "description": "Workflow models (RFC hivecommons/hive#17620): the spoke-local library of ingested/authored workflow definitions, per-repository bindings, and compilation. Writes are owner-gated and audited (workflow_save, workflow_delete, workflow_bind, workflow_unbind). Every route answers 503 when the hive has no workflow store."
     },
@@ -1832,6 +1836,10 @@
                           "backendAuthLastError": {
                             "type": "string",
                             "description": "The offending pane line that produced backendAuthStatus."
+                          },
+                          "quotaExhausted": {
+                            "type": "boolean",
+                            "description": "True when the agent's pane shows a provider quota refusal (e.g. Copilot \"You have exceeded your monthly quota\"), from crux.Process.QuotaExhausted; covers every backend (#18111). Omitted when false."
                           }
                         }
                       }
@@ -3784,6 +3792,104 @@
           },
           "500": {
             "description": "Failed to write the template file"
+          }
+        }
+      }
+    },
+    "/api/config/reference-repos": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Reference repos",
+        "description": "Returns project.reference_repos and the write vocabulary the editor offers. Owner only.",
+        "responses": {
+          "200": {
+            "description": "Current reference repos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reference_repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "write_kinds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Replace reference repos",
+        "description": "Replaces project.reference_repos after the same validation boot applies. Send an empty array to clear. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "reference_repos"
+                ],
+                "properties": {
+                  "reference_repos": {
+                    "type": "array",
+                    "items": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current reference repos",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reference_repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "write_kinds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid list; nothing was stored"
+          },
+          "409": {
+            "description": "The list edits, removes or replaces an entry derived from a request issue (derived_from); the message names the issue to change instead. Nothing was stored"
+          },
+          "500": {
+            "description": "The config file could not be written; the previous list is restored on the proxy and nothing changed"
           }
         }
       }
@@ -26341,6 +26447,284 @@
         }
       }
     },
+    "/api/config/github/webhooks": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Describe GitHub webhook setup for this hive (owner)",
+        "description": "Owner-only. Everything the Settings → Forge App → GitHub webhooks section shows: the payload URL GitHub must call, the events to subscribe, whether a secret is configured and where it comes from (never the secret itself), whether this hive receives hub-signed relays (hosted), the live receiver health and whether the App installation's hooks permission allows creating the webhook from here. See docs/webhooks.md#setting-up-webhooks-owner-guide.",
+        "responses": {
+          "200": {
+            "description": "Webhook setup",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "payload_url": {
+                      "type": "string"
+                    },
+                    "payload_url_source": {
+                      "type": "string",
+                      "enum": [
+                        "config",
+                        "hub",
+                        "request",
+                        "none"
+                      ]
+                    },
+                    "path": {
+                      "type": "string"
+                    },
+                    "content_type": {
+                      "type": "string"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "optional_events": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "verification": {
+                      "type": "string"
+                    },
+                    "hosted": {
+                      "type": "boolean"
+                    },
+                    "secret_configured": {
+                      "type": "boolean"
+                    },
+                    "secret_source": {
+                      "type": "string",
+                      "enum": [
+                        "env",
+                        "file",
+                        ""
+                      ]
+                    },
+                    "secret_path": {
+                      "type": "string"
+                    },
+                    "can_generate_secret": {
+                      "type": "boolean"
+                    },
+                    "health": {
+                      "type": "object",
+                      "properties": {
+                        "healthy": {
+                          "type": "boolean"
+                        },
+                        "last_event_at": {
+                          "type": "string"
+                        },
+                        "events_1h": {
+                          "type": "integer"
+                        },
+                        "invalidations_1h": {
+                          "type": "integer"
+                        },
+                        "targeted_refreshes_1h": {
+                          "type": "integer"
+                        },
+                        "tracker_invalidations_1h": {
+                          "type": "integer"
+                        },
+                        "last_ci_event_at": {
+                          "type": "string"
+                        },
+                        "ci_events_1h": {
+                          "type": "integer"
+                        },
+                        "ci_events_applied_1h": {
+                          "type": "integer"
+                        },
+                        "ci_refetches_1h": {
+                          "type": "integer"
+                        },
+                        "verification": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "org": {
+                      "type": "string"
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "app_org_hooks": {
+                      "type": "boolean"
+                    },
+                    "app_repo_hooks": {
+                      "type": "boolean"
+                    },
+                    "app_probe_error": {
+                      "type": "string"
+                    },
+                    "create_available": {
+                      "type": "boolean"
+                    },
+                    "docs_url": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an owner"
+          },
+          "503": {
+            "description": "Config not loaded"
+          }
+        }
+      }
+    },
+    "/api/config/github/webhooks/secret": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Generate this hive's GitHub webhook secret (owner)",
+        "description": "Owner-only. Writes a new random secret to the hive's secret file (mode 0600) and returns it exactly once; later GETs only report that a file secret is configured. Refused with 409 while GITHUB_WEBHOOK_SECRET is set in the environment, which always wins. Audited.",
+        "responses": {
+          "200": {
+            "description": "Secret, shown once",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "secret": {
+                      "type": "string"
+                    },
+                    "secret_path": {
+                      "type": "string"
+                    },
+                    "verification": {
+                      "type": "string"
+                    },
+                    "note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not an owner"
+          },
+          "409": {
+            "description": "Secret is supplied by the environment"
+          },
+          "500": {
+            "description": "Could not write the secret file"
+          }
+        }
+      }
+    },
+    "/api/config/github/webhooks/create": {
+      "post": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Create the org or repo webhook through the GitHub App (owner)",
+        "description": "Owner-only. Uses the App installation's organization_hooks or repository_hooks write permission to create a webhook on GitHub pointing at this hive's payload URL with the configured secret and event list. Requires a configured secret, a public dashboard URL and the matching permission; the repository must be one of project.repos. Idempotent: when a hook with the same payload URL already exists on the target it is returned with created=false instead of creating a duplicate. Creation is audited.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "scope": {
+                    "type": "string",
+                    "enum": [
+                      "organization",
+                      "repository"
+                    ]
+                  },
+                  "repo": {
+                    "type": "string",
+                    "description": "Repository name (bare or org/name); required for scope=repository."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Webhook created, or the existing hook for this payload URL",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "integer"
+                    },
+                    "hook_id": {
+                      "type": "integer",
+                      "description": "Same as id"
+                    },
+                    "created": {
+                      "type": "boolean",
+                      "description": "false when an existing hook for this payload URL was returned"
+                    },
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "payload_url": {
+                      "type": "string"
+                    },
+                    "scope": {
+                      "type": "string"
+                    },
+                    "target": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid scope or repository"
+          },
+          "403": {
+            "description": "Not an owner"
+          },
+          "409": {
+            "description": "No secret / no public URL / no project.org / no App auth"
+          },
+          "412": {
+            "description": "The App installation lacks organization_hooks or repository_hooks write for the scope"
+          },
+          "502": {
+            "description": "GitHub API error"
+          }
+        }
+      }
+    },
     "/api/config/github": {
       "put": {
         "tags": [
@@ -42074,6 +42458,307 @@
             }
           }
         }
+      }
+    },
+    "/api/sessions": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "List sessions, vendors and limits",
+        "description": "Any role. While the feature is off returns enabled=false with empty lists.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Create a session (owner or read-write)",
+        "description": "Starts a named CLI session. Vendor must be a known, allowed, installed backend; never a shell, never a bypass-permissions launch.",
+        "responses": {
+          "201": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Invalid name, group or vendor"
+          },
+          "403": {
+            "description": "Role or vendor not allowed"
+          },
+          "404": {
+            "description": "Sessions disabled"
+          },
+          "409": {
+            "description": "Vendor not installed"
+          },
+          "429": {
+            "description": "Session limit reached"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "group": {
+                    "type": "string"
+                  },
+                  "vendor": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/sessions/{id}": {
+      "patch": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Rename or regroup a session (creator or owner)",
+        "description": "Changes name and/or group.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "Not the creator or an owner"
+          },
+          "404": {
+            "description": "Unknown session"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "group": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Close a session (creator or owner)",
+        "description": "Kills tmux and keeps the metadata marked ended; on an ended session removes its metadata.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "Not the creator or an owner"
+          },
+          "404": {
+            "description": "Unknown session"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{id}/log": {
+      "get": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Redacted scrollback snapshot (any role)",
+        "description": "lines is capped at 5000.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "404": {
+            "description": "Unknown session"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{id}/input": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Type text into a session (owner or read-write)",
+        "description": "Literal paste, never key names. Audited with user and byte count, not the text.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Invalid text"
+          },
+          "403": {
+            "description": "Role not allowed"
+          },
+          "409": {
+            "description": "Session not running"
+          },
+          "413": {
+            "description": "Input too large"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "text": {
+                    "type": "string"
+                  },
+                  "submit": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{id}/upload": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Upload a file into a session directory (owner or read-write)",
+        "description": "Multipart field file. Returns the absolute path; the file is never executed.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "Role not allowed"
+          },
+          "413": {
+            "description": "Upload too large"
+          },
+          "429": {
+            "description": "Per-session file cap reached"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{id}/resume": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Resume an ended session (owner or read-write)",
+        "description": "Only for vendors with a resume handle.",
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "403": {
+            "description": "Role not allowed"
+          },
+          "409": {
+            "description": "Not ended or nothing to resume"
+          },
+          "429": {
+            "description": "Session limit reached"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
       }
     }
   },

@@ -180,6 +180,17 @@ const loginPathPrefix = "/login/"
 func (p *GitHubProxy) rewriteGitHubAuth(req *http.Request, agentName string) {
 	// NOTE: callers must gate on injectsGitHubAuthForHost first; this function
 	// does not know which host the request is bound for.
+	if agentName != internalCallerName {
+		if pol, isRef := p.referenceRepoFor(repoScopePath(req)); isRef {
+			// Reference repo (#18015): the agent's own credential belongs to
+			// the hive's installation and is never valid here, so it is
+			// stripped whatever the injection flag says. A read goes out
+			// unauthenticated, as the public internet would send it; an
+			// opt-in write carries the repo's own write credential.
+			p.rewriteReferenceRepoAuth(req, agentName, pol)
+			return
+		}
+	}
 	if !p.injectGHAuth {
 		// Flag off (the default): behavior byte-identical to before #1861 —
 		// no header is touched on any path.
@@ -371,4 +382,29 @@ func isGitPath(path string) bool {
 	return strings.HasSuffix(path, "/git-receive-pack") ||
 		strings.HasSuffix(path, "/git-upload-pack") ||
 		strings.HasSuffix(path, "/info/refs")
+}
+
+func (p *GitHubProxy) rewriteReferenceRepoAuth(req *http.Request, agentName string, pol ReferenceRepoPolicy) {
+	req.Header.Del("Authorization")
+	if isGitPath(req.URL.Path) {
+		// Same reason as the managed-repo git branch above: each git request
+		// must re-enter this rewrite on its own connection.
+		req.Close = true
+	}
+	if !referenceWriteCredential(pol, req.Method, req.URL.Path, req.URL.RawQuery) {
+		p.logger.Debug("proxy auth: reference repo read forwarded without credentials", "agent", agentName, "repo", pol.Repo, "injected", false)
+		return
+	}
+	token := p.referenceToken(pol)
+	if token == "" {
+		p.logger.Warn("proxy auth: reference repo write has no credential — forwarding without one (check the write_token_file or the App installation on the target org)", "agent", agentName, "repo", pol.Repo, "injected", false)
+		return
+	}
+	if isGitPath(req.URL.Path) {
+		basic := base64.StdEncoding.EncodeToString([]byte(gitInjectBasicUser + ":" + token))
+		req.Header.Set("Authorization", "Basic "+basic)
+	} else {
+		req.Header.Set("Authorization", "token "+token)
+	}
+	p.logger.Debug("proxy auth: reference repo write credential attached", "agent", agentName, "repo", pol.Repo, "injected", true)
 }

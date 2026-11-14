@@ -99,6 +99,9 @@ type Dependencies struct {
 	Governor              *governor.Governor
 	GHClient              *ghpkg.Client
 	GHAppAuth             *ghpkg.AppAuth
+	// Sessions is the interactive-session runtime behind /api/sessions
+	// (dashboard.sessions.enabled). Nil keeps the feature unavailable.
+	Sessions SessionRuntime
 	// CruxRuntimeHealth reports the agent runtime's reachability for
 	// /api/health (hivecommons/hive#14138 stage 4). nil (in-process, or a
 	// test without a runtime) leaves the field out of the body.
@@ -129,8 +132,16 @@ type Dependencies struct {
 	// (bare test deps) means the toggle can only persist the flag, so it
 	// answers restart_required.
 	KnowledgePrimer KnowledgePrimerControl
-	// KnowledgeConnectors is the running connector syncer; nil when none is wired.
+	// KnowledgeConnectors is the running connector syncer; nil when none is
+	// wired. Read it through Server.knowledgeConnectors: a dashboard edit
+	// can replace it at runtime (#18091).
 	KnowledgeConnectors KnowledgeConnectorRuntime
+	// ReloadKnowledgeConnectors applies a saved knowledge.connectors list to
+	// the running hive without a restart (#18091): it builds the syncer when
+	// none is running, else reconfigures it in place. It returns the runtime
+	// to serve, nil when none is needed. Nil (bare test deps) keeps the
+	// pre-#18091 behaviour where a new connector needs a restart.
+	ReloadKnowledgeConnectors func(entries []config.KnowledgeConnector) (KnowledgeConnectorRuntime, error)
 	// KnowledgePublish is the running knowledge.publish mirror; nil when
 	// publishing is not configured or failed to start.
 	KnowledgePublish KnowledgePublishRuntime
@@ -222,6 +233,20 @@ type Dependencies struct {
 	// escalation dispatcher can rebuild its sinks without a restart. Nil
 	// means nothing hot-reloads; the tab then shows the restart note.
 	ChannelsConfigApplied func()
+	// ApplyReferenceRepos is called by PUT /api/config/reference-repos with
+	// the validated list BEFORE it is stored: it verifies each write-mode
+	// entry's credential the way boot does and installs the result on the
+	// GitHub proxy, so the allow-list changes without a restart. A non-nil
+	// error refuses the edit with that message and nothing changes. Nil (no
+	// proxy, most tests) skips the check, matching boot, which only verifies
+	// credentials when a proxy is wired (hivecommons/hive#18136).
+	ApplyReferenceRepos func(ctx context.Context, refs []config.ReferenceRepo) error
+	// RemergeDerivedReferenceRepos is called after PUT /api/config/reference-repos
+	// has persisted the hand-written list: it puts the derived entries of the
+	// last pass (hivecommons/hive#18139) back into Config.Project.ReferenceRepos
+	// in memory, as the config reload hook does, so the kick and /api/status
+	// keep showing them. Nil (no deriver, most tests) leaves the list as saved.
+	RemergeDerivedReferenceRepos func()
 	// RescanReposFunc re-enumerates every watched repository's open issues
 	// and pull requests against the forge, enriches PR CI status, applies the
 	// duplicate-PR claim guard and republishes the dashboard status snapshot

@@ -50,7 +50,7 @@
         }
         // The Forge App tab renders a shell synchronously, then loads the
         // credential inventory (fingerprints only) from the spoke.
-        if (tabId === 'Forge App') loadForgeApps();
+        if (tabId === 'Forge App') { loadForgeApps(); loadWebhookSetup(); }
         // The Features tab's Linear Agent panel loads install/session state
         // from its own endpoint (owner-only; the render is a static shell).
         if (tabId === 'Features') loadLinearAgentStatus();
@@ -702,6 +702,9 @@
       if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
       _kcState.connectors = data.connectors || [];
       await loadKnowledgeConnectors();
+      // The config is saved even when the running syncer did not follow;
+      // surface that verbatim instead of the caller's success toast (#18091).
+      if (data.runtime_error) throw new Error('saved, but the running syncer did not reload: ' + data.runtime_error);
     }
 
     function kcFind(name) { return _kcState.connectors.find(c => c.name === name); }
@@ -949,6 +952,7 @@
         '</div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.experiment_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="experiment_lab"></div><span class="config-toggle-label">Experiment Lab (nous) ' + yamlHint('dashboard.experiment_lab') + ' <span class="text-muted">Adds the 🧪 Experiment Lab (nous) section and its sidebar entry on the next status refresh — no reload needed.</span></span></div>' +
         experimentLabToggleHelpHTML(currentACMMLevelForSettings(), 'dashboard') +
+        '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.subscription_gauge_header ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="subscription_gauge_header"></div><span class="config-toggle-label">Also show the usage gauge in the header ' + yamlHint('dashboard.subscription_gauge_header') + ' ' + settingHelpMark('settings', 'dashboard', 'Usage gauge in the header', 'The Claude usage fuel gauge is on the Overview by default for the owner. This also shows it as a small chip in the header on every page. It reads the usage measurements hive already makes, so it adds no calls to Claude. Only the hive owner sees it. This is the Claude plan this hive is signed in with, not the hive token budget. Off by default.') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.hub_proxied ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="hub_proxied"></div><span class="config-toggle-label">Hub-proxied auth ' + yamlHint('dashboard.hub_proxied') + ' <span class="text-muted">Managed by hub on hosted hives.</span></span></div>' +
         '<div class="config-field"><label>Dashboard auth token ' + yamlHint('dashboard.auth_token') + '</label><input type="password" autocomplete="new-password" placeholder="' + esc(authTokenText) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="auth_token" data-arg-types="s,s,v"><div class="config-help">Write-only; the current token is never echoed.</div></div>' +
         '<h3>Access allowlist</h3>' +
@@ -1798,7 +1802,8 @@
           when its forge matches the forge this hive's repos live on; everything else is
           read-only. Private keys appear as fingerprints — key material never leaves the hive.
         </div>
-        <div id="forge-app-host"><div style="color:var(--muted);font-size:0.8rem">Loading forge Apps…</div></div>`;
+        <div id="forge-app-host"><div style="color:var(--muted);font-size:0.8rem">Loading forge Apps…</div></div>
+        ${renderGovWebhooksSection()}`;
     }
 
     async function loadForgeApps() {

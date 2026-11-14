@@ -77,7 +77,29 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// refused and audited as agent_write_refused. Checked after pause and
 		// scope so their more specific reasons win when both apply.
 		writeSurfaceKind := ""
+		// Reference repos (#18015) sit outside every list below: not in
+		// allowedRepos (so the mode chain's repo filter would refuse the
+		// write with the wrong reason), not pausable, not agent-scoped. The
+		// gate runs first so its refusal — naming reference_repos and the
+		// tier — is what the agent reads, and an allowed opt-in write is
+		// remembered so the repo filter and the PR hard-deny below do not
+		// undo it (the credential it will carry is the reference repo's
+		// own, so App-bot authorship is already guaranteed).
+		referenceWrite := false
 		if agentName != internalCallerName {
+			if pol, isRef := p.referenceRepoFor(repoScopePath(req)); isRef {
+				if reason, refused := p.referenceRepoRefusal(req); refused {
+					blocked = true
+					blockReason = reason
+					blockCode = DenyReasonReferenceRepo
+				} else {
+					referenceWrite = referenceWriteCredential(pol, req.Method, req.URL.Path, req.URL.RawQuery)
+				}
+			}
+		}
+		if blocked {
+			// Refused as a reference-repo write; nothing below can un-block it.
+		} else if agentName != internalCallerName {
 			if reason, paused := p.repoPauseRefusal(req.Method, repoScopePath(req)); paused {
 				blocked = true
 				blockReason = reason
@@ -165,6 +187,12 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 			// autonomy. Its control-plane calls (App token mint, heartbeat)
 			// must not be gated as if they were agent writes. Repo-filter and
 			// canary-egress checks below still apply.
+		} else if referenceWrite && !referenceWriteAllowedByMode(mode, req.Method, req.URL.Path) {
+			blocked = true
+			blockCode = DenyReasonMode
+		} else if referenceWrite {
+			// Opt-in reference write at a sufficient mode: skip the PR
+			// hard-deny and the repo filter, both of which assume a managed repo.
 		} else if !AllowedByModeCaps(autonomyModeForRepo(agentName, ExtractRepo(repoScopePath(req)), mode), caps, req.Method, req.URL.Path) {
 			blocked = true
 			blockCode = DenyReasonMode

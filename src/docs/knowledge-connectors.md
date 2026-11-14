@@ -86,7 +86,7 @@ Status and **Sync now** need the connector syncer, which `hive` starts at boot w
 | `GET /api/knowledge/connectors` | dashboard session | `{"connectors": [...]}`: one status per configured connector, in config order |
 | `POST /api/knowledge/connectors/{name}/sync` | owner | Start a background sync now, even if the connector is disabled (`202` with the status; `404` unknown name; `409` if running) |
 
-Saved changes persist to the config overlay; the syncer picks up added, edited or removed connectors on the next restart.
+Saved changes persist to the config overlay and apply at once, without a restart: a hive booted with no connectors starts the syncer on the first save, and on a running syncer an added connector starts syncing, an edited one is rebuilt with its cursor and counts kept, and a disabled or removed one stops. Unchanged connectors keep syncing undisturbed. The `knowledge.publish` mirror is not rebuilt this way; a change to its connector still needs a restart.
 
 Each status object returned by `GET /api/knowledge/connectors` contains:
 
@@ -269,7 +269,8 @@ if you do not want a sync to pull a new upstream release unreviewed.
 1. The hive host (or container image) needs **Node.js ≥ 20** so `npx` can run
    the Plaud MCP server.
 2. Add the connector from **Knowledge → 🔌 Integrations → Plaud voice notes**
-   (or the YAML above) and restart the hive so the syncer picks it up.
+   (or the YAML above). A dashboard save loads it at once; a YAML edit
+   needs a restart.
 3. On the Plaud card click **Connect Plaud**. The card shows the Plaud
    authorization URL; open it, sign in and click **Authorize**. The OAuth
    callback lands on `localhost:8199` of the machine running hive, so for a

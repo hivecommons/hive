@@ -68,10 +68,16 @@ type Agent struct {
 	Harness string `json:"harness"`
 }
 
-// Model is the model the agent ran on.
+// Model is the model the agent ran on. Name is the id exactly as the
+// harness reported it; Canonical folds the spellings different CLIs use for
+// one model ("claude-sonnet-5-5", "anthropic/claude-sonnet-5.5" →
+// "claude-sonnet-5.5", modelfamily.Resolve) so the leaderboard shows one
+// row per model, and Provider is the vendor derived the same way.
 type Model struct {
-	Provider string `json:"provider"`
-	Name     string `json:"name"`
+	Provider  string `json:"provider"`
+	Name      string `json:"name"`
+	Canonical string `json:"canonical,omitempty"`
+	Effort    string `json:"effort,omitempty"`
 }
 
 // Task describes the unit of work.

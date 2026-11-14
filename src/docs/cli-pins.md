@@ -10,6 +10,7 @@ Every agent CLI hive drives is baked into the images at a fixed version:
 | pi | `PI_VERSION` (hub), `PI_CODING_AGENT_VERSION` (contributor) | npm `@earendil-works/pi-coding-agent` | npm |
 | Goose | `GOOSE_VERSION`, `GOOSE_SHA256_{AMD64,ARM64}` | GitHub releases `aaif-goose/goose` | SHA-256 per arch |
 | Antigravity (agy) | `AGY_VERSION` + `AGY_BUILD`, `AGY_SHA512_*` (hub); `AGY_VERSION=<ver>-<build>`, `AGY_SHA256_*` (contributor) | Google's updater artifact, as tracked by the Homebrew `antigravity-cli` cask | SHA-512 (hub) / SHA-256 (contributor) per arch |
+| spektacular | `SPEKTACULAR_VERSION`, `SPEKTACULAR_SHA256_{AMD64,ARM64}` | GitHub releases `hivecommons/spektacular` | SHA-256 per arch, from the release `checksums.txt` (manual bump for now; not yet in `cli-pin-bump.sh`) |
 | Oh My Pi (omp) | `OMP_VERSION`, `OMP_SHA256_*` | GitHub releases `can1357/oh-my-pi` | SHA-256 per arch, cross-checked with `SHA256SUMS.txt` |
 | Muse Code | `MUSE_VERSION`, `MUSE_SHA256_*` | `api.meta.ai/muse-code/channels/muse-stable` and its release manifest | SHA-256 per arch, cross-checked with the manifest |
 | bobshell (bob) | `BOBSHELL_VERSION`, `BOBSHELL_SHA256_*` | `bobshell2-version.txt` on IBM COS | SHA-256, cross-checked with the vendor `.tgz.sha256` |

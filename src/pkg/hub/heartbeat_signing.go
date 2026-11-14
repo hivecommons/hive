@@ -3,6 +3,7 @@ package hub
 import (
 	"encoding/json"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,7 +55,16 @@ func (h *heartbeatSeqState) next(hiveID string, now time.Time) int64 {
 // and it marshals resp once here to sign the exact bytes; the caller marshals
 // again to write. The two marshals are byte-identical (same struct, same
 // process), so the signature covers what the spoke receives.
+//
+// It also applies the self-service credential fence (#18060) first, and
+// before the keyless early return, because every heartbeat response passes
+// through here on its way to the wire: a self-service hive never receives a
+// fenced field, signed or not.
 func (s *HubServer) signHeartbeatResponse(w http.ResponseWriter, resp *HeartbeatResponse, hiveID string) {
+	if withheld := fenceSelfServiceHeartbeatResponse(resp, hiveID); len(withheld) > 0 && s.logger != nil {
+		s.logger.Warn("heartbeat: credential fence withheld fields from self-service hive",
+			"hive_id", hiveID, "fields", strings.Join(withheld, ","))
+	}
 	seed := s.ssoSigningSeed()
 	if seed == "" || hiveID == "" {
 		// No key or no identity: leave the response unsigned (legacy behaviour).

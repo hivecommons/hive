@@ -449,6 +449,7 @@ func BuildFrontendStatus(
 		Governor:              buildGovernorWithLaneDepths(govState, cfg, buildLaneQueueDepths(cfg, actionable), apiBudgetFromRateLimits(ghRateLimits)),
 		Tokens:                buildTokens(tokenCollector),
 		Repos:                 repos,
+		ReferenceRepos:        buildReferenceRepos(cfg),
 		OverviewKPIIncomplete: overviewKPIIncomplete(cfg, actionable) || overviewStaleSince(repos) != "",
 		StaleSince:            earliestRFC3339(staleSinceRFC3339(actionable), overviewStaleSince(repos)),
 		RestartRefresh:        restartRefreshInfo(actionable, repos),
@@ -621,8 +622,9 @@ func buildFeatures(cfg *config.Config) FrontendFeatures {
 	// without going through the loader.
 	enabled := cfg.Dashboard.ExperimentLab || cfg.Dashboard.StrategyLab
 	return FrontendFeatures{
-		ExperimentLab: enabled,
-		StrategyLab:   enabled,
+		ExperimentLab:           enabled,
+		StrategyLab:             enabled,
+		SubscriptionGaugeHeader: cfg.Dashboard.SubscriptionGaugeHeader,
 	}
 }
 
@@ -1319,6 +1321,9 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 				a.BackendAuthLastError = preferFullInferenceError(a.BackendAuthLastError, inferenceLastErr)
 			}
 		}
+		// #18111: the pane-poll quota flag covers every backend (Copilot's
+		// "exceeded your monthly quota" never reaches BackendAuthStatus).
+		a.QuotaExhausted = proc.QuotaExhausted
 		if refreshableFn := getAgentRefreshableFn(); refreshableFn != nil {
 			if refreshable, known := refreshableFn(name); known {
 				a.BackendAuthRefreshable = &refreshable
@@ -2499,6 +2504,44 @@ func repoForge(cfg *config.Config, repo string) (kind, url string) {
 
 func buildRepos(cfg *config.Config, actionable *github.ActionableResult, govState governor.State) []FrontendRepo {
 	return buildReposWithForge(cfg, actionable, govState, nil)
+}
+
+// buildReferenceRepos lists project.reference_repos with their tier for the
+// dashboard's minimal reference cards (hivecommons/hive#18015).
+func buildReferenceRepos(cfg *config.Config) []FrontendReferenceRepo {
+	if cfg == nil || len(cfg.Project.ReferenceRepos) == 0 {
+		return nil
+	}
+	out := make([]FrontendReferenceRepo, 0, len(cfg.Project.ReferenceRepos))
+	for _, rr := range cfg.Project.ReferenceRepos {
+		tier := rr.WriteLabel()
+		out = append(out, FrontendReferenceRepo{
+			Full: rr.Repo, Tier: tier, ReferenceTier: tier,
+			DerivedFrom: rr.DerivedFrom, DerivedFromURL: referenceRepoSourceURL(rr.DerivedFrom, cfg.GitHub.ResolvedBaseURL()),
+			CredentialState: rr.CredentialState, CredentialReason: rr.CredentialReason,
+		})
+	}
+	return out
+}
+
+// referenceRepoSourceURL turns a derived entry's "owner/repo#N" provenance
+// into the request issue's web URL on base (hivecommons/hive#18161). Anything
+// that is not exactly owner/repo#N with a positive N yields "" so the
+// dashboard shows the bare reference rather than a guessed link.
+func referenceRepoSourceURL(derivedFrom, base string) string {
+	repo, num, ok := strings.Cut(strings.TrimSpace(derivedFrom), "#")
+	if !ok {
+		return ""
+	}
+	owner, name, ok := strings.Cut(repo, "/")
+	if !ok || owner == "" || name == "" || strings.Contains(name, "/") {
+		return ""
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil || n <= 0 {
+		return ""
+	}
+	return overviewItemURL("", repo, n, "issue", base)
 }
 
 func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult, govState governor.State, forge forgeOpenCounter) []FrontendRepo {
