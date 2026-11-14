@@ -33,10 +33,11 @@ type fakeTransit struct {
 	encrypts  int
 	allowNew  bool // may encrypt/create auto-create keys
 	lookupTTL int
-	// hang makes authenticated handlers block until the client gives up, so
-	// the provider's per-request timeout is what ends the call (no fixed
-	// sleep: the handler waits on the request context).
-	hang bool
+	// hang, when non-nil, makes authenticated handlers block until the test
+	// closes it, so the provider's per-request timeout is what ends the
+	// client call (no fixed sleep, and the test releases the handler before
+	// the server shuts down).
+	hang chan struct{}
 }
 
 func newFake() *fakeTransit {
@@ -57,8 +58,8 @@ func (f *fakeTransit) handler() http.Handler {
 		f.mu.Lock()
 		hang := f.hang
 		f.mu.Unlock()
-		if hang {
-			<-r.Context().Done()
+		if hang != nil {
+			<-hang
 			return false
 		}
 		f.mu.Lock()
@@ -312,16 +313,17 @@ func TestNewRefusals(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer p.Close()
+		release := make(chan struct{})
 		f.mu.Lock()
-		f.hang = true
+		f.hang = release
 		f.mu.Unlock()
+		// Release the handler however the assertion goes, or the server's
+		// Close in cleanup waits on it forever.
+		defer close(release)
 		p.cfg.Timeout = 50 * time.Millisecond
 		if _, err := p.Encrypt(ctx, []byte("x"), nil); err == nil || !errors.Is(err, context.DeadlineExceeded) {
 			t.Fatalf("hung server: err = %v, want deadline exceeded", err)
 		}
-		f.mu.Lock()
-		f.hang = false
-		f.mu.Unlock()
 	})
 }
 
