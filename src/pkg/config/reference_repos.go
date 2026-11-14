@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -45,11 +46,56 @@ type ReferenceRepo struct {
 	// an overlay or the runtime config, where it would outlive the grant
 	// (see hivecommons/hive#18137). The dashboard reads it as JSON.
 	DerivedFrom string `yaml:"-" json:"derived_from,omitempty"`
+	// CredentialState is the resolved credential tier of a derived entry
+	// (hivecommons/hive#18158): ReferenceCredentialWriteTier when the App is
+	// installed on the target org, ReferenceCredentialReadOnly when it is not
+	// and the entry was downgraded in memory. Empty for a hand-written entry,
+	// whose credential is verified at boot instead. Never serialized to YAML:
+	// it is re-resolved on every load.
+	CredentialState string `yaml:"-" json:"credential_state,omitempty"`
+	// CredentialReason says why CredentialState is read-only, in words the
+	// request issue comment and the Settings editor can show.
+	CredentialReason string `yaml:"-" json:"credential_reason,omitempty"`
 }
+
+// Credential states of a derived reference repo.
+const (
+	// ReferenceCredentialWriteTier: the App has an installation on the target
+	// org, the entry keeps its issues+prs opt-in.
+	ReferenceCredentialWriteTier = "write-tier"
+	// ReferenceCredentialReadOnly: no installation, the entry was downgraded
+	// to read-only in memory and the request issue told why.
+	ReferenceCredentialReadOnly = "read-only"
+	// ReferenceCredentialUnresolved: installation discovery failed for a
+	// transient reason (network, 5xx); the entry is served read-only for
+	// this load without telling the request issue, and is retried on the
+	// next reload.
+	ReferenceCredentialUnresolved = "unresolved"
+)
 
 // Derived reports whether the entry came from an accepted request issue
 // rather than from the operator's config.
 func (r ReferenceRepo) Derived() bool { return r.DerivedFrom != "" }
+
+// DerivedReadOnly reports whether a derived entry was downgraded to
+// read-only because no credential covers it.
+func (r ReferenceRepo) DerivedReadOnly() bool {
+	return r.Derived() && r.CredentialState == ReferenceCredentialReadOnly
+}
+
+// DerivedFromIssue splits DerivedFrom ("owner/repo#N") into the request
+// issue's repo and number; ok is false for a hand-written or malformed entry.
+func (r ReferenceRepo) DerivedFromIssue() (repo string, number int, ok bool) {
+	repo, num, found := strings.Cut(strings.TrimSpace(r.DerivedFrom), "#")
+	if !found || !strings.Contains(repo, "/") {
+		return "", 0, false
+	}
+	n, err := strconv.Atoi(num)
+	if err != nil || n <= 0 {
+		return "", 0, false
+	}
+	return repo, n, true
+}
 
 const (
 	ReferenceWriteIssues = "issues"
