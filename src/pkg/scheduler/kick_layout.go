@@ -114,6 +114,7 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 	message = s.addRedPRFixFirst(a.agent, message)
 	message = s.addReviewThreadFixFirst(a.agent, message)
 	message = s.addPRFollowUpHandoff(a.agent, message)
+	message = s.addRemoteItemHandoff(a.agent, message)
 	message = s.addGuideFlow(a.agent, a.actionable, message)
 	message = s.addInflightNote(message, a.issues)
 	message = s.addMaintainerNotes(message, a.issues)

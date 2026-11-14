@@ -186,6 +186,7 @@ func (b *boot) newReferenceRepoRuntime() *referenceRepoRuntime {
 			}
 		}
 	}
+	rt.remoteItems = b.newRemoteItemsPoller(rt)
 	if b.ghClient == nil {
 		return rt
 	}
