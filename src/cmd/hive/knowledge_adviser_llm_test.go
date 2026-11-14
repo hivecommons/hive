@@ -849,8 +849,8 @@ func TestKnowledgeAdviserLLMBudgetRefund(t *testing.T) {
 	b.mu.Lock()
 	events, used = len(b.events["developer"]), b.used
 	b.mu.Unlock()
-	if events != 2 || used != 1 {
-		t.Errorf("after bogus refunds events = %d used = %d, want 2/1", events, used)
+	if events != 2 || used != 2 {
+		t.Errorf("after bogus refunds events = %d used = %d, want 2/2 (the take after the refund spent one again)", events, used)
 	}
 }
 
