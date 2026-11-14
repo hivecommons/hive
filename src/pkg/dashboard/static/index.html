@@ -47223,7 +47223,7 @@ function burnAreaChart() {
       const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
       if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Recordings are triaged in the Inbox, not here.</span></div>';
       return '<details class="kb-plaud-paste mt-2"><summary class="muted-xs">Hive runs on a server? Finish sign-in by pasting</summary>' +
-        '<p class="muted-xs">Plaud only redirects to <code>localhost:8199</code>. Open the authorization link, approve, then paste the <code>localhost:8199/auth/callback?…</code> URL your browser lands on (within 10 minutes). Alternatively paste the contents of <code>~/.plaud/tokens-mcp.json</code> from a laptop where <code>plaud-mcp</code> is signed in.</p>' +
+        '<p class="muted-xs">Plaud only redirects to <code>localhost:8199</code>. Open the authorization link, approve, then paste the <code>localhost:8199/auth/callback?…</code> URL your browser lands on (within 10 minutes). Alternatively paste the contents of <code>~/.plaud/tokens-mcp.json</code> from a laptop where <code>plaud-mcp</code> is signed in: on macOS run <code>cat ~/.plaud/tokens-mcp.json | pbcopy</code> (Linux: <code>xclip -selection clipboard &lt; ~/.plaud/tokens-mcp.json</code>) to copy it without showing it, then paste below.</p>' +
         '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="3" placeholder="http://localhost:8199/auth/callback?code=…  or  {&quot;access_token&quot;: …}"></textarea>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
     }
@@ -50957,7 +50957,7 @@ function burnAreaChart() {
     const SESSIONS_TYPING_NOTE = 'Number of browsers attached to this terminal. Everyone attached shares the same keyboard, and typing is not attributed to individual users.';
     const SESSIONS_HEADER_CONTENT_TYPE = 'Content-Type';
 
-    let _sessionsData = { enabled: false, sessions: [], vendors: [], limits: {} };
+    let _sessionsData = { enabled: false, sessions: [], vendors: [], limits: {}, workspace: {} };
     let _sessionsRole = '';
     let _sessionsSelected = '';
     let _sessionsCollapsed = {};
@@ -51070,6 +51070,17 @@ function burnAreaChart() {
       if (max > 0 && running >= max) return { ok: false, reason: 'This hive is at its limit of ' + max + ' running sessions. Close one first.' };
       return { ok: true, reason: '' };
     }
+    // Where a session's CLI runs: the hive's shared checkout (repo + path) or,
+    // without one, the session's own empty directory.
+    function sessionsWorkspaceLabel(ws) {
+      const repo = ws && ws.repo ? String(ws.repo) : '';
+      const path = ws && ws.path ? String(ws.path) : '';
+      if (!repo) return 'No workspace repo is configured; sessions start in an empty directory.';
+      return 'Workspace: ' + repo + (path ? ' (' + path + ')' : '') + ', shared by every session on this hive.';
+    }
+    function sessionsSessionWorkspace(s) {
+      return s ? { repo: s.workspace_repo || '', path: s.workspace || '' } : {};
+    }
     function sessionsTmuxName(id) { return SESSIONS_TMUX_PREFIX + id; }
     function sessionsTerminalPath(id, code) {
       return '/terminal/?arg=' + encodeURIComponent(sessionsTmuxName(id)) + (code ? '&code=' + encodeURIComponent(code) : '');
@@ -51120,9 +51131,10 @@ function burnAreaChart() {
           sessions: Array.isArray(data.sessions) ? data.sessions : [],
           vendors: Array.isArray(data.vendors) ? data.vendors : [],
           limits: data.limits || {},
+          workspace: data.workspace || {},
         };
       } catch (e) {
-        if (!_sessionsLoaded) _sessionsData = { enabled: false, sessions: [], vendors: [], limits: {} };
+        if (!_sessionsLoaded) _sessionsData = { enabled: false, sessions: [], vendors: [], limits: {}, workspace: {} };
         else return;
       }
       const wasEnabled = sessionsIsEnabled();
@@ -51166,6 +51178,7 @@ function burnAreaChart() {
       const attached = Number(s.attached) || 0;
       const badge = attached > 0 ? '<span class="sessions-attached" title="' + esc(SESSIONS_TYPING_NOTE) + '">' + attached + '</span>' : '';
       return '<button type="button" role="tab" class="sessions-tab' + (selected ? ' active' : '') + (ended ? ' ended' : '') + '" id="sessions-tab-' + esc(s.id) + '"'
+        + ' title="' + esc(sessionsWorkspaceLabel(sessionsSessionWorkspace(s))) + '"'
         + ' aria-selected="' + selected + '" aria-controls="sessions-pane-' + esc(s.id) + '" tabindex="' + (selected ? '0' : '-1') + '"'
         + ' data-action="sessionsSelect" data-arg0="' + esc(s.id) + '" data-keydown-action="sessionsTabKey" data-arg-types="s,e" data-keys="*" data-arg1="">'
         + '<span class="sessions-tab-dot" data-status="' + esc(s.status || '') + '"></span>'
@@ -51197,9 +51210,10 @@ function burnAreaChart() {
         + '<div class="sessions-form-row"><label for="sessions-new-vendor">CLI</label><select id="sessions-new-vendor" class="campaigns-input">'
         + vendors.map(function(v) { return '<option value="' + esc(v.id) + '">' + esc(v.label || v.id) + '</option>'; }).join('') + '</select></div>'
         + '<div class="sessions-form-row"><label for="sessions-new-shared">Share</label><input id="sessions-new-shared" type="checkbox"> <span>Let the team watch and type (read-write users)</span></div>'
+        + '<div class="sessions-form-row"><label>Workspace</label><span class="sessions-workspace">' + esc(sessionsWorkspaceLabel(_sessionsData.workspace)) + '</span></div>'
         + '<div class="sessions-form-actions"><button type="button" class="hv-btn btn-primary btn-sm" data-action="sessionsCreate">Start session</button>'
         + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="sessionsToggleNew">Cancel</button></div>'
-        + '<div class="sessions-note">Sessions run the vendor CLI with permission prompts on, as their own unprivileged user. A session is private to you and the hive owners unless you share it.</div>';
+        + '<div class="sessions-note">Sessions run the vendor CLI with permission prompts on, as their own unprivileged user, inside the workspace above (a checkout of the repo with its spek skills installed; every session shares it, like several people on one checkout). A session is private to you and the hive owners unless you share it.</div>';
     }
     function sessionsToolbarHtml() {
       const can = sessionsCanCreate(_sessionsRole, _sessionsData);
@@ -51217,7 +51231,7 @@ function burnAreaChart() {
           + '<button type="button" class="danger" data-action="sessionsClose" data-arg0="' + esc(s.id) + '">Close session</button></div></details>'
         : '';
       return '<div class="sessions-pane-head"><span class="sessions-pane-title">' + esc(s.name || s.id) + '</span>'
-        + '<span class="sessions-pane-meta">' + esc(s.vendor || '') + ' · started by ' + esc(s.creator || 'unknown') + (s.group ? ' · ' + esc(s.group) : '') + '</span>'
+        + '<span class="sessions-pane-meta" title="' + esc(sessionsWorkspaceLabel(sessionsSessionWorkspace(s))) + '">' + esc(s.vendor || '') + ' · started by ' + esc(s.creator || 'unknown') + (s.group ? ' · ' + esc(s.group) : '') + (s.workspace_repo ? ' · ' + esc(s.workspace_repo) : '') + '</span>'
         + '<span class="sessions-attached sessions-pane-attached" title="' + esc(SESSIONS_TYPING_NOTE) + '">' + attached + ' attached</span>' + menu + '</div>';
     }
     function sessionsInputBarHtml(s) {

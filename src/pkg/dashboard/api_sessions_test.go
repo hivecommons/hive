@@ -36,6 +36,8 @@ type fakeSessionRuntime struct {
 	removed []string
 	// removeErr, when set, makes Remove fail (the files could not be deleted).
 	removeErr error
+	// resumeDirs records the workDir each ResumeInfo call was given.
+	resumeDirs []string
 }
 
 func newFakeSessionRuntime(t *testing.T) *fakeSessionRuntime {
@@ -55,6 +57,12 @@ func newFakeSessionRuntime(t *testing.T) *fakeSessionRuntime {
 func (f *fakeSessionRuntime) Vendors() []crux.UserSessionVendor { return f.vendors }
 func (f *fakeSessionRuntime) SupportsResume(v string) bool      { return v == "claude" }
 func (f *fakeSessionRuntime) WorkDir(id string) string          { return filepath.Join(f.workDir, id) }
+func (f *fakeSessionRuntime) WorkspaceDir(repo string) string {
+	if repo == "" || !strings.Contains(repo, "/") {
+		return ""
+	}
+	return filepath.Join(f.workDir, "workspace", repo)
+}
 func (f *fakeSessionRuntime) Start(spec crux.UserSessionSpec) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -127,7 +135,10 @@ func (f *fakeSessionRuntime) StoreUpload(id, fileName string, src io.Reader, max
 	return dest, int64(len(b)), nil
 }
 
-func (f *fakeSessionRuntime) ResumeInfo(id, vendor string) (crux.UserSessionResume, bool) {
+func (f *fakeSessionRuntime) ResumeInfo(id, vendor, workDir string) (crux.UserSessionResume, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resumeDirs = append(f.resumeDirs, workDir)
 	r, ok := f.resume[id]
 	return r, ok
 }
@@ -141,7 +152,7 @@ func newSessionTestEnv(t *testing.T, enabled bool) *sessionTestEnv {
 	t.Helper()
 	t.Setenv(sessionsDirEnv, t.TempDir())
 	t.Setenv(config.EnvSessionsEnabled, "")
-	for _, e := range []string{config.EnvSessionsMax, config.EnvSessionsMaxPerUser, config.EnvSessionsIdleTTLHours,
+	for _, e := range []string{config.EnvSessionsMax, config.EnvSessionsMaxPerUser, config.EnvSessionsIdleTTLHours, config.EnvSessionsWorkspaceRepo,
 		sessionsMaxInputBytesEnv, sessionsMaxUploadBytesEnv, sessionsMaxUploadsEnv} {
 		t.Setenv(e, "")
 	}
