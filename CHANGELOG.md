@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.263.2)
+
+### Fixed
+
+- The permissions watcher no longer tries to chown a top-level watched directory it can never chown at startup. The #18120 guard covered only the per-entry walk. `ensureWatchedDirs`, which runs at every agent-runtime start and again on any tick that finds a watched root missing, still called `chown` on each root without checking first. On a spoke where `/data/beads` is owned by another uid, the unprivileged `dev` watcher therefore logged `permissions watcher: failed to chown directory ... operation not permitted` again and again (10 in ten minutes on hive-tall-frog). The watcher now makes the same before-the-syscall check there (unprivileged and not the owner), skips at DEBUG with the operator hint, and still reports wrong ownership through the walk's per-tick summary. Directories the process owns are chowned exactly as before (#18234).
+
 ## 2026-11-14 (v5.263.1)
 
 ### Fixed
