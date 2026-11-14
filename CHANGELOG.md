@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.252.0)
+
+### Added
+
+- Hub: self-service (`byo-`) hives now expire. A background sweep (every `HIVE_HUB_SELFSERVICE_SWEEP_INTERVAL`, default 10m) revokes the key and removes the registry entry of any registration that went longer than `HIVE_HUB_SELFSERVICE_EXPIRY` (default 24h) without an accepted heartbeat, writing `audit: selfservice_hive_expired`. The hub also assigns every `byo-` registry entry the hive type `self-hosted` from its ID prefix, ignoring any `hive_type` the heartbeat claims, so the dashboard and `/api/hub/*` listings can badge them (#18146, part of #18060).
+
 ## 2026-11-14 (v5.251.0)
 
 ### Added
