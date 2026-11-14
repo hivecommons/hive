@@ -59,6 +59,10 @@ type unparkServer struct {
 	// replyAfterPost maps issue number to comments that appear in its
 	// listing once a comment is POSTed on it (e.g. Prow's reply).
 	replyAfterPost map[int][]unparkWireComment
+	// postAuthor, when set, is the account GitHub reports as the author of
+	// every comment POSTed to the server: the response names it, and the
+	// comment shows up in later listings under it, as on GitHub.
+	postAuthor string
 	// permissions maps login to the permission level the API reports.
 	permissions map[string]string
 	// roles maps login to the role_name the permission endpoint reports
@@ -214,7 +218,20 @@ func newUnparkServer(t *testing.T, owner, repo string, issues []unparkWireIssue,
 				iss.Comments = append(append([]unparkWireComment(nil), iss.Comments...), extra...)
 				byNum[n] = iss
 			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"id": 9000 + len(rec.posted[n])})
+			resp := map[string]any{"id": 9000 + len(rec.posted[n])}
+			if rec.postAuthor != "" {
+				resp["user"] = wireUser{Login: rec.postAuthor}
+				iss := byNum[n]
+				iss.Comments = append(append([]unparkWireComment(nil), iss.Comments...), unparkWireComment{
+					ID:        int64(9000 + len(rec.posted[n])),
+					Body:      body.Body,
+					User:      wireUser{Login: rec.postAuthor},
+					CreatedAt: unparkNow(),
+					UpdatedAt: unparkNow(),
+				})
+				byNum[n] = iss
+			}
+			_ = json.NewEncoder(w).Encode(resp)
 
 		case strings.HasPrefix(path, "issues/comments/") && r.Method == http.MethodPatch:
 			var id int64
@@ -653,6 +670,35 @@ func TestSweepIssueUnparkCommandsHelpAndProseDoNotUnpark(t *testing.T) {
 				t.Fatalf("expected %q in the reply, got %v", tc.want, rec.posted[12])
 			}
 		})
+	}
+}
+
+// TestSweepIssueUnparkCommandsAnswersOnceWhenPostingAsUnconfiguredLogin covers
+// a reply flood seen on a live hive: the configured identity named one App
+// bot login while the hive actually posted as another (an App installed under
+// its own slug with no github.app_slug set falls back to the public default
+// slug). Its unpark-reply marker then never counted as its own, so every
+// sweep answered the same command again — 40-58 identical replies a day.
+func TestSweepIssueUnparkCommandsAnswersOnceWhenPostingAsUnconfiguredLogin(t *testing.T) {
+	issues := []unparkWireIssue{parkedIssue(7, humanComment(11, "maintainer", "/hive help"))}
+	server, rec := newUnparkServer(t, "org", "repo", issues, map[string]string{"maintainer": "admin"})
+	rec.postAuthor = "acme-hive[bot]"
+	c := newTestClient(t, server, "org", []string{"repo"})
+	c.SetHiveIdentity(HiveIdentity{AppLogin: "hivecommons-hive[bot]"})
+
+	for sweep := 1; sweep <= 3; sweep++ {
+		if _, err := c.SweepIssueUnparkCommands(context.Background(), IssueUnparkSweepOptions{}); err != nil {
+			t.Fatalf("sweep %d: %v", sweep, err)
+		}
+	}
+	var replies int
+	for _, body := range rec.posted[7] {
+		if strings.Contains(body, unparkReplyMarkerPrefix+"11 -->") {
+			replies++
+		}
+	}
+	if replies != 1 {
+		t.Fatalf("command 11 answered %d times over 3 sweeps, want once; posted=%v", replies, rec.posted[7])
 	}
 }
 

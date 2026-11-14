@@ -651,9 +651,11 @@ func (c *Client) recordLabelApproval(event IssueLabelApprovalEvent, la unparkLab
 
 func (c *Client) postLabelApprovalReply(ctx context.Context, owner, repo string, number int, eventID int64, body string) error {
 	marked := labelApprovalMarker(eventID) + "\n" + body
-	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(marked)}); err != nil {
+	created, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(marked)})
+	if err != nil {
 		return fmt.Errorf("replying to label approval on %s/%s#%d: %w", owner, repo, number, err)
 	}
+	c.learnSelfLogin(created)
 	return nil
 }
 
@@ -1239,9 +1241,11 @@ func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo stri
 		}
 		return nil
 	}
-	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desired)}); err != nil {
+	created, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(desired)})
+	if err != nil {
 		return fmt.Errorf("creating unpark notice on %s/%s#%d: %w", owner, repo, number, err)
 	}
+	c.learnSelfLogin(created)
 	return nil
 }
 
@@ -1249,9 +1253,11 @@ func (c *Client) ensureUnparkNoticeComment(ctx context.Context, owner, repo stri
 // the answered comment's ID so a later cycle recognises its own work.
 func (c *Client) postUnparkReply(ctx context.Context, owner, repo string, number int, commentID int64, body string) error {
 	marked := fmt.Sprintf("%s%d -->\n%s", unparkReplyMarkerPrefix, commentID, body)
-	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(marked)}); err != nil {
+	created, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(marked)})
+	if err != nil {
 		return fmt.Errorf("replying to unpark command on %s/%s#%d: %w", owner, repo, number, err)
 	}
+	c.learnSelfLogin(created)
 	return nil
 }
 
