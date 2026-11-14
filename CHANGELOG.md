@@ -11,6 +11,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.249.0)
+
+### Added
+
+- `config.ProjectConfig` gains a `ReferenceRepoTier(slug)` accessor (and `ReferenceRepo.Tier()`) returning a reference repo's write tier, so the proxy, kick renderer and dashboard share one source of truth (#18018).
+- Dashboard Sessions backend (off by default, `dashboard.sessions.enabled` / `HIVE_SESSIONS_ENABLED`): named, shared, interactive CLI terminals behind `/api/sessions` (create, rename, close, resume, scrollback, input and upload), with per-session HOME and a credential-free environment, no permission-bypass flags, per-spoke and per-user limits, an idle sweeper and `session_*` audit entries; `/api/terminal/handoff` accepts `{"session":"<id>"}`.
+- Dashboard: a new Sessions section (when sessions are enabled) with tabbed, named, grouped, shared CLI terminals, a send/attach input bar and a read-only scrollback view for the read role; it replaces the Inception wizard UI and keeps Campaigns and Jam on a tab.
+
+### Fixed
+
+- `native-queue-policy` now names the condition that made a PR ineligible for admission (`is a draft`, `is held by label needs-human`, `head moved to <sha>`, `base moved to v6`, `is closed`) instead of the single opaque `head/base moved, draft, closed, or held` line, and says it is PR state rather than a CI failure. Several held or draft PRs failing with the same generic text looked like a broken shared workflow and were filed as a shared-CI incident (#18128); the check's fail-closed verdict was correct on every one of them.
+- **A per-agent overlay for a derived replica no longer crash-loops the hive** (#18137). Dashboard saves on a replica such as `reviewer-2` used to write `reviewer-2.yaml` into `data.agents_dir` as if it were a base agent, and the next restart failed with `replicas:2 would create reviewer-2, but an agent with that name already exists` before the dashboard could bind. Replica edits are now written to the base agent's overlay, and a stray `<base>-N.yaml` already on disk is skipped at boot with an ERROR log naming the file, so the hive starts and the replica is re-derived from its base.
+
 ## 2026-11-13 (v5.248.1)
 
 ### Fixed
