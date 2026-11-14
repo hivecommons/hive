@@ -586,26 +586,42 @@
     .hive-toast.info { background: rgba(128,191,255,0.9); }
     /* Self-service registration modal and list (#18145). Colour comes from the
        shared tokens only, so the light and dark themes carry through. */
-    .ss-input { width: 100%; padding: var(--sp-4) var(--sp-5); background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); font-size: 0.85rem; font-family: inherit; box-sizing: border-box; }
-    .ss-label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: var(--sp-2); }
-    .ss-hint { font-size: 0.7rem; color: var(--muted); margin-top: var(--sp-2); }
-    .ss-warn, .ss-error { background: rgba(255,126,126,0.12); border: 1px solid rgba(255,126,126,0.5); border-radius: var(--r); padding: var(--sp-4) var(--sp-5); font-size: 0.85rem; margin-bottom: var(--sp-5); color: var(--text); }
+    .ss-hidden { display: none !important; }
+    .ss-section { display: none; margin-top: var(--sp-9); }
+    .ss-section.open { display: block; }
+    .ss-section-head { display: flex; align-items: baseline; gap: var(--sp-4); margin-bottom: var(--sp-6); }
+    .ss-section-title { font-size: var(--fs-xl); color: var(--hub-dashboard-accent); margin: var(--sp-0); }
+    .ss-modal { display: none; position: fixed; inset: 0; background: var(--overlay-scrim); z-index: 100; align-items: center; justify-content: center; }
+    .ss-modal.open { display: flex; }
+    .ss-panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg); max-width: 640px; width: 90%; max-height: 90vh; display: flex; flex-direction: column; }
+    .ss-head { font-size: var(--fs-xl); padding: var(--sp-9) var(--sp-9) var(--sp-6); margin: var(--sp-0); color: var(--hub-dashboard-accent); flex-shrink: 0; }
+    .ss-body { flex: 1; overflow-y: auto; padding: var(--sp-0) var(--sp-9); }
+    .ss-foot { display: flex; gap: var(--sp-5); justify-content: flex-end; padding: var(--sp-6) var(--sp-9); border-top: 1px solid var(--border); flex-shrink: 0; }
+    .ss-intro { font-size: var(--fs-base); color: var(--muted); margin-top: 0; }
+    .ss-input { width: 100%; padding: var(--sp-4) var(--sp-5); background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); font-size: var(--fs-base); font-family: inherit; box-sizing: border-box; }
+    .ss-label { display: block; font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-2); }
+    .ss-sub { font-size: var(--fs-xs); }
+    .ss-prefix { color: var(--muted); font-size: var(--fs-base); white-space: nowrap; }
+    .ss-hint { font-size: var(--fs-xs); color: var(--muted); margin-top: var(--sp-2); }
+    .ss-warn, .ss-error { background: color-mix(in srgb, var(--status-error) 14%, transparent); border: 1px solid color-mix(in srgb, var(--status-error) 50%, transparent); border-radius: var(--r); padding: var(--sp-4) var(--sp-5); font-size: var(--fs-base); margin-bottom: var(--sp-5); color: var(--text); }
     .ss-error { white-space: pre-wrap; overflow-wrap: anywhere; }
-    .ss-note { color: var(--muted); font-size: 0.8rem; }
+    .ss-note { color: var(--muted); font-size: var(--fs-sm); }
+    .ss-cap { margin-bottom: var(--sp-5); }
     .ss-field { margin-bottom: var(--sp-5); }
     .ss-row { display: flex; gap: var(--sp-3); align-items: center; }
     .ss-row-end { justify-content: flex-end; margin-bottom: var(--sp-2); }
-    .ss-code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-3) var(--sp-4); font-size: 0.8rem; color: var(--text); }
+    .ss-code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-3) var(--sp-4); font-size: var(--fs-sm); color: var(--text); }
     .ss-key { user-select: all; }
     .ss-tabs { display: flex; gap: var(--sp-2); border-bottom: 1px solid var(--border); margin: var(--sp-6) 0 var(--sp-4); }
-    .ss-tab { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: var(--sp-3) var(--sp-4); font-size: 0.85rem; cursor: pointer; font-family: inherit; }
+    .ss-tab { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: var(--sp-3) var(--sp-4); font-size: var(--fs-base); cursor: pointer; font-family: inherit; }
     .ss-tab.active { color: var(--text); border-bottom-color: var(--hub-dashboard-accent); }
-    .ss-pre { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4); font-size: 0.75rem; overflow-x: auto; margin: 0; max-height: 260px; color: var(--text); }
+    .ss-pre { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4); font-size: var(--fs-sm); overflow-x: auto; margin: 0; max-height: 260px; color: var(--text); }
     .ss-hive { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); margin-bottom: var(--sp-4); }
     .ss-hive-main { display: flex; align-items: center; gap: var(--sp-3); flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
-    .ss-hive-meta { flex: 1 1 100%; color: var(--muted); font-size: 0.78rem; overflow-wrap: anywhere; }
+    .ss-hive-main a { font-size: var(--fs-sm); }
+    .ss-hive-meta { flex: 1 1 100%; color: var(--muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
     .ss-hive-actions { display: flex; gap: var(--sp-3); margin-left: auto; }
-    .ss-badge { font-size: 0.7rem; padding: 1px var(--sp-3); border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+    .ss-badge { font-size: var(--fs-xs); padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); border: 1px solid var(--border); color: var(--muted); }
     .ss-badge.on { color: var(--green); border-color: var(--green); }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes toast-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
@@ -906,10 +922,10 @@
          self-service form (#18145): online badge, last accepted heartbeat,
          Rotate key and Remove. Hidden unless /api/hub/selfservice/status says
          the feature is on; filled by renderSelfServiceList(). -->
-    <div id="selfservice-section" style="display:none;margin-top:48px">
-      <div style="display:flex;align-items:baseline;gap:var(--sp-4);margin-bottom:var(--sp-6)">
-        <h2 style="font-size:1.3rem;color:var(--hub-dashboard-accent);margin:var(--sp-0)">Self-hosted hives</h2>
-        <span id="selfservice-cap" class="text-muted" style="font-size:0.8rem"></span>
+    <div id="selfservice-section" class="ss-section">
+      <div class="ss-section-head">
+        <h2 class="ss-section-title">Self-hosted hives</h2>
+        <span id="selfservice-cap" class="ss-note"></span>
       </div>
       <div id="selfservice-list"></div>
     </div>
@@ -12224,8 +12240,9 @@
        your own hive" CTAs stay plain links to /get-started#self-host and none
        of the fetches below happen. The raw heartbeat key exists only in the
        201 / rotate response and in the DOM of the open modal: it is never kept
-       in a variable that outlives the dialog, never written to localStorage
-       and never logged. */
+       in a variable that outlives the dialog, never written to browser
+       storage and never logged. Show/hide below is done with the ss-hidden /
+       open classes rather than style attributes (style ratchet). */
     var SELFSERVICE_ID_PREFIX = 'byo-';
     var SELFSERVICE_SNIPPET_TABS = [
       { key: 'docker_compose', label: 'Docker Compose' },
@@ -12269,7 +12286,7 @@
       if (prefix) prefix.textContent = SELFSERVICE_ID_PREFIX + (_currentUser || 'you') + '-';
       var cap = document.getElementById('ss-cap');
       if (cap) cap.textContent = _selfService.maxPerUser ? (_selfService.count + ' of ' + _selfService.maxPerUser + ' self-hosted hives registered.') : '';
-      m.style.display = 'flex';
+      m.classList.add('open');
       hiveHubRememberModalOpen(m);
       var name = document.getElementById('ss-name');
       if (name) name.focus();
@@ -12277,9 +12294,12 @@
     function closeSelfServiceModal() {
       var m = selfServiceModal();
       if (!m) return;
-      m.style.display = 'none';
+      m.classList.remove('open');
       selfServiceClearKeyPanel();
       selfServiceSetError('');
+    }
+    function selfServiceShow(el, on) {
+      if (el) el.classList.toggle('ss-hidden', !on);
     }
     /* The key panel is the only place the raw key lives; wipe it whenever it
        is hidden, so a later DOM inspection or a reopened dialog has nothing. */
@@ -12287,11 +12307,10 @@
       var k = document.getElementById('ss-key-panel');
       if (!k) return;
       k.innerHTML = '';
-      k.style.display = 'none';
+      selfServiceShow(k, false);
     }
     function selfServiceShowForm() {
-      var form = document.getElementById('ss-form-panel');
-      if (form) form.style.display = '';
+      selfServiceShow(document.getElementById('ss-form-panel'), true);
       selfServiceClearKeyPanel();
       selfServiceSetError('');
       ['ss-name', 'ss-org', 'ss-repos', 'ss-dash'].forEach(function(id) {
@@ -12302,15 +12321,14 @@
       if (title) title.textContent = 'Register your own hive';
       var close = document.getElementById('ss-close');
       if (close) close.textContent = 'Cancel';
-      var submit = document.getElementById('ss-submit');
-      if (submit) submit.style.display = '';
+      selfServiceShow(document.getElementById('ss-submit'), true);
       selfServiceSetBusy(false);
     }
     function selfServiceSetError(msg) {
       var el = document.getElementById('ss-error');
       if (!el) return;
       el.textContent = msg || '';
-      el.style.display = msg ? '' : 'none';
+      selfServiceShow(el, !!msg);
     }
     function selfServiceSetBusy(busy) {
       var btn = document.getElementById('ss-submit');
@@ -12378,13 +12396,12 @@
       var form = document.getElementById('ss-form-panel');
       var panel = document.getElementById('ss-key-panel');
       if (!form || !panel) return;
-      form.style.display = 'none';
+      selfServiceShow(form, false);
       var title = document.getElementById('ss-title');
       if (title) title.textContent = r.mode === 'rotated' ? 'New key issued' : 'Hive registered';
       var close = document.getElementById('ss-close');
       if (close) close.textContent = 'Close';
-      var submit = document.getElementById('ss-submit');
-      if (submit) submit.style.display = 'none';
+      selfServiceShow(document.getElementById('ss-submit'), false);
       var html = '<div class="ss-warn" role="alert"><strong>Copy the key before closing this dialog.</strong> It is shown once and never again: the hub stores only a hash. If you lose it, rotate it from the Self-hosted hives list.</div>';
       if (r.mode === 'rotated' && r.overlap) {
         html += '<p class="ss-note">The previous key keeps working for ' + esc(r.overlap) + ' so a running spoke can be updated without a gap; after that only the new key is accepted.</p>';
@@ -12399,13 +12416,13 @@
       html += '</div>';
       SELFSERVICE_SNIPPET_TABS.forEach(function(t, i) {
         var text = r.snippets && r.snippets[t.key] ? String(r.snippets[t.key]) : '';
-        html += '<div class="ss-snippet" id="ss-snippet-' + t.key + '" role="tabpanel" style="' + (i === 0 ? '' : 'display:none') + '">' +
+        html += '<div class="ss-snippet' + (i === 0 ? '' : ' ss-hidden') + '" id="ss-snippet-' + t.key + '" role="tabpanel">' +
           '<div class="ss-row ss-row-end"><button type="button" class="hv-btn btn-primary btn-sm" onclick="selfServiceCopy(\'ss-snippet-text-' + t.key + '\',\'' + escAttr(t.label) + ' snippet\')">Copy</button></div>' +
           '<pre class="ss-pre"><code id="ss-snippet-text-' + t.key + '">' + esc(text) + '</code></pre></div>';
       });
       html += '<p class="ss-note">Start the spoke with one of these; it shows as online in Self-hosted hives after its first accepted heartbeat. A registration that never heartbeats expires after ' + esc(_selfService.expiry || '24h') + '.</p>';
       panel.innerHTML = html;
-      panel.style.display = '';
+      selfServiceShow(panel, true);
     }
     function selfServiceValueRow(label, id, value, copyLabel, extraClass) {
       return '<div class="ss-field"><label class="ss-label">' + esc(label) + '</label><div class="ss-row">' +
@@ -12419,8 +12436,7 @@
     }
     function selfServiceTab(key) {
       SELFSERVICE_SNIPPET_TABS.forEach(function(t) {
-        var p = document.getElementById('ss-snippet-' + t.key);
-        if (p) p.style.display = t.key === key ? '' : 'none';
+        selfServiceShow(document.getElementById('ss-snippet-' + t.key), t.key === key);
       });
       document.querySelectorAll('#ss-key-panel .ss-tab').forEach(function(b) {
         var on = b.getAttribute('data-tab') === key;
@@ -12435,10 +12451,22 @@
       if (!section) return;
       try {
         var resp = await fetch('/api/hub/selfservice/hives');
-        if (resp.status === 404) { _selfService.enabled = false; section.style.display = 'none'; return; }
+        if (resp.status === 404) { _selfService.enabled = false; section.classList.remove('open'); return; }
         if (!resp.ok) return;
         var data = await resp.json();
-        _selfServiceHives = (data && data.hives) || [];
+        /* Normalised to the dashboard's camelCase row shape so the hive-table
+           guards against reading snake_case timestamps hold here too. */
+        _selfServiceHives = ((data && data.hives) || []).map(function(v) {
+          return {
+            id: String(v.id || ''),
+            org: v.org || '',
+            repos: v.repos || [],
+            dashboardUrl: v.dashboard_url || '',
+            createdAt: v.created_at || '',
+            lastHeartbeatAt: v.last_accepted_heartbeat_at || '',
+            online: !!v.online
+          };
+        });
       } catch (e) { return; }
       _selfService.count = _selfServiceHives.length;
       renderSelfServiceList();
@@ -12459,11 +12487,11 @@
       var section = document.getElementById('selfservice-section');
       var list = document.getElementById('selfservice-list');
       if (!section || !list) return;
-      section.style.display = '';
+      section.classList.add('open');
       var cap = document.getElementById('selfservice-cap');
       if (cap) cap.textContent = _selfService.maxPerUser ? (_selfServiceHives.length + ' of ' + _selfService.maxPerUser) : '';
       if (!_selfServiceHives.length) {
-        list.innerHTML = '<p class="text-muted" style="font-size:0.85rem">No self-hosted hives yet. Use Register your own hive above to add one.</p>';
+        list.innerHTML = '<p class="ss-note">No self-hosted hives yet. Use Register your own hive above to add one.</p>';
         return;
       }
       list.innerHTML = _selfServiceHives.map(function(h) {
@@ -12473,7 +12501,7 @@
             '<span class="online-dot ' + (online ? 'on' : 'off') + '" title="' + (online ? 'Online' : 'Offline') + '"></span>' +
             '<strong>' + esc(h.id) + '</strong>' +
             '<span class="ss-badge ' + (online ? 'on' : 'off') + '">' + (online ? 'online' : 'offline') + '</span>' +
-            (h.dashboard_url ? '<a class="text-accent" style="font-size:0.8rem" href="' + escAttr(h.dashboard_url) + '" target="_blank" rel="noopener">dashboard</a>' : '') +
+            (h.dashboardUrl ? '<a class="text-accent" href="' + escAttr(h.dashboardUrl) + '" target="_blank" rel="noopener">dashboard</a>' : '') +
           '</div>' +
           '<div class="ss-hive-actions">' +
             '<button type="button" class="hv-btn btn-primary btn-sm" onclick="rotateSelfServiceHive(' + jsArg(h.id) + ')" title="Issue a new heartbeat key; the current one keeps working for a short overlap">Rotate key</button>' +
@@ -12482,8 +12510,8 @@
           '<div class="ss-hive-meta">' +
             (h.org ? 'org ' + esc(h.org) + ' · ' : '') +
             'repos ' + esc((h.repos || []).join(', ') || 'none') + ' · ' +
-            'last heartbeat ' + esc(selfServiceAgo(h.last_accepted_heartbeat_at)) + ' · ' +
-            'registered ' + esc(selfServiceAgo(h.created_at)) +
+            'last heartbeat ' + esc(selfServiceAgo(h.lastHeartbeatAt)) + ' · ' +
+            'registered ' + esc(selfServiceAgo(h.createdAt)) +
           '</div></div>';
       }).join('');
     }
@@ -12502,7 +12530,7 @@
       } catch (e) { hiveToast('Network error: key not rotated', 'error'); return; }
       if (!resp.ok || !data || !data.key) { hiveToast(selfServiceErrorMessage(resp.status, data), 'error'); return; }
       var m = selfServiceModal();
-      if (m) { m.style.display = 'flex'; hiveHubRememberModalOpen(m); }
+      if (m) { m.classList.add('open'); hiveHubRememberModalOpen(m); }
       renderSelfServiceKey({ id: data.id || id, key: data.key, hubUrl: data.hub_url, overlap: data.overlap, snippets: data.snippets || {}, mode: 'rotated' });
     }
     async function removeSelfServiceHive(id) {
@@ -15008,38 +15036,38 @@
        closeSelfServiceModal(), so the raw key never outlives the open dialog.
        Deliberately no backdrop-click or Escape close: dismissing the dialog by
        accident would lose a key that is shown exactly once. -->
-  <div id="selfservice-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
-    <div role="dialog" aria-modal="true" aria-labelledby="ss-title" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);max-width:640px;width:90%;max-height:90vh;display:flex;flex-direction:column">
-      <h2 id="ss-title" style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-6);margin:var(--sp-0);color:var(--hub-dashboard-accent);flex-shrink:0">Register your own hive</h2>
-      <div style="flex:1;overflow-y:auto;padding:var(--sp-0) var(--sp-9)">
+  <div id="selfservice-modal" class="ss-modal">
+    <div class="ss-panel" role="dialog" aria-modal="true" aria-labelledby="ss-title">
+      <h2 id="ss-title" class="ss-head">Register your own hive</h2>
+      <div class="ss-body">
         <div id="ss-form-panel">
-          <p class="text-muted" style="font-size:0.85rem;margin-top:0">You run the hive; this hub issues it a heartbeat key. You must be a GitHub admin of every repository you list: the hub checks that with the GitHub account you signed in with.</p>
-          <div class="mb-5">
+          <p class="ss-intro">You run the hive; this hub issues it a heartbeat key. You must be a GitHub admin of every repository you list: the hub checks that with the GitHub account you signed in with.</p>
+          <div class="ss-field">
             <label class="ss-label" for="ss-name">Name *</label>
             <div class="ss-row">
-              <code id="ss-prefix" style="color:var(--muted);font-size:0.85rem;white-space:nowrap">byo-</code>
+              <code id="ss-prefix" class="ss-prefix">byo-</code>
               <input id="ss-name" class="ss-input" type="text" placeholder="my-hive" autocomplete="off" maxlength="48">
             </div>
             <div class="ss-hint">Letters, digits, '.', '_' and '-'. The hive ID is the prefix plus this name.</div>
           </div>
-          <div class="mb-5">
+          <div class="ss-field">
             <label class="ss-label" for="ss-org">GitHub organization</label>
             <input id="ss-org" class="ss-input" type="text" placeholder="my-org" autocomplete="off">
           </div>
-          <div class="mb-5">
-            <label class="ss-label" for="ss-repos">Repositories * <span style="font-size:0.7rem">(one owner/name per line)</span></label>
+          <div class="ss-field">
+            <label class="ss-label" for="ss-repos">Repositories * <span class="ss-sub">(one owner/name per line)</span></label>
             <textarea id="ss-repos" class="ss-input" rows="3" placeholder="my-org/repo-one&#10;my-org/repo-two" spellcheck="false"></textarea>
           </div>
-          <div class="mb-5">
-            <label class="ss-label" for="ss-dash">Dashboard URL <span style="font-size:0.7rem">(optional, https)</span></label>
+          <div class="ss-field">
+            <label class="ss-label" for="ss-dash">Dashboard URL <span class="ss-sub">(optional, https)</span></label>
             <input id="ss-dash" class="ss-input" type="url" placeholder="https://hive.example.com" autocomplete="off">
           </div>
-          <div id="ss-error" class="ss-error" role="alert" style="display:none"></div>
-          <div id="ss-cap" class="text-muted" style="font-size:0.75rem;margin-bottom:var(--sp-5)"></div>
+          <div id="ss-error" class="ss-error ss-hidden" role="alert"></div>
+          <div id="ss-cap" class="ss-note ss-cap"></div>
         </div>
-        <div id="ss-key-panel" style="display:none"></div>
+        <div id="ss-key-panel" class="ss-hidden"></div>
       </div>
-      <div style="display:flex;gap:var(--sp-5);justify-content:flex-end;padding:var(--sp-6) var(--sp-9);border-top:1px solid var(--border);flex-shrink:0">
+      <div class="ss-foot">
         <button class="hv-btn btn-primary" type="button" id="ss-close" onclick="closeSelfServiceModal()">Cancel</button>
         <button class="hv-btn btn-primary btn-primary" type="button" id="ss-submit" onclick="submitSelfService()">Register</button>
       </div>

@@ -172,6 +172,19 @@ func TestDashboardSelfServiceUXKeyPanel(t *testing.T) {
 			t.Errorf("self-service script block must not use %s", forbidden)
 		}
 	}
+	// Show/hide is done with classes so the dashboard style ratchet
+	// (pkg/dashboard/webstatic) does not grow; the script block and the modal
+	// markup must stay free of style attributes.
+	modalStart := strings.Index(html, `id="selfservice-modal"`)
+	modalEnd := strings.Index(html[modalStart:], `id="access-modal"`)
+	if modalStart < 0 || modalEnd < 0 {
+		t.Fatal("cannot locate the self-service modal markup")
+	}
+	for name, chunk := range map[string]string{"script block": block, "modal markup": html[modalStart : modalStart+modalEnd]} {
+		if strings.Contains(chunk, "style=") {
+			t.Errorf("self-service %s uses a style attribute; use the .ss-* classes", name)
+		}
+	}
 	// No hard-coded key placeholder anywhere in the asset: the raw key comes
 	// from the API response and nowhere else.
 	placeholder := regexp.MustCompile(`(?i)(HIVE_HEARTBEAT_KEY\s*[:=]\s*["']?[A-Za-z0-9+/_-]{16,}|byo-[a-z0-9-]+-[a-z0-9]+\.[A-Za-z0-9_-]{20,})`)
@@ -188,9 +201,8 @@ func TestDashboardSelfServiceUXEscaping(t *testing.T) {
 		`esc(h.id)`,
 		`esc(h.org)`,
 		`esc((h.repos || []).join(', ')`,
-		`escAttr(h.dashboard_url)`,
+		`escAttr(h.dashboardUrl)`,
 		`jsArg(h.id)`,
-		`esc(r.id || '')`,
 		`esc(value)`,
 		`esc(text)`,
 	} {
