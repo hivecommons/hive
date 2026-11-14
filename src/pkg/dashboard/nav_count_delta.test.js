@@ -52,6 +52,7 @@ function load() {
     function renderKnowledge() { knowledgeRenders++; }
     function fetchBeadSynthStatus() {}
     function fetchFactHistory() {}
+    function kbSyncProgressTick() { return Promise.resolve(); }
     function stageTrackerNoteMerges() {}
     function stageTrackerReconcileMerges() {}
     function stageTrackerNoteOpened() {}

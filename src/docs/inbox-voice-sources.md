@@ -73,7 +73,7 @@ Plaud card therefore offers **Finish sign-in by pasting**:
 2. The browser lands on `localhost:8199/auth/callback?code=…` (a connection
    error page is expected). Copy that URL and paste it into the card within
    10 minutes; the hive forwards it to the login session running in the pod.
-3. Alternative: on a laptop run `npx -y @plaud-ai/mcp@latest install`, sign
+3. Alternative: on a laptop run `npx -y @plaud-ai/mcp@0.3.14 install`, sign
    in, and paste the contents of `~/.plaud/tokens-mcp.json`.
 
 Both go through `POST /api/knowledge/connectors/{name}/auth/complete`.

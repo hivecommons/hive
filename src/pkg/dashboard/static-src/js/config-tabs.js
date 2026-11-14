@@ -334,7 +334,7 @@
       'github-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'master']],
       'google-drive': [['folder_ids', 'Folder IDs', 'folder123, folder456'], ['shared_drive_ids', 'Shared drive IDs', 'drive123'], ['include_mime', 'Include MIME groups', 'docs,md,txt']],
       'notion': [['root_page_ids', 'Root page IDs', '1a2b3c4d5e6f47a8b9c0d1e2f3a4b5c6'], ['database_ids', 'Database IDs', '0f1e2d3c-4b5a-4968-8776-655443322110'], ['include_archived', 'Include archived', 'false'], ['max_pages', 'Max pages', '2000'], ['full_sync_every', 'Full sync every', '10']],
-      'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@latest'], ['since_days', 'Days back on first sync', '30'], ['max_files', 'Max recordings per sync', '200'], ['include_audio', 'Include 24h audio link', 'false'], ['query', 'Name filter (optional)', 'standup'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['home', 'Token store HOME (optional)', '/data/knowledge/connector-state/plaud/home']],
+      'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@0.3.14'], ['since_days', 'Days back on first sync', '30'], ['max_files', 'Max recordings per sync', '200'], ['include_audio', 'Include 24h audio link', 'false'], ['query', 'Name filter (optional)', 'standup'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['home', 'Token store HOME (optional)', '/data/knowledge/connector-state/plaud/home']],
       'repo-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'v5'], ['dir', 'Wiki directory', '.hive/wiki']],
       'sharepoint': [['drive_ids', 'Drive IDs', 'b!drive-id'], ['site_ids', 'Site IDs', 'contoso.sharepoint.com,site-id,web-id'], ['folder_path', 'Folder path', '/Docs/Sub'], ['include_files', 'Include file extensions', '.md,.txt,.html']],
       'wisprflow': [['path', 'flow.sqlite or export folder (empty = app default)', '/Users/me/Library/Application Support/Wispr Flow/flow.sqlite'], ['since_days', 'Days back on first sync', '30'], ['max_items', 'Max dictations per sync', '500'], ['min_words', 'Skip dictations shorter than (words)', '3'], ['group', 'Fact per dictation or day', 'dictation'], ['apps', 'Only these apps (comma-separated, optional)', 'slack, obsidian, vscode'], ['include_raw', 'Include raw ASR text', 'false'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['sqlite3', 'sqlite3 command (optional)', 'sqlite3']]
@@ -389,7 +389,7 @@
         const err = r.last_error || '';
         const n = esc(c.name);
         html += '<tr data-connector="' + n + '"><td><code>' + n + '</code></td><td>' + esc(c.type) + '</td><td>' + esc(c.layer) + '</td>'
-          + '<td><span class="kc-pill" data-status="' + esc(status) + '">' + esc(status) + '</span></td>'
+          + '<td><span class="kc-pill" data-status="' + esc(status) + '">' + esc(status) + '</span><div data-kc-progress-slot>' + (typeof kcProgressHtml === 'function' ? kcProgressHtml(r) : '') + '</div></td>'
           + '<td title="' + esc(r.last_sync || '') + '">' + esc(kcAgo(r.last_sync)) + '</td>'
           + '<td>' + (r.pages || 0) + ' / ' + (r.facts || 0) + '</td>'
           + '<td class="kc-error-cell" title="' + esc(err) + '">' + (err ? esc(err.length > 80 ? err.slice(0, 80) + '…' : err) : '—') + '</td>';
@@ -719,6 +719,8 @@
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         showToast('Sync started for ' + name, 'success');
         setTimeout(loadKnowledgeConnectors, 1500);
+        // Start the live progress poll right away (card bar + header indicator).
+        if (typeof kbSyncProgressTick === 'function') setTimeout(() => kbSyncProgressTick().catch(() => {}), 300);
       } catch (e) {
         showToast('Sync failed to start: ' + e.message, 'error');
       }
