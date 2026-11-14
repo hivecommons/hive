@@ -426,12 +426,43 @@ func ensureWatchedDirs(logger *slog.Logger) {
 			continue
 		}
 		permWarnDedupe.clear(dedupeKey("mkdir", dir))
-		// Always set ownership on the top-level dir at startup.
-		if err := os.Chown(dir, DevUID, NodeGID); err != nil {
-			warnDeduped(logger, "chown watched dir", "permissions watcher: failed to chown directory", dir, err)
-		} else {
-			permWarnDedupe.clear(dedupeKey("chown watched dir", dir))
-		}
+		// A failed stat (the dir vanished after MkdirAll) leaves fi nil and
+		// falls through to the chown, whose own error is then reported.
+		fi, _ := os.Stat(dir)
+		ensureWatchedDirOwner(dir, fi, logger)
+	}
+}
+
+// ensureWatchedDirOwner sets DevUID:NodeGID on a top-level watched dir at
+// startup — unless this process certainly cannot. After the entrypoint's
+// privilege drop the watcher runs as dev without CAP_CHOWN, so a watched root
+// another uid owns (a root-seeded /data/beads on a spoke, #18234) fails with
+// EPERM on every call. ensureWatchedDirs runs at every agent-runtime start and
+// again from any tick that finds a watched root missing, so that unconditional
+// chown was the one call site the #18120 guard in fixEntry did not cover, and
+// it surfaced fleet-wide as a repeated "failed to chown directory" WARN for a
+// condition only root can repair. The skip is logged at DEBUG: the walk in
+// fixPermissions still reports the dir through the per-tick unownable summary
+// when its ownership is actually wrong, with the operator hint attached.
+func ensureWatchedDirOwner(dir string, fi os.FileInfo, logger *slog.Logger) {
+	var stat *syscall.Stat_t
+	if fi != nil {
+		stat, _ = fi.Sys().(*syscall.Stat_t)
+	}
+	if stat != nil && cannotChown(stat.Uid) {
+		permWarnDedupe.clear(dedupeKey("chown watched dir", dir))
+		logger.Debug("permissions watcher: skipping chown of watched directory owned by another uid",
+			"path", dir,
+			"owner_uid", stat.Uid,
+			"watcher_uid", os.Geteuid(),
+			"hint", unownableHint,
+		)
+		return
+	}
+	if err := os.Chown(dir, DevUID, NodeGID); err != nil {
+		warnDeduped(logger, "chown watched dir", "permissions watcher: failed to chown directory", dir, err)
+	} else {
+		permWarnDedupe.clear(dedupeKey("chown watched dir", dir))
 	}
 }
 
