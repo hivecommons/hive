@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.255.0)
+
+### Added
+
+- The repos page's reference repo cards show an entry derived from an accepted request issue read-only: a lock, a `from owner/repo#N` link to the request issue and its credential chip (`🔑 App installation`, `read-only` with the reason, or `unresolved`), with no edit or remove control; `/api/status` `referenceRepos` entries now also carry `derived_from_url`, the request issue's link on the hive's GitHub host (#18139, #18161).
+- Dashboard: Settings → Repos has a Reference repos editor for `project.reference_repos`, so a hosted hive's owner can add, change and remove study-only repos without the config file; a save is refused with the loader's or boot's own message (including a write entry with no usable credential, or a `write_token_file` not already set in the file: that path stays operator-only) and otherwise applies to the GitHub proxy without a restart; derived entries are never written to the file (#18136).
+
+### Fixed
+
+- The self-host card on `/get-started`, `hub-deployment.md`, `register-self-hosted-hive.md` and the `HIVE_MIRROR_HUB_HIVE_ID` row in `env-vars.md` now show the self-service hive ID as `byo-<login>--<name>`, the double-hyphen form that [#18166](https://github.com/hivecommons/hive/issues/18166) shipped, instead of the earlier single-hyphen form ([#18147](https://github.com/hivecommons/hive/issues/18147)).
+
 ## 2026-11-14 (v5.254.0)
 
 ### Added
