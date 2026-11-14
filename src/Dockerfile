@@ -86,6 +86,23 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /crux ./cmd/crux
 
 
+# --- Go security scanners (sec-check lane, #18192) ---
+# govulncheck and gosec are built here and only the static binaries are copied
+# into the runtime stage. Versions MUST match the pins in
+# .github/workflows/go-security-analysis.yml so the agent and CI agree on what
+# counts as a finding. The agent never installs scanners itself; this stage is
+# the only source.
+FROM --platform=$BUILDPLATFORM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS scanner-builder
+ARG TARGETOS
+ARG TARGETARCH
+ARG GOVULNCHECK_VERSION=v1.1.4
+ARG GOSEC_VERSION=v2.29.0
+RUN --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
+    GOBIN=/out GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 \
+      go install golang.org/x/vuln/cmd/govulncheck@${GOVULNCHECK_VERSION} && \
+    GOBIN=/out GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 \
+      go install github.com/securego/gosec/v2/cmd/gosec@${GOSEC_VERSION}
+
 # --- tmux from source (cached until TMUX_VERSION changes) ---
 # Pinned to the node:26-slim multi-arch index digest to prevent floating-tag
 # supply-chain risk. Refresh deliberately (same technique as golang above,
@@ -163,6 +180,9 @@ RUN for cert in mozilla/emSign_ECC_Root_CA_-_G3.crt mozilla/Comodo_AAA_Services_
 ENV NODE_OPTIONS=--use-openssl-ca
 
 COPY --from=tmux-builder /usr/local/bin/tmux /usr/local/bin/tmux
+
+# Pinned Go security scanners for the sec-check lane (#18192).
+COPY --from=scanner-builder /out/ /usr/local/bin/
 
 # su-exec: lightweight setuid exec for UID switching from non-root.
 # gosu rejects SUID mode, so we use su-exec (which is designed for it)

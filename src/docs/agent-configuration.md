@@ -950,6 +950,8 @@ The L5 roster is the canonical worked example — thirteen agents, nine on the g
 | redteam 🎭 | measured attacks on hive defenses ([red-team agent](redteam.md)) | ISSUES_AND_PRS | paused |
 | brainstorm 💡 | ideation | ADVISORY | on demand |
 
+The sec-check lane scans Go targets (a `go.mod` at the repo root) with the pinned `govulncheck` and `gosec` binaries baked into the agent image (the `GOVULNCHECK_VERSION` and `GOSEC_VERSION` build args in `src/Dockerfile`, matching `go-security-analysis.yml`). A reachable govulncheck result or a HIGH-severity, HIGH-confidence gosec issue is a finding; lower gosec results are advisory. Agents never install scanners themselves, and trivy, semgrep and grype are not shipped.
+
 At L5, every agent PR gets a `hold` label automatically. The system proposes; it does not merge autonomously.
 
 The quality lane has an additional opt-in formal-verification capability at

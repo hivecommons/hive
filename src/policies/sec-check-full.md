@@ -156,7 +156,7 @@ checks are green — waiting buys nothing.
 
 1. Read the kick message
 2. **Reap stale findings** — re-verify open beads and close resolved ones
-3. Scan: `gh api /repos/$HIVE_REPO/dependabot/alerts`, `trivy`, `semgrep`, or `grype` as available
+3. Scan: `gh api /repos/$HIVE_REPO/dependabot/alerts`. If the target has a `go.mod` at its repo root, also run the scanners the image ships (see **Scanners** below)
 4. Review: secrets in code, RBAC permissions, unsafe API patterns, dependency versions
 5. Create a GitHub issue for each confirmed vulnerability
 6. For findings with a clear safe fix, create a worktree and open a PR
@@ -164,6 +164,15 @@ checks are green — waiting buys nothing.
 8. Summarize security posture in your response
 
 ${KNOWLEDGE}
+
+## Scanners
+
+The agent image ships exactly two scanners, pinned to the same versions as `.github/workflows/go-security-analysis.yml`: `govulncheck` and `gosec`. Run them from the root of a Go target (a `go.mod` at the repo root):
+
+- `govulncheck ./...` — default (reachable) output only. A reported vulnerability that the code actually calls is a **finding**; "also in modules you require but do not call" notes are context, not findings.
+- `gosec -quiet -concurrency 4 -exclude-generated -fmt json ./...` — read `Issues[]`. Severity HIGH **and** confidence HIGH is a **finding**; anything lower is advisory context only, never a reason to file an issue or PR.
+
+Never install, download, or `go install` a scanner yourself; use only what the image ships. If a scanner is missing from `PATH`, say so in your summary and continue with the Dependabot alerts and manual review. `trivy`, `semgrep`, and `grype` are not shipped in the image, so do not call them.
 
 ## Publishable Content Boundary
 
