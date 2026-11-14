@@ -16,7 +16,8 @@ package hub
 //
 // Invariants:
 //   - Every ID this file produces starts with SelfServiceHiveIDPrefix and is
-//     built as byo-<github login>-<name>; nothing a caller sends can escape it.
+//     built as byo-<github login>--<name>; nothing a caller sends can escape it,
+//     and no two (login, name) pairs produce the same ID (#18166).
 //   - The raw key is in the 201 and the rotate body and nowhere else: not in
 //     the list route, not in a log line, not on disk (only its hash is).
 //   - HIVE_HUB_SECRET is never consulted here and never appears in a response.
@@ -64,18 +65,27 @@ const (
 
 	// selfServiceDashboardURLScheme is the only scheme a dashboard_url may use.
 	selfServiceDashboardURLScheme = "https"
+
+	// selfServiceIDSeparator joins the GitHub login and the hive name in a
+	// byo- ID. A single '-' was ambiguous because logins contain hyphens
+	// (login a-b + name c and login a + name b-c both gave byo-a-b-c, #18166).
+	// GitHub logins never contain "--" and never end in '-', so the first "--"
+	// after the prefix is always the boundary; selfServiceBuildID refuses a
+	// login that breaks either rule rather than mint an ambiguous ID.
+	selfServiceIDSeparator = "--"
 )
 
 // selfServiceReservedNamePrefixes are hive ID namespaces a self-service name
-// may not borrow. The final ID is always byo-<login>-<name>, so none of these
+// may not borrow. The final ID is always byo-<login>--<name>, so none of these
 // could become the ID's prefix; refusing them in the NAME keeps a registration
-// from reading like a hosted hive in the dashboard (byo-alice-hosted-prod).
+// from reading like a hosted hive in the dashboard (byo-alice--hosted-prod).
 var selfServiceReservedNamePrefixes = []string{"hosted-", "saas-", SelfServiceHiveIDPrefix}
 
 // selfServiceRefusalReasons are the audit-log reason values for
 // selfservice_hive_refused.
 const (
 	selfServiceRefusedInvalidName    = "invalid_name"
+	selfServiceRefusedInvalidLogin   = "invalid_login"
 	selfServiceRefusedReservedPrefix = "reserved_prefix"
 	selfServiceRefusedDuplicateID    = "duplicate_id"
 	selfServiceRefusedInvalidRepos   = "invalid_repos"
@@ -369,10 +379,15 @@ func selfServiceValidateDashboardURL(ctx context.Context, raw string) (string, e
 	return u.String(), nil
 }
 
-// selfServiceBuildID derives byo-<login>-<name> from the GitHub login and the
+// selfServiceBuildID derives byo-<login>--<name> from the GitHub login and the
 // caller's name, refusing names that cannot become a valid hive ID or that
-// borrow a reserved namespace.
+// borrow a reserved namespace, and logins that would make the ID ambiguous.
 func selfServiceBuildID(githubLogin, name string) (string, string, error) {
+	login := strings.ToLower(strings.TrimSpace(githubLogin))
+	if login == "" || !isValidName(login) || strings.Contains(login, selfServiceIDSeparator) ||
+		strings.HasPrefix(login, "-") || strings.HasSuffix(login, "-") {
+		return "", selfServiceRefusedInvalidLogin, errors.New("your GitHub login cannot form an unambiguous self-hosted hive ID")
+	}
 	name = strings.ToLower(strings.TrimSpace(name))
 	if name == "" {
 		return "", selfServiceRefusedInvalidName, errors.New("name is required")
@@ -380,12 +395,17 @@ func selfServiceBuildID(githubLogin, name string) (string, string, error) {
 	if strings.Contains(name, "/") || !isValidName(name) {
 		return "", selfServiceRefusedInvalidName, errors.New("name may contain only letters, digits, '.', '_' and '-'")
 	}
+	// A leading '-' would merge into the separator (a + -b gives byo-a---b,
+	// whose first "--" no longer marks the boundary).
+	if strings.HasPrefix(name, "-") {
+		return "", selfServiceRefusedInvalidName, errors.New("name may not start with '-'")
+	}
 	for _, p := range selfServiceReservedNamePrefixes {
 		if strings.HasPrefix(name, p) {
 			return "", selfServiceRefusedReservedPrefix, fmt.Errorf("name may not start with the reserved prefix %q", p)
 		}
 	}
-	id := SelfServiceHiveIDPrefix + strings.ToLower(strings.TrimSpace(githubLogin)) + "-" + name
+	id := SelfServiceHiveIDPrefix + login + selfServiceIDSeparator + name
 	if !isValidName(id) || !IsSelfServiceHiveID(id) {
 		return "", selfServiceRefusedInvalidName, errors.New("name is too long for a hive ID")
 	}
@@ -491,13 +511,22 @@ func (s *HubServer) handleSelfServiceRegister(w http.ResponseWriter, r *http.Req
 	}
 
 	now := time.Now().UTC()
-	rawKey, err := s.selfService.register(SelfServiceHive{
+	// The cap is enforced again inside the store, under the lock that inserts
+	// the record: the count above ran before up to selfServiceMaxRepos GitHub
+	// calls, so concurrent POSTs from one user could all have passed it.
+	maxPerUser := selfServiceMaxPerUser()
+	rawKey, err := s.selfService.registerCapped(SelfServiceHive{
 		ID: id, Owner: login, Org: org, Repos: repos, DashboardURL: dashboardURL, OwnershipCheckedAt: now,
-	})
+	}, maxPerUser)
 	if err != nil {
 		if errors.Is(err, errSelfServiceExists) {
 			s.auditSelfServiceRefused(login, id, selfServiceRefusedDuplicateID)
 			writeJSONError(w, http.StatusConflict, "a hive with this ID is already registered")
+			return
+		}
+		if errors.Is(err, errSelfServiceCapReached) {
+			s.auditSelfServiceRefused(login, id, selfServiceRefusedCap, "max_per_user", maxPerUser)
+			writeJSONError(w, http.StatusTooManyRequests, fmt.Sprintf("you already have %d self-hosted hives registered; remove one first", maxPerUser))
 			return
 		}
 		s.logger.Error("self-service registration: store write failed", "user", login, "hive", id, "error", err)
