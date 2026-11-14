@@ -15,6 +15,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/keystore"
 )
 
 // The hive owner's GitHub identity (hivecommons/hive#18197).
@@ -172,7 +173,10 @@ func (s *OwnerIdentityStore) Load() (id OwnerIdentity, ok bool, err error) {
 	if s == nil {
 		return OwnerIdentity{}, false, nil
 	}
-	b, err := os.ReadFile(s.path)
+	// Through the keystore (hive#18214): the identity file is sealed at rest
+	// once a provider is active; a file written before that is re-sealed on
+	// this read.
+	b, err := keystore.ReadFile(context.Background(), s.path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return OwnerIdentity{}, false, nil
@@ -211,17 +215,8 @@ func (s *OwnerIdentityStore) Save(id OwnerIdentity) error {
 	if err != nil {
 		return err
 	}
-	tmp := s.path + ".tmp"
-	if err := os.WriteFile(tmp, b, ownerIdentityFileMode); err != nil {
-		return err
-	}
-	// WriteFile does not change the mode of a pre-existing file.
-	if err := os.Chmod(tmp, ownerIdentityFileMode); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, s.path); err != nil {
-		_ = os.Remove(tmp)
+	// Sealed and replaced atomically at ownerIdentityFileMode (hive#18214).
+	if err := keystore.WriteFileMode(context.Background(), s.path, b, ownerIdentityFileMode); err != nil {
 		return err
 	}
 	s.mu.Lock()

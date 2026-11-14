@@ -58,6 +58,7 @@ import (
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/jev"
+	"github.com/hivecommons/hive/pkg/keystore"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/maintainernotes"
 	"github.com/hivecommons/hive/pkg/notify"
@@ -638,11 +639,35 @@ func (b *boot) bootConfigWith(deps bootConfigDeps) bool {
 	// (#2439). Same return signature as Load; falls back to the seed when no
 	// overlay exists or the pod is not in Kubernetes.
 
+	// Keystore first (hive#18214): the config loader opens the sealed
+	// github.token, and every secret file read from here on goes through the
+	// active provider. A provider the operator selected but that cannot be
+	// built (unknown name, unusable key material, an unreachable OpenBao) is a
+	// refusal to boot, never a silent fall-back to plaintext; the legacy
+	// no-key case is a WARN from LogStatus, not an error.
+	ksStatus, ksErr := keystore.Init(context.Background(), deps.getenv, nil)
+	if ksErr != nil {
+		b.logger.Error("keystore: refusing to start — "+keystore.EnvProviderName+" selects a provider this hive cannot use", "error", ksErr.Error())
+		deps.exit(1)
+		return false
+	}
+	keystore.LogStatus(b.logger, ksStatus)
+
 	b.cfg, err = deps.loadConfig(b.configPath)
 	if err != nil {
 		b.logger.Error("failed to load config", "error", err)
 		deps.exit(1)
 		return false
+	}
+
+	// With a provider active, converge the secret files nothing reads at
+	// boot (the backup key, a gateway key for an idle gateway) onto the
+	// current key generation, so a rotation does not leave a file sealed
+	// under a generation that is retired before anything re-reads it.
+	if ksStatus.Active() {
+		if n, merr := keystore.MigrateDir(context.Background(), config.WritableSecretsDir); merr != nil {
+			b.logger.Warn("keystore: some secret files could not be converged", "dir", config.WritableSecretsDir, "visited", n, "error", merr.Error())
+		}
 	}
 
 	// Reconfigure logger with rolling file output

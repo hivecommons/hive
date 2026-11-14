@@ -6,11 +6,13 @@
 package copilottoken
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"strings"
 
 	"github.com/hivecommons/hive/crux/claude"
+	"github.com/hivecommons/hive/crux/keystore"
 	"github.com/hivecommons/hive/crux/sharedfile"
 )
 
@@ -355,11 +357,20 @@ func TokenValueUsable(s string) bool {
 // rename, matching the dashboard login's saveCopilotToken write. The production
 // caller passes CopilotUserTokenPath — the file that survives upgrade rolls and
 // that the hive reads at boot into m.copilotAuthToken; the path is a parameter
-// so tests can target a temp file.
+// so tests can target a temp file. The token is sealed through the keystore
+// (hive#18214), so with a provider active the durable file holds an envelope,
+// never the plaintext.
 func WriteDurableToken(durablePath, token string) error {
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return nil
 	}
-	return sharedfile.Replace(durablePath, []byte(token), 0o600, sharedfile.Options{})
+	return keystore.WriteFile(context.Background(), durablePath, []byte(token))
+}
+
+// ReadDurableToken reads the durable user token written by WriteDurableToken
+// (or by the dashboard login), opening a sealed file or passing a legacy
+// plaintext one through. Returns "" and the read error when there is none.
+func ReadDurableToken(durablePath string) (string, error) {
+	return keystore.ReadString(context.Background(), durablePath)
 }
