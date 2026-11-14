@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.263.1)
+
+### Fixed
+
+- GitHub proxy policy refusals (`proxy request blocked`) no longer trigger unclassified runtime-error self-reports; the per-refusal WARN, violation counter and write-refusal audit are unchanged.
+
 ## 2026-11-14 (v5.263.0)
 
 ### Added
