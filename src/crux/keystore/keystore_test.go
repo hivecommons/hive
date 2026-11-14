@@ -190,6 +190,13 @@ func TestSecretFileRoundTripNoPlaintextOnDisk(t *testing.T) {
 	defer SetRewriteRootsForTest(dir)()
 	path := filepath.Join(dir, "secrets", "litellm_api_key")
 	ctx := context.Background()
+	// The caller owns the directory: a missing one is an error, not created.
+	if err := WriteFile(ctx, path, []byte("sk-live-1234")); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("write into a missing dir: err = %v, want ErrNotExist", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	if err := WriteFile(ctx, path, []byte("sk-live-1234")); err != nil {
 		t.Fatal(err)
 	}
@@ -203,9 +210,6 @@ func TestSecretFileRoundTripNoPlaintextOnDisk(t *testing.T) {
 	fi, _ := os.Stat(path)
 	if fi.Mode().Perm() != DefaultFileMode {
 		t.Fatalf("mode = %o, want %o", fi.Mode().Perm(), DefaultFileMode)
-	}
-	if dfi, _ := os.Stat(filepath.Dir(path)); dfi.Mode().Perm() != DefaultDirMode {
-		t.Fatalf("dir mode = %o, want %o", dfi.Mode().Perm(), DefaultDirMode)
 	}
 	got, err := ReadString(ctx, path)
 	if err != nil || got != "sk-live-1234" {

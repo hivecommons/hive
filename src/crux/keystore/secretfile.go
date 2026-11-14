@@ -28,9 +28,6 @@ import (
 const (
 	// DefaultFileMode is the mode WriteFile gives a new secret file.
 	DefaultFileMode fs.FileMode = 0o600
-	// DefaultDirMode is the mode WriteFile gives a secrets directory it has to
-	// create.
-	DefaultDirMode fs.FileMode = 0o700
 	// MaxFileBytes bounds a secret file read. Secrets are short; a file over
 	// this size is not one, and never gets decrypted or rewritten.
 	MaxFileBytes = 1 << 20
@@ -89,8 +86,10 @@ func FileAAD(path string) []byte {
 }
 
 // WriteFile seals plaintext for path and replaces the file atomically with
-// mode DefaultFileMode. The parent directory is created with DefaultDirMode
-// when missing.
+// mode DefaultFileMode. The parent directory must exist: every caller owns
+// its directory's creation and mode (the secrets dir is 0710 so agent uids
+// can traverse it, the owner identity dir is 0700), and a write into a
+// missing directory is the error it always was.
 func WriteFile(ctx context.Context, path string, plaintext []byte) error {
 	return WriteFileMode(ctx, path, plaintext, DefaultFileMode)
 }
@@ -216,9 +215,6 @@ func readCapped(path string) ([]byte, error) {
 // write, and the secret is never briefly readable by anyone else.
 func replaceFile(path string, body []byte, mode fs.FileMode) error {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, DefaultDirMode); err != nil {
-		return err
-	}
 	tmp, err := os.CreateTemp(dir, "."+filepath.Base(path)+".*")
 	if err != nil {
 		return err

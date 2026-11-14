@@ -69,8 +69,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// column block (RFC hivecommons/hive#17620, phase 2), plus pkg/inbox,
 	// the source-agnostic voice-recording triage service (items keyed by
 	// source + item id, spek_rfc/dibs destinations) behind the /api/inbox
-	// routes and the Inbox dashboard section.
-	const maxDashboardInternalImports = 61
+	// routes and the Inbox dashboard section, plus pkg/keystore, the
+	// secrets-at-rest seam every dashboard-written secret file (LiteLLM, Bob,
+	// gateway and backup keys, the Copilot login, the NPS relay identity) is
+	// sealed and opened through (hivecommons/hive#18214).
+	const maxDashboardInternalImports = 62
 
 	entries, err := os.ReadDir(".")
 	if err != nil {
