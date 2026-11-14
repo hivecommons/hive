@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.251.0)
+
+### Added
+
+- Workflow models gain `spec.intake.referenceRepoFields` / `outOfScopeFields`, `config.ReferenceRepo` gains a never-serialized `DerivedFrom` provenance, and the new `pkg/refderive` parser derives write-tier reference repos from an accepted assessment request issue, refusing with a typed reason when the request is closed, not `triage/accepted`, or accepted by a bot or a user without write access (#18139, #18157).
+- Hub: signed-in users can register a hive they run themselves ([#18060](https://github.com/hivecommons/hive/issues/18060), [#18144](https://github.com/hivecommons/hive/issues/18144)). Behind `HIVE_HUB_SELFSERVICE_REGISTRATION` (default off), `POST /api/hub/selfservice/hives` builds the ID as `byo-<login>-<name>`, proves `permissions.admin` on every listed repo with the caller's own GitHub token (refusing the whole registration by repo name otherwise), enforces `HIVE_HUB_SELFSERVICE_MAX_PER_USER` (default 5), and returns the heartbeat key once with Docker Compose, Podman and Kubernetes snippets; the owner can list, rotate and revoke their entries, a hub admin can revoke any, and every decision writes an `audit:` line without key material. The dashboard form follows in a later PR.
+
 ## 2026-11-14 (v5.250.0)
 
 ### Added
