@@ -38747,6 +38747,55 @@
           }
         ]
       }
+    },
+    "/api/github-owner-identity": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Owner GitHub identity for remote repos",
+        "description": "Reports the hive owner's connected GitHub account that write-tier reference repos are written as (hivecommons/hive#18197): connected, login, granted scope, whether the stored token is still usable and why not, the scope the consent asks for (public_repo) and the token file path. Never the token itself. Owner only.",
+        "responses": {
+          "200": {"description": "Identity status", "content": {"application/json": {"schema": {"type": "object", "properties": {"connected": {"type": "boolean"}, "login": {"type": "string"}, "scope": {"type": "string"}, "connected_at": {"type": "string", "format": "date-time"}, "usable": {"type": "boolean"}, "reason": {"type": "string"}, "verified_at": {"type": "string", "format": "date-time"}, "scope_required": {"type": "string"}, "private_repos_supported": {"type": "boolean"}, "file": {"type": "string"}}}}}},
+          "403": {"description": "Owner role required"},
+          "503": {"description": "No identity store on this hive"}
+        }
+      },
+      "delete": {
+        "tags": ["System"],
+        "summary": "Disconnect the owner GitHub identity",
+        "description": "Removes the owner token from this hive; every write-tier reference repo drops to read-only on the next pass. Revoking the authorization on GitHub is the owner's own step (Settings → Applications). Owner only.",
+        "responses": {
+          "200": {"description": "Disconnected", "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string"}, "login": {"type": "string"}, "identity": {"type": "object", "properties": {"connected": {"type": "boolean"}, "login": {"type": "string"}, "scope": {"type": "string"}, "connected_at": {"type": "string", "format": "date-time"}, "usable": {"type": "boolean"}, "reason": {"type": "string"}, "verified_at": {"type": "string", "format": "date-time"}, "scope_required": {"type": "string"}, "private_repos_supported": {"type": "boolean"}, "file": {"type": "string"}}}, "note": {"type": "string"}}}}}},
+          "403": {"description": "Owner role required"},
+          "503": {"description": "No identity store on this hive"}
+        }
+      }
+    },
+    "/api/github-owner-identity/start": {
+      "post": {
+        "tags": ["System"],
+        "summary": "Start the owner identity consent",
+        "description": "Begins a GitHub device flow with the spoke's oauth_client_id asking for the public_repo scope, separate from the scope-free dashboard login. Show user_code and verification_uri to the owner and poll with flow_id. Owner only.",
+        "responses": {
+          "200": {"description": "Device flow started", "content": {"application/json": {"schema": {"type": "object", "properties": {"user_code": {"type": "string"}, "verification_uri": {"type": "string"}, "expires_in": {"type": "integer"}, "interval": {"type": "integer"}, "flow_id": {"type": "string"}, "scope": {"type": "string"}}}}}},
+          "403": {"description": "Owner role required"},
+          "502": {"description": "GitHub refused the device-code request"},
+          "503": {"description": "No identity store on this hive"}
+        }
+      }
+    },
+    "/api/github-owner-identity/poll": {
+      "post": {
+        "tags": ["System"],
+        "summary": "Poll the owner identity consent",
+        "description": "Polls the device flow started by /start. status is pending or slow_down (poll again), complete (the identity was validated, checked for the public_repo scope and the logged-in owner's account, stored on the spoke, and the reference-repo policies re-resolved) or error. Owner only.",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["flow_id"], "properties": {"flow_id": {"type": "string"}}}}}},
+        "responses": {
+          "200": {"description": "Poll result", "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string", "enum": ["pending", "slow_down", "complete", "error"]}, "login": {"type": "string"}, "identity": {"type": "object", "properties": {"connected": {"type": "boolean"}, "login": {"type": "string"}, "scope": {"type": "string"}, "connected_at": {"type": "string", "format": "date-time"}, "usable": {"type": "boolean"}, "reason": {"type": "string"}, "verified_at": {"type": "string", "format": "date-time"}, "scope_required": {"type": "string"}, "private_repos_supported": {"type": "boolean"}, "file": {"type": "string"}}}, "error": {"type": "string"}}}}}},
+          "400": {"description": "No consent in progress, or the flow_id is not the one /start returned"},
+          "403": {"description": "Owner role required"},
+          "503": {"description": "No identity store on this hive"}
+        }
+      }
     }
   },
   "components": {

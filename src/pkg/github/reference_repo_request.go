@@ -17,10 +17,10 @@ import (
 //
 // A derived entry (config.ReferenceRepo.DerivedFrom) was granted by a
 // maintainer accepting a request issue in one of the hive's authorized repos.
-// When the App is not installed on the requesting project's org the hive can
-// still read the repos but cannot open issues or PRs there. That is the
-// requesting project's call to make, not the operator's, so the hive says so
-// once on the request issue instead of refusing to boot.
+// Until the hive owner connects their GitHub account (hivecommons/hive#18197)
+// the hive can still read the repos but cannot open issues or PRs there. That
+// is the owner's call to make, not the requesting project's, so the hive says
+// so once on the request issue instead of refusing to boot.
 
 // DerivedReadOnlyMarkerPrefix opens the marker the notice carries. The
 // complete marker names the read-only repo set, so one notice is posted per
@@ -75,13 +75,13 @@ func DerivedReadOnlyComment(readOnly []config.ReferenceRepo) string {
 	for _, rr := range readOnly {
 		reason := strings.TrimSpace(rr.CredentialReason)
 		if reason == "" {
-			reason = DerivedReadOnlyReason(rr)
+			reason = DerivedReadOnlyReason(rr, OwnerCredential{})
 		}
 		fmt.Fprintf(&b, "- `%s`: %s\n", rr.Repo, reason)
 	}
 	b.WriteString("\nThe hive will study these repositories (clone, read files, read issues and PRs) and keep its findings in the assessment deliverable here. ")
 	b.WriteString("It will not open issues or pull requests on them. ")
-	b.WriteString("To let it, an owner of that organization installs the same GitHub App there; the hive picks the installation up on its next config reload without a restart.")
+	b.WriteString("To let it, the hive owner connects their own GitHub account on the hive's dashboard (Settings → Reference repos → Connect GitHub account); issues and PRs then appear under that account, and the hive picks the change up without a restart. No GitHub App needs to be installed on these repositories.")
 	return AppendTrailer(b.String(), hiveWriteMeta())
 }
 

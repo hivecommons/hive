@@ -956,10 +956,25 @@ function isUpstreamDocPath(p) {
   return UPSTREAM_DOC_PATHS.some((base) => p === base || p.startsWith(`${base}/`));
 }
 
+// A user-session terminal (/terminal?arg=hive-sess-<id>) is the one document
+// the dashboard itself embeds: the Sessions section renders it in a same-origin
+// iframe. With frame-ancestors 'none' / X-Frame-Options DENY the browser fetches
+// ttyd's page and then refuses to display it, so the pane stays blank and the
+// terminal never opens its websocket. Framing is allowed for that document from
+// this origin only; agent terminals and everything else keep 'none'/DENY.
+// Authorisation is unchanged (the Go dashboard's session gate).
+const USER_SESSION_TERMINAL_PREFIX = 'hive-sess-';
+function isUserSessionTerminalRequest(req) {
+  if (!(req.path === '/terminal' || req.path.startsWith('/terminal/'))) return false;
+  const args = new URL(req.url, `http://${req.headers.host || 'hive.local'}`).searchParams.getAll('arg');
+  return args.some((a) => a.startsWith(USER_SESSION_TERMINAL_PREFIX));
+}
+
 app.use(async (req, res, next) => {
   const frameAllowlist = req.path === '/snapshot' ? await snapshotFrameAncestors() : [];
   const snapshotFramingAllowed = frameAllowlist.length > 0;
-  const frameAncestors = snapshotFramingAllowed ? frameAllowlist.join(' ') : "'none'";
+  const sessionTerminalFraming = isUserSessionTerminalRequest(req);
+  const frameAncestors = snapshotFramingAllowed ? frameAllowlist.join(' ') : (sessionTerminalFraming ? "'self'" : "'none'");
   const scriptDirectives = isUpstreamDocPath(req.path)
     ? ["script-src 'self' 'unsafe-inline' https://cdn.redoc.ly"]
     : [
@@ -982,8 +997,10 @@ app.use(async (req, res, next) => {
   ].join('; '));
   res.setHeader('X-Content-Type-Options', 'nosniff');
   // X-Frame-Options has no allowlist form; rely on CSP frame-ancestors for the
-  // explicitly allowlisted public /snapshot document, keep DENY everywhere else.
-  if (!snapshotFramingAllowed) res.setHeader('X-Frame-Options', 'DENY');
+  // explicitly allowlisted public /snapshot document, SAMEORIGIN for the
+  // dashboard-embedded user-session terminal, DENY everywhere else.
+  if (sessionTerminalFraming) res.setHeader('X-Frame-Options', 'SAMEORIGIN');
+  else if (!snapshotFramingAllowed) res.setHeader('X-Frame-Options', 'DENY');
   res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate');
   res.setHeader('Pragma', 'no-cache');

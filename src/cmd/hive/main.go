@@ -1312,6 +1312,8 @@ func (b *boot) wireBootClosures() {
 			IoscanConfigApplied:          b.reinstallIoscanClassifier,
 			ApplyReferenceRepos:          b.applyEditedReferenceRepos,
 			RemergeDerivedReferenceRepos: b.remergeLastDerivedReferenceRepos,
+			OwnerIdentity:                b.ownerIdentityStore(),
+			OwnerIdentityChanged:         b.ownerIdentityChanged,
 			ReviewConfigApplied: func(rc config.ReviewConfig) {
 				if b.ghClient == nil {
 					return

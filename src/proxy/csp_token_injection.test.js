@@ -197,6 +197,22 @@ async function main() {
     assert.match(csp, /base-uri 'self'/, "CSP must set base-uri 'self'");
     assert.match(csp, /form-action 'self'/, "CSP must set form-action 'self'");
     assert.match(csp, /frame-ancestors 'none'/, 'CSP must deny framing by default');
+    assert.equal(res.headers['x-frame-options'], 'DENY', 'dashboard document must keep X-Frame-Options DENY');
+
+    // A user-session terminal is the one document the dashboard embeds in a
+    // same-origin iframe (Sessions section); it may be framed by this origin
+    // only. An agent terminal keeps the deny policy: it opens in its own tab.
+    const sessionTerminal = await get('/terminal/?arg=hive-sess-6772199e9bc0');
+    assert.match(
+      sessionTerminal.headers['content-security-policy'] || '',
+      /frame-ancestors 'self'/,
+      "user-session terminal must allow same-origin framing (frame-ancestors 'self')",
+    );
+    assert.equal(sessionTerminal.headers['x-frame-options'], 'SAMEORIGIN', 'user-session terminal must send X-Frame-Options SAMEORIGIN');
+    const agentTerminal = await get('/terminal/?arg=hive-scanner');
+    assert.match(agentTerminal.headers['content-security-policy'] || '', /frame-ancestors 'none'/, 'agent terminal must stay unframeable');
+    assert.equal(agentTerminal.headers['x-frame-options'], 'DENY', 'agent terminal must keep X-Frame-Options DENY');
+    console.log('  ok: only the user-session terminal document may be framed, same-origin only');
 
     // #3848 part 1 landed: script-src is now scoped (see ADR-0016 and
     // csp_script_src_elem.test.js, which owns the elem/attr assertions). What

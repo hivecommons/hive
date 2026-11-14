@@ -325,6 +325,9 @@ func TestPrefilterTrustedAuthorPR(t *testing.T) {
 
 func TestTrustedAuthorGitHubSignals(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/collaborators/alice/permission":
 			json.NewEncoder(w).Encode(map[string]string{"permission": "write", "role_name": "maintain"})
@@ -408,6 +411,9 @@ func (b *recordingBoundary) Execute(ctx context.Context, claim effects.Claim, ef
 
 func TestExecuteMergeEffectReconcilesUnknownOpenPRBeforeRetry(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/widget/pulls/7" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.String())
 		}
@@ -700,6 +706,9 @@ func TestSweepQueuedAutoMergesRechecksSelfMergeBan(t *testing.T) {
 func TestSweepQueuedAutoMergesSkipsHeldIssueWithoutPRFetch(t *testing.T) {
 	var pullsGet int
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues":
 			json.NewEncoder(w).Encode([]map[string]any{{
@@ -737,6 +746,9 @@ func TestSweepQueuedAutoMergesSkipsHeldIssueWithoutPRFetch(t *testing.T) {
 
 func TestSweepQueuedAutoMergesSkipsHivePauseHeldIssueWithoutPRFetch(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues":
 			json.NewEncoder(w).Encode([]map[string]any{{
@@ -821,6 +833,9 @@ func TestCommitGreenStatusAndCheckBranches(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/status":
 					statuses := []map[string]string{}
@@ -882,6 +897,9 @@ func TestCommitGreenKnownEmptyRequiredChecksBlocksCompletedFailures(t *testing.T
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
 					json.NewEncoder(w).Encode(map[string]any{"strict": true, "contexts": []string{}})
@@ -936,6 +954,9 @@ func TestTrySweepQueuedPRSkipBranches(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				if serveUnprotectedSweepBase(w, r) {
 					return
 				}
@@ -991,6 +1012,9 @@ func TestTrySweepQueuedPRMissingHeadAndMergeNotApplied(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				if serveUnprotectedSweepBase(w, r) {
 					return
 				}
@@ -1033,6 +1057,9 @@ func TestTrySweepQueuedPRMissingHeadAndMergeNotApplied(t *testing.T) {
 
 func TestTrySweepQueuedPRMergeError(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		if serveUnprotectedSweepBase(w, r) {
 			return
 		}
@@ -1068,6 +1095,9 @@ func TestTrySweepQueuedPRMergeError(t *testing.T) {
 func TestTrySweepQueuedPRRequiredChecksExpectedIsRemembered(t *testing.T) {
 	var merges int
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		if serveUnprotectedSweepBase(w, r) {
 			return
 		}
@@ -1121,6 +1151,9 @@ func TestTrySweepQueuedPRRequiredChecksExpectedIsRemembered(t *testing.T) {
 func TestLatestHiveQueueApprovalDoesNotTrustBodyWhenReviewerIsNotApp(t *testing.T) {
 	var logs bytes.Buffer
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/widget/pulls/7/reviews" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -1150,6 +1183,9 @@ func TestLatestHiveQueueApprovalDoesNotTrustBodyWhenReviewerIsNotApp(t *testing.
 
 func TestLatestHiveQueueApprovalKeepsLatestCommitID(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		if r.Method != http.MethodGet || r.URL.Path != "/repos/acme/widget/pulls/7/reviews" {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
@@ -1174,6 +1210,9 @@ func TestLatestHiveQueueApprovalKeepsLatestCommitID(t *testing.T) {
 func TestInvalidateQueuedAutoMergeIgnoresMissingLabelAndComments(t *testing.T) {
 	var commented bool
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/7/labels/"+hgithub.AutoMergeQueuedLabel:
 			http.NotFound(w, r)
@@ -1207,6 +1246,9 @@ func TestInvalidateQueuedAutoMergeReportsAPIErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				switch {
 				case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/7/labels/"+hgithub.AutoMergeQueuedLabel:
 					w.WriteHeader(tt.deleteCode)
@@ -1242,6 +1284,9 @@ func TestCommitGreenAPIErrors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha/status":
 					if tt.statusCode != http.StatusOK {
@@ -1356,6 +1401,9 @@ func TestCommitGreenRequiredChecksOnly(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
 					json.NewEncoder(w).Encode(map[string]any{
@@ -1448,6 +1496,9 @@ func TestCommitGreenRequiredChecksUnavailableFallsBack(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
 					if tt.protectionCode == 0 {
@@ -1515,6 +1566,9 @@ func TestCommitGreenUnprotectedBaseIgnoresMetaWithEvidence(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
 					w.WriteHeader(http.StatusNotFound)
@@ -1585,6 +1639,9 @@ func TestCommitGreenConfigRequiredChecksFallback(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if servePRCommitsSigned(w, r) {
+					return
+				}
 				switch {
 				case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
 					http.Error(w, "forbidden", http.StatusForbidden)
@@ -1626,6 +1683,9 @@ func TestCommitGreenConfigRequiredChecksFallback(t *testing.T) {
 // enforcement.
 func TestCommitGreenNoConfigRequiredChecksFallsBackToServerEnforcement(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
 			w.WriteHeader(http.StatusInternalServerError)
@@ -1663,6 +1723,9 @@ func TestCommitGreenUnknownRequiredChecksSkipsExpectedReferenceChecks(t *testing
 	var referenceFetches int
 	var mergedPRFetches int
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
 			http.Error(w, "forbidden", http.StatusForbidden)
@@ -1716,6 +1779,9 @@ func TestCommitGreenUnknownRequiredChecksSkipsExpectedReferenceChecks(t *testing
 
 func TestCommitGreenUnknownRequiredChecksSkipsPreviousEvaluatedHead(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
 			http.Error(w, "forbidden", http.StatusForbidden)
@@ -1771,6 +1837,9 @@ func TestSetRequiredChecksEmptyMapIsNotDeclared(t *testing.T) {
 func TestListQueuedPullRequestIssuesPaginates(t *testing.T) {
 	var base string
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		switch r.URL.Query().Get("page") {
 		case "":
 			w.Header().Set("Link", `<`+base+`/repos/acme/widget/issues?page=2>; rel="next"`)
@@ -1848,6 +1917,9 @@ func newSelfAuthoredAutoMergeAPI(t *testing.T, prs []selfAuthoredPR, merged *[]i
 		byNumber[prs[i].number] = &prs[i]
 	}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/pulls":
 			var out []map[string]any
@@ -2153,6 +2225,9 @@ func TestTrySweepSelfAuthoredPRRequiredChecksDecision(t *testing.T) {
 
 func TestSweepSelfAuthoredAutoMergesSkipsRepoWhenAutoMergeDisabled(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		t.Fatalf("disabled auto-merge repo should be skipped before API calls; got %s %s", r.Method, r.URL.Path)
 	}))
 	defer api.Close()
@@ -2967,6 +3042,9 @@ func newAutoMergeSweepAPI(t *testing.T, expectedLabel string, prs []sweepPR, mer
 		byNumber[pr.number] = pr
 	}
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues":
 			if got := r.URL.Query().Get("labels"); got != expectedLabel {
@@ -3253,6 +3331,9 @@ func TestSweepSelfAuthoredAutoMergesRecordsPRMergedAuditTrail(t *testing.T) {
 
 func TestCommitGreenKnownEmptyRequiredChecksRequiresEvidence(t *testing.T) {
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/branches/main/protection/required_status_checks":
 			w.WriteHeader(http.StatusNotFound)
@@ -3452,4 +3533,20 @@ func TestSweepSelfAuthoredNeedsRebaseLabelAsksSupersededCloser(t *testing.T) {
 	if err != nil || reason != autoMergeReasonLabelNeedsRebase {
 		t.Fatalf("reason=%q err=%v, want %s", reason, err, autoMergeReasonLabelNeedsRebase)
 	}
+}
+
+// servePRCommitsSigned answers GET /repos/{o}/{r}/pulls/{n}/commits with one
+// signed-off branch commit, so a fixture's squash merge keeps a
+// Signed-off-by instead of being refused as unsigned (hivecommons/hive#18203).
+// It reports whether it served the request.
+func servePRCommitsSigned(w http.ResponseWriter, r *http.Request) bool {
+	if r.Method != http.MethodGet || !strings.Contains(r.URL.Path, "/pulls/") || !strings.HasSuffix(r.URL.Path, "/commits") {
+		return false
+	}
+	json.NewEncoder(w).Encode([]map[string]any{{
+		"sha":     "c0",
+		"commit":  map[string]any{"message": "Fix\n\nSigned-off-by: hive[bot] <hive@example.com>"},
+		"parents": []map[string]any{{"sha": "p"}},
+	}})
+	return true
 }

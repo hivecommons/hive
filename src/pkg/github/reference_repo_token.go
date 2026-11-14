@@ -7,67 +7,56 @@ import (
 	"log/slog"
 	"os"
 	"strings"
-	"sync"
-	"time"
-
-	gh "github.com/google/go-github/v72/github"
 
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-// Reference-repo write credentials (hivecommons/hive#18015).
+// Reference-repo write credentials (hivecommons/hive#18015, #18197).
 //
 // A project.reference_repos entry that opted in to writes needs a credential
 // GitHub actually honours for THAT repo. The hive's own installation token
 // cannot be it: an App installation is per-account, and a reference repo is by
-// definition outside the hive's org. Two sources are supported, in the order
-// an operator reaches for them:
+// definition outside the hive's org. The operator does not want the App
+// installed on any remote org either (hivecommons/hive#18196), so the
+// credential is a person's: the hive OWNER's GitHub user token, consented once
+// on the spoke dashboard (OwnerIdentityStore). Two sources, in the order an
+// operator reaches for them:
 //
-//   - the same App installed on the target org — the hive discovers that
-//     installation and mints a token on it, scoped to the one listed repo and
-//     to exactly the permissions the opt-in needs;
+//   - the owner identity — every write-tier entry, derived or hand-written,
+//     writes as the owner's login unless the next source overrides it;
 //   - write_token_file — an operator-supplied token (a maintainer PAT, a
-//     fine-grained token) read from disk on each use so a rotation is picked up
-//     without a restart.
+//     fine-grained token) for a HAND-WRITTEN entry, read from disk on each use
+//     so a rotation is picked up without a restart. A derived entry never
+//     reads it.
 //
-// Boot refuses a write-mode entry that has neither (see
+// Boot refuses a hand-written write-mode entry that has neither (see
 // VerifyReferenceRepoWriteCredential) so the failure is a config error with
-// the repo named, not a 401 a day later.
-
-// referenceTokenRefreshMargin is how long before expiry a minted reference
-// token is replaced.
-const referenceTokenRefreshMargin = 5 * time.Minute
+// the repo named, not a 401 a day later. A derived entry is downgraded to
+// read-only instead and the request issue is told once.
 
 // ErrReferenceRepoNoCredential is the sentinel for a write-mode entry with no
 // usable credential source.
 var ErrReferenceRepoNoCredential = errors.New("reference repo write-mode has no credential")
 
-// referenceRepoPermissions are the installation permissions an opt-in needs:
-// metadata always, issues:write for issues, contents:write + pull_requests:write
-// for prs (a PR needs a branch to be pushed first). Nothing wider — the proxy
-// narrows further to the exact write paths.
-func referenceRepoPermissions(rr config.ReferenceRepo) *gh.InstallationPermissions {
-	perms := &gh.InstallationPermissions{Metadata: gh.Ptr("read"), Contents: gh.Ptr("read")}
-	if rr.WritesIssues() {
-		perms.Issues = gh.Ptr("write")
-	}
-	if rr.WritesPRs() {
-		perms.Contents = gh.Ptr("write")
-		perms.PullRequests = gh.Ptr("write")
-	}
-	return perms
-}
+// OwnerTokenSource yields the hive owner's token for the proxy, or
+// ("", false) when no usable identity is connected. OwnerIdentityStore.Token
+// is the production source.
+type OwnerTokenSource func() (string, bool)
+
+// ownerIdentityCure is the sentence every missing-credential message ends
+// with: where the owner connects their account.
+const ownerIdentityCure = "connect the hive owner's GitHub account in Settings → Reference repos"
 
 // ReferenceRepoTokenSource returns a token function for the proxy: the
-// write_token_file when set, else a cached installation token minted on the
-// target org. auth may be replaced on key rotation, so it is taken through a
-// getter rather than captured.
-func ReferenceRepoTokenSource(rr config.ReferenceRepo, auth func() *AppAuth, logger *slog.Logger) func() (string, bool) {
+// write_token_file when a hand-written entry sets one, else the owner token.
+func ReferenceRepoTokenSource(rr config.ReferenceRepo, owner OwnerTokenSource, logger *slog.Logger) func() (string, bool) {
 	if rr.ReadOnly() {
 		return nil
 	}
-	// A derived entry never reads write_token_file (hivecommons/hive#18158):
-	// its only credential is the App installation on the target org.
+	if logger == nil {
+		logger = slog.Default()
+	}
+	// A derived entry never reads write_token_file (hivecommons/hive#18158).
 	if rr.WriteTokenFile != "" && !rr.Derived() {
 		return func() (string, bool) {
 			tok, err := readTokenFile(rr.WriteTokenFile)
@@ -78,50 +67,18 @@ func ReferenceRepoTokenSource(rr config.ReferenceRepo, auth func() *AppAuth, log
 			return tok, true
 		}
 	}
-	var (
-		mu     sync.Mutex
-		token  string
-		expiry time.Time
-	)
 	return func() (string, bool) {
-		mu.Lock()
-		defer mu.Unlock()
-		if token != "" && time.Now().Add(referenceTokenRefreshMargin).Before(expiry) {
-			return token, true
-		}
-		a := auth()
-		if a == nil {
-			logger.Warn("reference repo write token: no App auth available", "repo", rr.Repo)
+		if owner == nil {
+			logger.Warn("reference repo write: no owner identity store wired", "repo", rr.Repo)
 			return "", false
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), mintClientTimeout)
-		defer cancel()
-		tok, exp, err := a.MintReferenceRepoToken(ctx, rr)
-		if err != nil {
-			logger.Warn("reference repo write token mint failed", "repo", rr.Repo, "error", err)
+		tok, ok := owner()
+		if !ok {
+			logger.Warn("reference repo write: owner identity not connected or no longer valid", "repo", rr.Repo, "cure", ownerIdentityCure)
 			return "", false
 		}
-		token, expiry = tok, exp
-		return token, true
+		return tok, true
 	}
-}
-
-// MintReferenceRepoToken mints an installation token on the TARGET org's
-// installation of this App, scoped to rr's single repository and to the
-// permissions its write opt-in needs.
-func (a *AppAuth) MintReferenceRepoToken(ctx context.Context, rr config.ReferenceRepo) (string, time.Time, error) {
-	if a == nil {
-		return "", time.Time{}, ErrNoGitHubClient
-	}
-	installationID, err := a.DiscoverInstallationID(ctx, rr.Owner())
-	if err != nil {
-		return "", time.Time{}, fmt.Errorf("%w: %s: %v", ErrReferenceRepoNoCredential, rr.Repo, err)
-	}
-	opts := &gh.InstallationTokenOptions{
-		Repositories: []string{rr.Name()},
-		Permissions:  referenceRepoPermissions(rr),
-	}
-	return a.mintInstallationTokenWithOptions(ctx, installationID, opts)
 }
 
 func readTokenFile(path string) (string, error) {
@@ -136,13 +93,13 @@ func readTokenFile(path string) (string, error) {
 	return tok, nil
 }
 
-// VerifyReferenceRepoWriteCredential is the boot-time check for one write-mode
-// entry: the write_token_file must be readable and non-empty, or the App must
-// have an installation on the target org. It returns the login the credential
-// acts as — the App bot login, or the token's user — for the proxy's own-item
-// check. discover and whoAmI are seams: production passes the App's installation
-// discovery and a GET /user for file tokens.
-func VerifyReferenceRepoWriteCredential(ctx context.Context, rr config.ReferenceRepo, botLogin string, discover func(ctx context.Context, org string) (int64, error), whoAmI func(ctx context.Context, token string) (string, error)) (string, error) {
+// VerifyReferenceRepoWriteCredential is the boot-time check for one
+// hand-written write-mode entry: the write_token_file must be readable and
+// non-empty, or the owner identity must be connected and usable. It returns
+// the login the credential acts as — the token file's user, or the owner's
+// login — for the proxy's own-item check. whoAmI is a seam: production passes
+// GET /user for file tokens.
+func VerifyReferenceRepoWriteCredential(ctx context.Context, rr config.ReferenceRepo, owner OwnerCredential, whoAmI func(ctx context.Context, token string) (string, error)) (string, error) {
 	if rr.ReadOnly() {
 		return "", nil
 	}
@@ -160,81 +117,59 @@ func VerifyReferenceRepoWriteCredential(ctx context.Context, rr config.Reference
 		}
 		return login, nil
 	}
-	if discover == nil {
-		return "", fmt.Errorf("%w: project.reference_repos %s: write: %v needs the GitHub App installed on %s (or write_token_file), and this hive has no App auth", ErrReferenceRepoNoCredential, rr.Repo, rr.Write, rr.Owner())
+	if !owner.Usable() {
+		reason := owner.Unavailable
+		if reason == "" {
+			reason = OwnerIdentityNotConnected
+		}
+		return "", fmt.Errorf("%w: project.reference_repos %s: write: %v needs a credential for %s: %s — %s, or set write_token_file", ErrReferenceRepoNoCredential, rr.Repo, rr.Write, rr.Owner(), reason, ownerIdentityCure)
 	}
-	if _, err := discover(ctx, rr.Owner()); err != nil {
-		return "", fmt.Errorf("%w: project.reference_repos %s: write: %v needs the GitHub App installed on %s (or write_token_file): %v", ErrReferenceRepoNoCredential, rr.Repo, rr.Write, rr.Owner(), err)
-	}
-	if botLogin == "" {
-		return "", fmt.Errorf("%w: project.reference_repos %s: App bot login unknown, cannot attribute the hive's own items", ErrReferenceRepoNoCredential, rr.Repo)
-	}
-	return botLogin, nil
+	return owner.Login, nil
 }
 
-// Derived read-only reasons (hivecommons/hive#18158). They are shown to the
-// requesting project on its request issue, so they name the cure, not the
-// hive's internals.
-const (
-	// derivedReadOnlyNoInstallationFmt is used when the App is not installed
-	// on the target org; the argument is the owner.
-	derivedReadOnlyNoInstallationFmt = "the hive's GitHub App is not installed on %s"
-	// DerivedReadOnlyNoAppAuth is used when the hive runs without App auth at
-	// all, so no installation can ever be found.
-	DerivedReadOnlyNoAppAuth = "this hive has no GitHub App auth"
-	// DerivedReadOnlyBotLoginUnknown is used when an installation exists but
-	// the hive cannot name its own bot login, so it could not tell its own
-	// items from others' and must not write.
-	DerivedReadOnlyBotLoginUnknown = "the hive's App bot login is unknown"
-)
-
-// DerivedReadOnlyReason is the reason recorded on a derived entry whose
-// target org has no installation of the App.
-func DerivedReadOnlyReason(rr config.ReferenceRepo) string {
-	return fmt.Sprintf(derivedReadOnlyNoInstallationFmt, rr.Owner())
+// DerivedReadOnlyReason is the reason recorded on a derived entry when the
+// owner identity is not usable; owner.Unavailable when it names one, else the
+// not-connected default. rr is accepted for symmetry with the callers that
+// render per-repo lines.
+func DerivedReadOnlyReason(rr config.ReferenceRepo, owner OwnerCredential) string {
+	_ = rr
+	if owner.Unavailable != "" {
+		return owner.Unavailable
+	}
+	return OwnerIdentityNotConnected
 }
 
 // ResolveDerivedReferenceRepo resolves the credential for an entry derived
-// from a request issue (hivecommons/hive#18158). Unlike a hand-written entry,
-// a derived one is not the operator's mistake, so it never yields
-// ErrReferenceRepoNoCredential: when the App has an installation on the
-// target org the entry is returned unchanged with CredentialState write-tier
-// and the bot login the credential acts as; when there is none the entry
-// comes back with Write cleared, CredentialState read-only and the reason.
-// write_token_file is never consulted for a derived entry. A transient
-// discovery failure (network, 5xx) is returned as an error so the caller
-// keeps its last good state instead of downgrading on a blip. A hand-written
-// entry is returned unchanged with no login; use
+// from a request issue (hivecommons/hive#18158, #18197). Unlike a hand-written
+// entry, a derived one is not the operator's mistake, so it never yields
+// ErrReferenceRepoNoCredential: with a usable owner identity the entry is
+// returned with CredentialState write-tier and the owner's login; without one
+// it comes back with Write cleared, CredentialState read-only and the reason.
+// write_token_file is never consulted for a derived entry. No network is
+// involved. A hand-written entry is returned unchanged with no login; use
 // VerifyReferenceRepoWriteCredential for it.
-func ResolveDerivedReferenceRepo(ctx context.Context, rr config.ReferenceRepo, botLogin string, discover func(ctx context.Context, org string) (int64, error)) (config.ReferenceRepo, string, error) {
+func ResolveDerivedReferenceRepo(rr config.ReferenceRepo, owner OwnerCredential) (config.ReferenceRepo, string) {
 	if !rr.Derived() {
-		return rr, "", nil
+		return rr, ""
 	}
 	rr.WriteTokenFile = ""
-	readOnly := func(reason string) (config.ReferenceRepo, string, error) {
+	readOnly := func(reason string) (config.ReferenceRepo, string) {
 		rr.Write = nil
 		rr.CredentialState = config.ReferenceCredentialReadOnly
 		rr.CredentialReason = reason
-		return rr, "", nil
+		rr.CredentialLogin = ""
+		return rr, ""
 	}
 	if rr.ReadOnly() {
 		return readOnly(rr.CredentialReason)
 	}
-	if discover == nil {
-		return readOnly(DerivedReadOnlyNoAppAuth)
-	}
-	if _, err := discover(ctx, rr.Owner()); err != nil {
-		if errors.Is(err, ErrNoInstallationForOrg) {
-			return readOnly(DerivedReadOnlyReason(rr))
-		}
-		return rr, "", fmt.Errorf("resolving derived reference repo %s (from %s): %w", rr.Repo, rr.DerivedFrom, err)
-	}
-	if botLogin == "" {
-		return readOnly(DerivedReadOnlyBotLoginUnknown)
+	if !owner.Usable() {
+		return readOnly(DerivedReadOnlyReason(rr, owner))
 	}
 	rr.CredentialState = config.ReferenceCredentialWriteTier
 	rr.CredentialReason = ""
-	return rr, botLogin, nil
+	rr.CredentialLogin = owner.Login
+	return rr, owner.Login
 }
 
 // TokenUserLogin resolves the login a user token acts as (GET /user).

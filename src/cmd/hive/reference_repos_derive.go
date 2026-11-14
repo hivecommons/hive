@@ -11,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/refderive"
+	"github.com/hivecommons/hive/pkg/remoteitems"
 	"github.com/hivecommons/hive/pkg/workflowmodel"
 	wfstore "github.com/hivecommons/hive/pkg/workflowmodel/store"
 )
@@ -325,6 +326,10 @@ type referenceRepoRuntime struct {
 	post    derivedReadOnlyPoster
 	// interval is the periodic re-derive cadence; zero disables the poller.
 	interval time.Duration
+	// remoteItems follows up on the items the hive opened in write-tier
+	// reference repos (hivecommons/hive#18199); nil when no owner token
+	// source is wired.
+	remoteItems *remoteitems.Poller
 
 	mu sync.Mutex
 	// lastDerived are the derived entries as buildReferenceRepoPolicies
@@ -385,6 +390,9 @@ func (b *boot) applyReferenceRepos(ctx context.Context, rt *referenceRepoRuntime
 	// Off the caller's path: the notice is a GitHub write and must not delay
 	// the proxy coming up or a reload completing.
 	go notifyDerivedReadOnly(ctx, res.repos, rt.post, b.logger)
+	// Likewise the own-item follow-up: reads on the remote repos and resume
+	// kicks, bounded, never on the boot or reload path.
+	go b.pollRemoteItems(ctx, rt, res.repos)
 	return nil
 }
 

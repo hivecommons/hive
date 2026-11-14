@@ -395,10 +395,10 @@
         : `<span class="repo-reference-source">${esc(from)}</span>`;
       const state = String(rr.credential_state || '');
       const reason = String(rr.credential_reason || '');
+      const login = String(rr.credential_login || '');
       const chips = {
-        'write-tier': ['ok', '🔑 App installation', 'The hive\'s GitHub App is installed on this org; writes use a token minted for this repo only.'],
-        'read-only': ['ro', 'read-only', reason || 'No App installation on this org, so the entry was downgraded to read-only.'],
-        'unresolved': ['warn', 'unresolved', reason || 'Installation discovery failed; served read-only until the next reload resolves it.'],
+        'write-tier': ['ok', login ? '🔑 as ' + login : '🔑 owner account', 'Issues and PRs here appear under the hive owner\'s GitHub account' + (login ? ' (' + login + ')' : '') + ', never under the hive\'s App.'],
+        'read-only': ['ro', 'read-only', reason || 'The hive owner has not connected a GitHub account, so the entry was downgraded to read-only.'],
       };
       const chip = chips[state];
       const chipHTML = chip
