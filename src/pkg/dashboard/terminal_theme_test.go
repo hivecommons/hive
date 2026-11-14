@@ -114,7 +114,10 @@ func TestTerminalThemeScriptHasNoColorLiterals(t *testing.T) {
 	if m := hex.FindString(terminalThemeScript); m != "" {
 		t.Fatalf("theme script hard-codes colour %q; derive it from a token instead", m)
 	}
-	if strings.Contains(terminalThemeScript, "rgb(") {
-		t.Fatal("theme script hard-codes an rgb() colour; derive it from a token instead")
+	// An rgb()/rgba() literal has digits inside; the comment that names the
+	// computed form and the parser regex do not.
+	rgb := regexp.MustCompile(`rgba?\(\s*\d`)
+	if m := rgb.FindString(terminalThemeScript); m != "" {
+		t.Fatalf("theme script hard-codes an rgb() colour (%q); derive it from a token instead", m)
 	}
 }
