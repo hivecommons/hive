@@ -3683,6 +3683,9 @@
           },
           "400": {
             "description": "Invalid list; nothing was stored"
+          },
+          "500": {
+            "description": "The config file could not be written; the previous list is restored on the proxy and nothing changed"
           }
         }
       }

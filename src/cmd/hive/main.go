@@ -1309,8 +1309,9 @@ func (b *boot) wireBootClosures() {
 			ReInitFunc: func() {
 				initAgentConfigDrivenSystems(b.cfg)
 			},
-			IoscanConfigApplied: b.reinstallIoscanClassifier,
-			ApplyReferenceRepos: b.applyEditedReferenceRepos,
+			IoscanConfigApplied:          b.reinstallIoscanClassifier,
+			ApplyReferenceRepos:          b.applyEditedReferenceRepos,
+			RemergeDerivedReferenceRepos: b.remergeLastDerivedReferenceRepos,
 			ReviewConfigApplied: func(rc config.ReviewConfig) {
 				if b.ghClient == nil {
 					return

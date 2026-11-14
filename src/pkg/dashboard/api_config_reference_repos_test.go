@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
@@ -57,14 +59,14 @@ func TestReferenceReposPut_RoundTripAndApplyHook(t *testing.T) {
 
 	rec := doPut(s, referenceReposPath, map[string]any{"reference_repos": []map[string]any{
 		{"repo": " hivecommons/docs "},
-		{"repo": "hivecommons/hive", "write": []string{"PRs", "issues", "prs"}, "write_token_file": "/etc/hive/ref.token"},
+		{"repo": "hivecommons/hive", "write": []string{"PRs", "issues", "prs"}},
 	}})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	want := []config.ReferenceRepo{
 		{Repo: "hivecommons/docs"},
-		{Repo: "hivecommons/hive", Write: []string{"issues", "prs"}, WriteTokenFile: "/etc/hive/ref.token"},
+		{Repo: "hivecommons/hive", Write: []string{"issues", "prs"}},
 	}
 	if got := decodeReferenceRepos(t, rec.Body.Bytes()).ReferenceRepos; !reflect.DeepEqual(got, want) {
 		t.Fatalf("PUT echoed %+v, want %+v", got, want)
@@ -95,7 +97,10 @@ func TestReferenceReposPut_RoundTripAndApplyHook(t *testing.T) {
 func TestReferenceReposPut_RejectsWithLoaderMessage(t *testing.T) {
 	s := covApiServer(t)
 	cfg := s.deps.Config
-	prior := []config.ReferenceRepo{{Repo: "keep/me"}}
+	// a/b carries an operator-set token file so the "token without write"
+	// case reaches the loader's message rather than the dashboard's
+	// operator-only refusal (tested separately).
+	prior := []config.ReferenceRepo{{Repo: "keep/me"}, {Repo: "a/b", Write: []string{config.ReferenceWriteIssues}, WriteTokenFile: "/t"}}
 	cfg.Project.ReferenceRepos = append([]config.ReferenceRepo{}, prior...)
 
 	cases := []struct {
@@ -176,4 +181,118 @@ func jsonEscaped(t *testing.T, s string) string {
 		t.Fatal(err)
 	}
 	return strings.Trim(string(b), `"`)
+}
+
+// write_token_file is operator-only (hivecommons/hive#18154 review): the
+// path names a file on the hive host that the credential check reads and
+// sends to GitHub, so the dashboard may keep a path the config file already
+// holds for the same repo but never add or change one.
+func TestReferenceReposPut_TokenFileIsOperatorOnly(t *testing.T) {
+	s := covApiServer(t)
+	cfg := s.deps.Config
+	prior := []config.ReferenceRepo{{Repo: "a/b", Write: []string{config.ReferenceWriteIssues}, WriteTokenFile: "/etc/hive/ab.token"}}
+	cfg.Project.ReferenceRepos = append([]config.ReferenceRepo{}, prior...)
+
+	refused := []struct {
+		name string
+		body []map[string]any
+	}{
+		{"new repo with a token file", []map[string]any{
+			{"repo": "a/b", "write": []string{"issues"}, "write_token_file": "/etc/hive/ab.token"},
+			{"repo": "c/d", "write": []string{"prs"}, "write_token_file": "/etc/passwd"},
+		}},
+		{"changed path on a file-set repo", []map[string]any{
+			{"repo": "a/b", "write": []string{"issues"}, "write_token_file": "/etc/hive/other.token"},
+		}},
+	}
+	for _, tc := range refused {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := doPut(s, referenceReposPath, map[string]any{"reference_repos": tc.body})
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), "write_token_file") || !strings.Contains(rec.Body.String(), "config file") {
+				t.Fatalf("refusal must name write_token_file and the config file: %s", rec.Body.String())
+			}
+			if !reflect.DeepEqual(cfg.Project.ReferenceRepos, prior) {
+				t.Fatalf("a refused PUT changed the config: %+v", cfg.Project.ReferenceRepos)
+			}
+		})
+	}
+
+	// The operator's path round-trips unchanged, next to a new App-backed entry.
+	rec := doPut(s, referenceReposPath, map[string]any{"reference_repos": []map[string]any{
+		{"repo": "a/b", "write": []string{"issues"}, "write_token_file": "/etc/hive/ab.token"},
+		{"repo": "c/d", "write": []string{"prs"}},
+	}})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	want := []config.ReferenceRepo{
+		{Repo: "a/b", Write: []string{config.ReferenceWriteIssues}, WriteTokenFile: "/etc/hive/ab.token"},
+		{Repo: "c/d", Write: []string{config.ReferenceWritePRs}},
+	}
+	if !reflect.DeepEqual(cfg.Project.ReferenceRepos, want) {
+		t.Fatalf("config holds %+v, want %+v", cfg.Project.ReferenceRepos, want)
+	}
+}
+
+// A derived entry (hivecommons/hive#18139) echoed back by the editor is never
+// stored: the hook and the file see only the hand-written list, and the
+// derived set is merged back into memory after the save so /api/status and
+// the kick keep it.
+func TestReferenceReposPut_DerivedEntriesStrippedAndRemerged(t *testing.T) {
+	s := covApiServer(t)
+	cfg := s.deps.Config
+	cfg.SourcePath = filepath.Join(t.TempDir(), "hive.yaml")
+	derived := config.ReferenceRepo{Repo: "acme/docs", Write: []string{config.ReferenceWriteIssues, config.ReferenceWritePRs}, DerivedFrom: "cncf/techdocs#395", CredentialState: config.ReferenceCredentialWriteTier}
+	cfg.Project.ReferenceRepos = []config.ReferenceRepo{{Repo: "keep/me"}, derived}
+
+	var applied []config.ReferenceRepo
+	s.deps.ApplyReferenceRepos = func(_ context.Context, refs []config.ReferenceRepo) error {
+		applied = refs
+		return nil
+	}
+	remerged := 0
+	s.deps.RemergeDerivedReferenceRepos = func() {
+		remerged++
+		// What cmd/hive's remergeLastDerivedReferenceRepos does: the last
+		// derived set goes back under whatever hand-written list is in cfg.
+		cfg.Project.ReferenceRepos = append(config.HandWrittenReferenceRepos(cfg.Project.ReferenceRepos), derived)
+	}
+
+	// The editor sends the list as GET returned it, plus one new entry.
+	got := decodeReferenceRepos(t, doOwnerGet(s, referenceReposPath).Body.Bytes()).ReferenceRepos
+	if len(got) != 2 || got[1].DerivedFrom != derived.DerivedFrom {
+		t.Fatalf("GET must show the derived entry with its provenance: %+v", got)
+	}
+	rec := doPut(s, referenceReposPath, map[string]any{"reference_repos": append(got, config.ReferenceRepo{Repo: "new/one"})})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	handWritten := []config.ReferenceRepo{{Repo: "keep/me"}, {Repo: "new/one"}}
+	if !reflect.DeepEqual(applied, handWritten) {
+		t.Fatalf("the proxy hook must see only hand-written entries, got %+v", applied)
+	}
+	if remerged != 1 {
+		t.Fatalf("remerge hook called %d times, want 1", remerged)
+	}
+	if !reflect.DeepEqual(cfg.Project.ReferenceRepos, append(handWritten, derived)) {
+		t.Fatalf("memory must hold the hand-written list with the derived entry merged back, got %+v", cfg.Project.ReferenceRepos)
+	}
+	if back := decodeReferenceRepos(t, rec.Body.Bytes()).ReferenceRepos; len(back) != 3 || back[2].DerivedFrom != derived.DerivedFrom {
+		t.Fatalf("PUT must echo the merged list, got %+v", back)
+	}
+	data, err := os.ReadFile(cfg.SourcePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, leak := range []string{derived.Repo, derived.DerivedFrom, "derived_from", "credential_state"} {
+		if strings.Contains(string(data), leak) {
+			t.Fatalf("saved config leaks derived state %q:\n%s", leak, data)
+		}
+	}
+	if !strings.Contains(string(data), "new/one") || !strings.Contains(string(data), "keep/me") {
+		t.Fatalf("saved config must hold the hand-written entries:\n%s", data)
+	}
 }

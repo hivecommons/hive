@@ -1,6 +1,8 @@
 package dashboard
 
 import (
+	"context"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -68,7 +70,17 @@ func (s *Server) handleReferenceReposPut(w http.ResponseWriter, r *http.Request)
 	cfg := s.deps.Config
 
 	// --- validate before mutating anything ---
-	next := normalizeReferenceRepos(*body.ReferenceRepos)
+	// Only the operator's entries are ever stored. A derived entry
+	// (hivecommons/hive#18139) lives in memory, is rebuilt from its request
+	// issue on every pass and must never land in hive.yaml, so the editor
+	// echoing one back is dropped here; the derived set is merged back in
+	// after the save.
+	prevRepos := cfg.Project.ReferenceRepos
+	next := normalizeReferenceRepos(config.HandWrittenReferenceRepos(*body.ReferenceRepos))
+	if err := rejectDashboardTokenFiles(next, config.HandWrittenReferenceRepos(prevRepos)); err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	candidate := cfg.Project
 	candidate.ReferenceRepos = next
 	if err := config.ValidateReferenceRepos(candidate); err != nil {
@@ -83,15 +95,15 @@ func (s *Server) handleReferenceReposPut(w http.ResponseWriter, r *http.Request)
 	}
 
 	// --- apply ---
-	prevRepos := cfg.Project.ReferenceRepos
-	previous := len(prevRepos)
+	previous := len(config.HandWrittenReferenceRepos(prevRepos))
 	cfg.Project.ReferenceRepos = next
 	if err := s.saveConfig(); err != nil {
 		// The proxy already enforces `next`; roll config and proxy back so
-		// the enforced list never diverges from the persisted one.
+		// the enforced list never diverges from the persisted one. The
+		// restore must finish even if the caller has gone away.
 		cfg.Project.ReferenceRepos = prevRepos
 		if s.deps.ApplyReferenceRepos != nil {
-			if rerr := s.deps.ApplyReferenceRepos(r.Context(), prevRepos); rerr != nil && s.logger != nil {
+			if rerr := s.deps.ApplyReferenceRepos(context.WithoutCancel(r.Context()), prevRepos); rerr != nil && s.logger != nil {
 				s.logger.Error("failed to restore proxy reference repos after persist failure", "error", rerr)
 			}
 		}
@@ -100,6 +112,11 @@ func (s *Server) handleReferenceReposPut(w http.ResponseWriter, r *http.Request)
 		}
 		jsonError(w, "failed to save config; reference repos unchanged", http.StatusInternalServerError)
 		return
+	}
+	// The file holds the hand-written list; memory gets the derived entries
+	// of the last pass back, as a config reload does.
+	if s.deps.RemergeDerivedReferenceRepos != nil {
+		s.deps.RemergeDerivedReferenceRepos()
 	}
 	writable := 0
 	for _, rr := range next {
@@ -119,6 +136,31 @@ func (s *Server) handleReferenceReposPut(w http.ResponseWriter, r *http.Request)
 			"repos", len(next), "previous_repos", previous, "write_mode", writable)
 	}
 	jsonResponse(w, referenceReposSection(cfg))
+}
+
+// rejectDashboardTokenFiles refuses a write_token_file the dashboard would
+// introduce or change. The path names a file on the hive host that the
+// credential check reads and sends to GitHub as a bearer; a hosted hive's
+// owner has no host access by design (hivecommons/hive#18154 review), so
+// letting the editor pick the path would turn the owner role into an
+// arbitrary-file read and a file-existence oracle over the hive process's
+// filesystem. A path the operator already set in the config file for the
+// same repo round-trips unchanged; everything else is "set it in the file".
+func rejectDashboardTokenFiles(next, current []config.ReferenceRepo) error {
+	key := func(repo string) string { return strings.ToLower(strings.TrimSpace(repo)) }
+	fromFile := make(map[string]string, len(current))
+	for _, rr := range current {
+		if rr.WriteTokenFile != "" {
+			fromFile[key(rr.Repo)] = rr.WriteTokenFile
+		}
+	}
+	for i, rr := range next {
+		if rr.WriteTokenFile == "" || fromFile[key(rr.Repo)] == rr.WriteTokenFile {
+			continue
+		}
+		return fmt.Errorf("project.reference_repos[%d]: write_token_file for %q can only be set in the config file by the hive operator; a write opt-in saved from the dashboard uses the GitHub App installation on the repo's org", i, rr.Repo)
+	}
+	return nil
 }
 
 // normalizeReferenceRepos trims each entry and folds its write kinds to the

@@ -64487,11 +64487,15 @@ function burnAreaChart() {
        entries is edited in place until Save; a failed Save keeps the edits. */
     function renderReferenceReposPanel(host, entries, kinds) {
       if (!host) return;
-      entries = entries.map(e => ({ repo: e.repo || '', write: (e.write || []).slice(), write_token_file: e.write_token_file || '' }));
+      /* derived_from is carried through so the server can tell a derived
+         entry (rebuilt from its request issue, never saved) from an
+         operator's. */
+      entries = entries.map(e => ({ repo: e.repo || '', write: (e.write || []).slice(), write_token_file: e.write_token_file || '', derived_from: e.derived_from || '' }));
       host.textContent = '';
       host.appendChild(referenceRepoNode('p', 'config-help',
         'Read-only by default: agents clone and read these repos and are never told they are out of scope, but every write is refused. ' +
-        'Tick issues and/or prs to let agents open issues or PRs there; that needs the GitHub App installed on the repo\'s org, or a token file on the hive host. ' +
+        'Tick issues and/or prs to let agents open issues or PRs there; that needs the GitHub App installed on the repo\'s org. ' +
+        'A write_token_file is a path on the hive host and can only be set in the config file by the operator; one that is set is shown here and kept. ' +
         'Saving checks the credential and applies the change without a restart.'));
       const list = referenceRepoNode('div', 'config-list');
       host.appendChild(list);
@@ -64517,14 +64521,14 @@ function burnAreaChart() {
             label.appendChild(document.createTextNode(' write: ' + kind));
             row.appendChild(label);
           });
-          const token = document.createElement('input');
-          token.type = 'text';
-          token.placeholder = entry.write.length ? 'write_token_file (optional with the App installed)' : 'read-only';
-          token.value = entry.write_token_file;
-          token.disabled = !entry.write.length;
-          token.title = 'Path on the hive host to a token authorized for ' + entry.repo + '. Used instead of the GitHub App installation on its org. Only meaningful with a write opt-in.';
-          token.addEventListener('input', () => { entry.write_token_file = token.value.trim(); });
-          row.appendChild(token);
+          /* The token file is operator-only (set in the config file, never
+             from here): shown read-only when the file set one, so a save
+             round-trips it instead of dropping it. */
+          if (entry.write_token_file) {
+            const token = referenceRepoNode('span', 'text-muted fs-sm cfg-reference-repo-token', 'token file: ' + entry.write_token_file);
+            token.title = 'write_token_file set in the config file for ' + entry.repo + '. Only the hive operator can change it.';
+            row.appendChild(token);
+          }
           row.appendChild(referenceRepoNode('span', 'rt-inherit', entry.write.length ? entry.write.join('+') : 'read-only'));
           const remove = referenceRepoNode('button', 'remove-item', '\u2715');
           remove.title = 'Remove ' + entry.repo + ' from the reference repos';
@@ -64582,6 +64586,7 @@ function burnAreaChart() {
             const out = { repo: e.repo };
             if (e.write.length) out.write = e.write;
             if (e.write.length && e.write_token_file) out.write_token_file = e.write_token_file;
+            if (e.derived_from) out.derived_from = e.derived_from;
             return out;
           });
           const res = await fetch('/api/config/reference-repos', {
