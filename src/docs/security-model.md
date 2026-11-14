@@ -156,6 +156,32 @@ variable names. The dashboard never returns a key value. Agents using cloud
 CLI backends (Claude, Copilot, Codex, Goose) run with the provider credential
 you connected, because the CLI needs it.
 
+**Secrets at rest.** The secret values a spoke stores on its data volume
+(the owner-only key files under `/data/secrets`, the Copilot device-flow
+token, and the `github.token` value in the persisted runtime config) are
+sealed through a keystore provider interface
+([#18214](https://github.com/hivecommons/hive/issues/18214)). Each value is
+written as a single-line envelope, `hive-enc:v1:<provider>:<key
+generation>:<ciphertext>`, bound with additional authenticated data to the
+slot it belongs in, so a ciphertext moved from one file to another does not
+open. The default provider derives an AES-256-GCM key with HKDF-SHA256 from
+`HIVE_SECRETS_KEY` (or a key file), falling back to the per-hive
+`HIVE_HEARTBEAT_KEY` the hub already injects into the Deployment; a distinct
+info string keeps the encryption key separate from the signing key it is
+derived from. The threat this closes is the data volume on its own: a PVC
+snapshot, a backup archive or a copied disk no longer yields the credentials.
+It does not protect against an attacker who also holds the Deployment
+environment or the hub master key. Files written before the keystore existed
+are re-sealed on their first read, and a boot sweep converges the ones
+nothing reads, so an existing hive needs no migration step; a retired key
+generation is accepted for decryption through `HIVE_SECRETS_KEY_PREVIOUS`
+while that happens. A hive with no key material keeps plaintext storage and
+says so once at `WARN`; it never seals with a key stored beside the data.
+OpenBao Transit is available as an opt-in provider
+([#18216](https://github.com/hivecommons/hive/issues/18216)). Agent-facing
+credential files and the read-only `/secrets` Kubernetes mount are not
+touched. Variables: [env-vars.md](env-vars.md#secrets-at-rest-keystore).
+
 **GitHub blast radius.** The recommended authentication is a GitHub App,
 whose reach is limited to the repositories it is installed on. Hive mints a
 token per agent matching its mode: advisory agents get read-only tokens,
@@ -380,6 +406,20 @@ importance:
   transcripts for resume only through the launcher group. Deleting or pruning a
   session removes the sandbox and the uid's tmux socket directory before the
   slot can be reused; if removal fails the record and slot are kept and retried.
+- **A shared workspace, no shared credential.** Sessions open in one
+  per-repository checkout (`HIVE_SESSIONS_WORKSPACE_DIR`, default
+  `<sandbox root>/workspace/<org>/<repo>`) that the hive clones once as itself,
+  with a short-lived App token in a one-shot `git -c credential.helper` file
+  removed right after, so neither the clone's config nor its remote holds a
+  credential; root then hands the tree to the sessions-only group
+  (`HIVE_SESSIONS_GID`, default 20000) as `root:<gid> 2770`, group read-write,
+  nothing for "other". That group is every session's single group (su-exec
+  gives a numeric uid exactly one), which is what lets sessions share the
+  checkout; it is refused when it is the hive's own group, the reader group or
+  inside the session uid range, and session sandboxes stay `hive-launch`
+  group-only, so sessions still cannot read each other's homes. `spektacular
+  init` runs in the workspace as the session uid. Pushing from a session uses
+  the person's own login; the hive's token never enters a session.
 - **Environment.** Built from an allowlist: no dashboard token, terminal, hub,
   heartbeat, ttyd or attach-key secret and no GitHub token reaches it.
 - **Logins are read-only copies, not links.** A fixed allowlist of bare login

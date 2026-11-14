@@ -87,6 +87,10 @@ func (b *boot) adoptGitHubClient(newClient *github.Client, newAppAuth *github.Ap
 		b.agentMgr.SetSandboxPushMinter(appMinter(newAppAuth, ""))
 		b.agentMgr.SetSandboxPRClient(newClient)
 	}
+	if b.userSessions != nil {
+		// The Sessions workspace clone mints its token the same way.
+		b.userSessions.SetCloneMinter(appMinter(newAppAuth, ""))
+	}
 	if b.dashSrv != nil {
 		b.dashSrv.UpdateGitHubClient(newClient, newAppAuth)
 	}

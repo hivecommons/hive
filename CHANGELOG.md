@@ -11,6 +11,27 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.260.0)
+
+### Added
+
+- ✨ Sessions now open in a persistent per-hive workspace: a clone of the hive's project repo (or `dashboard.sessions.workspace_repo`) under `/data/session-sandbox/workspace/<org>/<repo>` that every session shares, cloned once by the hive with a one-shot token that never reaches the clone, handed to a sessions-only group, and `spektacular init <vendor>`-ed once per CLI so the CLI finds spek's skills; the dashboard shows the workspace in the new-session dialog, tab tooltip and API (`workspace_repo`, `workspace`).
+
+### Fixed
+
+- Plaud voice notes: syncs no longer fail with `list_files returned non-JSON output: {`. @plaud-ai/mcp 0.3.14 wraps every reply in an `<untrusted-user-data-…>` envelope whose closing tag follows the JSON; the connector now reads the first JSON value in each reply (listing, account, note, transcript, audio URL) instead of requiring the whole text to be JSON. The Plaud card's server sign-in help now shows the exact command to copy a laptop token (`cat ~/.plaud/tokens-mcp.json | pbcopy`).
+
+## 2026-11-14 (v5.259.0)
+
+### Added
+
+- Settings → Repos → Reference repos now shows the identity the hive writes to remote repos as ([#18200](https://github.com/hivecommons/hive/issues/18200), closing out [#18196](https://github.com/hivecommons/hive/issues/18196)): a Remote-repo identity panel with the connected GitHub login, a *Connect GitHub account* control that runs the device flow in place (code, URL, polling, reload), *Disconnect*, and a reconnect prompt with the reason when the stored token stopped working; every write entry, hand-written or derived, shows `tier · state as <login>`, the repos card chip reads `🔑 as <login>` instead of `App installation`, and `/api/status` carries `credential_login`. The docs gain a "Writing to repos you do not manage (the two lanes)" section describing linked repos under the App versus remote repos as the owner, the fork-and-PR flow, own-item follow-up and the `public_repo` limit; the sentence about installing the App on the target org is gone from `agent-configuration.md` and `github-write-surface.md`, and `env-vars.md` documents `HIVE_GITHUB_OWNER_TOKEN_FILE` and `HIVE_REMOTE_ITEMS_FILE`.
+
+### Fixed
+
+- **The hive's squash merges keep the branch's `Signed-off-by` (#18203).** When the hive squash-merged with an empty commit message, GitHub wrote its own default body, and for #18079 that body held only `Co-authored-by` lines: `f33758f5a` landed on v5 with no sign-off, and every branch that later merged v5 forward failed DCO on it. Every hive squash (relay `MergePR` and all auto-merge sweep lanes) now rebuilds the body from the branch commits, adds any branch sign-off the body lacks, and refuses to squash (sweep reason `squash-unsigned`) when no branch commit carries one. It never signs off on anyone's behalf. The post-merge and push-delta DCO checks still skip the sign-off identity match for bot authors, but now report a bot-authored commit with no `Signed-off-by` as `missing-signoff`, so the next one shows up within the hour.
+- Sessions: the embedded terminal no longer renders blank. Both dashboard proxies sent `frame-ancestors 'none'` / `X-Frame-Options: DENY` on the `/terminal` document, so the browser fetched ttyd's page and then refused to display it inside the Sessions iframe; user-session terminals (`?arg=hive-sess-<id>`) now allow same-origin framing only, while agent terminals and every other route keep the deny policy.
+
 ## 2026-11-14 (v5.258.0)
 
 ### Added

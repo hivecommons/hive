@@ -192,7 +192,7 @@ A step-by-step guide that turns a new project idea into a first set of files and
 
 Named terminal sessions where a command-line AI agent runs inside Hive; everyone on the hive can watch, and people with write access can join in.
 
-**What it tells you.** A tab strip lists each session, grouped under headings you choose, with the CLI it runs and how many browsers are attached. A **Campaigns** tab keeps the campaigns and Jam view that used to live under Inception. The selected tab shows a live terminal; ended sessions show their last output and a **Resume** button.
+**What it tells you.** A tab strip lists each session, grouped under headings you choose, with the CLI it runs and how many browsers are attached; a tab's tooltip names the workspace (the hive's shared checkout of the project repo, with its spek skills) the session runs in, and the new-session dialog shows the same. A **Campaigns** tab keeps the campaigns and Jam view that used to live under Inception. The selected tab shows a live terminal; ended sessions show their last output and a **Resume** button.
 
 **How the numbers are worked out.** The attached count is the number of browsers currently attached to that terminal. Everyone attached shares one keyboard, so typing in the terminal is not attributed to a person. Text sent from the input bar under the terminal (paste, send, send and run, attach file) goes through the Sessions API and is attributed to you in the audit log.
 

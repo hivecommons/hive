@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unicode"
@@ -21,6 +22,7 @@ import (
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent/resumehandle"
 	"github.com/hivecommons/hive/crux/agent/tmux"
+	"github.com/hivecommons/hive/crux/pushbroker"
 )
 
 // UserSessionTmuxPrefix is the tmux session (and socket) name prefix of every
@@ -123,6 +125,12 @@ type UserSessionRuntime struct {
 	lookPath func(string) (string, error)
 	environ  func() []string
 	now      func() time.Time
+	// git runs the hive-side git for the shared workspace clone
+	// (usersession_workspace.go); cloneMinter mints its scoped token.
+	git         gitRunFunc
+	cloneMinter pushbroker.TokenMinter
+	// workspaceMu serialises workspace clone and spek init across sessions.
+	workspaceMu sync.Mutex
 	// bufSeq makes every paste buffer name unique, so concurrent inputs to one
 	// session cannot paste each other's text.
 	bufSeq atomic.Uint64
@@ -141,6 +149,7 @@ func NewUserSessionRuntime(logger *slog.Logger) *UserSessionRuntime {
 		lookPath: exec.LookPath,
 		environ:  os.Environ,
 		now:      time.Now,
+		git:      execUserSessionGit,
 	}
 }
 
@@ -238,8 +247,18 @@ func (r *UserSessionRuntime) Start(spec crux.UserSessionSpec) error {
 	if err := r.prepareSandbox(spec.ID, uid); err != nil {
 		return err
 	}
+	// The pane opens in the hive's shared workspace checkout when the spec
+	// names one, otherwise in the session's own empty work dir.
+	cwd, workspace := userSessionWorkDir(spec.ID), ""
+	if spec.WorkspaceRepo != "" {
+		ws, err := r.ensureWorkspace(spec, uid)
+		if err != nil {
+			return err
+		}
+		cwd, workspace = ws, ws
+	}
 	session := UserSessionTmuxName(spec.ID)
-	create := newSessionCommands(session, userSessionWorkDir(spec.ID))
+	create := newSessionCommands(session, cwd)
 	// Keep the pane (and its scrollback) after the CLI exits so a late viewer
 	// can still read what happened; Probe reports it as Dead. The clipboard
 	// escape is refused server-wide: a session has no business writing to the
@@ -249,29 +268,31 @@ func (r *UserSessionRuntime) Start(spec crux.UserSessionSpec) error {
 	if out, err := r.tmuxAs(uid, spec.ID, "", create...); err != nil {
 		return outputErr("creating user session tmux server", err, out)
 	}
-	if _, err := r.tmuxAs(uid, spec.ID, "", r.environmentCommands(spec.ID, session)...); err != nil {
+	if _, err := r.tmuxAs(uid, spec.ID, "", r.environmentCommands(spec.ID, session, workspace)...); err != nil {
 		_ = r.killAs(uid, spec.ID)
 		return fmt.Errorf("setting session environment: %w", err)
 	}
 	// respawn-pane -k replaces the pre-env shell with the CLI itself, forked
 	// after the environment was populated.
-	respawn := append([]string{"respawn-pane", "-k", "-t", session, "-c", userSessionWorkDir(spec.ID), "--"}, argv...)
+	respawn := append([]string{"respawn-pane", "-k", "-t", session, "-c", cwd, "--"}, argv...)
 	if _, err := r.tmuxAs(uid, spec.ID, "", respawn...); err != nil {
 		_ = r.killAs(uid, spec.ID)
 		return fmt.Errorf("launching %s: %w", spec.Vendor, err)
 	}
-	r.logger.Info("user session started", "id", spec.ID, "vendor", spec.Vendor, "uid", uid)
+	r.logger.Info("user session started", "id", spec.ID, "vendor", spec.Vendor, "uid", uid, "cwd", cwd)
 	return nil
 }
 
 // environmentCommands removes every credential name from the session
 // environment and then sets the per-session variables, as one tmux invocation.
-func (r *UserSessionRuntime) environmentCommands(id, session string) []string {
+// workspace, when non-empty, adds the workspace variables.
+func (r *UserSessionRuntime) environmentCommands(id, session, workspace string) []string {
 	var args []string
 	for _, k := range userSessionStripNames() {
 		args = append(args, "set-environment", "-t", session, "-r", k, ";")
 	}
-	for _, kv := range userSessionEnvPairs(id, r.scrubScript()) {
+	pairs := append(userSessionEnvPairs(id, r.scrubScript()), userSessionWorkspaceEnvPairs(workspace)...)
+	for _, kv := range pairs {
 		args = append(args, "set-environment", "-t", session, kv[0], kv[1], ";")
 	}
 	return args[:len(args)-1]
@@ -446,13 +467,17 @@ func SanitizeSessionInput(text string) (string, error) {
 }
 
 // ResumeInfo reads the newest vendor-native conversation from the session's
-// own HOME.
-func (r *UserSessionRuntime) ResumeInfo(id, vendor string) (crux.UserSessionResume, bool) {
+// own HOME. workDir is the directory the CLI ran in (vendors key transcripts
+// by project directory); empty means the session's own work dir.
+func (r *UserSessionRuntime) ResumeInfo(id, vendor, workDir string) (crux.UserSessionResume, bool) {
 	if checkUserSessionID(id) != nil || !r.SupportsResume(vendor) {
 		return crux.UserSessionResume{}, false
 	}
+	if workDir == "" {
+		workDir = userSessionWorkDir(id)
+	}
 	r.makeHomeReadable(id)
-	h, ok := resumehandle.CaptureResumeHandleIn(userSessionHome(id), userSessionCodexHome(id), vendor, userSessionWorkDir(id), r.now())
+	h, ok := resumehandle.CaptureResumeHandleIn(userSessionHome(id), userSessionCodexHome(id), vendor, workDir, r.now())
 	if !ok || h.SessionID == "" || h.Command == "" {
 		return crux.UserSessionResume{}, false
 	}
