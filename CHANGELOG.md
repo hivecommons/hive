@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.250.0)
+
+### Added
+
+- Hub: self-service (`byo-`) hives now have their own heartbeat credential ([#18060](https://github.com/hivecommons/hive/issues/18060), [#18142](https://github.com/hivecommons/hive/issues/18142)). The hub mints a random key per registered hive, stores only its SHA-256 hash in `/data/hub-selfservice.json`, and verifies a `byo-` heartbeat against that hash and nothing else: a master-derived key never authenticates a `byo-` ID, and a self-service key authenticates no other hive. Keys rotate with a 10-minute overlap so a redeploy does not show the hive offline, and each accepted heartbeat stamps the record for the coming expiry sweep. The registration API and UI follow in later PRs; nothing changes for hosted or operator-provisioned hives.
+
+### Fixed
+
+- The permissions watcher no longer attempts, or logs per path, a chown it can never perform. After the entrypoint's privilege drop the hive process runs as `dev` (uid 1001) without `CAP_CHOWN`, so an entry another uid owns, such as a sandbox kick workspace under `/data/agents/sandbox/<slug>-<nonce>/.claude/skills/...` written by the Job pod's uid, always fails with `operation not permitted`; a surge of kicks minted ~4096 such paths between two ticks and the per-path deduper warned once for each of them (4087 `chown failed` WARN lines in ten minutes) before saturating. The watcher now decides ownership is unrepairable before the syscall, leaves the entry's mode alone as not ours, and reports all such entries as one summary line per tick: WARN with the count, a sample path and a hint when the condition appears or grows, DEBUG while it holds unchanged, nothing once it clears. Entries the process owns are still chowned and chmodded exactly as before (#18120).
+- The stage engine now treats `architecture discussion` as a discussion label beside `proposal` and `kind/design`, and reads an `[RFC]` / `RFC:` title opener (after any leading emoji) as a discussion signal when no discussion label is present, so an unclaimed RFC derives `stage/018-open-for-discussion` (reason `open for discussion: architecture discussion` or `open for discussion: rfc title`) instead of showing as idle agent work at 010. A live claim or covering PR still stages 020 / 030 / 040 as before (#18141).
+- The model-ranked knowledge advisor no longer burns its deliver arm on 429s from the model endpoint: a 429 is retried once after the upstream's `Retry-After` (a jittered 2 to 4 s backoff when absent) inside the existing `timeout_s`, a decision that still ends throttled is recorded as the new `rate-limited` outcome (distinct from `error`, excluded from the retro arm comparison) and is not charged against the per-agent-hour or per-day budgets, at most one advisor call is in flight across the whole hive on top of the per-agent guard, and the first 429 in each five-minute window logs at WARN with the `Retry-After`, `x-ratelimit-*` headers and response body while the rest log at DEBUG (#18151).
+
 ## 2026-11-14 (v5.249.0)
 
 ### Added
