@@ -584,6 +584,29 @@
     .hive-toast.success { background: rgba(116,223,154,0.9); }
     .hive-toast.error { background: rgba(255,126,126,0.9); }
     .hive-toast.info { background: rgba(128,191,255,0.9); }
+    /* Self-service registration modal and list (#18145). Colour comes from the
+       shared tokens only, so the light and dark themes carry through. */
+    .ss-input { width: 100%; padding: var(--sp-4) var(--sp-5); background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); font-size: 0.85rem; font-family: inherit; box-sizing: border-box; }
+    .ss-label { display: block; font-size: 0.8rem; color: var(--muted); margin-bottom: var(--sp-2); }
+    .ss-hint { font-size: 0.7rem; color: var(--muted); margin-top: var(--sp-2); }
+    .ss-warn, .ss-error { background: rgba(255,126,126,0.12); border: 1px solid rgba(255,126,126,0.5); border-radius: var(--r); padding: var(--sp-4) var(--sp-5); font-size: 0.85rem; margin-bottom: var(--sp-5); color: var(--text); }
+    .ss-error { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .ss-note { color: var(--muted); font-size: 0.8rem; }
+    .ss-field { margin-bottom: var(--sp-5); }
+    .ss-row { display: flex; gap: var(--sp-3); align-items: center; }
+    .ss-row-end { justify-content: flex-end; margin-bottom: var(--sp-2); }
+    .ss-code { flex: 1; min-width: 0; overflow-wrap: anywhere; background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-3) var(--sp-4); font-size: 0.8rem; color: var(--text); }
+    .ss-key { user-select: all; }
+    .ss-tabs { display: flex; gap: var(--sp-2); border-bottom: 1px solid var(--border); margin: var(--sp-6) 0 var(--sp-4); }
+    .ss-tab { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--muted); padding: var(--sp-3) var(--sp-4); font-size: 0.85rem; cursor: pointer; font-family: inherit; }
+    .ss-tab.active { color: var(--text); border-bottom-color: var(--hub-dashboard-accent); }
+    .ss-pre { background: var(--bg); border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4); font-size: 0.75rem; overflow-x: auto; margin: 0; max-height: 260px; color: var(--text); }
+    .ss-hive { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3) var(--sp-5); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); margin-bottom: var(--sp-4); }
+    .ss-hive-main { display: flex; align-items: center; gap: var(--sp-3); flex: 1 1 auto; min-width: 0; overflow-wrap: anywhere; }
+    .ss-hive-meta { flex: 1 1 100%; color: var(--muted); font-size: 0.78rem; overflow-wrap: anywhere; }
+    .ss-hive-actions { display: flex; gap: var(--sp-3); margin-left: auto; }
+    .ss-badge { font-size: 0.7rem; padding: 1px var(--sp-3); border-radius: 999px; border: 1px solid var(--border); color: var(--muted); }
+    .ss-badge.on { color: var(--green); border-color: var(--green); }
     @keyframes spin { to { transform: rotate(360deg); } }
     @keyframes toast-in { from { transform: translateX(100%); opacity: 0; } to { transform: translateX(0); opacity: 1; } }
     .hive-confirm-overlay { position: fixed; inset: 0; background: rgba(0,0,0,0.6); z-index: 150; display: flex; align-items: center; justify-content: center; }
@@ -800,17 +823,20 @@
       <div style="display:flex;gap:var(--sp-4);align-items:center">
         <button class="hv-btn btn-primary btn-primary" id="btn-send-banner-top" style="display:none" onclick="_bannerTargetHive=null;document.getElementById('banner-modal').style.display='flex';hiveHubRememberModalOpen(document.getElementById('banner-modal'));loadBannerHiveList()">Send Banner</button>
         <!-- Register-your-own-hive: for a user who self-installed a standalone
-             hive and wants to attach it to THIS hub. Points at the self-host
-             guide (get-started.html #self-host).
+             hive and wants to attach it to THIS hub.
 
-             NOTE: attaching a self-hosted hive is NOT self-service. Setting
-             HIVE_HUB_URL alone does not register anything — handleHeartbeat
-             rejects every unauthenticated beat with 401 whenever the hub has a
-             HIVE_HUB_SECRET configured (deliberate, #1077: "prevents registry
-             pollution from unauthenticated sources"). The operator must issue
-             the spoke a secret. The guide this links to now says so; keep the
-             two in step if either changes. -->
-        <a class="hv-btn btn-primary btn-primary" id="btn-register-hive" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub (requires a HIVE_HUB_SECRET issued by the hub operator)">Register your own hive</a>
+             Two behaviours, chosen by GET /api/hub/selfservice/status (#18060,
+             #18145). When the hub runs with HIVE_HUB_SELFSERVICE_REGISTRATION
+             the click opens the selfservice-modal form below: the hub proves
+             the user is a GitHub admin of the listed repos and issues the
+             spoke its own rotatable heartbeat key (shown once). When the flag
+             is off (the default) the anchor is a plain link to the self-host
+             guide (get-started.html #self-host), where the operator still has
+             to issue the spoke a secret: handleHeartbeat rejects every
+             unauthenticated beat with 401 whenever the hub has a
+             HIVE_HUB_SECRET configured (deliberate, #1077). The empty-state
+             copy of this CTA inside renderHives shares selfServiceCtaClick. -->
+        <a class="hv-btn btn-primary btn-primary" id="btn-register-hive" href="/get-started#self-host" onclick="return selfServiceCtaClick(event)" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub">Register your own hive</a>
         <!-- Request-a-hive: routes to the EXISTING Request-a-Hive wizard at
              /get-started (files a provision request via POST
              /api/saas/request-provision). Shown when the user has NO hosted
@@ -874,6 +900,18 @@
         </div>
         <div id="hives-container"><div class="loading">Loading your hives...</div></div>
       </div>
+    </div>
+
+    <!-- Self-hosted hives the signed-in user registered through the
+         self-service form (#18145): online badge, last accepted heartbeat,
+         Rotate key and Remove. Hidden unless /api/hub/selfservice/status says
+         the feature is on; filled by renderSelfServiceList(). -->
+    <div id="selfservice-section" style="display:none;margin-top:48px">
+      <div style="display:flex;align-items:baseline;gap:var(--sp-4);margin-bottom:var(--sp-6)">
+        <h2 style="font-size:1.3rem;color:var(--hub-dashboard-accent);margin:var(--sp-0)">Self-hosted hives</h2>
+        <span id="selfservice-cap" class="text-muted" style="font-size:0.8rem"></span>
+      </div>
+      <div id="selfservice-list"></div>
     </div>
 
     <div id="public-hives-section" style="display:none;margin-top:48px">
@@ -8885,11 +8923,13 @@
           /* Request-a-hive → the EXISTING Request-a-Hive wizard at /get-started
              (POST /api/saas/request-provision). We host it for you. */
           '<a class="hv-btn btn-primary btn-primary" href="/get-started" style="text-decoration:none" title="We host the hive for you">Request a hive</a>' +
-          /* Register-your-own-hive → the EXISTING self-host guide at
-             /get-started#self-host. Not self-service: the operator must issue
-             the spoke a HIVE_HUB_SECRET or its heartbeats 401 (see #1077 and
-             the note on the other copy of this CTA above). */
-          '<a class="hv-btn btn-primary btn-primary" href="/get-started#self-host" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub">Register your own hive</a>' +
+          /* Register-your-own-hive → with HIVE_HUB_SELFSERVICE_REGISTRATION on,
+             selfServiceCtaClick opens the registration form (#18145); with the
+             flag off it falls through to the self-host guide at
+             /get-started#self-host, where the operator must still issue the
+             spoke a HIVE_HUB_SECRET or its heartbeats 401 (#1077; see the note
+             on the header copy of this CTA). */
+          '<a class="hv-btn btn-primary btn-primary" href="/get-started#self-host" onclick="return selfServiceCtaClick(event)" style="background:var(--surface);color:var(--text);border:1px solid var(--border);text-decoration:none" title="You self-host the hive and attach it to this hub">Register your own hive</a>' +
           '</div>' +
           '<p style="color:var(--muted);font-size:0.85rem">…or contribute to a public hive below.</p>' +
           '</div>';
@@ -12178,6 +12218,315 @@
       } catch (e) { /* non-fatal */ }
     }
 
+    /* ---- Self-service (byo-) hive registration (#18060, #18145) ----
+       Everything here is gated by GET /api/hub/selfservice/status. When the
+       hub runs without HIVE_HUB_SELFSERVICE_REGISTRATION the two "Register
+       your own hive" CTAs stay plain links to /get-started#self-host and none
+       of the fetches below happen. The raw heartbeat key exists only in the
+       201 / rotate response and in the DOM of the open modal: it is never kept
+       in a variable that outlives the dialog, never written to localStorage
+       and never logged. */
+    var SELFSERVICE_ID_PREFIX = 'byo-';
+    var SELFSERVICE_SNIPPET_TABS = [
+      { key: 'docker_compose', label: 'Docker Compose' },
+      { key: 'podman', label: 'Podman' },
+      { key: 'kubernetes', label: 'Kubernetes' }
+    ];
+    var SELFSERVICE_REPO_RE = /^[^\/\s]+\/[^\/\s]+$/;
+    var _selfService = { enabled: false, maxPerUser: 0, count: 0, expiry: '' };
+    var _selfServiceHives = [];
+
+    async function loadSelfServiceStatus() {
+      try {
+        var resp = await fetch('/api/hub/selfservice/status');
+        if (!resp.ok) return;
+        var data = await resp.json();
+        _selfService.enabled = !!data.enabled;
+        _selfService.maxPerUser = Number(data.max_per_user) || 0;
+        _selfService.count = Number(data.count) || 0;
+        _selfService.expiry = String(data.expiry || '');
+      } catch (e) { return; }
+      if (!_selfService.enabled) return;
+      var btn = document.getElementById('btn-register-hive');
+      if (btn) btn.title = 'Register a hive you run yourself: this hub issues it a heartbeat key';
+      loadSelfServiceHives();
+    }
+    /* Shared by the header CTA and the empty-state copy. Returning true lets
+       the anchor navigate to the guide (flag off); with the flag on the click
+       is swallowed and the form opens instead, so the page never navigates. */
+    function selfServiceCtaClick(e) {
+      if (!_selfService.enabled) return true;
+      if (e && e.preventDefault) e.preventDefault();
+      openSelfServiceModal();
+      return false;
+    }
+    function selfServiceModal() { return document.getElementById('selfservice-modal'); }
+    function openSelfServiceModal() {
+      var m = selfServiceModal();
+      if (!m) return;
+      selfServiceShowForm();
+      var prefix = document.getElementById('ss-prefix');
+      if (prefix) prefix.textContent = SELFSERVICE_ID_PREFIX + (_currentUser || 'you') + '-';
+      var cap = document.getElementById('ss-cap');
+      if (cap) cap.textContent = _selfService.maxPerUser ? (_selfService.count + ' of ' + _selfService.maxPerUser + ' self-hosted hives registered.') : '';
+      m.style.display = 'flex';
+      hiveHubRememberModalOpen(m);
+      var name = document.getElementById('ss-name');
+      if (name) name.focus();
+    }
+    function closeSelfServiceModal() {
+      var m = selfServiceModal();
+      if (!m) return;
+      m.style.display = 'none';
+      selfServiceClearKeyPanel();
+      selfServiceSetError('');
+    }
+    /* The key panel is the only place the raw key lives; wipe it whenever it
+       is hidden, so a later DOM inspection or a reopened dialog has nothing. */
+    function selfServiceClearKeyPanel() {
+      var k = document.getElementById('ss-key-panel');
+      if (!k) return;
+      k.innerHTML = '';
+      k.style.display = 'none';
+    }
+    function selfServiceShowForm() {
+      var form = document.getElementById('ss-form-panel');
+      if (form) form.style.display = '';
+      selfServiceClearKeyPanel();
+      selfServiceSetError('');
+      ['ss-name', 'ss-org', 'ss-repos', 'ss-dash'].forEach(function(id) {
+        var el = document.getElementById(id);
+        if (el) el.value = '';
+      });
+      var title = document.getElementById('ss-title');
+      if (title) title.textContent = 'Register your own hive';
+      var close = document.getElementById('ss-close');
+      if (close) close.textContent = 'Cancel';
+      var submit = document.getElementById('ss-submit');
+      if (submit) submit.style.display = '';
+      selfServiceSetBusy(false);
+    }
+    function selfServiceSetError(msg) {
+      var el = document.getElementById('ss-error');
+      if (!el) return;
+      el.textContent = msg || '';
+      el.style.display = msg ? '' : 'none';
+    }
+    function selfServiceSetBusy(busy) {
+      var btn = document.getElementById('ss-submit');
+      if (!btn) return;
+      btn.disabled = !!busy;
+      btn.textContent = busy ? 'Registering…' : 'Register';
+    }
+    function selfServiceRepoLines(text) {
+      return String(text || '').split(/[\n,]+/).map(function(s) { return s.trim(); }).filter(Boolean);
+    }
+    async function submitSelfService() {
+      var name = (document.getElementById('ss-name').value || '').trim();
+      var org = (document.getElementById('ss-org').value || '').trim();
+      var repos = selfServiceRepoLines(document.getElementById('ss-repos').value);
+      var dash = (document.getElementById('ss-dash').value || '').trim();
+      if (!name) { selfServiceSetError('Name is required.'); return; }
+      if (!repos.length) { selfServiceSetError('List at least one repository as owner/name, one per line.'); return; }
+      var bad = repos.filter(function(r) { return !SELFSERVICE_REPO_RE.test(r); });
+      if (bad.length) { selfServiceSetError('Repository "' + bad[0] + '" must be owner/name.'); return; }
+      if (dash && !/^https:\/\//i.test(dash)) { selfServiceSetError('Dashboard URL must start with https://'); return; }
+      selfServiceSetError('');
+      selfServiceSetBusy(true);
+      var resp, data = null;
+      try {
+        resp = await fetch('/api/hub/selfservice/hives', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: name, org: org, repos: repos, dashboard_url: dash })
+        });
+        try { data = await resp.json(); } catch (e) { data = null; }
+      } catch (e) {
+        selfServiceSetBusy(false);
+        selfServiceSetError('Network error: the hub did not answer. Try again.');
+        return;
+      }
+      selfServiceSetBusy(false);
+      if (resp.status === 201 && data && data.key) {
+        _selfService.count++;
+        renderSelfServiceKey({ id: data.hive && data.hive.id, key: data.key, hubUrl: data.hub_url, snippets: data.snippets || {}, mode: 'registered' });
+        loadSelfServiceHives();
+        return;
+      }
+      selfServiceSetError(selfServiceErrorMessage(resp.status, data));
+    }
+    /* Maps the API's status codes to one inline sentence. The server's own
+       error text is preferred when present (the 403 names the refused repo);
+       the fallbacks cover an empty or non-JSON body. */
+    function selfServiceErrorMessage(status, data) {
+      var server = data && data.error ? String(data.error) : '';
+      switch (status) {
+        case 400: return server || 'The hub rejected the form; check the fields and try again.';
+        case 403:
+          if (data && data.repo) return 'Not registered: ' + (server || ('your GitHub account is not an admin of ' + data.repo)) + '. Only a repository admin can register a hive for it.';
+          return server || 'Not allowed: sign out and back in with GitHub, then retry.';
+        case 404: return server || 'Self-service registration is turned off on this hub.';
+        case 409: return server || 'A hive with this name is already registered; pick another name.';
+        case 429: return server || ('You already have the maximum of ' + _selfService.maxPerUser + ' self-hosted hives; remove one first.');
+        case 502: return server || 'GitHub could not be reached to verify your repository permission; try again in a moment.';
+        default: return server || ('Request failed (HTTP ' + status + ').');
+      }
+    }
+    /* Renders the one-time key panel from a 201 or a rotate response. Every
+       value is server-provided and goes through esc/escAttr. */
+    function renderSelfServiceKey(r) {
+      var form = document.getElementById('ss-form-panel');
+      var panel = document.getElementById('ss-key-panel');
+      if (!form || !panel) return;
+      form.style.display = 'none';
+      var title = document.getElementById('ss-title');
+      if (title) title.textContent = r.mode === 'rotated' ? 'New key issued' : 'Hive registered';
+      var close = document.getElementById('ss-close');
+      if (close) close.textContent = 'Close';
+      var submit = document.getElementById('ss-submit');
+      if (submit) submit.style.display = 'none';
+      var html = '<div class="ss-warn" role="alert"><strong>Copy the key before closing this dialog.</strong> It is shown once and never again: the hub stores only a hash. If you lose it, rotate it from the Self-hosted hives list.</div>';
+      if (r.mode === 'rotated' && r.overlap) {
+        html += '<p class="ss-note">The previous key keeps working for ' + esc(r.overlap) + ' so a running spoke can be updated without a gap; after that only the new key is accepted.</p>';
+      }
+      html += selfServiceValueRow('Hive ID', 'ss-out-id', r.id || '', 'hive ID');
+      html += selfServiceValueRow('Heartbeat key (HIVE_HEARTBEAT_KEY)', 'ss-out-key', r.key || '', 'key', 'ss-key');
+      html += selfServiceValueRow('Hub URL (HIVE_HUB_URL)', 'ss-out-hub', r.hubUrl || '', 'hub URL');
+      html += '<div class="ss-tabs" role="tablist" aria-label="Deploy snippets">';
+      SELFSERVICE_SNIPPET_TABS.forEach(function(t, i) {
+        html += '<button type="button" role="tab" class="ss-tab' + (i === 0 ? ' active' : '') + '" data-tab="' + t.key + '" aria-selected="' + (i === 0 ? 'true' : 'false') + '" onclick="selfServiceTab(\'' + t.key + '\')">' + esc(t.label) + '</button>';
+      });
+      html += '</div>';
+      SELFSERVICE_SNIPPET_TABS.forEach(function(t, i) {
+        var text = r.snippets && r.snippets[t.key] ? String(r.snippets[t.key]) : '';
+        html += '<div class="ss-snippet" id="ss-snippet-' + t.key + '" role="tabpanel" style="' + (i === 0 ? '' : 'display:none') + '">' +
+          '<div class="ss-row ss-row-end"><button type="button" class="hv-btn btn-primary btn-sm" onclick="selfServiceCopy(\'ss-snippet-text-' + t.key + '\',\'' + escAttr(t.label) + ' snippet\')">Copy</button></div>' +
+          '<pre class="ss-pre"><code id="ss-snippet-text-' + t.key + '">' + esc(text) + '</code></pre></div>';
+      });
+      html += '<p class="ss-note">Start the spoke with one of these; it shows as online in Self-hosted hives after its first accepted heartbeat. A registration that never heartbeats expires after ' + esc(_selfService.expiry || '24h') + '.</p>';
+      panel.innerHTML = html;
+      panel.style.display = '';
+    }
+    function selfServiceValueRow(label, id, value, copyLabel, extraClass) {
+      return '<div class="ss-field"><label class="ss-label">' + esc(label) + '</label><div class="ss-row">' +
+        '<code class="ss-code' + (extraClass ? ' ' + extraClass : '') + '" id="' + id + '">' + esc(value) + '</code>' +
+        '<button type="button" class="hv-btn btn-primary btn-sm" onclick="selfServiceCopy(\'' + id + '\',\'' + escAttr(copyLabel) + '\')">Copy</button></div></div>';
+    }
+    function selfServiceCopy(id, label) {
+      var el = document.getElementById(id);
+      if (!el) return;
+      copyHiveText(el.textContent, label);
+    }
+    function selfServiceTab(key) {
+      SELFSERVICE_SNIPPET_TABS.forEach(function(t) {
+        var p = document.getElementById('ss-snippet-' + t.key);
+        if (p) p.style.display = t.key === key ? '' : 'none';
+      });
+      document.querySelectorAll('#ss-key-panel .ss-tab').forEach(function(b) {
+        var on = b.getAttribute('data-tab') === key;
+        b.classList.toggle('active', on);
+        b.setAttribute('aria-selected', on ? 'true' : 'false');
+      });
+    }
+
+    async function loadSelfServiceHives() {
+      if (!_selfService.enabled) return;
+      var section = document.getElementById('selfservice-section');
+      if (!section) return;
+      try {
+        var resp = await fetch('/api/hub/selfservice/hives');
+        if (resp.status === 404) { _selfService.enabled = false; section.style.display = 'none'; return; }
+        if (!resp.ok) return;
+        var data = await resp.json();
+        _selfServiceHives = (data && data.hives) || [];
+      } catch (e) { return; }
+      _selfService.count = _selfServiceHives.length;
+      renderSelfServiceList();
+    }
+    /* Go's zero time.Time serialises as year 0001, which Date.parse turns into
+       a large negative number; that and a missing field both read as never. */
+    function selfServiceAgo(iso) {
+      if (!iso) return 'never';
+      var t = Date.parse(iso);
+      if (!isFinite(t) || t <= 0) return 'never';
+      var s = Math.max(0, Math.round((Date.now() - t) / 1000));
+      if (s < 60) return s + 's ago';
+      if (s < 3600) return Math.round(s / 60) + 'm ago';
+      if (s < 86400) return Math.round(s / 3600) + 'h ago';
+      return Math.round(s / 86400) + 'd ago';
+    }
+    function renderSelfServiceList() {
+      var section = document.getElementById('selfservice-section');
+      var list = document.getElementById('selfservice-list');
+      if (!section || !list) return;
+      section.style.display = '';
+      var cap = document.getElementById('selfservice-cap');
+      if (cap) cap.textContent = _selfService.maxPerUser ? (_selfServiceHives.length + ' of ' + _selfService.maxPerUser) : '';
+      if (!_selfServiceHives.length) {
+        list.innerHTML = '<p class="text-muted" style="font-size:0.85rem">No self-hosted hives yet. Use Register your own hive above to add one.</p>';
+        return;
+      }
+      list.innerHTML = _selfServiceHives.map(function(h) {
+        var online = !!h.online;
+        return '<div class="ss-hive">' +
+          '<div class="ss-hive-main">' +
+            '<span class="online-dot ' + (online ? 'on' : 'off') + '" title="' + (online ? 'Online' : 'Offline') + '"></span>' +
+            '<strong>' + esc(h.id) + '</strong>' +
+            '<span class="ss-badge ' + (online ? 'on' : 'off') + '">' + (online ? 'online' : 'offline') + '</span>' +
+            (h.dashboard_url ? '<a class="text-accent" style="font-size:0.8rem" href="' + escAttr(h.dashboard_url) + '" target="_blank" rel="noopener">dashboard</a>' : '') +
+          '</div>' +
+          '<div class="ss-hive-actions">' +
+            '<button type="button" class="hv-btn btn-primary btn-sm" onclick="rotateSelfServiceHive(' + jsArg(h.id) + ')" title="Issue a new heartbeat key; the current one keeps working for a short overlap">Rotate key</button>' +
+            '<button type="button" class="hv-btn btn-danger btn-sm" onclick="removeSelfServiceHive(' + jsArg(h.id) + ')" title="Revoke the key and remove this hive from the hub">Remove</button>' +
+          '</div>' +
+          '<div class="ss-hive-meta">' +
+            (h.org ? 'org ' + esc(h.org) + ' · ' : '') +
+            'repos ' + esc((h.repos || []).join(', ') || 'none') + ' · ' +
+            'last heartbeat ' + esc(selfServiceAgo(h.last_accepted_heartbeat_at)) + ' · ' +
+            'registered ' + esc(selfServiceAgo(h.created_at)) +
+          '</div></div>';
+      }).join('');
+    }
+    async function rotateSelfServiceHive(id) {
+      var ok = await hiveConfirm({
+        title: 'Rotate key',
+        message: 'Issue a new heartbeat key for ' + id + '? The current key keeps working for a short overlap so you can update the spoke, then stops being accepted.',
+        confirmLabel: 'Rotate',
+        danger: false
+      });
+      if (!ok) return;
+      var resp, data = null;
+      try {
+        resp = await fetch('/api/hub/selfservice/hives/' + encodeURIComponent(id) + '/rotate', { method: 'POST' });
+        try { data = await resp.json(); } catch (e) { data = null; }
+      } catch (e) { hiveToast('Network error: key not rotated', 'error'); return; }
+      if (!resp.ok || !data || !data.key) { hiveToast(selfServiceErrorMessage(resp.status, data), 'error'); return; }
+      var m = selfServiceModal();
+      if (m) { m.style.display = 'flex'; hiveHubRememberModalOpen(m); }
+      renderSelfServiceKey({ id: data.id || id, key: data.key, hubUrl: data.hub_url, overlap: data.overlap, snippets: data.snippets || {}, mode: 'rotated' });
+    }
+    async function removeSelfServiceHive(id) {
+      var ok = await hiveConfirm({
+        title: 'Remove self-hosted hive',
+        message: 'Remove ' + id + ' from this hub? Its key stops working at once and its heartbeats are rejected. The hive itself is not touched.',
+        confirmLabel: 'Remove'
+      });
+      if (!ok) return;
+      var resp;
+      try {
+        resp = await fetch('/api/hub/selfservice/hives/' + encodeURIComponent(id), { method: 'DELETE' });
+      } catch (e) { hiveToast('Network error: hive not removed', 'error'); return; }
+      if (!resp.ok) {
+        var data = null;
+        try { data = await resp.json(); } catch (e) { data = null; }
+        hiveToast(selfServiceErrorMessage(resp.status, data), 'error');
+        return;
+      }
+      hiveToast('Removed ' + id, 'success');
+      loadSelfServiceHives();
+      loadHives();
+    }
+
     async function init() {
       /* Restore grouping, collapse state and saved views (including applying
          the default view) BEFORE the first loadHives(), so the initial render
@@ -12200,6 +12549,9 @@
          scroll during a slow load is still captured. */
       window.addEventListener('scroll', persistHiveScroll, {passive: true});
       await loadUser();
+      /* After loadUser so the byo-<login>- prefix is known; not awaited, the
+         CTAs keep their link behaviour until the status answers. */
+      loadSelfServiceStatus();
       await autoRequestAccessFromUrl();
       await loadHives();
       /* Restore AFTER the real rows are in the DOM — loadHives' renderHives is
@@ -12218,6 +12570,9 @@
     init();
     var POLL_INTERVAL_MS = 30000;
     setInterval(loadHives, POLL_INTERVAL_MS);
+    /* No-op while self-service registration is off; keeps the online badge
+       and last-heartbeat column of Self-hosted hives current otherwise. */
+    setInterval(loadSelfServiceHives, POLL_INTERVAL_MS);
     /* Live-tick any claim-pending counters once a second so an assigned-but-
        unclaimed row's "claim pending · Nm" advances between the 30s polls. */
     startAssignCounterTicker();
@@ -14642,6 +14997,51 @@
       <div style="display:flex;gap:var(--sp-5);justify-content:flex-end;padding:var(--sp-6) var(--sp-9);border-top:1px solid var(--border);flex-shrink:0">
         <button class="hv-btn btn-primary" onclick="document.getElementById('create-modal').style.display='none'">Cancel</button>
         <button id="btn-go" onclick="createHive()" class="hv-btn btn-primary btn-primary">Go</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Self-service registration (#18060, #18145). Opened by the two
+       "Register your own hive" CTAs only when GET /api/hub/selfservice/status
+       answers enabled. The form panel is static markup; the key panel is
+       filled from the 201 / rotate response and emptied again by
+       closeSelfServiceModal(), so the raw key never outlives the open dialog.
+       Deliberately no backdrop-click or Escape close: dismissing the dialog by
+       accident would lose a key that is shown exactly once. -->
+  <div id="selfservice-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:100;align-items:center;justify-content:center">
+    <div role="dialog" aria-modal="true" aria-labelledby="ss-title" style="background:var(--surface);border:1px solid var(--border);border-radius:var(--r-lg);max-width:640px;width:90%;max-height:90vh;display:flex;flex-direction:column">
+      <h2 id="ss-title" style="font-size:1.3rem;padding:var(--sp-9) var(--sp-9) var(--sp-6);margin:var(--sp-0);color:var(--hub-dashboard-accent);flex-shrink:0">Register your own hive</h2>
+      <div style="flex:1;overflow-y:auto;padding:var(--sp-0) var(--sp-9)">
+        <div id="ss-form-panel">
+          <p class="text-muted" style="font-size:0.85rem;margin-top:0">You run the hive; this hub issues it a heartbeat key. You must be a GitHub admin of every repository you list: the hub checks that with the GitHub account you signed in with.</p>
+          <div class="mb-5">
+            <label class="ss-label" for="ss-name">Name *</label>
+            <div class="ss-row">
+              <code id="ss-prefix" style="color:var(--muted);font-size:0.85rem;white-space:nowrap">byo-</code>
+              <input id="ss-name" class="ss-input" type="text" placeholder="my-hive" autocomplete="off" maxlength="48">
+            </div>
+            <div class="ss-hint">Letters, digits, '.', '_' and '-'. The hive ID is the prefix plus this name.</div>
+          </div>
+          <div class="mb-5">
+            <label class="ss-label" for="ss-org">GitHub organization</label>
+            <input id="ss-org" class="ss-input" type="text" placeholder="my-org" autocomplete="off">
+          </div>
+          <div class="mb-5">
+            <label class="ss-label" for="ss-repos">Repositories * <span style="font-size:0.7rem">(one owner/name per line)</span></label>
+            <textarea id="ss-repos" class="ss-input" rows="3" placeholder="my-org/repo-one&#10;my-org/repo-two" spellcheck="false"></textarea>
+          </div>
+          <div class="mb-5">
+            <label class="ss-label" for="ss-dash">Dashboard URL <span style="font-size:0.7rem">(optional, https)</span></label>
+            <input id="ss-dash" class="ss-input" type="url" placeholder="https://hive.example.com" autocomplete="off">
+          </div>
+          <div id="ss-error" class="ss-error" role="alert" style="display:none"></div>
+          <div id="ss-cap" class="text-muted" style="font-size:0.75rem;margin-bottom:var(--sp-5)"></div>
+        </div>
+        <div id="ss-key-panel" style="display:none"></div>
+      </div>
+      <div style="display:flex;gap:var(--sp-5);justify-content:flex-end;padding:var(--sp-6) var(--sp-9);border-top:1px solid var(--border);flex-shrink:0">
+        <button class="hv-btn btn-primary" type="button" id="ss-close" onclick="closeSelfServiceModal()">Cancel</button>
+        <button class="hv-btn btn-primary btn-primary" type="button" id="ss-submit" onclick="submitSelfService()">Register</button>
       </div>
     </div>
   </div>
