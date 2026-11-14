@@ -507,7 +507,10 @@ On an opted-in repository the un-park sweep:
   **triage** role; `/hive help` gets a one-line reply pointing at the labels;
 - never removes a park label a person added, nor `hold` / `do-not-merge`. When
   one of those is present the issue stays parked and Hive posts one
-  "accepted, but still held by …" note naming the labels.
+  "accepted, but still held by …" note naming the labels. When a person's park
+  label is what withholds the approval, that note has its own marker
+  (`<!-- hive:label-approval-pending:11313 event=N -->`): once the label is
+  removed, the next pass completes the acceptance with no further reply.
 
 #### Lifecycle bots that park every new issue
 

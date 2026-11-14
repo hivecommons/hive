@@ -419,16 +419,51 @@ func (c *Client) evaluateLabelApprovalFrom(ctx context.Context, owner, repo stri
 // marker written by one of the hive's own accounts counts (A13).
 const labelApprovalMarkerPrefix = "<!-- hive:label-approval:11313 event="
 
+// labelApprovalPendingMarkerPrefix tags the one comment posted while a
+// person's park label withholds an acceptance. It is not the final marker,
+// so the acceptance still completes once that label is gone.
+const labelApprovalPendingMarkerPrefix = "<!-- hive:label-approval-pending:11313 event="
+
+// labelApprovalPendingPhrase is in every pending comment. Before the pending
+// marker existed the pending comment carried the final marker; this phrase
+// tells such a comment from a final one, which never contains it. Do not
+// reword it: old pending comments on open issues are matched by this text.
+const labelApprovalPendingPhrase = "but approval is withheld while"
+
 func labelApprovalMarker(eventID int64) string {
 	return fmt.Sprintf("%s%d -->", labelApprovalMarkerPrefix, eventID)
 }
 
+func labelApprovalPendingMarker(eventID int64) string {
+	return fmt.Sprintf("%s%d -->", labelApprovalPendingMarkerPrefix, eventID)
+}
+
 // labelApprovalAlreadyCommented reports whether a hive-authored comment
-// carries the marker for this acceptance event.
+// carries the final marker for this acceptance event. A pending comment in
+// the old format carries the same marker and does not count.
 func (c *Client) labelApprovalAlreadyCommented(comments []*gh.IssueComment, eventID int64) bool {
 	marker := labelApprovalMarker(eventID)
 	for _, cm := range comments {
-		if cm == nil || !strings.Contains(cm.GetBody(), marker) {
+		if cm == nil || !strings.Contains(cm.GetBody(), marker) || strings.Contains(cm.GetBody(), labelApprovalPendingPhrase) {
+			continue
+		}
+		if c.markerAuthorTrusted(cm.GetUser()) {
+			return true
+		}
+	}
+	return false
+}
+
+// labelApprovalPendingCommented reports whether a hive-authored pending
+// comment for this acceptance event is on the issue, in either format.
+func (c *Client) labelApprovalPendingCommented(comments []*gh.IssueComment, eventID int64) bool {
+	pending, legacy := labelApprovalPendingMarker(eventID), labelApprovalMarker(eventID)
+	for _, cm := range comments {
+		if cm == nil {
+			continue
+		}
+		body := cm.GetBody()
+		if !strings.Contains(body, pending) && !(strings.Contains(body, legacy) && strings.Contains(body, labelApprovalPendingPhrase)) {
 			continue
 		}
 		if c.markerAuthorTrusted(cm.GetUser()) {
@@ -521,7 +556,7 @@ func renderLabelApprovalPendingReply(f labelApprovalFinding) string {
 	if len(f.HiveParkLabels)+len(f.LaterHiveParkLabels) > 0 {
 		own = fmt.Sprintf(" Hive's own %s stay until then.", quoteLabels(append(append([]string{}, f.HiveParkLabels...), f.LaterHiveParkLabels...)))
 	}
-	return fmt.Sprintf("`%s` was added by @%s (%s), but approval is withheld while %s is on this issue: Hive never removes a park label it did not add.%s Remove that label to let the acceptance complete, or reply `/hive approve`.",
+	return fmt.Sprintf("`%s` was added by @%s (%s), "+labelApprovalPendingPhrase+" %s is on this issue: Hive never removes a park label it did not add.%s Remove that label and Hive completes the acceptance on its next pass; no reply is needed.",
 		f.Label, f.Actor, f.TrustReason, strings.Join(blocking, " and "), own)
 }
 
