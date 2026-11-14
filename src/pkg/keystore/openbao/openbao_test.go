@@ -33,7 +33,10 @@ type fakeTransit struct {
 	encrypts  int
 	allowNew  bool // may encrypt/create auto-create keys
 	lookupTTL int
-	slow      time.Duration
+	// hang makes authenticated handlers block until the client gives up, so
+	// the provider's per-request timeout is what ends the call (no fixed
+	// sleep: the handler waits on the request context).
+	hang bool
 }
 
 func newFake() *fakeTransit {
@@ -52,10 +55,14 @@ func (f *fakeTransit) handler() http.Handler {
 	}
 	authed := func(w http.ResponseWriter, r *http.Request) bool {
 		f.mu.Lock()
-		defer f.mu.Unlock()
-		if f.slow > 0 {
-			time.Sleep(f.slow)
+		hang := f.hang
+		f.mu.Unlock()
+		if hang {
+			<-r.Context().Done()
+			return false
 		}
+		f.mu.Lock()
+		defer f.mu.Unlock()
 		if f.namespace != r.Header.Get("X-Vault-Namespace") {
 			fail(w, http.StatusBadRequest, "wrong namespace")
 			return false
@@ -306,12 +313,15 @@ func TestNewRefusals(t *testing.T) {
 		}
 		defer p.Close()
 		f.mu.Lock()
-		f.slow = 300 * time.Millisecond
+		f.hang = true
 		f.mu.Unlock()
 		p.cfg.Timeout = 50 * time.Millisecond
 		if _, err := p.Encrypt(ctx, []byte("x"), nil); err == nil || !errors.Is(err, context.DeadlineExceeded) {
-			t.Fatalf("slow server: err = %v, want deadline exceeded", err)
+			t.Fatalf("hung server: err = %v, want deadline exceeded", err)
 		}
+		f.mu.Lock()
+		f.hang = false
+		f.mu.Unlock()
 	})
 }
 
