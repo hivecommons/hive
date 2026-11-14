@@ -158,6 +158,39 @@ rebuilt on every config load and never written to the overlay or runtime config,
 disappear when the issue closes or the label is removed. `curated-2026.11.1` is unchanged
 and declares no intake fields, so a hive that stays bound to it derives nothing.
 
+#### Operator walkthrough: the Hive Commons pilot
+
+The first request through this path is
+[cncf/techdocs#395](https://github.com/cncf/techdocs/issues/395), the Hive Commons assessment.
+What the operator of the TechDocs hive (authorized repo `cncf/techdocs`) does and sees:
+
+1. **Rebind to 11.2.** Settings → Workflows → Marketplace, bind `cncf/techdocs` to
+   `cncf-techdocs-assessment@curated-2026.11.2`. This step is required: a hive still bound to
+   `curated-2026.11.1` derives nothing, however many requests are accepted. No
+   `reference_repos` entry is written by hand.
+2. **A maintainer accepts the request.** Someone with write access to `cncf/techdocs` applies
+   `triage/accepted` to #395. A label applied by a bot grants nothing.
+3. **Three derived entries appear** on the next pass (boot, config reload or every
+   `HIVE_REFERENCE_REPOS_DERIVE_INTERVAL`, default `10m`): `hivecommons/docs`,
+   `hivecommons/hivecommons.github.io` and `hivecommons/hive`, each at the `issues+prs` tier with
+   `derived_from: cncf/techdocs#395`. The kick's `📚 REFERENCE REPOS` block lists them with
+   `(from cncf/techdocs#395)`. Settings → Reference repos shows them read-only with the source
+   link and `credential_state: write-tier`, because hivecommons has the App installed on every
+   repo. Had it not, the entries would read `read-only` with a reason, #395 would carry one
+   `hive:reference-repos-read-only` comment, and the hive would keep running.
+4. **What the hive may do there.** Clone and read the three repos, read their issues and PRs,
+   open an issue, open a PR or push a topic branch, and comment on an issue or PR it opened
+   itself. The assessment deliverable still lives in `cncf/techdocs`.
+5. **What it may not do.** Merge, push to a default branch, label or assign other people's
+   items, review, or close other people's issues. The proxy refuses each of these and logs
+   `reference_repo` in the violations log. `hivecommons` repos get no queue, no ACMM evaluation
+   and no work items.
+6. **Closing #395 removes them.** When the request issue closes, or `triage/accepted` is
+   removed, the three entries, their proxy policies and their kick lines are gone on the next
+   pass. Nothing was ever written to the overlay or runtime config, so there is nothing to clean
+   up. A hand-written entry for one of the repos, if the operator adds one, takes precedence and
+   stays.
+
 ## Not representable today
 
 These parts of the spec are documented in the model's annotations but not enforced by
