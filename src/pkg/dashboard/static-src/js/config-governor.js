@@ -998,6 +998,9 @@
     const KICK_LIST_CAP_PR_DEFAULT = 50;
 
     function renderGovRepos(repos) {
+      /* Reference repos (#18136): painted asynchronously from their own
+         owner-only endpoint, like the Security tab's write allowlist. */
+      loadReferenceRepos();
       const primary = _configState.data.primaryRepo || '';
       const selfAuthDefault = _configState.data.selfAuthorizationHold !== false;
       const selfAuthEnvLocked = !!_configState.data.selfAuthorizationHoldEnvLocked;
@@ -1144,6 +1147,8 @@
           <div id="cfg-repo-add-status" style="font-size:0.72rem;margin-top:var(--sp-3)"></div>
           ${defaultWarn}
         </div>
+        <div class="settings-subsection-title mt-4">Reference repos ${yamlHint('project.reference_repos[]')} ${settingHelpMark('settings', 'repos', 'Reference repos', 'Repositories outside this project that agents may clone and read but do not manage: no queue, no kicks, no work items. Read-only by default; a write opt-in allows opening issues and/or PRs there with a credential the hive verifies on save. A repo is either monitored above or a reference repo, never both.')}</div>
+        <div id="cfg-reference-repos-host"><div class="fs-sm text-muted">Loading…</div></div>
         ${anyLabelDriven ? `<div class="ld-defaults" id="cfg-label-driven-defaults">
           <div class="config-toggle">
             <div class="config-toggle-switch ${ldApproval.trustOrgMembers !== false ? 'on' : ''} ${ldLocked ? 'disabled' : ''}" data-action="${ldLocked ? '' : 'toggleLabelDrivenTrustOrgMembers'}" data-arg-types="t" title="Prow's own rule: public members of the repo's org may apply the approval label. Off: only triage/write/maintain/admin collaborators and trusted bots."></div>
@@ -1184,6 +1189,171 @@
             </div>
           </div>
         </div>`;
+    }
+
+    /* Reference repos editor (#18136): project.reference_repos, loaded from
+       and saved to the owner-only /api/config/reference-repos endpoint.
+       Rendered with DOM nodes and textContent only, so a repo name or token
+       path from hive.yaml is never parsed as markup. The server applies the
+       config loader's checks and the boot-time write-credential check, and
+       its error message is shown as-is; nothing is saved on an error. */
+    async function loadReferenceRepos() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/reference-repos');
+        host = document.getElementById('cfg-reference-repos-host');
+        if (!host) return;
+        if (r.status === 403) {
+          host.textContent = '';
+          host.appendChild(referenceRepoNode('div', 'fs-sm text-muted', 'Only the hive owner can view and edit reference repos.'));
+          return;
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const d = await r.json();
+        renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || ['issues', 'prs']);
+      } catch (e) {
+        host = host || document.getElementById('cfg-reference-repos-host');
+        if (!host) return;
+        host.textContent = '';
+        host.appendChild(referenceRepoNode('div', 'fs-sm text-danger', 'Failed to load reference repos: ' + e.message));
+      }
+    }
+
+    /* referenceRepoNode builds one element whose content is plain text. */
+    function referenceRepoNode(tag, className, text) {
+      const node = document.createElement(tag);
+      if (className) node.className = className;
+      if (text !== undefined) node.textContent = text;
+      return node;
+    }
+
+    /* referenceRepoYamlHint is yamlHint() as a DOM node. */
+    function referenceRepoYamlHint(path) {
+      const hint = referenceRepoNode('span', 'settings-yaml-hint', 'YAML ');
+      hint.appendChild(referenceRepoNode('code', '', path));
+      return hint;
+    }
+
+    /* renderReferenceReposPanel paints the editable list and wires Save.
+       entries is edited in place until Save; a failed Save keeps the edits. */
+    function renderReferenceReposPanel(host, entries, kinds) {
+      if (!host) return;
+      /* derived_from is carried through so the server can tell a derived
+         entry (rebuilt from its request issue, never saved) from an
+         operator's. */
+      entries = entries.map(e => ({ repo: e.repo || '', write: (e.write || []).slice(), write_token_file: e.write_token_file || '', derived_from: e.derived_from || '' }));
+      host.textContent = '';
+      host.appendChild(referenceRepoNode('p', 'config-help',
+        'Read-only by default: agents clone and read these repos and are never told they are out of scope, but every write is refused. ' +
+        'Tick issues and/or prs to let agents open issues or PRs there; that needs the GitHub App installed on the repo\'s org. ' +
+        'A write_token_file is a path on the hive host and can only be set in the config file by the operator; one that is set is shown here and kept. ' +
+        'Saving checks the credential and applies the change without a restart.'));
+      const list = referenceRepoNode('div', 'config-list');
+      host.appendChild(list);
+      const statusEl = referenceRepoNode('div', 'fs-sm');
+      const setStatus = (msg, cls) => { statusEl.textContent = msg; statusEl.className = 'fs-sm ' + (cls || 'text-muted'); };
+
+      const paintRows = () => {
+        list.textContent = '';
+        if (!entries.length) list.appendChild(referenceRepoNode('div', 'fs-sm text-muted mb-3', 'No reference repos configured'));
+        entries.forEach((entry, i) => {
+          const row = referenceRepoNode('div', 'config-list-item config-repo-row');
+          row.appendChild(referenceRepoNode('span', 'config-repo-name', entry.repo));
+          kinds.forEach(kind => {
+            const label = referenceRepoNode('label', 'rt-check');
+            const box = document.createElement('input');
+            box.type = 'checkbox';
+            box.checked = entry.write.includes(kind);
+            box.addEventListener('change', () => {
+              entry.write = kinds.filter(k => k === kind ? box.checked : entry.write.includes(k));
+              paintRows();
+            });
+            label.appendChild(box);
+            label.appendChild(document.createTextNode(' write: ' + kind));
+            row.appendChild(label);
+          });
+          /* The token file is operator-only (set in the config file, never
+             from here): shown read-only when the file set one, so a save
+             round-trips it instead of dropping it. */
+          if (entry.write_token_file) {
+            const token = referenceRepoNode('span', 'text-muted fs-sm cfg-reference-repo-token', 'token file: ' + entry.write_token_file);
+            token.title = 'write_token_file set in the config file for ' + entry.repo + '. Only the hive operator can change it.';
+            row.appendChild(token);
+          }
+          row.appendChild(referenceRepoNode('span', 'rt-inherit', entry.write.length ? entry.write.join('+') : 'read-only'));
+          const remove = referenceRepoNode('button', 'remove-item', '\u2715');
+          remove.title = 'Remove ' + entry.repo + ' from the reference repos';
+          remove.addEventListener('click', () => { entries.splice(i, 1); paintRows(); });
+          row.appendChild(remove);
+          list.appendChild(row);
+        });
+      };
+
+      const add = referenceRepoNode('div', 'config-list-add');
+      const input = document.createElement('input');
+      input.type = 'text';
+      input.id = 'cfg-reference-repo-input';
+      input.placeholder = 'owner/repo';
+      input.title = 'An explicit owner/repo outside this project. It must not also be a monitored repo.';
+      const addBtn = referenceRepoNode('button', 'hv-btn btn-primary', '+ Add');
+      const doAdd = () => {
+        const repo = input.value.trim().replace(/^https?:\/\/[^/]+\//, '').replace(/\.git$/, '').replace(/\/+$/, '');
+        if (!repo) return;
+        if (entries.some(e => e.repo.toLowerCase() === repo.toLowerCase())) {
+          setStatus(repo + ' is already listed', 'text-danger');
+          return;
+        }
+        entries.push({ repo, write: [], write_token_file: '' });
+        input.value = '';
+        setStatus('');
+        paintRows();
+      };
+      addBtn.addEventListener('click', doAdd);
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doAdd(); } });
+      add.appendChild(input);
+      add.appendChild(addBtn);
+      host.appendChild(add);
+
+      const hints = referenceRepoNode('div', 'config-help');
+      hints.appendChild(referenceRepoYamlHint('project.reference_repos[].repo'));
+      hints.appendChild(document.createTextNode(' '));
+      hints.appendChild(referenceRepoYamlHint('project.reference_repos[].write[]'));
+      hints.appendChild(document.createTextNode(' '));
+      hints.appendChild(referenceRepoYamlHint('project.reference_repos[].write_token_file'));
+      host.appendChild(hints);
+
+      const actions = referenceRepoNode('div', 'config-list-add');
+      const saveBtn = referenceRepoNode('button', 'hv-btn btn-primary btn-sm', 'Save reference repos');
+      actions.appendChild(saveBtn);
+      actions.appendChild(statusEl);
+      host.appendChild(actions);
+      paintRows();
+
+      saveBtn.addEventListener('click', async () => {
+        saveBtn.disabled = true;
+        setStatus('Saving…');
+        try {
+          const body = entries.map(e => {
+            const out = { repo: e.repo };
+            if (e.write.length) out.write = e.write;
+            if (e.write.length && e.write_token_file) out.write_token_file = e.write_token_file;
+            if (e.derived_from) out.derived_from = e.derived_from;
+            return out;
+          });
+          const res = await fetch('/api/config/reference-repos', {
+            method: 'PUT',
+            headers: _inceptionAuthHeaders(),
+            body: JSON.stringify({ reference_repos: body })
+          });
+          if (!res.ok) throw new Error(await saveErrorMessage(res));
+          const d = await res.json();
+          renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || kinds);
+          showToast('Reference repos saved', 'success');
+        } catch (e) {
+          saveBtn.disabled = false;
+          setStatus(e.message, 'text-danger');
+        }
+      });
     }
 
     function setDefaultRepo(repo) {
