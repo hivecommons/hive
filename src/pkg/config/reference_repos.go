@@ -38,7 +38,18 @@ type ReferenceRepo struct {
 	// authorized for Repo, used instead of minting from the App installation
 	// on the target org. Only meaningful with Write.
 	WriteTokenFile string `yaml:"write_token_file,omitempty" json:"write_token_file,omitempty"`
+	// DerivedFrom is the "owner/repo#N" of the accepted request issue this
+	// entry was derived from (hivecommons/hive#18139), empty for an entry an
+	// operator wrote. It is deliberately excluded from YAML: a derived entry
+	// is rebuilt from the issue on every config load and must never land in
+	// an overlay or the runtime config, where it would outlive the grant
+	// (see hivecommons/hive#18137). The dashboard reads it as JSON.
+	DerivedFrom string `yaml:"-" json:"derived_from,omitempty"`
 }
+
+// Derived reports whether the entry came from an accepted request issue
+// rather than from the operator's config.
+func (r ReferenceRepo) Derived() bool { return r.DerivedFrom != "" }
 
 const (
 	ReferenceWriteIssues = "issues"
