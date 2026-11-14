@@ -791,7 +791,7 @@ func (gw GatewayConfig) ResolveAPIKey() string {
 		if !SecretFilePathAllowed(gw.APIKeyFile) {
 			return ""
 		}
-		if b, err := os.ReadFile(gw.APIKeyFile); err == nil {
+		if b, err := readSecretFile(gw.APIKeyFile); err == nil {
 			return strings.TrimSpace(string(b))
 		}
 	}
@@ -814,7 +814,7 @@ func (c *InferenceAuthConfig) ResolveAPIKey(defaultEnv string) string {
 	// SECURITY (audit N8): same confinement as GatewayConfig.ResolveAPIKey — an
 	// api_key_file is only ever read from the managed secrets dirs.
 	if c.APIKeyFile != "" && SecretFilePathAllowed(c.APIKeyFile) {
-		if data, err := os.ReadFile(c.APIKeyFile); err == nil {
+		if data, err := readSecretFile(c.APIKeyFile); err == nil {
 			if key := strings.TrimSpace(string(data)); key != "" {
 				return key
 			}
@@ -1063,7 +1063,7 @@ func (c *LiteLLMConfig) resolveAPIKeyWithSource() (string, string) {
 		if !SecretFilePathAllowed(f) {
 			continue
 		}
-		if data, err := os.ReadFile(f); err == nil {
+		if data, err := readSecretFile(f); err == nil {
 			if key := strings.TrimSpace(string(data)); key != "" {
 				return key, "file:" + f
 			}

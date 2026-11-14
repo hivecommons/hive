@@ -156,6 +156,32 @@ variable names. The dashboard never returns a key value. Agents using cloud
 CLI backends (Claude, Copilot, Codex, Goose) run with the provider credential
 you connected, because the CLI needs it.
 
+**Secrets at rest.** The secret values a spoke stores on its data volume
+(the owner-only key files under `/data/secrets`, the Copilot device-flow
+token, and the `github.token` value in the persisted runtime config) are
+sealed through a keystore provider interface
+([#18214](https://github.com/hivecommons/hive/issues/18214)). Each value is
+written as a single-line envelope, `hive-enc:v1:<provider>:<key
+generation>:<ciphertext>`, bound with additional authenticated data to the
+slot it belongs in, so a ciphertext moved from one file to another does not
+open. The default provider derives an AES-256-GCM key with HKDF-SHA256 from
+`HIVE_SECRETS_KEY` (or a key file), falling back to the per-hive
+`HIVE_HEARTBEAT_KEY` the hub already injects into the Deployment; a distinct
+info string keeps the encryption key separate from the signing key it is
+derived from. The threat this closes is the data volume on its own: a PVC
+snapshot, a backup archive or a copied disk no longer yields the credentials.
+It does not protect against an attacker who also holds the Deployment
+environment or the hub master key. Files written before the keystore existed
+are re-sealed on their first read, and a boot sweep converges the ones
+nothing reads, so an existing hive needs no migration step; a retired key
+generation is accepted for decryption through `HIVE_SECRETS_KEY_PREVIOUS`
+while that happens. A hive with no key material keeps plaintext storage and
+says so once at `WARN`; it never seals with a key stored beside the data.
+OpenBao Transit is available as an opt-in provider
+([#18216](https://github.com/hivecommons/hive/issues/18216)). Agent-facing
+credential files and the read-only `/secrets` Kubernetes mount are not
+touched. Variables: [env-vars.md](env-vars.md#secrets-at-rest-keystore).
+
 **GitHub blast radius.** The recommended authentication is a GitHub App,
 whose reach is limited to the repositories it is installed on. Hive mints a
 token per agent matching its mode: advisory agents get read-only tokens,

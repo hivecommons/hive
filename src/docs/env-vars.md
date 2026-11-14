@@ -475,6 +475,34 @@ section requires for lookups.
 | `HIVE_PUBLIC_URL` | No | none (chain continues) | Second variable in the hub public-origin chain — see `HIVE_HUB_PUBLIC_URL` for the full precedence order. |
 | `HIVE_HUB_BASE_URL` | No | none (chain continues) | Third variable in the hub public-origin chain — see `HIVE_HUB_PUBLIC_URL` for the full precedence order. |
 
+### Secrets at rest (keystore)
+
+The spoke seals every secret value it stores on the data volume — the
+`/data/secrets/*` key files, the Copilot device-flow token and the
+`github.token` value in `hive.yaml.runtime` — through a keystore provider
+([#18214](https://github.com/hivecommons/hive/issues/18214); see
+[security-model.md](security-model.md#5-network-and-credentials)). Key
+material is resolved in the order listed; the first non-empty source is the
+current generation and every other non-empty one is accepted for decryption
+only, so moving from the heartbeat default to an explicit key, or a hub
+rotation, never strands a sealed file.
+
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `HIVE_KEYSTORE_PROVIDER` | No | `env` | Which provider seals secrets: `env` (AES-256-GCM under a key derived from the variables below), `openbao` (OpenBao Transit, [#18216](https://github.com/hivecommons/hive/issues/18216)), or `none` (explicit plaintext). A name the binary does not know, or a provider that cannot be built, refuses boot rather than falling back to plaintext. |
+| `HIVE_SECRETS_KEY_FILE` | No | none | Path to a file holding the key material for the `env` provider (at least 16 bytes). Wins over every other source. Mount it from a Kubernetes Secret or a Docker secret, never from the data volume. |
+| `HIVE_SECRETS_KEY` | No | none | Key material for the `env` provider, inline. Used when no key file is set. |
+| `HIVE_SECRETS_KEY_PREVIOUS` | No | none | Retired key material, decrypt-only. Set it beside the new key for one boot after a rotation; files sealed under the old generation are re-sealed under the new one as they are read, and the boot sweep covers the ones nothing reads. |
+| `HIVE_HEARTBEAT_KEY_PREVIOUS` | No | none | The previous hub-provisioned heartbeat key, decrypt-only, for a spoke whose default key material changed with a hub master-key rotation. |
+
+With `env` selected (the default) and none of these set, the hub-provisioned
+`HIVE_HEARTBEAT_KEY` is the key material, derived through HKDF with a
+dedicated info string so the signing key itself never encrypts anything. A
+self-hosted hive with no heartbeat key and no `HIVE_SECRETS_KEY` keeps storing
+secrets in plaintext and logs one `WARN` at boot: there is nowhere outside the
+data volume to put a generated key, and a key stored next to the data would
+protect nothing.
+
 ### Spoke-side derived keys
 
 A hub-hosted spoke is provisioned with only the derived sub-keys it needs and

@@ -15,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/config"
 	"github.com/hivecommons/hive/crux/effects"
+	"github.com/hivecommons/hive/crux/keystore"
 	"github.com/hivecommons/hive/crux/pushbroker"
 	"github.com/hivecommons/hive/crux/sandbox"
 	"github.com/hivecommons/hive/crux/watchdog"
@@ -858,7 +859,10 @@ func NewManagerWithOptions(agents map[string]config.AgentConfig, logger *slog.Lo
 	if copilotToken == "" {
 		// Fall back to the token persisted by the dashboard's device-flow login.
 		copilotTokenSource = CopilotTokenSourceDurableFile
-		if data, err := os.ReadFile(copilotUserTokenLoadPath); err == nil {
+		// Through the keystore (hive#18214): the durable token is sealed at
+		// rest once a provider is active, and a legacy plaintext file is
+		// re-sealed on this read.
+		if data, err := keystore.ReadFile(context.Background(), copilotUserTokenLoadPath); err == nil {
 			copilotToken = strings.TrimSpace(string(data))
 		}
 	}
