@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/keystore"
 )
 
 // watsonxProbeMintTimeout bounds the IAM token mint done just to run a
@@ -850,11 +851,9 @@ func (s *Server) storeGatewayAPIKey(name, key string) (string, error) {
 		return "", actionableWriteError(gatewaySecretsDir, err)
 	}
 	path := filepath.Join(gatewaySecretsDir, "gateway_"+strings.ToLower(name)+"_api_key")
-	if err := os.WriteFile(path, []byte(key), gatewaySecretFileMode); err != nil {
-		return "", actionableWriteError(path, err)
-	}
-	// WriteFile does not change the mode of a pre-existing file.
-	if err := os.Chmod(path, gatewaySecretFileMode); err != nil {
+	// Sealed through the keystore (hive#18214) and replaced atomically at
+	// gatewaySecretFileMode, pre-existing file included.
+	if err := keystore.WriteFileMode(context.Background(), path, []byte(key), gatewaySecretFileMode); err != nil {
 		return "", actionableWriteError(path, err)
 	}
 	s.logger.Info("gateway api key stored", "gateway", name, "api_key_file", path)

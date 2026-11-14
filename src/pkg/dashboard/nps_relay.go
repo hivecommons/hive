@@ -24,6 +24,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/keystore"
 )
 
 // NPS relay client, spoke side (issue #9619).
@@ -178,14 +179,23 @@ func loadOrCreateNPSRelayIdentity(path string) (*npsRelayIdentity, error) {
 	return id, nil
 }
 
-// npsReadCapped reads at most maxBytes+1 bytes of path, failing when larger.
+// npsReadCapped reads path through the keystore (hive#18214: the identity
+// is sealed at rest once a provider is active), failing when the file on disk
+// or the opened identity is larger than maxBytes. The size check runs on the
+// stored bytes BEFORE decryption, so an oversized file is never opened, and
+// again on the plaintext for the legacy shape.
 func npsReadCapped(path string, maxBytes int64) ([]byte, error) {
-	f, err := os.Open(path)
+	fi, err := os.Stat(path)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = f.Close() }()
-	raw, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	// A sealed envelope is a little larger than its plaintext (header, nonce,
+	// tag, base64); the cap on disk allows for that and the cap below holds
+	// the opened identity to the original bound.
+	if fi.Size() > npsSealedSizeBound(maxBytes) {
+		return nil, errNPSRelayIdentityCorrupt
+	}
+	raw, err := keystore.ReadFile(context.Background(), path)
 	if err != nil {
 		return nil, err
 	}
@@ -195,34 +205,24 @@ func npsReadCapped(path string, maxBytes int64) ([]byte, error) {
 	return raw, nil
 }
 
-// save writes the identity atomically with 0600 permissions.
+// npsSealedSizeBound is the largest sealed file a plaintext of maxBytes can
+// produce: base64 expands by 4/3, plus the envelope header, nonce and tag.
+func npsSealedSizeBound(maxBytes int64) int64 {
+	const envelopeOverheadBytes = 128
+	return maxBytes*4/3 + envelopeOverheadBytes
+}
+
+// save writes the identity atomically with 0600 permissions, sealed through
+// the keystore (hive#18214).
 func (id *npsRelayIdentity) save(path string) error {
 	data, err := json.Marshal(id)
 	if err != nil {
 		return errors.New("encode nps relay identity")
 	}
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, npsRelayIdentityDirMode); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), npsRelayIdentityDirMode); err != nil {
 		return fmt.Errorf("create nps relay identity dir: %w", err)
 	}
-	tmp, err := os.CreateTemp(dir, "."+npsRelayIdentityFileName+"-*")
-	if err != nil {
-		return fmt.Errorf("create nps relay identity: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if err := tmp.Chmod(npsRelayIdentityFileMode); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("chmod nps relay identity: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("write nps relay identity: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("close nps relay identity: %w", err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
+	if err := keystore.WriteFileMode(context.Background(), path, data, npsRelayIdentityFileMode); err != nil {
 		return fmt.Errorf("install nps relay identity: %w", err)
 	}
 	return nil
