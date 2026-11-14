@@ -84,8 +84,16 @@ type GitHubProxy struct {
 	caCert        tls.Certificate
 	caX509        *x509.Certificate
 	logger        *slog.Logger
-	uidMap        *agent.UIDMap
-	allowedRepos  map[string]bool
+	// uidMap is read through loadedUIDMap and swapped only by refreshUIDMap
+	// under uidMapMu (#18184): agents added at runtime land in uid-map.json
+	// after construction. uidMapPath/uidMapInfo are what the refresh compares
+	// against; an empty path (no map at boot, or a test literal) never reloads.
+	uidMap         *agent.UIDMap
+	uidMapMu       sync.RWMutex
+	uidMapReloadMu sync.Mutex
+	uidMapPath     string
+	uidMapInfo     os.FileInfo
+	allowedRepos   map[string]bool
 	// Reference repos (#18015): study-only repositories outside allowedRepos,
 	// read-only by default with a per-entry issues/prs opt-in. Reads to them
 	// are forwarded without the hive's credential; writes are gated by
@@ -279,8 +287,14 @@ func NewGitHubProxyEphemeral(logger *slog.Logger, org string, repos []string) (*
 
 func newGitHubProxyWithCA(caCert tls.Certificate, caX509 *x509.Certificate, logger *slog.Logger, org string, repos []string) *GitHubProxy {
 	var uidMap *agent.UIDMap
+	var uidMapPath string
+	var uidMapInfo os.FileInfo
+	// Stat before load: a write landing in between leaves an older stamp, so
+	// the next lookup miss reloads rather than missing the change.
+	statInfo, _ := os.Stat(agent.UIDMapPath)
 	if loaded, loadErr := agent.LoadUIDMap(agent.UIDMapPath); loadErr == nil {
 		uidMap = loaded
+		uidMapPath, uidMapInfo = agent.UIDMapPath, statInfo
 		logger.Info("proxy loaded UID map", "agents", len(uidMap.Agents), "iptables", uidMap.IptablesActive)
 	}
 
@@ -323,6 +337,8 @@ func newGitHubProxyWithCA(caCert tls.Certificate, caX509 *x509.Certificate, logg
 		caX509:              caX509,
 		logger:              logger,
 		uidMap:              uidMap,
+		uidMapPath:          uidMapPath,
+		uidMapInfo:          uidMapInfo,
 		proxyAdvisoryOK:     advisoryOK,
 		allowPrivateForward: allowPrivateForward,
 		injectGHAuth:        injectGHAuth,

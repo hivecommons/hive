@@ -9,7 +9,7 @@ import (
 // for the translator's purposes: root always, and the proxy UID only when the
 // proxy cannot relay to private addresses (see translatorAgentName).
 func (p *GitHubProxy) internalTranslatorUID(uid int) bool {
-	if !p.uidMap.IsInternalUID(uid) {
+	if !p.loadedUIDMap().IsInternalUID(uid) {
 		return false
 	}
 	return uid == 0 || !p.allowPrivateForward
@@ -24,7 +24,7 @@ func (p *GitHubProxy) internalTranslatorUID(uid int) bool {
 // the control plane and is not subject to this check, and other unmapped UIDs
 // keep the HIVE_PROXY_ADVISORY_OK semantics the GitHub path documents.
 func (p *GitHubProxy) sharedUIDClaimsIsolatedAgent(uid int, claimed string) bool {
-	return uid != 0 && uid == p.uidMap.ProxyUID && claimed != "" && p.uidMap.LookupByName(claimed) > 0
+	return uid != 0 && uid == p.loadedUIDMap().ProxyUID && claimed != "" && p.lookupUIDByName(claimed) > 0
 }
 
 // translatorRefusalAttrs are the log attributes for a refused translator
@@ -37,16 +37,16 @@ func (p *GitHubProxy) sharedUIDClaimsIsolatedAgent(uid int, claimed string) bool
 func (p *GitHubProxy) translatorRefusalAttrs(r *http.Request) []any {
 	attrs := []any{"remote", r.RemoteAddr, "method", r.Method, "path", r.URL.Path}
 	switch {
-	case p.uidMap == nil:
+	case p.loadedUIDMap() == nil:
 		attrs = append(attrs, "reason", "no_uid_map")
 	default:
 		uid, err := uidForRemoteAddr(r.RemoteAddr)
 		claimed := strings.TrimPrefix(r.Header.Get("x-api-key"), inferenceAPIKeyPrefix)
 		if err != nil {
 			attrs = append(attrs, "reason", "socket_owner_unresolved", "error", err.Error())
-		} else if p.uidMap.IsInternalUID(uid) && p.allowPrivateForward {
+		} else if p.loadedUIDMap().IsInternalUID(uid) && p.allowPrivateForward {
 			attrs = append(attrs, "reason", "proxy_uid_private_forward", "uid", uid)
-		} else if p.uidMap.IsInternalUID(uid) && p.sharedUIDClaimsIsolatedAgent(uid, claimed) {
+		} else if p.loadedUIDMap().IsInternalUID(uid) && p.sharedUIDClaimsIsolatedAgent(uid, claimed) {
 			attrs = append(attrs, "reason", "proxy_uid_claims_isolated_agent", "uid", uid, "claimed", claimed)
 		} else {
 			attrs = append(attrs, "reason", "uid_not_mapped", "uid", uid)
