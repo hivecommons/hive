@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.257.1)
+
+### Security
+
+- 🔒 Sessions now run each session's tmux server and CLI as its own unprivileged uid from a reserved range with a private sandbox (no more access to the hive's secrets, `/data`, other sessions or agents), copy only minimal read-only vendor logins instead of symlinking shared config, gate terminal attach with a per-session token and a handoff code bound to the session, default to creator-and-owner-only with an explicit `shared` flag, reject flag-shaped resume ids, and delete session files on removal.
+
 ## 2026-11-14 (v5.257.0)
 
 ### Added
