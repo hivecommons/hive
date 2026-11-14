@@ -50,6 +50,17 @@ const (
 	userSessionReaderGIDEnv = "HIVE_SESSIONS_READER_GID"
 	userSessionReaderGroup  = "hive-launch"
 
+	// userSessionGIDEnv / defaultUserSessionGID name the ONE group every
+	// session uid runs with as its primary (and only) group. It exists so
+	// sessions can share the per-hive workspace checkout (usersession_workspace.go)
+	// through group write, since su-exec gives a numeric uid exactly one group.
+	// It is never the hive's gid, never an agent's group and never the reader
+	// group: a session still cannot read another session's sandbox (those are
+	// group hive-launch, 2750) and the hive refuses to start a session when the
+	// gid is one of its own.
+	userSessionGIDEnv     = "HIVE_SESSIONS_GID"
+	defaultUserSessionGID = 20000
+
 	userSessionRootSpec = "root"
 	userSuExecBinary    = "su-exec"
 	// userSessionUploadFullExit is the exit status the upload script uses for
@@ -98,6 +109,9 @@ func userSessionUID(slot int) (int, error) {
 	if uid == 0 || uid == proxyUserUID {
 		return 0, fmt.Errorf("session uid %d is reserved", uid)
 	}
+	if err := checkUserSessionGID(base, slots); err != nil {
+		return 0, err
+	}
 	for _, path := range []string{PersistedUIDMapPath, UIDMapPath} {
 		m, err := LoadUIDMap(path)
 		if err != nil {
@@ -112,9 +126,44 @@ func userSessionUID(slot int) (int, error) {
 	return uid, nil
 }
 
-// userSessionSpec is the su-exec identity for a session uid: its own private
-// group, never the hive's gid (which every agent shares).
-func userSessionSpec(uid int) string { return fmt.Sprintf("%d:%d", uid, uid) }
+// userSessionSpec is the su-exec identity for a session uid: the sessions-only
+// group (userSessionGID), never the hive's gid (which every agent shares).
+func userSessionSpec(uid int) string { return fmt.Sprintf("%d:%d", uid, userSessionGID()) }
+
+// userSessionGID is the primary group of every session (HIVE_SESSIONS_GID or
+// defaultUserSessionGID). The group needs no /etc/group entry.
+func userSessionGID() int {
+	return envPositiveInt(userSessionGIDEnv, defaultUserSessionGID)
+}
+
+// checkUserSessionGID refuses a sessions gid that would let a session act as
+// root, as a session uid's private identity, as the sandbox reader group or as
+// any group the hive process itself belongs to (node, hive-launch, ...). It is
+// evaluated on every start, so a bad override fails closed before anything
+// runs.
+func checkUserSessionGID(base, slots int) error {
+	gid := userSessionGID()
+	if gid <= 0 {
+		return fmt.Errorf("%s must be a positive integer", userSessionGIDEnv)
+	}
+	if gid >= base && gid < base+slots {
+		return fmt.Errorf("%s=%d is inside the reserved session uid range %d..%d", userSessionGIDEnv, gid, base, base+slots-1)
+	}
+	if reader, err := userSessionReaderGID(); err == nil && gid == reader {
+		return fmt.Errorf("%s=%d is the sandbox reader group; sessions would read each other's sandboxes", userSessionGIDEnv, gid)
+	}
+	if gid == os.Getgid() || gid == os.Getegid() {
+		return fmt.Errorf("%s=%d is the hive's own group", userSessionGIDEnv, gid)
+	}
+	if groups, err := os.Getgroups(); err == nil {
+		for _, g := range groups {
+			if g == gid {
+				return fmt.Errorf("%s=%d is a group the hive belongs to", userSessionGIDEnv, gid)
+			}
+		}
+	}
+	return nil
+}
 
 func userSessionSandboxRoot() string {
 	if v := os.Getenv(userSessionSandboxDirEnv); v != "" {

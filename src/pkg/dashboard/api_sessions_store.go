@@ -58,6 +58,12 @@ type sessionRecord struct {
 	// Shared opens the session to every read-write user (and the scrollback to
 	// every role). The default, false, is creator + owners only.
 	Shared bool `json:"shared"`
+	// WorkspaceRepo ("org/repo") and Workspace (its path) name the hive's
+	// shared checkout the session opened in. Empty for a session that opened
+	// in its own empty work dir (no workspace repo configured, or a record
+	// from before workspaces); a resume reopens the same place.
+	WorkspaceRepo string `json:"workspace_repo,omitempty"`
+	Workspace     string `json:"workspace,omitempty"`
 }
 
 type sessionStore struct {
