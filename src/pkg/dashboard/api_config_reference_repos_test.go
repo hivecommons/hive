@@ -144,11 +144,12 @@ func TestReferenceReposPut_WriteWithoutCredentialRefused(t *testing.T) {
 	s := covApiServer(t)
 	cfg := s.deps.Config
 	// The production hook (cmd/hive applyReferenceRepos) runs the same
-	// verification boot runs; a hive with no App auth has no discover seam.
+	// verification boot runs; a hive whose owner has not connected a GitHub
+	// account has no owner login.
 	var bootMsg string
 	s.deps.ApplyReferenceRepos = func(ctx context.Context, refs []config.ReferenceRepo) error {
 		for _, rr := range refs {
-			if _, err := github.VerifyReferenceRepoWriteCredential(ctx, rr, "", nil, nil); err != nil {
+			if _, err := github.VerifyReferenceRepoWriteCredential(ctx, rr, "", nil); err != nil {
 				bootMsg = err.Error()
 				return err
 			}

@@ -46,30 +46,34 @@ type ReferenceRepo struct {
 	// an overlay or the runtime config, where it would outlive the grant
 	// (see hivecommons/hive#18137). The dashboard reads it as JSON.
 	DerivedFrom string `yaml:"-" json:"derived_from,omitempty"`
-	// CredentialState is the resolved credential tier of a derived entry
-	// (hivecommons/hive#18158): ReferenceCredentialWriteTier when the App is
-	// installed on the target org, ReferenceCredentialReadOnly when it is not
-	// and the entry was downgraded in memory. Empty for a hand-written entry,
-	// whose credential is verified at boot instead. Never serialized to YAML:
-	// it is re-resolved on every load.
+	// CredentialState is the resolved credential tier of a write-mode entry
+	// (hivecommons/hive#18158, #18197): ReferenceCredentialWriteTier when a
+	// credential covers it (the hive owner's connected GitHub account, or a
+	// hand-written entry's write_token_file), ReferenceCredentialReadOnly
+	// when none does and writes are refused. Empty for a read-only entry.
+	// Never serialized to YAML: it is re-resolved on every load.
 	CredentialState string `yaml:"-" json:"credential_state,omitempty"`
 	// CredentialReason says why CredentialState is read-only, in words the
 	// request issue comment and the Settings editor can show.
 	CredentialReason string `yaml:"-" json:"credential_reason,omitempty"`
+	// CredentialLogin is the GitHub login a write-tier entry writes as, so
+	// the kick, the status payload and Settings can name it. Never YAML.
+	CredentialLogin string `yaml:"-" json:"credential_login,omitempty"`
 }
 
 // Credential states of a derived reference repo.
 const (
-	// ReferenceCredentialWriteTier: the App has an installation on the target
-	// org, the entry keeps its issues+prs opt-in.
+	// ReferenceCredentialWriteTier: a credential covers the entry, which
+	// keeps its write opt-in.
 	ReferenceCredentialWriteTier = "write-tier"
-	// ReferenceCredentialReadOnly: no installation, the entry was downgraded
-	// to read-only in memory and the request issue told why.
+	// ReferenceCredentialReadOnly: no usable credential; a derived entry was
+	// downgraded to read-only in memory and the request issue told why.
 	ReferenceCredentialReadOnly = "read-only"
-	// ReferenceCredentialUnresolved: installation discovery failed for a
-	// transient reason (network, 5xx); the entry is served read-only for
-	// this load without telling the request issue, and is retried on the
-	// next reload.
+	// ReferenceCredentialUnresolved: the credential could not be resolved
+	// for a transient reason; the entry is served read-only for this load
+	// without telling the request issue. The owner-identity credential
+	// (hivecommons/hive#18197) needs no network to resolve, so the hive no
+	// longer produces it; the value stays for API consumers.
 	ReferenceCredentialUnresolved = "unresolved"
 )
 

@@ -397,7 +397,7 @@ func (p *GitHubProxy) rewriteReferenceRepoAuth(req *http.Request, agentName stri
 	}
 	token := p.referenceToken(pol)
 	if token == "" {
-		p.logger.Warn("proxy auth: reference repo write has no credential — forwarding without one (check the write_token_file or the App installation on the target org)", "agent", agentName, "repo", pol.Repo, "injected", false)
+		p.logger.Warn("proxy auth: reference repo write has no credential — forwarding without one (connect the hive owner's GitHub account in Settings → Reference repos, or check the write_token_file)", "agent", agentName, "repo", pol.Repo, "injected", false)
 		return
 	}
 	if isGitPath(req.URL.Path) {

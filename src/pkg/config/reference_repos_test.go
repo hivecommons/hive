@@ -198,7 +198,8 @@ func TestReferenceRepoCredentialStateNeverSerializesToYAML(t *testing.T) {
 	if (ReferenceRepo{Repo: "acme/docs", DerivedFrom: "x/y#1", CredentialState: ReferenceCredentialWriteTier}).DerivedReadOnly() {
 		t.Fatal("a write-tier entry is not DerivedReadOnly")
 	}
-	for _, entry := range []ReferenceRepo{rr, {Repo: "acme/docs", Write: []string{ReferenceWriteIssues}, DerivedFrom: "cncf/techdocs#395", CredentialState: ReferenceCredentialWriteTier}} {
+	for _, entry := range []ReferenceRepo{rr, {Repo: "acme/docs", Write: []string{ReferenceWriteIssues}, DerivedFrom: "cncf/techdocs#395", CredentialState: ReferenceCredentialWriteTier, CredentialLogin: "owner"},
+		{Repo: "acme/docs", Write: []string{ReferenceWriteIssues}, CredentialState: ReferenceCredentialWriteTier, CredentialLogin: "owner"}} {
 		out, err := yaml.Marshal(entry)
 		if err != nil {
 			t.Fatal(err)
@@ -213,6 +214,14 @@ func TestReferenceRepoCredentialStateNeverSerializesToYAML(t *testing.T) {
 	}
 	if !strings.Contains(string(js), `"credential_state":"read-only"`) || !strings.Contains(string(js), `"credential_reason":`) {
 		t.Fatalf("JSON must carry the credential state:\n%s", js)
+	}
+	// hivecommons/hive#18197: the writing login rides along in JSON only.
+	js, err = json.Marshal(ReferenceRepo{Repo: "acme/docs", Write: []string{ReferenceWriteIssues}, CredentialState: ReferenceCredentialWriteTier, CredentialLogin: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(js), `"credential_login":"owner"`) {
+		t.Fatalf("JSON must carry the credential login:\n%s", js)
 	}
 }
 

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -16,16 +17,23 @@ import (
 // referenceRepoTestTimeout bounds the waits on the async notice poster.
 const referenceRepoTestTimeout = 5 * time.Second
 
+// testOwnerLogin is the hive owner's connected GitHub login in these tests.
+const testOwnerLogin = "hive-owner"
+
+// testReferenceRepoDeps has the owner's GitHub account connected
+// (hivecommons/hive#18197).
 func testReferenceRepoDeps() referenceRepoDeps {
 	return referenceRepoDeps{
-		botLogin: "hive[bot]",
-		discover: func(_ context.Context, org string) (int64, error) {
-			if org == "hivecommons" {
-				return 1, nil
-			}
-			return 0, github.ErrNoInstallationForOrg
-		},
-		auth: func() *github.AppAuth { return nil },
+		ownerLogin: func() (string, error) { return testOwnerLogin, nil },
+		ownerToken: func() (string, bool) { return "owner-tok", true },
+	}
+}
+
+// disconnectedReferenceRepoDeps has no owner identity connected.
+func disconnectedReferenceRepoDeps() referenceRepoDeps {
+	return referenceRepoDeps{
+		ownerLogin: func() (string, error) { return "", nil },
+		ownerToken: func() (string, bool) { return "", false },
 	}
 }
 
@@ -47,23 +55,33 @@ func TestBuildReferenceRepoPolicies(t *testing.T) {
 	if pols[0].Token != nil || pols[0].Issues || pols[0].PRs || pols[0].Login != "" {
 		t.Errorf("read-only policy carries write state: %+v", pols[0])
 	}
-	if pols[1].Token == nil || !pols[1].Issues || !pols[1].PRs || pols[1].Login != "hive[bot]" {
+	if pols[1].Token == nil || !pols[1].Issues || !pols[1].PRs || pols[1].Login != testOwnerLogin {
 		t.Errorf("write policy incomplete: %+v", pols[1])
 	}
-	for i, rr := range res.repos {
-		if rr.CredentialState != "" || rr.Repo != refs[i].Repo {
-			t.Errorf("hand-written entry %d must come back unchanged: %+v", i, rr)
-		}
+	if tok, ok := pols[1].Token(); !ok || tok != "owner-tok" {
+		t.Errorf("write policy must serve the owner token, got %q,%v", tok, ok)
+	}
+	if rr := res.repos[0]; rr.CredentialState != "" || rr.CredentialLogin != "" || rr.Repo != refs[0].Repo {
+		t.Errorf("hand-written read-only entry must come back unchanged: %+v", rr)
+	}
+	// hivecommons/hive#18197: a hand-written write entry carries its
+	// credential state and the login it writes as.
+	if rr := res.repos[1]; rr.CredentialState != config.ReferenceCredentialWriteTier || rr.CredentialLogin != testOwnerLogin || !rr.WritesPRs() {
+		t.Errorf("hand-written write entry credential = %+v", rr)
 	}
 
 	// A hand-written write-mode entry without a credential still refuses
 	// boot with the exit-22 error text.
-	_, err = buildReferenceRepoPolicies(ctx, []config.ReferenceRepo{{Repo: "kubernetes/website", Write: []string{"issues"}}}, deps, testLogger())
+	_, err = buildReferenceRepoPolicies(ctx, []config.ReferenceRepo{{Repo: "kubernetes/website", Write: []string{"issues"}}}, disconnectedReferenceRepoDeps(), testLogger())
 	if !errors.Is(err, github.ErrReferenceRepoNoCredential) {
-		t.Fatalf("uninstalled org must refuse with ErrReferenceRepoNoCredential, got %v", err)
+		t.Fatalf("no owner identity must refuse with ErrReferenceRepoNoCredential, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "kubernetes/website") || !strings.Contains(err.Error(), "needs the GitHub App installed on kubernetes") {
+	if !strings.Contains(err.Error(), "kubernetes/website") || !strings.Contains(err.Error(), "Settings → Reference repos → Connect GitHub account") {
 		t.Fatalf("exit-22 error must name the repo and the cure: %v", err)
+	}
+	// Nil seams read as not connected.
+	if _, err := buildReferenceRepoPolicies(ctx, []config.ReferenceRepo{{Repo: "kubernetes/website", Write: []string{"issues"}}}, referenceRepoDeps{}, testLogger()); !errors.Is(err, github.ErrReferenceRepoNoCredential) {
+		t.Fatalf("nil seams must refuse like a disconnected owner, got %v", err)
 	}
 	if referenceRepoCredentialExitCode != 22 {
 		t.Fatalf("exit code = %d, want 22", referenceRepoCredentialExitCode)
@@ -103,12 +121,12 @@ func (n *notifyRecorder) count() int {
 	return len(n.calls)
 }
 
-// hivecommons/hive#18158: a derived entry never refuses boot. With the App
-// installed on its org it keeps the write tier; without, it is served
-// read-only and the request issue is told once.
+// hivecommons/hive#18158, #18197: a derived entry never refuses boot. With
+// the owner's GitHub account connected it keeps the write tier and writes as
+// the owner; without, it is served read-only and the request issue is told
+// once.
 func TestBuildReferenceRepoPoliciesDerived(t *testing.T) {
 	ctx := context.Background()
-	deps := testReferenceRepoDeps()
 	refs := []config.ReferenceRepo{
 		{Repo: "hivecommons/docs", Write: []string{"issues", "prs"}, DerivedFrom: "cncf/techdocs#395"},
 		{Repo: "acme/docs", Write: []string{"issues", "prs"}, DerivedFrom: "cncf/techdocs#395"},
@@ -116,24 +134,32 @@ func TestBuildReferenceRepoPoliciesDerived(t *testing.T) {
 		{Repo: "other/repo", Write: []string{"issues", "prs"}, DerivedFrom: "cncf/techdocs#400"},
 		{Repo: "hivecommons/hive"},
 	}
+	connected, err := buildReferenceRepoPolicies(ctx, refs, testReferenceRepoDeps(), testLogger())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i <= 3; i++ {
+		rr, p := connected.repos[i], connected.policies[i]
+		if !rr.WritesIssues() || !rr.WritesPRs() || rr.CredentialState != config.ReferenceCredentialWriteTier || rr.CredentialLogin != testOwnerLogin {
+			t.Errorf("connected owner must keep the write tier: %+v", rr)
+		}
+		if !p.Issues || !p.PRs || p.Login != testOwnerLogin || p.Token == nil {
+			t.Errorf("write-tier policy incomplete: %+v", p)
+		}
+	}
+
+	deps := disconnectedReferenceRepoDeps()
 	res, err := buildReferenceRepoPolicies(ctx, refs, deps, testLogger())
 	if err != nil {
-		t.Fatalf("a derived entry on an uninstalled org must not refuse boot: %v", err)
+		t.Fatalf("a derived entry without an owner identity must not refuse boot: %v", err)
 	}
 	if len(res.policies) != len(refs) || len(res.repos) != len(refs) {
 		t.Fatalf("got %d policies, %d repos, want %d", len(res.policies), len(res.repos), len(refs))
 	}
-	writeTier := res.repos[0]
-	if !writeTier.WritesIssues() || !writeTier.WritesPRs() || writeTier.CredentialState != config.ReferenceCredentialWriteTier {
-		t.Errorf("installed org must keep the write tier: %+v", writeTier)
-	}
-	if p := res.policies[0]; !p.Issues || !p.PRs || p.Login != "hive[bot]" || p.Token == nil {
-		t.Errorf("write-tier policy incomplete: %+v", p)
-	}
-	for i := 1; i <= 3; i++ {
+	for i := 0; i <= 3; i++ {
 		rr, p := res.repos[i], res.policies[i]
-		if !rr.DerivedReadOnly() || !rr.ReadOnly() || rr.CredentialReason == "" {
-			t.Errorf("uninstalled org must downgrade to read-only: %+v", rr)
+		if !rr.DerivedReadOnly() || !rr.ReadOnly() || rr.CredentialReason != github.DerivedReadOnlyOwnerNotConnected {
+			t.Errorf("no owner identity must downgrade to read-only: %+v", rr)
 		}
 		if p.Issues || p.PRs || p.Token != nil || p.Login != "" {
 			t.Errorf("read-only policy carries write state: %+v", p)
@@ -160,7 +186,7 @@ func TestBuildReferenceRepoPoliciesDerived(t *testing.T) {
 		}
 		byIssue[c.number] = c.repos
 	}
-	if got := strings.Join(byIssue[395], ","); got != "acme/docs,acme/site" {
+	if got := strings.Join(byIssue[395], ","); got != "hivecommons/docs,acme/docs,acme/site" {
 		t.Errorf("#395 read-only set = %q", got)
 	}
 	if got := strings.Join(byIssue[400], ","); got != "other/repo" {
@@ -197,24 +223,76 @@ func TestBuildReferenceRepoPoliciesDerived(t *testing.T) {
 	notifyDerivedReadOnly(ctx, res.repos, nil, testLogger())
 }
 
-// A transient discovery failure must not downgrade a derived entry with a
-// "not installed" verdict: it is served read-only this load as unresolved
-// and the request issue is not told.
-func TestBuildReferenceRepoPoliciesDerivedTransientError(t *testing.T) {
-	deps := testReferenceRepoDeps()
-	deps.discover = func(context.Context, string) (int64, error) { return 0, errors.New("dial tcp: i/o timeout") }
-	refs := []config.ReferenceRepo{{Repo: "acme/docs", Write: []string{"issues", "prs"}, DerivedFrom: "cncf/techdocs#395"}}
+// hivecommons/hive#18197: a 401 on the owner's stored token is not an
+// operator config error. Derived entries drop to read-only asking for a
+// reconnect; a hand-written write entry without a token file is served
+// read-only too (its Write is kept so a Settings save loses nothing), and
+// one with a write_token_file keeps writing with it.
+func TestBuildReferenceRepoPoliciesOwnerTokenRejected(t *testing.T) {
+	dir := t.TempDir()
+	tokFile := dir + "/tok"
+	if err := os.WriteFile(tokFile, []byte("file-tok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps := referenceRepoDeps{
+		ownerLogin: func() (string, error) { return "", github.ErrOwnerIdentityInvalid },
+		ownerToken: func() (string, bool) { return "", false },
+		whoAmI:     func(context.Context, string) (string, error) { return "maintainer", nil },
+	}
+	refs := []config.ReferenceRepo{
+		{Repo: "acme/docs", Write: []string{"issues", "prs"}, DerivedFrom: "cncf/techdocs#395"},
+		{Repo: "acme/site", Write: []string{"issues"}},
+		{Repo: "acme/api", Write: []string{"prs"}, WriteTokenFile: tokFile},
+	}
 	res, err := buildReferenceRepoPolicies(context.Background(), refs, deps, testLogger())
 	if err != nil {
-		t.Fatalf("transient error must not refuse boot: %v", err)
+		t.Fatalf("a rejected owner token must not refuse: %v", err)
 	}
-	rr := res.repos[0]
-	if !rr.ReadOnly() || rr.CredentialState != config.ReferenceCredentialUnresolved || rr.DerivedReadOnly() {
-		t.Fatalf("got %+v", rr)
+	if rr := res.repos[0]; !rr.DerivedReadOnly() || rr.CredentialReason != github.ReferenceRepoOwnerReconnect {
+		t.Errorf("derived entry = %+v", rr)
 	}
-	rec := &notifyRecorder{posted: true}
-	notifyDerivedReadOnly(context.Background(), res.repos, rec.post, testLogger())
-	if rec.count() != 0 {
-		t.Fatalf("an unresolved entry must not notify the request issue, got %d calls", rec.count())
+	if rr, p := res.repos[1], res.policies[1]; rr.CredentialState != config.ReferenceCredentialReadOnly || rr.CredentialReason != github.ReferenceRepoOwnerReconnect || !rr.WritesIssues() || p.Issues || p.Token != nil {
+		t.Errorf("hand-written entry = %+v policy = %+v", rr, p)
+	}
+	if rr, p := res.repos[2], res.policies[2]; rr.CredentialState != config.ReferenceCredentialWriteTier || rr.CredentialLogin != "maintainer" || !p.PRs || p.Login != "maintainer" {
+		t.Errorf("token-file entry = %+v policy = %+v", rr, p)
+	}
+	if tok, ok := res.policies[2].Token(); !ok || tok != "file-tok" {
+		t.Errorf("token-file entry must keep its own token, got %q,%v", tok, ok)
+	}
+}
+
+// The real store wires through: connecting flips a derived entry to write
+// tier on the next pass, disconnecting flips it back.
+func TestBuildReferenceRepoPoliciesWithOwnerIdentityStore(t *testing.T) {
+	store := github.NewOwnerIdentityStore(t.TempDir()+"/github-owner-token", nil)
+	deps := referenceRepoDeps{ownerLogin: store.Login, ownerToken: store.Token}
+	refs := []config.ReferenceRepo{{Repo: "acme/docs", Write: []string{"issues", "prs"}, DerivedFrom: "cncf/techdocs#395"}}
+	ctx := context.Background()
+
+	res, err := buildReferenceRepoPolicies(ctx, refs, deps, testLogger())
+	if err != nil || !res.repos[0].DerivedReadOnly() {
+		t.Fatalf("not connected: %+v err=%v", res.repos, err)
+	}
+	if err := store.Save(github.OwnerIdentity{Login: "owner", Token: "gho_x", Scope: github.OwnerIdentityScope}); err != nil {
+		t.Fatal(err)
+	}
+	res, err = buildReferenceRepoPolicies(ctx, refs, deps, testLogger())
+	if err != nil || res.repos[0].CredentialLogin != "owner" || res.policies[0].Login != "owner" {
+		t.Fatalf("connected: %+v err=%v", res.repos, err)
+	}
+	if tok, ok := res.policies[0].Token(); !ok || tok != "gho_x" {
+		t.Fatalf("token = %q,%v", tok, ok)
+	}
+	if err := store.Remove(); err != nil {
+		t.Fatal(err)
+	}
+	// The installed policy reads the store live: no token after disconnect.
+	if _, ok := res.policies[0].Token(); ok {
+		t.Fatal("a disconnected owner's token must not be served")
+	}
+	res, err = buildReferenceRepoPolicies(ctx, refs, deps, testLogger())
+	if err != nil || !res.repos[0].DerivedReadOnly() {
+		t.Fatalf("disconnected: %+v err=%v", res.repos, err)
 	}
 }

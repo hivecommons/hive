@@ -250,6 +250,11 @@ type boot struct {
 	// boot pass, config reloads and the periodic re-derive
 	// (hivecommons/hive#18159); nil until wireReferenceRepos ran.
 	referenceRepos *referenceRepoRuntime
+	// ownerIdentity is the hive owner's GitHub identity store for
+	// write-tier reference repos (hivecommons/hive#18197), shared with the
+	// dashboard; built once by githubOwnerIdentity.
+	ownerIdentity     *github.OwnerIdentityStore
+	ownerIdentityOnce sync.Once
 	// inferenceSink is the one per-agent inference usage ledger; the proxy
 	// records into it in-process and the hive callback's usage capability
 	// records into it for a sidecar runtime (#14138 stage 4).

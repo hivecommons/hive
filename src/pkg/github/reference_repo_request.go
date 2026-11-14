@@ -17,8 +17,9 @@ import (
 //
 // A derived entry (config.ReferenceRepo.DerivedFrom) was granted by a
 // maintainer accepting a request issue in one of the hive's authorized repos.
-// When the App is not installed on the requesting project's org the hive can
-// still read the repos but cannot open issues or PRs there. That is the
+// When the hive owner has not connected a GitHub account on the dashboard
+// (hivecommons/hive#18197) the hive can still read the repos but cannot open
+// issues or PRs there. That is the
 // requesting project's call to make, not the operator's, so the hive says so
 // once on the request issue instead of refusing to boot.
 
@@ -81,7 +82,7 @@ func DerivedReadOnlyComment(readOnly []config.ReferenceRepo) string {
 	}
 	b.WriteString("\nThe hive will study these repositories (clone, read files, read issues and PRs) and keep its findings in the assessment deliverable here. ")
 	b.WriteString("It will not open issues or pull requests on them. ")
-	b.WriteString("To let it, an owner of that organization installs the same GitHub App there; the hive picks the installation up on its next config reload without a restart.")
+	b.WriteString("To let it, the hive's owner connects their GitHub account on the hive's dashboard (Settings → Reference repos → Connect GitHub account); the hive then writes as that account and picks the change up without a restart.")
 	return AppendTrailer(b.String(), hiveWriteMeta())
 }
 

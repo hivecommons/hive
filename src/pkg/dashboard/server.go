@@ -409,6 +409,10 @@ type Server struct {
 	// the session cookie is minted on the poll response — without this secret
 	// any anonymous poller could race the operator and steal the session).
 	deviceFlowID string
+	// ownerIdentityFlow is the separate consent flow that connects the hive
+	// owner's GitHub account for write-tier reference repos
+	// (hivecommons/hive#18197, api_github_owner_identity.go).
+	ownerIdentityFlow ownerIdentityFlow
 
 	// userSessions maps a random opaque session id (stored in the client's
 	// hive_session cookie on direct-route spokes) to the authenticated user.
@@ -1250,11 +1254,14 @@ type FrontendReferenceRepo struct {
 	// re-deriving the host (hivecommons/hive#18161); empty when DerivedFrom
 	// is empty or not an "owner/repo#N" reference.
 	DerivedFromURL string `json:"derived_from_url,omitempty"`
-	// CredentialState is a derived entry's resolved credential:
+	// CredentialState is a write entry's resolved credential:
 	// "write-tier", "read-only" or "unresolved" (hivecommons/hive#18158);
 	// CredentialReason says why when it is not write-tier.
 	CredentialState  string `json:"credential_state,omitempty"`
 	CredentialReason string `json:"credential_reason,omitempty"`
+	// CredentialLogin is the GitHub login a write-tier entry writes as
+	// (hivecommons/hive#18197).
+	CredentialLogin string `json:"credential_login,omitempty"`
 }
 
 type FrontendRepo struct {

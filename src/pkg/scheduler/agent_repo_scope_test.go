@@ -391,6 +391,18 @@ func TestBuildReposSectionFor_ReferenceReposDerivedProvenance(t *testing.T) {
 			t.Errorf("REFERENCE REPOS block lacks %q:\n%s", want, section)
 		}
 	}
+	// hivecommons/hive#18197: a write-tier entry names the login it writes
+	// as; a hand-written write entry served read-only says why.
+	for rr, want := range map[*config.ReferenceRepo]string{
+		{Repo: "a/b", Write: []string{"issues"}, DerivedFrom: "o/r#1", CredentialState: config.ReferenceCredentialWriteTier, CredentialLogin: "owner"}: " (from o/r#1; writes as owner)",
+		{Repo: "a/b", Write: []string{"issues"}, CredentialState: config.ReferenceCredentialWriteTier, CredentialLogin: "owner"}:                       " (writes as owner)",
+		{Repo: "a/b", Write: []string{"issues"}, CredentialState: config.ReferenceCredentialReadOnly, CredentialReason: "reconnect"}:                   " (read-only: reconnect)",
+		{Repo: "a/b"}: "",
+	} {
+		if got := referenceRepoProvenance(*rr); got != want {
+			t.Errorf("referenceRepoProvenance(%+v) = %q, want %q", *rr, got, want)
+		}
+	}
 	if got := referenceRepoProvenance(config.ReferenceRepo{Repo: "x/y", DerivedFrom: "o/r#1", CredentialState: config.ReferenceCredentialReadOnly}); !strings.Contains(got, derivedReadOnlyNoReason) {
 		t.Errorf("read-only without a reason must fall back to the generic one, got %q", got)
 	}

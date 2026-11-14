@@ -92,7 +92,7 @@ func TestStatusReferenceReposCarryCredentialState(t *testing.T) {
 	srv := newFullServer(t)
 	cfg := srv.deps.Config
 	cfg.Project.ReferenceRepos = []config.ReferenceRepo{
-		{Repo: "hivecommons/docs", Write: []string{config.ReferenceWriteIssues, config.ReferenceWritePRs}, DerivedFrom: "cncf/techdocs#395", CredentialState: config.ReferenceCredentialWriteTier},
+		{Repo: "hivecommons/docs", Write: []string{config.ReferenceWriteIssues, config.ReferenceWritePRs}, DerivedFrom: "cncf/techdocs#395", CredentialState: config.ReferenceCredentialWriteTier, CredentialLogin: "hive-owner"},
 		{Repo: "acme/docs", DerivedFrom: "cncf/techdocs#395", CredentialState: config.ReferenceCredentialReadOnly, CredentialReason: "the hive's GitHub App is not installed on acme"},
 	}
 	srv.UpdateStatus(&StatusPayload{ReferenceRepos: buildReferenceRepos(cfg)})
@@ -111,7 +111,7 @@ func TestStatusReferenceReposCarryCredentialState(t *testing.T) {
 		t.Fatalf("referenceRepos = %v, want both entries", body.ReferenceRepos)
 	}
 	want := map[string]map[string]any{
-		"hivecommons/docs": {"reference_tier": "issues+prs", "credential_state": "write-tier", "derived_from": "cncf/techdocs#395"},
+		"hivecommons/docs": {"reference_tier": "issues+prs", "credential_state": "write-tier", "derived_from": "cncf/techdocs#395", "credential_login": "hive-owner"},
 		"acme/docs":        {"reference_tier": "read-only", "credential_state": "read-only", "derived_from": "cncf/techdocs#395", "credential_reason": "the hive's GitHub App is not installed on acme"},
 	}
 	for _, rr := range body.ReferenceRepos {

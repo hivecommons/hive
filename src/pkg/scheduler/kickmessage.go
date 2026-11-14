@@ -919,11 +919,32 @@ const derivedReadOnlyNoReason = "no write credential for this repository"
 // for an entry derived from an accepted request issue
 // (hivecommons/hive#18159): where the grant came from, and for one served
 // read-only, why. Empty for a hand-written entry.
+//
+// A write-tier entry also names the GitHub login it writes as, and a
+// hand-written write entry served read-only (the owner's token was rejected)
+// says why (hivecommons/hive#18197).
 func referenceRepoProvenance(rr config.ReferenceRepo) string {
+	writesAs := ""
+	if login := strings.TrimSpace(rr.CredentialLogin); login != "" && rr.CredentialState == config.ReferenceCredentialWriteTier {
+		writesAs = "writes as " + login
+	}
 	if !rr.Derived() {
+		switch {
+		case rr.CredentialState == config.ReferenceCredentialReadOnly && !rr.ReadOnly():
+			reason := strings.TrimSpace(rr.CredentialReason)
+			if reason == "" {
+				reason = derivedReadOnlyNoReason
+			}
+			return " (read-only: " + reason + ")"
+		case writesAs != "":
+			return " (" + writesAs + ")"
+		}
 		return ""
 	}
 	if !rr.DerivedReadOnly() {
+		if writesAs != "" {
+			return " (from " + rr.DerivedFrom + "; " + writesAs + ")"
+		}
 		return " (from " + rr.DerivedFrom + ")"
 	}
 	reason := strings.TrimSpace(rr.CredentialReason)

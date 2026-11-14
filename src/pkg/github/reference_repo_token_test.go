@@ -22,12 +22,6 @@ func TestVerifyReferenceRepoWriteCredential(t *testing.T) {
 	if err := os.WriteFile(emptyFile, []byte(" \n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	installed := func(_ context.Context, org string) (int64, error) {
-		if org == "hivecommons" {
-			return 42, nil
-		}
-		return 0, ErrNoInstallationForOrg
-	}
 	whoAmI := func(_ context.Context, token string) (string, error) {
 		if token == "ghp_x" {
 			return "nate", nil
@@ -36,24 +30,22 @@ func TestVerifyReferenceRepoWriteCredential(t *testing.T) {
 	}
 
 	cases := []struct {
-		name      string
-		rr        config.ReferenceRepo
-		botLogin  string
-		discover  func(context.Context, string) (int64, error)
-		wantLogin string
-		wantErr   bool
+		name       string
+		rr         config.ReferenceRepo
+		ownerLogin string
+		wantLogin  string
+		wantErr    bool
 	}{
 		{name: "read-only needs nothing", rr: config.ReferenceRepo{Repo: "hivecommons/docs"}, wantLogin: ""},
-		{name: "app installed on target org", rr: config.ReferenceRepo{Repo: "hivecommons/docs", Write: []string{"issues"}}, botLogin: "hive[bot]", discover: installed, wantLogin: "hive[bot]"},
-		{name: "app not installed, no token file", rr: config.ReferenceRepo{Repo: "other/docs", Write: []string{"issues"}}, botLogin: "hive[bot]", discover: installed, wantErr: true},
-		{name: "no app auth at all", rr: config.ReferenceRepo{Repo: "hivecommons/docs", Write: []string{"prs"}}, wantErr: true},
-		{name: "token file wins over installation", rr: config.ReferenceRepo{Repo: "other/docs", Write: []string{"issues", "prs"}, WriteTokenFile: tokFile}, discover: installed, wantLogin: "nate"},
-		{name: "empty token file", rr: config.ReferenceRepo{Repo: "other/docs", Write: []string{"issues"}, WriteTokenFile: emptyFile}, wantErr: true},
+		{name: "owner identity connected", rr: config.ReferenceRepo{Repo: "other/docs", Write: []string{"issues"}}, ownerLogin: "owner", wantLogin: "owner"},
+		{name: "owner not connected, no token file", rr: config.ReferenceRepo{Repo: "other/docs", Write: []string{"issues"}}, wantErr: true},
+		{name: "token file wins over owner identity", rr: config.ReferenceRepo{Repo: "other/docs", Write: []string{"issues", "prs"}, WriteTokenFile: tokFile}, ownerLogin: "owner", wantLogin: "nate"},
+		{name: "empty token file", rr: config.ReferenceRepo{Repo: "other/docs", Write: []string{"issues"}, WriteTokenFile: emptyFile}, ownerLogin: "owner", wantErr: true},
 		{name: "missing token file", rr: config.ReferenceRepo{Repo: "other/docs", Write: []string{"issues"}, WriteTokenFile: filepath.Join(dir, "nope")}, wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			login, err := VerifyReferenceRepoWriteCredential(ctx, tc.rr, tc.botLogin, tc.discover, whoAmI)
+			login, err := VerifyReferenceRepoWriteCredential(ctx, tc.rr, tc.ownerLogin, whoAmI)
 			if tc.wantErr {
 				if err == nil {
 					t.Fatalf("want error, got login %q", login)
@@ -71,30 +63,32 @@ func TestVerifyReferenceRepoWriteCredential(t *testing.T) {
 			}
 		})
 	}
+
+	// The exit-22 message names the cure on the dashboard and the
+	// operator's alternative, never the App.
+	_, err := VerifyReferenceRepoWriteCredential(ctx, config.ReferenceRepo{Repo: "other/docs", Write: []string{"prs"}}, "", whoAmI)
+	for _, want := range []string{"other/docs", "Settings → Reference repos → Connect GitHub account", "write_token_file"} {
+		if err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("error %v must name %q", err, want)
+		}
+	}
+	if err != nil && strings.Contains(err.Error(), "App") {
+		t.Errorf("error must not name the App: %v", err)
+	}
 }
 
-// hivecommons/hive#18158: a derived entry resolves against the App
-// installation on its org and never fails like a hand-written one.
+// hivecommons/hive#18158, #18197: a derived entry resolves against the hive
+// owner's connected identity, needs no network and never fails like a
+// hand-written one.
 func TestResolveDerivedReferenceRepo(t *testing.T) {
-	ctx := context.Background()
-	netErr := errors.New("dial tcp: i/o timeout")
-	installed := func(_ context.Context, org string) (int64, error) {
-		switch org {
-		case "hivecommons":
-			return 42, nil
-		case "flaky":
-			return 0, netErr
-		}
-		return 0, ErrNoInstallationForOrg
-	}
 	derived := func(repo string) config.ReferenceRepo {
 		return config.ReferenceRepo{Repo: repo, Write: []string{config.ReferenceWriteIssues, config.ReferenceWritePRs}, DerivedFrom: "cncf/techdocs#395"}
 	}
 
-	t.Run("installation found keeps write tier", func(t *testing.T) {
-		got, login, err := ResolveDerivedReferenceRepo(ctx, derived("hivecommons/docs"), "hive[bot]", installed)
-		if err != nil || login != "hive[bot]" {
-			t.Fatalf("login=%q err=%v", login, err)
+	t.Run("owner connected keeps write tier", func(t *testing.T) {
+		got, login := ResolveDerivedReferenceRepo(derived("acme/docs"), "owner", nil)
+		if login != "owner" || got.CredentialLogin != "owner" {
+			t.Fatalf("login=%q credential_login=%q", login, got.CredentialLogin)
 		}
 		if !got.WritesIssues() || !got.WritesPRs() || got.CredentialState != config.ReferenceCredentialWriteTier || got.CredentialReason != "" {
 			t.Fatalf("resolved = %+v", got)
@@ -103,67 +97,51 @@ func TestResolveDerivedReferenceRepo(t *testing.T) {
 			t.Fatalf("provenance lost or misread: %+v", got)
 		}
 	})
-	t.Run("no installation downgrades to read-only", func(t *testing.T) {
-		got, login, err := ResolveDerivedReferenceRepo(ctx, derived("acme/docs"), "hive[bot]", installed)
-		if err != nil || login != "" {
-			t.Fatalf("login=%q err=%v (a derived entry must never error on a missing installation)", login, err)
+	t.Run("owner not connected downgrades to read-only", func(t *testing.T) {
+		got, login := ResolveDerivedReferenceRepo(derived("acme/docs"), "", nil)
+		if login != "" {
+			t.Fatalf("login=%q", login)
 		}
 		if !got.ReadOnly() || !got.DerivedReadOnly() || got.CredentialState != config.ReferenceCredentialReadOnly {
 			t.Fatalf("resolved = %+v", got)
 		}
-		if got.CredentialReason != DerivedReadOnlyReason(derived("acme/docs")) || !strings.Contains(got.CredentialReason, "acme") {
+		if got.CredentialReason != DerivedReadOnlyOwnerNotConnected || got.CredentialReason != DerivedReadOnlyReason(got) {
 			t.Fatalf("reason = %q", got.CredentialReason)
 		}
 		if got.DerivedFrom != "cncf/techdocs#395" {
 			t.Fatalf("provenance lost: %+v", got)
 		}
 	})
+	t.Run("rejected owner token asks for a reconnect", func(t *testing.T) {
+		got, login := ResolveDerivedReferenceRepo(derived("acme/docs"), "", ErrOwnerIdentityInvalid)
+		if login != "" || !got.DerivedReadOnly() || got.CredentialReason != ReferenceRepoOwnerReconnect {
+			t.Fatalf("got %+v login=%q", got, login)
+		}
+	})
 	t.Run("write_token_file is never consulted", func(t *testing.T) {
 		rr := derived("acme/docs")
 		rr.WriteTokenFile = filepath.Join(t.TempDir(), "nope")
-		got, _, err := ResolveDerivedReferenceRepo(ctx, rr, "hive[bot]", installed)
-		if err != nil || got.WriteTokenFile != "" || !got.DerivedReadOnly() {
-			t.Fatalf("got %+v err=%v", got, err)
+		got, _ := ResolveDerivedReferenceRepo(rr, "", nil)
+		if got.WriteTokenFile != "" || !got.DerivedReadOnly() {
+			t.Fatalf("got %+v", got)
 		}
-		if ReferenceRepoTokenSource(rr, func() *AppAuth { return nil }, testLogger()) == nil {
+		src := ReferenceRepoTokenSource(rr, func() (string, bool) { return "", false }, testLogger())
+		if src == nil {
 			t.Fatal("derived write-mode entry must have a token source")
 		}
-		if _, ok := ReferenceRepoTokenSource(rr, func() *AppAuth { return nil }, testLogger())(); ok {
+		if _, ok := src(); ok {
 			t.Fatal("derived entry must not read write_token_file")
 		}
-	})
-	t.Run("no app auth is read-only", func(t *testing.T) {
-		got, _, err := ResolveDerivedReferenceRepo(ctx, derived("hivecommons/docs"), "", nil)
-		if err != nil || !got.DerivedReadOnly() || got.CredentialReason != DerivedReadOnlyNoAppAuth {
-			t.Fatalf("got %+v err=%v", got, err)
-		}
-	})
-	t.Run("bot login unknown is read-only", func(t *testing.T) {
-		got, _, err := ResolveDerivedReferenceRepo(ctx, derived("hivecommons/docs"), "", installed)
-		if err != nil || !got.DerivedReadOnly() || got.CredentialReason != DerivedReadOnlyBotLoginUnknown {
-			t.Fatalf("got %+v err=%v", got, err)
-		}
-	})
-	t.Run("transient discovery error propagates", func(t *testing.T) {
-		got, _, err := ResolveDerivedReferenceRepo(ctx, derived("flaky/docs"), "hive[bot]", installed)
-		if !errors.Is(err, netErr) {
-			t.Fatalf("want the network error, got %v", err)
-		}
-		if errors.Is(err, ErrReferenceRepoNoCredential) {
-			t.Fatal("a derived entry must never yield ErrReferenceRepoNoCredential")
-		}
-		if !strings.Contains(err.Error(), "flaky/docs") || !strings.Contains(err.Error(), "cncf/techdocs#395") {
-			t.Fatalf("error must name the repo and the request: %v", err)
-		}
-		if !got.WritesIssues() {
-			t.Fatal("the entry comes back unchanged for the caller to keep its last good state")
+		src = ReferenceRepoTokenSource(rr, func() (string, bool) { return "owner-tok", true }, testLogger())
+		if tok, ok := src(); !ok || tok != "owner-tok" {
+			t.Fatalf("derived entry must use the owner token, got %q,%v", tok, ok)
 		}
 	})
 	t.Run("hand-written entry passes through", func(t *testing.T) {
 		rr := config.ReferenceRepo{Repo: "acme/docs", Write: []string{"issues"}}
-		got, login, err := ResolveDerivedReferenceRepo(ctx, rr, "hive[bot]", installed)
-		if err != nil || login != "" || got.CredentialState != "" || !got.WritesIssues() {
-			t.Fatalf("got %+v login=%q err=%v", got, login, err)
+		got, login := ResolveDerivedReferenceRepo(rr, "owner", nil)
+		if login != "" || got.CredentialState != "" || !got.WritesIssues() {
+			t.Fatalf("got %+v login=%q", got, login)
 		}
 	})
 }
@@ -174,7 +152,7 @@ func TestReferenceRepoTokenSource_File(t *testing.T) {
 		t.Fatal(err)
 	}
 	rr := config.ReferenceRepo{Repo: "hivecommons/docs", Write: []string{"issues"}, WriteTokenFile: tokFile}
-	src := ReferenceRepoTokenSource(rr, func() *AppAuth { return nil }, testLogger())
+	src := ReferenceRepoTokenSource(rr, func() (string, bool) { return "owner-tok", true }, testLogger())
 	if tok, ok := src(); !ok || tok != "first" {
 		t.Fatalf("got %q,%v want first,true", tok, ok)
 	}
@@ -189,28 +167,27 @@ func TestReferenceRepoTokenSource_File(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, ok := src(); ok {
-		t.Fatal("removed token file should yield ok=false")
+		t.Fatal("removed token file should yield ok=false, not fall back to the owner token")
 	}
 	if ReferenceRepoTokenSource(config.ReferenceRepo{Repo: "a/b"}, nil, testLogger()) != nil {
 		t.Fatal("read-only entry must have no token source")
 	}
 }
 
-func TestReferenceRepoTokenSource_NoAuth(t *testing.T) {
+// hivecommons/hive#18197: without a token file the owner's token is read on
+// every call, so a connect or disconnect takes effect without a restart.
+func TestReferenceRepoTokenSource_Owner(t *testing.T) {
 	rr := config.ReferenceRepo{Repo: "hivecommons/docs", Write: []string{"prs"}}
-	src := ReferenceRepoTokenSource(rr, func() *AppAuth { return nil }, testLogger())
+	if _, ok := ReferenceRepoTokenSource(rr, nil, testLogger())(); ok {
+		t.Fatal("no owner identity must yield ok=false, not a credential")
+	}
+	tok, connected := "", false
+	src := ReferenceRepoTokenSource(rr, func() (string, bool) { return tok, connected }, testLogger())
 	if _, ok := src(); ok {
-		t.Fatal("no App auth must yield ok=false, not a credential")
+		t.Fatal("disconnected owner must yield ok=false")
 	}
-}
-
-func TestReferenceRepoPermissions(t *testing.T) {
-	p := referenceRepoPermissions(config.ReferenceRepo{Repo: "a/b", Write: []string{"issues"}})
-	if p.GetIssues() != "write" || p.GetContents() != "read" || p.GetPullRequests() != "" {
-		t.Errorf("issues-only perms wrong: issues=%q contents=%q prs=%q", p.GetIssues(), p.GetContents(), p.GetPullRequests())
-	}
-	p = referenceRepoPermissions(config.ReferenceRepo{Repo: "a/b", Write: []string{"prs"}})
-	if p.GetIssues() != "" || p.GetContents() != "write" || p.GetPullRequests() != "write" {
-		t.Errorf("prs perms wrong: issues=%q contents=%q prs=%q", p.GetIssues(), p.GetContents(), p.GetPullRequests())
+	tok, connected = "owner-tok", true
+	if got, ok := src(); !ok || got != "owner-tok" {
+		t.Fatalf("got %q,%v want owner-tok,true", got, ok)
 	}
 }

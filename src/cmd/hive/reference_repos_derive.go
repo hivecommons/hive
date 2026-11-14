@@ -323,6 +323,10 @@ type referenceRepoRuntime struct {
 	deriver *referenceRepoDeriver
 	deps    referenceRepoDeps
 	post    derivedReadOnlyPoster
+	// owner is the hive owner's GitHub identity (hivecommons/hive#18197);
+	// each pass re-validates its token at most every
+	// github.OwnerIdentityRevalidateInterval. Nil in tests that stub deps.
+	owner *github.OwnerIdentityStore
 	// interval is the periodic re-derive cadence; zero disables the poller.
 	interval time.Duration
 
@@ -364,6 +368,11 @@ func mergedReferenceRepos(cfg *config.Config, handWritten, derived []config.Refe
 func (b *boot) applyReferenceRepos(ctx context.Context, rt *referenceRepoRuntime) error {
 	if rt == nil || b.cfg == nil || b.githubProxy == nil {
 		return nil
+	}
+	// GET /user at most every ten minutes: a 401 drops the owner-backed
+	// entries to read-only in this pass (hivecommons/hive#18197).
+	if rt.owner.Revalidate(ctx) {
+		b.logger.Info("reference repos: the hive owner's GitHub identity changed validity, re-resolving", "invalid", rt.owner.Status().Invalid)
 	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
@@ -429,7 +438,9 @@ func (b *boot) remergeLastDerivedReferenceRepos() {
 
 // startReferenceRepoDerivePoller re-derives on rt.interval until ctx ends.
 func (b *boot) startReferenceRepoDerivePoller(ctx context.Context, rt *referenceRepoRuntime) {
-	if rt == nil || rt.deriver == nil || rt.interval <= 0 || ctx == nil {
+	// The pass also re-validates the owner identity, so it runs without a
+	// deriver too (hivecommons/hive#18197).
+	if rt == nil || (rt.deriver == nil && rt.owner == nil) || rt.interval <= 0 || ctx == nil {
 		return
 	}
 	go func() {

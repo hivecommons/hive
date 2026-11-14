@@ -562,6 +562,11 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// project.reference_repos editor on the Repos tab (#18136, api_config_reference_repos.go).
 	s.mux.HandleFunc("GET /api/config/reference-repos", s.handleReferenceReposGet)
 	s.mux.HandleFunc("PUT /api/config/reference-repos", s.handleReferenceReposPut)
+	// The owner's GitHub identity for write-tier reference repos (#18197, api_github_owner_identity.go).
+	s.mux.HandleFunc("GET /api/github-owner-identity", s.handleGitHubOwnerIdentityGet)
+	s.mux.HandleFunc("POST /api/github-owner-identity/start", s.handleGitHubOwnerIdentityStart)
+	s.mux.HandleFunc("POST /api/github-owner-identity/poll", s.handleGitHubOwnerIdentityPoll)
+	s.mux.HandleFunc("DELETE /api/github-owner-identity", s.handleGitHubOwnerIdentityDelete)
 }
 
 var (

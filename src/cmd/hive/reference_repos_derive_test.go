@@ -20,8 +20,9 @@ import (
 
 // Fixture: the CNCF TechDocs shape. cncf/techdocs is the authorized repo,
 // bound to a model whose intake names the form headings; request issue #395
-// names acme/docs (App installed on acme: write tier) and zeta/site (no
-// installation: read-only).
+// names acme/docs and zeta/site, both write tier while the hive owner's
+// GitHub account is connected and read-only when it is not
+// (hivecommons/hive#18197).
 const (
 	testIntakeRepoField   = "Website or documentation repository"
 	testIntakeOutOfScope  = "Out of scope"
@@ -124,21 +125,18 @@ func derivedTestConfig(t *testing.T, handWritten ...config.ReferenceRepo) *confi
 }
 
 // derivedTestBoot wires a boot with a real (ephemeral) proxy and the fake
-// issue store. deps install the App on acme and hivecommons only.
+// issue store, with the owner's GitHub account connected.
 func derivedTestBoot(t *testing.T, fake *fakeRequestIssues, post derivedReadOnlyPoster, handWritten ...config.ReferenceRepo) (*boot, *referenceRepoRuntime) {
+	t.Helper()
+	return derivedTestBootWith(t, fake, post, testReferenceRepoDeps(), handWritten...)
+}
+
+func derivedTestBootWith(t *testing.T, fake *fakeRequestIssues, post derivedReadOnlyPoster, deps referenceRepoDeps, handWritten ...config.ReferenceRepo) (*boot, *referenceRepoRuntime) {
 	t.Helper()
 	cfg := derivedTestConfig(t, handWritten...)
 	px, err := proxy.NewGitHubProxyEphemeral(testLogger(), cfg.Project.Org, cfg.Project.Repos)
 	if err != nil {
 		t.Fatal(err)
-	}
-	deps := testReferenceRepoDeps()
-	deps.discover = func(_ context.Context, org string) (int64, error) {
-		switch org {
-		case "acme", "hivecommons":
-			return 1, nil
-		}
-		return 0, github.ErrNoInstallationForOrg
 	}
 	b := &boot{cfg: cfg, logger: testLogger(), ctx: context.Background(), githubProxy: px}
 	rt := &referenceRepoRuntime{
@@ -158,9 +156,9 @@ func referenceRepoByName(refs []config.ReferenceRepo, repo string) (config.Refer
 	return config.ReferenceRepo{}, false
 }
 
-// Boot derives from the accepted issue: the write-tier entry reaches the
-// config and the proxy at issues+prs with its provenance, the uninstalled
-// org's entry is read-only and the request issue is told once, and the
+// Boot derives from the accepted issue: with the owner's GitHub account
+// connected both entries reach the config and the proxy at issues+prs with
+// their provenance and the owner's login, no notice is posted, and the
 // authorized repo the form also named is never derived.
 func TestWireReferenceReposDerivesAtBoot(t *testing.T) {
 	fake := newFakeRequestIssues()
@@ -175,29 +173,46 @@ func TestWireReferenceReposDerivesAtBoot(t *testing.T) {
 	if refs[0].Repo != testHandWrittenRepo || refs[0].Derived() {
 		t.Errorf("hand-written entry must come first and unchanged: %+v", refs[0])
 	}
-	docs, ok := referenceRepoByName(refs, testDerivedWriteRepo)
-	if !ok || docs.DerivedFrom != testRequestIssueRef || !docs.WritesIssues() || !docs.WritesPRs() || docs.CredentialState != config.ReferenceCredentialWriteTier {
-		t.Errorf("derived write-tier entry = %+v", docs)
-	}
-	site, ok := referenceRepoByName(refs, testDerivedReadOnly)
-	if !ok || !site.DerivedReadOnly() || !site.ReadOnly() {
-		t.Errorf("derived entry for an uninstalled org must be read-only: %+v", site)
+	for _, repo := range []string{testDerivedWriteRepo, testDerivedReadOnly} {
+		rr, ok := referenceRepoByName(refs, repo)
+		if !ok || rr.DerivedFrom != testRequestIssueRef || !rr.WritesIssues() || !rr.WritesPRs() || rr.CredentialState != config.ReferenceCredentialWriteTier || rr.CredentialLogin != testOwnerLogin {
+			t.Errorf("derived write-tier entry = %+v", rr)
+		}
+		pol, ok := b.githubProxy.ReferenceRepoPolicyFor(repo)
+		if !ok || !pol.Issues || !pol.PRs {
+			t.Errorf("proxy policy for %s = %+v ok=%v", repo, pol, ok)
+		}
 	}
 	if _, derived := referenceRepoByName(refs, "cncf/toc"); derived {
 		t.Error("an authorized repo named by the form must never become a reference repo")
 	}
-	pol, ok := b.githubProxy.ReferenceRepoPolicyFor(testDerivedWriteRepo)
-	if !ok || !pol.Issues || !pol.PRs {
-		t.Errorf("proxy policy for the derived repo = %+v ok=%v", pol, ok)
+	if rec.count() != 0 {
+		t.Errorf("no entry is read-only, yet %d notices were posted", rec.count())
 	}
-	if pol, ok := b.githubProxy.ReferenceRepoPolicyFor(testDerivedReadOnly); !ok || pol.Issues || pol.PRs {
-		t.Errorf("proxy policy for the read-only derived repo = %+v ok=%v", pol, ok)
+}
+
+// Without the owner's GitHub account every derived entry is read-only and
+// the request issue is told once, naming the cure.
+func TestWireReferenceReposDerivedReadOnlyWithoutOwner(t *testing.T) {
+	fake := newFakeRequestIssues()
+	rec := &notifyRecorder{posted: true}
+	b, rt := derivedTestBootWith(t, fake, rec.post, disconnectedReferenceRepoDeps())
+	b.wireReferenceReposWith(rt)
+
+	for _, repo := range []string{testDerivedWriteRepo, testDerivedReadOnly} {
+		rr, ok := referenceRepoByName(b.cfg.Project.ReferenceRepos, repo)
+		if !ok || !rr.DerivedReadOnly() || !rr.ReadOnly() || rr.CredentialReason != github.DerivedReadOnlyOwnerNotConnected {
+			t.Errorf("derived entry without an owner identity must be read-only: %+v", rr)
+		}
+		if pol, ok := b.githubProxy.ReferenceRepoPolicyFor(repo); !ok || pol.Issues || pol.PRs {
+			t.Errorf("proxy policy for read-only %s = %+v ok=%v", repo, pol, ok)
+		}
 	}
 	testutil.Eventually(t, referenceRepoTestTimeout, func() bool { return rec.count() == 1 }, "read-only notice must be posted once")
 	rec.mu.Lock()
 	calls := rec.calls
 	rec.mu.Unlock()
-	if len(calls) != 1 || calls[0].repo != testRequestIssueRepo || calls[0].number != 395 || len(calls[0].repos) != 1 || calls[0].repos[0] != testDerivedReadOnly {
+	if len(calls) != 1 || calls[0].repo != testRequestIssueRepo || calls[0].number != 395 || len(calls[0].repos) != 2 {
 		t.Errorf("notice calls = %+v", calls)
 	}
 }

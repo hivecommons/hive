@@ -12,8 +12,8 @@ import (
 
 func derivedReadOnlyFixture() []config.ReferenceRepo {
 	return []config.ReferenceRepo{
-		{Repo: "acme/docs", DerivedFrom: "o/r#7", CredentialState: config.ReferenceCredentialReadOnly, CredentialReason: "the hive's GitHub App is not installed on acme"},
-		{Repo: "acme/site", DerivedFrom: "o/r#7", CredentialState: config.ReferenceCredentialReadOnly, CredentialReason: "the hive's GitHub App is not installed on acme"},
+		{Repo: "acme/docs", DerivedFrom: "o/r#7", CredentialState: config.ReferenceCredentialReadOnly, CredentialReason: DerivedReadOnlyOwnerNotConnected},
+		{Repo: "acme/site", DerivedFrom: "o/r#7", CredentialState: config.ReferenceCredentialReadOnly, CredentialReason: DerivedReadOnlyOwnerNotConnected},
 	}
 }
 
@@ -33,10 +33,15 @@ func TestDerivedReadOnlyMarkerIsASetKey(t *testing.T) {
 
 func TestDerivedReadOnlyCommentBody(t *testing.T) {
 	body := DerivedReadOnlyComment(derivedReadOnlyFixture())
-	for _, want := range []string{DerivedReadOnlyMarkerPrefix, "`acme/docs`", "`acme/site`", "not installed on acme", "will not open issues or pull requests", AttributionTrailerPrefix} {
+	for _, want := range []string{DerivedReadOnlyMarkerPrefix, "`acme/docs`", "`acme/site`", DerivedReadOnlyOwnerNotConnected, "will not open issues or pull requests", "Connect GitHub account", AttributionTrailerPrefix} {
 		if !strings.Contains(body, want) {
 			t.Errorf("comment lacks %q:\n%s", want, body)
 		}
+	}
+	// hivecommons/hive#18197: the cure is the owner connecting their
+	// account, never installing the App.
+	if strings.Contains(body, "install") {
+		t.Errorf("comment must not ask anyone to install the App:\n%s", body)
 	}
 	if strings.Contains(body, "@") {
 		t.Fatalf("comment must not mention anyone:\n%s", body)
