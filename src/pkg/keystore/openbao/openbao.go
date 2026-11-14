@@ -85,13 +85,15 @@ const (
 	defaultKeyType = "aes256-gcm96"
 	// renewFraction of the lease is when the token is renewed.
 	renewFraction = 2.0 / 3.0
-	// minRenewInterval keeps a very short lease from turning into a busy loop.
-	minRenewInterval = 10 * time.Second
 	// maxResponseBytes bounds a response body read.
 	maxResponseBytes = 1 << 20
 	// hiveIDFile is read for the default key name when HIVE_ID is unset.
 	hiveIDFile = "/data/hive-id"
 )
+
+// minRenewInterval keeps a very short lease from turning into a busy loop. A
+// var only so the renewal loop can be exercised by tests at speed.
+var minRenewInterval = 10 * time.Second
 
 // Config is everything New needs. Factory fills it from the environment.
 type Config struct {
@@ -119,8 +121,9 @@ type Provider struct {
 	token   string
 	version int // latest key version seen, for KeyID
 
-	// renewOnce is a seam: tests drive renewal by hand.
 	renewCancel context.CancelFunc
+	// onRenewed, when set, observes each renewal attempt's outcome (tests).
+	onRenewed func(leaseInfo, error)
 }
 
 // ErrNoHiveID is returned when neither HIVE_OPENBAO_KEY nor a hive id is
@@ -532,6 +535,9 @@ func (p *Provider) renewLoop(ctx context.Context, lease leaseInfo) {
 		case <-time.After(wait):
 		}
 		next, err := p.renewOnce(ctx)
+		if p.onRenewed != nil {
+			p.onRenewed(next, err)
+		}
 		if err != nil {
 			// Logged by the keystore's caller through the next failing
 			// Encrypt/Decrypt; here we keep trying on a short cadence so a

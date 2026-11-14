@@ -33,6 +33,10 @@ type fakeTransit struct {
 	encrypts  int
 	allowNew  bool // may encrypt/create auto-create keys
 	lookupTTL int
+	// Malformed-reply toggles, for the provider's decode guards.
+	emptyToken      bool // kubernetes login replies without client_token
+	emptyCiphertext bool // encrypt replies without ciphertext
+	badPlaintext    bool // decrypt replies with plaintext that is not base64
 	// hang, when non-nil, makes authenticated handlers block until the test
 	// closes it, so the provider's per-request timeout is what ends the
 	// client call (no fixed sleep, and the test releases the handler before
@@ -94,8 +98,12 @@ func (f *fakeTransit) handler() http.Handler {
 			return
 		}
 		f.logins++
+		tok := f.token
+		if f.emptyToken {
+			tok = ""
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"auth": map[string]any{
-			"client_token": f.token, "lease_duration": 60, "renewable": true}})
+			"client_token": tok, "lease_duration": 60, "renewable": true}})
 	})
 	mux.HandleFunc("/v1/auth/token/lookup-self", func(w http.ResponseWriter, r *http.Request) {
 		if !authed(w, r) {
@@ -162,6 +170,9 @@ func (f *fakeTransit) handler() http.Handler {
 		}
 		f.encrypts++
 		ct := "vault:v" + string(rune('0'+v)) + ":" + base64.StdEncoding.EncodeToString([]byte(name+"|"+body.AssociatedData+"|"+body.Plaintext))
+		if f.emptyCiphertext {
+			ct = ""
+		}
 		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"ciphertext": ct, "key_version": v}})
 	})
 	mux.HandleFunc("/v1/transit/decrypt/", func(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +200,13 @@ func (f *fakeTransit) handler() http.Handler {
 			fail(w, http.StatusBadRequest, "cipher: message authentication failed")
 			return
 		}
-		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"plaintext": fields[2]}})
+		pt := fields[2]
+		f.mu.Lock()
+		if f.badPlaintext {
+			pt = "not*base64"
+		}
+		f.mu.Unlock()
+		writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"plaintext": pt}})
 	})
 	return mux
 }
