@@ -2086,15 +2086,9 @@ func (s *HubServer) handleHeartbeat(w http.ResponseWriter, r *http.Request) {
 		ContributorCount:       clampInt(payload.Contributors.Registered, 0, 10_000),
 		ActiveContributors:     clampInt(payload.Contributors.Active, 0, 10_000),
 		Owner:                  sanitizeHeartbeatField(payload.Owner),
-		HiveType: func() string {
-			if payload.HiveType != "" {
-				return sanitizeHeartbeatField(payload.HiveType)
-			}
-			if strings.HasPrefix(payload.HiveID, "hosted-") || strings.HasPrefix(payload.HiveID, "saas-") {
-				return "hosted"
-			}
-			return "local"
-		}(),
+		// byo- hives are typed by the hub from the ID prefix, never from the
+		// payload (#18146); see hubAssignedHiveType.
+		HiveType:      hubAssignedHiveType(payload.HiveID, payload.HiveType),
 		IsPublic:      payload.IsPublic,
 		LastHeartbeat: time.Now().UTC().Format(time.RFC3339),
 		Health:        payload.Health,
