@@ -70,6 +70,11 @@ type knowledgeConnectorStatusRow struct {
 	Pages     int    `json:"pages"`
 	Facts     int    `json:"facts"`
 	LastError string `json:"last_error,omitempty"`
+	// Running and Progress carry the live sync state the Integrations card
+	// polls while a sync runs (phase, items done/total, current item,
+	// started_at). Progress is absent when the syncer is not running.
+	Running  bool                `json:"running"`
+	Progress *connector.Progress `json:"progress,omitempty"`
 }
 
 // context7APIKey resolves the Context7 key for c: the referenced auth source,
@@ -284,12 +289,13 @@ func (s *Server) handleKnowledgeConnectorsPut(w http.ResponseWriter, r *http.Req
 }
 
 // knowledgeConnectorPill maps a connector's runtime state to ok / syncing /
-// error / disabled, or "pending" before its first sync attempt.
+// error / disabled, or "pending" before its first sync attempt. "syncing"
+// follows the live progress phase as well as the running flag.
 func knowledgeConnectorPill(enabled bool, st *connector.Status) string {
 	switch {
 	case !enabled:
 		return "disabled"
-	case st != nil && st.Running:
+	case st != nil && st.Syncing():
 		return "syncing"
 	case st != nil && st.LastError != "":
 		return "error"
@@ -314,6 +320,9 @@ func (s *Server) knowledgeConnectorStatusRows() []knowledgeConnectorStatusRow {
 		if st, ok := byName[c.Name]; ok {
 			stp = &st
 			row.Pages, row.Facts, row.LastError = st.Pages, st.Facts, st.LastError
+			row.Running = st.Running
+			progress := st.Progress
+			row.Progress = &progress
 			if !st.LastSync.IsZero() {
 				row.LastSync = st.LastSync.UTC().Format(time.RFC3339)
 			}

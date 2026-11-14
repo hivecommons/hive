@@ -238,6 +238,9 @@
     async function fetchKnowledgeStats() {
       try {
         const [r, , , docsR] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory(), fetch('/api/knowledge/documents')]);
+        // Header "syncing: <name> n/m" indicator; the tick switches itself to
+        // a 2.5s poll while a connector sync runs and back off when it ends.
+        kbSyncProgressTick().catch(() => {});
         if (!r.ok) return;
         const prev = _kbCache;
         _kbCache = await r.json();
@@ -2372,6 +2375,9 @@
         _kcState = Object.assign(_kcState, { loaded: true, error: e.message });
       }
       kbRenderIntegrationsModal();
+      kbSyncIndicatorRender();
+      // A sync already running (interval or another owner) starts the fast poll.
+      if ((_kcState.rows || []).some(kcProgressActive) && !DASHBOARD_INTERVALS['kb-sync-progress']) dashboardSetInterval('kb-sync-progress', kbSyncProgressTick, KC_SYNC_POLL_MS);
     }
 
     function kbIntegrationTypes() {
@@ -2437,16 +2443,161 @@
       return '<div class="muted-xs" data-kb-not-loaded>' + escapeHtml(KC_NOT_LOADED_HINT) + ' <a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener">Docs ↗</a></div>';
     }
 
+    // ── Connector sync progress (live) ──
+    // Pure helpers over one status row (`/api/config/knowledge/connectors/status`
+    // `connectors[]`, whose `progress` block the syncer updates as it goes).
+    // Rendered on the Integrations card and the Knowledge header while a sync
+    // runs; covered by knowledge_sync_ui.test.js.
+    const KC_SYNC_POLL_MS = 2500;
+    const KC_PROGRESS_ACTIVE_PHASES = ['listing', 'fetching', 'writing'];
+    const KC_PROGRESS_TITLE_MAX = 60;
+    function kcProgressActive(r) {
+      if (!r) return false;
+      const p = r.progress || {};
+      return !!r.running || KC_PROGRESS_ACTIVE_PHASES.includes(p.phase);
+    }
+    function kcProgressStartMs(p) {
+      const t = p && p.started_at ? Date.parse(p.started_at) : NaN;
+      return isNaN(t) || t <= 0 ? 0 : t;
+    }
+    function kcElapsedText(startMs, nowMs) {
+      if (!startMs) return '';
+      const s = Math.max(0, Math.round(((nowMs || Date.now()) - startMs) / 1000));
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + 'm ' + (s % 60) + 's';
+      return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+    }
+    function kcProgressCount(p) {
+      const done = (p && p.items_done) || 0;
+      const total = (p && p.items_total) || 0;
+      if (total > 0) return done + ' of ' + total;
+      return done > 0 ? String(done) : '';
+    }
+    function kcProgressLabel(p) {
+      p = p || {};
+      const phase = KC_PROGRESS_ACTIVE_PHASES.includes(p.phase) ? p.phase : 'listing';
+      const count = kcProgressCount(p);
+      let text = phase + (count ? ' ' + count : (phase === 'listing' ? ' items…' : '…'));
+      const title = (p.current || '').trim();
+      if (title) text += ' · ' + (title.length > KC_PROGRESS_TITLE_MAX ? title.slice(0, KC_PROGRESS_TITLE_MAX) + '…' : title);
+      return text;
+    }
+    function kcProgressHtml(r, nowMs) {
+      if (!kcProgressActive(r)) return '';
+      const p = (r && r.progress) || {};
+      const total = p.items_total || 0;
+      const done = Math.min(p.items_done || 0, total);
+      const bar = total > 0
+        ? '<progress class="kc-progress-bar" max="' + total + '" value="' + done + '"></progress>'
+        : '<progress class="kc-progress-bar"></progress>';
+      const elapsed = kcElapsedText(kcProgressStartMs(p), nowMs);
+      return '<div class="kc-progress" data-kc-progress data-phase="' + escapeHtml(p.phase || 'listing') + '">' + bar
+        + '<div class="kc-progress-copy"><span class="kc-progress-label">' + escapeHtml(kcProgressLabel(p)) + '</span>'
+        + (elapsed ? '<span class="kc-progress-elapsed" title="elapsed">' + escapeHtml(elapsed) + '</span>' : '') + '</div></div>';
+    }
+    // Error of the sync that just failed, shown inline under the bar's place
+    // until the next sync starts (the row's last_error line covers older ones).
+    function kcProgressFailedHtml(r) {
+      const p = (r && r.progress) || {};
+      if (p.phase !== 'failed' || !p.last_error || (r && r.last_error === p.last_error)) return '';
+      return '<div class="kc-error" data-kc-progress-error title="' + escapeHtml(p.last_error) + '">sync failed: ' + escapeHtml(p.last_error.length > 140 ? p.last_error.slice(0, 140) + '…' : p.last_error) + '</div>';
+    }
+    // Compact header text: "syncing: plaud 12/200" (+N when several run).
+    function kcSyncIndicatorText(rows) {
+      const active = (rows || []).filter(kcProgressActive);
+      if (!active.length) return '';
+      const r = active[0];
+      const p = r.progress || {};
+      let text = 'syncing: ' + (r.name || '?');
+      if (p.items_total > 0) text += ' ' + (p.items_done || 0) + '/' + p.items_total;
+      else if (p.items_done > 0) text += ' ' + p.items_done;
+      if (active.length > 1) text += ' +' + (active.length - 1);
+      return text;
+    }
+    // ── Connector sync progress end ──
+
+    function kbSyncIndicatorRender() {
+      const el = document.getElementById('kb-sync-badge');
+      if (!el) return;
+      const text = kcSyncIndicatorText(_kcState.rows);
+      el.hidden = !text;
+      el.textContent = text;
+      el.title = text ? 'A knowledge connector is syncing; open Integrations for the progress bar.' : '';
+    }
+    // Re-render only the live parts of a connector row (pill, meta line,
+    // progress bar, Sync now button) so an owner's half-typed form survives.
+    function kbSyncProgressPatchRows() {
+      const byName = {};
+      (_kcState.rows || []).forEach(r => { byName[r.name] = r; });
+      document.querySelectorAll('[data-kb-connector-name]').forEach(el => {
+        const name = el.getAttribute('data-kb-connector-name');
+        const c = (_kcState.connectors || []).find(x => x.name === name);
+        if (!c) return;
+        const r = byName[name] || {};
+        const status = kbConnectorStatusOf(c, r);
+        const pill = el.querySelector('.kc-pill');
+        if (pill) { pill.textContent = status; pill.setAttribute('data-status', status); }
+        const meta = el.querySelector('[data-kc-meta]');
+        if (meta) meta.innerHTML = kbConnectorMetaHtml(c, r);
+        const slot = el.querySelector('[data-kc-progress-slot]');
+        if (slot) slot.innerHTML = kcProgressHtml(r) + kcProgressFailedHtml(r);
+        const btn = el.querySelector('[data-action="kbIntegrationSync"]');
+        if (btn && !kbConnectorNotLoaded(c)) btn.disabled = status === 'syncing';
+      });
+      document.querySelectorAll('tr[data-connector] [data-kc-progress-slot]').forEach(slot => {
+        const row = slot.closest('tr');
+        const name = row.getAttribute('data-connector');
+        const r = byName[name] || {};
+        slot.innerHTML = kcProgressHtml(r);
+        const pill = row.querySelector('.kc-pill');
+        if (pill && r.status) { pill.textContent = r.status; pill.setAttribute('data-status', r.status); }
+      });
+    }
+    // One poll of the connector status; keeps polling every KC_SYNC_POLL_MS
+    // while any connector is syncing and stops (with one full refresh of the
+    // open Integrations modal / Settings table) when the last one finishes.
+    async function kbSyncProgressTick() {
+      let st;
+      try {
+        const r = await fetch('/api/config/knowledge/connectors/status');
+        if (!r.ok) return;
+        st = await r.json().catch(() => null);
+      } catch (e) { return; }
+      if (!st || !Array.isArray(st.connectors)) return;
+      _kcState.rows = st.connectors;
+      if (st.publish) _kcState.publish = st.publish;
+      if (typeof st.runtime === 'boolean') _kcState.runtime = st.runtime;
+      kbSyncIndicatorRender();
+      kbSyncProgressPatchRows();
+      const active = _kcState.rows.some(kcProgressActive);
+      const polling = !!DASHBOARD_INTERVALS['kb-sync-progress'];
+      if (active && !polling) dashboardSetInterval('kb-sync-progress', kbSyncProgressTick, KC_SYNC_POLL_MS);
+      if (!active && polling) {
+        dashboardClearInterval('kb-sync-progress');
+        if (document.getElementById('kb-integrations-content')) kbLoadIntegrationsModal(_kbIntegrationSelected);
+        if (document.getElementById('kc-connectors-root') && typeof renderKnowledgeConnectorsInto === 'function') renderKnowledgeConnectorsInto();
+      }
+    }
+
+    function kbConnectorStatusOf(c, r) {
+      return kbConnectorNotLoaded(c) ? KC_STATUS_NOT_LOADED : (r.status || (c.enabled ? 'pending' : 'disabled'));
+    }
+    function kbConnectorMetaHtml(c, r) {
+      const publish = _kcState.publish && _kcState.publish.connector === c.name ? ' · publish ' + (_kcState.publish.running ? 'syncing' : _kcState.publish.last_error ? 'error' : _kcState.publish.last_success ? 'ok' : 'pending') : '';
+      return escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish);
+    }
+
     function kbConnectorRow(type, c, owner) {
       const byName = {};
       (_kcState.rows || []).forEach(r => { byName[r.name] = r; });
       const r = byName[c.name] || {};
       const notLoaded = kbConnectorNotLoaded(c);
-      const status = notLoaded ? KC_STATUS_NOT_LOADED : (r.status || (c.enabled ? 'pending' : 'disabled'));
-      const publish = _kcState.publish && _kcState.publish.connector === c.name ? ' · publish ' + (_kcState.publish.running ? 'syncing' : _kcState.publish.last_error ? 'error' : _kcState.publish.last_success ? 'ok' : 'pending') : '';
+      const status = kbConnectorStatusOf(c, r);
       let html = '<div class="card-inset row-between mb-3" data-kb-connector-name="' + escapeHtml(c.name) + '"><div class="kb-integration-row-main">';
       html += '<div class="kb-integration-connector-title"><code>' + escapeHtml(c.name) + '</code> <span class="kc-pill" data-status="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span></div>';
-      html += '<div class="muted-xs">' + escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish) + '</div>';
+      html += '<div class="muted-xs" data-kc-meta>' + kbConnectorMetaHtml(c, r) + '</div>';
+      html += '<div data-kc-progress-slot>' + kcProgressHtml(r) + kcProgressFailedHtml(r) + '</div>';
       if (r.last_error) html += '<div class="kc-error" title="' + escapeHtml(r.last_error) + '">' + escapeHtml(r.last_error.length > 140 ? r.last_error.slice(0, 140) + '…' : r.last_error) + '</div>';
       if (notLoaded) html += kbConnectorNotLoadedHtml();
       else if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);
