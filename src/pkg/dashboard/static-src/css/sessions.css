@@ -37,8 +37,11 @@
     .sessions-menu-items button { background: none; border: 0; color: var(--fg); font: inherit; font-size: var(--fs-sm); text-align: left; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm); cursor: pointer; }
     .sessions-menu-items button:hover { background: color-mix(in srgb, var(--border) 30%, transparent); }
     .sessions-menu-items button.danger { color: var(--red); }
+    /* The pane and its iframe share the dashboard's terminal surface token, so
+       nothing black frames the terminal while ttyd loads; once loaded, the
+       proxied document paints itself from the same token (terminal_theme.go). */
     .sessions-terminal { height: 65vh; min-height: 20em; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; background: var(--terminal-bg); }
-    .sessions-frame { width: 100%; height: 100%; border: 0; display: block; }
+    .sessions-frame { width: 100%; height: 100%; border: 0; display: block; background: var(--terminal-bg); }
     .sessions-log { height: 65vh; min-height: 20em; overflow: auto; margin: 0; padding: var(--sp-4); background: var(--terminal-bg); color: var(--terminal-fg, var(--fg)); border: 1px solid var(--border); border-radius: var(--r); font-family: var(--font-mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
     .sessions-input { display: grid; gap: var(--sp-3); }
     .sessions-input-label { font-size: var(--fs-xs); color: var(--muted); }

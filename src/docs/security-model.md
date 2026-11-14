@@ -353,7 +353,8 @@ against `X-Hub-Signature-256`. Terminal access uses short-lived signed
 assertions. Systemd units refuse to run code from a directory an
 unprivileged user could have created.
 
-**Sessions.** With `dashboard.sessions.enabled` (default off) the dashboard
+**Sessions.** With `dashboard.sessions.enabled` (default off; Settings →
+Dashboard → Sessions, overridden by `HIVE_SESSIONS_ENABLED`) the dashboard
 offers interactive CLI terminals (`/api/sessions`, [API
 reference](api-reference/sessions.md)). A session is a plain vendor CLI, never
 a shell, launched with none of the permission-bypass flags agents run with, so

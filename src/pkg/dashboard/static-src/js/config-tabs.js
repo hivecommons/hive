@@ -866,6 +866,15 @@
       markDirty('dashboard', 'issue_bands', bands);
     }
 
+    // dashboard.sessions.* is saved as one nested block (like issue_bands), so a
+    // toggle or a limit edit stages the whole block with the other fields intact.
+    function markDashboardSessions(key, value) {
+      const d = _configState.data.dashboard = _configState.data.dashboard || {};
+      const sessions = d.sessions = Object.assign({}, d.sessions || {});
+      sessions[key] = key === 'enabled' ? !!value : Math.max(0, parseInt(value || '0', 10) || 0);
+      markDirty('dashboard', 'sessions', sessions);
+    }
+
     function markBackendsPolicy(key, value) {
       _configState.data.backends = _configState.data.backends || {};
       _configState.data.backends[key] = splitConfigLines(value);
@@ -876,6 +885,19 @@
       _configState.data.classifier = _configState.data.classifier || {};
       _configState.data.classifier[key] = splitConfigLines(value);
       markDirty('classifier', key, _configState.data.classifier[key]);
+    }
+
+    function renderGovDashboardSessions(dash) {
+      const sessions = dash.sessions || {};
+      const envNote = sessions.env_override ? ' <span class="text-muted">Overridden by <code>HIVE_SESSIONS_ENABLED</code> on this hive; the switch shows the saved value.</span>' : '';
+      const limit = (key, label, help) =>
+        '<div class="config-field"><label>' + label + ' ' + yamlHint('dashboard.sessions.' + key) + '</label><input type="number" min="0" step="1" value="' + esc(String(sessions[key] || 0)) + '" data-change-action="markDashboardSessions" data-arg0="' + key + '" data-arg-types="s,v"><div class="config-help">' + help + '</div></div>';
+      return '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.enabled ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="enabled"></div><span class="config-toggle-label">Sessions ' + yamlHint('dashboard.sessions.enabled') + ' ' + settingHelpMark('settings', 'dashboard', 'Sessions', 'Turns on the Sessions section: named, shared CLI-agent terminals inside the dashboard. It replaces the Inception section while on. Off by default. The HIVE_SESSIONS_ENABLED environment variable, when set, overrides this switch.') + envNote + '</span></div>' +
+        '<div class="config-field-row">' +
+          limit('max_sessions', 'Max running sessions', 'Live sessions per hive. 0 uses the default (12); HIVE_SESSIONS_MAX overrides.') +
+          limit('max_per_user', 'Max per user', 'Live sessions one person may create. 0 uses the default (4); HIVE_SESSIONS_MAX_PER_USER overrides.') +
+          limit('idle_ttl_hours', 'Idle close (hours)', 'A session with no input and nobody attached ends after this long. 0 uses the default (72); HIVE_SESSIONS_IDLE_TTL_HOURS overrides.') +
+        '</div>';
     }
 
     function renderGovDashboard(dash) {
@@ -891,6 +913,7 @@
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.experiment_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="experiment_lab"></div><span class="config-toggle-label">Experiment Lab ' + yamlHint('dashboard.experiment_lab') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.subscription_gauge_header ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="subscription_gauge_header"></div><span class="config-toggle-label">Also show the usage gauge in the header ' + yamlHint('dashboard.subscription_gauge_header') + ' ' + settingHelpMark('settings', 'dashboard', 'Usage gauge in the header', 'The Claude usage fuel gauge is on the Overview by default for the owner. This also shows it as a small chip in the header on every page. It reads the usage measurements hive already makes, so it adds no calls to Claude. Only the hive owner sees it. This is the Claude plan this hive is signed in with, not the hive token budget. Off by default.') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.hub_proxied ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="hub_proxied"></div><span class="config-toggle-label">Hub-proxied auth ' + yamlHint('dashboard.hub_proxied') + ' <span class="text-muted">Managed by hub on hosted hives.</span></span></div>' +
+        renderGovDashboardSessions(dash) +
         '<div class="config-field"><label>Dashboard auth token ' + yamlHint('dashboard.auth_token') + '</label><input type="password" autocomplete="new-password" placeholder="' + esc(authTokenText) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="auth_token" data-arg-types="s,s,v"><div class="config-help">Write-only; the current token is never echoed.</div></div>' +
         '<h3>Access allowlist</h3>' +
         '<div class="config-field"><label>Authorized users ' + yamlHint('dashboard.authorized_users[]') + '</label><textarea rows="5" data-change-action="markDashboardList" data-arg0="authorized_users" data-arg-types="s,v">' + esc((dash.authorized_users || []).join('\n')) + '</textarea><div class="config-help">One user per line; append <code>:read</code>, <code>:read-write</code>, or <code>:owner</code> for explicit roles.</div></div>' +
