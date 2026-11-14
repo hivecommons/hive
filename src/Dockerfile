@@ -105,13 +105,17 @@ ARG GOVULNCHECK_VERSION=1.1.4
 ARG GOSEC_VERSION=2.29.0
 ARG TARGETOS
 ARG TARGETARCH
+# One `go install` per tool: with pkg@version arguments go requires every
+# argument to come from the same module at the same version.
 RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
-    for i in 1 2 3; do \
-      GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 \
-        go install "golang.org/x/vuln/cmd/govulncheck@v${GOVULNCHECK_VERSION}" \
-                   "github.com/securego/gosec/v2/cmd/gosec@v${GOSEC_VERSION}" && break; \
-      [ "$i" = 3 ] && exit 1; sleep $((i * 2)); \
+    for pkg in "golang.org/x/vuln/cmd/govulncheck@v${GOVULNCHECK_VERSION}" \
+               "github.com/securego/gosec/v2/cmd/gosec@v${GOSEC_VERSION}"; do \
+      for i in 1 2 3; do \
+        GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 \
+          go install "$pkg" && break; \
+        [ "$i" = 3 ] && exit 1; sleep $((i * 2)); \
+      done; \
     done && \
     mkdir -p /out && \
     for b in govulncheck gosec; do \
