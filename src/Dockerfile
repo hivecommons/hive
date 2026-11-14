@@ -86,6 +86,40 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /crux ./cmd/crux
 
 
+# --- Go security scanners for the sec-check lane (#18192) ---
+# The sec-check policy runs govulncheck and gosec on Go targets; until this
+# stage existed the policy named scanners the image never shipped. Pins match
+# .github/workflows/go-security-analysis.yml so an agent in the pod and CI
+# reach the same verdict on the same tree — bump both places together. The
+# gosec floor is load-bearing (see that workflow): v2.21.4 pins a
+# golang.org/x/tools that does not compile under current Go.
+#
+# Cross-compiled on BUILDPLATFORM like /hive above so the arm64 image does not
+# compile two tool trees under QEMU. Only the two static binaries leave this
+# stage: the module and build caches are mounts, never image layers.
+# `go install pkg@version` writes to $GOPATH/bin/${GOOS}_${GOARCH}/ when
+# cross-compiling and to $GOPATH/bin/ when the target equals the host, and it
+# refuses GOBIN for cross builds, so the copy below checks both locations.
+FROM --platform=$BUILDPLATFORM ${BASE_REGISTRY}/golang:1.27-alpine@sha256:f2c872bcee949b7be9c490efd02b48a8a2fbf947cdf533f1c58525ec9d8170fd AS go-sec-tools
+ARG GOVULNCHECK_VERSION=1.1.4
+ARG GOSEC_VERSION=2.29.0
+ARG TARGETOS
+ARG TARGETARCH
+RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
+    --mount=type=cache,id=hive-go-mod,target=/go/pkg/mod \
+    for i in 1 2 3; do \
+      GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 \
+        go install "golang.org/x/vuln/cmd/govulncheck@v${GOVULNCHECK_VERSION}" \
+                   "github.com/securego/gosec/v2/cmd/gosec@v${GOSEC_VERSION}" && break; \
+      [ "$i" = 3 ] && exit 1; sleep $((i * 2)); \
+    done && \
+    mkdir -p /out && \
+    for b in govulncheck gosec; do \
+      if [ -x "/go/bin/${TARGETOS}_${TARGETARCH}/$b" ]; then cp "/go/bin/${TARGETOS}_${TARGETARCH}/$b" "/out/$b"; \
+      else cp "/go/bin/$b" "/out/$b"; fi; \
+    done
+
+
 # --- tmux from source (cached until TMUX_VERSION changes) ---
 # Pinned to the node:26-slim multi-arch index digest to prevent floating-tag
 # supply-chain risk. Refresh deliberately (same technique as golang above,
@@ -598,6 +632,12 @@ COPY --from=builder /hive-backup /usr/local/bin/hive-backup
 # set inside the container without the dashboard.
 COPY --from=builder /crux /usr/local/bin/crux
 
+# Go security scanners for the sec-check lane (#18192); built in the
+# go-sec-tools stage above. Both call `go list` through the go-wrapper.sh shim
+# installed below, which passes every subcommand except test/vet through.
+COPY --from=go-sec-tools /out/govulncheck /usr/local/bin/govulncheck
+COPY --from=go-sec-tools /out/gosec /usr/local/bin/gosec
+
 # #5646 — hivectl travels in the image as CARGO, not as part of the runtime.
 # It is the host-side client of the dashboard API, and the whole premise of
 # that client (see #4907) is that it is not a second implementation of Hive
@@ -632,11 +672,13 @@ COPY --from=builder /hivectl /usr/local/share/hive/hivectl
 # change (which stops the OCI-index form that enables the metacopy layout in the
 # first place) and this rewrite are independent, belt-and-suspenders defenses.
 RUN for b in /usr/local/bin/hive /usr/local/bin/bd /usr/local/bin/hive-backup \
-             /usr/local/bin/crux /usr/local/share/hive/hivectl; do \
+             /usr/local/bin/crux /usr/local/share/hive/hivectl \
+             /usr/local/bin/govulncheck /usr/local/bin/gosec; do \
       cp --remove-destination "$b" "$b.fresh" && \
       mv -f "$b.fresh" "$b" && \
       chmod 0755 "$b"; \
-    done
+    done && \
+    /usr/local/bin/gosec -version >/dev/null
 
 COPY src/proxy/ /opt/hive/proxy/
 
