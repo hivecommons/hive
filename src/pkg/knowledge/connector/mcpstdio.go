@@ -269,7 +269,7 @@ func (b *lockedBuffer) Tail(n int) string {
 // mcpChildEnvNames are the exact environment variables a stdio MCP server
 // inherits from the hive process; mcpChildEnvPrefixes extend the set by
 // prefix. The server is third-party code fetched at run time (the Plaud
-// default is `npx -y @plaud-ai/mcp@latest`), so it gets what a Node process
+// default is `npx -y @plaud-ai/mcp@<pinned version>`), so it gets what a Node process
 // needs to start and reach the registry through the egress proxy — never the
 // hub-injected credentials the hive process carries (DASHBOARD_AUTH_TOKEN,
 // HIVE_TERMINAL_KEY, HIVE_UPSTREAM_PROXY_URL, provider API keys, …), which
