@@ -110,7 +110,7 @@ All four are listed with the other hub variables in [env-vars.md](env-vars.md).
 #### What a registration does
 
 1. The user is signed in through the hub's GitHub OAuth, so the hub holds their encrypted GitHub token. Without a stored token or a GitHub login the request is refused.
-2. The user supplies a short name, an org, up to 20 `owner/name` repos and an `https` dashboard URL. The hub builds the ID as `byo-<github login>-<name>`. Nothing the user sends can produce an ID outside the `byo-` prefix, and a name that would borrow another namespace (such as `hosted-`) is refused.
+2. The user supplies a short name, an org, up to 20 `owner/name` repos and an `https` dashboard URL. The hub builds the ID as `byo-<github login>--<name>`; the double hyphen keeps IDs unambiguous, since logins may contain `-` but never `--`, and a name may not start with `-`. Nothing the user sends can produce an ID outside the `byo-` prefix, and a name that would borrow another namespace (such as `hosted-`) is refused.
 3. For every repo the hub calls GitHub with the user's own token and requires `permissions.admin`. `maintain` and `write` are not enough. One failing repo refuses the whole request with `403` naming that repo, and nothing is stored.
 4. The hub checks the per-user cap and that the ID is not already taken, in the registry or by a hub-provisioned hive.
 5. The hub mints a random heartbeat key, stores only its hash in `/data/hub-selfservice.json`, and returns the raw key in the `201` response together with Compose, Podman and Kubernetes snippets. The raw key appears nowhere else: not in the list route, not in a log line, not on disk.

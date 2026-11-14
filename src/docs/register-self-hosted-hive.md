@@ -14,7 +14,7 @@ A self-hosted hive is complete on its own. Listing it on a hub is optional and g
 
 1. Sign in to the hub with GitHub and open **My Hives**.
 2. Click **Register your own hive**.
-3. Fill in a short name, the GitHub org, the repos (as `owner/name`), and the `https` URL of your hive's dashboard. Your hive ID becomes `byo-<your login>-<name>`.
+3. Fill in a short name, the GitHub org, the repos (as `owner/name`), and the `https` URL of your hive's dashboard. Your hive ID becomes `byo-<your login>--<name>`, with two hyphens between login and name.
 4. Submit. The hub checks admin permission on each repo. One failing repo refuses the whole request and stores nothing.
 5. **Copy the key now.** The dialog shows `HIVE_HEARTBEAT_KEY` exactly once and the hub keeps only a hash. Closing the dialog is final. If you miss it, rotate the key (below) rather than registering again.
 6. Start the spoke with one of the snippets below, substituting the values from the dialog.
@@ -32,7 +32,7 @@ services:
     image: ghcr.io/hivecommons/hive:stable
     environment:
       HIVE_HUB_URL: "https://hive.example.com"
-      HIVE_ID: "byo-yourlogin-yourname"
+      HIVE_ID: "byo-yourlogin--yourname"
       HIVE_HEARTBEAT_KEY: "<the key shown once>"
 ```
 
@@ -41,7 +41,7 @@ Podman:
 ```sh
 podman run -d --name hive \
   -e HIVE_HUB_URL="https://hive.example.com" \
-  -e HIVE_ID="byo-yourlogin-yourname" \
+  -e HIVE_ID="byo-yourlogin--yourname" \
   -e HIVE_HEARTBEAT_KEY="<the key shown once>" \
   ghcr.io/hivecommons/hive:stable
 ```
@@ -56,7 +56,7 @@ metadata:
 type: Opaque
 stringData:
   HIVE_HUB_URL: "https://hive.example.com"
-  HIVE_ID: "byo-yourlogin-yourname"
+  HIVE_ID: "byo-yourlogin--yourname"
   HIVE_HEARTBEAT_KEY: "<the key shown once>"
 ```
 

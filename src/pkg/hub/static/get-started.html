@@ -462,7 +462,7 @@ open http://localhost:3001</code></pre>
         <li>Start the spoke. After its first accepted heartbeat it appears in Active Hives with the <strong>self-hosted</strong> type and in your <strong>Self-hosted hives</strong> list.</li>
       </ol>
       <p>Lost the key? Use <strong>Rotate key</strong> in Self-hosted hives; the old key keeps working for ten minutes so you can update a running spoke without a gap. <strong>Remove</strong> revokes the key and delists the hive at once. A hive that sends no accepted heartbeat for 24 hours is delisted automatically; register it again when it is back.</p>
-      <p>Your hive ID is <code>byo-&lt;your login&gt;-&lt;name&gt;</code>. The hub lists it as directory metadata only: it never sends your hive credentials, upgrades or management actions, and you never receive <code>HIVE_HUB_SECRET</code>. The key you hold authenticates that one hive ID and nothing else.</p>
+      <p>Your hive ID is <code>byo-&lt;your login&gt;--&lt;name&gt;</code> (two hyphens between login and name, since logins may contain a single hyphen). The hub lists it as directory metadata only: it never sends your hive credentials, upgrades or management actions, and you never receive <code>HIVE_HUB_SECRET</code>. The key you hold authenticates that one hive ID and nothing else.</p>
       <p style="margin-bottom:var(--sp-0)">A hub operator turns this on with <code>HIVE_HUB_SELFSERVICE_REGISTRATION</code>. On a hub where it is off, the Register your own hive button brings you here instead of opening the form; ask that hub's operator to enable it. If you would rather not run the infrastructure at all, use the hosted-hive wizard at the top of this page and the hub will provision and list one for you.</p>
     </div>
   </section>
