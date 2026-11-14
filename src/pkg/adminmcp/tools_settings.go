@@ -61,6 +61,7 @@ var settingsSections = []SettingsSection{
 	{"backends", "/api/config/backends", "Agent backends and their models."},
 	{"variables", "/api/config/variables", "Variable definitions (names, types and scopes)."},
 	{"write_surface", "/api/config/write-surface", "Write-surface allowlist."},
+	{"reference_repos", "/api/config/reference-repos", "Reference repositories (project.reference_repos): repos the hive may study without managing, each with its write opt-in and token file path (never the token); derived entries name their request issue and credential state."},
 	{"stat_sources", "/api/config/stat-sources", "Stat sources."},
 	{"knowledge_pipeline", "/api/config/knowledge/pipeline", "Knowledge pipeline: engine, curator, primer, code maps and bead synthesizer."},
 	{"knowledge_connectors", "/api/config/knowledge/connectors", "Knowledge connectors (credentials are named, never returned)."},

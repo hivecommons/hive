@@ -136,6 +136,7 @@ var heartbeatMirrorFieldPolicy = map[string]mirrorFieldPolicy{
 	"ACMMLevel":              mirrorFieldMirrored,
 	"Agents":                 mirrorFieldMirrored,
 	"Governor":               mirrorFieldMirrored,
+	"Runs":                   mirrorFieldMirrored,
 	"Tokens24h":              mirrorFieldMirrored,
 	"Contributors":           mirrorFieldMirrored,
 	"Leaderboard":            mirrorFieldMirrored,
@@ -185,6 +186,7 @@ var heartbeatMirrorFieldPolicy = map[string]mirrorFieldPolicy{
 	"UpgradeError":          mirrorFieldMirrored,
 	"UpgradePendingRestart": mirrorFieldMirrored,
 	"UpgradeDrain":          mirrorFieldMirrored,
+	"UpgradeDrainUntil":     mirrorFieldMirrored,
 	// Fleet contribution, repo activity and quadrant signals.
 	"PRsMerged90d":                 mirrorFieldMirrored,
 	"PRsRejected90d":               mirrorFieldMirrored,
