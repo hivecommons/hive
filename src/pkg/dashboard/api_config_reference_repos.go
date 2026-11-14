@@ -83,10 +83,23 @@ func (s *Server) handleReferenceReposPut(w http.ResponseWriter, r *http.Request)
 	}
 
 	// --- apply ---
-	previous := len(cfg.Project.ReferenceRepos)
+	prevRepos := cfg.Project.ReferenceRepos
+	previous := len(prevRepos)
 	cfg.Project.ReferenceRepos = next
-	if err := s.saveConfig(); err != nil && s.logger != nil {
-		s.logger.Error("failed to persist config after reference repos update", "error", err)
+	if err := s.saveConfig(); err != nil {
+		// The proxy already enforces `next`; roll config and proxy back so
+		// the enforced list never diverges from the persisted one.
+		cfg.Project.ReferenceRepos = prevRepos
+		if s.deps.ApplyReferenceRepos != nil {
+			if rerr := s.deps.ApplyReferenceRepos(r.Context(), prevRepos); rerr != nil && s.logger != nil {
+				s.logger.Error("failed to restore proxy reference repos after persist failure", "error", rerr)
+			}
+		}
+		if s.logger != nil {
+			s.logger.Error("failed to persist config after reference repos update", "error", err)
+		}
+		jsonError(w, "failed to save config; reference repos unchanged", http.StatusInternalServerError)
+		return
 	}
 	writable := 0
 	for _, rr := range next {
