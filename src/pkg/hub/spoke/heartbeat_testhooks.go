@@ -42,4 +42,6 @@ func ResetHeartbeatStateForTest() {
 	heartbeatIdentity.Lock()
 	heartbeatIdentity.payload = nil
 	heartbeatIdentity.Unlock()
+	// The report-only mirror's bookkeeping (#18148) is process-global too.
+	resetMirrorStateForTest()
 }

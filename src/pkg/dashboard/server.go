@@ -3704,6 +3704,13 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 			hbCheck["last_attempt"] = lastAttempt.UTC().Format(time.RFC3339)
 			hbCheck["last_attempt_age"] = time.Since(lastAttempt).Round(time.Second).String()
 		}
+		// Report-only mirror to a second hub (#18148): visibility only. A
+		// failing mirror never degrades this check, because the mirror has no
+		// role in liveness or in managing the hive; the owner reads it here to
+		// confirm the mirror is receiving beats (host only, never the key).
+		if mirror, ok := spoke.MirrorHubStatusSnapshot(); ok {
+			hbCheck["mirror"] = mirror
+		}
 		if hbCheck["status"] == "warn" && overall == "ok" {
 			overall = "degraded"
 		}
