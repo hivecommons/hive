@@ -46586,8 +46586,12 @@ function burnAreaChart() {
         _kcState = Object.assign(_kcState, { loaded: true, error: e.message });
       }
       kbRenderIntegrationsModal();
+      kbSyncProgressArm();
+    }
+    // After a status load: refresh the header indicator and, when a sync is
+    // already running (interval or another owner), start the fast poll.
+    function kbSyncProgressArm() {
       kbSyncIndicatorRender();
-      // A sync already running (interval or another owner) starts the fast poll.
       if ((_kcState.rows || []).some(kcProgressActive) && !DASHBOARD_INTERVALS['kb-sync-progress']) dashboardSetInterval('kb-sync-progress', kbSyncProgressTick, KC_SYNC_POLL_MS);
     }
 
