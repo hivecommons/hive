@@ -15,11 +15,22 @@ import (
 	"github.com/hivecommons/hive/pkg/workflowmodel/bundle"
 )
 
-const mktTechDocsKey = "cncf-techdocs-assessment@curated-2026.11.1"
+// The embedded cncf-techdocs-assessment versions. Curated files are never
+// edited in place, so each version is its own file and the catalogue keeps
+// both (hivecommons/hive#18139 step 4 added 2026.11.2).
+const (
+	mktTechDocsName       = "cncf-techdocs-assessment"
+	mktTechDocsVersion1   = "curated-2026.11.1"
+	mktTechDocsVersion2   = "curated-2026.11.2"
+	mktTechDocsKey        = mktTechDocsName + "@" + mktTechDocsVersion1
+	mktTechDocsKeyLatest  = mktTechDocsName + "@" + mktTechDocsVersion2
+	mktTechDocsVersionCnt = 2
+)
 
 // TestMarketplaceCuratedSeedPublishesAndIsIdempotent: the embedded curated
 // models land at tier curated on the first seed; a second seed publishes
-// nothing and leaves exactly one version per model.
+// nothing and leaves exactly the embedded versions per model, the newest
+// last in the index.
 func TestMarketplaceCuratedSeedPublishesAndIsIdempotent(t *testing.T) {
 	s := marketplaceTestHub(t, nil)
 	st := s.marketplace()
@@ -29,10 +40,17 @@ func TestMarketplaceCuratedSeedPublishesAndIsIdempotent(t *testing.T) {
 	if len(errs) != 0 {
 		t.Fatalf("seed errors: %v", errs)
 	}
-	if len(published) != mktCuratedCount(t) || published[0] != mktTechDocsKey {
+	if len(published) != mktCuratedCount(t) {
 		t.Fatalf("published = %v", published)
 	}
-	raw, err := st.Get("cncf-techdocs-assessment", "curated-2026.11.1")
+	seeded := map[string]bool{}
+	for _, k := range published {
+		seeded[k] = true
+	}
+	if !seeded[mktTechDocsKey] || !seeded[mktTechDocsKeyLatest] {
+		t.Fatalf("published = %v; want both %s and %s", published, mktTechDocsKey, mktTechDocsKeyLatest)
+	}
+	raw, err := st.Get(mktTechDocsName, mktTechDocsVersion1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,21 +64,40 @@ func TestMarketplaceCuratedSeedPublishesAndIsIdempotent(t *testing.T) {
 	if b.Model.Spec.Scope.Repository != "cncf/techdocs" {
 		t.Fatalf("scope: %+v", b.Model.Spec.Scope)
 	}
+	if b.Model.Spec.Intake.DerivesReferenceRepos() {
+		t.Fatalf("%s must not declare intake fields: %+v", mktTechDocsKey, b.Model.Spec.Intake)
+	}
+	raw, err = st.Get(mktTechDocsName, mktTechDocsVersion2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	latest, err := bundle.Decode(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if latest.Tier != bundle.TierCurated || !latest.Model.Spec.Intake.DerivesReferenceRepos() {
+		t.Fatalf("%s: tier=%s intake=%+v", mktTechDocsKeyLatest, latest.Tier, latest.Model.Spec.Intake)
+	}
 
 	published, errs = s.seedCuratedModels(st, now.Add(time.Hour))
 	if len(published) != 0 || len(errs) != 0 {
 		t.Fatalf("second seed: published=%v errs=%v", published, errs)
 	}
-	vs, err := st.Versions("cncf-techdocs-assessment")
-	if err != nil || len(vs) != 1 {
+	vs, err := st.Versions(mktTechDocsName)
+	if err != nil || len(vs) != mktTechDocsVersionCnt {
 		t.Fatalf("versions: %v %d", err, len(vs))
+	}
+	// The listing exposes both versions, oldest first, so the last entry is
+	// the one a fresh import picks up.
+	if vs[0].Version != mktTechDocsVersion1 || vs[len(vs)-1].Version != mktTechDocsVersion2 {
+		t.Fatalf("versions order: %+v", vs)
 	}
 	idx, _, _, err := st.Index()
 	if err != nil {
 		t.Fatal(err)
 	}
 	for _, e := range idx.Entries {
-		if e.Name == "cncf-techdocs-assessment" && (e.Tier != bundle.TierCurated || e.NewerIngestAvailable) {
+		if e.Name == mktTechDocsName && (e.Tier != bundle.TierCurated || e.NewerIngestAvailable) {
 			t.Fatalf("index entry: %+v", e)
 		}
 	}
@@ -147,9 +184,9 @@ func TestMarketplaceStartRefreshSeedsCurated(t *testing.T) {
 	done := make(chan struct{})
 	go func() { s.StartMarketplaceRefresh(ctx); close(done) }()
 	testutil.Eventually(t, 5*time.Second, func() bool {
-		vs, err := s.marketplace().Versions("cncf-techdocs-assessment")
-		return err == nil && len(vs) == 1
-	}, "curated model not seeded at startup")
+		vs, err := s.marketplace().Versions(mktTechDocsName)
+		return err == nil && len(vs) == mktTechDocsVersionCnt
+	}, "curated models not seeded at startup")
 	cancel()
 	select {
 	case <-done:

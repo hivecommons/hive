@@ -1,8 +1,8 @@
 # CNCF TechDocs AI-assisted assessment — curated workflow model
 
-`cncf-techdocs-assessment@curated-2026.11.1` is the first curated model in the hub
-marketplace (https://hive.hivecommons.dev → Settings → Workflows → Marketplace on any
-hive). It encodes the CNCF TechDocs team's AI-assisted documentation assessment process
+`cncf-techdocs-assessment@curated-2026.11.2` is the current version of the first curated
+model in the hub marketplace (https://hive.hivecommons.dev → Settings → Workflows →
+Marketplace on any hive); `curated-2026.11.1` stays in the catalogue unchanged. It encodes the CNCF TechDocs team's AI-assisted documentation assessment process
 so a hive bound to `cncf/techdocs` runs intake, drafting, verification, stakeholder review
 and approval as a visible lifecycle, with every agent action followed by a human gate.
 
@@ -18,10 +18,12 @@ annotations and in each element's `citations`):
   `pkg/workflowmodel/ingest/testdata/techdocs/`.
 
 The model's scope is `github.com cncf/techdocs` — the upstream repository where the
-process runs; the fork above is where the spec was written. Model file:
-`pkg/hub/marketplace/curated/cncf-techdocs-assessment.yaml`
+process runs; the fork above is where the spec was written. Model files:
+`pkg/hub/marketplace/curated/cncf-techdocs-assessment-2026.11.2.yaml` (current) and
+`pkg/hub/marketplace/curated/cncf-techdocs-assessment.yaml` (`curated-2026.11.1`)
 (`apiVersion: workflow.hivecommons.dev/v1alpha1`, `derivation.mode: rules`,
-`meta.provenance: curated`). The same repository is also in the ingest corpus
+`meta.provenance: curated`). Curated files are never edited in place: a change is a new
+file with a new `meta.version`, and the catalogue keeps every version. The same repository is also in the ingest corpus
 (`pkg/workflowmodel/ingest/corpus/extra.json`), so an `ingested-unreviewed` version built
 from the pipeline files alone sits next to this one in the catalogue.
 
@@ -131,6 +133,30 @@ moving-levels → assessment metadata; website/docs/repo/other-scope/out-of-scop
 domains → the agent's egress allowlist; contacts → the frozen stakeholder set (validated
 at `/accept`); tooling/context → drafter input; the HC-6 disclosure acknowledgement is
 required.
+
+#### Reference repos from the request
+
+`curated-2026.11.2` adds a `spec.intake` block
+([hivecommons/hive#18139](https://github.com/hivecommons/hive/issues/18139)):
+
+```yaml
+intake:
+  referenceRepoFields:
+    - "Website or documentation repository"
+    - "Other repositories or sites in scope"
+  outOfScopeFields:
+    - "Out of scope"
+```
+
+The entries are the rendered `### <label>` headings of `assessment-request.yml` as they
+appear in a request issue's body, not the form's field ids. A hive bound to this version
+derives one write-tier (`issues+prs`) `project.reference_repos` entry per repository named
+under a `referenceRepoFields` heading and not under an `outOfScopeFields` heading, once a
+maintainer with write access to `cncf/techdocs` applies `triage/accepted` to the request.
+The derived entries carry the request as provenance (`cncf/techdocs#395` style), are
+rebuilt on every config load and never written to the overlay or runtime config, and
+disappear when the issue closes or the label is removed. `curated-2026.11.1` is unchanged
+and declares no intake fields, so a hive that stays bound to it derives nothing.
 
 ## Not representable today
 
