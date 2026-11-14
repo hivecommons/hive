@@ -453,7 +453,17 @@ docker compose -f src/docker-compose.yaml up -d
 # Open the dashboard
 open http://localhost:3001</code></pre>
       <p>A self-hosted hive is fully functional on its own &mdash; it does not need to be attached to hive.hivecommons.dev.</p>
-      <p style="margin-bottom:var(--sp-0)">Listing a hive you host yourself in the <a class="text-info" href="/#hives">Active Hives</a> table is a separate, operator-mediated step. Setting <code>HIVE_HUB_URL</code> on its own is <strong>not</strong> sufficient: the hub authenticates every heartbeat against <code>HIVE_HUB_SECRET</code>, which is issued by the hub operator &mdash; unauthenticated registration was deliberately removed to prevent registry pollution. To get a self-hosted hive listed, <a class="text-info" href="https://github.com/hivecommons/hive/issues/new">open an issue</a>. If you would rather not run the infrastructure at all, use the hosted-hive wizard at the top of this page and the hub will provision and list one for you.</p>
+      <h3>List your hive on this hub</h3>
+      <p>You can list a hive you run yourself in the <a class="text-info" href="/#hives">Active Hives</a> table without asking anyone. Setting <code>HIVE_HUB_URL</code> on its own is <strong>not</strong> sufficient: the hub authenticates every heartbeat, so your hive needs a key the hub knows. You register for that key yourself:</p>
+      <ol>
+        <li><a class="text-info" href="/login">Sign in</a> to the hub with GitHub and open <strong>My Hives</strong>.</li>
+        <li>Click <strong>Register your own hive</strong>. Give the hive a short name, the GitHub org and the repos it will work on. You must have <strong>admin</strong> permission on each repo; the hub checks this with your own GitHub token and stores nothing until every repo passes.</li>
+        <li><strong>Copy the key once.</strong> The hub shows <code>HIVE_HEARTBEAT_KEY</code> exactly one time and keeps only a hash. Use the Docker Compose, Podman or Kubernetes snippet from the same dialog, or set <code>HIVE_HUB_URL</code>, <code>HIVE_ID</code> and <code>HIVE_HEARTBEAT_KEY</code> on your spoke yourself.</li>
+        <li>Start the spoke. After its first accepted heartbeat it appears in Active Hives with the <strong>self-hosted</strong> type and in your <strong>Self-hosted hives</strong> list.</li>
+      </ol>
+      <p>Lost the key? Use <strong>Rotate key</strong> in Self-hosted hives; the old key keeps working for ten minutes so you can update a running spoke without a gap. <strong>Remove</strong> revokes the key and delists the hive at once. A hive that sends no accepted heartbeat for 24 hours is delisted automatically; register it again when it is back.</p>
+      <p>Your hive ID is <code>byo-&lt;your login&gt;-&lt;name&gt;</code>. The hub lists it as directory metadata only: it never sends your hive credentials, upgrades or management actions, and you never receive <code>HIVE_HUB_SECRET</code>. The key you hold authenticates that one hive ID and nothing else.</p>
+      <p style="margin-bottom:var(--sp-0)">A hub operator turns this on with <code>HIVE_HUB_SELFSERVICE_REGISTRATION</code>. On a hub where it is off, the Register your own hive button brings you here instead of opening the form; ask that hub's operator to enable it. If you would rather not run the infrastructure at all, use the hosted-hive wizard at the top of this page and the hub will provision and list one for you.</p>
     </div>
   </section>
 
