@@ -420,3 +420,49 @@ func TestReferenceRepoDeriveInterval(t *testing.T) {
 		}
 	}
 }
+
+// The dashboard editor's hook (hivecommons/hive#18136) installs the edited
+// hand-written list with the last derived set still merged in: a derived
+// entry the editor echoes back is not re-verified as hand-written, a new
+// hand-written entry gets its policy, and a removed one loses it. The
+// remerge the handler runs after the save then restores the derived entries
+// in memory under the new list.
+func TestApplyEditedReferenceReposKeepsDerivedAndRemerges(t *testing.T) {
+	fake := newFakeRequestIssues()
+	b, rt := derivedTestBoot(t, fake, nil, config.ReferenceRepo{Repo: testHandWrittenRepo})
+	b.wireReferenceReposWith(rt)
+	derivedBefore := len(rt.lastDerived)
+	if derivedBefore == 0 {
+		t.Fatal("precondition: boot derived entries")
+	}
+
+	// Echo of the GET body (hand-written + derived) with the hand-written
+	// entry swapped for a new read-only one.
+	edited := append([]config.ReferenceRepo{{Repo: "other/ref"}}, rt.lastDerived...)
+	if err := b.applyEditedReferenceRepos(context.Background(), edited); err != nil {
+		t.Fatalf("applyEditedReferenceRepos: %v", err)
+	}
+	if _, ok := b.githubProxy.ReferenceRepoPolicyFor("other/ref"); !ok {
+		t.Error("new hand-written entry must get a proxy policy")
+	}
+	if _, ok := b.githubProxy.ReferenceRepoPolicyFor(testHandWrittenRepo); ok {
+		t.Error("removed hand-written entry must lose its proxy policy")
+	}
+	if pol, ok := b.githubProxy.ReferenceRepoPolicyFor(testDerivedWriteRepo); !ok || !pol.Issues || !pol.PRs {
+		t.Errorf("derived write-tier entry must stay enforced, got %+v ok=%v", pol, ok)
+	}
+	if len(rt.lastDerived) != derivedBefore {
+		t.Errorf("an edit must not change the derived set: %d -> %d", derivedBefore, len(rt.lastDerived))
+	}
+
+	// What the handler does after the file is written.
+	b.cfg.Project.ReferenceRepos = []config.ReferenceRepo{{Repo: "other/ref"}}
+	b.remergeLastDerivedReferenceRepos()
+	refs := b.cfg.Project.ReferenceRepos
+	if len(refs) != 1+derivedBefore || refs[0].Repo != "other/ref" || refs[0].Derived() {
+		t.Fatalf("derived entries must be merged back under the saved list, got %+v", refs)
+	}
+	if docs, ok := referenceRepoByName(refs, testDerivedWriteRepo); !ok || !docs.Derived() || docs.CredentialState != config.ReferenceCredentialWriteTier {
+		t.Fatalf("re-merged derived entry must keep its provenance and state, got %+v", docs)
+	}
+}

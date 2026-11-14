@@ -293,6 +293,13 @@ func (c *Config) ValidateReferenceRepos() error {
 	return c.validateReferenceRepos()
 }
 
+// ValidateReferenceRepos runs the config loader's project.reference_repos
+// checks against p, so a dashboard edit is refused with exactly the message
+// boot would print rather than leaving a hive.yaml that no longer loads.
+func ValidateReferenceRepos(p ProjectConfig) error {
+	return (&Config{Project: p}).validateReferenceRepos()
+}
+
 // ReferenceRepoSlugs returns the reference repos as sorted "owner/name"
 // strings, for kicks and environment.
 func (c *Config) ReferenceRepoSlugs() []string {

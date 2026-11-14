@@ -203,6 +203,20 @@ type Dependencies struct {
 	// whose min_priority the same PUT edits) can push the new values into
 	// it. Nil means nothing caches.
 	ReviewConfigApplied func(config.ReviewConfig)
+	// ApplyReferenceRepos is called by PUT /api/config/reference-repos with
+	// the validated list BEFORE it is stored: it verifies each write-mode
+	// entry's credential the way boot does and installs the result on the
+	// GitHub proxy, so the allow-list changes without a restart. A non-nil
+	// error refuses the edit with that message and nothing changes. Nil (no
+	// proxy, most tests) skips the check, matching boot, which only verifies
+	// credentials when a proxy is wired (hivecommons/hive#18136).
+	ApplyReferenceRepos func(ctx context.Context, refs []config.ReferenceRepo) error
+	// RemergeDerivedReferenceRepos is called after PUT /api/config/reference-repos
+	// has persisted the hand-written list: it puts the derived entries of the
+	// last pass (hivecommons/hive#18139) back into Config.Project.ReferenceRepos
+	// in memory, as the config reload hook does, so the kick and /api/status
+	// keep showing them. Nil (no deriver, most tests) leaves the list as saved.
+	RemergeDerivedReferenceRepos func()
 	// RescanReposFunc re-enumerates every watched repository's open issues
 	// and pull requests against the forge, enriches PR CI status, applies the
 	// duplicate-PR claim guard and republishes the dashboard status snapshot
