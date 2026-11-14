@@ -190,6 +190,24 @@ Things to know when you query them:
   older per-task files are pruned when the next attestation is stored, at most
   once an hour.
 
+## Hub self-service registration lines
+
+The hub does not write `audit.jsonl`; its accountability record is the
+`audit: <action>` lines in the hub server log (the same place `access
+granted`, `hub admin granted` and `registry entry removed` land). The
+self-service registration API ([#18060](https://github.com/hivecommons/hive/issues/18060),
+`pkg/hub/selfservice_api.go`) writes one line per decision. `user` is the hub
+login of the caller; `hive` is the `byo-` ID the request named or would have
+produced (empty when the name never became an ID). No line ever carries a key,
+a key hash, the master secret or the user's GitHub token.
+
+| Action | Written when | Keys |
+| --- | --- | --- |
+| `selfservice_hive_registered` | A registration passed every check and the key was minted | `user`, `hive`, `repos` (count), `org` |
+| `selfservice_hive_rotated` | The owner rotated the heartbeat key | `user`, `hive`, `overlap` (how long the previous key keeps authenticating) |
+| `selfservice_hive_revoked` | The owner or a hub admin revoked the hive; the registry entry is removed in the same request and `registry entry removed` follows | `user`, `hive`, `owner`, `by_admin` |
+| `selfservice_hive_refused` | A registration was turned away and nothing was stored | `user`, `hive`, `reason` (`invalid_name`, `reserved_prefix`, `duplicate_id`, `invalid_repos`, `invalid_dashboard_url`, `per_user_cap` with `max_per_user`, `no_github_token`, `no_github_login`, `not_repo_admin` with `repo`, `ownership_check_error` with `repo`) |
+
 ## Rotation and retention
 
 Rotation is handled by lumberjack:

@@ -1048,9 +1048,13 @@ type HubServer struct {
 	// selfService holds owner-registered (byo-) hives and the hashes of their
 	// random heartbeat keys (#18060). Nil on bare test literals; every method
 	// is nil-safe and answers "nothing registered".
-	selfService    *selfServiceStore
-	myHivesCacheMu sync.Mutex
-	myHivesCache   map[string]myHivesSnapshot
+	selfService *selfServiceStore
+	// selfServiceOwnership is the GitHub repo-admin check the registration API
+	// runs with the user's own token (selfservice_api.go). Nil means the
+	// production api.github.com checker; tests inject an httptest stub.
+	selfServiceOwnership *selfServiceOwnershipChecker
+	myHivesCacheMu       sync.Mutex
+	myHivesCache         map[string]myHivesSnapshot
 	// keyGenerations is the ordered set of master generations this hub accepts
 	// (hub_generations.go). Until a rotation happens it holds exactly ONE
 	// generation whose secret IS hubSecret, so every derived key is
@@ -1773,6 +1777,14 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	// no hub decision reads a chain. See src/docs/delegation-chain.md.
 	s.mux.HandleFunc("GET "+delegation.KeysPath, s.handleDelegationKeys)
 	s.mux.HandleFunc("DELETE /api/hub/registry/{id}", s.handleRegistryDelete)
+	// Self-service (byo-) hive registration (#18060, selfservice_api.go).
+	// Behind HIVE_HUB_SELFSERVICE_REGISTRATION: every route but /status answers
+	// 404 while the flag is off.
+	s.mux.HandleFunc("GET /api/hub/selfservice/status", s.requireAuth(s.handleSelfServiceStatus))
+	s.mux.HandleFunc("GET /api/hub/selfservice/hives", s.requireAuth(s.handleSelfServiceList))
+	s.mux.HandleFunc("POST /api/hub/selfservice/hives", s.requireAuth(s.handleSelfServiceRegister))
+	s.mux.HandleFunc("POST /api/hub/selfservice/hives/{id}/rotate", s.requireAuth(s.handleSelfServiceRotate))
+	s.mux.HandleFunc("DELETE /api/hub/selfservice/hives/{id}", s.requireAuth(s.handleSelfServiceDelete))
 	s.mux.HandleFunc("POST /api/contribute/register", s.handleContributeProxy)
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
 	s.mux.HandleFunc("GET /api/contribute/ws", s.handleContributeWSProxy)
