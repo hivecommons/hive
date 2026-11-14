@@ -1929,6 +1929,21 @@ func (s *Server) withServerTiming(next http.Handler) http.Handler {
 	})
 }
 
+// isSessionTerminalRequest reports whether r is a /terminal request that names
+// a user session (?arg=hive-sess-<id>), the only terminal document the
+// dashboard embeds in an iframe.
+func isSessionTerminalRequest(r *http.Request) bool {
+	if !isTerminalPath(r.URL.Path) {
+		return false
+	}
+	for _, a := range r.URL.Query()["arg"] {
+		if strings.HasPrefix(a, sessionTmuxPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		frameAncestors := "'none'"
@@ -1940,7 +1955,19 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		// X-Frame-Options cannot express an origin allowlist. When /snapshot has
 		// an explicit CSP frame-ancestors allowlist, omit XFO for that document
 		// only; every other route keeps DENY, and an empty allowlist fails closed.
-		if !snapshotAllowlist {
+		//
+		// A user-session terminal (/terminal?arg=hive-sess-<id>) is the one
+		// document the dashboard itself embeds: the Sessions section renders it
+		// in a same-origin iframe. With 'none'/DENY the browser fetches ttyd's
+		// page and then refuses to display it, so the pane stays blank and the
+		// terminal never opens its websocket. Framing is allowed for that
+		// document from this origin only; agent terminals and everything else
+		// keep 'none'/DENY. Authorisation is unchanged (guardTerminalSession).
+		switch {
+		case isSessionTerminalRequest(r):
+			frameAncestors = "'self'"
+			w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		case !snapshotAllowlist:
 			w.Header().Set("X-Frame-Options", "DENY")
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
