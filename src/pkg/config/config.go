@@ -8158,6 +8158,12 @@ func (c *Config) redactedForPersist() *Config {
 	if stringSlicesEqual(cp.Governor.Sensing.LoginPatterns, defaultLoginPatterns) {
 		cp.Governor.Sensing.LoginPatterns = nil
 	}
+	// hivecommons/hive#18159: a reference repo derived from an accepted
+	// request issue lives in memory only. yaml:"-" hides its provenance, but
+	// the entry itself would still marshal as a plain repo and outlive the
+	// grant in the overlay or runtime config (#18137), so the derived entries
+	// are dropped from the persisted copy here, on every save path.
+	cp.Project.ReferenceRepos = HandWrittenReferenceRepos(cp.Project.ReferenceRepos)
 	return &cp
 }
 

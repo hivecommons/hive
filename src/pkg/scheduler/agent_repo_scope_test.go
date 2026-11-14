@@ -370,3 +370,28 @@ func TestBuildReposSectionFor_ItemCitingOnlyReferenceReposIsInScope(t *testing.T
 		}
 	}
 }
+
+// hivecommons/hive#18159: a derived entry says which request issue granted
+// it, and a derived entry served read-only says why, so an agent can tell a
+// grant from an operator's decision.
+func TestBuildReposSectionFor_ReferenceReposDerivedProvenance(t *testing.T) {
+	s := scopeScheduler(t, map[string]config.AgentConfig{"scanner": {Backend: "claude"}})
+	s.cfg.Project.ReferenceRepos = []config.ReferenceRepo{
+		{Repo: "hivecommons/docs"},
+		{Repo: "acme/docs", Write: []string{"issues", "prs"}, DerivedFrom: "cncf/techdocs#395", CredentialState: config.ReferenceCredentialWriteTier},
+		{Repo: "acme/site", DerivedFrom: "cncf/techdocs#395", CredentialState: config.ReferenceCredentialReadOnly, CredentialReason: "the hive's GitHub App is not installed on acme"},
+	}
+	section := s.buildReposSectionFor("scanner")
+	for _, want := range []string{
+		"  https://github.com/hivecommons/docs  [reference · read-only]\n",
+		"  https://github.com/acme/docs  [reference · issues+prs] (from cncf/techdocs#395)\n",
+		"  https://github.com/acme/site  [reference · read-only] (from cncf/techdocs#395; read-only: the hive's GitHub App is not installed on acme)\n",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("REFERENCE REPOS block lacks %q:\n%s", want, section)
+		}
+	}
+	if got := referenceRepoProvenance(config.ReferenceRepo{Repo: "x/y", DerivedFrom: "o/r#1", CredentialState: config.ReferenceCredentialReadOnly}); !strings.Contains(got, derivedReadOnlyNoReason) {
+		t.Errorf("read-only without a reason must fall back to the generic one, got %q", got)
+	}
+}

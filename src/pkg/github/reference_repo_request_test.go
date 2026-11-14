@@ -2,6 +2,8 @@ package github
 
 import (
 	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -90,5 +92,100 @@ func TestCommentDerivedReadOnlyPostsOnce(t *testing.T) {
 	}
 	if _, err := (*Client)(nil).CommentDerivedReadOnly(ctx, "o/r", 7, readOnly); err == nil {
 		t.Fatal("nil client must refuse")
+	}
+}
+
+// requestIssueServer fakes the three GitHub endpoints request-issue
+// discovery reads: the labelled issue list, an issue's timeline and a
+// collaborator's permission.
+func requestIssueServer(t *testing.T, issuesJSON, timelineJSON, permissionJSON string) *httptest.Server {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/o/r/issues", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.URL.Query().Get("labels"); got != "triage/accepted" {
+			t.Errorf("labels filter = %q, want triage/accepted", got)
+		}
+		if got := r.URL.Query().Get("state"); got != "open" {
+			t.Errorf("state filter = %q, want open", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(issuesJSON))
+	})
+	mux.HandleFunc("/repos/o/r/issues/395/timeline", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(timelineJSON))
+	})
+	mux.HandleFunc("/repos/o/r/collaborators/maintainer/permission", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(permissionJSON))
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusNotFound)
+	})
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+const requestIssueListJSON = `[
+ {"number":395,"title":"Assessment request","body":"### Website or documentation repository\nhttps://github.com/acme/docs\n","state":"open",
+  "labels":[{"name":"triage/accepted"},{"name":"kind/assessment"}],"updated_at":"2026-11-01T10:00:00Z"},
+ {"number":400,"title":"a PR","body":"","state":"open","labels":[{"name":"triage/accepted"}],"updated_at":"2026-11-02T10:00:00Z",
+  "pull_request":{"url":"https://api.github.com/repos/o/r/pulls/400"}}
+]`
+
+const requestIssueTimelineJSON = `[
+ {"event":"labeled","created_at":"2026-10-01T00:00:00Z","label":{"name":"triage/accepted"},"actor":{"login":"hive-app[bot]","type":"Bot"}},
+ {"event":"unlabeled","created_at":"2026-10-02T00:00:00Z","label":{"name":"triage/accepted"},"actor":{"login":"maintainer","type":"User"}},
+ {"event":"labeled","created_at":"2026-10-03T00:00:00Z","label":{"name":"kind/assessment"},"actor":{"login":"someone","type":"User"}},
+ {"event":"labeled","created_at":"2026-10-04T00:00:00Z","label":{"name":"triage/accepted"},"actor":{"login":"maintainer","type":"User"}}
+]`
+
+func TestListRequestIssueCandidates(t *testing.T) {
+	srv := requestIssueServer(t, requestIssueListJSON, "[]", "{}")
+	c := testClient(t, srv.URL)
+	got, err := c.ListRequestIssueCandidates(context.Background(), "o/r", "triage/accepted", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("pull requests must be skipped; got %d candidates: %+v", len(got), got)
+	}
+	cand := got[0]
+	if cand.Repo != "o/r" || cand.Number != 395 || cand.Closed || !strings.Contains(cand.Body, "acme/docs") {
+		t.Errorf("candidate = %+v", cand)
+	}
+	if len(cand.Labels) != 2 || cand.Labels[0] != "triage/accepted" {
+		t.Errorf("labels = %v", cand.Labels)
+	}
+	if cand.UpdatedAt.IsZero() {
+		t.Error("updated_at must be carried: it is the cache key")
+	}
+}
+
+// The latest "labeled" event for the grant label names the accepter, not an
+// earlier application by a bot and not a labeled event for another label.
+func TestRequestIssueAccepterForLatestLabeledEvent(t *testing.T) {
+	srv := requestIssueServer(t, "[]", requestIssueTimelineJSON, `{"permission":"maintain","user":{"login":"maintainer"}}`)
+	c := testClient(t, srv.URL)
+	acc, err := c.RequestIssueAccepterFor(context.Background(), "o/r", 395, "triage/accepted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acc.Login != "maintainer" || acc.IsBot || acc.Permission != "maintain" {
+		t.Fatalf("accepter = %+v, want maintainer/maintain/human", acc)
+	}
+}
+
+func TestRequestIssueAccepterForNoLabeledEvent(t *testing.T) {
+	srv := requestIssueServer(t, "[]", `[{"event":"commented","created_at":"2026-10-01T00:00:00Z","actor":{"login":"x"}}]`, "{}")
+	c := testClient(t, srv.URL)
+	acc, err := c.RequestIssueAccepterFor(context.Background(), "o/r", 395, "triage/accepted")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acc.Login != "" || acc.Permission != "" {
+		t.Fatalf("an unattributed grant must come back empty, got %+v", acc)
 	}
 }

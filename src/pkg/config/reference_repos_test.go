@@ -238,3 +238,36 @@ func TestReferenceRepoDerivedFromIssue(t *testing.T) {
 		}
 	}
 }
+
+// hivecommons/hive#18159: every save path (runtime config and dashboard
+// overlay) marshals redactedForPersist, which must drop derived entries
+// outright: yaml:"-" on the provenance alone would still write the repo.
+func TestRedactedForPersistDropsDerivedReferenceRepos(t *testing.T) {
+	cfg := referenceRepoTestConfig(t, `    - hand/written`)
+	cfg.Project.ReferenceRepos = append(cfg.Project.ReferenceRepos,
+		ReferenceRepo{Repo: "acme/docs", Write: []string{"issues", "prs"}, DerivedFrom: "cncf/techdocs#395", CredentialState: ReferenceCredentialWriteTier},
+		ReferenceRepo{Repo: "zeta/site", DerivedFrom: "cncf/techdocs#395", CredentialState: ReferenceCredentialReadOnly, CredentialReason: "not installed"},
+	)
+	out, err := yaml.Marshal(cfg.redactedForPersist())
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := string(out)
+	if !strings.Contains(s, "hand/written") {
+		t.Errorf("hand-written entry must persist:\n%s", s)
+	}
+	for _, leak := range []string{"acme/docs", "zeta/site", "techdocs#395", "derived_from", "credential"} {
+		if strings.Contains(s, leak) {
+			t.Errorf("persisted config leaks derived state %q:\n%s", leak, s)
+		}
+	}
+	if len(cfg.Project.ReferenceRepos) != 3 {
+		t.Errorf("redaction must copy, not mutate the live list: %+v", cfg.Project.ReferenceRepos)
+	}
+	if got := HandWrittenReferenceRepos(nil); got != nil {
+		t.Errorf("nil in must be nil out, got %v", got)
+	}
+	if got := HandWrittenReferenceRepos([]ReferenceRepo{{Repo: "a/b", DerivedFrom: "o/r#1"}}); got != nil {
+		t.Errorf("all-derived must be nil, got %v", got)
+	}
+}

@@ -11,6 +11,7 @@ import (
 	"github.com/hivecommons/hive/crux/proxy"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	wfstore "github.com/hivecommons/hive/pkg/workflowmodel/store"
 )
 
 // referenceRepoCredentialExitCode marks an exit caused by a
@@ -133,46 +134,73 @@ func notifyDerivedReadOnly(ctx context.Context, repos []config.ReferenceRepo, po
 // wireReferenceRepos installs project.reference_repos on the proxy, refusing
 // to boot when a hand-written write-mode entry has no usable credential. A
 // derived entry never refuses boot: it is downgraded to read-only and the
-// request issue is told once (hivecommons/hive#18158).
+// request issue is told once (hivecommons/hive#18158). With a GitHub client
+// the derived entries are listed from accepted request issues first
+// (hivecommons/hive#18159) and kept current by every config reload and a
+// periodic pass.
 func (b *boot) wireReferenceRepos() {
-	refs := b.cfg.Project.ReferenceRepos
-	if len(refs) == 0 || b.githubProxy == nil {
+	if b.githubProxy == nil {
 		return
 	}
-	deps := referenceRepoDeps{auth: func() *github.AppAuth { return nil }}
-	var post derivedReadOnlyPoster
-	if b.ghClient != nil {
-		post = b.ghClient.CommentDerivedReadOnly
-		if auth := b.ghClient.AppAuth(); auth != nil {
-			apiURL := auth.APIURL()
-			deps.botLogin = auth.BotLogin()
-			deps.discover = auth.DiscoverInstallationID
-			deps.whoAmI = func(ctx context.Context, token string) (string, error) {
-				return github.TokenUserLogin(ctx, token, apiURL)
-			}
-			// Re-fetched per call: the AppAuth is replaced on key rotation.
-			deps.auth = func() *github.AppAuth { return b.ghClient.AppAuth() }
-		} else {
-			deps.whoAmI = func(ctx context.Context, token string) (string, error) {
-				return github.TokenUserLogin(ctx, token, "")
-			}
+	rt := b.newReferenceRepoRuntime()
+	if len(b.cfg.Project.ReferenceRepos) == 0 && rt.deriver == nil {
+		return
+	}
+	b.wireReferenceReposWith(rt)
+}
+
+// newReferenceRepoRuntime builds the seams from the live GitHub client. The
+// closures read b.ghClient on every call because the client is replaced on
+// App key rotation.
+func (b *boot) newReferenceRepoRuntime() *referenceRepoRuntime {
+	rt := &referenceRepoRuntime{
+		deps:     referenceRepoDeps{auth: func() *github.AppAuth { return nil }},
+		interval: referenceRepoDeriveInterval(),
+	}
+	if b.ghClient == nil {
+		return rt
+	}
+	rt.post = func(ctx context.Context, issueRepo string, number int, readOnly []config.ReferenceRepo) (bool, error) {
+		return b.ghClient.CommentDerivedReadOnly(ctx, issueRepo, number, readOnly)
+	}
+	if auth := b.ghClient.AppAuth(); auth != nil {
+		apiURL := auth.APIURL()
+		rt.deps.botLogin = auth.BotLogin()
+		rt.deps.discover = auth.DiscoverInstallationID
+		rt.deps.whoAmI = func(ctx context.Context, token string) (string, error) {
+			return github.TokenUserLogin(ctx, token, apiURL)
+		}
+		// Re-fetched per call: the AppAuth is replaced on key rotation.
+		rt.deps.auth = func() *github.AppAuth { return b.ghClient.AppAuth() }
+	} else {
+		rt.deps.whoAmI = func(ctx context.Context, token string) (string, error) {
+			return github.TokenUserLogin(ctx, token, "")
 		}
 	}
-	res, err := buildReferenceRepoPolicies(b.ctx, refs, deps, b.logger)
-	if err != nil {
+	rt.deriver = newReferenceRepoDeriver(
+		func(ctx context.Context, repo, label string, limit int) ([]github.RequestIssueCandidate, error) {
+			return b.ghClient.ListRequestIssueCandidates(ctx, repo, label, limit)
+		},
+		func(ctx context.Context, repo string, number int, label string) (github.RequestIssueAccepter, error) {
+			return b.ghClient.RequestIssueAccepterFor(ctx, repo, number, label)
+		},
+		workflowIntakeResolver(b.cfg, wfstore.Open(wfstore.Root(b.cfg.Data.WorkflowsDir))),
+		b.cfg.GitHub.HostLabel(),
+	)
+	return rt
+}
+
+// wireReferenceReposWith is wireReferenceRepos with the runtime injected
+// (tests supply fake listers). It runs the boot pass, exits on a hand-written
+// credential error and starts the periodic re-derive.
+func (b *boot) wireReferenceReposWith(rt *referenceRepoRuntime) {
+	b.referenceRepos = rt
+	if err := b.applyReferenceRepos(b.ctx, rt); err != nil {
 		b.logger.Error("refusing to start: project.reference_repos write-mode entry has no usable credential (#18015)", "error", err.Error())
 		if errors.Is(err, github.ErrReferenceRepoNoCredential) {
 			fmt.Fprintln(os.Stderr, err.Error())
 		}
 		os.Exit(referenceRepoCredentialExitCode)
 	}
-	// The resolved entries replace the list in memory only: a derived entry
-	// is never written back to any config file, and its credential state is
-	// what the kick and /api/status read.
-	b.cfg.Project.ReferenceRepos = res.repos
-	b.githubProxy.SetReferenceRepos(res.policies)
-	b.logger.Info("reference repos wired", "count", len(res.policies), "repos", b.cfg.ReferenceRepoSlugs())
-	// Off the boot path: the notice is a GitHub write and must not delay
-	// the proxy coming up.
-	go notifyDerivedReadOnly(b.ctx, res.repos, post, b.logger)
+	b.startReferenceRepoDerivePoller(b.ctx, rt)
 }
