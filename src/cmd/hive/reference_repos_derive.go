@@ -254,18 +254,6 @@ func (d *referenceRepoDeriver) derive(ctx context.Context, cfg *config.Config, l
 	return out
 }
 
-// handWrittenReferenceRepos returns the entries the operator wrote, i.e. the
-// live list without the derived ones a previous pass appended.
-func handWrittenReferenceRepos(refs []config.ReferenceRepo) []config.ReferenceRepo {
-	out := make([]config.ReferenceRepo, 0, len(refs))
-	for _, rr := range refs {
-		if !rr.Derived() {
-			out = append(out, rr)
-		}
-	}
-	return out
-}
-
 // clampDerivedWrite returns write restricted to the surfaces a derived entry
 // may ever carry (refderive.DerivedWrite): the parser only emits that tier,
 // the merge asserts it.
@@ -379,7 +367,7 @@ func (b *boot) applyReferenceRepos(ctx context.Context, rt *referenceRepoRuntime
 	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	handWritten := handWrittenReferenceRepos(b.cfg.Project.ReferenceRepos)
+	handWritten := config.HandWrittenReferenceRepos(b.cfg.Project.ReferenceRepos)
 	derived := rt.deriver.derive(ctx, b.cfg, b.logger)
 	merged := mergedReferenceRepos(b.cfg, handWritten, derived, b.logger)
 	res, err := buildReferenceRepoPolicies(ctx, merged, rt.deps, b.logger)
@@ -435,7 +423,7 @@ func (b *boot) remergeLastDerivedReferenceRepos() {
 	}
 	rt.mu.Lock()
 	defer rt.mu.Unlock()
-	handWritten := handWrittenReferenceRepos(b.cfg.Project.ReferenceRepos)
+	handWritten := config.HandWrittenReferenceRepos(b.cfg.Project.ReferenceRepos)
 	b.cfg.Project.ReferenceRepos = mergedReferenceRepos(b.cfg, handWritten, rt.lastDerived, b.logger)
 }
 

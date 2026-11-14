@@ -263,6 +263,25 @@ func (c *Config) validateReferenceRepos() error {
 	return nil
 }
 
+// HandWrittenReferenceRepos returns the entries an operator wrote, i.e. refs
+// without the derived ones (hivecommons/hive#18159). nil in, nil out, so a
+// config with no reference repos persists without an empty list.
+func HandWrittenReferenceRepos(refs []ReferenceRepo) []ReferenceRepo {
+	if len(refs) == 0 {
+		return nil
+	}
+	out := make([]ReferenceRepo, 0, len(refs))
+	for _, r := range refs {
+		if !r.Derived() {
+			out = append(out, r)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
 // ValidateReferenceRepos re-runs the project.reference_repos shape check on
 // the live list. The in-memory merge of derived entries
 // (hivecommons/hive#18159) calls it after appending, so a derived entry can
