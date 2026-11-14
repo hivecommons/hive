@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.261.0)
+
+### Added
+
+- **Secrets at rest are now encrypted on the spoke** ([#18214](https://github.com/hivecommons/hive/issues/18214), [#18215](https://github.com/hivecommons/hive/issues/18215)). Every secret value the dashboard collects (LiteLLM, Bob and per-gateway API keys, the backup key, the owner's GitHub token, the NPS relay identity, the Copilot device-flow login) and the `github.token` value in the persisted runtime config are stored through a new `keystore` provider interface as a versioned `hive-enc:v1:…` envelope instead of plaintext, so a copy of the data volume alone no longer yields them. The default `env` provider needs no new infrastructure: it derives an AES-256-GCM key with HKDF from `HIVE_SECRETS_KEY` (or `HIVE_SECRETS_KEY_FILE`), falling back to the hub-provisioned `HIVE_HEARTBEAT_KEY`, so hosted spokes encrypt on their next boot and legacy plaintext files are re-sealed on first read. A hive with no key material keeps today's behaviour and logs one `WARN` at boot; `HIVE_KEYSTORE_PROVIDER=none` makes that explicit, and `HIVE_SECRETS_KEY_PREVIOUS` lets a spoke absorb a key rotation. Agent-facing credential files and the read-only `/secrets` mount are unchanged.
+- The hub landing page gains an "Isolation and secrets" logo row (OpenShell, Agent Substrate, OpenBao, Podman, Kubernetes) in the existing chip style, and the integrations page now shows the OpenShell and Agent Substrate project logos instead of the NVIDIA and CNCF stand-ins plus a new "Secrets and keys" section for the built-in keystore and the opt-in OpenBao Transit provider, both in progress under [#18214](https://github.com/hivecommons/hive/issues/18214) ([#18217](https://github.com/hivecommons/hive/issues/18217)). Logo sources and licenses are recorded in `src/docs/assets/logos/SOURCES.md`.
+
 ## 2026-11-14 (v5.260.0)
 
 ### Added
