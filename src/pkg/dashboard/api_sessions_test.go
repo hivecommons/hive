@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -32,6 +33,9 @@ type fakeSessionRuntime struct {
 	capture string
 	resume  map[string]crux.UserSessionResume
 	startFn func(crux.UserSessionSpec) error
+	removed []string
+	// removeErr, when set, makes Remove fail (the files could not be deleted).
+	removeErr error
 }
 
 func newFakeSessionRuntime(t *testing.T) *fakeSessionRuntime {
@@ -88,6 +92,41 @@ func (f *fakeSessionRuntime) SendText(id, text string, submit bool) error {
 	f.submits = append(f.submits, submit)
 	return nil
 }
+func (f *fakeSessionRuntime) Remove(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.removeErr != nil {
+		return f.removeErr
+	}
+	f.removed = append(f.removed, id)
+	delete(f.alive, id)
+	return os.RemoveAll(filepath.Join(f.workDir, id))
+}
+
+// StoreUpload mimics the real runtime's contract: an exclusive 0600 file under
+// <work dir>/uploads, a file-count cap and a byte cap with the typed errors.
+func (f *fakeSessionRuntime) StoreUpload(id, fileName string, src io.Reader, maxBytes int64, maxFiles int) (string, int64, error) {
+	dir := filepath.Join(f.WorkDir(id), sessionUploadsDirName)
+	if err := os.MkdirAll(dir, sessionUploadDirMode); err != nil {
+		return "", 0, err
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) >= maxFiles {
+		return "", 0, crux.ErrUserSessionUploadLimit
+	}
+	b, err := io.ReadAll(io.LimitReader(src, maxBytes+1))
+	if err != nil {
+		return "", 0, err
+	}
+	if int64(len(b)) > maxBytes {
+		return "", int64(len(b)), crux.ErrUserSessionUploadTooLarge
+	}
+	dest := filepath.Join(dir, fileName)
+	if err := os.WriteFile(dest, b, sessionUploadFileMode); err != nil {
+		return "", 0, err
+	}
+	return dest, int64(len(b)), nil
+}
+
 func (f *fakeSessionRuntime) ResumeInfo(id, vendor string) (crux.UserSessionResume, bool) {
 	r, ok := f.resume[id]
 	return r, ok
@@ -169,7 +208,18 @@ func decodeSessionJSON(t *testing.T, rec *httptest.ResponseRecorder) map[string]
 
 func (e *sessionTestEnv) create(t *testing.T, c sessionCaller, name string) string {
 	t.Helper()
-	rec := e.do(t, c, "POST", "/api/sessions", map[string]string{"name": name, "group": "rfc", "vendor": "claude"})
+	return e.createWith(t, c, name, false)
+}
+
+// createShared makes a session every role can see and every writer can use.
+func (e *sessionTestEnv) createShared(t *testing.T, c sessionCaller, name string) string {
+	t.Helper()
+	return e.createWith(t, c, name, true)
+}
+
+func (e *sessionTestEnv) createWith(t *testing.T, c sessionCaller, name string, shared bool) string {
+	t.Helper()
+	rec := e.do(t, c, "POST", "/api/sessions", map[string]any{"name": name, "group": "rfc", "vendor": "claude", "shared": shared})
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("create = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -257,7 +307,7 @@ func TestSessionsListShapeVendorsAndLimits(t *testing.T) {
 
 func TestSessionsRoleMatrix(t *testing.T) {
 	e := newSessionTestEnv(t, true)
-	id := e.create(t, callerOwner, "owner session")
+	id := e.createShared(t, callerOwner, "owner session")
 	post := map[string]string{"name": "n", "group": "g", "vendor": "claude"}
 
 	type row struct {
@@ -284,7 +334,7 @@ func TestSessionsRoleMatrix(t *testing.T) {
 			t.Errorf("%s patch = %d, want %d", r.who.role, rec.Code, r.patch)
 		}
 	}
-	// Reads are open to every role, including read.
+	// A SHARED session is readable by every role, including read.
 	for _, who := range []sessionCaller{callerOwner, callerRW, callerMerger, callerRead} {
 		if rec := e.do(t, who, "GET", "/api/sessions", nil); rec.Code != http.StatusOK {
 			t.Errorf("%s list = %d", who.role, rec.Code)
@@ -301,7 +351,7 @@ func TestSessionsRoleMatrix(t *testing.T) {
 
 func TestSessionsCreatorOrOwnerMayRenameAndClose(t *testing.T) {
 	e := newSessionTestEnv(t, true)
-	id := e.create(t, callerRW, "ritas session")
+	id := e.createShared(t, callerRW, "ritas session")
 	if rec := e.do(t, callerRW2, "PATCH", "/api/sessions/"+id, map[string]string{"group": "x"}); rec.Code != http.StatusForbidden {
 		t.Errorf("other read-write patched = %d", rec.Code)
 	}
@@ -546,7 +596,7 @@ func TestSessionsUploadRolesCapsAndFieldName(t *testing.T) {
 
 func TestSessionsLogRedactsAndCaps(t *testing.T) {
 	e := newSessionTestEnv(t, true)
-	id := e.create(t, callerOwner, "log")
+	id := e.createShared(t, callerOwner, "log")
 	e.rt.capture = "line one\nghp_abcdefghijklmnopqrstuvwxyz0123456789 token\n" + strings.Repeat("filler\n", 9000)
 	rec := e.do(t, callerRead, "GET", "/api/sessions/"+id+"/log?lines=3", nil)
 	if rec.Code != http.StatusOK {
@@ -629,7 +679,7 @@ func TestSessionsRenameAudited(t *testing.T) {
 
 func TestSessionsResume(t *testing.T) {
 	e := newSessionTestEnv(t, true)
-	id := e.create(t, callerRW, "resumable")
+	id := e.createShared(t, callerRW, "resumable")
 	e.rt.resume[id] = crux.UserSessionResume{SessionID: "abc", Command: "claude --resume abc"}
 	if rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/resume", nil); rec.Code != http.StatusConflict {
 		t.Errorf("resume of running session = %d, want 409", rec.Code)
@@ -713,7 +763,7 @@ func TestSessionsStoreRoundTripAndPermissions(t *testing.T) {
 
 func TestSessionsResumeCommandNeverExposed(t *testing.T) {
 	e := newSessionTestEnv(t, true)
-	id := e.create(t, callerRW, "x")
+	id := e.createShared(t, callerRW, "x")
 	e.rt.resume[id] = crux.UserSessionResume{Command: "claude --resume abc-secret-id"}
 	e.do(t, callerRW, "DELETE", "/api/sessions/"+id, nil)
 	rec := e.do(t, callerRead, "GET", "/api/sessions", nil)
@@ -727,7 +777,7 @@ func TestSessionsReconcileMarksVanishedSessionsEnded(t *testing.T) {
 	live := e.create(t, callerRW, "live")
 	gone := e.create(t, callerRW, "gone")
 	delete(e.rt.alive, gone) // tmux did not survive the restart
-	list := decodeSessionJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil))
+	list := decodeSessionJSON(t, e.do(t, callerOwner, "GET", "/api/sessions", nil))
 	status := map[string]string{}
 	for _, v := range list["sessions"].([]any) {
 		m := v.(map[string]any)
@@ -746,7 +796,7 @@ func TestSessionsAttachedCountSurfaced(t *testing.T) {
 	e := newSessionTestEnv(t, true)
 	id := e.create(t, callerRW, "x")
 	e.rt.alive[id] = crux.UserSessionProbe{Exists: true, Attached: 3, Activity: time.Now()}
-	sess := decodeSessionJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil))["sessions"].([]any)[0].(map[string]any)
+	sess := decodeSessionJSON(t, e.do(t, callerOwner, "GET", "/api/sessions", nil))["sessions"].([]any)[0].(map[string]any)
 	if sess["attached"] != float64(3) || sess["tmux_name"] != "hive-sess-"+id {
 		t.Errorf("session = %v", sess)
 	}
@@ -838,6 +888,7 @@ func TestSanitizeUploadName(t *testing.T) {
 // Terminal handoff with a session id.
 func TestTerminalHandoffWithSession(t *testing.T) {
 	t.Setenv("HIVE_TERMINAL_KEY", "test-terminal-key-0123456789")
+	t.Setenv(ttydAttachKeyEnv, "test-attach-key")
 	e := newSessionTestEnv(t, true)
 	e.s.deps.Config.HiveID = "hosted-alpha"
 	if terminalassert.SigningKey() == "" {

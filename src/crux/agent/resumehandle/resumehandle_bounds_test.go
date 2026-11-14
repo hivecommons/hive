@@ -129,6 +129,20 @@ func TestCodexRolloutID_RejectsShortAndNonHexNames(t *testing.T) {
 	}
 }
 
+// TestIsSafeResumeID_RejectsLeadingDash asserts the flag-injection invariant: a
+// planted transcript file name such as "--dangerously-skip-permissions" (or any
+// id starting with '-') is never a usable resume id.
+func TestIsSafeResumeID_RejectsLeadingDash(t *testing.T) {
+	for _, id := range []string{"--dangerously-skip-permissions", "-abcdefgh", "--resume-abc"} {
+		if isSafeResumeID(id) {
+			t.Errorf("isSafeResumeID(%q) accepted a flag-shaped id", id)
+		}
+	}
+	if !isSafeResumeID("a-b_c-d-e-f") {
+		t.Error("an id with inner dashes must stay valid")
+	}
+}
+
 func TestIsSafeResumeID_BoundsLength(t *testing.T) {
 	if isSafeResumeID(strings.Repeat("a", resumeIDMinLen-1)) {
 		t.Error("id below the minimum length accepted")

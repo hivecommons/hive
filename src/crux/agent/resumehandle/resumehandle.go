@@ -250,9 +250,15 @@ func looksLikeUUID(s string) bool {
 }
 
 // isSafeResumeID reports whether an id read from inside a transcript is safe
-// to render into a shell command: a bounded run of [A-Za-z0-9_-].
+// to render into a command: a bounded run of [A-Za-z0-9_-] that does NOT start
+// with '-'. The id is the file name of a transcript the session's own user can
+// plant, so a leading dash would let "--dangerously-skip-permissions" (or any
+// other flag) ride into the resume command line as if it were the id.
 func isSafeResumeID(id string) bool {
 	if len(id) < resumeIDMinLen || len(id) > resumeIDMaxLen {
+		return false
+	}
+	if id[0] == '-' {
 		return false
 	}
 	for _, r := range id {

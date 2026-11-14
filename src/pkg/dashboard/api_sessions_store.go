@@ -52,6 +52,12 @@ type sessionRecord struct {
 	// ResumeCommand is the vendor-native resume command captured when the
 	// session ended. It is internal: never sent to the browser.
 	ResumeCommand string `json:"resume_command,omitempty"`
+	// UIDSlot is the 1-based slot in the reserved per-session uid range the
+	// session runs under. 0 marks a record from before per-session uids.
+	UIDSlot int `json:"uid_slot,omitempty"`
+	// Shared opens the session to every read-write user (and the scrollback to
+	// every role). The default, false, is creator + owners only.
+	Shared bool `json:"shared"`
 }
 
 type sessionStore struct {
@@ -175,6 +181,23 @@ func (st *sessionStore) remove(id string) error {
 	defer st.mu.Unlock()
 	delete(st.sessions, id)
 	return st.saveLocked()
+}
+
+// freeSlot returns the smallest uid slot (1-based) no record holds. Ended
+// sessions keep theirs until their files are removed. Callers hold the
+// dashboard's sessionsMu so two creations cannot take the same slot.
+func (st *sessionStore) freeSlot() int {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	used := make(map[int]bool, len(st.sessions))
+	for _, rec := range st.sessions {
+		used[rec.UIDSlot] = true
+	}
+	slot := 1
+	for used[slot] {
+		slot++
+	}
+	return slot
 }
 
 // newSessionRecordID returns a fresh lower-case hex id not present in the store.

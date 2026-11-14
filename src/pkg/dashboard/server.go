@@ -2236,7 +2236,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// authenticates the initial ttyd document load and establishes the
 		// Path=/terminal assertion cookie for subsequent asset/websocket requests.
 		if isTerminalPath(r.URL.Path) {
-			if user, role, ok := s.redeemTerminalHandoff(r.URL.Query().Get(terminalHandoffCodeParam)); ok && terminalRoleAllowed(role) {
+			if user, role, bound, ok := s.redeemTerminalHandoffBound(r.URL.Query().Get(terminalHandoffCodeParam)); ok && terminalRoleAllowed(role) && handoffBindingMatches(bound, r.URL.Query()["arg"]) {
 				if !trusted {
 					r.Header.Set("X-Hive-User", user)
 					r.Header.Set("X-Hive-Role", role)

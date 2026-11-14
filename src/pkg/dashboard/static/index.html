@@ -51193,9 +51193,10 @@ function burnAreaChart() {
         + '<datalist id="sessions-group-list">' + groups.map(function(g) { return '<option value="' + esc(g) + '"></option>'; }).join('') + '</datalist></div>'
         + '<div class="sessions-form-row"><label for="sessions-new-vendor">CLI</label><select id="sessions-new-vendor" class="campaigns-input">'
         + vendors.map(function(v) { return '<option value="' + esc(v.id) + '">' + esc(v.label || v.id) + '</option>'; }).join('') + '</select></div>'
+        + '<div class="sessions-form-row"><label for="sessions-new-shared">Share</label><input id="sessions-new-shared" type="checkbox"> <span>Let the team watch and type (read-write users)</span></div>'
         + '<div class="sessions-form-actions"><button type="button" class="hv-btn btn-primary btn-sm" data-action="sessionsCreate">Start session</button>'
         + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="sessionsToggleNew">Cancel</button></div>'
-        + '<div class="sessions-note">Sessions run the vendor CLI with permission prompts on. Everyone with terminal rights on this hive can attach and type.</div>';
+        + '<div class="sessions-note">Sessions run the vendor CLI with permission prompts on, as their own unprivileged user. A session is private to you and the hive owners unless you share it.</div>';
     }
     function sessionsToolbarHtml() {
       const can = sessionsCanCreate(_sessionsRole, _sessionsData);
@@ -51438,7 +51439,8 @@ function burnAreaChart() {
     }
     async function sessionsCreate() {
       const val = function(id) { const el = document.getElementById(id); return el ? el.value.trim() : ''; };
-      const body = { name: val('sessions-new-name'), group: val('sessions-new-group'), vendor: val('sessions-new-vendor') };
+      const sharedBox = document.getElementById('sessions-new-shared');
+      const body = { name: val('sessions-new-name'), group: val('sessions-new-group'), vendor: val('sessions-new-vendor'), shared: !!(sharedBox && sharedBox.checked) };
       if (!body.name) { showToast('Give the session a name.', 'error'); return; }
       if (!body.vendor) { showToast('Pick a CLI vendor.', 'error'); return; }
       try {
