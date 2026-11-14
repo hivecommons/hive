@@ -233,11 +233,10 @@ func TestSelfServiceHiveTypeIsHubAssigned(t *testing.T) {
 		t.Fatalf("byo- with no claim: status=%d hiveType=%q, want %q", code, got, SelfServiceHiveType)
 	}
 
-	// Hosted and operator-listed lanes are unchanged.
-	const hosted, operator = "hosted-alice-lab", "alice-lab"
-	if got, code := postTypedHeartbeat(t, s, hosted, derivePerHiveKey(s.hubSecret, infoHeartbeatKey, hosted), ""); code != http.StatusOK || got != "hosted" {
-		t.Fatalf("hosted- default: status=%d hiveType=%q, want hosted", code, got)
-	}
+	// The operator-listed lane is unchanged. (A hosted- heartbeat needs the
+	// provisioning state a bare test hub lacks and answers 403 before typing;
+	// TestHubAssignedHiveType covers that branch of the rule directly.)
+	const operator = "alice-lab"
 	if got, code := postTypedHeartbeat(t, s, operator, derivePerHiveKey(s.hubSecret, infoHeartbeatKey, operator), ""); code != http.StatusOK || got != "local" {
 		t.Fatalf("operator default: status=%d hiveType=%q, want local", code, got)
 	}
