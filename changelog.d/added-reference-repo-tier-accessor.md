@@ -1,1 +1,0 @@
-- `config.ProjectConfig` gains a `ReferenceRepoTier(slug)` accessor (and `ReferenceRepo.Tier()`) returning a reference repo's write tier, so the proxy, kick renderer and dashboard share one source of truth (#18018).

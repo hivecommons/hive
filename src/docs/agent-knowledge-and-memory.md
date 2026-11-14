@@ -152,7 +152,8 @@ flowchart LR
   G -->|rank| R[model: one candidate slug or null]
   R -->|slug in candidates| D2[deliver that entry]
   R -->|null / invalid| X2[nothing]
-  R -->|timeout / error / over budget| E{on_error}
+  R -->|429| W[wait Retry-After, retry once] --> R
+  R -->|timeout / error / rate-limited / over budget| E{on_error}
   E -->|silence| X2
   E -->|matcher| D3[phase-1 top-1]
 ```
@@ -174,18 +175,37 @@ flowchart LR
   `hive-knowledge-advisor:<agent>` so proxy spend logs attribute cost per
   agent. The answer must be `{"slug": <candidate>|null, "reason": "..."}`;
   a slug that is not exactly a candidate, or a malformed answer, is `invalid`
-  and treated as `null`. There is no retry, and the `reason` is logged, never
-  typed.
+  and treated as `null`. A wrong answer is never retried (only a 429 is, once;
+  see Pacing), and the `reason` is logged, never typed.
 - **Modes.** `shadow` delivers phase 1's top entry and records what the model
   would have picked. `rank` delivers the model's pick; with
   `holdout_percent`, the kick identity is hashed into a delivery or holdout
   arm, and holdout kicks make the call and log the pick but type nothing.
   A valid `null` never falls back to the matcher; `on_error: matcher` only
-  covers timeouts, endpoint errors and exhausted budgets.
+  covers timeouts, endpoint errors, rate-limited calls and exhausted budgets.
 - **Budgets.** A rolling one-hour window per agent
   (`max_calls_per_agent_hour`, default and ceiling 6) and a per-UTC-day fleet
   counter (`max_calls_per_day`, default and ceiling 300). An exhausted budget
-  makes no request and is handled like an error.
+  makes no request and is handled like an error. A call the endpoint answered
+  with 429 is handed back to both budgets: a throttled hour must not also
+  become an over-budget hour.
+- **Pacing (429s).** The advisor usually shares its upstream quota with the
+  agents (on the Copilot API, the same user token every `copilot` agent
+  spends), and holdout kicks make the call too, so N agents entering scopes
+  in the same second used to fan out N calls against one quota and lose
+  (hivecommons/hive#18151). At most one advisor call is now in flight across
+  the whole hive, behind the runtime's one-per-agent guard; a decision that
+  cannot get the slot inside `timeout_s` records `timeout` without a request
+  and without spending budget. A 429 is retried exactly once after the
+  upstream's `Retry-After` (seconds or HTTP date), or after a 2 to 4 s
+  jittered backoff when it sent none, and only when that wait leaves at least
+  3 s of `timeout_s` for the retry; otherwise the decision is recorded
+  `rate-limited` straight away. A decision that is still throttled after the
+  retry is `rate-limited`, distinct from `error`. The first 429 in each
+  five-minute window logs `knowledge advisor: model endpoint rate limited
+  (429)` at WARN with `retry_after_s`, the `header_retry_after` and
+  `header_x_ratelimit_*` values and the response body; the rest of the window
+  logs at DEBUG.
 - **Decision log.** Every model decision writes one line:
 
   ```
@@ -195,17 +215,20 @@ flowchart LR
   ```
 
   `verdict` is what the model produced (`pick`, `null`, `invalid`,
-  `timeout`, `over-budget`, `error`); `outcome` is what happened to delivery
-  (`delivered`, `held-out`, `gated` when the kick moved during the call,
-  `fallback-matcher`, or the verdict when nothing was typed). Over-budget
-  lines also carry `budget=agent-hour|fleet-day`. Delivered lines still land
-  in the prompt history under trigger `knowledge-advisor`.
+  `timeout`, `over-budget`, `rate-limited`, `error`); `outcome` is what
+  happened to delivery (`delivered`, `held-out`, `gated` when the kick moved
+  during the call, `fallback-matcher`, or the verdict when nothing was typed).
+  Over-budget lines also carry `budget=agent-hour|fleet-day`; rate-limited
+  lines carry `retry_after_s` and `retried`. Delivered lines still land in
+  the prompt history under trigger `knowledge-advisor`.
 - **Decision store.** Each decision, held-out ones included, also appends one
   compact record (agent, kick id, the kick's primed issue/PR refs, mode, arm
   `shadow|deliver|holdout`, outcome, slug; never the reason or pane text) to
   `/data/knowledge-advisor-decisions.jsonl`, which the retro lane reads to
   assign each bead its advisor arm (see
-  [retro-lane.md](retro-lane.md#knowledge-advisor-arm)).
+  [retro-lane.md](retro-lane.md#knowledge-advisor-arm)). The record schema is
+  unchanged by `rate-limited`: it is one more `outcome` value, which the lane
+  counts but excludes from the deliver arm.
 
 **Rollout.** Start with `mode: shadow` for about a week: delivery is
 unchanged, and the decision lines show how often the model says `null`, how

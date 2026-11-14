@@ -516,6 +516,7 @@ func fixPermissions(logger *slog.Logger) {
 			)
 		}
 	}
+	permUnownable.flush(logger)
 }
 
 // fixEntry checks a single file or directory and corrects ownership/mode
@@ -554,6 +555,16 @@ func fixEntry(path string, fi os.FileInfo, logger *slog.Logger) {
 	}
 	if stat.Gid != uint32(NodeGID) {
 		needsChown = true
+	}
+	if needsChown && cannotChown(stat.Uid) {
+		// Unrepairable by construction (#18120): an unprivileged watcher can
+		// never chown an inode it does not own, so do not spend a syscall and
+		// a WARN line per path on it. Tally it for the per-tick summary and
+		// leave the uid alone so the mode arms below skip it as not ours.
+		permUnownable.skipped(path)
+		permWarnDedupe.clear(dedupeKey("chown", path))
+		needsChown = false
+		newUID = int(stat.Uid)
 	}
 	if needsChown {
 		if err := entryChown(f, newUID, NodeGID); err != nil {
