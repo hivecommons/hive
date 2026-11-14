@@ -17,8 +17,18 @@ import (
 const TypePlaud = "plaud"
 
 const (
-	// plaudDefaultCommand launches the official Plaud MCP server.
-	plaudDefaultCommand = "npx -y @plaud-ai/mcp@latest"
+	// plaudMCPVersion pins the @plaud-ai/mcp release the default command runs.
+	// A floating @latest let 0.3.14's reply envelope break every sync
+	// unreviewed (#18212), so the pin moves by hand, like the CLI pins in
+	// docs/cli-pins.md: read the release notes on npm, bump this constant and
+	// the dashboard placeholder (static-src/js/config-tabs.js KC_SCOPE_FIELDS
+	// 'plaud' command), run the plaud_test.go envelope cases against a reply
+	// from the new release, and mention the bump in docs/knowledge-connectors.md.
+	// A user-set scope.command is never rewritten.
+	plaudMCPVersion = "0.3.14"
+	// plaudDefaultCommand launches the official Plaud MCP server at the
+	// pinned version.
+	plaudDefaultCommand = "npx -y @plaud-ai/mcp@" + plaudMCPVersion
 	// plaudDefaultSinceDays bounds the first sync.
 	plaudDefaultSinceDays = 30
 	// plaudDefaultMaxFiles caps recordings fetched per sync.
@@ -159,19 +169,26 @@ func (c *plaudConnector) Sync(ctx context.Context, cur Cursor, emit func(Page) e
 	} else {
 		since = since.Add(-plaudRelistOverlap)
 	}
+	reportProgress(ctx, func(p *Progress) { p.Phase = ProgressListing })
 	files, err := c.listFiles(ctx, client, since, c.scopeInt("max_files", plaudDefaultMaxFiles))
 	if err != nil {
 		return cur, err
 	}
+	total := len(files)
+	reportProgress(ctx, func(p *Progress) { p.Phase, p.ItemsTotal = ProgressFetching, total })
 	newest := parsePlaudCursor(cur)
 	var skipped []string
 	for _, f := range files {
 		if err := ctx.Err(); err != nil {
 			return cur, err
 		}
+		title := progressTitle(plaudPageTitle(f))
+		reportProgress(ctx, func(p *Progress) { p.Phase, p.Current = ProgressFetching, title })
 		page, err := c.fetchPage(ctx, client, f)
 		if err != nil {
 			skipped = append(skipped, fmt.Sprintf("%s: %v", f.ID, err))
+			// Skipped recordings never reach emit, so count them here.
+			reportProgress(ctx, func(p *Progress) { p.ItemsDone++ })
 			continue
 		}
 		if err := emit(page); err != nil {
@@ -248,10 +265,7 @@ func (c *plaudConnector) fetchPage(ctx context.Context, client mcpClient, f plau
 			audioURL = plaudPresignedURL(text)
 		}
 	}
-	title := strings.TrimSpace(f.Name)
-	if title == "" {
-		title = "Plaud recording " + f.ID
-	}
+	title := plaudPageTitle(f)
 	var md strings.Builder
 	fmt.Fprintf(&md, "# %s\n\n", title)
 	if !f.StartAt.IsZero() {
@@ -301,6 +315,16 @@ func (c *plaudConnector) fetchPage(ctx context.Context, client mcpClient, f plau
 		Path:      []string{"Plaud"},
 		Attrs:     attrs,
 	}, nil
+}
+
+// plaudPageTitle is the fact title for one recording: its name, or a
+// placeholder naming the file ID when Plaud has none.
+func plaudPageTitle(f plaudFile) string {
+	title := strings.TrimSpace(f.Name)
+	if title == "" {
+		title = "Plaud recording " + f.ID
+	}
+	return title
 }
 
 // plaudAuthError rewrites "not authenticated" tool errors into a hint that

@@ -170,3 +170,8 @@ patch-only bump PR.
   this workflow. Dispatching by hand with `cli=<name>` is the interim path.
 - `KILO_CLI_VERSION` and `COPILOT_SDK_VERSION` are pinned but not bumped by
   this workflow.
+- The Plaud knowledge connector's default MCP command is pinned to
+  `npx -y @plaud-ai/mcp@0.3.14` by the `plaudMCPVersion` constant in
+  `src/pkg/knowledge/connector/plaud.go` (not a Dockerfile `ARG`: npx fetches
+  it at run time). It is bumped by hand; the constant's comment lists the
+  steps. See [knowledge-connectors.md](knowledge-connectors.md#plaud-note-pro-voice-notes-type-plaud).

@@ -93,6 +93,30 @@ test('terminal iframe path attaches hive-sess-<id> with the handoff code', () =>
   assert.strictEqual(h.sessionsTerminalPath('abc', ''), '/terminal/?arg=hive-sess-abc');
 });
 
+test('terminal pane and iframe take the dashboard terminal surface token, never a literal colour', () => {
+  const css = html.slice(html.indexOf('.sessions-terminal {'), html.indexOf('.sessions-log {'));
+  assert.match(css, /\.sessions-terminal \{[^}]*background: var\(--terminal-bg\)/);
+  assert.match(css, /\.sessions-frame \{[^}]*background: var\(--terminal-bg\)/);
+  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, 'sessions pane CSS must not add hex literals');
+});
+
+test('Settings → Dashboard stages dashboard.sessions.* as one nested block', () => {
+  const src = html.slice(html.indexOf('function markDashboardSessions'), html.indexOf('function markBackendsPolicy'));
+  const dirty = {};
+  const state = { data: { dashboard: { sessions: { enabled: false, max_sessions: 6 } } } };
+  const mark = new Function('_configState', 'markDirty', src + '\nreturn markDashboardSessions;')(state, (section, key, value) => { dirty[section + '.' + key] = value; });
+  mark('enabled', true);
+  mark('max_per_user', '3');
+  mark('idle_ttl_hours', '-4');
+  assert.deepStrictEqual(dirty['dashboard.sessions'], { enabled: true, max_sessions: 6, max_per_user: 3, idle_ttl_hours: 0 });
+  assert.match(html, /data-section="dashboard-sessions" data-key="enabled"/, 'Sessions toggle is rendered in the Dashboard tab');
+  assert.match(html, /yamlHint\('dashboard\.sessions\.enabled'\)/);
+  for (const key of ['max_sessions', 'max_per_user', 'idle_ttl_hours']) {
+    assert.match(html, new RegExp("limit\\('" + key + "', "), 'limit field for dashboard.sessions.' + key);
+  }
+  assert.match(html, /HIVE_SESSIONS_ENABLED environment variable, when set, overrides this switch/);
+});
+
 test('layout gate shows Sessions and hides Inception only when sessions are enabled', () => {
   const m = /function sessionsFeatureEnabled\(\)\{[^\n]*\n\s*function dashboardFeatureSectionHidden\(id\)\{[^\n]*\}/.exec(html);
   assert.ok(m, 'layout gate not found');

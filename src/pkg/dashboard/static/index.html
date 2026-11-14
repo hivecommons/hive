@@ -5888,6 +5888,17 @@
     .kc-pill[data-status="syncing"] { background: var(--blue); }
     .kc-pill[data-status="error"] { background: var(--red); }
     .kc-pill[data-status="not loaded"] { background: var(--orange); }
+    /* Live connector sync progress: a <progress> bar under the connector's
+       meta line, determinate when the item count is known, plus the compact
+       "syncing: <name> n/m" indicator in the Knowledge header. Tokens only. */
+    .kc-progress { display: grid; gap: var(--sp-1); margin-top: var(--sp-2); max-width: 420px; }
+    .kc-progress-bar { display: block; width: 100%; height: 6px; accent-color: var(--blue); }
+    .kc-progress-copy { display: flex; justify-content: space-between; gap: var(--sp-3); min-width: 0; font-size: var(--fs-xs); color: var(--muted); }
+    .kc-progress-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .kc-progress-elapsed { flex: 0 0 auto; font-variant-numeric: tabular-nums; }
+    .kc-table .kc-progress { margin-top: var(--sp-1); max-width: 180px; }
+    .kc-sync-badge { margin-left: var(--sp-3); font-size: var(--fs-xs); font-weight: 700; color: var(--blue); }
+    .kc-sync-badge[hidden] { display: none; }
     .kc-publish { margin-top: var(--sp-4); border-top: var(--line-width) solid var(--border); padding-top: var(--sp-3); }
     .kc-publish-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
     .kc-publish-head h4 { margin: 0; }
@@ -7793,8 +7804,11 @@
     .sessions-menu-items button { background: none; border: 0; color: var(--fg); font: inherit; font-size: var(--fs-sm); text-align: left; padding: var(--sp-3) var(--sp-4); border-radius: var(--r-sm); cursor: pointer; }
     .sessions-menu-items button:hover { background: color-mix(in srgb, var(--border) 30%, transparent); }
     .sessions-menu-items button.danger { color: var(--red); }
+    /* The pane and its iframe share the dashboard's terminal surface token, so
+       nothing black frames the terminal while ttyd loads; once loaded, the
+       proxied document paints itself from the same token (terminal_theme.go). */
     .sessions-terminal { height: 65vh; min-height: 20em; border: 1px solid var(--border); border-radius: var(--r); overflow: hidden; background: var(--terminal-bg); }
-    .sessions-frame { width: 100%; height: 100%; border: 0; display: block; }
+    .sessions-frame { width: 100%; height: 100%; border: 0; display: block; background: var(--terminal-bg); }
     .sessions-log { height: 65vh; min-height: 20em; overflow: auto; margin: 0; padding: var(--sp-4); background: var(--terminal-bg); color: var(--terminal-fg, var(--fg)); border: 1px solid var(--border); border-radius: var(--r); font-family: var(--font-mono); font-size: var(--fs-xs); white-space: pre-wrap; overflow-wrap: anywhere; }
     .sessions-input { display: grid; gap: var(--sp-3); }
     .sessions-input-label { font-size: var(--fs-xs); color: var(--muted); }
@@ -9186,7 +9200,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
   </div>
 
   <div class="mt-6 mb-8" id="knowledge-section" data-dashboard-section="knowledge-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="knowledge-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Knowledge section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📚 Knowledge <span id="kb-status-badge" style="font-size:0.7rem;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span><span id="public-knowledge-header-control" data-public-knowledge-control="header" data-stop="1"></span></h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="knowledge-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Knowledge section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📚 Knowledge <span id="kb-status-badge" style="font-size:0.7rem;padding:var(--sp-1) var(--sp-4);border-radius:var(--r-pill);margin-left:var(--sp-4)"></span><span id="kb-sync-badge" class="kc-sync-badge" hidden></span><span id="public-knowledge-header-control" data-public-knowledge-control="header" data-stop="1"></span></h2>
     <div class="section-body">
       <div id="knowledge-panel"></div>
     </div>
@@ -44438,6 +44452,9 @@ function burnAreaChart() {
     async function fetchKnowledgeStats() {
       try {
         const [r, , , docsR] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory(), fetch('/api/knowledge/documents')]);
+        // Header "syncing: <name> n/m" indicator; the tick switches itself to
+        // a 2.5s poll while a connector sync runs and back off when it ends.
+        kbSyncProgressTick().catch(() => {});
         if (!r.ok) return;
         const prev = _kbCache;
         _kbCache = await r.json();
@@ -46572,6 +46589,13 @@ function burnAreaChart() {
         _kcState = Object.assign(_kcState, { loaded: true, error: e.message });
       }
       kbRenderIntegrationsModal();
+      kbSyncProgressArm();
+    }
+    // After a status load: refresh the header indicator and, when a sync is
+    // already running (interval or another owner), start the fast poll.
+    function kbSyncProgressArm() {
+      kbSyncIndicatorRender();
+      if ((_kcState.rows || []).some(kcProgressActive) && !DASHBOARD_INTERVALS['kb-sync-progress']) dashboardSetInterval('kb-sync-progress', kbSyncProgressTick, KC_SYNC_POLL_MS);
     }
 
     function kbIntegrationTypes() {
@@ -46637,16 +46661,161 @@ function burnAreaChart() {
       return '<div class="muted-xs" data-kb-not-loaded>' + escapeHtml(KC_NOT_LOADED_HINT) + ' <a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener">Docs ↗</a></div>';
     }
 
+    // ── Connector sync progress (live) ──
+    // Pure helpers over one status row (`/api/config/knowledge/connectors/status`
+    // `connectors[]`, whose `progress` block the syncer updates as it goes).
+    // Rendered on the Integrations card and the Knowledge header while a sync
+    // runs; covered by knowledge_sync_ui.test.js.
+    const KC_SYNC_POLL_MS = 2500;
+    const KC_PROGRESS_ACTIVE_PHASES = ['listing', 'fetching', 'writing'];
+    const KC_PROGRESS_TITLE_MAX = 60;
+    function kcProgressActive(r) {
+      if (!r) return false;
+      const p = r.progress || {};
+      return !!r.running || KC_PROGRESS_ACTIVE_PHASES.includes(p.phase);
+    }
+    function kcProgressStartMs(p) {
+      const t = p && p.started_at ? Date.parse(p.started_at) : NaN;
+      return isNaN(t) || t <= 0 ? 0 : t;
+    }
+    function kcElapsedText(startMs, nowMs) {
+      if (!startMs) return '';
+      const s = Math.max(0, Math.round(((nowMs || Date.now()) - startMs) / 1000));
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + 'm ' + (s % 60) + 's';
+      return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+    }
+    function kcProgressCount(p) {
+      const done = (p && p.items_done) || 0;
+      const total = (p && p.items_total) || 0;
+      if (total > 0) return done + ' of ' + total;
+      return done > 0 ? String(done) : '';
+    }
+    function kcProgressLabel(p) {
+      p = p || {};
+      const phase = KC_PROGRESS_ACTIVE_PHASES.includes(p.phase) ? p.phase : 'listing';
+      const count = kcProgressCount(p);
+      let text = phase + (count ? ' ' + count : (phase === 'listing' ? ' items…' : '…'));
+      const title = (p.current || '').trim();
+      if (title) text += ' · ' + (title.length > KC_PROGRESS_TITLE_MAX ? title.slice(0, KC_PROGRESS_TITLE_MAX) + '…' : title);
+      return text;
+    }
+    function kcProgressHtml(r, nowMs) {
+      if (!kcProgressActive(r)) return '';
+      const p = (r && r.progress) || {};
+      const total = p.items_total || 0;
+      const done = Math.min(p.items_done || 0, total);
+      const bar = total > 0
+        ? '<progress class="kc-progress-bar" max="' + total + '" value="' + done + '"></progress>'
+        : '<progress class="kc-progress-bar"></progress>';
+      const elapsed = kcElapsedText(kcProgressStartMs(p), nowMs);
+      return '<div class="kc-progress" data-kc-progress data-phase="' + escapeHtml(p.phase || 'listing') + '">' + bar
+        + '<div class="kc-progress-copy"><span class="kc-progress-label">' + escapeHtml(kcProgressLabel(p)) + '</span>'
+        + (elapsed ? '<span class="kc-progress-elapsed" title="elapsed">' + escapeHtml(elapsed) + '</span>' : '') + '</div></div>';
+    }
+    // Error of the sync that just failed, shown inline under the bar's place
+    // until the next sync starts (the row's last_error line covers older ones).
+    function kcProgressFailedHtml(r) {
+      const p = (r && r.progress) || {};
+      if (p.phase !== 'failed' || !p.last_error || (r && r.last_error === p.last_error)) return '';
+      return '<div class="kc-error" data-kc-progress-error title="' + escapeHtml(p.last_error) + '">sync failed: ' + escapeHtml(p.last_error.length > 140 ? p.last_error.slice(0, 140) + '…' : p.last_error) + '</div>';
+    }
+    // Compact header text: "syncing: plaud 12/200" (+N when several run).
+    function kcSyncIndicatorText(rows) {
+      const active = (rows || []).filter(kcProgressActive);
+      if (!active.length) return '';
+      const r = active[0];
+      const p = r.progress || {};
+      let text = 'syncing: ' + (r.name || '?');
+      if (p.items_total > 0) text += ' ' + (p.items_done || 0) + '/' + p.items_total;
+      else if (p.items_done > 0) text += ' ' + p.items_done;
+      if (active.length > 1) text += ' +' + (active.length - 1);
+      return text;
+    }
+    // ── Connector sync progress end ──
+
+    function kbSyncIndicatorRender() {
+      const el = document.getElementById('kb-sync-badge');
+      if (!el) return;
+      const text = kcSyncIndicatorText(_kcState.rows);
+      el.hidden = !text;
+      el.textContent = text;
+      el.title = text ? 'A knowledge connector is syncing; open Integrations for the progress bar.' : '';
+    }
+    // Re-render only the live parts of a connector row (pill, meta line,
+    // progress bar, Sync now button) so an owner's half-typed form survives.
+    function kbSyncProgressPatchRows() {
+      const byName = {};
+      (_kcState.rows || []).forEach(r => { byName[r.name] = r; });
+      document.querySelectorAll('[data-kb-connector-name]').forEach(el => {
+        const name = el.getAttribute('data-kb-connector-name');
+        const c = (_kcState.connectors || []).find(x => x.name === name);
+        if (!c) return;
+        const r = byName[name] || {};
+        const status = kbConnectorStatusOf(c, r);
+        const pill = el.querySelector('.kc-pill');
+        if (pill) { pill.textContent = status; pill.setAttribute('data-status', status); }
+        const meta = el.querySelector('[data-kc-meta]');
+        if (meta) meta.innerHTML = kbConnectorMetaHtml(c, r);
+        const slot = el.querySelector('[data-kc-progress-slot]');
+        if (slot) slot.innerHTML = kcProgressHtml(r) + kcProgressFailedHtml(r);
+        const btn = el.querySelector('[data-action="kbIntegrationSync"]');
+        if (btn && !kbConnectorNotLoaded(c)) btn.disabled = status === 'syncing';
+      });
+      document.querySelectorAll('tr[data-connector] [data-kc-progress-slot]').forEach(slot => {
+        const row = slot.closest('tr');
+        const name = row.getAttribute('data-connector');
+        const r = byName[name] || {};
+        slot.innerHTML = kcProgressHtml(r);
+        const pill = row.querySelector('.kc-pill');
+        if (pill && r.status) { pill.textContent = r.status; pill.setAttribute('data-status', r.status); }
+      });
+    }
+    // One poll of the connector status; keeps polling every KC_SYNC_POLL_MS
+    // while any connector is syncing and stops (with one full refresh of the
+    // open Integrations modal / Settings table) when the last one finishes.
+    async function kbSyncProgressTick() {
+      let st;
+      try {
+        const r = await fetch('/api/config/knowledge/connectors/status');
+        if (!r.ok) return;
+        st = await r.json().catch(() => null);
+      } catch (e) { return; }
+      if (!st || !Array.isArray(st.connectors)) return;
+      _kcState.rows = st.connectors;
+      if (st.publish) _kcState.publish = st.publish;
+      if (typeof st.runtime === 'boolean') _kcState.runtime = st.runtime;
+      kbSyncIndicatorRender();
+      kbSyncProgressPatchRows();
+      const active = _kcState.rows.some(kcProgressActive);
+      const polling = !!DASHBOARD_INTERVALS['kb-sync-progress'];
+      if (active && !polling) dashboardSetInterval('kb-sync-progress', kbSyncProgressTick, KC_SYNC_POLL_MS);
+      if (!active && polling) {
+        dashboardClearInterval('kb-sync-progress');
+        if (document.getElementById('kb-integrations-content')) kbLoadIntegrationsModal(_kbIntegrationSelected);
+        if (document.getElementById('kc-connectors-root') && typeof renderKnowledgeConnectorsInto === 'function') renderKnowledgeConnectorsInto();
+      }
+    }
+
+    function kbConnectorStatusOf(c, r) {
+      return kbConnectorNotLoaded(c) ? KC_STATUS_NOT_LOADED : (r.status || (c.enabled ? 'pending' : 'disabled'));
+    }
+    function kbConnectorMetaHtml(c, r) {
+      const publish = _kcState.publish && _kcState.publish.connector === c.name ? ' · publish ' + (_kcState.publish.running ? 'syncing' : _kcState.publish.last_error ? 'error' : _kcState.publish.last_success ? 'ok' : 'pending') : '';
+      return escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish);
+    }
+
     function kbConnectorRow(type, c, owner) {
       const byName = {};
       (_kcState.rows || []).forEach(r => { byName[r.name] = r; });
       const r = byName[c.name] || {};
       const notLoaded = kbConnectorNotLoaded(c);
-      const status = notLoaded ? KC_STATUS_NOT_LOADED : (r.status || (c.enabled ? 'pending' : 'disabled'));
-      const publish = _kcState.publish && _kcState.publish.connector === c.name ? ' · publish ' + (_kcState.publish.running ? 'syncing' : _kcState.publish.last_error ? 'error' : _kcState.publish.last_success ? 'ok' : 'pending') : '';
+      const status = kbConnectorStatusOf(c, r);
       let html = '<div class="card-inset row-between mb-3" data-kb-connector-name="' + escapeHtml(c.name) + '"><div class="kb-integration-row-main">';
       html += '<div class="kb-integration-connector-title"><code>' + escapeHtml(c.name) + '</code> <span class="kc-pill" data-status="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span></div>';
-      html += '<div class="muted-xs">' + escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish) + '</div>';
+      html += '<div class="muted-xs" data-kc-meta>' + kbConnectorMetaHtml(c, r) + '</div>';
+      html += '<div data-kc-progress-slot>' + kcProgressHtml(r) + kcProgressFailedHtml(r) + '</div>';
       if (r.last_error) html += '<div class="kc-error" title="' + escapeHtml(r.last_error) + '">' + escapeHtml(r.last_error.length > 140 ? r.last_error.slice(0, 140) + '…' : r.last_error) + '</div>';
       if (notLoaded) html += kbConnectorNotLoadedHtml();
       else if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);
@@ -56976,6 +57145,8 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Experiment Lab', key: 'dashboard.experiment_lab', text: 'experiment_lab Experiment Lab dashboard feature experimental planner' },
+      { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Sessions', key: 'dashboard.sessions.enabled', text: 'sessions enabled shared cli terminal tmux ttyd inception replace HIVE_SESSIONS_ENABLED dashboard.sessions.enabled' },
+      { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Session limits', key: 'dashboard.sessions.max_sessions', text: 'sessions limits max running per user idle close hours ttl HIVE_SESSIONS_MAX HIVE_SESSIONS_MAX_PER_USER HIVE_SESSIONS_IDLE_TTL_HOURS dashboard.sessions.max_sessions dashboard.sessions.max_per_user dashboard.sessions.idle_ttl_hours' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Subscription usage gauge in header', key: 'dashboard.subscription_gauge_header', text: 'subscription_gauge_header subscription usage gauge fuel header chip claude usage claude plan weekly 5-hour limit left remaining quota headroom' },
       { tab: 'Project Observability', section: 'Target platforms', label: 'Project observability targets', key: 'governor.project_observability.open_source[]', text: 'project observability telemetry operations open source kube native commercial references endpoint env credential secret' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Question auto-close', key: 'governor.question_autoclose.enabled', text: 'question auto close answered questions labels human objection window' },
@@ -58343,7 +58514,7 @@ function burnAreaChart() {
       'github-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'master']],
       'google-drive': [['folder_ids', 'Folder IDs', 'folder123, folder456'], ['shared_drive_ids', 'Shared drive IDs', 'drive123'], ['include_mime', 'Include MIME groups', 'docs,md,txt']],
       'notion': [['root_page_ids', 'Root page IDs', '1a2b3c4d5e6f47a8b9c0d1e2f3a4b5c6'], ['database_ids', 'Database IDs', '0f1e2d3c-4b5a-4968-8776-655443322110'], ['include_archived', 'Include archived', 'false'], ['max_pages', 'Max pages', '2000'], ['full_sync_every', 'Full sync every', '10']],
-      'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@latest'], ['since_days', 'Days back on first sync', '30'], ['max_files', 'Max recordings per sync', '200'], ['include_audio', 'Include 24h audio link', 'false'], ['query', 'Name filter (optional)', 'standup'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['home', 'Token store HOME (optional)', '/data/knowledge/connector-state/plaud/home']],
+      'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@0.3.14'], ['since_days', 'Days back on first sync', '30'], ['max_files', 'Max recordings per sync', '200'], ['include_audio', 'Include 24h audio link', 'false'], ['query', 'Name filter (optional)', 'standup'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['home', 'Token store HOME (optional)', '/data/knowledge/connector-state/plaud/home']],
       'repo-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'v5'], ['dir', 'Wiki directory', '.hive/wiki']],
       'sharepoint': [['drive_ids', 'Drive IDs', 'b!drive-id'], ['site_ids', 'Site IDs', 'contoso.sharepoint.com,site-id,web-id'], ['folder_path', 'Folder path', '/Docs/Sub'], ['include_files', 'Include file extensions', '.md,.txt,.html']],
       'wisprflow': [['path', 'flow.sqlite or export folder (empty = app default)', '/Users/me/Library/Application Support/Wispr Flow/flow.sqlite'], ['since_days', 'Days back on first sync', '30'], ['max_items', 'Max dictations per sync', '500'], ['min_words', 'Skip dictations shorter than (words)', '3'], ['group', 'Fact per dictation or day', 'dictation'], ['apps', 'Only these apps (comma-separated, optional)', 'slack, obsidian, vscode'], ['include_raw', 'Include raw ASR text', 'false'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['sqlite3', 'sqlite3 command (optional)', 'sqlite3']]
@@ -58398,7 +58569,7 @@ function burnAreaChart() {
         const err = r.last_error || '';
         const n = esc(c.name);
         html += '<tr data-connector="' + n + '"><td><code>' + n + '</code></td><td>' + esc(c.type) + '</td><td>' + esc(c.layer) + '</td>'
-          + '<td><span class="kc-pill" data-status="' + esc(status) + '">' + esc(status) + '</span></td>'
+          + '<td><span class="kc-pill" data-status="' + esc(status) + '">' + esc(status) + '</span><div data-kc-progress-slot>' + (typeof kcProgressHtml === 'function' ? kcProgressHtml(r) : '') + '</div></td>'
           + '<td title="' + esc(r.last_sync || '') + '">' + esc(kcAgo(r.last_sync)) + '</td>'
           + '<td>' + (r.pages || 0) + ' / ' + (r.facts || 0) + '</td>'
           + '<td class="kc-error-cell" title="' + esc(err) + '">' + (err ? esc(err.length > 80 ? err.slice(0, 80) + '…' : err) : '—') + '</td>';
@@ -58728,6 +58899,8 @@ function burnAreaChart() {
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         showToast('Sync started for ' + name, 'success');
         setTimeout(loadKnowledgeConnectors, 1500);
+        // Start the live progress poll right away (card bar + header indicator).
+        if (typeof kbSyncProgressTick === 'function') setTimeout(() => kbSyncProgressTick().catch(() => {}), 300);
       } catch (e) {
         showToast('Sync failed to start: ' + e.message, 'error');
       }
@@ -58875,6 +59048,15 @@ function burnAreaChart() {
       markDirty('dashboard', 'issue_bands', bands);
     }
 
+    // dashboard.sessions.* is saved as one nested block (like issue_bands), so a
+    // toggle or a limit edit stages the whole block with the other fields intact.
+    function markDashboardSessions(key, value) {
+      const d = _configState.data.dashboard = _configState.data.dashboard || {};
+      const sessions = d.sessions = Object.assign({}, d.sessions || {});
+      sessions[key] = key === 'enabled' ? !!value : Math.max(0, parseInt(value || '0', 10) || 0);
+      markDirty('dashboard', 'sessions', sessions);
+    }
+
     function markBackendsPolicy(key, value) {
       _configState.data.backends = _configState.data.backends || {};
       _configState.data.backends[key] = splitConfigLines(value);
@@ -58885,6 +59067,19 @@ function burnAreaChart() {
       _configState.data.classifier = _configState.data.classifier || {};
       _configState.data.classifier[key] = splitConfigLines(value);
       markDirty('classifier', key, _configState.data.classifier[key]);
+    }
+
+    function renderGovDashboardSessions(dash) {
+      const sessions = dash.sessions || {};
+      const envNote = sessions.env_override ? ' <span class="text-muted">Overridden by <code>HIVE_SESSIONS_ENABLED</code> on this hive; the switch shows the saved value.</span>' : '';
+      const limit = (key, label, help) =>
+        '<div class="config-field"><label>' + label + ' ' + yamlHint('dashboard.sessions.' + key) + '</label><input type="number" min="0" step="1" value="' + esc(String(sessions[key] || 0)) + '" data-change-action="markDashboardSessions" data-arg0="' + key + '" data-arg-types="s,v"><div class="config-help">' + help + '</div></div>';
+      return '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.enabled ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="enabled"></div><span class="config-toggle-label">Sessions ' + yamlHint('dashboard.sessions.enabled') + ' ' + settingHelpMark('settings', 'dashboard', 'Sessions', 'Turns on the Sessions section: named, shared CLI-agent terminals inside the dashboard. It replaces the Inception section while on. Off by default. The HIVE_SESSIONS_ENABLED environment variable, when set, overrides this switch.') + envNote + '</span></div>' +
+        '<div class="config-field-row">' +
+          limit('max_sessions', 'Max running sessions', 'Live sessions per hive. 0 uses the default (12); HIVE_SESSIONS_MAX overrides.') +
+          limit('max_per_user', 'Max per user', 'Live sessions one person may create. 0 uses the default (4); HIVE_SESSIONS_MAX_PER_USER overrides.') +
+          limit('idle_ttl_hours', 'Idle close (hours)', 'A session with no input and nobody attached ends after this long. 0 uses the default (72); HIVE_SESSIONS_IDLE_TTL_HOURS overrides.') +
+        '</div>';
     }
 
     function renderGovDashboard(dash) {
@@ -58900,6 +59095,7 @@ function burnAreaChart() {
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.experiment_lab ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="experiment_lab"></div><span class="config-toggle-label">Experiment Lab ' + yamlHint('dashboard.experiment_lab') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.subscription_gauge_header ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="subscription_gauge_header"></div><span class="config-toggle-label">Also show the usage gauge in the header ' + yamlHint('dashboard.subscription_gauge_header') + ' ' + settingHelpMark('settings', 'dashboard', 'Usage gauge in the header', 'The Claude usage fuel gauge is on the Overview by default for the owner. This also shows it as a small chip in the header on every page. It reads the usage measurements hive already makes, so it adds no calls to Claude. Only the hive owner sees it. This is the Claude plan this hive is signed in with, not the hive token budget. Off by default.') + '</span></div>' +
         '<div class="config-toggle"><div class="config-toggle-switch ' + (dash.hub_proxied ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard" data-key="hub_proxied"></div><span class="config-toggle-label">Hub-proxied auth ' + yamlHint('dashboard.hub_proxied') + ' <span class="text-muted">Managed by hub on hosted hives.</span></span></div>' +
+        renderGovDashboardSessions(dash) +
         '<div class="config-field"><label>Dashboard auth token ' + yamlHint('dashboard.auth_token') + '</label><input type="password" autocomplete="new-password" placeholder="' + esc(authTokenText) + '" data-change-action="markDirty" data-arg0="dashboard" data-arg1="auth_token" data-arg-types="s,s,v"><div class="config-help">Write-only; the current token is never echoed.</div></div>' +
         '<h3>Access allowlist</h3>' +
         '<div class="config-field"><label>Authorized users ' + yamlHint('dashboard.authorized_users[]') + '</label><textarea rows="5" data-change-action="markDashboardList" data-arg0="authorized_users" data-arg-types="s,v">' + esc((dash.authorized_users || []).join('\n')) + '</textarea><div class="config-help">One user per line; append <code>:read</code>, <code>:read-write</code>, or <code>:owner</code> for explicit roles.</div></div>' +
@@ -73170,6 +73366,12 @@ function burnAreaChart() {
       if (section === 'native-queue') {
         el.setAttribute('aria-checked', String(isOn));
         markDirtyNativeQueue(key, isOn);
+        return;
+      }
+      // dashboard.sessions.* is one nested block under the dashboard section.
+      if (section === 'dashboard-sessions') {
+        el.setAttribute('aria-checked', String(isOn));
+        markDashboardSessions(key, isOn);
         return;
       }
       markDirty(section, key, isOn);

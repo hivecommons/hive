@@ -11,6 +11,23 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.262.0)
+
+### Added
+
+- Knowledge → Integrations shows what a connector is doing while it syncs instead of nothing until the sync ends: each connector status carries a live `progress` block (phase `listing`/`fetching`/`writing`/`done`/`failed`, `items_done`/`items_total`, the current item title, `started_at`, bytes and facts written so far) that the syncer updates per page and the Plaud connector per recording right after `list_files`; the card draws a progress bar (determinate once the count is known), a `fetching 12 of 200 · <title>` line, the elapsed time and the error inline on failure, polling every 2.5 s only while a sync runs, and the Knowledge section header gains a compact `syncing: <name> 12/200` indicator. The Plaud connector's default MCP command is now pinned to `npx -y @plaud-ai/mcp@0.3.14` (`plaudMCPVersion`, bumped by hand) instead of a floating `@latest`; a `scope.command` set by the operator is left untouched.
+
+### Fixed
+
+- Sessions: the embedded terminal now follows the dashboard theme (the proxied ttyd document for a user session paints itself and xterm.js from the dashboard's `--terminal-bg` / `--terminal-fg` / `--accent` tokens, in light and dark mode and under theme presets, and the pane no longer shows a black frame while loading; agent terminals are unchanged), and Settings → Dashboard gains a real **Sessions** switch for `dashboard.sessions.enabled` with the `max_sessions`, `max_per_user` and `idle_ttl_hours` limits, noting when `HIVE_SESSIONS_ENABLED` overrides it.
+
+## 2026-11-14 (v5.261.0)
+
+### Added
+
+- **Secrets at rest are now encrypted on the spoke** ([#18214](https://github.com/hivecommons/hive/issues/18214), [#18215](https://github.com/hivecommons/hive/issues/18215)). Every secret value the dashboard collects (LiteLLM, Bob and per-gateway API keys, the backup key, the owner's GitHub token, the NPS relay identity, the Copilot device-flow login) and the `github.token` value in the persisted runtime config are stored through a new `keystore` provider interface as a versioned `hive-enc:v1:…` envelope instead of plaintext, so a copy of the data volume alone no longer yields them. The default `env` provider needs no new infrastructure: it derives an AES-256-GCM key with HKDF from `HIVE_SECRETS_KEY` (or `HIVE_SECRETS_KEY_FILE`), falling back to the hub-provisioned `HIVE_HEARTBEAT_KEY`, so hosted spokes encrypt on their next boot and legacy plaintext files are re-sealed on first read. A hive with no key material keeps today's behaviour and logs one `WARN` at boot; `HIVE_KEYSTORE_PROVIDER=none` makes that explicit, and `HIVE_SECRETS_KEY_PREVIOUS` lets a spoke absorb a key rotation. Agent-facing credential files and the read-only `/secrets` mount are unchanged.
+- The hub landing page gains an "Isolation and secrets" logo row (OpenShell, Agent Substrate, OpenBao, Podman, Kubernetes) in the existing chip style, and the integrations page now shows the OpenShell and Agent Substrate project logos instead of the NVIDIA and CNCF stand-ins plus a new "Secrets and keys" section for the built-in keystore and the opt-in OpenBao Transit provider, both in progress under [#18214](https://github.com/hivecommons/hive/issues/18214) ([#18217](https://github.com/hivecommons/hive/issues/18217)). Logo sources and licenses are recorded in `src/docs/assets/logos/SOURCES.md`.
+
 ## 2026-11-14 (v5.260.0)
 
 ### Added

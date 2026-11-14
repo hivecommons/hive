@@ -202,7 +202,7 @@ Named terminal sessions where a command-line AI agent runs inside Hive; everyone
 
 **When it appears.** Only when sessions are enabled on the hive (`GET /api/sessions` reports `enabled: true`); otherwise the Inception section is shown.
 
-**Settings that change it.** `dashboard.sessions.enabled` (default off) and the session limits it reports. See [Inception](../inception.md) for the section it replaces.
+**Settings that change it.** Settings → Dashboard → **Sessions** (`dashboard.sessions.enabled`, default off) and the three limits beside it (`max_sessions`, `max_per_user`, `idle_ttl_hours`; 0 keeps the default). `HIVE_SESSIONS_ENABLED` and the matching `HIVE_SESSIONS_*` variables override the saved values. The terminal is drawn in the dashboard's terminal colours, so it matches the current theme. See [Inception](../inception.md) for the section it replaces.
 
 ## Knowledge
 

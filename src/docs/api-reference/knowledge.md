@@ -39,7 +39,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/knowledge/vaults/{name}/facts` | Dashboard auth/session | Vault Facts | `pkg/dashboard/api.go:423` |
 | `GET` | `/api/config/knowledge/connectors` | Dashboard auth/session | Knowledge connectors config (name, type, layer, scope, env/file auth reference) and registered types | `pkg/dashboard/api.go` |
 | `PUT` | `/api/config/knowledge/connectors` | Owner only | Replace `knowledge.connectors` after validation; inline secrets rejected | `pkg/dashboard/api.go` |
-| `GET` | `/api/config/knowledge/connectors/status` | Dashboard auth/session | Per-connector status pill, last sync, pages/facts, last error, plus the `publish` mirror status | `pkg/dashboard/api.go` |
+| `GET` | `/api/config/knowledge/connectors/status` | Dashboard auth/session | Per-connector status pill, last sync, pages/facts, last error, `running` and the live `progress` block (phase, items_done/items_total, current item, started_at; see [knowledge-connectors.md](../knowledge-connectors.md#api)), plus the `publish` mirror status | `pkg/dashboard/api.go` |
 | `POST` | `/api/config/knowledge/connectors/validate` | Owner only | Dry-run validate one connector entry (no network) | `pkg/dashboard/api.go` |
 | `POST` | `/api/config/knowledge/connectors/{name}/sync` | Owner only | Start an immediate background sync of one connector | `pkg/dashboard/api.go` |
 | `GET` | `/api/config/knowledge/agent-scopes` | Dashboard auth/session | Per-agent knowledge scopes (`knowledge.agent_scopes`: layers, repos, types, tags, include_states) ([docs](../knowledge-toc.md#per-agent-scopes)) | `pkg/dashboard/api.go` |
@@ -59,7 +59,7 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `POST` | `/api/knowledge/cleanup-orphans` | Dashboard auth/session | Cleanup Orphans | `pkg/dashboard/api.go:443` |
 | `GET` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channels List | `pkg/dashboard/api.go:406` |
 | `POST` | `/api/knowledge/channels` | Dashboard auth/session | Knowledge Channel Create | `pkg/dashboard/api.go:407` |
-| `GET` | `/api/knowledge/connectors` | Dashboard auth/session | Knowledge connector statuses and publish mirror status (`{"connectors": [...], "publish": {...}\|null}`, see [knowledge-connectors.md](../knowledge-connectors.md)) | `pkg/dashboard/api_knowledge_connectors.go:24` |
+| `GET` | `/api/knowledge/connectors` | Dashboard auth/session | Knowledge connector statuses, each with a live `progress` block while a sync runs, and publish mirror status (`{"connectors": [...], "publish": {...}\|null}`, see [knowledge-connectors.md](../knowledge-connectors.md)) | `pkg/dashboard/api_knowledge_connectors.go:24` |
 | `POST` | `/api/knowledge/connectors/{name}/sync` | Owner only | Start one connector sync now (202; 404 unknown, 409 running) | `pkg/dashboard/api_knowledge_connectors.go:25` |
 | `POST` | `/api/knowledge/publish/sync` | Owner only | Run a publish mirror batch now (202 with publish status; 503 mirror not running, 409 batch in progress) | `pkg/dashboard/api_knowledge_connectors.go:26` |
 | `GET` | `/api/knowledge/connectors/{name}/auth` | Dashboard auth/session | Interactive sign-in state for a connector (Plaud OAuth): connected, account, pending, auth_url; `?refresh=1` re-checks upstream (400 for connector types without interactive sign-in) | `pkg/dashboard/api_knowledge_connector_auth.go:25` |
