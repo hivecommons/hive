@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v6.30.1)
+
+### Changed
+
+- chore: top up v6 from v5 (2026-11-14) (#18193)
+
+### Fixed
+
+- **A label-driven acceptance held back by a person's park label now completes once that label is removed.** On a repository with `label_driven` approval, a trusted `triage/accepted` added while a person's `needs-human` (for example, one added by an issue form) was on the issue got one "approval is withheld" comment, and that comment carried the same once-only marker as the final approval reply. Every later pass read the marker as "already done", so removing the label, as the comment advised, changed nothing and the issue stayed at `stage/045-needs-decision` (seen on projectbluefin/chairlift#752). The withheld comment now has its own marker (`<!-- hive:label-approval-pending:11313 event=N -->`), and an old-format withheld comment is recognised by its text, so issues already stuck release on the next pass. The comment no longer suggests `/hive approve`, which is refused on a park that names no recommendation and cannot lift a person's label anyway.
+
 ## 2026-11-13 (v6.30.0)
 
 ### Added
