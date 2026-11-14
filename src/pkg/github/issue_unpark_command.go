@@ -792,8 +792,13 @@ func (c *Client) tryLabelApproval(ctx context.Context, displayRepo, owner, repo 
 	event := IssueLabelApprovalEvent{Repo: displayRepo, Number: number, Label: f.Label, Actor: f.Actor, TrustReason: f.TrustReason}
 	if f.Blocked() {
 		// A person's park label keeps the issue out of the queue: no approval,
-		// one comment, and nothing more until that label is gone (R13).
-		if err := c.postLabelApprovalReply(ctx, owner, repo, number, f.AcceptanceID, renderLabelApprovalPendingReply(f)); err != nil {
+		// one comment, and nothing more until that label is gone (R13). The
+		// pending comment has its own marker, so the acceptance completes on
+		// the first pass after the label goes.
+		if c.labelApprovalPendingCommented(comments, f.AcceptanceID) {
+			return false, nil
+		}
+		if err := c.postLabelApprovalReply(ctx, owner, repo, number, labelApprovalPendingMarker(f.AcceptanceID), renderLabelApprovalPendingReply(f)); err != nil {
 			return false, err
 		}
 		event.Pending = true
@@ -819,7 +824,7 @@ func (c *Client) tryLabelApproval(ctx context.Context, displayRepo, owner, repo 
 	event.Released = f.Released()
 	if parked {
 		// R8: approval alone, on an issue that was not parked, gets no comment.
-		if err := c.postLabelApprovalReply(ctx, owner, repo, number, f.AcceptanceID, renderLabelApprovalReply(f, event.Removed)); err != nil {
+		if err := c.postLabelApprovalReply(ctx, owner, repo, number, labelApprovalMarker(f.AcceptanceID), renderLabelApprovalReply(f, event.Removed)); err != nil {
 			return false, err
 		}
 	}
@@ -837,8 +842,8 @@ func (c *Client) recordLabelApproval(event IssueLabelApprovalEvent, la unparkLab
 	}
 }
 
-func (c *Client) postLabelApprovalReply(ctx context.Context, owner, repo string, number int, eventID int64, body string) error {
-	marked := labelApprovalMarker(eventID) + "\n" + body
+func (c *Client) postLabelApprovalReply(ctx context.Context, owner, repo string, number int, marker, body string) error {
+	marked := marker + "\n" + body
 	if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(marked)}); err != nil {
 		return fmt.Errorf("replying to label approval on %s/%s#%d: %w", owner, repo, number, err)
 	}

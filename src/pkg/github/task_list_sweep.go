@@ -680,7 +680,7 @@ func (c *Client) tryAnnotateNonTaskListRefs(ctx context.Context, owner, repo str
 
 // lastMaintainerAcceptanceAt returns when the hive last recorded a maintainer
 // answer on the issue: an accepted `/hive approve` / `/hive decision` reply or
-// a label-approval reply. It is zero when there is none.
+// a label-approval reply, pending or final. It is zero when there is none.
 func (c *Client) lastMaintainerAcceptanceAt(comments []*gh.IssueComment) time.Time {
 	var latest time.Time
 	for _, cm := range comments {
@@ -688,7 +688,7 @@ func (c *Client) lastMaintainerAcceptanceAt(comments []*gh.IssueComment) time.Ti
 			continue
 		}
 		body := cm.GetBody()
-		accepted := strings.Contains(body, labelApprovalMarkerPrefix) ||
+		accepted := strings.Contains(body, labelApprovalMarkerPrefix) || strings.Contains(body, labelApprovalPendingMarkerPrefix) ||
 			(strings.Contains(body, unparkReplyMarkerPrefix) && strings.Contains(body, unparkDecisionLinePrefix))
 		if accepted && cm.GetCreatedAt().Time.After(latest) {
 			latest = cm.GetCreatedAt().Time
