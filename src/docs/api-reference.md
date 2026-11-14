@@ -12,7 +12,7 @@ History point limits, timestamp cutoffs, incremental cost reads and ETag/304 beh
 |---|---|---|
 | Health, status, events | [`api-reference/health-status-events.md`](api-reference/health-status-events.md) | 50 |
 | Snapshots and style | [`api-reference/snapshots-and-style.md`](api-reference/snapshots-and-style.md) | 5 |
-| Auth and external accounts | [`api-reference/auth.md`](api-reference/auth.md) | 22 |
+| Auth and external accounts | [`api-reference/auth.md`](api-reference/auth.md) | 26 |
 | Configuration | [`api-reference/configuration.md`](api-reference/configuration.md) | 110 |
 | Agents and controls | [`api-reference/agents-and-controls.md`](api-reference/agents-and-controls.md) | 36 |
 | Packs and ACMM | [`api-reference/packs-and-acmm.md`](api-reference/packs-and-acmm.md) | 18 |
@@ -37,7 +37,7 @@ History point limits, timestamp cutoffs, incremental cost reads and ETag/304 beh
 
 ## Auth and external accounts
 
-22 routes — see [api-reference/auth.md](api-reference/auth.md).
+26 routes — see [api-reference/auth.md](api-reference/auth.md).
 
 ## Configuration
 

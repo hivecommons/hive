@@ -562,6 +562,12 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// project.reference_repos editor on the Repos tab (#18136, api_config_reference_repos.go).
 	s.mux.HandleFunc("GET /api/config/reference-repos", s.handleReferenceReposGet)
 	s.mux.HandleFunc("PUT /api/config/reference-repos", s.handleReferenceReposPut)
+	// The hive owner's GitHub identity for remote repos (#18197,
+	// api_github_owner_identity.go): consent, status and disconnect.
+	s.mux.HandleFunc("GET /api/github-owner-identity", s.handleOwnerIdentityGet)
+	s.mux.HandleFunc("POST /api/github-owner-identity/start", s.handleOwnerIdentityStart)
+	s.mux.HandleFunc("POST /api/github-owner-identity/poll", s.handleOwnerIdentityPoll)
+	s.mux.HandleFunc("DELETE /api/github-owner-identity", s.handleOwnerIdentityDelete)
 }
 
 var (

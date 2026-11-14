@@ -214,7 +214,7 @@ func rejectDashboardTokenFiles(next, current []config.ReferenceRepo) error {
 		if rr.WriteTokenFile == "" || fromFile[key(rr.Repo)] == rr.WriteTokenFile {
 			continue
 		}
-		return fmt.Errorf("project.reference_repos[%d]: write_token_file for %q can only be set in the config file by the hive operator; a write opt-in saved from the dashboard uses the GitHub App installation on the repo's org", i, rr.Repo)
+		return fmt.Errorf("project.reference_repos[%d]: write_token_file for %q can only be set in the config file by the hive operator; a write opt-in saved from the dashboard writes as the hive owner's connected GitHub account", i, rr.Repo)
 	}
 	return nil
 }

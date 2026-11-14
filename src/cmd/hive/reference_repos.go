@@ -14,11 +14,11 @@ import (
 	wfstore "github.com/hivecommons/hive/pkg/workflowmodel/store"
 )
 
-// referenceRepoCredentialExitCode marks an exit caused by a
+// referenceRepoCredentialExitCode marks an exit caused by a hand-written
 // project.reference_repos entry that opted in to writes without a credential
 // GitHub would honour for that repo (hivecommons/hive#18015). Its own code so
-// the termination state says "install the App on the target org or supply
-// write_token_file", not "bug".
+// the termination state says "connect the hive owner's GitHub account or
+// supply write_token_file", not "bug".
 const referenceRepoCredentialExitCode = 22
 
 // derivedReadOnlyPoster posts the one-shot read-only notice on a request
@@ -26,21 +26,35 @@ const referenceRepoCredentialExitCode = 22
 // github.Client.CommentDerivedReadOnly; tests stub it.
 type derivedReadOnlyPoster func(ctx context.Context, issueRepo string, number int, readOnly []config.ReferenceRepo) (bool, error)
 
-// referenceRepoDeps are the seams buildReferenceRepoPolicies needs: App
-// installation discovery on a foreign org and token-identity resolution.
-// Either may be nil when the hive has no GitHub App auth, in which case a
-// write-mode entry can only be served by write_token_file.
+// referenceRepoDeps are the seams buildReferenceRepoPolicies needs: the hive
+// owner's connected GitHub identity (hivecommons/hive#18197) and
+// token-identity resolution for write_token_file entries. owner may be nil
+// when no identity store is wired, in which case a write-mode entry can only
+// be served by write_token_file.
 type referenceRepoDeps struct {
-	botLogin string
-	discover func(ctx context.Context, org string) (int64, error)
-	whoAmI   func(ctx context.Context, token string) (string, error)
-	auth     func() *github.AppAuth
+	// owner reports the owner credential as of now (login, or why none).
+	owner func() github.OwnerCredential
+	// ownerToken is the proxy's token source for the owner identity.
+	ownerToken github.OwnerTokenSource
+	// refreshOwner re-validates the stored owner token (rate-limited inside
+	// the store) before a pass resolves against it; nil skips.
+	refreshOwner func(ctx context.Context)
+	whoAmI       func(ctx context.Context, token string) (string, error)
+}
+
+// ownerCredential is deps.owner with a nil guard.
+func (d referenceRepoDeps) ownerCredential() github.OwnerCredential {
+	if d.owner == nil {
+		return github.OwnerCredential{Unavailable: github.OwnerIdentityNotConnected}
+	}
+	return d.owner()
 }
 
 // referenceRepoResolution is what buildReferenceRepoPolicies produces: the
-// proxy policies and the entries as resolved, with each derived entry's
-// CredentialState filled in (and its Write cleared when it was downgraded),
-// so the kick and the status payload describe what the proxy enforces.
+// proxy policies and the entries as resolved, with each write entry's
+// CredentialState and CredentialLogin filled in (and a derived entry's Write
+// cleared when it was downgraded), so the kick and the status payload
+// describe what the proxy enforces.
 type referenceRepoResolution struct {
 	policies []proxy.ReferenceRepoPolicy
 	repos    []config.ReferenceRepo
@@ -49,10 +63,13 @@ type referenceRepoResolution struct {
 // buildReferenceRepoPolicies turns the config list into proxy policies. A
 // read-only entry needs nothing; a hand-written write-mode entry is verified
 // now so the failure is a boot-time config error naming the repo. A derived
-// entry (hivecommons/hive#18158) is resolved instead: write tier when the App
-// is installed on its org, read-only otherwise, never an error (a transient
-// discovery failure keeps the entry read-only for this load and is logged).
+// entry (hivecommons/hive#18158) is resolved instead: write tier when the
+// owner identity is usable, read-only otherwise, never an error.
 func buildReferenceRepoPolicies(ctx context.Context, refs []config.ReferenceRepo, deps referenceRepoDeps, logger *slog.Logger) (referenceRepoResolution, error) {
+	if deps.refreshOwner != nil {
+		deps.refreshOwner(ctx)
+	}
+	owner := deps.ownerCredential()
 	res := referenceRepoResolution{
 		policies: make([]proxy.ReferenceRepoPolicy, 0, len(refs)),
 		repos:    make([]config.ReferenceRepo, 0, len(refs)),
@@ -60,27 +77,21 @@ func buildReferenceRepoPolicies(ctx context.Context, refs []config.ReferenceRepo
 	for _, rr := range refs {
 		login := ""
 		if rr.Derived() {
-			resolved, derivedLogin, err := github.ResolveDerivedReferenceRepo(ctx, rr, deps.botLogin, deps.discover)
-			if err != nil {
-				// A blip, not a verdict: serve read-only this load but do not
-				// tell the request issue the App is missing when it may not be.
-				logger.Warn("derived reference repo: credential discovery failed, serving read-only this load", "repo", rr.Repo, "from", rr.DerivedFrom, "error", err.Error())
-				resolved.Write = nil
-				resolved.CredentialState = config.ReferenceCredentialUnresolved
-				resolved.CredentialReason = err.Error()
-			}
-			rr, login = resolved, derivedLogin
+			rr, login = github.ResolveDerivedReferenceRepo(rr, owner)
 		} else if !rr.ReadOnly() {
-			l, err := github.VerifyReferenceRepoWriteCredential(ctx, rr, deps.botLogin, deps.discover, deps.whoAmI)
+			l, err := github.VerifyReferenceRepoWriteCredential(ctx, rr, owner, deps.whoAmI)
 			if err != nil {
 				return referenceRepoResolution{}, err
 			}
 			login = l
+			rr.CredentialState = config.ReferenceCredentialWriteTier
+			rr.CredentialReason = ""
+			rr.CredentialLogin = login
 		}
 		pol := proxy.ReferenceRepoPolicy{Repo: rr.Repo, Issues: rr.WritesIssues(), PRs: rr.WritesPRs()}
 		if !rr.ReadOnly() {
 			pol.Login = login
-			pol.Token = github.ReferenceRepoTokenSource(rr, deps.auth, logger)
+			pol.Token = github.ReferenceRepoTokenSource(rr, deps.ownerToken, logger)
 		}
 		res.policies = append(res.policies, pol)
 		res.repos = append(res.repos, rr)
@@ -136,8 +147,8 @@ func notifyDerivedReadOnly(ctx context.Context, repos []config.ReferenceRepo, po
 // derived entry never refuses boot: it is downgraded to read-only and the
 // request issue is told once (hivecommons/hive#18158). With a GitHub client
 // the derived entries are listed from accepted request issues first
-// (hivecommons/hive#18159) and kept current by every config reload and a
-// periodic pass.
+// (hivecommons/hive#18159) and kept current by every config reload, a
+// periodic pass, and every change to the owner identity (#18197).
 func (b *boot) wireReferenceRepos() {
 	if b.githubProxy == nil {
 		return
@@ -149,33 +160,37 @@ func (b *boot) wireReferenceRepos() {
 	b.wireReferenceReposWith(rt)
 }
 
-// newReferenceRepoRuntime builds the seams from the live GitHub client. The
-// closures read b.ghClient on every call because the client is replaced on
-// App key rotation.
+// newReferenceRepoRuntime builds the seams from the live GitHub client and
+// the owner identity store. The closures read b.ghClient on every call
+// because the client is replaced on App key rotation.
 func (b *boot) newReferenceRepoRuntime() *referenceRepoRuntime {
 	rt := &referenceRepoRuntime{
-		deps:     referenceRepoDeps{auth: func() *github.AppAuth { return nil }},
+		deps:     referenceRepoDeps{},
 		interval: referenceRepoDeriveInterval(),
+	}
+	apiURL := ""
+	if b.ghClient != nil {
+		if auth := b.ghClient.AppAuth(); auth != nil {
+			apiURL = auth.APIURL()
+		}
+	}
+	rt.deps.whoAmI = func(ctx context.Context, token string) (string, error) {
+		return github.TokenUserLogin(ctx, token, apiURL)
+	}
+	if store := b.ownerIdentityStore(); store != nil {
+		rt.deps.owner = store.Credential
+		rt.deps.ownerToken = store.Token
+		rt.deps.refreshOwner = func(ctx context.Context) {
+			if err := store.Verify(ctx, rt.deps.whoAmI, false); err != nil && !errors.Is(err, github.ErrOwnerIdentityNotConnected) {
+				b.logger.Warn("owner identity: verification skipped this pass", "error", err.Error())
+			}
+		}
 	}
 	if b.ghClient == nil {
 		return rt
 	}
 	rt.post = func(ctx context.Context, issueRepo string, number int, readOnly []config.ReferenceRepo) (bool, error) {
 		return b.ghClient.CommentDerivedReadOnly(ctx, issueRepo, number, readOnly)
-	}
-	if auth := b.ghClient.AppAuth(); auth != nil {
-		apiURL := auth.APIURL()
-		rt.deps.botLogin = auth.BotLogin()
-		rt.deps.discover = auth.DiscoverInstallationID
-		rt.deps.whoAmI = func(ctx context.Context, token string) (string, error) {
-			return github.TokenUserLogin(ctx, token, apiURL)
-		}
-		// Re-fetched per call: the AppAuth is replaced on key rotation.
-		rt.deps.auth = func() *github.AppAuth { return b.ghClient.AppAuth() }
-	} else {
-		rt.deps.whoAmI = func(ctx context.Context, token string) (string, error) {
-			return github.TokenUserLogin(ctx, token, "")
-		}
 	}
 	rt.deriver = newReferenceRepoDeriver(
 		func(ctx context.Context, repo, label string, limit int) ([]github.RequestIssueCandidate, error) {
@@ -227,4 +242,27 @@ func (b *boot) applyEditedReferenceRepos(ctx context.Context, refs []config.Refe
 	}
 	b.githubProxy.SetReferenceRepos(res.policies)
 	return nil
+}
+
+// ownerIdentityChanged is the dashboard's hook after the owner connects,
+// reconnects or disconnects their GitHub account (hivecommons/hive#18197):
+// the reference-repo policies are re-resolved so a derived entry flips
+// between read-only and write-tier without a restart. Off the caller's path;
+// the dashboard response does not wait for GitHub.
+func (b *boot) ownerIdentityChanged() {
+	if b.referenceRepos == nil || b.ctx == nil {
+		return
+	}
+	go b.rederiveReferenceRepos(b.ctx)
+}
+
+// ownerIdentityStore returns the boot's owner identity store, creating it on
+// first use over github.OwnerIdentityPath() so the dashboard's consent routes
+// and the reference-repo wiring share one instance whatever order they are
+// built in.
+func (b *boot) ownerIdentityStore() *github.OwnerIdentityStore {
+	if b.ownerIdentity == nil {
+		b.ownerIdentity = github.NewOwnerIdentityStore("")
+	}
+	return b.ownerIdentity
 }

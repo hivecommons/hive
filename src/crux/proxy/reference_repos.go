@@ -29,8 +29,8 @@ import (
 // branch, comment on the hive's OWN issue or PR. Merging, pushing the default
 // branch, labels/assignees/closing on anyone's items and reviews are never
 // allowed — there is no mode, capability or relay that widens this. The write
-// credential is the policy's own Token source (an installation token minted
-// on the TARGET org, or an operator-supplied file), never the hive's token.
+// credential is the policy's own Token source (the hive owner's connected
+// GitHub account, or an operator-supplied file), never the hive's token.
 
 // DenyReasonReferenceRepo is the 403 reason code for a refused reference-repo
 // write (see denial_message.go for the vocabulary).
@@ -44,8 +44,9 @@ type ReferenceRepoPolicy struct {
 	Issues, PRs bool
 	// Token yields the write credential for Repo. nil for a read-only entry.
 	Token func() (string, bool)
-	// Login is the GitHub login the Token acts as ("<app>[bot]" or the PAT's
-	// user); own-item checks compare an item's author against it.
+	// Login is the GitHub login the Token acts as (the hive owner's login, or
+	// the write_token_file's user); own-item checks compare an item's author
+	// against it.
 	Login string
 }
 
@@ -407,7 +408,7 @@ func peekReceivePackRefs(req *http.Request) ([]string, error) {
 // pushing a branch or opening a PR needs ISSUES_AND_PRS, exactly as on a
 // managed repo (the PR hard-deny that routes managed-repo PRs through
 // hive-open-pr does not apply — the relay cannot act on a foreign repo, and
-// the reference credential is the App bot's own).
+// the reference credential is the hive owner's own account).
 func referenceWriteAllowedByMode(mode agent.AgentMode, method, path string) bool {
 	switch {
 	case refGitReceivePackRe.MatchString(path), refGitInfoRefsRe.MatchString(path), refPullsPath.MatchString(path):
