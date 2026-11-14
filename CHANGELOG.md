@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.260.0)
+
+### Added
+
+- ✨ Sessions now open in a persistent per-hive workspace: a clone of the hive's project repo (or `dashboard.sessions.workspace_repo`) under `/data/session-sandbox/workspace/<org>/<repo>` that every session shares, cloned once by the hive with a one-shot token that never reaches the clone, handed to a sessions-only group, and `spektacular init <vendor>`-ed once per CLI so the CLI finds spek's skills; the dashboard shows the workspace in the new-session dialog, tab tooltip and API (`workspace_repo`, `workspace`).
+
+### Fixed
+
+- Plaud voice notes: syncs no longer fail with `list_files returned non-JSON output: {`. @plaud-ai/mcp 0.3.14 wraps every reply in an `<untrusted-user-data-…>` envelope whose closing tag follows the JSON; the connector now reads the first JSON value in each reply (listing, account, note, transcript, audio URL) instead of requiring the whole text to be JSON. The Plaud card's server sign-in help now shows the exact command to copy a laptop token (`cat ~/.plaud/tokens-mcp.json | pbcopy`).
+
 ## 2026-11-14 (v5.259.0)
 
 ### Added
