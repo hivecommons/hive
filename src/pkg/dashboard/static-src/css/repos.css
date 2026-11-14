@@ -79,6 +79,12 @@
     .repo-reference-provider { color: var(--muted); }
     .repo-reference-link { color: inherit; text-decoration: none; }
     .repo-reference-pill { flex: 0 0 auto; font-size: var(--fs-2xs); font-weight: 700; letter-spacing: 0.02em; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; border: 1px solid color-mix(in srgb, var(--indigo) 45%, transparent); background: color-mix(in srgb, var(--indigo) 12%, transparent); color: var(--indigo); cursor: help; }
+    .repo-reference-derived { font-size: var(--fs-2xs); color: var(--muted); margin-top: var(--sp-2); display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .repo-reference-source { color: inherit; font-weight: 600; }
+    .repo-reference-cred { font-weight: 700; line-height: 1; padding: var(--sp-1) var(--sp-3); border-radius: var(--r-pill); white-space: nowrap; border: 1px solid currentColor; cursor: help; }
+    .repo-reference-cred-ok { color: var(--green); }
+    .repo-reference-cred-ro { color: var(--muted); }
+    .repo-reference-cred-warn { color: var(--yellow); }
     .repo-reference-note { font-size: var(--fs-2xs); color: var(--muted); margin-top: var(--sp-2); }
     .repo-pause-btn { flex: 0 0 auto; margin-left: 0; font-size: 0.66rem; font-weight: 600; line-height: 1; padding: 3px 7px; border-radius: var(--r-pill); white-space: nowrap; cursor: pointer; border: 1px solid var(--border); background: transparent; color: var(--muted); opacity: 0.7; transition: opacity 0.15s, color 0.15s, border-color 0.15s; }
     .repo-automerge-toggle { flex: 0 0 auto; white-space: nowrap; gap: var(--sp-2); margin: 0; font-size: var(--fs-2xs); color: var(--muted); }
