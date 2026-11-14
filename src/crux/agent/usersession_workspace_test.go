@@ -306,9 +306,13 @@ func TestUserSessionWorkspaceSpekInitOncePerVendor(t *testing.T) {
 	}
 	ws := r.WorkspaceDir(testWorkspaceRepo)
 	wantVendors := []string{"claude", "codex"}
+	// claude was initialised by the first session (slot 3), codex by the
+	// second (slot 4): each init runs as the STARTING session's uid with the
+	// shared sessions group.
+	wantUsers := []string{testSessionSpecUser, strconv.Itoa(defaultUserSessionUIDBase+testSecondSlot-1) + ":" + strconv.Itoa(defaultUserSessionGID)}
 	for i, c := range inits {
-		if c.user != testSessionSpecUser {
-			t.Errorf("init ran as %q, want the session uid %q", c.user, testSessionSpecUser)
+		if c.user != wantUsers[i] {
+			t.Errorf("init %d ran as %q, want the session uid %q", i, c.user, wantUsers[i])
 		}
 		if c.argv[4] != ws || c.argv[6] != "/usr/bin/"+userSessionSpekDefaultBinary || c.argv[7] != wantVendors[i] {
 			t.Errorf("init args = %v", c.argv)

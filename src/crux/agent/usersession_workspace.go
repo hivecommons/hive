@@ -276,7 +276,8 @@ func (r *UserSessionRuntime) spekInit(spec crux.UserSessionSpec, uid int, ws, or
 		r.logger.Warn("session workspace: spektacular init failed; the session starts without spek skills", "vendor", spec.Vendor, "repo", org+"/"+name, "error", outputErr("spektacular init", err, out))
 		return
 	}
-	if err := os.MkdirAll(filepath.Dir(marker), userSessionWorkspaceStateDirMode); err == nil {
+	err = os.MkdirAll(filepath.Dir(marker), userSessionWorkspaceStateDirMode)
+	if err == nil {
 		err = os.WriteFile(marker, []byte(r.now().UTC().Format(time.RFC3339)+"\n"), userSessionWorkspaceStateMode)
 	}
 	if err != nil {
