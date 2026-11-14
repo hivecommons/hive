@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.262.0)
+
+### Added
+
+- Knowledge → Integrations shows what a connector is doing while it syncs instead of nothing until the sync ends: each connector status carries a live `progress` block (phase `listing`/`fetching`/`writing`/`done`/`failed`, `items_done`/`items_total`, the current item title, `started_at`, bytes and facts written so far) that the syncer updates per page and the Plaud connector per recording right after `list_files`; the card draws a progress bar (determinate once the count is known), a `fetching 12 of 200 · <title>` line, the elapsed time and the error inline on failure, polling every 2.5 s only while a sync runs, and the Knowledge section header gains a compact `syncing: <name> 12/200` indicator. The Plaud connector's default MCP command is now pinned to `npx -y @plaud-ai/mcp@0.3.14` (`plaudMCPVersion`, bumped by hand) instead of a floating `@latest`; a `scope.command` set by the operator is left untouched.
+
+### Fixed
+
+- Sessions: the embedded terminal now follows the dashboard theme (the proxied ttyd document for a user session paints itself and xterm.js from the dashboard's `--terminal-bg` / `--terminal-fg` / `--accent` tokens, in light and dark mode and under theme presets, and the pane no longer shows a black frame while loading; agent terminals are unchanged), and Settings → Dashboard gains a real **Sessions** switch for `dashboard.sessions.enabled` with the `max_sessions`, `max_per_user` and `idle_ttl_hours` limits, noting when `HIVE_SESSIONS_ENABLED` overrides it.
+
 ## 2026-11-14 (v5.261.0)
 
 ### Added
