@@ -410,6 +410,13 @@ type Server struct {
 	// any anonymous poller could race the operator and steal the session).
 	deviceFlowID string
 
+	// ownerIdentityFlow is the in-progress consent for the hive owner's
+	// GitHub identity (hivecommons/hive#18197, api_github_owner_identity.go);
+	// separate from the login device flow above because it asks for a scope
+	// and persists a token, which login never does.
+	ownerIdentityFlowMu sync.Mutex
+	ownerIdentityFlow   *ownerIdentityFlow
+
 	// userSessions maps a random opaque session id (stored in the client's
 	// hive_session cookie on direct-route spokes) to the authenticated user.
 	// This replaces the previous single shared s.authToken cookie so two
