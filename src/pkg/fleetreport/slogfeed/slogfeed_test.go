@@ -106,6 +106,38 @@ func TestProxyRequestBlockedStaysInLogsWithoutFleetReport(t *testing.T) {
 	}
 }
 
+// hivecommons/hive#18239: the eval cycle warns every cycle while an agent is
+// held for provider quota, so a long hold crossed the repeat threshold
+// (21 in 10m). The notices stay in local logs; other failures stay reportable.
+func TestProviderKickWithholdStaysInLogsWithoutFleetReport(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	const msg = "provider quota exhausted: withholding agent kicks"
+	for range 21 {
+		logger.Warn(msg, "withheld", []string{"reviewer-2"}, "probe", []string{}, "probe_interval", "30m0s")
+	}
+	for range 6 {
+		logger.Warn("provider spending limit: withholding agent kicks", "withheld", []string{"worker"}, "rebuffs", 3)
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("kick withhold notices produced observations: %+v", *seen)
+	}
+	if n := strings.Count(out.String(), msg); n != 21 || !strings.Contains(out.String(), "reviewer-2") {
+		t.Fatalf("local logs lost the warning or its agent: %s", out.String())
+	}
+	// Failures around the gate are not the complete notice, so the generic
+	// feed still reports them.
+	logger.Warn(msg+": status snapshot failed", "error", "unexpected failure")
+	if len(*seen) != 1 || (*seen)[0].class != fleetreport.ClassUnclassifiedRepeated {
+		t.Fatalf("gate failures must remain reportable: %+v", *seen)
+	}
+	// Probe kick delivery failures are owned by kick_failed_repeatedly, so the
+	// generic feed skips them; they must not be swallowed as benign.
+	const probeFail = "provider quota probe kick failed"
+	if fleetreport.IsBenignMessage(probeFail) || !fleetreport.MatchesExplicitClass(probeFail) {
+		t.Fatalf("probe kick failures must stay on the kick_failed_repeatedly path")
+	}
+}
+
 func TestClaudeCredentialRebridgeStaysInLogsWithoutFleetReport(t *testing.T) {
 	logger, seen, out := newFeed(t)
 	for range 6 {
