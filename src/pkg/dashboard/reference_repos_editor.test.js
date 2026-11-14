@@ -91,7 +91,7 @@ test('an operator-set write_token_file is shown as read-only text and sent back 
     entries,
     put: call => ({ ok: true, json: async () => ({ reference_repos: call.body.reference_repos, write_kinds: ['issues', 'prs'] }) }),
   });
-  const token = host.find(n => n.className.includes('cfg-reference-repo-token'));
+  const token = host.find(n => (n.className || '').includes('cfg-reference-repo-token'));
   assert.strictEqual(token.length, 1);
   assert.strictEqual(token[0].tag, 'span', 'the path is text, not an editable input');
   assert.strictEqual(token[0].textContent, 'token file: /etc/hive/acme.token');
