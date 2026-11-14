@@ -406,6 +406,20 @@ importance:
   transcripts for resume only through the launcher group. Deleting or pruning a
   session removes the sandbox and the uid's tmux socket directory before the
   slot can be reused; if removal fails the record and slot are kept and retried.
+- **A shared workspace, no shared credential.** Sessions open in one
+  per-repository checkout (`HIVE_SESSIONS_WORKSPACE_DIR`, default
+  `<sandbox root>/workspace/<org>/<repo>`) that the hive clones once as itself,
+  with a short-lived App token in a one-shot `git -c credential.helper` file
+  removed right after, so neither the clone's config nor its remote holds a
+  credential; root then hands the tree to the sessions-only group
+  (`HIVE_SESSIONS_GID`, default 20000) as `root:<gid> 2770`, group read-write,
+  nothing for "other". That group is every session's single group (su-exec
+  gives a numeric uid exactly one), which is what lets sessions share the
+  checkout; it is refused when it is the hive's own group, the reader group or
+  inside the session uid range, and session sandboxes stay `hive-launch`
+  group-only, so sessions still cannot read each other's homes. `spektacular
+  init` runs in the workspace as the session uid. Pushing from a session uses
+  the person's own login; the hive's token never enters a session.
 - **Environment.** Built from an allowlist: no dashboard token, terminal, hub,
   heartbeat, ttyd or attach-key secret and no GitHub token reaches it.
 - **Logins are read-only copies, not links.** A fixed allowlist of bare login

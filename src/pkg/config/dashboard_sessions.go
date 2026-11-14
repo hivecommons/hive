@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -19,11 +20,17 @@ const (
 	EnvSessionsMax          = "HIVE_SESSIONS_MAX"
 	EnvSessionsMaxPerUser   = "HIVE_SESSIONS_MAX_PER_USER"
 	EnvSessionsIdleTTLHours = "HIVE_SESSIONS_IDLE_TTL_HOURS"
+	// EnvSessionsWorkspaceRepo overrides dashboard.sessions.workspace_repo.
+	EnvSessionsWorkspaceRepo = "HIVE_SESSIONS_WORKSPACE_REPO"
 
 	DefaultSessionsMax          = 12
 	DefaultSessionsMaxPerUser   = 4
 	DefaultSessionsIdleTTLHours = 72
 )
+
+// sessionsWorkspaceRepoPattern is the "org/repo" shape the workspace repo
+// must have (one GitHub owner, one repository name).
+var sessionsWorkspaceRepoPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*/[A-Za-z0-9_][A-Za-z0-9._-]*$`)
 
 // DashboardSessionsConfig is dashboard.sessions: named, shared CLI-agent
 // terminal sessions inside the dashboard. Off by default.
@@ -37,9 +44,14 @@ type DashboardSessionsConfig struct {
 	// IdleTTLHours closes a session with no input and no attached client for
 	// this many hours. 0 = default (72).
 	IdleTTLHours int `yaml:"idle_ttl_hours,omitempty" json:"idle_ttl_hours,omitempty"`
+	// WorkspaceRepo is the "org/repo" every session opens in: a persistent
+	// per-hive clone, shared by all sessions, that `spektacular init` has run
+	// in. Empty means the hive's own project repo (project.org/primary_repo).
+	// HIVE_SESSIONS_WORKSPACE_REPO overrides it.
+	WorkspaceRepo string `yaml:"workspace_repo,omitempty" json:"workspace_repo,omitempty"`
 }
 
-// Validate rejects negative limits.
+// Validate rejects negative limits and a workspace repo that is not org/repo.
 func (s DashboardSessionsConfig) Validate() error {
 	for name, v := range map[string]int{
 		"max_sessions":   s.MaxSessions,
@@ -50,7 +62,34 @@ func (s DashboardSessionsConfig) Validate() error {
 			return fmt.Errorf("dashboard.sessions.%s must not be negative (got %d)", name, v)
 		}
 	}
+	if repo := strings.TrimSpace(s.WorkspaceRepo); repo != "" && !sessionsWorkspaceRepoPattern.MatchString(repo) {
+		return fmt.Errorf("dashboard.sessions.workspace_repo must be org/repo (got %q)", s.WorkspaceRepo)
+	}
 	return nil
+}
+
+// SessionsWorkspaceRepo returns the "org/repo" sessions open in: the env
+// override, then dashboard.sessions.workspace_repo, then the hive's project
+// repo (project.org + project.primary_repo). "" when none is set or the value
+// is not org/repo, in which case sessions open in their own empty work dir.
+func (c *Config) SessionsWorkspaceRepo() string {
+	candidates := []string{strings.TrimSpace(os.Getenv(EnvSessionsWorkspaceRepo))}
+	if c != nil {
+		candidates = append(candidates, strings.TrimSpace(c.Dashboard.Sessions.WorkspaceRepo))
+		if org, repo := strings.TrimSpace(c.Project.Org), strings.TrimSpace(c.Project.PrimaryRepo); org != "" && repo != "" {
+			candidates = append(candidates, org+"/"+repo)
+		}
+	}
+	for _, repo := range candidates {
+		if repo == "" {
+			continue
+		}
+		if sessionsWorkspaceRepoPattern.MatchString(repo) {
+			return repo
+		}
+		return ""
+	}
+	return ""
 }
 
 // SessionsEnabled reports whether the Sessions feature is on: the

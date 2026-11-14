@@ -13,7 +13,7 @@ const end = html.indexOf('// ── Storage conveniences');
 assert.ok(start >= 0 && end > start, 'sessions helper block not found in index.html');
 const names = ['sessionsRoleCanWrite', 'sessionsGroupSessions', 'sessionsExistingGroups', 'sessionsPickSelected', 'sessionsTabOrder',
   'sessionsNextTab', 'sessionsViewMode', 'sessionsCheckInput', 'sessionsCheckUpload', 'sessionsCanCreate', 'sessionsTerminalPath',
-  'sessionsFormatBytes', 'sessionsIsEnabled'];
+  'sessionsFormatBytes', 'sessionsIsEnabled', 'sessionsWorkspaceLabel', 'sessionsSessionWorkspace'];
 const h = new Function('window', html.slice(start, end) + '\nreturn {' + names.join(',') + '};')({});
 
 const S = (id, group, status) => ({ id, name: id, group, status: status || 'running' });
@@ -105,4 +105,14 @@ test('layout gate shows Sessions and hides Inception only when sessions are enab
   assert.strictEqual(on('sessions-section'), false);
   assert.strictEqual(on('inception-section'), true);
   assert.strictEqual(on('nous-section'), false);
+});
+
+test('workspace label names the shared checkout or says sessions start empty', () => {
+  assert.match(h.sessionsWorkspaceLabel({ repo: 'acme/widgets', path: '/data/session-sandbox/workspace/acme/widgets' }), /acme\/widgets \(\/data\/session-sandbox\/workspace\/acme\/widgets\)/);
+  assert.match(h.sessionsWorkspaceLabel({ repo: 'acme/widgets' }), /Workspace: acme\/widgets, shared/);
+  assert.match(h.sessionsWorkspaceLabel({}), /empty directory/);
+  assert.match(h.sessionsWorkspaceLabel(undefined), /empty directory/);
+  assert.deepStrictEqual(h.sessionsSessionWorkspace({ id: 'a', workspace_repo: 'acme/widgets', workspace: '/w' }), { repo: 'acme/widgets', path: '/w' });
+  assert.deepStrictEqual(h.sessionsSessionWorkspace({ id: 'a' }), { repo: '', path: '' });
+  assert.deepStrictEqual(h.sessionsSessionWorkspace(null), {});
 });

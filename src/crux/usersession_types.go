@@ -29,6 +29,14 @@ type UserSessionSpec struct {
 	// vendor's own transcript store (for example "claude --resume <id>"). The
 	// runtime re-validates it and runs it instead of the bare CLI.
 	ResumeCommand string
+	// WorkspaceRepo, when set ("org/repo"), makes the session open in the
+	// hive's persistent per-repo workspace: a clone of that repository, shared
+	// by every session of the hive, that `spektacular init <vendor>` has been
+	// run in. Empty keeps the session's own empty work directory as cwd.
+	WorkspaceRepo string
+	// SpektacularBinary is the spektacular executable to run `init` with
+	// (runs.spektacular.binary); empty means the default name on PATH.
+	SpektacularBinary string
 }
 
 // UserSessionProbe is one live read of a session's tmux state.
