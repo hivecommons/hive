@@ -59,6 +59,8 @@ import (
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/jev"
 	"github.com/hivecommons/hive/pkg/keystore"
+	// Registers the "openbao" keystore provider (HIVE_KEYSTORE_PROVIDER=openbao, #18216).
+	_ "github.com/hivecommons/hive/pkg/keystore/openbao"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/maintainernotes"
 	"github.com/hivecommons/hive/pkg/notify"
