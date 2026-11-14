@@ -1180,8 +1180,15 @@ const ttydProxy = createProxyMiddleware({
     },
   },
 });
+// A user-session terminal (?arg=hive-sess-<id>) is never forwarded straight to
+// ttyd from here: the Go dashboard authorises it (creator, owner or shared
+// session) and appends the per-session attach token ttyd-tmux.sh requires, and
+// this proxy can do neither.
+const isUserSessionTerminal = (u) => u.searchParams.getAll('arg').some((a) => a.startsWith('hive-sess-'));
+
 app.use('/terminal', (req, res, next) => {
-  if (new URL(req.url, `http://${req.headers.host || 'hive.local'}`).searchParams.has('code')) {
+  const terminalURL = new URL(req.url, `http://${req.headers.host || 'hive.local'}`);
+  if (terminalURL.searchParams.has('code') || isUserSessionTerminal(terminalURL)) {
     req.url = '/terminal' + (req.url.startsWith('/') ? req.url : '/' + req.url);
     terminalGoProxy(req, res, next);
     return;

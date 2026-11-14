@@ -32,16 +32,50 @@ fi
 # tmux server whose socket is named after the session. Reject any other
 # hive-sess-* shape so ?arg= cannot reach a glob or a path.
 USER_SESSION_RE='^hive-sess-[a-f0-9]{8,32}$'
+IS_USER_SESSION=0
+
+# verify_attach_token NAME TOKEN: the dashboard proxy appends
+#   hex(HMAC-SHA256(HIVE_TTYD_ATTACH_KEY, "hive-ttyd-attach-v1\0" + NAME))
+# as the second ttyd arg of every authorised session request. ttyd listens on
+# loopback without a secret a session user could not read (its credential is on
+# ttyd's command line), so THIS is the gate: anything that did not come through
+# the proxy cannot compute it. Fails closed when the key, the token or python3
+# is missing.
+verify_attach_token() {
+  local name="$1" token="$2"
+  [ -n "${HIVE_TTYD_ATTACH_KEY:-}" ] && [ -n "$token" ] || return 1
+  command -v python3 >/dev/null 2>&1 || return 1
+  python3 -c 'import hashlib, hmac, os, sys
+key = os.environ["HIVE_TTYD_ATTACH_KEY"].strip().encode()
+msg = ("hive-ttyd-attach-v1\0" + sys.argv[1]).encode()
+want = hmac.new(key, msg, hashlib.sha256).hexdigest()
+sys.exit(0 if hmac.compare_digest(want, sys.argv[2]) else 1)' "$name" "$token"
+}
+
 case "$SESSION" in
   hive-sess-*)
     if ! [[ "$SESSION" =~ $USER_SESSION_RE ]]; then
       echo "error: invalid user session name" >&2
       exit 1
     fi
+    if ! verify_attach_token "$SESSION" "${2:-}"; then
+      echo "error: session attach not authorised" >&2
+      exit 1
+    fi
+    IS_USER_SESSION=1
+    # The key must not reach anything forked below (the tmux client runs as
+    # the session's own uid, which can read its own process environment).
+    unset HIVE_TTYD_ATTACH_KEY
     ;;
 esac
 
 TTYD_WAIT_SEC="${HIVE_TTYD_WAIT_SEC:-900}"
+# A user session already exists when the dashboard hands out the attach
+# token, so a bogus or stale name must not hold a ttyd child for the agent
+# start-up wait.
+if [ "$IS_USER_SESSION" -eq 1 ]; then
+  TTYD_WAIT_SEC="${HIVE_TTYD_SESSION_WAIT_SEC:-10}"
+fi
 TTYD_POLL_SEC="${HIVE_TTYD_POLL_SEC:-2}"
 if ! [[ "$TTYD_WAIT_SEC" =~ ^[0-9]+$ ]]; then
   echo "error: HIVE_TTYD_WAIT_SEC must be a non-negative integer (got '${TTYD_WAIT_SEC}')" >&2
@@ -283,8 +317,12 @@ attach_with() {
   # script, which writes it to the browser clipboard
   # (src/pkg/dashboard/terminal_clipboard.go). Server-wide and not restored,
   # like the wheel rebind above.
-  "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -s terminal-features ",${TERM:-xterm-256color}:clipboard" 2>/dev/null || true
-  "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -s set-clipboard on 2>/dev/null || true
+  # User sessions keep the clipboard escape OFF (set at creation by the
+  # runtime): a session must not write to the clipboard of whoever attaches.
+  if [ "$IS_USER_SESSION" -ne 1 ]; then
+    "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -s terminal-features ",${TERM:-xterm-256color}:clipboard" 2>/dev/null || true
+    "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -s set-clipboard on 2>/dev/null || true
+  fi
   "${run[@]}" tmux -S "$TMUX_SOCKET" attach-session -t "$SESSION" || exit_code=$?
   "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse "$prev_mouse" 2>/dev/null || true
   if [ -n "$prev_history" ]; then
@@ -302,7 +340,24 @@ attach_with() {
   return "$exit_code"
 }
 
-if [ -n "$SOCK_OWNER_UID" ] && [ "$SOCK_OWNER_UID" != "$CURRENT_UID" ] && command -v su-exec >/dev/null 2>&1; then
+if [ "$IS_USER_SESSION" -eq 1 ]; then
+  # A user session's server MUST belong to a uid in the reserved session
+  # range: never the hive's own uid and never an agent's (an agent could
+  # plant a socket of this name under its own /tmp/tmux-<uid>). The attach
+  # runs as that uid with a scrubbed environment.
+  SESS_UID_BASE="${HIVE_SESSION_UID_BASE:-20001}"
+  SESS_UID_SLOTS="${HIVE_SESSION_UID_SLOTS:-8192}"
+  if ! [[ "$SOCK_OWNER_UID" =~ ^[0-9]+$ ]] || [ "$SOCK_OWNER_UID" -lt "$SESS_UID_BASE" ] || [ "$SOCK_OWNER_UID" -ge $((SESS_UID_BASE + SESS_UID_SLOTS)) ]; then
+    echo "error: session socket is not owned by a reserved session uid; refusing to attach" >&2
+    exit 1
+  fi
+  if ! command -v su-exec >/dev/null 2>&1; then
+    echo "error: su-exec is required to attach a user session" >&2
+    exit 1
+  fi
+  attach_with su-exec "$SOCK_OWNER_SPEC" env -i "PATH=${PATH}" "TERM=${TERM:-xterm-256color}" "LANG=${LANG:-C.UTF-8}"
+  exit $?
+elif [ -n "$SOCK_OWNER_UID" ] && [ "$SOCK_OWNER_UID" != "$CURRENT_UID" ] && command -v su-exec >/dev/null 2>&1; then
   attach_with su-exec "$SOCK_OWNER_SPEC"
   exit $?
 else

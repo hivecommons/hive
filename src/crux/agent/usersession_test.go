@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -15,9 +16,19 @@ import (
 	"github.com/hivecommons/hive/crux"
 )
 
-const testSessionID = "0123456789ab"
+const (
+	testSessionID   = "0123456789ab"
+	testSessionSlot = 3
+	testReaderGID   = 4242
+)
+
+// testSessionUID is the uid slot testSessionSlot maps to with the default base.
+const testSessionUID = defaultUserSessionUIDBase + testSessionSlot - 1
+
+var testSessionSpecUser = strconv.Itoa(testSessionUID) + ":" + strconv.Itoa(testSessionUID)
 
 type fakeTmuxCall struct {
+	user   string
 	env    []string
 	stdin  string
 	socket string
@@ -31,8 +42,8 @@ type fakeTmux struct {
 	handler func(args []string) ([]byte, error)
 }
 
-func (f *fakeTmux) run(_ context.Context, env []string, stdin, socket string, args ...string) ([]byte, error) {
-	f.calls = append(f.calls, fakeTmuxCall{env: env, stdin: stdin, socket: socket, args: args})
+func (f *fakeTmux) run(_ context.Context, user string, env []string, stdin, socket string, args ...string) ([]byte, error) {
+	f.calls = append(f.calls, fakeTmuxCall{user: user, env: env, stdin: stdin, socket: socket, args: args})
 	if f.handler != nil {
 		return f.handler(args)
 	}
@@ -47,20 +58,110 @@ func (f *fakeTmux) verbs() []string {
 	return out
 }
 
+type fakePrivCall struct {
+	user  string
+	argv  []string
+	stdin string
+}
+
+// fakePriv stands in for su-exec. It records every privileged call and
+// simulates the effect of the fixed scripts on the temp filesystem (no
+// ownership is applied; ownership is asserted on the recorded identity).
+type fakePriv struct {
+	calls   []fakePrivCall
+	failOn  string
+	handler func(c fakePrivCall) (handled bool, out []byte, err error)
+}
+
+func exitStatusError(code int) error {
+	return exec.Command("sh", "-c", "exit "+strconv.Itoa(code)).Run()
+}
+
+func (f *fakePriv) run(_ context.Context, user string, stdin io.Reader, argv ...string) ([]byte, error) {
+	c := fakePrivCall{user: user, argv: argv}
+	if stdin != nil {
+		b, _ := io.ReadAll(stdin)
+		c.stdin = string(b)
+	}
+	f.calls = append(f.calls, c)
+	if f.failOn != "" && strings.Contains(strings.Join(argv, " "), f.failOn) {
+		return []byte("simulated priv failure"), errors.New("priv failed")
+	}
+	if f.handler != nil {
+		if handled, out, err := f.handler(c); handled {
+			return out, err
+		}
+	}
+	if len(argv) >= 5 && argv[0] == "sh" {
+		switch argv[2] {
+		case userSessionPrepareScript:
+			for _, n := range []string{userSessionHomeDirName, userSessionWorkDirName, userSessionTmpDirName} {
+				if err := os.MkdirAll(filepath.Join(argv[4], n), 0o700); err != nil {
+					return []byte(err.Error()), err
+				}
+			}
+		case userSessionMkdirScript:
+			for _, d := range argv[4:] {
+				if err := os.MkdirAll(d, 0o700); err != nil {
+					return []byte(err.Error()), err
+				}
+			}
+		case userSessionCopyLoginScript:
+			if err := os.MkdirAll(filepath.Dir(argv[4]), 0o700); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(argv[4], []byte(c.stdin), 0o400); err != nil {
+				return nil, err
+			}
+		case userSessionUploadScript:
+			if err := os.MkdirAll(argv[4], 0o700); err != nil {
+				return nil, err
+			}
+			max, _ := strconv.Atoi(argv[5])
+			if ents, _ := os.ReadDir(argv[4]); len(ents) >= max {
+				return nil, exitStatusError(userSessionUploadFullExit)
+			}
+			if err := os.WriteFile(filepath.Join(argv[4], argv[6]), []byte(c.stdin), 0o600); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if len(argv) > 1 && argv[0] == "rm" {
+		_ = os.RemoveAll(argv[len(argv)-1])
+	}
+	return nil, nil
+}
+
 func newTestSessionRuntime(t *testing.T, f *fakeTmux, environ []string) *UserSessionRuntime {
+	r, _ := newTestSessionRuntimeWithPriv(t, f, environ)
+	return r
+}
+
+func newTestSessionRuntimeWithPriv(t *testing.T, f *fakeTmux, environ []string) (*UserSessionRuntime, *fakePriv) {
 	t.Helper()
 	oldHome := sharedAgentHome
 	sharedAgentHome = filepath.Join(t.TempDir(), "home")
 	t.Cleanup(func() { sharedAgentHome = oldHome })
 	t.Setenv(userSessionsDirEnv, filepath.Join(t.TempDir(), "sessions"))
+	t.Setenv(userSessionSandboxDirEnv, filepath.Join(t.TempDir(), "sandbox"))
+	t.Setenv(userSessionReaderGIDEnv, strconv.Itoa(testReaderGID))
+	t.Setenv(userSessionUIDBaseEnv, "")
+	t.Setenv(userSessionUIDSlotsEnv, "")
+	t.Setenv(agentUIDBaseEnv, "")
 	t.Setenv(userSessionEnvPassthroughEnv, "")
+	p := &fakePriv{}
 	return &UserSessionRuntime{
-		logger:   slog.New(slog.NewTextHandler(io.Discard, nil)),
-		run:      f.run,
+		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+		run:    f.run,
+		priv:   p.run,
+		// The fake sandbox has no real ownership; every session home reads as
+		// the test session uid (tests that need a missing or foreign owner
+		// override this).
+		statUID:  func(string) (int, error) { return testSessionUID, nil },
 		lookPath: func(name string) (string, error) { return "/usr/bin/" + name, nil },
 		environ:  func() []string { return environ },
 		now:      time.Now,
-	}
+	}, p
 }
 
 var sessionSecretEnv = []string{
@@ -124,7 +225,7 @@ func TestUserSessionForbiddenCoversEveryKnownCredentialVar(t *testing.T) {
 	var all []string
 	all = append(all, inheritedCredentialEnvVars...)
 	all = append(all, githubTokenEnvVars...)
-	all = append(all, "DASHBOARD_AUTH_TOKEN", "HIVE_DASHBOARD_TOKEN", "HIVE_TERMINAL_KEY", "HIVE_HUB_SECRET", "HIVE_HEARTBEAT_KEY", "HIVE_TTYD_CREDENTIAL")
+	all = append(all, "DASHBOARD_AUTH_TOKEN", "HIVE_DASHBOARD_TOKEN", "HIVE_TERMINAL_KEY", "HIVE_HUB_SECRET", "HIVE_HEARTBEAT_KEY", "HIVE_TTYD_CREDENTIAL", "HIVE_TTYD_ATTACH_KEY")
 	for _, name := range all {
 		if !sessionEnvForbidden(name) {
 			t.Errorf("%s is not forbidden in sessions", name)
@@ -145,7 +246,7 @@ func TestUserSessionStartLaunchesBareCLIWithoutBypassFlagsOrShell(t *testing.T) 
 	r := newTestSessionRuntime(t, f, sessionSecretEnv)
 	for _, v := range userSessionVendors {
 		f.calls = nil
-		if err := r.Start(crux.UserSessionSpec{ID: testSessionID, Vendor: v.id}); err != nil {
+		if err := r.Start(crux.UserSessionSpec{ID: testSessionID, UIDSlot: testSessionSlot, Vendor: v.id}); err != nil {
 			t.Fatalf("Start(%s): %v", v.id, err)
 		}
 		var respawn []string
@@ -153,6 +254,9 @@ func TestUserSessionStartLaunchesBareCLIWithoutBypassFlagsOrShell(t *testing.T) 
 		for _, c := range f.calls {
 			if c.socket != UserSessionTmuxPrefix+testSessionID {
 				t.Fatalf("socket = %q, want per-session socket", c.socket)
+			}
+			if c.user != testSessionSpecUser {
+				t.Fatalf("tmux ran as %q, want the session uid %q", c.user, testSessionSpecUser)
 			}
 			joined := strings.Join(c.env, "\n")
 			for _, secret := range []string{"dash-secret", "term-secret", "hub-secret", "ghp_pat", "ghs_installtoken", "proxypass"} {
@@ -223,14 +327,22 @@ func TestUserSessionStartRejectsBadInput(t *testing.T) {
 		{ID: testSessionID, Vendor: "claude", ResumeCommand: "claude --resume abc; rm -rf /"},
 		{ID: testSessionID, Vendor: "claude", ResumeCommand: "codex resume abc"},
 		{ID: testSessionID, Vendor: "claude", ResumeCommand: "claude --resume $(id)"},
+		{ID: testSessionID, Vendor: "claude", ResumeCommand: "claude --resume --dangerously-skip-permissions"},
+		{ID: testSessionID, Vendor: "claude", ResumeCommand: "claude --resume -abcdefgh1"},
 	}
 	for _, spec := range cases {
+		spec.UIDSlot = testSessionSlot
 		if err := r.Start(spec); err == nil {
 			t.Errorf("Start(%+v) succeeded, want error", spec)
 		}
 	}
 	if len(f.calls) != 0 {
 		t.Errorf("rejected starts reached tmux: %v", f.verbs())
+	}
+	for _, slot := range []int{0, -1, userSessionUIDSlots() + 1} {
+		if err := r.Start(crux.UserSessionSpec{ID: testSessionID, Vendor: "claude", UIDSlot: slot}); err == nil {
+			t.Errorf("Start with uid slot %d succeeded", slot)
+		}
 	}
 }
 
@@ -242,7 +354,7 @@ func TestUserSessionStartResumeUsesValidatedCommand(t *testing.T) {
 		return nil, nil
 	}}
 	r := newTestSessionRuntime(t, f, nil)
-	spec := crux.UserSessionSpec{ID: testSessionID, Vendor: "claude", ResumeCommand: "claude --resume 123e4567-e89b-12d3-a456-426614174000"}
+	spec := crux.UserSessionSpec{ID: testSessionID, UIDSlot: testSessionSlot, Vendor: "claude", ResumeCommand: "claude --resume 123e4567-e89b-12d3-a456-426614174000"}
 	if err := r.Start(spec); err != nil {
 		t.Fatal(err)
 	}
@@ -440,35 +552,5 @@ func TestUserSessionVendorsReportAvailability(t *testing.T) {
 		if v.Available != (v.ID == "claude") {
 			t.Errorf("vendor %s available = %v", v.ID, v.Available)
 		}
-	}
-}
-
-func TestUserSessionHomeBridgesVendorLoginsButNotGH(t *testing.T) {
-	newTestSessionRuntime(t, &fakeTmux{}, nil)
-	shared := sharedAgentHome
-	for _, p := range []string{
-		filepath.Join(shared, ".claude", ".credentials.json"),
-		filepath.Join(shared, ".config", "gh", "hosts.yml"),
-		filepath.Join(shared, ".codex", "auth.json"),
-	} {
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte("x"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if err := setupUserSessionHome(testSessionID); err != nil {
-		t.Fatal(err)
-	}
-	home := userSessionHome(testSessionID)
-	if _, err := os.Lstat(filepath.Join(home, ".claude", ".credentials.json")); err != nil {
-		t.Errorf("claude login not bridged: %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(userSessionCodexHome(testSessionID), "auth.json")); err != nil {
-		t.Errorf("codex login not bridged: %v", err)
-	}
-	if _, err := os.Lstat(filepath.Join(home, ".config", "gh")); err == nil {
-		t.Error("gh config (hosts.yml token) was bridged into a session")
 	}
 }

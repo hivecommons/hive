@@ -44,8 +44,12 @@ case "$SESSION" in
 esac
 case "$SESSION" in
   hive-sess-*)
-    # Per-session tmux server: every tmux call below targets its socket.
-    tmux() { command tmux -L "$SESSION" "$@"; }
+    # User sessions run under their own reserved uid and are attached with a
+    # per-session token by the container's src/deploy/ttyd-tmux.sh. This
+    # single-uid copy has neither, so it refuses rather than attach a session
+    # that shares the hive's uid.
+    echo "error: user sessions can only be attached through the container ttyd-tmux.sh (per-session uids)" >&2
+    exit 1
     ;;
 esac
 TTYD_WAIT_SEC="${HIVE_TTYD_WAIT_SEC:-900}"

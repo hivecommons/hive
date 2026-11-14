@@ -1,6 +1,9 @@
 package crux
 
-import "time"
+import (
+	"errors"
+	"time"
+)
 
 // UserSessionVendor is one CLI a user session may run, as offered to the
 // dashboard's new-session picker.
@@ -16,6 +19,12 @@ type UserSessionVendor struct {
 type UserSessionSpec struct {
 	ID     string
 	Vendor string
+	// UIDSlot is the session's allocated slot (1-based) in the reserved
+	// per-session uid range. The runtime runs the session's tmux server and
+	// CLI as the uid derived from it, never as the hive's own uid. The
+	// dashboard allocates it, persists it in the session record and passes the
+	// same value on every (re)start.
+	UIDSlot int
 	// ResumeCommand, when set, is a backend resume command captured from the
 	// vendor's own transcript store (for example "claude --resume <id>"). The
 	// runtime re-validates it and runs it instead of the bare CLI.
@@ -40,3 +49,12 @@ type UserSessionResume struct {
 	SessionID string
 	Command   string
 }
+
+var (
+	// ErrUserSessionUploadTooLarge is returned by StoreUpload when the file
+	// exceeds the byte cap; nothing is left behind.
+	ErrUserSessionUploadTooLarge = errors.New("upload is too large")
+	// ErrUserSessionUploadLimit is returned by StoreUpload when the session
+	// already holds the maximum number of uploaded files.
+	ErrUserSessionUploadLimit = errors.New("too many uploaded files")
+)

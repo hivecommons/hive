@@ -357,16 +357,74 @@ unprivileged user could have created.
 offers interactive CLI terminals (`/api/sessions`, [API
 reference](api-reference/sessions.md)). A session is a plain vendor CLI, never
 a shell, launched with none of the permission-bypass flags agents run with, so
-the CLI's own approval prompts stay on. Each session has its own tmux server,
-HOME, `CODEX_HOME` and XDG directories, and its environment is built from an
-allowlist: no dashboard token, terminal, hub, heartbeat or ttyd secret and no
-GitHub token reaches it (only vendor login files are bridged from the shared
-home, never `gh`'s `hosts.yml`). Creating, typing, uploading and attaching a
-terminal need owner or read-write; the scrollback snapshot is readable by any
-role and is token-redacted. Audit limits: `session_created`, `session_closed`,
-`session_renamed`, `session_input` and `session_upload` record the user and
-session id (never input text), but keystrokes typed inside the attached
-terminal go through ttyd and are not attributable to a user.
+the CLI's own approval prompts stay on. The isolation model, in order of
+importance:
+
+- **Its own unprivileged uid.** Each session's tmux server and CLI run as a uid
+  from a reserved range (`HIVE_SESSION_UID_BASE`, default 20001, with
+  `HIVE_SESSION_UID_SLOTS` slots) that cannot collide with agent uids
+  (`HIVE_UID_BASE`, 2001 upward) or the hive's own, through the same `su-exec`
+  hop agents use. The slot is allocated by the dashboard store, persisted in
+  the session record and reused on resume; the runtime refuses a range that
+  overlaps the agent uid map and recovers a session's uid from the owner of
+  its home directory, never from the id. The uid has its own gid, is not in
+  group `node` (all agents) and not in `hive-launch` (`su-exec`), so it cannot
+  read `/secrets/*.pem`, `/data/secrets`, `/data/.hive`, the shared vendor
+  logins in `/data/home` (group-only, 2770, re-asserted by the entrypoint), the
+  hive's `/proc/<pid>/environ`, or another session's sandbox, and it cannot
+  reach another session's tmux server.
+- **A private sandbox.** `HIVE_SESSIONS_SANDBOX_DIR` (default
+  `/data/session-sandbox`) holds one `root:hive-launch 0751` directory per
+  session with session-owned `home`, `work` (uploads) and `tmp` below it, so
+  the session cannot replace its own top-level directories and the hive reads
+  transcripts for resume only through the launcher group. Deleting or pruning a
+  session removes the sandbox and the uid's tmux socket directory before the
+  slot can be reused; if removal fails the record and slot are kept and retried.
+- **Environment.** Built from an allowlist: no dashboard token, terminal, hub,
+  heartbeat, ttyd or attach-key secret and no GitHub token reaches it.
+- **Logins are read-only copies, not links.** A fixed allowlist of bare login
+  files (`.claude/.credentials.json`, `.copilot/config.json`,
+  `.gemini/oauth_creds.json`, `.gemini/google_accounts.json`,
+  `.codex/auth.json`, `opencode/auth.json`) is copied into the session home
+  mode 0400, session-owned. `settings.json`, hooks, MCP or extension config,
+  `gh`'s `hosts.yml` and `~/.config` are never bridged, so a session can neither
+  rewrite shared configuration nor plant a hook an agent would run.
+- **Terminal access is bound.** ttyd listens on loopback without a secret a
+  session uid could not read (its `-c` credential is visible in `/proc`), so
+  session attaches are gated by a per-session token, HMAC-SHA256 of the tmux
+  session name under a per-boot `HIVE_TTYD_ATTACH_KEY` that only the hive and
+  ttyd hold. The dashboard proxy appends it after authorising the request;
+  `ttyd-tmux.sh` refuses any `hive-sess-*` attach without a valid token,
+  refuses a socket not owned by a reserved session uid and runs the attach
+  with a scrubbed environment. No key means no session terminal. A handoff code
+  minted for a session is bound to that session id and its caller (creator,
+  owner, or a writer on a shared session) and opens only
+  `?arg=hive-sess-<id>`; an agent-terminal code never opens a session.
+- **Ownership.** A session is private by default: only its creator and owners
+  can list, read, type into, upload to or attach it. The creator or an owner may
+  set `shared`, which lists it for every role (the read role gets the
+  token-redacted scrollback) and lets read-write users type, upload and attach.
+  Renaming, closing, resuming, deleting and the `shared` flag stay with the
+  creator and owners. Ids of sessions a caller may not see are never disclosed.
+- **Resume ids** never start with `-` and a resume command may carry only the
+  vendor binary, a fixed set of resume words and a flag-free id, so a planted
+  transcript name cannot add `--dangerously-skip-permissions`.
+
+Audit limits: `session_created`, `session_closed`, `session_renamed`,
+`session_input` and `session_upload` record the user and session id (never
+input text), but keystrokes typed inside the attached terminal go through ttyd
+and are not attributable to a user.
+
+Operator requirements the code cannot enforce: the container needs the
+`su-exec` helper with `CAP_SETUID`, `CAP_SETGID` and `CAP_CHOWN` (the standard
+agent layout; a rootless or single-uid runtime cannot run sessions and they fail
+closed). `/proc` should be mounted `hidepid=2` (or the pod run with a
+non-dumpable, PID-namespaced layout) where possible: `ttyd`'s command line
+exposes its basic-auth credential to every uid, and agent terminals on the same
+loopback ttyd are not covered by the session attach token, so a session user on
+a hive that also runs agents can still reach them there until ttyd moves to a
+credential only the hive can read. Reserve `HIVE_SESSION_UID_BASE` above every
+agent uid and keep `/data` and `/data/home` closed to "other".
 
 **Dashboard headers.** Content Security Policy, `X-Frame-Options` and related
 headers are always set. The metrics endpoint is off unless

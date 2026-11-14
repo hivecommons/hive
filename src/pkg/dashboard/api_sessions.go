@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -15,11 +16,19 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-// Sessions: interactive, named CLI terminals shared by everyone on a spoke.
-// The tmux/ttyd engine sits behind SessionRuntime so it can be swapped; this
-// file holds policy (roles, limits, validation, audit) and the JSON API.
-// The terminal itself is attached through /terminal (terminal_handoff.go);
+// Sessions: interactive, named CLI terminals. The tmux/ttyd engine sits behind
+// SessionRuntime so it can be swapped; this file holds policy (roles, limits,
+// validation, ownership, audit) and the JSON API. The terminal itself is
+// attached through /terminal (terminal_handoff.go, terminal_session_gate.go);
 // keystrokes typed there are NOT attributable, only /input and /upload are.
+//
+// Ownership model. A session is PRIVATE by default: only its creator and
+// owners may see it, read its log, type into it, upload to it or attach its
+// terminal. The creator (or an owner) may mark it shared, which makes it
+// visible to every role (read-only roles get the scrollback) and usable
+// (input, upload, terminal) by every read-write user: the "jam session" mode.
+// Whatever the flag, only the creator or an owner may rename, close, resume or
+// delete a session or change the flag.
 
 const (
 	sessionsLogDefaultLines = 1000
@@ -54,6 +63,10 @@ const (
 	auditSessionRenamed = "session_renamed"
 	auditSessionInput   = "session_input"
 	auditSessionUpload  = "session_upload"
+
+	// sessionTmuxPrefix is the tmux session name prefix of a user session
+	// (crux/agent.UserSessionTmuxPrefix).
+	sessionTmuxPrefix = "hive-sess-"
 )
 
 // SessionRuntime is the engine behind Sessions (implemented by
@@ -68,6 +81,11 @@ type SessionRuntime interface {
 	Capture(id string, lines int) (string, error)
 	SendText(id, text string, submit bool) error
 	ResumeInfo(id, vendor string) (crux.UserSessionResume, bool)
+	// StoreUpload writes src as the named file under the session's uploads
+	// directory, as the session's own uid, and returns its absolute path.
+	StoreUpload(id, fileName string, src io.Reader, maxBytes int64, maxFiles int) (string, int64, error)
+	// Remove ends the session and deletes everything it owned on disk.
+	Remove(id string) error
 }
 
 type sessionLimits struct {
@@ -93,6 +111,9 @@ type sessionView struct {
 	// Resumable (additive) is true for an ended session whose vendor can
 	// reopen its last conversation.
 	Resumable bool `json:"resumable"`
+	// Shared (additive) is true when every read-write user may type into the
+	// session and every role may watch it; false means creator + owners only.
+	Shared bool `json:"shared"`
 }
 
 func (s *Server) registerSessionRoutes() {
@@ -172,6 +193,27 @@ func (s *Server) sessionActorOf(r *http.Request) sessionActor {
 	return a
 }
 
+func (a sessionActor) isCreatorOf(rec sessionRecord) bool {
+	return a.user != "" && rec.Creator == a.user
+}
+
+// canViewSession: owners, the creator, and everyone for a shared session.
+func canViewSession(a sessionActor, rec sessionRecord) bool {
+	return a.owner || a.isCreatorOf(rec) || rec.Shared
+}
+
+// canUseSession (input, upload, terminal): owners, the writing creator, and
+// writers for a shared session. The read role never types.
+func canUseSession(a sessionActor, rec sessionRecord) bool {
+	return a.owner || (a.write && (a.isCreatorOf(rec) || rec.Shared))
+}
+
+// canManageSession (rename, share flag, close, resume, delete): the creator
+// with a write role, or an owner. Sharing never grants this.
+func canManageSession(a sessionActor, rec sessionRecord) bool {
+	return a.owner || (a.write && a.isCreatorOf(rec))
+}
+
 func (s *Server) auditSession(user, action, detail string) {
 	if s.audit != nil {
 		s.audit.Log(user, action, detail, "")
@@ -182,7 +224,7 @@ func (st sessionRecord) view(p *crux.UserSessionProbe, rt SessionRuntime) sessio
 	v := sessionView{
 		ID: st.ID, Name: st.Name, Group: st.Group, Vendor: st.Vendor, Creator: st.Creator,
 		CreatedAt: st.CreatedAt, LastActivity: st.LastActivity, Status: st.Status,
-		TmuxName: "hive-sess-" + st.ID,
+		TmuxName: sessionTmuxPrefix + st.ID, Shared: st.Shared,
 	}
 	if st.Status == sessionStatusRunning && p != nil {
 		v.Attached = p.Attached
@@ -241,8 +283,13 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 	}
 	st := s.sessionStoreOrNil()
 	probes := s.reconcileSessions(rt, st)
+	actor := s.sessionActorOf(r)
 	views := []sessionView{}
 	for _, rec := range st.list() {
+		// Ids of sessions the caller may not see are not disclosed at all.
+		if !canViewSession(actor, rec) {
+			continue
+		}
 		var p *crux.UserSessionProbe
 		if pr, ok := probes[rec.ID]; ok {
 			p = &pr
@@ -319,6 +366,7 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		Name   string `json:"name"`
 		Group  string `json:"group"`
 		Vendor string `json:"vendor"`
+		Shared bool   `json:"shared"`
 	}
 	if !readSmallJSON(w, r, &body) {
 		return
@@ -363,16 +411,17 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	rec := sessionRecord{ID: id, Name: body.Name, Group: body.Group, Vendor: vendor.ID, Creator: actor.user, CreatedAt: now, LastActivity: now, Status: sessionStatusRunning}
-	if err := rt.Start(crux.UserSessionSpec{ID: id, Vendor: vendor.ID}); err != nil {
+	rec := sessionRecord{ID: id, Name: body.Name, Group: body.Group, Vendor: vendor.ID, Creator: actor.user, CreatedAt: now, LastActivity: now, Status: sessionStatusRunning, UIDSlot: st.freeSlot(), Shared: body.Shared}
+	if err := rt.Start(crux.UserSessionSpec{ID: id, Vendor: vendor.ID, UIDSlot: rec.UIDSlot}); err != nil {
 		if s.logger != nil {
 			s.logger.Warn("sessions: start failed", "id", id, "vendor", vendor.ID, "error", err)
 		}
+		s.removeSessionFiles(rt, id)
 		jsonError(w, "could not start the session", http.StatusInternalServerError)
 		return
 	}
 	if err := st.put(rec); err != nil {
-		_ = rt.Kill(id)
+		s.removeSessionFiles(rt, id)
 		jsonError(w, "could not save the session", http.StatusInternalServerError)
 		return
 	}
@@ -388,7 +437,11 @@ func (s *Server) sessionForMutation(w http.ResponseWriter, r *http.Request, st *
 		return rec, sessionActor{}, false
 	}
 	actor := s.sessionActorOf(r)
-	if !actor.owner && !(actor.write && rec.Creator == actor.user) {
+	if !canViewSession(actor, rec) {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return rec, actor, false
+	}
+	if !canManageSession(actor, rec) {
 		jsonError(w, "only the session's creator or an owner may change it", http.StatusForbidden)
 		return rec, actor, false
 	}
@@ -405,13 +458,14 @@ func (s *Server) handleSessionPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name  *string `json:"name"`
-		Group *string `json:"group"`
+		Name   *string `json:"name"`
+		Group  *string `json:"group"`
+		Shared *bool   `json:"shared"`
 	}
 	if !readSmallJSON(w, r, &body) {
 		return
 	}
-	if body.Name == nil && body.Group == nil {
+	if body.Name == nil && body.Group == nil && body.Shared == nil {
 		jsonError(w, "nothing to change", http.StatusBadRequest)
 		return
 	}
@@ -430,7 +484,11 @@ func (s *Server) handleSessionPatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	updated, _, err := st.update(rec.ID, func(x *sessionRecord) { x.Name, x.Group = name, group })
+	shared := rec.Shared
+	if body.Shared != nil {
+		shared = *body.Shared
+	}
+	updated, _, err := st.update(rec.ID, func(x *sessionRecord) { x.Name, x.Group, x.Shared = name, group, shared })
 	if err != nil {
 		jsonError(w, "could not save the session", http.StatusInternalServerError)
 		return
@@ -453,8 +511,14 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if rec.Status == sessionStatusEnded {
-		if err := rt.Kill(rec.ID); err != nil && s.logger != nil {
-			s.logger.Warn("sessions: killing ended session's leftover tmux failed", "id", rec.ID, "error", err)
+		// Files first: if they cannot be removed the record (and its uid slot)
+		// stays, so the slot is never handed to a new session over old data.
+		if err := rt.Remove(rec.ID); err != nil {
+			if s.logger != nil {
+				s.logger.Warn("sessions: removing session files failed", "id", rec.ID, "error", err)
+			}
+			jsonError(w, "could not remove the session's files", http.StatusInternalServerError)
+			return
 		}
 		if err := st.remove(rec.ID); err != nil {
 			jsonError(w, "could not save the session store", http.StatusInternalServerError)
@@ -483,7 +547,7 @@ func (s *Server) handleSessionLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec, found := st.get(r.PathValue("id"))
-	if !found {
+	if !found || !canViewSession(s.sessionActorOf(r), rec) {
 		jsonError(w, "session not found", http.StatusNotFound)
 		return
 	}
@@ -527,13 +591,8 @@ func (s *Server) handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "sending input requires owner or read-write role", http.StatusForbidden)
 		return
 	}
-	rec, found := st.get(r.PathValue("id"))
-	if !found {
-		jsonError(w, "session not found", http.StatusNotFound)
-		return
-	}
-	if rec.Status != sessionStatusRunning {
-		jsonError(w, "session is not running", http.StatusConflict)
+	rec, ok := s.sessionForUse(w, st, r.PathValue("id"), actor)
+	if !ok {
 		return
 	}
 	lim := s.sessionLimits()
@@ -573,6 +632,32 @@ func (s *Server) handleSessionInput(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]any{"ok": true})
 }
 
+// sessionForUse loads a running session the actor may type into, writing the
+// 404 (not visible), 403 (visible, not usable) or 409 (not running) itself.
+func (s *Server) sessionForUse(w http.ResponseWriter, st *sessionStore, id string, actor sessionActor) (sessionRecord, bool) {
+	rec, found := st.get(id)
+	if !found || !canViewSession(actor, rec) {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return rec, false
+	}
+	if !canUseSession(actor, rec) {
+		jsonError(w, "only the session's creator or an owner may use a private session", http.StatusForbidden)
+		return rec, false
+	}
+	if rec.Status != sessionStatusRunning {
+		jsonError(w, "session is not running", http.StatusConflict)
+		return rec, false
+	}
+	return rec, true
+}
+
+// removeSessionFiles deletes a session's on-disk state, logging a failure.
+func (s *Server) removeSessionFiles(rt SessionRuntime, id string) {
+	if err := rt.Remove(id); err != nil && s.logger != nil {
+		s.logger.Warn("sessions: removing session files failed", "id", id, "error", err)
+	}
+}
+
 func (s *Server) touchSession(st *sessionStore, id string) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, _, _ = st.update(id, func(x *sessionRecord) { x.LastActivity = now })
@@ -589,8 +674,16 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec, found := st.get(r.PathValue("id"))
-	if !found {
+	if !found || !canViewSession(actor, rec) {
 		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if !canManageSession(actor, rec) {
+		jsonError(w, "only the session's creator or an owner may resume it", http.StatusForbidden)
+		return
+	}
+	if rec.UIDSlot < 1 {
+		jsonError(w, "this session predates per-session isolation and cannot be resumed; start a new one", http.StatusConflict)
 		return
 	}
 	if rec.Status != sessionStatusEnded {
@@ -620,7 +713,7 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 	if !s.checkSessionCapacity(w, st, actor.user) {
 		return
 	}
-	if err := rt.Start(crux.UserSessionSpec{ID: rec.ID, Vendor: rec.Vendor, ResumeCommand: cmd}); err != nil {
+	if err := rt.Start(crux.UserSessionSpec{ID: rec.ID, Vendor: rec.Vendor, UIDSlot: rec.UIDSlot, ResumeCommand: cmd}); err != nil {
 		if s.logger != nil {
 			s.logger.Warn("sessions: resume failed", "id", rec.ID, "error", err)
 		}
@@ -692,6 +785,14 @@ func (s *Server) sweepSessions(now time.Time) {
 			s.auditSession("system", auditSessionClosed, auditDetail("session", rec.ID, "reason", "idle"))
 		case sessionStatusEnded:
 			if ended, err := time.Parse(time.RFC3339, rec.EndedAt); err == nil && now.Sub(ended) > sessionEndedRetention {
+				// Files first; a failure keeps the record (and its uid slot)
+				// so the next sweep retries instead of orphaning the data.
+				if err := rt.Remove(rec.ID); err != nil {
+					if s.logger != nil {
+						s.logger.Warn("sessions: pruning session files failed", "id", rec.ID, "error", err)
+					}
+					continue
+				}
 				_ = st.remove(rec.ID)
 			}
 		}
@@ -699,23 +800,23 @@ func (s *Server) sweepSessions(now time.Time) {
 }
 
 // sessionHandoffTarget validates a terminal handoff request for a session id:
-// the feature must be on and the session must be running. It writes the error
-// response itself.
-func (s *Server) sessionHandoffTarget(w http.ResponseWriter, id string) bool {
+// the feature must be on, the caller must be allowed to use the session, the
+// session must be running and the hive must hold the ttyd attach key. It
+// writes the error response itself.
+func (s *Server) sessionHandoffTarget(w http.ResponseWriter, r *http.Request, id string) bool {
 	rt, st, ok := s.sessionsGate(w)
 	if !ok {
 		return false
 	}
-	rec, found := st.get(id)
-	if !found {
-		jsonError(w, "session not found", http.StatusNotFound)
+	rec, ok := s.sessionForUse(w, st, id, s.sessionActorOf(r))
+	if !ok {
 		return false
 	}
-	if rec.Status != sessionStatusRunning {
-		jsonError(w, "session is not running", http.StatusConflict)
+	if ttydAttachKey() == "" {
+		jsonError(w, "session terminals are unavailable: the ttyd attach key is not configured", http.StatusServiceUnavailable)
 		return false
 	}
-	if p := rt.Probe(id); !p.Exists {
+	if p := rt.Probe(rec.ID); !p.Exists {
 		jsonError(w, "session is not running", http.StatusConflict)
 		return false
 	}

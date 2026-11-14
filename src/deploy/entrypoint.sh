@@ -1561,6 +1561,28 @@ if [ "$(id -u)" = "0" ]; then
   # is perfectly writable. 2775 = rwxrwxr-x + setgid (new entries inherit node).
   chmod 2775 /data/home 2>/dev/null || true
   chown dev:node /data/home 2>/dev/null || true
+  # User Sessions (dashboard feature) run each session's tmux server + CLI as
+  # its OWN uid from a reserved range (HIVE_SESSION_UID_BASE, default 20001+),
+  # in neither group node (every agent) nor hive-launch (su-exec). Two filesystem
+  # consequences, both re-asserted every boot:
+  #
+  #  1. Keep that uid OUT of the shared state. /data/home holds the fleet's
+  #     vendor logins and every agent's home; it is group-only (2770) because
+  #     agents and dev are all in group node and nothing else needs it. A
+  #     session uid is "other", so it cannot even traverse /data/home. The
+  #     /data/secrets (710 dev:node), /data/.hive (700) and /secrets/*.pem (600)
+  #     modes already exclude "other"; /data itself only gets o+x (traverse, no
+  #     listing) so the session can reach its own sandbox below.
+  #  2. Create the sandbox root: traverse-only (0711), dev-owned. Each session's
+  #     directory beneath it is created by the Go runtime through su-exec as
+  #     root:hive-launch 0751 with session-owned children (usersession_home.go).
+  chmod 2770 /data/home 2>/dev/null || true
+  chmod o+x /data 2>/dev/null || true
+  _sess_sandbox="${HIVE_SESSIONS_SANDBOX_DIR:-/data/session-sandbox}"
+  mkdir -p "$_sess_sandbox" 2>/dev/null || true
+  chown dev:node "$_sess_sandbox" 2>/dev/null || true
+  chmod 0711 "$_sess_sandbox" 2>/dev/null || true
+  unset _sess_sandbox
   # Per-agent interactive HOMEs live here (#4596): the manager provisions
   # /data/home/agents/<name> per agent at launch, bridged by symlinks back to
   # the shared dot-dirs below. 0755: every agent UID traverses it, none write
@@ -3072,6 +3094,26 @@ hive_ensure_terminal_signing_key() {
   fi
 }
 hive_ensure_terminal_signing_key
+
+# Per-boot attach key for user-session terminals. ttyd listens on loopback and
+# its credential (when any) is on its command line, which a session uid can
+# read in /proc, so session attaches are gated instead by a per-session token
+# HMAC'd with this key: the dashboard proxy computes it (HIVE_TTYD_ATTACH_KEY in
+# the hive's env), ttyd-tmux.sh verifies it (same env, inherited by ttyd). The
+# key lives only in those two processes' environments, which other uids cannot
+# read, and is never passed to a session. Without it every session attach fails
+# closed. An operator-supplied value wins.
+hive_ensure_ttyd_attach_key() {
+  if [ -z "${HIVE_TTYD_ATTACH_KEY:-}" ]; then
+    HIVE_TTYD_ATTACH_KEY="$(head -c 32 /dev/urandom 2>/dev/null | od -An -tx1 | tr -d ' \n')"
+  fi
+  if [ -n "$HIVE_TTYD_ATTACH_KEY" ]; then
+    export HIVE_TTYD_ATTACH_KEY
+  else
+    echo "[entrypoint] WARN: could not generate HIVE_TTYD_ATTACH_KEY; user-session terminals will refuse to attach"
+  fi
+}
+hive_ensure_ttyd_attach_key
 
 echo "[entrypoint] Starting Go binary on :${HIVE_API_PORT} (uid=$(id -u))"
 hive "$@" &
