@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-14 (v5.256.0)
+
+### Added
+
+- Dashboard: Settings → Repos → Reference repos shows entries derived from an accepted request issue as read-only rows with a lock, a `from owner/repo#N` link to the issue, a credential-state chip (`write-tier`, `read-only`, `unresolved`) and the reason; `PUT /api/config/reference-repos` answers 409 to any attempt to edit, remove or replace a derived entry, naming the issue to change instead, while hand-written entries stay editable (#18161, part of #18139).
+
+### Security
+
+- The egress proxy now reloads `uid-map.json` when a UID or agent name is not in its copy, so an agent added at runtime is identified from its own socket and protected by the proxy-UID name-claim check ([#18133](https://github.com/hivecommons/hive/issues/18133)) without restarting the hive ([#18184](https://github.com/hivecommons/hive/issues/18184)).
+
 ## 2026-11-14 (v5.255.0)
 
 ### Added
