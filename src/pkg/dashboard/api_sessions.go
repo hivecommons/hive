@@ -19,16 +19,19 @@ import (
 // Sessions: interactive, named CLI terminals. The tmux/ttyd engine sits behind
 // SessionRuntime so it can be swapped; this file holds policy (roles, limits,
 // validation, ownership, audit) and the JSON API. The terminal itself is
-// attached through /terminal (terminal_handoff.go, terminal_session_gate.go);
-// keystrokes typed there are NOT attributable, only /input and /upload are.
+// attached through /terminal (terminal_handoff.go, terminal_session_gate.go).
+// Keystrokes typed there are attributable only to the keyboard holder (one
+// writable attach at a time, api_sessions_keyboard.go); /input is queued and
+// audited per sender at delivery (api_sessions_queue.go), /upload at once.
 //
 // Ownership model. A session is PRIVATE by default: only its creator and
-// owners may see it, read its log, type into it, upload to it or attach its
-// terminal. The creator (or an owner) may mark it shared, which makes it
-// visible to every role (read-only roles get the scrollback) and usable
-// (input, upload, terminal) by every read-write user: the "jam session" mode.
-// Whatever the flag, only the creator or an owner may rename, close, resume or
-// delete a session or change the flag.
+// owners may see it, read its log, watch its terminal, type into it or upload
+// to it. The creator (or an owner) may mark it shared, which makes it visible
+// to every role and usable (Send, upload, keyboard) by every read-write user:
+// the "jam session" mode. The read role only ever watches: the scrollback and
+// a read-only live terminal, never the keyboard, Send or upload. Whatever the
+// flag, only the creator or an owner may rename, close, resume or delete a
+// session or change the flag.
 
 const (
 	sessionsLogDefaultLines = 1000
@@ -87,6 +90,10 @@ type SessionRuntime interface {
 	Kill(id string) error
 	Capture(id string, lines int) (string, error)
 	SendText(id, text string, submit bool) error
+	// DetachWritableClients detaches every tmux client of the session that is
+	// not read-only: the previous keyboard holder's browser, when the keyboard
+	// changes hands, so it cannot keep typing until it re-attaches (read-only).
+	DetachWritableClients(id string) error
 	// ResumeInfo captures the vendor's newest conversation for the session;
 	// workDir is where the CLI ran ("" = the session's own work dir).
 	ResumeInfo(id, vendor, workDir string) (crux.UserSessionResume, bool)
@@ -133,6 +140,16 @@ type sessionView struct {
 	// `ended`, did not start.
 	Message string `json:"message"`
 	Error   string `json:"error"`
+	// KeyboardHolder and KeyboardSince (additive) are the keyboard lease: the
+	// one user whose terminal is writable and since when ("" = released).
+	// KeyboardMine is true when the caller holds it.
+	KeyboardHolder string `json:"keyboard_holder"`
+	KeyboardSince  string `json:"keyboard_since"`
+	KeyboardMine   bool   `json:"keyboard_mine"`
+	// Viewers (additive) is who has a live terminal on the session and whether
+	// theirs is the writable one; Queue (additive) is the pending Send queue.
+	Viewers []sessionViewer  `json:"viewers"`
+	Queue   sessionQueueView `json:"queue"`
 }
 
 func (s *Server) registerSessionRoutes() {
@@ -144,6 +161,8 @@ func (s *Server) registerSessionRoutes() {
 	s.mux.HandleFunc("POST /api/sessions/{id}/input", s.handleSessionInput)
 	s.mux.HandleFunc("POST /api/sessions/{id}/upload", s.handleSessionUpload)
 	s.mux.HandleFunc("POST /api/sessions/{id}/resume", s.handleSessionResume)
+	s.mux.HandleFunc("POST /api/sessions/{id}/keyboard", s.handleSessionKeyboard)
+	s.mux.HandleFunc("DELETE /api/sessions/{id}/input/{queue_id}", s.handleSessionInputCancel)
 }
 
 // sessionsRuntime returns the runtime when the feature is enabled and wired.
@@ -256,6 +275,22 @@ func (st sessionRecord) view(p *crux.UserSessionProbe, rt SessionRuntime) sessio
 		}
 	}
 	v.Resumable = st.Status == sessionStatusEnded && st.ResumeCommand != "" && rt.SupportsResume(st.Vendor)
+	v.KeyboardHolder, v.KeyboardSince = st.KeyboardHolder, st.KeyboardSince
+	v.Viewers = []sessionViewer{}
+	v.Queue = sessionQueueView{Items: []sessionQueueItemView{}}
+	return v
+}
+
+// sessionViewFor is view() plus the per-caller and live parts: whether the
+// caller holds the keyboard, who is attached, and the Send queue with the
+// caller's own items marked.
+func (s *Server) sessionViewFor(rec sessionRecord, p *crux.UserSessionProbe, rt SessionRuntime, actor sessionActor) sessionView {
+	v := rec.view(p, rt)
+	v.KeyboardMine = holdsKeyboard(actor, rec)
+	if rec.Status == sessionStatusRunning {
+		v.Viewers = s.sessionViewers(rec.ID)
+		v.Queue = s.sessionQueueSnapshot(rec.ID, actor.user)
+	}
 	return v
 }
 
@@ -304,6 +339,8 @@ func (s *Server) markSessionEnded(rt SessionRuntime, st *sessionStore, rec sessi
 	}); err != nil && s.logger != nil {
 		s.logger.Warn("sessions: persisting ended state failed", "id", rec.ID, "error", err)
 	}
+	// Nothing queued can be delivered to an ended session.
+	s.dropSessionQueue(rec.ID)
 }
 
 func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
@@ -325,7 +362,7 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		if pr, ok := probes[rec.ID]; ok {
 			p = &pr
 		}
-		views = append(views, rec.view(p, rt))
+		views = append(views, s.sessionViewFor(rec, p, rt, actor))
 	}
 	vendors := []crux.UserSessionVendor{}
 	for _, v := range rt.Vendors() {
@@ -478,8 +515,10 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	// takes minutes and used to outlive the ingress's request timeout (a 504
 	// in the browser for a session that then started anyway). The start runs
 	// in the background and moves the record to running or failed.
+	// The creator holds the keyboard from the start (api_sessions_keyboard.go).
 	rec := sessionRecord{ID: id, Name: body.Name, Group: body.Group, Vendor: vendor.ID, Creator: actor.user, CreatedAt: now, LastActivity: now, Status: sessionStatusPreparing, UIDSlot: st.freeSlot(), Shared: body.Shared,
-		WorkspaceRepo: repo, Workspace: rt.WorkspaceDir(repo), Message: s.sessionPreparingMessage(rt, repo, vendor.Label)}
+		WorkspaceRepo: repo, Workspace: rt.WorkspaceDir(repo), Message: s.sessionPreparingMessage(rt, repo, vendor.Label),
+		KeyboardHolder: actor.user, KeyboardSince: now}
 	s.setSessionStartInFlightLocked(id, true)
 	if err := st.put(rec); err != nil {
 		s.setSessionStartInFlightLocked(id, false)
@@ -773,18 +812,22 @@ func (s *Server) handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "nothing to send", http.StatusBadRequest)
 		return
 	}
-	if err := rt.SendText(rec.ID, body.Text, body.Submit); err != nil {
-		if strings.Contains(err.Error(), "control character") || strings.Contains(err.Error(), "UTF-8") {
-			jsonError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		jsonError(w, "could not send input to the session", http.StatusBadGateway)
+	// Validate now (so the sender hears about an escape character at once),
+	// deliver later: the text is queued and typed by the session's worker when
+	// the pane is idle (api_sessions_queue.go), audited then, as this user.
+	clean, err := crux.SanitizeUserSessionInput(body.Text)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.touchSession(st, rec.ID)
-	// Who typed, how much, and into which session; never the text itself.
-	s.auditSession(actor.user, auditSessionInput, auditDetail("session", rec.ID, "bytes", strconv.Itoa(len(body.Text)), "submit", strconv.FormatBool(body.Submit)))
-	jsonResponse(w, map[string]any{"ok": true})
+	item, pos, ok := s.enqueueSessionInput(rec.ID, sessionQueueItem{User: actor.user, Text: clean, Submit: body.Submit})
+	if !ok {
+		jsonError(w, fmt.Sprintf("this session already has %d queued sends; wait for some to be delivered", sessionQueueMaxItems), http.StatusTooManyRequests)
+		return
+	}
+	s.ensureSessionQueueWorker(rt, st, rec.ID)
+	jsonStatusResponse(w, http.StatusAccepted, map[string]any{"ok": true, "queued": map[string]any{"id": item.ID, "position": pos},
+		"queue": s.sessionQueueSnapshot(rec.ID, actor.user)})
 }
 
 // sessionForUse loads a running session the actor may type into, writing the
@@ -882,8 +925,10 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	message := s.sessionPreparingMessage(rt, rec.WorkspaceRepo, vendorLabel)
 	s.setSessionStartInFlightLocked(rec.ID, true)
+	// Whoever resumes the session holds its keyboard.
 	updated, _, err := st.update(rec.ID, func(x *sessionRecord) {
 		x.Status, x.LastActivity, x.Message, x.Error = sessionStatusPreparing, now, message, ""
+		x.KeyboardHolder, x.KeyboardSince = actor.user, now
 	})
 	if err != nil {
 		s.setSessionStartInFlightLocked(rec.ID, false)
@@ -964,16 +1009,32 @@ func (s *Server) sweepSessions(now time.Time) {
 	}
 }
 
+// sessionForWatch loads a running session the actor may at least watch (the
+// read role attaches read-only), writing the 404 or 409 itself.
+func (s *Server) sessionForWatch(w http.ResponseWriter, st *sessionStore, id string, actor sessionActor) (sessionRecord, bool) {
+	rec, found := st.get(id)
+	if !found || !canViewSession(actor, rec) {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return rec, false
+	}
+	if rec.Status != sessionStatusRunning {
+		jsonError(w, "session is not running", http.StatusConflict)
+		return rec, false
+	}
+	return rec, true
+}
+
 // sessionHandoffTarget validates a terminal handoff request for a session id:
-// the feature must be on, the caller must be allowed to use the session, the
-// session must be running and the hive must hold the ttyd attach key. It
-// writes the error response itself.
+// the feature must be on, the caller must be allowed to see the session (a
+// viewer attaches read-only; only the keyboard holder's attach is writable,
+// decided in guardTerminalSession), the session must be running and the hive
+// must hold the ttyd attach key. It writes the error response itself.
 func (s *Server) sessionHandoffTarget(w http.ResponseWriter, r *http.Request, id string) bool {
 	rt, st, ok := s.sessionsGate(w)
 	if !ok {
 		return false
 	}
-	rec, ok := s.sessionForUse(w, st, id, s.sessionActorOf(r))
+	rec, ok := s.sessionForWatch(w, st, id, s.sessionActorOf(r))
 	if !ok {
 		return false
 	}

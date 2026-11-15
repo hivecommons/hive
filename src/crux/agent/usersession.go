@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -16,8 +15,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-	"unicode"
-	"unicode/utf8"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/agent/resumehandle"
@@ -129,6 +126,9 @@ type UserSessionRuntime struct {
 	// (usersession_workspace.go); cloneMinter mints its scoped token.
 	git         gitRunFunc
 	cloneMinter pushbroker.TokenMinter
+	// orphaned judges whether an attached tmux client has lost its terminal
+	// attacher (usersession_clients.go); nil disables the reaper.
+	orphaned clientOrphanFunc
 	// workspaceMu serialises workspace clone and spek init across sessions.
 	workspaceMu sync.Mutex
 	// bufSeq makes every paste buffer name unique, so concurrent inputs to one
@@ -150,6 +150,7 @@ func NewUserSessionRuntime(logger *slog.Logger) *UserSessionRuntime {
 		environ:  os.Environ,
 		now:      time.Now,
 		git:      execUserSessionGit,
+		orphaned: procClientOrphaned,
 	}
 }
 
@@ -366,12 +367,20 @@ func (r *UserSessionRuntime) probeAs(uid int, id string) crux.UserSessionProbe {
 	}
 	attached, _ := strconv.Atoi(fields[1])
 	secs, _ := strconv.ParseInt(fields[2], 10, 64)
-	return crux.UserSessionProbe{
+	p := crux.UserSessionProbe{
 		Exists:   true,
 		Dead:     fields[0] == "1",
 		Attached: attached,
 		Activity: time.Unix(secs, 0),
 	}
+	// Attached is the LIVE count: clients whose attacher is gone are detached
+	// here and not reported (usersession_clients.go).
+	if !p.Dead && p.Attached > 0 {
+		if live, ok := r.liveClients(uid, id); ok {
+			p.Attached = live
+		}
+	}
+	return p
 }
 
 // Kill ends the session's tmux server. A missing session is not an error.
@@ -448,26 +457,43 @@ func (r *UserSessionRuntime) SendText(id, text string, submit bool) error {
 	return nil
 }
 
+// userSessionWritableClientFormat lists each attached client as "<name> <readonly>".
+const userSessionWritableClientFormat = "#{client_name} #{client_readonly}"
+
+// DetachWritableClients detaches every attached tmux client that is not
+// read-only. The dashboard calls it when the keyboard lease changes hands: the
+// previous holder's ttyd client is the only writable one by construction
+// (every other viewer attached with `attach-session -r`), so detaching the
+// writable set is detaching the old holder. A missing session is not an error.
+func (r *UserSessionRuntime) DetachWritableClients(id string) error {
+	if err := checkUserSessionID(id); err != nil {
+		return err
+	}
+	session := UserSessionTmuxName(id)
+	if p := r.Probe(id); !p.Exists {
+		return nil
+	}
+	out, err := r.tmux(id, "", "list-clients", "-t", session, "-F", userSessionWritableClientFormat)
+	if err != nil {
+		return outputErr("listing session clients", err, out)
+	}
+	for _, line := range strings.Split(string(out), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) != 2 || fields[1] != "0" {
+			continue
+		}
+		if out, err := r.tmux(id, "", "detach-client", "-t", fields[0]); err != nil {
+			return outputErr("detaching session client", err, out)
+		}
+	}
+	return nil
+}
+
 // SanitizeSessionInput validates text for typing into a session: it must be
 // valid UTF-8 and contain no control characters other than tab and newline
 // (CRLF is folded to LF). It returns the text to paste.
 func SanitizeSessionInput(text string) (string, error) {
-	if !utf8.ValidString(text) {
-		return "", fmt.Errorf("input is not valid UTF-8")
-	}
-	text = strings.ReplaceAll(text, "\r\n", "\n")
-	var b bytes.Buffer
-	for _, r := range text {
-		if r == '\n' || r == '\t' {
-			b.WriteRune(r)
-			continue
-		}
-		if unicode.IsControl(r) {
-			return "", fmt.Errorf("input contains a control character")
-		}
-		b.WriteRune(r)
-	}
-	return b.String(), nil
+	return crux.SanitizeUserSessionInput(text)
 }
 
 // ResumeInfo reads the newest vendor-native conversation from the session's

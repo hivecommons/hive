@@ -11,6 +11,40 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.265.2)
+
+### Fixed
+
+- Clear an agent's forge-unreachable condition when a later scoped-token refresh succeeds, so recovered mint outages do not remain reported until the agent restarts.
+
+## 2026-11-15 (v5.265.1)
+
+### Fixed
+
+- **Sessions: an ended session that cannot be resumed now offers "Start again" instead of a Resume button that always fails.** When the CLI never reached its first prompt before the hive restarted, the session has no conversation to continue and `POST /api/sessions/{id}/resume` answers 409 `no conversation to resume was found`, which surfaced only as a toast. The ended pane now checks the session's `resumable` flag: when false it explains why and shows "Start again" (a fresh session with the same name, group, vendor and sharing, the old scrollback kept); when true it keeps "Resume" and adds a secondary "Start again".
+
+## 2026-11-15 (v5.265.0)
+
+### Added
+
+- Shared dashboard Sessions are now safe for several people at once. **Roles:** the `read` role watches a shared session's live terminal read-only (it used to get only a polled scrollback) and never types, Sends or uploads; `read-write` and `owner` may Send, upload and hold the keyboard; private sessions stay creator-and-owners only. **One keyboard at a time:** each session has a keyboard lease (`keyboard_holder`, `keyboard_since` on the record, held by the creator from the start and by whoever resumes); only the holder's terminal attach is writable, every other viewer is attached with `tmux attach-session -r`, decided server-side (the proxy appends a second per-session write token only for the holder and `ttyd-tmux.sh` attaches read-only without it, so nothing a browser sends can promote a viewer). `POST /api/sessions/{id}/keyboard {"action":"take"|"release"}`: owners and the creator always take it, another writer only once it is released or the holder has been idle for `HIVE_SESSIONS_KEYBOARD_GRACE_SEC` (default 60); a hand-over detaches the previous holder's tmux client, both browsers re-attach in their new mode, and it is audited as `session_keyboard` with from/to, which makes terminal typing attributable to the holder of record. **Queued Send:** `POST /api/sessions/{id}/input` now answers 202 and queues the text (32 per session); a per-session worker types the head only when the CLI prompt is idle (no run in progress, empty prompt line, per-vendor heuristics for Claude Code, Copilot and Codex), falling open after `HIVE_SESSIONS_SEND_WAIT_SEC` (default 45) so nothing is stuck; `GET /api/sessions` reports the `queue` (length, head, your position, items without text), `DELETE /api/sessions/{id}/input/{queue_id}` cancels your own item, and each delivery is audited as `session_input` for the user who queued it. **Presence:** `viewers` (user, attached since, keyboard) per session; the tab tooltip and the pane header read `keyboard: andy · watching: bob, carol` with a Take/Release keyboard button, and the Send button shows `queued behind N` with the queue listed under the input bar.
+
+## 2026-11-15 (v5.264.0)
+
+### Added
+
+- Inbox items from Plaud now carry real text and play their audio. The Plaud connector asks `get_file` which transcript blocks and notes a recording actually has before reading them (preferring the AI-cleaned transcript, then the raw one, then the outline, and following the MCP's `Available blocks:` hint when the inventory is unreadable), so the MCP's `Block "transaction" not available for this recording` reply is no longer stored as the fact body; a recording Plaud has not transcribed yet becomes a fact marked `attr_plaud_content: pending` with a plain note and its flagged highlights, and such facts are re-fetched on every sync (capped at 25 per sync) until text arrives. The Inbox item shows the summary (collapsible), a Transcript disclosure, highlights, duration and recording time, and a `▶ Play recording` control that mints a fresh 24h presigned link through `GET /api/inbox/{source}/{id}/audio` (owner or read-write; audited; never persisted) and plays it inline; `GET /api/inbox/{source}/{id}/content` returns the full text. The connector's `include_audio` option now only decides whether a sync also stores the link in the fact.
+
+### Fixed
+
+- Sessions: the attached count no longer climbs with every reload of a terminal ("26 attached" on a session one person was using), and a session's window is no longer sized to a stale client that nobody is looking at. A browser terminal is a tmux client that `ttyd-tmux.sh` attaches on a pty ttyd owns; when the browser closed, ttyd sent SIGHUP to the helper's process group, but the client runs as the session's own uid (su-exec) so ttyd's uid could not signal it, and the helper itself never acted on the signal: bash defers signals while a foreground command runs, and the entrypoint's ttyd respawn loop had `trap '' HUP`, an ignore that is inherited across exec by ttyd and by every helper it spawns and that a non-interactive bash can neither trap nor reset. Nothing exited, ttyd kept the pty open, and each reload leaked one attached client and one pty; agent terminals attach through the same path and were exposed the same way. The respawn loop now keeps itself alive with a handler (`trap ':' HUP`, reset to default on exec) instead of an ignore, and the helper runs the attach as a background job it waits on, so ttyd's SIGHUP (or a TERM) detaches the client through tmux by its tty and the helper exits cleanly, closing the pty. As defense in depth the runtime reaps on every sessions poll: clients whose process is gone or no longer descends from ttyd (a ttyd respawn, a killed helper, an attach from outside the dashboard) are detached, bounded and logged, and `attached` reports the live count that remains.
+
+## 2026-11-15 (v5.263.6)
+
+### Fixed
+
+- Starting a dashboard Session no longer blocks the request on the first-ever clone of the project workspace: `POST /api/sessions` (and `/resume`) answers 202 at once with the session in a new `preparing` status and a message such as "preparing workspace: cloning org/repo (first session on this hive)", the clone, hand-over, spek init and tmux start run in the background, and the record moves to `running` or `failed` with the error stored on it and shown in the tab (Retry and Delete inline). Two root causes behind the 504 and the "process exited with code 1" terminal are fixed as well: the root hand-over of the clone ran under the 10-second tmux command timeout, after which Go tried to kill a root child the hive's uid may not signal (`exec: killing Cmd: operation not permitted`) although the workspace had been moved into place; it now runs under its own 10-minute deadline, root children are cancelled through the setuid helper, and a failed hand-over removes its staging tree. And a session's tmux socket dir was left `0700` with the sessions-only group, so ttyd (the hive's uid) could never stat the socket and every attach died at its wait; the runtime now makes it `0710` with the hive's group (`HIVE_SESSIONS_ATTACH_GID`), as agent socket dirs are, and ttyd-tmux.sh names a socket dir it cannot traverse in its diagnostic. A `preparing` record left over by a restart is marked failed instead of spinning forever, preparing sessions count against the caps, and the outcome of every start is audited as `session_started`.
+
 ## 2026-11-15 (v5.263.5)
 
 ### Changed

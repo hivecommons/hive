@@ -180,7 +180,7 @@ Full entry: [Inception](dashboard-sections/workflow-and-agents.md#inception).
 
 ## Sessions
 
-Named terminal sessions running command-line AI tools inside Hive. Everyone on this hive can watch, and people with write access can type.
+Named terminal sessions running command-line AI tools inside Hive; everyone who can see one watches live and one person at a time holds the keyboard.
 
 Sessions are named and grouped, and the section replaces Inception when sessions are enabled. Turn it on from Settings → Dashboard → **Sessions** (`dashboard.sessions.enabled`; `HIVE_SESSIONS_ENABLED` overrides). The terminal pane follows the dashboard theme, light or dark and any theme preset, instead of showing a black terminal.
 

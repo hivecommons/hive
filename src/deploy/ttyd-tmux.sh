@@ -42,15 +42,38 @@ IS_USER_SESSION=0
 # the proxy cannot compute it. Fails closed when the key, the token or python3
 # is missing.
 verify_attach_token() {
-  local name="$1" token="$2"
+  verify_keyed_token "hive-ttyd-attach-v1" "$1" "$2"
+}
+
+# verify_write_token NAME TOKEN: the THIRD ttyd arg, present only on the
+# keyboard holder's attach (one writable terminal per session; the dashboard
+# decides who holds the keyboard and computes the token after authorising the
+# request). Same construction as the attach token under its own domain string:
+#   hex(HMAC-SHA256(HIVE_TTYD_ATTACH_KEY, "hive-ttyd-attach-rw-v1\0" + NAME))
+# A missing or wrong write token does not refuse the attach: it makes it
+# READ-ONLY (tmux attach-session -r), so nothing a browser could send turns a
+# viewer into a typist.
+verify_write_token() {
+  verify_keyed_token "hive-ttyd-attach-rw-v1" "$1" "$2"
+}
+
+# verify_keyed_token DOMAIN NAME TOKEN: constant-time check of one HMAC token.
+# Fails closed when the key, the token or python3 is missing.
+verify_keyed_token() {
+  local domain="$1" name="$2" token="$3"
   [ -n "${HIVE_TTYD_ATTACH_KEY:-}" ] && [ -n "$token" ] || return 1
   command -v python3 >/dev/null 2>&1 || return 1
   python3 -c 'import hashlib, hmac, os, sys
 key = os.environ["HIVE_TTYD_ATTACH_KEY"].strip().encode()
-msg = ("hive-ttyd-attach-v1\0" + sys.argv[1]).encode()
+msg = (sys.argv[1] + "\0" + sys.argv[2]).encode()
 want = hmac.new(key, msg, hashlib.sha256).hexdigest()
-sys.exit(0 if hmac.compare_digest(want, sys.argv[2]) else 1)' "$name" "$token"
+sys.exit(0 if hmac.compare_digest(want, sys.argv[3]) else 1)' "$domain" "$name" "$token"
 }
+
+# ATTACH_READ_ONLY is 1 for every user-session attach that did not present a
+# valid write token (viewers), 0 for the keyboard holder. Agent terminals are
+# never read-only.
+ATTACH_READ_ONLY=0
 
 case "$SESSION" in
   hive-sess-*)
@@ -63,6 +86,12 @@ case "$SESSION" in
       exit 1
     fi
     IS_USER_SESSION=1
+    ATTACH_READ_ONLY=1
+    if verify_write_token "$SESSION" "${3:-}"; then
+      ATTACH_READ_ONLY=0
+    else
+      echo "attaching read-only: this browser does not hold the session's keyboard" >&2
+    fi
     # The key must not reach anything forked below (the tmux client runs as
     # the session's own uid, which can read its own process environment).
     unset HIVE_TTYD_ATTACH_KEY
@@ -296,6 +325,11 @@ TTYD_STATUS_INTERVAL="${HIVE_TTYD_STATUS_INTERVAL:-2}"
 # expansion (position counters included) with headroom.
 TTYD_STATUS_RIGHT_LENGTH="${HIVE_TTYD_STATUS_RIGHT_LENGTH:-140}"
 
+# How often, and how long apart, a hang-up re-tries detaching a client that
+# had not yet registered with the tmux server when the signal arrived.
+TTYD_DETACH_RETRIES="${HIVE_TTYD_DETACH_RETRIES:-20}"
+TTYD_DETACH_RETRY_SEC="${HIVE_TTYD_DETACH_RETRY_SEC:-0.25}"
+
 # attach_with runs the attach lifecycle. $1 is an optional command prefix
 # (e.g. "su-exec <spec>") so the same logic serves both the owner and non-owner
 # paths without duplication.
@@ -342,7 +376,61 @@ attach_with() {
     "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -s terminal-features ",${TERM:-xterm-256color}:clipboard" 2>/dev/null || true
     "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -s set-clipboard on 2>/dev/null || true
   fi
-  "${run[@]}" tmux -S "$TMUX_SOCKET" attach-session -t "$SESSION" || exit_code=$?
+  # Attached-client leak (dashboard showed "26 attached" on one session). When
+  # the browser closes or reloads the terminal, ttyd sends its close signal
+  # (SIGHUP) to THIS script's process group and keeps the pty open until the
+  # child exits. The tmux client below runs as the socket owner's uid through
+  # su-exec, and ttyd's uid may not signal a process of another uid (EPERM), so
+  # the signal only ever reaches this script. A foreground child made that
+  # useless twice over: bash defers everything until a foreground command
+  # returns, and when SIGHUP was inherited ignored (see the ttyd respawn loop
+  # in entrypoint.sh) it was dropped outright. Either way nobody exited, the
+  # pty never closed, and every reload left one more client attached: a leaked
+  # pty each, a count the dashboard reported as attached browsers, and tmux
+  # sizing the window to the smallest of the stale clients.
+  #
+  # So the attach runs as a background job (stdin kept: bash gives an
+  # asynchronous command /dev/null unless it is redirected explicitly) and this
+  # script waits on it. `wait` returns the moment a trapped signal arrives, and
+  # the handler detaches the client by its tty, which the owner uid is allowed
+  # to do, through tmux itself (`detach-client`). If that fails the exit below
+  # still ends this pty session leader, and the kernel, which needs no
+  # permission, hangs up the foreground process group with it.
+  local attach_pid attach_tty detached=0 tries=0
+  attach_tty=$(tty 2>/dev/null || true)
+  detach_this_client() {
+    detached=1
+    if [ -n "$attach_tty" ]; then
+      "${run[@]}" tmux -S "$TMUX_SOCKET" detach-client -t "$attach_tty" 2>/dev/null || true
+    fi
+  }
+  # A viewer without the session's keyboard attaches read-only (-r): tmux
+  # drops every keystroke from that client while it still sees the output.
+  local attach_flags=()
+  if [ "$ATTACH_READ_ONLY" -eq 1 ]; then
+    attach_flags=(-r)
+  fi
+  trap detach_this_client HUP TERM INT
+  "${run[@]}" tmux -S "$TMUX_SOCKET" attach-session ${attach_flags[@]+"${attach_flags[@]}"} -t "$SESSION" <&0 &
+  attach_pid=$!
+  # wait is interrupted (status > 128) when the trap fires. A hang-up ends the
+  # attach on purpose, so it is not a failure whatever the client's own status
+  # (a client that was signalled too exits 1, "lost tty"). The signal can land
+  # before the client has registered with the server, in which case the first
+  # detach found nothing: retry while the job is still running (bash's own
+  # job table; kill -0 would be EPERM across uids), then leave without waiting
+  # for a client that will not go: this process is the pty's session leader,
+  # and its exit makes the kernel hang up the foreground process group.
+  wait "$attach_pid" || exit_code=$?
+  if [ "$detached" -eq 1 ]; then
+    while [ -n "$(jobs -rp)" ] && [ "$tries" -lt "$TTYD_DETACH_RETRIES" ]; do
+      tries=$((tries + 1))
+      sleep "$TTYD_DETACH_RETRY_SEC"
+      detach_this_client
+    done
+    exit_code=0
+  fi
+  trap - HUP TERM INT
   "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" mouse "$prev_mouse" 2>/dev/null || true
   if [ -n "$prev_history" ]; then
     "${run[@]}" tmux -S "$TMUX_SOCKET" set-option -t "$SESSION" history-limit "$prev_history" 2>/dev/null || true

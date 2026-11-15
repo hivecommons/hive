@@ -442,6 +442,42 @@ func TestUserSessionSendTextUsesPasteBufferNotKeyNames(t *testing.T) {
 	}
 }
 
+func TestUserSessionDetachWritableClientsLeavesReadOnlyViewers(t *testing.T) {
+	f := &fakeTmux{handler: func(args []string) ([]byte, error) {
+		switch args[0] {
+		case "display-message":
+			return []byte("0 3 1700000000\n"), nil
+		case "list-clients":
+			return []byte("/dev/pts/3 1\n/dev/pts/7 0\n/dev/pts/9 1\n"), nil
+		}
+		return nil, nil
+	}}
+	r := newTestSessionRuntime(t, f, nil)
+	if err := r.DetachWritableClients(testSessionID); err != nil {
+		t.Fatal(err)
+	}
+	var detached []string
+	for _, c := range f.calls {
+		if c.args[0] == "detach-client" {
+			detached = append(detached, c.args[len(c.args)-1])
+		}
+	}
+	if len(detached) != 1 || detached[0] != "/dev/pts/7" {
+		t.Fatalf("detached %v, want only the writable client /dev/pts/7", detached)
+	}
+	// A session that is gone is not an error and nothing is listed.
+	f.handler = func(args []string) ([]byte, error) { return nil, errors.New("no server running") }
+	f.calls = nil
+	if err := r.DetachWritableClients(testSessionID); err != nil {
+		t.Fatalf("missing session: %v", err)
+	}
+	for _, v := range f.verbs() {
+		if v == "list-clients" || v == "detach-client" {
+			t.Errorf("missing session reached %s", v)
+		}
+	}
+}
+
 func TestUserSessionSendTextRefusesDeadOrInvalid(t *testing.T) {
 	f := &fakeTmux{handler: func(args []string) ([]byte, error) { return []byte("1 0 1700000000\n"), nil }}
 	r := newTestSessionRuntime(t, f, nil)

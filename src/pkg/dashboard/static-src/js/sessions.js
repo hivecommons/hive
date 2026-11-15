@@ -28,8 +28,13 @@
     // SESSIONS_POLL_MS so the tab flips to a terminal soon after it starts.
     const SESSIONS_PREPARING_POLL_MS = 2000;
     const SESSIONS_PREPARING_HINT = 'this can take a couple of minutes on the first session of a hive, while the project repository is cloned.';
-    const SESSIONS_TYPING_NOTE = 'Number of browsers attached to this terminal. Everyone attached shares the same keyboard, and typing is not attributed to individual users.';
+    const SESSIONS_TYPING_NOTE = 'Number of browsers attached to this terminal. One person at a time holds the keyboard; everyone else watches read-only. Typing is attributed to the keyboard holder, Send to whoever queued it.';
     const SESSIONS_HEADER_CONTENT_TYPE = 'Content-Type';
+    // Keyboard lease (POST /api/sessions/{id}/keyboard): the one writable
+    // terminal. The creator and owners can always take it; another writer only
+    // once the holder released it or has been idle for the server's grace.
+    const SESSIONS_KEYBOARD_TAKE = 'take';
+    const SESSIONS_KEYBOARD_RELEASE = 'release';
 
     let _sessionsData = { enabled: false, sessions: [], vendors: [], limits: {}, workspace: {} };
     let _sessionsRole = '';
@@ -98,13 +103,48 @@
       if (key === 'End') return order[order.length - 1];
       return '';
     }
-    // The terminal iframe needs terminal rights; everyone else gets the scrollback view.
+    // Every role that can see a running session gets the live terminal: the
+    // keyboard holder writable, everyone else read-only (decided by the
+    // server, never here). Scrollback is the fallback when the iframe fails.
     function sessionsViewMode(role, session) {
       if (!session) return 'none';
       if (session.status === SESSIONS_STATUS_ENDED) return 'ended';
       if (session.status === SESSIONS_STATUS_PREPARING) return 'preparing';
       if (session.status === SESSIONS_STATUS_FAILED) return 'failed';
-      return sessionsRoleCanWrite(role) ? 'terminal' : 'scrollback';
+      return 'terminal';
+    }
+    // Send (and upload) need a write role; the read role only watches.
+    function sessionsCanSend(role, session) {
+      return sessionsRoleCanWrite(role) && !!session && session.status === SESSIONS_STATUS_RUNNING;
+    }
+    // Which keyboard action the pane header offers: release for the holder,
+    // take for any other writer (the server answers 409 while the holder is
+    // active), nothing for the read role or a session that is not running.
+    function sessionsKeyboardAction(role, session) {
+      if (!sessionsCanSend(role, session)) return '';
+      return session.keyboard_mine ? SESSIONS_KEYBOARD_RELEASE : SESSIONS_KEYBOARD_TAKE;
+    }
+    // "keyboard: andy · watching: bob, carol" from the server's viewers list.
+    function sessionsPresenceText(session) {
+      const viewers = (session && Array.isArray(session.viewers)) ? session.viewers.filter(function(v) { return v && v.user; }) : [];
+      const holder = (session && session.keyboard_holder) || '';
+      const watching = viewers.filter(function(v) { return v.user !== holder; }).map(function(v) { return v.user; });
+      const holderAttached = viewers.some(function(v) { return v.user === holder; });
+      const parts = [];
+      if (holder) parts.push('keyboard: ' + holder + (holderAttached ? '' : ' (away)'));
+      else parts.push('keyboard: free');
+      if (watching.length) parts.push('watching: ' + watching.join(', '));
+      return parts.join(' · ');
+    }
+    // The Send button label: "Send" or "Send · queued behind N".
+    function sessionsQueueLabel(base, queue) {
+      const n = Number(queue && queue.length) || 0;
+      return n > 0 ? base + ' · queued behind ' + n : base;
+    }
+    // The toast after a 202 from /input.
+    function sessionsQueuedToast(name, queued) {
+      const pos = Number(queued && queued.position) || 1;
+      return pos <= 1 ? 'Sent to ' + name + ' (delivered when the prompt is idle).' : 'Queued for ' + name + ' at position ' + pos + '.';
     }
     // Running and preparing sessions both hold (or are about to hold) a slot.
     function sessionsIsLive(s) {
@@ -278,7 +318,8 @@
       const failed = s.status === SESSIONS_STATUS_FAILED;
       const attached = Number(s.attached) || 0;
       const badge = attached > 0 ? '<span class="sessions-attached" title="' + esc(SESSIONS_TYPING_NOTE) + '">' + attached + '</span>' : '';
-      const title = preparing || failed ? sessionsStatusText(s) : sessionsWorkspaceLabel(sessionsSessionWorkspace(s));
+      const title = preparing || failed ? sessionsStatusText(s)
+        : (s.status === SESSIONS_STATUS_RUNNING ? sessionsPresenceText(s) + '\n' : '') + sessionsWorkspaceLabel(sessionsSessionWorkspace(s));
       const dot = preparing
         ? '<span class="sessions-spinner" role="img" aria-label="Preparing"></span>'
         : '<span class="sessions-tab-dot" data-status="' + esc(s.status || '') + '"></span>';
@@ -326,9 +367,25 @@
         + '<button type="button" class="hv-btn btn-primary btn-sm sessions-new-btn" data-action="sessionsToggleNew"' + (can.ok ? '' : ' disabled title="' + esc(can.reason) + '"') + '>+ New session</button></div>'
         + '<div id="sessions-new" class="sessions-new" role="group" aria-label="New session"' + (_sessionsNewOpen && can.ok ? '' : ' hidden') + '>' + (_sessionsNewOpen && can.ok ? sessionsNewFormHtml() : '') + '</div>';
     }
+    // The keyboard button and the "watching" badge of a running session.
+    function sessionsKeyboardHtml(s) {
+      if (s.status !== SESSIONS_STATUS_RUNNING) return '';
+      const action = sessionsKeyboardAction(_sessionsRole, s);
+      if (action === SESSIONS_KEYBOARD_RELEASE) {
+        return '<button type="button" class="hv-btn btn-secondary btn-sm sessions-keyboard-btn" data-action="sessionsKeyboard" data-arg0="' + esc(s.id) + '" data-arg1="' + SESSIONS_KEYBOARD_RELEASE + '" title="Let someone else type; you keep watching">Release keyboard</button>';
+      }
+      if (action === SESSIONS_KEYBOARD_TAKE) {
+        const holder = s.keyboard_holder ? ' from ' + s.keyboard_holder : '';
+        return '<button type="button" class="hv-btn btn-primary btn-sm sessions-keyboard-btn" data-action="sessionsKeyboard" data-arg0="' + esc(s.id) + '" data-arg1="' + SESSIONS_KEYBOARD_TAKE + '" title="Take the keyboard' + esc(holder) + '; their terminal becomes read-only">Take keyboard</button>';
+      }
+      return '<span class="sessions-watching" title="Your role can watch this session but not type into it">watching · you have the keyboard? no</span>';
+    }
     function sessionsHeaderHtml(s) {
       const canManage = sessionsRoleCanWrite(_sessionsRole);
       const attached = Number(s.attached) || 0;
+      const presence = s.status === SESSIONS_STATUS_RUNNING
+        ? '<span class="sessions-presence' + (s.keyboard_mine ? ' mine' : '') + '" title="' + esc(SESSIONS_TYPING_NOTE) + '">' + esc(sessionsPresenceText(s)) + '</span>'
+        : '';
       // A preparing session cannot be closed yet (the start is in flight); a
       // failed one is deleted (or retried from its pane) rather than closed.
       let closeItem = '<button type="button" class="danger" data-action="sessionsClose" data-arg0="' + esc(s.id) + '">Close session</button>';
@@ -342,10 +399,24 @@
         : '';
       return '<div class="sessions-pane-head"><span class="sessions-pane-title">' + esc(s.name || s.id) + '</span>'
         + '<span class="sessions-pane-meta" title="' + esc(sessionsWorkspaceLabel(sessionsSessionWorkspace(s))) + '">' + esc(s.vendor || '') + ' · started by ' + esc(s.creator || 'unknown') + (s.group ? ' · ' + esc(s.group) : '') + (s.workspace_repo ? ' · ' + esc(s.workspace_repo) : '') + '</span>'
-        + '<span class="sessions-attached sessions-pane-attached" title="' + esc(SESSIONS_TYPING_NOTE) + '">' + attached + ' attached</span>' + menu + '</div>';
+        + presence
+        + '<span class="sessions-attached sessions-pane-attached" title="' + esc(SESSIONS_TYPING_NOTE) + '">' + attached + ' attached</span>' + sessionsKeyboardHtml(s) + menu + '</div>';
+    }
+    // The pending Send queue under the input bar; Cancel on your own items.
+    function sessionsQueueHtml(s) {
+      const q = (s && s.queue) || {};
+      const items = Array.isArray(q.items) ? q.items : [];
+      if (!items.length) return '<div class="sessions-queue" id="sessions-queue-' + esc(s.id) + '" hidden></div>';
+      return '<div class="sessions-queue" id="sessions-queue-' + esc(s.id) + '" aria-live="polite"><div class="sessions-queue-title">' + items.length + ' queued' + (q.position ? ' · yours is #' + q.position : '') + '</div>'
+        + items.map(function(it, i) {
+          const what = (it.submit ? 'send and run' : 'send') + ' · ' + sessionsFormatBytes(Number(it.bytes) || 0);
+          const state = it.delivering ? '<span class="sessions-queue-state">delivering…</span>' : '';
+          const cancel = it.mine && !it.delivering ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="sessionsCancelQueued" data-arg0="' + esc(s.id) + '" data-arg1="' + esc(it.id) + '">Cancel</button>' : '';
+          return '<div class="sessions-queue-item' + (it.mine ? ' mine' : '') + '"><span class="sessions-queue-pos">#' + (i + 1) + '</span><span class="sessions-queue-user">' + esc(it.user || '') + '</span><span class="sessions-queue-what">' + esc(what) + '</span>' + state + cancel + '</div>';
+        }).join('') + '</div>';
     }
     function sessionsInputBarHtml(s) {
-      if (!sessionsRoleCanWrite(_sessionsRole) || !s || s.status !== SESSIONS_STATUS_RUNNING) return '';
+      if (!sessionsCanSend(_sessionsRole, s)) return '';
       const max = Number(_sessionsData.limits && _sessionsData.limits.max_input_bytes) || 0;
       const more = SESSIONS_INPUT_ACTIONS.length
         ? '<details class="sessions-menu sessions-input-more"><summary class="hv-btn btn-secondary btn-sm">More</summary><div class="sessions-menu-items">'
@@ -357,11 +428,24 @@
         + '<textarea id="sessions-input-text-' + esc(s.id) + '" class="sessions-input-text" rows="3" placeholder="Paste or type a prompt, then Send. Multiline is fine."'
         + ' data-input-action="sessionsInputChanged" data-arg-types="t"></textarea>'
         + '<div class="sessions-input-actions">'
-        + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="sessionsSend" data-arg0="0" title="Type the text into the terminal without pressing Enter">Send</button>'
-        + '<button type="button" class="hv-btn btn-primary btn-sm" data-action="sessionsSend" data-arg0="1" title="Type the text and press Enter">Send and run</button>'
+        + '<button type="button" class="hv-btn btn-secondary btn-sm sessions-send-btn" data-action="sessionsSend" data-arg0="0" title="Queue the text; it is typed into the terminal, without Enter, once the prompt is idle">' + esc(sessionsQueueLabel('Send', s.queue)) + '</button>'
+        + '<button type="button" class="hv-btn btn-primary btn-sm sessions-send-run-btn" data-action="sessionsSend" data-arg0="1" title="Queue the text; it is typed and run once the prompt is idle">' + esc(sessionsQueueLabel('Send and run', s.queue)) + '</button>'
         + '<label class="hv-btn btn-secondary btn-sm sessions-attach" title="Upload a file into the session workspace and type its path">Attach file'
         + '<input type="file" class="sessions-file" id="sessions-file-' + esc(s.id) + '" data-change-action="sessionsFilePicked" data-arg-types="t"></label>' + more
-        + '<span class="sessions-input-count" id="sessions-input-count-' + esc(s.id) + '" aria-live="polite">' + (max ? '0 / ' + sessionsFormatBytes(max) : '') + '</span></div></div>';
+        + '<span class="sessions-input-count" id="sessions-input-count-' + esc(s.id) + '" aria-live="polite">' + (max ? '0 / ' + sessionsFormatBytes(max) : '') + '</span></div>'
+        + sessionsQueueHtml(s) + '</div>';
+    }
+    // Refresh the queue-dependent bits of a live pane without rebuilding it
+    // (the iframe and a half-typed Send must survive polling).
+    function sessionsRefreshQueueUI(s) {
+      const pane = document.getElementById('sessions-pane-' + s.id);
+      if (!pane) return;
+      const queue = pane.querySelector('#sessions-queue-' + s.id);
+      if (queue) queue.outerHTML = sessionsQueueHtml(s);
+      const send = pane.querySelector('.sessions-send-btn');
+      if (send) send.textContent = sessionsQueueLabel('Send', s.queue);
+      const run = pane.querySelector('.sessions-send-run-btn');
+      if (run) run.textContent = sessionsQueueLabel('Send and run', s.queue);
     }
     function sessionsPaneBodyHtml(s, mode) {
       if (mode === 'terminal') return '<div class="sessions-terminal" data-terminal-host="' + esc(s.id) + '"></div>' + sessionsInputBarHtml(s);
@@ -378,10 +462,20 @@
       let note;
       if (mode === 'ended') {
         const failedResume = s.error ? ' ' + sessionsStatusText(s) : '';
-        note = '<div class="sessions-note">This session has ended (the hive restarted or the process exited). Scrollback below is the last output.' + esc(failedResume)
-          + (can ? ' <button type="button" class="hv-btn btn-primary btn-sm" data-action="sessionsResume" data-arg0="' + esc(s.id) + '">Resume</button>' : '') + '</div>';
+        const idAttr = esc(s.id);
+        const restartBtn = function(cls) { return ' <button type="button" class="hv-btn ' + cls + ' btn-sm" data-action="sessionsRestart" data-arg0="' + idAttr + '">Start again</button>'; };
+        let actions = '';
+        let lead = 'This session has ended (the hive restarted or the process exited). Scrollback below is the last output.';
+        if (s.resumable) {
+          actions = can ? ' <button type="button" class="hv-btn btn-primary btn-sm" data-action="sessionsResume" data-arg0="' + idAttr + '">Resume</button>' + restartBtn('btn-secondary') : '';
+        } else {
+          // The CLI left no conversation to continue, so Resume would only 409.
+          lead = 'This session has ended and cannot be resumed (the CLI left no conversation to continue). Start again opens a fresh ' + (s.vendor || 'CLI') + ' session with the same name and group; the scrollback below stays.';
+          actions = can ? restartBtn('btn-primary') : '';
+        }
+        note = '<div class="sessions-note">' + esc(lead) + esc(failedResume) + actions + '</div>';
       } else {
-        note = '<div class="sessions-note">Your role can watch this session but not type into it, so you see a read-only scrollback that refreshes every few seconds.</div>';
+        note = '<div class="sessions-note">The live terminal could not be opened, so you see a read-only scrollback that refreshes every few seconds.</div>';
       }
       return note + '<pre class="sessions-log" id="sessions-log-' + esc(s.id) + '" tabindex="0" aria-label="Session scrollback">Loading scrollback…</pre>';
     }
@@ -408,7 +502,23 @@
       }
       const head = pane.querySelector('.sessions-pane-header');
       if (head) head.innerHTML = sessionsHeaderHtml(s);
+      if (mode === 'terminal') { sessionsRefreshQueueUI(s); sessionsSyncKeyboardFrame(s); }
       return pane;
+    }
+    // When the keyboard changes hands the attached iframe is stale: the old
+    // holder's tmux client was detached by the server, the new holder's is
+    // still read-only. Drop the frame and re-attach with a fresh handoff, in
+    // whichever mode the server now grants this user.
+    const _sessionsFrameKeyboard = {};
+    function sessionsSyncKeyboardFrame(s) {
+      const mine = !!s.keyboard_mine;
+      const frame = _sessionsFrames[s.id];
+      if (!frame || frame === 'pending') { _sessionsFrameKeyboard[s.id] = mine; return; }
+      if (_sessionsFrameKeyboard[s.id] === mine) return;
+      _sessionsFrameKeyboard[s.id] = mine;
+      if (frame.remove) frame.remove();
+      delete _sessionsFrames[s.id];
+      if (s.id === _sessionsSelected) sessionsAttachTerminal(s);
     }
     function renderSessions() {
       const panel = document.getElementById('sessions-panel');
@@ -498,6 +608,7 @@
       const host = document.querySelector('[data-terminal-host="' + s.id + '"]');
       if (!host) return;
       _sessionsFrames[s.id] = 'pending';
+      _sessionsFrameKeyboard[s.id] = !!s.keyboard_mine;
       try {
         const code = await sessionsHandoff(s.id);
         const frame = document.createElement('iframe');
@@ -631,6 +742,16 @@
         await sessionsSubmitCreate(body);
       } catch (e) { showToast('Could not retry the session: ' + e.message, 'error'); loadSessions(); }
     }
+    // Start again: an ended session with nothing to resume. A fresh session is
+    // created with the same name, group, vendor and sharing; the old record
+    // (and its scrollback) is kept so the user can still read it.
+    async function sessionsRestart(id) {
+      const s = (_sessionsData.sessions || []).find(function(x) { return x.id === id; });
+      if (!s) return;
+      const body = { name: s.name || id, group: s.group || '', vendor: s.vendor, shared: !!s.shared };
+      try { await sessionsSubmitCreate(body); }
+      catch (e) { showToast('Could not start the session again: ' + e.message, 'error'); }
+    }
     async function sessionsPatch(id, patch, okMsg) {
       try {
         await sessionsApi('/' + encodeURIComponent(id), 'PATCH', patch);
@@ -691,8 +812,13 @@
       counter.textContent = sessionsFormatBytes(size) + ' / ' + sessionsFormatBytes(max);
       counter.classList.toggle('over', size > max);
     }
+    // POST /input answers 202 with {queued: {id, position}, queue}; the text
+    // is typed by the server once the CLI prompt is idle.
     async function sessionsPostInput(id, text, submit) {
-      await sessionsApi('/' + encodeURIComponent(id) + '/input', 'POST', { text: text, submit: !!submit });
+      const data = await sessionsApi('/' + encodeURIComponent(id) + '/input', 'POST', { text: text, submit: !!submit });
+      const s = (_sessionsData.sessions || []).find(function(x) { return x.id === id; });
+      if (s && data.queue) { s.queue = data.queue; sessionsRefreshQueueUI(s); }
+      return data;
     }
     async function sessionsSend(submit) {
       const s = sessionsSelectedSession();
@@ -702,11 +828,29 @@
       const check = sessionsCheckInput(box.value, _sessionsData.limits);
       if (!check.ok) { showToast(check.error, 'error'); return; }
       try {
-        await sessionsPostInput(s.id, box.value, String(submit) === '1' || submit === true);
+        const data = await sessionsPostInput(s.id, box.value, String(submit) === '1' || submit === true);
         box.value = '';
         sessionsInputChanged(box);
-        showToast('Sent to ' + (s.name || s.id) + '.', 'success');
+        showToast(sessionsQueuedToast(s.name || s.id, data && data.queued), 'success');
       } catch (e) { showToast('Could not send: ' + e.message, 'error'); }
+    }
+    async function sessionsCancelQueued(id, queueId) {
+      try {
+        const data = await sessionsApi('/' + encodeURIComponent(id) + '/input/' + encodeURIComponent(queueId), 'DELETE');
+        const s = (_sessionsData.sessions || []).find(function(x) { return x.id === id; });
+        if (s && data.queue) { s.queue = data.queue; sessionsRefreshQueueUI(s); }
+        showToast('Cancelled the queued send.', 'success');
+      } catch (e) { showToast('Could not cancel: ' + e.message, 'error'); loadSessions(); }
+    }
+    // Take or release the keyboard; the list reload re-attaches the iframe in
+    // the new mode (sessionsSyncKeyboardFrame).
+    async function sessionsKeyboard(id, action) {
+      const s = (_sessionsData.sessions || []).find(function(x) { return x.id === id; });
+      try {
+        await sessionsApi('/' + encodeURIComponent(id) + '/keyboard', 'POST', { action: action });
+        showToast(action === SESSIONS_KEYBOARD_RELEASE ? 'Keyboard released.' : 'You have the keyboard' + (s && s.name ? ' for ' + s.name : '') + '.', 'success');
+        await loadSessions();
+      } catch (e) { showToast('Could not ' + action + ' the keyboard: ' + e.message, 'error'); }
     }
     async function sessionsFilePicked(el) {
       const s = sessionsSelectedSession();
@@ -720,7 +864,7 @@
         const data = await sessionsApi('/' + encodeURIComponent(s.id) + '/upload', 'POST', form);
         if (!data.path) throw new Error('the server returned no file path');
         await sessionsPostInput(s.id, data.path, false);
-        showToast('Uploaded ' + file.name + ' and typed its path into the session.', 'success');
+        showToast('Uploaded ' + file.name + '; its path is queued to be typed into the session.', 'success');
       } catch (e) { showToast('Could not attach the file: ' + e.message, 'error'); }
       el.value = '';
     }

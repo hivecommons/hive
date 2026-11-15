@@ -2,8 +2,36 @@ package crux
 
 import (
 	"errors"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
+
+// SanitizeUserSessionInput validates text for typing into a user session: it
+// must be valid UTF-8 and contain no control characters other than tab and
+// newline (CRLF is folded to LF), because an ESC could close tmux's bracketed
+// paste early and turn data into keystrokes. It returns the text to paste.
+// The dashboard validates with it when a Send is queued; the runtime again
+// when it is delivered.
+func SanitizeUserSessionInput(text string) (string, error) {
+	if !utf8.ValidString(text) {
+		return "", errors.New("input is not valid UTF-8")
+	}
+	text = strings.ReplaceAll(text, "\r\n", "\n")
+	var b strings.Builder
+	for _, r := range text {
+		if r == '\n' || r == '\t' {
+			b.WriteRune(r)
+			continue
+		}
+		if unicode.IsControl(r) {
+			return "", errors.New("input contains a control character")
+		}
+		b.WriteRune(r)
+	}
+	return b.String(), nil
+}
 
 // UserSessionVendor is one CLI a user session may run, as offered to the
 // dashboard's new-session picker.

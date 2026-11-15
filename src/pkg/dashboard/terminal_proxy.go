@@ -113,9 +113,15 @@ func (s *Server) registerTerminalProxy() {
 			// An authorised user-session request (see guardTerminalSession)
 			// carries the per-session attach token as ttyd's second arg;
 			// ttyd-tmux.sh verifies it. It is added here, after the guard, and
-			// only ever on the outbound request.
+			// only ever on the outbound request. The keyboard holder's request
+			// also carries the write token as the third arg; without it
+			// ttyd-tmux.sh attaches read-only (api_sessions_keyboard.go).
 			if args := q["arg"]; len(args) == 1 && strings.HasPrefix(args[0], sessionTmuxPrefix) {
-				q["arg"] = []string{args[0], ttydAttachToken(args[0])}
+				out := []string{args[0], ttydAttachToken(args[0])}
+				if sessionAttachWritableFrom(pr.In) {
+					out = append(out, ttydAttachWriteToken(args[0]))
+				}
+				q["arg"] = out
 			}
 			pr.Out.URL.RawQuery = q.Encode()
 		},
