@@ -17,7 +17,7 @@ Sessions are interactive, named CLI-agent terminals. Each runs as its own unpriv
 
 ## Session object
 
-`{id, name, group, vendor, creator, created_at, last_activity, status, attached, tmux_name, resumable, shared, workspace_repo, workspace, message, error}` where `status` is `preparing`, `running`, `failed` or `ended`, `attached` is the number of attached tmux clients and `tmux_name` is `hive-sess-<id>`. `resumable`, `shared`, `workspace_repo`, `workspace`, `message` and `error` are additive. `GET /api/sessions` lists only sessions the caller created, owners (all) and `shared` sessions; the log, input, upload, resume and terminal routes answer 404 for a session the caller cannot see and 403 when it is visible but not usable.
+`{id, name, group, vendor, creator, created_at, last_activity, status, attached, tmux_name, resumable, shared, workspace_repo, workspace, message, error}` where `status` is `preparing`, `running`, `failed` or `ended`, `attached` is the number of live attached tmux clients (each list probe detaches clients whose process is gone or no longer descends from the terminal attacher, so a stale client never counts) and `tmux_name` is `hive-sess-<id>`. `resumable`, `shared`, `workspace_repo`, `workspace`, `message` and `error` are additive. `GET /api/sessions` lists only sessions the caller created, owners (all) and `shared` sessions; the log, input, upload, resume and terminal routes answer 404 for a session the caller cannot see and 403 when it is visible but not usable.
 
 ## Lifecycle
 
