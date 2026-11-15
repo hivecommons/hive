@@ -162,7 +162,10 @@ Reconciliation is periodic/event-driven, so a gate change can race GitHub's
 eventual merge. To narrow the window, a `pull_request` `labeled` delivery on
 an open PR in a repository and base in scope wakes the lanes for that PR at
 once (`queue_label_nudge` in the webhook response), with or without the
-forgestate cache; labels the hive's own App adds are skipped. Before this,
+forgestate cache. A label the hive's own App adds wakes them only when the
+lanes refuse to merge over it (a hold, `do-not-merge*`, `blocked`,
+`needs-human`, the sentinel label, a merge-exempt or human-merge label), so
+its stage and role label writes do not. Before this,
 a hive without the cache saw the label only on its next lane tick (about two
 minutes on a twenty-repository hive, up to fifteen): projectbluefin/testsuite#1235
 merged 71 seconds after a person added `hold`. The lane still needs a few

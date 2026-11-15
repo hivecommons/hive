@@ -20,15 +20,19 @@ import (
 // `hold` to it. The targeted pass runs the lane's own gate, so the label
 // decides exactly as it would on a tick.
 //
-// Labels the hive's own App adds are skipped: the lanes wrote them, and a
-// pass per stage-label write would only feed itself. Returns whether a pass
-// was requested.
+// A label someone else adds always wakes the lanes. A label the hive's own
+// App adds wakes them only when the lanes refuse to merge over it (a hold,
+// do-not-merge, blocked, needs-human, the sentinel label, a merge-exempt or
+// human-merge label): the App's bookkeeping writes (stage/*, role/*, …)
+// would otherwise run a pass per write and feed themselves. Returns whether
+// a pass was requested.
 func (s *Server) nudgeQueueLabelEvent(event string, body []byte, res github.WebhookEventResult) bool {
 	if event != "pull_request" || s == nil || s.deps == nil || s.deps.SweepNudge == nil || s.deps.Config == nil || !s.deps.Config.AutoMerge.NativeMergeQueue.Enabled {
 		return false
 	}
 	var p struct {
 		Action      string          `json:"action"`
+		Label       *gh.Label       `json:"label"`
 		Sender      *gh.User        `json:"sender"`
 		PullRequest *gh.PullRequest `json:"pull_request"`
 		Repository  struct {
@@ -48,11 +52,38 @@ func (s *Server) nudgeQueueLabelEvent(event string, body []byte, res github.Webh
 	if !s.nativeQueueScopeAllowed(repo, p.PullRequest.GetBase().GetRef()) {
 		return false
 	}
-	if app := s.webhookAppLogin(); app != "" && strings.EqualFold(strings.TrimSpace(p.Sender.GetLogin()), app) {
+	if app := s.webhookAppLogin(); app != "" && strings.EqualFold(strings.TrimSpace(p.Sender.GetLogin()), app) && !s.queueRefusingLabel(p.Label.GetName()) {
 		return false
 	}
 	s.deps.SweepNudge(repo, p.PullRequest.GetNumber())
 	return true
+}
+
+// queueRefusingLabel reports whether name is a label the automerge lanes
+// refuse to merge over, the same families their label gate checks.
+func (s *Server) queueRefusingLabel(name string) bool {
+	lower := strings.ToLower(strings.TrimSpace(name))
+	if lower == "" {
+		return false
+	}
+	if lower == "blocked" || lower == "needs-human" || lower == "do-not-merge" || strings.HasPrefix(lower, "do-not-merge/") {
+		return true
+	}
+	client := s.deps.GHClient
+	if client.IsHeldLabels([]string{name}) || (client != nil && client.IsExemptLabels([]string{name})) {
+		return true
+	}
+	if cfg := s.deps.Config; cfg != nil {
+		if strings.EqualFold(lower, cfg.Sentinel.LabelOrDefault()) {
+			return true
+		}
+		for _, l := range cfg.AutoMerge.HumanMergeLabelsEffective() {
+			if strings.EqualFold(lower, strings.TrimSpace(l)) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // webhookAppLogin is the hive's own App bot login, "" when unknown.
