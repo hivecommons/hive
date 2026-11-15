@@ -749,6 +749,12 @@
       }
     }
   },
+  "meetings": {
+    "quorum": {},
+    "vexa": {},
+    "discord": {},
+    "budget": {}
+  },
   "swarm": {},
   "autonomy": {},
   "review": {

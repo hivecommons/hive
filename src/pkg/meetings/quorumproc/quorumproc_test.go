@@ -16,6 +16,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 // helperEnv selects the fake Quorum behaviour when the test binary is
@@ -126,14 +128,7 @@ func fastOpts(t *testing.T, mode string) (Options, *syncBuf) {
 
 func waitFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(10 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatalf("timed out waiting for %s", what)
+	testutil.Eventually(t, 10*time.Second, cond, "timed out waiting for %s", what)
 }
 
 func TestNewValidates(t *testing.T) {
