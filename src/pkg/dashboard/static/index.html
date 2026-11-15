@@ -16911,13 +16911,16 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // "workflow-files" / "untrusted-author" / "branch-protection", falling
     // back to "policy"); the tooltip carries the payload's one-sentence
     // human_merge_reason_text (hivecommons/hive#14658).
-    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'hive bot lacks permission', 'reviewer-deferred': 'reviewer deferred', 'breaking-change': 'human merge', 'policy': 'policy' };
+    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'hive bot lacks permission', 'reviewer-deferred': 'reviewer deferred', 'breaking-change': 'human merge', 'renovate-automerge-off': 'Renovate: merge manually', 'renovate-artifact-problem': 'Renovate artifact problem', 'policy': 'policy' };
     // 090 under the breaking-change rule (human_merge_reason
     // "breaking-change": a ⚠️ title or needs-owner-merge label,
     // hivecommons/hive#15442): no approval lets the hive merge it, so the
     // word is the stage's own, "Ready for human merge", and the chip says
     // "human merge".
     const STAGE_TRACKER_BREAKING_CHANGE_CODE = 'breaking-change';
+    // Renovate's own "merge this manually" signals on a trusted bot's PR
+    // are the same kind of rule: no approval releases them.
+    const STAGE_TRACKER_OWNER_MERGE_CODES = [STAGE_TRACKER_BREAKING_CHANGE_CODE, 'renovate-automerge-off', 'renovate-artifact-problem'];
     const STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD = 'Ready for human merge';
     function stageTrackerHumanMergeReasonWord(item) {
       const code = String((item && item.human_merge_reason) || '').trim();
@@ -16928,7 +16931,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const approver = String((item && item.human_approver) || '').trim();
       const why = stageTrackerHumanMergeReasonWord(item);
       const code = String((item && item.human_merge_reason) || '').trim();
-      const lead = code === STAGE_TRACKER_BREAKING_CHANGE_CODE ? STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD : STAGE_TRACKER_MANUAL_MERGE_WORD;
+      const lead = STAGE_TRACKER_OWNER_MERGE_CODES.includes(code) ? STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD : STAGE_TRACKER_MANUAL_MERGE_WORD;
       return lead + (why ? ' · ' + why : '') + (approver ? ' · approved by @' + approver : '');
     }
     // The plain 090 word (no manual-merge rule): the stage's short word
@@ -74628,6 +74631,10 @@ function burnAreaChart() {
           <div class="config-toggle mt-4">
             <div class="config-toggle-switch ${am.bot_takeover_enabled !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="bot_takeover_enabled"></div>
             <span class="config-toggle-label">Take over github-actions[bot] PRs whose checks cannot run ${yamlHint('auto_merge.bot_takeover.enabled')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Take over github-actions[bot] PRs', `On by default. Applies only when github-actions[bot] is a trusted bot author above. A PR that bot opens with a workflow GITHUB_TOKEN never triggers pull_request checks, so it can never go green. Once its head is older than both the minimum head age and 30 minutes with no pull_request run, the App pushes the same change as one signed-off commit to hive/takeover-&lt;n&gt;, opens a PR that supersedes it and closes the bot PR. One attempt per bot head SHA. Applies on the next sweep.`)}</span>
+          </div>
+          <div class="config-toggle mt-4">
+            <div class="config-toggle-switch ${am.trusted_bot_honor_renovate_automerge !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="auto-merge" data-key="trusted_bot_honor_renovate_automerge"></div>
+            <span class="config-toggle-label">Leave Renovate PRs with automerge off to a person ${yamlHint('auto_merge.trusted_bot_honor_renovate_automerge')} ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Leave Renovate PRs with automerge off to a person', `On by default. When a trusted bot&apos;s Renovate PR says &quot;Automerge: Disabled by config&quot; (for example a major update under automerge: false), hive does not merge it; it waits at Ready for human merge. Turn this off if your Renovate config leaves automerge off everywhere because hive does the merging. A Renovate &quot;Artifact update problem&quot; comment holds the PR either way.`)}</span>
           </div>
           <div class="config-field mt-4" id="am-repo-policy">
             <label>Per-repository merge policy ${settingHelpMark('operator-reference/README', 'app-self-merge-sweep-auto_merge', 'Per-repository merge policy', `Repo-scoped rules every auto-merge lane applies. Repositories come from project.repos; saving writes each list in full and applies on the next sweep.`)}</label>

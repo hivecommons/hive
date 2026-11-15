@@ -77,6 +77,8 @@ func TestHumanMergeReason(t *testing.T) {
 		ContributorLaneReasonTestsRemoved:                                   HumanMergeReasonTestsRemoved,
 		AutoMergeReasonHumanMergePath:                                       HumanMergeReasonManualMergePolicy,
 		AutoMergeReasonHumanMergePathEvidence:                               HumanMergeReasonManualMergePolicy,
+		AutoMergeReasonRenovateAutomergeDisabled:                            HumanMergeReasonRenovateAutomergeOff,
+		AutoMergeReasonRenovateArtifactProblem + ":human-approved@castrojo": HumanMergeReasonRenovateArtifactProblem,
 		AutoMergeReasonMergeRefusedReview:                                   HumanMergeReasonBranchProtection,
 		AutoMergeReasonReviewGatePrefix + ReviewGateOutcomeAwaiting:         HumanMergeReasonBranchProtection,
 		AutoMergeReasonMergeRefusedMethod:                                   HumanMergeReasonMergeMethod,

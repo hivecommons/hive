@@ -27,7 +27,18 @@ const (
 	// change (⚠️, or an auto_merge.human_merge_title_prefixes prefix) or it
 	// wears an auto_merge.human_merge_labels label; no lane and no merge
 	// train ever merges it — the owner does (hivecommons/hive#15442).
-	AutoMergeReasonHumanMergeRequired      = "human-merge-required"
+	AutoMergeReasonHumanMergeRequired = "human-merge-required"
+	// AutoMergeReasonRenovateAutomergeDisabled: a trusted bot's Renovate PR
+	// whose description says its own config disables automerge for this
+	// update ("🚦 **Automerge**: Disabled …"). The owner merges it, like a
+	// breaking change; auto_merge.trusted_bot_honor_renovate_automerge
+	// turns the check off.
+	AutoMergeReasonRenovateAutomergeDisabled = "renovate-automerge-disabled"
+	// AutoMergeReasonRenovateArtifactProblem: the bot that opened the PR
+	// commented "⚠️ Artifact update problem" (Renovate could not update a
+	// lock file or other artifact on the branch). Renovate removes that
+	// comment once a later run succeeds; until then the owner decides.
+	AutoMergeReasonRenovateArtifactProblem = "renovate-artifact-problem"
 	AutoMergeReasonIntentEvidence          = "intent-evidence"
 	AutoMergeReasonIntentUnauthorized      = "intent-unauthorized"
 	AutoMergeReasonMergeQueueRequired      = "merge-queue-required"
@@ -150,6 +161,12 @@ const (
 	// HumanMergeReasonBreakingChange: the PR's title or label marks it a
 	// breaking change the owner merges by hand (AutoMergeReasonHumanMergeRequired).
 	HumanMergeReasonBreakingChange = "breaking-change"
+	// HumanMergeReasonRenovateAutomergeOff: Renovate's own config turns
+	// automerge off for this update (AutoMergeReasonRenovateAutomergeDisabled).
+	HumanMergeReasonRenovateAutomergeOff = "renovate-automerge-off"
+	// HumanMergeReasonRenovateArtifactProblem: Renovate reported an
+	// artifact update problem on the branch (AutoMergeReasonRenovateArtifactProblem).
+	HumanMergeReasonRenovateArtifactProblem = "renovate-artifact-problem"
 	// HumanMergeReasonPolicy: a lane rule no more specific code names.
 	HumanMergeReasonPolicy = "policy"
 )
@@ -244,6 +261,10 @@ func HumanMergeReason(reason string) string {
 		return HumanMergeReasonManualMergePolicy
 	case base == AutoMergeReasonHumanMergeRequired:
 		return HumanMergeReasonBreakingChange
+	case base == AutoMergeReasonRenovateAutomergeDisabled:
+		return HumanMergeReasonRenovateAutomergeOff
+	case base == AutoMergeReasonRenovateArtifactProblem:
+		return HumanMergeReasonRenovateArtifactProblem
 	case base == AutoMergeReasonMergeRefusedReview, strings.HasPrefix(base, AutoMergeReasonReviewGatePrefix):
 		return HumanMergeReasonBranchProtection
 	case base == AutoMergeReasonMergeRefusedMethod, base == AutoMergeReasonNativeQueueMethod:
@@ -259,4 +280,38 @@ func HumanMergeReason(reason string) string {
 		return HumanMergeReasonReviewerDeferred
 	}
 	return HumanMergeReasonPolicy
+}
+
+// IsOwnerMergeReason reports whether a lane reason (with or without the
+// `:human-approved@login` suffix) is a rule no approval releases: the hive
+// never merges the head, the owner's merge click does. The breaking-change
+// rule (hivecommons/hive#15442) and Renovate's own "merge this manually"
+// signals are.
+func IsOwnerMergeReason(reason string) bool {
+	return OwnerMergeCause(reason) != ""
+}
+
+// OwnerMergeCause is the prose for an IsOwnerMergeReason reason, "" for
+// any other reason.
+func OwnerMergeCause(reason string) string {
+	base, _ := stagelabels.HumanApprovedReason(reason)
+	switch strings.ToLower(strings.TrimSpace(base)) {
+	case AutoMergeReasonHumanMergeRequired:
+		return CauseHumanMergeRequired
+	case AutoMergeReasonRenovateAutomergeDisabled:
+		return CauseRenovateAutomergeDisabled
+	case AutoMergeReasonRenovateArtifactProblem:
+		return CauseRenovateArtifactProblem
+	}
+	return ""
+}
+
+// IsOwnerMergeCode reports whether a HumanMergeReason code names an
+// IsOwnerMergeReason rule.
+func IsOwnerMergeCode(code string) bool {
+	switch code {
+	case HumanMergeReasonBreakingChange, HumanMergeReasonRenovateAutomergeOff, HumanMergeReasonRenovateArtifactProblem:
+		return true
+	}
+	return false
 }

@@ -47,22 +47,23 @@ func (p *autoMergeProvider) ExecuteWrite(_ context.Context, req WriteRequest) (a
 // project repositories, two of them squash-only and with human-merge paths.
 func autoMergeFixture() map[string]any {
 	return map[string]any{
-		"self_authored":                true,
-		"max_merges":                   0,
-		"min_head_age":                 "3m0s",
-		"required_checks":              []string{"build"},
-		"allow_unprotected_base":       []string{},
-		"no_ci_ok":                     []string{},
-		"squash_only":                  []string{"org/a", "org/b"},
-		"require_current_base":         []string{},
-		"human_merge_paths":            map[string][]string{"org/a": {".github/workflows/**", ".claude/hooks/**"}, "org/b": {"CODEOWNERS"}},
-		"project_repos":                []string{"org/a", "org/b", "org/c"},
-		"trusted_bot_authors":          []string{"dependabot[bot]"},
-		"bot_takeover_enabled":         false,
-		"require_current_base_default": false,
-		"merge_train":                  map[string]any{"enabled": true, "max_rebase_attempts": 2},
-		"native_merge_queue":           map[string]any{"enabled": true, "repos": []string{"org/a"}, "bases": []string{"org/a#main"}, "skip_current_base_gate": false, "probe_ttl": "30m0s"},
-		"trusted_authors":              map[string]any{"enabled": false, "repos": []string{}, "require_role": "owner", "require_github_permission": true, "exclude_labels": []string{"hold"}},
+		"self_authored":                        true,
+		"max_merges":                           0,
+		"min_head_age":                         "3m0s",
+		"required_checks":                      []string{"build"},
+		"allow_unprotected_base":               []string{},
+		"no_ci_ok":                             []string{},
+		"squash_only":                          []string{"org/a", "org/b"},
+		"require_current_base":                 []string{},
+		"human_merge_paths":                    map[string][]string{"org/a": {".github/workflows/**", ".claude/hooks/**"}, "org/b": {"CODEOWNERS"}},
+		"project_repos":                        []string{"org/a", "org/b", "org/c"},
+		"trusted_bot_authors":                  []string{"dependabot[bot]"},
+		"bot_takeover_enabled":                 false,
+		"trusted_bot_honor_renovate_automerge": true,
+		"require_current_base_default":         false,
+		"merge_train":                          map[string]any{"enabled": true, "max_rebase_attempts": 2},
+		"native_merge_queue":                   map[string]any{"enabled": true, "repos": []string{"org/a"}, "bases": []string{"org/a#main"}, "skip_current_base_gate": false, "probe_ttl": "30m0s"},
+		"trusted_authors":                      map[string]any{"enabled": false, "repos": []string{}, "require_role": "owner", "require_github_permission": true, "exclude_labels": []string{"hold"}},
 		"contributor_lane": map[string]any{
 			"enabled": true, "soak_minutes": 30, "require_reviewer_verdict": true, "repos": []string{"org/a"},
 			"exclude_labels": []string{"hold"}, "require_tiers": []string{"merger", "trusted"}, "registry_tiers_sufficient": true,
@@ -194,6 +195,7 @@ func TestAutoMergeUpdateWideningRules(t *testing.T) {
 		"soak 0 is the default 30":   {map[string]any{"contributor_lane": map[string]any{"soak_minutes": float64(0)}}, false},
 		"exclude label added":        {map[string]any{"trusted_authors": map[string]any{"exclude_labels": map[string]any{"add": []any{"wip"}}}}, false},
 		"self-authored switched off": {map[string]any{"self_authored": false}, false},
+		"renovate automerge ignored": {map[string]any{"trusted_bot_honor_renovate_automerge": false}, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			preview, _ := autoMergePreview(t, autoMergeHandler(&autoMergeProvider{settings: autoMergeFixture()}), tc.args)

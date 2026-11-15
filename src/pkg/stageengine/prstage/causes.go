@@ -15,9 +15,13 @@ const (
 	CauseHumanMergePath    = "the PR touches a human-merge path (auto_merge.human_merge_paths)"
 	// CauseHumanMergeRequired: the breaking-change title or the
 	// needs-owner-merge label; the words the 090 chip and gate reuse.
-	CauseHumanMergeRequired   = "breaking change — owner merges"
-	CauseIntentUnauthorized   = "the merge intent could not be authorized"
-	CauseApprovalDeskWithheld = "the approval desk withheld this merge"
+	CauseHumanMergeRequired = "breaking change — owner merges"
+	// CauseRenovateAutomergeDisabled and CauseRenovateArtifactProblem:
+	// Renovate itself asks for a person (AutoMergeReasonRenovate*).
+	CauseRenovateAutomergeDisabled = "Renovate's config turns automerge off for this update — owner merges"
+	CauseRenovateArtifactProblem   = "Renovate reported an artifact update problem on this branch — owner checks and merges"
+	CauseIntentUnauthorized        = "the merge intent could not be authorized"
+	CauseApprovalDeskWithheld      = "the approval desk withheld this merge"
 	// CauseReviewOff: the contributor lane wants a reviewer verdict the hive
 	// will never ask for (contributor-lane:review-off).
 	CauseReviewOff = "the contributor lane needs a reviewer verdict (`auto_merge.contributor_lane.require_reviewer_verdict`), but this hive does not dispatch the review swarm (`review.require_approval` and `review.fan_out` must both be on), so no verdict will come for this head; a person merges it, or the owner turns the review swarm on or the verdict requirement off"

@@ -472,6 +472,10 @@ func humanizeStageReason(reason string) string {
 		return "human-merge path"
 	case stageengineprstage.AutoMergeReasonHumanMergeRequired:
 		return "human merge"
+	case stageengineprstage.AutoMergeReasonRenovateAutomergeDisabled:
+		return "Renovate: merge manually"
+	case stageengineprstage.AutoMergeReasonRenovateArtifactProblem:
+		return "Renovate artifact problem"
 	case stageengineprstage.AutoMergeReasonForkNotEditable:
 		// The App cannot update a fork the author did not open to
 		// maintainer edits; only adoption (hive re-authoring on its own
@@ -524,27 +528,28 @@ func stageTrackerUnauthorized(reason string) (step, tip string) {
 // on a maintainer's merge click rather than on /lgtm /approve.
 func stageTrackerManualMergeReason(reason string) bool {
 	switch strings.ToLower(strings.TrimSpace(reason)) {
-	case stageengineprstage.ContributorLaneReasonWorkflowPath, stageengineprstage.ContributorLaneReasonTestsRemoved, stageengineprstage.AutoMergeReasonHumanMergePath,
-		stageengineprstage.AutoMergeReasonHumanMergeRequired:
+	case stageengineprstage.ContributorLaneReasonWorkflowPath, stageengineprstage.ContributorLaneReasonTestsRemoved, stageengineprstage.AutoMergeReasonHumanMergePath:
 		return true
 	}
-	return false
+	return stageengineprstage.IsOwnerMergeReason(reason)
 }
 
 // Gate-cell words and tooltips per prstage.HumanMergeReason* code: why a
 // person, not the hive, merges a PR parked at 090 (hivecommons/hive#14658).
 // Plain words, one short sentence each, no config keys (hivecommons/hive#15394).
 var stageTrackerHumanMergeReasonWords = map[string][2]string{
-	stageengineprstage.HumanMergeReasonWorkflowFiles:     {"workflow files", "It changes GitHub workflow files, which hive never merges on its own"},
-	stageengineprstage.HumanMergeReasonTestsRemoved:      {"tests removed", "It removes tests, which hive never merges on its own"},
-	stageengineprstage.HumanMergeReasonManualMergePolicy: {"manual-merge policy", "It touches files this repo reserves for a person to merge"},
-	stageengineprstage.HumanMergeReasonBranchProtection:  {"branch protection", "Branch protection wants a review hive cannot give; approve on GitHub or merge it"},
-	stageengineprstage.HumanMergeReasonMergeMethod:       {"merge method", "The repo does not allow the merge method this PR needs"},
-	stageengineprstage.HumanMergeReasonAutoMergeOff:      {"auto-merge off", "Auto-merge is off for this repo, so a person merges"},
-	stageengineprstage.HumanMergeReasonUntrustedAuthor:   {"untrusted author", "Hive won't merge it alone — the author isn't a trusted author yet"},
-	stageengineprstage.HumanMergeReasonUnauthorized:      {"hive bot lacks permission", "The hive bot's GitHub App is missing the permission to merge here; a person merges"},
-	stageengineprstage.HumanMergeReasonReviewerDeferred:  {"reviewer deferred", "A reviewer asked for a person to merge this one"},
-	stageengineprstage.HumanMergeReasonBreakingChange:    {"human merge", "Breaking change — owner merges; hive never merges a ⚠️-titled or needs-owner-merge PR"},
+	stageengineprstage.HumanMergeReasonWorkflowFiles:           {"workflow files", "It changes GitHub workflow files, which hive never merges on its own"},
+	stageengineprstage.HumanMergeReasonTestsRemoved:            {"tests removed", "It removes tests, which hive never merges on its own"},
+	stageengineprstage.HumanMergeReasonManualMergePolicy:       {"manual-merge policy", "It touches files this repo reserves for a person to merge"},
+	stageengineprstage.HumanMergeReasonBranchProtection:        {"branch protection", "Branch protection wants a review hive cannot give; approve on GitHub or merge it"},
+	stageengineprstage.HumanMergeReasonMergeMethod:             {"merge method", "The repo does not allow the merge method this PR needs"},
+	stageengineprstage.HumanMergeReasonAutoMergeOff:            {"auto-merge off", "Auto-merge is off for this repo, so a person merges"},
+	stageengineprstage.HumanMergeReasonUntrustedAuthor:         {"untrusted author", "Hive won't merge it alone — the author isn't a trusted author yet"},
+	stageengineprstage.HumanMergeReasonUnauthorized:            {"hive bot lacks permission", "The hive bot's GitHub App is missing the permission to merge here; a person merges"},
+	stageengineprstage.HumanMergeReasonReviewerDeferred:        {"reviewer deferred", "A reviewer asked for a person to merge this one"},
+	stageengineprstage.HumanMergeReasonBreakingChange:          {"human merge", "Breaking change — owner merges; hive never merges a ⚠️-titled or needs-owner-merge PR"},
+	stageengineprstage.HumanMergeReasonRenovateAutomergeOff:    {"Renovate: merge manually", "Renovate's own config turns automerge off for this update and asks for a manual merge; hive never merges it"},
+	stageengineprstage.HumanMergeReasonRenovateArtifactProblem: {"Renovate artifact problem", "Renovate could not update a lock file or other artifact on this branch; check it before merging — hive never merges it"},
 }
 
 // stageTrackerHumanMergeReason derives, from a 090 stage reason, the
@@ -905,10 +910,11 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		return joinClause("A human decision is owed", clause), "maintainer"
 	case stagelabels.ReadyForHumanMerge:
 		if base, approver := stagelabels.HumanApprovedReason(reason); stageTrackerManualMergeReason(base) {
-			if strings.EqualFold(strings.TrimSpace(base), stageengineprstage.AutoMergeReasonHumanMergeRequired) {
-				// The breaking-change rule (hivecommons/hive#15442): no
-				// approval releases it; the owner's merge click does.
-				c := "Ready for human merge (" + stageengineprstage.CauseHumanMergeRequired + ")"
+			if cause := stageengineprstage.OwnerMergeCause(base); cause != "" {
+				// The breaking-change rule (hivecommons/hive#15442) and
+				// Renovate's own "merge manually" signals: no approval
+				// releases them; the owner's merge click does.
+				c := "Ready for human merge (" + cause + ")"
 				if approver != "" {
 					c += " — approved by @" + approver
 				}

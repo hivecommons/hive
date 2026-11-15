@@ -233,6 +233,12 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 	if humanReason, err := c.humanMergePathGate(ctx, displayRepo, owner, repo, pr); err != nil || humanReason != "" {
 		return AutoMergeSweepEvent{}, humanReason, err
 	}
+	// Renovate's own "merge this manually" signals on a trusted bot's PR
+	// (automerge_renovate_signals.go): automerge disabled by its config, or
+	// an artifact update problem on the branch. The owner merges it.
+	if renovateReason, err := c.renovateManualMergeGate(ctx, displayRepo, owner, repo, pr, lane); err != nil || renovateReason != "" {
+		return AutoMergeSweepEvent{}, renovateReason, err
+	}
 	// Review verdict hold (#12374): a requires_human or reject verdict stops
 	// this lane even with review.require_approval off, and survives a fix push.
 	// On the trusted-bot lane the swarm verdict is advisory (#17577), so the

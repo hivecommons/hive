@@ -582,6 +582,14 @@ type AutoMergeConfig struct {
 	// requires_human / changes_requested swarm verdict hold trusted-bot PRs
 	// exactly like the App's own.
 	TrustedBotSkipReview *bool `yaml:"trusted_bot_skip_review,omitempty" json:"trusted_bot_skip_review,omitempty"`
+	// TrustedBotHonorRenovateAutomerge keeps the trusted-bot lane from
+	// merging a Renovate PR whose description says Renovate's own config
+	// disables automerge for that update ("🚦 **Automerge**: Disabled …",
+	// e.g. a major under `automerge: false`): the owner merges it instead.
+	// nil/unset means true; set false on a hive whose Renovate config leaves
+	// automerge off everywhere because the hive does the merging. Renovate's
+	// "Artifact update problem" comment holds the PR either way.
+	TrustedBotHonorRenovateAutomerge *bool `yaml:"trusted_bot_honor_renovate_automerge,omitempty" json:"trusted_bot_honor_renovate_automerge,omitempty"`
 	// BotTakeover lets the sweep re-author a trusted `github-actions[bot]` PR
 	// whose required `pull_request` checks can never run because the bot
 	// opened it with a workflow GITHUB_TOKEN (#12003). The App pushes the
@@ -1250,6 +1258,13 @@ func (a AutoMergeConfig) TrustedBotAuthorSet() map[string]bool {
 // default true).
 func (a AutoMergeConfig) TrustedBotSkipsReview() bool {
 	return a.TrustedBotSkipReview == nil || *a.TrustedBotSkipReview
+}
+
+// TrustedBotHonorsRenovateAutomerge reports whether the trusted-bot lane
+// leaves a Renovate PR whose own config disables automerge to the owner
+// (auto_merge.trusted_bot_honor_renovate_automerge, default true).
+func (a AutoMergeConfig) TrustedBotHonorsRenovateAutomerge() bool {
+	return a.TrustedBotHonorRenovateAutomerge == nil || *a.TrustedBotHonorRenovateAutomerge
 }
 
 func (t TrustedAuthorAutoMergeConfig) EffectiveRequireRole() string {

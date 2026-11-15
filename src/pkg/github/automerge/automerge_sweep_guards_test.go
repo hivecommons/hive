@@ -55,6 +55,9 @@ type selfSweepFixture struct {
 	issueAuthorID  int64
 	commitMessages []string
 	mergeBody      *map[string]any
+	// issueComments is the PR's issue-comment list (Renovate's artifact
+	// problem comment); nil serves an empty list.
+	issueComments []map[string]any
 }
 
 func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
@@ -135,6 +138,12 @@ func newSelfSweepGuardAPI(t *testing.T, fx selfSweepFixture) *httptest.Server {
 				files = append(files, map[string]any{"filename": name, "status": "modified", "additions": 1, "deletions": 0})
 			}
 			json.NewEncoder(w).Encode(files)
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/comments":
+			comments := fx.issueComments
+			if comments == nil {
+				comments = []map[string]any{}
+			}
+			json.NewEncoder(w).Encode(comments)
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/7/timeline":
 			// The superseded rule looks for a merged PR declaring
 			// `Supersedes #7`; this fixture has none.

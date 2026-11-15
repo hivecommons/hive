@@ -44,6 +44,7 @@ func stageTrackerManualMergeJS(t *testing.T, html string) string {
 		jsConstLine(t, html, "STAGE_TRACKER_READY_FOR_HUMAN_MERGE"),
 		jsConstLine(t, html, "STAGE_TRACKER_MANUAL_MERGE_WORD"),
 		jsConstLine(t, html, "STAGE_TRACKER_BREAKING_CHANGE_CODE"),
+		jsConstLine(t, html, "STAGE_TRACKER_OWNER_MERGE_CODES"),
 		jsConstLine(t, html, "STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD"),
 		jsConstLine(t, html, "STAGE_TRACKER_HUMAN_MERGE_REASON_WORD"),
 		jsFunc(t, html, "stageTrackerHumanMergeReasonWord"),

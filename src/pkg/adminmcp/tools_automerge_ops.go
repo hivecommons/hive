@@ -114,6 +114,7 @@ var autoMergeFields = []amField{
 	{key: "human_merge_paths", kind: amRepoPaths, widen: amWidenPaths, why: "pull requests touching these paths no longer wait for a person to merge them"},
 	{key: "human_merge_pin_only", kind: amPinOnly, widen: amWidenPinOnly},
 	{key: "bot_takeover_enabled", kind: amBool, widen: amWidenOn, why: "the App re-authors trusted github-actions[bot] pull requests and merges its copy"},
+	{key: "trusted_bot_honor_renovate_automerge", kind: amBool, widen: amWidenOff, why: "the trusted-bot lane merges Renovate pull requests whose own config turns automerge off"},
 	{key: "require_current_base_default", kind: amBool, widen: amWidenOff, why: "repositories without an override may merge without the current base tip"},
 	{key: "merge_train.enabled", kind: amBool},
 	{key: "merge_train.max_rebase_attempts", kind: amInt},

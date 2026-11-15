@@ -173,6 +173,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// TrustedBotSkipReview is auto_merge.trusted_bot_skip_review: the
 		// review swarm's verdict is advisory on the trusted-bot lane.
 		TrustedBotSkipReview *bool `json:"trusted_bot_skip_review"`
+		// TrustedBotHonorRenovateAutomerge is
+		// auto_merge.trusted_bot_honor_renovate_automerge: a Renovate PR
+		// whose own config disables automerge waits for the owner.
+		TrustedBotHonorRenovateAutomerge *bool `json:"trusted_bot_honor_renovate_automerge"`
 		// BotTakeoverEnabled is auto_merge.bot_takeover.enabled; flat so the
 		// dialog's plain toggle can stage it.
 		BotTakeoverEnabled *bool `json:"bot_takeover_enabled"`
@@ -432,6 +436,10 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		v := *body.TrustedBotSkipReview
 		cfg.AutoMerge.TrustedBotSkipReview = &v
 	}
+	if body.TrustedBotHonorRenovateAutomerge != nil {
+		v := *body.TrustedBotHonorRenovateAutomerge
+		cfg.AutoMerge.TrustedBotHonorRenovateAutomerge = &v
+	}
 	if body.BotTakeoverEnabled != nil {
 		v := *body.BotTakeoverEnabled
 		cfg.AutoMerge.BotTakeover.Enabled = &v
@@ -603,25 +611,26 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		contributorLaneFenceScopeRepos = append(contributorLaneFenceScopeRepos, map[string]interface{}{"repo": o.Repo, "workflow_fence_scope": o.Scope})
 	}
 	return map[string]interface{}{
-		"self_authored":                selfAuthored,
-		"self_authored_set":            am.SelfAuthored != nil,
-		"max_merges":                   am.MaxMerges,
-		"min_head_age":                 am.EffectiveMinHeadAge().String(),
-		"required_checks":              checks,
-		"allow_unprotected_base":       allowUnprotected,
-		"no_ci_ok":                     noCIOK,
-		"squash_only":                  squashOnly,
-		"require_current_base":         requireCurrentBase,
-		"human_merge_paths":            humanMergePaths,
-		"human_merge_pin_only":         humanMergePinOnly,
-		"pin_only_kinds":               config.PinOnlyKinds,
-		"project_repos":                projectRepos,
-		"trusted_bot_authors":          trustedBots,
-		"trusted_bot_authors_set":      am.TrustedBotAuthors != nil,
-		"trusted_bot_skip_review":      am.TrustedBotSkipsReview(),
-		"bot_takeover_enabled":         am.BotTakeover.IsEnabled(),
-		"require_current_base_default": am.CurrentBaseDefaultEnabled(),
-		"skip_current_base":            emptyIfNilStrings(am.SkipCurrentBase),
+		"self_authored":                        selfAuthored,
+		"self_authored_set":                    am.SelfAuthored != nil,
+		"max_merges":                           am.MaxMerges,
+		"min_head_age":                         am.EffectiveMinHeadAge().String(),
+		"required_checks":                      checks,
+		"allow_unprotected_base":               allowUnprotected,
+		"no_ci_ok":                             noCIOK,
+		"squash_only":                          squashOnly,
+		"require_current_base":                 requireCurrentBase,
+		"human_merge_paths":                    humanMergePaths,
+		"human_merge_pin_only":                 humanMergePinOnly,
+		"pin_only_kinds":                       config.PinOnlyKinds,
+		"project_repos":                        projectRepos,
+		"trusted_bot_authors":                  trustedBots,
+		"trusted_bot_authors_set":              am.TrustedBotAuthors != nil,
+		"trusted_bot_skip_review":              am.TrustedBotSkipsReview(),
+		"trusted_bot_honor_renovate_automerge": am.TrustedBotHonorsRenovateAutomerge(),
+		"bot_takeover_enabled":                 am.BotTakeover.IsEnabled(),
+		"require_current_base_default":         am.CurrentBaseDefaultEnabled(),
+		"skip_current_base":                    emptyIfNilStrings(am.SkipCurrentBase),
 		"merge_train": map[string]interface{}{
 			"enabled":             am.MergeTrain.IsEnabled(),
 			"max_rebase_attempts": am.MergeTrain.EffectiveMaxRebaseAttempts(),

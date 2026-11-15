@@ -48,9 +48,10 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 		details = append(details, "Approved by @"+approver+".")
 	}
 	admitter := stagelabels.AdmissionLogin(it.AdmittedBy)
-	breaking := strings.EqualFold(base, stageengineprstage.AutoMergeReasonHumanMergeRequired)
+	breaking := stageengineprstage.IsOwnerMergeReason(base)
 	if breaking {
-		// No approval lets hive merge a breaking change (hivecommons/hive#15442).
+		// No approval lets hive merge a breaking change (hivecommons/hive#15442),
+		// nor a Renovate PR Renovate itself says to merge by hand.
 		admitter = ""
 	}
 	if admitter != "" {

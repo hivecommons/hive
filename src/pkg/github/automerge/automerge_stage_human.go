@@ -617,10 +617,10 @@ func manualMergeRuleReasonFor(reason string, workflowManual bool) bool {
 	switch reason {
 	case contributorLaneReasonWorkflowPath:
 		return workflowManual
-	case contributorLaneReasonTestsRemoved, autoMergeReasonHumanMergePath, autoMergeReasonHumanMergeRequired:
+	case contributorLaneReasonTestsRemoved, autoMergeReasonHumanMergePath:
 		return true
 	}
-	return false
+	return prstage.IsOwnerMergeReason(reason)
 }
 
 // workflowFenceManual reports whether a workflow-path PR at this head is
@@ -707,8 +707,8 @@ func decisionCauseFor(reason string, workflowManual bool) string {
 		return prstage.CauseReviewOff
 	case reason == autoMergeReasonHumanMergePath, reason == autoMergeReasonHumanMergePathEvidence:
 		return prstage.CauseHumanMergePath
-	case reason == autoMergeReasonHumanMergeRequired:
-		return prstage.CauseHumanMergeRequired
+	case prstage.IsOwnerMergeReason(reason):
+		return prstage.OwnerMergeCause(reason)
 	case reason == autoMergeReasonIntentUnauthorized, reason == autoMergeReasonIntentEvidence:
 		return prstage.CauseIntentUnauthorized
 	case reason == autoMergeReasonWorkflowPermission:
@@ -876,9 +876,10 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 		return 0, nil
 	}
 	_, fixerExhausted := stagelabels.ParseFixerExhausted(obs.Reason)
-	if obs.Reason == autoMergeReasonHumanMergeRequired || fixerExhausted || obs.Reason == stagelabels.LaneReasonBotAuthorFinding {
+	if prstage.IsOwnerMergeReason(obs.Reason) || fixerExhausted || obs.Reason == stagelabels.LaneReasonBotAuthorFinding {
 		// The "waiting for a person" note on a breaking-titled or
-		// owner-flagged PR is an unsolicited write (hivecommons/hive#15442):
+		// owner-flagged PR, or on a Renovate PR Renovate says to merge by
+		// hand, is an unsolicited write (hivecommons/hive#15442):
 		// it goes through the write-back gate like every other hive
 		// comment, and a refusal leaves the record unmarked so the next
 		// pass asks again. The fixer-exhausted note on the hive's own PR

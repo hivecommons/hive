@@ -216,6 +216,7 @@ func TestParityBatch6SettingsRenderEveryKey(t *testing.T) {
 		{"good_first_issue.docs_url", `data-arg1="goodFirstIssueDocsUrl" data-arg-types="s,s,w"`},
 		{"good_first_issue.comment_template", `data-arg1="goodFirstIssueCommentTemplate" data-arg-types="s,s,v"`},
 		{"auto_merge.bot_takeover.enabled", `data-section="auto-merge" data-key="bot_takeover_enabled"`},
+		{"auto_merge.trusted_bot_honor_renovate_automerge", `data-section="auto-merge" data-key="trusted_bot_honor_renovate_automerge"`},
 	} {
 		if !strings.Contains(features, "yamlHint('"+c.yaml+"')") {
 			t.Errorf("%s has no YAML-key hint", c.yaml)

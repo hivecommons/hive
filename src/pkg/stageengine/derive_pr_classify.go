@@ -483,9 +483,10 @@ func ClassifyStage(o stageObservation) stageVerdict {
 		// can take it (hivecommons/hive#14589). The reason keeps the step.
 		return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true}
 	}
-	if reason == autoMergeReasonHumanMergeRequired {
+	if prstage.IsOwnerMergeReason(reason) {
 		// A breaking-change title or a needs-owner-merge label
-		// (hivecommons/hive#15442): no decision is owed, only the owner's
+		// (hivecommons/hive#15442), or Renovate's own "merge this manually"
+		// signal on a trusted bot's PR: no decision is owed, only the owner's
 		// merge click, so the PR parks at 090 with the manual-merge rule
 		// once the head is green. Owned, so the trusted tier cannot drop it
 		// (ResolveStage keeps only owned 090 opinions for trusted authors).
