@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v6.33.1)
+
+### Changed
+
+- v6: converge kick_observer.go with v5's fan-out observers (#18315)
+
 ## 2026-11-15 (v6.33.0)
 
 ### Added
