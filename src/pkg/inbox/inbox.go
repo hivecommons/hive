@@ -76,7 +76,9 @@ type RouteState struct {
 	// URL is the RFC issue or dibs idea once filed.
 	URL string `json:"url,omitempty"`
 	// Children are the RFC's child issue URLs.
-	Children  []string  `json:"children,omitempty"`
+	Children []string `json:"children,omitempty"`
+	// Note says who took the work on a delegated route (the agent name).
+	Note      string    `json:"note,omitempty"`
 	Error     string    `json:"error,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

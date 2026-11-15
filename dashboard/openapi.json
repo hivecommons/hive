@@ -37785,7 +37785,7 @@
           "Knowledge"
         ],
         "summary": "Route an inbox item to a destination",
-        "description": "Owner-only. `spek_rfc` runs `spektacular voice --publish` inside the hive (or hands a prompt to the configured spoke agent) and files one RFC issue plus child issues on `repo` (default `inbox.spek.repo`); `dibs` posts the recording as a private draft idea to the configured dibs instance; `dismiss` keeps the item as a Knowledge fact only. Returns 202 with the queued state; poll `GET /api/inbox` for completion.",
+        "description": "Owner-only. `spek_rfc` hands the item (enveloped text plus provenance) to a hive agent (`inbox.spek.agent`, default the first enabled agent), which drafts a spec with spektacular and files one RFC issue plus child issues on `repo` (default `inbox.spek.repo`) with `spektacular publish`; the route state becomes `delegated` with a `note` naming the agent, or `failed` with an `error` when no agent can take it; `dibs` posts the recording as a private draft idea to the configured dibs instance; `dismiss` keeps the item as a Knowledge fact only. Returns 202 with the queued state; poll `GET /api/inbox` for completion.",
         "requestBody": {
           "required": true,
           "content": {
