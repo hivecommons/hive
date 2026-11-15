@@ -1,0 +1,111 @@
+package main
+
+import (
+	"context"
+	"errors"
+	"strings"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/inbox"
+	"github.com/hivecommons/hive/pkg/meetings"
+	"github.com/hivecommons/hive/pkg/meetings/live"
+)
+
+// meetingsInbox presents ended meetings to the inbox (hivecommons/hive#18293):
+// the final transcript plus the notes Spek took, routable to spek_rfc and
+// dibs. Hand-off erases the meeting upstream through the manager.
+type meetingsInbox struct {
+	mgr   *meetings.Manager
+	store *meetings.Store
+}
+
+// meetingsInboxStates are the states whose meetings the inbox lists.
+var meetingsInboxStates = map[meetings.State]bool{
+	meetings.StateEnded: true, meetings.StateFailed: true, meetings.StateBlocked: true, meetings.StateHandedOff: true,
+}
+
+func (mi *meetingsInbox) build(m meetings.Meeting) (inbox.LiveMeeting, error) {
+	tr, err := mi.store.Transcript(m.ID)
+	if err != nil {
+		return inbox.LiveMeeting{}, err
+	}
+	var b strings.Builder
+	for _, ev := range tr {
+		who := ev.Who()
+		if who == "" {
+			who = "unknown"
+		}
+		if ev.Type == meetings.EventChat {
+			who += " (chat)"
+		}
+		b.WriteString(who + ": " + strings.TrimSpace(ev.Text) + "\n")
+	}
+	var st live.State
+	if err := mi.store.LoadDoc(m.ID, live.StateDoc, &st); err != nil && !errors.Is(err, meetings.ErrNotFound) {
+		return inbox.LiveMeeting{}, err
+	}
+	out := inbox.LiveMeeting{
+		ID: m.ID, Title: live.NotesTitle(m), Platform: m.Platform,
+		StartedAt: m.CreatedAt, Transcript: b.String(),
+	}
+	if m.LiveAt != nil {
+		out.StartedAt = *m.LiveAt
+	}
+	if m.EndedAt != nil {
+		out.EndedAt = *m.EndedAt
+	}
+	if len(st.Notes) > 0 {
+		out.Notes = live.RenderNotes(m, st.Notes)
+		out.Summary = strings.Join(st.Notes[live.SectionSummary], "\n")
+	}
+	return out, nil
+}
+
+// EndedMeetings implements inbox.LiveMeetingReader.
+func (mi *meetingsInbox) EndedMeetings(context.Context) ([]inbox.LiveMeeting, error) {
+	list, err := mi.mgr.List()
+	if err != nil {
+		return nil, err
+	}
+	var out []inbox.LiveMeeting
+	for _, m := range list {
+		if !meetingsInboxStates[m.State] {
+			continue
+		}
+		lm, err := mi.build(m)
+		if err != nil {
+			continue
+		}
+		if strings.TrimSpace(lm.Transcript) == "" && lm.Notes == "" {
+			continue
+		}
+		out = append(out, lm)
+	}
+	return out, nil
+}
+
+// ReadMeeting implements inbox.LiveMeetingReader.
+func (mi *meetingsInbox) ReadMeeting(_ context.Context, id string) (inbox.LiveMeeting, error) {
+	m, err := mi.mgr.Get(id)
+	if err != nil {
+		return inbox.LiveMeeting{}, err
+	}
+	return mi.build(m)
+}
+
+// HandOff implements inbox.LiveMeetingReader.
+func (mi *meetingsInbox) HandOff(ctx context.Context, id string) error {
+	return mi.mgr.HandOff(ctx, id)
+}
+
+// hoursPerDay converts meetings.retention_days to a duration.
+const hoursPerDay = 24
+
+// wireMeetingsInbox adds ended meetings to the inbox and starts the
+// retention sweeper.
+func (b *boot) wireMeetingsInbox(mgr *meetings.Manager, store *meetings.Store) {
+	b.meetingsInboxSrc = &inbox.LiveMeetingSource{Reader: &meetingsInbox{mgr: mgr, store: store}}
+	b.refreshInboxSources(b.cfg.Knowledge.Connectors, b.knowledgeConnectors)
+	retention := time.Duration(b.cfg.Meetings.RetentionDaysOrDefault()) * hoursPerDay * time.Hour
+	mgr.StartRetention(retention, 0, live.StateDoc)
+}

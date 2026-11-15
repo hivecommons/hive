@@ -335,6 +335,8 @@ type boot struct {
 	meetingsMgr *meetings.Manager
 	// meetingsLive is the Spektacular live loop (hivecommons/hive#18291).
 	meetingsLive *live.Runner
+	// meetingsInboxSrc lists ended meetings in the inbox (#18293).
+	meetingsInboxSrc inbox.Source
 }
 
 // deferStack stands in for the `defer` statements that used to sit in

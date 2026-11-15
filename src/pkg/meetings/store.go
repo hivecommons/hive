@@ -256,3 +256,21 @@ func (s *Store) LoadDoc(id, name string, v any) error {
 	}
 	return json.Unmarshal(data, v)
 }
+
+// RemoveDoc deletes a side document. Removing a missing one is not an
+// error.
+func (s *Store) RemoveDoc(id, name string) error {
+	if !validDocName.MatchString(name) {
+		return fmt.Errorf("meetings: invalid document name %q", name)
+	}
+	p, err := s.path(id, name)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	return nil
+}
