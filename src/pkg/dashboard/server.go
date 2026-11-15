@@ -467,6 +467,10 @@ type Server struct {
 	linearAgentOnce sync.Once
 	linearAgentSvc  LinearAgentGateway
 
+	// meetings is the meetings feature (hivecommons/hive#18292); nil
+	// holder or service while meetings are off.
+	meetings atomic.Pointer[meetingsHolder]
+
 	audit *AuditLog
 
 	// presenceEngagedAt maps a username to the last time their browser

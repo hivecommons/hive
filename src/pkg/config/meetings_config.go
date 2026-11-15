@@ -373,6 +373,13 @@ func (m MeetingsConfig) IsEnabled() bool {
 	return m.Enabled
 }
 
+// MeetingsEnabledEnvSet reports whether HIVE_MEETINGS_ENABLED overrides
+// meetings.enabled, so the dashboard can say a toggle will not take effect.
+func MeetingsEnabledEnvSet() bool {
+	_, ok := parseBoolEnv(MeetingsEnabledEnv)
+	return ok
+}
+
 // QuorumBinary returns the Quorum bundle or executable path.
 func (m MeetingsConfig) QuorumBinary() string {
 	return meetingsEnvString(MeetingsQuorumBinaryEnv, m.Quorum.Binary, DefaultMeetingsQuorumBinary)
