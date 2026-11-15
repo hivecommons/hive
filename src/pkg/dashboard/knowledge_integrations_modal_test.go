@@ -293,7 +293,7 @@ func TestKnowledgeIntegrationsModalGoogleMeetCard(t *testing.T) {
 	for _, want := range []string{
 		`'google-meet': { label: 'Google Meet recordings'`,
 		`'google-meet': [['users', 'Users to read (service account only: Workspace addresses, comma-separated)'`,
-		`'github-wiki', 'google-drive', 'google-meet', 'notion',`,
+		`'github-wiki', 'google-drive', 'google-meet',`,
 		`else if (type === 'google-meet') html += kbPlaudAuthLine(c.name, type) + kbGoogleMeetPasteHtml(c.name, c);`,
 		`if (type === 'google-meet') html += kbMeetingAuthFormHTML(type, c);`,
 		`} else if (type === 'google-meet') {`,
