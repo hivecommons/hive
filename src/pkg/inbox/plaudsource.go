@@ -107,16 +107,25 @@ const directListTTL = 5 * time.Minute
 // directListTimeout bounds one background direct listing.
 const directListTimeout = 2 * time.Minute
 
+// DirectSource is a vendor-backed source (PlaudSource, MeetingSource) that
+// PreferDirect can put in front of the fact-backed one.
+type DirectSource interface {
+	Source
+	AudioSource
+	// Available reports whether the connector can be read right now.
+	Available(ctx context.Context) bool
+}
+
 // PreferDirect lists through Direct while it is available and healthy and
-// falls back to Facts otherwise, so the Inbox keeps working before Plaud is
-// signed in or when the MCP server is unreachable.
+// falls back to Facts otherwise, so the Inbox keeps working before the
+// vendor (Plaud, Zoom, Teams) is signed in or when it is unreachable.
 //
 // The direct listing is cached for TTL and refreshed in the background:
 // List returns whatever is cached (or just facts while nothing is) and
-// never blocks on the Plaud process. Direct items are merged with the facts
+// never blocks on the vendor call. Direct items are merged with the facts
 // of the same id so they keep FactSlug/FactPath/Layer/Excerpt.
 type PreferDirect struct {
-	Direct *PlaudSource
+	Direct DirectSource
 	Facts  Source
 	// TTL overrides directListTTL; zero means the default.
 	TTL time.Duration
@@ -232,11 +241,11 @@ func (s *PreferDirect) Fetch(ctx context.Context, it Item) (Content, error) {
 	return s.Direct.Fetch(ctx, it)
 }
 
-// AudioLink implements AudioSource through the direct Plaud source; audio is
+// AudioLink implements AudioSource through the direct source; audio is
 // never read from facts.
 func (s *PreferDirect) AudioLink(ctx context.Context, it Item) (AudioLink, error) {
 	if !s.Direct.Available(ctx) {
-		return AudioLink{}, fmt.Errorf("%w: Plaud is not connected", ErrNoAudio)
+		return AudioLink{}, fmt.Errorf("%w: %s is not connected", ErrNoAudio, s.Type())
 	}
 	return s.Direct.AudioLink(ctx, it)
 }

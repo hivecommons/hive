@@ -20,6 +20,15 @@ that status is the thing to check before treating a page as current behaviour:
 
 ## Records
 
+- [Meeting recordings in the Inbox: Zoom and Microsoft Teams](meeting-recordings.md) -
+  **Zoom shipped; Teams scaffold shipped, live verification blocked on tenant
+  consent.** Zoom cloud recordings (user-level OAuth with the hosted paste
+  flow, or Server-to-Server) and Teams recordings/transcripts (Graph
+  application permissions) become one fact per recorded meeting and Inbox
+  items next to Plaud, sharing a VTT renderer and the audio endpoint; records
+  the auth model per platform, polling over webhooks, the fact shape, the
+  Teams playback gap and the privacy posture.
+
 - [Email to Inbox: a per-hive inbound address](email-inbox.md) - **design only /
   proposed.** Gives every hive a unique, unguessable inbound address
   (`<uid>@inbox.<hub domain>`, plus-addressing as routing tags) whose mail lands
