@@ -90,7 +90,7 @@ nginx `auth-check?hive=<id>` subrequest
 (`src/pkg/hub/contribute_ingress_reconcile.go:98-105`). Hub users are GitHub
 usernames, not email addresses (`src/pkg/hub/saas.go:140-144`); the spoke's own
 allowlist is `dashboard.authorized_users`, also usernames
-(`src/pkg/config/config.go:5317`).
+(`src/pkg/config/dashboard_config.go:43`).
 
 Inbound HTTP precedent: `POST /api/webhook/github` fails closed without a
 secret, verifies `X-Hub-Signature-256` or, on hosted spokes, the hub's
