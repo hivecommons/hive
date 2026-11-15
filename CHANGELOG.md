@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.265.2)
+
+### Fixed
+
+- Clear an agent's forge-unreachable condition when a later scoped-token refresh succeeds, so recovered mint outages do not remain reported until the agent restarts.
+
 ## 2026-11-15 (v5.265.1)
 
 ### Fixed
