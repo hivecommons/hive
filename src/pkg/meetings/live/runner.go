@@ -44,6 +44,8 @@ type Runner struct {
 	mu        sync.Mutex
 	sessions  map[string]*session
 	byKick    map[string]string
+	early     map[string][]ResearchSignal
+	earlyIDs  []string
 	observers map[int]func(Event)
 	nextObs   int
 	unsub     func()
@@ -71,8 +73,9 @@ func NewRunner(opts Options) (*Runner, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Runner{
 		opts: opts, log: log,
-		sessions: map[string]*session{}, byKick: map[string]string{}, observers: map[int]func(Event){},
-		ctx: ctx, cancel: cancel,
+		sessions: map[string]*session{}, byKick: map[string]string{}, early: map[string][]ResearchSignal{},
+		observers: map[int]func(Event){},
+		ctx:       ctx, cancel: cancel,
 	}, nil
 }
 
@@ -135,10 +138,43 @@ func (r *Runner) emit(ev Event) {
 	}
 }
 
+// maxEarlyKicks bounds kicks whose signals arrived before Dispatch returned
+// their ID; the oldest is forgotten first.
+const maxEarlyKicks = 64
+
+// registerKick maps a dispatched kick to its meeting and replays any
+// signals that arrived before the dispatcher returned the kick ID (a fast
+// agent can report before Dispatch returns). It runs on the session
+// goroutine, so replayed signals are queued without blocking.
 func (r *Runner) registerKick(kick, meetingID string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.byKick[kick] = meetingID
+	early := r.early[kick]
+	delete(r.early, kick)
+	s := r.sessions[meetingID]
+	r.mu.Unlock()
+	if s == nil {
+		return
+	}
+	for _, sig := range early {
+		select {
+		case s.signals <- sig:
+		default:
+		}
+	}
+}
+
+// holdEarly keeps a signal for a kick no meeting has claimed yet; r.mu is
+// held.
+func (r *Runner) holdEarly(sig ResearchSignal) {
+	if _, ok := r.early[sig.KickID]; !ok {
+		if len(r.earlyIDs) >= maxEarlyKicks {
+			delete(r.early, r.earlyIDs[0])
+			r.earlyIDs = r.earlyIDs[1:]
+		}
+		r.earlyIDs = append(r.earlyIDs, sig.KickID)
+	}
+	r.early[sig.KickID] = append(r.early[sig.KickID], sig)
 }
 
 func (r *Runner) unregisterKick(kick string) {
@@ -205,6 +241,9 @@ func (r *Runner) DeliverResearch(sig ResearchSignal) bool {
 	r.mu.Lock()
 	id, ok := r.byKick[sig.KickID]
 	s := r.sessions[id]
+	if !ok {
+		r.holdEarly(sig)
+	}
 	r.mu.Unlock()
 	if !ok || s == nil {
 		return false
