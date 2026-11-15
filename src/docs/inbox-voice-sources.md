@@ -41,6 +41,38 @@ see the issue linked from the changelog entry.
   items already in the Inbox are never re-routed. The same editor, with the
   default RFC repository and dibs URL, is under Settings → Inbox.
 
+## Reading and listening to an item
+
+Each Inbox item shows what the source has for the recording:
+
+- **Summary / memo** — Plaud's AI summary (`get_note`), collapsed after a
+  few lines with a *more* toggle. Highlights (moments flagged with the
+  device button, `mark_memo`) are listed as timestamps.
+- **Transcript** — behind a *Transcript* disclosure, loaded on demand from
+  `GET /api/inbox/{source}/{id}/content`. The connector reads the best
+  transcript block the recording has: `transaction_polish` (AI-cleaned),
+  then `transaction` (raw), then `outline`, following `next_cursor` pages.
+- **Duration and recording time** — from the listing.
+- **▶ Play recording** (owner or read-write) — asks the hive for a fresh
+  presigned audio URL (`GET /api/inbox/{source}/{id}/audio`, Plaud:
+  `get_file`, valid 24h) and plays it in an inline HTML5 player. The link is
+  minted per click and never stored in facts or inbox state; the request is
+  audited as `inbox_audio`. The Plaud card's *Include 24h audio link* option
+  only decides whether a sync also writes a link into the fact.
+
+A recording that was **never transcribed in the Plaud app** has no summary
+and no transcript: the MCP's inventory (`get_file`) lists no `transaction`
+block and `get_transcript` answers `Block "transaction" not available for
+this recording. Available blocks: mark_memo.` The connector no longer stores
+that reply as the fact body. Instead the fact (and the item) says *Plaud has
+not transcribed this recording yet*, is marked `attr_plaud_content: pending`,
+and is re-fetched on every sync (at most 25 pending recordings per sync, on
+top of the listing) until Plaud has text; while Plaud is connected, the item's
+content is read live so text shows up as soon as it exists. Run
+transcription/summary in the Plaud app to fill it. Facts written before this
+behaviour, whose body carries the "not available" line, are refreshed the
+same way.
+
 ## Configuration
 
 ```yaml
@@ -93,7 +125,8 @@ allows additional redirect URIs for its client.
 
 See [api-reference/knowledge.md](api-reference/knowledge.md) for
 `GET /api/inbox`, `POST /api/inbox/route`, `POST /api/inbox/dismiss`,
-`GET|POST /api/inbox/settings` and
+`GET|POST /api/inbox/settings`, `GET /api/inbox/{source}/{id}/content`,
+`GET /api/inbox/{source}/{id}/audio` and
 `POST /api/knowledge/connectors/{name}/auth/complete`.
 
 `GET /api/inbox` always answers `200`: on a hive with no voice connector

@@ -258,7 +258,7 @@ knowledge:
         command: npx -y @plaud-ai/mcp@0.3.14   # default (pinned); any stdio MCP command
         since_days: "30"                       # how far back the first sync reaches
         max_files: "200"                       # recordings fetched per sync
-        include_audio: "false"                 # add Plaud's 24h presigned MP3 link
+        include_audio: "false"                 # also store Plaud's 24h presigned MP3 link in the fact (Inbox playback never needs it)
         query: ""                              # optional name filter (list_files query)
         tags: "voice, ideas"                   # extra tags written as attr_tags
         # home: /data/knowledge/connector-state/plaud/home   # token store; default shown, or "inherit"
@@ -320,8 +320,15 @@ set yourself is never rewritten, so an explicit `@latest` still floats.
   recordings is two or three MCP calls each, so the bar is what tells you
   it is moving.
 - Facts carry `source: plaud`, `attr_plaud_file_id`, `attr_recorded_at`,
-  `attr_duration_ms` and `attr_device_serial`. Audio is never downloaded;
-  with `include_audio: true` the fact links Plaud's 24-hour presigned URL.
+  `attr_duration_ms`, `attr_device_serial` and `attr_plaud_content`
+  (`ready`, or `pending` while Plaud has produced neither a summary nor a
+  transcript; pending facts are re-fetched on every sync, 25 at most). The
+  body has `## Summary (Plaud)`, `## Transcript` (the best block the
+  recording has: `transaction_polish`, `transaction`, `outline`) and
+  `## Highlights` (device-button marks) sections. Audio is never downloaded;
+  with `include_audio: true` the fact also links Plaud's 24-hour presigned
+  URL. The Inbox plays audio through a per-click link regardless (see
+  [inbox-voice-sources.md](inbox-voice-sources.md)).
 - The listing is incremental, so recordings deleted in Plaud are not
   tombstoned automatically; remove the fact file or the connector.
 - Sign-in state (`connected as`, pending authorization, last error) comes from

@@ -161,6 +161,29 @@ func (s *Service) Find(ctx context.Context, source, id string) (Item, bool, erro
 	return Item{}, false, err
 }
 
+// Content reads the full body of one item from its source.
+func (s *Service) Content(ctx context.Context, it Item) (Content, error) {
+	src := s.source(it.Source)
+	if src == nil {
+		return Content{}, fmt.Errorf("source %q is not configured", it.Source)
+	}
+	return src.Fetch(ctx, it)
+}
+
+// AudioLink mints a fresh audio link for one item through its source. The
+// link is handed back and forgotten: the service never stores it.
+func (s *Service) AudioLink(ctx context.Context, it Item) (AudioLink, error) {
+	src := s.source(it.Source)
+	if src == nil {
+		return AudioLink{}, fmt.Errorf("source %q is not configured", it.Source)
+	}
+	audio, ok := src.(AudioSource)
+	if !ok {
+		return AudioLink{}, ErrNoAudio
+	}
+	return audio.AudioLink(ctx, it)
+}
+
 // Unprocessed counts items with no filed route and not dismissed.
 func Unprocessed(items []Item) int {
 	n := 0

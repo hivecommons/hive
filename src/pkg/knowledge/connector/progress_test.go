@@ -161,16 +161,18 @@ func TestPlaudSyncReportsProgress(t *testing.T) {
 	})
 	emitted := 0
 	_, err := pc.Sync(ctx, "", func(Page) error { emitted++; return nil })
-	if !IsPartial(err) {
+	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
-	// rec-old is dropped by since_days, so two recordings are listed.
-	if got.ItemsTotal != 2 || emitted != 1 {
+	// rec-old is dropped by since_days, so two recordings are listed. Both
+	// are emitted: an untranscribed recording (rec-2) is a pending page, not
+	// a skipped one, so the connector counts nothing itself (the syncer counts
+	// emitted pages).
+	if got.ItemsTotal != 2 || emitted != 2 {
 		t.Fatalf("total = %d, emitted = %d", got.ItemsTotal, emitted)
 	}
-	// Only the skipped recording is counted here; the syncer counts emitted pages.
-	if got.ItemsDone != 1 {
-		t.Fatalf("items_done = %d, want the skipped recording only", got.ItemsDone)
+	if got.ItemsDone != 0 {
+		t.Fatalf("items_done = %d, want 0 (nothing skipped)", got.ItemsDone)
 	}
 	if want := []string{ProgressListing, ProgressFetching}; strings.Join(phases, ",") != strings.Join(want, ",") {
 		t.Fatalf("phases = %v", phases)
