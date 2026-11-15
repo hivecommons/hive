@@ -1,1 +1,0 @@
-- Meetings: research asked for in a meeting now runs on the read-only research agent pool (`research-1..N`, sized by `meetings.research_pool_size`) with findings routed back to the meeting by kick ID, and the hive image ships the pinned Quorum v0.1.0 bundle (SHA-256 verified) plus the Discord DAVE module (#18294).

@@ -8,7 +8,7 @@ Microsoft Teams meeting recordings (`type: zoom`, `type: teams`, see
 [design/meeting-recordings.md](design/meeting-recordings.md)), Discord
 meetings (`type: discord`), Google Meet meetings (`type: google-meet`)
 Webex meetings (`type: webex`) and Slack huddle notes (`type:
-slack-huddles`), Fireflies.ai meetings (`type: fireflies`), Fathom meetings (`type: fathom`), Limitless Pendant lifelogs (`type: limitless`), Granola meeting notes (`type: granola`) are its siblings, and later sources (file drop, webhook, …) add nothing to the UI.
+slack-huddles`), Fireflies.ai meetings (`type: fireflies`), Fathom meetings (`type: fathom`), Limitless Pendant lifelogs (`type: limitless`), Granola meeting notes (`type: granola`), Otter.ai conversations (`type: otter`) are its siblings, and later sources (file drop, webhook, …) add nothing to the UI.
 
 Tracker RFC: *Voice recorders as first-class input sources (Inbox)* —
 see the issue linked from the changelog entry.
@@ -16,7 +16,7 @@ see the issue linked from the changelog entry.
 ## Model
 
 - **Source** — a knowledge connector whose facts are recordings (`plaud`,
-  `wisprflow`, `zoom`, `teams`, `discord`, `google-meet`, `webex`, `slack-huddles`, `fireflies`, `fathom`, `limitless`, `granola`). Connecting a source happens in **Knowledge →
+  `wisprflow`, `zoom`, `teams`, `discord`, `google-meet`, `webex`, `slack-huddles`, `fireflies`, `fathom`, `limitless`, `granola`, `otter`). Connecting a source happens in **Knowledge →
   🔌 Integrations**; that card shows only the connection state and an **Open
   Inbox** button.
 - **Item** — one recording, keyed `(source, item_id)` (for Plaud, the
@@ -26,7 +26,7 @@ see the issue linked from the changelog entry.
   `e:<event>` in `attr_discord_recording_id`; for Google Meet the conference
   record id in `attr_google_meet_recording_id`; for Webex the meeting
   instance id in `attr_webex_recording_id`; for Slack huddles
-  `<channel>:<message ts>` in `attr_slack_huddle_recording_id`; for Granola the note id in `attr_granola_recording_id`; for Limitless the lifelog id in `attr_limitless_recording_id`; for Fathom the recording id in `attr_fathom_recording_id`; for Fireflies the transcript id in `attr_fireflies_recording_id`). When the source is connected the Inbox lists
+  `<channel>:<message ts>` in `attr_slack_huddle_recording_id`; for Otter the conversation id in `attr_otter_recording_id`; for Granola the note id in `attr_granola_recording_id`; for Limitless the lifelog id in `attr_limitless_recording_id`; for Fathom the recording id in `attr_fathom_recording_id`; for Fireflies the transcript id in `attr_fireflies_recording_id`). When the source is connected the Inbox lists
   recordings directly from it, so an item may appear before the sync has
   written its Knowledge fact; the Inbox only tracks what you did with it.
   "📚 Fact" opens the fact in Knowledge once that fact exists.
@@ -226,11 +226,21 @@ audio, so there is no ▶ Play. A meeting appears once Granola has generated
 its notes. Setup is in
 [knowledge-connectors.md](knowledge-connectors.md#granola-meeting-notes-type-granola).
 
+## Otter.ai conversations
+
+An Otter item is one conversation: the AI summary, the outline and the
+action items as the summary and Otter's speaker-labelled transcript as the
+transcript. ▶ Play asks Otter for the conversation's MP3 download link
+(minted per click, never stored), which also feeds the Deepgram fallback
+for a conversation Otter has no transcript for
+([inbox-transcription.md](inbox-transcription.md)). Setup is in
+[knowledge-connectors.md](knowledge-connectors.md#otterai-conversations-type-otter).
+
 ## Configuration
 
 ```yaml
 inbox:
-  sources: [plaud, wisprflow, zoom, teams, discord, google-meet, webex, slack-huddles, fireflies, fathom, limitless, granola]   # default: every configured voice/meeting connector
+  sources: [plaud, wisprflow, zoom, teams, discord, google-meet, webex, slack-huddles, fireflies, fathom, limitless, granola, otter]   # default: every configured voice/meeting connector
   spek:
     repo: hivecommons/hive        # default RFC target
     binary: spektacular           # or an absolute path; empty = look on PATH (the prompt says whether it is installed)
