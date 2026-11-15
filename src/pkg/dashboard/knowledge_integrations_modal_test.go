@@ -203,7 +203,7 @@ func TestKnowledgeIntegrationsModalMeetingCards(t *testing.T) {
 		`'teams': { label: 'Microsoft Teams recordings'`,
 		`'zoom': [['users', 'Recording owners (me, or user ids/emails for Server-to-Server)', 'me']`,
 		`'teams': [['users', 'Meeting organizers (object ids or UPNs, comma-separated)'`,
-		`const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord' };`,
+		`const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet' };`,
 		`else if (type === 'zoom') html += kbPlaudAuthLine(c.name, type) + kbZoomPasteHtml(c.name, c);`,
 		`else if (type === 'teams') html += kbPlaudAuthLine(c.name, type) + kbTeamsConsentHtml(c.name, c);`,
 		`if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);`,
@@ -275,6 +275,48 @@ func TestKnowledgeIntegrationsModalDiscordCard(t *testing.T) {
 	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
 		if strings.Contains(block, native) {
 			t.Errorf("Discord card block uses a browser-native dialog %q", native)
+		}
+	}
+}
+
+// TestKnowledgeIntegrationsModalGoogleMeetCard guards the Google Meet entry:
+// it shares the sign-in line and buttons, offers the pasted-redirect
+// fallback (user-level) or the domain-wide delegation note (service
+// account), carries the app-registration form, and uses no browser-native
+// dialog.
+func TestKnowledgeIntegrationsModalGoogleMeetCard(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`'google-meet': { label: 'Google Meet recordings'`,
+		`'google-meet': [['users', 'Users to read (service account only: Workspace addresses, comma-separated)'`,
+		`'github-wiki', 'google-drive', 'google-meet', 'notion',`,
+		`else if (type === 'google-meet') html += kbPlaudAuthLine(c.name, type) + kbGoogleMeetPasteHtml(c.name, c);`,
+		`if (type === 'google-meet') html += kbMeetingAuthFormHTML(type, c);`,
+		`} else if (type === 'google-meet') {`,
+		`function kbGoogleMeetPasteHtml(name, c)`,
+		`function kbOpenGoogleMeetIntegration()`,
+		`data-kb-google-meet-paste`,
+		`data-kb-google-meet-sa`,
+		`data-kb-google-meet-note`,
+		`'google-meet': '🎥'`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing Google Meet card snippet %q", want)
+		}
+	}
+	start := strings.Index(html, "function kbGoogleMeetPasteHtml(name, c)")
+	end := strings.Index(html, "async function kbPlaudAuthLoad(name, refresh)")
+	if start < 0 || end < start {
+		t.Fatal("Google Meet card block not found")
+	}
+	block := html[start:end]
+	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
+		if strings.Contains(block, native) {
+			t.Errorf("Google Meet card block uses a browser-native dialog %q", native)
 		}
 	}
 }
