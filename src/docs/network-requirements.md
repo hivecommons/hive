@@ -43,6 +43,7 @@ Reverse proxies, Routes, and Ingresses must preserve HTTP upgrade headers and lo
 | Kubernetes API | In-cluster spokes/hub | Used for health/provisioning/route discovery when those features are configured. |
 | Login provider issuers | Hub with multi-provider login | GitHub OAuth endpoints, plus the OIDC issuer/JWKS hosts for each configured provider (e.g. `accounts.google.com`, `login.microsoftonline.com`, `sso.redhat.com`, or your IBMid/custom issuer). |
 | OCI Object Storage (`objectstorage.<region>.oraclecloud.com`) | Hub running DR backups | Only when the opt-in backup CronJob is deployed; see [backup-restore.md](backup-restore.md). |
+| `api.deepgram.com:443` | Spokes with Inbox transcription | Only when `inbox.transcription.enabled` is true. The hive process itself (not an agent) uploads recording audio to Deepgram under the owner's own key, so it does not go through the agent MITM proxy; the hive also downloads the audio from the source's audio host (for Plaud, its presigned CDN link). See [inbox-transcription.md](inbox-transcription.md). |
 
 ## Egress through a corporate forward proxy
 

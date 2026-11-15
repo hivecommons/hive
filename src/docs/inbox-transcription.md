@@ -112,6 +112,38 @@ and the failure reason). Once done, the item is no longer pending and its
 deepgram/nova-3)**, in the same `[mm:ss] Speaker N: text` line shape as Plaud
 and meeting transcripts.
 
+## Automatic transcription (auto mode)
+
+With `mode: auto`, the hive also transcribes new pending items by itself,
+but only from the sources listed in `inbox.transcription.sources` (an Inbox
+source type such as `plaud`, or a `knowledge.connectors[]` entry name). An
+empty list transcribes nothing automatically. The sweep runs after each
+connector sync, right after the auto-routing rules:
+
+- It queues only what today's `daily_max_items` and this month's
+  `monthly_budget_minutes` leave room for; items that do not fit stay
+  pending, without a skip record, and are picked up once budget frees up.
+- Runs still execute one at a time. An item that is queued, running or done
+  is never queued again, and a recording listed twice is queued once.
+- A **failed** item is retried after 1 hour, then 2 hours, up to 3 runs in
+  total. An item **skipped for budget** is retried once the UTC day turns.
+  Items skipped as too long, too large or unsupported are not retried
+  automatically. The owner can always click **Retry transcription**.
+- Sweep-started runs are audited as `inbox_transcribe` with the actor
+  `inbox-auto-transcribe`.
+
+The ⚙ settings panel shows this month's minutes used against the budget,
+today's runs against the daily limit, and the egress the hive needs.
+
+## Egress
+
+The hive process itself uploads the audio, so a spoke behind an egress
+allowlist must allow `api.deepgram.com:443` while transcription is enabled
+(and the source's audio host, which playback already needs). Nothing is
+needed while transcription is off. `settings.transcription.egress_hosts` and
+the boot log line `inbox transcription enabled` name the host. See
+[network-requirements.md](network-requirements.md).
+
 ## Upstream text wins
 
 The machine transcript is a fallback. If the source later produces its own
