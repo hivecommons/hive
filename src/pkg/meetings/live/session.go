@@ -440,9 +440,11 @@ func (s *session) research(ctx context.Context, in intent) {
 		return
 	}
 	now := s.now()
+	limit := s.r.opts.Policy.ResearchPerMeeting
+	overCap := limit > 0 && s.dispatchedCount() >= limit
 	s.state.Research = append(s.state.Research, ResearchItem{RID: rid, Query: query, Reason: in.Reason, CreatedAt: now})
 	it := &s.state.Research[len(s.state.Research)-1]
-	if limit := s.r.opts.Policy.ResearchPerMeeting; limit > 0 && s.dispatchedCount() >= limit {
+	if overCap {
 		s.update(it, ResearchPendingApproval, "")
 		// Spek only knows the contract statuses; tell it the item is queued
 		// behind an approval.

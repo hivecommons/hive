@@ -622,9 +622,8 @@ func TestCorruptStateStartsFresh(t *testing.T) {
 	h := newHarness(t, Policy{}, nil)
 	_ = h.store.SaveDoc(h.m.ID, StateDoc, map[string]any{"notes": "not a map"})
 	h.live()
-	if st := h.state(); st.Notes == nil {
-		t.Fatal("fresh state")
-	}
+	h.spek.intent(`{"type":"notes.append","section":"notes","text":"n"}`)
+	h.eventually("fresh state accepts notes", func() bool { return len(h.state().Notes[SectionNotes]) == 1 })
 }
 
 type fakeImporter struct {
