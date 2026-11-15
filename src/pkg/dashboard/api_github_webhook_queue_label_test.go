@@ -10,9 +10,9 @@ import (
 
 // A label someone adds to a PR in a native-merge-queue repo wakes the lanes
 // for that PR at once, so a hold reaches the dequeue before GitHub's queue
-// merges it (projectbluefin/testsuite#1235). The hive's own bookkeeping
-// labels, other actions, closed PRs and repos or bases outside the queue
-// scope do not; a refusing label the hive adds itself does.
+// merges it (projectbluefin/testsuite#1235). The hive's own label writes,
+// other actions, closed PRs and repos or bases outside the queue scope do
+// not.
 func TestNudgeQueueLabelEvent(t *testing.T) {
 	const app = "hivecommons-hive[bot]"
 	labelled := func(action, sender, label, state, base string, merged bool) []byte {
@@ -44,13 +44,7 @@ func TestNudgeQueueLabelEvent(t *testing.T) {
 	}{
 		{"person adds a label", "pull_request", payload("labeled", "Danathar", "open", "main", false), queue, true},
 		{"another bot adds a label", "pull_request", payload("labeled", "mergeraptor[bot]", "open", "main", false), queue, true},
-		{"the hive's own stage label", "pull_request", labelled("labeled", app, "stage/100-merge-queue", "open", "main", false), queue, false},
-		{"the hive's own role label", "pull_request", labelled("labeled", app, "role/trusted", "open", "main", false), queue, false},
-		{"the hive adds hold", "pull_request", payload("labeled", app, "open", "main", false), queue, true},
-		{"the hive adds the sentinel label", "pull_request", labelled("labeled", app, config.DefaultSentinelLabel, "open", "main", false), queue, true},
-		{"the hive adds needs-human", "pull_request", labelled("labeled", app, "needs-human", "open", "main", false), queue, true},
-		{"the hive adds an owner-merge label", "pull_request", labelled("labeled", app, "needs-owner-merge", "open", "main", false), queue, true},
-		{"the hive adds do-not-merge/hold", "pull_request", labelled("labeled", app, "do-not-merge/hold", "open", "main", false), queue, true},
+		{"the hive's own label write", "pull_request", labelled("labeled", app, "stage/100-merge-queue", "open", "main", false), queue, false},
 		{"a person adds any label", "pull_request", labelled("labeled", "Danathar", "kind/bug", "open", "main", false), queue, true},
 		{"label removed", "pull_request", payload("unlabeled", "Danathar", "open", "main", false), queue, false},
 		{"other action", "pull_request", payload("synchronize", "Danathar", "open", "main", false), queue, false},

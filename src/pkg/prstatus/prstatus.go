@@ -170,7 +170,4 @@ const (
 	// `hive/awaiting-ci:` deferral, a stage/045 parking note, an
 	// "Already fixed" verdict) that used to be its own comment.
 	KeyAgentNotePrefix = "agent-note:"
-	// KeyNativeQueueWithdrawn says why the hive took the PR out of GitHub's
-	// merge queue (<!-- hive:native-queue-withdrawn -->).
-	KeyNativeQueueWithdrawn = "native-queue-withdrawn"
 )

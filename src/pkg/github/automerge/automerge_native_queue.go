@@ -426,7 +426,6 @@ func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo
 		})
 		if err == nil && withdrew {
 			c.info("native merge queue entry withdrawn", "repo", owner+"/"+repo, "pr", pr.GetNumber(), "lane", lane, "reason", reason, "entry", entryID)
-			c.noteNativeQueueWithdrawn(ctx, owner, repo, pr, reason)
 		}
 	}
 	if err != nil {

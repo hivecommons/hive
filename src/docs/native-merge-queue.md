@@ -152,20 +152,14 @@ native-queue outcomes, leaves the entry for GitHub's queue to settle. Entries
 from a person or another App are preserved.
 The queued sweep also withdraws this App's entries on opted-in repositories
 that are paused or have automerge disabled. Every enqueue and dequeue uses the
-existing mutation boundary, including its write denials. A withdrawal writes
-one line in the PR's hive status comment (section `native-queue-withdrawn`)
-naming the head and the reason; the write-back gate decides, so with the
-default policy it appears on the hive's own PRs and is withheld on another
-bot's. The log line `native merge queue entry withdrawn` records every one.
+existing mutation boundary, including its write denials. The log line
+`native merge queue entry withdrawn` records every withdrawal.
 
 Reconciliation is periodic/event-driven, so a gate change can race GitHub's
 eventual merge. To narrow the window, a `pull_request` `labeled` delivery on
 an open PR in a repository and base in scope wakes the lanes for that PR at
 once (`queue_label_nudge` in the webhook response), with or without the
-forgestate cache. A label the hive's own App adds wakes them only when the
-lanes refuse to merge over it (a hold, `do-not-merge*`, `blocked`,
-`needs-human`, the sentinel label, a merge-exempt or human-merge label), so
-its stage and role label writes do not. Before this,
+forgestate cache; labels the hive's own App adds are skipped. Before this,
 a hive without the cache saw the label only on its next lane tick (about two
 minutes on a twenty-repository hive, up to fifteen): projectbluefin/testsuite#1235
 merged 71 seconds after a person added `hold`. The lane still needs a few
