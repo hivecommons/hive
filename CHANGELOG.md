@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.266.0)
+
+### Added
+
+- Inbox: Zoom and Microsoft Teams meeting recordings as sources next to Plaud — a `zoom` connector (user-level OAuth with the hosted paste flow, or Server-to-Server) that syncs cloud recordings with topic, participants, AI summary and VTT transcript into one fact each and plays them inline through the Inbox audio endpoint, and a `teams` connector scaffold (Graph application permissions, recordings and transcripts per organizer) whose Integrations card states when Entra admin consent is still missing; both are default `inbox.sources` with Connect / Check / Sync now cards.
+
 ## 2026-11-15 (v5.265.2)
 
 ### Fixed
