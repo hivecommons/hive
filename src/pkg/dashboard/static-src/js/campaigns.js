@@ -1,8 +1,8 @@
     // ── Campaigns + Jam (Spek / inception campaign archive) ──
-    // Moved verbatim out of inception.js so the Campaigns and Jam UI survives
-    // the Inception wizard being replaced by the Sessions section. Plain
-    // top-level declarations, shared with inception.js through the single
-    // concatenated dashboard script; keep this file adjacent to it in manifest.txt.
+    // Moved out of inception.js so the Campaigns and Jam UI survives the
+    // Inception wizard's removal; it is the Campaigns tab of the Inception
+    // (spek) section (sessions.js). Plain top-level declarations, shared
+    // through the single concatenated dashboard script; keep this file adjacent to it in manifest.txt.
     let _campaigns = [];
     let _campaignActionsInFlight = new Set();
 
@@ -127,10 +127,9 @@
 
     function renderCampaignsList() {
       const list = document.getElementById('campaigns-list');
-      setSectionSummary('inception-section', inceptionSectionSummary());
       if (!list) return;
       if (!_campaigns || _campaigns.length === 0) {
-        list.innerHTML = '<div class="campaign-empty">No campaigns yet. New Inception archives completed sessions here.</div>';
+        list.innerHTML = '<div class="campaign-empty">No campaigns yet. Reset or completed inception runs are archived here.</div>';
         return;
       }
       list.innerHTML = campaignRevisionChains(_campaigns).map(function(chain) { return renderCampaignRow(chain.head, chain.history); }).join('');
@@ -489,7 +488,9 @@
         const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/resume', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ surface: 'dashboard' }) });
         const data = await r.json();
         if (!data.ok) { showToast(data.error || 'Failed to resume campaign', 'error'); return; }
-        if (data.state) { _inceptionState = data.state; renderInception(); }
+        // The dashboard wizard that drove a resumed inception state is gone;
+        // the campaign is resumed server-side and continued from its command.
+        if (data.state && !data.resume_command) showToast('Campaign resumed', 'success');
         if (data.resume_command) { await hiveAlert('Resume command:\n' + data.resume_command, 'Resume command'); }
         await loadCampaigns();
       } catch (e) { showToast('Error: ' + e.message, 'error'); }

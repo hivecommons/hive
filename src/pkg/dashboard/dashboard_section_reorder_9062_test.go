@@ -23,7 +23,6 @@ var dashboardLayoutIDs9062 = []string{
 	"advisory-section",
 	"token-panel",
 	"cost-panel",
-	"inception-section",
 	"sessions-section",
 	"acmm-eval-section",
 	"debug-section",
@@ -51,7 +50,6 @@ var dashboardDefaultNavOrder9062 = []string{
 	"advisory-section",
 	"token-panel",
 	"cost-panel",
-	"inception-section",
 	"sessions-section",
 	"acmm-eval-section",
 	"debug-section",
@@ -61,7 +59,7 @@ var dashboardDefaultNavOrder9062 = []string{
 
 var dashboardDefaultLayoutOrder9062 = append([]string{}, dashboardLayoutIDs9062...)
 
-const dashboardDefaultLayoutTemplate9062 = `DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','search-section','inbox-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']}`
+const dashboardDefaultLayoutTemplate9062 = `DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','runs-section','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','search-section','inbox-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']}`
 
 func jsArray9062(ids []string) string {
 	var b strings.Builder
@@ -101,7 +99,7 @@ var dashboardKeyboardSnapshot=null;
 var window={_lastStatus:{features:{experiment_lab:true}}};
 function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
 function experimentLabEnabled(){return dashboardFeatureEnabled('experiment_lab');}
-function dashboardAliasSectionId(id){return id==='review-pipeline-section'?'review-queue-section':id;}
+function dashboardAliasSectionId(id){if(id==='review-pipeline-section')return 'review-queue-section';if(id==='inception-section')return 'sessions-section';return id;}
 function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);return id==='nous-section'&&!experimentLabEnabled();}
 `
 }
@@ -319,11 +317,11 @@ const stale = {v:1, main:['runs-section','overview-section','governor','pr-throu
 const got = dashboardLayoutNormalize(stale).main;
 if (got[got.length-1] !== 'faq-section') throw new Error('persisted FAQ move not respected: '+JSON.stringify(got));
 const middle = got.slice(got.indexOf('nous-section'), got.indexOf('nous-section')+5).join(',');
-if (middle !== 'nous-section,logs-section,agents-section,agent-activity-section,inception-section') throw new Error('missing sections not slotted by neighbours: '+middle);
+if (middle !== 'nous-section,logs-section,agents-section,agent-activity-section,sessions-section') throw new Error('missing sections not slotted by neighbours: '+middle);
 if (new Set(got).size !== got.length) throw new Error('duplicate ids: '+JSON.stringify(got));
 const moved = dashboardLayoutNormalize({v:1, main:['faq-section','cost-panel','overview-section']}).main;
 if (moved[0] !== 'faq-section') throw new Error('operator-moved FAQ not respected: '+JSON.stringify(moved));
-if (moved.length !== 25) throw new Error('missing sections not restored: '+moved.length);
+if (moved.length !== 24) throw new Error('missing sections not restored: '+moved.length);
 `
 	cmd := exec.Command(node, "-e", script)
 	if out, err := cmd.CombinedOutput(); err != nil {

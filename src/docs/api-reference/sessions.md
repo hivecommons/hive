@@ -2,7 +2,7 @@
 
 Part of the [Dashboard REST API reference](../api-reference.md); see that page for how auth levels and `pkg/<file>:<line>` source citations are read and checked. Edit this file for routes in this area and run `src/scripts/check-api-reference-citations.sh --fix` to resync citations.
 
-Sessions are interactive, named CLI-agent terminals. Each runs as its own unprivileged uid and is private to its creator and the hive owners unless `shared` is set (see [security model](../security-model.md)). The feature is off unless `dashboard.sessions.enabled` (or `HIVE_SESSIONS_ENABLED`) is true; while off, `GET /api/sessions` answers `{"enabled":false,"sessions":[],"vendors":[],"limits":{}}` and every other route answers 404. Errors are `{"ok":false,"error":"..."}`.
+Sessions are interactive, named CLI-agent terminals. Each runs as its own unprivileged uid and is private to its creator and the hive owners unless `shared` is set (see [security model](../security-model.md)). The dashboard shows these as the **Inception (spek)** section. The feature is on by default; `dashboard.sessions.enabled: false` (or `HIVE_SESSIONS_ENABLED=false`) turns it off; while off, `GET /api/sessions` answers `{"enabled":false,"sessions":[],"vendors":[],"limits":{}}` and every other route answers 404. Errors are `{"ok":false,"error":"..."}`.
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
