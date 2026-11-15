@@ -47890,6 +47890,8 @@ function burnAreaChart() {
     let _meetingsList = null;
     let _meetingsError = '';
     let _meetingsOpen = null; // { id, ws, meeting, lines, partial, intents, live }
+    // Ended meetings are inbox items too (source "meeting").
+    if (typeof INBOX_SOURCE_ICONS === 'object' && !INBOX_SOURCE_ICONS.meeting) INBOX_SOURCE_ICONS.meeting = '🎙';
 
     function meetingsIsOwner() { return window._hiveRole === 'owner'; }
     function meetingsLabel(m) {

@@ -196,7 +196,7 @@ Full entry: [Inbox](dashboard-sections/workflow-and-agents.md#inbox).
 
 Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.
 
-Owner only. Approve research past the per-meeting cap and answer Discord join requests here; settings are under Settings, Meetings. Reference: [meetings environment variables](env-vars.md#meetings-quorum).
+Owner only. Approve research past the per-meeting cap and answer Discord join requests here; settings are under Settings, Meetings. Full entry: [Meetings](meetings.md).
 
 ## Contributors
 

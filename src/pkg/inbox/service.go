@@ -237,6 +237,7 @@ func (s *Service) Route(ctx context.Context, it Item, req Request) (RouteState, 
 		if err := s.Dismiss(it.Source, it.ID, true); err != nil {
 			return RouteState{}, err
 		}
+		s.handOff(ctx, it, DestDismiss)
 		return RouteState{Status: StatusFiled, UpdatedAt: s.now()}, nil
 	}
 	s.mu.RLock()
@@ -289,6 +290,19 @@ func (s *Service) deliver(it Item, dest Destination, req Request) {
 		s.Logger.Warn("inbox: persist filed state", "item", key, "error", err)
 	}
 	s.Logger.Info("inbox: routed", "item", key, "destination", req.Destination, "status", status, "url", res.URL)
+	s.handOff(ctx, it, req.Destination)
+}
+
+// handOff tells a HandOffSource that it left the inbox. A failure is logged:
+// the route itself succeeded.
+func (s *Service) handOff(ctx context.Context, it Item, dest string) {
+	hs, ok := s.source(it.Source).(HandOffSource)
+	if !ok {
+		return
+	}
+	if err := hs.HandedOff(ctx, it, dest); err != nil {
+		s.Logger.Warn("inbox: source hand-off", "item", it.Key(), "destination", dest, "error", err)
+	}
 }
 
 func (s *Service) fail(key, dest string, err error) {

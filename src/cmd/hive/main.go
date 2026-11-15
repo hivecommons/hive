@@ -3590,6 +3590,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 			}
 			// Owner API, live panel and /api/events frames (#18292).
 			b.dashSrv.SetMeetingsService(&meetingsDashboard{mgr: mgr, live: b.meetingsLive})
+			// Ended meetings become inbox items; transcripts are purged
+			// after meetings.retention_days (#18293).
+			b.wireMeetingsInbox(mgr, store)
 		}
 	}
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
