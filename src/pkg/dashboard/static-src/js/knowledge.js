@@ -2608,6 +2608,7 @@
       else if (type === 'zoom') html += kbPlaudAuthLine(c.name, type) + kbZoomPasteHtml(c.name, c);
       else if (type === 'teams') html += kbPlaudAuthLine(c.name, type) + kbTeamsConsentHtml(c.name, c);
       else if (type === 'discord') html += kbPlaudAuthLine(c.name, type) + kbDiscordHelpHtml(c.name, c);
+      else if (type === 'google-meet') html += kbPlaudAuthLine(c.name, type) + kbGoogleMeetPasteHtml(c.name, c);
       if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
@@ -2653,6 +2654,7 @@
       if (type === 'wisprflow') html += '<p class="muted-xs" data-kb-wisprflow-note>Leave the credential source as None: the connector reads Wispr Flow\'s local history read-only with the sqlite3 CLI. Leave the path empty for the default app location on the hive host (macOS: ~/Library/Application Support/Wispr Flow/flow.sqlite; Windows: %APPDATA%\\Wispr Flow\\flow.sqlite), or point it at a copy of flow.sqlite or a folder of exported .json/.ndjson/.csv/.md files. New dictations need no connector at all — dictate into + New Fact directly.</p>';
       if (type === 'plaud') html += '<p class="muted-xs" data-kb-plaud-note>Leave the credential source as None: Plaud signs in with its own OAuth flow (Connect on the entry above) and keeps the token in the MCP server\'s own store. Requires Node.js ≥ 20 on the hive host and costs nothing beyond your Plaud plan.</p>';
       if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);
+      if (type === 'google-meet') html += kbMeetingAuthFormHTML(type, c);
       if (type === 'discord') html += '<p class="muted-xs" data-kb-discord-note>Set the credential source to <strong>Environment variable</strong> and enter the NAME of the variable that holds the bot token (for example <code>DISCORD_BOT_TOKEN</code>); the value never passes through the dashboard. List the server id for scheduled events and the ids of the channels where finished recordings are posted.</p>';
       html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
       html += '<div class="hive-dialog-error" role="alert" data-kb-kc-msg></div>';
@@ -2716,6 +2718,13 @@
         html += field('account_id_env', 'Account ID env var (Server-to-Server only)', 'ZOOM_ACCOUNT_ID');
         html += '</div>';
         html += '<p class="muted-xs" data-kb-zoom-note>Leave the credential source as None. Register an OAuth app on the Zoom App Marketplace (General app for user-level, Server-to-Server OAuth for the account) with the scopes <code>cloud_recording:read:list_user_recordings</code>, <code>cloud_recording:read:list_recording_files</code>, <code>user:read:user</code> (classic: <code>recording:read</code>, <code>user:read</code>), plus <code>meeting_summary:read</code> and <code>meeting:read:list_past_participants</code> for the AI summary and participants. For user-level add the redirect URL above to the app\'s OAuth allow list; put the client id/secret in the hive\'s environment under the variable names you enter here. Tokens are kept at <code>/data/knowledge/connector-state/&lt;name&gt;/home/.zoom/tokens.json</code> (0600).</p>';
+      } else if (type === 'google-meet') {
+        const mode = a.mode || 'user_oauth';
+        html += '<label class="muted-note">OAuth grant<select class="field-input field-input-block mt-2" data-kb-kc-auth-field="mode" data-setting-key="knowledge.connectors[].auth.mode"><option value="user_oauth"' + (mode === 'user_oauth' ? ' selected' : '') + '>User-level OAuth (my own meetings)</option><option value="server_to_server"' + (mode === 'server_to_server' ? ' selected' : '') + '>Service account with domain-wide delegation (list users above)</option></select></label>';
+        html += field('client_id_env', 'OAuth client ID env var (user-level only)', 'GOOGLE_MEET_CLIENT_ID');
+        html += field('client_secret_env', 'OAuth client secret env var (user-level only)', 'GOOGLE_MEET_CLIENT_SECRET');
+        html += '</div>';
+        html += '<p class="muted-xs" data-kb-google-meet-note>User-level OAuth: leave the credential source as None. In Google Cloud enable the <strong>Google Meet REST API</strong> and the <strong>Google Drive API</strong>, configure the OAuth consent screen with the scopes <code>meetings.space.readonly</code> and <code>drive.meet.readonly</code>, create an OAuth client (Web application) whose authorized redirect URI is the redirect URL above, and put its id and secret in the hive\'s environment under the variable names you enter here. Tokens are kept at <code>/data/knowledge/connector-state/&lt;name&gt;/home/.google-meet/tokens.json</code> (0600). Service account: leave the client id/secret fields empty, set the credential source to the environment variable or file holding the service-account key JSON, list the Workspace users to read under Users, and have a Workspace super admin authorize the service account\'s client id for <code>https://www.googleapis.com/auth/meetings.space.readonly</code> and <code>https://www.googleapis.com/auth/drive.meet.readonly</code> in Admin console → Security → API controls → Domain-wide delegation.</p>';
       } else {
         html += field('tenant_id_env', 'Tenant ID env var', 'TEAMS_TENANT_ID');
         html += field('client_id_env', 'Client (application) ID env var', 'TEAMS_CLIENT_ID');
@@ -2779,7 +2788,7 @@
     // Cached per connector name; loaded lazily when the card renders. The
     // kbPlaud* functions serve every KB_AUTH_TYPES type; the label follows
     // the connector type.
-    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord' };
+    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet' };
     const _kbPlaudAuth = {};
     function kbAuthLabel(name, type) {
       if (!type) { const c = (_kcState.connectors || []).find(x => x.name === name); type = c && c.type; }
@@ -2850,6 +2859,24 @@
       const where = [scope.guild ? 'server <code>' + escapeHtml(scope.guild) + '</code>' : '', scope.channels ? 'channels <code>' + escapeHtml(scope.channels) + '</code>' : ''].filter(Boolean).join(' and ') || 'the configured server and channels';
       const access = /invite it/i.test(a.message || '') ? '<div class="kc-error" data-kb-discord-access>The bot cannot read ' + where + (a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">invite the bot ↗</a>' : '') + '</div>' : '';
       return access + '<p class="muted-xs" data-kb-discord-help>Discord has no cloud recordings or transcripts, so the hive reads what a meeting leaves behind: finished recordings posted to the recording channels (an audio upload, or a recording bot\'s download link such as Craig\'s, forwarded there), and scheduled events with their channel chat. Create an application in the Discord Developer Portal, add a bot, enable the <strong>Message Content</strong> intent, put the bot token in the hive environment, and invite the bot with View Channel and Read Message History. Connect probes ' + where + ' with that token. Audio uploads play in the Inbox; items without a transcript stay marked as not transcribed.</p>';
+    }
+    // Google Meet user-level OAuth on a hosted hive: the OAuth client's
+    // redirect is a localhost address the browser cannot reach, so the
+    // operator pastes the URL it landed on (same endpoint as Plaud and Zoom).
+    // A service account has no browser step.
+    function kbGoogleMeetPasteHtml(name, c) {
+      const n = escapeHtml(name);
+      const a = _kbPlaudAuth[name] || {};
+      const mode = (c && c.auth && c.auth.mode) || 'user_oauth';
+      const redirect = (c && c.scope && c.scope.redirect_uri) || 'http://localhost:8199/google-meet/callback';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      const playback = '<span class="muted-xs" data-kb-google-meet-playback>Meet recordings are Drive files served behind a bearer token, so Inbox items link the Drive page instead of playing inline; transcripts and Gemini notes sync as text.</span>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + playback + '</div>';
+      if (mode === 'server_to_server') return '<p class="muted-xs" data-kb-google-meet-sa>Service account with domain-wide delegation: Connect signs a token request as the first listed user with the key named in the form; no browser step. A Workspace super admin must authorize the service account\'s client id for <code>meetings.space.readonly</code> and <code>drive.meet.readonly</code> (Admin console → Security → API controls → Domain-wide delegation).</p>';
+      return '<details class="kb-plaud-paste mt-2" data-kb-google-meet-paste><summary class="muted-xs">Finish Google sign-in by pasting the redirect URL</summary>' +
+        '<p class="muted-xs">Registration: in Google Cloud enable the Google Meet REST API and the Google Drive API, add the scopes <code>meetings.space.readonly</code> and <code>drive.meet.readonly</code> to the OAuth consent screen, create an OAuth client (Web application) with <code>' + escapeHtml(redirect) + '</code> as an authorized redirect URI, and put its id and secret in the hive environment under the variable names in the form. Then click <strong>Connect Google Meet</strong>, approve in the browser, and paste the <code>' + escapeHtml(redirect) + '?state=…&amp;code=…</code> URL the browser lands on (a connection error page is expected) within 10 minutes.</p>' +
+        '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="2" placeholder="' + escapeHtml(redirect) + '?state=…&amp;code=…"></textarea>' +
+        '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
     }
     async function kbPlaudAuthLoad(name, refresh) {
       try {
@@ -2924,6 +2951,7 @@
     function kbOpenZoomIntegration() { _kbIntegrationSelected = 'zoom'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenTeamsIntegration() { _kbIntegrationSelected = 'teams'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenDiscordIntegration() { _kbIntegrationSelected = 'discord'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenGoogleMeetIntegration() { _kbIntegrationSelected = 'google-meet'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
 
     // ── Wispr Flow (local dictation history, no sign-in) ──
     function kbWisprFlowSourceLine(c) {
