@@ -59,7 +59,9 @@ func (s *Server) linearAgent() LinearAgentGateway {
 		// unconditionally costs nothing.
 		if svc != nil && s.deps.AgentMgr != nil {
 			if obs := svc.AgentEventObserver(); obs != nil {
-				s.deps.AgentMgr.SetKickObserver(obs)
+				// Fan-out, beside the mention responder's observer
+				// (hivecommons/hive#7483).
+				crux.AddLegacyKickObserver(s.deps.AgentMgr, obs)
 			}
 		}
 		s.linearAgentSvc = svc
