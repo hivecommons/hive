@@ -7,7 +7,8 @@ Wispr Flow (`type: wisprflow`) plugs in with the same model, Zoom and
 Microsoft Teams meeting recordings (`type: zoom`, `type: teams`, see
 [design/meeting-recordings.md](design/meeting-recordings.md)), Discord
 meetings (`type: discord`), Google Meet meetings (`type: google-meet`)
-and Webex meetings (`type: webex`) are its siblings, and later sources (file drop, webhook, …) add nothing to the UI.
+Webex meetings (`type: webex`) and Slack huddle notes (`type:
+slack-huddles`) are its siblings, and later sources (file drop, webhook, …) add nothing to the UI.
 
 Tracker RFC: *Voice recorders as first-class input sources (Inbox)* —
 see the issue linked from the changelog entry.
@@ -15,7 +16,7 @@ see the issue linked from the changelog entry.
 ## Model
 
 - **Source** — a knowledge connector whose facts are recordings (`plaud`,
-  `wisprflow`, `zoom`, `teams`, `discord`, `google-meet`, `webex`). Connecting a source happens in **Knowledge →
+  `wisprflow`, `zoom`, `teams`, `discord`, `google-meet`, `webex`, `slack-huddles`). Connecting a source happens in **Knowledge →
   🔌 Integrations**; that card shows only the connection state and an **Open
   Inbox** button.
 - **Item** — one recording, keyed `(source, item_id)` (for Plaud, the
@@ -24,7 +25,8 @@ see the issue linked from the changelog entry.
   `attr_teams_recording_id`; for Discord `m:<channel>:<message>` or
   `e:<event>` in `attr_discord_recording_id`; for Google Meet the conference
   record id in `attr_google_meet_recording_id`; for Webex the meeting
-  instance id in `attr_webex_recording_id`). When the source is connected the Inbox lists
+  instance id in `attr_webex_recording_id`; for Slack huddles
+  `<channel>:<message ts>` in `attr_slack_huddle_recording_id`). When the source is connected the Inbox lists
   recordings directly from it, so an item may appear before the sync has
   written its Knowledge fact; the Inbox only tracks what you did with it.
   "📚 Fact" opens the fact in Knowledge once that fact exists.
@@ -158,11 +160,20 @@ without transcript or summary is `attr_meeting_content: pending` and re-read
 on later syncs. Setup is in
 [knowledge-connectors.md](knowledge-connectors.md#webex-recordings-type-webex).
 
+## Slack huddle notes
+
+Slack never records huddle audio, so a Slack huddle item is text only: the
+AI notes canvas Slack posts in the huddle thread (summary, topics, action
+items) as the summary, and the transcript section of that canvas, when the
+workspace allows transcripts, as the transcript. Huddles nobody turned AI
+notes on for are not items. There is no ▶ Play. Setup is in
+[knowledge-connectors.md](knowledge-connectors.md#slack-huddle-notes-type-slack-huddles).
+
 ## Configuration
 
 ```yaml
 inbox:
-  sources: [plaud, wisprflow, zoom, teams, discord, google-meet, webex]   # default: every configured voice/meeting connector
+  sources: [plaud, wisprflow, zoom, teams, discord, google-meet, webex, slack-huddles]   # default: every configured voice/meeting connector
   spek:
     repo: hivecommons/hive        # default RFC target
     binary: spektacular           # or an absolute path; empty = look on PATH
