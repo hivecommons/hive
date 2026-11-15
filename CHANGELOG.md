@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.265.0)
+
+### Added
+
+- Shared dashboard Sessions are now safe for several people at once. **Roles:** the `read` role watches a shared session's live terminal read-only (it used to get only a polled scrollback) and never types, Sends or uploads; `read-write` and `owner` may Send, upload and hold the keyboard; private sessions stay creator-and-owners only. **One keyboard at a time:** each session has a keyboard lease (`keyboard_holder`, `keyboard_since` on the record, held by the creator from the start and by whoever resumes); only the holder's terminal attach is writable, every other viewer is attached with `tmux attach-session -r`, decided server-side (the proxy appends a second per-session write token only for the holder and `ttyd-tmux.sh` attaches read-only without it, so nothing a browser sends can promote a viewer). `POST /api/sessions/{id}/keyboard {"action":"take"|"release"}`: owners and the creator always take it, another writer only once it is released or the holder has been idle for `HIVE_SESSIONS_KEYBOARD_GRACE_SEC` (default 60); a hand-over detaches the previous holder's tmux client, both browsers re-attach in their new mode, and it is audited as `session_keyboard` with from/to, which makes terminal typing attributable to the holder of record. **Queued Send:** `POST /api/sessions/{id}/input` now answers 202 and queues the text (32 per session); a per-session worker types the head only when the CLI prompt is idle (no run in progress, empty prompt line, per-vendor heuristics for Claude Code, Copilot and Codex), falling open after `HIVE_SESSIONS_SEND_WAIT_SEC` (default 45) so nothing is stuck; `GET /api/sessions` reports the `queue` (length, head, your position, items without text), `DELETE /api/sessions/{id}/input/{queue_id}` cancels your own item, and each delivery is audited as `session_input` for the user who queued it. **Presence:** `viewers` (user, attached since, keyboard) per session; the tab tooltip and the pane header read `keyboard: andy · watching: bob, carol` with a Take/Release keyboard button, and the Send button shows `queued behind N` with the queue listed under the input bar.
+
 ## 2026-11-15 (v5.264.0)
 
 ### Added
