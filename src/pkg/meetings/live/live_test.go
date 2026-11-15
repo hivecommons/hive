@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -654,4 +655,36 @@ func TestKnowledgeNotes(t *testing.T) {
 	if err := (KnowledgeNotes{API: imp, Vault: "other"}).Upsert(context.Background(), "T", "B", nil); err == nil || imp.layer != "other" {
 		t.Fatal("errors and vault override")
 	}
+}
+
+// earlyDispatcher reports a finding and completion before Dispatch returns.
+type earlyDispatcher struct{ r **Runner }
+
+func (d earlyDispatcher) Dispatch(_ context.Context, _ string, meta map[string]string) (string, error) {
+	kick := "kick-" + meta["rid"]
+	(*d.r).DeliverResearch(ResearchSignal{KickID: kick, Kind: SignalFinding, Text: "early finding"})
+	(*d.r).DeliverResearch(ResearchSignal{KickID: kick, Kind: SignalComplete, Text: "early summary"})
+	return kick, nil
+}
+
+func TestSignalsBeforeDispatchReturns(t *testing.T) {
+	var runner *Runner
+	h := newHarness(t, Policy{}, func(o *Options) { o.Research = earlyDispatcher{r: &runner} })
+	runner = h.r
+	h.live()
+	h.spek.intent(`{"type":"research","rid":"r1","query":"fast"}`)
+	h.eventually("early signals applied", func() bool {
+		st := h.state()
+		return len(st.Research) == 1 && st.Research[0].Status == ResearchDone && st.Research[0].Summary == "early summary"
+	})
+	for i := 0; i < maxEarlyKicks+2; i++ {
+		h.r.DeliverResearch(ResearchSignal{KickID: "orphan-" + strconv.Itoa(i), Kind: SignalFinding})
+	}
+	h.r.mu.Lock()
+	n := len(h.r.early)
+	h.r.mu.Unlock()
+	if n != maxEarlyKicks {
+		t.Fatalf("early buffer holds %d kicks, want %d", n, maxEarlyKicks)
+	}
+	h.r.registerKick("orphan-unknown-meeting", "mtg-none")
 }
