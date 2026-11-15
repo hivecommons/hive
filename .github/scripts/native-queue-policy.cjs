@@ -58,6 +58,23 @@ class ProviderUnavailable extends Error {
   }
 }
 
+// A provider that completed red on this exact head is that PR's own verdict
+// (a missing sign-off, a missing changelog fragment, a failed verifier), never
+// a broken admission workflow. Name it as such: four PRs each red on their own
+// provider read like one shared incident and got filed as one (#18280). It is
+// a hard failure, deliberately not PendingEvidence: waiting cannot change a
+// completed verdict, and only a new push to the PR re-runs the providers.
+const PROVIDER_VERDICT_NOTE =
+  'per-PR provider verdict, not a shared CI incident: fix it on this PR; the next push re-evaluates';
+
+class ProviderVerdict extends Error {
+  constructor(provider, conclusion, head) {
+    super(`${provider}: ${conclusion} on ${head} (${PROVIDER_VERDICT_NOTE})`);
+    this.provider = provider;
+    this.conclusion = conclusion;
+  }
+}
+
 function dcoEnumerationUnavailable(run) {
   // This text only classifies a diagnostic, never supplies passing evidence.
   // Call only after validating provider, head and completed status.
@@ -134,7 +151,7 @@ function evidenceForHead(runs, head, checks) {
     // Existing PR path scoping legitimately skips technical jobs only. Policy
     // proofs, especially external DCO, must have actually succeeded.
     const scopedSkip = Object.hasOwn(BUILD_CHECKS, name) && run.conclusion === 'skipped';
-    if (run.conclusion !== 'success' && !scopedSkip) throw new Error(`${name}: ${run.conclusion}`);
+    if (run.conclusion !== 'success' && !scopedSkip) throw new ProviderVerdict(name, run.conclusion, head);
     return { run, source };
   });
 }
@@ -229,7 +246,7 @@ async function assertProwDCO(github, repo, head) {
     .sort((a, b) => b.id - a.id)[0];
   if (!status) throw new PendingEvidence(`Missing prow ${PROW.context} on ${head}`);
   if (status.state === 'pending') throw new PendingEvidence(`prow ${PROW.context} is pending`);
-  if (status.state !== 'success') throw new Error(`prow ${PROW.context}: ${status.state}`);
+  if (status.state !== 'success') throw new ProviderVerdict(`prow ${PROW.context}`, status.state, head);
 }
 
 async function assertEvidence(github, repo, number, head, checks, pr) {
@@ -427,7 +444,7 @@ module.exports = {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict, BLOCKED_LABEL,
-  ProviderUnavailable, FORWARD_MERGE, PROW,
+  ProviderUnavailable, ProviderVerdict, PROVIDER_VERDICT_NOTE, FORWARD_MERGE, PROW,
   DCO_ENUMERATION_SUMMARY_PREFIX, DCO_ENUMERATION_SUMMARY_FALLBACK,
   DCO_PROVIDER_UNAVAILABLE_TEXT, DCO_PROVIDER_RUNBOOK,
 };

@@ -74,7 +74,7 @@ jobs:
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
-            const { evaluate, PendingEvidence, ProviderUnavailable } = require('./.github/scripts/native-queue-policy.cjs');
+            const { evaluate, PendingEvidence, ProviderUnavailable, ProviderVerdict } = require('./.github/scripts/native-queue-policy.cjs');
             const attempts = 90;
             const intervalMs = 15000;
             for (let attempt = 0; attempt < attempts; attempt++) {
@@ -85,6 +85,17 @@ jobs:
                 if (error instanceof ProviderUnavailable) {
                   await core.summary
                     .addHeading('Admission blocked: DCO provider unavailable')
+                    .addRaw(error.message)
+                    .write();
+                  core.setFailed(error.message);
+                  return;
+                }
+                if (error instanceof ProviderVerdict) {
+                  // The PR's own provider is red (#18280): a per-PR verdict to
+                  // fix on the PR, reported plainly rather than as an
+                  // unhandled exception that reads like a broken workflow.
+                  await core.summary
+                    .addHeading('Admission blocked: ' + error.provider + ' is ' + error.conclusion + ' on this PR')
                     .addRaw(error.message)
                     .write();
                   core.setFailed(error.message);
