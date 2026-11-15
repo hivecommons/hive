@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 )
 
 // Per-session uid isolation. A session's tmux server and CLI run as an
@@ -204,19 +205,68 @@ type privRunFunc func(ctx context.Context, user string, stdin io.Reader, argv ..
 // execUserSessionPriv is the real privRunFunc. The child gets a minimal
 // environment: nothing from the hive's own (credential-bearing) env.
 func execUserSessionPriv(ctx context.Context, user string, stdin io.Reader, argv ...string) ([]byte, error) {
+	cmd, err := newUserSessionPrivCmd(ctx, user, stdin, argv...)
+	if err != nil {
+		return nil, err
+	}
+	return cmd.CombinedOutput()
+}
+
+// newUserSessionPrivCmd builds the su-exec invocation for execUserSessionPriv.
+//
+// A child that runs as root (the workspace hand-over, sandbox removal) is one
+// the hive, an unprivileged uid, is NOT allowed to signal: su-exec execs into
+// the target identity in the same pid, so once it has switched, a plain
+// Process.Kill from Go fails with EPERM, surfaces as "exec: killing Cmd:
+// operation not permitted" and Wait still blocks until the child exits on its
+// own. That is what happened when the 10-second userSessionCmdTimeout ran out
+// under a `chown -R` of a freshly cloned workspace. For root children the
+// cancel therefore goes back through the helper (`su-exec root kill`) against
+// the child's own process group, and no WaitDelay is set, because after it
+// Go would fall back to the raw Kill the hive may not send.
+func newUserSessionPrivCmd(ctx context.Context, user string, stdin io.Reader, argv ...string) (*exec.Cmd, error) {
 	if user == "" || len(argv) == 0 {
 		return nil, errors.New("refusing to run without an explicit identity and command")
 	}
 	cmd := exec.CommandContext(ctx, userSuExecBinary, append([]string{user}, argv...)...)
 	cmd.Env = []string{"PATH=" + os.Getenv("PATH")}
-	cmd.WaitDelay = tmuxCmdWaitDelay
 	cmd.Stdin = stdin
-	return cmd.CombinedOutput()
+	if user != userSessionRootSpec {
+		cmd.WaitDelay = tmuxCmdWaitDelay
+		return cmd, nil
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process == nil {
+			return os.ErrProcessDone
+		}
+		return killUserSessionRootGroup(cmd.Process.Pid, cmd.Env)
+	}
+	return cmd, nil
+}
+
+// killUserSessionRootGroup ends a root child (and everything it spawned, via
+// its process group) through the setuid helper, the only way the hive's uid
+// can signal a root process.
+func killUserSessionRootGroup(pid int, env []string) error {
+	kill := exec.Command(userSuExecBinary, userSessionRootSpec, "kill", "-KILL", "--", "-"+strconv.Itoa(pid))
+	kill.Env = env
+	if out, err := kill.CombinedOutput(); err != nil {
+		return outputErr("killing privileged child", err, out)
+	}
+	return nil
 }
 
 // privRun is r.priv bound to the standard command timeout.
 func (r *UserSessionRuntime) privRun(user string, stdin io.Reader, argv ...string) ([]byte, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), userSessionCmdTimeout)
+	return r.privRunFor(userSessionCmdTimeout, user, stdin, argv...)
+}
+
+// privRunFor is r.priv bound to its own timeout, detached from any caller
+// context: a request that goes away must not cancel a privileged operation
+// half-way (a root hand-over or removal of a workspace tree).
+func (r *UserSessionRuntime) privRunFor(timeout time.Duration, user string, stdin io.Reader, argv ...string) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return r.priv(ctx, user, stdin, argv...)
 }
@@ -259,6 +309,49 @@ func userSessionTmuxSocketDir(uid int) string {
 		root = "/tmp"
 	}
 	return filepath.Join(root, fmt.Sprintf("tmux-%d", uid))
+}
+
+// The terminal attacher (ttyd, running ttyd-tmux.sh as the hive's own uid and
+// groups, no capabilities) finds a session's socket by stat-ing
+// <socket dir>/hive-sess-<id>, then attaches as the owner through su-exec.
+// tmux creates the socket dir 0700, owned by the session uid with the
+// sessions-only group, so the hive's uid could neither see nor stat the socket
+// and every attach died at ttyd's wait ("process exited with code 1") while
+// the tmux session itself was healthy. Agent socket dirs are 0710 with the
+// hive's group (manager_tmux.go) for exactly this reason; the session uid
+// cannot chgrp to a group it is not in, so root does it here. tmux insists on
+// owner == uid and no group/other write, which 0710 keeps; the socket file
+// itself stays srw-rw---- uid:<sessions gid>.
+const (
+	// userSessionAttachGIDEnv overrides the group the socket dir is opened to
+	// (default: the hive process's own gid, which ttyd shares).
+	userSessionAttachGIDEnv  = "HIVE_SESSIONS_ATTACH_GID"
+	userSessionSocketDirMode = "0710"
+	// userSessionSocketDirScript (run as root): $1 socket dir, $2 attach gid,
+	// $3 the session uid that must own it. A symlink or a dir someone else
+	// planted under the name fails closed.
+	userSessionSocketDirScript = `set -e
+d=$1; g=$2; u=$3
+[ -d "$d" ] && [ ! -L "$d" ]
+[ "$(stat -c %u -- "$d")" = "$u" ]
+chgrp -- "$g" "$d"
+chmod ` + userSessionSocketDirMode + ` -- "$d"`
+)
+
+// userSessionAttachGID is the group the terminal attacher runs with.
+func userSessionAttachGID() int {
+	return envPositiveInt(userSessionAttachGIDEnv, os.Getgid())
+}
+
+// openSocketDirToAttacher makes the session uid's tmux socket dir traversable
+// by the terminal attacher's group (see userSessionSocketDirScript).
+func (r *UserSessionRuntime) openSocketDirToAttacher(uid int) error {
+	dir := userSessionTmuxSocketDir(uid)
+	out, err := r.privRun(userSessionRootSpec, nil, "sh", "-c", userSessionSocketDirScript, "sh", dir, strconv.Itoa(userSessionAttachGID()), strconv.Itoa(uid))
+	if err != nil {
+		return outputErr("opening the session socket dir to the terminal attacher", err, out)
+	}
+	return nil
 }
 
 // Remove ends the session and deletes everything it owned: the sandbox (home,

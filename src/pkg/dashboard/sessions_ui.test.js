@@ -13,7 +13,8 @@ const end = html.indexOf('// ── Storage conveniences');
 assert.ok(start >= 0 && end > start, 'sessions helper block not found in index.html');
 const names = ['sessionsRoleCanWrite', 'sessionsGroupSessions', 'sessionsExistingGroups', 'sessionsPickSelected', 'sessionsTabOrder',
   'sessionsNextTab', 'sessionsViewMode', 'sessionsCheckInput', 'sessionsCheckUpload', 'sessionsCanCreate', 'sessionsTerminalPath',
-  'sessionsFormatBytes', 'sessionsIsEnabled', 'sessionsWorkspaceLabel', 'sessionsSessionWorkspace'];
+  'sessionsFormatBytes', 'sessionsIsEnabled', 'sessionsWorkspaceLabel', 'sessionsSessionWorkspace', 'sessionsIsLive', 'sessionsHasPreparing',
+  'sessionsStatusText'];
 const h = new Function('window', html.slice(start, end) + '\nreturn {' + names.join(',') + '};')({});
 
 const S = (id, group, status) => ({ id, name: id, group, status: status || 'running' });
@@ -139,4 +140,51 @@ test('workspace label names the shared checkout or says sessions start empty', (
   assert.deepStrictEqual(h.sessionsSessionWorkspace({ id: 'a', workspace_repo: 'acme/widgets', workspace: '/w' }), { repo: 'acme/widgets', path: '/w' });
   assert.deepStrictEqual(h.sessionsSessionWorkspace({ id: 'a' }), { repo: '', path: '' });
   assert.deepStrictEqual(h.sessionsSessionWorkspace(null), {});
+});
+
+test('a preparing session is its own view mode, counts as live and carries the server message with the clone hint', () => {
+  const prep = { id: 'p', name: 'p', status: 'preparing', message: 'preparing workspace: cloning acme/widgets (first session on this hive)' };
+  const failed = { id: 'f', name: 'f', status: 'failed', error: 'preparing session workspace: git clone acme/widgets: exit 128' };
+  for (const role of ['owner', 'read-write', 'read']) {
+    assert.strictEqual(h.sessionsViewMode(role, prep), 'preparing', 'no terminal and no scrollback while preparing');
+    assert.strictEqual(h.sessionsViewMode(role, failed), 'failed');
+  }
+  assert.strictEqual(h.sessionsIsLive(prep), true);
+  assert.strictEqual(h.sessionsIsLive(S('a', '')), true);
+  assert.strictEqual(h.sessionsIsLive(failed), false);
+  assert.strictEqual(h.sessionsIsLive(S('a', '', 'ended')), false);
+  assert.strictEqual(h.sessionsHasPreparing([S('a', ''), prep]), true);
+  assert.strictEqual(h.sessionsHasPreparing([S('a', '')]), false);
+  assert.strictEqual(h.sessionsHasPreparing(undefined), false);
+  const text = h.sessionsStatusText(prep);
+  assert.match(text, /^Preparing workspace: cloning acme\/widgets \(first session on this hive\)… /);
+  assert.match(text, /couple of minutes/);
+  assert.match(h.sessionsStatusText({ status: 'preparing' }), /^Preparing the session… /, 'a missing message still reads as progress');
+  assert.strictEqual(h.sessionsStatusText(failed), 'Could not start this session: preparing session workspace: git clone acme/widgets: exit 128.');
+  assert.match(h.sessionsStatusText({ status: 'failed' }), /unknown error/);
+  assert.match(h.sessionsStatusText({ status: 'ended', error: 'spoke is out of uids' }), /last resume failed: spoke is out of uids/);
+  assert.strictEqual(h.sessionsStatusText(S('a', '')), '');
+  assert.strictEqual(h.sessionsStatusText(null), '');
+});
+
+test('preparing sessions count against the running-session cap', () => {
+  const data = { vendors: [{ id: 'claude', available: true }], sessions: [S('a', ''), S('b', '', 'preparing')], limits: { max_sessions: 2 } };
+  assert.strictEqual(h.sessionsCanCreate('owner', data).ok, false, 'two quick clicks must not overshoot the cap');
+  assert.strictEqual(h.sessionsCanCreate('owner', Object.assign({}, data, { sessions: [S('a', ''), S('b', '', 'failed')] })).ok, true);
+});
+
+test('preparing and failed tabs and panes are rendered with a spinner, the message, and Retry/Delete', () => {
+  const js = html.slice(html.indexOf('function sessionsTabHtml('), html.indexOf('function sessionsEnsurePane('));
+  assert.match(js, /sessions-spinner[^<]*aria-label="Preparing"/, 'the preparing tab shows a spinner in place of the status dot');
+  assert.match(js, /class="sessions-status sessions-status-preparing" role="status" aria-live="polite"/);
+  assert.match(js, /sessionsStatusText\(s\)/);
+  assert.match(js, /role="alert"[^]*data-action="sessionsRetry"[^]*data-action="sessionsClose"/, 'a failed pane offers Retry and Delete');
+  assert.match(js, /SESSIONS_STATUS_PREPARING\) closeItem = ''/, 'a preparing session cannot be closed from the menu');
+  const css = html.slice(html.indexOf('.sessions-spinner {'), html.indexOf('.sessions-status-failed {'));
+  assert.match(css, /animation: spin/);
+  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, 'status CSS must not add hex literals');
+  // The empty-state text is hidden as soon as a session (preparing included) exists.
+  const render = html.slice(html.indexOf('function renderSessions('), html.indexOf('function sessionsSyncPreparingPoll('));
+  assert.match(render, /empty\.hidden = sessions\.length > 0/);
+  assert.match(render, /sessionsSyncPreparingPoll\(sessions\)/, 'polling speeds up while a session is preparing');
 });

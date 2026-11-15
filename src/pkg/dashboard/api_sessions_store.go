@@ -25,8 +25,15 @@ const (
 	sessionsStoreFileMode = 0o600
 	sessionsStoreDirMode  = 0o700
 
-	sessionStatusRunning = "running"
-	sessionStatusEnded   = "ended"
+	// Session status values. A session is `preparing` from the moment its
+	// record is created until the background start (workspace clone and
+	// hand-over, spek init, tmux) finishes; it then becomes `running` or, when
+	// that start fails, `failed` with the error on the record. `ended` is a
+	// session whose CLI exited or was closed.
+	sessionStatusPreparing = "preparing"
+	sessionStatusRunning   = "running"
+	sessionStatusEnded     = "ended"
+	sessionStatusFailed    = "failed"
 
 	// sessionIDBytes random bytes -> 2x hex chars; matches the runtime's id
 	// pattern ([a-f0-9]{8,32}).
@@ -64,6 +71,12 @@ type sessionRecord struct {
 	// from before workspaces); a resume reopens the same place.
 	WorkspaceRepo string `json:"workspace_repo,omitempty"`
 	Workspace     string `json:"workspace,omitempty"`
+	// Message says what a `preparing` session is waiting on ("preparing
+	// workspace: cloning org/repo"); Error is why a `failed` session (or a
+	// resume that fell back to `ended`) did not start. Both are shown as-is in
+	// the dashboard, redacted of tokens before they are stored.
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
 }
 
 type sessionStore struct {

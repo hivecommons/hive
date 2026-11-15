@@ -41,10 +41,11 @@ func TestUserSessionRunsAsReservedUnprivilegedUID(t *testing.T) {
 	if testSessionUID < userSessionMinUIDBase || testSessionUID <= baseAgentUID {
 		t.Errorf("session uid %d overlaps the agent range", testSessionUID)
 	}
-	// Only the sandbox preparation runs as root; everything else is the session uid.
+	// Only the sandbox preparation and the opening of the tmux socket dir to
+	// the terminal attacher run as root; everything else is the session uid.
 	for _, c := range p.calls {
 		if c.user == userSessionRootSpec {
-			if len(c.argv) < 3 || c.argv[2] != userSessionPrepareScript {
+			if len(c.argv) < 3 || (c.argv[2] != userSessionPrepareScript && c.argv[2] != userSessionSocketDirScript) {
 				t.Errorf("unexpected root command during start: %v", c.argv)
 			}
 			continue
