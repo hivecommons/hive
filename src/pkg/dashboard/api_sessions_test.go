@@ -496,6 +496,11 @@ func TestSessionsCreateValidation(t *testing.T) {
 		t.Errorf("started %d sessions, want only the one valid create", n)
 	}
 	for _, spec := range e.rt.startedSpecs() {
+		// Start records the spec before the background worker persists its
+		// outcome. Wait for that write before TempDir cleanup removes the store.
+		if got := e.waitSettled(t, spec.ID); got.Status != sessionStatusRunning {
+			t.Errorf("session %s settled as %s (%s), want running", spec.ID, got.Status, got.Error)
+		}
 		if spec.ResumeCommand != "" {
 			t.Errorf("fresh create carried a resume command")
 		}
