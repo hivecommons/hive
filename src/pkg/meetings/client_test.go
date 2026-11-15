@@ -27,6 +27,7 @@ type fakeQuorumServer struct {
 	expire     int               // answer the next N session requests 404
 	events     map[string][]string
 	inits      int
+	afterSeq   string
 }
 
 func newFakeQuorumServer(t *testing.T) (*fakeQuorumServer, *httptest.Server) {
