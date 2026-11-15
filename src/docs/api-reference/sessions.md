@@ -6,18 +6,22 @@ Sessions are interactive, named CLI-agent terminals. Each runs as its own unpriv
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/sessions` | Dashboard auth/session | Sessions, vendors and limits | `pkg/dashboard/api_sessions.go:130` |
-| `POST` | `/api/sessions` | Owner or read-write | Create a session `{name, group, vendor, shared?}` (201) | `pkg/dashboard/api_sessions.go:131` |
-| `PATCH` | `/api/sessions/{id}` | Session creator or owner | Rename, regroup or (un)share `{name?, group?, shared?}` | `pkg/dashboard/api_sessions.go:132` |
-| `DELETE` | `/api/sessions/{id}` | Session creator or owner | Close a running session (metadata kept, marked `ended`); on an ended session, remove its metadata and delete its sandbox files | `pkg/dashboard/api_sessions.go:133` |
-| `GET` | `/api/sessions/{id}/log` | Dashboard auth/session | Redacted scrollback `?lines=N` (capped at 5000) | `pkg/dashboard/api_sessions.go:134` |
-| `POST` | `/api/sessions/{id}/input` | Owner or read-write | Type `{text, submit}` into the pane (size-capped, audited without the text) | `pkg/dashboard/api_sessions.go:135` |
-| `POST` | `/api/sessions/{id}/upload` | Owner or read-write | Multipart `file`; returns the absolute path inside the session directory | `pkg/dashboard/api_sessions.go:136` |
-| `POST` | `/api/sessions/{id}/resume` | Owner or read-write | Reopen an ended session's last conversation where the vendor supports it (409 otherwise) | `pkg/dashboard/api_sessions.go:137` |
+| `GET` | `/api/sessions` | Dashboard auth/session | Sessions, vendors and limits | `pkg/dashboard/api_sessions.go:139` |
+| `POST` | `/api/sessions` | Owner or read-write | Create a session `{name, group, vendor, shared?}`; answers 202 at once with the session `preparing`, the start runs in the background | `pkg/dashboard/api_sessions.go:140` |
+| `PATCH` | `/api/sessions/{id}` | Session creator or owner | Rename, regroup or (un)share `{name?, group?, shared?}` | `pkg/dashboard/api_sessions.go:141` |
+| `DELETE` | `/api/sessions/{id}` | Session creator or owner | Close a running session (metadata kept, marked `ended`); on an ended session, remove its metadata and delete its sandbox files | `pkg/dashboard/api_sessions.go:142` |
+| `GET` | `/api/sessions/{id}/log` | Dashboard auth/session | Redacted scrollback `?lines=N` (capped at 5000) | `pkg/dashboard/api_sessions.go:143` |
+| `POST` | `/api/sessions/{id}/input` | Owner or read-write | Type `{text, submit}` into the pane (size-capped, audited without the text) | `pkg/dashboard/api_sessions.go:144` |
+| `POST` | `/api/sessions/{id}/upload` | Owner or read-write | Multipart `file`; returns the absolute path inside the session directory | `pkg/dashboard/api_sessions.go:145` |
+| `POST` | `/api/sessions/{id}/resume` | Owner or read-write | Reopen an ended session's last conversation where the vendor supports it (409 otherwise); answers 202 with the session `preparing` | `pkg/dashboard/api_sessions.go:146` |
 
 ## Session object
 
-`{id, name, group, vendor, creator, created_at, last_activity, status, attached, tmux_name, resumable, shared, workspace_repo, workspace}` where `status` is `running` or `ended`, `attached` is the number of attached tmux clients and `tmux_name` is `hive-sess-<id>`. `resumable`, `shared`, `workspace_repo` and `workspace` are additive. `GET /api/sessions` lists only sessions the caller created, owners (all) and `shared` sessions; the log, input, upload, resume and terminal routes answer 404 for a session the caller cannot see and 403 when it is visible but not usable.
+`{id, name, group, vendor, creator, created_at, last_activity, status, attached, tmux_name, resumable, shared, workspace_repo, workspace, message, error}` where `status` is `preparing`, `running`, `failed` or `ended`, `attached` is the number of attached tmux clients and `tmux_name` is `hive-sess-<id>`. `resumable`, `shared`, `workspace_repo`, `workspace`, `message` and `error` are additive. `GET /api/sessions` lists only sessions the caller created, owners (all) and `shared` sessions; the log, input, upload, resume and terminal routes answer 404 for a session the caller cannot see and 403 when it is visible but not usable.
+
+## Lifecycle
+
+A create (or resume) never blocks the request on the start. The record is saved and answered as `preparing` with a human `message` (`preparing workspace: cloning org/repo (first session on this hive)` when the workspace does not exist yet, otherwise the vendor being started), and the start runs in the background: the one-time clone of the workspace, its hand-over to the sessions group, `spektacular init` and the tmux server. Poll `GET /api/sessions` until the session is `running` (the terminal can then be attached) or `failed`, in which case `error` carries the reason (tokens redacted) and `DELETE` removes the record; a resume whose start fails goes back to `ended` with `error` set and stays resumable. Preparing sessions count against the limits, answer 409 to input, upload, terminal handoff and `DELETE`, and a second create that needs the same workspace waits for the clone in flight instead of starting another. A `preparing` record found after a hive restart, with no start behind it, is marked `failed` on the next list. The create is audited as `session_created` and its outcome as `session_started` (`outcome=running` or `outcome=failed` with the error).
 
 ## Workspace
 

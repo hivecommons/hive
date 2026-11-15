@@ -72,9 +72,11 @@ esac
 TTYD_WAIT_SEC="${HIVE_TTYD_WAIT_SEC:-900}"
 # A user session already exists when the dashboard hands out the attach
 # token, so a bogus or stale name must not hold a ttyd child for the agent
-# start-up wait.
+# start-up wait. The dashboard only hands a token out for a session whose
+# record is `running`, so the wait only covers a slow socket under load; 30s
+# is generous for that without turning a stale name into a long-held child.
 if [ "$IS_USER_SESSION" -eq 1 ]; then
-  TTYD_WAIT_SEC="${HIVE_TTYD_SESSION_WAIT_SEC:-10}"
+  TTYD_WAIT_SEC="${HIVE_TTYD_SESSION_WAIT_SEC:-30}"
 fi
 TTYD_POLL_SEC="${HIVE_TTYD_POLL_SEC:-2}"
 if ! [[ "$TTYD_WAIT_SEC" =~ ^[0-9]+$ ]]; then
@@ -115,6 +117,23 @@ list_available_sessions() {
   else
     echo "available sessions: none — no agent tmux sockets exist under ${TMUX_SOCKET_ROOT}/tmux-*/" >&2
   fi
+  list_opaque_socket_dirs
+}
+
+# list_opaque_socket_dirs names every tmux socket dir this uid cannot traverse.
+# A socket behind such a dir is invisible to the globs above: `[ -S ]` fails
+# with EACCES exactly as if the session did not exist, which is how a healthy
+# user session (its dir 0700 uid:<sessions gid>, where the runtime should have
+# opened it to this uid's group as 0710) read as "no tmux socket found".
+list_opaque_socket_dirs() {
+  local dir desc
+  for dir in "${TMUX_SOCKET_ROOT}"/tmux-*/; do
+    dir="${dir%/}"
+    [ -d "$dir" ] || continue
+    [ -x "$dir" ] && continue
+    desc=$(stat -c '%a %u:%g' "$dir" 2>/dev/null || echo "?")
+    echo "socket dir ${dir} (mode ${desc}) cannot be traversed by uid $(id -u); a session socket inside it is invisible here" >&2
+  done
 }
 
 # default_socket_candidates prints, one per line and deduplicated, every path

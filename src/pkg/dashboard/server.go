@@ -429,9 +429,13 @@ type Server struct {
 
 	// Sessions (api_sessions.go): lazily opened metadata store and the mutex
 	// serialising create/resume so the per-spoke and per-user caps hold.
-	sessionsOnce      sync.Once
-	sessionStore      *sessionStore
-	sessionsMu        sync.Mutex
+	sessionsOnce sync.Once
+	sessionStore *sessionStore
+	sessionsMu   sync.Mutex
+	// sessionsPreparing holds the ids whose background start is in flight in
+	// THIS process; a `preparing` record without one is left over from a
+	// restart and is marked failed on the next reconcile. Guarded by sessionsMu.
+	sessionsPreparing map[string]bool
 	terminalHandoffMu sync.Mutex
 	terminalHandoffs  map[string]terminalHandoff
 

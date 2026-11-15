@@ -19,6 +19,17 @@
     .sessions-tab:focus-visible, .sessions-group-toggle:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: var(--sp-1); }
     .sessions-tab-dot { width: var(--status-dot-size); height: var(--status-dot-size); border-radius: var(--r-pill); background: var(--muted); }
     .sessions-tab-dot[data-status="running"] { background: var(--green); }
+    .sessions-tab-dot[data-status="failed"] { background: var(--red); }
+    .sessions-tab.failed .sessions-tab-name { color: var(--red); }
+    /* Preparing: the dot is replaced by a spinner (same footprint), reusing
+       the toast spinner's `spin` keyframes (alerts-toasts.css). */
+    .sessions-spinner { display: inline-block; flex: none; width: var(--status-dot-size); height: var(--status-dot-size); border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); border-radius: var(--r-pill); animation: spin 0.8s linear infinite; }
+    .sessions-status { display: flex; align-items: flex-start; gap: var(--sp-4); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: var(--card-bg); color: var(--fg); font-size: var(--fs-sm); flex-wrap: wrap; }
+    .sessions-status .sessions-spinner { margin-top: var(--sp-1); }
+    .sessions-status-text { flex: 1 1 20em; min-width: 0; overflow-wrap: anywhere; }
+    .sessions-status-failed { border-color: var(--red); }
+    .sessions-status-failed .sessions-status-text { color: var(--red); }
+    .sessions-status .sessions-form-actions { flex: 0 0 100%; }
     .sessions-tab-vendor { color: var(--muted); font-size: var(--fs-xs); }
     .sessions-attached { border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); font-size: var(--fs-xs); cursor: help; }
     .sessions-new { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-5); display: grid; gap: var(--sp-4); background: var(--card-bg); }

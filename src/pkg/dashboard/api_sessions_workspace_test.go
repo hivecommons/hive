@@ -52,11 +52,14 @@ func TestSessionsOpenInTheProjectWorkspace(t *testing.T) {
 	}
 	e.s.deps.Config.Dashboard.Sessions.WorkspaceRepo = "acme/other"
 	_, _, _ = e.s.sessionStoreOrNil().update(id, func(r *sessionRecord) { r.ResumeCommand = "claude --resume abcdefgh" })
-	if rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/resume", map[string]any{}); rec.Code != http.StatusOK {
+	if rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/resume", map[string]any{}); rec.Code != http.StatusAccepted {
 		t.Fatalf("resume = %d: %s", rec.Code, rec.Body.String())
 	}
-	if len(e.rt.started) != 2 || e.rt.started[1].WorkspaceRepo != "acme/widgets" {
-		t.Errorf("resume spec = %+v, want the original workspace", e.rt.started)
+	if got := e.waitSettled(t, id); got.Status != sessionStatusRunning {
+		t.Fatalf("record after resume = %+v", got)
+	}
+	if started := e.rt.startedSpecs(); len(started) != 2 || started[1].WorkspaceRepo != "acme/widgets" {
+		t.Errorf("resume spec = %+v, want the original workspace", started)
 	}
 }
 

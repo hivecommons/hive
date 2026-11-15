@@ -211,7 +211,7 @@ func TestUserSessionWorkspaceOwnedBySessionsGroup(t *testing.T) {
 		t.Errorf("workspace %q is not under the sandbox root's workspace dir", ws)
 	}
 	for _, c := range p.calls {
-		if c.user == userSessionRootSpec && c.argv[0] == "sh" && c.argv[2] != userSessionPrepareScript && c.argv[2] != userSessionWorkspaceOwnScript {
+		if c.user == userSessionRootSpec && c.argv[0] == "sh" && c.argv[2] != userSessionPrepareScript && c.argv[2] != userSessionWorkspaceOwnScript && c.argv[2] != userSessionSocketDirScript {
 			t.Errorf("unexpected root script: %v", c.argv)
 		}
 	}
