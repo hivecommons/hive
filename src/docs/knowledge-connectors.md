@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles | fireflies | fathom
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles | fireflies | fathom | limitless
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -951,6 +951,67 @@ knowledge:
   ([rate limits](https://developers.fathom.ai/api-overview): 60 calls a
   minute, 30 a minute for transcript and summary reads, 30 download
   requests a minute). The key is only sent to `api.fathom.ai`.
+
+## Limitless Pendant lifelogs (`type: limitless`)
+
+The [Limitless](https://www.limitless.ai) Pendant records conversations and
+Limitless turns them into transcribed **lifelogs**. The connector reads them
+through the [Limitless Developer API](https://www.limitless.ai/developers)
+with an API key: one fact per lifelog with title, start time, duration, the
+speakers, the topic headings as summary and the spoken lines as transcript.
+Items land in the **📥 Inbox** as text.
+
+The Developer API is in beta and covers Pendant data only. Limitless was
+acquired by Meta in December 2025 and has said it keeps serving existing
+Pendant owners for at least a year; service has already ended in some
+regions (EU, UK), where the API answers *not connected*.
+
+```yaml
+knowledge:
+  connectors:
+    - name: pendant
+      type: limitless
+      layer: personal
+      interval: 15m
+      auth:
+        env: LIMITLESS_API_KEY         # variable NAME holding the Limitless API key (sent as X-API-Key)
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        starred_only: "false"          # true: only starred lifelogs (isStarred)
+        include_participants: "true"   # speakerName of the transcript lines
+        tags: "pendant"
+```
+
+### Setup
+
+1. In the Limitless desktop or web app open the **Developer** settings and
+   create an API key.
+2. Put it in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Limitless Pendant** with the credential
+   source *Environment variable* naming that variable. **Connect** /
+   **Check** list one lifelog, so a dead key shows on the card.
+
+### Behaviour
+
+- Each sync pages `GET /v1/lifelogs` (`start` in `YYYY-MM-DD HH:mm:SS`
+  with `timezone=UTC`, `direction=desc`, `limit=10`, the API maximum,
+  following `meta.lifelogs.nextCursor`) from the newest lifelog seen (minus
+  48 h) back to `since_days`, with `includeContents`, so the transcript
+  comes in the same pages. The Inbox listing asks for metadata only;
+  opening an item reads `GET /v1/lifelogs/{id}`. Without contents the
+  lifelog `markdown` is the transcript.
+- Facts carry `source: limitless`, `attr_limitless_recording_id` (the
+  lifelog id, the Inbox item id), `attr_recorded_at` (`startTime`),
+  `attr_duration_ms` (to `endTime`) and `attr_participants`.
+- Playback: none. Audio comes only from `GET /v1/download-audio` (Ogg Opus,
+  two hours per request) with the `X-API-Key` header, which the hive never
+  hands to a browser; ▶ Play answers 404 and the Deepgram fallback does not
+  apply (Limitless transcribes every lifelog itself).
+- Errors: `401` / `403` read as *not connected*. `429` is retried
+  honouring `Retry-After` (180 requests a minute per key; the body's
+  `retryAfter` is named in the error). The key is only sent to
+  `api.limitless.ai`.
 
 ## Wispr Flow (dictation, `type: wisprflow`)
 

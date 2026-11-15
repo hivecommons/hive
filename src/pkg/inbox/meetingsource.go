@@ -8,7 +8,7 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
 
-// Meeting-recording source types (Zoom, Microsoft Teams, Discord, Google Meet, Webex, Slack huddles, Fireflies, Fathom).
+// Meeting-recording source types (Zoom, Microsoft Teams, Discord, Google Meet, Webex, Slack huddles, Fireflies, Fathom, Limitless).
 const (
 	ZoomType         = connector.TypeZoom
 	TeamsType        = connector.TypeTeams
@@ -16,17 +16,18 @@ const (
 	GoogleMeetType   = connector.TypeGoogleMeet
 	WebexType        = connector.TypeWebex
 	SlackHuddlesType = connector.TypeSlackHuddles
+	LimitlessType    = connector.TypeLimitless
 	FathomType       = connector.TypeFathom
 	FirefliesType    = connector.TypeFireflies
 )
 
 // MeetingSource reads recorded meetings straight from a meeting connector
-// (zoom, teams, discord, google-meet, webex, slack-huddles, fireflies, fathom), the sibling of PlaudSource. Item.ID is the platform
+// (zoom, teams, discord, google-meet, webex, slack-huddles, fireflies, fathom, limitless), the sibling of PlaudSource. Item.ID is the platform
 // recording id, the same value the sync writes to `attr_<type>_recording_id`,
 // so route state carries over between this source and FactSource.
 type MeetingSource struct {
 	// SourceType is the connector type (zoom, teams, discord, google-meet, webex,
-	// slack-huddles, fireflies, fathom).
+	// slack-huddles, fireflies, fathom, limitless).
 	SourceType string
 	// Name is the knowledge.connectors[] entry name.
 	Name   string
