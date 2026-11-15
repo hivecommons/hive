@@ -1884,6 +1884,54 @@ function warnOnTokenExpiry(now = Date.now()) {
   return msg;
 }
 
+// ── Broad personal token warning (hivecommons/hive#18238) ───────────────────
+// The agent this relay runs can read the contributor's personal GitHub token,
+// and every task feeds it text written by other people. A classic token with
+// the full `repo` scope can push to EVERY repository the contributor can write
+// to, so a leaked one reaches far past their hive forks. Until the agent stops
+// holding the token at all, the relay says so at start and points at a
+// fine-grained token limited to the forks. Warn-only: refusing would stop
+// every existing contributor at once.
+
+// parseOAuthScopes pulls the scope list out of `gh api --include` output. A
+// fine-grained token has no X-OAuth-Scopes header, so this returns null.
+function parseOAuthScopes(output) {
+  const m = /^x-oauth-scopes:[ \t]*(.*)$/im.exec(String(output || ''));
+  if (!m) return null;
+  return m[1].split(',').map(s => s.trim()).filter(Boolean);
+}
+
+// broadTokenScopeWarning is PURE: given the token's scopes, the message to
+// log, or null when the token is not a full-`repo` classic token.
+function broadTokenScopeWarning(scopes) {
+  if (!Array.isArray(scopes) || !scopes.includes('repo')) return null;
+  return 'WARNING: your personal GitHub token has the full `repo` scope, and the agent this relay runs can read it. ' +
+    'A leaked copy could push to every repository you can write to, not only your hive forks. ' +
+    'Replace it with a fine-grained token limited to your forks (Contents and Pull requests: read and write), ' +
+    'then rerun `just contribute-setup <backend>`. See hivecommons/hive#18238.';
+}
+
+function probePersonalTokenScopes() {
+  const out = execFileSync('gh', ['api', '--include', '/user'], {
+    encoding: 'utf8',
+    timeout: 10000,
+    stdio: ['ignore', 'pipe', 'ignore'],
+  });
+  return parseOAuthScopes(out);
+}
+
+// warnOnBroadPersonalToken runs once at start, before the hub can hand the
+// relay a per-task token, so the credential it inspects is the personal one.
+// Best-effort: any probe failure is silent and never stops the relay.
+function warnOnBroadPersonalToken(probe = probePersonalTokenScopes, env = process.env) {
+  if (!env.GH_TOKEN && !env.GITHUB_TOKEN) return null;
+  let scopes;
+  try { scopes = probe(); } catch (_) { return null; }
+  const msg = broadTokenScopeWarning(scopes);
+  if (msg) console.warn(msg);
+  return msg;
+}
+
 function nextSeq() { return ++seq; }
 
 // ── Quota hold state (kubestellar/hive#6541) ─────────────────────────────────
@@ -9510,6 +9558,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     GH_TOKEN_CACHE,
     tokenLifetimeStatus,
     warnOnTokenExpiry,
+    parseOAuthScopes,
+    broadTokenScopeWarning,
+    warnOnBroadPersonalToken,
     TOKEN_EXPIRY_WARN_MS,
     tmuxSendKeys,
     flushPendingTask,
@@ -9954,6 +10005,7 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
   // path entirely, where a slow host could otherwise eat that budget. Failures are
   // already absorbed field-by-field, so this cannot stop the relay starting.
   detectCapabilities();
+  warnOnBroadPersonalToken();
   writeRelayPidFile();
   writeRelayStatus();
   connect();

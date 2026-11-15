@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.274.0)
+
+### Added
+
+- Inbox: Fathom as a knowledge integration — a `fathom` connector (a Fathom API key named in `auth.env`) that pages `GET /meetings` with the transcript, AI summary and action items included into one fact per recording; ▶ Play and the Deepgram fallback use a Fathom recording download (audio at once, video polled), whose signed link lasts about 24 hours; a default `inbox.sources` entry with a Connect / Check / Sync now card.
+- Inbox: Fireflies.ai as a knowledge integration — a `fireflies` connector (a Fireflies API key named in `auth.env`) that reads meetings through the Fireflies GraphQL API (`transcripts`, 50 per page, with sentences and the AI summary in the same query) into one fact each, with the overview and action items as summary and the speaker-labelled sentences as transcript; ▶ Play and the Deepgram fallback use the meeting's 24-hour `audio_url` (Pro plan or higher); a default `inbox.sources` entry with a Connect / Check / Sync now card.
+- Meetings: research asked for in a meeting now runs on the read-only research agent pool (`research-1..N`, sized by `meetings.research_pool_size`) with findings routed back to the meeting by kick ID, and the hive image ships the pinned Quorum v0.1.0 bundle (SHA-256 verified) plus the Discord DAVE module (#18294).
+
+## 2026-11-15 (v5.273.0)
+
+### Added
+
+- Meetings: ended meetings appear in the Inbox as `meeting` items with the final transcript and notes, routable to a spek RFC or dibs; once handed off hive deletes the transcript upstream, and it purges its own copy after `meetings.retention_days` (30). New page `src/docs/meetings.md` covers consent, setup on hosted and self-hosted hives, and every setting (#18293).
+
 ## 2026-11-15 (v5.272.0)
 
 ### Added

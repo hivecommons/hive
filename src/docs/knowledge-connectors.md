@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles | fireflies | fathom
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles | fireflies | fathom | limitless | granola | otter
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -951,6 +951,192 @@ knowledge:
   ([rate limits](https://developers.fathom.ai/api-overview): 60 calls a
   minute, 30 a minute for transcript and summary reads, 30 download
   requests a minute). The key is only sent to `api.fathom.ai`.
+
+## Limitless Pendant lifelogs (`type: limitless`)
+
+The [Limitless](https://www.limitless.ai) Pendant records conversations and
+Limitless turns them into transcribed **lifelogs**. The connector reads them
+through the [Limitless Developer API](https://www.limitless.ai/developers)
+with an API key: one fact per lifelog with title, start time, duration, the
+speakers, the topic headings as summary and the spoken lines as transcript.
+Items land in the **📥 Inbox** as text.
+
+The Developer API is in beta and covers Pendant data only. Limitless was
+acquired by Meta in December 2025 and has said it keeps serving existing
+Pendant owners for at least a year; service has already ended in some
+regions (EU, UK), where the API answers *not connected*.
+
+```yaml
+knowledge:
+  connectors:
+    - name: pendant
+      type: limitless
+      layer: personal
+      interval: 15m
+      auth:
+        env: LIMITLESS_API_KEY         # variable NAME holding the Limitless API key (sent as X-API-Key)
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        starred_only: "false"          # true: only starred lifelogs (isStarred)
+        include_participants: "true"   # speakerName of the transcript lines
+        tags: "pendant"
+```
+
+### Setup
+
+1. In the Limitless desktop or web app open the **Developer** settings and
+   create an API key.
+2. Put it in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Limitless Pendant** with the credential
+   source *Environment variable* naming that variable. **Connect** /
+   **Check** list one lifelog, so a dead key shows on the card.
+
+### Behaviour
+
+- Each sync pages `GET /v1/lifelogs` (`start` in `YYYY-MM-DD HH:mm:SS`
+  with `timezone=UTC`, `direction=desc`, `limit=10`, the API maximum,
+  following `meta.lifelogs.nextCursor`) from the newest lifelog seen (minus
+  48 h) back to `since_days`, with `includeContents`, so the transcript
+  comes in the same pages. The Inbox listing asks for metadata only;
+  opening an item reads `GET /v1/lifelogs/{id}`. Without contents the
+  lifelog `markdown` is the transcript.
+- Facts carry `source: limitless`, `attr_limitless_recording_id` (the
+  lifelog id, the Inbox item id), `attr_recorded_at` (`startTime`),
+  `attr_duration_ms` (to `endTime`) and `attr_participants`.
+- Playback: none. Audio comes only from `GET /v1/download-audio` (Ogg Opus,
+  two hours per request) with the `X-API-Key` header, which the hive never
+  hands to a browser; ▶ Play answers 404 and the Deepgram fallback does not
+  apply (Limitless transcribes every lifelog itself).
+- Errors: `401` / `403` read as *not connected*. `429` is retried
+  honouring `Retry-After` (180 requests a minute per key; the body's
+  `retryAfter` is named in the error). The key is only sent to
+  `api.limitless.ai`.
+
+## Granola meeting notes (`type: granola`)
+
+[Granola](https://www.granola.ai) transcribes meetings on the device and
+writes AI notes next to your own. The connector reads them through the
+[Granola API](https://docs.granola.ai/introduction) with an API key: one
+fact per meeting with title (else the calendar event title), scheduled
+time, duration, owner, attendees (else the calendar invitees), the notes
+and the transcript. Items land in the **📥 Inbox** as text.
+
+```yaml
+knowledge:
+  connectors:
+    - name: granola
+      type: granola
+      layer: project
+      interval: 15m
+      auth:
+        env: GRANOLA_API_KEY           # variable NAME holding the grn_… API key
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        folder: ""                     # optional folder_id
+        space: ""                      # optional space_id
+        include_private_notes: "true"  # your own notes under "My notes"
+        include_participants: "true"
+        tags: "meetings"
+```
+
+### Setup
+
+1. Create an API key (`grn_…`) in Granola's API settings
+   ([Granola API](https://docs.granola.ai/help-center/sharing/integrations/granola-api)).
+   A personal key reads your notes; a workspace key reads public notes and
+   the spaces with API access turned on.
+2. Put it in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Granola meeting notes** with the
+   credential source *Environment variable* naming that variable.
+   **Connect** / **Check** list one note, so a dead key shows on the card.
+
+### Behaviour
+
+- Each sync pages [`GET /v1/notes`](https://docs.granola.ai/api-reference/list-notes)
+  (`updated_after`, `page_size=30`, the maximum, `cursor` while `hasMore`,
+  optional `folder_id` / `space_id`) from the newest update seen (minus
+  48 h) back to `since_days`, skips deleted notes and reads each with
+  [`GET /v1/notes/{id}?include=transcript`](https://docs.granola.ai/api-reference/get-note);
+  a `413` (transcript too large to inline) falls back to the paged
+  [`/v1/notes/{id}/transcript`](https://docs.granola.ai/api-reference/get-transcript).
+  A note without generated notes answers `NOTE_NOT_FOUND` and is picked up
+  by a later sync.
+- Facts carry `source: granola`, `attr_granola_recording_id` (the note id,
+  the Inbox item id), `attr_recorded_at` (the calendar event's
+  `scheduled_start_time`, else `created_at`), `attr_duration_ms` (the
+  transcript span, else the scheduled length), `attr_host` (`owner`) and
+  `attr_participants`; the recording page is the `web_url`.
+- Playback: none (▶ Play answers 404, Granola keeps no audio).
+- Errors: `401` / `403` read as *not connected*. `429` is retried
+  honouring `Retry-After`. The key is only sent to `public-api.granola.ai`.
+
+## Otter.ai conversations (`type: otter`)
+
+[Otter.ai](https://otter.ai) records and transcribes meetings and writes an
+AI summary, an outline and action items per conversation. The connector
+reads them through the
+[Otter.ai Public API](https://help.otter.ai/hc/en-us/articles/36130822688279-Otter-ai-Public-API),
+which Otter offers to **Enterprise workspaces**, with an API key: one fact
+per conversation with title, creation time, duration (the last transcript
+offset), owner, calendar guests, the summary and the transcript. Items
+land in the **📥 Inbox** with playback.
+
+On other Otter plans there is no Public API (the Developer tab is missing).
+Otter's own exports (txt, docx, srt) can still be filed by hand through
+**+ New Fact**; the hive never uses Otter's private web API.
+
+```yaml
+knowledge:
+  connectors:
+    - name: otter
+      type: otter
+      layer: project
+      interval: 15m
+      auth:
+        env: OTTER_API_KEY             # variable NAME holding the Otter API key
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        include_shared: "false"        # true: also conversations shared with the key's user
+        channel: ""                    # optional channel id (overrides include_shared)
+        include_summary: "true"        # abstract_summary, outline, action_items
+        include_participants: "true"   # calendar_guests
+        tags: "meetings"
+```
+
+### Setup
+
+1. In Otter open **Integrations → Developer**, click **Create key** and copy
+   it (it is shown once; two keys per user). If the tab is missing on an
+   Enterprise workspace, Otter's account manager turns it on.
+2. Put it in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Otter.ai conversations** with the
+   credential source *Environment variable* naming that variable.
+   **Connect** / **Check** read `GET /workspace`, so a dead key or a
+   workspace without the Public API shows on the card.
+
+### Behaviour
+
+- Each sync pages `GET /conversations` (newest first, `limit=20`, the
+  maximum, `cursor` while `meta.has_more`; `include_shared` or
+  `channel_id`) until a conversation older than the newest one seen (minus
+  48 h) or `since_days`, and reads each with
+  `GET /conversations/{id}?include=action_items,outline,transcript`. The
+  `txt` transcript (`Speaker  00:07` heads) becomes `[mm:ss] Speaker: text`
+  lines.
+- Facts carry `source: otter`, `attr_otter_recording_id` (the conversation
+  id, the Inbox item id), `attr_recorded_at` (`created_at`),
+  `attr_duration_ms`, `attr_host` (`owner`) and `attr_participants`; the
+  recording page is the conversation `url`.
+- Playback: `GET /conversations/{id}/audio` returns the MP3 download link;
+  Otter does not state its lifetime, so the hive mints it per click with a
+  one-hour expiry and never stores it.
+- Errors: `401` reads as *not connected* (a wrong or deleted key, or a
+  workspace without the Public API); `403` keeps Otter's refusal. `429` is
+  retried honouring `Retry-After` (10 requests a second). The key is only
+  sent to `api.otter.ai`.
 
 ## Wispr Flow (dictation, `type: wisprflow`)
 

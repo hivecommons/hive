@@ -9783,6 +9783,45 @@ test('#5447 the expiry warning is throttled, not emitted every tick', () => {
   } finally { teardown(relay); }
 });
 
+test('#18238 a classic token with the full repo scope warns at start', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const origWarn = console.warn;
+  const warnings = [];
+  console.warn = (m) => { warnings.push(String(m)); };
+  try {
+    const header = 'HTTP/2.0 200 OK\r\nX-Oauth-Scopes: read:org, repo\r\nContent-Type: application/json\r\n\r\n{"login":"x"}';
+    assert.deepStrictEqual(relay.parseOAuthScopes(header), ['read:org', 'repo']);
+    const msg = relay.warnOnBroadPersonalToken(() => relay.parseOAuthScopes(header), { GH_TOKEN: 'set' });
+    assert.ok(msg && /full `repo` scope/.test(msg), `expected a broad-scope warning, got: ${msg}`);
+    assert.ok(/fine-grained/.test(msg), 'the warning must point at a fine-grained token');
+    assert.ok(warnings.some(w => /full `repo` scope/.test(w)), 'the warning never reached the log');
+  } finally {
+    console.warn = origWarn;
+    teardown(relay);
+  }
+});
+
+test('#18238 a fine-grained or narrow token, no token, or a failed probe does not warn', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const origWarn = console.warn;
+  console.warn = () => {};
+  try {
+    // Fine-grained tokens carry no X-OAuth-Scopes header at all.
+    assert.strictEqual(relay.parseOAuthScopes('HTTP/2.0 200 OK\r\nContent-Type: application/json\r\n\r\n{}'), null);
+    assert.strictEqual(relay.warnOnBroadPersonalToken(() => null, { GH_TOKEN: 'set' }), null);
+    assert.strictEqual(relay.warnOnBroadPersonalToken(() => ['public_repo', 'read:org'], { GH_TOKEN: 'set' }), null,
+      'public_repo is not the full repo scope');
+    let probed = false;
+    assert.strictEqual(relay.warnOnBroadPersonalToken(() => { probed = true; return ['repo']; }, {}), null);
+    assert.strictEqual(probed, false, 'with no personal token in the environment there is nothing to probe');
+    assert.strictEqual(relay.warnOnBroadPersonalToken(() => { throw new Error('offline'); }, { GH_TOKEN: 'set' }), null,
+      'a failed probe must never stop the relay');
+  } finally {
+    console.warn = origWarn;
+    teardown(relay);
+  }
+});
+
 test('#5447 an expired token still does NOT refuse the work (clock skew)', () => {
   const relay = loadRelay({ backend: 'claude' });
   const origWarn = console.warn;

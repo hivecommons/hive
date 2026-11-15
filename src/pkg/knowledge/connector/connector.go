@@ -236,7 +236,7 @@ func NewRegistry() *Registry {
 // DefaultRegistry returns a registry with the built-in connector types
 // (`git`, `document`, `github-wiki`, `repo-wiki`, `confluence`, `notion`,
 // `sharepoint`, `google-drive`, `context7`, `plaud`, `wisprflow`, `zoom`,
-// `teams`, `discord`, `google-meet`, `webex`, `slack-huddles`, `fireflies` and `fathom`) registered.
+// `teams`, `discord`, `google-meet`, `webex`, `slack-huddles`, `fireflies`, `fathom`, `limitless`, `granola` and `otter`) registered.
 func DefaultRegistry() *Registry {
 	r := NewRegistry()
 	_ = r.Register(TypeGit, newGitConnector)
@@ -258,6 +258,9 @@ func DefaultRegistry() *Registry {
 	_ = r.Register(TypeSlackHuddles, newSlackHuddlesConnector)
 	_ = r.Register(TypeFireflies, newFirefliesConnector)
 	_ = r.Register(TypeFathom, newFathomConnector)
+	_ = r.Register(TypeLimitless, newLimitlessConnector)
+	_ = r.Register(TypeGranola, newGranolaConnector)
+	_ = r.Register(TypeOtter, newOtterConnector)
 	return r
 }
 
