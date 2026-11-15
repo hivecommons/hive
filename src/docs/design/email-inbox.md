@@ -218,7 +218,8 @@ secret from `inbox.email.webhook_secret_env`.
   dependency in phase 1; type and size are the only gate.
 - **Prompt-injection posture.** The body is untrusted data, same as a Plaud
   transcript: it reaches a prompt only through `Content.Text()` into the spek
-  stdin or the agent kick prompt (`src/pkg/inbox/spek.go:76`), and the spoke
+  stdin or the agent kick prompt (`src/pkg/inbox/spek.go:76`), fenced in the
+  nonce-tagged `<untrusted-inbox-data>` envelope (`src/pkg/inbox/envelope.go:40`), and the spoke
   passes it through `ioscan.EnforceInput` (`src/pkg/ioscan/enforce.go:24`)
   before `Fetch` returns. Headers are never trusted for anything but routing;
   HTML is converted to markdown with scripts and tracking pixels stripped.
