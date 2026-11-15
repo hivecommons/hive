@@ -92,7 +92,7 @@
        `[hidden] { display: none }`, so a hidden status chip otherwise paints
        as an empty outlined pill (#oc-providers when every provider is usable). */
     .oc-providers-chip[hidden] { display: none; }
-    /* Opt-in Claude usage chip: a compact fuel dial plus its percentage. */
+    /* Opt-in plan usage chip: a compact fuel dial plus its percentage. */
     .subscription-gauge-chip[hidden] { display: none; }
     .subscription-gauge-chip__dial { display: inline-flex; align-items: center; }
     .subscription-gauge-chip__dial:empty { display: none; }
