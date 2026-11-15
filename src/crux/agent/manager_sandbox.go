@@ -311,6 +311,9 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 		if agent.LastKick != nil {
 			agent.KickOutcome.KickAt = *agent.LastKick
 		}
+		// A sandbox run's end is its turn's end: complete a queued kick
+		// riding on it (#18285).
+		m.kickQueue.turnEnded(name, agent.KickOutcome, ended)
 		entry := SandboxRunHistoryEntry{Agent: name, Backend: effectiveBackend(agent), Model: agent.Config.Model, Run: run}
 		pending = &entry
 		workDir = m.workDir

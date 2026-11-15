@@ -245,6 +245,7 @@ func (m *Manager) SetKickOutcomeObserver(fn func(agentName string, outcome KickO
 }
 
 func (m *Manager) notifyKickOutcome(agentName string, outcome KickOutcome) {
+	m.kickQueue.turnEnded(agentName, outcome, time.Now())
 	if fn := m.kickOutcomeObserver.Load(); fn != nil {
 		go (*fn)(agentName, outcome)
 	}
