@@ -5,12 +5,14 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/meetings"
 	"github.com/hivecommons/hive/pkg/meetings/live"
+	"github.com/hivecommons/hive/pkg/meetings/meetllm"
 	"github.com/hivecommons/hive/pkg/meetings/quorumproc"
 	"github.com/hivecommons/hive/pkg/spektacular"
 )
@@ -154,6 +156,16 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 	}
 	m := cfg.Meetings
 	binary := cfg.Runs.Spektacular.BinaryOrDefault()
+	llm := cfg.ResolveMeetingsLLM(context.Background())
+	hiveBin, err := os.Executable()
+	if err != nil && llm.Backend == config.MeetingsLLMModeOpenAI {
+		llm = config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeNone, Reason: "rules only, the hive binary path is unknown"}
+	}
+	slotsDir := filepath.Join(store.Dir(), meetingLLMSlotsDir)
+	maxTokens := m.Budget.MaxTokensPerMeetingOrDefault()
+	if logger != nil {
+		logger.Info("[meetings] spektacular live mode model", "model", llm.Label())
+	}
 	var notes live.NotesSink
 	if kapi != nil {
 		notes = live.KnowledgeNotes{API: kapi}
@@ -162,7 +174,15 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 		Meetings: mgr,
 		Store:    store,
 		NewSpek: func(mt meetings.Meeting) live.Spek {
-			return spektacular.StreamExec(binary, meetingSpekArgs(mt, filepath.Join(store.Dir(), mt.ID)), spektacular.StreamOptions{Logger: logger})
+			env := meetingSpekEnv(os.Getenv, llm, hiveBin, meetingUsageFile(store, mt.ID), slotsDir, maxTokens)
+			return spektacular.StreamExec(binary, meetingSpekArgs(mt, filepath.Join(store.Dir(), mt.ID)), spektacular.StreamOptions{Logger: logger, Env: env})
+		},
+		SpekMode: llm.Label(),
+		UsageFile: func(id string) string {
+			if llm.Backend != config.MeetingsLLMModeOpenAI {
+				return ""
+			}
+			return meetingUsageFile(store, id)
 		},
 		Research: research,
 		Notes:    notes,
@@ -184,4 +204,63 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 	}
 	r.Start()
 	return r
+}
+
+// meetingLLMSlotsDir holds the in-flight slot locks `hive meeting-llm`
+// shares across meetings; the leading dot keeps it out of the meeting list.
+const meetingLLMSlotsDir = ".llm-slots"
+
+// meetingUsageFile is a meeting's model usage ledger (meetllm).
+func meetingUsageFile(store *meetings.Store, id string) string {
+	return filepath.Join(store.Dir(), id, "llm-usage.jsonl")
+}
+
+// meetingSpekPassthrough are the hive environment variables the Spek child
+// inherits; hive's own secrets never reach it.
+var meetingSpekPassthrough = []string{
+	"PATH", "HOME", "TMPDIR", "TZ", "LANG", "LC_ALL",
+	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+	"NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
+}
+
+// meetingSpekEnv is the Spek child's environment. Hive owns the model
+// credential and budget: with an OpenAI-compatible model Spek runs
+// SPEK_MEETING_LLM=command against `hive meeting-llm`, which reads the
+// endpoint and key from this environment (never argv) and charges the
+// meeting's usage file; with an Anthropic key Spek calls Anthropic itself;
+// with neither it runs on rules only.
+func meetingSpekEnv(getenv func(string) string, llm config.ResolvedMeetingsLLM, hiveBin, usageFile, slotsDir string, maxTokens int) []string {
+	var env []string
+	for _, k := range meetingSpekPassthrough {
+		if v := getenv(k); v != "" {
+			env = append(env, k+"="+v)
+		}
+	}
+	switch llm.Backend {
+	case config.MeetingsLLMModeOpenAI:
+		env = append(env,
+			"SPEK_MEETING_LLM=command",
+			"SPEK_MEETING_LLM_CMD="+hiveBin+" "+meetllm.Subcommand,
+			"SPEK_MEETING_LLM_TIMEOUT_MS="+strconv.Itoa(llm.TimeoutMS),
+			meetllm.EnvEndpoint+"="+llm.Endpoint,
+			meetllm.EnvModel+"="+llm.Model,
+			meetllm.EnvTimeoutMS+"="+strconv.Itoa(llm.TimeoutMS),
+			meetllm.EnvUsageFile+"="+usageFile,
+			meetllm.EnvMaxTokens+"="+strconv.Itoa(maxTokens),
+			meetllm.EnvSlotsDir+"="+slotsDir,
+			meetllm.EnvMaxInFlight+"="+strconv.Itoa(llm.MaxInFlight),
+		)
+		if llm.APIKey != "" {
+			env = append(env, meetllm.EnvAPIKey+"="+llm.APIKey)
+		}
+	case config.MeetingsLLMModeAnthropic:
+		env = append(env, "SPEK_MEETING_LLM=anthropic", "ANTHROPIC_API_KEY="+llm.AnthropicKey,
+			"SPEK_MEETING_LLM_TIMEOUT_MS="+strconv.Itoa(llm.TimeoutMS))
+		if llm.AnthropicModel != "" {
+			env = append(env, "SPEK_MEETING_MODEL="+llm.AnthropicModel)
+		}
+	default:
+		env = append(env, "SPEK_MEETING_LLM=none")
+	}
+	return env
 }

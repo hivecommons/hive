@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -559,11 +561,35 @@ func TestEndSendsEndAndPersists(t *testing.T) {
 	}
 }
 
-func TestSpekExitEndsSession(t *testing.T) {
-	h := newHarness(t, Policy{}, nil)
+func TestSpekExitKeepsSessionDegraded(t *testing.T) {
+	h := newHarness(t, Policy{}, func(o *Options) { o.SpekMode = "rules only, no model configured" })
 	h.live()
+	if st := h.state(); st.SpekMode != "rules only, no model configured" {
+		t.Fatalf("spek mode %q", st.SpekMode)
+	}
 	h.spek.Close(nil)
+	h.eventually("degraded", func() bool {
+		return strings.Contains(h.state().SpekStatus, "spektacular/pull/126") || strings.Contains(h.state().SpekStatus, "#126")
+	})
+	// Research signals and approvals still reach the session.
+	if _, ok := h.r.session(h.m.ID); !ok {
+		t.Fatal("the session must outlive Spek")
+	}
+	ended := h.m
+	ended.State = meetings.StateEnded
+	h.mt.push(meetings.Update{Meeting: ended})
 	h.eventually("session gone", func() bool { _, ok := h.r.session(h.m.ID); return !ok })
+}
+
+func TestUsageFileCharged(t *testing.T) {
+	usage := filepath.Join(t.TempDir(), "usage.jsonl")
+	h := newHarness(t, Policy{MaxTokensPerMeeting: 50}, func(o *Options) { o.UsageFile = func(string) string { return usage } })
+	h.live()
+	if err := os.WriteFile(usage, []byte("{\"tokens\":30}\n{\"tokens\":25}\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	h.spek.intent(`{"type":"notes.append","section":"notes","text":"n"}`)
+	h.eventually("tokens from the usage file", func() bool { st := h.state(); return st.Tokens == 55 && st.BudgetExhausted })
 }
 
 func TestSpekStartFailureAndResume(t *testing.T) {

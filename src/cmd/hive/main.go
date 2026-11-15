@@ -63,6 +63,7 @@ import (
 	_ "github.com/hivecommons/hive/pkg/keystore/openbao"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/maintainernotes"
+	"github.com/hivecommons/hive/pkg/meetings/meetllm"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/perspsrc"
 	"github.com/hivecommons/hive/pkg/planning"
@@ -7354,6 +7355,10 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// Run from inside an agent's pane by the jev-decide skill; see
 		// pkg/jev/cli.go. Talks only to the hive's loopback decision endpoint.
 		return true, jev.Run(args[1:], os.Stdin, stdout, stderr)
+	case meetllm.Subcommand:
+		// Run by Spektacular live mode for one model call per prompt; see
+		// pkg/meetings/meetllm. Reads its endpoint and key from the env.
+		return true, meetllm.Run(args[1:], os.Stdin, stdout, stderr, os.Getenv)
 	case memoryDrainSubcommand:
 		// Run as the agent by the Claude Code memory hooks Hive seeds; see
 		// memory_drain_cmd.go. Always exits 0.

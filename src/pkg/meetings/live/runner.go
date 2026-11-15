@@ -27,6 +27,12 @@ type Options struct {
 	Logger      *slog.Logger
 	CallTimeout time.Duration
 	Now         func() time.Time
+	// SpekMode is the panel's description of the model Spek uses.
+	SpekMode string
+	// UsageFile returns the meeting's model usage ledger written by
+	// `hive meeting-llm` (meetllm); nil when Spek reports usage itself or
+	// uses no hive-run model.
+	UsageFile func(meetingID string) string
 }
 
 // Runner starts a live session when a meeting goes live and ends it when

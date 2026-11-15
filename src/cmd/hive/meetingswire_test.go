@@ -204,3 +204,45 @@ func TestWireMeetingsLive(t *testing.T) {
 		t.Fatalf("args %q", got)
 	}
 }
+
+func TestMeetingSpekEnv(t *testing.T) {
+	get := func(k string) string {
+		return map[string]string{"PATH": "/bin", "HIVE_GITHUB_TOKEN": "ghp_x", "HTTPS_PROXY": "http://p"}[k]
+	}
+	asMap := func(env []string) map[string]string {
+		out := map[string]string{}
+		for _, kv := range env {
+			k, v, _ := strings.Cut(kv, "=")
+			out[k] = v
+		}
+		return out
+	}
+	openai := asMap(meetingSpekEnv(get, config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeOpenAI, Endpoint: "https://llm", Model: "m", APIKey: "k", TimeoutMS: 2500, MaxInFlight: 4},
+		"/usr/local/bin/hive", "/data/meetings/mtg-1/llm-usage.jsonl", "/data/meetings/.llm-slots", 1000))
+	if openai["SPEK_MEETING_LLM"] != "command" || openai["SPEK_MEETING_LLM_CMD"] != "/usr/local/bin/hive meeting-llm" ||
+		openai["HIVE_MEETING_LLM_API_KEY"] != "k" || openai["HIVE_MEETING_LLM_MAX_TOKENS"] != "1000" || openai["PATH"] != "/bin" || openai["HTTPS_PROXY"] != "http://p" {
+		t.Fatalf("openai env %v", openai)
+	}
+	if _, leaked := openai["HIVE_GITHUB_TOKEN"]; leaked {
+		t.Fatal("hive secrets must not reach spek")
+	}
+	noKey := asMap(meetingSpekEnv(get, config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeOpenAI, Endpoint: "e", Model: "m"}, "h", "u", "s", 0))
+	if _, ok := noKey["HIVE_MEETING_LLM_API_KEY"]; ok {
+		t.Fatal("no key, no key variable")
+	}
+	anth := asMap(meetingSpekEnv(get, config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeAnthropic, AnthropicKey: "ak", AnthropicModel: "claude-x", TimeoutMS: 2500}, "h", "u", "s", 0))
+	if anth["SPEK_MEETING_LLM"] != "anthropic" || anth["ANTHROPIC_API_KEY"] != "ak" || anth["SPEK_MEETING_MODEL"] != "claude-x" {
+		t.Fatalf("anthropic env %v", anth)
+	}
+	if _, ok := asMap(meetingSpekEnv(get, config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeAnthropic, AnthropicKey: "ak"}, "h", "u", "s", 0))["SPEK_MEETING_MODEL"]; ok {
+		t.Fatal("no model override without anthropic_model")
+	}
+	none := asMap(meetingSpekEnv(get, config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeNone}, "h", "u", "s", 0))
+	if none["SPEK_MEETING_LLM"] != "none" {
+		t.Fatalf("none env %v", none)
+	}
+	store, _ := meetings.NewStore(t.TempDir())
+	if !strings.HasSuffix(meetingUsageFile(store, "mtg-1"), "mtg-1/llm-usage.jsonl") {
+		t.Fatal("usage file path")
+	}
+}

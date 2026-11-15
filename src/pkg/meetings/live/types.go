@@ -122,6 +122,12 @@ type State struct {
 	BudgetExhausted bool                `json:"budget_exhausted,omitempty"`
 	Dropped         int                 `json:"dropped"`
 	LastHeartbeat   *time.Time          `json:"last_heartbeat,omitempty"`
+	// SpekMode describes the model Spek reasons with ("model X",
+	// "Anthropic ...", or "rules only, no model configured").
+	SpekMode string `json:"spek_mode,omitempty"`
+	// SpekStatus is set when Spektacular live mode is not running for the
+	// meeting; the transcript and the panel keep working without it.
+	SpekStatus string `json:"spek_status,omitempty"`
 }
 
 // StateDoc is the side document name the state is stored under.
@@ -133,6 +139,7 @@ const (
 	EventResearch = "research"
 	EventNotes    = "notes"
 	EventDropped  = "dropped"
+	EventSpek     = "spek"
 )
 
 // Event is what live-panel observers receive.

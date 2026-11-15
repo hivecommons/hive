@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/meetings"
+	"github.com/hivecommons/hive/pkg/meetings/meetllm"
 )
 
 // sessionInbox is the depth of a session's input queue.
@@ -39,6 +40,8 @@ type session struct {
 	spek  Spek
 	state State
 	rate  rateLimiter
+	// fileTokens is the usage-ledger total already charged.
+	fileTokens int
 
 	updates  chan meetings.Update
 	signals  chan ResearchSignal
@@ -65,6 +68,10 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 	if s.state.Notes == nil {
 		s.state.Notes = map[string][]string{}
 	}
+	s.state.SpekMode, s.state.SpekStatus = r.opts.SpekMode, ""
+	if r.opts.UsageFile != nil {
+		s.fileTokens, _ = meetllm.UsageTotal(r.opts.UsageFile(m.ID))
+	}
 	return s
 }
 
@@ -82,7 +89,7 @@ func (s *session) save() {
 func (s *session) run(ctx context.Context) {
 	defer close(s.done)
 	lines := s.spek.Lines()
-	ending := false
+	ending, spekGone := false, false
 	for {
 		select {
 		case <-ctx.Done():
@@ -96,6 +103,10 @@ func (s *session) run(ctx context.Context) {
 			if u.Meeting.State.Terminal() {
 				ending = true
 				close(s.ended)
+				if spekGone {
+					s.save()
+					return
+				}
 				// Close blocks until Spek has flushed its last notes, which
 				// arrive on lines; keep draining them here meanwhile.
 				go s.spek.Close(map[string]string{"type": "end"})
@@ -104,11 +115,20 @@ func (s *session) run(ctx context.Context) {
 			s.onUpdate(u)
 		case line, ok := <-lines:
 			if !ok {
-				s.save()
-				if !ending {
-					close(s.ended)
+				if ending {
+					s.save()
+					return
 				}
-				return
+				// Spek stopped (or this spektacular has no `meeting` verb)
+				// while the meeting goes on: keep the session for the panel,
+				// research signals and approvals; only Spek's questions and
+				// notes stop.
+				spekGone, lines = true, nil
+				s.state.SpekStatus = "Spektacular live mode is not running for this meeting (needs a spektacular with the meeting command, hivecommons/spektacular#126); the transcript and research still work, questions and notes do not"
+				s.log().Warn("[meetings] spektacular live mode stopped; continuing without it")
+				s.emit(Event{Kind: EventSpek, Reason: s.state.SpekStatus})
+				s.save()
+				continue
 			}
 			s.onIntent(ctx, line)
 		case sig := <-s.signals:
@@ -228,6 +248,13 @@ func (s *session) onIntent(ctx context.Context, line []byte) {
 // sends usage, else one intent.
 func (s *session) account(ctx context.Context, in intent) {
 	p := s.r.opts.Policy
+	if s.r.opts.UsageFile != nil {
+		if total, err := meetllm.UsageTotal(s.r.opts.UsageFile(s.id)); err == nil && total > s.fileTokens {
+			s.state.Tokens += total - s.fileTokens
+			s.r.opts.Ledger.Add(s.now(), total-s.fileTokens)
+			s.fileTokens = total
+		}
+	}
 	if in.Usage != nil {
 		t := in.Usage.total()
 		s.state.Tokens += t
