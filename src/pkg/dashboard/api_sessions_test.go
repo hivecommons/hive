@@ -364,11 +364,11 @@ func TestSessionsRoleMatrix(t *testing.T) {
 		who                  sessionCaller
 		create, input, patch int // expected status codes
 	}
-	// Create/input need owner or read-write; patch needs creator or owner and
+	// Create answers 202 (the workspace is prepared in the background); create/input need owner or read-write; patch needs creator or owner and
 	// every non-owner here is not the creator of the owner's session.
 	rows := []row{
-		{callerOwner, 201, 200, 200},
-		{callerRW, 201, 200, 403},
+		{callerOwner, 202, 200, 200},
+		{callerRW, 202, 200, 403},
 		{callerMerger, 403, 403, 403},
 		{callerRead, 403, 403, 403},
 		{callerForgedOwn, 403, 403, 403},
