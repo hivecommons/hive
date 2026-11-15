@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v6.30.2)
+
+### Fixed
+
+- **A hold added to a PR already in GitHub's merge queue now withdraws it in seconds, not on the next lane tick.** The lanes already withdraw the App's own queue entry when a PR loses merge eligibility, but without the forgestate cache no webhook woke them, so a label was seen only on the next tick (about two minutes on a twenty-repository hive, up to fifteen) and GitHub's queue merged first (projectbluefin/testsuite#1235 merged 71 seconds after a person added `hold`). A `pull_request` `labeled` delivery on an open PR in a native-merge-queue repository and base now asks the lanes for an immediate pass over that PR (labels the hive's own App adds are skipped), so the existing withdrawal runs while the merge group is still testing; each withdrawal is logged as `native merge queue entry withdrawn`. A breaking-change title or an `auto_merge.human_merge_labels` label such as `needs-owner-merge` now withdraws an entry too. It narrows the race rather than closing it: GitHub may still finish a merge group before the pass runs.
+
 ## 2026-11-14 (v6.30.1)
 
 ### Changed
