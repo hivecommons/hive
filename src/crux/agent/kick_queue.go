@@ -403,7 +403,10 @@ func (m *Manager) deliverQueuedKick(name, message string) error {
 		return fmt.Errorf("agent %s not found", name)
 	}
 	if m.agentSandboxEnabledLocked(agent) {
-		err := m.startSandboxKickLocked(agent, message)
+		// v6 sandbox kicks carry a source for the kick observer
+		// (hivecommons/hive#7483); use SendKickAsync's, since this is its
+		// synchronous twin.
+		err := m.startSandboxKickLocked(agent, message, "sandbox-kick")
 		m.mu.Unlock()
 		return err
 	}
