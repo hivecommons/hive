@@ -685,6 +685,9 @@ type Manager struct {
 	// registered observer receives every kick event, with its kick ID, in
 	// order on its own goroutine. See kick_observer.go.
 	kickObservers kickObserverSet
+	// outputSignalSeen dedupes output-signal events per agent and kick
+	// (#18287); a pane redraw must not deliver a finding twice.
+	outputSignalSeen outputSignalDedupe
 	// kickOutcomeObserver receives the verdict on how each kicked turn ended
 	// (#7421); the governor consumes it. Same discipline as kickObserver.
 	kickOutcomeObserver atomic.Pointer[func(agentName string, outcome KickOutcome)]

@@ -508,8 +508,11 @@ var outputSignalPatterns = map[string]string{
 }
 
 // logOutputSignals checks a line of agent output for meaningful patterns
-// and emits a structured slog entry for each match.
+// and emits a structured slog entry for each match. The structured markers
+// ([STATUS], [FINDING], [COMPLETE], [ERROR]) also go to the kick observers
+// (#18287; see output_signals.go).
 func (m *Manager) logOutputSignals(agent, line string) {
+	m.emitOutputSignal(agent, line)
 	for pattern, event := range outputSignalPatterns {
 		if strings.Contains(line, pattern) {
 			preview := line
