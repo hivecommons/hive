@@ -681,6 +681,10 @@ type Manager struct {
 	// m.mu, so the pointer must be readable from a locked context, and the
 	// observer is always invoked on its own goroutine. See kick_observer.go.
 	kickObserver atomic.Pointer[func(agentName, event, detail string)]
+	// kickObservers is the fan-out observer registry (#18286): every
+	// registered observer receives every kick event, with its kick ID, in
+	// order on its own goroutine. See kick_observer.go.
+	kickObservers kickObserverSet
 	// kickOutcomeObserver receives the verdict on how each kicked turn ended
 	// (#7421); the governor consumes it. Same discipline as kickObserver.
 	kickOutcomeObserver atomic.Pointer[func(agentName string, outcome KickOutcome)]
