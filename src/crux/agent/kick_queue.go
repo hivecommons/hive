@@ -88,6 +88,9 @@ type kickQueue struct {
 	inflight map[string]*queuedKick
 	statuses map[string]*crux.KickStatus
 	order    []string
+	// emit fans a lifecycle event out to the manager's kick observers. Set
+	// on first enqueue; called with q.mu held, and never takes q.mu itself.
+	emit func(crux.KickEvent)
 }
 
 func (q *kickQueue) initLocked() {
@@ -122,6 +125,9 @@ func (q *kickQueue) recordLocked(st *crux.KickStatus) {
 	q.order = kept
 }
 
+// settleLocked moves a status to a terminal phase and, when it did, fans the
+// matching kick-completed / kick-failed event out to the observers (#18286).
+// emit may be nil (bare queue in tests).
 func (q *kickQueue) settleLocked(id, phase, errMsg, outcome string, now time.Time) {
 	st, ok := q.statuses[id]
 	if !ok || st.Terminal() {
@@ -131,6 +137,14 @@ func (q *kickQueue) settleLocked(id, phase, errMsg, outcome string, now time.Tim
 	st.Error = errMsg
 	st.Outcome = outcome
 	st.SettledAt = now
+	if q.emit == nil {
+		return
+	}
+	ev := crux.KickEvent{Agent: st.Agent, Event: crux.KickEventCompleted, Detail: outcome, KickID: id, At: now}
+	if phase == crux.KickPhaseFailed {
+		ev.Event, ev.Detail = crux.KickEventFailed, errMsg
+	}
+	q.emit(ev)
 }
 
 // turnEnded completes the agent's in-flight queued kick when the outcome
@@ -179,6 +193,9 @@ func (m *Manager) EnqueueKick(name, kickID, message string) (string, error) {
 	q := &m.kickQueue
 	q.mu.Lock()
 	q.initLocked()
+	if q.emit == nil {
+		q.emit = m.emitKickEvent
+	}
 	if _, dup := q.statuses[kickID]; dup {
 		q.mu.Unlock()
 		return "", fmt.Errorf("%w: %s", crux.ErrKickIDInUse, kickID)
@@ -188,7 +205,9 @@ func (m *Manager) EnqueueKick(name, kickID, message string) (string, error) {
 		return "", fmt.Errorf("%w: agent %s has %d kicks waiting", crux.ErrKickQueueFull, name, size)
 	}
 	q.pending[name] = append(q.pending[name], &queuedKick{id: kickID, agent: name, message: message})
-	q.recordLocked(&crux.KickStatus{ID: kickID, Agent: name, Phase: crux.KickPhaseQueued, QueuedAt: time.Now()})
+	queuedAt := time.Now()
+	q.recordLocked(&crux.KickStatus{ID: kickID, Agent: name, Phase: crux.KickPhaseQueued, QueuedAt: queuedAt})
+	q.emit(crux.KickEvent{Agent: name, Event: crux.KickEventQueued, KickID: kickID, At: queuedAt})
 	start := !q.pumping[name]
 	q.pumping[name] = true
 	q.mu.Unlock()
