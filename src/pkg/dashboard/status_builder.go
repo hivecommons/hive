@@ -2518,7 +2518,7 @@ func buildReferenceRepos(cfg *config.Config) []FrontendReferenceRepo {
 		out = append(out, FrontendReferenceRepo{
 			Full: rr.Repo, Tier: tier, ReferenceTier: tier,
 			DerivedFrom: rr.DerivedFrom, DerivedFromURL: referenceRepoSourceURL(rr.DerivedFrom, cfg.GitHub.ResolvedBaseURL()),
-			CredentialState: rr.CredentialState, CredentialReason: rr.CredentialReason,
+			CredentialState: rr.CredentialState, CredentialReason: rr.CredentialReason, CredentialLogin: rr.CredentialLogin,
 		})
 	}
 	return out

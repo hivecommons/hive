@@ -144,11 +144,11 @@ func TestReferenceReposPut_WriteWithoutCredentialRefused(t *testing.T) {
 	s := covApiServer(t)
 	cfg := s.deps.Config
 	// The production hook (cmd/hive applyReferenceRepos) runs the same
-	// verification boot runs; a hive with no App auth has no discover seam.
+	// verification boot runs; here the owner has not connected an account.
 	var bootMsg string
 	s.deps.ApplyReferenceRepos = func(ctx context.Context, refs []config.ReferenceRepo) error {
 		for _, rr := range refs {
-			if _, err := github.VerifyReferenceRepoWriteCredential(ctx, rr, "", nil, nil); err != nil {
+			if _, err := github.VerifyReferenceRepoWriteCredential(ctx, rr, github.OwnerCredential{}, nil); err != nil {
 				bootMsg = err.Error()
 				return err
 			}
@@ -220,7 +220,7 @@ func TestReferenceReposPut_TokenFileIsOperatorOnly(t *testing.T) {
 		})
 	}
 
-	// The operator's path round-trips unchanged, next to a new App-backed entry.
+	// The operator's path round-trips unchanged, next to a new owner-backed entry.
 	rec := doPut(s, referenceReposPath, map[string]any{"reference_repos": []map[string]any{
 		{"repo": "a/b", "write": []string{"issues"}, "write_token_file": "/etc/hive/ab.token"},
 		{"repo": "c/d", "write": []string{"prs"}},

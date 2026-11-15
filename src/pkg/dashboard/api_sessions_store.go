@@ -25,8 +25,15 @@ const (
 	sessionsStoreFileMode = 0o600
 	sessionsStoreDirMode  = 0o700
 
-	sessionStatusRunning = "running"
-	sessionStatusEnded   = "ended"
+	// Session status values. A session is `preparing` from the moment its
+	// record is created until the background start (workspace clone and
+	// hand-over, spek init, tmux) finishes; it then becomes `running` or, when
+	// that start fails, `failed` with the error on the record. `ended` is a
+	// session whose CLI exited or was closed.
+	sessionStatusPreparing = "preparing"
+	sessionStatusRunning   = "running"
+	sessionStatusEnded     = "ended"
+	sessionStatusFailed    = "failed"
 
 	// sessionIDBytes random bytes -> 2x hex chars; matches the runtime's id
 	// pattern ([a-f0-9]{8,32}).
@@ -52,6 +59,30 @@ type sessionRecord struct {
 	// ResumeCommand is the vendor-native resume command captured when the
 	// session ended. It is internal: never sent to the browser.
 	ResumeCommand string `json:"resume_command,omitempty"`
+	// UIDSlot is the 1-based slot in the reserved per-session uid range the
+	// session runs under. 0 marks a record from before per-session uids.
+	UIDSlot int `json:"uid_slot,omitempty"`
+	// Shared opens the session to every read-write user (and the scrollback to
+	// every role). The default, false, is creator + owners only.
+	Shared bool `json:"shared"`
+	// WorkspaceRepo ("org/repo") and Workspace (its path) name the hive's
+	// shared checkout the session opened in. Empty for a session that opened
+	// in its own empty work dir (no workspace repo configured, or a record
+	// from before workspaces); a resume reopens the same place.
+	WorkspaceRepo string `json:"workspace_repo,omitempty"`
+	Workspace     string `json:"workspace,omitempty"`
+	// Message says what a `preparing` session is waiting on ("preparing
+	// workspace: cloning org/repo"); Error is why a `failed` session (or a
+	// resume that fell back to `ended`) did not start. Both are shown as-is in
+	// the dashboard, redacted of tokens before they are stored.
+	Message string `json:"message,omitempty"`
+	Error   string `json:"error,omitempty"`
+	// KeyboardHolder is the one user whose terminal attach is writable (the
+	// keyboard lease, api_sessions_keyboard.go); everyone else attaches
+	// read-only. The creator holds it from the start; "" means released.
+	// KeyboardSince is when the current holder took it (RFC3339).
+	KeyboardHolder string `json:"keyboard_holder,omitempty"`
+	KeyboardSince  string `json:"keyboard_since,omitempty"`
 }
 
 type sessionStore struct {
@@ -175,6 +206,23 @@ func (st *sessionStore) remove(id string) error {
 	defer st.mu.Unlock()
 	delete(st.sessions, id)
 	return st.saveLocked()
+}
+
+// freeSlot returns the smallest uid slot (1-based) no record holds. Ended
+// sessions keep theirs until their files are removed. Callers hold the
+// dashboard's sessionsMu so two creations cannot take the same slot.
+func (st *sessionStore) freeSlot() int {
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	used := make(map[int]bool, len(st.sessions))
+	for _, rec := range st.sessions {
+		used[rec.UIDSlot] = true
+	}
+	slot := 1
+	for used[slot] {
+		slot++
+	}
+	return slot
 }
 
 // newSessionRecordID returns a fresh lower-case hex id not present in the store.

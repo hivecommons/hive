@@ -31,15 +31,27 @@ const constSrc = name => {
   return m[1];
 };
 
+// Any one-line `const NAME = <expr>;` declaration, verbatim.
+const declSrc = name => {
+  const m = html.match(new RegExp('const ' + name + ' = [^\\n]+;'));
+  assert.ok(m, name + ' not found');
+  return m[0];
+};
+
 const NOT_LOADED = constSrc('KC_STATUS_NOT_LOADED');
 const HINT = constSrc('KC_NOT_LOADED_HINT');
 const OWNER = true;
+
+// The row's live-progress helpers (status, meta line, progress bar) ride along
+// so the extracted kbConnectorRow runs the shipped code end to end.
+const ROW_HELPERS = ['kbConnectorStatusOf', 'kbConnectorMetaHtml', 'kcProgressActive', 'kcProgressStartMs', 'kcElapsedText', 'kcProgressCount',
+  'kcProgressLabel', 'kcProgressHtml', 'kcProgressFailedHtml'].map(fnSrc).join('\n') + '\n' + ['KC_PROGRESS_ACTIVE_PHASES', 'KC_PROGRESS_TITLE_MAX'].map(declSrc).join('\n');
 
 const render = ({ runtime, c, row, type = 'plaud', owner = OWNER }) => {
   const calls = { authLines: 0 };
   const escapeHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const h = new Function('_kcState', '_kbPlaudAuth', 'escapeHtml', 'kcAgo', 'kbPlaudAuthLine', 'kbPlaudPasteHtml', 'kbWisprFlowSourceLine',
-    fnSrc('kbConnectorNotLoaded') + '\n' + fnSrc('kbConnectorNotLoadedHtml') + '\n' + fnSrc('kbPlaudAuthButtons') + '\n' + fnSrc('kbConnectorRow') +
+    declSrc('KB_AUTH_TYPES') + '\n' + fnSrc('kbAuthLabel') + '\n' + fnSrc('kbConnectorNotLoaded') + '\n' + fnSrc('kbConnectorNotLoadedHtml') + '\n' + fnSrc('kbPlaudAuthButtons') + '\n' + fnSrc('kbConnectorRow') + '\n' + ROW_HELPERS +
     "\nconst KC_STATUS_NOT_LOADED = '" + NOT_LOADED + "'; const KC_NOT_LOADED_HINT = '" + HINT + "';" +
     '\nreturn kbConnectorRow;')(
     { runtime, rows: row ? [row] : [], publish: null }, {}, escapeHtml, () => '—',
@@ -101,9 +113,9 @@ const loadRuntime = async statusRes => {
   const cfgRes = { ok: true, status: HTTP_OK, json: async () => ({ connectors: [{ name: 'plaud-voice', type: 'plaud', enabled: true }], types: ['plaud'] }) };
   const fetch = async url => (url.endsWith('/status') ? statusRes : cfgRes);
   const state = { layers: [] };
-  const run = new Function('fetch', '_kcState', 'kbRenderIntegrationsModal',
+  const run = new Function('fetch', '_kcState', 'kbRenderIntegrationsModal', 'kbSyncProgressArm',
     "let _kbIntegrationSelected = 'plaud';\n" + fnSrc('kbLoadIntegrationsModal') + '\nreturn kbLoadIntegrationsModal("plaud").then(() => _kcState);');
-  return (await run(fetch, state, () => {})).runtime;
+  return (await run(fetch, state, () => {}, () => {})).runtime;
 };
 
 test('a failed status fetch leaves runtime true, so cards keep pending rather than claiming not loaded', async () => {

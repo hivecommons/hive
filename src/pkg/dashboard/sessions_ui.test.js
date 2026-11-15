@@ -13,7 +13,8 @@ const end = html.indexOf('// ── Storage conveniences');
 assert.ok(start >= 0 && end > start, 'sessions helper block not found in index.html');
 const names = ['sessionsRoleCanWrite', 'sessionsGroupSessions', 'sessionsExistingGroups', 'sessionsPickSelected', 'sessionsTabOrder',
   'sessionsNextTab', 'sessionsViewMode', 'sessionsCheckInput', 'sessionsCheckUpload', 'sessionsCanCreate', 'sessionsTerminalPath',
-  'sessionsFormatBytes', 'sessionsIsEnabled'];
+  'sessionsFormatBytes', 'sessionsIsEnabled', 'sessionsWorkspaceLabel', 'sessionsSessionWorkspace', 'sessionsIsLive', 'sessionsHasPreparing',
+  'sessionsStatusText', 'sessionsCanSend', 'sessionsKeyboardAction', 'sessionsPresenceText', 'sessionsQueueLabel', 'sessionsQueuedToast'];
 const h = new Function('window', html.slice(start, end) + '\nreturn {' + names.join(',') + '};')({});
 
 const S = (id, group, status) => ({ id, name: id, group, status: status || 'running' });
@@ -47,14 +48,67 @@ test('arrow keys walk the visible tabs and wrap; collapsed groups keep only the 
   assert.strictEqual(h.sessionsNextTab([], 'b', 'ArrowRight'), '');
 });
 
-test('only owner and read-write get a terminal; read sees scrollback; ended sessions never attach', () => {
+test('every role gets the live terminal (read-only unless it holds the keyboard); ended sessions never attach', () => {
   const run = S('a', '');
   const ended = S('a', '', 'ended');
-  for (const role of ['owner', 'read-write']) assert.strictEqual(h.sessionsViewMode(role, run), 'terminal');
-  for (const role of ['read', 'merger', '', undefined]) assert.strictEqual(h.sessionsViewMode(role, run), 'scrollback');
+  for (const role of ['owner', 'read-write', 'read', 'merger', '', undefined]) assert.strictEqual(h.sessionsViewMode(role, run), 'terminal');
   assert.strictEqual(h.sessionsViewMode('owner', ended), 'ended');
   assert.strictEqual(h.sessionsViewMode('owner', null), 'none');
   assert.strictEqual(h.sessionsRoleCanWrite('read'), false);
+  // Send and the keyboard stay with the write roles.
+  for (const role of ['owner', 'read-write']) assert.strictEqual(h.sessionsCanSend(role, run), true);
+  for (const role of ['read', 'merger', '']) assert.strictEqual(h.sessionsCanSend(role, run), false);
+  assert.strictEqual(h.sessionsCanSend('owner', ended), false);
+});
+
+test('keyboard button: release for the holder, take for another writer, nothing for read or non-running', () => {
+  const mine = Object.assign(S('a', ''), { keyboard_mine: true, keyboard_holder: 'andy' });
+  const theirs = Object.assign(S('a', ''), { keyboard_mine: false, keyboard_holder: 'bob' });
+  assert.strictEqual(h.sessionsKeyboardAction('read-write', mine), 'release');
+  assert.strictEqual(h.sessionsKeyboardAction('owner', theirs), 'take');
+  assert.strictEqual(h.sessionsKeyboardAction('read-write', Object.assign({}, theirs, { keyboard_holder: '' })), 'take', 'a free keyboard is taken, not released');
+  assert.strictEqual(h.sessionsKeyboardAction('read', theirs), '');
+  assert.strictEqual(h.sessionsKeyboardAction('owner', Object.assign({}, mine, { status: 'ended' })), '');
+  const js = html.slice(html.indexOf('function sessionsKeyboardHtml('), html.indexOf('function sessionsHeaderHtml('));
+  assert.match(js, /data-action="sessionsKeyboard"[^>]*SESSIONS_KEYBOARD_RELEASE[^>]*>Release keyboard</);
+  assert.match(js, /data-action="sessionsKeyboard"[^>]*SESSIONS_KEYBOARD_TAKE[^>]*>Take keyboard</);
+  assert.match(js, /class="sessions-watching"[^>]*>watching · you have the keyboard\? no</, 'a read-only viewer sees the watching pill');
+});
+
+test('presence line names the keyboard holder and the watchers', () => {
+  const s = { id: 'a', status: 'running', keyboard_holder: 'andy', viewers: [{ user: 'bob', keyboard: false }, { user: 'andy', keyboard: true }, { user: 'carol', keyboard: false }, null] };
+  assert.strictEqual(h.sessionsPresenceText(s), 'keyboard: andy · watching: bob, carol');
+  assert.strictEqual(h.sessionsPresenceText({ keyboard_holder: 'andy', viewers: [{ user: 'bob' }] }), 'keyboard: andy (away) · watching: bob', 'a holder who is not attached is marked away');
+  assert.strictEqual(h.sessionsPresenceText({ keyboard_holder: '', viewers: [] }), 'keyboard: free');
+  assert.strictEqual(h.sessionsPresenceText(null), 'keyboard: free');
+  const head = html.slice(html.indexOf('function sessionsHeaderHtml('), html.indexOf('function sessionsQueueHtml('));
+  assert.match(head, /class="sessions-presence' \+ \(s\.keyboard_mine \? ' mine' : ''\)/, 'the holder\'s own presence line is accented');
+  assert.match(head, /sessionsKeyboardHtml\(s\)/);
+  const tab = html.slice(html.indexOf('function sessionsTabHtml('), html.indexOf('function sessionsTabsHtml('));
+  assert.match(tab, /sessionsPresenceText\(s\)/, 'the tab tooltip carries presence');
+});
+
+test('Send shows the queue depth, the toast says queued or sent, and the queue list offers Cancel on own items', () => {
+  assert.strictEqual(h.sessionsQueueLabel('Send', { length: 0 }), 'Send');
+  assert.strictEqual(h.sessionsQueueLabel('Send and run', { length: 2 }), 'Send and run · queued behind 2');
+  assert.strictEqual(h.sessionsQueueLabel('Send', undefined), 'Send');
+  assert.match(h.sessionsQueuedToast('fix', { position: 1 }), /^Sent to fix/);
+  assert.match(h.sessionsQueuedToast('fix', { position: 3 }), /position 3/);
+  const js = html.slice(html.indexOf('function sessionsQueueHtml('), html.indexOf('function sessionsInputBarHtml('));
+  assert.match(js, /data-action="sessionsCancelQueued"/);
+  assert.match(js, /it\.mine && !it\.delivering \?/, 'only own, not-yet-delivering items can be cancelled');
+  assert.doesNotMatch(js, /it\.text/, 'the queue never renders text (the server does not send it)');
+  const bar = html.slice(html.indexOf('function sessionsInputBarHtml('), html.indexOf('function sessionsRefreshQueueUI('));
+  assert.match(bar, /sessionsQueueLabel\('Send', s\.queue\)/);
+  assert.match(bar, /sessionsQueueHtml\(s\)/);
+  const css = html.slice(html.indexOf('.sessions-presence {'), html.indexOf('.sessions-queue-item .hv-btn'));
+  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, 'presence and queue CSS must not add hex literals');
+});
+
+test('a keyboard hand-over re-attaches the iframe with a fresh handoff', () => {
+  const js = html.slice(html.indexOf('function sessionsSyncKeyboardFrame('), html.indexOf('async function sessionsHandoff('));
+  assert.match(js, /_sessionsFrameKeyboard\[s\.id\] === mine\) return/);
+  assert.match(js, /sessionsAttachTerminal\(s\)/);
 });
 
 test('input bar rejects empty and oversize text using the server limits', () => {
@@ -93,16 +147,115 @@ test('terminal iframe path attaches hive-sess-<id> with the handoff code', () =>
   assert.strictEqual(h.sessionsTerminalPath('abc', ''), '/terminal/?arg=hive-sess-abc');
 });
 
-test('layout gate shows Sessions and hides Inception only when sessions are enabled', () => {
+test('terminal pane and iframe take the dashboard terminal surface token, never a literal colour', () => {
+  const css = html.slice(html.indexOf('.sessions-terminal {'), html.indexOf('.sessions-log {'));
+  assert.match(css, /\.sessions-terminal \{[^}]*background: var\(--terminal-bg\)/);
+  assert.match(css, /\.sessions-frame \{[^}]*background: var\(--terminal-bg\)/);
+  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, 'sessions pane CSS must not add hex literals');
+});
+
+test('Settings → Dashboard stages dashboard.sessions.* as one nested block', () => {
+  const src = html.slice(html.indexOf('function markDashboardSessions'), html.indexOf('function markBackendsPolicy'));
+  const dirty = {};
+  const state = { data: { dashboard: { sessions: { enabled: false, max_sessions: 6 } } } };
+  const mark = new Function('_configState', 'markDirty', src + '\nreturn markDashboardSessions;')(state, (section, key, value) => { dirty[section + '.' + key] = value; });
+  mark('enabled', true);
+  mark('max_per_user', '3');
+  mark('idle_ttl_hours', '-4');
+  assert.deepStrictEqual(dirty['dashboard.sessions'], { enabled: true, max_sessions: 6, max_per_user: 3, idle_ttl_hours: 0 });
+  assert.match(html, /data-section="dashboard-sessions" data-key="enabled"/, 'Sessions toggle is rendered in the Dashboard tab');
+  assert.match(html, /yamlHint\('dashboard\.sessions\.enabled'\)/);
+  for (const key of ['max_sessions', 'max_per_user', 'idle_ttl_hours']) {
+    assert.match(html, new RegExp("limit\\('" + key + "', "), 'limit field for dashboard.sessions.' + key);
+  }
+  assert.match(html, /HIVE_SESSIONS_ENABLED environment variable, when set, overrides this switch/);
+});
+
+test('layout gate shows Inception (spek) only when sessions are enabled; the wizard section is gone', () => {
   const m = /function sessionsFeatureEnabled\(\)\{[^\n]*\n\s*function dashboardFeatureSectionHidden\(id\)\{[^\n]*\}/.exec(html);
   assert.ok(m, 'layout gate not found');
   const gate = enabled => new Function('window', 'dashboardAliasSectionId', 'experimentLabEnabled',
     m[0] + '\nreturn dashboardFeatureSectionHidden;')({ _sessionsEnabled: enabled }, id => id, () => true);
   const off = gate(false);
   assert.strictEqual(off('sessions-section'), true);
-  assert.strictEqual(off('inception-section'), false);
   const on = gate(true);
   assert.strictEqual(on('sessions-section'), false);
-  assert.strictEqual(on('inception-section'), true);
   assert.strictEqual(on('nous-section'), false);
+  assert.doesNotMatch(html, /id="inception-section"/, 'the Inception wizard section must be removed');
+  assert.doesNotMatch(html, /data-section="inception-section"/, 'the Inception wizard sidebar item must be removed');
+});
+
+test('#inception-section deep links and saved layouts alias to the Inception (spek) section', () => {
+  const m = /function dashboardAliasSectionId\(id\)\{[^\n]*?return id;\}/.exec(html);
+  assert.ok(m, 'dashboardAliasSectionId not found');
+  const alias = new Function(m[0] + '\nreturn dashboardAliasSectionId;')();
+  assert.strictEqual(alias('inception-section'), 'sessions-section');
+  assert.strictEqual(alias('review-pipeline-section'), 'review-queue-section');
+  assert.strictEqual(alias('knowledge-section'), 'knowledge-section');
+});
+
+test('workspace label names the shared checkout or says sessions start empty', () => {
+  assert.match(h.sessionsWorkspaceLabel({ repo: 'acme/widgets', path: '/data/session-sandbox/workspace/acme/widgets' }), /acme\/widgets \(\/data\/session-sandbox\/workspace\/acme\/widgets\)/);
+  assert.match(h.sessionsWorkspaceLabel({ repo: 'acme/widgets' }), /Workspace: acme\/widgets, shared/);
+  assert.match(h.sessionsWorkspaceLabel({}), /empty directory/);
+  assert.match(h.sessionsWorkspaceLabel(undefined), /empty directory/);
+  assert.deepStrictEqual(h.sessionsSessionWorkspace({ id: 'a', workspace_repo: 'acme/widgets', workspace: '/w' }), { repo: 'acme/widgets', path: '/w' });
+  assert.deepStrictEqual(h.sessionsSessionWorkspace({ id: 'a' }), { repo: '', path: '' });
+  assert.deepStrictEqual(h.sessionsSessionWorkspace(null), {});
+});
+
+test('a preparing session is its own view mode, counts as live and carries the server message with the clone hint', () => {
+  const prep = { id: 'p', name: 'p', status: 'preparing', message: 'preparing workspace: cloning acme/widgets (first session on this hive)' };
+  const failed = { id: 'f', name: 'f', status: 'failed', error: 'preparing session workspace: git clone acme/widgets: exit 128' };
+  for (const role of ['owner', 'read-write', 'read']) {
+    assert.strictEqual(h.sessionsViewMode(role, prep), 'preparing', 'no terminal and no scrollback while preparing');
+    assert.strictEqual(h.sessionsViewMode(role, failed), 'failed');
+  }
+  assert.strictEqual(h.sessionsIsLive(prep), true);
+  assert.strictEqual(h.sessionsIsLive(S('a', '')), true);
+  assert.strictEqual(h.sessionsIsLive(failed), false);
+  assert.strictEqual(h.sessionsIsLive(S('a', '', 'ended')), false);
+  assert.strictEqual(h.sessionsHasPreparing([S('a', ''), prep]), true);
+  assert.strictEqual(h.sessionsHasPreparing([S('a', '')]), false);
+  assert.strictEqual(h.sessionsHasPreparing(undefined), false);
+  const text = h.sessionsStatusText(prep);
+  assert.match(text, /^Preparing workspace: cloning acme\/widgets \(first session on this hive\)… /);
+  assert.match(text, /couple of minutes/);
+  assert.match(h.sessionsStatusText({ status: 'preparing' }), /^Preparing the session… /, 'a missing message still reads as progress');
+  assert.strictEqual(h.sessionsStatusText(failed), 'Could not start this session: preparing session workspace: git clone acme/widgets: exit 128.');
+  assert.match(h.sessionsStatusText({ status: 'failed' }), /unknown error/);
+  assert.match(h.sessionsStatusText({ status: 'ended', error: 'spoke is out of uids' }), /last resume failed: spoke is out of uids/);
+  assert.strictEqual(h.sessionsStatusText(S('a', '')), '');
+  assert.strictEqual(h.sessionsStatusText(null), '');
+});
+
+test('preparing sessions count against the running-session cap', () => {
+  const data = { vendors: [{ id: 'claude', available: true }], sessions: [S('a', ''), S('b', '', 'preparing')], limits: { max_sessions: 2 } };
+  assert.strictEqual(h.sessionsCanCreate('owner', data).ok, false, 'two quick clicks must not overshoot the cap');
+  assert.strictEqual(h.sessionsCanCreate('owner', Object.assign({}, data, { sessions: [S('a', ''), S('b', '', 'failed')] })).ok, true);
+});
+
+test('preparing and failed tabs and panes are rendered with a spinner, the message, and Retry/Delete', () => {
+  const js = html.slice(html.indexOf('function sessionsTabHtml('), html.indexOf('function sessionsEnsurePane('));
+  assert.match(js, /sessions-spinner[^<]*aria-label="Preparing"/, 'the preparing tab shows a spinner in place of the status dot');
+  assert.match(js, /class="sessions-status sessions-status-preparing" role="status" aria-live="polite"/);
+  assert.match(js, /sessionsStatusText\(s\)/);
+  assert.match(js, /role="alert"[^]*data-action="sessionsRetry"[^]*data-action="sessionsClose"/, 'a failed pane offers Retry and Delete');
+  assert.match(js, /SESSIONS_STATUS_PREPARING\) closeItem = ''/, 'a preparing session cannot be closed from the menu');
+  const css = html.slice(html.indexOf('.sessions-spinner {'), html.indexOf('.sessions-status-failed {'));
+  assert.match(css, /animation: spin/);
+  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, 'status CSS must not add hex literals');
+  // The empty-state text is hidden as soon as a session (preparing included) exists.
+  const render = html.slice(html.indexOf('function renderSessions('), html.indexOf('function sessionsSyncPreparingPoll('));
+  assert.match(render, /empty\.hidden = sessions\.length > 0/);
+  assert.match(render, /sessionsSyncPreparingPoll\(sessions\)/, 'polling speeds up while a session is preparing');
+});
+
+test('an ended pane offers Resume only when resumable, and Start again either way', () => {
+  const js = html.slice(html.indexOf('function sessionsPaneBodyHtml('), html.indexOf('function sessionsEnsurePane('));
+  assert.match(js, /if \(s\.resumable\)[^]*data-action="sessionsResume"[^]*\} else \{[^]*cannot be resumed[^]*\}/, 'Resume sits only in the resumable branch');
+  assert.match(js, /data-action="sessionsRestart"[^]*>Start again</);
+  assert.match(js, /restartBtn\('btn-secondary'\)/, 'resumable panes get a secondary Start again');
+  assert.match(js, /restartBtn\('btn-primary'\)/, 'non-resumable panes get a primary Start again');
+  assert.match(html, /async function sessionsRestart\(id\)[^]*sessionsSubmitCreate\(body\)/);
 });

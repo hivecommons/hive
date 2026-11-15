@@ -88,11 +88,30 @@ type Truncator interface {
 }
 
 // Auth names where a connector's credential lives. Inline secrets are never
-// accepted; at most one of Env or File may be set.
+// accepted; at most one of Env or File may be set. OAuth-client connectors
+// (zoom, teams) name their client registration through the *Env fields,
+// which are environment variable names as well, never values.
 type Auth struct {
 	Env  string
 	File string
+	// Mode selects the OAuth grant: AuthModeUserOAuth or AuthModeServerToServer
+	// (zoom). Empty means the connector default.
+	Mode string
+	// ClientIDEnv / ClientSecretEnv name the environment variables holding
+	// the OAuth client registration (zoom, teams).
+	ClientIDEnv     string
+	ClientSecretEnv string
+	// AccountIDEnv names the Zoom account id variable (server_to_server).
+	AccountIDEnv string
+	// TenantIDEnv names the Entra tenant id variable (teams).
+	TenantIDEnv string
 }
+
+// OAuth client grant modes for Auth.Mode.
+const (
+	AuthModeUserOAuth      = "user_oauth"
+	AuthModeServerToServer = "server_to_server"
+)
 
 // ErrNoCredential is returned by Auth.Secret when no credential is configured.
 var ErrNoCredential = errors.New("connector: no credential configured (set auth.env or auth.file)")
@@ -216,7 +235,8 @@ func NewRegistry() *Registry {
 
 // DefaultRegistry returns a registry with the built-in connector types
 // (`git`, `document`, `github-wiki`, `repo-wiki`, `confluence`, `notion`,
-// `sharepoint`, `google-drive`, `context7`, `plaud` and `wisprflow`) registered.
+// `sharepoint`, `google-drive`, `context7`, `plaud`, `wisprflow`, `zoom`,
+// `teams` and `discord`) registered.
 func DefaultRegistry() *Registry {
 	r := NewRegistry()
 	_ = r.Register(TypeGit, newGitConnector)
@@ -230,6 +250,9 @@ func DefaultRegistry() *Registry {
 	_ = r.Register(TypeContext7, newContext7Connector)
 	_ = r.Register(TypePlaud, newPlaudConnector)
 	_ = r.Register(TypeWisprFlow, newWisprConnector)
+	_ = r.Register(TypeZoom, newZoomConnector)
+	_ = r.Register(TypeTeams, newTeamsConnector)
+	_ = r.Register(TypeDiscord, newDiscordConnector)
 	return r
 }
 

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/prfollowup"
+	"github.com/hivecommons/hive/pkg/remoteitems"
 )
 
 // prFollowUpDir resolves the PR follow-up pointer directory; a var so tests
@@ -29,6 +30,25 @@ func (s *Scheduler) addPRFollowUpHandoff(agentName string, message string) strin
 	// staleness limit.
 	section := prfollowup.HandoffSectionWithResume(context.Background(), prFollowUpDir(),
 		s.cfg.PRFollowUpResumeIDMaxAge(), time.Now(), agentName, s.cfg.BaseAgentName(agentName))
+	if section == "" {
+		return message
+	}
+	return appendKickSection(message, section)
+}
+
+// remoteItemsPath is the remote-item store the kick reads
+// (hivecommons/hive#18199); a test seam.
+var remoteItemsPath = remoteitems.Path
+
+// addRemoteItemHandoff appends the remote-item follow-up block: feedback on
+// issues and PRs the agent opened in a write-tier reference repo as the hive
+// owner that could not be resumed into its live session. Independent of
+// turn.pr_follow_up: the remote lane has no other route for this feedback.
+func (s *Scheduler) addRemoteItemHandoff(agentName string, message string) string {
+	if message == "" || s.cfg == nil {
+		return message
+	}
+	section := remoteitems.HandoffSection(remoteItemsPath(), agentName, s.cfg.BaseAgentName(agentName))
 	if section == "" {
 		return message
 	}

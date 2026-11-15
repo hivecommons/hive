@@ -104,7 +104,7 @@ func newPreparationAPI(t *testing.T) (*preparationAPI, *httptest.Server) {
 				api.updates[n]++
 				w.WriteHeader(http.StatusAccepted)
 				write(map[string]string{"message": "Updating pull request branch"})
-			case "reviews":
+			case "reviews", "commits":
 				write([]any{})
 			case "files":
 				if api.onFiles != nil {

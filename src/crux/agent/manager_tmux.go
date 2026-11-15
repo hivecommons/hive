@@ -80,6 +80,9 @@ var inheritedCredentialEnvVars = []string{
 	"HIVE_HEARTBEAT_KEY",
 	"HIVE_HUB_SECRET",
 	"HIVE_TTYD_CREDENTIAL",
+	// The per-boot key behind the user-session ttyd attach tokens
+	// (terminal_session_gate.go): whoever holds it can attach any session.
+	"HIVE_TTYD_ATTACH_KEY",
 	// The corporate forward-proxy rules. The URL's userinfo is the proxy's
 	// Basic credential; agents reach the upstream only through the MITM
 	// proxy and are never handed the corporate proxy URL. The list vars

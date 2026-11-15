@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/hivecommons/hive/crux/keystore"
 	"gopkg.in/yaml.v3"
 )
 
@@ -587,7 +589,38 @@ func (c *Config) redactedForPersist() *Config {
 	// grant in the overlay or runtime config (#18137), so the derived entries
 	// are dropped from the persisted copy here, on every save path.
 	cp.Project.ReferenceRepos = HandWrittenReferenceRepos(cp.Project.ReferenceRepos)
+	// hivecommons/hive#18214: the PAT is the one credential VALUE this file
+	// carries (every other secret is a path). With a keystore provider active
+	// it is persisted as an envelope string; the YAML shape is unchanged and
+	// openPersistedSecrets reverses it on load. In legacy mode the value is
+	// written as before.
+	if sealed, err := keystore.SealActive(context.Background(), cp.GitHub.Token, githubTokenAAD); err == nil {
+		cp.GitHub.Token = sealed
+	} else {
+		log.Printf("[config] warning: github.token could not be sealed for persistence; it is written as it was: %v", err)
+	}
 	return &cp
+}
+
+// githubTokenAAD binds the persisted github.token envelope to its slot, so an
+// envelope lifted from a secret file cannot be pasted in as the PAT.
+var githubTokenAAD = []byte("config:github.token")
+
+// openPersistedSecrets reverses redactedForPersist's sealing after the YAML
+// is parsed: a github.token envelope is opened with the active provider; a
+// plaintext value (a hand-written config, or one saved in legacy mode) is left
+// as is. An envelope this process cannot open is a load error naming the cure
+// rather than a silently empty token, because an empty PAT would make a PAT
+// hive fail every GitHub call with a far less actionable 401.
+func (c *Config) openPersistedSecrets() error {
+	token, _, _, err := keystore.OpenActive(context.Background(), c.GitHub.Token, githubTokenAAD)
+	if err != nil {
+		return fmt.Errorf("github.token is sealed at rest and cannot be opened with the current keystore (%w); "+
+			"set %s to the key material it was sealed with, or %s=none only if the value is to be re-entered",
+			err, keystore.EnvSecretsKeyPrevious, keystore.EnvProviderName)
+	}
+	c.GitHub.Token = token
+	return nil
 }
 
 func mergeOTelOverride(base, override OTelConfig) OTelConfig {

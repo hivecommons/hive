@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
 	"time"
@@ -680,4 +682,75 @@ func TestSignedReconcile_RunsFromWatcherLoop(t *testing.T) {
 			defer m.mu.Unlock()
 			return "the watcher loop never ran the reconcile pass:\n" + strings.Join(m.calls, "\n")
 		})
+}
+
+// clientTimeoutError is the net/http client-timeout cause go-github wraps in a
+// *url.Error ("context deadline exceeded (Client.Timeout exceeded while
+// awaiting headers)").
+type clientTimeoutError struct{}
+
+func (clientTimeoutError) Error() string {
+	return "context deadline exceeded (Client.Timeout exceeded while awaiting headers)"
+}
+func (clientTimeoutError) Timeout() bool   { return true }
+func (clientTimeoutError) Temporary() bool { return true }
+
+// hivecommons/hive#18243: a reconciler read that fails transiently is retried
+// on the next pass, so it logs at INFO and stays out of the WARN-fed fleet
+// selfreport; a failure that describes the repo or the App stays a WARN.
+func TestLogSignedReadFailure_TransientIsInfo(t *testing.T) {
+	ghStatus := func(code int) error {
+		return &gh.ErrorResponse{Response: &http.Response{StatusCode: code, Request: &http.Request{Method: "GET"}}, Message: http.StatusText(code)}
+	}
+	cases := []struct {
+		name string
+		err  error
+		warn bool
+	}{
+		{"client timeout", &url.Error{Op: "Get", URL: "https://api.github.com/repos/o/r/pulls?per_page=100&state=open", Err: clientTimeoutError{}}, false},
+		{"deadline", fmt.Errorf("list: %w", context.DeadlineExceeded), false},
+		{"canceled", fmt.Errorf("list: %w", context.Canceled), false},
+		{"bad gateway", ghStatus(http.StatusBadGateway), false},
+		{"too many requests", ghStatus(http.StatusTooManyRequests), false},
+		{"not found", ghStatus(http.StatusNotFound), true},
+		{"forbidden", ghStatus(http.StatusForbidden), true},
+		{"other", errors.New("unexpected end of JSON input"), true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var logs strings.Builder
+			c := &Client{logger: slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))}
+			c.logSignedReadFailure("signed-commit reconciler: listing open PRs failed", tc.err, "repo", "o/r")
+			out := logs.String()
+			if !strings.Contains(out, "signed-commit reconciler: listing open PRs failed") || !strings.Contains(out, "repo=o/r") || !strings.Contains(out, "err=") {
+				t.Fatalf("failure must still be logged with its repo and error: %s", out)
+			}
+			if gotWarn := strings.Contains(out, "level=WARN"); gotWarn != tc.warn {
+				t.Errorf("WARN=%v, want %v: %s", gotWarn, tc.warn, out)
+			}
+			if !tc.warn && !strings.Contains(out, "level=INFO") {
+				t.Errorf("transient failure must log at INFO: %s", out)
+			}
+		})
+	}
+}
+
+// The open-PR listing goes through logSignedReadFailure: a 404 (the repo is
+// gone or the App lost access) is still a WARN naming the repo.
+func TestSignedReconcile_ListOpenPRsNotFoundWarns(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
+	}))
+	t.Cleanup(srv.Close)
+	c := signedTestClient(t, srv.URL, true)
+	c.SetAppBotLogin(reconcileBot)
+	var logs strings.Builder
+	c.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+
+	c.reconcileSignedCommits(context.Background())
+
+	out := logs.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "signed-commit reconciler: listing open PRs failed") || !strings.Contains(out, "repo=o/r") {
+		t.Errorf("a 404 listing open PRs must stay a WARN naming the repo: %s", out)
+	}
 }

@@ -4,15 +4,26 @@
     // dibs happens inside the hive via POST /api/inbox/route.
     const INBOX_POLL_MS = 60000;
     const INBOX_BUSY_POLL_MS = 5000;
-    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', 'file-drop': '📎', webhook: '🔗' };
+    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'file-drop': '📎', webhook: '🔗' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
+    // Summaries longer than this many characters start collapsed.
+    const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
     let _inboxCache = null;
     let _inboxSelected = new Set();
     let _inboxShowProcessed = false;
     let _inboxBusyTimer = null;
+    // Per-item view state: expanded summaries, open transcript disclosures
+    // and fetched content (summary/transcript/highlights). Audio links are
+    // never kept here: a minted link lives only in the <audio> element.
+    let _inboxExpanded = new Set();
+    let _inboxTranscriptOpen = new Set();
+    let _inboxContent = {};
 
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
     function inboxItemKey(it) { return it.source + '/' + it.id; }
+    // Playback is a read of private audio: owners and read-write sessions.
+    function inboxViewerCanPlay() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
+    function inboxApiPath(src, id, leaf) { return '/api/inbox/' + encodeURIComponent(src) + '/' + encodeURIComponent(id) + '/' + leaf; }
     function inboxFmtDuration(ms) {
       const s = Math.round((Number(ms) || 0) / 1000);
       if (s <= 0) return '';
@@ -54,12 +65,46 @@
       return html;
     }
 
+    // Summary / memo text: collapsed past INBOX_SUMMARY_COLLAPSE_CHARS with a
+    // more/less toggle. Falls back to the pending note or the fact excerpt.
+    function inboxSummaryHtml(it, key) {
+      const src = escapeHtml(it.source), id = escapeHtml(it.id);
+      const cached = _inboxContent[key];
+      const summary = (cached && cached.summary) || it.summary || '';
+      if (summary) {
+        const long = summary.length > INBOX_SUMMARY_COLLAPSE_CHARS;
+        const expanded = _inboxExpanded.has(key);
+        let html = '<div class="inbox-summary' + (long && !expanded ? ' is-collapsed' : '') + '">' + escapeHtml(summary) + '</div>';
+        if (long) html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-more" data-action="inboxToggleSummary" data-arg0="' + src + '" data-arg1="' + id + '">' + (expanded ? 'less' : 'more') + '</button>';
+        return html;
+      }
+      if (it.pending || (cached && cached.pending)) {
+        if (it.source === 'zoom' || it.source === 'teams') return '<div class="inbox-pending muted-xs" title="The platform reports no transcript or summary for this recording yet">Not transcribed yet: ' + (it.source === 'zoom' ? 'Zoom' : 'Teams') + ' has no transcript or summary for this recording (cloud transcription may still be processing or is disabled); the hive re-checks it on every sync.</div>';
+        if (it.source === 'discord') return '<div class="inbox-pending muted-xs" title="Discord has no transcripts; none was posted with this recording">Not transcribed yet: Discord has no built-in transcription and no transcript file was posted with this recording; play it here, or post a .vtt/.txt transcript in the same message. The hive re-checks it on every sync.</div>';
+        return '<div class="inbox-pending muted-xs" title="The MCP reports no transcript or summary block for this recording">Not transcribed yet in Plaud: open the recording in the Plaud app and run transcription; the hive re-checks it on every sync.</div>';
+      }
+      return it.excerpt ? '<div class="kb-fact-snippet">' + escapeHtml(it.excerpt) + '</div>' : '';
+    }
+
+    // Transcript disclosure body: loaded on demand from the content endpoint.
+    function inboxTranscriptHtml(it, key) {
+      if (!_inboxTranscriptOpen.has(key)) return '';
+      const c = _inboxContent[key];
+      if (!c) return '<div class="inbox-transcript muted-xs">Loading transcript…</div>';
+      if (c.error) return '<div class="inbox-transcript kc-error muted-xs">' + escapeHtml(c.error) + '</div>';
+      let html = '<div class="inbox-transcript">';
+      if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
+      else html += '<div class="muted-xs">No transcript yet' + (c.pending ? (it.source === 'plaud' ? ': Plaud has not transcribed this recording.' : ': the meeting platform has not produced a transcript for this recording.') : '.') + '</div>';
+      if (c.highlights) html += '<div class="muted-xs inbox-highlights"><strong>Highlights</strong> (flagged on the device)<pre class="inbox-transcript-text">' + escapeHtml(c.highlights) + '</pre></div>';
+      return html + '</div>';
+    }
+
     function inboxItemHtml(it) {
       const key = inboxItemKey(it);
       const checked = _inboxSelected.has(key) ? ' checked' : '';
       const when = it.recorded_at && !String(it.recorded_at).startsWith('0001') ? relativeTimeShort(it.recorded_at) : '';
       const dur = inboxFmtDuration(it.duration_ms);
-      const meta = [escapeHtml(it.source), when, dur].filter(Boolean).join(' · ');
+      const meta = [escapeHtml(it.source), when ? 'recorded ' + when : '', dur].filter(Boolean).join(' · ');
       const routes = it.routes || {};
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
@@ -67,6 +112,8 @@
       const owner = viewerIsOwner();
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
       let actions = '';
+      if (inboxViewerCanPlay()) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Fetch a fresh 24h audio link and play it here">▶ Play recording</button>';
+      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + ' Transcript</button>';
       if (owner) {
         const retry = (d) => routes[d] && routes[d].status === 'failed' ? 'Retry ' : '→ ';
         actions += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxOpenRoute" data-arg0="' + src + '" data-arg1="' + id + '" data-arg2="spek_rfc">' + retry('spek_rfc') + 'RFC…</button>';
@@ -80,9 +127,84 @@
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
         '<div class="kb-fact-body"><div class="kb-fact-title">' + escapeHtml(it.title || it.id) + '</div>' +
         '<div class="muted-xs">' + meta + '</div>' +
-        (it.excerpt ? '<div class="kb-fact-snippet">' + escapeHtml(it.excerpt) + '</div>' : '') +
+        inboxSummaryHtml(it, key) +
+        '<div class="inbox-media" data-inbox-media="' + escapeHtml(key) + '"></div>' +
         (pills ? '<div class="inbox-pills">' + pills + '</div>' : '') +
-        '<div class="kc-actions mt-2">' + actions + '</div></div></div>';
+        '<div class="kc-actions mt-2">' + actions + '</div>' +
+        inboxTranscriptHtml(it, key) + '</div></div>';
+    }
+
+    function inboxToggleSummary(src, id) {
+      const key = src + '/' + id;
+      if (_inboxExpanded.has(key)) _inboxExpanded.delete(key); else _inboxExpanded.add(key);
+      renderInbox();
+    }
+
+    async function inboxLoadContent(src, id) {
+      const key = src + '/' + id;
+      try {
+        const r = await fetch(inboxApiPath(src, id, 'content'));
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _inboxContent[key] = data;
+      } catch (e) {
+        _inboxContent[key] = { error: 'Could not load the transcript: ' + e.message };
+      }
+      renderInbox();
+    }
+    function inboxToggleTranscript(src, id) {
+      const key = src + '/' + id;
+      if (_inboxTranscriptOpen.has(key)) { _inboxTranscriptOpen.delete(key); renderInbox(); return; }
+      _inboxTranscriptOpen.add(key);
+      renderInbox();
+      const cached = _inboxContent[key];
+      if (!cached || cached.error) inboxLoadContent(src, id);
+    }
+
+    // ▶ Play recording: mint a fresh presigned link through the hive and play
+    // it inline. The link is only ever placed on the <audio> element; the
+    // hive stores nothing and the next click mints a new one.
+    async function inboxPlay(src, id) {
+      const key = src + '/' + id;
+      const mount = document.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
+      if (mount) mount.innerHTML = '<div class="muted-xs">Fetching audio link…</div>';
+      try {
+        const r = await fetch(inboxApiPath(src, id, 'audio'), { cache: 'no-store' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        if (!data.url) throw new Error('no audio link returned');
+        const target = document.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
+        if (!target) return;
+        target.innerHTML = '';
+        const audio = document.createElement('audio');
+        audio.controls = true;
+        audio.autoplay = true;
+        audio.preload = 'auto';
+        audio.className = 'inbox-audio';
+        audio.src = data.url;
+        target.appendChild(audio);
+        const note = document.createElement('div');
+        note.className = 'muted-xs';
+        note.textContent = 'Fresh link' + (data.expires_at ? ', valid until ' + formatDashboardDateTime(data.expires_at) : '') + '. Click ▶ Play recording again for a new one.';
+        target.appendChild(note);
+      } catch (e) {
+        if (mount) mount.innerHTML = '';
+        showToast('Audio unavailable: ' + e.message, 'error');
+      }
+    }
+
+    // A poll must not stop a recording that is playing: live <audio> elements
+    // are moved into the freshly rendered item instead of being rebuilt.
+    function inboxPreserveAudio(panel, render) {
+      const live = {};
+      panel.querySelectorAll('[data-inbox-media]').forEach(m => {
+        if (m.querySelector('audio')) live[m.dataset.inboxMedia] = Array.from(m.childNodes);
+      });
+      render();
+      for (const key of Object.keys(live)) {
+        const target = panel.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
+        if (target) { target.innerHTML = ''; live[key].forEach(n => target.appendChild(n)); }
+      }
     }
 
     function renderInbox() {
@@ -121,7 +243,7 @@
       }
       if (!shown.length) html += '<div class="muted-note">' + (items.length ? 'Everything is triaged. Toggle “show processed” to see filed and dismissed items.' : 'Nothing yet. Connect Plaud or another voice source under Knowledge → Integrations; new recordings land here after the next sync (a newly added connector starts on the next hive restart).') + '</div>';
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
-      panel.innerHTML = html;
+      inboxPreserveAudio(panel, () => { panel.innerHTML = html; });
     }
 
     function inboxToggleProcessed() { _inboxShowProcessed = !_inboxShowProcessed; renderInbox(); }
@@ -319,10 +441,13 @@
     // to localhost:8199, so the operator pastes either the redirect URL the
     // browser landed on or the tokens-mcp.json contents; the hive finishes
     // the login in-pod.
+    // The same endpoint finishes a Zoom user-level sign-in from its pasted
+    // redirect URL (kbZoomPasteHtml); the label follows the connector type.
     async function kbPlaudPasteComplete(name) {
+      const label = kbAuthLabel(name);
       const el = document.getElementById('kb-plaud-paste-' + name);
       const raw = el ? el.value.trim() : '';
-      if (!raw) { showToast('Paste the redirect URL or the tokens JSON first.', 'error'); return; }
+      if (!raw) { showToast('Paste the redirect URL' + (label === 'Plaud' ? ' or the tokens JSON' : '') + ' first.', 'error'); return; }
       const body = raw.startsWith('{') ? { tokens: raw } : { redirect_url: raw };
       try {
         const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -330,10 +455,10 @@
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         _kbPlaudAuth[name] = data;
         kbRenderIntegrationsModal();
-        showToast(data.connected ? 'Plaud connected' + (data.account ? ' as ' + data.account : '') : 'Plaud sign-in submitted; click Check.', data.connected ? 'success' : 'info');
+        showToast(data.connected ? label + ' connected' + (data.account ? ' as ' + data.account : '') : label + ' sign-in submitted; click Check.', data.connected ? 'success' : 'info');
         fetchInbox();
       } catch (e) {
-        showToast('Plaud sign-in failed: ' + e.message, 'error');
+        showToast(label + ' sign-in failed: ' + e.message, 'error');
       }
     }
     function kbPlaudPasteHtml(name) {
@@ -342,7 +467,7 @@
       const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
       if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Recordings are triaged in the Inbox, not here.</span></div>';
       return '<details class="kb-plaud-paste mt-2"><summary class="muted-xs">Hive runs on a server? Finish sign-in by pasting</summary>' +
-        '<p class="muted-xs">Plaud only redirects to <code>localhost:8199</code>. Open the authorization link, approve, then paste the <code>localhost:8199/auth/callback?…</code> URL your browser lands on (within 10 minutes). Alternatively paste the contents of <code>~/.plaud/tokens-mcp.json</code> from a laptop where <code>plaud-mcp</code> is signed in.</p>' +
+        '<p class="muted-xs">Plaud only redirects to <code>localhost:8199</code>. Open the authorization link, approve, then paste the <code>localhost:8199/auth/callback?…</code> URL your browser lands on (within 10 minutes). Alternatively paste the contents of <code>~/.plaud/tokens-mcp.json</code> from a laptop where <code>plaud-mcp</code> is signed in: on macOS run <code>cat ~/.plaud/tokens-mcp.json | pbcopy</code> (Linux: <code>xclip -selection clipboard &lt; ~/.plaud/tokens-mcp.json</code>) to copy it without showing it, then paste below.</p>' +
         '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="3" placeholder="http://localhost:8199/auth/callback?code=…  or  {&quot;access_token&quot;: …}"></textarea>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
     }

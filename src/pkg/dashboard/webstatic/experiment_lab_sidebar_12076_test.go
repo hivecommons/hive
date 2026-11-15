@@ -91,8 +91,8 @@ func TestStaticCodenamedSidebarLabelsShareOneConvention(t *testing.T) {
 	}
 	codenamed := regexp.MustCompile(`^[A-Z][A-Za-z ]+ \([a-z]+\)$`)
 	for section, want := range map[string]string{
-		"inception-section": "Inception (spektacular)",
-		"nous-section":      "Experiment Lab (nous)",
+		"sessions-section": "Inception (spek)",
+		"nous-section":     "Experiment Lab (nous)",
 	} {
 		got, ok := labels[section]
 		if !ok {

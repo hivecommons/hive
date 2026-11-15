@@ -229,8 +229,8 @@ func (c *plaudConnector) Disconnect(ctx context.Context) (AuthState, error) {
 // plaudAccountName extracts an identity from get_current_user output.
 func plaudAccountName(text string) string {
 	text = strings.TrimSpace(text)
-	var m map[string]any
-	if err := json.Unmarshal([]byte(text), &m); err == nil {
+	if raw, ok := plaudJSONPayload(text); ok {
+		m, _ := raw.(map[string]any)
 		for _, key := range []string{"email", "name", "nickname", "username", "id"} {
 			if s := plaudString(m, key); s != "" {
 				return s
@@ -252,11 +252,8 @@ func mustJSON(v any) string {
 // flattened: note_list entries and content/summary/markdown fields.
 func renderPlaudNote(text string) string {
 	text = strings.TrimSpace(text)
-	if text == "" || !strings.HasPrefix(text, "{") && !strings.HasPrefix(text, "[") {
-		return text
-	}
-	var raw any
-	if err := json.Unmarshal([]byte(text), &raw); err != nil {
+	raw, ok := plaudStructuredReply(text)
+	if !ok {
 		return text
 	}
 	var parts []string
@@ -292,11 +289,8 @@ func renderPlaudNote(text string) string {
 // text" lines when it is JSON; plain text passes through.
 func renderPlaudTranscript(text string) string {
 	text = strings.TrimSpace(text)
-	if text == "" || !strings.HasPrefix(text, "{") && !strings.HasPrefix(text, "[") {
-		return text
-	}
-	var raw any
-	if err := json.Unmarshal([]byte(text), &raw); err != nil {
+	raw, ok := plaudStructuredReply(text)
+	if !ok {
 		return text
 	}
 	var segs []any
@@ -304,7 +298,7 @@ func renderPlaudTranscript(text string) string {
 	case []any:
 		segs = t
 	case map[string]any:
-		for _, key := range []string{"source_list", "segments", "transcript", "items", "data"} {
+		for _, key := range []string{"source_list", "segments", "utterances", "transcript", "items", "data", "results", "entries", "sentences"} {
 			if arr, ok := t[key].([]any); ok {
 				segs = arr
 				break
@@ -364,10 +358,11 @@ func plaudTimestamp(m map[string]any) string {
 
 // plaudPresignedURL pulls the presigned audio URL out of get_file output.
 func plaudPresignedURL(text string) string {
-	var m map[string]any
-	if err := json.Unmarshal([]byte(strings.TrimSpace(text)), &m); err == nil {
-		if u := plaudString(m, "presigned_url", "audio_url", "url"); u != "" {
-			return u
+	if raw, ok := plaudJSONPayload(text); ok {
+		if m, ok := raw.(map[string]any); ok {
+			if u := plaudString(m, "presigned_url", "audio_url", "url"); u != "" {
+				return u
+			}
 		}
 	}
 	return firstHTTPSURL(text)

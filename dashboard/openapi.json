@@ -41200,7 +41200,7 @@
           "Knowledge"
         ],
         "summary": "Get a knowledge connector's sign-in state",
-        "description": "Returns the cached sign-in state of a connector that authenticates interactively (e.g. `plaud` via the Plaud MCP OAuth flow). Pass `refresh=1` to re-query the upstream account. Tokens are never returned; they stay in the connector's own credential store.",
+        "description": "Returns the cached sign-in state of a connector that authenticates interactively (`plaud` via the Plaud MCP OAuth flow, `zoom` via its OAuth app, `teams` via Graph application permissions, `discord` via a bot token named in `auth.env`). Pass `refresh=1` to re-query the upstream account; for `teams` a missing admin consent is reported in `message` with the Entra admin-consent page in `auth_url`; for `discord` a bot that is not in the server or cannot read a channel is reported the same way with the bot invite page in `auth_url`. Tokens are never returned; they stay in the connector's own credential store.",
         "parameters": [
           {
             "name": "name",
@@ -41309,7 +41309,7 @@
           "Knowledge"
         ],
         "summary": "Start a knowledge connector's interactive sign-in",
-        "description": "Owner-only. Starts the connector's OAuth login (for `plaud`, the MCP server's `login` tool) and returns the pending state including `auth_url` for the user to open in a browser. The login session is kept alive for the callback; poll `GET /api/knowledge/connectors/{name}/auth?refresh=1` for the outcome.",
+        "description": "Owner-only. Starts the connector's OAuth login (for `plaud`, the MCP server's `login` tool; for `zoom` user-level OAuth, the authorization URL of the registered app with a `state`) and returns the pending state including `auth_url` for the user to open in a browser. The login session is kept alive for the callback (Plaud) or the pasted redirect URL (Zoom, 10 minutes); poll `GET /api/knowledge/connectors/{name}/auth?refresh=1` for the outcome. Connectors without a browser step (`zoom` Server-to-Server, `teams`, `discord`) fetch a token or probe the API and answer with the resulting state; `teams` includes the admin-consent URL when consent is missing.",
         "parameters": [
           {
             "name": "name",
@@ -41441,7 +41441,7 @@
           "Knowledge"
         ],
         "summary": "Sign a knowledge connector out",
-        "description": "Owner-only. Signs the connector out upstream (for `plaud`, the MCP server's `logout` tool), which removes the token from the connector's own credential store, and returns the new state.",
+        "description": "Owner-only. Signs the connector out upstream (for `plaud`, the MCP server's `logout` tool; for `zoom`, a token revoke and the connector token store is cleared; for `teams`, the cached client-credentials token is dropped; for `discord`, nothing is stored, so the state only records that the bot must be removed or its token reset to revoke) and returns the new state.",
         "parameters": [
           {
             "name": "name",
@@ -41573,7 +41573,7 @@
           "Knowledge"
         ],
         "summary": "List inbox items (voice recordings and dictations) with their triage state",
-        "description": "Items are the facts written by voice knowledge connectors (`plaud`, `wisprflow`), newest first, keyed by `(source, id)`, with per-destination routing state, source connection status, candidate repositories and the auto-routing settings.",
+        "description": "Items are the facts written by voice and meeting knowledge connectors (`plaud`, `wisprflow`, `zoom`, `teams`, `discord`), newest first, keyed by `(source, id)`, with per-destination routing state, source connection status, candidate repositories and the auto-routing settings.",
         "responses": {
           "200": {
             "description": "Inbox listing",
@@ -41590,7 +41590,7 @@
                         "properties": {
                           "source": {
                             "type": "string",
-                            "description": "Connector type (plaud, wisprflow, …)"
+                            "description": "Connector type (plaud, wisprflow, zoom, teams, discord, …)"
                           },
                           "connector": {
                             "type": "string"
@@ -42077,6 +42077,207 @@
         }
       }
     },
+    "/api/inbox/{source}/{id}/content": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Read one inbox item's full text",
+        "description": "Summary, transcript and highlights of one recording, read from its Knowledge fact or live from the source while the fact still has no text. `pending` is true when the source has produced neither a summary nor a transcript yet (for Plaud: the recording was never transcribed in the app; for Zoom/Teams: cloud transcription is still processing or disabled; for Discord: no transcript file was posted with the recording).",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Source type (`plaud`, `wisprflow`, `zoom`, `teams`, `discord`, ...)"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id; Discord: `m:<channel>:<message>` or `e:<event>`)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Item content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "item_id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "transcript": {
+                      "type": "string"
+                    },
+                    "highlights": {
+                      "type": "string"
+                    },
+                    "markdown": {
+                      "type": "string"
+                    },
+                    "pending": {
+                      "type": "boolean"
+                    },
+                    "provenance": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Source unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/{source}/{id}/audio": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Mint a fresh audio link for one inbox item",
+        "description": "Owner or read-write. Asks the item's connector for a short-lived audio/video URL (Plaud: `get_file`, valid 24h; Zoom: the audio-only or video `download_url` with a one-hour download token appended as `access_token`; Teams: 404, Graph serves recordings behind a bearer token; Discord: the freshly signed CDN URL of the audio attachment, re-read from the message, expiring at its `ex` time) and returns it once with `Cache-Control: no-store`; the hive never stores the link in facts or state. Playback does not depend on the connector's `include_audio` option, which only decides whether a sync also writes a link into the fact. Audited as `inbox_audio`.",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Source type (`plaud`, `wisprflow`, `zoom`, `teams`, `discord`, ...)"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id; Discord: `m:<channel>:<message>` or `e:<event>`)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Presigned audio link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "item_id": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown item, or no audio for this item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Source unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/inbox/settings": {
       "get": {
         "tags": [
@@ -42326,7 +42527,7 @@
           "Knowledge"
         ],
         "summary": "Finish a connector sign-in from pasted material (hosted hives)",
-        "description": "Owner-only. Plaud's OAuth client only redirects to `localhost:8199`, which a hive running in a cluster never receives. The operator pastes either the `redirect_url` the browser landed on after approving (forwarded to the in-pod callback while the login started by `/auth/connect` is still pending, 10 minutes) or the `tokens` JSON from a laptop's `~/.plaud/tokens-mcp.json`; the hive stores it and re-checks the account.",
+        "description": "Owner-only. Plaud's OAuth client only redirects to `localhost:8199`, and a Zoom user-level app is registered with a localhost redirect as well, which a hive running in a cluster never receives. The operator pastes the `redirect_url` the browser landed on after approving (Plaud: forwarded to the in-pod callback while the login started by `/auth/connect` is still pending; Zoom: its `code` is exchanged for tokens, the `state` must match the pending sign-in; 10 minutes either way) or, for Plaud only, the `tokens` JSON from a laptop's `~/.plaud/tokens-mcp.json`; the hive stores it and re-checks the account.",
         "parameters": [
           {
             "name": "name",
@@ -42466,7 +42667,7 @@
           "Sessions"
         ],
         "summary": "List sessions, vendors and limits",
-        "description": "Any role. While the feature is off returns enabled=false with empty lists.",
+        "description": "Any role. While the feature is off returns enabled=false with empty lists. Also reports workspace {repo, path}: the shared checkout new sessions open in; each session carries workspace_repo and workspace. A session's status is `preparing` (background start in flight; `message` says what it waits on), `running`, `failed` (`error` says why; DELETE removes it) or `ended`. Each running session also carries keyboard_holder / keyboard_since / keyboard_mine (the keyboard lease), viewers [{user, attached_since, keyboard}] (live terminals) and queue {length, head, position, items[{id, user, bytes, submit, queued_at, delivering, mine}]} (pending sends, never their text).",
         "responses": {
           "200": {
             "description": "OK"
@@ -42478,10 +42679,10 @@
           "Sessions"
         ],
         "summary": "Create a session (owner or read-write)",
-        "description": "Starts a named CLI session. Vendor must be a known, allowed, installed backend; never a shell, never a bypass-permissions launch.",
+        "description": "Starts a named CLI session in the hive's shared workspace checkout (spektacular init run for the vendor). Vendor must be a known, allowed, installed backend; never a shell, never a bypass-permissions launch. ASYNCHRONOUS: answers at once with the session in status `preparing` (and a human `message`, e.g. the first session on a hive clones the project repository, which takes minutes); the start runs in the background. Poll GET /api/sessions until the session is `running` or `failed` (then `error` carries the reason and DELETE removes it).",
         "responses": {
-          "201": {
-            "description": "OK"
+          "202": {
+            "description": "Accepted; the session is preparing"
           },
           "400": {
             "description": "Invalid name, group or vendor"
@@ -42630,11 +42831,14 @@
         "tags": [
           "Sessions"
         ],
-        "summary": "Type text into a session (owner or read-write)",
-        "description": "Literal paste, never key names. Audited with user and byte count, not the text.",
+        "summary": "Queue text for a session (owner or read-write)",
+        "description": "Literal paste, never key names. QUEUED: answers 202 with {queued: {id, position}, queue}; a per-session worker types the head once the CLI prompt is idle (no run in progress, empty prompt line; fails open after HIVE_SESSIONS_SEND_WAIT_SEC, default 45). Audited at delivery with the queuing user and byte count, not the text. The read role never sends (403).",
         "responses": {
-          "200": {
-            "description": "OK"
+          "202": {
+            "description": "Queued; body carries the item id, its position and the session's queue"
+          },
+          "429": {
+            "description": "Queue full (32 items)"
           },
           "400": {
             "description": "Invalid text"
@@ -42661,6 +42865,96 @@
                   },
                   "submit": {
                     "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{id}/input/{queue_id}": {
+      "delete": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Cancel a queued send (owner or read-write)",
+        "description": "Removes your own queued item; the session's creator or an owner may cancel anyone's.",
+        "responses": {
+          "200": {
+            "description": "Cancelled; body carries the updated queue"
+          },
+          "403": {
+            "description": "Not your item, or role not allowed"
+          },
+          "404": {
+            "description": "Unknown session or item"
+          },
+          "409": {
+            "description": "The item is being delivered"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "queue_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{id}/keyboard": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Take or release the session's keyboard (owner or read-write)",
+        "description": "One person at a time holds the keyboard: the only writable terminal attach; everyone else watches read-only (tmux attach-session -r, decided by the server). {\"action\":\"take\"}: owners and the creator always may; another read-write user only when the keyboard is released or the holder has been idle for HIVE_SESSIONS_KEYBOARD_GRACE_SEC (default 60), else 409 {holder, grace_seconds}. {\"action\":\"release\"}: the holder, the creator or an owner. A hand-over detaches the previous holder's tmux client and is audited as session_keyboard with from/to.",
+        "responses": {
+          "200": {
+            "description": "OK; body carries the session with keyboard_holder, keyboard_mine, viewers"
+          },
+          "400": {
+            "description": "Unknown action"
+          },
+          "403": {
+            "description": "Role not allowed, or not the holder on release"
+          },
+          "409": {
+            "description": "The holder is active; or the session is not running"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": ["take", "release"]
                   }
                 }
               }
@@ -42734,10 +43028,10 @@
           "Sessions"
         ],
         "summary": "Resume an ended session (owner or read-write)",
-        "description": "Only for vendors with a resume handle.",
+        "description": "Only for vendors with a resume handle. ASYNCHRONOUS like the create: answers at once with the session `preparing`; poll GET /api/sessions until it is `running`, or back to `ended` with `error` set when the start failed (still resumable).",
         "responses": {
-          "200": {
-            "description": "OK"
+          "202": {
+            "description": "Accepted; the session is preparing"
           },
           "403": {
             "description": "Role not allowed"
@@ -42759,6 +43053,55 @@
             }
           }
         ]
+      }
+    },
+    "/api/github-owner-identity": {
+      "get": {
+        "tags": ["System"],
+        "summary": "Owner GitHub identity for remote repos",
+        "description": "Reports the hive owner's connected GitHub account that write-tier reference repos are written as (hivecommons/hive#18197): connected, login, granted scope, whether the stored token is still usable and why not, the scope the consent asks for (public_repo) and the token file path. Never the token itself. Owner only.",
+        "responses": {
+          "200": {"description": "Identity status", "content": {"application/json": {"schema": {"type": "object", "properties": {"connected": {"type": "boolean"}, "login": {"type": "string"}, "scope": {"type": "string"}, "connected_at": {"type": "string", "format": "date-time"}, "usable": {"type": "boolean"}, "reason": {"type": "string"}, "verified_at": {"type": "string", "format": "date-time"}, "scope_required": {"type": "string"}, "private_repos_supported": {"type": "boolean"}, "file": {"type": "string"}}}}}},
+          "403": {"description": "Owner role required"},
+          "503": {"description": "No identity store on this hive"}
+        }
+      },
+      "delete": {
+        "tags": ["System"],
+        "summary": "Disconnect the owner GitHub identity",
+        "description": "Removes the owner token from this hive; every write-tier reference repo drops to read-only on the next pass. Revoking the authorization on GitHub is the owner's own step (Settings → Applications). Owner only.",
+        "responses": {
+          "200": {"description": "Disconnected", "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string"}, "login": {"type": "string"}, "identity": {"type": "object", "properties": {"connected": {"type": "boolean"}, "login": {"type": "string"}, "scope": {"type": "string"}, "connected_at": {"type": "string", "format": "date-time"}, "usable": {"type": "boolean"}, "reason": {"type": "string"}, "verified_at": {"type": "string", "format": "date-time"}, "scope_required": {"type": "string"}, "private_repos_supported": {"type": "boolean"}, "file": {"type": "string"}}}, "note": {"type": "string"}}}}}},
+          "403": {"description": "Owner role required"},
+          "503": {"description": "No identity store on this hive"}
+        }
+      }
+    },
+    "/api/github-owner-identity/start": {
+      "post": {
+        "tags": ["System"],
+        "summary": "Start the owner identity consent",
+        "description": "Begins a GitHub device flow with the spoke's oauth_client_id asking for the public_repo scope, separate from the scope-free dashboard login. Show user_code and verification_uri to the owner and poll with flow_id. Owner only.",
+        "responses": {
+          "200": {"description": "Device flow started", "content": {"application/json": {"schema": {"type": "object", "properties": {"user_code": {"type": "string"}, "verification_uri": {"type": "string"}, "expires_in": {"type": "integer"}, "interval": {"type": "integer"}, "flow_id": {"type": "string"}, "scope": {"type": "string"}}}}}},
+          "403": {"description": "Owner role required"},
+          "502": {"description": "GitHub refused the device-code request"},
+          "503": {"description": "No identity store on this hive"}
+        }
+      }
+    },
+    "/api/github-owner-identity/poll": {
+      "post": {
+        "tags": ["System"],
+        "summary": "Poll the owner identity consent",
+        "description": "Polls the device flow started by /start. status is pending or slow_down (poll again), complete (the identity was validated, checked for the public_repo scope and the logged-in owner's account, stored on the spoke, and the reference-repo policies re-resolved) or error. Owner only.",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"type": "object", "required": ["flow_id"], "properties": {"flow_id": {"type": "string"}}}}}},
+        "responses": {
+          "200": {"description": "Poll result", "content": {"application/json": {"schema": {"type": "object", "properties": {"status": {"type": "string", "enum": ["pending", "slow_down", "complete", "error"]}, "login": {"type": "string"}, "identity": {"type": "object", "properties": {"connected": {"type": "boolean"}, "login": {"type": "string"}, "scope": {"type": "string"}, "connected_at": {"type": "string", "format": "date-time"}, "usable": {"type": "boolean"}, "reason": {"type": "string"}, "verified_at": {"type": "string", "format": "date-time"}, "scope_required": {"type": "string"}, "private_repos_supported": {"type": "boolean"}, "file": {"type": "string"}}}, "error": {"type": "string"}}}}}},
+          "400": {"description": "No consent in progress, or the flow_id is not the one /start returned"},
+          "403": {"description": "Owner role required"},
+          "503": {"description": "No identity store on this hive"}
+        }
       }
     }
   },

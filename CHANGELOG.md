@@ -88,6 +88,134 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 - The signed-commit reconciler's intentional refusal to rewrite a foreign or merge commit no longer files repeated unclassified-error fleet reports; its warning and PR remediation remain visible ([#17924](https://github.com/hivecommons/hive/issues/17924)).
 - Dashboard logs one summary warning per five minutes for dropped SSE events instead of one warning per event, so a stalled browser tab no longer triggers repeated-error fleet reports (#17995).
 
+## 2026-11-15 (v5.265.2)
+
+### Fixed
+
+- Clear an agent's forge-unreachable condition when a later scoped-token refresh succeeds, so recovered mint outages do not remain reported until the agent restarts.
+
+## 2026-11-15 (v5.265.1)
+
+### Fixed
+
+- **Sessions: an ended session that cannot be resumed now offers "Start again" instead of a Resume button that always fails.** When the CLI never reached its first prompt before the hive restarted, the session has no conversation to continue and `POST /api/sessions/{id}/resume` answers 409 `no conversation to resume was found`, which surfaced only as a toast. The ended pane now checks the session's `resumable` flag: when false it explains why and shows "Start again" (a fresh session with the same name, group, vendor and sharing, the old scrollback kept); when true it keeps "Resume" and adds a secondary "Start again".
+
+## 2026-11-15 (v5.265.0)
+
+### Added
+
+- Shared dashboard Sessions are now safe for several people at once. **Roles:** the `read` role watches a shared session's live terminal read-only (it used to get only a polled scrollback) and never types, Sends or uploads; `read-write` and `owner` may Send, upload and hold the keyboard; private sessions stay creator-and-owners only. **One keyboard at a time:** each session has a keyboard lease (`keyboard_holder`, `keyboard_since` on the record, held by the creator from the start and by whoever resumes); only the holder's terminal attach is writable, every other viewer is attached with `tmux attach-session -r`, decided server-side (the proxy appends a second per-session write token only for the holder and `ttyd-tmux.sh` attaches read-only without it, so nothing a browser sends can promote a viewer). `POST /api/sessions/{id}/keyboard {"action":"take"|"release"}`: owners and the creator always take it, another writer only once it is released or the holder has been idle for `HIVE_SESSIONS_KEYBOARD_GRACE_SEC` (default 60); a hand-over detaches the previous holder's tmux client, both browsers re-attach in their new mode, and it is audited as `session_keyboard` with from/to, which makes terminal typing attributable to the holder of record. **Queued Send:** `POST /api/sessions/{id}/input` now answers 202 and queues the text (32 per session); a per-session worker types the head only when the CLI prompt is idle (no run in progress, empty prompt line, per-vendor heuristics for Claude Code, Copilot and Codex), falling open after `HIVE_SESSIONS_SEND_WAIT_SEC` (default 45) so nothing is stuck; `GET /api/sessions` reports the `queue` (length, head, your position, items without text), `DELETE /api/sessions/{id}/input/{queue_id}` cancels your own item, and each delivery is audited as `session_input` for the user who queued it. **Presence:** `viewers` (user, attached since, keyboard) per session; the tab tooltip and the pane header read `keyboard: andy · watching: bob, carol` with a Take/Release keyboard button, and the Send button shows `queued behind N` with the queue listed under the input bar.
+
+## 2026-11-15 (v5.264.0)
+
+### Added
+
+- Inbox items from Plaud now carry real text and play their audio. The Plaud connector asks `get_file` which transcript blocks and notes a recording actually has before reading them (preferring the AI-cleaned transcript, then the raw one, then the outline, and following the MCP's `Available blocks:` hint when the inventory is unreadable), so the MCP's `Block "transaction" not available for this recording` reply is no longer stored as the fact body; a recording Plaud has not transcribed yet becomes a fact marked `attr_plaud_content: pending` with a plain note and its flagged highlights, and such facts are re-fetched on every sync (capped at 25 per sync) until text arrives. The Inbox item shows the summary (collapsible), a Transcript disclosure, highlights, duration and recording time, and a `▶ Play recording` control that mints a fresh 24h presigned link through `GET /api/inbox/{source}/{id}/audio` (owner or read-write; audited; never persisted) and plays it inline; `GET /api/inbox/{source}/{id}/content` returns the full text. The connector's `include_audio` option now only decides whether a sync also stores the link in the fact.
+
+### Fixed
+
+- Sessions: the attached count no longer climbs with every reload of a terminal ("26 attached" on a session one person was using), and a session's window is no longer sized to a stale client that nobody is looking at. A browser terminal is a tmux client that `ttyd-tmux.sh` attaches on a pty ttyd owns; when the browser closed, ttyd sent SIGHUP to the helper's process group, but the client runs as the session's own uid (su-exec) so ttyd's uid could not signal it, and the helper itself never acted on the signal: bash defers signals while a foreground command runs, and the entrypoint's ttyd respawn loop had `trap '' HUP`, an ignore that is inherited across exec by ttyd and by every helper it spawns and that a non-interactive bash can neither trap nor reset. Nothing exited, ttyd kept the pty open, and each reload leaked one attached client and one pty; agent terminals attach through the same path and were exposed the same way. The respawn loop now keeps itself alive with a handler (`trap ':' HUP`, reset to default on exec) instead of an ignore, and the helper runs the attach as a background job it waits on, so ttyd's SIGHUP (or a TERM) detaches the client through tmux by its tty and the helper exits cleanly, closing the pty. As defense in depth the runtime reaps on every sessions poll: clients whose process is gone or no longer descends from ttyd (a ttyd respawn, a killed helper, an attach from outside the dashboard) are detached, bounded and logged, and `attached` reports the live count that remains.
+
+## 2026-11-15 (v5.263.6)
+
+### Fixed
+
+- Starting a dashboard Session no longer blocks the request on the first-ever clone of the project workspace: `POST /api/sessions` (and `/resume`) answers 202 at once with the session in a new `preparing` status and a message such as "preparing workspace: cloning org/repo (first session on this hive)", the clone, hand-over, spek init and tmux start run in the background, and the record moves to `running` or `failed` with the error stored on it and shown in the tab (Retry and Delete inline). Two root causes behind the 504 and the "process exited with code 1" terminal are fixed as well: the root hand-over of the clone ran under the 10-second tmux command timeout, after which Go tried to kill a root child the hive's uid may not signal (`exec: killing Cmd: operation not permitted`) although the workspace had been moved into place; it now runs under its own 10-minute deadline, root children are cancelled through the setuid helper, and a failed hand-over removes its staging tree. And a session's tmux socket dir was left `0700` with the sessions-only group, so ttyd (the hive's uid) could never stat the socket and every attach died at its wait; the runtime now makes it `0710` with the hive's group (`HIVE_SESSIONS_ATTACH_GID`), as agent socket dirs are, and ttyd-tmux.sh names a socket dir it cannot traverse in its diagnostic. A `preparing` record left over by a restart is marked failed instead of spinning forever, preparing sessions count against the caps, and the outcome of every start is audited as `session_started`.
+
+## 2026-11-15 (v5.263.5)
+
+### Changed
+
+- agent: split group-mode repairs out of permissions_watcher.go (file-size ratchet) (#18246)
+
+## 2026-11-15 (v5.263.4)
+
+### Fixed
+
+- The signed-commit reconciler now logs transient GitHub read failures (timeouts, rate limits, 5xx) at INFO and retries on its next pass, so a slow GitHub minute no longer files an unclassified runtime-error self-report; permission and not-found failures still warn.
+
+## 2026-11-14 (v5.263.3)
+
+### Fixed
+
+- Provider quota and spending-limit kick-withholding notices no longer trigger unclassified runtime-error self-reports; the per-cycle WARN and the probe-kick schedule are unchanged.
+
+## 2026-11-14 (v5.263.2)
+
+### Fixed
+
+- The permissions watcher no longer tries to chown a top-level watched directory it can never chown at startup. The #18120 guard covered only the per-entry walk. `ensureWatchedDirs`, which runs at every agent-runtime start and again on any tick that finds a watched root missing, still called `chown` on each root without checking first. On a spoke where `/data/beads` is owned by another uid, the unprivileged `dev` watcher therefore logged `permissions watcher: failed to chown directory ... operation not permitted` again and again (10 in ten minutes on hive-tall-frog). The watcher now makes the same before-the-syscall check there (unprivileged and not the owner), skips at DEBUG with the operator hint, and still reports wrong ownership through the walk's per-tick summary. Directories the process owns are chowned exactly as before (#18234).
+
+## 2026-11-14 (v5.263.1)
+
+### Fixed
+
+- GitHub proxy policy refusals (`proxy request blocked`) no longer trigger unclassified runtime-error self-reports; the per-refusal WARN, violation counter and write-refusal audit are unchanged.
+
+## 2026-11-14 (v5.263.0)
+
+### Added
+
+- **OpenBao Transit keystore provider (opt-in)** ([#18216](https://github.com/hivecommons/hive/issues/18216), part of [#18214](https://github.com/hivecommons/hive/issues/18214)). `HIVE_KEYSTORE_PROVIDER=openbao` seals the spoke's secrets at rest through an [OpenBao](https://openbao.org/) (or Vault-API compatible) transit engine over plain `net/http`, so the data encryption key never exists on the spoke: `HIVE_OPENBAO_ADDR`, `HIVE_OPENBAO_TOKEN` / `HIVE_OPENBAO_TOKEN_FILE` or Kubernetes auth with `HIVE_OPENBAO_K8S_ROLE`, `HIVE_OPENBAO_TRANSIT_MOUNT` (`transit`), `HIVE_OPENBAO_KEY` (`hive-<hive id>`, created when missing and permitted), `HIVE_OPENBAO_NAMESPACE`, `HIVE_OPENBAO_CA_FILE`, `HIVE_OPENBAO_TIMEOUT`. Bounded timeouts, token renewal ahead of the lease with re-login for Kubernetes auth, server-side key rotation picked up as a stale generation, and a hard refusal to boot when the server is unreachable, sealed or rejects the credential; nothing sensitive is cached locally. Walkthrough in `src/docs/integrations/openbao.md`.
+
+## 2026-11-14 (v5.262.0)
+
+### Added
+
+- Knowledge → Integrations shows what a connector is doing while it syncs instead of nothing until the sync ends: each connector status carries a live `progress` block (phase `listing`/`fetching`/`writing`/`done`/`failed`, `items_done`/`items_total`, the current item title, `started_at`, bytes and facts written so far) that the syncer updates per page and the Plaud connector per recording right after `list_files`; the card draws a progress bar (determinate once the count is known), a `fetching 12 of 200 · <title>` line, the elapsed time and the error inline on failure, polling every 2.5 s only while a sync runs, and the Knowledge section header gains a compact `syncing: <name> 12/200` indicator. The Plaud connector's default MCP command is now pinned to `npx -y @plaud-ai/mcp@0.3.14` (`plaudMCPVersion`, bumped by hand) instead of a floating `@latest`; a `scope.command` set by the operator is left untouched.
+
+### Fixed
+
+- Sessions: the embedded terminal now follows the dashboard theme (the proxied ttyd document for a user session paints itself and xterm.js from the dashboard's `--terminal-bg` / `--terminal-fg` / `--accent` tokens, in light and dark mode and under theme presets, and the pane no longer shows a black frame while loading; agent terminals are unchanged), and Settings → Dashboard gains a real **Sessions** switch for `dashboard.sessions.enabled` with the `max_sessions`, `max_per_user` and `idle_ttl_hours` limits, noting when `HIVE_SESSIONS_ENABLED` overrides it.
+
+## 2026-11-14 (v5.261.0)
+
+### Added
+
+- **Secrets at rest are now encrypted on the spoke** ([#18214](https://github.com/hivecommons/hive/issues/18214), [#18215](https://github.com/hivecommons/hive/issues/18215)). Every secret value the dashboard collects (LiteLLM, Bob and per-gateway API keys, the backup key, the owner's GitHub token, the NPS relay identity, the Copilot device-flow login) and the `github.token` value in the persisted runtime config are stored through a new `keystore` provider interface as a versioned `hive-enc:v1:…` envelope instead of plaintext, so a copy of the data volume alone no longer yields them. The default `env` provider needs no new infrastructure: it derives an AES-256-GCM key with HKDF from `HIVE_SECRETS_KEY` (or `HIVE_SECRETS_KEY_FILE`), falling back to the hub-provisioned `HIVE_HEARTBEAT_KEY`, so hosted spokes encrypt on their next boot and legacy plaintext files are re-sealed on first read. A hive with no key material keeps today's behaviour and logs one `WARN` at boot; `HIVE_KEYSTORE_PROVIDER=none` makes that explicit, and `HIVE_SECRETS_KEY_PREVIOUS` lets a spoke absorb a key rotation. Agent-facing credential files and the read-only `/secrets` mount are unchanged.
+- The hub landing page gains an "Isolation and secrets" logo row (OpenShell, Agent Substrate, OpenBao, Podman, Kubernetes) in the existing chip style, and the integrations page now shows the OpenShell and Agent Substrate project logos instead of the NVIDIA and CNCF stand-ins plus a new "Secrets and keys" section for the built-in keystore and the opt-in OpenBao Transit provider, both in progress under [#18214](https://github.com/hivecommons/hive/issues/18214) ([#18217](https://github.com/hivecommons/hive/issues/18217)). Logo sources and licenses are recorded in `src/docs/assets/logos/SOURCES.md`.
+
+## 2026-11-14 (v5.260.0)
+
+### Added
+
+- ✨ Sessions now open in a persistent per-hive workspace: a clone of the hive's project repo (or `dashboard.sessions.workspace_repo`) under `/data/session-sandbox/workspace/<org>/<repo>` that every session shares, cloned once by the hive with a one-shot token that never reaches the clone, handed to a sessions-only group, and `spektacular init <vendor>`-ed once per CLI so the CLI finds spek's skills; the dashboard shows the workspace in the new-session dialog, tab tooltip and API (`workspace_repo`, `workspace`).
+
+### Fixed
+
+- Plaud voice notes: syncs no longer fail with `list_files returned non-JSON output: {`. @plaud-ai/mcp 0.3.14 wraps every reply in an `<untrusted-user-data-…>` envelope whose closing tag follows the JSON; the connector now reads the first JSON value in each reply (listing, account, note, transcript, audio URL) instead of requiring the whole text to be JSON. The Plaud card's server sign-in help now shows the exact command to copy a laptop token (`cat ~/.plaud/tokens-mcp.json | pbcopy`).
+
+## 2026-11-14 (v5.259.0)
+
+### Added
+
+- Settings → Repos → Reference repos now shows the identity the hive writes to remote repos as ([#18200](https://github.com/hivecommons/hive/issues/18200), closing out [#18196](https://github.com/hivecommons/hive/issues/18196)): a Remote-repo identity panel with the connected GitHub login, a *Connect GitHub account* control that runs the device flow in place (code, URL, polling, reload), *Disconnect*, and a reconnect prompt with the reason when the stored token stopped working; every write entry, hand-written or derived, shows `tier · state as <login>`, the repos card chip reads `🔑 as <login>` instead of `App installation`, and `/api/status` carries `credential_login`. The docs gain a "Writing to repos you do not manage (the two lanes)" section describing linked repos under the App versus remote repos as the owner, the fork-and-PR flow, own-item follow-up and the `public_repo` limit; the sentence about installing the App on the target org is gone from `agent-configuration.md` and `github-write-surface.md`, and `env-vars.md` documents `HIVE_GITHUB_OWNER_TOKEN_FILE` and `HIVE_REMOTE_ITEMS_FILE`.
+
+### Fixed
+
+- **The hive's squash merges keep the branch's `Signed-off-by` (#18203).** When the hive squash-merged with an empty commit message, GitHub wrote its own default body, and for #18079 that body held only `Co-authored-by` lines: `f33758f5a` landed on v5 with no sign-off, and every branch that later merged v5 forward failed DCO on it. Every hive squash (relay `MergePR` and all auto-merge sweep lanes) now rebuilds the body from the branch commits, adds any branch sign-off the body lacks, and refuses to squash (sweep reason `squash-unsigned`) when no branch commit carries one. It never signs off on anyone's behalf. The post-merge and push-delta DCO checks still skip the sign-off identity match for bot authors, but now report a bot-authored commit with no `Signed-off-by` as `missing-signoff`, so the next one shows up within the hour.
+- Sessions: the embedded terminal no longer renders blank. Both dashboard proxies sent `frame-ancestors 'none'` / `X-Frame-Options: DENY` on the `/terminal` document, so the browser fetched ttyd's page and then refused to display it inside the Sessions iframe; user-session terminals (`?arg=hive-sess-<id>`) now allow same-origin framing only, while agent terminals and every other route keep the deny policy.
+
+## 2026-11-14 (v5.258.0)
+
+### Added
+
+- Write-tier reference repos are now written as the hive owner's own GitHub account instead of an installation of the hive's GitHub App on the target org ([#18197](https://github.com/hivecommons/hive/issues/18197), part of [#18196](https://github.com/hivecommons/hive/issues/18196)). The owner connects their account once on the spoke dashboard through new owner-only routes (`GET`/`DELETE /api/github-owner-identity`, `POST /api/github-owner-identity/{start,poll}`): a GitHub device flow with the spoke's existing OAuth client asking for `public_repo`, kept separate from the scope-free dashboard login. The token is stored on the spoke only, as an owner-only file under `/data/secrets` (`HIVE_GITHUB_OWNER_TOKEN_FILE` overrides), never in `hive.yaml` and never on the hub; the proxy injects it only on the writes the reference-repo gate already allows, and the stored token is re-checked every ten minutes so a revoked one drops the entries to read-only. The App-installation mint is gone with no fallback: a derived entry is `write-tier` under the owner's login when the account is connected and `read-only` otherwise, every write entry now reports `credential_state` and a new `credential_login`, the request-issue read-only notice tells the owner to connect their account rather than to install the App, and a hand-written write entry without `write_token_file` still refuses boot (exit 22) with that same cure.
+- Agents can now open pull requests against a `prs`-tier reference repo through the hive owner's fork ([#18198](https://github.com/hivecommons/hive/issues/18198), part of [#18196](https://github.com/hivecommons/hive/issues/18196)). The owner's account cannot push to a repository it does not own, so the proxy's reference-repo gate now allows `POST /repos/{owner}/{repo}/forks` on the reference repo, recognises `{ownerlogin}/{name}` as the owner's fork of it (never when that slug is an authorized or reference repo in its own right) and allows git pushes to that fork with the default-branch guard applied to the fork, injecting the owner token on both; every other write on the fork, and everything management-like on the reference repo, stays refused with a reason that names the fork flow. The kick's REFERENCE REPOS block tells agents the login the writes appear under and the exact three commands (`gh repo fork --clone=false`, push the topic branch to the fork, `gh pr create --repo <remote> --head <login>:<branch>`), so `git push` and `gh pr create` work through the existing credential helper with no agent-side special casing.
+- Comments and reviews on the issues and pull requests the hive opens in a write-tier reference repo now reach the agent that opened them ([#18199](https://github.com/hivecommons/hive/issues/18199), part of [#18196](https://github.com/hivecommons/hive/issues/18196)). A remote repo has no webhooks (the hive's App is not installed there, by design) and is not enumerated, so that feedback was lost. Every reference-repo pass now also lists the open items in each write-tier reference repo created by the hive owner's login, keeps the ones whose body carries a hive marker (the `— hive:` attribution trailer or the `🐝 **Hive Agent**` footer), fetches new comments, review comments and reviews on them under the owner token, and delivers them to the agent the marker names: into its live session as a resume kick, or as a `🌐 REMOTE ITEM FOLLOW-UP` section on its next kick when it has no session. State lives in `/data/turn/remote-items.json` (`HIVE_REMOTE_ITEMS_FILE` overrides) and is pruned when an item closes. Nothing else happens on the remote: no backlog scan, no queue, no kicks driven by remote items, no stage engine.
+
+## 2026-11-14 (v5.257.1)
+
+### Security
+
+- 🔒 Sessions now run each session's tmux server and CLI as its own unprivileged uid from a reserved range with a private sandbox (no more access to the hive's secrets, `/data`, other sessions or agents), copy only minimal read-only vendor logins instead of symlinking shared config, gate terminal attach with a per-session token and a handoff code bound to the session, default to creator-and-owner-only with an explicit `shared` flag, reject flag-shaped resume ids, and delete session files on removal.
+
+## 2026-11-14 (v5.257.0)
+
+### Added
+
+- The agent image now ships `govulncheck` v1.1.4 and `gosec` v2.29.0, and the sec-check policy's scan step runs them on Go targets ([#18192](https://github.com/hivecommons/hive/issues/18192)). Previously the policy told the agent to use `trivy`, `semgrep` or `grype` "as available", and none of them, nor any Go scanner, was installed, so every sec-check session degraded to the Dependabot API plus a manual read of the tree. The two scanners are cross-compiled in a dedicated build stage (`GOVULNCHECK_VERSION`, `GOSEC_VERSION` build args, matching the pins in `.github/workflows/go-security-analysis.yml`) and only the static binaries are copied into the runtime stage. The policy now treats every reachable govulncheck vulnerability and every gosec HIGH-severity, HIGH-confidence issue as a finding, keeps lower gosec results as advisory context, forbids the agent from installing or downloading scanners itself, and marks trivy/semgrep/grype as not shipped.
+
 ## 2026-11-14 (v5.256.1)
 
 ### Fixed

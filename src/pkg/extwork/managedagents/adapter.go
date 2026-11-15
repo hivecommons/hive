@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/extwork"
+	"github.com/hivecommons/hive/pkg/keystore"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
 
@@ -1152,7 +1153,9 @@ func (e *apiError) Error() string {
 
 func (a *Adapter) apiKey() (string, error) {
 	if a.apiKeyFile != "" {
-		raw, err := os.ReadFile(a.apiKeyFile)
+		// Through the keystore (hive#18214): a key file on the data volume is
+		// sealed at rest once a provider is active.
+		raw, err := keystore.ReadFile(context.Background(), a.apiKeyFile)
 		if err != nil {
 			return "", fmt.Errorf("%w: read managed agents API key reference", extwork.ErrRefused)
 		}

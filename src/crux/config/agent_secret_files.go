@@ -1,9 +1,21 @@
 package config
 
 import (
+	"context"
 	"path/filepath"
 	"strings"
+
+	"github.com/hivecommons/hive/crux/keystore"
 )
+
+// readSecretFile reads a key file through the keystore (hive#18214): a file
+// sealed at rest is opened, a legacy plaintext file is passed through, and a
+// plaintext file under the writable secrets dir is re-sealed on read once a
+// provider is active. Every ResolveAPIKey in this package reads through it so
+// no key file is ever read raw.
+func readSecretFile(path string) ([]byte, error) {
+	return keystore.ReadFile(context.Background(), path)
+}
 
 // ResolveAPIKey returns this gateway's key value, preferring the env var when
 // set and falling back to the file. Returns "" when neither yields a value

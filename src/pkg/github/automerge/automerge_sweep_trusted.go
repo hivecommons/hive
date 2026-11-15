@@ -356,7 +356,10 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return AutoMergeSweepEvent{}, refused, nil
 	}
 
-	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, current, evaluatedHeadSHA, method)
+	mergeMessage, mergeOpts, refused := c.mergeOptions(ctx, owner, repo, current, evaluatedHeadSHA, method)
+	if refused != "" {
+		return AutoMergeSweepEvent{}, refused, nil
+	}
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, evaluatedHeadSHA, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error
@@ -836,7 +839,10 @@ func (c *Engine) trySweepTrustedAuthorPR(ctx context.Context, displayRepo, owner
 		return AutoMergeSweepEvent{}, refused, nil
 	}
 
-	mergeMessage, mergeOpts := c.mergeOptions(ctx, owner, repo, current, headSHA, method)
+	mergeMessage, mergeOpts, refused := c.mergeOptions(ctx, owner, repo, current, headSHA, method)
+	if refused != "" {
+		return AutoMergeSweepEvent{}, refused, nil
+	}
 	var mergeResult *gh.PullRequestMergeResult
 	mergeOut, err := c.executeMergeEffect(ctx, mergeClaim, owner, repo, number, headSHA, func(ctx context.Context) (effects.Result, error) {
 		var apiErr error

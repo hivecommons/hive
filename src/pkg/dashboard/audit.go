@@ -135,6 +135,7 @@ var auditSensitiveActions = map[string]bool{
 	"session_created":                         true,
 	"session_input":                           true,
 	"session_renamed":                         true,
+	"session_started":                         true,
 	"session_upload":                          true,
 	"signed_commit_reauthored":                true,
 	"tool_approval":                           true,

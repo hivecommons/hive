@@ -395,3 +395,40 @@ func TestBuildReposSectionFor_ReferenceReposDerivedProvenance(t *testing.T) {
 		t.Errorf("read-only without a reason must fall back to the generic one, got %q", got)
 	}
 }
+
+// hivecommons/hive#18198: a prs-tier entry with a resolved credential login
+// adds the fork-and-PR paragraph naming the owner's login and the exact
+// commands; without a login or without the prs tier the paragraph is absent
+// so the golden block above stays byte-identical.
+func TestBuildReposSectionFor_ReferenceRepoForkInstruction(t *testing.T) {
+	s := scopeScheduler(t, map[string]config.AgentConfig{"scanner": {Backend: "claude"}})
+	s.cfg.Project.ReferenceRepos = []config.ReferenceRepo{
+		{Repo: "hivecommons/docs"},
+		{Repo: "hivecommons/hive", Write: []string{"issues", "prs"}, CredentialState: config.ReferenceCredentialWriteTier, CredentialLogin: "nate-double-u"},
+	}
+	section := s.buildReposSectionFor("scanner")
+	for _, want := range []string{
+		"under the GitHub account nate-double-u (the hive owner)",
+		"You CANNOT push to a reference repo itself",
+		"gh repo fork <owner>/<name> --clone=false",
+		"https://github.com/nate-double-u/<name>",
+		"gh pr create --repo <owner>/<name> --head nate-double-u:<branch>",
+		"Never push to the fork's default branch",
+	} {
+		if !strings.Contains(section, want) {
+			t.Errorf("fork instruction lacks %q:\n%s", want, section)
+		}
+	}
+	if strings.Contains(section, "@nate-double-u") {
+		t.Error("the kick must never @-mention the owner")
+	}
+	if got := referenceRepoForkInstruction([]config.ReferenceRepo{{Repo: "a/b", Write: []string{"issues"}, CredentialLogin: "nate"}}, "https://github.com"); got != "" {
+		t.Errorf("issues-only entry must not render the fork paragraph: %q", got)
+	}
+	if got := referenceRepoForkInstruction([]config.ReferenceRepo{{Repo: "a/b", Write: []string{"prs"}}}, "https://github.com"); got != "" {
+		t.Errorf("no credential login, no fork paragraph: %q", got)
+	}
+	if got := referenceRepoForkInstruction([]config.ReferenceRepo{{Repo: "a/b", Write: []string{"prs"}, CredentialLogin: "x"}}, "https://ghe.example.com/"); !strings.Contains(got, "https://ghe.example.com/x/<name>") {
+		t.Errorf("GHE host must be used without a trailing slash: %q", got)
+	}
+}

@@ -262,6 +262,9 @@
     async function fetchKnowledgeStats() {
       try {
         const [r, , , docsR, reviewDrafts] = await Promise.all([fetch('/api/knowledge/stats'), fetchBeadSynthStatus(), fetchFactHistory(), fetch('/api/knowledge/documents'), fetchKnowledgeReviewDrafts()]);
+        // Header "syncing: <name> n/m" indicator; the tick switches itself to
+        // a 2.5s poll while a connector sync runs and back off when it ends.
+        kbSyncProgressTick().catch(() => {});
         if (!r.ok) return;
         const prev = _kbCache;
         _kbCache = await r.json();
@@ -2436,6 +2439,13 @@
         _kcState = Object.assign(_kcState, { loaded: true, error: e.message });
       }
       kbRenderIntegrationsModal();
+      kbSyncProgressArm();
+    }
+    // After a status load: refresh the header indicator and, when a sync is
+    // already running (interval or another owner), start the fast poll.
+    function kbSyncProgressArm() {
+      kbSyncIndicatorRender();
+      if ((_kcState.rows || []).some(kcProgressActive) && !DASHBOARD_INTERVALS['kb-sync-progress']) dashboardSetInterval('kb-sync-progress', kbSyncProgressTick, KC_SYNC_POLL_MS);
     }
 
     function kbIntegrationTypes() {
@@ -2501,25 +2511,173 @@
       return '<div class="muted-xs" data-kb-not-loaded>' + escapeHtml(KC_NOT_LOADED_HINT) + ' <a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener">Docs ↗</a></div>';
     }
 
+    // ── Connector sync progress (live) ──
+    // Pure helpers over one status row (`/api/config/knowledge/connectors/status`
+    // `connectors[]`, whose `progress` block the syncer updates as it goes).
+    // Rendered on the Integrations card and the Knowledge header while a sync
+    // runs; covered by knowledge_sync_ui.test.js.
+    const KC_SYNC_POLL_MS = 2500;
+    const KC_PROGRESS_ACTIVE_PHASES = ['listing', 'fetching', 'writing'];
+    const KC_PROGRESS_TITLE_MAX = 60;
+    function kcProgressActive(r) {
+      if (!r) return false;
+      const p = r.progress || {};
+      return !!r.running || KC_PROGRESS_ACTIVE_PHASES.includes(p.phase);
+    }
+    function kcProgressStartMs(p) {
+      const t = p && p.started_at ? Date.parse(p.started_at) : NaN;
+      return isNaN(t) || t <= 0 ? 0 : t;
+    }
+    function kcElapsedText(startMs, nowMs) {
+      if (!startMs) return '';
+      const s = Math.max(0, Math.round(((nowMs || Date.now()) - startMs) / 1000));
+      if (s < 60) return s + 's';
+      const m = Math.floor(s / 60);
+      if (m < 60) return m + 'm ' + (s % 60) + 's';
+      return Math.floor(m / 60) + 'h ' + (m % 60) + 'm';
+    }
+    function kcProgressCount(p) {
+      const done = (p && p.items_done) || 0;
+      const total = (p && p.items_total) || 0;
+      if (total > 0) return done + ' of ' + total;
+      return done > 0 ? String(done) : '';
+    }
+    function kcProgressLabel(p) {
+      p = p || {};
+      const phase = KC_PROGRESS_ACTIVE_PHASES.includes(p.phase) ? p.phase : 'listing';
+      const count = kcProgressCount(p);
+      let text = phase + (count ? ' ' + count : (phase === 'listing' ? ' items…' : '…'));
+      const title = (p.current || '').trim();
+      if (title) text += ' · ' + (title.length > KC_PROGRESS_TITLE_MAX ? title.slice(0, KC_PROGRESS_TITLE_MAX) + '…' : title);
+      return text;
+    }
+    function kcProgressHtml(r, nowMs) {
+      if (!kcProgressActive(r)) return '';
+      const p = (r && r.progress) || {};
+      const total = p.items_total || 0;
+      const done = Math.min(p.items_done || 0, total);
+      const bar = total > 0
+        ? '<progress class="kc-progress-bar" max="' + total + '" value="' + done + '"></progress>'
+        : '<progress class="kc-progress-bar"></progress>';
+      const elapsed = kcElapsedText(kcProgressStartMs(p), nowMs);
+      return '<div class="kc-progress" data-kc-progress data-phase="' + escapeHtml(p.phase || 'listing') + '">' + bar
+        + '<div class="kc-progress-copy"><span class="kc-progress-label">' + escapeHtml(kcProgressLabel(p)) + '</span>'
+        + (elapsed ? '<span class="kc-progress-elapsed" title="elapsed">' + escapeHtml(elapsed) + '</span>' : '') + '</div></div>';
+    }
+    // Error of the sync that just failed, shown inline under the bar's place
+    // until the next sync starts (the row's last_error line covers older ones).
+    function kcProgressFailedHtml(r) {
+      const p = (r && r.progress) || {};
+      if (p.phase !== 'failed' || !p.last_error || (r && r.last_error === p.last_error)) return '';
+      return '<div class="kc-error" data-kc-progress-error title="' + escapeHtml(p.last_error) + '">sync failed: ' + escapeHtml(p.last_error.length > 140 ? p.last_error.slice(0, 140) + '…' : p.last_error) + '</div>';
+    }
+    // Compact header text: "syncing: plaud 12/200" (+N when several run).
+    function kcSyncIndicatorText(rows) {
+      const active = (rows || []).filter(kcProgressActive);
+      if (!active.length) return '';
+      const r = active[0];
+      const p = r.progress || {};
+      let text = 'syncing: ' + (r.name || '?');
+      if (p.items_total > 0) text += ' ' + (p.items_done || 0) + '/' + p.items_total;
+      else if (p.items_done > 0) text += ' ' + p.items_done;
+      if (active.length > 1) text += ' +' + (active.length - 1);
+      return text;
+    }
+    // ── Connector sync progress end ──
+
+    function kbSyncIndicatorRender() {
+      const el = document.getElementById('kb-sync-badge');
+      if (!el) return;
+      const text = kcSyncIndicatorText(_kcState.rows);
+      el.hidden = !text;
+      el.textContent = text;
+      el.title = text ? 'A knowledge connector is syncing; open Integrations for the progress bar.' : '';
+    }
+    // Re-render only the live parts of a connector row (pill, meta line,
+    // progress bar, Sync now button) so an owner's half-typed form survives.
+    function kbSyncProgressPatchRows() {
+      const byName = {};
+      (_kcState.rows || []).forEach(r => { byName[r.name] = r; });
+      document.querySelectorAll('[data-kb-connector-name]').forEach(el => {
+        const name = el.getAttribute('data-kb-connector-name');
+        const c = (_kcState.connectors || []).find(x => x.name === name);
+        if (!c) return;
+        const r = byName[name] || {};
+        const status = kbConnectorStatusOf(c, r);
+        const pill = el.querySelector('.kc-pill');
+        if (pill) { pill.textContent = status; pill.setAttribute('data-status', status); }
+        const meta = el.querySelector('[data-kc-meta]');
+        if (meta) meta.innerHTML = kbConnectorMetaHtml(c, r);
+        const slot = el.querySelector('[data-kc-progress-slot]');
+        if (slot) slot.innerHTML = kcProgressHtml(r) + kcProgressFailedHtml(r);
+        const btn = el.querySelector('[data-action="kbIntegrationSync"]');
+        if (btn && !kbConnectorNotLoaded(c)) btn.disabled = status === 'syncing';
+      });
+      document.querySelectorAll('tr[data-connector] [data-kc-progress-slot]').forEach(slot => {
+        const row = slot.closest('tr');
+        const name = row.getAttribute('data-connector');
+        const r = byName[name] || {};
+        slot.innerHTML = kcProgressHtml(r);
+        const pill = row.querySelector('.kc-pill');
+        if (pill && r.status) { pill.textContent = r.status; pill.setAttribute('data-status', r.status); }
+      });
+    }
+    // One poll of the connector status; keeps polling every KC_SYNC_POLL_MS
+    // while any connector is syncing and stops (with one full refresh of the
+    // open Integrations modal / Settings table) when the last one finishes.
+    async function kbSyncProgressTick() {
+      let st;
+      try {
+        const r = await fetch('/api/config/knowledge/connectors/status');
+        if (!r.ok) return;
+        st = await r.json().catch(() => null);
+      } catch (e) { return; }
+      if (!st || !Array.isArray(st.connectors)) return;
+      _kcState.rows = st.connectors;
+      if (st.publish) _kcState.publish = st.publish;
+      if (typeof st.runtime === 'boolean') _kcState.runtime = st.runtime;
+      kbSyncIndicatorRender();
+      kbSyncProgressPatchRows();
+      const active = _kcState.rows.some(kcProgressActive);
+      const polling = !!DASHBOARD_INTERVALS['kb-sync-progress'];
+      if (active && !polling) dashboardSetInterval('kb-sync-progress', kbSyncProgressTick, KC_SYNC_POLL_MS);
+      if (!active && polling) {
+        dashboardClearInterval('kb-sync-progress');
+        if (document.getElementById('kb-integrations-content')) kbLoadIntegrationsModal(_kbIntegrationSelected);
+        if (document.getElementById('kc-connectors-root') && typeof renderKnowledgeConnectorsInto === 'function') renderKnowledgeConnectorsInto();
+      }
+    }
+
+    function kbConnectorStatusOf(c, r) {
+      return kbConnectorNotLoaded(c) ? KC_STATUS_NOT_LOADED : (r.status || (c.enabled ? 'pending' : 'disabled'));
+    }
+    function kbConnectorMetaHtml(c, r) {
+      const publish = _kcState.publish && _kcState.publish.connector === c.name ? ' · publish ' + (_kcState.publish.running ? 'syncing' : _kcState.publish.last_error ? 'error' : _kcState.publish.last_success ? 'ok' : 'pending') : '';
+      return escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish);
+    }
+
     function kbConnectorRow(type, c, owner) {
       const byName = {};
       (_kcState.rows || []).forEach(r => { byName[r.name] = r; });
       const r = byName[c.name] || {};
       const notLoaded = kbConnectorNotLoaded(c);
-      const status = notLoaded ? KC_STATUS_NOT_LOADED : (r.status || (c.enabled ? 'pending' : 'disabled'));
-      const publish = _kcState.publish && _kcState.publish.connector === c.name ? ' · publish ' + (_kcState.publish.running ? 'syncing' : _kcState.publish.last_error ? 'error' : _kcState.publish.last_success ? 'ok' : 'pending') : '';
+      const status = kbConnectorStatusOf(c, r);
       let html = '<div class="card-inset row-between mb-3" data-kb-connector-name="' + escapeHtml(c.name) + '"><div class="kb-integration-row-main">';
       html += '<div class="kb-integration-connector-title"><code>' + escapeHtml(c.name) + '</code> <span class="kc-pill" data-status="' + escapeHtml(status) + '">' + escapeHtml(status) + '</span></div>';
-      html += '<div class="muted-xs">' + escapeHtml(c.layer || 'project') + ' · ' + escapeHtml(c.interval || '15m') + ' · last sync ' + escapeHtml(kcAgo(r.last_sync)) + ' · pages/facts ' + (r.pages || 0) + '/' + (r.facts || 0) + escapeHtml(publish) + '</div>';
+      html += '<div class="muted-xs" data-kc-meta>' + kbConnectorMetaHtml(c, r) + '</div>';
+      html += '<div data-kc-progress-slot>' + kcProgressHtml(r) + kcProgressFailedHtml(r) + '</div>';
       if (r.last_error) html += '<div class="kc-error" title="' + escapeHtml(r.last_error) + '">' + escapeHtml(r.last_error.length > 140 ? r.last_error.slice(0, 140) + '…' : r.last_error) + '</div>';
       if (notLoaded) html += kbConnectorNotLoadedHtml();
-      else if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);
+      else if (type === 'plaud') html += kbPlaudAuthLine(c.name, type) + kbPlaudPasteHtml(c.name);
+      else if (type === 'zoom') html += kbPlaudAuthLine(c.name, type) + kbZoomPasteHtml(c.name, c);
+      else if (type === 'teams') html += kbPlaudAuthLine(c.name, type) + kbTeamsConsentHtml(c.name, c);
+      else if (type === 'discord') html += kbPlaudAuthLine(c.name, type) + kbDiscordHelpHtml(c.name, c);
       if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
         const disabledAttr = ' disabled title="' + escapeHtml(KC_NOT_LOADED_HINT) + '"';
         html += '<div class="kb-integration-actions">';
-        if (type === 'plaud') html += kbPlaudAuthButtons(c.name, notLoaded ? disabledAttr : '');
+        if (KB_AUTH_TYPES[type]) html += kbPlaudAuthButtons(c.name, notLoaded ? disabledAttr : '', type);
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationSync" data-arg0="' + escapeHtml(c.name) + '"' + (notLoaded ? disabledAttr : status === 'syncing' ? ' disabled' : '') + '>Sync now</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationEdit" data-arg0="' + escapeHtml(c.name) + '">Edit</button>';
         html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationToggle" data-arg0="' + escapeHtml(c.name) + '">' + (c.enabled ? 'Disable' : 'Enable') + '</button>';
@@ -2535,7 +2693,7 @@
       const connectors = (_kcState.connectors || []).filter(c => c.type === type);
       if (!_kbIntegrationEditName || !connectors.some(c => c.name === _kbIntegrationEditName)) _kbIntegrationEditName = connectors[0]?.name || '';
       const edited = connectors.find(c => c.name === _kbIntegrationEditName) || { name: '', type, enabled: true, layer: 'project', interval: '', scope: {}, auth: {} };
-      let html = '<div class="card-inset mb-5"><div class="row-between"><div><div class="title-sm kb-integration-title">' + kbIntegrationIcon(type) + escapeHtml(info.label) + '</div><p class="muted-note m-0">' + escapeHtml(info.description) + '</p></div><span class="row">' + (type === 'plaud' ? '<a href="/docs/inbox-voice-sources.md" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm">Inbox quickstart ↗</a>' : '') + '<a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm">Docs ↗</a></span></div></div>';
+      let html = '<div class="card-inset mb-5"><div class="row-between"><div><div class="title-sm kb-integration-title">' + kbIntegrationIcon(type) + escapeHtml(info.label) + '</div><p class="muted-note m-0">' + escapeHtml(info.description) + '</p></div><span class="row">' + (KB_AUTH_TYPES[type] ? '<a href="/docs/inbox-voice-sources.md" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm">Inbox quickstart ↗</a>' : '') + '<a href="/docs/knowledge-connectors.md" target="_blank" rel="noopener" class="hv-btn btn-secondary btn-sm">Docs ↗</a></span></div></div>';
       html += '<div class="row-between mb-4"><div class="section-label m-0">Configured entries</div>' + (owner ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbIntegrationNew" data-arg0="' + escapeHtml(type) + '">Add ' + escapeHtml(info.label) + '</button>' : '') + '</div>';
       html += connectors.length ? connectors.map(c => kbConnectorRow(type, c, owner)).join('') : '<div class="empty-dashed mb-4">No ' + escapeHtml(info.label) + ' connector configured yet.</div>';
       html += owner ? kbConnectorFormHTML(type, edited, !!edited.name) : '<p class="muted-note">Only the hive owner can edit connector configuration.</p>';
@@ -2558,6 +2716,8 @@
       if (type === 'context7') html += kbContext7FormExtras(c);
       if (type === 'wisprflow') html += '<p class="muted-xs" data-kb-wisprflow-note>Leave the credential source as None: the connector reads Wispr Flow\'s local history read-only with the sqlite3 CLI. Leave the path empty for the default app location on the hive host (macOS: ~/Library/Application Support/Wispr Flow/flow.sqlite; Windows: %APPDATA%\\Wispr Flow\\flow.sqlite), or point it at a copy of flow.sqlite or a folder of exported .json/.ndjson/.csv/.md files. New dictations need no connector at all — dictate into + New Fact directly.</p>';
       if (type === 'plaud') html += '<p class="muted-xs" data-kb-plaud-note>Leave the credential source as None: Plaud signs in with its own OAuth flow (Connect on the entry above) and keeps the token in the MCP server\'s own store. Requires Node.js ≥ 20 on the hive host and costs nothing beyond your Plaud plan.</p>';
+      if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);
+      if (type === 'discord') html += '<p class="muted-xs" data-kb-discord-note>Set the credential source to <strong>Environment variable</strong> and enter the NAME of the variable that holds the bot token (for example <code>DISCORD_BOT_TOKEN</code>); the value never passes through the dashboard. List the server id for scheduled events and the ids of the channels where finished recordings are posted.</p>';
       html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
       html += '<div class="hive-dialog-error" role="alert" data-kb-kc-msg></div>';
       html += '<div class="row-end kb-integration-form-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationValidate">Validate</button><button type="button" class="hv-btn btn-primary btn-sm" data-action="kbIntegrationSave">Save</button></div></div>';
@@ -2591,7 +2751,43 @@
       box.querySelectorAll('[data-kc-scope]').forEach(el => { if (el.value.trim()) scope[el.dataset.kcScope] = el.value.trim(); });
       const authKind = val('[data-kb-kc-auth-kind]');
       const authVal = val('[data-kb-kc-auth-value]');
-      return { name: val('[data-kb-kc-name]'), type: box.dataset.kbType, enabled: !box.querySelector('[data-kb-kc-enabled]') || box.querySelector('[data-kb-kc-enabled]').checked, layer: val('[data-kb-kc-layer]'), interval: val('[data-kb-kc-interval]'), scope, auth: authKind === 'env' ? { env: authVal } : authKind === 'file' ? { file: authVal } : {} };
+      const auth = authKind === 'env' ? { env: authVal } : authKind === 'file' ? { file: authVal } : {};
+      // OAuth client registration references (zoom, teams): variable NAMES only.
+      box.querySelectorAll('[data-kb-kc-auth-field]').forEach(el => { const v = el.value.trim(); if (v) auth[el.dataset.kbKcAuthField] = v; });
+      return { name: val('[data-kb-kc-name]'), type: box.dataset.kbType, enabled: !box.querySelector('[data-kb-kc-enabled]') || box.querySelector('[data-kb-kc-enabled]').checked, layer: val('[data-kb-kc-layer]'), interval: val('[data-kb-kc-interval]'), scope, auth };
+    }
+
+    // Zoom / Teams app registration: which environment variables hold the
+    // client id, secret and account/tenant id. Values never pass through the
+    // dashboard; the hive reads the variables at sync time.
+    // Settings keys of the auth.*_env references, spelled out so the Settings
+    // parity guard sees each hive.yaml leaf referenced by the dashboard.
+    const KB_MEETING_AUTH_SETTING_KEYS = {
+      client_id_env: 'knowledge.connectors[].auth.client_id_env',
+      client_secret_env: 'knowledge.connectors[].auth.client_secret_env',
+      account_id_env: 'knowledge.connectors[].auth.account_id_env',
+      tenant_id_env: 'knowledge.connectors[].auth.tenant_id_env'
+    };
+    function kbMeetingAuthFormHTML(type, c) {
+      const a = (c && c.auth) || {};
+      const field = (key, label, placeholder) => '<label class="muted-note">' + escapeHtml(label) + '<input class="kb-search-box mt-2" type="text" data-kb-kc-auth-field="' + key + '" data-setting-key="' + KB_MEETING_AUTH_SETTING_KEYS[key] + '" value="' + escapeHtml(a[key] || '') + '" placeholder="' + escapeHtml(placeholder) + '" autocomplete="off"></label>';
+      let html = '<div class="kb-integration-form-grid-2" data-kb-meeting-auth="' + escapeHtml(type) + '">';
+      if (type === 'zoom') {
+        const mode = a.mode || 'user_oauth';
+        html += '<label class="muted-note">OAuth grant<select class="field-input field-input-block mt-2" data-kb-kc-auth-field="mode" data-setting-key="knowledge.connectors[].auth.mode"><option value="user_oauth"' + (mode === 'user_oauth' ? ' selected' : '') + '>User-level OAuth (my own recordings)</option><option value="server_to_server"' + (mode === 'server_to_server' ? ' selected' : '') + '>Server-to-Server (account; list users above)</option></select></label>';
+        html += field('client_id_env', 'Client ID env var', 'ZOOM_CLIENT_ID');
+        html += field('client_secret_env', 'Client secret env var', 'ZOOM_CLIENT_SECRET');
+        html += field('account_id_env', 'Account ID env var (Server-to-Server only)', 'ZOOM_ACCOUNT_ID');
+        html += '</div>';
+        html += '<p class="muted-xs" data-kb-zoom-note>Leave the credential source as None. Register an OAuth app on the Zoom App Marketplace (General app for user-level, Server-to-Server OAuth for the account) with the scopes <code>cloud_recording:read:list_user_recordings</code>, <code>cloud_recording:read:list_recording_files</code>, <code>user:read:user</code> (classic: <code>recording:read</code>, <code>user:read</code>), plus <code>meeting_summary:read</code> and <code>meeting:read:list_past_participants</code> for the AI summary and participants. For user-level add the redirect URL above to the app\'s OAuth allow list; put the client id/secret in the hive\'s environment under the variable names you enter here. Tokens are kept at <code>/data/knowledge/connector-state/&lt;name&gt;/home/.zoom/tokens.json</code> (0600).</p>';
+      } else {
+        html += field('tenant_id_env', 'Tenant ID env var', 'TEAMS_TENANT_ID');
+        html += field('client_id_env', 'Client (application) ID env var', 'TEAMS_CLIENT_ID');
+        html += field('client_secret_env', 'Client secret env var', 'TEAMS_CLIENT_SECRET');
+        html += '</div>';
+        html += '<p class="muted-xs" data-kb-teams-note>Leave the credential source as None. Register an app in Microsoft Entra (app registrations), add a client secret, and grant the <strong>application</strong> permissions <code>OnlineMeetingRecording.Read.All</code> and <code>OnlineMeetingTranscript.Read.All</code> (optionally <code>OnlineMeetings.Read.All</code> for meeting subject and attendees, <code>User.Read.All</code> to list organizers by UPN). A tenant administrator must grant admin consent and create an application access policy for the organizers (<code>New-CsApplicationAccessPolicy</code> / <code>Grant-CsApplicationAccessPolicy</code>); Connect shows the consent link when it is missing. Graph endpoints used: <code>/users/{id}/onlineMeetings/getAllRecordings</code>, <code>/getAllTranscripts</code> and the transcript <code>/content</code> as VTT.</p>';
+      }
+      return html;
     }
 
     function kbSetIntegrationMsg(text, ok) {
@@ -2642,32 +2838,82 @@
       setTimeout(() => kbLoadIntegrationsModal(_kbIntegrationSelected), 1500);
     }
 
-    // ── Plaud sign-in (OAuth through the Plaud MCP server) ──
-    // Cached per connector name; loaded lazily when the Plaud card renders.
+    // ── Interactive connector sign-in (Plaud OAuth through its MCP server;
+    // Zoom OAuth app; Teams Graph application permissions) ──
+    // Cached per connector name; loaded lazily when the card renders. The
+    // kbPlaud* functions serve every KB_AUTH_TYPES type; the label follows
+    // the connector type.
+    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord' };
     const _kbPlaudAuth = {};
-    function kbPlaudAuthLine(name) {
+    function kbAuthLabel(name, type) {
+      if (!type) { const c = (_kcState.connectors || []).find(x => x.name === name); type = c && c.type; }
+      return KB_AUTH_TYPES[type] || 'Plaud';
+    }
+    function kbPlaudAuthLine(name, type) {
+      const label = kbAuthLabel(name, type);
       const a = _kbPlaudAuth[name];
       if (!a) {
         setTimeout(() => kbPlaudAuthLoad(name, false), 0);
-        return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '">Plaud: checking sign-in…</div>';
+        return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '">' + label + ': checking sign-in…</div>';
       }
+      const link = a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">open the ' + label + (type === 'teams' ? ' admin consent' : type === 'discord' ? ' bot invite' : ' authorization') + ' page ↗</a>' : '';
       let text;
-      if (a.error) text = 'Plaud: ' + a.error;
-      else if (a.pending) text = 'Plaud: waiting for authorization' + (a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">open the Plaud authorization page ↗</a>' : ' (URL pending…)');
-      else if (a.connected) text = 'Plaud: connected' + (a.account ? ' as <strong>' + escapeHtml(a.account) + '</strong>' : '');
-      else text = 'Plaud: not connected' + (a.message ? ' — ' + escapeHtml(a.message) : '');
+      if (a.error) text = label + ': ' + escapeHtml(a.error);
+      else if (a.pending) text = label + ': waiting for authorization' + (link || ' (URL pending…)');
+      else if (a.connected) text = label + ': connected' + (a.account ? ' as <strong>' + escapeHtml(a.account) + '</strong>' : '');
+      else text = label + ': not connected' + (a.message ? ' — ' + escapeHtml(a.message) : '') + link;
       return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '" data-connected="' + (a.connected ? '1' : '0') + '">' + text + '</div>';
     }
     // disabledAttr, when set, is appended to every button (connector not loaded, #18093).
-    function kbPlaudAuthButtons(name, disabledAttr) {
+    function kbPlaudAuthButtons(name, disabledAttr, type) {
+      const label = kbAuthLabel(name, type);
       const a = _kbPlaudAuth[name] || {};
       const n = escapeHtml(name);
       const off = disabledAttr || '';
       let html = '';
       if (a.connected) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudDisconnect" data-arg0="' + n + '"' + off + '>Disconnect</button>';
-      else html += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbPlaudConnect" data-arg0="' + n + '"' + (off || (a.pending ? ' disabled' : '')) + '>Connect Plaud</button>';
-      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudRefreshAuth" data-arg0="' + n + '"' + (off || ' title="Re-check sign-in with Plaud"') + '>Check</button>';
+      else html += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="kbPlaudConnect" data-arg0="' + n + '"' + (off || (a.pending ? ' disabled' : '')) + '>Connect ' + label + '</button>';
+      html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudRefreshAuth" data-arg0="' + n + '"' + (off || ' title="Re-check sign-in with ' + label + '"') + '>Check</button>';
       return html;
+    }
+    // Zoom user-level OAuth on a hosted hive: the app's redirect URL is a
+    // localhost address the browser cannot reach, so the operator pastes the
+    // URL it landed on; the hive exchanges the code and keeps the refresh
+    // token in the connector's token store (same endpoint as Plaud).
+    function kbZoomPasteHtml(name, c) {
+      const n = escapeHtml(name);
+      const a = _kbPlaudAuth[name] || {};
+      const mode = (c && c.auth && c.auth.mode) || 'user_oauth';
+      const redirect = (c && c.scope && c.scope.redirect_uri) || 'http://localhost:8199/zoom/callback';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Recordings are triaged in the Inbox, not here.</span></div>';
+      if (mode === 'server_to_server') return '<p class="muted-xs" data-kb-zoom-s2s>Server-to-Server OAuth: Connect requests an account token with the client id, secret and account id from the environment variables named in the form; no browser step. Scopes to add on the Zoom app: <code>cloud_recording:read:list_user_recordings:admin</code>, <code>cloud_recording:read:list_recording_files:admin</code>, <code>user:read:user:admin</code>, optionally <code>meeting_summary:read:admin</code> and <code>meeting:read:list_past_participants:admin</code>.</p>';
+      return '<details class="kb-plaud-paste mt-2" data-kb-zoom-paste><summary class="muted-xs">Finish Zoom sign-in by pasting the redirect URL</summary>' +
+        '<p class="muted-xs">Registration: on the Zoom App Marketplace create a <strong>General</strong> (user-managed) OAuth app, add <code>' + escapeHtml(redirect) + '</code> to its OAuth Redirect URL and allow list, add the scopes <code>cloud_recording:read:list_user_recordings</code>, <code>cloud_recording:read:list_recording_files</code>, <code>user:read:user</code> (optionally <code>meeting_summary:read</code>, <code>meeting:read:list_past_participants</code>), and put the client id and secret in the hive environment under the variable names in the form. Then click <strong>Connect Zoom</strong>, approve in the browser, and paste the <code>' + escapeHtml(redirect) + '?code=…&amp;state=…</code> URL the browser lands on (a connection error page is expected) within 10 minutes.</p>' +
+        '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="2" placeholder="' + escapeHtml(redirect) + '?code=…&amp;state=…"></textarea>' +
+        '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
+    }
+    // Teams: client credentials have no browser step; what can be missing
+    // is the tenant administrator's consent (and application access policy).
+    function kbTeamsConsentHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const users = (c && c.scope && (c.scope.users || c.scope.group)) || '';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Recordings are triaged in the Inbox, not here.</span></div>';
+      const consent = /admin consent/i.test(a.message || '') ? '<div class="kc-error" data-kb-teams-consent>Requires Entra admin consent for OnlineMeetingRecording.Read.All and OnlineMeetingTranscript.Read.All' + (a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">grant consent ↗</a>' : '') + '</div>' : '';
+      return consent + '<p class="muted-xs" data-kb-teams-help>Microsoft Graph application permissions: Connect fetches a client-credentials token with the tenant id, client id and secret from the environment variables named in the form and probes the recordings of ' + (users ? '<code>' + escapeHtml(users) + '</code>' : 'the configured organizers') + '. A tenant administrator must grant admin consent to <code>OnlineMeetingRecording.Read.All</code> and <code>OnlineMeetingTranscript.Read.All</code> and assign an application access policy covering those organizers; without it Graph answers 403 and the card shows the consent link. Playback of Teams recordings in the Inbox is not available yet (Graph serves them behind a bearer token); transcripts and metadata sync.</p>';
+    }
+    // Discord: a bot token has no browser step; what can be missing is the
+    // bot's membership in the server or its channel permissions (the card
+    // then offers the bot invite link), or the Message Content intent.
+    function kbDiscordHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const scope = (c && c.scope) || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Recordings and event notes are triaged in the Inbox, not here.</span></div>';
+      const where = [scope.guild ? 'server <code>' + escapeHtml(scope.guild) + '</code>' : '', scope.channels ? 'channels <code>' + escapeHtml(scope.channels) + '</code>' : ''].filter(Boolean).join(' and ') || 'the configured server and channels';
+      const access = /invite it/i.test(a.message || '') ? '<div class="kc-error" data-kb-discord-access>The bot cannot read ' + where + (a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">invite the bot ↗</a>' : '') + '</div>' : '';
+      return access + '<p class="muted-xs" data-kb-discord-help>Discord has no cloud recordings or transcripts, so the hive reads what a meeting leaves behind: finished recordings posted to the recording channels (an audio upload, or a recording bot\'s download link such as Craig\'s, forwarded there), and scheduled events with their channel chat. Create an application in the Discord Developer Portal, add a bot, enable the <strong>Message Content</strong> intent, put the bot token in the hive environment, and invite the bot with View Channel and Read Message History. Connect probes ' + where + ' with that token. Audio uploads play in the Inbox; items without a transcript stay marked as not transcribed.</p>';
     }
     async function kbPlaudAuthLoad(name, refresh) {
       try {
@@ -2691,24 +2937,27 @@
     // 404 "no knowledge connectors are configured" reads as an error toast
     // with the server's message verbatim, not as silence (hivecommons/hive#18092).
     async function kbPlaudRefreshAuth(name) {
-      showToast('Checking Plaud sign-in…', 'info');
+      const label = kbAuthLabel(name);
+      showToast('Checking ' + label + ' sign-in…', 'info');
       const a = (await kbPlaudAuthLoad(name, true)) || {};
       if (a.error) showToast('Check failed: ' + a.error, 'error');
-      else showToast('Plaud ' + name + ': ' + kbPlaudAuthSummary(a), a.connected ? 'success' : 'info');
+      else showToast(label + ' ' + name + ': ' + kbPlaudAuthSummary(a), a.connected ? 'success' : 'info');
     }
     async function kbPlaudConnect(name) {
+      const label = kbAuthLabel(name);
       try {
         const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/connect', { method: 'POST' });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         _kbPlaudAuth[name] = data;
         kbRenderIntegrationsModal();
-        if (data.connected) showToast('Plaud connected' + (data.account ? ' as ' + data.account : ''), 'success');
-        else if (data.auth_url) { showToast('Open the Plaud authorization link shown on the card, then click Check.', 'info'); kbPlaudPollAuth(name, 0); }
-        else showToast('Plaud login started; the authorization URL will appear on the card shortly.', 'info');
+        if (data.connected) showToast(label + ' connected' + (data.account ? ' as ' + data.account : ''), 'success');
+        else if (data.pending && data.auth_url) { showToast('Open the ' + label + ' authorization link shown on the card, then ' + (label === 'Zoom' ? 'paste the redirect URL into the card.' : 'click Check.'), 'info'); kbPlaudPollAuth(name, 0); }
+        else if (data.auth_url) showToast(label + ': ' + (data.message || 'not connected') + ' — the consent link is on the card.', 'info');
+        else showToast(label + ' login started; the authorization URL will appear on the card shortly.', 'info');
         if (!data.connected && !data.auth_url) kbPlaudPollAuth(name, 0);
       } catch (e) {
-        showToast('Plaud connect failed: ' + e.message, 'error');
+        showToast(label + ' connect failed: ' + e.message, 'error');
       }
     }
     // Poll the cached state while a login is pending (URL arrival, completion).
@@ -2717,24 +2966,28 @@
       setTimeout(async () => {
         await kbPlaudAuthLoad(name, false);
         const a = _kbPlaudAuth[name] || {};
-        if (a.connected) { showToast('Plaud connected' + (a.account ? ' as ' + a.account : ''), 'success'); return; }
+        if (a.connected) { showToast(kbAuthLabel(name) + ' connected' + (a.account ? ' as ' + a.account : ''), 'success'); return; }
         if (a.pending) kbPlaudPollAuth(name, attempt + 1);
       }, 5000);
     }
     async function kbPlaudDisconnect(name) {
-      if (!(await hiveConfirm('Sign out of Plaud? Synced recordings stay in the vault until you remove the connector.'))) return;
+      const label = kbAuthLabel(name);
+      if (!(await hiveConfirm('Sign out of ' + label + '? Synced recordings stay in the vault until you remove the connector.'))) return;
       try {
         const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/disconnect', { method: 'POST' });
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         _kbPlaudAuth[name] = data;
         kbRenderIntegrationsModal();
-        showToast('Plaud disconnected', 'success');
+        showToast(label + ' disconnected', 'success');
       } catch (e) {
-        showToast('Plaud disconnect failed: ' + e.message, 'error');
+        showToast(label + ' disconnect failed: ' + e.message, 'error');
       }
     }
     function kbOpenPlaudIntegration() { _kbIntegrationSelected = 'plaud'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenZoomIntegration() { _kbIntegrationSelected = 'zoom'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenTeamsIntegration() { _kbIntegrationSelected = 'teams'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenDiscordIntegration() { _kbIntegrationSelected = 'discord'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
 
     // ── Wispr Flow (local dictation history, no sign-in) ──
     function kbWisprFlowSourceLine(c) {

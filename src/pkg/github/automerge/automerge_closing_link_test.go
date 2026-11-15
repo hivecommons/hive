@@ -318,8 +318,11 @@ func TestClosingLinkGatesSkipNonDefaultBase(t *testing.T) {
 	front.mu.Lock()
 	commitReads := front.commitReads
 	front.mu.Unlock()
-	if commitReads != 0 {
-		t.Fatalf("commit list reads = %d, want 0", commitReads)
+	// The one commit listing is the merge's squash-body rebuild that carries
+	// the branch sign-offs (hivecommons/hive#18204); the closing-keyword scan
+	// itself must not read the commits off the default branch.
+	if commitReads != 1 {
+		t.Fatalf("commit list reads = %d, want 1 (the squash sign-off rebuild only)", commitReads)
 	}
 
 	// The same PR into the default branch is held as before.

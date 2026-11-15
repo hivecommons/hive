@@ -13,9 +13,9 @@ func TestInceptionSidebarLabelsSpektacular(t *testing.T) {
 	html := string(b)
 
 	for _, snippet := range []string{
-		`data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spektacular)</span>`,
-		`Project Inception · powered by Spektacular`,
-		`Settings → Extensions → Spektacular`,
+		// The old Inception wizard section is gone (hivecommons/hive#18268);
+		// its sidebar entry is now the Inception (spek) sessions section.
+		`data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spek)</span>`,
 		`const SIDEBAR_MIN_W = 280;`,
 	} {
 		if !strings.Contains(html, snippet) {

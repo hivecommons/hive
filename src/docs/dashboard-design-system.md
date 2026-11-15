@@ -519,7 +519,7 @@ Count badges use `.badge-count`; zero counts render as dimmed `0` badges with `d
 | `.agent-card`, `.repo-card`, hub hero/proof cards | `--surface-2` (`.card`) | Legacy class names remain for JS/tests; bespoke gradients/radii/shadows were removed. |
 | `.governor`, `.token-panel`, `.cost-panel`, contribute `.ops-card`, `.steps`, hub comparison wrapper | `--surface-1` (`.card-panel`) | Section panels now share `--r-lg`, `--line-subtle`, and `--shadow-card`. |
 | `.card-inset`, `.card-tile`, `.row-card`, `.gov-pr-models`, contribute dossier stat/seal rows | `--surface-3` (`.card-inset`) | Nested cards keep local layout/click behavior but use the common inset surface. |
-| `#logs-output`, `#audit-panel`, `#inception-activity`, `.oc-detail-summary`, `.doing` | `--surface-terminal` | Terminal/log panes stay dark in both themes. |
+| `#logs-output`, `#audit-panel`, `.oc-detail-summary`, `.doing` | `--surface-terminal` | Terminal/log panes stay dark in both themes. |
 | `.token-stat`, `.cost-stat`, hub stats | `.metric-tile` equivalent | Numeric tiles use tokenized spacing, radius, border, and type scale. |
 
 Skipped table follow-ups: governor matrix and model-performance tables remain

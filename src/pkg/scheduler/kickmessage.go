@@ -1000,6 +1000,7 @@ func (s *Scheduler) buildReposSectionFor(agentName string) string {
 			b.WriteString(fmt.Sprintf("  %s/%s  [reference · %s]%s\n", strings.TrimRight(host, "/"), rr.Repo, rr.WriteLabel(), referenceRepoProvenance(rr)))
 		}
 		b.WriteString("   You MAY clone them (public, unauthenticated), read their files, and GET their issues/PRs/API. An authorized-repo item whose deliverables name a reference repo is IN SCOPE, not a scope violation: do NOT classify it out-of-scope, critical, or a security concern. Findings about a reference repo belong in the deliverable inside the AUTHORIZED repo (the assessment document, the report), never as issues or PRs on the reference repo itself — unless its tier above says issues/prs, in which case you may ONLY open an issue, open a PR from your own branch, or comment on an issue/PR you opened; the proxy refuses merges, default-branch pushes, labels, assignments, reviews and closing others' items deterministically, so retrying cannot succeed.\n")
+		b.WriteString(referenceRepoForkInstruction(refs, host))
 	}
 	b.WriteString("⛔ NEVER access, search, list, file issues in, or open PRs on repos not listed above.\n")
 	b.WriteString(fmt.Sprintf("⛔ Every repo above is on %s. This hive is single-host — never touch a repo on a different GitHub host.\n", host))
@@ -1074,4 +1075,25 @@ func referenceRepoProvenance(rr config.ReferenceRepo) string {
 		reason = derivedReadOnlyNoReason
 	}
 	return " (from " + rr.DerivedFrom + "; read-only: " + reason + ")"
+}
+
+// referenceRepoForkInstruction is the kick's fork-and-PR paragraph for the
+// prs-tier reference repos (hivecommons/hive#18198). Writes to a reference
+// repo appear under the hive owner's GitHub account, and that account cannot
+// push to a repo it does not own, so a PR goes through the owner's fork: the
+// paragraph names the login and the exact three commands. Empty when no entry
+// has both the prs tier and a resolved credential login.
+func referenceRepoForkInstruction(refs []config.ReferenceRepo, host string) string {
+	login := ""
+	for _, rr := range refs {
+		if rr.WritesPRs() && rr.CredentialLogin != "" {
+			login = rr.CredentialLogin
+			break
+		}
+	}
+	if login == "" {
+		return ""
+	}
+	host = strings.TrimRight(host, "/")
+	return fmt.Sprintf("   ✍️ Writes to a reference repo appear under the GitHub account %s (the hive owner), not under the hive. You CANNOT push to a reference repo itself. For a PR: fork it into that account (gh repo fork <owner>/<name> --clone=false; already-forked is fine), push your topic branch to %s/%s/<name> (git remote add fork %s/%s/<name>.git && git push fork <branch>), then open the PR against the reference repo: gh pr create --repo <owner>/<name> --head %s:<branch>. Never push to the fork's default branch; do nothing else on the fork.\n", login, host, login, host, login, login)
 }

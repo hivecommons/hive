@@ -10,7 +10,9 @@ and keep the real compiler beside it as `go-real`. When `HIVE_AGENT` or
 inside the hive pod and points agents to CI instead, because those commands can
 read or mutate live `/data` state and have killed agent sessions. Human
 operators can debug inside the pod by setting `HIVE_ALLOW_LOCAL_GO_TEST=1`; all
-other Go subcommands pass through unchanged.
+other Go subcommands pass through unchanged. The image also ships pinned
+`govulncheck` and `gosec` for the sec-check lane; both load packages through
+`go list`, which the shim passes through, so they work in an agent pane.
 
 ## Abandoned contributor PRs
 

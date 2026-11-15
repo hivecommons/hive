@@ -5,13 +5,13 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"mime/multipart"
 	"net/http"
-	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/hivecommons/hive/crux"
 )
 
 const sessionUploadPrefixBytes = 4
@@ -42,8 +42,8 @@ func sanitizeUploadName(name string) string {
 
 // handleSessionUpload stores one multipart file ("file") under the session's
 // uploads directory and returns its absolute path; the UI then types that path
-// into the session through /input. The file is written 0600 and never
-// executed or interpreted by the hive.
+// into the session through /input. The file is written 0600, owned by the
+// session's uid, and never executed or interpreted by the hive.
 func (s *Server) handleSessionUpload(w http.ResponseWriter, r *http.Request) {
 	rt, st, ok := s.sessionsGate(w)
 	if !ok {
@@ -54,13 +54,8 @@ func (s *Server) handleSessionUpload(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "uploading requires owner or read-write role", http.StatusForbidden)
 		return
 	}
-	rec, found := st.get(r.PathValue("id"))
-	if !found {
-		jsonError(w, "session not found", http.StatusNotFound)
-		return
-	}
-	if rec.Status != sessionStatusRunning {
-		jsonError(w, "session is not running", http.StatusConflict)
+	rec, ok := s.sessionForUse(w, st, r.PathValue("id"), actor)
+	if !ok {
 		return
 	}
 	lim := s.sessionLimits()
@@ -86,35 +81,27 @@ func (s *Server) handleSessionUpload(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	dir := filepath.Join(rt.WorkDir(rec.ID), sessionUploadsDirName)
-	if err := os.MkdirAll(dir, sessionUploadDirMode); err != nil {
-		jsonError(w, "could not prepare the upload directory", http.StatusInternalServerError)
-		return
-	}
-	if entries, err := os.ReadDir(dir); err == nil && len(entries) >= lim.MaxUploads {
-		jsonError(w, "this session already has the maximum of "+strconv.Itoa(lim.MaxUploads)+" uploaded files", http.StatusTooManyRequests)
-		return
-	}
 	prefix := make([]byte, sessionUploadPrefixBytes)
 	if _, err := rand.Read(prefix); err != nil {
 		jsonError(w, "could not name the upload", http.StatusInternalServerError)
 		return
 	}
-	dest := filepath.Join(dir, hex.EncodeToString(prefix)+"-"+sanitizeUploadName(part.FileName()))
-	f, err := os.OpenFile(dest, os.O_WRONLY|os.O_CREATE|os.O_EXCL, sessionUploadFileMode)
-	if err != nil {
-		jsonError(w, "could not store the upload", http.StatusInternalServerError)
-		return
-	}
-	n, copyErr := io.Copy(f, io.LimitReader(part, lim.MaxUploadByte+1))
-	closeErr := f.Close()
+	fileName := hex.EncodeToString(prefix) + "-" + sanitizeUploadName(part.FileName())
+	// The runtime writes the file AS THE SESSION'S UID into the session's own
+	// sandbox (exclusive create, no symlink following), so the hive never
+	// opens a path inside a directory the session controls.
+	dest, n, err := rt.StoreUpload(rec.ID, fileName, part, lim.MaxUploadByte, lim.MaxUploads)
 	switch {
-	case copyErr != nil && isUploadTooLarge(copyErr), copyErr == nil && n > lim.MaxUploadByte:
-		_ = os.Remove(dest)
+	case errors.Is(err, crux.ErrUserSessionUploadLimit):
+		jsonError(w, "this session already has the maximum of "+strconv.Itoa(lim.MaxUploads)+" uploaded files", http.StatusTooManyRequests)
+		return
+	case errors.Is(err, crux.ErrUserSessionUploadTooLarge), err != nil && isUploadTooLarge(err):
 		jsonError(w, fmt.Sprintf("upload exceeds %d bytes", lim.MaxUploadByte), http.StatusRequestEntityTooLarge)
 		return
-	case copyErr != nil, closeErr != nil:
-		_ = os.Remove(dest)
+	case err != nil:
+		if s.logger != nil {
+			s.logger.Warn("sessions: storing upload failed", "id", rec.ID, "error", err)
+		}
 		jsonError(w, "could not store the upload", http.StatusInternalServerError)
 		return
 	}

@@ -247,6 +247,16 @@ type Dependencies struct {
 	// in memory, as the config reload hook does, so the kick and /api/status
 	// keep showing them. Nil (no deriver, most tests) leaves the list as saved.
 	RemergeDerivedReferenceRepos func()
+	// OwnerIdentity is the store behind /api/github-owner-identity
+	// (hivecommons/hive#18197): the hive owner's GitHub account, consented
+	// once on this dashboard, that write-tier reference repos are written as.
+	// Nil (most tests, a hive without a secrets dir) answers 503 on those
+	// routes.
+	OwnerIdentity *ghpkg.OwnerIdentityStore
+	// OwnerIdentityChanged is called after the owner connects, reconnects or
+	// disconnects their account, so the reference-repo policies re-resolve
+	// without a restart. Nil skips.
+	OwnerIdentityChanged func()
 	// RescanReposFunc re-enumerates every watched repository's open issues
 	// and pull requests against the forge, enriches PR CI status, applies the
 	// duplicate-PR claim guard and republishes the dashboard status snapshot
