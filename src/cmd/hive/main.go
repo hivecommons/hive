@@ -3580,6 +3580,10 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	if sup := wireMeetings(b.ctx, b.cfg, b.logger); sup != nil {
 		b.meetingsQuorum = sup
 		b.cleanup.push(sup.Stop)
+		if mgr := wireMeetingsManager(b.cfg, sup, b.logger); mgr != nil {
+			b.meetingsMgr = mgr
+			b.cleanup.push(mgr.Close)
+		}
 	}
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
 	ghClientFn := func() *github.Client { return b.ghClient }

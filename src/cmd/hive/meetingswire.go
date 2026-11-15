@@ -5,8 +5,10 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/meetings"
 	"github.com/hivecommons/hive/pkg/meetings/quorumproc"
 )
 
@@ -14,6 +16,8 @@ import (
 type quorumSupervisor interface {
 	Start(ctx context.Context) error
 	Stop()
+	BaseURL() string
+	Token() string
 }
 
 // newQuorumSupervisor is the constructor seam; tests replace it.
@@ -83,4 +87,47 @@ func wireMeetings(ctx context.Context, cfg *config.Config, logger *slog.Logger) 
 			"listen", cfg.Meetings.QuorumListen())
 	}
 	return sup
+}
+
+// wireMeetingsManager builds the meeting manager over a running Quorum
+// supervisor (hivecommons/hive#18290) and re-attaches to meetings that were
+// live before a restart. It returns nil (logged) when the store cannot be
+// opened.
+func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.Logger) *meetings.Manager {
+	if cfg == nil || sup == nil {
+		return nil
+	}
+	store, err := meetings.NewStore(cfg.Meetings.DataDirOrDefault())
+	if err != nil {
+		if logger != nil {
+			logger.Error("[meetings] meeting store unavailable; meetings unavailable", "error", err)
+		}
+		return nil
+	}
+	mgr, err := meetings.NewManager(meetings.Options{
+		Store:        store,
+		Quorum:       meetings.NewClient(sup.BaseURL(), sup.Token(), nil),
+		BotName:      cfg.Meetings.BotNameOrDefault(),
+		ConsentText:  cfg.Meetings.ConsentTextOrDefault(),
+		LobbyTimeout: time.Duration(cfg.Meetings.LobbyTimeoutSOrDefault()) * time.Second,
+		Logger:       logger,
+		// Vexa fixes speaking ability at join time, so with voice-on-address
+		// allowed every bot starts able to speak; the meeting's voice toggle
+		// still decides whether hive does.
+		VoiceOnAddress: cfg.Meetings.VoiceOnAddressEnabled(),
+	})
+	if err != nil {
+		if logger != nil {
+			logger.Error("[meetings] meeting manager not created", "error", err)
+		}
+		return nil
+	}
+	// Discord `/hive join` requests arrive on the all-meetings stream. No
+	// Discord identity is mapped to the hive owner yet, so none is approved
+	// automatically: each waits for the owner in the dashboard.
+	mgr.StartRequests()
+	if n := mgr.Resume(); n > 0 && logger != nil {
+		logger.Info("[meetings] re-attached to meetings", "count", n)
+	}
+	return mgr
 }
