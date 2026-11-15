@@ -46929,9 +46929,17 @@ function burnAreaChart() {
     // Zoom / Teams app registration: which environment variables hold the
     // client id, secret and account/tenant id. Values never pass through the
     // dashboard; the hive reads the variables at sync time.
+    // Settings keys of the auth.*_env references, spelled out so the Settings
+    // parity guard sees each hive.yaml leaf referenced by the dashboard.
+    const KB_MEETING_AUTH_SETTING_KEYS = {
+      client_id_env: 'knowledge.connectors[].auth.client_id_env',
+      client_secret_env: 'knowledge.connectors[].auth.client_secret_env',
+      account_id_env: 'knowledge.connectors[].auth.account_id_env',
+      tenant_id_env: 'knowledge.connectors[].auth.tenant_id_env'
+    };
     function kbMeetingAuthFormHTML(type, c) {
       const a = (c && c.auth) || {};
-      const field = (key, label, placeholder) => '<label class="muted-note">' + escapeHtml(label) + '<input class="kb-search-box mt-2" type="text" data-kb-kc-auth-field="' + key + '" data-setting-key="knowledge.connectors[].auth.' + key + '" value="' + escapeHtml(a[key] || '') + '" placeholder="' + escapeHtml(placeholder) + '" autocomplete="off"></label>';
+      const field = (key, label, placeholder) => '<label class="muted-note">' + escapeHtml(label) + '<input class="kb-search-box mt-2" type="text" data-kb-kc-auth-field="' + key + '" data-setting-key="' + KB_MEETING_AUTH_SETTING_KEYS[key] + '" value="' + escapeHtml(a[key] || '') + '" placeholder="' + escapeHtml(placeholder) + '" autocomplete="off"></label>';
       let html = '<div class="kb-integration-form-grid-2" data-kb-meeting-auth="' + escapeHtml(type) + '">';
       if (type === 'zoom') {
         const mode = a.mode || 'user_oauth';

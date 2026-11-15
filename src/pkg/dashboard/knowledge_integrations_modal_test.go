@@ -216,7 +216,9 @@ func TestKnowledgeIntegrationsModalMeetingCards(t *testing.T) {
 		`data-kb-zoom-paste`,
 		`data-kb-teams-consent`,
 		`Requires Entra admin consent for OnlineMeetingRecording.Read.All and OnlineMeetingTranscript.Read.All`,
-		`data-setting-key="knowledge.connectors[].auth.' + key + '"`,
+		`client_id_env: 'knowledge.connectors[].auth.client_id_env',`,
+		`tenant_id_env: 'knowledge.connectors[].auth.tenant_id_env'`,
+		`data-setting-key="' + KB_MEETING_AUTH_SETTING_KEYS[key] + '"`,
 		`data-setting-key="knowledge.connectors[].auth.mode"`,
 		`box.querySelectorAll('[data-kb-kc-auth-field]')`,
 	} {
@@ -263,7 +265,7 @@ func TestKnowledgeIntegrationsModalWisprFlowCard(t *testing.T) {
 			t.Errorf("index.html missing Wispr Flow card snippet %q", want)
 		}
 	}
-	if !strings.Contains(html, `'sharepoint', 'wisprflow']`) {
+	if !strings.Contains(html, `'sharepoint', 'teams', 'wisprflow', 'zoom']`) {
 		t.Error("wisprflow missing from KB_CONNECTOR_TYPE_ORDER")
 	}
 	start := strings.Index(html, "function kbWisprFlowSourceLine(c)")

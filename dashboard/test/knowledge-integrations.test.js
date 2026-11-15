@@ -29,6 +29,7 @@ function extractFunction(name) {
 function makeContext(connectors, auth) {
   const ctx = {
     KB_AUTH_TYPES: { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams' },
+    KB_MEETING_AUTH_SETTING_KEYS: { client_id_env: 'knowledge.connectors[].auth.client_id_env', client_secret_env: 'knowledge.connectors[].auth.client_secret_env', account_id_env: 'knowledge.connectors[].auth.account_id_env', tenant_id_env: 'knowledge.connectors[].auth.tenant_id_env' },
     _kcState: { connectors },
     _kbPlaudAuth: auth || {},
     escapeHtml: (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
