@@ -203,7 +203,7 @@ func TestKnowledgeIntegrationsModalMeetingCards(t *testing.T) {
 		`'teams': { label: 'Microsoft Teams recordings'`,
 		`'zoom': [['users', 'Recording owners (me, or user ids/emails for Server-to-Server)', 'me']`,
 		`'teams': [['users', 'Meeting organizers (object ids or UPNs, comma-separated)'`,
-		`const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', fireflies: 'Fireflies', fathom: 'Fathom', limitless: 'Limitless', granola: 'Granola' };`,
+		`const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', fireflies: 'Fireflies', fathom: 'Fathom', limitless: 'Limitless', granola: 'Granola', otter: 'Otter' };`,
 		`else if (type === 'zoom') html += kbPlaudAuthLine(c.name, type) + kbZoomPasteHtml(c.name, c);`,
 		`else if (type === 'teams') html += kbPlaudAuthLine(c.name, type) + kbTeamsConsentHtml(c.name, c);`,
 		`if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);`,
@@ -530,6 +530,41 @@ func TestKnowledgeIntegrationsModalGranolaCard(t *testing.T) {
 	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
 		if strings.Contains(html[start:end], native) {
 			t.Errorf("Granola card block uses a browser-native dialog %q", native)
+		}
+	}
+}
+
+// TestKnowledgeIntegrationsModalOtterCard guards the Otter entry: API key
+// through the generic credential source, the help, the icon, and no
+// browser-native dialog.
+func TestKnowledgeIntegrationsModalOtterCard(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`'otter': { label: 'Otter.ai conversations'`,
+		`'otter': [['since_days', 'Days back on first sync', '30']`,
+		`else if (type === 'otter') html += kbPlaudAuthLine(c.name, type) + kbOtterHelpHtml(c.name, c);`,
+		`data-kb-otter-note`,
+		`function kbOtterHelpHtml(name, c)`,
+		`function kbOpenOtterIntegration()`,
+		`data-kb-otter-help`,
+		`'otter': '🦦'`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing Otter card snippet %q", want)
+		}
+	}
+	start := strings.Index(html, "function kbOtterHelpHtml(name, c)")
+	end := strings.Index(html, "async function kbPlaudAuthLoad(name, refresh)")
+	if start < 0 || end < start {
+		t.Fatal("Otter card block not found")
+	}
+	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
+		if strings.Contains(html[start:end], native) {
+			t.Errorf("Otter card block uses a browser-native dialog %q", native)
 		}
 	}
 }

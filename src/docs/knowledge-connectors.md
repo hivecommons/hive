@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles | fireflies | fathom | limitless | granola
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles | fireflies | fathom | limitless | granola | otter
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -1071,6 +1071,72 @@ knowledge:
 - Playback: none (▶ Play answers 404, Granola keeps no audio).
 - Errors: `401` / `403` read as *not connected*. `429` is retried
   honouring `Retry-After`. The key is only sent to `public-api.granola.ai`.
+
+## Otter.ai conversations (`type: otter`)
+
+[Otter.ai](https://otter.ai) records and transcribes meetings and writes an
+AI summary, an outline and action items per conversation. The connector
+reads them through the
+[Otter.ai Public API](https://help.otter.ai/hc/en-us/articles/36130822688279-Otter-ai-Public-API),
+which Otter offers to **Enterprise workspaces**, with an API key: one fact
+per conversation with title, creation time, duration (the last transcript
+offset), owner, calendar guests, the summary and the transcript. Items
+land in the **📥 Inbox** with playback.
+
+On other Otter plans there is no Public API (the Developer tab is missing).
+Otter's own exports (txt, docx, srt) can still be filed by hand through
+**+ New Fact**; the hive never uses Otter's private web API.
+
+```yaml
+knowledge:
+  connectors:
+    - name: otter
+      type: otter
+      layer: project
+      interval: 15m
+      auth:
+        env: OTTER_API_KEY             # variable NAME holding the Otter API key
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        include_shared: "false"        # true: also conversations shared with the key's user
+        channel: ""                    # optional channel id (overrides include_shared)
+        include_summary: "true"        # abstract_summary, outline, action_items
+        include_participants: "true"   # calendar_guests
+        tags: "meetings"
+```
+
+### Setup
+
+1. In Otter open **Integrations → Developer**, click **Create key** and copy
+   it (it is shown once; two keys per user). If the tab is missing on an
+   Enterprise workspace, Otter's account manager turns it on.
+2. Put it in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Otter.ai conversations** with the
+   credential source *Environment variable* naming that variable.
+   **Connect** / **Check** read `GET /workspace`, so a dead key or a
+   workspace without the Public API shows on the card.
+
+### Behaviour
+
+- Each sync pages `GET /conversations` (newest first, `limit=20`, the
+  maximum, `cursor` while `meta.has_more`; `include_shared` or
+  `channel_id`) until a conversation older than the newest one seen (minus
+  48 h) or `since_days`, and reads each with
+  `GET /conversations/{id}?include=action_items,outline,transcript`. The
+  `txt` transcript (`Speaker  00:07` heads) becomes `[mm:ss] Speaker: text`
+  lines.
+- Facts carry `source: otter`, `attr_otter_recording_id` (the conversation
+  id, the Inbox item id), `attr_recorded_at` (`created_at`),
+  `attr_duration_ms`, `attr_host` (`owner`) and `attr_participants`; the
+  recording page is the conversation `url`.
+- Playback: `GET /conversations/{id}/audio` returns the MP3 download link;
+  Otter does not state its lifetime, so the hive mints it per click with a
+  one-hour expiry and never stores it.
+- Errors: `401` reads as *not connected* (a wrong or deleted key, or a
+  workspace without the Public API); `403` keeps Otter's refusal. `429` is
+  retried honouring `Retry-After` (10 requests a second). The key is only
+  sent to `api.otter.ai`.
 
 ## Wispr Flow (dictation, `type: wisprflow`)
 
