@@ -1,17 +1,22 @@
-    // Claude subscription usage gauge. subscriptionGaugeModel is the single
-    // pure decision point: it turns a /api/providers/headroom response into
-    // the dials, the needle and the no-reading reason that the Overview gauge
-    // and the header chip render. No DOM, no fetch, so node tests can run it.
+    // Plan usage gauge. subscriptionGaugeModel is the single pure decision
+    // point: it turns a /api/providers/headroom response into one row per
+    // provider the hive's agents spend (used_by), each with its dials, plus
+    // the needle and the no-reading reasons that the Overview gauge and the
+    // header chip render. No DOM, no fetch, so node tests can run it. The
+    // top-level fields mirror the row holding the needle, so a one-provider
+    // hive reads exactly as before.
     function subscriptionGaugeModel(resp, nowMs) {
       const OUT_OF_DATE_MS = 15 * 60 * 1000;
-      const REASONS = {
-        not_installed: 'Claude Code is not installed on this hive.',
-        no_credentials: 'This hive is not signed in to Claude.',
-        rate_limited: 'Claude rate-limited the usage check; hive will try again.',
+      const NAMES = { anthropic: 'Claude', github: 'Copilot', openai: 'Codex', google: 'Gemini', 'aws-kiro': 'Kiro', deepseek: 'DeepSeek' };
+      const ORDER = ['anthropic', 'github', 'openai', 'google', 'aws-kiro', 'deepseek'];
+      const reasonFor = (cause, name) => ({
+        not_installed: name === 'Claude' ? 'Claude Code is not installed on this hive.' : name + ' is not installed on this hive.',
+        no_credentials: 'This hive is not signed in to ' + name + '.',
+        rate_limited: name + ' rate-limited the usage check; hive will try again.',
         timeout: 'The usage check timed out; hive will try again.',
-        unrecognized_schema: 'Claude changed its usage format, so hive could not read it.',
+        unrecognized_schema: name + ' changed its usage format, so hive could not read it.',
         probe_failed: 'The usage check failed; hive will try again.',
-      };
+      })[cause];
       const NOT_USED = ['not_installed', 'no_credentials'];
       const validTime = (v) => {
         const ms = Date.parse(v || '');
@@ -23,6 +28,10 @@
         const k = String(kind || id || '').toLowerCase();
         const i = String(id || '').toLowerCase();
         const sc = scope || {};
+        // Copilot's monthly quotas, named as Copilot names them.
+        if (i === 'premium_interactions') return { label: 'Premium requests', shortName: 'premium' };
+        if (i === 'chat') return { label: 'Chat', shortName: 'chat' };
+        if (i === 'completions') return { label: 'Code completions', shortName: 'completions' };
         // A weekly limit that counts only some models: the builtin source
         // sends kind weekly_scoped; ccleft sends kind weekly with id
         // seven_day_<model> and scope.scope set (binding "false").
@@ -44,75 +53,104 @@
         if (mins > 0) return { label: Math.round(mins / 60) + '-hour', shortName: Math.round(mins / 60) + '-hour' };
         return { label: 'Limit', shortName: 'limit' };
       };
-      const providers = resp && Array.isArray(resp.providers) ? resp.providers : [];
-      const reading = providers.find((p) => p && p.provider === 'anthropic');
-      if (!reading) {
-        return { state: 'no-reading', usesClaude: false, cause: 'absent', reason: 'Usage measurement is not running on this hive.' };
-      }
-      const cause = String(reading.probe_error_cause || '');
-      const limits = Array.isArray(reading.limits) ? reading.limits : [];
-      const dials = [];
       // Paid credit pools and prepaid balances are not plan limits.
       const NOT_LIMITS = ['credits', 'balance'];
-      limits.forEach((l, i) => {
-        if (!l || typeof l.pct_remaining !== 'number' || !Number.isFinite(l.pct_remaining)) return;
-        if (NOT_LIMITS.includes(String(l.kind || '').toLowerCase())) return;
-        const mins = Number(l.duration_mins) || 0;
-        const d = describe(l.kind, l.id, mins, l.scope);
-        const pctLeft = Math.max(0, Math.min(100, Math.round(l.pct_remaining)));
-        const reset = validTime(l.resets_at);
-        dials.push({
-          id: String(l.id || l.kind || ''),
-          kind: String(l.kind || ''),
-          label: d.label,
-          shortName: d.shortName,
-          pctLeft: pctLeft,
-          resetsAt: reset === null ? '' : new Date(reset).toISOString(),
-          durationMins: mins,
-          status: statusFor(pctLeft),
-          order: i,
+      // listed: the provider is in used_by, so agents spend it and a missing
+      // or failed reading is worth saying. Unlisted (a server without
+      // used_by) keeps the Claude-only rule: hidden when Claude is not used.
+      const providerRow = (provider, reading, usedBy, listed) => {
+        const name = NAMES[provider] || provider;
+        const base = { provider: provider, name: name, usedBy: usedBy || [] };
+        if (!reading) {
+          return Object.assign(base, {
+            state: 'no-reading', shown: listed, cause: 'absent',
+            reason: listed ? 'This hive does not measure ' + name + ' usage.' : 'Usage measurement is not running on this hive.',
+          });
+        }
+        const cause = String(reading.probe_error_cause || '');
+        const limits = Array.isArray(reading.limits) ? reading.limits : [];
+        const dials = [];
+        limits.forEach((l, i) => {
+          if (!l || typeof l.pct_remaining !== 'number' || !Number.isFinite(l.pct_remaining)) return;
+          if (NOT_LIMITS.includes(String(l.kind || '').toLowerCase())) return;
+          const mins = Number(l.duration_mins) || 0;
+          const d = describe(l.kind, l.id, mins, l.scope);
+          const pctLeft = Math.max(0, Math.min(100, Math.round(l.pct_remaining)));
+          const reset = validTime(l.resets_at);
+          dials.push({
+            id: String(l.id || l.kind || ''),
+            kind: String(l.kind || ''),
+            label: d.label,
+            shortName: d.shortName,
+            pctLeft: pctLeft,
+            resetsAt: reset === null ? '' : new Date(reset).toISOString(),
+            durationMins: mins,
+            status: statusFor(pctLeft),
+            order: i,
+          });
         });
-      });
-      if (!dials.length) {
-        return {
-          state: 'no-reading',
-          usesClaude: !NOT_USED.includes(cause),
-          cause: cause || 'empty',
-          reason: REASONS[cause] || 'No usage reading yet.',
-        };
-      }
-      // Longest window first; among equal lengths the all-models weekly
-      // limit leads, then the provider's own order.
-      const rank = (dial) => (dial.shortName === '' ? 0 : 1);
-      dials.sort((a, b) => {
-        const am = a.durationMins > 0 ? a.durationMins : -1;
-        const bm = b.durationMins > 0 ? b.durationMins : -1;
-        if (am !== bm) return bm - am;
-        if (rank(a) !== rank(b)) return rank(a) - rank(b);
-        return a.order - b.order;
-      });
-      // The needle follows the window with the least left; ties keep the
-      // earlier (longer) window.
-      let needle = dials[0];
-      dials.forEach((dial) => { if (dial.pctLeft < needle.pctLeft) needle = dial; });
-      const captured = validTime(reading.captured_at);
-      const ageMs = captured === null || !Number.isFinite(nowMs) ? null : Math.max(0, nowMs - captured);
-      return {
-        state: 'reading',
-        usesClaude: true,
-        cause: cause,
-        dials: dials.map((dial) => ({
-          id: dial.id, kind: dial.kind, label: dial.label, shortName: dial.shortName,
-          pctLeft: dial.pctLeft, resetsAt: dial.resetsAt, durationMins: dial.durationMins, status: dial.status,
-        })),
-        needle: { id: needle.id, kind: needle.kind, label: needle.label, shortName: needle.shortName, pctLeft: needle.pctLeft, status: needle.status },
-        worstStatus: needle.status,
-        capturedAt: captured === null ? '' : new Date(captured).toISOString(),
-        ageMs: ageMs,
-        outOfDate: !!reading.stale || (ageMs !== null && ageMs > OUT_OF_DATE_MS),
-        planName: String(reading.plan_type || ''),
-        accountNote: 'Reflects the Claude account this hive is signed in with.',
+        if (!dials.length) {
+          return Object.assign(base, {
+            state: 'no-reading',
+            shown: listed || !NOT_USED.includes(cause),
+            cause: cause || 'empty',
+            reason: reasonFor(cause, name) || 'No usage reading yet.',
+          });
+        }
+        // Longest window first; among equal lengths the all-models weekly
+        // limit leads, then the provider's own order.
+        const rank = (dial) => (dial.shortName === '' ? 0 : 1);
+        dials.sort((a, b) => {
+          const am = a.durationMins > 0 ? a.durationMins : -1;
+          const bm = b.durationMins > 0 ? b.durationMins : -1;
+          if (am !== bm) return bm - am;
+          if (rank(a) !== rank(b)) return rank(a) - rank(b);
+          return a.order - b.order;
+        });
+        // The needle follows the window with the least left; ties keep the
+        // earlier (longer) window.
+        let needle = dials[0];
+        dials.forEach((dial) => { if (dial.pctLeft < needle.pctLeft) needle = dial; });
+        const captured = validTime(reading.captured_at);
+        const ageMs = captured === null || !Number.isFinite(nowMs) ? null : Math.max(0, nowMs - captured);
+        return Object.assign(base, {
+          state: 'reading',
+          shown: true,
+          cause: cause,
+          dials: dials.map((dial) => ({
+            id: dial.id, kind: dial.kind, label: dial.label, shortName: dial.shortName,
+            pctLeft: dial.pctLeft, resetsAt: dial.resetsAt, durationMins: dial.durationMins, status: dial.status,
+          })),
+          needle: { id: needle.id, kind: needle.kind, label: needle.label, shortName: needle.shortName, pctLeft: needle.pctLeft, status: needle.status },
+          worstStatus: needle.status,
+          capturedAt: captured === null ? '' : new Date(captured).toISOString(),
+          ageMs: ageMs,
+          outOfDate: !!reading.stale || (ageMs !== null && ageMs > OUT_OF_DATE_MS),
+          planName: String(reading.plan_type || ''),
+          accountNote: 'Reflects the ' + name + ' account this hive is signed in with.',
+        });
       };
+      const providers = resp && Array.isArray(resp.providers) ? resp.providers : [];
+      const readingFor = (id) => providers.find((p) => p && p.provider === id) || null;
+      const usedBy = resp && resp.used_by && typeof resp.used_by === 'object' && !Array.isArray(resp.used_by) ? resp.used_by : null;
+      const rank = (id) => (ORDER.includes(id) ? ORDER.indexOf(id) : ORDER.length);
+      const ids = usedBy
+        ? Object.keys(usedBy).filter((id) => Array.isArray(usedBy[id]) && usedBy[id].length > 0)
+          .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
+        : ['anthropic'];
+      const rows = ids.map((id) => providerRow(id, readingFor(id), usedBy ? usedBy[id].map(String) : null, !!usedBy))
+        .filter((row) => row.shown);
+      if (!rows.length) {
+        const legacy = !usedBy ? providerRow('anthropic', readingFor('anthropic'), null, false) : null;
+        return legacy && legacy.state === 'no-reading' && legacy.cause !== 'absent'
+          ? Object.assign(legacy, { rows: [] })
+          : { state: 'no-reading', shown: false, rows: [], cause: 'absent', reason: 'Usage measurement is not running on this hive.' };
+      }
+      // The needle row is the one with the least left; rows without a
+      // reading only lead when no row has one.
+      let lead = rows.find((row) => row.state === 'reading') || rows[0];
+      rows.forEach((row) => { if (row.state === 'reading' && row.needle.pctLeft < lead.needle.pctLeft) lead = row; });
+      return Object.assign({}, lead, { shown: true, rows: rows });
     }
 
     // Shared loader. The headroom endpoint is owner-only and the fetch
@@ -207,13 +245,23 @@
       return svg;
     }
 
-    // Overview block: on by default for the owner of a hive that uses
-    // Claude; hidden per browser from the Overview settings.
+    // "scanner, reviewer and 3 more": the agents that spend a provider.
+    function subscriptionGaugeUsers(names) {
+      const list = Array.isArray(names) ? names : [];
+      const SHOWN = 6;
+      if (list.length <= SHOWN) return list.join(', ');
+      return list.slice(0, SHOWN).join(', ') + ' and ' + (list.length - SHOWN) + ' more';
+    }
+
+    // Overview block: on by default for the owner of a hive whose agents
+    // spend a measured plan; hidden per browser from the Overview settings.
+    // One row per provider; a one-provider hive gets the single block it
+    // always had.
     function renderSubscriptionGaugeOverview() {
       const host = document.getElementById('overview-usage-gauge');
       if (!host) return;
       const m = subscriptionGaugeCurrentModel();
-      if (!subscriptionGaugeOwner() || !subscriptionGaugeOverviewEnabled() || !m || !m.usesClaude) {
+      if (!subscriptionGaugeOwner() || !subscriptionGaugeOverviewEnabled() || !m || !m.shown) {
         host.hidden = true;
         host.replaceChildren();
         return;
@@ -224,72 +272,100 @@
         if (text !== undefined) n.textContent = text;
         return n;
       };
+      const rows = m.rows && m.rows.length ? m.rows : [m];
+      const single = rows.length === 1;
+      const metaFor = (row) => {
+        const meta = [];
+        if (row.state === 'reading') {
+          if (row.capturedAt) meta.push('Measured ' + relativeTimeShort(row.capturedAt));
+          if (row.planName) meta.push('Plan: ' + row.planName);
+        }
+        return meta.join(' · ');
+      };
       const head = el('div', 'overview-usage-gauge__head');
-      head.appendChild(el('div', 'overview-usage-gauge__title', 'Claude usage left'));
-      const meta = [];
-      if (m.state === 'reading') {
-        if (m.capturedAt) meta.push('Measured ' + relativeTimeShort(m.capturedAt));
-        if (m.planName) meta.push('Plan: ' + m.planName);
-      }
-      head.appendChild(el('div', 'overview-usage-gauge__meta', meta.join(' · ')));
+      head.appendChild(el('div', 'overview-usage-gauge__title', single ? rows[0].name + ' usage left' : 'Usage left'));
+      head.appendChild(el('div', 'overview-usage-gauge__meta', single ? metaFor(rows[0]) : ''));
       const parts = [head];
-      if (m.state !== 'reading') {
-        parts.push(el('div', 'overview-usage-gauge__note', 'No reading: ' + m.reason));
-      } else {
-        if (m.outOfDate) parts.push(el('div', 'overview-usage-gauge__stale', 'This reading is out of date; treat it as a rough guide until hive measures again.'));
-        const grid = el('div', 'overview-usage-gauge__dials');
-        m.dials.forEach((d) => {
-          const cell = el('div', 'overview-usage-gauge__dial');
-          cell.appendChild(subscriptionGaugeDialSvg(d.pctLeft, { status: d.status, stale: m.outOfDate, label: d.label + ': ' + d.pctLeft + '% left' }));
-          const pct = el('div', 'overview-usage-gauge__pct', d.pctLeft + '% left');
-          pct.setAttribute('data-status', m.outOfDate ? 'neutral' : d.status);
-          cell.appendChild(pct);
-          cell.appendChild(el('div', 'overview-usage-gauge__label', d.label));
-          if (d.resetsAt) cell.appendChild(el('div', 'overview-usage-gauge__reset', 'Resets ' + formatDashboardDateTime(d.resetsAt)));
-          grid.appendChild(cell);
-        });
-        parts.push(grid);
-      }
-      parts.push(el('div', 'overview-usage-gauge__note', (m.accountNote || 'Reflects the Claude account this hive is signed in with.') + ' This is the Claude plan, not the hive token budget.'));
+      rows.forEach((row) => {
+        const box = el('div', 'overview-usage-gauge__row');
+        box.dataset.provider = row.provider;
+        if (!single) {
+          const rowHead = el('div', 'overview-usage-gauge__head');
+          rowHead.appendChild(el('div', 'overview-usage-gauge__provider', row.name));
+          rowHead.appendChild(el('div', 'overview-usage-gauge__meta', metaFor(row)));
+          box.appendChild(rowHead);
+        }
+        if (row.usedBy && row.usedBy.length) box.appendChild(el('div', 'overview-usage-gauge__users', 'Used by ' + subscriptionGaugeUsers(row.usedBy)));
+        if (row.state !== 'reading') {
+          box.appendChild(el('div', 'overview-usage-gauge__note', 'No reading: ' + row.reason));
+        } else {
+          if (row.outOfDate) box.appendChild(el('div', 'overview-usage-gauge__stale', 'This reading is out of date; treat it as a rough guide until hive measures again.'));
+          const grid = el('div', 'overview-usage-gauge__dials');
+          row.dials.forEach((d) => {
+            const cell = el('div', 'overview-usage-gauge__dial');
+            cell.appendChild(subscriptionGaugeDialSvg(d.pctLeft, { status: d.status, stale: row.outOfDate, label: row.name + ' ' + d.label + ': ' + d.pctLeft + '% left' }));
+            const pct = el('div', 'overview-usage-gauge__pct', d.pctLeft + '% left');
+            pct.setAttribute('data-status', row.outOfDate ? 'neutral' : d.status);
+            cell.appendChild(pct);
+            cell.appendChild(el('div', 'overview-usage-gauge__label', d.label));
+            if (d.resetsAt) cell.appendChild(el('div', 'overview-usage-gauge__reset', 'Resets ' + formatDashboardDateTime(d.resetsAt)));
+            grid.appendChild(cell);
+          });
+          box.appendChild(grid);
+        }
+        parts.push(box);
+      });
+      parts.push(el('div', 'overview-usage-gauge__note', single
+        ? (rows[0].accountNote || 'Reflects the ' + rows[0].name + ' account this hive is signed in with.') + ' This is the ' + rows[0].name + ' plan, not the hive token budget.'
+        : 'Each row reflects the account this hive is signed in with for that provider. These are the providers\' plans, not the hive token budget.'));
       host.replaceChildren.apply(host, parts);
       host.hidden = false;
     }
 
     // Opt-in header chip: a compact dial whose needle shows the limit closest
-    // to empty. It shares the Overview gauge's readings; no separate fetch.
+    // to empty across every provider row. It shares the Overview gauge's
+    // readings; no separate fetch.
     function renderSubscriptionGaugeChip() {
       const el = document.getElementById('oc-subscription-gauge');
       if (!el) return;
       const dialHost = el.querySelector('.subscription-gauge-chip__dial');
       const labelEl = el.querySelector('.nav-chip__label');
       const m = subscriptionGaugeCurrentModel();
-      if (!subscriptionGaugeOwner() || !subscriptionGaugeHeaderEnabled() || !m) {
+      if (!subscriptionGaugeOwner() || !subscriptionGaugeHeaderEnabled() || !m || (m.rows && !m.shown && m.cause === 'absent')) {
         el.hidden = true;
         if (dialHost) dialHost.replaceChildren();
         return;
       }
+      const name = m.name || 'Claude';
+      const rows = m.rows && m.rows.length ? m.rows : [m];
       const lines = [];
       if (m.state !== 'reading') {
         if (dialHost) dialHost.replaceChildren();
-        if (labelEl) labelEl.textContent = 'Claude: no reading';
+        if (labelEl) labelEl.textContent = name + ': no reading';
         el.dataset.status = 'neutral';
         el.dataset.outOfDate = 'false';
-        lines.push('No Claude usage reading: ' + m.reason);
       } else {
         const n = m.needle;
-        const label = 'Claude ' + n.pctLeft + '%' + (n.shortName ? ' · ' + n.shortName : '');
-        if (dialHost) dialHost.replaceChildren(subscriptionGaugeDialSvg(n.pctLeft, { compact: true, status: n.status, stale: m.outOfDate, label: n.label + ': ' + n.pctLeft + '% left' }));
+        const label = name + ' ' + n.pctLeft + '%' + (n.shortName ? ' · ' + n.shortName : '');
+        if (dialHost) dialHost.replaceChildren(subscriptionGaugeDialSvg(n.pctLeft, { compact: true, status: n.status, stale: m.outOfDate, label: name + ' ' + n.label + ': ' + n.pctLeft + '% left' }));
         if (labelEl) labelEl.textContent = label;
         el.dataset.status = m.outOfDate ? 'neutral' : m.worstStatus;
         el.dataset.outOfDate = m.outOfDate ? 'true' : 'false';
-        m.dials.forEach((d) => {
-          lines.push(d.label + ': ' + d.pctLeft + '% left' + (d.resetsAt ? ' · resets ' + formatDashboardDateTime(d.resetsAt) : ''));
-        });
-        if (m.capturedAt) lines.push('Measured ' + relativeTimeShort(m.capturedAt) + (m.outOfDate ? ' (out of date)' : ''));
       }
+      rows.forEach((row) => {
+        const prefix = rows.length > 1 ? row.name + ' ' : '';
+        if (row.state !== 'reading') {
+          lines.push('No ' + row.name + ' usage reading: ' + row.reason);
+          return;
+        }
+        row.dials.forEach((d) => {
+          lines.push(prefix + d.label + ': ' + d.pctLeft + '% left' + (d.resetsAt ? ' · resets ' + formatDashboardDateTime(d.resetsAt) : ''));
+        });
+        if (row.capturedAt) lines.push(prefix + 'Measured ' + relativeTimeShort(row.capturedAt) + (row.outOfDate ? ' (out of date)' : ''));
+      });
       lines.push('Click to open the usage gauge on the Overview.');
       el.title = lines.join('\n');
-      el.setAttribute('aria-label', (m.state === 'reading' ? 'Claude subscription: ' + m.needle.pctLeft + '% left in the ' + m.needle.label + ' limit' : 'Claude subscription: no reading') + '. Open the usage gauge on the Overview.');
+      el.setAttribute('aria-label', (m.state === 'reading' ? name + ' plan: ' + m.needle.pctLeft + '% left in the ' + m.needle.label + ' limit' : name + ' plan: no reading') + '. Open the usage gauge on the Overview.');
       el.hidden = false;
     }
     function openSubscriptionGaugeOverview() {
@@ -298,6 +374,6 @@
       if (host && !host.hidden) {
         host.scrollIntoView({ block: 'start', behavior: 'smooth' });
       } else if (typeof showToast === 'function') {
-        showToast('The usage gauge is hidden on the Overview. Turn on "Show Claude usage gauge" in Overview settings to see every limit.', 'info');
+        showToast('The usage gauge is hidden on the Overview. Turn on "Show usage gauge" in Overview settings to see every limit.', 'info');
       }
     }
