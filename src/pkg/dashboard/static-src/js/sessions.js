@@ -1,7 +1,8 @@
     // ── Sessions section ──
     // Named, grouped, shared CLI-agent terminal sessions. When the spoke has
-    // `GET /api/sessions` -> {enabled:true} this section replaces the Inception
-    // wizard UI (the legacy section stays untouched when disabled). The server
+    // `GET /api/sessions` -> {enabled:true} (the default) this section is shown
+    // as "Inception (spek)"; it replaced the Inception wizard UI. Disabled, the
+    // section stays hidden. The server
     // is the source of truth; localStorage only remembers the selected tab and
     // collapsed groups as a convenience. Each session gets one lazily created
     // ttyd iframe that is kept alive (just hidden) while another tab is shown.
@@ -289,15 +290,13 @@
       dashboardSetInterval('sessions-poll', loadSessions, SESSIONS_POLL_MS);
     }
 
-    // ── Visibility: Sessions replaces Inception when enabled ──
+    // ── Visibility: Inception (spek) shows only while sessions are enabled ──
     function sessionsApplyVisibility() {
       const on = sessionsIsEnabled();
-      [['sessions-section', on], ['inception-section', !on]].forEach(function(pair) {
-        const el = document.getElementById(pair[0]);
-        if (el) el.hidden = !pair[1];
-        const nav = document.querySelector('.oc-nav-item[data-section="' + pair[0] + '"]');
-        if (nav) nav.hidden = !pair[1];
-      });
+      const el = document.getElementById('sessions-section');
+      if (el) el.hidden = !on;
+      const nav = document.querySelector('.oc-nav-item[data-section="sessions-section"]');
+      if (nav) nav.hidden = !on;
       if (typeof dashboardApplyLayout === 'function' && typeof dashboardLayoutNormalize === 'function') {
         dashboardApplyLayout(dashboardLayoutNormalize(dashboardLayoutRead()));
       }
@@ -363,7 +362,7 @@
     }
     function sessionsToolbarHtml() {
       const can = sessionsCanCreate(_sessionsRole, _sessionsData);
-      return '<div class="sessions-toolbar"><div id="sessions-tabs" class="sessions-tabs" role="tablist" aria-label="Sessions">' + sessionsTabsHtml() + '</div>'
+      return '<div class="sessions-toolbar"><div id="sessions-tabs" class="sessions-tabs" role="tablist" aria-label="Inception (spek) sessions">' + sessionsTabsHtml() + '</div>'
         + '<button type="button" class="hv-btn btn-primary btn-sm sessions-new-btn" data-action="sessionsToggleNew"' + (can.ok ? '' : ' disabled title="' + esc(can.reason) + '"') + '>+ New session</button></div>'
         + '<div id="sessions-new" class="sessions-new" role="group" aria-label="New session"' + (_sessionsNewOpen && can.ok ? '' : ' hidden') + '>' + (_sessionsNewOpen && can.ok ? sessionsNewFormHtml() : '') + '</div>';
     }

@@ -191,7 +191,7 @@ func newSessionTestEnv(t *testing.T, enabled bool) *sessionTestEnv {
 	}
 	rt := newFakeSessionRuntime(t)
 	cfg := &config.Config{}
-	cfg.Dashboard.Sessions.Enabled = enabled
+	cfg.Dashboard.Sessions.Enabled = &enabled
 	s := NewServer(0, nil)
 	s.deps = &Dependencies{Config: cfg, Sessions: rt}
 	// Routes are registered by RegisterAPI in production; the tests register
@@ -1199,7 +1199,8 @@ func TestTerminalHandoffWithSession(t *testing.T) {
 	if rec := post(callerRW, map[string]string{"session": id}); rec.Code != http.StatusConflict {
 		t.Errorf("ended session handoff = %d, want 409", rec.Code)
 	}
-	e.s.deps.Config.Dashboard.Sessions.Enabled = false
+	off := false
+	e.s.deps.Config.Dashboard.Sessions.Enabled = &off
 	if rec := post(callerRW, map[string]string{"session": id}); rec.Code != http.StatusNotFound {
 		t.Errorf("disabled handoff = %d, want 404", rec.Code)
 	}

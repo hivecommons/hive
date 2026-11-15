@@ -30,18 +30,26 @@ func TestDashboardSettingsAPISessionsRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(get.Body.Bytes(), &payload); err != nil {
 		t.Fatalf("decode GET: %v", err)
 	}
-	if payload.Sessions.Enabled == nil || *payload.Sessions.Enabled || payload.Sessions.EnvOverride {
-		t.Fatalf("sessions default should be off with no env override: %s", get.Body.String())
+	if payload.Sessions.Enabled == nil || !*payload.Sessions.Enabled || payload.Sessions.EnvOverride {
+		t.Fatalf("sessions default should be on with no env override: %s", get.Body.String())
 	}
 
-	put := doPut(s, "/api/config/dashboard", map[string]any{
+	put := doPut(s, "/api/config/dashboard", map[string]any{"sessions": map[string]any{"enabled": false}})
+	if put.Code != http.StatusOK {
+		t.Fatalf("PUT off = %d: %s", put.Code, put.Body.String())
+	}
+	if d := s.deps.Config.Dashboard.Sessions; d.Enabled == nil || *d.Enabled || s.deps.Config.SessionsEnabled() {
+		t.Fatalf("saving the toggle off did not persist an explicit false: %+v", d)
+	}
+
+	put = doPut(s, "/api/config/dashboard", map[string]any{
 		"sessions": map[string]any{"enabled": true, "max_sessions": 6, "max_per_user": 2, "idle_ttl_hours": 0},
 	})
 	if put.Code != http.StatusOK {
 		t.Fatalf("PUT = %d: %s", put.Code, put.Body.String())
 	}
 	d := s.deps.Config.Dashboard.Sessions
-	if !d.Enabled || d.MaxSessions != 6 || d.MaxPerUser != 2 || d.IdleTTLHours != 0 {
+	if !d.EnabledOrDefault() || d.MaxSessions != 6 || d.MaxPerUser != 2 || d.IdleTTLHours != 0 {
 		t.Fatalf("sessions config not updated: %+v", d)
 	}
 	if !s.deps.Config.SessionsEnabled() {
@@ -54,7 +62,7 @@ func TestDashboardSettingsAPISessionsRoundTrip(t *testing.T) {
 		t.Fatalf("partial PUT = %d: %s", put.Code, put.Body.String())
 	}
 	d = s.deps.Config.Dashboard.Sessions
-	if !d.Enabled || d.MaxSessions != 6 || d.MaxPerUser != 3 {
+	if !d.EnabledOrDefault() || d.MaxSessions != 6 || d.MaxPerUser != 3 {
 		t.Fatalf("partial PUT clobbered sessions config: %+v", d)
 	}
 
@@ -72,7 +80,8 @@ func TestDashboardSettingsAPISessionsRoundTrip(t *testing.T) {
 func TestDashboardSettingsAPISessionsReportsEnvOverride(t *testing.T) {
 	s := govServer(t)
 	t.Setenv(config.EnvSessionsEnabled, "true")
-	s.deps.Config.Dashboard.Sessions.Enabled = false
+	off := false
+	s.deps.Config.Dashboard.Sessions.Enabled = &off
 
 	get := doOwnerGet(s, "/api/config/dashboard")
 	if get.Code != http.StatusOK {

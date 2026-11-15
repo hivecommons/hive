@@ -5,10 +5,14 @@ import "testing"
 func TestSessionsEnabledEnvOverridesConfig(t *testing.T) {
 	c := &Config{}
 	t.Setenv(EnvSessionsEnabled, "")
-	if c.SessionsEnabled() {
-		t.Error("sessions enabled by default")
+	if !c.SessionsEnabled() {
+		t.Error("sessions must be on by default when dashboard.sessions.enabled is unset")
 	}
-	c.Dashboard.Sessions.Enabled = true
+	c.Dashboard.Sessions.Enabled = boolPtrSessions(false)
+	if c.SessionsEnabled() {
+		t.Error("explicit enabled: false ignored")
+	}
+	c.Dashboard.Sessions.Enabled = boolPtrSessions(true)
 	if !c.SessionsEnabled() {
 		t.Error("config flag ignored")
 	}
@@ -16,7 +20,7 @@ func TestSessionsEnabledEnvOverridesConfig(t *testing.T) {
 	if c.SessionsEnabled() {
 		t.Error("env false did not override config true")
 	}
-	c.Dashboard.Sessions.Enabled = false
+	c.Dashboard.Sessions.Enabled = boolPtrSessions(false)
 	t.Setenv(EnvSessionsEnabled, "1")
 	if !c.SessionsEnabled() {
 		t.Error("env true did not override config false")
@@ -61,7 +65,7 @@ func TestDashboardSessionsValidateRejectsNegative(t *testing.T) {
 	if err := (DashboardSessionsConfig{IdleTTLHours: -1}).Validate(); err == nil {
 		t.Error("negative idle_ttl_hours accepted")
 	}
-	if err := (DashboardSessionsConfig{Enabled: true}).Validate(); err != nil {
+	if err := (DashboardSessionsConfig{Enabled: boolPtrSessions(true)}).Validate(); err != nil {
 		t.Errorf("valid config rejected: %v", err)
 	}
 }
@@ -111,3 +115,5 @@ func TestSessionsWorkspaceRepoPrecedence(t *testing.T) {
 		t.Errorf("org without primary repo produced %q", got)
 	}
 }
+
+func boolPtrSessions(v bool) *bool { return &v }

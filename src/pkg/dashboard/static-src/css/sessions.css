@@ -1,8 +1,6 @@
     /* Sessions section: tabbed, shared CLI terminals. Tokens only. */
     #sessions-section[hidden],
-    #inception-section[hidden],
-    .oc-nav-item[data-section="sessions-section"][hidden],
-    .oc-nav-item[data-section="inception-section"][hidden] { display: none !important; }
+    .oc-nav-item[data-section="sessions-section"][hidden] { display: none !important; }
     .sessions-root { display: flex; flex-direction: column; gap: var(--sp-4); }
     .sessions-toolbar { display: flex; align-items: flex-start; gap: var(--sp-4); flex-wrap: wrap; }
     .sessions-tabs { display: flex; flex-wrap: wrap; gap: var(--sp-4); flex: 1 1 auto; min-width: 0; }
