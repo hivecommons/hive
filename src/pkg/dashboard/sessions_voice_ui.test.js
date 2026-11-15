@@ -62,6 +62,7 @@ function load(win) {
   const id = 'abc';
   for (const name of ['sessions-input-text-', 'sessions-voice-btn-', 'sessions-voice-interim-']) els[name + id] = new FakeEl(name + id);
   h.setData({ sessions: [{ id, name: 'demo', status: 'running' }], limits: {} });
+  h.setRole('owner');
   return { h, els, id, toasts, posts, store, changed, box: els['sessions-input-text-' + id], btn: els['sessions-voice-btn-' + id], interim: els['sessions-voice-interim-' + id] };
 }
 
