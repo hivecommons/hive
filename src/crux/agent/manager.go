@@ -696,6 +696,17 @@ type Manager struct {
 	// manager lock and must not contend with the launch path. See kick_async.go.
 	kickDispatches kickDispatchRegistry
 
+	// kickQueue holds the bounded per-agent FIFOs of ID-addressed kicks and
+	// their statuses (#18285). Own mutex, like kickDispatches. See
+	// kick_queue.go.
+	kickQueue kickQueue
+	// kickQueueDeliverFn / kickQueueIdleFn / kickQueuePollInterval are test
+	// overrides for the queue pump; nil / zero use the real delivery path,
+	// the real idle check and defaultKickQueuePollInterval.
+	kickQueueDeliverFn    func(name, message string) error
+	kickQueueIdleFn       func(name string) bool
+	kickQueuePollInterval time.Duration
+
 	inferenceRouteCallback      func(agentName, backend, model string)
 	clearInferenceRouteCallback func(agentName string)
 
