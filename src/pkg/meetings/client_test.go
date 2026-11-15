@@ -53,7 +53,11 @@ func (f *fakeQuorumServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (f *fakeQuorumServer) serveEvents(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("meeting_id")
+	if id == "" {
+		id = "*"
+	}
 	f.mu.Lock()
+	f.afterSeq = r.URL.Query().Get("after_seq")
 	evs, ok := f.events[id]
 	f.mu.Unlock()
 	if !ok {
@@ -235,13 +239,13 @@ func TestClientTransportErrors(t *testing.T) {
 	if err := down.ChatPost(context.Background(), "q1", "x"); err == nil {
 		t.Fatal("want a transport error")
 	}
-	if err := down.Events(context.Background(), "q1", func(Event) bool { return true }); err == nil {
+	if err := down.Events(context.Background(), "q1", 0, func(Event) bool { return true }); err == nil {
 		t.Fatal("want a transport error")
 	}
 	if err := NewClient("http://bad host", "t", nil).ChatPost(context.Background(), "q", "x"); err == nil {
 		t.Fatal("want a request error")
 	}
-	if err := NewClient("http://bad host", "t", nil).Events(context.Background(), "q", nil); err == nil {
+	if err := NewClient("http://bad host", "t", nil).Events(context.Background(), "q", 0, nil); err == nil {
 		t.Fatal("want a request error")
 	}
 }
@@ -278,7 +282,7 @@ func TestClientEvents(t *testing.T) {
 	}
 	c := NewClient(srv.URL, "tok", nil)
 	var got []Event
-	err := c.Events(context.Background(), "q1", func(ev Event) bool { got = append(got, ev); return true })
+	err := c.Events(context.Background(), "q1", 0, func(ev Event) bool { got = append(got, ev); return true })
 	if err == nil || !strings.Contains(err.Error(), "stream ended") {
 		t.Fatalf("err = %v", err)
 	}
@@ -289,13 +293,19 @@ func TestClientEvents(t *testing.T) {
 		t.Fatalf("raw not kept: %s", got[1].Raw)
 	}
 	n := 0
-	if err := c.Events(context.Background(), "q1", func(Event) bool { n++; return false }); err != nil || n != 1 {
+	if err := c.Events(context.Background(), "q1", 7, func(Event) bool { n++; return false }); err != nil || n != 1 || f.afterSeq != "7" {
 		t.Fatalf("stop: %v, %d", err, n)
 	}
-	if err := c.Events(context.Background(), "missing", nil); !errors.Is(err, ErrStreamGone) {
+	f.events["*"] = []string{`{"type":"state","meeting_id":"q9","state":"requested","platform":"discord","guild_id":"g","channel_id":"c","requested_by":{"id":"u1","name":"Ana"}}`}
+	var req Event
+	_ = c.Events(context.Background(), "", 0, func(ev Event) bool { req = ev; return false })
+	if req.RequestedBy == nil || req.RequestedBy.Name != "Ana" || req.GuildID != "g" || f.afterSeq != "" {
+		t.Fatalf("request event %+v", req)
+	}
+	if err := c.Events(context.Background(), "missing", 0, nil); !errors.Is(err, ErrStreamGone) {
 		t.Fatalf("missing = %v", err)
 	}
-	if err := NewClient(srv.URL, "wrong", nil).Events(context.Background(), "q1", nil); err == nil || !strings.Contains(err.Error(), "401") {
+	if err := NewClient(srv.URL, "wrong", nil).Events(context.Background(), "q1", 0, nil); err == nil || !strings.Contains(err.Error(), "401") {
 		t.Fatalf("unauthorized = %v", err)
 	}
 }

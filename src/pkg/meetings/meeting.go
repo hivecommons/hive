@@ -58,17 +58,29 @@ const (
 
 // Meeting is one meeting hive was sent to.
 type Meeting struct {
-	ID              string     `json:"id"`
-	Platform        string     `json:"platform,omitempty"`
-	URL             string     `json:"url,omitempty"`
-	GuildID         string     `json:"guild_id,omitempty"`
-	ChannelID       string     `json:"channel_id,omitempty"`
-	NativeID        string     `json:"native_id,omitempty"`
-	Title           string     `json:"title,omitempty"`
-	InvitedBy       string     `json:"invited_by,omitempty"`
-	State           State      `json:"state"`
-	StateReason     string     `json:"state_reason,omitempty"`
-	VoiceEnabled    bool       `json:"voice_enabled"`
+	ID           string `json:"id"`
+	Platform     string `json:"platform,omitempty"`
+	URL          string `json:"url,omitempty"`
+	GuildID      string `json:"guild_id,omitempty"`
+	ChannelID    string `json:"channel_id,omitempty"`
+	NativeID     string `json:"native_id,omitempty"`
+	Title        string `json:"title,omitempty"`
+	InvitedBy    string `json:"invited_by,omitempty"`
+	State        State  `json:"state"`
+	StateReason  string `json:"state_reason,omitempty"`
+	VoiceEnabled bool   `json:"voice_enabled"`
+	// VoiceCapable records that the bot was started able to speak. Vexa
+	// fixes this at join time: turning voice on later for a bot joined
+	// without it downgrades every spoken reply to chat.
+	VoiceCapable bool `json:"voice_capable"`
+	// RequestedBy is the platform user who asked hive in (Discord
+	// `/hive join`); such a meeting waits in requested for approval.
+	RequestedBy *Person `json:"requested_by,omitempty"`
+	// LastSeq is the highest segment/chat seq stored, the replay cursor.
+	LastSeq int64 `json:"last_seq,omitempty"`
+	// ConsentError is why the consent notice could not be posted yet
+	// (for example platform_unavailable while chat is down).
+	ConsentError    string     `json:"consent_error,omitempty"`
 	ConsentPostedAt *time.Time `json:"consent_posted_at,omitempty"`
 	LobbySince      *time.Time `json:"lobby_since,omitempty"`
 	LiveAt          *time.Time `json:"live_at,omitempty"`
@@ -107,7 +119,13 @@ type Event struct {
 	At        json.RawMessage `json:"at,omitempty"`
 	State     State           `json:"state,omitempty"`
 	Reason    string          `json:"reason,omitempty"`
-	Raw       json.RawMessage `json:"-"`
+	// Platform, GuildID, ChannelID and RequestedBy are set on a `requested`
+	// state event raised from the platform (Discord `/hive join`).
+	Platform    string          `json:"platform,omitempty"`
+	GuildID     string          `json:"guild_id,omitempty"`
+	ChannelID   string          `json:"channel_id,omitempty"`
+	RequestedBy *Person         `json:"requested_by,omitempty"`
+	Raw         json.RawMessage `json:"-"`
 }
 
 // Who returns the speaker or author display name.

@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -286,6 +287,9 @@ type JoinArgs struct {
 	Platform    string `json:"platform,omitempty"`
 	GuildID     string `json:"guild_id,omitempty"`
 	ChannelID   string `json:"channel_id,omitempty"`
+	// Voice starts the bot able to speak; Vexa fixes this at join time, so
+	// a bot joined without it can never use say.
+	Voice bool `json:"voice,omitempty"`
 }
 
 // JoinResult is meeting.join's result.
@@ -365,12 +369,25 @@ func (c *Client) Delete(ctx context.Context, nativeID string) error {
 	return c.Call(ctx, "meeting.delete", idArgs{nativeID}, nil)
 }
 
-// Events streams GET /events?meeting_id=... and calls fn for each event
-// until the stream ends, ctx ends, or fn returns false. It returns nil when
-// fn stopped it, ErrStreamGone on 404, and an error otherwise (including a
-// clean end of stream, so callers reconnect).
-func (c *Client) Events(ctx context.Context, nativeID string, fn func(Event) bool) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.base+"/events?meeting_id="+url.QueryEscape(nativeID), nil)
+// Events streams GET /events and calls fn for each event until the stream
+// ends, ctx ends, or fn returns false. nativeID "" follows every meeting
+// (the stream that carries Discord `/hive join` requests); afterSeq > 0
+// replays buffered segment and chat events after that seq first. It
+// returns nil when fn stopped it, ErrStreamGone on 404, and an error
+// otherwise (including a clean end of stream, so callers reconnect).
+func (c *Client) Events(ctx context.Context, nativeID string, afterSeq int64, fn func(Event) bool) error {
+	q := url.Values{}
+	if nativeID != "" {
+		q.Set("meeting_id", nativeID)
+	}
+	if afterSeq > 0 {
+		q.Set("after_seq", strconv.FormatInt(afterSeq, 10))
+	}
+	target := c.base + "/events"
+	if len(q) > 0 {
+		target += "?" + q.Encode()
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 	if err != nil {
 		return err
 	}

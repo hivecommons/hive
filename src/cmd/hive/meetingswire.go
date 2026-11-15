@@ -111,6 +111,10 @@ func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.
 		ConsentText:  cfg.Meetings.ConsentTextOrDefault(),
 		LobbyTimeout: time.Duration(cfg.Meetings.LobbyTimeoutSOrDefault()) * time.Second,
 		Logger:       logger,
+		// Vexa fixes speaking ability at join time, so with voice-on-address
+		// allowed every bot starts able to speak; the meeting's voice toggle
+		// still decides whether hive does.
+		VoiceOnAddress: cfg.Meetings.VoiceOnAddressEnabled(),
 	})
 	if err != nil {
 		if logger != nil {
@@ -118,6 +122,10 @@ func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.
 		}
 		return nil
 	}
+	// Discord `/hive join` requests arrive on the all-meetings stream. No
+	// Discord identity is mapped to the hive owner yet, so none is approved
+	// automatically: each waits for the owner in the dashboard.
+	mgr.StartRequests()
 	if n := mgr.Resume(); n > 0 && logger != nil {
 		logger.Info("[meetings] re-attached to meetings", "count", n)
 	}

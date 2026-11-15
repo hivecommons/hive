@@ -19,7 +19,7 @@ type Quorum interface {
 	ChatPost(ctx context.Context, nativeID, text string) error
 	Say(ctx context.Context, nativeID, text string) error
 	Delete(ctx context.Context, nativeID string) error
-	Events(ctx context.Context, nativeID string, fn func(Event) bool) error
+	Events(ctx context.Context, nativeID string, afterSeq int64, fn func(Event) bool) error
 }
 
 const (
@@ -29,6 +29,12 @@ const (
 	DefaultReconnectMax = 30 * time.Second
 	// DefaultCallTimeout bounds one Quorum tool call made by the manager.
 	DefaultCallTimeout = 30 * time.Second
+	// DefaultConsentRetry spaces consent-notice retries while chat is
+	// unavailable, so a platform without chat is not called on every line.
+	DefaultConsentRetry = time.Minute
+	// ReasonDeclined is the state reason for a platform join request the
+	// owner declined.
+	ReasonDeclined = "declined"
 	// ReasonHiveLeave is the state reason when someone typed or said
 	// "hive leave".
 	ReasonHiveLeave = "hive_leave"
@@ -59,6 +65,16 @@ type Options struct {
 	ReconnectMin time.Duration
 	ReconnectMax time.Duration
 	CallTimeout  time.Duration
+	// ConsentRetry spaces consent retries; zero means DefaultConsentRetry.
+	ConsentRetry time.Duration
+	// VoiceOnAddress starts every bot able to speak (meetings.voice_on_address),
+	// so voice can be turned on later in the meeting; whether hive actually
+	// speaks is still the meeting's voice toggle.
+	VoiceOnAddress bool
+	// AutoApprove decides whether a platform join request (Discord
+	// `/hive join`) is approved without the owner. Nil approves none: every
+	// request waits in the dashboard.
+	AutoApprove func(requester Person) bool
 	// Now is the clock (tests).
 	Now func() time.Time
 }
@@ -87,6 +103,7 @@ type Manager struct {
 	log  *slog.Logger
 
 	mu        sync.Mutex
+	consentAt map[string]time.Time
 	watchers  map[string]context.CancelFunc
 	lobby     map[string]*time.Timer
 	listeners map[int]func(Update)
@@ -124,6 +141,9 @@ func NewManager(opts Options) (*Manager, error) {
 	if opts.Now == nil {
 		opts.Now = time.Now
 	}
+	if opts.ConsentRetry <= 0 {
+		opts.ConsentRetry = DefaultConsentRetry
+	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -132,6 +152,7 @@ func NewManager(opts Options) (*Manager, error) {
 	return &Manager{
 		opts: opts, log: log,
 		watchers:  map[string]context.CancelFunc{},
+		consentAt: map[string]time.Time{},
 		lobby:     map[string]*time.Timer{},
 		listeners: map[int]func(Update){},
 		ctx:       ctx, cancel: cancel,
@@ -203,16 +224,18 @@ func (m *Manager) Join(ctx context.Context, req JoinRequest) (Meeting, error) {
 		return Meeting{}, err
 	}
 	now := m.opts.Now()
+	voice := req.Voice || m.opts.VoiceOnAddress
 	mt := Meeting{
 		ID: newMeetingID(), Platform: req.Platform, URL: req.URL, GuildID: req.GuildID, ChannelID: req.ChannelID,
 		Title: strings.TrimSpace(req.Title), InvitedBy: req.InvitedBy, State: StateRequested,
-		VoiceEnabled: req.Voice, CreatedAt: now, UpdatedAt: now,
+		VoiceEnabled: req.Voice, VoiceCapable: voice, CreatedAt: now, UpdatedAt: now,
 	}
 	if err := m.opts.Store.Save(mt); err != nil {
 		return Meeting{}, err
 	}
 	res, err := m.opts.Quorum.Join(ctx, JoinArgs{
 		URL: req.URL, DisplayName: m.opts.BotName, Platform: req.Platform, GuildID: req.GuildID, ChannelID: req.ChannelID,
+		Voice: voice,
 	})
 	if err != nil {
 		mt.State, mt.StateReason = StateFailed, err.Error()
@@ -344,7 +367,7 @@ func (m *Manager) Resume() int {
 	}
 	n := 0
 	for _, mt := range list {
-		if mt.State.Terminal() || mt.NativeID == "" {
+		if mt.State.Terminal() || mt.NativeID == "" || (mt.State == StateRequested && mt.RequestedBy != nil) {
 			continue
 		}
 		if mt.State == StateLobby && mt.LobbySince != nil {
@@ -381,7 +404,7 @@ func (m *Manager) watch(mt Meeting) {
 	go func() {
 		defer m.wg.Done()
 		defer m.stopWatch(mt.ID)
-		m.follow(ctx, mt.ID, mt.NativeID)
+		m.follow(ctx, mt.ID, mt.NativeID, mt.LastSeq)
 	}()
 }
 
@@ -397,12 +420,22 @@ func (m *Manager) stopWatch(id string) {
 
 // follow consumes the meeting's event stream, reconnecting with backoff,
 // until the meeting is terminal or ctx ends.
-func (m *Manager) follow(ctx context.Context, id, nativeID string) {
+// Reconnects replay from the last seen seq (after_seq), and replayed lines
+// already seen are skipped.
+func (m *Manager) follow(ctx context.Context, id, nativeID string, lastSeq int64) {
 	backoff := m.opts.ReconnectMin
 	for ctx.Err() == nil {
 		done := false
-		err := m.opts.Quorum.Events(ctx, nativeID, func(ev Event) bool {
+		err := m.opts.Quorum.Events(ctx, nativeID, lastSeq, func(ev Event) bool {
 			backoff = m.opts.ReconnectMin
+			if ev.Type == EventSegment || ev.Type == EventChat {
+				if ev.Seq > 0 && ev.Seq <= lastSeq {
+					return true
+				}
+				if ev.Seq > 0 && (ev.Type == EventChat || ev.Final) {
+					lastSeq = ev.Seq
+				}
+			}
 			done = m.handle(ctx, id, ev)
 			return !done
 		})
@@ -482,13 +515,28 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) {
 	if mt.ConsentPostedAt != nil || mt.State != StateLive {
 		return
 	}
+	now := m.opts.Now()
+	m.mu.Lock()
+	last, tried := m.consentAt[mt.ID]
+	if tried && now.Sub(last) < m.opts.ConsentRetry {
+		m.mu.Unlock()
+		return
+	}
+	m.consentAt[mt.ID] = now
+	m.mu.Unlock()
 	cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
 	defer cancel()
 	if err := m.opts.Quorum.ChatPost(cctx, mt.NativeID, m.opts.ConsentText); err != nil {
+		// Soft failure (for example platform_unavailable while the
+		// platform's chat is down): nothing else reaches the meeting until
+		// the notice is posted, and the panel keeps showing everything.
 		m.log.Warn("[meetings] consent notice not posted; will retry", "meeting", mt.ID, "error", err)
+		if mt.ConsentError != err.Error() {
+			_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentError = err.Error() })
+		}
 		return
 	}
-	_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentPostedAt = timePtr(m.opts.Now()) })
+	_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentPostedAt, x.ConsentError = timePtr(m.opts.Now()), "" })
 }
 
 // fromHive reports whether a line is hive's own (its chat posts echo back).
@@ -514,6 +562,10 @@ func (m *Manager) handleLine(ctx context.Context, id string, ev Event) bool {
 	}
 	if err := m.opts.Store.AppendTranscript(id, ev); err != nil {
 		m.log.Warn("[meetings] appending transcript", "meeting", id, "error", err)
+	} else if cur, err := m.opts.Store.Get(id); err == nil && ev.Seq > cur.LastSeq {
+		// Quietly: the replay cursor is bookkeeping, not an update.
+		cur.LastSeq = ev.Seq
+		_ = m.opts.Store.Save(cur)
 	}
 	if IsLeaveCommand(ev.Text) {
 		m.log.Info("[meetings] leave requested in the meeting", "meeting", id, "by", ev.Who())

@@ -30,6 +30,8 @@ type fakeQuorum struct {
 	says     []string
 	leaves   []string
 	connects int
+	afters   []int64
+	joins    []JoinArgs
 }
 
 func newFakeQuorum() *fakeQuorum {
@@ -51,6 +53,9 @@ func (f *fakeQuorum) stream(id string) chan Event {
 }
 
 func (f *fakeQuorum) Join(_ context.Context, a JoinArgs) (JoinResult, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.joins = append(f.joins, a)
 	return f.joinRes, f.joinErr
 }
 
@@ -82,9 +87,10 @@ func (f *fakeQuorum) Say(_ context.Context, _ string, text string) error {
 
 func (f *fakeQuorum) Delete(context.Context, string) error { return nil }
 
-func (f *fakeQuorum) Events(ctx context.Context, id string, fn func(Event) bool) error {
+func (f *fakeQuorum) Events(ctx context.Context, id string, afterSeq int64, fn func(Event) bool) error {
 	f.mu.Lock()
 	f.connects++
+	f.afters = append(f.afters, afterSeq)
 	gone := f.gone[id]
 	f.mu.Unlock()
 	if gone {
@@ -124,6 +130,7 @@ func newTestManager(t *testing.T, q Quorum, lobby time.Duration) *Manager {
 	m, err := NewManager(Options{
 		Store: st, Quorum: q, BotName: "hive (notes)", ConsentText: testConsent,
 		LobbyTimeout: lobby, ReconnectMin: 5 * time.Millisecond, ReconnectMax: 20 * time.Millisecond,
+		ConsentRetry: time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
