@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.276.0)
+
+### Added
+
+- Inbox: Otter.ai as a knowledge integration — an `otter` connector (an Otter.ai Public API key, Enterprise workspaces, named in `auth.env`) that pages `GET /conversations` and reads each with its transcript, outline and action items into one fact per conversation; ▶ Play and the Deepgram fallback use the conversation's MP3 download link; a default `inbox.sources` entry with a Connect / Check / Sync now card.
+
+### Security
+
+- Contributor relay: warns at start when your personal GitHub token is a classic token with the full `repo` scope (which the agent can read), and `contribute-setup` now recommends a fine-grained token limited to your forks.
+
 ## 2026-11-15 (v5.275.0)
 
 ### Added

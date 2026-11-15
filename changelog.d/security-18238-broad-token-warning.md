@@ -1,1 +1,0 @@
-- Contributor relay: warns at start when your personal GitHub token is a classic token with the full `repo` scope (which the agent can read), and `contribute-setup` now recommends a fine-grained token limited to your forks.
