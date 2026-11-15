@@ -100,3 +100,31 @@ func TestHumanMergeReason(t *testing.T) {
 		}
 	}
 }
+
+// TestOwnerMergeReason pins the owner-merge rules no approval releases: the
+// breaking-change rule and Renovate's own "merge manually" signals, with or
+// without an approver suffix, each with its cause and 090 code.
+func TestOwnerMergeReason(t *testing.T) {
+	for reason, want := range map[string]struct{ cause, code string }{
+		AutoMergeReasonHumanMergeRequired:                                   {CauseHumanMergeRequired, HumanMergeReasonBreakingChange},
+		AutoMergeReasonRenovateAutomergeDisabled:                            {CauseRenovateAutomergeDisabled, HumanMergeReasonRenovateAutomergeOff},
+		"Renovate-Automerge-Disabled":                                       {CauseRenovateAutomergeDisabled, HumanMergeReasonRenovateAutomergeOff},
+		AutoMergeReasonRenovateArtifactProblem + ":human-approved@castrojo": {CauseRenovateArtifactProblem, HumanMergeReasonRenovateArtifactProblem},
+		AutoMergeReasonHumanMergePath:                                       {"", HumanMergeReasonManualMergePolicy},
+		"":                                                                  {"", ""},
+	} {
+		if got := OwnerMergeCause(reason); got != want.cause {
+			t.Errorf("OwnerMergeCause(%q) = %q, want %q", reason, got, want.cause)
+		}
+		if got := IsOwnerMergeReason(reason); got != (want.cause != "") {
+			t.Errorf("IsOwnerMergeReason(%q) = %v", reason, got)
+		}
+		code := HumanMergeReason(reason)
+		if code != want.code {
+			t.Errorf("HumanMergeReason(%q) = %q, want %q", reason, code, want.code)
+		}
+		if got := IsOwnerMergeCode(code); got != (want.cause != "") {
+			t.Errorf("IsOwnerMergeCode(%q) = %v", code, got)
+		}
+	}
+}
