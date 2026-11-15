@@ -110,7 +110,7 @@ func TestInboxEndpoints(t *testing.T) {
 	if len(resp.Repos) != 2 || resp.Repos[0] != "myorg/rfcs" || resp.Repos[1] != "repo1" {
 		t.Fatalf("repos = %v", resp.Repos)
 	}
-	if len(resp.Sources) != 2 || resp.Sources[0].Type != "plaud" || resp.Sources[0].Configured || resp.Settings.SpekRepo != "myorg/rfcs" {
+	if len(resp.Sources) != len(config.DefaultInboxSources) || resp.Sources[0].Type != "plaud" || resp.Sources[0].Configured || resp.Sources[2].Type != "zoom" || resp.Sources[3].Type != "teams" || resp.Settings.SpekRepo != "myorg/rfcs" {
 		t.Fatalf("sources/settings = %+v %+v", resp.Sources, resp.Settings)
 	}
 

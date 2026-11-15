@@ -4,7 +4,7 @@
     // dibs happens inside the hive via POST /api/inbox/route.
     const INBOX_POLL_MS = 60000;
     const INBOX_BUSY_POLL_MS = 5000;
-    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', 'file-drop': '📎', webhook: '🔗' };
+    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'file-drop': '📎', webhook: '🔗' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
     // Summaries longer than this many characters start collapsed.
     const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
@@ -79,6 +79,8 @@
         return html;
       }
       if (it.pending || (cached && cached.pending)) {
+        if (it.source === 'zoom' || it.source === 'teams') return '<div class="inbox-pending muted-xs" title="The platform reports no transcript or summary for this recording yet">Not transcribed yet: ' + (it.source === 'zoom' ? 'Zoom' : 'Teams') + ' has no transcript or summary for this recording (cloud transcription may still be processing or is disabled); the hive re-checks it on every sync.</div>';
+        if (it.source === 'discord') return '<div class="inbox-pending muted-xs" title="Discord has no transcripts; none was posted with this recording">Not transcribed yet: Discord has no built-in transcription and no transcript file was posted with this recording; play it here, or post a .vtt/.txt transcript in the same message. The hive re-checks it on every sync.</div>';
         return '<div class="inbox-pending muted-xs" title="The MCP reports no transcript or summary block for this recording">Not transcribed yet in Plaud: open the recording in the Plaud app and run transcription; the hive re-checks it on every sync.</div>';
       }
       return it.excerpt ? '<div class="kb-fact-snippet">' + escapeHtml(it.excerpt) + '</div>' : '';
@@ -92,7 +94,7 @@
       if (c.error) return '<div class="inbox-transcript kc-error muted-xs">' + escapeHtml(c.error) + '</div>';
       let html = '<div class="inbox-transcript">';
       if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
-      else html += '<div class="muted-xs">No transcript yet' + (c.pending ? ': Plaud has not transcribed this recording.' : '.') + '</div>';
+      else html += '<div class="muted-xs">No transcript yet' + (c.pending ? (it.source === 'plaud' ? ': Plaud has not transcribed this recording.' : ': the meeting platform has not produced a transcript for this recording.') : '.') + '</div>';
       if (c.highlights) html += '<div class="muted-xs inbox-highlights"><strong>Highlights</strong> (flagged on the device)<pre class="inbox-transcript-text">' + escapeHtml(c.highlights) + '</pre></div>';
       return html + '</div>';
     }
@@ -439,10 +441,13 @@
     // to localhost:8199, so the operator pastes either the redirect URL the
     // browser landed on or the tokens-mcp.json contents; the hive finishes
     // the login in-pod.
+    // The same endpoint finishes a Zoom user-level sign-in from its pasted
+    // redirect URL (kbZoomPasteHtml); the label follows the connector type.
     async function kbPlaudPasteComplete(name) {
+      const label = kbAuthLabel(name);
       const el = document.getElementById('kb-plaud-paste-' + name);
       const raw = el ? el.value.trim() : '';
-      if (!raw) { showToast('Paste the redirect URL or the tokens JSON first.', 'error'); return; }
+      if (!raw) { showToast('Paste the redirect URL' + (label === 'Plaud' ? ' or the tokens JSON' : '') + ' first.', 'error'); return; }
       const body = raw.startsWith('{') ? { tokens: raw } : { redirect_url: raw };
       try {
         const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/complete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -450,10 +455,10 @@
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         _kbPlaudAuth[name] = data;
         kbRenderIntegrationsModal();
-        showToast(data.connected ? 'Plaud connected' + (data.account ? ' as ' + data.account : '') : 'Plaud sign-in submitted; click Check.', data.connected ? 'success' : 'info');
+        showToast(data.connected ? label + ' connected' + (data.account ? ' as ' + data.account : '') : label + ' sign-in submitted; click Check.', data.connected ? 'success' : 'info');
         fetchInbox();
       } catch (e) {
-        showToast('Plaud sign-in failed: ' + e.message, 'error');
+        showToast(label + ' sign-in failed: ' + e.message, 'error');
       }
     }
     function kbPlaudPasteHtml(name) {

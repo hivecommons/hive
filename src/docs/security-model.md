@@ -140,7 +140,10 @@ knowledge store holds typed facts with sources and confidence. Neither stores
 conversation text. Agents are primed with a bounded set of facts in the task
 prompt; they cannot query the store, so a poisoned fact cannot be amplified.
 Untrusted text is scanned by `ioscan` before it reaches a prompt
-([ioscan.md](ioscan.md)); canaries are planted per task and agent output is
+([ioscan.md](ioscan.md)). Inbox item text (voice and meeting transcripts,
+summaries, messages) is fenced in a nonce-tagged `<untrusted-inbox-data>`
+envelope before it reaches spektacular or an agent prompt
+([inbox-voice-sources.md](inbox-voice-sources.md)); canaries are planted per task and agent output is
 scanned for them. Session state is pruned and logs are scrubbed
 ([security.md](security.md)).
 
