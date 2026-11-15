@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles | fireflies
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -819,6 +819,71 @@ knowledge:
   read as *not connected*; `missing_scope` names the scope needed;
   `not_in_channel` asks for `/invite`. `429` is retried honouring
   `Retry-After`. The token is only sent to `slack.com` hosts.
+
+## Fireflies.ai meetings (`type: fireflies`)
+
+[Fireflies.ai](https://fireflies.ai) sends a notetaker to Zoom, Meet, Teams
+and other calls and keeps a transcript, speakers and an AI summary per
+meeting. The connector reads them through the
+[Fireflies GraphQL API](https://docs.fireflies.ai/graphql-api/query/transcripts)
+with an API key: one fact per meeting with title, date, duration, organizer,
+attendees, the summary and the transcript. Items land in the **📥 Inbox**
+with playback.
+
+```yaml
+knowledge:
+  connectors:
+    - name: fireflies
+      type: fireflies
+      layer: project
+      interval: 15m
+      auth:
+        env: FIREFLIES_API_KEY         # variable NAME holding the Fireflies API key
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        mine: "false"                  # true: only meetings the key's owner organized
+        include_summary: "true"        # summary { overview action_items ... }
+        include_participants: "true"   # meeting_attendees / participants
+        tags: "meetings"
+```
+
+### Setup
+
+1. In Fireflies open **Integrations → Fireflies API** and copy the API key
+   ([authorization](https://docs.fireflies.ai/fundamentals/authorization)).
+2. Put it in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Fireflies.ai meetings** with the
+   credential source *Environment variable* naming that variable.
+   **Connect** / **Check** read the key's owner (`user { email name }`), so a
+   dead key shows on the card before the first sync.
+
+### Behaviour
+
+- Each sync pages [`transcripts`](https://docs.fireflies.ai/graphql-api/query/transcripts)
+  (`limit: 50`, `skip`, `fromDate`, optional `mine`) from the newest meeting
+  seen (minus 48 h, which also catches summaries that finish later) back to
+  `since_days`, and asks for `sentences` and `summary` in the same query, so a
+  sync costs one request per 50 meetings. The Inbox listing asks for the
+  metadata only; opening an item reads
+  [`transcript(id)`](https://docs.fireflies.ai/graphql-api/query/transcript).
+- Facts carry `source: fireflies`, `attr_fireflies_recording_id` (the
+  transcript id, the Inbox item id), `attr_recorded_at` (`date`, epoch ms),
+  `attr_duration_ms` (Fireflies reports `duration` in minutes), `attr_host`
+  (`organizer_email`), `attr_participants`; the recording page is the
+  `transcript_url`. A meeting with neither sentences nor summary yet is
+  `attr_meeting_content: pending` and re-read on later syncs.
+- Playback: `audio_url` (else `video_url`), hashed links that
+  [expire after 24 hours](https://docs.fireflies.ai/schema/transcript) and
+  need a Pro plan or higher (`paid_required` answers 404 with that reason).
+  The hive mints one per click and never stores it.
+- Errors: Fireflies answers GraphQL `errors` with a `code`
+  ([error codes](https://docs.fireflies.ai/miscellaneous/error-codes));
+  `auth_failed` or HTTP 401 reads as *not connected*. `429`
+  (`too_many_requests`) is retried honouring `Retry-After`; the
+  [limits](https://docs.fireflies.ai/fundamentals/limits) are 30 requests a
+  minute and 500 a day on Free, 60 a minute on Pro. The key is only sent to
+  `api.fireflies.ai`.
 
 ## Wispr Flow (dictation, `type: wisprflow`)
 

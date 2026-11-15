@@ -87,7 +87,7 @@ func (b *boot) refreshInboxSources(entries []config.KnowledgeConnector, syncer *
 }
 
 // inboxSource returns the fact-backed source for typ. For Plaud and the
-// meeting platforms (zoom, teams, discord, google-meet, webex, slack-huddles) it prefers reading recordings directly
+// meeting platforms (zoom, teams, discord, google-meet, webex, slack-huddles, fireflies) it prefers reading recordings directly
 // from the connector while it is signed in.
 func (b *boot) inboxSource(baseDir, typ string, entries []config.KnowledgeConnector, syncer *connector.Syncer) inbox.Source {
 	facts := &inbox.FactSource{ConnectorsDir: filepath.Join(baseDir, "connectors"), SourceType: typ}
