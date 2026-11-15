@@ -46,7 +46,7 @@ func waitKickPhase(t *testing.T, m *Manager, id, phase string) crux.KickStatus {
 		if st, ok := m.KickStatus(id); ok && st.Phase == phase {
 			return st
 		}
-		time.Sleep(kqTestPoll)
+		<-time.After(kqTestPoll)
 	}
 	st, _ := m.KickStatus(id)
 	t.Fatalf("kick %s phase = %q, want %q", id, st.Phase, phase)
