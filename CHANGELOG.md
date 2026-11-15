@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.271.0)
+
+### Added
+
+- Inbox: Slack huddle notes as a knowledge integration — a `slack-huddles` connector (a Slack bot or user token named in `auth.env`) that reads ended huddles in the listed channels and turns the AI notes canvas Slack posts in the huddle thread into one fact each, with the notes as summary and the embedded transcript as transcript (text only: Slack never records huddle audio); a default `inbox.sources` entry with a Connect / Check / Sync now card.
+- Meetings: the meeting record and store under `/data/meetings`, an MCP client for Quorum's contract tools and its live event stream, and a manager that posts the consent notice as soon as hive is live in a meeting, leaves when someone types or says "hive leave", and gives up after the lobby timeout (#18290).
+- Meetings: hive runs `spektacular meeting` live for each meeting and applies its intents through a policy layer: rate-limited chat posts, clarifying questions matched to the next reply, notes kept as one knowledge fact per meeting in a `meetings` vault, research capped per meeting (more needs dashboard approval) with findings posted back once per item, voice only when the meeting enables it, and a per-meeting plus hive-wide LLM budget (#18291).
+
 ## 2026-11-15 (v5.270.0)
 
 ### Added

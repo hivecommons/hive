@@ -1,1 +1,0 @@
-- Meetings: the meeting record and store under `/data/meetings`, an MCP client for Quorum's contract tools and its live event stream, and a manager that posts the consent notice as soon as hive is live in a meeting, leaves when someone types or says "hive leave", and gives up after the lobby timeout (#18290).
