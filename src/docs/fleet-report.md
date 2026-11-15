@@ -260,6 +260,14 @@ designed, not a repeated runtime defect (hivecommons/hive#17924). The WARN and
 its `reason` stay in local logs; other reconciler failures and the same message
 at ERROR remain reportable.
 
+The same reconciler logs a failed read (listing open PRs, a PR's commits or its
+comments) at INFO, not WARN, when the failure is transient: a transport
+timeout, a deadline, a rate limit, a 5xx or a shutdown cancellation
+(`logSignedReadFailure`, `pkg/github/pr_signed_reconcile.go`). Every such read
+is retried on the next pass a minute later, so one slow GitHub minute across a
+few active repos is network weather, not a repeated runtime defect
+(hivecommons/hive#18243). A 401, 403, 404 or malformed response stays a WARN.
+
 It also skips the exact WARN `proxy request blocked` (`recordViolation`,
 `src/crux/proxy/github_proxy_violations.go`): the GitHub proxy refusing a
 request that the agent's mode, write-surface or issue-shape policy forbids is
