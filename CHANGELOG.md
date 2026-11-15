@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.268.0)
+
+### Added
+
+- **Inbox: Deepgram transcription for recordings without text (manual).** A pending Inbox item with audio (for example a Plaud recording never transcribed in the Plaud app) now has a **🎧 Transcribe** button for owners and read-write sessions. The hive downloads the audio itself and streams it to Deepgram's pre-recorded API (`nova-3`, diarized, `mip_opt_out=true` so the audio is not used for training) under the hive owner's own `DEEPGRAM_API_KEY`; presigned links are never forwarded or logged. Each hive owns its transcriptions: the transcript is stored only on that spoke (`connector-state/transcripts/<source>/<id>.json`, 0600), shown as *Transcript (machine: deepgram/nova-3)* in the shared `[mm:ss] Speaker N: text` shape, and replaced by the source's own transcript when one appears. New `inbox.transcription` config (off by default; enabling requires `consent_acknowledged: true`) with per-hive monthly minutes, daily item, duration and size limits checked before upload; every run is audited as `inbox_transcribe` with outcome and estimated cost. See `src/docs/inbox-transcription.md`.
+- Inception (spek): voice notes in the session input bar. Write roles get a Voice button that dictates into the Send text box through the browser's Web Speech API (transcribed by the browser vendor's speech service, never by Hive), with live interim text and nothing sent until Send; the gateway Permissions-Policy now allows `microphone=(self)` for the dashboard document only.
+
 ## 2026-11-15 (v5.267.0)
 
 ### Added
