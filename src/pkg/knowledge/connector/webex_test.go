@@ -522,3 +522,75 @@ func TestWebexHelpers(t *testing.T) {
 		t.Errorf("default redirect = %q", got)
 	}
 }
+
+func TestWebexEdgeCases(t *testing.T) {
+	f := &webexFixture{}
+	c := newWebexTest(t, f, map[string]string{"max_recordings": "1"})
+	ctx := context.Background()
+
+	// No pending sign-in, then an expired one.
+	if _, err := c.CompleteAuth(ctx, AuthCompletion{RedirectURL: webexDefaultRedirectURI + "?code=the-code"}); err == nil || !strings.Contains(err.Error(), "no sign-in is pending") {
+		t.Fatalf("no pending sign-in: %v", err)
+	}
+	if _, err := c.Connect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	c.pendingAt = c.now().Add(-2 * webexLoginWindow)
+	c.mu.Unlock()
+	if _, err := c.CompleteAuth(ctx, AuthCompletion{RedirectURL: webexDefaultRedirectURI + "?code=the-code"}); err == nil || !strings.Contains(err.Error(), "no sign-in is pending") {
+		t.Fatalf("expired sign-in: %v", err)
+	}
+	// A rejected code surfaces the token endpoint's reason.
+	if _, err := c.Connect(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.CompleteAuth(ctx, AuthCompletion{RedirectURL: webexDefaultRedirectURI + "?code=wrong"}); err == nil || !strings.Contains(err.Error(), "bad code") {
+		t.Fatalf("rejected code: %v", err)
+	}
+	// Connect without the client id variable fails by name.
+	t.Setenv(webexTestClientIDEnv, "")
+	if _, err := c.Connect(ctx); err == nil || !strings.Contains(err.Error(), webexTestClientIDEnv) {
+		t.Fatalf("missing client id: %v", err)
+	}
+	t.Setenv(webexTestClientIDEnv, "cid")
+
+	// The probe without any stored sign-in reports not connected.
+	c.mu.Lock()
+	c.pendingState = ""
+	c.mu.Unlock()
+	if st := c.AuthStatus(ctx, true); st.Connected || !strings.Contains(st.Message, "not connected") {
+		t.Fatalf("probe without sign-in: %+v", st)
+	}
+
+	// max_recordings caps the listing and reports truncation.
+	_ = c.store.save(oauthTokens{AccessToken: "at-1", RefreshToken: "rt-1", ExpiresAt: c.now().Add(time.Hour)})
+	recs, err := c.ListMeetings(ctx)
+	if err != nil || len(recs) != 1 || !c.Truncated() {
+		t.Fatalf("truncated listing: %+v, %v, truncated=%v", recs, err, c.Truncated())
+	}
+	if _, err := c.MediaLink(ctx, "bad/id"); err == nil {
+		t.Fatal("an invalid id must be rejected")
+	}
+
+	// Grouping ignores items without a meeting id or with a dead status.
+	g := &webexMeetings{}
+	g.addRecording(map[string]any{"id": "r"})
+	g.addRecording(map[string]any{"id": "r", "meetingId": "m", "status": "purged"})
+	g.addTranscript(map[string]any{"id": "t", "meetingId": "m", "status": "deleted"})
+	g.addTranscript(map[string]any{"id": "t2"})
+	if len(g.order) != 0 {
+		t.Fatalf("dead items must not group: %v", g.order)
+	}
+	g.addTranscript(map[string]any{"id": "t3", "meetingId": "m2", "startTime": "2026-11-12T10:00:00Z"})
+	g.addRecording(map[string]any{"id": "r3", "meetingId": "m2", "timeRecorded": "2026-11-12T09:59:00Z", "topic": "Later topic"})
+	if wm := g.byID["m2"]; wm.Topic != "Later topic" || !wm.StartAt.Equal(time.Date(2026, 11, 12, 9, 59, 0, 0, time.UTC)) || !wm.HasMedia {
+		t.Fatalf("merged meeting = %+v", wm)
+	}
+	if _, err := c.fetchContent(ctx, "at-1", webexMeeting{TranscriptIDs: []string{"bad/id"}}); err == nil {
+		t.Fatal("an invalid transcript id must be rejected")
+	}
+	if got := webexNextLink(http.Header{}); got != "" {
+		t.Fatalf("no Link header = %q", got)
+	}
+}
