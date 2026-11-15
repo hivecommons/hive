@@ -225,7 +225,7 @@ func TestSessionsFailedStartCleansUp(t *testing.T) {
 	if got := e.waitSettled(t, id); got.Status != sessionStatusFailed {
 		t.Fatalf("record after failed start = %+v", got)
 	}
-	waitFor(t, "sandbox removal", func() bool {
+	waitSessionsFor(t, "sandbox removal", func() bool {
 		e.rt.mu.Lock()
 		defer e.rt.mu.Unlock()
 		return len(e.rt.removed) == 1

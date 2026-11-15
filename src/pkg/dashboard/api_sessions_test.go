@@ -271,7 +271,7 @@ func waitSessionsFor(t *testing.T, what string, cond func() bool) {
 func (e *sessionTestEnv) waitSettled(t *testing.T, id string) sessionRecord {
 	t.Helper()
 	var rec sessionRecord
-	waitFor(t, "session "+id+" to leave preparing", func() bool {
+	waitSessionsFor(t, "session "+id+" to leave preparing", func() bool {
 		var ok bool
 		rec, ok = e.s.sessionStoreOrNil().get(id)
 		return ok && rec.Status != sessionStatusPreparing
@@ -455,7 +455,7 @@ func TestSessionsCreateValidation(t *testing.T) {
 	if rec := e.do(t, callerOwner, "POST", "/api/sessions", map[string]string{"name": "x", "vendor": "claude"}); rec.Code != http.StatusForbidden {
 		t.Errorf("denied backend = %d, want 403", rec.Code)
 	}
-	waitFor(t, "the one valid create to start", func() bool { return len(e.rt.startedSpecs()) >= 1 })
+	waitSessionsFor(t, "the one valid create to start", func() bool { return len(e.rt.startedSpecs()) >= 1 })
 	if n := len(e.rt.startedSpecs()); n != 1 {
 		t.Errorf("started %d sessions, want only the one valid create", n)
 	}
@@ -505,7 +505,7 @@ func TestSessionsStartFailureMarksRecordFailed(t *testing.T) {
 	if strings.Contains(got.Error, "ghp_abcdefghijklmnopqrstuvwxyz0123456789") {
 		t.Error("a token in the start error reached the record unredacted")
 	}
-	waitFor(t, "sandbox removal", func() bool {
+	waitSessionsFor(t, "sandbox removal", func() bool {
 		e.rt.mu.Lock()
 		defer e.rt.mu.Unlock()
 		return len(e.rt.removed) == 1
