@@ -49,7 +49,7 @@ const itemHarness = ({ role = 'owner', status = 202, body = { state: { status: '
 
 test('Transcribe button shows on transcribable items for owner and read-write only', () => {
   const it = { source: 'plaud', id: 'r1', pending: true, transcribable: true };
-  for (const [role, want] of [['owner', true], ['read-write', true], ['read-only', false], [undefined, false]]) {
+  for (const [role, want] of [['owner', true], ['read-write', true], ['read-only', false], ['', false]]) {
     const { api } = itemHarness({ role });
     const out = api.inboxTranscriptionHtml(it, 'plaud/r1');
     assert.strictEqual(/data-action="inboxTranscribe" data-arg0="plaud" data-arg1="r1"/.test(out), want, 'role ' + role);
