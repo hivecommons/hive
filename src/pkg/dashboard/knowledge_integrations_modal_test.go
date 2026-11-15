@@ -203,7 +203,7 @@ func TestKnowledgeIntegrationsModalMeetingCards(t *testing.T) {
 		`'teams': { label: 'Microsoft Teams recordings'`,
 		`'zoom': [['users', 'Recording owners (me, or user ids/emails for Server-to-Server)', 'me']`,
 		`'teams': [['users', 'Meeting organizers (object ids or UPNs, comma-separated)'`,
-		`const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack' };`,
+		`const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', fireflies: 'Fireflies' };`,
 		`else if (type === 'zoom') html += kbPlaudAuthLine(c.name, type) + kbZoomPasteHtml(c.name, c);`,
 		`else if (type === 'teams') html += kbPlaudAuthLine(c.name, type) + kbTeamsConsentHtml(c.name, c);`,
 		`if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);`,
@@ -390,6 +390,41 @@ func TestKnowledgeIntegrationsModalSlackHuddlesCard(t *testing.T) {
 	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
 		if strings.Contains(html[start:end], native) {
 			t.Errorf("Slack huddles card block uses a browser-native dialog %q", native)
+		}
+	}
+}
+
+// TestKnowledgeIntegrationsModalFirefliesCard guards the Fireflies entry:
+// API key through the generic credential source, the help that names the
+// GraphQL API and the Pro-plan audio link, and no browser-native dialog.
+func TestKnowledgeIntegrationsModalFirefliesCard(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`'fireflies': { label: 'Fireflies.ai meetings'`,
+		`'fireflies': [['since_days', 'Days back on first sync', '30']`,
+		`else if (type === 'fireflies') html += kbPlaudAuthLine(c.name, type) + kbFirefliesHelpHtml(c.name, c);`,
+		`data-kb-fireflies-note`,
+		`function kbFirefliesHelpHtml(name, c)`,
+		`function kbOpenFirefliesIntegration()`,
+		`data-kb-fireflies-help`,
+		`'fireflies': '🪲'`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing Fireflies card snippet %q", want)
+		}
+	}
+	start := strings.Index(html, "function kbFirefliesHelpHtml(name, c)")
+	end := strings.Index(html, "async function kbPlaudAuthLoad(name, refresh)")
+	if start < 0 || end < start {
+		t.Fatal("Fireflies card block not found")
+	}
+	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
+		if strings.Contains(html[start:end], native) {
+			t.Errorf("Fireflies card block uses a browser-native dialog %q", native)
 		}
 	}
 }
