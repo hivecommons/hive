@@ -1,0 +1,1 @@
+- Sessions: the queued-Send fail-open deadline is now measured through an injectable clock (no behaviour change; it makes the deadline test deterministic instead of racing a one-second wall-clock wait under CI load).

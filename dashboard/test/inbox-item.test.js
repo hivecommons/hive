@@ -35,6 +35,9 @@ function makeContext(role) {
     _inboxExpanded: new Set(),
     _inboxTranscriptOpen: new Set(),
     _inboxContent: {},
+    _inboxTranscribing: new Set(),
+    INBOX_TX_STATUS_LABELS: { queued: 'Transcription queued', running: 'Transcribing', done: 'Machine transcript', failed: 'Transcription failed', skipped: 'Not transcribed' },
+    formatDashboardDateTime: (s) => String(s),
     escapeHtml: (s) => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
     viewerIsOwner: () => role === 'owner',
     relativeTimeShort: () => '2h ago',
@@ -45,7 +48,7 @@ function makeContext(role) {
     Array,
   };
   vm.createContext(ctx);
-  for (const fn of ['inboxSourceIcon', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxItemHtml']) {
+  for (const fn of ['inboxSourceIcon', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTranscriptionHtml', 'inboxItemHtml']) {
     vm.runInContext(extractFunction(fn), ctx);
   }
   return ctx;

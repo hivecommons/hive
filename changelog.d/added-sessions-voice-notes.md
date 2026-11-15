@@ -1,1 +1,0 @@
-- Inception (spek): voice notes in the session input bar. Write roles get a Voice button that dictates into the Send text box through the browser's Web Speech API (transcribed by the browser vendor's speech service, never by Hive), with live interim text and nothing sent until Send; the gateway Permissions-Policy now allows `microphone=(self)` for the dashboard document only.

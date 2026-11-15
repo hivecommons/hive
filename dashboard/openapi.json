@@ -37560,7 +37560,7 @@
           "Knowledge"
         ],
         "summary": "List inbox items (voice recordings and dictations) with their triage state",
-        "description": "Items are the facts written by voice and meeting knowledge connectors (`plaud`, `wisprflow`, `zoom`, `teams`, `discord`), newest first, keyed by `(source, id)`, with per-destination routing state, source connection status, candidate repositories and the auto-routing settings.",
+        "description": "Items are the facts written by voice and meeting knowledge connectors (`plaud`, `wisprflow`, `zoom`, `teams`, `discord`, `google-meet`), newest first, keyed by `(source, id)`, with per-destination routing state, source connection status, candidate repositories and the auto-routing settings.",
         "responses": {
           "200": {
             "description": "Inbox listing",
@@ -38088,7 +38088,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id; Discord: `m:<channel>:<message>` or `e:<event>`)"
+            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id; Discord: `m:<channel>:<message>` or `e:<event>`; Google Meet: conference record id)"
           }
         ],
         "responses": {
@@ -38170,7 +38170,7 @@
           "Knowledge"
         ],
         "summary": "Mint a fresh audio link for one inbox item",
-        "description": "Owner or read-write. Asks the item's connector for a short-lived audio/video URL (Plaud: `get_file`, valid 24h; Zoom: the audio-only or video `download_url` with a one-hour download token appended as `access_token`; Teams: 404, Graph serves recordings behind a bearer token; Discord: the freshly signed CDN URL of the audio attachment, re-read from the message, expiring at its `ex` time) and returns it once with `Cache-Control: no-store`; the hive never stores the link in facts or state. Playback does not depend on the connector's `include_audio` option, which only decides whether a sync also writes a link into the fact. Audited as `inbox_audio`.",
+        "description": "Owner or read-write. Asks the item's connector for a short-lived audio/video URL (Plaud: `get_file`, valid 24h; Zoom: the audio-only or video `download_url` with a one-hour download token appended as `access_token`; Teams: 404, Graph serves recordings behind a bearer token; Google Meet: 404, Drive serves the recording behind a bearer token; Discord: the freshly signed CDN URL of the audio attachment, re-read from the message, expiring at its `ex` time) and returns it once with `Cache-Control: no-store`; the hive never stores the link in facts or state. Playback does not depend on the connector's `include_audio` option, which only decides whether a sync also writes a link into the fact. Audited as `inbox_audio`.",
         "parameters": [
           {
             "name": "source",
@@ -38188,7 +38188,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id; Discord: `m:<channel>:<message>` or `e:<event>`)"
+            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id; Discord: `m:<channel>:<message>` or `e:<event>`; Google Meet: conference record id)"
           }
         ],
         "responses": {
@@ -38249,6 +38249,195 @@
           },
           "502": {
             "description": "Source unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/{source}/{id}/transcribe": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Transcribe one pending inbox item with Deepgram",
+        "description": "Owner or read-write. Queues a machine transcription of a pending item (no summary, no transcript) on this hive, with the hive owner's own Deepgram key (`inbox.transcription.api_key_env`, default `DEEPGRAM_API_KEY`). The hive downloads the audio itself and streams it to Deepgram; the presigned link is never forwarded, stored or logged. The transcript stays on this spoke. Checks that need no upload (no audio, too long, daily cap, monthly budget) are recorded as `skipped` and answered 200. Each run is audited as `inbox_transcribe`.",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Source type (`plaud`, `wisprflow`, ...)"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Upstream item id (for Plaud, the file id)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skipped before upload (reason in state.reason)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "item_id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "queued",
+                            "running",
+                            "done",
+                            "failed",
+                            "skipped"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "attempts": {
+                          "type": "integer"
+                        },
+                        "provider": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "updated_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "item_id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "queued",
+                            "running",
+                            "done",
+                            "failed",
+                            "skipped"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "attempts": {
+                          "type": "integer"
+                        },
+                        "provider": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "updated_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown item, or the Inbox is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already queued/running, already transcribed, or the item has text from its source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Transcription is disabled or not consented (inbox.transcription.enabled / consent_acknowledged)",
             "content": {
               "application/json": {
                 "schema": {
