@@ -8,6 +8,16 @@
     .inbox-icon { flex-shrink: 0; font-size: var(--fs-lg); line-height: 1; padding-top: var(--sp-1); }
     .inbox-pills { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
     .inbox-link { font-size: var(--fs-xs); }
+    .inbox-summary { white-space: pre-wrap; font-size: var(--fs-sm); margin-top: var(--sp-2); }
+    .inbox-summary.is-collapsed { max-height: 6.5em; overflow: hidden; position: relative; }
+    .inbox-summary.is-collapsed::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2.5em; background: linear-gradient(to bottom, transparent, var(--surface)); }
+    .inbox-more { padding: 0; font-size: var(--fs-xs); }
+    .inbox-pending { margin-top: var(--sp-2); font-style: italic; }
+    .inbox-media:not(:empty) { margin-top: var(--sp-2); }
+    .inbox-audio { width: 100%; max-width: 520px; display: block; }
+    .inbox-transcript { margin-top: var(--sp-2); }
+    .inbox-transcript-text { white-space: pre-wrap; font-family: inherit; font-size: var(--fs-sm); max-height: 24em; overflow: auto; margin: var(--sp-1) 0 0; padding: var(--sp-2); border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+    .inbox-highlights { margin-top: var(--sp-2); }
     .inbox-field { display: block; margin-top: var(--sp-4); }
     .inbox-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
     .inbox-rule { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr) auto; gap: var(--sp-2); align-items: center; margin-bottom: var(--sp-2); }

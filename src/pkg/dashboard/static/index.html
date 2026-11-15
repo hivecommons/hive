@@ -6060,6 +6060,16 @@
     .inbox-icon { flex-shrink: 0; font-size: var(--fs-lg); line-height: 1; padding-top: var(--sp-1); }
     .inbox-pills { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
     .inbox-link { font-size: var(--fs-xs); }
+    .inbox-summary { white-space: pre-wrap; font-size: var(--fs-sm); margin-top: var(--sp-2); }
+    .inbox-summary.is-collapsed { max-height: 6.5em; overflow: hidden; position: relative; }
+    .inbox-summary.is-collapsed::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2.5em; background: linear-gradient(to bottom, transparent, var(--surface)); }
+    .inbox-more { padding: 0; font-size: var(--fs-xs); }
+    .inbox-pending { margin-top: var(--sp-2); font-style: italic; }
+    .inbox-media:not(:empty) { margin-top: var(--sp-2); }
+    .inbox-audio { width: 100%; max-width: 520px; display: block; }
+    .inbox-transcript { margin-top: var(--sp-2); }
+    .inbox-transcript-text { white-space: pre-wrap; font-family: inherit; font-size: var(--fs-sm); max-height: 24em; overflow: auto; margin: var(--sp-1) 0 0; padding: var(--sp-2); border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+    .inbox-highlights { margin-top: var(--sp-2); }
     .inbox-field { display: block; margin-top: var(--sp-4); }
     .inbox-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
     .inbox-rule { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr) auto; gap: var(--sp-2); align-items: center; margin-bottom: var(--sp-2); }
@@ -47056,13 +47066,24 @@ function burnAreaChart() {
     const INBOX_BUSY_POLL_MS = 5000;
     const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', 'file-drop': '📎', webhook: '🔗' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
+    // Summaries longer than this many characters start collapsed.
+    const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
     let _inboxCache = null;
     let _inboxSelected = new Set();
     let _inboxShowProcessed = false;
     let _inboxBusyTimer = null;
+    // Per-item view state: expanded summaries, open transcript disclosures
+    // and fetched content (summary/transcript/highlights). Audio links are
+    // never kept here: a minted link lives only in the <audio> element.
+    let _inboxExpanded = new Set();
+    let _inboxTranscriptOpen = new Set();
+    let _inboxContent = {};
 
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
     function inboxItemKey(it) { return it.source + '/' + it.id; }
+    // Playback is a read of private audio: owners and read-write sessions.
+    function inboxViewerCanPlay() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
+    function inboxApiPath(src, id, leaf) { return '/api/inbox/' + encodeURIComponent(src) + '/' + encodeURIComponent(id) + '/' + leaf; }
     function inboxFmtDuration(ms) {
       const s = Math.round((Number(ms) || 0) / 1000);
       if (s <= 0) return '';
@@ -47104,12 +47125,44 @@ function burnAreaChart() {
       return html;
     }
 
+    // Summary / memo text: collapsed past INBOX_SUMMARY_COLLAPSE_CHARS with a
+    // more/less toggle. Falls back to the pending note or the fact excerpt.
+    function inboxSummaryHtml(it, key) {
+      const src = escapeHtml(it.source), id = escapeHtml(it.id);
+      const cached = _inboxContent[key];
+      const summary = (cached && cached.summary) || it.summary || '';
+      if (summary) {
+        const long = summary.length > INBOX_SUMMARY_COLLAPSE_CHARS;
+        const expanded = _inboxExpanded.has(key);
+        let html = '<div class="inbox-summary' + (long && !expanded ? ' is-collapsed' : '') + '">' + escapeHtml(summary) + '</div>';
+        if (long) html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-more" data-action="inboxToggleSummary" data-arg0="' + src + '" data-arg1="' + id + '">' + (expanded ? 'less' : 'more') + '</button>';
+        return html;
+      }
+      if (it.pending || (cached && cached.pending)) {
+        return '<div class="inbox-pending muted-xs" title="The MCP reports no transcript or summary block for this recording">Not transcribed yet in Plaud: open the recording in the Plaud app and run transcription; the hive re-checks it on every sync.</div>';
+      }
+      return it.excerpt ? '<div class="kb-fact-snippet">' + escapeHtml(it.excerpt) + '</div>' : '';
+    }
+
+    // Transcript disclosure body: loaded on demand from the content endpoint.
+    function inboxTranscriptHtml(it, key) {
+      if (!_inboxTranscriptOpen.has(key)) return '';
+      const c = _inboxContent[key];
+      if (!c) return '<div class="inbox-transcript muted-xs">Loading transcript…</div>';
+      if (c.error) return '<div class="inbox-transcript kc-error muted-xs">' + escapeHtml(c.error) + '</div>';
+      let html = '<div class="inbox-transcript">';
+      if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
+      else html += '<div class="muted-xs">No transcript yet' + (c.pending ? ': Plaud has not transcribed this recording.' : '.') + '</div>';
+      if (c.highlights) html += '<div class="muted-xs inbox-highlights"><strong>Highlights</strong> (flagged on the device)<pre class="inbox-transcript-text">' + escapeHtml(c.highlights) + '</pre></div>';
+      return html + '</div>';
+    }
+
     function inboxItemHtml(it) {
       const key = inboxItemKey(it);
       const checked = _inboxSelected.has(key) ? ' checked' : '';
       const when = it.recorded_at && !String(it.recorded_at).startsWith('0001') ? relativeTimeShort(it.recorded_at) : '';
       const dur = inboxFmtDuration(it.duration_ms);
-      const meta = [escapeHtml(it.source), when, dur].filter(Boolean).join(' · ');
+      const meta = [escapeHtml(it.source), when ? 'recorded ' + when : '', dur].filter(Boolean).join(' · ');
       const routes = it.routes || {};
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
@@ -47117,6 +47170,8 @@ function burnAreaChart() {
       const owner = viewerIsOwner();
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
       let actions = '';
+      if (inboxViewerCanPlay()) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Fetch a fresh 24h audio link and play it here">▶ Play recording</button>';
+      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + ' Transcript</button>';
       if (owner) {
         const retry = (d) => routes[d] && routes[d].status === 'failed' ? 'Retry ' : '→ ';
         actions += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxOpenRoute" data-arg0="' + src + '" data-arg1="' + id + '" data-arg2="spek_rfc">' + retry('spek_rfc') + 'RFC…</button>';
@@ -47130,9 +47185,84 @@ function burnAreaChart() {
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
         '<div class="kb-fact-body"><div class="kb-fact-title">' + escapeHtml(it.title || it.id) + '</div>' +
         '<div class="muted-xs">' + meta + '</div>' +
-        (it.excerpt ? '<div class="kb-fact-snippet">' + escapeHtml(it.excerpt) + '</div>' : '') +
+        inboxSummaryHtml(it, key) +
+        '<div class="inbox-media" data-inbox-media="' + escapeHtml(key) + '"></div>' +
         (pills ? '<div class="inbox-pills">' + pills + '</div>' : '') +
-        '<div class="kc-actions mt-2">' + actions + '</div></div></div>';
+        '<div class="kc-actions mt-2">' + actions + '</div>' +
+        inboxTranscriptHtml(it, key) + '</div></div>';
+    }
+
+    function inboxToggleSummary(src, id) {
+      const key = src + '/' + id;
+      if (_inboxExpanded.has(key)) _inboxExpanded.delete(key); else _inboxExpanded.add(key);
+      renderInbox();
+    }
+
+    async function inboxLoadContent(src, id) {
+      const key = src + '/' + id;
+      try {
+        const r = await fetch(inboxApiPath(src, id, 'content'));
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _inboxContent[key] = data;
+      } catch (e) {
+        _inboxContent[key] = { error: 'Could not load the transcript: ' + e.message };
+      }
+      renderInbox();
+    }
+    function inboxToggleTranscript(src, id) {
+      const key = src + '/' + id;
+      if (_inboxTranscriptOpen.has(key)) { _inboxTranscriptOpen.delete(key); renderInbox(); return; }
+      _inboxTranscriptOpen.add(key);
+      renderInbox();
+      const cached = _inboxContent[key];
+      if (!cached || cached.error) inboxLoadContent(src, id);
+    }
+
+    // ▶ Play recording: mint a fresh presigned link through the hive and play
+    // it inline. The link is only ever placed on the <audio> element; the
+    // hive stores nothing and the next click mints a new one.
+    async function inboxPlay(src, id) {
+      const key = src + '/' + id;
+      const mount = document.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
+      if (mount) mount.innerHTML = '<div class="muted-xs">Fetching audio link…</div>';
+      try {
+        const r = await fetch(inboxApiPath(src, id, 'audio'), { cache: 'no-store' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        if (!data.url) throw new Error('no audio link returned');
+        const target = document.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
+        if (!target) return;
+        target.innerHTML = '';
+        const audio = document.createElement('audio');
+        audio.controls = true;
+        audio.autoplay = true;
+        audio.preload = 'auto';
+        audio.className = 'inbox-audio';
+        audio.src = data.url;
+        target.appendChild(audio);
+        const note = document.createElement('div');
+        note.className = 'muted-xs';
+        note.textContent = 'Fresh link' + (data.expires_at ? ', valid until ' + new Date(data.expires_at).toLocaleString() : '') + '. Click ▶ Play recording again for a new one.';
+        target.appendChild(note);
+      } catch (e) {
+        if (mount) mount.innerHTML = '';
+        showToast('Audio unavailable: ' + e.message, 'error');
+      }
+    }
+
+    // A poll must not stop a recording that is playing: live <audio> elements
+    // are moved into the freshly rendered item instead of being rebuilt.
+    function inboxPreserveAudio(panel, render) {
+      const live = {};
+      panel.querySelectorAll('[data-inbox-media]').forEach(m => {
+        if (m.querySelector('audio')) live[m.dataset.inboxMedia] = Array.from(m.childNodes);
+      });
+      render();
+      for (const key of Object.keys(live)) {
+        const target = panel.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
+        if (target) { target.innerHTML = ''; live[key].forEach(n => target.appendChild(n)); }
+      }
     }
 
     function renderInbox() {
@@ -47171,7 +47301,7 @@ function burnAreaChart() {
       }
       if (!shown.length) html += '<div class="muted-note">' + (items.length ? 'Everything is triaged. Toggle “show processed” to see filed and dismissed items.' : 'Nothing yet. Connect Plaud or another voice source under Knowledge → Integrations; new recordings land here after the next sync (a newly added connector starts on the next hive restart).') + '</div>';
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
-      panel.innerHTML = html;
+      inboxPreserveAudio(panel, () => { panel.innerHTML = html; });
     }
 
     function inboxToggleProcessed() { _inboxShowProcessed = !_inboxShowProcessed; renderInbox(); }
@@ -58514,7 +58644,7 @@ function burnAreaChart() {
       'github-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'master']],
       'google-drive': [['folder_ids', 'Folder IDs', 'folder123, folder456'], ['shared_drive_ids', 'Shared drive IDs', 'drive123'], ['include_mime', 'Include MIME groups', 'docs,md,txt']],
       'notion': [['root_page_ids', 'Root page IDs', '1a2b3c4d5e6f47a8b9c0d1e2f3a4b5c6'], ['database_ids', 'Database IDs', '0f1e2d3c-4b5a-4968-8776-655443322110'], ['include_archived', 'Include archived', 'false'], ['max_pages', 'Max pages', '2000'], ['full_sync_every', 'Full sync every', '10']],
-      'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@0.3.14'], ['since_days', 'Days back on first sync', '30'], ['max_files', 'Max recordings per sync', '200'], ['include_audio', 'Include 24h audio link', 'false'], ['query', 'Name filter (optional)', 'standup'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['home', 'Token store HOME (optional)', '/data/knowledge/connector-state/plaud/home']],
+      'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@0.3.14'], ['since_days', 'Days back on first sync', '30'], ['max_files', 'Max recordings per sync', '200'], ['include_audio', 'Also store 24h audio link in the fact (Inbox playback never needs it)', 'false'], ['query', 'Name filter (optional)', 'standup'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['home', 'Token store HOME (optional)', '/data/knowledge/connector-state/plaud/home']],
       'repo-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'v5'], ['dir', 'Wiki directory', '.hive/wiki']],
       'sharepoint': [['drive_ids', 'Drive IDs', 'b!drive-id'], ['site_ids', 'Site IDs', 'contoso.sharepoint.com,site-id,web-id'], ['folder_path', 'Folder path', '/Docs/Sub'], ['include_files', 'Include file extensions', '.md,.txt,.html']],
       'wisprflow': [['path', 'flow.sqlite or export folder (empty = app default)', '/Users/me/Library/Application Support/Wispr Flow/flow.sqlite'], ['since_days', 'Days back on first sync', '30'], ['max_items', 'Max dictations per sync', '500'], ['min_words', 'Skip dictations shorter than (words)', '3'], ['group', 'Fact per dictation or day', 'dictation'], ['apps', 'Only these apps (comma-separated, optional)', 'slack, obsidian, vscode'], ['include_raw', 'Include raw ASR text', 'false'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['sqlite3', 'sqlite3 command (optional)', 'sqlite3']]

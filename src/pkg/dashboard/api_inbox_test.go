@@ -1,10 +1,12 @@
 package dashboard
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -222,5 +224,110 @@ func TestKnowledgeConnectorAuthComplete(t *testing.T) {
 	}
 	if st := decodeAuthState(t, rec.Body.Bytes()); !st.Connected || conn.got.RedirectURL == "" {
 		t.Fatalf("state = %+v got = %+v", st, conn.got)
+	}
+}
+
+// inboxAudioSource is an Inbox source whose items have on-demand audio.
+type inboxAudioSource struct {
+	items []inbox.Item
+	link  inbox.AudioLink
+	links int
+}
+
+func (f *inboxAudioSource) Type() string                               { return "plaud" }
+func (f *inboxAudioSource) List(context.Context) ([]inbox.Item, error) { return f.items, nil }
+func (f *inboxAudioSource) Fetch(_ context.Context, it inbox.Item) (inbox.Content, error) {
+	return inbox.Content{Title: it.Title, Summary: "the memo", Transcript: "[00:01] A: words", Highlights: "- 05:03", Markdown: "## Summary\n\nthe memo"}, nil
+}
+func (f *inboxAudioSource) AudioLink(context.Context, inbox.Item) (inbox.AudioLink, error) {
+	f.links++
+	return f.link, nil
+}
+
+func doGetRole(s *Server, path, role string, verified bool) *httptest.ResponseRecorder {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	if role != "" {
+		req.Header.Set("X-Hive-Role", role)
+	}
+	if verified {
+		req.Header.Set(ownerRoleVerifiedHeader, "true")
+	}
+	s.mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// Playback is gated to owner (verified) and read-write sessions, the link is
+// minted per request and never lands in the inbox state file.
+func TestInboxAudioAndContentEndpoints(t *testing.T) {
+	s, deps := apiServer(t)
+	base := t.TempDir()
+	const audioURL = "https://cdn.plaud.example/rec-1.mp3?sig=secret"
+	src := &inboxAudioSource{
+		items: []inbox.Item{{Source: "plaud", ID: "rec-1", Title: "Standup", Pending: true, DurationMS: 307100}},
+		link:  inbox.AudioLink{URL: audioURL, ExpiresAt: time.Date(2026, 11, 12, 19, 0, 0, 0, time.UTC)},
+	}
+	statePath := filepath.Join(base, "_inbox.json")
+	svc := inbox.NewService(config.InboxConfig{}, inbox.NewStore(statePath), []inbox.Source{src}, nil, nil)
+	deps.Inbox = svc
+
+	if rec := doGetRole(s, "/api/inbox/plaud/rec-1/audio", "", false); rec.Code != http.StatusForbidden {
+		t.Fatalf("anonymous audio = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+	if rec := doGetRole(s, "/api/inbox/plaud/rec-1/audio", "read-only", false); rec.Code != http.StatusForbidden {
+		t.Fatalf("read-only audio = %d, want 403", rec.Code)
+	}
+	if rec := doGetRole(s, "/api/inbox/plaud/rec-1/audio", "owner", false); rec.Code != http.StatusForbidden {
+		t.Fatalf("unverified owner audio = %d, want 403", rec.Code)
+	}
+	if src.links != 0 {
+		t.Fatalf("link minted for a refused request (%d)", src.links)
+	}
+	if rec := doGetRole(s, "/api/inbox/plaud/nope/audio", "owner", true); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown item = %d", rec.Code)
+	}
+	for _, role := range []string{"read-write", "owner"} {
+		rec := doGetRole(s, "/api/inbox/plaud/rec-1/audio", role, role == "owner")
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s audio = %d: %s", role, rec.Code, rec.Body.String())
+		}
+		var got InboxAudioResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+			t.Fatal(err)
+		}
+		if got.URL != audioURL || got.ExpiresAt.IsZero() || got.ItemID != "rec-1" || got.Source != "plaud" {
+			t.Fatalf("%s audio = %+v", role, got)
+		}
+		if rec.Header().Get("Cache-Control") != "no-store" {
+			t.Fatalf("audio reply must be no-store, got %q", rec.Header().Get("Cache-Control"))
+		}
+	}
+	if src.links != 2 {
+		t.Fatalf("links minted = %d, want one per request", src.links)
+	}
+	// Nothing persisted the presigned URL.
+	_ = svc.Dismiss("plaud", "rec-1", true) // force the state file to exist
+	if data, err := os.ReadFile(statePath); err != nil || bytes.Contains(data, []byte("cdn.plaud.example")) {
+		t.Fatalf("state file leaks the audio link (err %v): %s", err, data)
+	}
+	list := decodeInboxList(t, doGet(s, "/api/inbox").Body.Bytes())
+	if !list.Items[0].Pending || list.Items[0].DurationMS != 307100 {
+		t.Fatalf("list item = %+v", list.Items[0])
+	}
+
+	// Content is readable with the listing's auth and carries every section.
+	rec := doGetRole(s, "/api/inbox/plaud/rec-1/content", "", false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("content = %d: %s", rec.Code, rec.Body.String())
+	}
+	var content InboxContentResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &content); err != nil {
+		t.Fatal(err)
+	}
+	if content.Summary != "the memo" || content.Transcript != "[00:01] A: words" || content.Highlights != "- 05:03" || content.ItemID != "rec-1" {
+		t.Fatalf("content = %+v", content)
+	}
+	if rec := doGetRole(s, "/api/inbox/plaud/nope/content", "", false); rec.Code != http.StatusNotFound {
+		t.Fatalf("unknown content = %d", rec.Code)
 	}
 }

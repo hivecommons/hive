@@ -5,6 +5,7 @@ package inbox
 
 import (
 	"context"
+	"errors"
 	"time"
 )
 
@@ -30,9 +31,17 @@ type Item struct {
 	// Connector is the knowledge.connectors[] entry name that synced it.
 	Connector string `json:"connector"`
 	// ID is the upstream id (Plaud file id, ...). (Source, ID) is the key.
-	ID         string    `json:"id"`
-	Title      string    `json:"title"`
-	Excerpt    string    `json:"excerpt,omitempty"`
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Excerpt string `json:"excerpt,omitempty"`
+	// Summary is the recording's summary/memo text (bounded to
+	// SummaryRunes); the full text is read through Fetch.
+	Summary string `json:"summary,omitempty"`
+	// HasTranscript reports that Fetch returns a transcript.
+	HasTranscript bool `json:"has_transcript,omitempty"`
+	// Pending reports that the source has produced neither a summary nor a
+	// transcript yet (for Plaud: the recording was never transcribed).
+	Pending    bool      `json:"pending,omitempty"`
 	RecordedAt time.Time `json:"recorded_at,omitempty"`
 	DurationMS int64     `json:"duration_ms,omitempty"`
 	Tags       []string  `json:"tags,omitempty"`
@@ -69,14 +78,36 @@ type RouteState struct {
 
 // Content is the full item body a destination needs.
 type Content struct {
-	Title      string
-	Summary    string
-	Transcript string
+	Title      string `json:"title"`
+	Summary    string `json:"summary"`
+	Transcript string `json:"transcript"`
+	// Highlights lists moments flagged during the recording, when any.
+	Highlights string `json:"highlights,omitempty"`
 	// Markdown is the whole fact body when Summary/Transcript are not split.
-	Markdown string
+	Markdown string `json:"markdown"`
+	// Pending is true when the source has no text for the item yet.
+	Pending bool `json:"pending"`
 	// Provenance is a stable reference such as plaud://recordings/<id>.
-	Provenance string
+	Provenance string `json:"provenance"`
 }
+
+// AudioLink is a fresh, short-lived link to an item's audio. It is minted on
+// demand and never persisted: not in facts, not in the route state.
+type AudioLink struct {
+	URL       string    `json:"url"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// AudioSource is optionally implemented by sources whose items have audio.
+type AudioSource interface {
+	AudioLink(ctx context.Context, it Item) (AudioLink, error)
+}
+
+// ErrNoAudio is returned when an item's source offers no audio.
+var ErrNoAudio = errors.New("no audio is available for this item")
+
+// SummaryRunes bounds Item.Summary in listings.
+const SummaryRunes = 2000
 
 // Text returns transcript+summary, falling back to the raw markdown.
 func (c Content) Text() string {
