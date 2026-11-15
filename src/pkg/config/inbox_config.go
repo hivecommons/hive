@@ -30,6 +30,9 @@ type InboxConfig struct {
 	Rules []InboxRule `yaml:"rules,omitempty" json:"rules,omitempty"`
 	Spek  InboxSpek   `yaml:"spek,omitempty" json:"spek,omitempty"`
 	Dibs  InboxDibs   `yaml:"dibs,omitempty" json:"dibs,omitempty"`
+	// Transcription is spoke-local machine transcription of recordings that
+	// arrive without text (off by default; see inbox_transcription.go).
+	Transcription InboxTranscription `yaml:"transcription,omitempty" json:"transcription,omitempty"`
 }
 
 // InboxRule routes items whose source and title/tag match.
@@ -104,6 +107,9 @@ func ValidateInbox(c InboxConfig) error {
 	}
 	if c.Dibs.URL != "" && !strings.HasPrefix(c.Dibs.URL, "http://") && !strings.HasPrefix(c.Dibs.URL, "https://") {
 		return fmt.Errorf("inbox.dibs.url %q: must start with http:// or https://", c.Dibs.URL)
+	}
+	if err := ValidateInboxTranscription(c.Transcription); err != nil {
+		return err
 	}
 	for i, r := range c.Rules {
 		switch r.Destination {

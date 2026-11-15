@@ -21,6 +21,10 @@
     .inbox-field { display: block; margin-top: var(--sp-4); }
     .inbox-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
     .inbox-rule { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr) auto; gap: var(--sp-2); align-items: center; margin-bottom: var(--sp-2); }
+    .inbox-tx { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
+    .inbox-tx-reason { flex-basis: 100%; }
+    .inbox-tx-spinner { display: inline-block; flex: none; width: var(--status-dot-size); height: var(--status-dot-size); border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); border-radius: var(--r-pill); animation: spin 0.8s linear infinite; vertical-align: middle; }
+    .inbox-tx-notice { margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--r); background: var(--bg); font-size: var(--fs-sm); }
     .kb-plaud-paste textarea { width: 100%; margin-top: var(--sp-2); font-family: var(--font-mono); font-size: var(--fs-xs); }
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }

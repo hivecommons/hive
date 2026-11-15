@@ -38265,6 +38265,195 @@
         }
       }
     },
+    "/api/inbox/{source}/{id}/transcribe": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Transcribe one pending inbox item with Deepgram",
+        "description": "Owner or read-write. Queues a machine transcription of a pending item (no summary, no transcript) on this hive, with the hive owner's own Deepgram key (`inbox.transcription.api_key_env`, default `DEEPGRAM_API_KEY`). The hive downloads the audio itself and streams it to Deepgram; the presigned link is never forwarded, stored or logged. The transcript stays on this spoke. Checks that need no upload (no audio, too long, daily cap, monthly budget) are recorded as `skipped` and answered 200. Each run is audited as `inbox_transcribe`.",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Source type (`plaud`, `wisprflow`, ...)"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Upstream item id (for Plaud, the file id)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Skipped before upload (reason in state.reason)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "item_id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "queued",
+                            "running",
+                            "done",
+                            "failed",
+                            "skipped"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "attempts": {
+                          "type": "integer"
+                        },
+                        "provider": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "updated_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "202": {
+            "description": "Queued",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "item_id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "object",
+                      "properties": {
+                        "status": {
+                          "type": "string",
+                          "enum": [
+                            "queued",
+                            "running",
+                            "done",
+                            "failed",
+                            "skipped"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "attempts": {
+                          "type": "integer"
+                        },
+                        "provider": {
+                          "type": "string"
+                        },
+                        "model": {
+                          "type": "string"
+                        },
+                        "updated_at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown item, or the Inbox is not available",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already queued/running, already transcribed, or the item has text from its source",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "Transcription is disabled or not consented (inbox.transcription.enabled / consent_acknowledged)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/inbox/settings": {
       "get": {
         "tags": [
