@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/meetings"
 	"github.com/hivecommons/hive/pkg/meetings/quorumproc"
 )
 
@@ -26,6 +27,10 @@ func (f *fakeQuorumSup) Start(context.Context) error {
 }
 
 func (f *fakeQuorumSup) Stop() { f.stopped = true }
+
+func (f *fakeQuorumSup) BaseURL() string { return "http://127.0.0.1:1" }
+
+func (f *fakeQuorumSup) Token() string { return "t" }
 
 func withQuorumSupervisor(t *testing.T, fn func(quorumproc.Options) (quorumSupervisor, error)) {
 	t.Helper()
@@ -133,4 +138,37 @@ func TestNewQuorumSupervisorDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	sup.Stop()
+}
+
+func TestWireMeetingsManager(t *testing.T) {
+	if wireMeetingsManager(nil, &fakeQuorumSup{}, nil) != nil || wireMeetingsManager(&config.Config{}, nil, nil) != nil {
+		t.Fatal("nil inputs must not build a manager")
+	}
+	dir := t.TempDir()
+	cfg := &config.Config{Meetings: config.MeetingsConfig{Enabled: true, DataDir: filepath.Join(dir, "meetings")}}
+	store, err := meetings.NewStore(cfg.Meetings.DataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Save(meetings.Meeting{ID: "mtg-x", NativeID: "q", State: meetings.StateLive}); err != nil {
+		t.Fatal(err)
+	}
+	var logs bytes.Buffer
+	mgr := wireMeetingsManager(cfg, &fakeQuorumSup{}, slog.New(slog.NewTextHandler(&logs, nil)))
+	if mgr == nil {
+		t.Fatal("want a manager")
+	}
+	mgr.Close()
+	if !strings.Contains(logs.String(), "re-attached") {
+		t.Fatalf("logs %q", logs.String())
+	}
+	blocker := filepath.Join(dir, "file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Meetings.DataDir = filepath.Join(blocker, "sub")
+	if wireMeetingsManager(cfg, &fakeQuorumSup{}, slog.New(slog.DiscardHandler)) != nil ||
+		wireMeetingsManager(cfg, &fakeQuorumSup{}, nil) != nil {
+		t.Fatal("an unusable store must leave meetings unwired")
+	}
 }
