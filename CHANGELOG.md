@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.263.5)
+
+### Changed
+
+- agent: split group-mode repairs out of permissions_watcher.go (file-size ratchet) (#18246)
+
 ## 2026-11-15 (v5.263.4)
 
 ### Fixed
