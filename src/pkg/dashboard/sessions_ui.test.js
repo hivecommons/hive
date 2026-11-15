@@ -241,3 +241,12 @@ test('preparing and failed tabs and panes are rendered with a spinner, the messa
   assert.match(render, /empty\.hidden = sessions\.length > 0/);
   assert.match(render, /sessionsSyncPreparingPoll\(sessions\)/, 'polling speeds up while a session is preparing');
 });
+
+test('an ended pane offers Resume only when resumable, and Start again either way', () => {
+  const js = html.slice(html.indexOf('function sessionsPaneBodyHtml('), html.indexOf('function sessionsEnsurePane('));
+  assert.match(js, /if \(s\.resumable\)[^]*data-action="sessionsResume"[^]*\} else \{[^]*cannot be resumed[^]*\}/, 'Resume sits only in the resumable branch');
+  assert.match(js, /data-action="sessionsRestart"[^]*>Start again</);
+  assert.match(js, /restartBtn\('btn-secondary'\)/, 'resumable panes get a secondary Start again');
+  assert.match(js, /restartBtn\('btn-primary'\)/, 'non-resumable panes get a primary Start again');
+  assert.match(html, /async function sessionsRestart\(id\)[^]*sessionsSubmitCreate\(body\)/);
+});
