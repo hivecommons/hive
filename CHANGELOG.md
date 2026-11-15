@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.275.0)
+
+### Added
+
+- Inbox: Granola as a knowledge integration — a `granola` connector (a Granola API key named in `auth.env`) that pages `GET /v1/notes` and reads each note with its transcript into one fact per meeting, with the AI notes (and your own notes) as summary and the speaker-labelled transcript as transcript; text only (Granola keeps no audio); a default `inbox.sources` entry with a Connect / Check / Sync now card.
+- Inbox: Limitless Pendant as a knowledge integration — a `limitless` connector (a Limitless API key named in `auth.env`) that pages the Developer API's `GET /v1/lifelogs` with contents into one fact per lifelog, with the topic headings as summary and the speaker-labelled lines as transcript; text only (Pendant audio stays behind the API key); a default `inbox.sources` entry with a Connect / Check / Sync now card.
+
 ## 2026-11-15 (v5.274.0)
 
 ### Added
