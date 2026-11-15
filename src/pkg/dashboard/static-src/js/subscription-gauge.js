@@ -29,8 +29,11 @@
         const scoped = k === 'weekly_scoped' || ((k === 'weekly' || k === 'seven_day') &&
           (!!sc.scope || /^(seven_day|weekly)_(?!all$)./.test(i)));
         if (scoped) {
-          let model = sc.model || sc.model_family || sc.scope || sc.name || '';
-          if (/^scoped$/i.test(String(model))) model = '';
+          let model = String(sc.model || sc.model_family || sc.scope || sc.name || '');
+          if (/^scoped$/i.test(model)) model = '';
+          // ccleft lower-cases the name ("fable"); /usage writes "Fable". A
+          // model id ("claude-fable") is shown as sent.
+          if (/^[a-z]+$/.test(model)) model = model.charAt(0).toUpperCase() + model.slice(1);
           return { label: model ? 'Weekly (' + model + ')' : 'Weekly (model-specific)', shortName: 'model' };
         }
         if (k === 'weekly' || k === 'weekly_all' || k === 'seven_day') return { label: 'Weekly', shortName: '' };
