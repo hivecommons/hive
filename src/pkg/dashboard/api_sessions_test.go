@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/terminalassert"
 )
@@ -257,13 +258,7 @@ const sessionTestSettleTimeout = 5 * time.Second
 // waitSessionsFor polls cond until it holds or the settle timeout passes.
 func waitSessionsFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(sessionTestSettleTimeout)
-	for !cond() {
-		if time.Now().After(deadline) {
-			t.Fatalf("timed out waiting for %s", what)
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	testutil.Eventually(t, sessionTestSettleTimeout, cond, "timed out waiting for %s", what)
 }
 
 // waitSettled waits until the background start of id has moved the record out

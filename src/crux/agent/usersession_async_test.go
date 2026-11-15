@@ -144,9 +144,9 @@ func TestUserSessionWorkspaceConcurrentStartsCloneOnce(t *testing.T) {
 	go func() { errs <- r.Start(workspaceSpec(testSessionID, testSessionSlot, "claude")) }()
 	<-cloneEntered
 	go func() { errs <- r.Start(workspaceSpec(testSecondSessionID, testSecondSlot, "codex")) }()
-	// Give the second start time to reach the workspace mutex, then let the
-	// clone finish.
-	time.Sleep(50 * time.Millisecond)
+	// Whether the second start is already waiting on the workspace mutex or
+	// still preparing its sandbox when the clone is released, the invariant is
+	// the same: it finds the workspace and never clones.
 	close(release)
 	for i := 0; i < 2; i++ {
 		select {
