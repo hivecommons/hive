@@ -8,18 +8,19 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
 
-// Meeting-recording source types (Zoom, Microsoft Teams).
+// Meeting-recording source types (Zoom, Microsoft Teams, Discord).
 const (
-	ZoomType  = connector.TypeZoom
-	TeamsType = connector.TypeTeams
+	ZoomType    = connector.TypeZoom
+	TeamsType   = connector.TypeTeams
+	DiscordType = connector.TypeDiscord
 )
 
 // MeetingSource reads recorded meetings straight from a meeting connector
-// (zoom, teams), the sibling of PlaudSource. Item.ID is the platform
+// (zoom, teams, discord), the sibling of PlaudSource. Item.ID is the platform
 // recording id, the same value the sync writes to `attr_<type>_recording_id`,
 // so route state carries over between this source and FactSource.
 type MeetingSource struct {
-	// SourceType is the connector type (zoom, teams).
+	// SourceType is the connector type (zoom, teams, discord).
 	SourceType string
 	// Name is the knowledge.connectors[] entry name.
 	Name   string

@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -495,6 +495,92 @@ knowledge:
   browser media element cannot send, so ▶ Play answers *no playable media*
   for Teams items until a streaming proxy exists (tracked in the design
   record). Transcripts and metadata sync regardless.
+
+## Discord meetings (`type: discord`)
+
+Discord has no cloud recordings and no transcripts, so the Discord connector
+reads what a meeting leaves behind, with a bot token through the Discord REST
+API, and writes one fact per item:
+
+- **Recordings posted to a channel.** List the channels where finished
+  recordings land (`scope.channels`). A message counts as a recording when it
+  carries an audio attachment (`.ogg`, `.flac`, `.mp3`, `.m4a`, `.wav`,
+  `.opus`, ...) or a recording-bot download link (by default Craig's
+  `craig.horse` / `craig.chat` links; `scope.link_hosts` replaces the list).
+  Craig sends its download link to the person who started the recording, so
+  forward or paste it into the recordings channel, or upload the exported
+  audio there. A `.vtt` / `.srt` / `.txt` attachment on the same message is
+  read as the transcript.
+- **Scheduled events.** With `scope.guild`, every active or completed
+  scheduled event becomes a meeting item: name, start/end, creator and
+  interested users as the envelope, the event description as the summary and
+  the event channel's text chat between start and end as the transcript, so
+  an Inbox item exists even when nothing was recorded.
+
+```yaml
+knowledge:
+  connectors:
+    - name: community
+      type: discord
+      layer: project
+      auth:
+        env: DISCORD_BOT_TOKEN          # environment variable NAME, never the value
+      scope:
+        guild: "111111111111111111"     # server id: scheduled events
+        channels: "222222222222222222"  # recording channel ids (comma-separated)
+        # recorder_bots: "<craig user id>"  # only messages from these user ids count
+        since_days: "30"
+        max_recordings: "200"
+        include_events: "true"          # scheduled events as meeting items (needs guild)
+        include_chat: "true"            # the event channel chat as the transcript
+        include_participants: "true"    # interested users
+        include_video_link: "false"     # also store the recording-bot link (it carries the recording's key) in the fact
+```
+
+### Setup
+
+1. In the Discord Developer Portal create an application, add a **bot**, and
+   turn on the **Message Content** privileged intent (without it the API
+   returns messages with empty text, attachments and embeds).
+2. Invite the bot to the server with **View Channel** and **Read Message
+   History** only (permissions integer `66560`). **Connect** on the card
+   shows the invite link when the bot is not in the server or cannot read a
+   configured channel.
+3. Put the bot token in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Discord meetings**, with the credential
+   source set to *Environment variable* and the variable name. **Connect**
+   reads the bot user (`GET /users/@me`), the server and each channel.
+
+### Behaviour
+
+- Recording channels are walked back from the newest message with
+  `GET /channels/{id}/messages?before=…` (100 per page) until `since`; event
+  chat is read forward from the event start with `after=…` until its end (or
+  now while it is active). A `429` is retried after the `retry_after` the
+  reply carries (capped at a minute). A `401` reads as *not connected*; a
+  `403`, or a `404 Unknown Guild/Channel`, as *missing access* with the
+  invite link.
+- Facts carry `source: discord`, `attr_discord_recording_id` (`m:<channel
+  id>:<message id>` or `e:<event id>`), `attr_discord_channel_id`,
+  `attr_discord_message_id` or `attr_discord_meeting_id` (the event id),
+  `attr_discord_event_status`, `attr_recorded_at`, `attr_duration_ms`,
+  `attr_host`, `attr_participants`.
+- Chat messages and event descriptions are written by server members, so they
+  are wrapped in an untrusted-data envelope (a preamble plus an
+  `<untrusted-user-data-…>` block with a random tag name, the shape the Plaud
+  MCP server uses) before they reach the fact, the Inbox and spek.
+- Items without text (an audio upload or bot link without a transcript file)
+  are marked `attr_meeting_content: pending`, shown as *not transcribed yet*
+  in the Inbox and re-read on every sync. The hive does not transcribe audio
+  itself. An event that was still active is re-read once it ends, while
+  Discord still returns it.
+- Playback: ▶ Play re-reads the message for a freshly signed CDN URL of the
+  audio attachment (it expires at the URL's own `ex` time); recording-bot
+  links and events have no playable file. The bot token is never sent to the
+  CDN.
+- Not in v1: a hive bot that joins voice channels and records itself. That
+  needs a long-lived gateway voice connection and per-speaker consent
+  handling, so it is left as future work.
 
 ## Wispr Flow (dictation, `type: wisprflow`)
 

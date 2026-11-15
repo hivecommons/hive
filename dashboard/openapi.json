@@ -12788,7 +12788,7 @@
           "Knowledge"
         ],
         "summary": "Get a knowledge connector's sign-in state",
-        "description": "Returns the cached sign-in state of a connector that authenticates interactively (`plaud` via the Plaud MCP OAuth flow, `zoom` via its OAuth app, `teams` via Graph application permissions). Pass `refresh=1` to re-query the upstream account; for `teams` a missing admin consent is reported in `message` with the Entra admin-consent page in `auth_url`. Tokens are never returned; they stay in the connector's own credential store.",
+        "description": "Returns the cached sign-in state of a connector that authenticates interactively (`plaud` via the Plaud MCP OAuth flow, `zoom` via its OAuth app, `teams` via Graph application permissions, `discord` via a bot token named in `auth.env`). Pass `refresh=1` to re-query the upstream account; for `teams` a missing admin consent is reported in `message` with the Entra admin-consent page in `auth_url`; for `discord` a bot that is not in the server or cannot read a channel is reported the same way with the bot invite page in `auth_url`. Tokens are never returned; they stay in the connector's own credential store.",
         "parameters": [
           {
             "name": "name",
@@ -12897,7 +12897,7 @@
           "Knowledge"
         ],
         "summary": "Start a knowledge connector's interactive sign-in",
-        "description": "Owner-only. Starts the connector's OAuth login (for `plaud`, the MCP server's `login` tool; for `zoom` user-level OAuth, the authorization URL of the registered app with a `state`) and returns the pending state including `auth_url` for the user to open in a browser. The login session is kept alive for the callback (Plaud) or the pasted redirect URL (Zoom, 10 minutes); poll `GET /api/knowledge/connectors/{name}/auth?refresh=1` for the outcome. Connectors without a browser step (`zoom` Server-to-Server, `teams`) fetch a token and answer with the resulting state; `teams` includes the admin-consent URL when consent is missing.",
+        "description": "Owner-only. Starts the connector's OAuth login (for `plaud`, the MCP server's `login` tool; for `zoom` user-level OAuth, the authorization URL of the registered app with a `state`) and returns the pending state including `auth_url` for the user to open in a browser. The login session is kept alive for the callback (Plaud) or the pasted redirect URL (Zoom, 10 minutes); poll `GET /api/knowledge/connectors/{name}/auth?refresh=1` for the outcome. Connectors without a browser step (`zoom` Server-to-Server, `teams`, `discord`) fetch a token or probe the API and answer with the resulting state; `teams` includes the admin-consent URL when consent is missing.",
         "parameters": [
           {
             "name": "name",
@@ -13029,7 +13029,7 @@
           "Knowledge"
         ],
         "summary": "Sign a knowledge connector out",
-        "description": "Owner-only. Signs the connector out upstream (for `plaud`, the MCP server's `logout` tool; for `zoom`, a token revoke and the connector token store is cleared; for `teams`, the cached client-credentials token is dropped) and returns the new state.",
+        "description": "Owner-only. Signs the connector out upstream (for `plaud`, the MCP server's `logout` tool; for `zoom`, a token revoke and the connector token store is cleared; for `teams`, the cached client-credentials token is dropped; for `discord`, nothing is stored, so the state only records that the bot must be removed or its token reset to revoke) and returns the new state.",
         "parameters": [
           {
             "name": "name",
@@ -37560,7 +37560,7 @@
           "Knowledge"
         ],
         "summary": "List inbox items (voice recordings and dictations) with their triage state",
-        "description": "Items are the facts written by voice and meeting knowledge connectors (`plaud`, `wisprflow`, `zoom`, `teams`), newest first, keyed by `(source, id)`, with per-destination routing state, source connection status, candidate repositories and the auto-routing settings.",
+        "description": "Items are the facts written by voice and meeting knowledge connectors (`plaud`, `wisprflow`, `zoom`, `teams`, `discord`), newest first, keyed by `(source, id)`, with per-destination routing state, source connection status, candidate repositories and the auto-routing settings.",
         "responses": {
           "200": {
             "description": "Inbox listing",
@@ -37577,7 +37577,7 @@
                         "properties": {
                           "source": {
                             "type": "string",
-                            "description": "Connector type (plaud, wisprflow, zoom, teams, …)"
+                            "description": "Connector type (plaud, wisprflow, zoom, teams, discord, …)"
                           },
                           "connector": {
                             "type": "string"
@@ -38070,7 +38070,7 @@
           "Knowledge"
         ],
         "summary": "Read one inbox item's full text",
-        "description": "Summary, transcript and highlights of one recording, read from its Knowledge fact or live from the source while the fact still has no text. `pending` is true when the source has produced neither a summary nor a transcript yet (for Plaud: the recording was never transcribed in the app; for Zoom/Teams: cloud transcription is still processing or disabled).",
+        "description": "Summary, transcript and highlights of one recording, read from its Knowledge fact or live from the source while the fact still has no text. `pending` is true when the source has produced neither a summary nor a transcript yet (for Plaud: the recording was never transcribed in the app; for Zoom/Teams: cloud transcription is still processing or disabled; for Discord: no transcript file was posted with the recording).",
         "parameters": [
           {
             "name": "source",
@@ -38079,7 +38079,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Source type (`plaud`, `wisprflow`, `zoom`, `teams`, ...)"
+            "description": "Source type (`plaud`, `wisprflow`, `zoom`, `teams`, `discord`, ...)"
           },
           {
             "name": "id",
@@ -38088,7 +38088,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id)"
+            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id; Discord: `m:<channel>:<message>` or `e:<event>`)"
           }
         ],
         "responses": {
@@ -38170,7 +38170,7 @@
           "Knowledge"
         ],
         "summary": "Mint a fresh audio link for one inbox item",
-        "description": "Owner or read-write. Asks the item's connector for a short-lived audio/video URL (Plaud: `get_file`, valid 24h; Zoom: the audio-only or video `download_url` with a one-hour download token appended as `access_token`; Teams: 404, Graph serves recordings behind a bearer token) and returns it once with `Cache-Control: no-store`; the hive never stores the link in facts or state. Playback does not depend on the connector's `include_audio` option, which only decides whether a sync also writes a link into the fact. Audited as `inbox_audio`.",
+        "description": "Owner or read-write. Asks the item's connector for a short-lived audio/video URL (Plaud: `get_file`, valid 24h; Zoom: the audio-only or video `download_url` with a one-hour download token appended as `access_token`; Teams: 404, Graph serves recordings behind a bearer token; Discord: the freshly signed CDN URL of the audio attachment, re-read from the message, expiring at its `ex` time) and returns it once with `Cache-Control: no-store`; the hive never stores the link in facts or state. Playback does not depend on the connector's `include_audio` option, which only decides whether a sync also writes a link into the fact. Audited as `inbox_audio`.",
         "parameters": [
           {
             "name": "source",
@@ -38179,7 +38179,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Source type (`plaud`, `wisprflow`, `zoom`, `teams`, ...)"
+            "description": "Source type (`plaud`, `wisprflow`, `zoom`, `teams`, `discord`, ...)"
           },
           {
             "name": "id",
@@ -38188,7 +38188,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id)"
+            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id; Discord: `m:<channel>:<message>` or `e:<event>`)"
           }
         ],
         "responses": {
