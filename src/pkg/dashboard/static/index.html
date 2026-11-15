@@ -47525,7 +47525,7 @@ function burnAreaChart() {
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
-      if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default).</p>';
+      if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
       const shown = items.filter(it => _inboxShowProcessed || !it.processed);
       if (owner && shown.length) {
         const sel = _inboxSelected.size;
