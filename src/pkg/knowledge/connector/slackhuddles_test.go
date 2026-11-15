@@ -418,6 +418,9 @@ func TestSlackHuddlesHelpers(t *testing.T) {
 	if !strings.Contains(e.Error(), "check scope.channels") {
 		t.Errorf("channel_not_found = %q", e.Error())
 	}
+	if got := slackHTMLText("<h2>Action items</h2><ul><li>Ship &amp; tell</li><li>Rest</li></ul><p>a<br>b</p>"); got != "## Action items\n\n- Ship & tell\n\n- Rest\n\na\nb" {
+		t.Errorf("slackHTMLText = %q", got)
+	}
 	if !isSlackCanvas(map[string]any{"pretty_type": "Canvas"}) || isSlackCanvas(map[string]any{"filetype": "png"}) {
 		t.Error("canvas detection")
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -54,10 +55,28 @@ var slackFileIDRE = regexp.MustCompile(`^F[A-Z0-9]{2,}$`)
 // slackTranscriptHeadingRE finds the transcript section of a notes canvas.
 var slackTranscriptHeadingRE = regexp.MustCompile(`(?im)^#{1,6}\s*(huddle\s+)?transcript\b.*$`)
 
-// slackHTMLHeadingRE finds HTML headings in a downloaded canvas; they are
-// kept as "## text" paragraphs so the transcript heading survives the
-// plain-text conversion.
-var slackHTMLHeadingRE = regexp.MustCompile(`(?is)<h[1-6][^>]*>(.*?)</h[1-6]>`)
+// Downloaded canvases are HTML; slackHTMLText keeps headings as "## text"
+// lines and block ends as line breaks so the transcript heading survives.
+var (
+	slackHTMLHeadingRE = regexp.MustCompile(`(?is)<h[1-6][^>]*>(.*?)</h[1-6]>`)
+	slackHTMLBlockRE   = regexp.MustCompile(`(?i)<br\s*/?>|</(p|div|li|tr|ul|ol|pre|blockquote)>`)
+	slackHTMLItemRE    = regexp.MustCompile(`(?i)<li[^>]*>`)
+	slackHTMLTagRE     = regexp.MustCompile(`(?s)<[^>]*>`)
+	slackBlankLinesRE  = regexp.MustCompile(`\n{3,}`)
+)
+
+// slackHTMLText turns canvas HTML into markdown-ish text.
+func slackHTMLText(body string) string {
+	s := slackHTMLHeadingRE.ReplaceAllString(body, "\n\n## $1\n\n")
+	s = slackHTMLItemRE.ReplaceAllString(s, "\n- ")
+	s = slackHTMLBlockRE.ReplaceAllString(s, "\n")
+	s = html.UnescapeString(slackHTMLTagRE.ReplaceAllString(s, ""))
+	lines := strings.Split(s, "\n")
+	for i, l := range lines {
+		lines[i] = strings.TrimSpace(l)
+	}
+	return strings.TrimSpace(slackBlankLinesRE.ReplaceAllString(strings.Join(lines, "\n"), "\n\n"))
+}
 
 // slackAuthErrors are the Slack error codes that mean the token is dead.
 var slackAuthErrors = map[string]bool{
@@ -606,8 +625,7 @@ func (c *slackHuddlesConnector) canvasMarkdown(ctx context.Context, id string) (
 	if derr != nil {
 		return "", fmt.Errorf("canvas %s download: %w", id, derr)
 	}
-	_, md := HTMLToMarkdown(slackHTMLHeadingRE.ReplaceAll(resp.Body, []byte("<p>## $1</p>")))
-	return md, nil
+	return slackHTMLText(string(resp.Body)), nil
 }
 
 // fetchContent reads the notes canvas of one huddle.
