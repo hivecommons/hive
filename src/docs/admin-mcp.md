@@ -338,15 +338,17 @@ capped at 256 KiB.
 
 **Status and version**
 
-| Tool                 | Returns                                                                  |
-| -------------------- | ------------------------------------------------------------------------ |
-| `hive_status`        | Hive status summary                                                      |
-| `fleet_status`       | Fleet state, including memory limit and out-of-memory kills (see note 1) |
-| `version_read`       | Running build from `/api/version` (see note 2)                           |
-| `claude_auth_status` | Claude auth mode (`long-lived token` or `dashboard sign-in`); no token   |
-| `autonomy_readiness` | Autonomy readiness                                                       |
-| `spend_read`         | Spend                                                                    |
-| `github_api_usage`   | GitHub API budget and who is spending it (see note 7); optional `limit`  |
+| Tool                           | Returns                                                                                                                  |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
+| `hive_status`                  | Hive status summary                                                                                                      |
+| `fleet_status`                 | Fleet state, including memory limit and out-of-memory kills (see note 1)                                                 |
+| `version_read`                 | Running build from `/api/version` (see note 2)                                                                           |
+| `claude_auth_status`           | Claude auth mode (`long-lived token` or `dashboard sign-in`); no token                                                   |
+| `autonomy_readiness`           | Autonomy readiness                                                                                                       |
+| `spend_read`                   | Spend                                                                                                                    |
+| `pr_models_read`               | PRs by model, as on the Governor card: outcomes, rework and effectiveness rank per model (see note 8); optional `window` |
+| `contributor_model_stats_read` | Contributor run stats by model: runs, verified-PR share, failure rate; optional `days` (0-365, default 7)                |
+| `github_api_usage`             | GitHub API budget and who is spending it (see note 7); optional `limit`                                                  |
 
 **Agents, runs and plans**
 
@@ -445,6 +447,16 @@ capped at 256 KiB.
    - It needs what the endpoint needs: a signed-in caller, with no role floor.
    - Reading it spends no core API call.
    - See [GitHub API usage](#github-api-usage) for how to read the answer.
+8. **`pr_models_read` and `contributor_model_stats_read`:** read the endpoints
+   the dashboard reads for model effectiveness, `GET /api/governor/pr-models`
+   (Governor → PRs by model) and `GET /api/contribute/run-stats/models` (the
+   contributor run stats by model), and return their answer unchanged.
+   - `window` is `7d` (default), `30d` or `all`; `days` is 0-365 (default 7),
+     and 0 reads every recorded run. Any other value is refused with its
+     reason; the endpoints themselves would quietly use their default.
+   - `limit` caps the per-model rows (`buckets`, `models`). A capped answer
+     says so in `_admin_mcp` and gives the full count.
+   - Neither carries cost: `spend_read` has spend by model.
 
 **Meta tools**
 

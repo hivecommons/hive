@@ -145,6 +145,19 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 		}
 		return adminmcp.GitHubAPIUsageResult(data, args)
 	}
+	if adminmcp.ModelEffectivenessTool(tool) {
+		// The endpoint the dashboard reads, as the caller. window or days is
+		// checked first: the endpoint answers an unknown one with its default.
+		path, err := adminmcp.ModelEffectivenessReadPath(tool, args)
+		if err != nil {
+			return nil, err
+		}
+		data, err := p.get(tool, path)
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.ModelEffectivenessResult(tool, data, args)
+	}
 	if tool == adminmcp.ToolStageTrackerRead {
 		data, err := p.get(tool, adminmcp.StageTrackerReadPath())
 		if err != nil {
