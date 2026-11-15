@@ -6081,6 +6081,31 @@
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
     }
+    /* Meetings: hive as a live meeting participant (Quorum) */
+    .meetings-panel { display: flex; flex-direction: column; gap: var(--sp-4); }
+    .meetings-join { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto auto; gap: var(--sp-2); align-items: end; }
+    .meetings-join-discord { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-2); }
+    .meetings-join label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
+    .meetings-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+    .meetings-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
+    .meetings-row.is-open { border-color: var(--accent); }
+    .meetings-row-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meetings-live { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--sp-4); }
+    .meetings-transcript { max-height: 28em; overflow: auto; font-size: var(--fs-sm); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
+    .meetings-line { margin: 0 0 var(--sp-1); white-space: pre-wrap; }
+    .meetings-line.is-partial { opacity: 0.6; font-style: italic; }
+    .meetings-who { font-weight: 600; margin-right: var(--sp-1); }
+    .meetings-side { display: flex; flex-direction: column; gap: var(--sp-3); }
+    .meetings-side ul { margin: 0; padding-left: var(--sp-4); font-size: var(--fs-sm); }
+    .meetings-research { display: flex; flex-direction: column; gap: var(--sp-2); font-size: var(--fs-sm); }
+    .meetings-research-item { padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); }
+    .meetings-intents { max-height: 12em; overflow: auto; font-family: var(--font-mono); font-size: var(--fs-xs); }
+    .meetings-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+    .meetings-effective { font-size: var(--fs-xs); }
+    .meetings-effective td { padding: 0 var(--sp-2) 0 0; vertical-align: top; }
+    @media (max-width: 720px) {
+      .meetings-join, .meetings-join-discord, .meetings-live, .meetings-settings-grid { grid-template-columns: 1fr; }
+    }
     /* Collapsible advisory sections (#1546) */
     .collapse-chevron {
       display: inline-block;
@@ -8818,6 +8843,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spek)</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="inbox-section" data-action="ocNavigate" data-arg0="inbox-section"><span class="oc-nav-emoji">📥</span><span class="oc-nav-text">Inbox</span><span id="inbox-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
+      <a class="oc-nav-item" data-section="meetings-section" data-action="ocNavigate" data-arg0="meetings-section"><span class="oc-nav-emoji">🎙</span><span class="oc-nav-text">Meetings</span></a>
       <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
     </div>
     <div class="oc-nav-group">
@@ -9262,6 +9288,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="inbox-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Inbox section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📥 Inbox</h2>
     <div class="section-body">
       <div id="inbox-panel" class="inbox-panel"></div>
+    </div>
+  </div>
+  <div class="mt-6 mb-8" id="meetings-section" data-dashboard-section="meetings-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="meetings-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Meetings section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🎙 Meetings</h2>
+    <div class="section-body">
+      <div id="meetings-panel" class="meetings-panel"><p class="muted-xs">Loading meetings…</p></div>
     </div>
   </div>
   <div class="mt-6 mb-8" id="debug-section" data-dashboard-section="debug-section">
@@ -10736,6 +10768,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'sessions-section': { title: '💡 Inception (spek)', summary: '0 running · 0 total', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'inbox-section': { title: '📥 Inbox', summary: '0 to triage' },
+      'meetings-section': { title: '🎙 Meetings', summary: 'no live meetings' },
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
@@ -10774,6 +10807,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'nous-section': { heading: 'Experiment Lab', help: 'An experimental planner that tries out code changes in your repositories and records what it learned.' },
       'sessions-section': { heading: 'Inception (spek)', help: 'Named terminal sessions running command-line AI tools inside Hive; everyone who can see one watches live and one person at a time holds the keyboard.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
+      'meetings-section': { heading: 'Meetings', help: 'Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.' },
       'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC, send to dibs, or keep as knowledge.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
@@ -47843,6 +47877,302 @@ function burnAreaChart() {
         '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="3" placeholder="http://localhost:8199/auth/callback?code=…  or  {&quot;access_token&quot;: …}"></textarea>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
     }
+    // ── Meetings: hive as a live meeting participant (Quorum, #18284) ──
+    // Owner-only. The list comes from GET /api/meetings; an opened meeting
+    // streams its transcript, Spek intents and research over
+    // GET /api/meetings/{id}/ws. /api/events "meeting" frames refresh the list.
+    const MEETINGS_POLL_MS = 60000;
+    // Transcript lines kept in the open panel.
+    const MEETINGS_MAX_LINES = 500;
+    // Intent lines kept in the open panel.
+    const MEETINGS_MAX_INTENTS = 100;
+    const MEETINGS_LIVE_STATES = { requested: 1, joining: 1, lobby: 1, live: 1 };
+    let _meetingsList = null;
+    let _meetingsError = '';
+    let _meetingsOpen = null; // { id, ws, meeting, lines, partial, intents, live }
+
+    function meetingsIsOwner() { return window._hiveRole === 'owner'; }
+    function meetingsLabel(m) {
+      if (m.title) return m.title;
+      if (m.platform === 'discord') return 'Discord ' + (m.channel_id || '');
+      return m.url || m.platform || m.id;
+    }
+
+    async function fetchMeetings() {
+      const host = document.getElementById('meetings-panel');
+      if (!host) return;
+      if (!meetingsIsOwner()) {
+        host.innerHTML = '<p class="muted-xs">Meetings are visible to the hive owner only.</p>';
+        return;
+      }
+      try {
+        const r = await fetch('/api/meetings');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { _meetingsList = []; _meetingsError = data.error || ('HTTP ' + r.status); }
+        else { _meetingsList = data.meetings || []; _meetingsError = ''; }
+      } catch (e) { return; }
+      renderMeetings();
+    }
+    dashboardScheduleWork('meetings', fetchMeetings).catch(console.error);
+    dashboardSetInterval('meetings', fetchMeetings, MEETINGS_POLL_MS);
+
+    function meetingsJoinFormHtml() {
+      return '<div class="meetings-join">' +
+        '<label>Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-meetings-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
+        '<label>Title (optional)<input class="kb-search-box" type="text" data-meetings-field="title" placeholder="Weekly sync" autocomplete="off"></label>' +
+        '<label class="inbox-toggle"><input type="checkbox" data-meetings-field="voice"> Voice</label>' +
+        '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsJoin">Send hive to a meeting</button></div>' +
+        '<details class="mt-2"><summary class="muted-xs">Discord voice channel instead</summary><div class="meetings-join-discord mt-2">' +
+        '<label>Guild ID<input class="kb-search-box" type="text" data-meetings-field="guild" autocomplete="off"></label>' +
+        '<label>Voice channel ID<input class="kb-search-box" type="text" data-meetings-field="channel" autocomplete="off"></label></div></details>' +
+        '<div class="hive-dialog-error" role="alert" data-meetings-field="error"></div>';
+    }
+
+    function meetingsRowHtml(m) {
+      const active = !!MEETINGS_LIVE_STATES[m.state];
+      const open = _meetingsOpen && _meetingsOpen.id === m.id;
+      const request = m.state === 'requested' && m.requested_by;
+      if (request) {
+        return '<div class="meetings-row"><span class="badge">join request</span>' +
+          '<span class="meetings-row-title">' + escapeHtml((m.requested_by.name || m.requested_by.id || 'someone') + ' asked hive into ' + meetingsLabel(m)) + '</span>' +
+          '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsApproveRequest" data-arg0="' + escapeHtml(m.id) + '">Approve</button>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button></div>';
+      }
+      return '<div class="meetings-row' + (open ? ' is-open' : '') + '">' +
+        '<span class="badge">' + escapeHtml(m.state || '') + '</span>' +
+        '<span class="meetings-row-title" title="' + escapeHtml(m.url || '') + '">' + escapeHtml(meetingsLabel(m)) + '</span>' +
+        (m.state_reason ? '<span class="muted-xs">' + escapeHtml(m.state_reason) + '</span>' : '') +
+        (m.consent_error && !m.consent_posted_at ? '<span class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</span>' : '') +
+        (m.voice_enabled && !m.voice_capable ? '<span class="muted-xs">joined without voice; replies go to chat</span>' : '') +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +
+        (active ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsToggleVoice" data-arg0="' + escapeHtml(m.id) + '" data-arg1="' + (m.voice_enabled ? 'false' : 'true') + '">' + (m.voice_enabled ? 'Voice on' : 'Voice off') + '</button>' +
+          '<button type="button" class="hv-btn btn-danger btn-sm" data-action="meetingsLeave" data-arg0="' + escapeHtml(m.id) + '">Leave</button>' : '') +
+        '</div>';
+    }
+
+    function renderMeetings() {
+      const host = document.getElementById('meetings-panel');
+      if (!host) return;
+      let html = '';
+      if (_meetingsError) {
+        html += '<p class="kc-error muted-xs">' + escapeHtml(_meetingsError) + '</p>';
+      } else {
+        html += meetingsJoinFormHtml();
+      }
+      const list = _meetingsList || [];
+      html += '<div class="meetings-list">' + (list.length ? list.map(meetingsRowHtml).join('') : (_meetingsError ? '' : '<p class="muted-xs">No meetings yet.</p>')) + '</div>';
+      html += '<div id="meetings-live-panel"></div>';
+      host.innerHTML = html;
+      const liveCount = list.filter(m => MEETINGS_LIVE_STATES[m.state]).length;
+      if (typeof refreshSectionCardShell === 'function') refreshSectionCardShell('meetings-section');
+      if (typeof setSectionSummary === 'function') setSectionSummary('meetings-section', liveCount ? liveCount + ' live' : 'no live meetings');
+      renderMeetingsLive();
+    }
+
+    function meetingsField(name) { return document.querySelector('[data-meetings-field="' + name + '"]'); }
+
+    async function meetingsPost(path, body) {
+      const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return data;
+    }
+
+    async function meetingsJoin() {
+      const err = meetingsField('error');
+      const guild = ((meetingsField('guild') || {}).value || '').trim();
+      const channel = ((meetingsField('channel') || {}).value || '').trim();
+      const body = { title: ((meetingsField('title') || {}).value || '').trim(), voice: !!(meetingsField('voice') || {}).checked };
+      if (guild || channel) { body.platform = 'discord'; body.guild_id = guild; body.channel_id = channel; }
+      else body.url = ((meetingsField('url') || {}).value || '').trim();
+      try {
+        const m = await meetingsPost('/api/meetings', body);
+        showToast('Hive is joining the meeting', 'success');
+        await fetchMeetings();
+        if (m && m.id) meetingsOpenPanel(m.id);
+      } catch (e) { if (err) err.textContent = e.message; }
+    }
+
+    async function meetingsLeave(id) {
+      try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/leave'); showToast('Hive left the meeting', 'success'); }
+      catch (e) { showToast('Leave failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    async function meetingsToggleVoice(id, enabled) {
+      try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/voice', { enabled: enabled === 'true' || enabled === true }); }
+      catch (e) { showToast('Voice change failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    async function meetingsApproveRequest(id) {
+      try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/approve'); showToast('Hive is joining', 'success'); }
+      catch (e) { showToast('Approve failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    async function meetingsDeclineRequest(id) {
+      try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/decline'); }
+      catch (e) { showToast('Decline failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    async function meetingsApprove(id, rid) {
+      try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/research/' + encodeURIComponent(rid) + '/approve'); showToast('Research approved', 'success'); }
+      catch (e) { showToast('Approve failed: ' + e.message, 'error'); }
+    }
+
+    function meetingsClosePanel() {
+      if (_meetingsOpen && _meetingsOpen.ws) { try { _meetingsOpen.ws.close(); } catch (e) { /* already closed */ } }
+      _meetingsOpen = null;
+    }
+
+    function meetingsOpenPanel(id) {
+      const wasOpen = _meetingsOpen && _meetingsOpen.id === id;
+      meetingsClosePanel();
+      if (wasOpen) { renderMeetings(); return; }
+      const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+      const ws = new WebSocket(proto + location.host + '/api/meetings/' + encodeURIComponent(id) + '/ws');
+      _meetingsOpen = { id: id, ws: ws, meeting: null, lines: [], partial: null, intents: [], live: null };
+      ws.onmessage = (e) => { try { meetingsOnFrame(JSON.parse(e.data)); } catch (err) { /* ignore malformed frame */ } };
+      ws.onclose = () => { if (_meetingsOpen && _meetingsOpen.ws === ws) _meetingsOpen.ws = null; };
+      renderMeetings();
+    }
+
+    function meetingsOnFrame(f) {
+      const o = _meetingsOpen;
+      if (!o || !f || f.meeting_id !== o.id) return;
+      switch (f.kind) {
+        case 'snapshot':
+          o.meeting = (f.data || {}).meeting || null;
+          o.lines = ((f.data || {}).transcript || []).slice(-MEETINGS_MAX_LINES);
+          o.live = (f.data || {}).live || null;
+          break;
+        case 'meeting': o.meeting = f.data; break;
+        case 'line': {
+          const ev = f.data || {};
+          if (ev.type === 'segment' && !ev.final) { o.partial = ev; break; }
+          o.partial = null;
+          o.lines.push(ev);
+          if (o.lines.length > MEETINGS_MAX_LINES) o.lines.shift();
+          break;
+        }
+        case 'intent':
+          o.intents.push((f.data || {}).intent);
+          if (o.intents.length > MEETINGS_MAX_INTENTS) o.intents.shift();
+          break;
+        case 'research': {
+          const it = (f.data || {}).research;
+          if (!it) break;
+          o.live = o.live || {};
+          const list = o.live.research = o.live.research || [];
+          const i = list.findIndex(x => x.rid === it.rid);
+          if (i >= 0) list[i] = it; else list.push(it);
+          break;
+        }
+        case 'notes': meetingsRefreshLive(o.id); break;
+        case 'spek': meetingsRefreshLive(o.id); break;
+        default: break;
+      }
+      renderMeetingsLive();
+    }
+
+    async function meetingsRefreshLive(id) {
+      try {
+        const r = await fetch('/api/meetings/' + encodeURIComponent(id));
+        if (!r.ok) return;
+        const data = await r.json();
+        if (_meetingsOpen && _meetingsOpen.id === id) { _meetingsOpen.live = data.live || null; renderMeetingsLive(); }
+      } catch (e) { /* transient */ }
+    }
+
+    function meetingsLineHtml(ev, partial) {
+      const who = (ev.speaker && ev.speaker.name) || (ev.author && ev.author.name) || '';
+      return '<p class="meetings-line' + (partial ? ' is-partial' : '') + '"><span class="meetings-who">' + escapeHtml(who) + (ev.type === 'chat' ? ' (chat)' : '') + '</span>' + escapeHtml(ev.text || '') + '</p>';
+    }
+
+    function renderMeetingsLive() {
+      const host = document.getElementById('meetings-live-panel');
+      if (!host) return;
+      const o = _meetingsOpen;
+      if (!o) { host.innerHTML = ''; return; }
+      const live = o.live || {};
+      const notes = live.notes || {};
+      const sections = ['summary', 'decisions', 'actions', 'questions', 'notes'];
+      const notesHtml = sections.filter(s => (notes[s] || []).length).map(s =>
+        '<div><div class="section-label m-0">' + escapeHtml(s) + '</div><ul>' + notes[s].map(n => '<li>' + escapeHtml(n) + '</li>').join('') + '</ul></div>').join('') || '<p class="muted-xs">No notes yet.</p>';
+      const research = (live.research || []).map(it =>
+        '<div class="meetings-research-item"><div><span class="badge">' + escapeHtml(it.status) + '</span> ' + escapeHtml(it.query) + '</div>' +
+        (it.summary ? '<div class="muted-xs">' + escapeHtml(it.summary) + '</div>' : '') +
+        (it.status === 'pending_approval' ? '<button type="button" class="hv-btn btn-primary btn-sm mt-2" data-action="meetingsApprove" data-arg0="' + escapeHtml(o.id) + '" data-arg1="' + escapeHtml(it.rid) + '">Approve research</button>' : '') +
+        '</div>').join('') || '<p class="muted-xs">No research yet.</p>';
+      const lines = o.lines.map(ev => meetingsLineHtml(ev, false)).join('') + (o.partial ? meetingsLineHtml(o.partial, true) : '');
+      const intents = o.intents.map(i => '<div>' + escapeHtml(typeof i === 'string' ? i : JSON.stringify(i)) + '</div>').join('');
+      const spek = live.spek_status ? '<p class="kc-error muted-xs">' + escapeHtml(live.spek_status) + '</p>' :
+        (live.spek_mode ? '<p class="muted-xs">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
+      host.innerHTML = spek + '<div class="meetings-live">' +
+        '<div><div class="section-label m-0">Transcript' + (o.ws ? '' : ' (disconnected)') + '</div><div class="meetings-transcript">' + (lines || '<p class="muted-xs">Waiting for the first words…</p>') + '</div></div>' +
+        '<div class="meetings-side"><div><div class="section-label m-0">Notes</div>' + notesHtml + '</div>' +
+        '<div><div class="section-label m-0">Research</div><div class="meetings-research">' + research + '</div></div>' +
+        '<div><div class="section-label m-0">Spek intents</div><div class="meetings-intents">' + (intents || '<p class="muted-xs">None yet.</p>') + '</div></div></div></div>';
+      const tr = host.querySelector('.meetings-transcript');
+      if (tr) tr.scrollTop = tr.scrollHeight;
+    }
+
+    // Settings → Meetings: enable, Vexa gateway, write-only secrets.
+    function renderGovMeetings() {
+      return '<div class="config-section" data-config-section="Meetings"><h3>Meetings</h3>' +
+        '<p class="text-muted fs-base">Send hive into Google Meet, Teams, Zoom or Discord meetings to take notes, ask clarifying questions and run research. ' +
+        yamlHint('meetings.enabled') + ' ' + yamlHint('meetings.vexa.url') + ' ' + yamlHint('meetings.vexa.api_key_file') + ' ' + yamlHint('meetings.discord.token_file') + ' Changes apply after a restart.</p>' +
+        '<div id="meetings-settings-inline"><p class="muted-xs">Loading…</p></div></div>';
+    }
+
+    function meetingsSettingsFormHtml(s) {
+      const eff = s.effective || {};
+      const rows = Object.keys(eff).sort().map(k => '<tr><td><code>' + escapeHtml(k) + '</code></td><td>' + escapeHtml(eff[k]) + '</td></tr>').join('');
+      return '<div class="meetings-settings-form">' +
+        '<label class="inbox-toggle"><input type="checkbox" data-meetings-setting="enabled"' + (s.enabled ? ' checked' : '') + '> Meetings enabled' + (s.enabled_env_override ? ' (set by HIVE_MEETINGS_ENABLED; the toggle has no effect)' : '') + '</label>' +
+        '<p class="muted-xs">' + (s.running ? 'Running on this hive.' : 'Not running on this hive.') + ' Spektacular model: ' + escapeHtml(s.spek_model || '') + '.</p>' +
+        '<div class="meetings-settings-grid">' +
+        '<label class="muted-note inbox-field">Vexa gateway URL<input class="kb-search-box mt-2" type="url" data-meetings-setting="vexa_url" placeholder="https://vexa.example.org" autocomplete="off" value="' + escapeHtml(s.vexa_url || '') + '"></label>' +
+        '<label class="muted-note inbox-field">Vexa tenant key ' + (s.vexa_key_set ? '(set)' : '(not set)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="vexa_api_key" placeholder="leave blank to keep" autocomplete="new-password"></label>' +
+        '<label class="muted-note inbox-field">Discord bot token ' + (s.discord_token_set ? '(set)' : '(not set, optional)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="discord_token" placeholder="leave blank to keep" autocomplete="new-password"></label></div>' +
+        '<details class="mt-4"><summary class="muted-xs">Other meetings settings (hive.yaml or HIVE_MEETINGS_* env)</summary><table class="meetings-effective">' + rows + '</table></details>' +
+        '<div class="hive-dialog-error" role="alert" data-meetings-setting="error"></div>' +
+        '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="meetingsSaveSettings">Save</button></div></div>';
+    }
+
+    async function loadMeetingsSettingsInline() {
+      const host = document.getElementById('meetings-settings-inline');
+      if (!host) return;
+      try {
+        const r = await fetch('/api/meetings/settings');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        host.innerHTML = meetingsSettingsFormHtml(data);
+      } catch (e) {
+        host.innerHTML = '<p class="kc-error muted-xs">Meetings settings unavailable: ' + escapeHtml(e.message) + '</p>';
+      }
+    }
+
+    function meetingsSetting(name) { return document.querySelector('[data-meetings-setting="' + name + '"]'); }
+
+    async function meetingsSaveSettings() {
+      const errEl = meetingsSetting('error');
+      const body = { enabled: !!(meetingsSetting('enabled') || {}).checked, vexa_url: ((meetingsSetting('vexa_url') || {}).value || '').trim() };
+      const key = ((meetingsSetting('vexa_api_key') || {}).value || '').trim();
+      const tok = ((meetingsSetting('discord_token') || {}).value || '').trim();
+      if (key) body.vexa_api_key = key;
+      if (tok) body.discord_token = tok;
+      try {
+        const data = await meetingsPost('/api/meetings/settings', body);
+        showToast(data.restart_required ? 'Meetings settings saved; restart the hive to apply' : 'Meetings settings saved', 'success');
+        const host = document.getElementById('meetings-settings-inline');
+        if (host) host.innerHTML = meetingsSettingsFormHtml(data);
+      } catch (e) {
+        if (errEl) errEl.textContent = e.message; else showToast('Save failed: ' + e.message, 'error');
+      }
+    }
     // ── Vault Management ──
 
     function kbOpenVaults() {
@@ -57041,6 +57371,12 @@ function burnAreaChart() {
         } catch (err) { hamNotesLoad(); }
       });
 
+      // A meeting hive is in changed state: refresh the Meetings list.
+      source.addEventListener('meeting', () => {
+        noteSSEFrame();
+        if (typeof fetchMeetings === 'function') fetchMeetings();
+      });
+
       source.addEventListener('agent-status', (e) => {
         noteSSEFrame();
         try {
@@ -57228,7 +57564,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Workflows', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Knowledge', 'Inbox', 'Project Observability', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Workflows', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Knowledge', 'Inbox', 'Project Observability', 'Meetings', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -57288,6 +57624,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval auto_merge.nudge_repeat_after governor.labels.stage.contributor_nudge.ci_failure_cooldown governor.labels.stage.presence_window' },
       { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority governor.labels.stage.adoption.supersede.close_first close first superseded reopen copy failed governor.labels.stage.adoption.close_superseded close superseded on adopt on merge clanker authored opt-in label governor.labels.stage.adoption.offline_grace offline grace rebase failed twice fixer resolving conflicts governor.labels.stage.adoption.rebase_attempt_timeout rebase attempt timeout' },
       { tab: 'Inbox', section: 'Inbox', label: 'Inbox routing', key: 'inbox.spek.repo', lazy: true, text: 'inbox voice recordings plaud wispr default rfc repository spek dibs url auto-routing rules inbox.spek.repo inbox.dibs.url inbox.rules transcription transcribe deepgram speech to text diarize consent budget minutes inbox.transcription.enabled inbox.transcription.mode inbox.transcription.provider inbox.transcription.model inbox.transcription.api_key_env inbox.transcription.sources[] inbox.transcription.diarize inbox.transcription.language inbox.transcription.max_duration_minutes inbox.transcription.max_bytes inbox.transcription.monthly_budget_minutes inbox.transcription.daily_max_items inbox.transcription.consent_acknowledged' },
+      { tab: 'Meetings', section: 'Meetings', label: 'Meetings (Quorum)', key: 'meetings.enabled', lazy: true, text: 'meetings quorum vexa discord live meeting notes research google meet teams zoom tenant key bot token meetings.enabled meetings.vexa.url meetings.vexa.api_key_file meetings.discord.token_file' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff update interval rewrite floor changed digest governor.advisory.update_interval_s governor.advisory.digest_min_interval' },
@@ -58384,6 +58721,7 @@ function burnAreaChart() {
         // from its own endpoint (owner-only; the render is a static shell).
         if (tabId === 'Features') loadLinearAgentStatus();
         if (tabId === 'Inbox') loadInboxSettingsInline();
+        if (tabId === 'Meetings') loadMeetingsSettingsInline();
         // The same tab carries the upstream-watch editor and divergence view
         // (#9969, #11211); it loads from its own endpoint.
         if (tabId === 'Features') loadUpstreamWatch();
@@ -58597,6 +58935,7 @@ function burnAreaChart() {
         case 'Features': return renderGovFeatures(d.features || {}, d.auto_merge || {}, d.review || {});
         case 'Knowledge': return renderGovKnowledgeSharing();
         case 'Inbox': return renderGovInbox();
+        case 'Meetings': return renderGovMeetings();
         case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
         case 'Work Source': return renderGovWorkSource(d.work_source || {});

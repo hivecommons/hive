@@ -554,6 +554,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerKnowledgeConnectorRoutes()
 	s.registerKnowledgeConnectorAuthRoutes()
 	s.registerInboxRoutes()
+	s.registerMeetingsRoutes()
 	s.mux.HandleFunc("POST /api/system-alerts/dismiss", s.handleSystemAlertDismiss)
 	// Per-agent Variables tab (#11458, api_variables.go).
 	s.registerAgentVariableRoutes()
