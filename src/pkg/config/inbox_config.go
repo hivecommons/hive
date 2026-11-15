@@ -32,7 +32,7 @@ type InboxConfig struct {
 	Dibs  InboxDibs   `yaml:"dibs,omitempty" json:"dibs,omitempty"`
 	// Transcription is spoke-local machine transcription of recordings that
 	// arrive without text (off by default; see inbox_transcription.go).
-	Transcription InboxTranscription `yaml:"transcription,omitempty" json:"transcription,omitempty"`
+	Transcription InboxTranscription `yaml:"transcription,omitempty" json:"transcription,omitzero"`
 }
 
 // InboxRule routes items whose source and title/tag match.
