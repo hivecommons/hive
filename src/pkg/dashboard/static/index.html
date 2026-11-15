@@ -6073,6 +6073,10 @@
     .inbox-field { display: block; margin-top: var(--sp-4); }
     .inbox-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
     .inbox-rule { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr) minmax(0, 1.4fr) auto; gap: var(--sp-2); align-items: center; margin-bottom: var(--sp-2); }
+    .inbox-tx { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
+    .inbox-tx-reason { flex-basis: 100%; }
+    .inbox-tx-spinner { display: inline-block; flex: none; width: var(--status-dot-size); height: var(--status-dot-size); border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); border-radius: var(--r-pill); animation: spin 0.8s linear infinite; vertical-align: middle; }
+    .inbox-tx-notice { margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--r); background: var(--bg); font-size: var(--fs-sm); }
     .kb-plaud-paste textarea { width: 100%; margin-top: var(--sp-2); font-family: var(--font-mono); font-size: var(--fs-xs); }
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
@@ -47176,6 +47180,11 @@ function burnAreaChart() {
     let _inboxExpanded = new Set();
     let _inboxTranscriptOpen = new Set();
     let _inboxContent = {};
+    // Items whose Transcribe request is in flight (button spinner).
+    let _inboxTranscribing = new Set();
+    // Bytes per MB for the transcription size limit field.
+    const INBOX_TX_BYTES_PER_MB = 1048576;
+    const INBOX_TX_STATUS_LABELS = { queued: 'Transcription queued', running: 'Transcribing', done: 'Machine transcript', failed: 'Transcription failed', skipped: 'Not transcribed' };
 
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
     function inboxItemKey(it) { return it.source + '/' + it.id; }
@@ -47189,7 +47198,8 @@ function burnAreaChart() {
       return m >= 60 ? Math.floor(m / 60) + 'h ' + (m % 60) + 'm' : m + 'm ' + (s % 60) + 's';
     }
     function inboxRouteBusy(items) {
-      return (items || []).some(it => Object.values(it.routes || {}).some(r => r && (r.status === 'queued' || r.status === 'running')));
+      return (items || []).some(it => Object.values(it.routes || {}).some(r => r && (r.status === 'queued' || r.status === 'running')) ||
+        (it.transcription && (it.transcription.status === 'queued' || it.transcription.status === 'running')));
     }
 
     async function fetchInbox() {
@@ -47237,9 +47247,10 @@ function burnAreaChart() {
         return html;
       }
       if (it.pending || (cached && cached.pending)) {
-        if (it.source === 'zoom' || it.source === 'teams') return '<div class="inbox-pending muted-xs" title="The platform reports no transcript or summary for this recording yet">Not transcribed yet: ' + (it.source === 'zoom' ? 'Zoom' : 'Teams') + ' has no transcript or summary for this recording (cloud transcription may still be processing or is disabled); the hive re-checks it on every sync.</div>';
-        if (it.source === 'discord') return '<div class="inbox-pending muted-xs" title="Discord has no transcripts; none was posted with this recording">Not transcribed yet: Discord has no built-in transcription and no transcript file was posted with this recording; play it here, or post a .vtt/.txt transcript in the same message. The hive re-checks it on every sync.</div>';
-        return '<div class="inbox-pending muted-xs" title="The MCP reports no transcript or summary block for this recording">Not transcribed yet in Plaud: open the recording in the Plaud app and run transcription; the hive re-checks it on every sync.</div>';
+        const tx = it.transcribable ? ' Or click 🎧 Transcribe to have this hive transcribe it with Deepgram.' : '';
+        if (it.source === 'zoom' || it.source === 'teams') return '<div class="inbox-pending muted-xs" title="The platform reports no transcript or summary for this recording yet">Not transcribed yet: ' + (it.source === 'zoom' ? 'Zoom' : 'Teams') + ' has no transcript or summary for this recording (cloud transcription may still be processing or is disabled); the hive re-checks it on every sync.' + tx + '</div>';
+        if (it.source === 'discord') return '<div class="inbox-pending muted-xs" title="Discord has no transcripts; none was posted with this recording">Not transcribed yet: Discord has no built-in transcription and no transcript file was posted with this recording; play it here, or post a .vtt/.txt transcript in the same message. The hive re-checks it on every sync.' + tx + '</div>';
+        return '<div class="inbox-pending muted-xs" title="The MCP reports no transcript or summary block for this recording">Not transcribed yet in Plaud: open the recording in the Plaud app and run transcription; the hive re-checks it on every sync.' + tx + '</div>';
       }
       return it.excerpt ? '<div class="kb-fact-snippet">' + escapeHtml(it.excerpt) + '</div>' : '';
     }
@@ -47251,10 +47262,59 @@ function burnAreaChart() {
       if (!c) return '<div class="inbox-transcript muted-xs">Loading transcript…</div>';
       if (c.error) return '<div class="inbox-transcript kc-error muted-xs">' + escapeHtml(c.error) + '</div>';
       let html = '<div class="inbox-transcript">';
+      if (c.transcript && c.transcript_label) html += '<div class="muted-xs"><strong>' + escapeHtml(c.transcript_label) + '</strong></div>';
       if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
       else html += '<div class="muted-xs">No transcript yet' + (c.pending ? (it.source === 'plaud' ? ': Plaud has not transcribed this recording.' : ': the meeting platform has not produced a transcript for this recording.') : '.') + '</div>';
       if (c.highlights) html += '<div class="muted-xs inbox-highlights"><strong>Highlights</strong> (flagged on the device)<pre class="inbox-transcript-text">' + escapeHtml(c.highlights) + '</pre></div>';
       return html + '</div>';
+    }
+
+    // Machine transcription: a state pill (spinner while queued/running, the
+    // reason when it failed or was skipped) and the 🎧 Transcribe button on
+    // pending items with audio, for owners and read-write sessions.
+    function inboxTranscriptionHtml(it, key) {
+      const st = it.transcription;
+      const src = escapeHtml(it.source), id = escapeHtml(it.id);
+      let html = '';
+      if (st && st.status) {
+        const busy = st.status === 'queued' || st.status === 'running';
+        const pill = st.status === 'done' ? 'ok' : (st.status === 'failed' ? 'error' : (busy ? 'syncing' : ''));
+        let label = INBOX_TX_STATUS_LABELS[st.status] || st.status;
+        if (st.status === 'done' && st.provider) label += ' (' + st.provider + '/' + st.model + ')';
+        const when = st.updated_at && !String(st.updated_at).startsWith('0001') ? formatDashboardDateTime(st.updated_at) : '';
+        html += '<span class="kc-pill" data-status="' + pill + '" title="' + escapeHtml(when ? 'Updated ' + when : '') + '">' +
+          (busy ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> ' : '') + escapeHtml(label) + '</span>';
+        if (st.reason && (st.status === 'failed' || st.status === 'skipped')) html += ' <span class="muted-xs inbox-tx-reason">' + escapeHtml(st.reason) + '</span>';
+      }
+      if (it.transcribable && inboxViewerCanPlay()) {
+        const inflight = _inboxTranscribing.has(key);
+        const retry = st && (st.status === 'failed' || st.status === 'skipped');
+        html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-transcribe" data-action="inboxTranscribe" data-arg0="' + src + '" data-arg1="' + id + '"' + (inflight ? ' disabled aria-busy="true"' : '') +
+          ' title="Send this recording to Deepgram under the hive owner\'s own key; the transcript is kept on this hive only">' +
+          (inflight ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> Sending…' : (retry ? '🎧 Retry transcription' : '🎧 Transcribe')) + '</button>';
+      }
+      return html ? '<div class="inbox-tx">' + html + '</div>' : '';
+    }
+
+    async function inboxTranscribe(src, id) {
+      const key = src + '/' + id;
+      if (_inboxTranscribing.has(key)) return;
+      _inboxTranscribing.add(key);
+      renderInbox();
+      try {
+        const r = await fetch(inboxApiPath(src, id, 'transcribe'), { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        const st = data.state || {};
+        if (st.status === 'skipped') showToast('Not transcribed: ' + (st.reason || 'skipped'), 'error');
+        else showToast('Transcription queued; the item updates when it finishes.', 'success');
+        delete _inboxContent[key];
+      } catch (e) {
+        showToast('Transcription failed: ' + e.message, 'error');
+      } finally {
+        _inboxTranscribing.delete(key);
+      }
+      await fetchInbox();
     }
 
     function inboxItemHtml(it) {
@@ -47288,6 +47348,7 @@ function burnAreaChart() {
         inboxSummaryHtml(it, key) +
         '<div class="inbox-media" data-inbox-media="' + escapeHtml(key) + '"></div>' +
         (pills ? '<div class="inbox-pills">' + pills + '</div>' : '') +
+        inboxTranscriptionHtml(it, key) +
         '<div class="kc-actions mt-2">' + actions + '</div>' +
         inboxTranscriptHtml(it, key) + '</div></div>';
     }
@@ -47389,7 +47450,7 @@ function burnAreaChart() {
         ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenIntegrations">Connect sources</button></div>' +
         '<div class="kc-actions">' +
         '<label class="muted-xs inbox-toggle"><input type="checkbox" data-change-action="inboxToggleProcessed"' + (_inboxShowProcessed ? ' checked' : '') + '> show processed</label>' +
-        (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL">⚙ Auto-routing (' + rules + ')</button>' : '') +
+        (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
       if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs a <code>spektacular</code> binary on the hive host (<code>inbox.spek.binary</code>) or at least one enabled agent to hand the job to (<code>inbox.spek.agent</code> overrides the default).</p>';
@@ -47538,7 +47599,69 @@ function burnAreaChart() {
         '<p class="muted-xs">The dibs token is read from the environment variable named by <code>inbox.dibs.token_env</code>' + (settings.dibs_token_set ? ' (set)' : ' (not set)') + '.</p>' +
         '<div class="row-between mt-4 mb-2"><div class="section-label m-0">Rules</div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddRule">Add rule</button></div>' +
         '<div class="inbox-settings-rules"></div>' +
+        inboxTranscriptionFormHtml(settings.transcription) +
         '<div class="hive-dialog-error" role="alert" data-inbox-field="error"></div>' + buttons + '</div>';
+    }
+
+    // Transcription section: spoke-local Deepgram transcription with the
+    // owner's own key. The key value is never shown, only whether the named
+    // variable is set on this hive.
+    function inboxTranscriptionFormHtml(tx) {
+      tx = tx || {};
+      const field = (name, label, value, placeholder, type) => '<label class="muted-note inbox-field">' + label +
+        '<input class="kb-search-box mt-2" type="' + (type || 'text') + '" data-inbox-tx-field="' + name + '" autocomplete="off" placeholder="' + escapeHtml(placeholder || '') + '" value="' + escapeHtml(value == null ? '' : String(value)) + '"></label>';
+      const mode = tx.mode === 'auto' ? 'auto' : 'manual';
+      const env = tx.api_key_env || 'DEEPGRAM_API_KEY';
+      const sizeMB = tx.max_bytes ? Math.round(Number(tx.max_bytes) / INBOX_TX_BYTES_PER_MB) : '';
+      return '<div class="inbox-tx-settings" data-inbox-tx-section="1">' +
+        '<div class="section-label mt-4 mb-2">Transcription</div>' +
+        '<p class="muted-xs">Recordings that arrive without text can be transcribed by Deepgram on this hive. Each hive uses its owner\'s own Deepgram account: nothing is shared with other hives or paid for centrally, and the transcript is stored only on this hive. ' + yamlHint('inbox.transcription.enabled') + '</p>' +
+        '<div class="inbox-tx-notice" role="note"><strong>Before you enable this:</strong> recordings contain other people\'s voices. When a recording is transcribed, this hive sends its audio to Deepgram under the hive owner\'s Deepgram account and key, with Deepgram\'s model-training opt-out set. Make sure the people you record are comfortable with that.</div>' +
+        '<label class="muted-note inbox-toggle mt-2"><input type="checkbox" data-inbox-tx-field="consent_acknowledged"' + (tx.consent_acknowledged ? ' checked' : '') + '> I understand that audio is sent to Deepgram under my own account ' + yamlHint('inbox.transcription.consent_acknowledged') + '</label>' +
+        '<label class="muted-note inbox-toggle mt-2"><input type="checkbox" data-inbox-tx-field="enabled"' + (tx.enabled ? ' checked' : '') + '> Enable transcription</label>' +
+        '<div class="inbox-settings-grid">' +
+        '<label class="muted-note inbox-field">Mode<select class="field-input field-input-block mt-2" data-inbox-tx-field="mode">' +
+        '<option value="manual"' + (mode === 'manual' ? ' selected' : '') + '>manual: only when someone clicks Transcribe</option>' +
+        '<option value="auto"' + (mode === 'auto' ? ' selected' : '') + '>auto: also new recordings from the sources below</option></select></label>' +
+        field('sources', 'Auto-mode sources', (tx.sources || []).join(', '), 'plaud') +
+        field('api_key_env', 'API key environment variable', env, 'DEEPGRAM_API_KEY') +
+        field('model', 'Model', tx.model || 'nova-3', 'nova-3') +
+        field('language', 'Language', tx.language || 'auto', 'auto or en, de, pt-BR') +
+        field('monthly_budget_minutes', 'Monthly budget (minutes)', tx.monthly_budget_minutes || '', '600', 'number') +
+        field('daily_max_items', 'Daily limit (recordings)', tx.daily_max_items || '', '20', 'number') +
+        field('max_duration_minutes', 'Longest recording (minutes)', tx.max_duration_minutes || '', '120', 'number') +
+        field('max_mb', 'Largest upload (MB)', sizeMB, '500', 'number') +
+        '</div>' +
+        '<label class="muted-note inbox-toggle mt-2"><input type="checkbox" data-inbox-tx-field="diarize"' + (tx.diarize !== false ? ' checked' : '') + '> Label speakers (Speaker 1, Speaker 2, …)</label>' +
+        '<p class="muted-xs">Key <code>$' + escapeHtml(env) + '</code>: ' + (tx.key_present ? '<span class="kc-pill" data-status="ok">key present</span>' : '<span class="kc-pill" data-status="error">key missing</span> set it in this hive\'s environment (it is never stored in hive.yaml)') + '. ' +
+        yamlHint('inbox.transcription.mode') + ' ' + yamlHint('inbox.transcription.sources[]') + ' ' + yamlHint('inbox.transcription.api_key_env') + ' ' + yamlHint('inbox.transcription.provider') + ' ' + yamlHint('inbox.transcription.model') + ' ' + yamlHint('inbox.transcription.diarize') + ' ' + yamlHint('inbox.transcription.language') + ' ' +
+        yamlHint('inbox.transcription.max_duration_minutes') + ' ' + yamlHint('inbox.transcription.max_bytes') + ' ' + yamlHint('inbox.transcription.monthly_budget_minutes') + ' ' + yamlHint('inbox.transcription.daily_max_items') + '</p></div>';
+    }
+    // inboxReadTranscription reads the section back into inbox.transcription.
+    // It returns { error } when enabling without the consent box.
+    function inboxReadTranscription(root, current) {
+      if (!root || !root.querySelector('[data-inbox-tx-section]')) return null;
+      const el = name => root.querySelector('[data-inbox-tx-field="' + name + '"]');
+      const val = name => { const e = el(name); return e ? String(e.value || '').trim() : ''; };
+      const on = name => { const e = el(name); return !!(e && e.checked); };
+      const num = name => { const n = Math.floor(Number(val(name))); return n > 0 ? n : 0; };
+      const tx = {
+        enabled: on('enabled'),
+        consent_acknowledged: on('consent_acknowledged'),
+        mode: val('mode') || 'manual',
+        provider: (current && current.provider) || 'deepgram',
+        model: val('model'),
+        api_key_env: val('api_key_env'),
+        sources: val('sources').split(',').map(x => x.trim()).filter(Boolean),
+        diarize: on('diarize'),
+        language: val('language'),
+        monthly_budget_minutes: num('monthly_budget_minutes'),
+        daily_max_items: num('daily_max_items'),
+        max_duration_minutes: num('max_duration_minutes'),
+        max_bytes: num('max_mb') * INBOX_TX_BYTES_PER_MB,
+      };
+      if (tx.enabled && !tx.consent_acknowledged) return { error: 'Tick the consent box to enable transcription: recordings contain other people\'s voices and the audio is sent to Deepgram under your account.' };
+      return { transcription: tx };
     }
     function inboxOpenSettings() {
       const settings = (_inboxCache || {}).settings || {};
@@ -47549,7 +47672,7 @@ function burnAreaChart() {
     // Settings → Inbox: the same form inline, loaded from /api/inbox/settings.
     function renderGovInbox() {
       return '<div class="config-section" data-config-section="Inbox"><h3>Inbox</h3>' +
-        '<p class="text-muted fs-base">Default RFC repository, dibs URL and auto-routing rules for voice recordings. ' + yamlHint('inbox.spek.repo') + ' ' + yamlHint('inbox.dibs.url') + ' ' + yamlHint('inbox.rules') + '</p>' +
+        '<p class="text-muted fs-base">Default RFC repository, dibs URL, auto-routing rules and Deepgram transcription for voice recordings. ' + yamlHint('inbox.spek.repo') + ' ' + yamlHint('inbox.dibs.url') + ' ' + yamlHint('inbox.rules') + ' ' + yamlHint('inbox.transcription') + '</p>' +
         '<div id="inbox-settings-inline"><p class="muted-xs">Loading…</p></div></div>';
     }
     async function loadInboxSettingsInline() {
@@ -47583,6 +47706,9 @@ function burnAreaChart() {
       const errEl = inboxSettingsField(root, 'error');
       const rules = inboxReadRules(root).map(r => { const o = {}; for (const k of Object.keys(r)) if (r[k]) o[k] = r[k]; return o; });
       const payload = { rules, spek_repo: (inboxSettingsField(root, 'spek-repo') || {}).value || '', dibs_url: (inboxSettingsField(root, 'dibs-url') || {}).value || '' };
+      const tx = inboxReadTranscription(root, (((_inboxCache || {}).settings) || {}).transcription);
+      if (tx && tx.error) { if (errEl) errEl.textContent = tx.error; else showToast(tx.error, 'error'); return; }
+      if (tx) payload.transcription = tx.transcription;
       try {
         const r = await fetch('/api/inbox/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
         const data = await r.json().catch(() => ({}));
@@ -57073,7 +57199,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Adoption of a maintainer\'s PR', key: 'governor.labels.stage.adoption.maintainer_policy', text: 'adoption maintainer policy adopt ask never maintainer own pr clanker disconnected offline adopt action governor.labels.stage.adoption.maintainer_policy' },
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval auto_merge.nudge_repeat_after governor.labels.stage.contributor_nudge.ci_failure_cooldown governor.labels.stage.presence_window' },
       { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority governor.labels.stage.adoption.supersede.close_first close first superseded reopen copy failed governor.labels.stage.adoption.close_superseded close superseded on adopt on merge clanker authored opt-in label governor.labels.stage.adoption.offline_grace offline grace rebase failed twice fixer resolving conflicts governor.labels.stage.adoption.rebase_attempt_timeout rebase attempt timeout' },
-      { tab: 'Inbox', section: 'Inbox', label: 'Inbox routing', key: 'inbox.spek.repo', lazy: true, text: 'inbox voice recordings plaud wispr default rfc repository spek dibs url auto-routing rules inbox.spek.repo inbox.dibs.url inbox.rules' },
+      { tab: 'Inbox', section: 'Inbox', label: 'Inbox routing', key: 'inbox.spek.repo', lazy: true, text: 'inbox voice recordings plaud wispr default rfc repository spek dibs url auto-routing rules inbox.spek.repo inbox.dibs.url inbox.rules transcription transcribe deepgram speech to text diarize consent budget minutes inbox.transcription.enabled inbox.transcription.mode inbox.transcription.provider inbox.transcription.model inbox.transcription.api_key_env inbox.transcription.sources[] inbox.transcription.diarize inbox.transcription.language inbox.transcription.max_duration_minutes inbox.transcription.max_bytes inbox.transcription.monthly_budget_minutes inbox.transcription.daily_max_items inbox.transcription.consent_acknowledged' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff update interval rewrite floor changed digest governor.advisory.update_interval_s governor.advisory.digest_min_interval' },

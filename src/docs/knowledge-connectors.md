@@ -328,7 +328,9 @@ set yourself is never rewritten, so an explicit `@latest` still floats.
   `## Highlights` (device-button marks) sections. Audio is never downloaded;
   with `include_audio: true` the fact also links Plaud's 24-hour presigned
   URL. The Inbox plays audio through a per-click link regardless (see
-  [inbox-voice-sources.md](inbox-voice-sources.md)).
+  [inbox-voice-sources.md](inbox-voice-sources.md)). Recordings Plaud never
+  transcribed can be transcribed on the hive with the owner's own Deepgram
+  key ([inbox-transcription.md](inbox-transcription.md)).
 - The listing is incremental, so recordings deleted in Plaud are not
   tombstoned automatically; remove the fact file or the connector.
 - Sign-in state (`connected as`, pending authorization, last error) comes from
