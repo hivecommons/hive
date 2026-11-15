@@ -126,30 +126,47 @@ one-line deprecation at config load, and is folded into
 `dashboard.experiment_lab` so the next config save writes the documented key;
 see [Experiment Lab](experiment-lab.md).
 
-### Claude usage gauge
+### Usage gauge
 
-When the hive uses Claude, the owner sees a fuel gauge at the top of the
-**Overview** card: one dial for each usage limit the Claude plan reports (the
-weekly limit, plus a 5-hour or model-specific weekly limit when the plan has
-one), each with the percentage left and when it resets. A model-specific limit
-is named after its model the way Claude Code's `/usage` names it, for example
-"Weekly (Fable)". A dial turns amber at
-25% left or less and red at 10% or less, and the gauge says how old the reading
-is and greys out when it is more than 15 minutes old. When there is no reading,
-it says so and why (for example, the hive is not signed in to Claude) instead
-of showing an empty dial.
+The owner sees a fuel gauge at the top of the **Overview** card with a row for
+each provider whose plan the hive's agents spend: Claude, Copilot, Codex,
+Gemini, Kiro or DeepSeek. An agent counts against the provider of its
+**backend**, not its model: a Claude model run through the Copilot backend
+spends Copilot premium requests, so it is listed under Copilot. Each row names
+the agents that use it and shows one dial for each limit the plan reports,
+with the percentage left and when it resets:
+
+- **Claude**: the weekly limit, plus a 5-hour or model-specific weekly limit
+  when the plan has one. A model-specific limit is named after its model the
+  way Claude Code's `/usage` names it, for example "Weekly (Fable)".
+- **Copilot**: the monthly premium-request quota ("Premium requests"), as
+  Copilot itself reports it, resetting at the start of each month.
+
+A dial turns amber at 25% left or less and red at 10% or less, and each row
+says how old its reading is and greys out when it is more than 15 minutes old.
+When a provider the agents use has no reading, its row says so and why (for
+example, the hive is not signed in to Copilot) instead of showing an empty
+dial. A hive whose agents all use one provider sees a single block titled
+after it, such as "Claude usage left".
 
 The gauge shows the measurements hive already makes on its regular 5-minute
 schedule, through provider rotation or the usage reading that runs by default
-without it. It adds no calls to Claude and never moves or pauses an agent. It
-reflects the Claude account the hive itself is signed in with, and it is the
-Claude plan's usage, not the hive's own token budget.
+without it. It never moves or pauses an agent. Each row reflects the account
+the hive itself is signed in with for that provider, and it is that plan's
+usage, not the hive's own token budget.
 
-Only the owner sees it. To hide it, untick **Show Claude usage gauge** in the
+The Copilot reading signs in only with the Copilot login the agents use
+(`COPILOT_GITHUB_TOKEN`, else the dashboard's Copilot login, else the shared
+Copilot CLI config), never with another GitHub token on the host. It is for
+display only: no relay or quota guard holds work on it. With provider rotation
+on, list `github` under `governor.rotation.providers` to measure Copilot.
+
+Only the owner sees it. To hide it, untick **Show usage gauge** in the
 Overview settings (remembered per browser). To also show it as a small chip in
 the header on every page, turn on **Also show the usage gauge in the header**
-(`dashboard.subscription_gauge_header`) under Settings → Dashboard; clicking the
-chip opens the gauge on the Overview.
+(`dashboard.subscription_gauge_header`) under Settings → Dashboard. The chip's
+needle shows the limit closest to empty across every provider, and clicking it
+opens the gauge on the Overview.
 
 ## Governor card
 

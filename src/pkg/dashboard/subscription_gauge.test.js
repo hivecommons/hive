@@ -109,15 +109,15 @@ test('every probe cause gives a no-reading state with a reason and no percentage
     assert.equal(m.dials, undefined, cause);
     assert.equal(m.needle, undefined, cause);
   }
-  assert.equal(model(resp({ probe_error_cause: 'no_credentials' }), NOW).usesClaude, false);
-  assert.equal(model(resp({ probe_error_cause: 'not_installed' }), NOW).usesClaude, false);
-  assert.equal(model(resp({ probe_error_cause: 'rate_limited' }), NOW).usesClaude, true);
+  assert.equal(model(resp({ probe_error_cause: 'no_credentials' }), NOW).shown, false);
+  assert.equal(model(resp({ probe_error_cause: 'not_installed' }), NOW).shown, false);
+  assert.equal(model(resp({ probe_error_cause: 'rate_limited' }), NOW).shown, true);
 });
 
 test('no anthropic reading means measurement is not running and Claude is not used', () => {
   const m = model(resp(null, [{ provider: 'google', limits: [limit('gemini-weekly', 'weekly', 54, 10080)] }]), NOW);
   assert.equal(m.state, 'no-reading');
-  assert.equal(m.usesClaude, false);
+  assert.equal(m.shown, false);
   assert.match(m.reason, /not running/);
   assert.equal(model(null, NOW).state, 'no-reading');
   assert.equal(model({}, NOW).state, 'no-reading');
@@ -178,4 +178,59 @@ test('credit pools and balances are not drawn as plan limits', () => {
   ] }), NOW);
   assert.equal(m.dials.length, 1);
   assert.equal(m.needle.pctLeft, 60);
+});
+
+// Multi-provider: the server names, per provider, the agents that spend it.
+function usedBy(map, providers) {
+  return { providers: providers.map(p => Object.assign({ available: true, captured_at: CAPTURED }, p)), used_by: map, enabled: false, readings: true };
+}
+const COPILOT = { provider: 'github', plan_type: 'business', limits: [
+  { id: 'premium_interactions', kind: 'monthly', percent_used: 88, pct_remaining: 12, resets_at: '2026-12-01T00:00:00Z', duration_mins: 43200, scope: { unit: 'requests' } },
+] };
+const CLAUDE = { provider: 'anthropic', limits: [limit('weekly_all', 'weekly', 40, 10080), limit('weekly_scoped', 'weekly_scoped', 70, 10080, { scope: { model: 'Fable' } })] };
+
+test('one row per provider the agents spend, Claude first, needle on the lowest across rows', () => {
+  const m = model(usedBy({ github: ['scanner', 'reviewer'], anthropic: ['fixer'] }, [COPILOT, CLAUDE]), NOW);
+  assert.equal(m.shown, true);
+  assert.deepEqual(plain(m.rows.map(r => [r.provider, r.name, r.usedBy])), [['anthropic', 'Claude', ['fixer']], ['github', 'Copilot', ['scanner', 'reviewer']]]);
+  assert.deepEqual(plain(m.rows[1].dials.map(d => [d.label, d.pctLeft])), [['Premium requests', 12]]);
+  assert.equal(m.rows[1].planName, 'business');
+  assert.equal(m.name, 'Copilot');
+  assert.equal(m.needle.pctLeft, 12);
+  assert.equal(m.needle.shortName, 'premium');
+  assert.equal(m.worstStatus, 'warn');
+});
+
+test('a Copilot-only hive shows Copilot and no Claude row, even with a Claude reading', () => {
+  const m = model(usedBy({ github: ['scanner'] }, [COPILOT, CLAUDE]), NOW);
+  assert.deepEqual(plain(m.rows.map(r => r.provider)), ['github']);
+  assert.equal(m.name, 'Copilot');
+});
+
+test('a provider the agents spend but hive cannot read still gets a row saying why', () => {
+  const m = model(usedBy({ github: ['scanner'], anthropic: ['fixer'] }, [{ provider: 'github', probe_error_cause: 'no_credentials' }, CLAUDE]), NOW);
+  assert.deepEqual(plain(m.rows.map(r => [r.provider, r.state])), [['anthropic', 'reading'], ['github', 'no-reading']]);
+  assert.equal(m.rows[1].reason, 'This hive is not signed in to Copilot.');
+  assert.equal(m.name, 'Claude');
+  const unmeasured = model(usedBy({ github: ['scanner'] }, []), NOW);
+  assert.equal(unmeasured.shown, true);
+  assert.equal(unmeasured.state, 'no-reading');
+  assert.equal(unmeasured.reason, 'This hive does not measure Copilot usage.');
+});
+
+test('providers no agent spends stay hidden; an empty used_by shows nothing', () => {
+  const m = model(usedBy({}, [COPILOT, CLAUDE]), NOW);
+  assert.equal(m.shown, false);
+  assert.equal(m.state, 'no-reading');
+  assert.deepEqual(plain(m.rows), []);
+  const empty = model(usedBy({ github: [] }, [COPILOT]), NOW);
+  assert.equal(empty.shown, false);
+});
+
+test('a one-provider hive reads exactly as before at the top level', () => {
+  const m = model(usedBy({ anthropic: ['fixer'] }, [CLAUDE]), NOW);
+  assert.equal(m.rows.length, 1);
+  assert.equal(m.name, 'Claude');
+  assert.deepEqual(plain(m.dials.map(d => d.label)), ['Weekly', 'Weekly (Fable)']);
+  assert.equal(m.accountNote, 'Reflects the Claude account this hive is signed in with.');
 });

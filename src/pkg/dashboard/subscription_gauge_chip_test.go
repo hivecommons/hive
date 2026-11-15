@@ -30,7 +30,7 @@ func TestSubscriptionGaugeChipWiring(t *testing.T) {
 	}
 
 	chip := jsFunc(t, html, "renderSubscriptionGaugeChip")
-	for _, want := range []string{"subscriptionGaugeOwner()", "subscriptionGaugeHeaderEnabled()", "el.hidden = true", "subscriptionGaugeDialSvg(", "compact: true", "Claude: no reading"} {
+	for _, want := range []string{"subscriptionGaugeOwner()", "subscriptionGaugeHeaderEnabled()", "el.hidden = true", "subscriptionGaugeDialSvg(", "compact: true", ": no reading"} {
 		if !strings.Contains(chip, want) {
 			t.Fatalf("renderSubscriptionGaugeChip missing %q:\n%s", want, chip)
 		}
