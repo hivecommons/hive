@@ -322,6 +322,15 @@ func binaryExec(binary string, timeout, waitDelay time.Duration) ExecFunc {
 	}
 }
 
+// StreamExec returns a long-lived spektacular child supervisor for the
+// line-oriented verbs (`spektacular meeting --from stdin --format jsonl`,
+// hivecommons/hive#18291): stdin and stdout are pipes carrying one JSON
+// object per line, stderr goes to the logger, a child that dies early is
+// restarted with backoff, and Close ends it. See Stream.
+func StreamExec(binary string, args []string, opts StreamOptions) *Stream {
+	return newStream(binary, args, opts)
+}
+
 // errorEnvelope is the JSON error shape every Spektacular failure is
 // expressed in (internal/output.ErrorResponse):
 //

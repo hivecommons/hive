@@ -17,7 +17,7 @@ const (
 
 // DefaultInboxSources are the connector types whose facts surface as Inbox
 // items when inbox.sources is empty.
-var DefaultInboxSources = []string{"plaud", "wisprflow", "zoom", "teams", "discord", "google-meet"}
+var DefaultInboxSources = []string{"plaud", "wisprflow", "zoom", "teams", "discord", "google-meet", "webex", "slack-huddles", "fireflies", "fathom", "limitless", "granola", "otter"}
 
 // InboxConfig is the `inbox:` block: which connector types feed the Inbox,
 // how items are auto-routed, and how each destination is reached.
@@ -55,14 +55,15 @@ type InboxSpek struct {
 	Repo string `yaml:"repo,omitempty" json:"repo,omitempty"`
 	// Binary is the spektacular executable (default runs.spektacular.binary).
 	Binary string `yaml:"binary,omitempty" json:"binary,omitempty"`
-	// Agent names a hive agent to kick with a spek-new/publish prompt when
-	// the binary is unavailable in the hive image. Empty picks the first
-	// enabled, unpaused agent by name (see InboxSpekAgent).
+	// Agent names the hive agent File RFC hands items to: it drafts the spec
+	// with spektacular (spek-new workflow) and files it with `spektacular
+	// publish`. Empty picks the first enabled, unpaused agent by name (see
+	// InboxSpekAgent).
 	Agent string `yaml:"agent,omitempty" json:"agent,omitempty"`
 }
 
-// InboxSpekAgent returns the agent the spek_rfc destination falls back to
-// when the spektacular binary is absent: inbox.spek.agent if set, else the
+// InboxSpekAgent returns the agent the spek_rfc destination hands every
+// File RFC to: inbox.spek.agent if set, else the
 // alphabetically first enabled, unpaused agent, else "".
 func (c *Config) InboxSpekAgent() string {
 	if a := strings.TrimSpace(c.Inbox.Spek.Agent); a != "" {

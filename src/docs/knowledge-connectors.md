@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles | fireflies | fathom | limitless | granola | otter
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -21,7 +21,7 @@ knowledge:
         # file: /run/secrets/wiki-token   # an absolute secret file path
 ```
 
-Only one of `auth.env` / `auth.file` may be set. Inline secrets (an `auth.token`, or secret-looking scope keys such as `api_key`) are rejected everywhere, including by the dashboard. Connectors that talk to an OAuth app the operator registered (`zoom`, `teams`, `google-meet`) name that registration the same way, through `auth.client_id_env`, `auth.client_secret_env` and `auth.account_id_env` / `auth.tenant_id_env`: environment variable **names**, never values, plus `auth.mode` (`user_oauth` or `server_to_server`).
+Only one of `auth.env` / `auth.file` may be set. Inline secrets (an `auth.token`, or secret-looking scope keys such as `api_key`) are rejected everywhere, including by the dashboard. Connectors that talk to an OAuth app the operator registered (`zoom`, `teams`, `google-meet`, `webex`) name that registration the same way, through `auth.client_id_env`, `auth.client_secret_env` and `auth.account_id_env` / `auth.tenant_id_env`: environment variable **names**, never values, plus `auth.mode` (`user_oauth` or `server_to_server`).
 
 ## How it works
 
@@ -675,6 +675,468 @@ knowledge:
   Google's reason (API not enabled, scope not granted). `429` and `5xx` are
   retried honouring `Retry-After`. The bearer token is only sent to the Meet
   and Drive API hosts.
+
+## Webex recordings (`type: webex`)
+
+The Webex connector reads Webex Meetings through a Webex **integration**
+(OAuth as the signed-in user): one fact per ended meeting instance that has
+a recording or a transcript, with the topic, start time, duration, host,
+participants, the Webex AI Assistant summary (notes and action items, when
+the site has AI Assistant) and the transcript rendered as `[mm:ss] Speaker:
+text` lines from Webex's VTT. Meetings land in the **📥 Inbox** with inline
+playback.
+
+```yaml
+knowledge:
+  connectors:
+    - name: webex
+      type: webex
+      layer: personal
+      interval: 15m
+      auth:
+        client_id_env: WEBEX_CLIENT_ID          # environment variable NAMES, never values
+        client_secret_env: WEBEX_CLIENT_SECRET
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        include_summary: "true"                 # GET /meetingSummaries (meeting:summaries_read, AI Assistant)
+        include_participants: "true"            # GET /meetingParticipants (host only)
+        include_video_link: "false"             # also store the Webex playback link in the fact
+        # site_url: acme.webex.com              # default: every site of the user
+        redirect_uri: http://localhost:8199/webex/callback
+        # oauth_scopes: meeting:recordings_read meeting:transcripts_read   # narrow the request
+        tags: "meetings"
+```
+
+### Setup
+
+1. On [developer.webex.com](https://developer.webex.com/my-apps) create an
+   **Integration** with the redirect URI (default
+   `http://localhost:8199/webex/callback`) and the scopes
+   `meeting:recordings_read`, `meeting:transcripts_read`,
+   `meeting:summaries_read` (Webex AI Assistant), `meeting:participants_read`
+   and `spark:people_read`. If the integration has fewer scopes, list the ones
+   it has in `scope.oauth_scopes`: Webex rejects an authorization request for
+   scopes the integration was not registered with.
+2. Put the client id and secret in the hive's environment and add the
+   connector from **Knowledge → 🔌 Integrations → Webex recordings**.
+3. Click **Connect Webex**, approve, and paste the
+   `…/webex/callback?code=…&state=…` URL the browser lands on into **Finish
+   Webex sign-in by pasting** within 10 minutes. The hive exchanges the code
+   and keeps the tokens at
+   `/data/knowledge/connector-state/<name>/home/.webex/tokens.json` (mode
+   0600); access tokens last 14 days and refresh tokens 90 days, and a
+   rotated refresh token is written back on every refresh.
+
+### Behaviour
+
+- Each sync lists [`GET /recordings`](https://developer.webex.com/docs/api/v1/recordings/list-recordings)
+  and [`GET /meetingTranscripts`](https://developer.webex.com/docs/api/v1/meeting-transcripts/list-meeting-transcripts)
+  in explicit 30-day `from`/`to` windows (the API defaults a missing bound to
+  7 days), `max=100`, following the `Link: rel="next"` header, and groups
+  both by meeting instance id (`meetingId`, the Inbox item id). Deleted
+  recordings and transcripts are skipped. Per meeting it downloads the newest
+  transcript as VTT (`/meetingTranscripts/{id}/download?format=vtt`), asks
+  [`/meetingSummaries`](https://developer.webex.com/docs/api/v1/meeting-summaries)
+  for the AI Assistant notes (HTML, converted) and action items, and lists
+  the participants; a missing scope or feature only drops that section.
+- Meetings with a recording but no transcript or summary are
+  `attr_meeting_content: pending` and re-read on later syncs (25 at most).
+- Facts carry `source: webex`, `attr_webex_recording_id` and
+  `attr_webex_meeting_id` (both the meeting instance id), `attr_recorded_at`,
+  `attr_duration_ms`, `attr_host`, `attr_participants`.
+- Playback: ▶ Play asks [`GET /recordings/{id}`](https://developer.webex.com/docs/api/v1/recordings/get-recording-details)
+  for its `temporaryDirectDownloadLinks` and returns the audio link (else the
+  MP4), which needs no token and expires 3 hours after the request; nothing
+  is stored. With *Prevent downloading* on, Webex returns no link and the
+  error names the playback page.
+- A `401` or a dead refresh token reads as *not connected* with a pointer to
+  the card; a `403` keeps Webex's reason. `429` and `5xx` are retried
+  honouring `Retry-After`. The bearer token is only sent to `webexapis.com`.
+
+## Slack huddle notes (`type: slack-huddles`)
+
+Slack does not record huddle audio or video and has no huddle-recording API.
+What it keeps is the **AI notes canvas** it posts in the huddle's thread when
+someone turns on AI notes (paid plans; not in huddles with external people),
+which embeds the transcript when the workspace allows transcripts. The
+connector reads those canvases: one fact per ended huddle that has notes,
+with the canvas title (else *Huddle in #channel*), start time, duration,
+host, participants, the notes as the summary and the transcript section as
+the transcript. Items land in the **📥 Inbox** as text only.
+
+```yaml
+knowledge:
+  connectors:
+    - name: huddles
+      type: slack-huddles
+      layer: project
+      interval: 15m
+      auth:
+        env: SLACK_HUDDLES_TOKEN       # variable NAME holding an xoxb- (bot) or xoxp- (user) token
+      scope:
+        channels: C0123ABC, G0456DEF   # conversation ids whose huddles to read
+        since_days: "30"
+        max_recordings: "200"
+        include_participants: "true"   # users.info (users:read)
+        tags: "huddles"
+```
+
+### Setup
+
+1. Create a Slack app (api.slack.com/apps), add the scopes
+   `channels:history`, `groups:history` (private channels), `canvases:read`,
+   `files:read`, `users:read` and `channels:read` / `groups:read`, install it
+   in the workspace and `/invite` it to each channel. For huddles in DMs use
+   a user token with `im:history` / `mpim:history` instead.
+2. Put the token in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Slack huddle notes** with the credential
+   source *Environment variable* naming that variable. **Connect** / **Check**
+   call `auth.test` and read one message of the first channel, so a missing
+   scope (`needs scope …`) or a missing channel membership shows on the card.
+
+### Behaviour
+
+- Each sync pages [`conversations.history`](https://docs.slack.dev/reference/methods/conversations.history)
+  from the newest huddle seen (minus 48 h, which also catches notes Slack
+  writes a little after the huddle ends) back to `since_days`, following
+  `response_metadata.next_cursor`, and keeps the `huddle_thread` messages
+  whose [`room`](https://docs.slack.dev/reference/objects/conversation-object)
+  has ended (`has_ended` / `date_end`). Per huddle it reads the thread
+  (`conversations.replies`) and the room's `attached_file_ids`
+  (`files.info`) for canvases, prefers the one titled as huddle notes, and
+  reads it as markdown with [`canvases.getContent`](https://docs.slack.dev/reference/methods/canvases.getContent);
+  without `canvases:read` it falls back to the canvas file's private
+  download (`files:read`, HTML converted). A `Transcript` heading in the
+  canvas splits notes from transcript. Huddles without a notes canvas are
+  skipped: nothing else exists to file.
+- Facts carry `source: slack-huddles`, `attr_slack_huddle_recording_id`
+  (`<channel>:<message ts>`, the Inbox item id), `attr_slack_huddle_meeting_id`
+  (the room id), `attr_recorded_at`, `attr_duration_ms`, `attr_host`,
+  `attr_participants`; the recording page is the huddle message permalink.
+- Playback: none (▶ Play answers 404, Slack keeps no audio). Slack answers
+  `ok: false` with HTTP 200: `invalid_auth`, `token_revoked` and the like
+  read as *not connected*; `missing_scope` names the scope needed;
+  `not_in_channel` asks for `/invite`. `429` is retried honouring
+  `Retry-After`. The token is only sent to `slack.com` hosts.
+
+## Fireflies.ai meetings (`type: fireflies`)
+
+[Fireflies.ai](https://fireflies.ai) sends a notetaker to Zoom, Meet, Teams
+and other calls and keeps a transcript, speakers and an AI summary per
+meeting. The connector reads them through the
+[Fireflies GraphQL API](https://docs.fireflies.ai/graphql-api/query/transcripts)
+with an API key: one fact per meeting with title, date, duration, organizer,
+attendees, the summary and the transcript. Items land in the **📥 Inbox**
+with playback.
+
+```yaml
+knowledge:
+  connectors:
+    - name: fireflies
+      type: fireflies
+      layer: project
+      interval: 15m
+      auth:
+        env: FIREFLIES_API_KEY         # variable NAME holding the Fireflies API key
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        mine: "false"                  # true: only meetings the key's owner organized
+        include_summary: "true"        # summary { overview action_items ... }
+        include_participants: "true"   # meeting_attendees / participants
+        tags: "meetings"
+```
+
+### Setup
+
+1. In Fireflies open **Integrations → Fireflies API** and copy the API key
+   ([authorization](https://docs.fireflies.ai/fundamentals/authorization)).
+2. Put it in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Fireflies.ai meetings** with the
+   credential source *Environment variable* naming that variable.
+   **Connect** / **Check** read the key's owner (`user { email name }`), so a
+   dead key shows on the card before the first sync.
+
+### Behaviour
+
+- Each sync pages [`transcripts`](https://docs.fireflies.ai/graphql-api/query/transcripts)
+  (`limit: 50`, `skip`, `fromDate`, optional `mine`) from the newest meeting
+  seen (minus 48 h, which also catches summaries that finish later) back to
+  `since_days`, and asks for `sentences` and `summary` in the same query, so a
+  sync costs one request per 50 meetings. The Inbox listing asks for the
+  metadata only; opening an item reads
+  [`transcript(id)`](https://docs.fireflies.ai/graphql-api/query/transcript).
+- Facts carry `source: fireflies`, `attr_fireflies_recording_id` (the
+  transcript id, the Inbox item id), `attr_recorded_at` (`date`, epoch ms),
+  `attr_duration_ms` (Fireflies reports `duration` in minutes), `attr_host`
+  (`organizer_email`), `attr_participants`; the recording page is the
+  `transcript_url`. A meeting with neither sentences nor summary yet is
+  `attr_meeting_content: pending` and re-read on later syncs.
+- Playback: `audio_url` (else `video_url`), hashed links that
+  [expire after 24 hours](https://docs.fireflies.ai/schema/transcript) and
+  need a Pro plan or higher (`paid_required` answers 404 with that reason).
+  The hive mints one per click and never stores it.
+- Errors: Fireflies answers GraphQL `errors` with a `code`
+  ([error codes](https://docs.fireflies.ai/miscellaneous/error-codes));
+  `auth_failed` or HTTP 401 reads as *not connected*. `429`
+  (`too_many_requests`) is retried honouring `Retry-After`; the
+  [limits](https://docs.fireflies.ai/fundamentals/limits) are 30 requests a
+  minute and 500 a day on Free, 60 a minute on Pro. The key is only sent to
+  `api.fireflies.ai`.
+
+## Fathom meetings (`type: fathom`)
+
+[Fathom](https://fathom.video) records Zoom, Meet and Teams calls and keeps
+a transcript, an AI summary and action items per call. The connector reads
+them through the [Fathom API](https://developers.fathom.ai/api-overview)
+with an API key: one fact per recording with title, recording time and
+duration, the recorder as host, the calendar invitees, the summary and
+action items, and the transcript. Items land in the **📥 Inbox** with
+playback.
+
+```yaml
+knowledge:
+  connectors:
+    - name: fathom
+      type: fathom
+      layer: project
+      interval: 15m
+      auth:
+        env: FATHOM_API_KEY            # variable NAME holding the Fathom API key (sent as X-Api-Key)
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        recorded_by: ""                # optional: only calls these users recorded (emails)
+        teams: ""                      # optional: only these Fathom teams
+        include_summary: "true"        # default_summary + action_items
+        include_participants: "true"   # calendar_invitees
+        tags: "meetings"
+```
+
+### Setup
+
+1. In Fathom open **User Settings → API Access** and generate an API key
+   ([quickstart](https://developers.fathom.ai/quickstart)). The key belongs
+   to its user: it sees the meetings that user recorded and the ones shared
+   with them or their team, never other users' private meetings.
+2. Put it in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Fathom meetings** with the credential
+   source *Environment variable* naming that variable. **Connect** /
+   **Check** list one page of meetings, so a dead key shows on the card.
+
+### Behaviour
+
+- Each sync pages [`GET /meetings`](https://developers.fathom.ai/api-reference/meetings/list-meetings)
+  (`created_after`, `next_cursor`, optional `recorded_by[]` / `teams[]`)
+  from the newest call seen (minus 48 h, which also catches summaries Fathom
+  writes after the call) back to `since_days`, with `include_transcript`,
+  `include_summary` and `include_action_items`, so the text comes in the
+  same pages. The Inbox listing asks for the metadata only; opening an item
+  reads [`/recordings/{id}/transcript`](https://developers.fathom.ai/api-reference/recordings/get-transcript)
+  and [`/recordings/{id}/summary`](https://developers.fathom.ai/api-reference/recordings/get-summary).
+- Facts carry `source: fathom`, `attr_fathom_recording_id` (the recording
+  id, the Inbox item id), `attr_recorded_at` (`recording_start_time`),
+  `attr_duration_ms` (to `recording_end_time`), `attr_host` (`recorded_by`),
+  `attr_participants`; the recording page is the `share_url`. A call with
+  neither transcript nor summary yet is `attr_meeting_content: pending` and
+  re-read on later syncs.
+- Playback: [`POST /recordings/{id}/download`](https://developers.fathom.ai/api-reference/recordings/request-a-download)
+  starts a download and `GET /recordings/{id}/downloads/{download_id}`
+  polls it; a completed download's `audio` (else `video`) `url` is a signed
+  link valid until its `expires_at` (about 24 hours). `422` (no
+  downloadable media) answers 404. The hive never stores the link.
+- Errors: `401` reads as *not connected*; `403` names limited-access
+  sharing. `429` is retried honouring `Retry-After`
+  ([rate limits](https://developers.fathom.ai/api-overview): 60 calls a
+  minute, 30 a minute for transcript and summary reads, 30 download
+  requests a minute). The key is only sent to `api.fathom.ai`.
+
+## Limitless Pendant lifelogs (`type: limitless`)
+
+The [Limitless](https://www.limitless.ai) Pendant records conversations and
+Limitless turns them into transcribed **lifelogs**. The connector reads them
+through the [Limitless Developer API](https://www.limitless.ai/developers)
+with an API key: one fact per lifelog with title, start time, duration, the
+speakers, the topic headings as summary and the spoken lines as transcript.
+Items land in the **📥 Inbox** as text.
+
+The Developer API is in beta and covers Pendant data only. Limitless was
+acquired by Meta in December 2025 and has said it keeps serving existing
+Pendant owners for at least a year; service has already ended in some
+regions (EU, UK), where the API answers *not connected*.
+
+```yaml
+knowledge:
+  connectors:
+    - name: pendant
+      type: limitless
+      layer: personal
+      interval: 15m
+      auth:
+        env: LIMITLESS_API_KEY         # variable NAME holding the Limitless API key (sent as X-API-Key)
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        starred_only: "false"          # true: only starred lifelogs (isStarred)
+        include_participants: "true"   # speakerName of the transcript lines
+        tags: "pendant"
+```
+
+### Setup
+
+1. In the Limitless desktop or web app open the **Developer** settings and
+   create an API key.
+2. Put it in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Limitless Pendant** with the credential
+   source *Environment variable* naming that variable. **Connect** /
+   **Check** list one lifelog, so a dead key shows on the card.
+
+### Behaviour
+
+- Each sync pages `GET /v1/lifelogs` (`start` in `YYYY-MM-DD HH:mm:SS`
+  with `timezone=UTC`, `direction=desc`, `limit=10`, the API maximum,
+  following `meta.lifelogs.nextCursor`) from the newest lifelog seen (minus
+  48 h) back to `since_days`, with `includeContents`, so the transcript
+  comes in the same pages. The Inbox listing asks for metadata only;
+  opening an item reads `GET /v1/lifelogs/{id}`. Without contents the
+  lifelog `markdown` is the transcript.
+- Facts carry `source: limitless`, `attr_limitless_recording_id` (the
+  lifelog id, the Inbox item id), `attr_recorded_at` (`startTime`),
+  `attr_duration_ms` (to `endTime`) and `attr_participants`.
+- Playback: none. Audio comes only from `GET /v1/download-audio` (Ogg Opus,
+  two hours per request) with the `X-API-Key` header, which the hive never
+  hands to a browser; ▶ Play answers 404 and the Deepgram fallback does not
+  apply (Limitless transcribes every lifelog itself).
+- Errors: `401` / `403` read as *not connected*. `429` is retried
+  honouring `Retry-After` (180 requests a minute per key; the body's
+  `retryAfter` is named in the error). The key is only sent to
+  `api.limitless.ai`.
+
+## Granola meeting notes (`type: granola`)
+
+[Granola](https://www.granola.ai) transcribes meetings on the device and
+writes AI notes next to your own. The connector reads them through the
+[Granola API](https://docs.granola.ai/introduction) with an API key: one
+fact per meeting with title (else the calendar event title), scheduled
+time, duration, owner, attendees (else the calendar invitees), the notes
+and the transcript. Items land in the **📥 Inbox** as text.
+
+```yaml
+knowledge:
+  connectors:
+    - name: granola
+      type: granola
+      layer: project
+      interval: 15m
+      auth:
+        env: GRANOLA_API_KEY           # variable NAME holding the grn_… API key
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        folder: ""                     # optional folder_id
+        space: ""                      # optional space_id
+        include_private_notes: "true"  # your own notes under "My notes"
+        include_participants: "true"
+        tags: "meetings"
+```
+
+### Setup
+
+1. Create an API key (`grn_…`) in Granola's API settings
+   ([Granola API](https://docs.granola.ai/help-center/sharing/integrations/granola-api)).
+   A personal key reads your notes; a workspace key reads public notes and
+   the spaces with API access turned on.
+2. Put it in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Granola meeting notes** with the
+   credential source *Environment variable* naming that variable.
+   **Connect** / **Check** list one note, so a dead key shows on the card.
+
+### Behaviour
+
+- Each sync pages [`GET /v1/notes`](https://docs.granola.ai/api-reference/list-notes)
+  (`updated_after`, `page_size=30`, the maximum, `cursor` while `hasMore`,
+  optional `folder_id` / `space_id`) from the newest update seen (minus
+  48 h) back to `since_days`, skips deleted notes and reads each with
+  [`GET /v1/notes/{id}?include=transcript`](https://docs.granola.ai/api-reference/get-note);
+  a `413` (transcript too large to inline) falls back to the paged
+  [`/v1/notes/{id}/transcript`](https://docs.granola.ai/api-reference/get-transcript).
+  A note without generated notes answers `NOTE_NOT_FOUND` and is picked up
+  by a later sync.
+- Facts carry `source: granola`, `attr_granola_recording_id` (the note id,
+  the Inbox item id), `attr_recorded_at` (the calendar event's
+  `scheduled_start_time`, else `created_at`), `attr_duration_ms` (the
+  transcript span, else the scheduled length), `attr_host` (`owner`) and
+  `attr_participants`; the recording page is the `web_url`.
+- Playback: none (▶ Play answers 404, Granola keeps no audio).
+- Errors: `401` / `403` read as *not connected*. `429` is retried
+  honouring `Retry-After`. The key is only sent to `public-api.granola.ai`.
+
+## Otter.ai conversations (`type: otter`)
+
+[Otter.ai](https://otter.ai) records and transcribes meetings and writes an
+AI summary, an outline and action items per conversation. The connector
+reads them through the
+[Otter.ai Public API](https://help.otter.ai/hc/en-us/articles/36130822688279-Otter-ai-Public-API),
+which Otter offers to **Enterprise workspaces**, with an API key: one fact
+per conversation with title, creation time, duration (the last transcript
+offset), owner, calendar guests, the summary and the transcript. Items
+land in the **📥 Inbox** with playback.
+
+On other Otter plans there is no Public API (the Developer tab is missing).
+Otter's own exports (txt, docx, srt) can still be filed by hand through
+**+ New Fact**; the hive never uses Otter's private web API.
+
+```yaml
+knowledge:
+  connectors:
+    - name: otter
+      type: otter
+      layer: project
+      interval: 15m
+      auth:
+        env: OTTER_API_KEY             # variable NAME holding the Otter API key
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        include_shared: "false"        # true: also conversations shared with the key's user
+        channel: ""                    # optional channel id (overrides include_shared)
+        include_summary: "true"        # abstract_summary, outline, action_items
+        include_participants: "true"   # calendar_guests
+        tags: "meetings"
+```
+
+### Setup
+
+1. In Otter open **Integrations → Developer**, click **Create key** and copy
+   it (it is shown once; two keys per user). If the tab is missing on an
+   Enterprise workspace, Otter's account manager turns it on.
+2. Put it in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Otter.ai conversations** with the
+   credential source *Environment variable* naming that variable.
+   **Connect** / **Check** read `GET /workspace`, so a dead key or a
+   workspace without the Public API shows on the card.
+
+### Behaviour
+
+- Each sync pages `GET /conversations` (newest first, `limit=20`, the
+  maximum, `cursor` while `meta.has_more`; `include_shared` or
+  `channel_id`) until a conversation older than the newest one seen (minus
+  48 h) or `since_days`, and reads each with
+  `GET /conversations/{id}?include=action_items,outline,transcript`. The
+  `txt` transcript (`Speaker  00:07` heads) becomes `[mm:ss] Speaker: text`
+  lines.
+- Facts carry `source: otter`, `attr_otter_recording_id` (the conversation
+  id, the Inbox item id), `attr_recorded_at` (`created_at`),
+  `attr_duration_ms`, `attr_host` (`owner`) and `attr_participants`; the
+  recording page is the conversation `url`.
+- Playback: `GET /conversations/{id}/audio` returns the MP3 download link;
+  Otter does not state its lifetime, so the hive mints it per click with a
+  one-hour expiry and never stores it.
+- Errors: `401` reads as *not connected* (a wrong or deleted key, or a
+  workspace without the Public API); `403` keeps Otter's refusal. `429` is
+  retried honouring `Retry-After` (10 requests a second). The key is only
+  sent to `api.otter.ai`.
 
 ## Wispr Flow (dictation, `type: wisprflow`)
 

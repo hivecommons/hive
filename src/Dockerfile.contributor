@@ -415,11 +415,16 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" \
      fi
 
 # spektacular CLI (Inbox -> RFC destination) ---
-# Pinned hivecommons/spektacular release (includes `spektacular voice`,
-# hivecommons/spektacular#123), SHA-256-verified before extraction, installed
-# to /usr/local/bin/spektacular so inbox.spek.binary / runs.spektacular.binary
-# resolve on PATH with no config. Download failures are tolerated (the Inbox
-# falls back to inbox.spek.agent); checksum mismatches hard-fail the build.
+# Pinned hivecommons/spektacular release, SHA-256-verified before extraction,
+# installed to /usr/local/bin/spektacular so inbox.spek.binary /
+# runs.spektacular.binary resolve on PATH with no config. 0.31.0 provides the
+# agent-driven workflow commands (`init`, `skill`, `spec new|goto|file`) and
+# `publish`; it has no `voice` command (hivecommons/spektacular#123 was closed
+# unmerged) and never calls an LLM itself. So Inbox -> RFC always hands the
+# item to an agent (inbox.spek.agent), which drafts the spec with these
+# commands and files it with `spektacular publish`. Download failures are
+# tolerated (the agent prompt then says to install it); checksum mismatches
+# hard-fail the build.
 # Bump note: see src/docs/cli-pins.md (spektacular row); update the version and
 # both digests together from the release's checksums.txt.
 ARG SPEKTACULAR_VERSION=0.31.0

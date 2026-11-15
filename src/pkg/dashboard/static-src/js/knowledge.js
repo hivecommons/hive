@@ -2673,6 +2673,13 @@
       else if (type === 'teams') html += kbPlaudAuthLine(c.name, type) + kbTeamsConsentHtml(c.name, c);
       else if (type === 'discord') html += kbPlaudAuthLine(c.name, type) + kbDiscordHelpHtml(c.name, c);
       else if (type === 'google-meet') html += kbPlaudAuthLine(c.name, type) + kbGoogleMeetPasteHtml(c.name, c);
+      else if (type === 'webex') html += kbPlaudAuthLine(c.name, type) + kbWebexPasteHtml(c.name, c);
+      else if (type === 'slack-huddles') html += kbPlaudAuthLine(c.name, type) + kbSlackHuddlesHelpHtml(c.name, c);
+      else if (type === 'otter') html += kbPlaudAuthLine(c.name, type) + kbOtterHelpHtml(c.name, c);
+      else if (type === 'granola') html += kbPlaudAuthLine(c.name, type) + kbGranolaHelpHtml(c.name, c);
+      else if (type === 'limitless') html += kbPlaudAuthLine(c.name, type) + kbLimitlessHelpHtml(c.name, c);
+      else if (type === 'fathom') html += kbPlaudAuthLine(c.name, type) + kbFathomHelpHtml(c.name, c);
+      else if (type === 'fireflies') html += kbPlaudAuthLine(c.name, type) + kbFirefliesHelpHtml(c.name, c);
       if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
@@ -2719,6 +2726,13 @@
       if (type === 'plaud') html += '<p class="muted-xs" data-kb-plaud-note>Leave the credential source as None: Plaud signs in with its own OAuth flow (Connect on the entry above) and keeps the token in the MCP server\'s own store. Requires Node.js ≥ 20 on the hive host and costs nothing beyond your Plaud plan.</p>';
       if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);
       if (type === 'google-meet') html += kbMeetingAuthFormHTML(type, c);
+      if (type === 'webex') html += kbMeetingAuthFormHTML(type, c);
+      if (type === 'slack-huddles') html += '<p class="muted-xs" data-kb-slack-huddles-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Slack token: a bot token (<code>xoxb-</code>) of an app installed in the workspace and invited to each channel, or a user token (<code>xoxp-</code>) for DMs. Scopes: <code>channels:history</code> and <code>groups:history</code> (plus <code>im:history</code> / <code>mpim:history</code> for DMs), <code>canvases:read</code> and <code>files:read</code> for the notes canvas, <code>users:read</code> for names and <code>channels:read</code> / <code>groups:read</code> for channel names. List the channel ids (C…, G…, D…) under Channels.</p>';
+      if (type === 'otter') html += '<p class="muted-xs" data-kb-otter-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding an Otter.ai API key: in Otter open <strong>Integrations → Developer</strong> and click Create key (Enterprise workspaces; the key is shown once, two per user); enter the NAME of the variable (for example <code>OTTER_API_KEY</code>), never the key itself.</p>';
+      if (type === 'granola') html += '<p class="muted-xs" data-kb-granola-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Granola API key (<code>grn_…</code>): create it in Granola\'s API settings (Business and Enterprise plans) and enter the NAME of the variable (for example <code>GRANOLA_API_KEY</code>), never the key itself.</p>';
+      if (type === 'limitless') html += '<p class="muted-xs" data-kb-limitless-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Limitless API key: in the Limitless desktop or web app open the <strong>Developer</strong> settings and create a key; enter the NAME of the variable (for example <code>LIMITLESS_API_KEY</code>), never the key itself. The Developer API is in beta and reads Pendant data only.</p>';
+      if (type === 'fathom') html += '<p class="muted-xs" data-kb-fathom-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Fathom API key: in Fathom open <strong>User Settings → API Access</strong> and generate a key; enter the NAME of the variable (for example <code>FATHOM_API_KEY</code>), never the key itself. The key sees the meetings its user recorded or that were shared with them or their team.</p>';
+      if (type === 'fireflies') html += '<p class="muted-xs" data-kb-fireflies-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Fireflies API key: in Fireflies open <strong>Integrations → Fireflies API</strong> and copy the key; enter the NAME of the variable (for example <code>FIREFLIES_API_KEY</code>), never the key itself. Audio playback and Deepgram fallback use the meeting audio link, which Fireflies serves on Pro plans and higher.</p>';
       if (type === 'discord') html += '<p class="muted-xs" data-kb-discord-note>Set the credential source to <strong>Environment variable</strong> and enter the NAME of the variable that holds the bot token (for example <code>DISCORD_BOT_TOKEN</code>); the value never passes through the dashboard. List the server id for scheduled events and the ids of the channels where finished recordings are posted.</p>';
       html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
       html += '<div class="hive-dialog-error" role="alert" data-kb-kc-msg></div>';
@@ -2789,6 +2803,11 @@
         html += field('client_secret_env', 'OAuth client secret env var (user-level only)', 'GOOGLE_MEET_CLIENT_SECRET');
         html += '</div>';
         html += '<p class="muted-xs" data-kb-google-meet-note>User-level OAuth: leave the credential source as None. In Google Cloud enable the <strong>Google Meet REST API</strong> and the <strong>Google Drive API</strong>, configure the OAuth consent screen with the scopes <code>meetings.space.readonly</code> and <code>drive.meet.readonly</code>, create an OAuth client (Web application) whose authorized redirect URI is the redirect URL above, and put its id and secret in the hive\'s environment under the variable names you enter here. Tokens are kept at <code>/data/knowledge/connector-state/&lt;name&gt;/home/.google-meet/tokens.json</code> (0600). Service account: leave the client id/secret fields empty, set the credential source to the environment variable or file holding the service-account key JSON, list the Workspace users to read under Users, and have a Workspace super admin authorize the service account\'s client id for <code>https://www.googleapis.com/auth/meetings.space.readonly</code> and <code>https://www.googleapis.com/auth/drive.meet.readonly</code> in Admin console → Security → API controls → Domain-wide delegation.</p>';
+      } else if (type === 'webex') {
+        html += field('client_id_env', 'Integration client ID env var', 'WEBEX_CLIENT_ID');
+        html += field('client_secret_env', 'Integration client secret env var', 'WEBEX_CLIENT_SECRET');
+        html += '</div>';
+        html += '<p class="muted-xs" data-kb-webex-note>Leave the credential source as None. On developer.webex.com create an <strong>Integration</strong> with the redirect URL above and the scopes <code>meeting:recordings_read</code>, <code>meeting:transcripts_read</code>, <code>meeting:summaries_read</code> (needs Webex AI Assistant), <code>meeting:participants_read</code> and <code>spark:people_read</code>, and put its client id and secret in the hive\'s environment under the variable names you enter here (narrow the request with the <code>oauth_scopes</code> scope key when the integration has fewer). Tokens are kept at <code>/data/knowledge/connector-state/&lt;name&gt;/home/.webex/tokens.json</code> (0600).</p>';
       } else {
         html += field('tenant_id_env', 'Tenant ID env var', 'TEAMS_TENANT_ID');
         html += field('client_id_env', 'Client (application) ID env var', 'TEAMS_CLIENT_ID');
@@ -2852,7 +2871,7 @@
     // Cached per connector name; loaded lazily when the card renders. The
     // kbPlaud* functions serve every KB_AUTH_TYPES type; the label follows
     // the connector type.
-    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet' };
+    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', fireflies: 'Fireflies', fathom: 'Fathom', limitless: 'Limitless', granola: 'Granola', otter: 'Otter' };
     const _kbPlaudAuth = {};
     function kbAuthLabel(name, type) {
       if (!type) { const c = (_kcState.connectors || []).find(x => x.name === name); type = c && c.type; }
@@ -2942,6 +2961,83 @@
         '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="2" placeholder="' + escapeHtml(redirect) + '?state=…&amp;code=…"></textarea>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
     }
+    // Webex integration on a hosted hive: the registered redirect is a
+    // localhost address the browser cannot reach, so the operator pastes the
+    // URL it landed on (same endpoint as Plaud, Zoom and Google Meet).
+    function kbWebexPasteHtml(name, c) {
+      const n = escapeHtml(name);
+      const a = _kbPlaudAuth[name] || {};
+      const redirect = (c && c.scope && c.scope.redirect_uri) || 'http://localhost:8199/webex/callback';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-webex-playback>Recordings play in the Inbox through Webex\'s temporary direct download link (minted per click, valid 3 hours); transcripts and AI Assistant summaries sync as text.</span></div>';
+      return '<details class="kb-plaud-paste mt-2" data-kb-webex-paste><summary class="muted-xs">Finish Webex sign-in by pasting the redirect URL</summary>' +
+        '<p class="muted-xs">Registration: on developer.webex.com → My Webex Apps create an <strong>Integration</strong> with <code>' + escapeHtml(redirect) + '</code> as its redirect URI and the scopes <code>meeting:recordings_read</code>, <code>meeting:transcripts_read</code>, <code>meeting:summaries_read</code>, <code>meeting:participants_read</code>, <code>spark:people_read</code>, and put its client id and secret in the hive environment under the variable names in the form. Then click <strong>Connect Webex</strong>, approve in the browser, and paste the <code>' + escapeHtml(redirect) + '?code=…&amp;state=…</code> URL the browser lands on (a connection error page is expected) within 10 minutes.</p>' +
+        '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="2" placeholder="' + escapeHtml(redirect) + '?code=…&amp;state=…"></textarea>' +
+        '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
+    }
+    // Slack huddles: a bot or user token has no browser step; the card says
+    // what Slack keeps for a huddle (the AI notes canvas, with its transcript
+    // when allowed; never audio) and what the token needs.
+    function kbSlackHuddlesHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const chans = (c && c.scope && c.scope.channels) || '';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Huddle notes are triaged in the Inbox, not here.</span></div>';
+      const scopeHint = /needs scope/i.test(a.message || '') ? '<div class="kc-error" data-kb-slack-huddles-scope>The Slack token is missing a scope: add it on the app (OAuth &amp; Permissions), reinstall the app and click Check.</div>' : '';
+      const channelHint = /\/invite/.test(a.message || '') ? '<div class="kc-error" data-kb-slack-huddles-invite>The app is not in ' + (chans ? '<code>' + escapeHtml(chans) + '</code>' : 'the channel') + ': run <code>/invite @your-app</code> there and click Check.</div>' : '';
+      return scopeHint + channelHint + '<p class="muted-xs" data-kb-slack-huddles-help>Slack never records huddle audio. What it keeps is the <strong>AI notes canvas</strong> Slack posts in the huddle thread when someone turns on AI notes (paid plans), with the transcript embedded when the workspace allows it. The hive reads the huddle messages of ' + (chans ? '<code>' + escapeHtml(chans) + '</code>' : 'the configured channels') + ' (<code>conversations.history</code>), finds the notes canvas in the thread and reads it with <code>canvases.getContent</code>; huddles without notes are skipped. Inbox items are text only, with no playback.</p>';
+    }
+    // Fireflies: an API key has no browser step; the card says where the key
+    // comes from and that playback needs a Pro plan (audio_url).
+    function kbFirefliesHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-fireflies-playback>Meetings are triaged in the Inbox. ▶ Play uses Fireflies\' 24-hour audio link (Pro plan or higher).</span></div>';
+      const paid = /paid_required|Pro plan/i.test(a.message || '') ? '<div class="kc-error" data-kb-fireflies-paid>Fireflies answered that this needs a paid plan (Pro or higher).</div>' : '';
+      const limited = /too_many_requests|rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-fireflies-ratelimit>Fireflies rate-limited the API key; the next sync retries (Free plan: 500 requests a day).</div>' : '';
+      return paid + limited + '<p class="muted-xs" data-kb-fireflies-help>Fireflies.ai keeps a transcript, speakers and an AI summary for every meeting its notetaker joined. The hive reads them with the <a href="https://docs.fireflies.ai/graphql-api/query/transcripts" target="_blank" rel="noopener">Fireflies GraphQL API</a> (<code>transcripts</code>, 50 per page) using the API key from <strong>Fireflies → Integrations → Fireflies API</strong>. ' + (c && c.scope && /^true$/i.test(c.scope.mine || '') ? 'Only meetings you organized are read.' : 'Every meeting the key\'s owner can see is read.') + ' Click Check to verify the key.</p>';
+    }
+    // Fathom: an API key has no browser step; the card says which meetings
+    // the key sees and how playback works (a recording download Fathom
+    // prepares on request).
+    function kbFathomHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-fathom-playback>Meetings are triaged in the Inbox. ▶ Play asks Fathom for a recording download; video can take a minute to prepare, so click again if it is not ready.</span></div>';
+      const limited = /rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-fathom-ratelimit>Fathom rate-limited the API key (60 calls a minute, 30 for transcripts and summaries); the next sync retries.</div>' : '';
+      const recorders = (c && c.scope && c.scope.recorded_by) || '';
+      return limited + '<p class="muted-xs" data-kb-fathom-help>Fathom keeps a transcript, an AI summary and action items for every call its notetaker recorded. The hive reads them with the <a href="https://developers.fathom.ai/api-reference/meetings/list-meetings" target="_blank" rel="noopener">Fathom API</a> (<code>GET /meetings</code>) using an API key from <strong>Fathom → User Settings → API Access</strong>. The key sees the meetings its user recorded and the ones shared with them or their team' + (recorders ? ', limited here to <code>' + escapeHtml(recorders) + '</code>' : '') + '. Click Check to verify the key.</p>';
+    }
+    // Limitless: an API key has no browser step; the card says the API reads
+    // Pendant lifelogs only and that audio stays behind the key (no playback).
+    function kbLimitlessHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Pendant conversations are triaged in the Inbox, not here.</span></div>';
+      const limited = /rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-limitless-ratelimit>Limitless rate-limited the API key (180 requests a minute); the next sync retries.</div>' : '';
+      const starred = c && c.scope && /^true$/i.test(c.scope.starred_only || '');
+      return limited + '<p class="muted-xs" data-kb-limitless-help>The Limitless Pendant records conversations and Limitless transcribes them into <strong>lifelogs</strong>. The hive reads them with the <a href="https://www.limitless.ai/developers" target="_blank" rel="noopener">Limitless Developer API</a> (<code>GET /v1/lifelogs</code>, Pendant data only) using an API key from the Limitless app\'s Developer settings' + (starred ? ', starred lifelogs only' : '') + '. Pendant audio is served only behind the key, so Inbox items are text only, with no playback. Click Check to verify the key.</p>';
+    }
+    // Granola: an API key has no browser step; the card says which notes the
+    // key can read and that Granola keeps no audio.
+    function kbGranolaHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Meeting notes are triaged in the Inbox, not here.</span></div>';
+      const limited = /rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-granola-ratelimit>Granola rate-limited the API key; the next sync retries.</div>' : '';
+      const where = (c && c.scope && (c.scope.folder || c.scope.space)) || '';
+      return limited + '<p class="muted-xs" data-kb-granola-help>Granola writes AI notes and a transcript for each meeting on your device and keeps no audio. The hive reads the notes with the <a href="https://docs.granola.ai/introduction" target="_blank" rel="noopener">Granola API</a> (<code>GET /v1/notes</code>) using an API key (<code>grn_…</code>, Business and Enterprise plans) from Granola\'s API settings' + (where ? ', limited here to <code>' + escapeHtml(where) + '</code>' : '') + '. A personal key reads your notes; a workspace key reads public notes and spaces with API access. Inbox items are text only, with no playback. Click Check to verify the key.</p>';
+    }
+    // Otter.ai: an API key has no browser step; the card says the Public API
+    // needs an Enterprise workspace and how playback works.
+    function kbOtterHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-otter-playback>Conversations are triaged in the Inbox. ▶ Play uses Otter\'s MP3 download link, minted per click.</span></div>';
+      const enterprise = /Public API/i.test(a.message || '') ? '<div class="kc-error" data-kb-otter-enterprise>Otter rejected the key. The Public API is available to Enterprise workspaces only; if Integrations → Developer is missing, ask your Otter account manager to turn it on.</div>' : '';
+      const scope = (c && c.scope && c.scope.channel) ? 'the channel <code>' + escapeHtml(c.scope.channel) + '</code>' : (c && c.scope && /^true$/i.test(c.scope.include_shared || '') ? 'your conversations and the ones shared with you' : 'your own conversations');
+      return enterprise + '<p class="muted-xs" data-kb-otter-help>Otter.ai keeps a transcript, an AI summary, an outline and action items for every conversation. The hive reads ' + scope + ' with the <a href="https://help.otter.ai/hc/en-us/articles/36130822688279-Otter-ai-Public-API" target="_blank" rel="noopener">Otter.ai Public API</a> (<code>GET /conversations</code>, Enterprise workspaces) using an API key from <strong>Integrations → Developer</strong>. Click Check to verify the key.</p>';
+    }
     async function kbPlaudAuthLoad(name, refresh) {
       try {
         const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth' + (refresh ? '?refresh=1' : ''));
@@ -3016,6 +3112,13 @@
     function kbOpenTeamsIntegration() { _kbIntegrationSelected = 'teams'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenDiscordIntegration() { _kbIntegrationSelected = 'discord'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenGoogleMeetIntegration() { _kbIntegrationSelected = 'google-meet'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenWebexIntegration() { _kbIntegrationSelected = 'webex'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenSlackHuddlesIntegration() { _kbIntegrationSelected = 'slack-huddles'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenOtterIntegration() { _kbIntegrationSelected = 'otter'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenGranolaIntegration() { _kbIntegrationSelected = 'granola'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenLimitlessIntegration() { _kbIntegrationSelected = 'limitless'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenFathomIntegration() { _kbIntegrationSelected = 'fathom'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenFirefliesIntegration() { _kbIntegrationSelected = 'fireflies'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
 
     // ── Wispr Flow (local dictation history, no sign-in) ──
     function kbWisprFlowSourceLine(c) {

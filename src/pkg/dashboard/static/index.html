@@ -6340,6 +6340,31 @@
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
     }
+    /* Meetings: hive as a live meeting participant (Quorum) */
+    .meetings-panel { display: flex; flex-direction: column; gap: var(--sp-4); }
+    .meetings-join { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto auto; gap: var(--sp-2); align-items: end; }
+    .meetings-join-discord { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-2); }
+    .meetings-join label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
+    .meetings-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+    .meetings-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
+    .meetings-row.is-open { border-color: var(--accent); }
+    .meetings-row-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meetings-live { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--sp-4); }
+    .meetings-transcript { max-height: 28em; overflow: auto; font-size: var(--fs-sm); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
+    .meetings-line { margin: 0 0 var(--sp-1); white-space: pre-wrap; }
+    .meetings-line.is-partial { opacity: 0.6; font-style: italic; }
+    .meetings-who { font-weight: 600; margin-right: var(--sp-1); }
+    .meetings-side { display: flex; flex-direction: column; gap: var(--sp-3); }
+    .meetings-side ul { margin: 0; padding-left: var(--sp-4); font-size: var(--fs-sm); }
+    .meetings-research { display: flex; flex-direction: column; gap: var(--sp-2); font-size: var(--fs-sm); }
+    .meetings-research-item { padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); }
+    .meetings-intents { max-height: 12em; overflow: auto; font-family: var(--font-mono); font-size: var(--fs-xs); }
+    .meetings-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
+    .meetings-effective { font-size: var(--fs-xs); }
+    .meetings-effective td { padding: 0 var(--sp-2) 0 0; vertical-align: top; }
+    @media (max-width: 720px) {
+      .meetings-join, .meetings-join-discord, .meetings-live, .meetings-settings-grid { grid-template-columns: 1fr; }
+    }
     /* Collapsible advisory sections (#1546) */
     .collapse-chevron {
       display: inline-block;
@@ -9174,6 +9199,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="search-section" data-action="ocNavigate" data-arg0="search-section" hidden><span class="oc-nav-emoji">🔍</span><span class="oc-nav-text">Search</span></a>
       <a class="oc-nav-item" data-section="inbox-section" data-action="ocNavigate" data-arg0="inbox-section"><span class="oc-nav-emoji">📥</span><span class="oc-nav-text">Inbox</span><span id="inbox-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
+      <a class="oc-nav-item" data-section="meetings-section" data-action="ocNavigate" data-arg0="meetings-section"><span class="oc-nav-emoji">🎙</span><span class="oc-nav-text">Meetings</span></a>
       <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
     </div>
     <div class="oc-nav-group">
@@ -9648,6 +9674,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="inbox-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Inbox section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📥 Inbox</h2>
     <div class="section-body">
       <div id="inbox-panel" class="inbox-panel"></div>
+    </div>
+  </div>
+  <div class="mt-6 mb-8" id="meetings-section" data-dashboard-section="meetings-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="meetings-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Meetings section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🎙 Meetings</h2>
+    <div class="section-body">
+      <div id="meetings-panel" class="meetings-panel"><p class="muted-xs">Loading meetings…</p></div>
     </div>
   </div>
   <div class="mt-6 mb-8" id="debug-section" data-dashboard-section="debug-section">
@@ -11129,6 +11161,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'search-section': { title: '🔍 Search', summary: 'search' },
       'inbox-section': { title: '📥 Inbox', summary: '0 to triage' },
+      'meetings-section': { title: '🎙 Meetings', summary: 'no live meetings' },
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
@@ -11167,6 +11200,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'sessions-section': { heading: 'Inception (spek)', help: 'Named terminal sessions running command-line AI tools inside Hive; everyone who can see one watches live and one person at a time holds the keyboard.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'search-section': { heading: 'Search', help: 'Find past pull requests, issues, review records and findings across your projects by keyword, with a link to each one.' },
+      'meetings-section': { heading: 'Meetings', help: 'Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.' },
       'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC, send to dibs, or keep as knowledge.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
@@ -49601,6 +49635,13 @@ function burnAreaChart() {
       else if (type === 'teams') html += kbPlaudAuthLine(c.name, type) + kbTeamsConsentHtml(c.name, c);
       else if (type === 'discord') html += kbPlaudAuthLine(c.name, type) + kbDiscordHelpHtml(c.name, c);
       else if (type === 'google-meet') html += kbPlaudAuthLine(c.name, type) + kbGoogleMeetPasteHtml(c.name, c);
+      else if (type === 'webex') html += kbPlaudAuthLine(c.name, type) + kbWebexPasteHtml(c.name, c);
+      else if (type === 'slack-huddles') html += kbPlaudAuthLine(c.name, type) + kbSlackHuddlesHelpHtml(c.name, c);
+      else if (type === 'otter') html += kbPlaudAuthLine(c.name, type) + kbOtterHelpHtml(c.name, c);
+      else if (type === 'granola') html += kbPlaudAuthLine(c.name, type) + kbGranolaHelpHtml(c.name, c);
+      else if (type === 'limitless') html += kbPlaudAuthLine(c.name, type) + kbLimitlessHelpHtml(c.name, c);
+      else if (type === 'fathom') html += kbPlaudAuthLine(c.name, type) + kbFathomHelpHtml(c.name, c);
+      else if (type === 'fireflies') html += kbPlaudAuthLine(c.name, type) + kbFirefliesHelpHtml(c.name, c);
       if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
@@ -49647,6 +49688,13 @@ function burnAreaChart() {
       if (type === 'plaud') html += '<p class="muted-xs" data-kb-plaud-note>Leave the credential source as None: Plaud signs in with its own OAuth flow (Connect on the entry above) and keeps the token in the MCP server\'s own store. Requires Node.js ≥ 20 on the hive host and costs nothing beyond your Plaud plan.</p>';
       if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);
       if (type === 'google-meet') html += kbMeetingAuthFormHTML(type, c);
+      if (type === 'webex') html += kbMeetingAuthFormHTML(type, c);
+      if (type === 'slack-huddles') html += '<p class="muted-xs" data-kb-slack-huddles-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Slack token: a bot token (<code>xoxb-</code>) of an app installed in the workspace and invited to each channel, or a user token (<code>xoxp-</code>) for DMs. Scopes: <code>channels:history</code> and <code>groups:history</code> (plus <code>im:history</code> / <code>mpim:history</code> for DMs), <code>canvases:read</code> and <code>files:read</code> for the notes canvas, <code>users:read</code> for names and <code>channels:read</code> / <code>groups:read</code> for channel names. List the channel ids (C…, G…, D…) under Channels.</p>';
+      if (type === 'otter') html += '<p class="muted-xs" data-kb-otter-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding an Otter.ai API key: in Otter open <strong>Integrations → Developer</strong> and click Create key (Enterprise workspaces; the key is shown once, two per user); enter the NAME of the variable (for example <code>OTTER_API_KEY</code>), never the key itself.</p>';
+      if (type === 'granola') html += '<p class="muted-xs" data-kb-granola-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Granola API key (<code>grn_…</code>): create it in Granola\'s API settings (Business and Enterprise plans) and enter the NAME of the variable (for example <code>GRANOLA_API_KEY</code>), never the key itself.</p>';
+      if (type === 'limitless') html += '<p class="muted-xs" data-kb-limitless-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Limitless API key: in the Limitless desktop or web app open the <strong>Developer</strong> settings and create a key; enter the NAME of the variable (for example <code>LIMITLESS_API_KEY</code>), never the key itself. The Developer API is in beta and reads Pendant data only.</p>';
+      if (type === 'fathom') html += '<p class="muted-xs" data-kb-fathom-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Fathom API key: in Fathom open <strong>User Settings → API Access</strong> and generate a key; enter the NAME of the variable (for example <code>FATHOM_API_KEY</code>), never the key itself. The key sees the meetings its user recorded or that were shared with them or their team.</p>';
+      if (type === 'fireflies') html += '<p class="muted-xs" data-kb-fireflies-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Fireflies API key: in Fireflies open <strong>Integrations → Fireflies API</strong> and copy the key; enter the NAME of the variable (for example <code>FIREFLIES_API_KEY</code>), never the key itself. Audio playback and Deepgram fallback use the meeting audio link, which Fireflies serves on Pro plans and higher.</p>';
       if (type === 'discord') html += '<p class="muted-xs" data-kb-discord-note>Set the credential source to <strong>Environment variable</strong> and enter the NAME of the variable that holds the bot token (for example <code>DISCORD_BOT_TOKEN</code>); the value never passes through the dashboard. List the server id for scheduled events and the ids of the channels where finished recordings are posted.</p>';
       html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
       html += '<div class="hive-dialog-error" role="alert" data-kb-kc-msg></div>';
@@ -49717,6 +49765,11 @@ function burnAreaChart() {
         html += field('client_secret_env', 'OAuth client secret env var (user-level only)', 'GOOGLE_MEET_CLIENT_SECRET');
         html += '</div>';
         html += '<p class="muted-xs" data-kb-google-meet-note>User-level OAuth: leave the credential source as None. In Google Cloud enable the <strong>Google Meet REST API</strong> and the <strong>Google Drive API</strong>, configure the OAuth consent screen with the scopes <code>meetings.space.readonly</code> and <code>drive.meet.readonly</code>, create an OAuth client (Web application) whose authorized redirect URI is the redirect URL above, and put its id and secret in the hive\'s environment under the variable names you enter here. Tokens are kept at <code>/data/knowledge/connector-state/&lt;name&gt;/home/.google-meet/tokens.json</code> (0600). Service account: leave the client id/secret fields empty, set the credential source to the environment variable or file holding the service-account key JSON, list the Workspace users to read under Users, and have a Workspace super admin authorize the service account\'s client id for <code>https://www.googleapis.com/auth/meetings.space.readonly</code> and <code>https://www.googleapis.com/auth/drive.meet.readonly</code> in Admin console → Security → API controls → Domain-wide delegation.</p>';
+      } else if (type === 'webex') {
+        html += field('client_id_env', 'Integration client ID env var', 'WEBEX_CLIENT_ID');
+        html += field('client_secret_env', 'Integration client secret env var', 'WEBEX_CLIENT_SECRET');
+        html += '</div>';
+        html += '<p class="muted-xs" data-kb-webex-note>Leave the credential source as None. On developer.webex.com create an <strong>Integration</strong> with the redirect URL above and the scopes <code>meeting:recordings_read</code>, <code>meeting:transcripts_read</code>, <code>meeting:summaries_read</code> (needs Webex AI Assistant), <code>meeting:participants_read</code> and <code>spark:people_read</code>, and put its client id and secret in the hive\'s environment under the variable names you enter here (narrow the request with the <code>oauth_scopes</code> scope key when the integration has fewer). Tokens are kept at <code>/data/knowledge/connector-state/&lt;name&gt;/home/.webex/tokens.json</code> (0600).</p>';
       } else {
         html += field('tenant_id_env', 'Tenant ID env var', 'TEAMS_TENANT_ID');
         html += field('client_id_env', 'Client (application) ID env var', 'TEAMS_CLIENT_ID');
@@ -49780,7 +49833,7 @@ function burnAreaChart() {
     // Cached per connector name; loaded lazily when the card renders. The
     // kbPlaud* functions serve every KB_AUTH_TYPES type; the label follows
     // the connector type.
-    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet' };
+    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', fireflies: 'Fireflies', fathom: 'Fathom', limitless: 'Limitless', granola: 'Granola', otter: 'Otter' };
     const _kbPlaudAuth = {};
     function kbAuthLabel(name, type) {
       if (!type) { const c = (_kcState.connectors || []).find(x => x.name === name); type = c && c.type; }
@@ -49870,6 +49923,83 @@ function burnAreaChart() {
         '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="2" placeholder="' + escapeHtml(redirect) + '?state=…&amp;code=…"></textarea>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
     }
+    // Webex integration on a hosted hive: the registered redirect is a
+    // localhost address the browser cannot reach, so the operator pastes the
+    // URL it landed on (same endpoint as Plaud, Zoom and Google Meet).
+    function kbWebexPasteHtml(name, c) {
+      const n = escapeHtml(name);
+      const a = _kbPlaudAuth[name] || {};
+      const redirect = (c && c.scope && c.scope.redirect_uri) || 'http://localhost:8199/webex/callback';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-webex-playback>Recordings play in the Inbox through Webex\'s temporary direct download link (minted per click, valid 3 hours); transcripts and AI Assistant summaries sync as text.</span></div>';
+      return '<details class="kb-plaud-paste mt-2" data-kb-webex-paste><summary class="muted-xs">Finish Webex sign-in by pasting the redirect URL</summary>' +
+        '<p class="muted-xs">Registration: on developer.webex.com → My Webex Apps create an <strong>Integration</strong> with <code>' + escapeHtml(redirect) + '</code> as its redirect URI and the scopes <code>meeting:recordings_read</code>, <code>meeting:transcripts_read</code>, <code>meeting:summaries_read</code>, <code>meeting:participants_read</code>, <code>spark:people_read</code>, and put its client id and secret in the hive environment under the variable names in the form. Then click <strong>Connect Webex</strong>, approve in the browser, and paste the <code>' + escapeHtml(redirect) + '?code=…&amp;state=…</code> URL the browser lands on (a connection error page is expected) within 10 minutes.</p>' +
+        '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="2" placeholder="' + escapeHtml(redirect) + '?code=…&amp;state=…"></textarea>' +
+        '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
+    }
+    // Slack huddles: a bot or user token has no browser step; the card says
+    // what Slack keeps for a huddle (the AI notes canvas, with its transcript
+    // when allowed; never audio) and what the token needs.
+    function kbSlackHuddlesHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const chans = (c && c.scope && c.scope.channels) || '';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Huddle notes are triaged in the Inbox, not here.</span></div>';
+      const scopeHint = /needs scope/i.test(a.message || '') ? '<div class="kc-error" data-kb-slack-huddles-scope>The Slack token is missing a scope: add it on the app (OAuth &amp; Permissions), reinstall the app and click Check.</div>' : '';
+      const channelHint = /\/invite/.test(a.message || '') ? '<div class="kc-error" data-kb-slack-huddles-invite>The app is not in ' + (chans ? '<code>' + escapeHtml(chans) + '</code>' : 'the channel') + ': run <code>/invite @your-app</code> there and click Check.</div>' : '';
+      return scopeHint + channelHint + '<p class="muted-xs" data-kb-slack-huddles-help>Slack never records huddle audio. What it keeps is the <strong>AI notes canvas</strong> Slack posts in the huddle thread when someone turns on AI notes (paid plans), with the transcript embedded when the workspace allows it. The hive reads the huddle messages of ' + (chans ? '<code>' + escapeHtml(chans) + '</code>' : 'the configured channels') + ' (<code>conversations.history</code>), finds the notes canvas in the thread and reads it with <code>canvases.getContent</code>; huddles without notes are skipped. Inbox items are text only, with no playback.</p>';
+    }
+    // Fireflies: an API key has no browser step; the card says where the key
+    // comes from and that playback needs a Pro plan (audio_url).
+    function kbFirefliesHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-fireflies-playback>Meetings are triaged in the Inbox. ▶ Play uses Fireflies\' 24-hour audio link (Pro plan or higher).</span></div>';
+      const paid = /paid_required|Pro plan/i.test(a.message || '') ? '<div class="kc-error" data-kb-fireflies-paid>Fireflies answered that this needs a paid plan (Pro or higher).</div>' : '';
+      const limited = /too_many_requests|rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-fireflies-ratelimit>Fireflies rate-limited the API key; the next sync retries (Free plan: 500 requests a day).</div>' : '';
+      return paid + limited + '<p class="muted-xs" data-kb-fireflies-help>Fireflies.ai keeps a transcript, speakers and an AI summary for every meeting its notetaker joined. The hive reads them with the <a href="https://docs.fireflies.ai/graphql-api/query/transcripts" target="_blank" rel="noopener">Fireflies GraphQL API</a> (<code>transcripts</code>, 50 per page) using the API key from <strong>Fireflies → Integrations → Fireflies API</strong>. ' + (c && c.scope && /^true$/i.test(c.scope.mine || '') ? 'Only meetings you organized are read.' : 'Every meeting the key\'s owner can see is read.') + ' Click Check to verify the key.</p>';
+    }
+    // Fathom: an API key has no browser step; the card says which meetings
+    // the key sees and how playback works (a recording download Fathom
+    // prepares on request).
+    function kbFathomHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-fathom-playback>Meetings are triaged in the Inbox. ▶ Play asks Fathom for a recording download; video can take a minute to prepare, so click again if it is not ready.</span></div>';
+      const limited = /rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-fathom-ratelimit>Fathom rate-limited the API key (60 calls a minute, 30 for transcripts and summaries); the next sync retries.</div>' : '';
+      const recorders = (c && c.scope && c.scope.recorded_by) || '';
+      return limited + '<p class="muted-xs" data-kb-fathom-help>Fathom keeps a transcript, an AI summary and action items for every call its notetaker recorded. The hive reads them with the <a href="https://developers.fathom.ai/api-reference/meetings/list-meetings" target="_blank" rel="noopener">Fathom API</a> (<code>GET /meetings</code>) using an API key from <strong>Fathom → User Settings → API Access</strong>. The key sees the meetings its user recorded and the ones shared with them or their team' + (recorders ? ', limited here to <code>' + escapeHtml(recorders) + '</code>' : '') + '. Click Check to verify the key.</p>';
+    }
+    // Limitless: an API key has no browser step; the card says the API reads
+    // Pendant lifelogs only and that audio stays behind the key (no playback).
+    function kbLimitlessHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Pendant conversations are triaged in the Inbox, not here.</span></div>';
+      const limited = /rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-limitless-ratelimit>Limitless rate-limited the API key (180 requests a minute); the next sync retries.</div>' : '';
+      const starred = c && c.scope && /^true$/i.test(c.scope.starred_only || '');
+      return limited + '<p class="muted-xs" data-kb-limitless-help>The Limitless Pendant records conversations and Limitless transcribes them into <strong>lifelogs</strong>. The hive reads them with the <a href="https://www.limitless.ai/developers" target="_blank" rel="noopener">Limitless Developer API</a> (<code>GET /v1/lifelogs</code>, Pendant data only) using an API key from the Limitless app\'s Developer settings' + (starred ? ', starred lifelogs only' : '') + '. Pendant audio is served only behind the key, so Inbox items are text only, with no playback. Click Check to verify the key.</p>';
+    }
+    // Granola: an API key has no browser step; the card says which notes the
+    // key can read and that Granola keeps no audio.
+    function kbGranolaHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Meeting notes are triaged in the Inbox, not here.</span></div>';
+      const limited = /rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-granola-ratelimit>Granola rate-limited the API key; the next sync retries.</div>' : '';
+      const where = (c && c.scope && (c.scope.folder || c.scope.space)) || '';
+      return limited + '<p class="muted-xs" data-kb-granola-help>Granola writes AI notes and a transcript for each meeting on your device and keeps no audio. The hive reads the notes with the <a href="https://docs.granola.ai/introduction" target="_blank" rel="noopener">Granola API</a> (<code>GET /v1/notes</code>) using an API key (<code>grn_…</code>, Business and Enterprise plans) from Granola\'s API settings' + (where ? ', limited here to <code>' + escapeHtml(where) + '</code>' : '') + '. A personal key reads your notes; a workspace key reads public notes and spaces with API access. Inbox items are text only, with no playback. Click Check to verify the key.</p>';
+    }
+    // Otter.ai: an API key has no browser step; the card says the Public API
+    // needs an Enterprise workspace and how playback works.
+    function kbOtterHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-otter-playback>Conversations are triaged in the Inbox. ▶ Play uses Otter\'s MP3 download link, minted per click.</span></div>';
+      const enterprise = /Public API/i.test(a.message || '') ? '<div class="kc-error" data-kb-otter-enterprise>Otter rejected the key. The Public API is available to Enterprise workspaces only; if Integrations → Developer is missing, ask your Otter account manager to turn it on.</div>' : '';
+      const scope = (c && c.scope && c.scope.channel) ? 'the channel <code>' + escapeHtml(c.scope.channel) + '</code>' : (c && c.scope && /^true$/i.test(c.scope.include_shared || '') ? 'your conversations and the ones shared with you' : 'your own conversations');
+      return enterprise + '<p class="muted-xs" data-kb-otter-help>Otter.ai keeps a transcript, an AI summary, an outline and action items for every conversation. The hive reads ' + scope + ' with the <a href="https://help.otter.ai/hc/en-us/articles/36130822688279-Otter-ai-Public-API" target="_blank" rel="noopener">Otter.ai Public API</a> (<code>GET /conversations</code>, Enterprise workspaces) using an API key from <strong>Integrations → Developer</strong>. Click Check to verify the key.</p>';
+    }
     async function kbPlaudAuthLoad(name, refresh) {
       try {
         const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth' + (refresh ? '?refresh=1' : ''));
@@ -49944,6 +50074,13 @@ function burnAreaChart() {
     function kbOpenTeamsIntegration() { _kbIntegrationSelected = 'teams'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenDiscordIntegration() { _kbIntegrationSelected = 'discord'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenGoogleMeetIntegration() { _kbIntegrationSelected = 'google-meet'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenWebexIntegration() { _kbIntegrationSelected = 'webex'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenSlackHuddlesIntegration() { _kbIntegrationSelected = 'slack-huddles'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenOtterIntegration() { _kbIntegrationSelected = 'otter'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenGranolaIntegration() { _kbIntegrationSelected = 'granola'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenLimitlessIntegration() { _kbIntegrationSelected = 'limitless'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenFathomIntegration() { _kbIntegrationSelected = 'fathom'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenFirefliesIntegration() { _kbIntegrationSelected = 'fireflies'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
 
     // ── Wispr Flow (local dictation history, no sign-in) ──
     function kbWisprFlowSourceLine(c) {
@@ -49958,7 +50095,7 @@ function burnAreaChart() {
     // dibs happens inside the hive via POST /api/inbox/route.
     const INBOX_POLL_MS = 60000;
     const INBOX_BUSY_POLL_MS = 5000;
-    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', 'file-drop': '📎', webhook: '🔗' };
+    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
     // Summaries longer than this many characters start collapsed.
     const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
@@ -50020,6 +50157,10 @@ function burnAreaChart() {
       const text = st.status === 'filed' ? label + ' filed' : st.status === 'delegated' ? label + ' handed to agent' : label + ' ' + st.status;
       const title = st.error ? escapeHtml(st.error) : (st.repo ? escapeHtml(st.repo) : '');
       let html = '<span class="kc-pill" data-status="' + status + '" title="' + title + '">' + escapeHtml(text) + '</span>';
+      // A failed route shows its error inline (not only on hover) so a broken
+      // hand-off never reads as silently pending; delegated shows the agent.
+      if (st.status === 'failed' && st.error) html += ' <span class="kc-error muted-xs" role="alert">' + escapeHtml(st.error) + '</span>';
+      else if (st.status === 'delegated' && st.note) html += ' <span class="muted-xs">' + escapeHtml(st.note) + '</span>';
       if (st.url) html += ' <a class="inbox-link" href="' + escapeHtml(st.url) + '" target="_blank" rel="noopener">open ↗</a>';
       if (Array.isArray(st.children) && st.children.length) html += ' <span class="muted-xs">' + st.children.length + ' child issue' + (st.children.length === 1 ? '' : 's') + '</span>';
       return html;
@@ -50042,7 +50183,7 @@ function burnAreaChart() {
         const tx = it.transcribable ? ' Or click 🎧 Transcribe to have this hive transcribe it with Deepgram.' : '';
         // Meeting platforms whose pending items read "<label> has no transcript"
         // (inline so the extracted function stays self-contained in tests).
-        const meetingLabel = { zoom: 'Zoom', teams: 'Teams', 'google-meet': 'Google Meet' }[it.source];
+        const meetingLabel = { zoom: 'Zoom', teams: 'Teams', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', 'fireflies': 'Fireflies', 'fathom': 'Fathom', 'limitless': 'Limitless', 'granola': 'Granola', 'otter': 'Otter' }[it.source];
         if (meetingLabel) return '<div class="inbox-pending muted-xs" title="The platform reports no transcript or summary for this recording yet">Not transcribed yet: ' + meetingLabel + ' has no transcript or summary for this recording (cloud transcription may still be processing or is disabled); the hive re-checks it on every sync.' + tx + '</div>';
         if (it.source === 'discord') return '<div class="inbox-pending muted-xs" title="Discord has no transcripts; none was posted with this recording">Not transcribed yet: Discord has no built-in transcription and no transcript file was posted with this recording; play it here, or post a .vtt/.txt transcript in the same message. The hive re-checks it on every sync.' + tx + '</div>';
         return '<div class="inbox-pending muted-xs" title="The MCP reports no transcript or summary block for this recording">Not transcribed yet in Plaud: open the recording in the Plaud app and run transcription; the hive re-checks it on every sync.' + tx + '</div>';
@@ -50248,7 +50389,7 @@ function burnAreaChart() {
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
-      if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs a <code>spektacular</code> binary on the hive host (<code>inbox.spek.binary</code>) or at least one enabled agent to hand the job to (<code>inbox.spek.agent</code> overrides the default).</p>';
+      if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
       const shown = items.filter(it => _inboxShowProcessed || !it.processed);
       if (owner && shown.length) {
         const sel = _inboxSelected.size;
@@ -50310,7 +50451,7 @@ function burnAreaChart() {
       let body = '<p class="muted-note m-0"><strong>' + escapeHtml(it.title || it.id) + '</strong></p>';
       if (dest === 'spek_rfc') {
         const opts = repos.map(r => '<option value="' + escapeHtml(r) + '"' + (r === def ? ' selected' : '') + '>' + escapeHtml(r) + '</option>').join('');
-        body += '<p class="muted-note">A hive-run <code>spektacular voice</code> turns the transcript into a spec, then files one RFC issue plus child issues on the chosen repository. The children are picked up by the hive like any other issue.</p>' +
+        body += '<p class="muted-note">A hive agent drafts a spec from the transcript with spektacular, then runs <code>spektacular publish</code> to file one RFC issue plus child issues on the chosen repository. The children are picked up by the hive like any other issue.</p>' +
           '<label class="muted-note inbox-field">Repository<select class="field-input field-input-block mt-2" id="inbox-route-repo">' + opts + '</select></label>' +
           (repos.length ? '' : '<p class="kc-error muted-xs">No repositories configured on this hive.</p>');
       } else {
@@ -50565,6 +50706,304 @@ function burnAreaChart() {
         '<p class="muted-xs">Plaud only redirects to <code>localhost:8199</code>. Open the authorization link, approve, then paste the <code>localhost:8199/auth/callback?…</code> URL your browser lands on (within 10 minutes). Alternatively paste the contents of <code>~/.plaud/tokens-mcp.json</code> from a laptop where <code>plaud-mcp</code> is signed in: on macOS run <code>cat ~/.plaud/tokens-mcp.json | pbcopy</code> (Linux: <code>xclip -selection clipboard &lt; ~/.plaud/tokens-mcp.json</code>) to copy it without showing it, then paste below.</p>' +
         '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="3" placeholder="http://localhost:8199/auth/callback?code=…  or  {&quot;access_token&quot;: …}"></textarea>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
+    }
+    // ── Meetings: hive as a live meeting participant (Quorum, #18284) ──
+    // Owner-only. The list comes from GET /api/meetings; an opened meeting
+    // streams its transcript, Spek intents and research over
+    // GET /api/meetings/{id}/ws. /api/events "meeting" frames refresh the list.
+    const MEETINGS_POLL_MS = 60000;
+    // Transcript lines kept in the open panel.
+    const MEETINGS_MAX_LINES = 500;
+    // Intent lines kept in the open panel.
+    const MEETINGS_MAX_INTENTS = 100;
+    const MEETINGS_LIVE_STATES = { requested: 1, joining: 1, lobby: 1, live: 1 };
+    let _meetingsList = null;
+    let _meetingsError = '';
+    let _meetingsOpen = null; // { id, ws, meeting, lines, partial, intents, live }
+    // Ended meetings are inbox items too (source "meeting").
+    if (typeof INBOX_SOURCE_ICONS === 'object' && !INBOX_SOURCE_ICONS.meeting) INBOX_SOURCE_ICONS.meeting = '🎙';
+
+    function meetingsIsOwner() { return window._hiveRole === 'owner'; }
+    function meetingsLabel(m) {
+      if (m.title) return m.title;
+      if (m.platform === 'discord') return 'Discord ' + (m.channel_id || '');
+      return m.url || m.platform || m.id;
+    }
+
+    async function fetchMeetings() {
+      const host = document.getElementById('meetings-panel');
+      if (!host) return;
+      if (!meetingsIsOwner()) {
+        host.innerHTML = '<p class="muted-xs">Meetings are visible to the hive owner only.</p>';
+        return;
+      }
+      try {
+        const r = await fetch('/api/meetings');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { _meetingsList = []; _meetingsError = data.error || ('HTTP ' + r.status); }
+        else { _meetingsList = data.meetings || []; _meetingsError = ''; }
+      } catch (e) { return; }
+      renderMeetings();
+    }
+    dashboardScheduleWork('meetings', fetchMeetings).catch(console.error);
+    dashboardSetInterval('meetings', fetchMeetings, MEETINGS_POLL_MS);
+
+    function meetingsJoinFormHtml() {
+      return '<div class="meetings-join">' +
+        '<label>Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-meetings-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
+        '<label>Title (optional)<input class="kb-search-box" type="text" data-meetings-field="title" placeholder="Weekly sync" autocomplete="off"></label>' +
+        '<label class="inbox-toggle"><input type="checkbox" data-meetings-field="voice"> Voice</label>' +
+        '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsJoin">Send hive to a meeting</button></div>' +
+        '<details class="mt-2"><summary class="muted-xs">Discord voice channel instead</summary><div class="meetings-join-discord mt-2">' +
+        '<label>Guild ID<input class="kb-search-box" type="text" data-meetings-field="guild" autocomplete="off"></label>' +
+        '<label>Voice channel ID<input class="kb-search-box" type="text" data-meetings-field="channel" autocomplete="off"></label></div></details>' +
+        '<div class="hive-dialog-error" role="alert" data-meetings-field="error"></div>';
+    }
+
+    function meetingsRowHtml(m) {
+      const active = !!MEETINGS_LIVE_STATES[m.state];
+      const open = _meetingsOpen && _meetingsOpen.id === m.id;
+      const request = m.state === 'requested' && m.requested_by;
+      if (request) {
+        return '<div class="meetings-row"><span class="badge">join request</span>' +
+          '<span class="meetings-row-title">' + escapeHtml((m.requested_by.name || m.requested_by.id || 'someone') + ' asked hive into ' + meetingsLabel(m)) + '</span>' +
+          '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsApproveRequest" data-arg0="' + escapeHtml(m.id) + '">Approve</button>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button></div>';
+      }
+      return '<div class="meetings-row' + (open ? ' is-open' : '') + '">' +
+        '<span class="badge">' + escapeHtml(m.state || '') + '</span>' +
+        '<span class="meetings-row-title" title="' + escapeHtml(m.url || '') + '">' + escapeHtml(meetingsLabel(m)) + '</span>' +
+        (m.state_reason ? '<span class="muted-xs">' + escapeHtml(m.state_reason) + '</span>' : '') +
+        (m.consent_error && !m.consent_posted_at ? '<span class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</span>' : '') +
+        (m.voice_enabled && !m.voice_capable ? '<span class="muted-xs">joined without voice; replies go to chat</span>' : '') +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +
+        (active ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsToggleVoice" data-arg0="' + escapeHtml(m.id) + '" data-arg1="' + (m.voice_enabled ? 'false' : 'true') + '">' + (m.voice_enabled ? 'Voice on' : 'Voice off') + '</button>' +
+          '<button type="button" class="hv-btn btn-danger btn-sm" data-action="meetingsLeave" data-arg0="' + escapeHtml(m.id) + '">Leave</button>' : '') +
+        '</div>';
+    }
+
+    function renderMeetings() {
+      const host = document.getElementById('meetings-panel');
+      if (!host) return;
+      let html = '';
+      if (_meetingsError) {
+        html += '<p class="kc-error muted-xs">' + escapeHtml(_meetingsError) + '</p>';
+      } else {
+        html += meetingsJoinFormHtml();
+      }
+      const list = _meetingsList || [];
+      html += '<div class="meetings-list">' + (list.length ? list.map(meetingsRowHtml).join('') : (_meetingsError ? '' : '<p class="muted-xs">No meetings yet.</p>')) + '</div>';
+      html += '<div id="meetings-live-panel"></div>';
+      host.innerHTML = html;
+      const liveCount = list.filter(m => MEETINGS_LIVE_STATES[m.state]).length;
+      if (typeof refreshSectionCardShell === 'function') refreshSectionCardShell('meetings-section');
+      if (typeof setSectionSummary === 'function') setSectionSummary('meetings-section', liveCount ? liveCount + ' live' : 'no live meetings');
+      renderMeetingsLive();
+    }
+
+    function meetingsField(name) { return document.querySelector('[data-meetings-field="' + name + '"]'); }
+
+    async function meetingsPost(path, body) {
+      const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return data;
+    }
+
+    async function meetingsJoin() {
+      const err = meetingsField('error');
+      const guild = ((meetingsField('guild') || {}).value || '').trim();
+      const channel = ((meetingsField('channel') || {}).value || '').trim();
+      const body = { title: ((meetingsField('title') || {}).value || '').trim(), voice: !!(meetingsField('voice') || {}).checked };
+      if (guild || channel) { body.platform = 'discord'; body.guild_id = guild; body.channel_id = channel; }
+      else body.url = ((meetingsField('url') || {}).value || '').trim();
+      try {
+        const m = await meetingsPost('/api/meetings', body);
+        showToast('Hive is joining the meeting', 'success');
+        await fetchMeetings();
+        if (m && m.id) meetingsOpenPanel(m.id);
+      } catch (e) { if (err) err.textContent = e.message; }
+    }
+
+    async function meetingsLeave(id) {
+      try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/leave'); showToast('Hive left the meeting', 'success'); }
+      catch (e) { showToast('Leave failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    async function meetingsToggleVoice(id, enabled) {
+      try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/voice', { enabled: enabled === 'true' || enabled === true }); }
+      catch (e) { showToast('Voice change failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    async function meetingsApproveRequest(id) {
+      try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/approve'); showToast('Hive is joining', 'success'); }
+      catch (e) { showToast('Approve failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    async function meetingsDeclineRequest(id) {
+      try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/decline'); }
+      catch (e) { showToast('Decline failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    async function meetingsApprove(id, rid) {
+      try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/research/' + encodeURIComponent(rid) + '/approve'); showToast('Research approved', 'success'); }
+      catch (e) { showToast('Approve failed: ' + e.message, 'error'); }
+    }
+
+    function meetingsClosePanel() {
+      if (_meetingsOpen && _meetingsOpen.ws) { try { _meetingsOpen.ws.close(); } catch (e) { /* already closed */ } }
+      _meetingsOpen = null;
+    }
+
+    function meetingsOpenPanel(id) {
+      const wasOpen = _meetingsOpen && _meetingsOpen.id === id;
+      meetingsClosePanel();
+      if (wasOpen) { renderMeetings(); return; }
+      const proto = location.protocol === 'https:' ? 'wss://' : 'ws://';
+      const ws = new WebSocket(proto + location.host + '/api/meetings/' + encodeURIComponent(id) + '/ws');
+      _meetingsOpen = { id: id, ws: ws, meeting: null, lines: [], partial: null, intents: [], live: null };
+      ws.onmessage = (e) => { try { meetingsOnFrame(JSON.parse(e.data)); } catch (err) { /* ignore malformed frame */ } };
+      ws.onclose = () => { if (_meetingsOpen && _meetingsOpen.ws === ws) _meetingsOpen.ws = null; };
+      renderMeetings();
+    }
+
+    function meetingsOnFrame(f) {
+      const o = _meetingsOpen;
+      if (!o || !f || f.meeting_id !== o.id) return;
+      switch (f.kind) {
+        case 'snapshot':
+          o.meeting = (f.data || {}).meeting || null;
+          o.lines = ((f.data || {}).transcript || []).slice(-MEETINGS_MAX_LINES);
+          o.live = (f.data || {}).live || null;
+          break;
+        case 'meeting': o.meeting = f.data; break;
+        case 'line': {
+          const ev = f.data || {};
+          if (ev.type === 'segment' && !ev.final) { o.partial = ev; break; }
+          o.partial = null;
+          o.lines.push(ev);
+          if (o.lines.length > MEETINGS_MAX_LINES) o.lines.shift();
+          break;
+        }
+        case 'intent':
+          o.intents.push((f.data || {}).intent);
+          if (o.intents.length > MEETINGS_MAX_INTENTS) o.intents.shift();
+          break;
+        case 'research': {
+          const it = (f.data || {}).research;
+          if (!it) break;
+          o.live = o.live || {};
+          const list = o.live.research = o.live.research || [];
+          const i = list.findIndex(x => x.rid === it.rid);
+          if (i >= 0) list[i] = it; else list.push(it);
+          break;
+        }
+        case 'notes': meetingsRefreshLive(o.id); break;
+        case 'spek': meetingsRefreshLive(o.id); break;
+        default: break;
+      }
+      renderMeetingsLive();
+    }
+
+    async function meetingsRefreshLive(id) {
+      try {
+        const r = await fetch('/api/meetings/' + encodeURIComponent(id));
+        if (!r.ok) return;
+        const data = await r.json();
+        if (_meetingsOpen && _meetingsOpen.id === id) { _meetingsOpen.live = data.live || null; renderMeetingsLive(); }
+      } catch (e) { /* transient */ }
+    }
+
+    function meetingsLineHtml(ev, partial) {
+      const who = (ev.speaker && ev.speaker.name) || (ev.author && ev.author.name) || '';
+      return '<p class="meetings-line' + (partial ? ' is-partial' : '') + '"><span class="meetings-who">' + escapeHtml(who) + (ev.type === 'chat' ? ' (chat)' : '') + '</span>' + escapeHtml(ev.text || '') + '</p>';
+    }
+
+    function renderMeetingsLive() {
+      const host = document.getElementById('meetings-live-panel');
+      if (!host) return;
+      const o = _meetingsOpen;
+      if (!o) { host.innerHTML = ''; return; }
+      const live = o.live || {};
+      const notes = live.notes || {};
+      const sections = ['summary', 'decisions', 'actions', 'questions', 'notes'];
+      const notesHtml = sections.filter(s => (notes[s] || []).length).map(s =>
+        '<div><div class="section-label m-0">' + escapeHtml(s) + '</div><ul>' + notes[s].map(n => '<li>' + escapeHtml(n) + '</li>').join('') + '</ul></div>').join('') || '<p class="muted-xs">No notes yet.</p>';
+      const research = (live.research || []).map(it =>
+        '<div class="meetings-research-item"><div><span class="badge">' + escapeHtml(it.status) + '</span> ' + escapeHtml(it.query) + '</div>' +
+        (it.summary ? '<div class="muted-xs">' + escapeHtml(it.summary) + '</div>' : '') +
+        (it.status === 'pending_approval' ? '<button type="button" class="hv-btn btn-primary btn-sm mt-2" data-action="meetingsApprove" data-arg0="' + escapeHtml(o.id) + '" data-arg1="' + escapeHtml(it.rid) + '">Approve research</button>' : '') +
+        '</div>').join('') || '<p class="muted-xs">No research yet.</p>';
+      const lines = o.lines.map(ev => meetingsLineHtml(ev, false)).join('') + (o.partial ? meetingsLineHtml(o.partial, true) : '');
+      const intents = o.intents.map(i => '<div>' + escapeHtml(typeof i === 'string' ? i : JSON.stringify(i)) + '</div>').join('');
+      const spek = live.spek_status ? '<p class="kc-error muted-xs">' + escapeHtml(live.spek_status) + '</p>' :
+        (live.spek_mode ? '<p class="muted-xs">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
+      host.innerHTML = spek + '<div class="meetings-live">' +
+        '<div><div class="section-label m-0">Transcript' + (o.ws ? '' : ' (disconnected)') + '</div><div class="meetings-transcript">' + (lines || '<p class="muted-xs">Waiting for the first words…</p>') + '</div></div>' +
+        '<div class="meetings-side"><div><div class="section-label m-0">Notes</div>' + notesHtml + '</div>' +
+        '<div><div class="section-label m-0">Research</div><div class="meetings-research">' + research + '</div></div>' +
+        '<div><div class="section-label m-0">Spek intents</div><div class="meetings-intents">' + (intents || '<p class="muted-xs">None yet.</p>') + '</div></div></div></div>';
+      const tr = host.querySelector('.meetings-transcript');
+      if (tr) tr.scrollTop = tr.scrollHeight;
+    }
+
+    // Settings → Meetings: enable, Vexa gateway, write-only secrets.
+    function renderGovMeetings() {
+      return '<div class="config-section" data-config-section="Meetings"><h3>Meetings</h3>' +
+        '<p class="text-muted fs-base">Send hive into Google Meet, Teams, Zoom or Discord meetings to take notes, ask clarifying questions and run research. ' +
+        yamlHint('meetings.enabled') + ' ' + yamlHint('meetings.vexa.url') + ' ' + yamlHint('meetings.vexa.api_key_file') + ' ' + yamlHint('meetings.discord.token_file') + ' Changes apply after a restart.</p>' +
+        '<div id="meetings-settings-inline"><p class="muted-xs">Loading…</p></div></div>';
+    }
+
+    function meetingsSettingsFormHtml(s) {
+      const eff = s.effective || {};
+      const rows = Object.keys(eff).sort().map(k => '<tr><td><code>' + escapeHtml(k) + '</code></td><td>' + escapeHtml(eff[k]) + '</td></tr>').join('');
+      return '<div class="meetings-settings-form">' +
+        '<label class="inbox-toggle"><input type="checkbox" data-meetings-setting="enabled"' + (s.enabled ? ' checked' : '') + '> Meetings enabled' + (s.enabled_env_override ? ' (set by HIVE_MEETINGS_ENABLED; the toggle has no effect)' : '') + '</label>' +
+        '<p class="muted-xs">' + (s.running ? 'Running on this hive.' : 'Not running on this hive.') + ' Spektacular model: ' + escapeHtml(s.spek_model || '') + '.</p>' +
+        '<div class="meetings-settings-grid">' +
+        '<label class="muted-note inbox-field">Vexa gateway URL<input class="kb-search-box mt-2" type="url" data-meetings-setting="vexa_url" placeholder="https://vexa.example.org" autocomplete="off" value="' + escapeHtml(s.vexa_url || '') + '"></label>' +
+        '<label class="muted-note inbox-field">Vexa tenant key ' + (s.vexa_key_set ? '(set)' : '(not set)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="vexa_api_key" placeholder="leave blank to keep" autocomplete="new-password"></label>' +
+        '<label class="muted-note inbox-field">Discord bot token ' + (s.discord_token_set ? '(set)' : '(not set, optional)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="discord_token" placeholder="leave blank to keep" autocomplete="new-password"></label></div>' +
+        '<details class="mt-4"><summary class="muted-xs">Other meetings settings (hive.yaml or HIVE_MEETINGS_* env)</summary><table class="meetings-effective">' + rows + '</table></details>' +
+        '<div class="hive-dialog-error" role="alert" data-meetings-setting="error"></div>' +
+        '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="meetingsSaveSettings">Save</button></div></div>';
+    }
+
+    async function loadMeetingsSettingsInline() {
+      const host = document.getElementById('meetings-settings-inline');
+      if (!host) return;
+      try {
+        const r = await fetch('/api/meetings/settings');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        host.innerHTML = meetingsSettingsFormHtml(data);
+      } catch (e) {
+        host.innerHTML = '<p class="kc-error muted-xs">Meetings settings unavailable: ' + escapeHtml(e.message) + '</p>';
+      }
+    }
+
+    function meetingsSetting(name) { return document.querySelector('[data-meetings-setting="' + name + '"]'); }
+
+    async function meetingsSaveSettings() {
+      const errEl = meetingsSetting('error');
+      const body = { enabled: !!(meetingsSetting('enabled') || {}).checked, vexa_url: ((meetingsSetting('vexa_url') || {}).value || '').trim() };
+      const key = ((meetingsSetting('vexa_api_key') || {}).value || '').trim();
+      const tok = ((meetingsSetting('discord_token') || {}).value || '').trim();
+      if (key) body.vexa_api_key = key;
+      if (tok) body.discord_token = tok;
+      try {
+        const data = await meetingsPost('/api/meetings/settings', body);
+        showToast(data.restart_required ? 'Meetings settings saved; restart the hive to apply' : 'Meetings settings saved', 'success');
+        const host = document.getElementById('meetings-settings-inline');
+        if (host) host.innerHTML = meetingsSettingsFormHtml(data);
+      } catch (e) {
+        if (errEl) errEl.textContent = e.message; else showToast('Save failed: ' + e.message, 'error');
+      }
     }
     // ── Vault Management ──
 
@@ -60217,6 +60656,12 @@ function burnAreaChart() {
         } catch (err) { hamNotesLoad(); }
       });
 
+      // A meeting hive is in changed state: refresh the Meetings list.
+      source.addEventListener('meeting', () => {
+        noteSSEFrame();
+        if (typeof fetchMeetings === 'function') fetchMeetings();
+      });
+
       source.addEventListener('agent-status', (e) => {
         noteSSEFrame();
         try {
@@ -60405,7 +60850,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Workflows', 'Budget', 'Notifications', 'Channels', 'Health', 'Sensing', 'Logging', 'Features', 'Extensions', 'Knowledge', 'Inbox', 'Project Observability', 'Advisory', 'Smart classifier', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Workflows', 'Budget', 'Notifications', 'Channels', 'Health', 'Sensing', 'Logging', 'Features', 'Extensions', 'Knowledge', 'Inbox', 'Project Observability', 'Meetings', 'Advisory', 'Smart classifier', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -60469,6 +60914,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval auto_merge.nudge_repeat_after governor.labels.stage.contributor_nudge.ci_failure_cooldown governor.labels.stage.presence_window' },
       { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority governor.labels.stage.adoption.supersede.close_first close first superseded reopen copy failed governor.labels.stage.adoption.close_superseded close superseded on adopt on merge clanker authored opt-in label governor.labels.stage.adoption.offline_grace offline grace rebase failed twice fixer resolving conflicts governor.labels.stage.adoption.rebase_attempt_timeout rebase attempt timeout' },
       { tab: 'Inbox', section: 'Inbox', label: 'Inbox routing', key: 'inbox.spek.repo', lazy: true, text: 'inbox voice recordings plaud wispr default rfc repository spek dibs url auto-routing rules inbox.spek.repo inbox.dibs.url inbox.rules transcription transcribe deepgram speech to text diarize consent budget minutes inbox.transcription.enabled inbox.transcription.mode inbox.transcription.provider inbox.transcription.model inbox.transcription.api_key_env inbox.transcription.sources[] inbox.transcription.diarize inbox.transcription.language inbox.transcription.max_duration_minutes inbox.transcription.max_bytes inbox.transcription.monthly_budget_minutes inbox.transcription.daily_max_items inbox.transcription.consent_acknowledged' },
+      { tab: 'Meetings', section: 'Meetings', label: 'Meetings (Quorum)', key: 'meetings.enabled', lazy: true, text: 'meetings quorum vexa discord live meeting notes research google meet teams zoom tenant key bot token meetings.enabled meetings.vexa.url meetings.vexa.api_key_file meetings.discord.token_file' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
       { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff update interval rewrite floor changed digest governor.advisory.update_interval_s governor.advisory.digest_min_interval' },
@@ -61572,6 +62018,7 @@ function burnAreaChart() {
         // The Features tab also hosts the advisor lane settings panel.
         if (tabId === 'Features') loadAdvisorSettings();
         if (tabId === 'Inbox') loadInboxSettingsInline();
+        if (tabId === 'Meetings') loadMeetingsSettingsInline();
         // The same tab carries the upstream-watch editor and divergence view
         // (#9969, #11211); it loads from its own endpoint.
         if (tabId === 'Features') loadUpstreamWatch();
@@ -61789,6 +62236,7 @@ function burnAreaChart() {
         case 'Extensions': return renderGovExtensions(d.features || {});
         case 'Knowledge': return renderGovKnowledgeSharing();
         case 'Inbox': return renderGovInbox();
+        case 'Meetings': return renderGovMeetings();
         case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
         case 'Smart classifier': return renderGovSmartClassifier(d.classifier || {});
@@ -61814,7 +62262,7 @@ function burnAreaChart() {
     }
 
     // ---- Settings → Knowledge → Connectors (#11075) ----
-    const KB_CONNECTOR_TYPE_ORDER = ['confluence', 'context7', 'discord', 'document', 'git', 'github-wiki', 'google-drive', 'google-meet', 'notion', 'plaud', 'repo-wiki', 'sharepoint', 'teams', 'wisprflow', 'zoom'];
+    const KB_CONNECTOR_TYPE_ORDER = ['confluence', 'context7', 'discord', 'document', 'fathom', 'fireflies', 'git', 'github-wiki', 'google-drive', 'google-meet', 'granola', 'limitless', 'notion', 'otter', 'plaud', 'repo-wiki', 'sharepoint', 'slack-huddles', 'teams', 'webex', 'wisprflow', 'zoom'];
     const KC_TYPE_INFO = {
       'confluence': { label: 'Confluence', description: 'Sync Confluence Cloud or Data Center pages into knowledge facts.' },
       'context7': { label: 'Context7', description: 'Sync documentation for default Context7 libraries. The API key is a reference to an environment variable or secret file; the value is never shown.' },
@@ -61828,6 +62276,13 @@ function burnAreaChart() {
       'repo-wiki': { label: 'Repo wiki', description: 'Sync .hive/wiki (or another directory) from one or more GitHub repositories.' },
       'sharepoint': { label: 'SharePoint / OneDrive', description: 'Sync markdown, text, and HTML files from SharePoint document libraries or OneDrive drives.' },
       'google-meet': { label: 'Google Meet recordings', description: 'Sync Google Meet meetings that produced a recording, transcript or Gemini notes through the Meet REST API: user-level OAuth for your own meetings or a service account with domain-wide delegation for Workspace users. One fact per meeting; items land in the Inbox.' },
+      'webex': { label: 'Webex recordings', description: 'Sync Webex Meetings recordings, transcripts and AI Assistant summaries through a Webex integration (OAuth) you register. One fact per meeting; items land in the Inbox with playback.' },
+      'slack-huddles': { label: 'Slack huddle notes', description: 'Sync the AI notes (and transcript, when the workspace allows it) Slack writes for a huddle into the huddle thread, from the channels you list, with a Slack bot or user token. Slack never records huddle audio, so items are text only. One fact per huddle; items land in the Inbox.' },
+      'otter': { label: 'Otter.ai conversations', description: 'Sync Otter.ai conversations: transcript, AI summary, outline and action items, through the Otter.ai Public API (Enterprise workspaces) with an API key. One fact per conversation; items land in the Inbox with playback.' },
+      'granola': { label: 'Granola meeting notes', description: 'Sync Granola meeting notes: the AI notes, your own notes and the transcript, through the Granola API with an API key. Granola keeps no audio, so items are text only. One fact per meeting; items land in the Inbox.' },
+      'limitless': { label: 'Limitless Pendant', description: 'Sync Limitless Pendant lifelogs (transcribed conversations with speakers and topics) through the Limitless Developer API with an API key. One fact per lifelog; items land in the Inbox as text (Pendant audio stays behind the API key).' },
+      'fathom': { label: 'Fathom meetings', description: 'Sync Fathom call recordings: transcript, AI summary and action items, through the Fathom API with an API key. One fact per meeting; items land in the Inbox with playback through Fathom recording downloads.' },
+      'fireflies': { label: 'Fireflies.ai meetings', description: 'Sync Fireflies.ai meeting transcripts, speakers and AI summaries (overview, action items) through the Fireflies GraphQL API with an API key. One fact per meeting; items land in the Inbox with playback (audio link on Pro plans and higher).' },
       'teams': { label: 'Microsoft Teams recordings', description: 'Sync Teams meeting recordings and transcripts for the organizers you list, through Microsoft Graph application permissions (Entra app registration + admin consent). One fact per recorded meeting; items land in the Inbox.' },
       'zoom': { label: 'Zoom recordings', description: 'Sync Zoom cloud recordings (topic, participants, AI summary, transcript) through a Zoom OAuth app you register: user-level OAuth for your own recordings or Server-to-Server for the account. One fact per recorded meeting; items land in the Inbox with playback.' },
       'wisprflow': { label: 'Wispr Flow dictation', description: 'Sync your Wispr Flow dictation history (what you spoke, when, into which app) from the desktop app\'s local flow.sqlite or an export folder. Read-only, no sign-in, $0 beyond your Wispr Flow plan.' }
@@ -61850,6 +62305,13 @@ function burnAreaChart() {
       'zoom': 'M3 6a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v3.2l4.2-2.8a.8.8 0 0 1 1.3.7v9.8a.8.8 0 0 1-1.3.7L16 14.8V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zm2 0v12h9V6z',
       'discord': 'M12 3a8 8 0 0 0-8 8v5a3 3 0 0 0 3 3h1v-7H6v-1a6 6 0 0 1 12 0v1h-2v7h1a3 3 0 0 0 3-3v-5a8 8 0 0 0-8-8z',
       'google-meet': 'M4 5h12a2 2 0 0 1 2 2v2.5l3.2-2.2a.8.8 0 0 1 1.3.6v8.2a.8.8 0 0 1-1.3.6L18 14.5V17a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2zm4 4v6l5-3z',
+      'webex': 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zm0 2a7 7 0 1 1 0 14 7 7 0 0 1 0-14zm-1 3v8l6-4z',
+      'slack-huddles': 'M5 4h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2h-6l-5 4v-4H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zm3 4v5h2V8zm4-1v7h2V7zm4 2v3h2V9z',
+      'otter': 'M12 4c4.4 0 8 2.9 8 7.5S16.4 20 12 20s-8-3.9-8-8.5S7.6 4 12 4zm-3 6a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm6 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2zm-3 3c-1.1 0-2 .6-2 1.3s.9 1.2 2 1.2 2-.5 2-1.2-.9-1.3-2-1.3z',
+      'granola': 'M4 10h16a8 8 0 0 1-16 0zm3-6h2v4H7zm4-1h2v5h-2zm4 1h2v4h-2z',
+      'limitless': 'M12 2a1 1 0 0 1 1 1v2.1a7 7 0 1 1-2 0V3a1 1 0 0 1 1-1zm0 5a5 5 0 1 0 0 10 5 5 0 0 0 0-10zm0 2a3 3 0 1 1 0 6 3 3 0 0 1 0-6z',
+      'fathom': 'M3 14c2-3 4-3 6 0s4 3 6 0 4-3 6 0v2c-2-3-4-3-6 0s-4 3-6 0-4-3-6 0zm0-6c2-3 4-3 6 0s4 3 6 0 4-3 6 0v2c-2-3-4-3-6 0s-4 3-6 0-4-3-6 0z',
+      'fireflies': 'M12 2a3 3 0 0 1 3 3v1.2a5 5 0 0 1 2 4V16a5 5 0 0 1-10 0v-5.8a5 5 0 0 1 2-4V5a3 3 0 0 1 3-3zm-1 9v6h2v-6zM4 8l3 2-1 1.6-3-2zm16 0l1 1.6-3 2-1-1.6z',
       'teams': 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 1a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM3 19a6 6 0 0 1 12 0v1H3zm13.5 1v-1c0-1.6-.5-3-1.3-4.2.5-.2 1.1-.3 1.8-.3a4 4 0 0 1 4 4v1.5z',
       'repo-wiki': 'M4 3h7.2c1.1 0 2 .55 2.8 1.3.8-.75 1.7-1.3 2.8-1.3H20v16h-3.2c-1 0-1.95.4-2.8 1.1V22h-4v-1.9c-.85-.7-1.8-1.1-2.8-1.1H4zm2 2v12h1.2c1.3 0 2.5.4 3.6 1.1V6.2C10.4 5.55 9.6 5 8.8 5zm12 0h-1.2c-.8 0-1.6.55-2 1.2v12.1c1.1-.7 2.3-1.1 3.6-1.1H18z'
     };
@@ -61871,6 +62333,13 @@ function burnAreaChart() {
       'sharepoint': [['drive_ids', 'Drive IDs', 'b!drive-id'], ['site_ids', 'Site IDs', 'contoso.sharepoint.com,site-id,web-id'], ['folder_path', 'Folder path', '/Docs/Sub'], ['include_files', 'Include file extensions', '.md,.txt,.html']],
       'discord': [['guild', 'Server (guild) id, for scheduled events', '111111111111111111'], ['channels', 'Recording channel ids (comma-separated; where recordings are posted)', '222222222222222222'], ['recorder_bots', 'Only messages from these user ids (optional, e.g. the recording bot)', ''], ['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max items per sync', '200'], ['include_events', 'Scheduled events as meeting items', 'true'], ['include_chat', 'Include the event channel chat', 'true'], ['include_participants', 'List interested users', 'true'], ['include_video_link', 'Also store the recording-bot download link in the fact', 'false'], ['link_hosts', 'Recording-bot link hosts (comma-separated)', 'craig.horse, craig.chat'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
       'google-meet': [['users', 'Users to read (service account only: Workspace addresses, comma-separated)', 'alice@example.com, bob@example.com'], ['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max meetings per sync', '200'], ['include_summary', 'Fetch Gemini "Take notes for me" notes as the summary', 'true'], ['include_participants', 'Fetch the participant list', 'true'], ['include_video_link', 'Also store the Drive recording link in the fact', 'false'], ['redirect_uri', 'OAuth redirect URL registered on the client (user-level)', 'http://localhost:8199/google-meet/callback'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'webex': [['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max meetings per sync', '200'], ['include_summary', 'Fetch the AI Assistant summary (meeting:summaries_read)', 'true'], ['include_participants', 'Fetch the participant list (host only)', 'true'], ['include_video_link', 'Also store the Webex playback link in the fact', 'false'], ['site_url', 'Webex site (optional; default: all your sites)', 'acme.webex.com'], ['redirect_uri', 'OAuth redirect URL registered on the integration', 'http://localhost:8199/webex/callback'], ['oauth_scopes', 'OAuth scopes to request (optional override)', 'meeting:recordings_read meeting:transcripts_read'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'slack-huddles': [['channels', 'Channel ids whose huddles to read (comma-separated)', 'C0123ABC, G0456DEF'], ['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max huddles per sync', '200'], ['include_participants', 'List the huddle participants (users:read)', 'true'], ['tags', 'Extra tags (comma-separated)', 'huddles']],
+      'otter': [['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max conversations per sync', '200'], ['include_shared', 'Include conversations shared with you', 'false'], ['channel', 'Only this channel id (optional; overrides shared)', ''], ['include_summary', 'Fetch the summary, outline and action items', 'true'], ['include_participants', 'List the calendar guests', 'true'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'granola': [['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max notes per sync', '200'], ['folder', 'Only this folder id (optional)', ''], ['space', 'Only this space id (optional)', ''], ['include_private_notes', 'Include your own notes', 'true'], ['include_participants', 'List the attendees', 'true'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'limitless': [['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max lifelogs per sync', '200'], ['starred_only', 'Only starred lifelogs', 'false'], ['include_participants', 'List the speakers', 'true'], ['tags', 'Extra tags (comma-separated)', 'pendant']],
+      'fathom': [['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max meetings per sync', '200'], ['recorded_by', 'Only calls recorded by (emails, comma-separated; optional)', 'andy@example.com'], ['teams', 'Only these Fathom teams (comma-separated; optional)', ''], ['include_summary', 'Fetch the AI summary and action items', 'true'], ['include_participants', 'List the calendar invitees', 'true'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
+      'fireflies': [['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max meetings per sync', '200'], ['mine', 'Only meetings you organized', 'false'], ['include_summary', 'Fetch the AI summary (overview, action items)', 'true'], ['include_participants', 'List the attendees', 'true'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
       'teams': [['users', 'Meeting organizers (object ids or UPNs, comma-separated)', '8b081ef6-4792-4def-b2c9-c363a1bf41d5, someone@contoso.example'], ['group', 'Or an Entra group object id (members are the organizers)', ''], ['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max recordings per sync', '200'], ['include_video_link', 'Also store the Teams meeting link in the fact', 'false'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
       'zoom': [['users', 'Recording owners (me, or user ids/emails for Server-to-Server)', 'me'], ['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max recordings per sync', '200'], ['include_summary', 'Fetch the Zoom AI meeting summary (meeting_summary:read)', 'true'], ['include_participants', 'Fetch the participant list (meeting:read past participants)', 'true'], ['include_video_link', 'Also store the Zoom play link in the fact (Inbox playback never needs it)', 'false'], ['redirect_uri', 'OAuth redirect URL registered on the Zoom app (user-level)', 'http://localhost:8199/zoom/callback'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
       'wisprflow': [['path', 'flow.sqlite or export folder (empty = app default)', '/Users/me/Library/Application Support/Wispr Flow/flow.sqlite'], ['since_days', 'Days back on first sync', '30'], ['max_items', 'Max dictations per sync', '500'], ['min_words', 'Skip dictations shorter than (words)', '3'], ['group', 'Fact per dictation or day', 'dictation'], ['apps', 'Only these apps (comma-separated, optional)', 'slack, obsidian, vscode'], ['include_raw', 'Include raw ASR text', 'false'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['sqlite3', 'sqlite3 command (optional)', 'sqlite3']]

@@ -76,7 +76,9 @@ type RouteState struct {
 	// URL is the RFC issue or dibs idea once filed.
 	URL string `json:"url,omitempty"`
 	// Children are the RFC's child issue URLs.
-	Children  []string  `json:"children,omitempty"`
+	Children []string `json:"children,omitempty"`
+	// Note says who took the work on a delegated route (the agent name).
+	Note      string    `json:"note,omitempty"`
 	Error     string    `json:"error,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 }
@@ -141,6 +143,14 @@ type Source interface {
 	Type() string
 	List(ctx context.Context) ([]Item, error)
 	Fetch(ctx context.Context, it Item) (Content, error)
+}
+
+// HandOffSource is optionally implemented by a source that must learn when
+// one of its items has left the inbox: filed or delegated to a destination,
+// or kept as knowledge only. The hive's own meetings use it to erase the
+// transcript upstream once it has been handed off (hivecommons/hive#18293).
+type HandOffSource interface {
+	HandedOff(ctx context.Context, it Item, dest string) error
 }
 
 // Request is one routing request.

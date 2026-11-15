@@ -177,6 +177,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Knowledge connectors](knowledge-connectors.md) — **Owner configuration:** connect, validate, and sync external document/wiki sources; includes scope and API reference.
 - [Inbox and voice sources](inbox-voice-sources.md) — triage Plaud/Wispr Flow recordings into spektacular RFCs, dibs ideas, or knowledge only; hosted-hive Plaud sign-in.
 - [Inbox transcription](inbox-transcription.md) — spoke-local Deepgram transcription of recordings without text, with the owner's own key, budget and consent gate.
+- [Meetings](meetings.md) — send hive into Google Meet, Teams, Zoom or Discord meetings to take notes, ask questions and run research; consent, setup and settings.
 - [Knowledge curator](knowledge-curator.md) — configure fact extraction, sources, vaults, document imports, code maps, and retention.
 - [Knowledge confidence scoring](knowledge-confidence.md) — interpret confidence badges and score explanations.
 - [Knowledge lifecycle states](knowledge-lifecycle.md) — approve, deprecate, or supersede facts and keep stale knowledge out of prompts.
