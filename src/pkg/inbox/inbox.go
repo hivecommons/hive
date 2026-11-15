@@ -55,6 +55,11 @@ type Item struct {
 	Dismissed bool `json:"dismissed,omitempty"`
 	// Processed is true once any route filed or the item was dismissed.
 	Processed bool `json:"processed"`
+	// Transcription is the machine-transcription state, when one ran.
+	Transcription *TranscriptionState `json:"transcription,omitempty"`
+	// Transcribable marks a pending item with audio that may be sent for
+	// machine transcription now (transcription enabled and consented).
+	Transcribable bool `json:"transcribable,omitempty"`
 }
 
 // Key returns the stable "source/id" key used by the state store.
@@ -81,6 +86,9 @@ type Content struct {
 	Title      string `json:"title"`
 	Summary    string `json:"summary"`
 	Transcript string `json:"transcript"`
+	// TranscriptLabel is set when Transcript is a machine transcript made on
+	// this hive: "Transcript (machine: deepgram/nova-3)".
+	TranscriptLabel string `json:"transcript_label,omitempty"`
 	// Highlights lists moments flagged during the recording, when any.
 	Highlights string `json:"highlights,omitempty"`
 	// Markdown is the whole fact body when Summary/Transcript are not split.
@@ -115,6 +123,9 @@ func (c Content) Text() string {
 		return c.Markdown
 	}
 	out := c.Transcript
+	if out != "" && c.TranscriptLabel != "" {
+		out = c.TranscriptLabel + ":\n" + out
+	}
 	if c.Summary != "" {
 		if out != "" {
 			out += "\n\n"

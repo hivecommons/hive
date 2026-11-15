@@ -3,9 +3,10 @@ package connector
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/transcribe"
 )
 
 // AuthState describes a connector's external sign-in. Connectors that own
@@ -321,13 +322,7 @@ func renderPlaudTranscript(text string) string {
 		if content == "" {
 			continue
 		}
-		if ts := plaudTimestamp(m); ts != "" {
-			fmt.Fprintf(&b, "[%s] ", ts)
-		}
-		if sp := plaudString(m, "speaker", "speaker_name", "speaker_id"); sp != "" {
-			b.WriteString(sp + ": ")
-		}
-		b.WriteString(content + "\n")
+		transcribe.WriteLine(&b, plaudTimestamp(m), plaudString(m, "speaker", "speaker_name", "speaker_id"), content)
 	}
 	// Parsed JSON with no segments means the transcript is not ready yet.
 	return b.String()
@@ -339,14 +334,7 @@ func plaudTimestamp(m map[string]any) string {
 		switch v := m[key].(type) {
 		case float64:
 			// Plaud reports segment offsets in milliseconds.
-			d := (time.Duration(v) * time.Millisecond).Round(time.Second)
-			h := int(d.Hours())
-			mm := int(d.Minutes()) % 60
-			ss := int(d.Seconds()) % 60
-			if h > 0 {
-				return fmt.Sprintf("%d:%02d:%02d", h, mm, ss)
-			}
-			return fmt.Sprintf("%02d:%02d", mm, ss)
+			return transcribe.FormatOffset(time.Duration(v) * time.Millisecond)
 		case string:
 			if s := strings.TrimSpace(v); s != "" {
 				return s
