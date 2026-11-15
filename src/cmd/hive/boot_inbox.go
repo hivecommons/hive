@@ -26,12 +26,6 @@ const inboxSweepTimeout = 2 * time.Minute
 // machine transcripts under <baseDir>/connector-state/transcripts.
 func (b *boot) bootInbox(baseDir string) {
 	srcs := b.inboxSources(baseDir, b.cfg.Knowledge.Connectors, b.knowledgeConnectors)
-	token := func(ctx context.Context, _ string) (string, error) {
-		if b.appAuth == nil {
-			return "", nil
-		}
-		return b.appAuth.Token(ctx)
-	}
 	kick := func(agent, prompt string) error {
 		if b.agentMgr == nil {
 			return fmt.Errorf("agent runtime is not available")
@@ -46,7 +40,7 @@ func (b *boot) bootInbox(baseDir string) {
 		return nil
 	}
 	store := inbox.NewStore(filepath.Join(baseDir, "connector-state", "_inbox.json"))
-	svc := inbox.NewService(b.cfg.Inbox, store, srcs, dashboard.NewInboxDestinations(b.cfg, token, kick), b.logger)
+	svc := inbox.NewService(b.cfg.Inbox, store, srcs, dashboard.NewInboxDestinations(b.cfg, kick), b.logger)
 	svc.SetReadiness(dashboard.InboxReadiness(b.cfg))
 	// Machine transcripts stay on this spoke's own data volume; runs only
 	// happen once inbox.transcription is enabled and consented to.

@@ -285,7 +285,7 @@ func (s *Service) deliver(it Item, dest Destination, req Request) {
 	if res.URL == "" && res.Note != "" {
 		status = StatusDelegated
 	}
-	if _, err := s.Store.Set(key, req.Destination, status, res, res.Note); err != nil {
+	if _, err := s.Store.Set(key, req.Destination, status, res, ""); err != nil {
 		s.Logger.Warn("inbox: persist filed state", "item", key, "error", err)
 	}
 	s.Logger.Info("inbox: routed", "item", key, "destination", req.Destination, "status", status, "url", res.URL)
