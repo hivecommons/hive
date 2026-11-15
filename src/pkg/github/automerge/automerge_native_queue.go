@@ -147,7 +147,9 @@ func ownNativeQueueEntry(e *hgithub.NativeMergeQueueEntry, slug string) bool {
 // the PR lost merge eligibility (#15198): a hold, a withdrawn or stale
 // approval, changes requested, a paused or disabled repo, a draft or closed
 // PR, a release in progress, or a human-merge path. Anything else — pending or red checks, behind, a moved head, an
-// API error, a routing observation — keeps the App's queue entry.
+// API error, a routing observation — keeps the App's queue entry. A
+// breaking-change title or an auto_merge.human_merge_labels label added
+// while the PR waits in the queue withdraws it too: no lane merges it.
 func nativeQueueWithdrawReason(reason string) bool {
 	switch reason {
 	case "held", "label:hold", autoMergeReasonLabelBlocked, "label:needs-human", "sentinel", contributorLaneReasonSentinelBlocked, "exempt-label",
@@ -155,7 +157,7 @@ func nativeQueueWithdrawReason(reason string) bool {
 		"queue-approval-missing-head", "queue-approval-head-changed", "self-merge-ban", autoMergeReasonUntrustedMerger,
 		"changes-requested", autoMergeReasonHumanChangesRequested, contributorLaneReasonChangesRequested,
 		nativeQueueReasonPaused, "repo-auto-merge-disabled", relayLaneReasonDisabled,
-		"draft", "closed", releaseInProgressStatusContext, autoMergeReasonHumanMergePath:
+		"draft", "closed", releaseInProgressStatusContext, autoMergeReasonHumanMergePath, autoMergeReasonHumanMergeRequired:
 		return true
 	}
 	return strings.HasPrefix(reason, "label:do-not-merge") || strings.HasPrefix(reason, "excluded-label:") ||
@@ -397,6 +399,7 @@ func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo
 	state, err := t.ReadNativeMergeQueue(ctx, pr.GetNodeID())
 	if err == nil && state.IsInMergeQueue && ownNativeQueueEntry(state.MergeQueueEntry, login) {
 		entryID := state.MergeQueueEntry.ID
+		withdrew := false
 		claim := effects.Claim{Repo: owner + "/" + repo, Kind: effects.KindPullRequestMerge, Target: strconv.Itoa(pr.GetNumber()), Actor: "automerge", Inputs: map[string]string{"operation": "dequeue", "entry": entryID}}
 		observe := func(ctx context.Context) (effects.ExternalState, error) {
 			current, err := t.ReadNativeMergeQueue(ctx, pr.GetNodeID())
@@ -418,8 +421,12 @@ func (c *Engine) reconcileNativeQueueGate(ctx context.Context, lane, owner, repo
 			if err := t.DequeueNativePullRequest(ctx, state.ID); err != nil {
 				return effects.Result{}, err
 			}
+			withdrew = true
 			return effects.Result{Provenance: entryID}, nil
 		})
+		if err == nil && withdrew {
+			c.info("native merge queue entry withdrawn", "repo", owner+"/"+repo, "pr", pr.GetNumber(), "lane", lane, "reason", reason, "entry", entryID)
+		}
 	}
 	if err != nil {
 		c.warn("native merge queue gate reconciliation failed", "repo", owner+"/"+repo, "pr", pr.GetNumber(), "reason", reason, "error", err)

@@ -142,7 +142,9 @@ close an issue. The stage observation carries the reason to the dashboard.
 When the owning lane rejects a PR because it lost merge eligibility — a hold
 or `do-not-merge`/`needs-human` label, a removed merger label, a missing,
 untrusted or stale queue approval, changes requested, a draft or closed PR, a
-release in progress on the repository, or a human-merge-path hold — Hive rechecks the entry's enqueuer and withdraws it only if it belongs to
+release in progress on the repository, a human-merge-path hold, or a
+breaking-change title or `auto_merge.human_merge_labels` label (such as
+`needs-owner-merge`) — Hive rechecks the entry's enqueuer and withdraws it only if it belongs to
 this App (a `Bot` enqueuer whose login matches the App's slug). Every other
 reason, including transient refusals such as `behind`, `not-mergeable`, pending
 checks, a moved head, API read errors, author-routing skips and Hive's own
@@ -150,8 +152,18 @@ native-queue outcomes, leaves the entry for GitHub's queue to settle. Entries
 from a person or another App are preserved.
 The queued sweep also withdraws this App's entries on opted-in repositories
 that are paused or have automerge disabled. Every enqueue and dequeue uses the
-existing mutation boundary, including its write denials. Reconciliation is
-periodic/event-driven, so a gate change can race GitHub's eventual merge.
+existing mutation boundary, including its write denials. The log line
+`native merge queue entry withdrawn` records every withdrawal.
+
+Reconciliation is periodic/event-driven, so a gate change can race GitHub's
+eventual merge. To narrow the window, a `pull_request` `labeled` delivery on
+an open PR in a repository and base in scope wakes the lanes for that PR at
+once (`queue_label_nudge` in the webhook response), with or without the
+forgestate cache; labels the hive's own App adds are skipped. Before this,
+a hive without the cache saw the label only on its next lane tick (about two
+minutes on a twenty-repository hive, up to fifteen): projectbluefin/testsuite#1235
+merged 71 seconds after a person added `hold`. The lane still needs a few
+seconds and GitHub may finish the merge group first.
 
 A queue-required base reports `mergeable_state: blocked` (or `behind`) until
 the PR merges through the queue, so on a queue-enabled base the queued lane
