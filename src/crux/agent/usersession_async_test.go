@@ -210,8 +210,10 @@ func TestNewUserSessionPrivCmdRootChildIsCancelledThroughHelper(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sess.SysProcAttr != nil || sess.Cancel != nil || sess.WaitDelay != tmuxCmdWaitDelay {
-		t.Errorf("session-uid child changed shape: pgid=%v cancel=%v waitDelay=%s", sess.SysProcAttr, sess.Cancel != nil, sess.WaitDelay)
+	// (exec.CommandContext always installs a default Cancel, the plain
+	// Process.Kill, so only the process group and WaitDelay distinguish it.)
+	if sess.SysProcAttr != nil || sess.WaitDelay != tmuxCmdWaitDelay {
+		t.Errorf("session-uid child changed shape: pgid=%v waitDelay=%s", sess.SysProcAttr, sess.WaitDelay)
 	}
 	if _, err := newUserSessionPrivCmd(context.Background(), "", nil, "true"); err == nil {
 		t.Error("empty identity accepted")
