@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -420,16 +421,62 @@ func TestSessionsSendIsQueuedUntilThePaneIsIdle(t *testing.T) {
 	}
 }
 
+// fakeQueueClock is a hand-advanced clock for the queue worker's fail-open
+// deadline, so the test never depends on how fast the machine runs.
+type fakeQueueClock struct {
+	mu  sync.Mutex
+	cur time.Time
+}
+
+func (c *fakeQueueClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.cur
+}
+
+func (c *fakeQueueClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.cur = c.cur.Add(d)
+}
+
+// waitPolls waits until the pane has been read n more times, which gives a
+// "nothing else happened" assertion real polls to be wrong in, without a sleep.
+func (e *sessionTestEnv) waitPolls(t *testing.T, n int) {
+	t.Helper()
+	target := e.rt.captureCount() + n
+	waitSessionsFor(t, "more pane polls", func() bool { return e.rt.captureCount() >= target })
+}
+
 func TestSessionsSendFailsOpenAfterTheDeadline(t *testing.T) {
+	const deadline = time.Minute
 	e := newSessionTestEnv(t, true)
 	fastSessionQueue(t, e)
-	t.Setenv(sessionQueueDeliverAfterEnv, "1")
+	clock := &fakeQueueClock{cur: time.Unix(1_700_000_000, 0)}
+	e.s.sessionQueueTiming.now = clock.Now
+	e.s.sessionQueueTiming.deliverAfter = deadline
 	id := e.create(t, callerRW, "stuck")
 	e.rt.setCapture(claudeBusyPane)
 	if got := e.statusOf(t, callerRW, "POST", "/api/sessions/"+id+"/input", map[string]any{"text": "eventually"}); got != http.StatusAccepted {
 		t.Fatalf("input = %d", got)
 	}
+	// The worker is polling the busy pane; before the deadline nothing is typed.
+	waitSessionsFor(t, "the worker to pick up the head", func() bool {
+		return sessionOf(t, e, callerRW, id)["queue"].(map[string]any)["items"].([]any)[0].(map[string]any)["delivering"] == true
+	})
+	clock.Advance(deadline - time.Second)
+	e.waitPolls(t, 10)
+	if typed := e.rt.typedTexts(); len(typed) != 0 {
+		t.Fatalf("delivered before the deadline: %v", typed)
+	}
+	// Past the deadline the send fails open, and is delivered exactly once.
+	clock.Advance(2 * time.Second)
 	waitSessionsFor(t, "fail-open delivery", func() bool { return len(e.rt.typedTexts()) == 1 })
+	waitSessionsFor(t, "queue to drain", func() bool { return sessionOf(t, e, callerRW, id)["queue"].(map[string]any)["length"] == float64(0) })
+	// The worker has exited with the queue empty, so nothing can type again.
+	if typed := e.rt.typedTexts(); len(typed) != 1 || typed[0] != "eventually" {
+		t.Errorf("typed = %v, want exactly one delivery of the queued text", typed)
+	}
 }
 
 func TestSessionsQueueCancelBoundsAndEndedSession(t *testing.T) {
