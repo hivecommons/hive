@@ -59,6 +59,10 @@ const (
 	sessionUploadFormName = "file"
 
 	auditSessionCreated = "session_created"
+	// auditSessionStarted records the OUTCOME of a background start
+	// (outcome=running or outcome=failed with the reason), since the create
+	// entry is written before the workspace is even cloned.
+	auditSessionStarted = "session_started"
 	auditSessionClosed  = "session_closed"
 	auditSessionRenamed = "session_renamed"
 	auditSessionInput   = "session_input"
@@ -124,6 +128,11 @@ type sessionView struct {
 	// own empty work dir.
 	WorkspaceRepo string `json:"workspace_repo"`
 	Workspace     string `json:"workspace"`
+	// Message (additive) says what a `preparing` session is waiting on; Error
+	// (additive) is why a `failed` session, or a resume that fell back to
+	// `ended`, did not start.
+	Message string `json:"message"`
+	Error   string `json:"error"`
 }
 
 func (s *Server) registerSessionRoutes() {
@@ -236,6 +245,7 @@ func (st sessionRecord) view(p *crux.UserSessionProbe, rt SessionRuntime) sessio
 		CreatedAt: st.CreatedAt, LastActivity: st.LastActivity, Status: st.Status,
 		TmuxName: sessionTmuxPrefix + st.ID, Shared: st.Shared,
 		WorkspaceRepo: st.WorkspaceRepo, Workspace: st.Workspace,
+		Message: st.Message, Error: st.Error,
 	}
 	if st.Status == sessionStatusRunning && p != nil {
 		v.Attached = p.Attached
@@ -257,6 +267,16 @@ func (s *Server) reconcileSessions(rt SessionRuntime, st *sessionStore) map[stri
 	probes := map[string]crux.UserSessionProbe{}
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, rec := range st.list() {
+		if rec.Status == sessionStatusPreparing && !s.sessionStartInFlight(rec.ID) {
+			// Only a restart leaves a preparing record with no goroutine
+			// behind it; nothing will ever move it on, so say so.
+			status := sessionStatusFailed
+			if rec.ResumeCommand != "" {
+				status = sessionStatusEnded
+			}
+			s.markSessionFailed(st, rec.ID, status, sessionRestartedWhilePreparing, now)
+			continue
+		}
 		if rec.Status != sessionStatusRunning {
 			continue
 		}
@@ -358,9 +378,16 @@ func readSmallJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
+// sessionIsLive reports whether a record holds (or is about to hold) a tmux
+// server: running sessions and those still being prepared both count against
+// the caps, or two quick clicks would overshoot them.
+func sessionIsLive(rec sessionRecord) bool {
+	return rec.Status == sessionStatusRunning || rec.Status == sessionStatusPreparing
+}
+
 func (s *Server) liveSessionCounts(st *sessionStore, user string) (total, mine int) {
 	for _, rec := range st.list() {
-		if rec.Status == sessionStatusRunning {
+		if sessionIsLive(rec) {
 			total++
 			if rec.Creator == user {
 				mine++
@@ -445,23 +472,110 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	repo := s.sessionsWorkspaceRepo(rt)
-	rec := sessionRecord{ID: id, Name: body.Name, Group: body.Group, Vendor: vendor.ID, Creator: actor.user, CreatedAt: now, LastActivity: now, Status: sessionStatusRunning, UIDSlot: st.freeSlot(), Shared: body.Shared,
-		WorkspaceRepo: repo, Workspace: rt.WorkspaceDir(repo)}
-	if err := rt.Start(crux.UserSessionSpec{ID: id, Vendor: vendor.ID, UIDSlot: rec.UIDSlot, WorkspaceRepo: repo, SpektacularBinary: s.sessionsSpektacularBinary()}); err != nil {
-		if s.logger != nil {
-			s.logger.Warn("sessions: start failed", "id", id, "vendor", vendor.ID, "error", err)
-		}
-		s.removeSessionFiles(rt, id)
-		jsonError(w, "could not start the session", http.StatusInternalServerError)
-		return
-	}
+	// The record is saved (and answered) as `preparing` BEFORE anything is
+	// started: the first session on a hive clones the whole project
+	// repository, hands it to the sessions group and runs spek init, which
+	// takes minutes and used to outlive the ingress's request timeout (a 504
+	// in the browser for a session that then started anyway). The start runs
+	// in the background and moves the record to running or failed.
+	rec := sessionRecord{ID: id, Name: body.Name, Group: body.Group, Vendor: vendor.ID, Creator: actor.user, CreatedAt: now, LastActivity: now, Status: sessionStatusPreparing, UIDSlot: st.freeSlot(), Shared: body.Shared,
+		WorkspaceRepo: repo, Workspace: rt.WorkspaceDir(repo), Message: s.sessionPreparingMessage(rt, repo, vendor.Label)}
+	s.setSessionStartInFlightLocked(id, true)
 	if err := st.put(rec); err != nil {
-		s.removeSessionFiles(rt, id)
+		s.setSessionStartInFlightLocked(id, false)
 		jsonError(w, "could not save the session", http.StatusInternalServerError)
 		return
 	}
-	s.auditSession(actor.user, auditSessionCreated, auditDetail("session", id, "vendor", vendor.ID))
-	jsonStatusResponse(w, http.StatusCreated, map[string]any{"ok": true, "session": rec.view(&crux.UserSessionProbe{}, rt)})
+	s.auditSession(actor.user, auditSessionCreated, auditDetail("session", id, "vendor", vendor.ID, "status", sessionStatusPreparing))
+	spec := crux.UserSessionSpec{ID: id, Vendor: vendor.ID, UIDSlot: rec.UIDSlot, WorkspaceRepo: repo, SpektacularBinary: s.sessionsSpektacularBinary()}
+	go s.startSessionInBackground(rt, st, spec, actor.user, sessionStatusFailed)
+	jsonStatusResponse(w, http.StatusAccepted, map[string]any{"ok": true, "session": rec.view(&crux.UserSessionProbe{}, rt)})
+}
+
+// sessionRestartedWhilePreparing is the error a preparing record is given when
+// the hive comes back up with no start behind it.
+const sessionRestartedWhilePreparing = "the hive restarted while this session was being prepared; start it again"
+
+// sessionPreparingMessage is the human line a preparing session shows: the
+// first session for a repository clones it, later ones only wait for the
+// vendor to start.
+func (s *Server) sessionPreparingMessage(rt SessionRuntime, repo, vendorLabel string) string {
+	if repo == "" {
+		return "starting " + vendorLabel
+	}
+	if _, err := os.Lstat(rt.WorkspaceDir(repo)); err != nil {
+		return "preparing workspace: cloning " + repo + " (first session on this hive)"
+	}
+	return "preparing workspace " + repo + ", starting " + vendorLabel
+}
+
+// sessionStartInFlight reports whether this process is starting the session.
+func (s *Server) sessionStartInFlight(id string) bool {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	return s.sessionsPreparing[id]
+}
+
+// setSessionStartInFlightLocked records (or clears) an in-flight start. The
+// caller holds sessionsMu.
+func (s *Server) setSessionStartInFlightLocked(id string, inFlight bool) {
+	if s.sessionsPreparing == nil {
+		s.sessionsPreparing = map[string]bool{}
+	}
+	if inFlight {
+		s.sessionsPreparing[id] = true
+		return
+	}
+	delete(s.sessionsPreparing, id)
+}
+
+// startSessionInBackground runs the runtime's Start for a record that was saved
+// as `preparing` and moves it to running, or to failStatus with the error on
+// the record (`failed` for a create, whose sandbox is removed; `ended` for a
+// resume, which keeps the session resumable). Concurrent starts that need the
+// same workspace are serialised inside the runtime, so a second click while
+// the clone runs waits for that clone instead of starting another. Nothing
+// here is tied to the request that asked: the runtime's privileged steps run
+// under their own deadlines.
+func (s *Server) startSessionInBackground(rt SessionRuntime, st *sessionStore, spec crux.UserSessionSpec, user, failStatus string) {
+	err := rt.Start(spec)
+	now := time.Now().UTC().Format(time.RFC3339)
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	s.setSessionStartInFlightLocked(spec.ID, false)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("sessions: start failed", "id", spec.ID, "vendor", spec.Vendor, "error", err)
+		}
+		if failStatus == sessionStatusFailed {
+			s.removeSessionFiles(rt, spec.ID)
+		}
+		reason := redactTokens(err.Error())
+		s.markSessionFailed(st, spec.ID, failStatus, reason, now)
+		s.auditSession(user, auditSessionStarted, auditDetail("session", spec.ID, "vendor", spec.Vendor, "outcome", failStatus, "error", reason))
+		return
+	}
+	if _, _, err := st.update(spec.ID, func(r *sessionRecord) {
+		r.Status, r.LastActivity, r.EndedAt, r.Message, r.Error = sessionStatusRunning, now, "", "", ""
+	}); err != nil && s.logger != nil {
+		s.logger.Warn("sessions: persisting running state failed", "id", spec.ID, "error", err)
+	}
+	s.auditSession(user, auditSessionStarted, auditDetail("session", spec.ID, "vendor", spec.Vendor, "outcome", sessionStatusRunning))
+}
+
+// markSessionFailed records why a start did not happen: status is `failed`
+// for a session that never ran, `ended` for a resume that fell through (the
+// session stays resumable).
+func (s *Server) markSessionFailed(st *sessionStore, id, status, reason, now string) {
+	if _, _, err := st.update(id, func(r *sessionRecord) {
+		r.Status = status
+		if r.EndedAt == "" {
+			r.EndedAt = now
+		}
+		r.Message, r.Error = "", reason
+	}); err != nil && s.logger != nil {
+		s.logger.Warn("sessions: persisting failed state failed", "id", id, "error", err)
+	}
 }
 
 // sessionOwnedBy loads the record and enforces creator-or-owner.
@@ -545,7 +659,13 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if rec.Status == sessionStatusEnded {
+	if rec.Status == sessionStatusPreparing {
+		// A start is in flight; the record changes under it as soon as it
+		// finishes, so the client is asked to come back then.
+		jsonError(w, "session is still being prepared; close it once it is running or failed", http.StatusConflict)
+		return
+	}
+	if rec.Status == sessionStatusEnded || rec.Status == sessionStatusFailed {
 		// Files first: if they cannot be removed the record (and its uid slot)
 		// stays, so the slot is never handed to a new session over old data.
 		if err := rt.Remove(rec.ID); err != nil {
@@ -749,25 +869,32 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A resume reopens the workspace the session was created in (or its own
-	// work dir for a record without one), never a repo configured since.
-	if err := rt.Start(crux.UserSessionSpec{ID: rec.ID, Vendor: rec.Vendor, UIDSlot: rec.UIDSlot, ResumeCommand: cmd,
-		WorkspaceRepo: rec.WorkspaceRepo, SpektacularBinary: s.sessionsSpektacularBinary()}); err != nil {
-		if s.logger != nil {
-			s.logger.Warn("sessions: resume failed", "id", rec.ID, "error", err)
+	// work dir for a record without one), never a repo configured since. Like
+	// a create it is answered as `preparing` and started in the background
+	// (the workspace may have to be cloned again, spek init may run); a
+	// failure puts the session back to ended with the reason, still resumable.
+	vendorLabel := rec.Vendor
+	for _, v := range rt.Vendors() {
+		if v.ID == rec.Vendor && v.Label != "" {
+			vendorLabel = v.Label
 		}
-		jsonError(w, "could not resume the session", http.StatusInternalServerError)
-		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	message := s.sessionPreparingMessage(rt, rec.WorkspaceRepo, vendorLabel)
+	s.setSessionStartInFlightLocked(rec.ID, true)
 	updated, _, err := st.update(rec.ID, func(x *sessionRecord) {
-		x.Status, x.EndedAt, x.LastActivity = sessionStatusRunning, "", now
+		x.Status, x.LastActivity, x.Message, x.Error = sessionStatusPreparing, now, message, ""
 	})
 	if err != nil {
+		s.setSessionStartInFlightLocked(rec.ID, false)
 		jsonError(w, "could not save the session", http.StatusInternalServerError)
 		return
 	}
-	s.auditSession(actor.user, auditSessionCreated, auditDetail("session", rec.ID, "vendor", rec.Vendor, "resumed", "true"))
-	jsonResponse(w, map[string]any{"ok": true, "session": updated.view(&crux.UserSessionProbe{}, rt)})
+	s.auditSession(actor.user, auditSessionCreated, auditDetail("session", rec.ID, "vendor", rec.Vendor, "resumed", "true", "status", sessionStatusPreparing))
+	spec := crux.UserSessionSpec{ID: rec.ID, Vendor: rec.Vendor, UIDSlot: rec.UIDSlot, ResumeCommand: cmd,
+		WorkspaceRepo: rec.WorkspaceRepo, SpektacularBinary: s.sessionsSpektacularBinary()}
+	go s.startSessionInBackground(rt, st, spec, actor.user, sessionStatusEnded)
+	jsonStatusResponse(w, http.StatusAccepted, map[string]any{"ok": true, "session": updated.view(&crux.UserSessionProbe{}, rt)})
 }
 
 // StartSessionSweeper reconciles sessions at start (hive restarted or the pod
@@ -821,7 +948,7 @@ func (s *Server) sweepSessions(now time.Time) {
 				s.logger.Warn("sessions: idle kill failed", "id", rec.ID, "error", err)
 			}
 			s.auditSession("system", auditSessionClosed, auditDetail("session", rec.ID, "reason", "idle"))
-		case sessionStatusEnded:
+		case sessionStatusEnded, sessionStatusFailed:
 			if ended, err := time.Parse(time.RFC3339, rec.EndedAt); err == nil && now.Sub(ended) > sessionEndedRetention {
 				// Files first; a failure keeps the record (and its uid slot)
 				// so the next sweep retries instead of orphaning the data.

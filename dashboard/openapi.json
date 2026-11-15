@@ -38654,7 +38654,7 @@
           "Sessions"
         ],
         "summary": "List sessions, vendors and limits",
-        "description": "Any role. While the feature is off returns enabled=false with empty lists. Also reports workspace {repo, path}: the shared checkout new sessions open in; each session carries workspace_repo and workspace.",
+        "description": "Any role. While the feature is off returns enabled=false with empty lists. Also reports workspace {repo, path}: the shared checkout new sessions open in; each session carries workspace_repo and workspace. A session's status is `preparing` (background start in flight; `message` says what it waits on), `running`, `failed` (`error` says why; DELETE removes it) or `ended`.",
         "responses": {
           "200": {
             "description": "OK"
@@ -38666,10 +38666,10 @@
           "Sessions"
         ],
         "summary": "Create a session (owner or read-write)",
-        "description": "Starts a named CLI session in the hive's shared workspace checkout (spektacular init run for the vendor). Vendor must be a known, allowed, installed backend; never a shell, never a bypass-permissions launch.",
+        "description": "Starts a named CLI session in the hive's shared workspace checkout (spektacular init run for the vendor). Vendor must be a known, allowed, installed backend; never a shell, never a bypass-permissions launch. ASYNCHRONOUS: answers at once with the session in status `preparing` (and a human `message`, e.g. the first session on a hive clones the project repository, which takes minutes); the start runs in the background. Poll GET /api/sessions until the session is `running` or `failed` (then `error` carries the reason and DELETE removes it).",
         "responses": {
-          "201": {
-            "description": "OK"
+          "202": {
+            "description": "Accepted; the session is preparing"
           },
           "400": {
             "description": "Invalid name, group or vendor"
@@ -38922,10 +38922,10 @@
           "Sessions"
         ],
         "summary": "Resume an ended session (owner or read-write)",
-        "description": "Only for vendors with a resume handle.",
+        "description": "Only for vendors with a resume handle. ASYNCHRONOUS like the create: answers at once with the session `preparing`; poll GET /api/sessions until it is `running`, or back to `ended` with `error` set when the start failed (still resumable).",
         "responses": {
-          "200": {
-            "description": "OK"
+          "202": {
+            "description": "Accepted; the session is preparing"
           },
           "403": {
             "description": "Role not allowed"

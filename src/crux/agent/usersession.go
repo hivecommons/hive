@@ -268,6 +268,10 @@ func (r *UserSessionRuntime) Start(spec crux.UserSessionSpec) error {
 	if out, err := r.tmuxAs(uid, spec.ID, "", create...); err != nil {
 		return outputErr("creating user session tmux server", err, out)
 	}
+	if err := r.openSocketDirToAttacher(uid); err != nil {
+		_ = r.killAs(uid, spec.ID)
+		return err
+	}
 	if _, err := r.tmuxAs(uid, spec.ID, "", r.environmentCommands(spec.ID, session, workspace)...); err != nil {
 		_ = r.killAs(uid, spec.ID)
 		return fmt.Errorf("setting session environment: %w", err)

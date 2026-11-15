@@ -231,7 +231,7 @@ func (c *Client) reconcileSignedCommits(ctx context.Context) {
 		owner, name := c.splitRepo(repo)
 		prs, err := c.listOpenPRsForSigning(ctx, owner, name)
 		if err != nil {
-			c.warn("signed-commit reconciler: listing open PRs failed", "repo", owner+"/"+name, "err", err)
+			c.logSignedReadFailure("signed-commit reconciler: listing open PRs failed", err, "repo", owner+"/"+name)
 			continue
 		}
 		prefix := owner + "/" + name + "#"
@@ -260,6 +260,23 @@ func (c *Client) reconcileSignedCommits(ctx context.Context) {
 		}
 		c.signedReconcile.prune(prefix, open)
 	}
+}
+
+// logSignedReadFailure logs a failed reconciler read. Every such read is
+// retried on the next pass (prSignedReconcileInterval), so a transient
+// failure (a transport timeout, a deadline, a rate limit or a 5xx; see
+// isRetryableGitHubError) or a shutdown cancellation is logged at INFO: one
+// slow GitHub minute across a handful of active repos otherwise crossed the
+// fleet selfreport's WARN repeat threshold (hivecommons/hive#18243). Any other
+// failure (401, 403, 404, a malformed response) says something about the repo
+// or the App and stays a WARN.
+func (c *Client) logSignedReadFailure(msg string, err error, args ...any) {
+	args = append(append([]any(nil), args...), "err", err)
+	if isRetryableGitHubError(err) || errors.Is(err, context.Canceled) {
+		c.info(msg+"; retrying next pass", args...)
+		return
+	}
+	c.warn(msg, args...)
 }
 
 func (c *Client) listOpenPRsForSigning(ctx context.Context, owner, repo string) ([]*gh.PullRequest, error) {
@@ -291,7 +308,7 @@ func (c *Client) reconcileSignedPR(ctx context.Context, owner, repo string, pr *
 
 	commits, err := c.listPRRepositoryCommits(ctx, owner, repo, number)
 	if err != nil {
-		c.warn("signed-commit reconciler: listing PR commits failed", append(logArgs, "err", err)...)
+		c.logSignedReadFailure("signed-commit reconciler: listing PR commits failed", err, logArgs...)
 		return ""
 	}
 	if len(commits) == 0 {
@@ -446,7 +463,7 @@ func (c *Client) noteSignedSkip(ctx context.Context, owner, repo string, number 
 	}
 	comments, err := c.listIssueComments(ctx, owner, repo, number)
 	if err != nil {
-		c.warn("signed-commit reconciler: listing PR comments failed", "repo", owner+"/"+repo, "pr", number, "err", err)
+		c.logSignedReadFailure("signed-commit reconciler: listing PR comments failed", err, "repo", owner+"/"+repo, "pr", number)
 		return
 	}
 	for _, cm := range comments {

@@ -7796,6 +7796,17 @@
     .sessions-tab:focus-visible, .sessions-group-toggle:focus-visible { outline: var(--focus-ring-width) solid var(--accent); outline-offset: var(--sp-1); }
     .sessions-tab-dot { width: var(--status-dot-size); height: var(--status-dot-size); border-radius: var(--r-pill); background: var(--muted); }
     .sessions-tab-dot[data-status="running"] { background: var(--green); }
+    .sessions-tab-dot[data-status="failed"] { background: var(--red); }
+    .sessions-tab.failed .sessions-tab-name { color: var(--red); }
+    /* Preparing: the dot is replaced by a spinner (same footprint), reusing
+       the toast spinner's `spin` keyframes (alerts-toasts.css). */
+    .sessions-spinner { display: inline-block; flex: none; width: var(--status-dot-size); height: var(--status-dot-size); border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); border-radius: var(--r-pill); animation: spin 0.8s linear infinite; }
+    .sessions-status { display: flex; align-items: flex-start; gap: var(--sp-4); padding: var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: var(--card-bg); color: var(--fg); font-size: var(--fs-sm); flex-wrap: wrap; }
+    .sessions-status .sessions-spinner { margin-top: var(--sp-1); }
+    .sessions-status-text { flex: 1 1 20em; min-width: 0; overflow-wrap: anywhere; }
+    .sessions-status-failed { border-color: var(--red); }
+    .sessions-status-failed .sessions-status-text { color: var(--red); }
+    .sessions-status .sessions-form-actions { flex: 0 0 100%; }
     .sessions-tab-vendor { color: var(--muted); font-size: var(--fs-xs); }
     .sessions-attached { border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); font-size: var(--fs-xs); cursor: help; }
     .sessions-new { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-5); display: grid; gap: var(--sp-4); background: var(--card-bg); }
@@ -51253,6 +51264,15 @@ function burnAreaChart() {
     const SESSIONS_WRITE_ROLES = Object.freeze(['owner', 'read-write']);
     const SESSIONS_STATUS_RUNNING = 'running';
     const SESSIONS_STATUS_ENDED = 'ended';
+    // A session is `preparing` from the create (202) until the background
+    // start (workspace clone on the first session, spek init, tmux) finishes;
+    // then `running`, or `failed` with the error on the record.
+    const SESSIONS_STATUS_PREPARING = 'preparing';
+    const SESSIONS_STATUS_FAILED = 'failed';
+    // While a session is preparing the list is polled faster than the regular
+    // SESSIONS_POLL_MS so the tab flips to a terminal soon after it starts.
+    const SESSIONS_PREPARING_POLL_MS = 2000;
+    const SESSIONS_PREPARING_HINT = 'this can take a couple of minutes on the first session of a hive, while the project repository is cloned.';
     const SESSIONS_TYPING_NOTE = 'Number of browsers attached to this terminal. Everyone attached shares the same keyboard, and typing is not attributed to individual users.';
     const SESSIONS_HEADER_CONTENT_TYPE = 'Content-Type';
 
@@ -51264,6 +51284,7 @@ function burnAreaChart() {
     let _sessionsNewOpen = false;
     let _sessionsLogTimerOn = false;
     let _sessionsAssertionTimerOn = false;
+    let _sessionsPrepPollOn = false;
     const _sessionsFrames = {};
     const _sessionsFrameFailed = {};
     // Extension slot for the input bar: other features (for example future
@@ -51326,7 +51347,31 @@ function burnAreaChart() {
     function sessionsViewMode(role, session) {
       if (!session) return 'none';
       if (session.status === SESSIONS_STATUS_ENDED) return 'ended';
+      if (session.status === SESSIONS_STATUS_PREPARING) return 'preparing';
+      if (session.status === SESSIONS_STATUS_FAILED) return 'failed';
       return sessionsRoleCanWrite(role) ? 'terminal' : 'scrollback';
+    }
+    // Running and preparing sessions both hold (or are about to hold) a slot.
+    function sessionsIsLive(s) {
+      return !!s && (s.status === SESSIONS_STATUS_RUNNING || s.status === SESSIONS_STATUS_PREPARING);
+    }
+    function sessionsHasPreparing(sessions) {
+      return (sessions || []).some(function(s) { return s && s.status === SESSIONS_STATUS_PREPARING; });
+    }
+    // The line shown in a preparing or failed tab: the server's message
+    // ("preparing workspace: cloning org/repo (first session on this hive)")
+    // with a hint about how long it takes, or the stored start error.
+    function sessionsStatusText(s) {
+      if (!s) return '';
+      if (s.status === SESSIONS_STATUS_PREPARING) {
+        const msg = String(s.message || 'preparing the session').trim();
+        return msg.charAt(0).toUpperCase() + msg.slice(1) + '… ' + SESSIONS_PREPARING_HINT;
+      }
+      if (s.status === SESSIONS_STATUS_FAILED) {
+        return 'Could not start this session: ' + String(s.error || 'unknown error') + '.';
+      }
+      if (s.status === SESSIONS_STATUS_ENDED && s.error) return 'The last resume failed: ' + String(s.error) + '.';
+      return '';
     }
     function sessionsByteLength(text) {
       const s = String(text == null ? '' : text);
@@ -51365,7 +51410,7 @@ function burnAreaChart() {
       const vendors = ((data && data.vendors) || []).filter(function(v) { return v && v.available; });
       if (!vendors.length) return { ok: false, reason: 'No CLI vendor is available on this hive.' };
       const max = Number(data && data.limits && data.limits.max_sessions) || 0;
-      const running = ((data && data.sessions) || []).filter(function(s) { return s && s.status === SESSIONS_STATUS_RUNNING; }).length;
+      const running = ((data && data.sessions) || []).filter(sessionsIsLive).length;
       if (max > 0 && running >= max) return { ok: false, reason: 'This hive is at its limit of ' + max + ' running sessions. Close one first.' };
       return { ok: true, reason: '' };
     }
@@ -51474,13 +51519,19 @@ function burnAreaChart() {
     function sessionsTabHtml(s) {
       const selected = s.id === _sessionsSelected;
       const ended = s.status === SESSIONS_STATUS_ENDED;
+      const preparing = s.status === SESSIONS_STATUS_PREPARING;
+      const failed = s.status === SESSIONS_STATUS_FAILED;
       const attached = Number(s.attached) || 0;
       const badge = attached > 0 ? '<span class="sessions-attached" title="' + esc(SESSIONS_TYPING_NOTE) + '">' + attached + '</span>' : '';
-      return '<button type="button" role="tab" class="sessions-tab' + (selected ? ' active' : '') + (ended ? ' ended' : '') + '" id="sessions-tab-' + esc(s.id) + '"'
-        + ' title="' + esc(sessionsWorkspaceLabel(sessionsSessionWorkspace(s))) + '"'
+      const title = preparing || failed ? sessionsStatusText(s) : sessionsWorkspaceLabel(sessionsSessionWorkspace(s));
+      const dot = preparing
+        ? '<span class="sessions-spinner" role="img" aria-label="Preparing"></span>'
+        : '<span class="sessions-tab-dot" data-status="' + esc(s.status || '') + '"></span>';
+      return '<button type="button" role="tab" class="sessions-tab' + (selected ? ' active' : '') + (ended ? ' ended' : '') + (preparing ? ' preparing' : '') + (failed ? ' failed' : '') + '" id="sessions-tab-' + esc(s.id) + '"'
+        + ' title="' + esc(title) + '"'
         + ' aria-selected="' + selected + '" aria-controls="sessions-pane-' + esc(s.id) + '" tabindex="' + (selected ? '0' : '-1') + '"'
         + ' data-action="sessionsSelect" data-arg0="' + esc(s.id) + '" data-keydown-action="sessionsTabKey" data-arg-types="s,e" data-keys="*" data-arg1="">'
-        + '<span class="sessions-tab-dot" data-status="' + esc(s.status || '') + '"></span>'
+        + dot
         + '<span class="sessions-tab-name">' + esc(s.name || s.id) + '</span>'
         + '<span class="sessions-tab-vendor">' + esc(s.vendor || '') + '</span>' + badge + '</button>';
     }
@@ -51523,11 +51574,16 @@ function burnAreaChart() {
     function sessionsHeaderHtml(s) {
       const canManage = sessionsRoleCanWrite(_sessionsRole);
       const attached = Number(s.attached) || 0;
+      // A preparing session cannot be closed yet (the start is in flight); a
+      // failed one is deleted (or retried from its pane) rather than closed.
+      let closeItem = '<button type="button" class="danger" data-action="sessionsClose" data-arg0="' + esc(s.id) + '">Close session</button>';
+      if (s.status === SESSIONS_STATUS_PREPARING) closeItem = '';
+      else if (s.status === SESSIONS_STATUS_FAILED || s.status === SESSIONS_STATUS_ENDED) closeItem = '<button type="button" class="danger" data-action="sessionsClose" data-arg0="' + esc(s.id) + '">Delete session</button>';
       const menu = canManage
         ? '<details class="sessions-menu"><summary class="hv-btn btn-secondary btn-sm" aria-label="Session actions">⋯</summary><div class="sessions-menu-items">'
           + '<button type="button" data-action="sessionsRename" data-arg0="' + esc(s.id) + '">Rename</button>'
           + '<button type="button" data-action="sessionsRegroup" data-arg0="' + esc(s.id) + '">Change group</button>'
-          + '<button type="button" class="danger" data-action="sessionsClose" data-arg0="' + esc(s.id) + '">Close session</button></div></details>'
+          + closeItem + '</div></details>'
         : '';
       return '<div class="sessions-pane-head"><span class="sessions-pane-title">' + esc(s.name || s.id) + '</span>'
         + '<span class="sessions-pane-meta" title="' + esc(sessionsWorkspaceLabel(sessionsSessionWorkspace(s))) + '">' + esc(s.vendor || '') + ' · started by ' + esc(s.creator || 'unknown') + (s.group ? ' · ' + esc(s.group) : '') + (s.workspace_repo ? ' · ' + esc(s.workspace_repo) : '') + '</span>'
@@ -51554,10 +51610,20 @@ function burnAreaChart() {
     }
     function sessionsPaneBodyHtml(s, mode) {
       if (mode === 'terminal') return '<div class="sessions-terminal" data-terminal-host="' + esc(s.id) + '"></div>' + sessionsInputBarHtml(s);
+      const can = sessionsRoleCanWrite(_sessionsRole);
+      if (mode === 'preparing') {
+        return '<div class="sessions-status sessions-status-preparing" role="status" aria-live="polite"><span class="sessions-spinner" aria-hidden="true"></span>'
+          + '<span class="sessions-status-text">' + esc(sessionsStatusText(s)) + ' The terminal opens here by itself once the session is running.</span></div>';
+      }
+      if (mode === 'failed') {
+        return '<div class="sessions-status sessions-status-failed" role="alert"><span class="sessions-status-text">' + esc(sessionsStatusText(s)) + '</span>'
+          + (can ? '<div class="sessions-form-actions"><button type="button" class="hv-btn btn-primary btn-sm" data-action="sessionsRetry" data-arg0="' + esc(s.id) + '">Retry</button>'
+            + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="sessionsClose" data-arg0="' + esc(s.id) + '">Delete</button></div>' : '') + '</div>';
+      }
       let note;
       if (mode === 'ended') {
-        const can = sessionsRoleCanWrite(_sessionsRole);
-        note = '<div class="sessions-note">This session has ended (the hive restarted or the process exited). Scrollback below is the last output.'
+        const failedResume = s.error ? ' ' + sessionsStatusText(s) : '';
+        note = '<div class="sessions-note">This session has ended (the hive restarted or the process exited). Scrollback below is the last output.' + esc(failedResume)
           + (can ? ' <button type="button" class="hv-btn btn-primary btn-sm" data-action="sessionsResume" data-arg0="' + esc(s.id) + '">Resume</button>' : '') + '</div>';
       } else {
         note = '<div class="sessions-note">Your role can watch this session but not type into it, so you see a read-only scrollback that refreshes every few seconds.</div>';
@@ -51618,10 +51684,19 @@ function burnAreaChart() {
       });
       sessionsEnsureCampaignsPane();
       sessionsShowSelected();
+      sessionsSyncPreparingPoll(sessions);
+    }
+    // Poll faster while any session is preparing, so the tab turns into a
+    // terminal (or shows its failure) within seconds of the start finishing.
+    function sessionsSyncPreparingPoll(sessions) {
+      const want = sessionsHasPreparing(sessions);
+      if (want && !_sessionsPrepPollOn) { _sessionsPrepPollOn = true; dashboardSetInterval('sessions-preparing-poll', loadSessions, SESSIONS_PREPARING_POLL_MS); }
+      if (!want && _sessionsPrepPollOn) { _sessionsPrepPollOn = false; dashboardClearInterval('sessions-preparing-poll'); }
     }
     function sessionsSummary(sessions) {
       const running = (sessions || []).filter(function(s) { return s.status === SESSIONS_STATUS_RUNNING; }).length;
-      return running + ' running · ' + (sessions || []).length + ' total';
+      const preparing = (sessions || []).filter(function(s) { return s.status === SESSIONS_STATUS_PREPARING; }).length;
+      return running + ' running · ' + (preparing ? preparing + ' preparing · ' : '') + (sessions || []).length + ' total';
     }
     function sessionsEnsureCampaignsPane() {
       const host = document.getElementById('sessions-panes');
@@ -51647,6 +51722,7 @@ function burnAreaChart() {
       const s = sessionsSelectedSession();
       if (!s) return;
       const mode = sessionsViewMode(_sessionsRole, s);
+      if (mode === 'preparing' || mode === 'failed') { sessionsStopLogPoll(); return; }
       if (mode === 'terminal' && !_sessionsFrameFailed[s.id]) { sessionsStopLogPoll(); sessionsAttachTerminal(s); } else sessionsStartLogPoll();
     }
 
@@ -51760,13 +51836,45 @@ function burnAreaChart() {
       if (!body.name) { showToast('Give the session a name.', 'error'); return; }
       if (!body.vendor) { showToast('Pick a CLI vendor.', 'error'); return; }
       try {
-        const data = await sessionsApi('', 'POST', body);
+        await sessionsSubmitCreate(body);
         _sessionsNewOpen = false;
-        if (data.session) { _sessionsData.sessions.push(data.session); _sessionsSelected = data.session.id; sessionsStoreSet(SESSIONS_SELECTED_KEY, data.session.id); }
         renderSessions();
-        showToast('Started session ' + body.name + '.', 'success');
-        loadSessions();
       } catch (e) { showToast('Could not start the session: ' + e.message, 'error'); }
+    }
+    // POST the create; the server answers at once with the session in
+    // `preparing` (the clone and start run in the background), so it is added
+    // to the list right away and selected: its tab shows the progress line
+    // until polling sees it running (terminal attaches) or failed.
+    async function sessionsSubmitCreate(body) {
+      const data = await sessionsApi('', 'POST', body);
+      if (data.session) {
+        _sessionsData.sessions = (_sessionsData.sessions || []).filter(function(x) { return x.id !== data.session.id; });
+        _sessionsData.sessions.push(data.session);
+        _sessionsSelected = data.session.id;
+        sessionsStoreSet(SESSIONS_SELECTED_KEY, data.session.id);
+      }
+      // renderSessions leaves the toolbar alone while focus is inside the New
+      // session form (so typing survives polling); the click that got us here
+      // left focus on its button, so drop it or the new tab would wait for
+      // the next poll.
+      if (document.activeElement && document.activeElement.closest && document.activeElement.closest('#sessions-new') && document.activeElement.blur) document.activeElement.blur();
+      renderSessions();
+      showToast('Starting session ' + body.name + '…', 'success');
+      loadSessions();
+      return data.session;
+    }
+    // Retry a failed session: its record is deleted and a new one is created
+    // with the same name, group, vendor and sharing.
+    async function sessionsRetry(id) {
+      const s = (_sessionsData.sessions || []).find(function(x) { return x.id === id; });
+      if (!s) return;
+      const body = { name: s.name || id, group: s.group || '', vendor: s.vendor, shared: !!s.shared };
+      try {
+        await sessionsApi('/' + encodeURIComponent(id), 'DELETE');
+        delete _sessionsFrames[id];
+        _sessionsData.sessions = (_sessionsData.sessions || []).filter(function(x) { return x.id !== id; });
+        await sessionsSubmitCreate(body);
+      } catch (e) { showToast('Could not retry the session: ' + e.message, 'error'); loadSessions(); }
     }
     async function sessionsPatch(id, patch, okMsg) {
       try {
@@ -51791,7 +51899,10 @@ function burnAreaChart() {
     async function sessionsClose(id) {
       const s = (_sessionsData.sessions || []).find(function(x) { return x.id === id; });
       if (!s) return;
-      const ok = await hiveConfirm({ title: 'Close this session?', message: 'Closing "' + (s.name || s.id) + '" ends the CLI process for everyone attached and discards its scrollback.', confirmLabel: 'Close session', danger: true });
+      const gone = s.status === SESSIONS_STATUS_FAILED || s.status === SESSIONS_STATUS_ENDED;
+      const ok = await hiveConfirm(gone
+        ? { title: 'Delete this session?', message: 'Deleting "' + (s.name || s.id) + '" removes its record and files; an ended session can no longer be resumed.', confirmLabel: 'Delete session', danger: true }
+        : { title: 'Close this session?', message: 'Closing "' + (s.name || s.id) + '" ends the CLI process for everyone attached and discards its scrollback.', confirmLabel: 'Close session', danger: true });
       if (!ok) return;
       try {
         await sessionsApi('/' + encodeURIComponent(id), 'DELETE');
@@ -51804,8 +51915,12 @@ function burnAreaChart() {
     }
     async function sessionsResume(id) {
       try {
-        await sessionsApi('/' + encodeURIComponent(id) + '/resume', 'POST', {});
-        showToast('Session resumed.', 'success');
+        const data = await sessionsApi('/' + encodeURIComponent(id) + '/resume', 'POST', {});
+        if (data.session) {
+          _sessionsData.sessions = (_sessionsData.sessions || []).map(function(x) { return x.id === data.session.id ? data.session : x; });
+          renderSessions();
+        }
+        showToast('Resuming session…', 'success');
         await loadSessions();
       } catch (e) { showToast('Could not resume the session: ' + e.message, 'error'); }
     }

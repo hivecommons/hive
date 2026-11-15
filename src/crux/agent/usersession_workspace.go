@@ -44,8 +44,16 @@ const (
 	// userSessionWorkspaceParentMode is the mode of the hive-owned root and
 	// <org> directories: traverse-only, like the sandbox root.
 	userSessionWorkspaceParentMode = 0o711
-	// userSessionWorkspaceCloneTimeout bounds the one-time clone.
+	// userSessionWorkspaceCloneTimeout bounds the one-time clone (git runs as
+	// the hive itself and can be killed when it expires).
 	userSessionWorkspaceCloneTimeout = 10 * time.Minute
+	// userSessionWorkspaceHandoffTimeout bounds the root hand-over of a
+	// finished clone (`chown -R` and two `find -exec chmod` over the whole
+	// tree) and the root removal of a stale staging tree. It is deliberately
+	// the clone's own order of magnitude, NOT userSessionCmdTimeout (10s): on a
+	// repository the size of a real project the hand-over outlives that, and a
+	// cancelled root child is one the hive cannot kill (usersession_priv.go).
+	userSessionWorkspaceHandoffTimeout = 10 * time.Minute
 	// userSessionSpekInitTimeout bounds one `spektacular init`.
 	userSessionSpekInitTimeout = 2 * time.Minute
 	// userSessionWorkspaceStateDirName, under the sessions data dir, holds the
@@ -195,10 +203,12 @@ func (r *UserSessionRuntime) cloneWorkspace(org, name, ws string) error {
 	staging := ws + userSessionWorkspaceCloningSuffix
 	if _, err := os.Lstat(staging); err == nil {
 		// An interrupted earlier clone; it may already be root-owned.
-		if out, err := r.privRun(userSessionRootSpec, nil, "rm", "-rf", "--one-file-system", "--", staging); err != nil {
-			return outputErr("removing stale workspace staging dir", err, out)
+		if err := r.removeWorkspaceStaging(staging); err != nil {
+			return fmt.Errorf("removing stale workspace staging dir: %w", err)
 		}
 	}
+	// The clone has its own deadline, detached from whichever request asked
+	// for the session: git runs as the hive and may be killed when it expires.
 	ctx, cancel := context.WithTimeout(context.Background(), userSessionWorkspaceCloneTimeout)
 	defer cancel()
 	repo := org + "/" + name
@@ -212,8 +222,27 @@ func (r *UserSessionRuntime) cloneWorkspace(org, name, ws string) error {
 	}
 	cleanupAuth()
 	gid := userSessionGID()
-	if out, err := r.privRun(userSessionRootSpec, nil, "sh", "-c", userSessionWorkspaceOwnScript, "sh", staging, ws, fmt.Sprint(gid)); err != nil {
+	// The hand-over runs as root under its own, generous deadline
+	// (privRunFor): it is never bound to the clone's context, let alone to an
+	// HTTP request's. Should it still fail, the staging tree is removed so the
+	// next start clones afresh instead of tripping over a half-owned tree.
+	if out, err := r.privRunFor(userSessionWorkspaceHandoffTimeout, userSessionRootSpec, nil, "sh", "-c", userSessionWorkspaceOwnScript, "sh", staging, ws, fmt.Sprint(gid)); err != nil {
+		if _, statErr := os.Lstat(staging); statErr == nil {
+			if rmErr := r.removeWorkspaceStaging(staging); rmErr != nil {
+				r.logger.Warn("session workspace: removing the staging dir after a failed hand-over failed; the next start retries", "path", staging, "error", rmErr)
+			}
+		}
 		return outputErr("handing workspace to the sessions group", err, out)
+	}
+	return nil
+}
+
+// removeWorkspaceStaging deletes a (possibly root-owned) staging tree through
+// the helper, under the hand-over deadline rather than the 10-second command
+// timeout: a whole clone takes longer than that to remove.
+func (r *UserSessionRuntime) removeWorkspaceStaging(staging string) error {
+	if out, err := r.privRunFor(userSessionWorkspaceHandoffTimeout, userSessionRootSpec, nil, "rm", "-rf", "--one-file-system", "--", staging); err != nil {
+		return outputErr("rm", err, out)
 	}
 	return nil
 }

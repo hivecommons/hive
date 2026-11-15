@@ -451,7 +451,8 @@ importance:
   vendor binary, a fixed set of resume words and a flag-free id, so a planted
   transcript name cannot add `--dangerously-skip-permissions`.
 
-Audit limits: `session_created`, `session_closed`, `session_renamed`,
+Audit limits: `session_created`, `session_started` (the outcome of the
+background start), `session_closed`, `session_renamed`,
 `session_input` and `session_upload` record the user and session id (never
 input text), but keystrokes typed inside the attached terminal go through ttyd
 and are not attributable to a user.

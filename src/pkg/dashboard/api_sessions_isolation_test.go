@@ -217,12 +217,19 @@ func TestSessionsDeleteAndPruneRemoveSessionFiles(t *testing.T) {
 func TestSessionsFailedStartCleansUp(t *testing.T) {
 	e := newSessionTestEnv(t, true)
 	e.rt.startFn = func(crux.UserSessionSpec) error { return errors.New("boom") }
-	if got := e.statusOf(t, callerOwner, "POST", "/api/sessions", map[string]string{"name": "x", "vendor": "claude"}); got != 500 {
-		t.Fatalf("start failure = %d", got)
+	rec := e.do(t, callerOwner, "POST", "/api/sessions", map[string]string{"name": "x", "vendor": "claude"})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create = %d: %s", rec.Code, rec.Body.String())
 	}
-	if len(e.rt.removed) != 1 {
-		t.Errorf("half-created sandbox not removed: %v", e.rt.removed)
+	id, _ := decodeSessionJSON(t, rec)["session"].(map[string]any)["id"].(string)
+	if got := e.waitSettled(t, id); got.Status != sessionStatusFailed {
+		t.Fatalf("record after failed start = %+v", got)
 	}
+	waitSessionsFor(t, "sandbox removal", func() bool {
+		e.rt.mu.Lock()
+		defer e.rt.mu.Unlock()
+		return len(e.rt.removed) == 1
+	})
 }
 
 func TestSessionsLegacyRecordWithoutSlotCannotResume(t *testing.T) {
