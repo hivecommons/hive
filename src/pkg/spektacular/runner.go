@@ -261,6 +261,15 @@ func BinaryExec(binary string) ExecFunc {
 	}
 }
 
+// StreamExec returns a long-lived spektacular child supervisor for the
+// line-oriented verbs (`spektacular meeting --from stdin --format jsonl`,
+// hivecommons/hive#18291): stdin and stdout are pipes carrying one JSON
+// object per line, stderr goes to the logger, a child that dies early is
+// restarted with backoff, and Close ends it. See Stream.
+func StreamExec(binary string, args []string, opts StreamOptions) *Stream {
+	return newStream(binary, args, opts)
+}
+
 // NotFoundError is returned when the status verb reports that the artifact
 // does not exist (error code artifact_not_found). Callers distinguish it from
 // transport failures because it is a signal about the document (it may have

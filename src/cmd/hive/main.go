@@ -3580,9 +3580,13 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	if sup := wireMeetings(b.ctx, b.cfg, b.logger); sup != nil {
 		b.meetingsQuorum = sup
 		b.cleanup.push(sup.Stop)
-		if mgr := wireMeetingsManager(b.cfg, sup, b.logger); mgr != nil {
+		if mgr, store := wireMeetingsManager(b.cfg, sup, b.logger); mgr != nil {
 			b.meetingsMgr = mgr
 			b.cleanup.push(mgr.Close)
+			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, nil, b.logger); lr != nil {
+				b.meetingsLive = lr
+				b.cleanup.push(lr.Close)
+			}
 		}
 	}
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.

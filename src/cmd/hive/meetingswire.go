@@ -8,8 +8,11 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/meetings"
+	"github.com/hivecommons/hive/pkg/meetings/live"
 	"github.com/hivecommons/hive/pkg/meetings/quorumproc"
+	"github.com/hivecommons/hive/pkg/spektacular"
 )
 
 // quorumSupervisor is the slice of *quorumproc.Supervisor boot uses.
@@ -93,16 +96,16 @@ func wireMeetings(ctx context.Context, cfg *config.Config, logger *slog.Logger) 
 // supervisor (hivecommons/hive#18290) and re-attaches to meetings that were
 // live before a restart. It returns nil (logged) when the store cannot be
 // opened.
-func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.Logger) *meetings.Manager {
+func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.Logger) (*meetings.Manager, *meetings.Store) {
 	if cfg == nil || sup == nil {
-		return nil
+		return nil, nil
 	}
 	store, err := meetings.NewStore(cfg.Meetings.DataDirOrDefault())
 	if err != nil {
 		if logger != nil {
 			logger.Error("[meetings] meeting store unavailable; meetings unavailable", "error", err)
 		}
-		return nil
+		return nil, nil
 	}
 	mgr, err := meetings.NewManager(meetings.Options{
 		Store:        store,
@@ -120,7 +123,7 @@ func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.
 		if logger != nil {
 			logger.Error("[meetings] meeting manager not created", "error", err)
 		}
-		return nil
+		return nil, nil
 	}
 	// Discord `/hive join` requests arrive on the all-meetings stream. No
 	// Discord identity is mapped to the hive owner yet, so none is approved
@@ -129,5 +132,56 @@ func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.
 	if n := mgr.Resume(); n > 0 && logger != nil {
 		logger.Info("[meetings] re-attached to meetings", "count", n)
 	}
-	return mgr
+	return mgr, store
+}
+
+// meetingSpekArgs is the contract's live-mode command line
+// (quorum.contract/v1 section 2).
+func meetingSpekArgs(m meetings.Meeting, contextDir string) []string {
+	title := live.NotesTitle(m)
+	return []string{"meeting", "--from", "stdin", "--format", "jsonl", "--title", title, "--context", contextDir}
+}
+
+// wireMeetingsLive starts the Spektacular live loop over the meeting
+// manager (hivecommons/hive#18291): one `spektacular meeting` child per live
+// meeting, its intents applied through the meetings policy. research may be
+// nil until the research pool is wired; research intents then fail visibly
+// in the panel instead of silently.
+func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings.Store, kapi *knowledge.KnowledgeAPI,
+	research live.ResearchDispatcher, logger *slog.Logger) *live.Runner {
+	if cfg == nil || mgr == nil || store == nil {
+		return nil
+	}
+	m := cfg.Meetings
+	binary := cfg.Runs.Spektacular.BinaryOrDefault()
+	var notes live.NotesSink
+	if kapi != nil {
+		notes = live.KnowledgeNotes{API: kapi}
+	}
+	r, err := live.NewRunner(live.Options{
+		Meetings: mgr,
+		Store:    store,
+		NewSpek: func(mt meetings.Meeting) live.Spek {
+			return spektacular.StreamExec(binary, meetingSpekArgs(mt, filepath.Join(store.Dir(), mt.ID)), spektacular.StreamOptions{Logger: logger})
+		},
+		Research: research,
+		Notes:    notes,
+		Policy: live.Policy{
+			ChatPostsPerMinute:   m.ChatPostsPerMinuteOrDefault(),
+			ResearchPerMeeting:   m.ResearchPerMeetingOrDefault(),
+			VoiceOnAddress:       m.VoiceOnAddressEnabled(),
+			MaxTokensPerMeeting:  m.Budget.MaxTokensPerMeetingOrDefault(),
+			MaxIntentsPerMeeting: m.Budget.MaxIntentsPerMeetingOrDefault(),
+		},
+		Ledger: live.NewLedger(m.Budget.MaxTokensPerHourOrDefault(), m.Budget.MaxTokensPerDayOrDefault()),
+		Logger: logger,
+	})
+	if err != nil {
+		if logger != nil {
+			logger.Error("[meetings] live loop not created", "error", err)
+		}
+		return nil
+	}
+	r.Start()
+	return r
 }
