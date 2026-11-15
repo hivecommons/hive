@@ -41,12 +41,22 @@ func parseOutputSignal(line string) (signal, text, whole string, ok bool) {
 	})
 	for _, mk := range outputSignalMarkers {
 		if rest, found := strings.CutPrefix(trimmed, mk.marker); found {
-			text = truncateStr(strings.TrimSpace(rest), maxOutputSignalTextLen)
-			whole = truncateStr(strings.TrimSpace(trimmed), maxOutputSignalTextLen)
+			text = boundRunes(strings.TrimSpace(rest), maxOutputSignalTextLen)
+			whole = boundRunes(strings.TrimSpace(trimmed), maxOutputSignalTextLen)
 			return mk.signal, text, whole, true
 		}
 	}
 	return "", "", "", false
+}
+
+// boundRunes cuts s to at most n runes. Unlike truncateStr it adds no
+// ellipsis, so the bound is exact.
+func boundRunes(s string, n int) string {
+	r := []rune(s)
+	if len(r) <= n {
+		return s
+	}
+	return string(r[:n])
 }
 
 // outputSignalDedupe remembers, per agent, which signal lines were already
