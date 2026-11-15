@@ -324,6 +324,23 @@ func (f *fakeSessionRuntime) startedSpecs() []crux.UserSessionSpec {
 
 func (e *sessionTestEnv) auditActions() []AuditEntry { return e.s.audit.Recent(0) }
 
+// waitStartedAudit waits for the session_started audit of a background start
+// and returns its detail. The record leaves `preparing` before that audit is
+// written, so a waitSettled caller must not read the audit log just once.
+func (e *sessionTestEnv) waitStartedAudit(t *testing.T, outcome string) string {
+	t.Helper()
+	var detail string
+	waitSessionsFor(t, "the session_started audit", func() bool {
+		for _, a := range e.auditActions() {
+			if a.Action == auditSessionStarted {
+				detail = a.Detail
+			}
+		}
+		return strings.Contains(detail, "outcome="+outcome)
+	})
+	return detail
+}
+
 func TestSessionsDisabledReportsEmptyAndHidesRoutes(t *testing.T) {
 	e := newSessionTestEnv(t, false)
 	rec := e.do(t, callerRead, "GET", "/api/sessions", nil)
@@ -556,15 +573,7 @@ func TestSessionsStartFailureMarksRecordFailed(t *testing.T) {
 	if view["status"] != sessionStatusFailed || view["error"] != got.Error || view["message"] != "" {
 		t.Errorf("failed view = %v", view)
 	}
-	var outcome string
-	for _, a := range e.auditActions() {
-		if a.Action == auditSessionStarted {
-			outcome = a.Detail
-		}
-	}
-	if !strings.Contains(outcome, "outcome="+sessionStatusFailed) {
-		t.Errorf("session_started audit = %q, want the failed outcome", outcome)
-	}
+	e.waitStartedAudit(t, sessionStatusFailed)
 	if rec := e.do(t, callerOwner, "DELETE", "/api/sessions/"+id, nil); rec.Code != http.StatusOK {
 		t.Fatalf("delete failed session = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -619,15 +628,7 @@ func TestSessionsCreateAnswersBeforeTheStartFinishes(t *testing.T) {
 	if got.Status != sessionStatusRunning || got.Message != "" || got.Error != "" {
 		t.Fatalf("record after start = %+v", got)
 	}
-	var outcome string
-	for _, a := range e.auditActions() {
-		if a.Action == auditSessionStarted {
-			outcome = a.Detail
-		}
-	}
-	if !strings.Contains(outcome, "outcome="+sessionStatusRunning) {
-		t.Errorf("session_started audit = %q, want the running outcome", outcome)
-	}
+	e.waitStartedAudit(t, sessionStatusRunning)
 }
 
 // Two creates while the first start is still running are both accepted as

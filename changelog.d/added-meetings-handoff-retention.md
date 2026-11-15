@@ -1,0 +1,1 @@
+- Meetings: ended meetings appear in the Inbox as `meeting` items with the final transcript and notes, routable to a spek RFC or dibs; once handed off hive deletes the transcript upstream, and it purges its own copy after `meetings.retention_days` (30). New page `src/docs/meetings.md` covers consent, setup on hosted and self-hosted hives, and every setting (#18293).

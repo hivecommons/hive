@@ -18,20 +18,22 @@ const testConsent = "Hive has joined to take notes and help with research. It re
 // fakeQuorum implements Quorum in memory. Each Events call drains the
 // meeting's channel; closing a stream ends one connection.
 type fakeQuorum struct {
-	mu       sync.Mutex
-	joinErr  error
-	joinRes  JoinResult
-	leaveErr error
-	chatErr  error
-	sayErr   error
-	streams  map[string]chan Event
-	gone     map[string]bool
-	posts    []string
-	says     []string
-	leaves   []string
-	connects int
-	afters   []int64
-	joins    []JoinArgs
+	mu        sync.Mutex
+	joinErr   error
+	joinRes   JoinResult
+	leaveErr  error
+	chatErr   error
+	sayErr    error
+	streams   map[string]chan Event
+	gone      map[string]bool
+	posts     []string
+	says      []string
+	leaves    []string
+	connects  int
+	afters    []int64
+	joins     []JoinArgs
+	deletes   []string
+	deleteErr error
 }
 
 func newFakeQuorum() *fakeQuorum {
@@ -85,7 +87,12 @@ func (f *fakeQuorum) Say(_ context.Context, _ string, text string) error {
 	return f.sayErr
 }
 
-func (f *fakeQuorum) Delete(context.Context, string) error { return nil }
+func (f *fakeQuorum) Delete(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.deletes = append(f.deletes, id)
+	return f.deleteErr
+}
 
 func (f *fakeQuorum) Events(ctx context.Context, id string, afterSeq int64, fn func(Event) bool) error {
 	f.mu.Lock()

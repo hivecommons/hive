@@ -68,6 +68,9 @@ func (b *boot) inboxSources(baseDir string, entries []config.KnowledgeConnector,
 			srcs = append(srcs, b.inboxSource(baseDir, typ, entries, syncer))
 		}
 	}
+	if b.meetingsInboxSrc != nil {
+		srcs = append(srcs, b.meetingsInboxSrc)
+	}
 	return srcs
 }
 
