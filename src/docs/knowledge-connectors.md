@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles | fireflies
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles | fireflies | fathom
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -884,6 +884,73 @@ knowledge:
   [limits](https://docs.fireflies.ai/fundamentals/limits) are 30 requests a
   minute and 500 a day on Free, 60 a minute on Pro. The key is only sent to
   `api.fireflies.ai`.
+
+## Fathom meetings (`type: fathom`)
+
+[Fathom](https://fathom.video) records Zoom, Meet and Teams calls and keeps
+a transcript, an AI summary and action items per call. The connector reads
+them through the [Fathom API](https://developers.fathom.ai/api-overview)
+with an API key: one fact per recording with title, recording time and
+duration, the recorder as host, the calendar invitees, the summary and
+action items, and the transcript. Items land in the **📥 Inbox** with
+playback.
+
+```yaml
+knowledge:
+  connectors:
+    - name: fathom
+      type: fathom
+      layer: project
+      interval: 15m
+      auth:
+        env: FATHOM_API_KEY            # variable NAME holding the Fathom API key (sent as X-Api-Key)
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        recorded_by: ""                # optional: only calls these users recorded (emails)
+        teams: ""                      # optional: only these Fathom teams
+        include_summary: "true"        # default_summary + action_items
+        include_participants: "true"   # calendar_invitees
+        tags: "meetings"
+```
+
+### Setup
+
+1. In Fathom open **User Settings → API Access** and generate an API key
+   ([quickstart](https://developers.fathom.ai/quickstart)). The key belongs
+   to its user: it sees the meetings that user recorded and the ones shared
+   with them or their team, never other users' private meetings.
+2. Put it in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Fathom meetings** with the credential
+   source *Environment variable* naming that variable. **Connect** /
+   **Check** list one page of meetings, so a dead key shows on the card.
+
+### Behaviour
+
+- Each sync pages [`GET /meetings`](https://developers.fathom.ai/api-reference/meetings/list-meetings)
+  (`created_after`, `next_cursor`, optional `recorded_by[]` / `teams[]`)
+  from the newest call seen (minus 48 h, which also catches summaries Fathom
+  writes after the call) back to `since_days`, with `include_transcript`,
+  `include_summary` and `include_action_items`, so the text comes in the
+  same pages. The Inbox listing asks for the metadata only; opening an item
+  reads [`/recordings/{id}/transcript`](https://developers.fathom.ai/api-reference/recordings/get-transcript)
+  and [`/recordings/{id}/summary`](https://developers.fathom.ai/api-reference/recordings/get-summary).
+- Facts carry `source: fathom`, `attr_fathom_recording_id` (the recording
+  id, the Inbox item id), `attr_recorded_at` (`recording_start_time`),
+  `attr_duration_ms` (to `recording_end_time`), `attr_host` (`recorded_by`),
+  `attr_participants`; the recording page is the `share_url`. A call with
+  neither transcript nor summary yet is `attr_meeting_content: pending` and
+  re-read on later syncs.
+- Playback: [`POST /recordings/{id}/download`](https://developers.fathom.ai/api-reference/recordings/request-a-download)
+  starts a download and `GET /recordings/{id}/downloads/{download_id}`
+  polls it; a completed download's `audio` (else `video`) `url` is a signed
+  link valid until its `expires_at` (about 24 hours). `422` (no
+  downloadable media) answers 404. The hive never stores the link.
+- Errors: `401` reads as *not connected*; `403` names limited-access
+  sharing. `429` is retried honouring `Retry-After`
+  ([rate limits](https://developers.fathom.ai/api-overview): 60 calls a
+  minute, 30 a minute for transcript and summary reads, 30 download
+  requests a minute). The key is only sent to `api.fathom.ai`.
 
 ## Wispr Flow (dictation, `type: wisprflow`)
 
