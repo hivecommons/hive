@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles | fireflies | fathom | limitless
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles | fireflies | fathom | limitless | granola
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -1012,6 +1012,65 @@ knowledge:
   honouring `Retry-After` (180 requests a minute per key; the body's
   `retryAfter` is named in the error). The key is only sent to
   `api.limitless.ai`.
+
+## Granola meeting notes (`type: granola`)
+
+[Granola](https://www.granola.ai) transcribes meetings on the device and
+writes AI notes next to your own. The connector reads them through the
+[Granola API](https://docs.granola.ai/introduction) with an API key: one
+fact per meeting with title (else the calendar event title), scheduled
+time, duration, owner, attendees (else the calendar invitees), the notes
+and the transcript. Items land in the **📥 Inbox** as text.
+
+```yaml
+knowledge:
+  connectors:
+    - name: granola
+      type: granola
+      layer: project
+      interval: 15m
+      auth:
+        env: GRANOLA_API_KEY           # variable NAME holding the grn_… API key
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        folder: ""                     # optional folder_id
+        space: ""                      # optional space_id
+        include_private_notes: "true"  # your own notes under "My notes"
+        include_participants: "true"
+        tags: "meetings"
+```
+
+### Setup
+
+1. Create an API key (`grn_…`) in Granola's API settings
+   ([Granola API](https://docs.granola.ai/help-center/sharing/integrations/granola-api)).
+   A personal key reads your notes; a workspace key reads public notes and
+   the spaces with API access turned on.
+2. Put it in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Granola meeting notes** with the
+   credential source *Environment variable* naming that variable.
+   **Connect** / **Check** list one note, so a dead key shows on the card.
+
+### Behaviour
+
+- Each sync pages [`GET /v1/notes`](https://docs.granola.ai/api-reference/list-notes)
+  (`updated_after`, `page_size=30`, the maximum, `cursor` while `hasMore`,
+  optional `folder_id` / `space_id`) from the newest update seen (minus
+  48 h) back to `since_days`, skips deleted notes and reads each with
+  [`GET /v1/notes/{id}?include=transcript`](https://docs.granola.ai/api-reference/get-note);
+  a `413` (transcript too large to inline) falls back to the paged
+  [`/v1/notes/{id}/transcript`](https://docs.granola.ai/api-reference/get-transcript).
+  A note without generated notes answers `NOTE_NOT_FOUND` and is picked up
+  by a later sync.
+- Facts carry `source: granola`, `attr_granola_recording_id` (the note id,
+  the Inbox item id), `attr_recorded_at` (the calendar event's
+  `scheduled_start_time`, else `created_at`), `attr_duration_ms` (the
+  transcript span, else the scheduled length), `attr_host` (`owner`) and
+  `attr_participants`; the recording page is the `web_url`.
+- Playback: none (▶ Play answers 404, Granola keeps no audio).
+- Errors: `401` / `403` read as *not connected*. `429` is retried
+  honouring `Retry-After`. The key is only sent to `public-api.granola.ai`.
 
 ## Wispr Flow (dictation, `type: wisprflow`)
 
