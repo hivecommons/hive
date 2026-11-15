@@ -14,7 +14,7 @@ assert.ok(start >= 0 && end > start, 'sessions helper block not found in index.h
 const names = ['sessionsRoleCanWrite', 'sessionsGroupSessions', 'sessionsExistingGroups', 'sessionsPickSelected', 'sessionsTabOrder',
   'sessionsNextTab', 'sessionsViewMode', 'sessionsCheckInput', 'sessionsCheckUpload', 'sessionsCanCreate', 'sessionsTerminalPath',
   'sessionsFormatBytes', 'sessionsIsEnabled', 'sessionsWorkspaceLabel', 'sessionsSessionWorkspace', 'sessionsIsLive', 'sessionsHasPreparing',
-  'sessionsStatusText'];
+  'sessionsStatusText', 'sessionsCanSend', 'sessionsKeyboardAction', 'sessionsPresenceText', 'sessionsQueueLabel', 'sessionsQueuedToast'];
 const h = new Function('window', html.slice(start, end) + '\nreturn {' + names.join(',') + '};')({});
 
 const S = (id, group, status) => ({ id, name: id, group, status: status || 'running' });
@@ -48,14 +48,67 @@ test('arrow keys walk the visible tabs and wrap; collapsed groups keep only the 
   assert.strictEqual(h.sessionsNextTab([], 'b', 'ArrowRight'), '');
 });
 
-test('only owner and read-write get a terminal; read sees scrollback; ended sessions never attach', () => {
+test('every role gets the live terminal (read-only unless it holds the keyboard); ended sessions never attach', () => {
   const run = S('a', '');
   const ended = S('a', '', 'ended');
-  for (const role of ['owner', 'read-write']) assert.strictEqual(h.sessionsViewMode(role, run), 'terminal');
-  for (const role of ['read', 'merger', '', undefined]) assert.strictEqual(h.sessionsViewMode(role, run), 'scrollback');
+  for (const role of ['owner', 'read-write', 'read', 'merger', '', undefined]) assert.strictEqual(h.sessionsViewMode(role, run), 'terminal');
   assert.strictEqual(h.sessionsViewMode('owner', ended), 'ended');
   assert.strictEqual(h.sessionsViewMode('owner', null), 'none');
   assert.strictEqual(h.sessionsRoleCanWrite('read'), false);
+  // Send and the keyboard stay with the write roles.
+  for (const role of ['owner', 'read-write']) assert.strictEqual(h.sessionsCanSend(role, run), true);
+  for (const role of ['read', 'merger', '']) assert.strictEqual(h.sessionsCanSend(role, run), false);
+  assert.strictEqual(h.sessionsCanSend('owner', ended), false);
+});
+
+test('keyboard button: release for the holder, take for another writer, nothing for read or non-running', () => {
+  const mine = Object.assign(S('a', ''), { keyboard_mine: true, keyboard_holder: 'andy' });
+  const theirs = Object.assign(S('a', ''), { keyboard_mine: false, keyboard_holder: 'bob' });
+  assert.strictEqual(h.sessionsKeyboardAction('read-write', mine), 'release');
+  assert.strictEqual(h.sessionsKeyboardAction('owner', theirs), 'take');
+  assert.strictEqual(h.sessionsKeyboardAction('read-write', Object.assign({}, theirs, { keyboard_holder: '' })), 'take', 'a free keyboard is taken, not released');
+  assert.strictEqual(h.sessionsKeyboardAction('read', theirs), '');
+  assert.strictEqual(h.sessionsKeyboardAction('owner', Object.assign({}, mine, { status: 'ended' })), '');
+  const js = html.slice(html.indexOf('function sessionsKeyboardHtml('), html.indexOf('function sessionsHeaderHtml('));
+  assert.match(js, /data-action="sessionsKeyboard"[^>]*SESSIONS_KEYBOARD_RELEASE[^>]*>Release keyboard</);
+  assert.match(js, /data-action="sessionsKeyboard"[^>]*SESSIONS_KEYBOARD_TAKE[^>]*>Take keyboard</);
+  assert.match(js, /class="sessions-watching"[^>]*>watching · you have the keyboard\? no</, 'a read-only viewer sees the watching pill');
+});
+
+test('presence line names the keyboard holder and the watchers', () => {
+  const s = { id: 'a', status: 'running', keyboard_holder: 'andy', viewers: [{ user: 'bob', keyboard: false }, { user: 'andy', keyboard: true }, { user: 'carol', keyboard: false }, null] };
+  assert.strictEqual(h.sessionsPresenceText(s), 'keyboard: andy · watching: bob, carol');
+  assert.strictEqual(h.sessionsPresenceText({ keyboard_holder: 'andy', viewers: [{ user: 'bob' }] }), 'keyboard: andy (away) · watching: bob', 'a holder who is not attached is marked away');
+  assert.strictEqual(h.sessionsPresenceText({ keyboard_holder: '', viewers: [] }), 'keyboard: free');
+  assert.strictEqual(h.sessionsPresenceText(null), 'keyboard: free');
+  const head = html.slice(html.indexOf('function sessionsHeaderHtml('), html.indexOf('function sessionsQueueHtml('));
+  assert.match(head, /class="sessions-presence' \+ \(s\.keyboard_mine \? ' mine' : ''\)/, 'the holder\'s own presence line is accented');
+  assert.match(head, /sessionsKeyboardHtml\(s\)/);
+  const tab = html.slice(html.indexOf('function sessionsTabHtml('), html.indexOf('function sessionsTabsHtml('));
+  assert.match(tab, /sessionsPresenceText\(s\)/, 'the tab tooltip carries presence');
+});
+
+test('Send shows the queue depth, the toast says queued or sent, and the queue list offers Cancel on own items', () => {
+  assert.strictEqual(h.sessionsQueueLabel('Send', { length: 0 }), 'Send');
+  assert.strictEqual(h.sessionsQueueLabel('Send and run', { length: 2 }), 'Send and run · queued behind 2');
+  assert.strictEqual(h.sessionsQueueLabel('Send', undefined), 'Send');
+  assert.match(h.sessionsQueuedToast('fix', { position: 1 }), /^Sent to fix/);
+  assert.match(h.sessionsQueuedToast('fix', { position: 3 }), /position 3/);
+  const js = html.slice(html.indexOf('function sessionsQueueHtml('), html.indexOf('function sessionsInputBarHtml('));
+  assert.match(js, /data-action="sessionsCancelQueued"/);
+  assert.match(js, /it\.mine && !it\.delivering \?/, 'only own, not-yet-delivering items can be cancelled');
+  assert.doesNotMatch(js, /it\.text/, 'the queue never renders text (the server does not send it)');
+  const bar = html.slice(html.indexOf('function sessionsInputBarHtml('), html.indexOf('function sessionsRefreshQueueUI('));
+  assert.match(bar, /sessionsQueueLabel\('Send', s\.queue\)/);
+  assert.match(bar, /sessionsQueueHtml\(s\)/);
+  const css = html.slice(html.indexOf('.sessions-presence {'), html.indexOf('.sessions-queue-item .hv-btn'));
+  assert.doesNotMatch(css, /#[0-9a-fA-F]{3,8}\b/, 'presence and queue CSS must not add hex literals');
+});
+
+test('a keyboard hand-over re-attaches the iframe with a fresh handoff', () => {
+  const js = html.slice(html.indexOf('function sessionsSyncKeyboardFrame('), html.indexOf('async function sessionsHandoff('));
+  assert.match(js, /_sessionsFrameKeyboard\[s\.id\] === mine\) return/);
+  assert.match(js, /sessionsAttachTerminal\(s\)/);
 });
 
 test('input bar rejects empty and oversize text using the server limits', () => {

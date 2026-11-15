@@ -436,8 +436,20 @@ type Server struct {
 	// THIS process; a `preparing` record without one is left over from a
 	// restart and is marked failed on the next reconcile. Guarded by sessionsMu.
 	sessionsPreparing map[string]bool
-	terminalHandoffMu sync.Mutex
-	terminalHandoffs  map[string]terminalHandoff
+	// sessionAttaches are the live terminal websockets of user sessions
+	// (presence and the keyboard lease, api_sessions_keyboard.go); keyed by
+	// attach id, guarded by sessionAttachMu.
+	sessionAttachMu  sync.Mutex
+	sessionAttaches  map[string]*sessionAttach
+	sessionAttachSeq uint64
+	// sessionQueues holds the per-session Send queues and their workers
+	// (api_sessions_queue.go); guarded by sessionQueuesMu.
+	sessionQueuesMu sync.Mutex
+	sessionQueues   map[string]*sessionQueue
+	// sessionQueueTiming overrides the workers' pacing (tests); zero = defaults.
+	sessionQueueTiming sessionQueuePacing
+	terminalHandoffMu  sync.Mutex
+	terminalHandoffs   map[string]terminalHandoff
 
 	claudeOAuthFlow claudeOAuthFlow
 
@@ -2276,8 +2288,14 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// first use. When the request is not otherwise trusted, a valid code also
 		// authenticates the initial ttyd document load and establishes the
 		// Path=/terminal assertion cookie for subsequent asset/websocket requests.
+		//
+		// A code bound to a user session was minted only after the caller was
+		// found able to see that session, and opens nothing but it; the read
+		// role is admitted on that path as a read-only viewer
+		// (guardTerminalSession decides the attach mode). Agent terminals
+		// keep requiring owner or read-write.
 		if isTerminalPath(r.URL.Path) {
-			if user, role, bound, ok := s.redeemTerminalHandoffBound(r.URL.Query().Get(terminalHandoffCodeParam)); ok && terminalRoleAllowed(role) && handoffBindingMatches(bound, r.URL.Query()["arg"]) {
+			if user, role, bound, ok := s.redeemTerminalHandoffBound(r.URL.Query().Get(terminalHandoffCodeParam)); ok && (terminalRoleAllowed(role) || bound != "") && handoffBindingMatches(bound, r.URL.Query()["arg"]) {
 				if !trusted {
 					r.Header.Set("X-Hive-User", user)
 					r.Header.Set("X-Hive-Role", role)
@@ -2291,7 +2309,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		}
 
 		if !trusted && isTerminalPath(r.URL.Path) {
-			if user, role, ok := s.terminalAssertionFromRequest(r); ok && terminalRoleAllowed(role) {
+			if user, role, ok := s.terminalAssertionFromRequest(r); ok && (terminalRoleAllowed(role) || requestNamesUserSession(r)) {
 				r.Header.Set("X-Hive-User", user)
 				r.Header.Set("X-Hive-Role", role)
 				if isOwnerRole(role) {
@@ -2396,7 +2414,9 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			}
 			return
 		}
-		if isTerminalPath(r.URL.Path) && !terminalRoleAllowed(r.Header.Get("X-Hive-Role")) {
+		// A user-session terminal is the exception: the read role watches it
+		// read-only, authorised per session by guardTerminalSession.
+		if isTerminalPath(r.URL.Path) && !terminalRoleAllowed(r.Header.Get("X-Hive-Role")) && !requestNamesUserSession(r) {
 			writeTerminalRoleForbidden(w, r)
 			return
 		}

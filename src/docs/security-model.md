@@ -438,24 +438,41 @@ importance:
   `ttyd-tmux.sh` refuses any `hive-sess-*` attach without a valid token,
   refuses a socket not owned by a reserved session uid and runs the attach
   with a scrubbed environment. No key means no session terminal. A handoff code
-  minted for a session is bound to that session id and its caller (creator,
-  owner, or a writer on a shared session) and opens only
-  `?arg=hive-sess-<id>`; an agent-terminal code never opens a session.
+  minted for a session is bound to that session id and its caller (anyone who
+  may see the session) and opens only `?arg=hive-sess-<id>`; an agent-terminal
+  code never opens a session and still needs owner or read-write.
+- **One keyboard at a time.** Every attach is read-only (`tmux attach-session
+  -r`) unless the proxy also appends the session's *write token*, a second
+  HMAC under the same key (`hive-ttyd-attach-rw-v1`), which it does only for
+  the one user holding the session's keyboard lease. The browser's request
+  carries a single arg, the session name; an extra arg is rejected as
+  malformed before it reaches ttyd, and `ttyd-tmux.sh` treats a missing or
+  wrong write token as read-only, so a viewer cannot promote itself. The
+  creator holds the keyboard from the start; owners and the creator may take
+  it at any time, another read-write user only after it is released or the
+  holder has been idle for `HIVE_SESSIONS_KEYBOARD_GRACE_SEC` (default 60).
+  Taking it detaches the previous holder's writable tmux client immediately.
 - **Ownership.** A session is private by default: only its creator and owners
-  can list, read, type into, upload to or attach it. The creator or an owner may
+  can list, read, watch, type into or upload to it. The creator or an owner may
   set `shared`, which lists it for every role (the read role gets the
-  token-redacted scrollback) and lets read-write users type, upload and attach.
-  Renaming, closing, resuming, deleting and the `shared` flag stay with the
-  creator and owners. Ids of sessions a caller may not see are never disclosed.
+  token-redacted scrollback and a read-only live terminal, never the keyboard,
+  Send or upload) and lets read-write users Send, upload and take the
+  keyboard. Renaming, closing, resuming, deleting and the `shared` flag stay
+  with the creator and owners. Ids of sessions a caller may not see are never
+  disclosed.
 - **Resume ids** never start with `-` and a resume command may carry only the
   vendor binary, a fixed set of resume words and a flag-free id, so a planted
   transcript name cannot add `--dangerously-skip-permissions`.
 
-Audit limits: `session_created`, `session_started` (the outcome of the
-background start), `session_closed`, `session_renamed`,
-`session_input` and `session_upload` record the user and session id (never
-input text), but keystrokes typed inside the attached terminal go through ttyd
-and are not attributable to a user.
+Audit: `session_created`, `session_started` (the outcome of the background
+start), `session_closed`, `session_renamed`, `session_input` and
+`session_upload` record the user and session id (never input text).
+`session_input` is written when a queued Send is actually typed into the pane,
+as the user who queued it, so attribution follows the sender, not the moment
+of delivery. `session_keyboard` records every keyboard hand-over (`from`,
+`to`); since only the holder's attach is writable, keystrokes typed inside the
+terminal are attributable to the holder of record at that time. Keystrokes are
+still not logged individually.
 
 Operator requirements the code cannot enforce: the container needs the
 `su-exec` helper with `CAP_SETUID`, `CAP_SETGID` and `CAP_CHOWN` (the standard

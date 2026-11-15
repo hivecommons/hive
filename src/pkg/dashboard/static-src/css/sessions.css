@@ -62,3 +62,17 @@
     .sessions-attach:focus-within { outline: var(--focus-ring-width) solid var(--accent); }
     .sessions-input-count { margin-left: auto; color: var(--muted); font-size: var(--fs-xs); }
     .sessions-input-count.over { color: var(--red); }
+    /* Presence and the keyboard lease (pane header). The holder's own line is
+       accented; a viewer without the keyboard sees the muted "watching" pill. */
+    .sessions-presence { color: var(--muted); font-size: var(--fs-xs); cursor: help; }
+    .sessions-presence.mine { color: var(--accent); font-weight: var(--fw-semibold); }
+    .sessions-watching { border: 1px dashed var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); font-size: var(--fs-xs); cursor: help; }
+    /* Queued Send list under the input bar. */
+    .sessions-queue { display: grid; gap: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3) var(--sp-4); background: var(--card-bg); font-size: var(--fs-xs); color: var(--muted); }
+    .sessions-queue[hidden] { display: none; }
+    .sessions-queue-title { font-weight: var(--fw-semibold); }
+    .sessions-queue-item { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+    .sessions-queue-item.mine .sessions-queue-user { color: var(--fg); font-weight: var(--fw-semibold); }
+    .sessions-queue-pos { font-family: var(--font-mono); }
+    .sessions-queue-state { color: var(--accent); }
+    .sessions-queue-item .hv-btn { margin-left: auto; }

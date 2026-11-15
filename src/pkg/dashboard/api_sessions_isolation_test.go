@@ -51,8 +51,8 @@ func TestSessionsPrivateByDefaultOwnershipMatrix(t *testing.T) {
 		log, input, upload, patch, rs int
 	}
 	rows := []row{
-		{callerRW, true, 200, 200, 200, 200, 409},      // creator
-		{callerOwner, true, 200, 200, 200, 200, 409},   // owner
+		{callerRW, true, 200, 202, 200, 200, 409},      // creator (input is queued: 202)
+		{callerOwner, true, 200, 202, 200, 200, 409},   // owner
 		{callerRW2, false, 404, 404, 404, 404, 404},    // another writer
 		{callerRead, false, 404, 403, 403, 404, 403},   // read role (write gate first)
 		{callerMerger, false, 404, 403, 403, 404, 403}, // merger
@@ -107,8 +107,8 @@ func TestSessionsSharedFlagOpensWatchingAndTypingNotManagement(t *testing.T) {
 	if got := e.statusOf(t, callerRead, "POST", "/api/sessions/"+id+"/input", map[string]any{"text": "x"}); got != 403 {
 		t.Errorf("read role typed into a shared session: %d", got)
 	}
-	if got := e.statusOf(t, callerRW2, "POST", "/api/sessions/"+id+"/input", map[string]any{"text": "x"}); got != 200 {
-		t.Errorf("writer input on shared = %d", got)
+	if got := e.statusOf(t, callerRW2, "POST", "/api/sessions/"+id+"/input", map[string]any{"text": "x"}); got != 202 {
+		t.Errorf("writer input on shared = %d, want 202 (queued)", got)
 	}
 	if got := e.upload(t, callerRW2, id, "file", "a.txt", []byte("x")).Code; got != 200 {
 		t.Errorf("writer upload on shared = %d", got)
@@ -414,14 +414,15 @@ func TestTerminalSessionGateEnforcesOwnershipAndShape(t *testing.T) {
 	if code, called := guardRequest(t, e, callerRW, "arg="+sessionTmuxPrefix+id2); code != http.StatusServiceUnavailable || called {
 		t.Errorf("no attach key = %d (proxy reached %v), want 503", code, called)
 	}
-	// Shared sessions open to writers but not to the read role.
+	// Shared sessions open to writers and, read-only, to the read role; the
+	// mode is decided here (see TestTerminalSessionAttachModeIsServerDecided).
 	e.do(t, callerRW, "PATCH", "/api/sessions/"+id2, map[string]any{"shared": true})
 	t.Setenv(ttydAttachKeyEnv, "test-attach-key")
 	if code, _ := guardRequest(t, e, callerRW2, "arg="+sessionTmuxPrefix+id2); code != 200 {
 		t.Errorf("writer on shared = %d", code)
 	}
-	if code, _ := guardRequest(t, e, callerRead, "arg="+sessionTmuxPrefix+id2); code != http.StatusForbidden {
-		t.Errorf("read role on shared = %d, want 403", code)
+	if code, _ := guardRequest(t, e, callerRead, "arg="+sessionTmuxPrefix+id2); code != 200 {
+		t.Errorf("read role on shared = %d, want 200 (read-only attach)", code)
 	}
 }
 
