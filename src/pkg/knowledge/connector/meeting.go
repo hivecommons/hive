@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/transcribe"
 )
 
 // Meeting-recording connectors (Zoom, Microsoft Teams) share one reading
@@ -326,8 +328,8 @@ var vttTagRE = regexp.MustCompile(`</?[a-zA-Z][^>]*>|<\d{2}:\d{2}[^>]*>`)
 var vttSpeakerRE = regexp.MustCompile(`^([^:\n]{1,80}?):\s+(.*)$`)
 
 // renderVTT turns a WebVTT transcript into "[mm:ss] Speaker: text" lines,
-// one per cue, in the shape renderPlaudTranscript produces for Plaud. Both
-// Zoom ("Name: text" cue bodies) and Teams ("<v Name>text</v>") speaker
+// one per cue, through transcribe.WriteLine: the same line shape Plaud and
+// machine transcripts use. Both Zoom ("Name: text" cue bodies) and Teams ("<v Name>text</v>") speaker
 // conventions are recognised; NOTE/STYLE/REGION blocks are skipped and
 // consecutive duplicate lines (Teams repeats rolling cues) are collapsed.
 // Anything that is not VTT is returned trimmed, as plain text.
@@ -376,19 +378,12 @@ func renderVTT(text string) string {
 		if content == "" {
 			continue
 		}
-		rendered := content
-		if speaker != "" {
-			rendered = speaker + ": " + content
-		}
+		rendered := speaker + "\x00" + content
 		if rendered == last {
 			continue
 		}
 		last = rendered
-		if stamp != "" {
-			fmt.Fprintf(&b, "[%s] ", stamp)
-		}
-		b.WriteString(rendered)
-		b.WriteByte('\n')
+		transcribe.WriteLine(&b, stamp, speaker, content)
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -415,11 +410,8 @@ func vttStamp(timing string) string {
 	if err != nil {
 		return ""
 	}
-	sec := int(s)
-	if h > 0 {
-		return fmt.Sprintf("%d:%02d:%02d", h, m, sec)
-	}
-	return fmt.Sprintf("%02d:%02d", m, sec)
+	// Whole seconds, truncated: a cue at 00:04.600 is stamped 00:04.
+	return transcribe.FormatOffset(time.Duration(h)*time.Hour + time.Duration(m)*time.Minute + time.Duration(int(s))*time.Second)
 }
 
 // vttSpeakerAndText splits a cue body into speaker and text.

@@ -5,11 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/transcribe"
 )
 
 // routeTimeout bounds one background delivery.
@@ -26,6 +28,9 @@ type Settings struct {
 	// itself is never returned.
 	DibsTokenSet bool `json:"dibs_token_set"`
 	SpekReady    bool `json:"spek_ready"`
+	// Transcription is inbox.transcription with defaults, key and budget
+	// status applied.
+	Transcription TranscriptionSettings `json:"transcription"`
 }
 
 // Service lists items across sources, applies persisted state, runs
@@ -47,6 +52,24 @@ type Service struct {
 	// Status snapshots for the settings view.
 	spekReady    func() bool
 	dibsTokenSet func() bool
+
+	// Machine transcription (see transcription.go). transcripts is nil until
+	// EnableTranscription; txMu guards the queue check-and-set, txRun
+	// serialises runs so one job uploads at a time.
+	transcripts *TranscriptStore
+	txMu        sync.Mutex
+	txRun       sync.Mutex
+	// NewTranscriber builds the provider for a run; nil uses
+	// DefaultTranscriber with the key from Getenv. Tests inject a fake.
+	NewTranscriber func(config.InboxTranscription) (transcribe.Transcriber, error)
+	// AudioClient downloads audio for transcription; nil uses
+	// http.DefaultClient (the run's context bounds it).
+	AudioClient *http.Client
+	// Getenv reads the provider key variable; nil uses os.Getenv.
+	Getenv func(string) string
+	// TranscribeBackoff is the wait between upload attempts; nil doubles
+	// from five seconds.
+	TranscribeBackoff func(attempt int) time.Duration
 }
 
 // NewService builds a service for cfg with the given sources/destinations.
@@ -119,6 +142,7 @@ func (s *Service) Settings() Settings {
 	if s.dibsTokenSet != nil {
 		st.DibsTokenSet = s.dibsTokenSet()
 	}
+	st.Transcription = s.TranscriptionSettings()
 	return st
 }
 
@@ -140,6 +164,7 @@ func (s *Service) Items(ctx context.Context) ([]Item, error) {
 		out = append(out, items...)
 	}
 	s.Store.Apply(out)
+	s.applyTranscripts(out)
 	sortItems(out)
 	return out, errors.Join(errs...)
 }
@@ -161,13 +186,15 @@ func (s *Service) Find(ctx context.Context, source, id string) (Item, bool, erro
 	return Item{}, false, err
 }
 
-// Content reads the full body of one item from its source.
+// Content reads the full body of one item from its source. While the
+// source has no text, a done machine transcript stands in for it.
 func (s *Service) Content(ctx context.Context, it Item) (Content, error) {
 	src := s.source(it.Source)
 	if src == nil {
 		return Content{}, fmt.Errorf("source %q is not configured", it.Source)
 	}
-	return src.Fetch(ctx, it)
+	c, err := src.Fetch(ctx, it)
+	return s.withMachineTranscript(it, c, err)
 }
 
 // AudioLink mints a fresh audio link for one item through its source. The
@@ -244,12 +271,7 @@ func (s *Service) deliver(it Item, dest Destination, req Request) {
 	if _, err := s.Store.Set(key, req.Destination, StatusRunning, Result{}, ""); err != nil {
 		s.Logger.Warn("inbox: persist running state", "item", key, "error", err)
 	}
-	src := s.source(it.Source)
-	if src == nil {
-		s.fail(key, req.Destination, fmt.Errorf("source %q is not configured", it.Source))
-		return
-	}
-	content, err := src.Fetch(ctx, it)
+	content, err := s.Content(ctx, it)
 	if err != nil {
 		s.fail(key, req.Destination, fmt.Errorf("fetch: %w", err))
 		return

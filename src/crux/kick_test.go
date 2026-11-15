@@ -66,3 +66,17 @@ func TestKickDispatchJSONOmitsZeroSettledAt(t *testing.T) {
 		t.Errorf("settled dispatch JSON must contain settledAt, got: %s", string(data))
 	}
 }
+
+func TestKickStatusTerminal(t *testing.T) {
+	for phase, want := range map[string]bool{
+		KickPhaseQueued:    false,
+		KickPhasePending:   false,
+		KickPhaseDelivered: false,
+		KickPhaseCompleted: true,
+		KickPhaseFailed:    true,
+	} {
+		if got := (KickStatus{Phase: phase}).Terminal(); got != want {
+			t.Errorf("phase %q Terminal() = %v, want %v", phase, got, want)
+		}
+	}
+}

@@ -17,7 +17,7 @@ const (
 
 // DefaultInboxSources are the connector types whose facts surface as Inbox
 // items when inbox.sources is empty.
-var DefaultInboxSources = []string{"plaud", "wisprflow", "zoom", "teams", "discord"}
+var DefaultInboxSources = []string{"plaud", "wisprflow", "zoom", "teams", "discord", "google-meet"}
 
 // InboxConfig is the `inbox:` block: which connector types feed the Inbox,
 // how items are auto-routed, and how each destination is reached.
@@ -30,6 +30,9 @@ type InboxConfig struct {
 	Rules []InboxRule `yaml:"rules,omitempty" json:"rules,omitempty"`
 	Spek  InboxSpek   `yaml:"spek,omitempty" json:"spek,omitempty"`
 	Dibs  InboxDibs   `yaml:"dibs,omitempty" json:"dibs,omitempty"`
+	// Transcription is spoke-local machine transcription of recordings that
+	// arrive without text (off by default; see inbox_transcription.go).
+	Transcription InboxTranscription `yaml:"transcription,omitempty" json:"transcription,omitzero"`
 }
 
 // InboxRule routes items whose source and title/tag match.
@@ -104,6 +107,9 @@ func ValidateInbox(c InboxConfig) error {
 	}
 	if c.Dibs.URL != "" && !strings.HasPrefix(c.Dibs.URL, "http://") && !strings.HasPrefix(c.Dibs.URL, "https://") {
 		return fmt.Errorf("inbox.dibs.url %q: must start with http:// or https://", c.Dibs.URL)
+	}
+	if err := ValidateInboxTranscription(c.Transcription); err != nil {
+		return err
 	}
 	for i, r := range c.Rules {
 		switch r.Destination {

@@ -214,3 +214,45 @@ func TestGatewayAuthRateLimiting(t *testing.T) {
 		})
 	}
 }
+
+// Permissions-Policy values the gateway emits. The dashboard document allows
+// the microphone for its own origin only (Sessions voice notes use the
+// browser's Web Speech API); the ttyd terminal iframe and /api/ responses keep
+// the fully closed policy.
+const (
+	gatewayDocumentPermissionsPolicy = `geolocation=(), camera=(), microphone=(self)`
+	gatewayClosedPermissionsPolicy   = `geolocation=(), camera=(), microphone=()`
+)
+
+// TestGatewayPermissionsPolicyMicrophoneScope pins the microphone scope of
+// the gateway's Permissions-Policy: microphone=(self) only for documents
+// served by `location /` outside /terminal/, never a wildcard origin list.
+func TestGatewayPermissionsPolicyMicrophoneScope(t *testing.T) {
+	conf := readNginxConf(t)
+
+	mapBlock := regexp.MustCompile(`(?ms)^\s*map\s+\$uri\s+\$hive_document_permissions_policy\s*\{([^}]*)\}`).FindStringSubmatch(conf)
+	if mapBlock == nil {
+		t.Fatal("nginx.conf must define `map $uri $hive_document_permissions_policy` for the dashboard document")
+	}
+	body := mapBlock[1]
+	if !regexp.MustCompile(`(?m)^\s*default\s+"` + regexp.QuoteMeta(gatewayDocumentPermissionsPolicy) + `";`).MatchString(body) {
+		t.Errorf("dashboard document Permissions-Policy default must be %q", gatewayDocumentPermissionsPolicy)
+	}
+	if !regexp.MustCompile(`(?m)^\s*~\^/terminal/\s+"` + regexp.QuoteMeta(gatewayClosedPermissionsPolicy) + `";`).MatchString(body) {
+		t.Errorf("the ttyd terminal iframe (/terminal/) must keep %q", gatewayClosedPermissionsPolicy)
+	}
+
+	if regexp.MustCompile(`microphone=\*|microphone=\(\s*\*`).MatchString(conf) {
+		t.Error("nginx.conf must never allow the microphone for every origin")
+	}
+
+	apiBlock := regexp.MustCompile(`(?ms)^\s*location\s+/api/\s*\{.*?add_header\s+Permissions-Policy\s+"([^"]+)"\s+always;`).FindStringSubmatch(conf)
+	if apiBlock == nil || apiBlock[1] != gatewayClosedPermissionsPolicy {
+		t.Errorf("/api/ responses must keep Permissions-Policy %q", gatewayClosedPermissionsPolicy)
+	}
+
+	rootBlock := regexp.MustCompile(`(?ms)^\s*location\s+/\s*\{.*?add_header\s+Permissions-Policy\s+"([^"]+)"\s+always;`).FindStringSubmatch(conf)
+	if rootBlock == nil || rootBlock[1] != `$hive_document_permissions_policy` {
+		t.Error("`location /` must emit Permissions-Policy from $hive_document_permissions_policy")
+	}
+}
