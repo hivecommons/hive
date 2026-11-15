@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.264.0)
+
+### Added
+
+- Inbox items from Plaud now carry real text and play their audio. The Plaud connector asks `get_file` which transcript blocks and notes a recording actually has before reading them (preferring the AI-cleaned transcript, then the raw one, then the outline, and following the MCP's `Available blocks:` hint when the inventory is unreadable), so the MCP's `Block "transaction" not available for this recording` reply is no longer stored as the fact body; a recording Plaud has not transcribed yet becomes a fact marked `attr_plaud_content: pending` with a plain note and its flagged highlights, and such facts are re-fetched on every sync (capped at 25 per sync) until text arrives. The Inbox item shows the summary (collapsible), a Transcript disclosure, highlights, duration and recording time, and a `▶ Play recording` control that mints a fresh 24h presigned link through `GET /api/inbox/{source}/{id}/audio` (owner or read-write; audited; never persisted) and plays it inline; `GET /api/inbox/{source}/{id}/content` returns the full text. The connector's `include_audio` option now only decides whether a sync also stores the link in the fact.
+
+### Fixed
+
+- Sessions: the attached count no longer climbs with every reload of a terminal ("26 attached" on a session one person was using), and a session's window is no longer sized to a stale client that nobody is looking at. A browser terminal is a tmux client that `ttyd-tmux.sh` attaches on a pty ttyd owns; when the browser closed, ttyd sent SIGHUP to the helper's process group, but the client runs as the session's own uid (su-exec) so ttyd's uid could not signal it, and the helper itself never acted on the signal: bash defers signals while a foreground command runs, and the entrypoint's ttyd respawn loop had `trap '' HUP`, an ignore that is inherited across exec by ttyd and by every helper it spawns and that a non-interactive bash can neither trap nor reset. Nothing exited, ttyd kept the pty open, and each reload leaked one attached client and one pty; agent terminals attach through the same path and were exposed the same way. The respawn loop now keeps itself alive with a handler (`trap ':' HUP`, reset to default on exec) instead of an ignore, and the helper runs the attach as a background job it waits on, so ttyd's SIGHUP (or a TERM) detaches the client through tmux by its tty and the helper exits cleanly, closing the pty. As defense in depth the runtime reaps on every sessions poll: clients whose process is gone or no longer descends from ttyd (a ttyd respawn, a killed helper, an attach from outside the dashboard) are detached, bounded and logged, and `attached` reports the live count that remains.
+
 ## 2026-11-15 (v5.263.6)
 
 ### Fixed
