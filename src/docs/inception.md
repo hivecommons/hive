@@ -10,7 +10,7 @@ This guide documents only what the code in `pkg/dashboard/inception_handlers.go`
 and `pkg/knowledge/inception.go` actually does — see those files for
 implementation detail.
 
-> **Dashboard UI.** When `dashboard.sessions.enabled` is on, the dashboard hides the Inception wizard and shows the Sessions section instead (the Campaigns and Jam view moves to a Campaigns tab there). The `/api/inception/*` endpoints, the brainstorm agent and `/api/campaigns` are unchanged, and the wizard is still shown whenever sessions are off.
+> **Dashboard UI.** The dashboard's **Inception (spek)** section (interactive, shared CLI-agent sessions opened in the hive's spek workspace; `dashboard.sessions.enabled`, on by default) replaces the Inception wizard (the Campaigns and Jam view moves to a Campaigns tab there). The `/api/inception/*` endpoints, the brainstorm agent and `/api/campaigns` are unchanged, and the wizard is still shown when sessions are turned off (`dashboard.sessions.enabled: false` or `HIVE_SESSIONS_ENABLED=false`).
 
 ## When to use it
 

@@ -23,6 +23,11 @@ const (
 	// EnvSessionsWorkspaceRepo overrides dashboard.sessions.workspace_repo.
 	EnvSessionsWorkspaceRepo = "HIVE_SESSIONS_WORKSPACE_REPO"
 
+	// DefaultSessionsEnabled is dashboard.sessions.enabled when hive.yaml
+	// leaves it unset: Inception (spek) sessions are on unless an operator
+	// turns them off (enabled: false or HIVE_SESSIONS_ENABLED=false).
+	DefaultSessionsEnabled = true
+
 	DefaultSessionsMax          = 12
 	DefaultSessionsMaxPerUser   = 4
 	DefaultSessionsIdleTTLHours = 72
@@ -33,10 +38,13 @@ const (
 var sessionsWorkspaceRepoPattern = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]*/[A-Za-z0-9_][A-Za-z0-9._-]*$`)
 
 // DashboardSessionsConfig is dashboard.sessions: named, shared CLI-agent
-// terminal sessions inside the dashboard. Off by default.
+// terminal sessions inside the dashboard, shown as "Inception (spek)". On by
+// default.
 type DashboardSessionsConfig struct {
-	// Enabled turns the Sessions feature on. HIVE_SESSIONS_ENABLED overrides it.
-	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Enabled turns the Sessions feature on or off. Nil (unset) means
+	// DefaultSessionsEnabled; a pointer so an explicit false survives a save.
+	// HIVE_SESSIONS_ENABLED overrides it.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
 	// MaxSessions caps live (running) sessions per spoke. 0 = default (12).
 	MaxSessions int `yaml:"max_sessions,omitempty" json:"max_sessions,omitempty"`
 	// MaxPerUser caps live sessions one user may create. 0 = default (4).
@@ -99,7 +107,20 @@ func (c *Config) SessionsEnabled() bool {
 	if v, ok := parseBoolEnv(EnvSessionsEnabled); ok {
 		return v
 	}
-	return c != nil && c.Dashboard.Sessions.Enabled
+	if c == nil {
+		return false
+	}
+	return c.Dashboard.Sessions.EnabledOrDefault()
+}
+
+// EnabledOrDefault is the saved dashboard.sessions.enabled value, or
+// DefaultSessionsEnabled when hive.yaml leaves it unset. It ignores
+// HIVE_SESSIONS_ENABLED (see Config.SessionsEnabled).
+func (s DashboardSessionsConfig) EnabledOrDefault() bool {
+	if s.Enabled == nil {
+		return DefaultSessionsEnabled
+	}
+	return *s.Enabled
 }
 
 // SessionsMax returns the per-spoke live-session cap.

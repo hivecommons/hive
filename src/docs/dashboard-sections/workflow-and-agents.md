@@ -184,11 +184,11 @@ A step-by-step guide that turns a new project idea into a first set of files and
 
 **Example.** You describe a small web service. Inception asks two questions and then proposes a folder layout and five starter issues.
 
-**When it appears.** Always.
+**When it appears.** Only when Inception (spek) sessions are turned off (`dashboard.sessions.enabled: false` or `HIVE_SESSIONS_ENABLED=false`); sessions are on by default.
 
-**Settings that change it.** No settings change this section. See [Inception](../inception.md). When `dashboard.sessions.enabled` is on, the Sessions section replaces it.
+**Settings that change it.** No settings change this section. See [Inception](../inception.md). While `dashboard.sessions.enabled` is on (the default), the Inception (spek) section replaces it.
 
-## Sessions
+## Inception (spek)
 
 Named terminal sessions where a command-line AI agent runs inside Hive; everyone who can see a session watches it live, one person at a time holds the keyboard, and people with write access can join in.
 
@@ -200,9 +200,9 @@ Named terminal sessions where a command-line AI agent runs inside Hive; everyone
 
 **Example.** You start a session named "fix flaky test" in the group "ci" with the Claude CLI, paste the failing log into the input bar and press Send and run. A teammate opens the same tab and watches.
 
-**When it appears.** Only when sessions are enabled on the hive (`GET /api/sessions` reports `enabled: true`); otherwise the Inception section is shown.
+**When it appears.** Whenever sessions are enabled on the hive, which is the default (`GET /api/sessions` reports `enabled: true`); with `dashboard.sessions.enabled: false` or `HIVE_SESSIONS_ENABLED=false` the Inception wizard is shown instead.
 
-**Settings that change it.** Settings → Dashboard → **Sessions** (`dashboard.sessions.enabled`, default off) and the three limits beside it (`max_sessions`, `max_per_user`, `idle_ttl_hours`; 0 keeps the default). `HIVE_SESSIONS_ENABLED` and the matching `HIVE_SESSIONS_*` variables override the saved values. The terminal is drawn in the dashboard's terminal colours, so it matches the current theme. See [Inception](../inception.md) for the section it replaces.
+**Settings that change it.** Settings → Dashboard → **Inception (spek) sessions** (`dashboard.sessions.enabled`, default on) and the three limits beside it (`max_sessions`, `max_per_user`, `idle_ttl_hours`; 0 keeps the default). `HIVE_SESSIONS_ENABLED` and the matching `HIVE_SESSIONS_*` variables override the saved values. The terminal is drawn in the dashboard's terminal colours, so it matches the current theme. See [Inception](../inception.md) for the section it replaces.
 
 ## Knowledge
 

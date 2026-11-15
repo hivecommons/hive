@@ -46,7 +46,7 @@ type dashboardSessionsPayload struct {
 
 func dashboardSessionsResponse(cfg *config.Config) dashboardSessionsPayload {
 	s := cfg.Dashboard.Sessions
-	enabled, maxSessions, maxPerUser, idle := s.Enabled, s.MaxSessions, s.MaxPerUser, s.IdleTTLHours
+	enabled, maxSessions, maxPerUser, idle := s.EnabledOrDefault(), s.MaxSessions, s.MaxPerUser, s.IdleTTLHours
 	return dashboardSessionsPayload{
 		Enabled:      &enabled,
 		MaxSessions:  &maxSessions,
@@ -75,7 +75,8 @@ func applyDashboardSessionsSettings(next *config.DashboardConfig, body *dashboar
 		}
 	}
 	if body.Enabled != nil {
-		next.Sessions.Enabled = *body.Enabled
+		enabled := *body.Enabled
+		next.Sessions.Enabled = &enabled
 	}
 	if body.MaxSessions != nil {
 		next.Sessions.MaxSessions = *body.MaxSessions

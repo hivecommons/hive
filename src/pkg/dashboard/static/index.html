@@ -8807,7 +8807,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item" data-section="advisory-section" data-action="ocNavigate" data-arg0="advisory-section"><span class="oc-nav-emoji">📣</span><span class="oc-nav-text">Advisory</span></a>
       <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
       <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spektacular)</span></a>
-      <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💻</span><span class="oc-nav-text">Sessions</span></a>
+      <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spek)</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="inbox-section" data-action="ocNavigate" data-arg0="inbox-section"><span class="oc-nav-emoji">📥</span><span class="oc-nav-text">Inbox</span><span id="inbox-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
       <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
@@ -9228,7 +9228,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
   </div>
 
   <div class="mt-6 mb-8" id="sessions-section" data-dashboard-section="sessions-section" hidden>
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="sessions-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Sessions section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 💻 Sessions</h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="sessions-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Inception (spek) section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 💡 Inception (spek)</h2>
     <div class="section-body">
       <div id="sessions-panel"></div>
     </div>
@@ -9514,8 +9514,8 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
         </details>
 
         <details class="faq-q" id="faq-sessions">
-          <summary>What are Sessions, and where did Inception go?</summary>
-          <p>When sessions are enabled on your hive, the dashboard shows a <strong>Sessions</strong> section instead of Inception: named terminal tabs where a command-line AI agent runs inside Hive, shared with everyone on the hive. People with the <code>read</code> role see a read-only scrollback. Typing in a terminal is shared and not attributed to individual people. Campaigns and Jam moved to a Campaigns tab. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections/workflow-and-agents.md#sessions" target="_blank" rel="noopener noreferrer">Sessions</a>.</p>
+          <summary>What is Inception (spek), and where did the Inception wizard go?</summary>
+          <p>The dashboard shows an <strong>Inception (spek)</strong> section instead of the Inception wizard (on by default; an owner can turn it off in Settings): named terminal tabs where a command-line AI agent runs inside Hive, shared with everyone on the hive. People with the <code>read</code> role see a read-only scrollback. Typing in a terminal is shared and not attributed to individual people. Campaigns and Jam moved to a Campaigns tab. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections/workflow-and-agents.md#inception-spek" target="_blank" rel="noopener noreferrer">Inception (spek)</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-external-engines">
@@ -10733,7 +10733,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'review-queue-subsection': { title: 'Queue', summary: '—' },
       'nous-section': { title: '🧪 Experiment Lab (nous)', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },
       'inception-section': { title: '💡 Inception (spektacular)', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
-      'sessions-section': { title: '💻 Sessions', summary: '0 running · 0 total', badgeHtml: '<span class="dash-card-badge">shared terminals</span>' },
+      'sessions-section': { title: '💡 Inception (spek)', summary: '0 running · 0 total', badgeHtml: '<span class="dash-card-badge">shared terminals</span>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'inbox-section': { title: '📥 Inbox', summary: '0 to triage' },
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
@@ -10772,7 +10772,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'review-pipeline-subsection': { heading: 'Review Pipeline', help: 'Each open PR in the stage the review pipeline derived for it (GET /api/review/pipeline), with reviewers, P0–P3 findings, the fix-loop counter and the next action.' },
       'review-queue-subsection': { heading: 'Queue', help: 'Every open PR across the governed repos in one deterministic rank order (GET /api/review/queue), regardless of author type, with the reasons for each position.' },
       'nous-section': { heading: 'Experiment Lab', help: 'An experimental planner that tries out code changes in your repositories and records what it learned.' },
-      'sessions-section': { heading: 'Sessions', help: 'Named terminal sessions running command-line AI tools inside Hive; everyone who can see one watches live and one person at a time holds the keyboard.' },
+      'sessions-section': { heading: 'Inception (spek)', help: 'Named terminal sessions running command-line AI tools inside Hive; everyone who can see one watches live and one person at a time holds the keyboard.' },
       'inception-section': { heading: 'Inception', help: 'A step-by-step guide that turns a new project idea into a first set of files and planned work.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC, send to dibs, or keep as knowledge.' },
@@ -51622,7 +51622,7 @@ function burnAreaChart() {
     }
     function sessionsToolbarHtml() {
       const can = sessionsCanCreate(_sessionsRole, _sessionsData);
-      return '<div class="sessions-toolbar"><div id="sessions-tabs" class="sessions-tabs" role="tablist" aria-label="Sessions">' + sessionsTabsHtml() + '</div>'
+      return '<div class="sessions-toolbar"><div id="sessions-tabs" class="sessions-tabs" role="tablist" aria-label="Inception (spek) sessions">' + sessionsTabsHtml() + '</div>'
         + '<button type="button" class="hv-btn btn-primary btn-sm sessions-new-btn" data-action="sessionsToggleNew"' + (can.ok ? '' : ' disabled title="' + esc(can.reason) + '"') + '>+ New session</button></div>'
         + '<div id="sessions-new" class="sessions-new" role="group" aria-label="New session"' + (_sessionsNewOpen && can.ok ? '' : ' hidden') + '>' + (_sessionsNewOpen && can.ok ? sessionsNewFormHtml() : '') + '</div>';
     }
@@ -57548,7 +57548,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Experiment Lab', key: 'dashboard.experiment_lab', text: 'experiment_lab Experiment Lab dashboard feature experimental planner' },
-      { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Sessions', key: 'dashboard.sessions.enabled', text: 'sessions enabled shared cli terminal tmux ttyd inception replace HIVE_SESSIONS_ENABLED dashboard.sessions.enabled' },
+      { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Inception (spek) sessions', key: 'dashboard.sessions.enabled', text: 'sessions enabled shared cli terminal tmux ttyd inception spek replace HIVE_SESSIONS_ENABLED dashboard.sessions.enabled' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Session limits', key: 'dashboard.sessions.max_sessions', text: 'sessions limits max running per user idle close hours ttl HIVE_SESSIONS_MAX HIVE_SESSIONS_MAX_PER_USER HIVE_SESSIONS_IDLE_TTL_HOURS dashboard.sessions.max_sessions dashboard.sessions.max_per_user dashboard.sessions.idle_ttl_hours' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Subscription usage gauge in header', key: 'dashboard.subscription_gauge_header', text: 'subscription_gauge_header subscription usage gauge fuel header chip claude usage claude plan weekly 5-hour limit left remaining quota headroom' },
       { tab: 'Project Observability', section: 'Target platforms', label: 'Project observability targets', key: 'governor.project_observability.open_source[]', text: 'project observability telemetry operations open source kube native commercial references endpoint env credential secret' },
@@ -59477,7 +59477,7 @@ function burnAreaChart() {
       const envNote = sessions.env_override ? ' <span class="text-muted">Overridden by <code>HIVE_SESSIONS_ENABLED</code> on this hive; the switch shows the saved value.</span>' : '';
       const limit = (key, label, help) =>
         '<div class="config-field"><label>' + label + ' ' + yamlHint('dashboard.sessions.' + key) + '</label><input type="number" min="0" step="1" value="' + esc(String(sessions[key] || 0)) + '" data-change-action="markDashboardSessions" data-arg0="' + key + '" data-arg-types="s,v"><div class="config-help">' + help + '</div></div>';
-      return '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.enabled ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="enabled"></div><span class="config-toggle-label">Sessions ' + yamlHint('dashboard.sessions.enabled') + ' ' + settingHelpMark('settings', 'dashboard', 'Sessions', 'Turns on the Sessions section: named, shared CLI-agent terminals inside the dashboard. It replaces the Inception section while on. Off by default. The HIVE_SESSIONS_ENABLED environment variable, when set, overrides this switch.') + envNote + '</span></div>' +
+      return '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.enabled ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="enabled"></div><span class="config-toggle-label">Inception (spek) sessions ' + yamlHint('dashboard.sessions.enabled') + ' ' + settingHelpMark('settings', 'dashboard', 'Sessions', 'Turns on the Inception (spek) section: named, shared CLI-agent terminals inside the dashboard. It replaces the Inception wizard while on. On by default. The HIVE_SESSIONS_ENABLED environment variable, when set, overrides this switch.') + envNote + '</span></div>' +
         '<div class="config-field-row">' +
           limit('max_sessions', 'Max running sessions', 'Live sessions per hive. 0 uses the default (12); HIVE_SESSIONS_MAX overrides.') +
           limit('max_per_user', 'Max per user', 'Live sessions one person may create. 0 uses the default (4); HIVE_SESSIONS_MAX_PER_USER overrides.') +
