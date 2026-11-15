@@ -306,3 +306,83 @@ func TestMeetingsSecrets(t *testing.T) {
 		t.Fatal("want an error when the secret dir cannot be created")
 	}
 }
+
+func TestResolveMeetingsLLM(t *testing.T) {
+	ctx := context.Background()
+	if r := (*Config)(nil).ResolveMeetingsLLM(ctx); r.Backend != MeetingsLLMModeNone || r.Label() != MeetingsLLMNoModelReason {
+		t.Fatalf("nil config %+v", r)
+	}
+	dir := t.TempDir()
+	cfg := &Config{}
+	cfg.Meetings.LLM.APIKeyFile = filepath.Join(dir, "missing")
+	cfg.Meetings.LLM.AnthropicKeyFile = filepath.Join(dir, "missing-a")
+	if r := cfg.ResolveMeetingsLLM(ctx); r.Backend != MeetingsLLMModeNone {
+		t.Fatalf("nothing configured %+v", r)
+	}
+	// Falls back to governor.litellm like the knowledge advisor.
+	cfg.Governor.LiteLLM.Endpoint = "https://litellm.example/"
+	cfg.Governor.LiteLLM.DefaultModel = "gpt-x"
+	r := cfg.ResolveMeetingsLLM(ctx)
+	if r.Backend != MeetingsLLMModeOpenAI || r.Endpoint != "https://litellm.example" || r.Model != "gpt-x" ||
+		r.TimeoutMS != DefaultMeetingsLLMTimeoutMS || r.MaxInFlight != DefaultMeetingsLLMMaxInFlight || r.Label() != "model gpt-x" {
+		t.Fatalf("litellm fallback %+v", r)
+	}
+	// Meetings' own endpoint, model and key win.
+	keyFile := filepath.Join(dir, "k")
+	if err := WriteMeetingsSecret(ctx, keyFile, "mkey"); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Meetings.LLM = MeetingsLLMConfig{Endpoint: "https://llm.example", Model: "m1", APIKeyFile: keyFile, TimeoutMS: 900, MaxInFlight: 2,
+		AnthropicKeyFile: filepath.Join(dir, "missing-a")}
+	r = cfg.ResolveMeetingsLLM(ctx)
+	if r.Endpoint != "https://llm.example" || r.Model != "m1" || r.APIKey != "mkey" || r.TimeoutMS != 900 || r.MaxInFlight != 2 {
+		t.Fatalf("meetings llm %+v", r)
+	}
+	// An Anthropic key switches to anthropic mode.
+	aFile := filepath.Join(dir, "a")
+	if err := WriteMeetingsSecret(ctx, aFile, "akey"); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Meetings.LLM.AnthropicKeyFile = aFile
+	r = cfg.ResolveMeetingsLLM(ctx)
+	if r.Backend != MeetingsLLMModeAnthropic || r.AnthropicKey != "akey" || !strings.Contains(r.Label(), "Anthropic") {
+		t.Fatalf("anthropic %+v", r)
+	}
+	cfg.Meetings.LLM.AnthropicModel = "claude-x"
+	if r := cfg.ResolveMeetingsLLM(ctx); r.Label() != "Anthropic claude-x" {
+		t.Fatal(r.Label())
+	}
+	// mode openai ignores the Anthropic key; mode none turns the model off.
+	cfg.Meetings.LLM.Mode = "openai"
+	if r := cfg.ResolveMeetingsLLM(ctx); r.Backend != MeetingsLLMModeOpenAI {
+		t.Fatalf("openai mode %+v", r)
+	}
+	t.Setenv(MeetingsLLMModeEnv, "none")
+	if r := cfg.ResolveMeetingsLLM(ctx); r.Backend != MeetingsLLMModeNone || !strings.Contains(r.Reason, "turned off") {
+		t.Fatalf("none %+v", r)
+	}
+	t.Setenv(MeetingsLLMModeEnv, "anthropic")
+	cfg.Meetings.LLM.AnthropicKeyFile = filepath.Join(dir, "missing-a")
+	if r := cfg.ResolveMeetingsLLM(ctx); r.Backend != MeetingsLLMModeNone || !strings.Contains(r.Reason, "Anthropic") {
+		t.Fatalf("anthropic without key %+v", r)
+	}
+}
+
+func TestMeetingsLLMValidate(t *testing.T) {
+	m := MeetingsConfig{Enabled: true, LLM: MeetingsLLMConfig{Mode: "gpt"}}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "meetings.llm.mode") {
+		t.Fatalf("mode = %v", err)
+	}
+	m.LLM = MeetingsLLMConfig{Endpoint: "ftp://x"}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "meetings.llm.endpoint") {
+		t.Fatalf("endpoint = %v", err)
+	}
+	m.LLM = MeetingsLLMConfig{TimeoutMS: -1}
+	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "timeout_ms") {
+		t.Fatalf("timeout = %v", err)
+	}
+	m.LLM = MeetingsLLMConfig{Mode: "anthropic", Endpoint: "https://x"}
+	if err := m.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
