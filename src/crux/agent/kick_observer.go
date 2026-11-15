@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"strings"
 	"sync"
 	"time"
 
@@ -22,59 +21,16 @@ const kickObserverBuffer = 256
 // Compile-time proof the in-process runtime offers fan-out observers.
 var _ crux.KickObserverRegistry = (*Manager)(nil)
 
-// kickObserverSourcePrefix separates the archive reason from the kick source
-// in a kick-log-archived detail, so the mention responder can tell which
-// kicks it summoned (hivecommons/hive#7483).
-const kickObserverSourcePrefix = " source="
-
-func kickObserverArchiveDetail(reason, source string) string {
-	reason = strings.TrimSpace(reason)
-	source = strings.TrimSpace(source)
-	if source == "" {
-		return reason
-	}
-	if reason == "" {
-		return kickObserverSourcePrefix + source
-	}
-	return reason + kickObserverSourcePrefix + source
-}
-
-// KickObserverDetailSource returns the kick source carried in an archive
-// detail, or "" when it has none.
-func KickObserverDetailSource(detail string) string {
-	if _, source, ok := strings.Cut(detail, kickObserverSourcePrefix); ok {
-		return strings.TrimSpace(source)
-	}
-	return ""
-}
-
-// KickObserverDetailReason returns the archive reason without the source.
-func KickObserverDetailReason(detail string) string {
-	reason, _, _ := strings.Cut(detail, kickObserverSourcePrefix)
-	return strings.TrimSpace(reason)
-}
-
 // SetKickObserver installs (or with nil, removes) the single-slot kick
 // lifecycle observer. Safe to leave unset: notifications are then no-ops.
 //
-// This is the compatibility path: it receives only kick-delivered and
-// kick-log-archived, each on its own goroutine, and is independent of the
-// fan-out observers (AddKickObserver). On this line it has two consumers,
-// the mention responder and the Linear agent, so a second call chains after
-// the installed observer instead of replacing it (hivecommons/hive#7483);
-// nil clears every chained observer.
+// This is the compatibility path (the Linear agent is its consumer): it
+// receives only kick-delivered and kick-log-archived, each on its own
+// goroutine, exactly as before AddKickObserver existed. It is independent of
+// the fan-out observers.
 func (m *Manager) SetKickObserver(fn func(agentName, event, detail string)) {
 	if fn == nil {
 		m.kickObserver.Store(nil)
-		return
-	}
-	if existing := m.kickObserver.Load(); existing != nil {
-		prev := *existing
-		chained := func(agentName, event, detail string) {
-			prev(agentName, event, detail)
-			fn(agentName, event, detail)
-		}
-		m.kickObserver.Store(&chained)
 		return
 	}
 	m.kickObserver.Store(&fn)

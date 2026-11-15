@@ -627,9 +627,9 @@ always resolved server-side from the validated token.
 | `POST` | `/api/plan/{epicID}/approve` | Owner only | Plan Approve | `pkg/dashboard/api.go:494` |
 | `POST` | `/api/plan/{epicID}/reject` | Owner only | Plan Reject | `pkg/dashboard/api.go:496` |
 | `POST` | `/api/plan/{epicID}/child/{childID}` | Owner only | Plan Child Action | `pkg/dashboard/api.go:497` |
-| `POST` | `/api/linear/agent/install` | Owner only | Linear Agent Install (OAuth start) | `pkg/dashboard/api_linear_agent.go:219` |
-| `GET` | `/api/linear/agent/status` | Owner only | Linear Agent Status | `pkg/dashboard/api_linear_agent.go:220` |
-| `POST` | `/api/linear/agent/disconnect` | Owner only | Linear Agent Disconnect | `pkg/dashboard/api_linear_agent.go:221` |
+| `POST` | `/api/linear/agent/install` | Owner only | Linear Agent Install (OAuth start) | `pkg/dashboard/api_linear_agent.go:221` |
+| `GET` | `/api/linear/agent/status` | Owner only | Linear Agent Status | `pkg/dashboard/api_linear_agent.go:222` |
+| `POST` | `/api/linear/agent/disconnect` | Owner only | Linear Agent Disconnect | `pkg/dashboard/api_linear_agent.go:223` |
 | `GET` | `/api/upstream-watch` | Owner only | Upstream-watch divergence: per watched fork the upstream followed, the watermark and last-run time, surfaced/ported/dismissed/skipped counts, and the recent upstream refs with their upstream URL, diff URL, fork issue number and state. Read-only — it reads the config and the watch state file, never GitHub. Also carries `interval`, `project_repos` and each repo's configured entry (`config`) for the editor. | `pkg/dashboard/api.go:325` |
 | `PUT` | `/api/config/upstream-watch` | Owner only | Upstream Watch Config Update: edit `upstream_watch` from the Features tab. Body `{enabled?, interval?, repos?: {<repo>: {upstream?, sources?, pr_labels?, max_issues_per_run?, label?} \| null}}` — absent keys are unchanged, `null` removes a repo, keys are stored as the bare repo name. Validated with the loader's rules before the config changes (400 on failure), then persisted and audited as `config_upstream_watch`. | `pkg/dashboard/api.go:326` |
 
