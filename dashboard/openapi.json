@@ -37560,7 +37560,7 @@
           "Knowledge"
         ],
         "summary": "List inbox items (voice recordings and dictations) with their triage state",
-        "description": "Items are the facts written by voice and meeting knowledge connectors (`plaud`, `wisprflow`, `zoom`, `teams`, `discord`), newest first, keyed by `(source, id)`, with per-destination routing state, source connection status, candidate repositories and the auto-routing settings.",
+        "description": "Items are the facts written by voice and meeting knowledge connectors (`plaud`, `wisprflow`, `zoom`, `teams`, `discord`, `google-meet`), newest first, keyed by `(source, id)`, with per-destination routing state, source connection status, candidate repositories and the auto-routing settings.",
         "responses": {
           "200": {
             "description": "Inbox listing",
@@ -38088,7 +38088,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id; Discord: `m:<channel>:<message>` or `e:<event>`)"
+            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id; Discord: `m:<channel>:<message>` or `e:<event>`; Google Meet: conference record id)"
           }
         ],
         "responses": {
@@ -38170,7 +38170,7 @@
           "Knowledge"
         ],
         "summary": "Mint a fresh audio link for one inbox item",
-        "description": "Owner or read-write. Asks the item's connector for a short-lived audio/video URL (Plaud: `get_file`, valid 24h; Zoom: the audio-only or video `download_url` with a one-hour download token appended as `access_token`; Teams: 404, Graph serves recordings behind a bearer token; Discord: the freshly signed CDN URL of the audio attachment, re-read from the message, expiring at its `ex` time) and returns it once with `Cache-Control: no-store`; the hive never stores the link in facts or state. Playback does not depend on the connector's `include_audio` option, which only decides whether a sync also writes a link into the fact. Audited as `inbox_audio`.",
+        "description": "Owner or read-write. Asks the item's connector for a short-lived audio/video URL (Plaud: `get_file`, valid 24h; Zoom: the audio-only or video `download_url` with a one-hour download token appended as `access_token`; Teams: 404, Graph serves recordings behind a bearer token; Google Meet: 404, Drive serves the recording behind a bearer token; Discord: the freshly signed CDN URL of the audio attachment, re-read from the message, expiring at its `ex` time) and returns it once with `Cache-Control: no-store`; the hive never stores the link in facts or state. Playback does not depend on the connector's `include_audio` option, which only decides whether a sync also writes a link into the fact. Audited as `inbox_audio`.",
         "parameters": [
           {
             "name": "source",
@@ -38188,7 +38188,7 @@
             "schema": {
               "type": "string"
             },
-            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id; Discord: `m:<channel>:<message>` or `e:<event>`)"
+            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id; Discord: `m:<channel>:<message>` or `e:<event>`; Google Meet: conference record id)"
           }
         ],
         "responses": {

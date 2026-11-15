@@ -5,8 +5,9 @@ dictations from voice sources land so you can turn them into work without
 leaving the dashboard. It is source-agnostic: Plaud is the first source,
 Wispr Flow (`type: wisprflow`) plugs in with the same model, Zoom and
 Microsoft Teams meeting recordings (`type: zoom`, `type: teams`, see
-[design/meeting-recordings.md](design/meeting-recordings.md)) and Discord
-meetings (`type: discord`) are its siblings, and later sources (file drop, webhook, …) add nothing to the UI.
+[design/meeting-recordings.md](design/meeting-recordings.md)), Discord
+meetings (`type: discord`) and Google Meet meetings (`type: google-meet`)
+are its siblings, and later sources (file drop, webhook, …) add nothing to the UI.
 
 Tracker RFC: *Voice recorders as first-class input sources (Inbox)* —
 see the issue linked from the changelog entry.
@@ -14,14 +15,15 @@ see the issue linked from the changelog entry.
 ## Model
 
 - **Source** — a knowledge connector whose facts are recordings (`plaud`,
-  `wisprflow`, `zoom`, `teams`, `discord`). Connecting a source happens in **Knowledge →
+  `wisprflow`, `zoom`, `teams`, `discord`, `google-meet`). Connecting a source happens in **Knowledge →
   🔌 Integrations**; that card shows only the connection state and an **Open
   Inbox** button.
 - **Item** — one recording, keyed `(source, item_id)` (for Plaud, the
   `attr_plaud_file_id`; for Zoom the meeting instance UUID in
   `attr_zoom_recording_id`; for Teams the callRecording id in
   `attr_teams_recording_id`; for Discord `m:<channel>:<message>` or
-  `e:<event>` in `attr_discord_recording_id`). When the source is connected the Inbox lists
+  `e:<event>` in `attr_discord_recording_id`; for Google Meet the conference
+  record id in `attr_google_meet_recording_id`). When the source is connected the Inbox lists
   recordings directly from it, so an item may appear before the sync has
   written its Knowledge fact; the Inbox only tracks what you did with it.
   "📚 Fact" opens the fact in Knowledge once that fact exists.
@@ -128,11 +130,26 @@ Such a pending item can also be transcribed on the hive itself: with
 owner's own key and stores the transcript on this hive only. See
 [Inbox transcription](inbox-transcription.md).
 
+## Google Meet meetings
+
+Google Meet items follow the Zoom shape: the title is the calendar event
+title read from the Meet-created Drive file name (else the meeting code), the
+summary slot shows the Gemini *Take notes for me* document when the meeting
+had one, and the transcript comes from the Meet API's structured transcript
+entries as `[mm:ss] Speaker: text` lines. Only meetings that produced a
+recording, a transcript or notes become items. **▶ Play recording** answers
+404 for Google Meet items: the MP4 is a Drive file Drive serves only behind a
+bearer token, so the error names the Drive page instead. A recording without
+transcript or notes is `attr_meeting_content: pending` and re-read on later
+syncs. Like every item, the text reaches spek inside the untrusted-data
+envelope. Setup is in
+[knowledge-connectors.md](knowledge-connectors.md#google-meet-recordings-type-google-meet).
+
 ## Configuration
 
 ```yaml
 inbox:
-  sources: [plaud, wisprflow, zoom, teams, discord]   # default: every configured voice/meeting connector
+  sources: [plaud, wisprflow, zoom, teams, discord, google-meet]   # default: every configured voice/meeting connector
   spek:
     repo: hivecommons/hive        # default RFC target
     binary: spektacular           # or an absolute path; empty = look on PATH
