@@ -28,7 +28,9 @@ func (m *Manager) StartRequests() {
 		for m.ctx.Err() == nil {
 			err := m.opts.Quorum.Events(m.ctx, "", 0, func(ev Event) bool {
 				backoff = m.opts.ReconnectMin
-				if ev.Type == EventState && ev.State == StateRequested && ev.RequestedBy != nil {
+				// The live request carries requested_by; the snapshot a
+				// (re)connect opens with carries only the channel.
+				if ev.Type == EventState && ev.State == StateRequested && (ev.RequestedBy != nil || ev.GuildID != "") {
 					m.onRequest(ev)
 				}
 				return true
@@ -61,11 +63,30 @@ func (m *Manager) findNative(nativeID string) (Meeting, bool) {
 	return Meeting{}, false
 }
 
+// knownChannel reports whether a running meeting already targets the
+// channel: a dashboard join announces itself on the request stream too,
+// possibly before its Quorum id is recorded.
+func (m *Manager) knownChannel(guild, channel string) bool {
+	if guild == "" || channel == "" {
+		return false
+	}
+	list, err := m.opts.Store.List()
+	if err != nil {
+		return false
+	}
+	for _, mt := range list {
+		if !mt.State.Terminal() && mt.GuildID == guild && mt.ChannelID == channel {
+			return true
+		}
+	}
+	return false
+}
+
 func (m *Manager) onRequest(ev Event) {
 	if ev.MeetingID == "" {
 		return
 	}
-	if _, ok := m.findNative(ev.MeetingID); ok {
+	if _, ok := m.findNative(ev.MeetingID); ok || m.knownChannel(ev.GuildID, ev.ChannelID) {
 		return
 	}
 	now := m.opts.Now()
@@ -73,7 +94,10 @@ func (m *Manager) onRequest(ev Event) {
 	if platform == "" {
 		platform = PlatformDiscord
 	}
-	who := *ev.RequestedBy
+	var who Person
+	if ev.RequestedBy != nil {
+		who = *ev.RequestedBy
+	}
 	mt := Meeting{
 		ID: newMeetingID(), Platform: platform, GuildID: ev.GuildID, ChannelID: ev.ChannelID,
 		NativeID: ev.MeetingID, InvitedBy: who.Name, RequestedBy: &who, State: StateRequested,

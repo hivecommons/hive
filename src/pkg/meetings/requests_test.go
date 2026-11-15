@@ -81,6 +81,8 @@ func TestPlatformJoinRequests(t *testing.T) {
 	all <- Event{Type: EventState, MeetingID: "q-d1", State: StateRequested, Platform: PlatformDiscord, GuildID: "g", ChannelID: "c", RequestedBy: &Person{ID: "u1", Name: "Ana"}}
 	all <- Event{Type: EventState, MeetingID: "q-x", State: StateLive}
 	all <- Event{Type: EventState, State: StateRequested, RequestedBy: &Person{ID: "u2"}}
+	// The reconnect snapshot of the same request (no requester) is a duplicate.
+	all <- Event{Type: EventState, MeetingID: "q-d1b", State: StateRequested, GuildID: "g", ChannelID: "c"}
 	var pending Meeting
 	eventually(t, "pending request", func() bool {
 		list, _ := m.List()
@@ -138,6 +140,10 @@ func TestPlatformJoinRequests(t *testing.T) {
 		t.Fatal("want the join error")
 	}
 	q.joinErr = nil
+
+	// A snapshot-only request (no requester) is still recorded.
+	all <- Event{Type: EventState, MeetingID: "q-d5", State: StateRequested, GuildID: "g5", ChannelID: "c5"}
+	eventually(t, "snapshot request", func() bool { x, ok := m.findNative("q-d5"); return ok && x.RequestedBy != nil })
 
 	// An owner-mapped requester is approved automatically.
 	q.joinRes = JoinResult{MeetingID: "q-d4", State: StateLive}
