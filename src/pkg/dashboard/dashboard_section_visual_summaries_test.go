@@ -71,7 +71,6 @@ const fixtures = {
   'acmm-eval-section': 'L3',
   'audit-section': '5 events today',
   'review-queue-section': '6 PRs',
-  'inception-section': '2 proposals · 1 in progress',
   'knowledge-section': '9 facts',
   'contributors-section': '2 contributors · 1 active',
   'debug-section': 'healthy',

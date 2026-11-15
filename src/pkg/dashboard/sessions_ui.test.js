@@ -171,18 +171,27 @@ test('Settings → Dashboard stages dashboard.sessions.* as one nested block', (
   assert.match(html, /HIVE_SESSIONS_ENABLED environment variable, when set, overrides this switch/);
 });
 
-test('layout gate shows Sessions and hides Inception only when sessions are enabled', () => {
+test('layout gate shows Inception (spek) only when sessions are enabled; the wizard section is gone', () => {
   const m = /function sessionsFeatureEnabled\(\)\{[^\n]*\n\s*function dashboardFeatureSectionHidden\(id\)\{[^\n]*\}/.exec(html);
   assert.ok(m, 'layout gate not found');
   const gate = enabled => new Function('window', 'dashboardAliasSectionId', 'experimentLabEnabled',
     m[0] + '\nreturn dashboardFeatureSectionHidden;')({ _sessionsEnabled: enabled }, id => id, () => true);
   const off = gate(false);
   assert.strictEqual(off('sessions-section'), true);
-  assert.strictEqual(off('inception-section'), false);
   const on = gate(true);
   assert.strictEqual(on('sessions-section'), false);
-  assert.strictEqual(on('inception-section'), true);
   assert.strictEqual(on('nous-section'), false);
+  assert.doesNotMatch(html, /id="inception-section"/, 'the Inception wizard section must be removed');
+  assert.doesNotMatch(html, /data-section="inception-section"/, 'the Inception wizard sidebar item must be removed');
+});
+
+test('#inception-section deep links and saved layouts alias to the Inception (spek) section', () => {
+  const m = /function dashboardAliasSectionId\(id\)\{[^\n]*?return id;\}/.exec(html);
+  assert.ok(m, 'dashboardAliasSectionId not found');
+  const alias = new Function(m[0] + '\nreturn dashboardAliasSectionId;')();
+  assert.strictEqual(alias('inception-section'), 'sessions-section');
+  assert.strictEqual(alias('review-pipeline-section'), 'review-queue-section');
+  assert.strictEqual(alias('knowledge-section'), 'knowledge-section');
 });
 
 test('workspace label names the shared checkout or says sessions start empty', () => {
