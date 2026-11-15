@@ -2611,6 +2611,7 @@
       else if (type === 'google-meet') html += kbPlaudAuthLine(c.name, type) + kbGoogleMeetPasteHtml(c.name, c);
       else if (type === 'webex') html += kbPlaudAuthLine(c.name, type) + kbWebexPasteHtml(c.name, c);
       else if (type === 'slack-huddles') html += kbPlaudAuthLine(c.name, type) + kbSlackHuddlesHelpHtml(c.name, c);
+      else if (type === 'fathom') html += kbPlaudAuthLine(c.name, type) + kbFathomHelpHtml(c.name, c);
       else if (type === 'fireflies') html += kbPlaudAuthLine(c.name, type) + kbFirefliesHelpHtml(c.name, c);
       if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
@@ -2660,6 +2661,7 @@
       if (type === 'google-meet') html += kbMeetingAuthFormHTML(type, c);
       if (type === 'webex') html += kbMeetingAuthFormHTML(type, c);
       if (type === 'slack-huddles') html += '<p class="muted-xs" data-kb-slack-huddles-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Slack token: a bot token (<code>xoxb-</code>) of an app installed in the workspace and invited to each channel, or a user token (<code>xoxp-</code>) for DMs. Scopes: <code>channels:history</code> and <code>groups:history</code> (plus <code>im:history</code> / <code>mpim:history</code> for DMs), <code>canvases:read</code> and <code>files:read</code> for the notes canvas, <code>users:read</code> for names and <code>channels:read</code> / <code>groups:read</code> for channel names. List the channel ids (C…, G…, D…) under Channels.</p>';
+      if (type === 'fathom') html += '<p class="muted-xs" data-kb-fathom-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Fathom API key: in Fathom open <strong>User Settings → API Access</strong> and generate a key; enter the NAME of the variable (for example <code>FATHOM_API_KEY</code>), never the key itself. The key sees the meetings its user recorded or that were shared with them or their team.</p>';
       if (type === 'fireflies') html += '<p class="muted-xs" data-kb-fireflies-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Fireflies API key: in Fireflies open <strong>Integrations → Fireflies API</strong> and copy the key; enter the NAME of the variable (for example <code>FIREFLIES_API_KEY</code>), never the key itself. Audio playback and Deepgram fallback use the meeting audio link, which Fireflies serves on Pro plans and higher.</p>';
       if (type === 'discord') html += '<p class="muted-xs" data-kb-discord-note>Set the credential source to <strong>Environment variable</strong> and enter the NAME of the variable that holds the bot token (for example <code>DISCORD_BOT_TOKEN</code>); the value never passes through the dashboard. List the server id for scheduled events and the ids of the channels where finished recordings are posted.</p>';
       html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
@@ -2799,7 +2801,7 @@
     // Cached per connector name; loaded lazily when the card renders. The
     // kbPlaud* functions serve every KB_AUTH_TYPES type; the label follows
     // the connector type.
-    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', fireflies: 'Fireflies' };
+    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', fireflies: 'Fireflies', fathom: 'Fathom' };
     const _kbPlaudAuth = {};
     function kbAuthLabel(name, type) {
       if (!type) { const c = (_kcState.connectors || []).find(x => x.name === name); type = c && c.type; }
@@ -2925,6 +2927,17 @@
       const limited = /too_many_requests|rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-fireflies-ratelimit>Fireflies rate-limited the API key; the next sync retries (Free plan: 500 requests a day).</div>' : '';
       return paid + limited + '<p class="muted-xs" data-kb-fireflies-help>Fireflies.ai keeps a transcript, speakers and an AI summary for every meeting its notetaker joined. The hive reads them with the <a href="https://docs.fireflies.ai/graphql-api/query/transcripts" target="_blank" rel="noopener">Fireflies GraphQL API</a> (<code>transcripts</code>, 50 per page) using the API key from <strong>Fireflies → Integrations → Fireflies API</strong>. ' + (c && c.scope && /^true$/i.test(c.scope.mine || '') ? 'Only meetings you organized are read.' : 'Every meeting the key\'s owner can see is read.') + ' Click Check to verify the key.</p>';
     }
+    // Fathom: an API key has no browser step; the card says which meetings
+    // the key sees and how playback works (a recording download Fathom
+    // prepares on request).
+    function kbFathomHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-fathom-playback>Meetings are triaged in the Inbox. ▶ Play asks Fathom for a recording download; video can take a minute to prepare, so click again if it is not ready.</span></div>';
+      const limited = /rate limit/i.test(a.message || '') ? '<div class="kc-error" data-kb-fathom-ratelimit>Fathom rate-limited the API key (60 calls a minute, 30 for transcripts and summaries); the next sync retries.</div>' : '';
+      const recorders = (c && c.scope && c.scope.recorded_by) || '';
+      return limited + '<p class="muted-xs" data-kb-fathom-help>Fathom keeps a transcript, an AI summary and action items for every call its notetaker recorded. The hive reads them with the <a href="https://developers.fathom.ai/api-reference/meetings/list-meetings" target="_blank" rel="noopener">Fathom API</a> (<code>GET /meetings</code>) using an API key from <strong>Fathom → User Settings → API Access</strong>. The key sees the meetings its user recorded and the ones shared with them or their team' + (recorders ? ', limited here to <code>' + escapeHtml(recorders) + '</code>' : '') + '. Click Check to verify the key.</p>';
+    }
     async function kbPlaudAuthLoad(name, refresh) {
       try {
         const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth' + (refresh ? '?refresh=1' : ''));
@@ -3001,6 +3014,7 @@
     function kbOpenGoogleMeetIntegration() { _kbIntegrationSelected = 'google-meet'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenWebexIntegration() { _kbIntegrationSelected = 'webex'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenSlackHuddlesIntegration() { _kbIntegrationSelected = 'slack-huddles'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenFathomIntegration() { _kbIntegrationSelected = 'fathom'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenFirefliesIntegration() { _kbIntegrationSelected = 'fireflies'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
 
     // ── Wispr Flow (local dictation history, no sign-in) ──
