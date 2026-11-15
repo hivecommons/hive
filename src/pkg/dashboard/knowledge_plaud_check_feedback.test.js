@@ -28,6 +28,10 @@ const NOT_CONFIGURED = 'no knowledge connectors are configured';
 const HTTP_NOT_FOUND = 404;
 const HTTP_OK = 200;
 
+// The connector-type label table kbAuthLabel reads, lifted verbatim.
+const KB_AUTH_TYPES_DECL = (html.match(/const KB_AUTH_TYPES = [^\n]+;/) || [])[0];
+assert.ok(KB_AUTH_TYPES_DECL, 'KB_AUTH_TYPES not found');
+
 const setup = ({ status, body, cardPresent = true }) => {
   const toasts = [];
   const calls = { urls: [], renders: 0 };
@@ -38,7 +42,7 @@ const setup = ({ status, body, cardPresent = true }) => {
   const document = { querySelector: () => (cardPresent ? {} : null) };
   const CSS = { escape: s => s };
   const h = new Function('fetch', 'document', 'CSS', 'showToast', 'kbRenderIntegrationsModal',
-    'const _kbPlaudAuth = {};\n' + fnSrc('kbPlaudAuthLoad') + '\n' + fnSrc('kbPlaudAuthSummary') + '\n' + fnSrc('kbPlaudRefreshAuth') +
+    'const _kbPlaudAuth = {}; const _kcState = { connectors: [] };\n' + KB_AUTH_TYPES_DECL + '\n' + fnSrc('kbAuthLabel') + '\n' + fnSrc('kbPlaudAuthLoad') + '\n' + fnSrc('kbPlaudAuthSummary') + '\n' + fnSrc('kbPlaudRefreshAuth') +
     '\nreturn { kbPlaudRefreshAuth, _kbPlaudAuth };')(fetch, document, CSS, (m, k) => toasts.push([m, k]), () => { calls.renders++; });
   return { h, toasts, calls };
 };

@@ -3,8 +3,10 @@
 The **Inbox** (sidebar → Intelligence → 📥 Inbox) is where recordings and
 dictations from voice sources land so you can turn them into work without
 leaving the dashboard. It is source-agnostic: Plaud is the first source,
-Wispr Flow (`type: wisprflow`) plugs in with the same model, and later sources
-(file drop, webhook, Otter.ai, Fireflies, …) add nothing to the UI.
+Wispr Flow (`type: wisprflow`) plugs in with the same model, Zoom and
+Microsoft Teams meeting recordings (`type: zoom`, `type: teams`, see
+[design/meeting-recordings.md](design/meeting-recordings.md)) are its
+siblings, and later sources (file drop, webhook, …) add nothing to the UI.
 
 Tracker RFC: *Voice recorders as first-class input sources (Inbox)* —
 see the issue linked from the changelog entry.
@@ -12,10 +14,13 @@ see the issue linked from the changelog entry.
 ## Model
 
 - **Source** — a knowledge connector whose facts are recordings (`plaud`,
-  `wisprflow`). Connecting a source happens in **Knowledge → 🔌 Integrations**;
-  that card shows only the connection state and an **Open Inbox** button.
+  `wisprflow`, `zoom`, `teams`). Connecting a source happens in **Knowledge →
+  🔌 Integrations**; that card shows only the connection state and an **Open
+  Inbox** button.
 - **Item** — one recording, keyed `(source, item_id)` (for Plaud, the
-  `attr_plaud_file_id`). When the source is connected the Inbox lists
+  `attr_plaud_file_id`; for Zoom the meeting instance UUID in
+  `attr_zoom_recording_id`; for Teams the callRecording id in
+  `attr_teams_recording_id`). When the source is connected the Inbox lists
   recordings directly from it, so an item may appear before the sync has
   written its Knowledge fact; the Inbox only tracks what you did with it.
   "📚 Fact" opens the fact in Knowledge once that fact exists.
@@ -73,11 +78,30 @@ transcription/summary in the Plaud app to fill it. Facts written before this
 behaviour, whose body carries the "not available" line, are refreshed the
 same way.
 
+## Meeting recordings (Zoom, Teams)
+
+Zoom and Teams items look like Plaud items: the title is the meeting topic,
+the meta line carries the start time and duration, the summary slot shows
+the platform's AI summary when there is one (Zoom), the *Transcript*
+disclosure shows `[mm:ss] Speaker: text` lines rendered from the platform's
+VTT, and the fact lists the participants. **▶ Play recording** goes through
+the same `GET /api/inbox/{source}/{id}/audio` endpoint: for Zoom the hive
+asks for the audio-only (else video) file and appends a one-hour download
+token minted for that click; for Teams the endpoint answers 404 because Graph
+serves recordings only behind a bearer token the browser cannot send (a
+streaming proxy is the open follow-up). A recording the platform has not
+transcribed yet is marked `attr_meeting_content: pending` and re-read on
+later syncs, the same posture as Plaud's pending recordings. Setup, scopes
+and the admin steps are in
+[knowledge-connectors.md](knowledge-connectors.md#zoom-cloud-recordings-type-zoom);
+the design record with the data flow, auth model, limits and privacy notes is
+[design/meeting-recordings.md](design/meeting-recordings.md).
+
 ## Configuration
 
 ```yaml
 inbox:
-  sources: [plaud, wisprflow]     # default: every configured voice connector
+  sources: [plaud, wisprflow, zoom, teams]   # default: every configured voice/meeting connector
   spek:
     repo: hivecommons/hive        # default RFC target
     binary: spektacular           # or an absolute path; empty = look on PATH
@@ -111,6 +135,13 @@ Plaud card therefore offers **Finish sign-in by pasting**:
 Both go through `POST /api/knowledge/connectors/{name}/auth/complete`.
 A browser-only redirect to the hive's public URL is not possible until Plaud
 allows additional redirect URIs for its client.
+
+The Zoom card uses the same paste flow for user-level OAuth: **Connect Zoom**
+shows the authorization URL of the app you registered (with a `state`), and
+the `…/zoom/callback?code=…&state=…` URL the browser lands on is pasted into
+**Finish Zoom sign-in by pasting**; the hive exchanges the code itself and
+keeps the refresh token in the connector token store. Server-to-Server Zoom
+apps and Teams need no browser step.
 
 ## Requirements on the hive image
 

@@ -51,7 +51,7 @@ const render = ({ runtime, c, row, type = 'plaud', owner = OWNER }) => {
   const calls = { authLines: 0 };
   const escapeHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
   const h = new Function('_kcState', '_kbPlaudAuth', 'escapeHtml', 'kcAgo', 'kbPlaudAuthLine', 'kbPlaudPasteHtml', 'kbWisprFlowSourceLine',
-    fnSrc('kbConnectorNotLoaded') + '\n' + fnSrc('kbConnectorNotLoadedHtml') + '\n' + fnSrc('kbPlaudAuthButtons') + '\n' + fnSrc('kbConnectorRow') + '\n' + ROW_HELPERS +
+    declSrc('KB_AUTH_TYPES') + '\n' + fnSrc('kbAuthLabel') + '\n' + fnSrc('kbConnectorNotLoaded') + '\n' + fnSrc('kbConnectorNotLoadedHtml') + '\n' + fnSrc('kbPlaudAuthButtons') + '\n' + fnSrc('kbConnectorRow') + '\n' + ROW_HELPERS +
     "\nconst KC_STATUS_NOT_LOADED = '" + NOT_LOADED + "'; const KC_NOT_LOADED_HINT = '" + HINT + "';" +
     '\nreturn kbConnectorRow;')(
     { runtime, rows: row ? [row] : [], publish: null }, {}, escapeHtml, () => '—',
