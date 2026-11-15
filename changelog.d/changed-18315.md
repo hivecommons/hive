@@ -1,0 +1,1 @@
+- v6: converge kick_observer.go with v5's fan-out observers (#18315)
