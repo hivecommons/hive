@@ -174,6 +174,24 @@ func TestNavbarAgentStripNeverScrolls(t *testing.T) {
 	}
 }
 
+// The "+N" count is the strip's ::after, which does not inherit box-sizing.
+// As a content box its padding and border sat on top of the tile min-height,
+// so it was 10px taller than a tile, stretched the row past the one-row cap,
+// and the bottom of every tile was cut off whenever a count showed.
+func TestNavbarAgentCountIsNoTallerThanATile(t *testing.T) {
+	html := indexHTML(t)
+	tile := navbarAgentCSSBlock(t, html, ".agent-navbar-tile { flex: 0 0 auto;")
+	count := navbarAgentCSSBlock(t, html, ".agent-navbar-upnext[data-agent-more]::after {")
+	for name, rule := range map[string]string{"tile": tile, "count chip": count} {
+		if !strings.Contains(rule, "min-height: calc(var(--nav-chip-h) + var(--sp-4));") {
+			t.Errorf("navbar agent %s rule lost its shared min-height", name)
+		}
+		if !strings.Contains(rule, "box-sizing: border-box;") {
+			t.Errorf("navbar agent %s rule must be border-box so its min-height is its whole height", name)
+		}
+	}
+}
+
 // A replica ("adjudicator-2") is a copy of its base agent and keeps the base's
 // displayName, so two tiles read "adjudicator". The tile, its title and its
 // aria-label must say which copy it is; an agent that is not a copy is
