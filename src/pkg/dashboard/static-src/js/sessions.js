@@ -462,8 +462,18 @@
       let note;
       if (mode === 'ended') {
         const failedResume = s.error ? ' ' + sessionsStatusText(s) : '';
-        note = '<div class="sessions-note">This session has ended (the hive restarted or the process exited). Scrollback below is the last output.' + esc(failedResume)
-          + (can ? ' <button type="button" class="hv-btn btn-primary btn-sm" data-action="sessionsResume" data-arg0="' + esc(s.id) + '">Resume</button>' : '') + '</div>';
+        const idAttr = esc(s.id);
+        const restartBtn = function(cls) { return ' <button type="button" class="hv-btn ' + cls + ' btn-sm" data-action="sessionsRestart" data-arg0="' + idAttr + '">Start again</button>'; };
+        let actions = '';
+        let lead = 'This session has ended (the hive restarted or the process exited). Scrollback below is the last output.';
+        if (s.resumable) {
+          actions = can ? ' <button type="button" class="hv-btn btn-primary btn-sm" data-action="sessionsResume" data-arg0="' + idAttr + '">Resume</button>' + restartBtn('btn-secondary') : '';
+        } else {
+          // The CLI left no conversation to continue, so Resume would only 409.
+          lead = 'This session has ended and cannot be resumed (the CLI left no conversation to continue). Start again opens a fresh ' + (s.vendor || 'CLI') + ' session with the same name and group; the scrollback below stays.';
+          actions = can ? restartBtn('btn-primary') : '';
+        }
+        note = '<div class="sessions-note">' + esc(lead) + esc(failedResume) + actions + '</div>';
       } else {
         note = '<div class="sessions-note">The live terminal could not be opened, so you see a read-only scrollback that refreshes every few seconds.</div>';
       }
@@ -731,6 +741,16 @@
         _sessionsData.sessions = (_sessionsData.sessions || []).filter(function(x) { return x.id !== id; });
         await sessionsSubmitCreate(body);
       } catch (e) { showToast('Could not retry the session: ' + e.message, 'error'); loadSessions(); }
+    }
+    // Start again: an ended session with nothing to resume. A fresh session is
+    // created with the same name, group, vendor and sharing; the old record
+    // (and its scrollback) is kept so the user can still read it.
+    async function sessionsRestart(id) {
+      const s = (_sessionsData.sessions || []).find(function(x) { return x.id === id; });
+      if (!s) return;
+      const body = { name: s.name || id, group: s.group || '', vendor: s.vendor, shared: !!s.shared };
+      try { await sessionsSubmitCreate(body); }
+      catch (e) { showToast('Could not start the session again: ' + e.message, 'error'); }
     }
     async function sessionsPatch(id, patch, okMsg) {
       try {
