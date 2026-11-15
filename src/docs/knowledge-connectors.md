@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -21,7 +21,7 @@ knowledge:
         # file: /run/secrets/wiki-token   # an absolute secret file path
 ```
 
-Only one of `auth.env` / `auth.file` may be set. Inline secrets (an `auth.token`, or secret-looking scope keys such as `api_key`) are rejected everywhere, including by the dashboard. Connectors that talk to an OAuth app the operator registered (`zoom`, `teams`) name that registration the same way, through `auth.client_id_env`, `auth.client_secret_env` and `auth.account_id_env` / `auth.tenant_id_env`: environment variable **names**, never values, plus `auth.mode` (`user_oauth` or `server_to_server`).
+Only one of `auth.env` / `auth.file` may be set. Inline secrets (an `auth.token`, or secret-looking scope keys such as `api_key`) are rejected everywhere, including by the dashboard. Connectors that talk to an OAuth app the operator registered (`zoom`, `teams`, `google-meet`) name that registration the same way, through `auth.client_id_env`, `auth.client_secret_env` and `auth.account_id_env` / `auth.tenant_id_env`: environment variable **names**, never values, plus `auth.mode` (`user_oauth` or `server_to_server`).
 
 ## How it works
 
@@ -583,6 +583,98 @@ knowledge:
 - Not in v1: a hive bot that joins voice channels and records itself. That
   needs a long-lived gateway voice connection and per-speaker consent
   handling, so it is left as future work.
+
+## Google Meet recordings (`type: google-meet`)
+
+The Google Meet connector reads [conference records](https://developers.google.com/workspace/meet/api/guides/conferences)
+through the [Google Meet REST API v2](https://developers.google.com/workspace/meet/api/reference/rest/v2):
+one fact per meeting that produced a recording, a transcript or Gemini notes,
+with the event title, start time, duration, participants, the Gemini *Take
+notes for me* document as the summary and the transcript rendered as
+`[mm:ss] Speaker: text` lines from the structured
+[transcript entries](https://developers.google.com/workspace/meet/api/reference/rest/v2/conferenceRecords.transcripts.entries).
+Meetings land in the **📥 Inbox** next to Zoom and Teams items.
+
+```yaml
+knowledge:
+  connectors:
+    - name: meet
+      type: google-meet
+      layer: personal
+      interval: 15m
+      auth:
+        mode: user_oauth                        # my own meetings; or server_to_server (service account)
+        client_id_env: GOOGLE_MEET_CLIENT_ID    # environment variable NAMES, never values
+        client_secret_env: GOOGLE_MEET_CLIENT_SECRET
+        # server_to_server instead: the service-account key JSON
+        # env: GOOGLE_MEET_SA_KEY               # or file: /run/secrets/meet-sa.json
+      scope:
+        # users: alice@example.com, bob@example.com   # server_to_server: Workspace users to impersonate
+        since_days: "30"
+        max_recordings: "200"
+        include_summary: "true"                 # smartNotes (Gemini notes) exported from Docs
+        include_participants: "true"
+        include_video_link: "false"             # also store the Drive recording link in the fact
+        redirect_uri: http://localhost:8199/google-meet/callback   # user_oauth: the redirect registered on the client
+        tags: "meetings"
+```
+
+### Setup
+
+1. In the Google Cloud console enable the **Google Meet REST API** and the
+   **Google Drive API** for a project, and add the scopes
+   `https://www.googleapis.com/auth/meetings.space.readonly` and
+   `https://www.googleapis.com/auth/drive.meet.readonly` to its OAuth consent
+   screen (both are restricted/sensitive scopes: an *Internal* consent screen
+   in a Workspace organization avoids Google verification).
+2. **User-level OAuth** (your own meetings): create an OAuth client of type
+   *Web application* with the redirect URL (default
+   `http://localhost:8199/google-meet/callback`) as an authorized redirect
+   URI, put its id and secret in the hive's environment, and add the
+   connector from **Knowledge → 🔌 Integrations → Google Meet recordings**.
+   Click **Connect Google Meet**, approve, and paste the
+   `…/google-meet/callback?state=…&code=…` URL the browser lands on (a
+   connection error page is expected) into **Finish Google sign-in by
+   pasting** within 10 minutes. The hive asks for offline access, exchanges
+   the code and keeps the refresh token at
+   `/data/knowledge/connector-state/<name>/home/.google-meet/tokens.json`
+   (mode 0600).
+3. **Service account** (Workspace users): create a service account and a JSON
+   key, have a Workspace super admin authorize its client id for the two
+   scopes above under *Admin console → Security → API controls → Domain-wide
+   delegation*, set `auth.mode: server_to_server`, point `auth.env` or
+   `auth.file` at the key, and list the users in `scope.users`. Connect signs
+   an RS256 assertion per user (`sub` = the user) and reports the outcome.
+4. Click **Check** any time to re-probe, **Sync now** to sync.
+
+### Behaviour
+
+- Each sync pages `GET /v2/conferenceRecords?filter=start_time>="…"`
+  (`pageSize` 100, `nextPageToken`) from the newest meeting seen (minus 48 h)
+  back to `since_days`, skips meetings still in progress, and for each
+  meeting lists `recordings`, `transcripts` and `smartNotes`; meetings with
+  none of the three are not facts. `conferenceRecords.list` only returns
+  meetings the user **organized**.
+- Title: the Meet-created Drive file name (the calendar event title, with
+  the date and the " - Transcript" / " - Notes by Gemini" suffix removed),
+  else `Google Meet <meeting code>`. Transcript: `transcripts.entries` with
+  each `participant` resolved through `participants`; when the entries are
+  empty the Docs transcript is exported as text. Summary: the newest
+  `FILE_GENERATED` smart note exported as text (`smartNotes` needs Gemini in
+  Meet; without it only the summary is dropped).
+- Meetings with a recording but no transcript or notes are marked
+  `attr_meeting_content: pending` and re-read on later syncs (25 at most).
+- Facts carry `source: google-meet`, `attr_google_meet_recording_id` (the
+  conference record id, the Inbox item id), `attr_google_meet_meeting_id`
+  (the meeting code), `attr_recorded_at`, `attr_duration_ms`,
+  `attr_participants`, `attr_host` (service account: the impersonated user).
+- Playback: Meet stores the MP4 as a Drive file that Drive serves only
+  behind a bearer token, so ▶ Play answers *no playable media* and names the
+  Drive page (`driveDestination.exportUri`) instead. Text syncs regardless.
+- A `401` reads as *not connected* with a pointer to the card; a `403` keeps
+  Google's reason (API not enabled, scope not granted). `429` and `5xx` are
+  retried honouring `Retry-After`. The bearer token is only sent to the Meet
+  and Drive API hosts.
 
 ## Wispr Flow (dictation, `type: wisprflow`)
 
