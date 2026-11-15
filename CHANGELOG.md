@@ -11,6 +11,31 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v6.33.0)
+
+### Added
+
+- Agent output markers now reach kick observers: a line that starts with `[STATUS]`, `[FINDING]`, `[COMPLETE]` or `[ERROR]` (after any CLI glyph) is delivered as a `output-signal` kick event carrying the agent, the in-flight queued kick's ID, the signal kind and the text after the marker (bounded to 500 runes), deduplicated per kick so a pane redraw does not repeat a finding. The existing log line is unchanged ([#18287](https://github.com/hivecommons/hive/issues/18287), parent [#18284](https://github.com/hivecommons/hive/issues/18284)).
+- New `pkg/research` research agent pool for the meetings feature: `research-1..N` agents (`meetings.research_pool_size`, default 2, at most 8) defined as `ADVISORY` with no repo checkouts, so the proxy refuses every GitHub write whatever the prompt says. `Pool.Dispatch(ctx, query, meta)` queues the query on the least busy agent (starting it if stopped) and returns the kick ID; `Pool.Observe` reports `queued`, `running`, `finding`, `done` and `failed` per kick from the agent's `[FINDING]` / `[COMPLETE]` / `[ERROR]` output ([#18288](https://github.com/hivecommons/hive/issues/18288), parent [#18284](https://github.com/hivecommons/hive/issues/18284)).
+- **Inbox: automatic transcription sweep for opted-in sources.** With `inbox.transcription.mode: auto`, the hive now transcribes new pending recordings by itself after each connector sync, but only from the sources listed in `inbox.transcription.sources`. The sweep queues only what the day's item cap and the month's minutes budget leave room for (items that do not fit stay pending, no skip records), never queues an item twice, retries failed items after 1h then 2h up to 3 runs, and retries budget skips the next UTC day. Runs are audited as `inbox_transcribe` by `inbox-auto-transcribe`. The ⚙ settings panel shows this month's minutes used, today's runs and the required egress (`api.deepgram.com:443`, only while transcription is enabled), and the network requirements docs list it.
+- Meetings groundwork: a `meetings:` config block (off by default, every key overridable by a `HIVE_MEETINGS_*` env var, Vexa tenant key and Discord bot token kept in keystore-sealed secret files) and a supervisor that runs the Quorum meeting server as a loopback child process with a per-boot bearer token, health checks and restart backoff (#18289).
+
+### Changed
+
+- Sessions: the queued-Send fail-open deadline is now measured through an injectable clock (no behaviour change; it makes the deadline test deterministic instead of racing a one-second wall-clock wait under CI load).
+
+### Fixed
+
+- A kick refused because another kick is already being typed into the same pane is now logged at info instead of warn, so this expected back-pressure no longer floods the fleet self-report as an unclassified repeated error ([#18276](https://github.com/hivecommons/hive/issues/18276)).
+
+## 2026-11-15 (v6.32.0)
+
+### Added
+
+- Crux gains ID-addressed, queued kicks: `Manager.EnqueueKick(agent, kickID, message)` appends a kick to a bounded per-agent FIFO (`HIVE_KICK_QUEUE_SIZE`, default 8) and returns its kick ID (caller-supplied or generated), delivering each kick once the agent is idle. `Manager.KickStatus(kickID)` reports `queued`, `pending`, `delivered`, `completed` (with the turn's outcome) or `failed`; waits and turns are bounded by `HIVE_KICK_QUEUE_WAIT_TIMEOUT` (30m) and `HIVE_KICK_QUEUE_TURN_TIMEOUT` (60m). The optional `crux.KickQueuer` interface exposes it; `SendKick` and `SendKickAsync` are unchanged. Groundwork for meeting research kicks ([#18285](https://github.com/hivecommons/hive/issues/18285), parent [#18284](https://github.com/hivecommons/hive/issues/18284)).
+- Crux kick observers fan out: `Manager.AddKickObserver(func(crux.KickEvent)) (remove func())` registers any number of observers, each receiving every kick event in order on its own goroutine (a slow observer has events dropped rather than stalling the runtime). Events carry the kick ID of the queued kick they belong to, and the kick queue adds `kick-queued`, `kick-completed` and `kick-failed`. `SetKickObserver` keeps its single slot and its two events, so the Linear agent behaves exactly as before ([#18286](https://github.com/hivecommons/hive/issues/18286), parent [#18284](https://github.com/hivecommons/hive/issues/18284)).
+- Inbox: Google Meet meetings as a knowledge integration — a `google-meet` connector (user-level OAuth with the hosted paste flow, or a service account with domain-wide delegation) that syncs conference records with a recording, transcript or Gemini notes into one fact each, with the event title, participants, Gemini notes as the summary and the transcript entries as `[mm:ss] Speaker: text` lines; a default `inbox.sources` entry with a Connect / Check / Sync now card (Meet recordings are Drive files behind a bearer token, so Inbox playback links the Drive page).
+
 ## 2026-11-15 (v6.31.0)
 
 ### Added
