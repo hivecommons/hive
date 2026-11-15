@@ -23,18 +23,19 @@ import (
 
 // fakeSessionRuntime is a deterministic SessionRuntime: no tmux, no processes.
 type fakeSessionRuntime struct {
-	mu      sync.Mutex
-	vendors []crux.UserSessionVendor
-	workDir string
-	alive   map[string]crux.UserSessionProbe
-	started []crux.UserSessionSpec
-	killed  []string
-	typed   []string
-	submits []bool
-	capture string
-	resume  map[string]crux.UserSessionResume
-	startFn func(crux.UserSessionSpec) error
-	removed []string
+	mu       sync.Mutex
+	vendors  []crux.UserSessionVendor
+	workDir  string
+	alive    map[string]crux.UserSessionProbe
+	started  []crux.UserSessionSpec
+	killed   []string
+	typed    []string
+	submits  []bool
+	capture  string
+	captures int // times Capture was called
+	resume   map[string]crux.UserSessionResume
+	startFn  func(crux.UserSessionSpec) error
+	removed  []string
 	// removeErr, when set, makes Remove fail (the files could not be deleted).
 	removeErr error
 	// resumeDirs records the workDir each ResumeInfo call was given.
@@ -93,7 +94,15 @@ func (f *fakeSessionRuntime) Kill(id string) error {
 func (f *fakeSessionRuntime) Capture(id string, lines int) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.captures++
 	return f.capture, nil
+}
+
+// captureCount is how many times the pane has been read so far.
+func (f *fakeSessionRuntime) captureCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.captures
 }
 
 // setCapture replaces what Capture returns (the pane's last lines).

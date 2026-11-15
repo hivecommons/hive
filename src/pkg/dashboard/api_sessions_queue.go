@@ -46,8 +46,27 @@ const (
 
 // sessionQueuePacing is the worker's poll interval and post-delivery pause;
 // zero values mean the defaults. Set on the Server before any worker starts.
+// now, when set, replaces the wall clock the fail-open deadline is measured
+// against, and deliverAfter, when positive, replaces the env/default deadline
+// (both are test seams, so a test advances a fake clock instead of sleeping).
 type sessionQueuePacing struct {
 	poll, postDeliver time.Duration
+	deliverAfter      time.Duration
+	now               func() time.Time
+}
+
+func (s *Server) sessionQueueNow() time.Time {
+	if s.sessionQueueTiming.now != nil {
+		return s.sessionQueueTiming.now()
+	}
+	return time.Now()
+}
+
+func (s *Server) sessionQueueDeadline() time.Duration {
+	if s.sessionQueueTiming.deliverAfter > 0 {
+		return s.sessionQueueTiming.deliverAfter
+	}
+	return sessionQueueDeliverAfter()
 }
 
 func (s *Server) sessionQueuePoll() time.Duration {
@@ -361,14 +380,14 @@ func (s *Server) sessionQueueHeadIs(id, itemID string) bool {
 // waitSessionIdle blocks until the pane looks idle, the fail-open deadline
 // passes or the item is gone from the queue, and returns how long it waited.
 func (s *Server) waitSessionIdle(rt SessionRuntime, id, vendor, itemID string) time.Duration {
-	start := time.Now()
-	deadline := start.Add(sessionQueueDeliverAfter())
+	start := s.sessionQueueNow()
+	deadline := start.Add(s.sessionQueueDeadline())
 	for {
 		if text, err := rt.Capture(id, sessionIdleCaptureLines); err == nil && sessionPaneIdle(vendor, text) {
-			return time.Since(start)
+			return s.sessionQueueNow().Sub(start)
 		}
-		if !time.Now().Before(deadline) || !s.sessionQueueHeadIs(id, itemID) {
-			return time.Since(start)
+		if !s.sessionQueueNow().Before(deadline) || !s.sessionQueueHeadIs(id, itemID) {
+			return s.sessionQueueNow().Sub(start)
 		}
 		time.Sleep(s.sessionQueuePoll())
 	}
