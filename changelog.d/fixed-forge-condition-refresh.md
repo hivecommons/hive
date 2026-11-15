@@ -1,0 +1,1 @@
+- Clear an agent's forge-unreachable condition when a later scoped-token refresh succeeds, so recovered mint outages do not remain reported until the agent restarts.

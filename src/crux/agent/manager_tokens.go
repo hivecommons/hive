@@ -826,6 +826,8 @@ func (m *Manager) RefreshAgentTokenFor(ctx context.Context, name string) error {
 	if err := auth.WriteAgentToken(ctx, agent.Name, tier, agent.UID); err != nil {
 		return fmt.Errorf("re-caching scoped token for %s: %w", name, err)
 	}
+	// A successful re-cache proves this agent's forge connection recovered.
+	m.clearCondition(crux.ClassForgeUnreachable, agent.Name)
 	return nil
 }
 
@@ -869,6 +871,8 @@ func (m *Manager) refreshAgentTokens(ctx context.Context) {
 			m.logger.Warn("agent token refresh failed", "agent", a.Name, "error", err)
 			continue
 		}
+		// A launch-time forge outage can recover without another launch.
+		m.clearCondition(crux.ClassForgeUnreachable, a.Name)
 		// App auth can arrive after launch. Publish the cache path then too, so
 		// the next turn can read without a restart of the shared-UID agent.
 		if a.UID == 0 && a.tmuxSession != "" {

@@ -91,3 +91,42 @@ func TestMintSuccessClearsForgeUnreachable(t *testing.T) {
 		t.Fatalf("forge_unreachable clears = %d, want 1", len(got))
 	}
 }
+
+func TestRefreshClearsLaunchForgeOutageOnlyOnSuccess(t *testing.T) {
+	for _, method := range []string{"periodic", "single"} {
+		t.Run(method, func(t *testing.T) {
+			minter := &failingMinter{err: context.DeadlineExceeded}
+			m, a := mintClassManager(t, minter)
+			m.mu.Lock()
+			a.State = StateRunning
+			m.mu.Unlock()
+			rec := recordConditions(t, m)
+			m.mintAgentTokenUnlocked(context.Background(), a)
+			if got := rec.active(crux.ClassForgeUnreachable); len(got) != 1 {
+				t.Fatalf("launch outage = %+v, want active condition", got)
+			}
+
+			refresh := func() error {
+				if method == "single" {
+					return m.RefreshAgentTokenFor(context.Background(), a.Name)
+				}
+				m.refreshAgentTokens(context.Background())
+				return nil
+			}
+			_ = refresh()
+			if got := rec.active(crux.ClassForgeUnreachable); len(got) != 1 {
+				t.Fatalf("failed refresh cleared outage: %+v", got)
+			}
+			minter.err = nil
+			if err := refresh(); err != nil {
+				t.Fatal(err)
+			}
+			if got := rec.active(crux.ClassForgeUnreachable); len(got) != 0 {
+				t.Fatalf("successful refresh left outage active: %+v", got)
+			}
+			if got := rec.clears(crux.ClassForgeUnreachable); len(got) != 1 || got[0].Key != a.Name {
+				t.Fatalf("outage clears = %+v, want only %s", got, a.Name)
+			}
+		})
+	}
+}
