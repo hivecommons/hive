@@ -1,0 +1,1 @@
+- Meetings dashboard: an owner-only `/api/meetings` API (send hive to a meeting, list, leave, voice toggle, research approval) with a live WebSocket panel showing the transcript, notes, research and Spek intents, `meeting` frames on `/api/events`, and Settings, Meetings for the enable toggle, the Vexa gateway URL and the write-only Vexa tenant key and Discord bot token (#18292).

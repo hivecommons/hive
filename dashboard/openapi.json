@@ -87,9 +87,587 @@
     {
       "name": "Sessions",
       "description": "Interactive named CLI terminals"
+    },
+    {
+      "name": "Meetings",
+      "description": "Hive as a live meeting participant (Quorum)"
     }
   ],
   "paths": {
+    "/api/meetings/{id}/approve": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Approve a platform join request",
+        "description": "Lets hive into a meeting someone asked for from the platform (Discord /hive join): calls meeting.join for that channel. Optional body {voice}. Owner only.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "voice": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Meeting record"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Unknown meeting"
+          },
+          "409": {
+            "description": "Not a pending join request"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/{id}/decline": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Decline a platform join request",
+        "description": "Refuses the request with meeting.leave. Owner only.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The meeting record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Meeting record"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Unknown meeting"
+          },
+          "409": {
+            "description": "Not a pending join request"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "List meetings",
+        "description": "Every meeting hive was sent to, newest first. Owner only.",
+        "responses": {
+          "200": {
+            "description": "Meetings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "meetings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Meeting record: id, platform, url or guild_id/channel_id, native_id, title, invited_by, state (requested, joining, lobby, live, ended, failed, blocked, handed_off, purged), state_reason, voice_enabled, consent_posted_at and timestamps."
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Send hive to a meeting",
+        "description": "Joins a Google Meet, Teams or Zoom meeting by URL, or a Discord voice channel by guild and channel id, through Quorum. Hive posts the consent notice as soon as it is live. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "platform": {
+                    "type": "string",
+                    "description": "google_meet, teams, zoom or discord; inferred from the URL when omitted"
+                  },
+                  "guild_id": {
+                    "type": "string"
+                  },
+                  "channel_id": {
+                    "type": "string"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "voice": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Meeting record: id, platform, url or guild_id/channel_id, native_id, title, invited_by, state (requested, joining, lobby, live, ended, failed, blocked, handed_off, purged), state_reason, voice_enabled, consent_posted_at and timestamps."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          },
+          "400": {
+            "description": "Invalid request"
+          },
+          "502": {
+            "description": "Quorum refused or failed the join"
+          }
+        }
+      }
+    },
+    "/api/meetings/settings": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Get meetings settings",
+        "description": "meetings.enabled, the Vexa gateway URL, whether the Vexa tenant key and Discord bot token are set (never their values), and the effective values of the other meetings keys. Owner only.",
+        "responses": {
+          "200": {
+            "description": "Settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "enabled_env_override": {
+                      "type": "boolean"
+                    },
+                    "running": {
+                      "type": "boolean"
+                    },
+                    "vexa_url": {
+                      "type": "string"
+                    },
+                    "vexa_key_set": {
+                      "type": "boolean"
+                    },
+                    "discord_token_set": {
+                      "type": "boolean"
+                    },
+                    "restart_required": {
+                      "type": "boolean"
+                    },
+                    "effective": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Update meetings settings",
+        "description": "Sets meetings.enabled and meetings.vexa.url in hive.yaml and writes the Vexa tenant key and Discord bot token to keystore-sealed secret files (an empty string clears one). Takes effect after a restart. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "vexa_url": {
+                    "type": "string"
+                  },
+                  "vexa_api_key": {
+                    "type": "string"
+                  },
+                  "discord_token": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Settings after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "vexa_url": {
+                      "type": "string"
+                    },
+                    "vexa_key_set": {
+                      "type": "boolean"
+                    },
+                    "discord_token_set": {
+                      "type": "boolean"
+                    },
+                    "restart_required": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          },
+          "400": {
+            "description": "Invalid setting"
+          }
+        }
+      }
+    },
+    "/api/meetings/{id}": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Get a meeting",
+        "description": "The meeting record, its stored transcript (final segments and chat) and the live-loop state (notes, research items, asks, budget). Owner only.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "meeting": {
+                      "type": "object",
+                      "description": "Meeting record: id, platform, url or guild_id/channel_id, native_id, title, invited_by, state (requested, joining, lobby, live, ended, failed, blocked, handed_off, purged), state_reason, voice_enabled, consent_posted_at and timestamps."
+                    },
+                    "transcript": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "live": {
+                      "type": "object"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          },
+          "404": {
+            "description": "Unknown meeting"
+          }
+        }
+      }
+    },
+    "/api/meetings/{id}/leave": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Make hive leave a meeting",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "description": "Owner only.",
+        "responses": {
+          "200": {
+            "description": "The meeting record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Meeting record: id, platform, url or guild_id/channel_id, native_id, title, invited_by, state (requested, joining, lobby, live, ended, failed, blocked, handed_off, purged), state_reason, voice_enabled, consent_posted_at and timestamps."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          },
+          "404": {
+            "description": "Unknown meeting"
+          }
+        }
+      }
+    },
+    "/api/meetings/{id}/voice": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Turn voice on or off for a meeting",
+        "description": "With voice on (and meetings.voice_on_address), hive may answer aloud when addressed by name; otherwise it answers in chat. Owner only.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The meeting record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Meeting record: id, platform, url or guild_id/channel_id, native_id, title, invited_by, state (requested, joining, lobby, live, ended, failed, blocked, handed_off, purged), state_reason, voice_enabled, consent_posted_at and timestamps."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          },
+          "404": {
+            "description": "Unknown meeting"
+          },
+          "400": {
+            "description": "Missing enabled"
+          }
+        }
+      }
+    },
+    "/api/meetings/{id}/research/{rid}/approve": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Approve a research item past the per-meeting cap",
+        "description": "Dispatches a research item that is waiting for approval to the research agent pool. Owner only.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "rid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "approved": {
+                      "type": "boolean"
+                    },
+                    "rid": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          },
+          "404": {
+            "description": "Unknown meeting"
+          },
+          "409": {
+            "description": "Not waiting for approval, or the meeting's live session has ended"
+          }
+        }
+      }
+    },
+    "/api/meetings/{id}/ws": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Live meeting panel",
+        "description": "Upgrades to a WebSocket. The first frame is a snapshot (meeting, transcript, live state); then frames of kind meeting, line, intent, research, notes and dropped for this meeting. Owner only.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "101": {
+            "description": "WebSocket upgrade accepted"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Unknown meeting"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
     "/api/integration-orchestration": {
       "get": {
         "tags": ["System"],
