@@ -17,7 +17,7 @@ const (
 
 // DefaultInboxSources are the connector types whose facts surface as Inbox
 // items when inbox.sources is empty.
-var DefaultInboxSources = []string{"plaud", "wisprflow", "zoom", "teams", "discord", "google-meet"}
+var DefaultInboxSources = []string{"plaud", "wisprflow", "zoom", "teams", "discord", "google-meet", "webex"}
 
 // InboxConfig is the `inbox:` block: which connector types feed the Inbox,
 // how items are auto-routed, and how each destination is reached.

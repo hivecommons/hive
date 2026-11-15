@@ -6,8 +6,8 @@ leaving the dashboard. It is source-agnostic: Plaud is the first source,
 Wispr Flow (`type: wisprflow`) plugs in with the same model, Zoom and
 Microsoft Teams meeting recordings (`type: zoom`, `type: teams`, see
 [design/meeting-recordings.md](design/meeting-recordings.md)), Discord
-meetings (`type: discord`) and Google Meet meetings (`type: google-meet`)
-are its siblings, and later sources (file drop, webhook, …) add nothing to the UI.
+meetings (`type: discord`), Google Meet meetings (`type: google-meet`)
+and Webex meetings (`type: webex`) are its siblings, and later sources (file drop, webhook, …) add nothing to the UI.
 
 Tracker RFC: *Voice recorders as first-class input sources (Inbox)* —
 see the issue linked from the changelog entry.
@@ -15,7 +15,7 @@ see the issue linked from the changelog entry.
 ## Model
 
 - **Source** — a knowledge connector whose facts are recordings (`plaud`,
-  `wisprflow`, `zoom`, `teams`, `discord`, `google-meet`). Connecting a source happens in **Knowledge →
+  `wisprflow`, `zoom`, `teams`, `discord`, `google-meet`, `webex`). Connecting a source happens in **Knowledge →
   🔌 Integrations**; that card shows only the connection state and an **Open
   Inbox** button.
 - **Item** — one recording, keyed `(source, item_id)` (for Plaud, the
@@ -23,7 +23,8 @@ see the issue linked from the changelog entry.
   `attr_zoom_recording_id`; for Teams the callRecording id in
   `attr_teams_recording_id`; for Discord `m:<channel>:<message>` or
   `e:<event>` in `attr_discord_recording_id`; for Google Meet the conference
-  record id in `attr_google_meet_recording_id`). When the source is connected the Inbox lists
+  record id in `attr_google_meet_recording_id`; for Webex the meeting
+  instance id in `attr_webex_recording_id`). When the source is connected the Inbox lists
   recordings directly from it, so an item may appear before the sync has
   written its Knowledge fact; the Inbox only tracks what you did with it.
   "📚 Fact" opens the fact in Knowledge once that fact exists.
@@ -145,11 +146,23 @@ syncs. Like every item, the text reaches spek inside the untrusted-data
 envelope. Setup is in
 [knowledge-connectors.md](knowledge-connectors.md#google-meet-recordings-type-google-meet).
 
+## Webex meetings
+
+Webex items follow the Zoom shape: the title is the meeting topic, the
+summary slot shows the Webex AI Assistant notes and action items when the
+site has AI Assistant, and the transcript comes from Webex's VTT. **▶ Play
+recording** goes through the same audio endpoint: the hive asks Webex for the
+recording's temporary direct download link (audio, else MP4; valid 3 hours,
+no token in it) at the moment of the click and never stores it. A recording
+without transcript or summary is `attr_meeting_content: pending` and re-read
+on later syncs. Setup is in
+[knowledge-connectors.md](knowledge-connectors.md#webex-recordings-type-webex).
+
 ## Configuration
 
 ```yaml
 inbox:
-  sources: [plaud, wisprflow, zoom, teams, discord, google-meet]   # default: every configured voice/meeting connector
+  sources: [plaud, wisprflow, zoom, teams, discord, google-meet, webex]   # default: every configured voice/meeting connector
   spek:
     repo: hivecommons/hive        # default RFC target
     binary: spektacular           # or an absolute path; empty = look on PATH
