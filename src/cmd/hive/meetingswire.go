@@ -14,6 +14,7 @@ import (
 	"github.com/hivecommons/hive/pkg/meetings/live"
 	"github.com/hivecommons/hive/pkg/meetings/meetllm"
 	"github.com/hivecommons/hive/pkg/meetings/quorumproc"
+	"github.com/hivecommons/hive/pkg/research"
 	"github.com/hivecommons/hive/pkg/spektacular"
 )
 
@@ -144,11 +145,57 @@ func meetingSpekArgs(m meetings.Meeting, contextDir string) []string {
 	return []string{"meeting", "--from", "stdin", "--format", "jsonl", "--title", title, "--context", contextDir}
 }
 
+// wireMeetingsResearch creates only the on-demand, read-only meeting agents.
+// Unsupported runtimes leave research unavailable without preventing meetings.
+func wireMeetingsResearch(cfg *config.Config, rt any, logger *slog.Logger) live.ResearchDispatcher {
+	if cfg == nil || !cfg.Meetings.IsEnabled() {
+		return nil
+	}
+	pool, err := research.NewPool(rt, cfg.Meetings.ResearchPoolSizeOrDefault())
+	if err != nil {
+		if logger != nil {
+			logger.Warn("[meetings] research unavailable", "error", err)
+		}
+		return nil
+	}
+	// Reuse the hive's scanner model, not its identity, prompt or privileges.
+	scanner := cfg.Agents["scanner"]
+	backend := scanner.Backend
+	if backend == "" {
+		backend = cfg.Backends.Fallback()
+		if backend == "" {
+			backend = "claude"
+		}
+	}
+	pool.Ensure(config.AgentConfig{Enabled: true, Backend: backend, Model: scanner.Model})
+	return meetingResearchPool{pool}
+}
+
+type meetingResearchPool struct {
+	*research.Pool
+}
+
+func (p meetingResearchPool) ObserveResearch(fn func(live.ResearchSignal)) func() {
+	return p.Observe(func(ev research.Event) {
+		var kind string
+		switch ev.Kind {
+		case research.EventFinding:
+			kind = live.SignalFinding
+		case research.EventDone:
+			kind = live.SignalComplete
+		case research.EventFailed:
+			kind = live.SignalError
+		default:
+			return
+		}
+		fn(live.ResearchSignal{KickID: ev.KickID, MeetingID: ev.Meta["meeting_id"], Kind: kind, Text: ev.Text})
+	})
+}
+
 // wireMeetingsLive starts the Spektacular live loop over the meeting
 // manager (hivecommons/hive#18291): one `spektacular meeting` child per live
-// meeting, its intents applied through the meetings policy. research may be
-// nil until the research pool is wired; research intents then fail visibly
-// in the panel instead of silently.
+// meeting, its intents applied through the meetings policy. Unsupported
+// research runtimes fail research intents visibly in the panel.
 func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings.Store, kapi *knowledge.KnowledgeAPI,
 	research live.ResearchDispatcher, logger *slog.Logger) *live.Runner {
 	if cfg == nil || mgr == nil || store == nil {

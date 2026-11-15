@@ -1,0 +1,1 @@
+- Meetings now dispatch research to the read-only research pool, using the scanner's backend/model (or the allowed backend fallback, then Claude when no scanner backend is configured), and return findings and completion to Spektacular, chat and meeting knowledge; images include the SHA-256-pinned Quorum v0.1.0 bundle ([#18294](https://github.com/hivecommons/hive/issues/18294)).

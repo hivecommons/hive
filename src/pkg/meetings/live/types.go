@@ -23,6 +23,12 @@ type ResearchDispatcher interface {
 	Dispatch(ctx context.Context, query string, meta map[string]string) (kickID string, err error)
 }
 
+// ResearchObserver optionally supplies a dispatcher's findings and completion.
+// The remover stops delivery when the live runner closes.
+type ResearchObserver interface {
+	ObserveResearch(func(ResearchSignal)) func()
+}
+
 // Research signal kinds: the agent's [FINDING], [COMPLETE] and [ERROR]
 // output for a kick.
 const (
@@ -34,8 +40,10 @@ const (
 // ResearchSignal is one output signal for a research kick.
 type ResearchSignal struct {
 	KickID string
-	Kind   string
-	Text   string
+	// MeetingID routes signals emitted before Dispatch returns its kick ID.
+	MeetingID string
+	Kind      string
+	Text      string
 }
 
 // NotesSink stores a knowledge fact, replacing an earlier fact with the same

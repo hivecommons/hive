@@ -3584,7 +3584,8 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		if mgr, store := wireMeetingsManager(b.cfg, sup, b.logger); mgr != nil {
 			b.meetingsMgr = mgr
 			b.cleanup.push(mgr.Close)
-			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, nil, b.logger); lr != nil {
+			research := wireMeetingsResearch(b.cfg, b.agentMgr, b.logger)
+			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, research, b.logger); lr != nil {
 				b.meetingsLive = lr
 				b.cleanup.push(lr.Close)
 			}

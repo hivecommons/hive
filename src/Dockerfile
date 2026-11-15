@@ -450,12 +450,10 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # The pinned hivecommons/quorum release asset `quorum.mjs` (a single-file
 # Node bundle), SHA-256-verified, installed to /usr/local/lib/quorum so the
 # default meetings.quorum.binary resolves with no config. Quorum only runs
-# when meetings.enabled is set. QUORUM_VERSION is empty until the first
-# quorum release is cut; while it is empty the download is skipped and a
-# hive with meetings enabled logs that the bundle is missing. A checksum
-# mismatch hard-fails the build. Bump the version and digest together.
-ARG QUORUM_VERSION=""
-ARG QUORUM_SHA256=""
+# when meetings.enabled is set. A checksum mismatch hard-fails the build.
+# Bump the version and digest together.
+ARG QUORUM_VERSION="v0.1.0"
+ARG QUORUM_SHA256="917aee456e5c87a6b531f1c7c09040fa60d04a39609a1c2755cfdd20d63d7c95"
 RUN if [ -n "${QUORUM_VERSION}" ]; then \
       test -n "${QUORUM_SHA256}" || { echo "QUORUM_SHA256 is required with QUORUM_VERSION" >&2; exit 1; } && \
       mkdir -p /usr/local/lib/quorum && \

@@ -41,15 +41,16 @@ type Runner struct {
 	opts Options
 	log  *slog.Logger
 
-	mu        sync.Mutex
-	sessions  map[string]*session
-	byKick    map[string]string
-	observers map[int]func(Event)
-	nextObs   int
-	unsub     func()
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	mu            sync.Mutex
+	sessions      map[string]*session
+	byKick        map[string]string
+	observers     map[int]func(Event)
+	nextObs       int
+	unsub         func()
+	unsubResearch func()
+	ctx           context.Context
+	cancel        context.CancelFunc
+	wg            sync.WaitGroup
 }
 
 // NewRunner builds a runner. Start subscribes it to meeting updates.
@@ -85,6 +86,9 @@ func (r *Runner) Start() {
 		return
 	}
 	r.unsub = r.opts.Meetings.Subscribe(r.onUpdate)
+	if observer, ok := r.opts.Research.(ResearchObserver); ok {
+		r.unsubResearch = observer.ObserveResearch(func(sig ResearchSignal) { r.DeliverResearch(sig) })
+	}
 	r.mu.Unlock()
 	if list, err := r.opts.Store.List(); err == nil {
 		for _, m := range list {
@@ -100,9 +104,14 @@ func (r *Runner) Close() {
 	r.mu.Lock()
 	unsub := r.unsub
 	r.unsub = nil
+	unsubResearch := r.unsubResearch
+	r.unsubResearch = nil
 	r.mu.Unlock()
 	if unsub != nil {
 		unsub()
+	}
+	if unsubResearch != nil {
+		unsubResearch()
 	}
 	r.cancel()
 	r.wg.Wait()
@@ -204,6 +213,11 @@ func (r *Runner) session(id string) (*session, bool) {
 func (r *Runner) DeliverResearch(sig ResearchSignal) bool {
 	r.mu.Lock()
 	id, ok := r.byKick[sig.KickID]
+	if !ok && sig.MeetingID != "" {
+		// Dispatch may synchronously emit results while the session is
+		// still waiting for its kick ID. Its inbox applies them afterwards.
+		id, ok = sig.MeetingID, true
+	}
 	s := r.sessions[id]
 	r.mu.Unlock()
 	if !ok || s == nil {
