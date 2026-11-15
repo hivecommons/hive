@@ -472,8 +472,6 @@ func humanizeStageReason(reason string) string {
 		return "human-merge path"
 	case stageengineprstage.AutoMergeReasonHumanMergeRequired:
 		return "human merge"
-	case stageengineprstage.AutoMergeReasonRenovateAutomergeDisabled:
-		return "Renovate: merge manually"
 	case stageengineprstage.AutoMergeReasonRenovateArtifactProblem:
 		return "Renovate artifact problem"
 	case stageengineprstage.AutoMergeReasonForkNotEditable:
@@ -548,7 +546,6 @@ var stageTrackerHumanMergeReasonWords = map[string][2]string{
 	stageengineprstage.HumanMergeReasonUnauthorized:            {"hive bot lacks permission", "The hive bot's GitHub App is missing the permission to merge here; a person merges"},
 	stageengineprstage.HumanMergeReasonReviewerDeferred:        {"reviewer deferred", "A reviewer asked for a person to merge this one"},
 	stageengineprstage.HumanMergeReasonBreakingChange:          {"human merge", "Breaking change — owner merges; hive never merges a ⚠️-titled or needs-owner-merge PR"},
-	stageengineprstage.HumanMergeReasonRenovateAutomergeOff:    {"Renovate: merge manually", "Renovate's own config turns automerge off for this update and asks for a manual merge; hive never merges it"},
 	stageengineprstage.HumanMergeReasonRenovateArtifactProblem: {"Renovate artifact problem", "Renovate could not update a lock file or other artifact on this branch; check it before merging — hive never merges it"},
 }
 
@@ -912,8 +909,8 @@ func stageTrackerCaption(stage stagelabels.Stage, reason, author string, kind st
 		if base, approver := stagelabels.HumanApprovedReason(reason); stageTrackerManualMergeReason(base) {
 			if cause := stageengineprstage.OwnerMergeCause(base); cause != "" {
 				// The breaking-change rule (hivecommons/hive#15442) and
-				// Renovate's own "merge manually" signals: no approval
-				// releases them; the owner's merge click does.
+				// Renovate's artifact update problem: no approval releases
+				// them; the owner's merge click does.
 				c := "Ready for human merge (" + cause + ")"
 				if approver != "" {
 					c += " — approved by @" + approver

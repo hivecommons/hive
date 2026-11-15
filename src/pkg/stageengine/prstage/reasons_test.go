@@ -77,7 +77,6 @@ func TestHumanMergeReason(t *testing.T) {
 		ContributorLaneReasonTestsRemoved:                                   HumanMergeReasonTestsRemoved,
 		AutoMergeReasonHumanMergePath:                                       HumanMergeReasonManualMergePolicy,
 		AutoMergeReasonHumanMergePathEvidence:                               HumanMergeReasonManualMergePolicy,
-		AutoMergeReasonRenovateAutomergeDisabled:                            HumanMergeReasonRenovateAutomergeOff,
 		AutoMergeReasonRenovateArtifactProblem + ":human-approved@castrojo": HumanMergeReasonRenovateArtifactProblem,
 		AutoMergeReasonMergeRefusedReview:                                   HumanMergeReasonBranchProtection,
 		AutoMergeReasonReviewGatePrefix + ReviewGateOutcomeAwaiting:         HumanMergeReasonBranchProtection,
@@ -102,13 +101,12 @@ func TestHumanMergeReason(t *testing.T) {
 }
 
 // TestOwnerMergeReason pins the owner-merge rules no approval releases: the
-// breaking-change rule and Renovate's own "merge manually" signals, with or
+// breaking-change rule and Renovate's artifact update problem, with or
 // without an approver suffix, each with its cause and 090 code.
 func TestOwnerMergeReason(t *testing.T) {
 	for reason, want := range map[string]struct{ cause, code string }{
 		AutoMergeReasonHumanMergeRequired:                                   {CauseHumanMergeRequired, HumanMergeReasonBreakingChange},
-		AutoMergeReasonRenovateAutomergeDisabled:                            {CauseRenovateAutomergeDisabled, HumanMergeReasonRenovateAutomergeOff},
-		"Renovate-Automerge-Disabled":                                       {CauseRenovateAutomergeDisabled, HumanMergeReasonRenovateAutomergeOff},
+		"Renovate-Artifact-Problem":                                         {CauseRenovateArtifactProblem, HumanMergeReasonRenovateArtifactProblem},
 		AutoMergeReasonRenovateArtifactProblem + ":human-approved@castrojo": {CauseRenovateArtifactProblem, HumanMergeReasonRenovateArtifactProblem},
 		AutoMergeReasonHumanMergePath:                                       {"", HumanMergeReasonManualMergePolicy},
 		"":                                                                  {"", ""},

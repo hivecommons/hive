@@ -51,7 +51,7 @@ func decisionForHumanMerge(it StageTrackerItem, held bool) *StageTrackerDecision
 	breaking := stageengineprstage.IsOwnerMergeReason(base)
 	if breaking {
 		// No approval lets hive merge a breaking change (hivecommons/hive#15442),
-		// nor a Renovate PR Renovate itself says to merge by hand.
+		// nor a Renovate PR whose artifacts Renovate could not update.
 		admitter = ""
 	}
 	if admitter != "" {

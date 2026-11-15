@@ -263,7 +263,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 			}
 			// A person already took the trust call for this head (#15136) —
 			// unless an owner-merge rule holds (breaking change, Renovate's
-			// own "merge manually" signals), which no approval
+			// artifact update problem), which no approval
 			// releases (hivecommons/hive#15442).
 			if login := stagelabels.AdmissionLogin(it.AdmittedBy); login != "" && !stageengineprstage.IsOwnerMergeCode(it.HumanMergeReason) {
 				it.HumanMergeReasonText = "@" + login + " approved it; hive merges it on its next pass"

@@ -1,9 +1,7 @@
 package automerge
 
-// Renovate's own "merge this manually" signals hold a trusted bot's Renovate
-// PR for the owner (projectbluefin/testsuite#1230): an "Artifact update
-// problem" comment by the bot, always, and automerge disabled by its config
-// while auto_merge.trusted_bot_honor_renovate_automerge is on (default off).
+// Renovate's "Artifact update problem" comment by the PR's own bot holds a
+// trusted bot's Renovate PR for the owner (projectbluefin/testsuite#1230).
 
 import (
 	"context"
@@ -12,7 +10,6 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 
-	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 )
 
@@ -23,25 +20,6 @@ const (
 	renovateEnabledLine  = "🚦 **Automerge**: Enabled."
 	renovateArtifactBody = "### ⚠️ Artifact update problem\n\nRenovate failed to update an artifact related to this branch. You probably do not want to merge this PR as-is."
 )
-
-func TestRenovateAutomergeDisabled(t *testing.T) {
-	for _, tc := range []struct {
-		name string
-		body string
-		want bool
-	}{
-		{"disabled by config", "### Configuration\n\n📅 **Schedule**: Branch creation - At any time.\n\n" + renovateDisabledLine + "\n", true},
-		{"disabled after a previous automerge", "🚦 **Automerge**: Disabled because a matching PR was automerged previously.", true},
-		{"no emoji", "**Automerge**: Disabled by config.", true},
-		{"enabled", renovateEnabledLine, false},
-		{"quoted mid-line", "Renovate wrote `🚦 **Automerge**: Disabled` on the last one.", false},
-		{"empty", "", false},
-	} {
-		if got := renovateAutomergeDisabled(tc.body); got != tc.want {
-			t.Errorf("%s: renovateAutomergeDisabled = %v, want %v", tc.name, got, tc.want)
-		}
-	}
-}
 
 func TestRenovateArtifactProblemComment(t *testing.T) {
 	comment := func(login, body string) *gh.IssueComment {
@@ -89,22 +67,10 @@ func TestIsRenovatePR(t *testing.T) {
 	}
 }
 
-func TestTrustedBotHonorsRenovateAutomergeDefault(t *testing.T) {
-	if (config.AutoMergeConfig{}).TrustedBotHonorsRenovateAutomerge() {
-		t.Fatal("trusted_bot_honor_renovate_automerge must default to false")
-	}
-	on := true
-	if !(config.AutoMergeConfig{TrustedBotHonorRenovateAutomerge: &on}).TrustedBotHonorsRenovateAutomerge() {
-		t.Fatal("trusted_bot_honor_renovate_automerge: true must be honored")
-	}
-}
-
-// The sweep holds a trusted bot's Renovate PR on either signal and merges
-// it otherwise. The App's own PR and a non-Renovate bot's PR are never
-// checked.
-var renovateOn, renovateOff = true, false
-
-func TestTrustedBotLaneRenovateManualMergeGate(t *testing.T) {
+// The sweep holds a trusted bot's Renovate PR on its bot's artifact comment
+// and merges it otherwise, whatever the description says about automerge.
+// The App's own PR and a non-Renovate bot's PR are never checked.
+func TestTrustedBotLaneRenovateArtifactGate(t *testing.T) {
 	artifact := []map[string]any{{"id": 1, "user": map[string]any{"login": renovateTestBot}, "body": renovateArtifactBody}}
 	forged := []map[string]any{{"id": 2, "user": map[string]any{"login": "mallory"}, "body": renovateArtifactBody}}
 	for _, tc := range []struct {
@@ -112,18 +78,15 @@ func TestTrustedBotLaneRenovateManualMergeGate(t *testing.T) {
 		author     string
 		body       string
 		comments   []map[string]any
-		honor      *bool // nil leaves the switch unset (default off)
 		wantReason string
 	}{
-		{name: "automerge disabled, switch on", author: renovateTestBot, body: renovateDisabledLine + renovateFooter, honor: &renovateOn, wantReason: prstage.AutoMergeReasonRenovateAutomergeDisabled},
-		{name: "automerge disabled, switch off", author: renovateTestBot, body: renovateDisabledLine + renovateFooter, honor: &renovateOff},
-		{name: "automerge disabled, switch unset", author: renovateTestBot, body: renovateDisabledLine + renovateFooter},
+		{name: "automerge disabled, no comment", author: renovateTestBot, body: renovateDisabledLine + renovateFooter},
 		{name: "artifact problem", author: renovateTestBot, body: renovateEnabledLine + renovateFooter, comments: artifact, wantReason: prstage.AutoMergeReasonRenovateArtifactProblem},
-		{name: "artifact problem, automerge disabled, switch unset", author: renovateTestBot, body: renovateDisabledLine + renovateFooter, comments: artifact, wantReason: prstage.AutoMergeReasonRenovateArtifactProblem},
+		{name: "artifact problem, automerge disabled", author: renovateTestBot, body: renovateDisabledLine + renovateFooter, comments: artifact, wantReason: prstage.AutoMergeReasonRenovateArtifactProblem},
 		{name: "artifact comment by someone else", author: renovateTestBot, body: renovateEnabledLine + renovateFooter, comments: forged},
 		{name: "automerge enabled, no comment", author: renovateTestBot, body: renovateEnabledLine + renovateFooter},
-		{name: "not a Renovate PR", author: "dependabot[bot]", body: renovateDisabledLine, honor: &renovateOn},
-		{name: "the App's own PR", author: testHiveAppBotLogin, body: renovateDisabledLine + renovateFooter, honor: &renovateOn},
+		{name: "not a Renovate PR", author: "dependabot[bot]", body: renovateDisabledLine, comments: artifact},
+		{name: "the App's own PR", author: testHiveAppBotLogin, body: renovateDisabledLine + renovateFooter, comments: artifact},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			merges := 0
@@ -131,10 +94,6 @@ func TestTrustedBotLaneRenovateManualMergeGate(t *testing.T) {
 			defer api.Close()
 			c := newAutoMergeSweepClient(api.URL)
 			c.trustedBotAuthors = func() map[string]bool { return map[string]bool{renovateTestBot: true, "dependabot[bot]": true} }
-			if tc.honor != nil {
-				honor := *tc.honor
-				c.trustedBotHonorRenovateAutomerge = func() bool { return honor }
-			}
 			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
 			if err != nil {
 				t.Fatalf("trySweepSelfAuthoredPR error: %v", err)
@@ -153,12 +112,11 @@ func TestTrustedBotLaneRenovateManualMergeGate(t *testing.T) {
 	}
 }
 
-// Both reasons park at 090 under an owner-merge rule no approval releases,
-// with their own code and cause.
-func TestRenovateReasonsAreOwnerMergeRules(t *testing.T) {
+// The reason parks at 090 under an owner-merge rule no approval releases,
+// with its own code and cause.
+func TestRenovateArtifactProblemIsOwnerMergeRule(t *testing.T) {
 	for reason, code := range map[string]string{
-		prstage.AutoMergeReasonRenovateAutomergeDisabled: prstage.HumanMergeReasonRenovateAutomergeOff,
-		prstage.AutoMergeReasonRenovateArtifactProblem:   prstage.HumanMergeReasonRenovateArtifactProblem,
+		prstage.AutoMergeReasonRenovateArtifactProblem: prstage.HumanMergeReasonRenovateArtifactProblem,
 	} {
 		if !manualMergeRuleReasonFor(reason, false) {
 			t.Errorf("%s: not a manual-merge rule", reason)

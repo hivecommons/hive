@@ -610,34 +610,26 @@ on "every reported check green" and warns once per repo per hour
 the human-gate reason. Declare the repo's real set under
 `auto_merge.repos.<repo>.required_checks` to clear either condition.
 
-Green CI is not enough for a Renovate PR that Renovate itself says a person
-should merge. The lane recognises a Renovate PR by its `renovate/` head
-branch or the Renovate footer link in its description, whatever account it
-runs as (`renovate[bot]`, a self-hosted `mergeraptor[bot]`, …), and holds it
-on Renovate's own signals:
+Green CI is not enough for a Renovate PR whose branch Renovate itself says
+is broken. When the bot that opened the PR has commented
+`### ⚠️ Artifact update problem` (Renovate could not update a lock file or
+other artifact on the branch), the lane does not merge it: lane reason
+`renovate-artifact-problem`, parked at 090 Ready for human merge like a
+breaking change, so no approval releases it and the owner merges or closes
+it on GitHub. Renovate deletes that comment once a later run updates the
+artifacts, and the PR then merges as usual. The lane recognises a Renovate PR
+by its `renovate/` head branch or the Renovate footer link in its
+description, whatever account it runs as (`renovate[bot]`, a self-hosted
+`mergeraptor[bot]`, …), and reads the comments only for a Renovate PR whose
+head is otherwise ready to merge (projectbluefin/testsuite#1230: a
+TypeScript major merged three minutes after Renovate reported that it could
+not update `package-lock.json`).
 
-- the bot that opened the PR commented `### ⚠️ Artifact update problem`
-  (Renovate could not update a lock file or other artifact on the branch):
-  lane reason `renovate-artifact-problem`, always. Renovate deletes that
-  comment once a later run updates the artifacts, and the PR then merges as
-  usual;
-- with `auto_merge.trusted_bot_honor_renovate_automerge: true` (Settings →
-  Auto-merge → "Leave Renovate PRs with automerge off to a person"; default
-  **off**), the description says `🚦 **Automerge**: Disabled …` (the
-  repository's Renovate config turns automerge off for this update, for
-  example a major under `automerge: false`): lane reason
-  `renovate-automerge-disabled`. It is off by default because many Renovate
-  configs set `automerge: false` precisely so that the hive, not Renovate,
-  merges those updates, and the description does not say which rule produced
-  the line. Turn it on only where `automerge: false` always means "a person
-  merges"; otherwise hold such updates with a Renovate `addLabels` hold
-  label on the rule.
-
-Either hold parks the PR at 090 Ready for human merge, like a breaking
-change: no approval releases it, the owner merges it (or closes it) on GitHub. The
-comment is read only for a Renovate PR whose head is otherwise ready to
-merge (projectbluefin/testsuite#1230: a TypeScript major merged three
-minutes after Renovate reported that it could not update `package-lock.json`).
+Renovate's own `automerge: false` does not stop the trusted-bot lane: many
+configurations use it so that the hive, not Renovate, does the merging. To
+make an update wait for a person, have Renovate label it with a
+`auto_merge.human_merge_labels` label, for example
+`"addLabels": ["needs-owner-merge"]` on the rule for major updates.
 
 A trusted bot's PR that is red only because of an infrastructure problem gets
 the same one re-run a hive PR gets. When every failing check run on its head

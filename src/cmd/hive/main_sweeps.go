@@ -933,7 +933,6 @@ func runAutoMergeSweepIfDue(ctx context.Context, ghClient *github.Client, cfg *c
 		opts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 		opts.ReviewBotAuthors = func() []string { return cfg.Review.EffectiveBotAuthors() }
 		opts.TrustedBotSkipReview = func() bool { return cfg.AutoMerge.TrustedBotSkipsReview() }
-		opts.TrustedBotHonorRenovateAutomerge = func() bool { return cfg.AutoMerge.TrustedBotHonorsRenovateAutomerge() }
 		opts.NativeMergeQueue = func() automerge.NativeMergeQueuePolicy {
 			q := cfg.AutoMerge.NativeMergeQueue
 			return automerge.NativeMergeQueuePolicy{Enabled: q.Enabled, Repos: q.RepoSet(), Bases: q.BaseSet(), SkipCurrentBaseGate: q.SkipCurrentBaseGate, ProbeTTL: q.EffectiveProbeTTL()}
@@ -1565,7 +1564,6 @@ func runIssueUnparkSweepIfDue(ctx context.Context, ghClient *github.Client, cfg 
 		approveOpts.HumanMergeRule = func() prstage.HumanMergeRule { return humanMergeRuleFor(cfg) }
 		approveOpts.TrustedBotAuthors = func() map[string]bool { return cfg.AutoMerge.TrustedBotAuthorSet() }
 		approveOpts.TrustedBotSkipReview = func() bool { return cfg.AutoMerge.TrustedBotSkipsReview() }
-		approveOpts.TrustedBotHonorRenovateAutomerge = func() bool { return cfg.AutoMerge.TrustedBotHonorsRenovateAutomerge() }
 	}
 	approveEngine := automerge.New(ghClient, approveOpts)
 	// A bound workflow model's replies are accepted as `/hive <verb>`

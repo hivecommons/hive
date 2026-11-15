@@ -186,12 +186,6 @@ type Options struct {
 	// switch: the review swarm's verdict is advisory on the trusted-bot lane
 	// (config.AutoMergeConfig.TrustedBotSkipsReview). nil means true.
 	TrustedBotSkipReview func() bool
-	// TrustedBotHonorRenovateAutomerge returns the live
-	// auto_merge.trusted_bot_honor_renovate_automerge switch: the trusted-bot
-	// lane leaves a Renovate PR whose own config disables automerge to the
-	// owner (config.AutoMergeConfig.TrustedBotHonorsRenovateAutomerge). nil
-	// means false.
-	TrustedBotHonorRenovateAutomerge func() bool
 	// BotTakeoverEnabled returns the live auto_merge.bot_takeover.enabled
 	// switch: re-author a trusted github-actions[bot] PR whose
 	// `pull_request` checks can never run (#12003). nil means off.
@@ -432,7 +426,6 @@ type Engine struct {
 	trustedBotAuthors                 func() map[string]bool
 	reviewBotAuthors                  func() []string
 	trustedBotSkipReview              func() bool
-	trustedBotHonorRenovateAutomerge  func() bool
 	botTakeoverEnabledFn              func() bool
 	onTerminalHold                    func(repo string, number int, headSHA, reason string)
 	trustedAuthorPolicy               func() TrustedAuthorPolicy
@@ -575,7 +568,6 @@ func New(transport Transport, opts Options) *Engine {
 		trustedBotAuthors:                 opts.TrustedBotAuthors,
 		reviewBotAuthors:                  opts.ReviewBotAuthors,
 		trustedBotSkipReview:              opts.TrustedBotSkipReview,
-		trustedBotHonorRenovateAutomerge:  opts.TrustedBotHonorRenovateAutomerge,
 		rateLimitCautious:                 opts.RateLimitCautious,
 		botTakeoverEnabledFn:              opts.BotTakeoverEnabled,
 		onTerminalHold:                    opts.OnTerminalHold,

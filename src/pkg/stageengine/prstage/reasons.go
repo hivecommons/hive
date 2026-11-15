@@ -28,12 +28,6 @@ const (
 	// wears an auto_merge.human_merge_labels label; no lane and no merge
 	// train ever merges it — the owner does (hivecommons/hive#15442).
 	AutoMergeReasonHumanMergeRequired = "human-merge-required"
-	// AutoMergeReasonRenovateAutomergeDisabled: a trusted bot's Renovate PR
-	// whose description says its own config disables automerge for this
-	// update ("🚦 **Automerge**: Disabled …"), while
-	// auto_merge.trusted_bot_honor_renovate_automerge is on (default off).
-	// The owner merges it, like a breaking change.
-	AutoMergeReasonRenovateAutomergeDisabled = "renovate-automerge-disabled"
 	// AutoMergeReasonRenovateArtifactProblem: the bot that opened the PR
 	// commented "⚠️ Artifact update problem" (Renovate could not update a
 	// lock file or other artifact on the branch). Renovate removes that
@@ -161,9 +155,6 @@ const (
 	// HumanMergeReasonBreakingChange: the PR's title or label marks it a
 	// breaking change the owner merges by hand (AutoMergeReasonHumanMergeRequired).
 	HumanMergeReasonBreakingChange = "breaking-change"
-	// HumanMergeReasonRenovateAutomergeOff: Renovate's own config turns
-	// automerge off for this update (AutoMergeReasonRenovateAutomergeDisabled).
-	HumanMergeReasonRenovateAutomergeOff = "renovate-automerge-off"
 	// HumanMergeReasonRenovateArtifactProblem: Renovate reported an
 	// artifact update problem on the branch (AutoMergeReasonRenovateArtifactProblem).
 	HumanMergeReasonRenovateArtifactProblem = "renovate-artifact-problem"
@@ -261,8 +252,6 @@ func HumanMergeReason(reason string) string {
 		return HumanMergeReasonManualMergePolicy
 	case base == AutoMergeReasonHumanMergeRequired:
 		return HumanMergeReasonBreakingChange
-	case base == AutoMergeReasonRenovateAutomergeDisabled:
-		return HumanMergeReasonRenovateAutomergeOff
 	case base == AutoMergeReasonRenovateArtifactProblem:
 		return HumanMergeReasonRenovateArtifactProblem
 	case base == AutoMergeReasonMergeRefusedReview, strings.HasPrefix(base, AutoMergeReasonReviewGatePrefix):
@@ -285,8 +274,7 @@ func HumanMergeReason(reason string) string {
 // IsOwnerMergeReason reports whether a lane reason (with or without the
 // `:human-approved@login` suffix) is a rule no approval releases: the hive
 // never merges the head, the owner's merge click does. The breaking-change
-// rule (hivecommons/hive#15442) and Renovate's own "merge this manually"
-// signals are.
+// rule (hivecommons/hive#15442) and Renovate's artifact update problem are.
 func IsOwnerMergeReason(reason string) bool {
 	return OwnerMergeCause(reason) != ""
 }
@@ -298,8 +286,6 @@ func OwnerMergeCause(reason string) string {
 	switch strings.ToLower(strings.TrimSpace(base)) {
 	case AutoMergeReasonHumanMergeRequired:
 		return CauseHumanMergeRequired
-	case AutoMergeReasonRenovateAutomergeDisabled:
-		return CauseRenovateAutomergeDisabled
 	case AutoMergeReasonRenovateArtifactProblem:
 		return CauseRenovateArtifactProblem
 	}
@@ -310,7 +296,7 @@ func OwnerMergeCause(reason string) string {
 // IsOwnerMergeReason rule.
 func IsOwnerMergeCode(code string) bool {
 	switch code {
-	case HumanMergeReasonBreakingChange, HumanMergeReasonRenovateAutomergeOff, HumanMergeReasonRenovateArtifactProblem:
+	case HumanMergeReasonBreakingChange, HumanMergeReasonRenovateArtifactProblem:
 		return true
 	}
 	return false

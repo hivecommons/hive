@@ -486,14 +486,14 @@
     // "workflow-files" / "untrusted-author" / "branch-protection", falling
     // back to "policy"); the tooltip carries the payload's one-sentence
     // human_merge_reason_text (hivecommons/hive#14658).
-    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'hive bot lacks permission', 'reviewer-deferred': 'reviewer deferred', 'breaking-change': 'human merge', 'renovate-automerge-off': 'Renovate: merge manually', 'renovate-artifact-problem': 'Renovate artifact problem', 'policy': 'policy' };
+    const STAGE_TRACKER_HUMAN_MERGE_REASON_WORD = { 'workflow-files': 'workflow files', 'tests-removed': 'tests removed', 'manual-merge-policy': 'manual-merge policy', 'branch-protection': 'branch protection', 'merge-method': 'merge method', 'auto-merge-off': 'auto-merge off', 'untrusted-author': 'untrusted author', 'unauthorized': 'hive bot lacks permission', 'reviewer-deferred': 'reviewer deferred', 'breaking-change': 'human merge', 'renovate-artifact-problem': 'Renovate artifact problem', 'policy': 'policy' };
     // 090 under the breaking-change rule (human_merge_reason
     // "breaking-change": a ⚠️ title or needs-owner-merge label,
     // hivecommons/hive#15442): no approval lets the hive merge it, so the
     // word is the stage's own, "Ready for human merge", and the chip says
     // "human merge".
     const STAGE_TRACKER_BREAKING_CHANGE_CODE = 'breaking-change';
-    // Renovate's own "merge this manually" signals on a trusted bot's PR
-    // are the same kind of rule: no approval releases them.
-    const STAGE_TRACKER_OWNER_MERGE_CODES = [STAGE_TRACKER_BREAKING_CHANGE_CODE, 'renovate-automerge-off', 'renovate-artifact-problem'];
+    // Renovate's artifact update problem on a trusted bot's PR is the same
+    // kind of rule: no approval releases it.
+    const STAGE_TRACKER_OWNER_MERGE_CODES = [STAGE_TRACKER_BREAKING_CHANGE_CODE, 'renovate-artifact-problem'];
     const STAGE_TRACKER_READY_FOR_HUMAN_MERGE_WORD = 'Ready for human merge';

@@ -878,8 +878,8 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	_, fixerExhausted := stagelabels.ParseFixerExhausted(obs.Reason)
 	if prstage.IsOwnerMergeReason(obs.Reason) || fixerExhausted || obs.Reason == stagelabels.LaneReasonBotAuthorFinding {
 		// The "waiting for a person" note on a breaking-titled or
-		// owner-flagged PR, or on a Renovate PR Renovate says to merge by
-		// hand, is an unsolicited write (hivecommons/hive#15442):
+		// owner-flagged PR, or on a Renovate PR with an artifact update
+		// problem, is an unsolicited write (hivecommons/hive#15442):
 		// it goes through the write-back gate like every other hive
 		// comment, and a refusal leaves the record unmarked so the next
 		// pass asks again. The fixer-exhausted note on the hive's own PR

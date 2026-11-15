@@ -207,7 +207,7 @@ func decisionLaneRule(base string) bool {
 		stageengineprstage.AutoMergeReasonIntentUnauthorized, stageengineprstage.AutoMergeReasonIntentEvidence,
 		stageengineprstage.AutoMergeReasonMergeRefusedReview, stageengineprstage.AutoMergeReasonMergeRefusedMethod,
 		stageengineprstage.AutoMergeReasonNoAppBotLogin, stageengineprstage.AutoMergeReasonHumanMergeRequired,
-		stageengineprstage.AutoMergeReasonRenovateAutomergeDisabled, stageengineprstage.AutoMergeReasonRenovateArtifactProblem:
+		stageengineprstage.AutoMergeReasonRenovateArtifactProblem:
 		return true
 	}
 	return false
@@ -235,8 +235,6 @@ func decisionPlainReason(base string) string {
 		return "it touches files a person must merge"
 	case stageengineprstage.AutoMergeReasonHumanMergeRequired:
 		return "it is a breaking change (⚠️ title or needs-owner-merge label) — the owner merges it"
-	case stageengineprstage.AutoMergeReasonRenovateAutomergeDisabled:
-		return "Renovate's own config turns automerge off for this update and asks for a manual merge"
 	case stageengineprstage.AutoMergeReasonRenovateArtifactProblem:
 		return "Renovate could not update a lock file or other artifact on this branch, so check it before merging"
 	case stageengineprstage.AutoMergeReasonIntentUnauthorized, stageengineprstage.AutoMergeReasonIntentEvidence:
