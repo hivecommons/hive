@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v6.30.3)
+
+### Fixed
+
+- **The Claude usage gauge names the model on the model-specific weekly dial.** Claude's usage reply names the model a model-specific weekly limit counts (`/usage` shows it as "Current week (Fable)"), but the hive's built-in usage reading dropped that name, so the dial could only say "Weekly (model-specific)". The reading now keeps the name in the limit's `scope.model`, and the dial reads "Weekly (Fable)", following whichever model Claude reports. Names from the optional ccleft source, which arrive lower-cased, are capitalized the same way.
+
 ## 2026-11-15 (v6.30.2)
 
 ### Fixed
