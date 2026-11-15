@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 
+	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/mention"
@@ -91,7 +92,8 @@ func (b *boot) syncMentionRuntime() {
 	responder.SetPerThreadMaxFunc(func() int {
 		return b.cfg.GitHub.Mentions.PerThreadMaxEffective()
 	})
-	b.agentMgr.SetKickObserver(responder.HandleAgentEvent)
+	// Fan-out, beside the Linear agent's observer (hivecommons/hive#7483).
+	crux.AddLegacyKickObserver(b.agentMgr, responder.HandleAgentEvent)
 	b.logger.Info("GitHub mention trigger poller started", "interval", b.cfg.GitHub.Mentions.PollIntervalEffective())
 }
 
