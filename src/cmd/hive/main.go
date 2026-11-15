@@ -3575,6 +3575,12 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	// at once (hivecommons/hive#16521).
 	github.SetCIEvidenceHook(b.dashSrv.RefreshCIEvidence)
 	wireSpektacularRunner(b.cfg, b.dashSrv, b.logger)
+	// Meetings (hivecommons/hive#18289): the Quorum child, only when
+	// meetings.enabled is set. Stopped on shutdown.
+	if sup := wireMeetings(b.ctx, b.cfg, b.logger); sup != nil {
+		b.meetingsQuorum = sup
+		b.cleanup.push(sup.Stop)
+	}
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
 	ghClientFn := func() *github.Client { return b.ghClient }
 	b.dashSrv.InstallClaimHooks(gfiClaimHooks(b.ctx, b.cfg, b.gfiState(), ghClientFn, b.dashSrv, b.logger,

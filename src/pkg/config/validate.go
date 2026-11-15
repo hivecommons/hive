@@ -165,6 +165,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Jev.Validate(); err != nil {
 		return err
 	}
+	if err := c.Meetings.Validate(); err != nil {
+		return err
+	}
 	if err := c.Review.ValidateFixerFallback(); err != nil {
 		return err
 	}

@@ -178,7 +178,10 @@ type Config struct {
 	Jev JevConfig `yaml:"jev,omitempty" json:"jev,omitempty"`
 	// Runs tunes long-running runs and the opt-in Spektacular stage runner
 	// (hivecommons/hive#8303). Zero value: runner off, default retry budget.
-	Runs      RunsConfig      `yaml:"runs,omitempty" json:"runs,omitempty"`
+	Runs RunsConfig `yaml:"runs,omitempty" json:"runs,omitempty"`
+	// Meetings turns on hive as a live meeting participant through Quorum
+	// (hivecommons/hive#18284). Zero value: off, no Quorum process.
+	Meetings  MeetingsConfig  `yaml:"meetings,omitempty" json:"meetings,omitempty"`
 	Swarm     SwarmConfig     `yaml:"swarm,omitempty" json:"swarm,omitempty"`
 	Autonomy  AutonomyConfig  `yaml:"autonomy,omitempty" json:"autonomy,omitempty"`
 	Review    ReviewConfig    `yaml:"review,omitempty" json:"review,omitempty"`
