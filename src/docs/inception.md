@@ -1,16 +1,26 @@
-# Inception — turning an idea into a scaffolded project
+# Inception — Inception (spek) sessions and the inception API
 
-Inception is the ACMM **L1 ("Inception")** workflow. It drives the `brainstorm`
-agent through a fixed phase sequence that turns a raw idea (or an existing
-repo) into structured knowledge-base facts and a downloadable project
-scaffold. This guide covers the operator-facing workflow, the API surface
-behind it, and how to configure the agent that powers it.
+In the dashboard, **Inception (spek)** is the interactive way to turn an idea
+(or an existing repo) into specs, plans and a starting project: named, shared
+CLI-agent terminal sessions that open in the hive's shared spek workspace (a
+checkout of the project repo with its spek skills installed). Everyone who can
+see a session watches it live, one person at a time holds the keyboard, and
+`read` users only watch. It is on by default (`dashboard.sessions.enabled`;
+`HIVE_SESSIONS_ENABLED=false` or `enabled: false` hides it). See
+[Inception (spek)](dashboard-sections/workflow-and-agents.md#inception-spek)
+and the [Sessions API](api-reference/sessions.md).
 
-This guide documents only what the code in `pkg/dashboard/inception_handlers.go`
-and `pkg/knowledge/inception.go` actually does — see those files for
-implementation detail.
+The dashboard's old step-by-step Inception wizard was removed; Inception (spek)
+replaces it. Its Campaigns and Jam view is the **Campaigns** tab of the
+Inception (spek) section.
 
-> **Dashboard UI.** When `dashboard.sessions.enabled` is on, the dashboard hides the Inception wizard and shows the Sessions section instead (the Campaigns and Jam view moves to a Campaigns tab there). The `/api/inception/*` endpoints, the brainstorm agent and `/api/campaigns` are unchanged, and the wizard is still shown whenever sessions are off.
+The rest of this guide covers the ACMM **L1 ("Inception")** workflow behind
+`/api/inception/*`, which is unchanged and still available to API callers. It
+drives the `brainstorm` agent through a fixed phase sequence that turns a raw
+idea (or an existing repo) into structured knowledge-base facts and a
+downloadable project scaffold. It documents only what the code in
+`pkg/dashboard/inception_handlers.go` and `pkg/knowledge/inception.go`
+actually does; see those files for implementation detail.
 
 ## When to use it
 
@@ -53,8 +63,8 @@ capture → clarify → structure → scaffold → complete
 
 | Phase | What happens | Who acts |
 |---|---|---|
-| `capture` | You submit an idea (or a repo URL for brownfield). The engine seeds a `FactIdea` KB fact and creates the inception state. The dashboard kicks the `brainstorm` agent, which must generate 5–7 clarification questions as beads. | Operator starts; agent generates questions |
-| `clarify` | Questions are posted to the dashboard (`POST /api/inception/questions` records them and advances the phase). You answer them. | Operator answers |
+| `capture` | You submit an idea (or a repo URL for brownfield). The engine seeds a `FactIdea` KB fact and creates the inception state. Hive kicks the `brainstorm` agent, which must generate 5–7 clarification questions as beads. | Operator starts; agent generates questions |
+| `clarify` | Questions are recorded (`POST /api/inception/questions` records them and advances the phase). You answer them. | Operator answers |
 | `structure` | Your answers are submitted (`POST /api/inception/answer`); the agent is re-kicked with the idea + answers and must create fact beads — 1 vision, 1 constitution, 2+ requirements, plus constraints/stakeholders/acceptance criteria as needed. You record them (`POST /api/inception/facts`), which writes each fact to the inception wiki vault and advances to `scaffold`. | Agent produces facts; operator records them |
 | `scaffold` | `GET /api/inception/scaffold` (or `/download`) generates the project scaffold from the recorded facts — README, AGENTS.md, CLAUDE.md, CONTRIBUTING.md, CI workflows, `.gitignore`, and language-specific stubs inferred from the constitution fact (falling back to language cues in the idea text). | Operator reviews the generated files |
 | `complete` | `POST /api/inception/approve` marks the run finished and re-pauses the `brainstorm` agent so the governor doesn't kick it again with generic ideation prompts. If `runs.spektacular.enabled` is on and the approve request identifies a real GitHub issue, Hive also admits that issue as the first `spec` stage of a long-running run. | Operator approves |
@@ -73,47 +83,44 @@ Notes on the state machine, verified from `pkg/knowledge/inception.go`:
 - Starting a new inception (`Start` / `StartBrownfield`) is rejected unless
   the previous run reached `complete`, or `force: true` is passed.
 
-## Operator workflow (dashboard)
+## Driving the workflow through the API
 
-1. Open the Inception panel on the dashboard. With no active run, it shows a
-   mode selector (idea text box for greenfield, repo URL box for
-   brownfield).
-2. Submit an idea (greenfield) or a repo URL (brownfield). This calls
-   `POST /api/inception/start` or `POST /api/inception/scan`, which also
-   kicks the `brainstorm` agent (unpausing it first if the governor had
-   paused it).
-3. Wait for the agent to post 5–7 clarification questions as beads. The
-   dashboard polls `GET /api/inception/state` (every 3s while the panel is
-   open) and renders the questions once `POST /api/inception/questions` has
+The dashboard no longer has a wizard for these steps; an API caller (with the
+owner role for state-changing calls) drives them:
+
+1. Submit an idea (greenfield) with `POST /api/inception/start` or a repo URL
+   (brownfield) with `POST /api/inception/scan`. Both kick the `brainstorm`
+   agent (unpausing it first if the governor had paused it).
+2. Wait for the agent to post 5–7 clarification questions as beads; poll
+   `GET /api/inception/state` until `POST /api/inception/questions` has
    recorded them.
-4. Answer the questions in the dashboard form; this posts
-   `POST /api/inception/answer`. The agent is re-kicked (via `SendKick`, not
-   a full restart, to avoid losing its clarify-phase context) with the idea,
-   phase, and your answers injected via `${INCEPTION_*}` template variables.
-5. Wait for the agent to create fact beads, then record them via
+3. Answer them with `POST /api/inception/answer`. The agent is re-kicked (via
+   `SendKick`, not a full restart, to avoid losing its clarify-phase context)
+   with the idea, phase, and your answers injected via `${INCEPTION_*}`
+   template variables.
+4. Wait for the agent to create fact beads, then record them via
    `POST /api/inception/facts`. This writes each fact as a Markdown file
    with YAML frontmatter into an `inception-wiki` vault directory and
    connects that vault as a knowledge source for all agents.
-6. Review the generated scaffold (`GET /api/inception/scaffold`) or download
+5. Review the generated scaffold (`GET /api/inception/scaffold`) or download
    it as a zip (`GET /api/inception/download`).
-7. Approve (`POST /api/inception/approve`) to mark the run complete. This
+6. Approve (`POST /api/inception/approve`) to mark the run complete. This
    also re-pauses `brainstorm` so the L2+ governor doesn't restart it with
    unrelated ideation prompts. When long-running runs are enabled, include
    either `issue_url` or `repo`/`issue_number` in the approve body to admit
    the linked issue as the first `spec` stage. Inception does not create or
    guess an issue number on its own; if the approve request does not name one,
    completion remains a no-op for run admission.
-8. If anything goes wrong, `POST /api/inception/reset` first archives the
+7. If anything goes wrong, `POST /api/inception/reset` first archives the
    current state and wiki files as an Inception campaign, then clears the
-   active state and state file. The Campaigns list can restore that archived
-   session later, so New Inception no longer discards completed work.
+   active state and state file. The Campaigns tab lists that archived
+   session, so a reset does not discard completed work.
 
 Optional wiki-management calls, usable at any point once an inception has
 produced wiki files:
 
 - `GET /api/inception/has-files` — whether the inception wiki has any `.md`
-  files, used by the dashboard to decide whether to show wiki-related
-  controls.
+  files.
 - `PUT /api/inception/wiki-name` — rename the inception wiki vault
   (persisted into inception state).
 - `POST /api/inception/import` — upload a zip of Markdown files
@@ -173,21 +180,21 @@ recorded as advisory beads, unrelated to any specific inception run.
 
 ## Campaigns and resume
 
-The Inception panel now starts with a Campaigns list. Each row is a resumable
-unit of work keyed by its stable session/spec id:
+The **Campaigns** tab of the Inception (spek) section lists campaigns. Each
+row is a resumable unit of work keyed by its stable session/spec id:
 
 - Archived L1 sessions have type `inception` and engine `Spec Kit`. Pressing
   **Continue** calls `POST /api/campaigns/{id}/resume`, takes a durable
-  campaign lease, restores the saved inception state and wiki working files,
-  and opens the existing wizard at the archived phase. A second operator gets
+  campaign lease and restores the saved inception state and wiki working
+  files, so the API workflow above continues from the archived phase (the
+  dashboard has no wizard to reopen). A second operator gets
   a 409 until the holder presses **Release** or the lease expires.
 - Spektacular (Spek)-backed runs have type `spektacular`, engine `Spektacular`, and a
   `/api/runs/{key}` link. Resume returns the retained run detail and a CLI
   status command; Spek itself reloads state from its working files and
   speks.
 - The list supports `search`/`q`, `repo`, `stage`, `status`, and `owner`
-  filters and keeps shipped/completed work visible instead of replacing it
-  with a blank New Inception screen.
+  filters and keeps shipped/completed work visible.
 - **Revise** calls `POST /api/campaigns/{id}/revise` and creates a new
   campaign linked with `revision_of`/`revision`, so changed requirements branch
   from the shipped campaign instead of erasing its trail. The list marks the

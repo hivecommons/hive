@@ -382,8 +382,9 @@ against `X-Hub-Signature-256`. Terminal access uses short-lived signed
 assertions. Systemd units refuse to run code from a directory an
 unprivileged user could have created.
 
-**Sessions.** With `dashboard.sessions.enabled` (default off; Settings →
-Dashboard → Sessions, overridden by `HIVE_SESSIONS_ENABLED`) the dashboard
+**Sessions.** With `dashboard.sessions.enabled` (default on; Settings →
+Dashboard → Inception (spek) sessions, overridden by `HIVE_SESSIONS_ENABLED`,
+`false` turns it off) the dashboard
 offers interactive CLI terminals (`/api/sessions`, [API
 reference](api-reference/sessions.md)). A session is a plain vendor CLI, never
 a shell, launched with none of the permission-bypass flags agents run with, so
@@ -466,6 +467,17 @@ importance:
 - **Resume ids** never start with `-` and a resume command may carry only the
   vendor binary, a fixed set of resume words and a flag-free id, so a planted
   transcript name cannot add `--dangerously-skip-permissions`.
+- **Voice notes stay in the browser.** The input bar's Voice button (write
+  roles only) uses the browser's Web Speech API, so transcription is done by
+  the browser vendor's speech service (Chrome sends the audio to Google), not
+  by Hive; the audio never reaches the Hive backend. The transcript only fills
+  the Send textarea and goes through the same queued `/input` path as typed
+  text when the user presses Send. To allow it, the gateway's
+  `Permissions-Policy` for the dashboard document is
+  `geolocation=(), camera=(), microphone=(self)` (`src/deploy/nginx.conf`,
+  `map $uri $hive_document_permissions_policy`); the ttyd terminal iframe
+  (`/terminal/`) and `/api/` responses keep `microphone=()`, and no other origin
+  is ever granted the microphone.
 
 Audit: `session_created`, `session_started` (the outcome of the background
 start), `session_closed`, `session_renamed`, `session_input` and

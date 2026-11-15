@@ -7460,9 +7460,9 @@
     /* ══ Terminal surface (Phase 3) ══
        Log/pane/audit/activity surfaces read as terminals in both modes:
        slightly-inset dark bg (--terminal-bg), mono type, subtle border.
-       Surface props were stripped from the #logs-output / #audit-panel /
-       #inception-activity inline styles so these rules can apply. */
-    #logs-output, #audit-panel, #inception-activity, .oc-detail-summary, .doing {
+       Surface props were stripped from the #logs-output / #audit-panel
+       inline styles so these rules can apply. */
+    #logs-output, #audit-panel, .oc-detail-summary, .doing {
       background: var(--surface-terminal);
       color: var(--terminal-fg);
       border: var(--line-width) solid var(--terminal-line);
@@ -7471,7 +7471,7 @@
       box-shadow: var(--shadow-card);
     }
     .doing { color: var(--terminal-cyan); padding: var(--sp-4) var(--sp-5); }
-    .oc-detail-summary, #inception-activity { color: var(--terminal-cyan); }
+    .oc-detail-summary { color: var(--terminal-cyan); }
     /* Children of the always-dark pane capture can't use mode-remapped
        colors — pin them to the terminal companions. */
     .oc-detail-summary .sum-text, .oc-detail-summary .sum-tool,
@@ -7777,9 +7777,7 @@
     .review-priority-low { border-color: var(--muted); }
     /* Sessions section: tabbed, shared CLI terminals. Tokens only. */
     #sessions-section[hidden],
-    #inception-section[hidden],
-    .oc-nav-item[data-section="sessions-section"][hidden],
-    .oc-nav-item[data-section="inception-section"][hidden] { display: none !important; }
+    .oc-nav-item[data-section="sessions-section"][hidden] { display: none !important; }
     .sessions-root { display: flex; flex-direction: column; gap: var(--sp-4); }
     .sessions-toolbar { display: flex; align-items: flex-start; gap: var(--sp-4); flex-wrap: wrap; }
     .sessions-tabs { display: flex; flex-wrap: wrap; gap: var(--sp-4); flex: 1 1 auto; min-width: 0; }
@@ -7839,6 +7837,13 @@
     .sessions-attach:focus-within { outline: var(--focus-ring-width) solid var(--accent); }
     .sessions-input-count { margin-left: auto; color: var(--muted); font-size: var(--fs-xs); }
     .sessions-input-count.over { color: var(--red); }
+    /* Voice notes: the mic is accented while dictating; the live interim
+       line and the first-use vendor notice are muted helper text. */
+    .sessions-voice-btn[aria-pressed="true"] { color: var(--red); border-color: var(--red); }
+    .sessions-voice-btn[hidden] { display: none; }
+    .sessions-voice-interim { color: var(--muted); font-size: var(--fs-xs); font-style: italic; }
+    .sessions-voice-interim:empty { display: none; }
+    .sessions-voice-notice { color: var(--muted); font-size: var(--fs-xs); }
     /* Presence and the keyboard lease (pane header). The holder's own line is
        accented; a viewer without the keyboard sees the muted "watching" pill. */
     .sessions-presence { color: var(--muted); font-size: var(--fs-xs); cursor: help; }
@@ -8806,8 +8811,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <div class="oc-nav-label">Intelligence</div>
       <a class="oc-nav-item" data-section="advisory-section" data-action="ocNavigate" data-arg0="advisory-section"><span class="oc-nav-emoji">📣</span><span class="oc-nav-text">Advisory</span></a>
       <a class="oc-nav-item" data-section="acmm-eval-section" data-action="ocNavigate" data-arg0="acmm-eval-section"><span class="oc-nav-emoji">🎯</span><span class="oc-nav-text">ACMM Eval</span></a>
-      <a class="oc-nav-item" data-section="inception-section" data-action="ocNavigate" data-arg0="inception-section"><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spektacular)</span></a>
-      <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💻</span><span class="oc-nav-text">Sessions</span></a>
+      <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spek)</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="inbox-section" data-action="ocNavigate" data-arg0="inbox-section"><span class="oc-nav-emoji">📥</span><span class="oc-nav-text">Inbox</span><span id="inbox-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
       <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
@@ -9220,15 +9224,8 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     </div>
   </div>
 
-  <div class="mt-6 mb-8" id="inception-section" data-dashboard-section="inception-section">
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="inception-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Inception section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 💡 Inception</h2>
-    <div class="section-body">
-      <div id="inception-panel" style="height:min(800px,70vh);overflow-y:auto;overflow-x:hidden;"></div>
-    </div>
-  </div>
-
   <div class="mt-6 mb-8" id="sessions-section" data-dashboard-section="sessions-section" hidden>
-    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="sessions-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Sessions section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 💻 Sessions</h2>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="sessions-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Inception (spek) section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 💡 Inception (spek)</h2>
     <div class="section-body">
       <div id="sessions-panel"></div>
     </div>
@@ -9400,7 +9397,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
 
         <details class="faq-q" id="faq-l1-l2">
           <summary>What are L1 and L2 for?</summary>
-          <p><strong>L1 is inception; L2 is calibration.</strong> At L1 the <strong>brainstorm</strong> agent can turn a raw idea or existing repo into structured facts and a scaffold through the Inception panel; it asks clarifying questions and stops when you approve. At L2 the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
+          <p><strong>L1 is inception; L2 is calibration.</strong> At L1 the <strong>brainstorm</strong> agent can turn a raw idea or existing repo into structured facts and a scaffold through the <code>/api/inception</code> workflow; it asks clarifying questions and stops when you approve. In the dashboard, the <strong>Inception (spek)</strong> section is where you work an idea interactively in a shared CLI-agent session. At L2 the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
           <p>The job at L2 is not to fix everything in the ledger. It is to decide whether you believe the hive's judgement: point your own local agent — <code>claude</code>, <code>bob</code>, or <code>copilot</code> — at the 🐝 Hive Advisory Report and ask whether the findings hold up before you give Hive more authority.</p>
         </details>
 
@@ -9510,12 +9507,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
 
         <details class="faq-q" id="faq-spek-l1">
           <summary>How does Spek fit with L1?</summary>
-          <p>Inception is the L1 human-and-brainstorm workflow for turning an idea into facts and a scaffold. Spek is the optional runner for staged speks and plans once you are using long-running runs. Both keep authority in Hive: Spek status can advance a lease, but implement still lands through the existing PR flow. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spek</a>.</p>
+          <p>Inception (spek) is the dashboard's interactive way in: shared CLI-agent sessions opened in the hive's spek workspace. Spek is the optional runner for staged speks and plans once you are using long-running runs. Both keep authority in Hive: Spek status can advance a lease, but implement still lands through the existing PR flow. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/spektacular.md" target="_blank" rel="noopener noreferrer">Spek</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-sessions">
-          <summary>What are Sessions, and where did Inception go?</summary>
-          <p>When sessions are enabled on your hive, the dashboard shows a <strong>Sessions</strong> section instead of Inception: named terminal tabs where a command-line AI agent runs inside Hive, shared with everyone on the hive. People with the <code>read</code> role see a read-only scrollback. Typing in a terminal is shared and not attributed to individual people. Campaigns and Jam moved to a Campaigns tab. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections/workflow-and-agents.md#sessions" target="_blank" rel="noopener noreferrer">Sessions</a>.</p>
+          <summary>What is Inception (spek), and where did the Inception wizard go?</summary>
+          <p>The step-by-step Inception wizard was removed; the dashboard's <strong>Inception (spek)</strong> section replaces it (on by default; an owner can turn it off in Settings, which hides the section): named terminal tabs where a command-line AI agent runs inside Hive, shared with everyone on the hive. People with the <code>read</code> role see a read-only scrollback. Typing in a terminal is shared and not attributed to individual people. Campaigns and Jam moved to a Campaigns tab. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections/workflow-and-agents.md#inception-spek" target="_blank" rel="noopener noreferrer">Inception (spek)</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-external-engines">
@@ -10622,7 +10619,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     // keeps the historical all-expanded default forever) or is new ('v1').
     const DASHBOARD_DEFAULT_COLLAPSED_SECTIONS = Object.freeze([
       'pr-throughput-section', 'token-panel', 'cost-panel', 'advisory-section', 'knowledge-section', 'inbox-section',
-      'contributors-section', 'inception-section', 'sessions-section', 'acmm-eval-section', 'debug-section', 'audit-section',
+      'contributors-section', 'sessions-section', 'acmm-eval-section', 'debug-section', 'audit-section',
       'logs-section', 'nous-section', 'faq-section'
     ]);
     const DASHBOARD_COLLAPSE_DEFAULTS_KEY = 'hive.dashboard.collapseDefaults';
@@ -10732,8 +10729,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'review-pipeline-subsection': { title: 'Pipeline', summary: '—' },
       'review-queue-subsection': { title: 'Queue', summary: '—' },
       'nous-section': { title: '🧪 Experiment Lab (nous)', summary: '—', settingsHtml: sectionSettingsGear('Experiment Lab', 'openNousConfig', 'Experiment Lab Configuration') },
-      'inception-section': { title: '💡 Inception (spektacular)', summary: 'ready', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
-      'sessions-section': { title: '💻 Sessions', summary: '0 running · 0 total', badgeHtml: '<span class="dash-card-badge">shared terminals</span>' },
+      'sessions-section': { title: '💡 Inception (spek)', summary: '0 running · 0 total', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'inbox-section': { title: '📥 Inbox', summary: '0 to triage' },
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
@@ -10772,8 +10768,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'review-pipeline-subsection': { heading: 'Review Pipeline', help: 'Each open PR in the stage the review pipeline derived for it (GET /api/review/pipeline), with reviewers, P0–P3 findings, the fix-loop counter and the next action.' },
       'review-queue-subsection': { heading: 'Queue', help: 'Every open PR across the governed repos in one deterministic rank order (GET /api/review/queue), regardless of author type, with the reasons for each position.' },
       'nous-section': { heading: 'Experiment Lab', help: 'An experimental planner that tries out code changes in your repositories and records what it learned.' },
-      'sessions-section': { heading: 'Sessions', help: 'Named terminal sessions running command-line AI tools inside Hive; everyone who can see one watches live and one person at a time holds the keyboard.' },
-      'inception-section': { heading: 'Inception', help: 'A step-by-step guide that turns a new project idea into a first set of files and planned work.' },
+      'sessions-section': { heading: 'Inception (spek)', help: 'Named terminal sessions running command-line AI tools inside Hive; everyone who can see one watches live and one person at a time holds the keyboard.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC, send to dibs, or keep as knowledge.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
@@ -11379,8 +11374,6 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
         inner = miniDial(n0, ['L0','L1','L2','L3','L4','L5','L6'], text);
       } else if (sectionId === 'review-queue-section') {
         return reviewQueueCollapsedSummary(text);
-      } else if (sectionId === 'inception-section') {
-        inner = miniBar([{ label: 'proposals', value: n0, color: 'var(--blue)' }, { label: 'in progress', value: nums[1] || 0, color: 'var(--green)' }], text);
       } else if (sectionId === 'sessions-section') {
         inner = miniBar([{ label: 'running', value: n0, color: 'var(--green)' }], text);
       } else if (sectionId === 'contributors-section') {
@@ -11964,21 +11957,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (top) return `${total} contributors · ${online} online · top: @${top}`;
       return total ? `${total} contributors · ${online} online` : '0 contributors';
     }
-    function inceptionSectionSummary() {
-      const campaigns = Array.isArray(_campaigns) ? _campaigns : [];
-      const activeStatuses = { active: true, running: true, working: true, in_progress: true, started: true, open: true };
-      let active = campaigns.filter(c => {
-        const status = String((c && (c.status || c.current_stage)) || '').toLowerCase().replace(/[-\s]+/g, '_');
-        return activeStatuses[status] || (!!status && status !== 'complete' && status !== 'completed' && status !== 'parked' && status !== 'archived');
-      }).length;
-      let proposals = campaigns.length;
-      if (_inceptionState && _inceptionState.phase) {
-        proposals = Math.max(1, proposals);
-        active = Math.max(1, active);
-      }
-      if (!proposals && !active) return 'no active proposals';
-      return `${proposals} proposal${proposals === 1 ? '' : 's'} · ${active} in progress`;
-    }
     function refreshDashboardSectionSummaries(data) {
       data = data || window._lastStatus || {};
       const repos = data.repos || [];
@@ -12010,7 +11988,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       setSectionSummary('approvals-section', `${textOrDash(appr && appr.textContent)} pending`);
       setSectionSummary('logs-section', `${agents.length} agents`);
       setSectionSummary('overview-section', data.governor && data.governor.mode ? `${data.governor.mode} · ${repos.length} repos` : `${repos.length} repos`);
-      setSectionSummary('inception-section', inceptionSectionSummary());
       setSectionSummary('faq-section', '');
     }
 
@@ -12247,7 +12224,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','inbox-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','inbox-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
@@ -12259,7 +12236,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var DASHBOARD_LAYOUT_PRESET_LIMIT=5;
     var DASHBOARD_LAYOUT_DEFAULT_NAME='My layout';
     var DASHBOARD_REVIEW_MIGRATION_KEY='hive.dashboard.reviewSectionMigrated';
-    function dashboardAliasSectionId(id){return id==='review-pipeline-section'?'review-queue-section':id;}
+    function dashboardAliasSectionId(id){if(id==='review-pipeline-section')return 'review-queue-section';if(id==='inception-section')return 'sessions-section';return id;}
     function dashboardMigrateReviewSectionStorage(){try{if(localStorage.getItem(DASHBOARD_REVIEW_MIGRATION_KEY)==='1')return;['hive-section-collapsed-review-queue-section','hive-section-collapsed-review-pipeline-section'].forEach(function(k){localStorage.removeItem(k);});var raw=localStorage.getItem(DASHBOARD_HIDDEN_SECTIONS_KEY);if(raw){var arr=JSON.parse(raw);if(Array.isArray(arr)){arr=arr.map(dashboardAliasSectionId).filter(function(id,i,a){return id!=='review-queue-section'&&dashboardCanHideSection(id)&&a.indexOf(id)===i;});if(arr.length)localStorage.setItem(DASHBOARD_HIDDEN_SECTIONS_KEY,JSON.stringify(arr));else localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);}}var layoutRaw=localStorage.getItem(DASHBOARD_LAYOUT_KEY);if(layoutRaw){var layout=JSON.parse(layoutRaw);if(layout&&Array.isArray(layout.main)){layout.main=layout.main.map(dashboardAliasSectionId).filter(function(id,i,a){return a.indexOf(id)===i;});localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(layout));}}localStorage.setItem(DASHBOARD_REVIEW_MIGRATION_KEY,'1');}catch(e){}}
     dashboardSeedCollapseDefaults();
     dashboardMigrateReviewSectionStorage();
@@ -12268,7 +12245,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
     function experimentLabEnabled(){return dashboardFeatureEnabled('experiment_lab');}
     function sessionsFeatureEnabled(){return window._sessionsEnabled===true;}
-    function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);if(id==='sessions-section')return !sessionsFeatureEnabled();if(id==='inception-section')return sessionsFeatureEnabled();return id==='nous-section'&&!experimentLabEnabled();}
+    function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);if(id==='sessions-section')return !sessionsFeatureEnabled();return id==='nous-section'&&!experimentLabEnabled();}
     function dashboardCanHideSection(id){id=dashboardAliasSectionId(id);return DASHBOARD_LAYOUT_TEMPLATE.main.indexOf(id)>=0&&DASHBOARD_HIDE_DENYLIST.indexOf(id)<0&&!dashboardFeatureSectionHidden(id);}
     function dashboardHiddenSectionsRead(){try{var raw=localStorage.getItem(DASHBOARD_HIDDEN_SECTIONS_KEY),arr=raw?JSON.parse(raw):[];return Array.isArray(arr)?arr.filter(function(id,i){return dashboardCanHideSection(id)&&arr.indexOf(id)===i;}):[];}catch(e){return [];}}
     function dashboardHiddenSectionsWrite(ids){try{var valid=(ids||[]).filter(function(id,i,a){return dashboardCanHideSection(id)&&a.indexOf(id)===i;});if(valid.length)localStorage.setItem(DASHBOARD_HIDDEN_SECTIONS_KEY,JSON.stringify(valid));else localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);}catch(e){}dashboardUpdateLayoutMenuState();}
@@ -12812,8 +12789,6 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     function ocNavigate(section, skipScroll) {
       section = dashboardAliasSectionId(section);
-      // Sessions replaces Inception when enabled: old links and the welcome checklist land there.
-      if (section === 'inception-section' && window._sessionsEnabled === true) section = 'sessions-section';
       if (dashboardFeatureSectionHidden(section)) return;
       if (dashboardSectionHidden(section)) dashboardSetSectionHidden(section,false);
       _ocSelectedAgent = null;
@@ -49673,7 +49648,7 @@ function burnAreaChart() {
       const COLLAPSIBLE_SECTION_IDS = [
         'advisory-section', 'advisory-digest-section', 'hive-advice-section', 'acmm-reco-section', 'lifecycle-section', 'pr-throughput-section',
         'overview-section', 'governor', 'token-panel', 'cost-panel', 'repos-section', 'acmm-eval-section',
-        'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'inception-section', 'sessions-section',
+        'fleet-report-section', 'audit-section', 'review-queue-section', 'nous-section', 'sessions-section',
         'knowledge-section', 'inbox-section', 'contributors-section', 'debug-section', 'logs-section',
         'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'
       ];
@@ -49822,10 +49797,10 @@ function burnAreaChart() {
       initScrollStabilizer();
     }
     // ── Campaigns + Jam (Spek / inception campaign archive) ──
-    // Moved verbatim out of inception.js so the Campaigns and Jam UI survives
-    // the Inception wizard being replaced by the Sessions section. Plain
-    // top-level declarations, shared with inception.js through the single
-    // concatenated dashboard script; keep this file adjacent to it in manifest.txt.
+    // Moved out of inception.js so the Campaigns and Jam UI survives the
+    // Inception wizard's removal; it is the Campaigns tab of the Inception
+    // (spek) section (sessions.js). Plain top-level declarations, shared
+    // through the single concatenated dashboard script; keep this file adjacent to it in manifest.txt.
     let _campaigns = [];
 
     async function loadCampaigns() {
@@ -49934,10 +49909,9 @@ function burnAreaChart() {
 
     function renderCampaignsList() {
       const list = document.getElementById('campaigns-list');
-      setSectionSummary('inception-section', inceptionSectionSummary());
       if (!list) return;
       if (!_campaigns || _campaigns.length === 0) {
-        list.innerHTML = '<div class="campaign-empty">No campaigns yet. New Inception archives completed sessions here.</div>';
+        list.innerHTML = '<div class="campaign-empty">No campaigns yet. Reset or completed inception runs are archived here.</div>';
         return;
       }
       list.innerHTML = campaignRevisionChains(_campaigns).map(function(chain) { return renderCampaignRow(chain.head, chain.history); }).join('');
@@ -50176,7 +50150,9 @@ function burnAreaChart() {
         const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/resume', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ surface: 'dashboard' }) });
         const data = await r.json();
         if (!data.ok) { showToast(data.error || 'Failed to resume campaign', 'error'); return; }
-        if (data.state) { _inceptionState = data.state; renderInception(); }
+        // The dashboard wizard that drove a resumed inception state is gone;
+        // the campaign is resumed server-side and continued from its command.
+        if (data.state && !data.resume_command) showToast('Campaign resumed', 'success');
         if (data.resume_command) { await hiveAlert('Resume command:\n' + data.resume_command, 'Resume command'); }
         await loadCampaigns();
       } catch (e) { showToast('Error: ' + e.message, 'error'); }
@@ -50211,697 +50187,9 @@ function burnAreaChart() {
         await loadCampaigns();
       } catch (e) { showToast('Error: ' + e.message, 'error'); }
     }
-    // ── Inception section ──
-    let _inceptionState = null;
-
-
-    async function loadInceptionState() {
-      try {
-        const r = await fetch('/api/inception/state', {headers: _inceptionAuthHeaders()});
-        const data = await r.json();
-        _inceptionState = data.active ? data.state : null;
-        renderInception();
-        loadCampaigns();
-      } catch (e) { console.error('inception state load failed', e); }
-    }
-
-    function renderInception() {
-      refreshSectionCardShell('inception-section');
-      setSectionSummary('inception-section', inceptionSectionSummary());
-      const panel = document.getElementById('inception-panel');
-      if (!panel) return;
-
-      let wizard = '';
-      if (!_inceptionState || !_inceptionState.phase) {
-        wizard = renderInceptionModeSelect();
-      } else {
-        switch (_inceptionState.phase) {
-          case 'capture':
-            if (_inceptionState.idea_text) {
-              wizard = renderInceptionProgress('idea') + renderInceptionWorking();
-            } else {
-              wizard = _inceptionState.mode === 'greenfield'
-                ? renderInceptionCapture()
-                : renderInceptionScanProgress();
-            }
-            break;
-          case 'clarify':
-            wizard = renderInceptionProgress('clarify') + renderInceptionClarify();
-            break;
-          case 'structure':
-            wizard = renderInceptionProgress('structure') + renderInceptionStructure();
-            break;
-          case 'scaffold':
-            wizard = renderInceptionProgress('scaffold') + renderInceptionScaffold();
-            break;
-          case 'complete':
-            wizard = renderInceptionProgress('complete') + renderInceptionComplete();
-            setTimeout(loadInceptionCompleteFiles, 100);
-            break;
-          default:
-            wizard = renderInceptionModeSelect();
-        }
-      }
-      // Rebuilding the panel resets its own scroll and the campaign filters;
-      // carry both across so refreshes don't move the reader (#11032).
-      const panelScrollTop = panel.scrollTop;
-      const campaignFilters = {};
-      panel.querySelectorAll('.campaigns-filters input').forEach(function(el) { campaignFilters[el.id] = el.value; });
-      panel.innerHTML = '<div class="inception-spektacular-note">Project inception runs on <a href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer">Spektacular</a>, a Hive Commons project.</div>' + renderCampaignsPanel() + '<div class="campaigns-card">' + wizard + '</div>';
-      Object.keys(campaignFilters).forEach(function(id) {
-        const el = document.getElementById(id);
-        if (el) { el.defaultValue = campaignFilters[id]; el.value = campaignFilters[id]; }
-      });
-      panel.scrollTop = panelScrollTop;
-      renderCampaignsList();
-      if (!_inceptionPollTimer) startInceptionPoll();
-    }
-
-    function renderInceptionProgress(phase) {
-      var STAGES = [
-        { id: 'idea', label: 'Idea', icon: '💡' },
-        { id: 'clarify', label: 'Clarify', icon: '🔍' },
-        { id: 'structure', label: 'Structure', icon: '📐' },
-        { id: 'scaffold', label: 'Scaffold', icon: '🏗️' },
-        { id: 'complete', label: 'Complete', icon: '✅' }
-      ];
-
-      var currentIndex = STAGES.findIndex(function(s) { return s.id === phase; });
-      if (currentIndex === -1) { currentIndex = 0; }
-
-      var isDark = document.body.classList.contains('dark') ||
-        window.matchMedia('(prefers-color-scheme: dark)').matches ||
-        (document.body.style.backgroundColor || '').indexOf('0d1117') !== -1;
-
-      var COLORS = isDark
-        ? { bg: 'var(--panel)', border: 'var(--line)', text: 'var(--text)', muted: 'var(--muted)', blue: 'var(--blue)', green: 'var(--green)', lineBg: 'var(--line)' }
-        : { bg: '#ffffff', border: '#d0d7de', text: '#1f2328', muted: '#656d76', blue: '#0969da', green: '#1a7f37', lineBg: '#d0d7de' };
-
-      var STAGE_COUNT = STAGES.length;
-      var CONNECTOR_SEGMENTS = STAGE_COUNT - 1;
-
-      var html = '';
-      html += '<div style="';
-      html += 'display:flex;align-items:flex-start;justify-content:center;';
-      html += 'padding:var(--sp-6) var(--sp-8) var(--sp-5);';
-      html += 'background:' + COLORS.bg + ';';
-      html += 'border:1px solid ' + COLORS.border + ';';
-      html += 'border-radius:8px;';
-      html += 'font-family:var(--font-ui);';
-      html += 'position:relative;';
-      html += 'margin-bottom:var(--sp-6);';
-      html += '">';
-
-      for (var i = 0; i < STAGE_COUNT; i++) {
-        var stage = STAGES[i];
-        var isPast = i < currentIndex;
-        var isCurrent = i === currentIndex;
-        var isFuture = i > currentIndex;
-
-        var circleSize = isCurrent ? '32px' : '28px';
-        var circleBorder = isCurrent ? '3px' : '2px';
-        var circleBg, circleColor, circleBorderColor;
-
-        if (isPast) {
-          circleBg = COLORS.green;
-          circleColor = '#ffffff';
-          circleBorderColor = COLORS.green;
-        } else if (isCurrent) {
-          circleBg = COLORS.blue;
-          circleColor = '#ffffff';
-          circleBorderColor = COLORS.blue;
-        } else {
-          circleBg = 'transparent';
-          circleColor = COLORS.muted;
-          circleBorderColor = COLORS.lineBg;
-        }
-
-        var labelColor = isCurrent ? COLORS.text : (isPast ? COLORS.green : COLORS.muted);
-        var labelWeight = isCurrent ? '600' : '400';
-        var labelSize = isCurrent ? '12px' : '11px';
-
-        html += '<div style="';
-        html += 'display:flex;flex-direction:column;align-items:center;';
-        html += 'flex:1;position:relative;z-index:1;';
-        html += '">';
-
-        /* Circle */
-        html += '<div style="';
-        html += 'width:' + circleSize + ';height:' + circleSize + ';';
-        html += 'border-radius:50%;';
-        html += 'background:' + circleBg + ';';
-        html += 'border:' + circleBorder + ' solid ' + circleBorderColor + ';';
-        html += 'display:flex;align-items:center;justify-content:center;';
-        html += 'font-size:' + (isCurrent ? '15px' : '13px') + ';';
-        html += 'color:' + circleColor + ';';
-        html += 'transition:all 0.3s ease;';
-        html += 'box-shadow:' + (isCurrent ? '0 0 0 4px ' + COLORS.blue + '33' : 'none') + ';';
-        html += '">';
-
-        if (isPast) {
-          html += '<svg class="d-block" width="14" height="14" viewBox="0 0 16 16" fill="none">';
-          html += '<path d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z" fill="#ffffff"/>';
-          html += '</svg>';
-        } else if (isCurrent) {
-          html += '<span style="line-height:1;">' + stage.icon + '</span>';
-        } else {
-          html += '<span style="font-size:11px;color:' + COLORS.muted + ';">' + (i + 1) + '</span>';
-        }
-
-        html += '</div>';
-
-        /* Label */
-        html += '<div style="';
-        html += 'margin-top:var(--sp-4);';
-        html += 'font-size:' + labelSize + ';';
-        html += 'font-weight:' + labelWeight + ';';
-        html += 'color:' + labelColor + ';';
-        html += 'text-align:center;';
-        html += 'white-space:nowrap;';
-        html += '">' + stage.label + '</div>';
-
-        html += '</div>';
-
-        /* Connector line between stages */
-        if (i < CONNECTOR_SEGMENTS) {
-          var lineColor = (i < currentIndex) ? COLORS.green : COLORS.lineBg;
-          var lineHeight = '2px';
-
-          html += '<div style="';
-          html += 'flex:2;';
-          html += 'height:' + lineHeight + ';';
-          html += 'background:' + lineColor + ';';
-          html += 'margin-top:' + (isCurrent ? '16px' : '14px') + ';';
-          html += 'border-radius:1px;';
-          html += 'align-self:flex-start;';
-          html += 'transition:background 0.3s ease;';
-          html += '">';
-
-          /* Animated pulse on the active connector */
-          if (i === currentIndex) {
-            html += '<div style="';
-            html += 'width:30%;height:100%;';
-            html += 'background:linear-gradient(90deg,transparent,' + COLORS.blue + ',transparent);';
-            html += 'border-radius:1px;';
-            html += 'animation:inceptionPulse 2s ease-in-out infinite;';
-            html += '"></div>';
-          }
-
-          html += '</div>';
-        }
-      }
-
-      /* spec-kit attribution */
-      html += '<div style="text-align:center;margin-top:var(--sp-2);margin-bottom:-6px;">';
-      html += '<span style="font-size:10px;color:' + COLORS.muted + ';letter-spacing:0.3px;">';
-      html += 'Powered by <a href="https://github.com/github/spec-kit" target="_blank" rel="noopener" style="color:' + COLORS.muted + ';text-decoration:underline;text-underline-offset:2px;">GitHub Spec Kit</a>';
-      html += ' &middot; Spec-Driven Development';
-      html += '</span></div>';
-
-      html += '</div>';
-
-      /* Inject keyframes if not already present */
-      if (!document.getElementById('inception-progress-styles')) {
-        var styleEl = document.createElement('style');
-        styleEl.id = 'inception-progress-styles';
-        styleEl.textContent = '@keyframes inceptionPulse{0%{transform:translateX(0)}50%{transform:translateX(233%)}100%{transform:translateX(0)}}';
-        document.head.appendChild(styleEl);
-      }
-
-      if (_inceptionState && _inceptionState.idea_text) {
-        var ideaText = escapeHtml(_inceptionState.idea_text);
-        html += '<div style="';
-        html += 'margin-top:var(--sp-5);margin-bottom:var(--sp-6);padding:10px 14px;';
-        html += 'background:' + (isDark ? '#1c2333' : '#f6f8fa') + ';';
-        html += 'border:1px solid ' + COLORS.border + ';';
-        html += 'border-radius:var(--r);';
-        html += 'font-size:13px;color:' + COLORS.text + ';';
-        html += 'line-height:1.4;';
-        html += '">';
-        html += '<span style="color:' + COLORS.muted + ';font-size:11px;text-transform:uppercase;letter-spacing:0.5px;">Idea</span><br>';
-        html += ideaText;
-        html += '</div>';
-      }
-
-      return html;
-    }
-
-    function renderInceptionModeSelect() {
-      return `
-        <div style="max-width:700px;margin:0 auto 16px">${emptyStateCard('💡', 'Project Inception — bootstrap a project with your hive',
-          'Inception takes a project from raw idea to structured knowledge and a scaffolded repo. ' +
-          'In greenfield mode a brainstorm agent captures your one-line idea, asks clarifying questions, structures the answers into vision, requirements, and constraints (stored as Knowledge Base facts), then scaffolds the project. ' +
-          'In brownfield mode it scans an existing repo and captures its conventions and principles as KB facts instead. Pick a mode below to begin.')}</div>
-        <div style="display:flex;gap:var(--sp-6);max-width:700px;margin:0 auto">
-          <div data-action="startInceptionGreenfield" style="flex:1;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-8);cursor:pointer;text-align:center;transition:border-color 0.2s" data-mouseover-action="gh20" data-mouseout-action="gh21">
-            <div class="fs-3xl mb-4">🌱</div>
-            <div style="font-weight:600;margin-bottom:var(--sp-2)">Start from an idea</div>
-            <div style="font-size:0.78rem;color:var(--muted)">New project — describe what you want to build and we'll scaffold it</div>
-          </div>
-          <div data-action="startInceptionBrownfield" style="flex:1;background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-8);cursor:pointer;text-align:center;transition:border-color 0.2s" data-mouseover-action="gh20" data-mouseout-action="gh21">
-            <div class="fs-3xl mb-4">🏗️</div>
-            <div style="font-weight:600;margin-bottom:var(--sp-2)">Add to existing repo</div>
-            <div style="font-size:0.78rem;color:var(--muted)">Scan an existing project and capture its principles as KB facts</div>
-          </div>
-        </div>`;
-    }
-
-    function renderInceptionCapture() {
-      return `
-        <div style="max-width:600px;margin:0 auto">
-          <div style="font-size:0.85rem;color:var(--muted);margin-bottom:var(--sp-5)">Describe your project idea in a sentence or two.</div>
-          <textarea id="inception-idea" placeholder="A CLI tool that syncs Obsidian vaults to a wiki server..." style="width:100%;min-height:80px;padding:var(--sp-5);border:1px solid var(--border);border-radius:8px;background:var(--card-bg);color:var(--fg);font-family:inherit;font-size:0.85rem;resize:vertical"></textarea>
-          <div style="margin-top:var(--sp-5);display:flex;gap:var(--sp-4);justify-content:flex-end">
-            <button class="hv-btn btn-danger" data-action="stopInception">Stop</button>
-            <button class="hv-btn btn-danger" data-action="clearInception">Clear</button>
-            <button class="hv-btn btn-primary" data-action="submitInceptionIdea">Start</button>
-          </div>
-        </div>`;
-    }
-
-    let _inceptionPollTimer = null;
-    let _inceptionTailing = true;
-
-    function onInceptionScroll() {
-      const el = document.getElementById('inception-activity');
-      const btn = document.getElementById('inception-follow-btn');
-      if (!el) return;
-      const SCROLL_THRESHOLD = 40;
-      const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_THRESHOLD;
-      _inceptionTailing = atBottom;
-      if (btn) btn.classList.toggle('visible', !atBottom);
-    }
-
-    function inceptionResumeTail() {
-      _inceptionTailing = true;
-      const el = document.getElementById('inception-activity');
-      if (el) el.scrollTop = el.scrollHeight;
-      const btn = document.getElementById('inception-follow-btn');
-      if (btn) btn.classList.remove('visible');
-    }
-
-    function renderInceptionWorking() {
-      const phase = escapeHtml(_inceptionState.phase || 'capture');
-      return `
-        <div style="max-width:100%;margin:var(--sp-0)">
-          <div style="display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-5)">
-            <div style="width:8px;height:8px;border-radius:50%;background:var(--blue);animation:pulse 1.5s infinite"></div>
-            <div style="font-size:var(--fs-base);font-weight:600">Brainstorm agent working</div>
-            <div style="font-size:0.72rem;color:var(--muted);margin-left:auto">Phase: ${phase}</div>
-          </div>
-          <div style="position:relative">
-          <div id="inception-activity" style="padding:var(--sp-6);font-size:var(--fs-sm);height:450px;overflow-y:auto;white-space:pre-wrap;resize:vertical;min-height:150px;max-height:calc(100vh - 200px)" data-scroll-action="onInceptionScroll">Waiting for brainstorm agent...</div>
-          <button id="inception-follow-btn" class="oc-summary-follow-btn" data-action="inceptionResumeTail" title="Follow new output">⬇</button>
-          </div>
-          <div style="margin-top:var(--sp-5);display:flex;gap:var(--sp-4);justify-content:flex-end">
-            <button class="hv-btn btn-danger" data-action="stopInception">Stop</button>
-            <button class="hv-btn btn-danger" data-action="clearInception">Clear</button>
-          </div>
-        </div>`;
-    }
-
-    function startInceptionPoll() {
-      stopInceptionPoll();
-      _inceptionTailing = true;
-      pollInceptionActivity();
-      const INCEPTION_POLL_INTERVAL_MS = 3000;
-      _inceptionPollTimer = dashboardSetInterval('inception-activity', pollInceptionActivity, INCEPTION_POLL_INTERVAL_MS);
-    }
-
-    function stopInceptionPoll() {
-      if (_inceptionPollTimer) { dashboardClearInterval('inception-activity'); _inceptionPollTimer = null; }
-    }
-
-    function _inceptionStateKey(s) {
-      if (!s) return 'inactive';
-      return (s.idea_slug || '') + ':' + (s.phase || '');
-    }
-
-    async function pollInceptionActivity() {
-      try {
-        const r = await fetch('/api/pane/brainstorm?lines=500&source=buffer', {headers: _inceptionAuthHeaders()});
-        if (!r.ok) return;
-        const data = await r.json();
-        const lines = data.lines || [];
-        const el = document.getElementById('inception-activity');
-        if (el) {
-          el.textContent = lines.join('\n') || 'Waiting for brainstorm agent...';
-          if (_inceptionTailing) el.scrollTop = el.scrollHeight;
-        }
-      } catch (e) { /* ignore poll errors */ }
-
-      try {
-        // Don't clobber the textarea while the user is typing their idea, nor
-        // any panel field that is focused or holds unsaved input (#11032);
-        // the next poll retries once the user is done.
-        if (_inceptionState && _inceptionState.phase === 'capture' && !_inceptionState.idea_text) {
-          return;
-        }
-        if (sectionHoldsUserInput(document.getElementById('inception-panel'), '.campaigns-filters input')) {
-          return;
-        }
-        const sr = await fetch('/api/inception/state', {headers: _inceptionAuthHeaders()});
-        const sd = await sr.json();
-        if (!sd.ok) return;
-        var oldKey = _inceptionStateKey(_inceptionState);
-        var newKey = _inceptionStateKey(sd.state);
-        if (oldKey !== newKey) {
-          _inceptionState = sd.state || {};
-          renderInception();
-          if (typeof renderKnowledge === 'function') renderKnowledge();
-        }
-      } catch (e) { /* ignore */ }
-    }
-
-    function renderInceptionScanProgress() {
-      return `
-        <div style="max-width:600px;margin:0 auto;text-align:center;padding:40px 0">
-          <div style="font-size:1.2rem;margin-bottom:var(--sp-5)">🔍</div>
-          <div style="font-size:0.85rem;color:var(--muted)">Scanning project...</div>
-          <div style="font-size:0.78rem;color:var(--muted);margin-top:var(--sp-2)">${escapeHtml(_inceptionState.repo_url || '')}</div>
-          <div class="mt-6"><button class="hv-btn btn-danger btn-sm" data-action="resetInception">Cancel</button></div>
-        </div>`;
-    }
-
-    function renderInceptionClarify() {
-      const questions = _inceptionState.questions || [];
-      let html = '<div style="max-width:600px;margin:0 auto">';
-      html += '<div style="font-size:0.85rem;color:var(--muted);margin-bottom:var(--sp-6)">Answer these questions to refine your project definition.</div>';
-      questions.forEach(q => {
-        html += `<div class="mb-6">
-          <label style="font-size:var(--fs-base);font-weight:600;display:block;margin-bottom:var(--sp-2)">${escapeHtml(q.text)}</label>
-          <input type="text" id="inception-q-${q.id}" value="${escapeHtml(q.default || '')}"
-            style="width:100%;padding:var(--sp-4) var(--sp-5);border:1px solid var(--border);border-radius:var(--r);background:var(--card-bg);color:var(--fg);font-size:var(--fs-base)" />
-          <div style="font-size:0.7rem;color:var(--muted);margin-top:var(--sp-1)">${escapeHtml(q.category || '')}</div>
-        </div>`;
-      });
-      html += `<div style="display:flex;gap:var(--sp-4);justify-content:flex-end">
-        <button class="hv-btn btn-danger" data-action="resetInception">Reset</button>
-        <button class="hv-btn btn-primary" data-action="submitInceptionAnswers">Submit</button>
-      </div>`;
-      html += '</div>';
-      return html;
-    }
-
-    function renderInceptionStructure() {
-      return `
-        <div style="max-width:100%;margin:var(--sp-0)">
-          <div style="display:flex;align-items:center;gap:var(--sp-4);margin-bottom:var(--sp-5)">
-            <div style="width:8px;height:8px;border-radius:50%;background:var(--blue);animation:pulse 1.5s infinite"></div>
-            <div style="font-size:var(--fs-base);font-weight:600">Brainstorm agent structuring project</div>
-            <div style="font-size:0.72rem;color:var(--muted);margin-left:auto">Phase: structure</div>
-          </div>
-          <div style="position:relative">
-          <div id="inception-activity" style="padding:var(--sp-6);font-size:var(--fs-sm);height:450px;overflow-y:auto;white-space:pre-wrap;resize:vertical;min-height:150px;max-height:calc(100vh - 200px)" data-scroll-action="onInceptionScroll">Brainstorm agent is producing vision, constitution, requirements, and acceptance criteria...</div>
-          <button id="inception-follow-btn" class="oc-summary-follow-btn" data-action="inceptionResumeTail" title="Follow new output">⬇</button>
-          </div>
-          <div style="margin-top:var(--sp-5);display:flex;gap:var(--sp-4);justify-content:flex-end">
-            <button class="hv-btn btn-danger" data-action="stopInception">Stop</button>
-            <button class="hv-btn btn-danger" data-action="clearInception">Clear</button>
-          </div>
-        </div>`;
-    }
-
-    function renderInceptionScaffold() {
-      setTimeout(loadInceptionScaffoldSummary, 100);
-      return `
-        <div style="max-width:700px;margin:0 auto">
-          <div style="font-size:0.85rem;color:var(--muted);margin-bottom:var(--sp-5)">Your scaffold is ready. Review the generated files below, then approve to complete.</div>
-          <div class="mb-6" id="inception-scaffold-summary"><div style="text-align:center;color:var(--muted);padding:var(--sp-7)">Loading scaffold summary...</div></div>
-          <div style="display:flex;gap:var(--sp-4);justify-content:flex-end">
-            <button class="hv-btn btn-danger" data-action="resetInception">Start Over</button>
-            <button class="hv-btn btn-primary" data-action="approveInception">Approve</button>
-          </div>
-        </div>`;
-    }
-
-    async function loadInceptionScaffoldSummary() {
-      const container = document.getElementById('inception-scaffold-summary');
-      if (!container) return;
-      try {
-        const r = await fetch('/api/inception/scaffold', {headers: _inceptionAuthHeaders()});
-        const data = await r.json();
-        if (!data.ok || !data.scaffold || !data.scaffold.files || data.scaffold.files.length === 0) {
-          container.innerHTML = '<div class="text-muted">No scaffold files generated.</div>';
-          return;
-        }
-        const files = data.scaffold.files;
-        const dirs = new Set();
-        const exts = {};
-        files.forEach(f => {
-          const parts = f.path.split('/');
-          if (parts.length > 1) dirs.add(parts[0]);
-          const ext = f.path.includes('.') ? f.path.split('.').pop() : 'other';
-          exts[ext] = (exts[ext] || 0) + 1;
-        });
-        let html = '<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6)">';
-        html += '<div style="font-size:0.9rem;font-weight:600;margin-bottom:var(--sp-5)">📦 Scaffold Summary</div>';
-        html += '<div style="display:flex;gap:var(--sp-8);flex-wrap:wrap;margin-bottom:var(--sp-5)">';
-        html += '<div><span style="font-size:1.2rem;font-weight:700">' + files.length + '</span> <span style="color:var(--muted);font-size:0.8rem">files</span></div>';
-        html += '<div><span style="font-size:1.2rem;font-weight:700">' + dirs.size + '</span> <span style="color:var(--muted);font-size:0.8rem">directories</span></div>';
-        const totalChars = files.reduce((sum, f) => sum + f.content.length, 0);
-        html += '<div><span style="font-size:1.2rem;font-weight:700">' + (totalChars > 1000 ? (totalChars/1000).toFixed(1)+'K' : totalChars) + '</span> <span style="color:var(--muted);font-size:0.8rem">chars</span></div>';
-        html += '</div>';
-        html += '<div style="display:flex;gap:var(--sp-3);flex-wrap:wrap;margin-bottom:var(--sp-5)">';
-        Object.entries(exts).sort((a,b) => b[1]-a[1]).forEach(([ext,count]) => {
-          html += '<span style="padding:var(--sp-1) var(--sp-4);background:var(--bg);border:1px solid var(--border);border-radius:var(--r-lg);font-size:0.72rem;color:var(--muted)">.' + escapeHtml(ext) + ' ×' + count + '</span>';
-        });
-        html += '</div>';
-        html += '<details><summary style="cursor:pointer;font-size:0.8rem;color:var(--blue)">View file tree</summary>';
-        html += '<div class="mt-4">' + renderFileTree(files) + '</div>';
-        html += '</details></div>';
-        container.innerHTML = html;
-      } catch (e) { container.innerHTML = '<div style="color:var(--error)">Error: ' + escapeHtml(e.message) + '</div>'; }
-    }
-
-    function renderInceptionComplete() {
-      const factCount = (_inceptionState.fact_slugs || []).length;
-      return `
-        <div style="max-width:100%;margin:var(--sp-0)">
-          <div style="text-align:center;margin-bottom:var(--sp-7)">
-            <div style="font-size:1rem;font-weight:600;margin-bottom:var(--sp-2)">Inception Complete</div>
-            <div style="font-size:0.85rem;color:var(--muted)">${factCount} knowledge facts created. Your project is ready to grow.</div>
-          </div>
-          <div class="mb-6" id="inception-complete-files"></div>
-          <div style="display:flex;gap:var(--sp-4);justify-content:center">
-            <button class="hv-btn btn-danger" data-action="resetInception">New Inception</button>
-            <button class="hv-btn btn-primary" data-action="downloadInceptionZip">Download Project</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="loadInceptionCompleteFiles">Refresh Files</button>
-          </div>
-        </div>`;
-    }
-
-    async function loadInceptionCompleteFiles() {
-      const container = document.getElementById('inception-complete-files');
-      if (!container) return;
-      container.innerHTML = '<div style="color:var(--muted);text-align:center;padding:var(--sp-5)">Loading scaffold files...</div>';
-      try {
-        const r = await fetch('/api/inception/scaffold', {headers: _inceptionAuthHeaders()});
-        const data = await r.json();
-        if (!data.ok || !data.scaffold || !data.scaffold.files || data.scaffold.files.length === 0) {
-          container.innerHTML = '<div style="color:var(--muted);text-align:center;padding:var(--sp-5)">No scaffold files generated. The brainstorm agent may not have produced KB facts.</div>';
-          return;
-        }
-        container.innerHTML = renderFileTree(data.scaffold.files);
-      } catch (e) {
-        container.innerHTML = '<div style="color:var(--muted);text-align:center;padding:var(--sp-5)">Error loading files: ' + escapeHtml(e.message) + '</div>';
-      }
-    }
-
-    function renderFileTree(files) {
-      // Build tree structure from flat paths
-      const root = {};
-      for (const f of files) {
-        const parts = f.path.split('/');
-        let node = root;
-        for (let i = 0; i < parts.length; i++) {
-          const part = parts[i];
-          if (i === parts.length - 1) {
-            node[part] = { _file: f };
-          } else {
-            if (!node[part]) node[part] = {};
-            node = node[part];
-          }
-        }
-      }
-
-      function renderNode(node, prefix, isLast) {
-        let html = '';
-        const entries = Object.keys(node).sort((a, b) => {
-          const aIsDir = !node[a]._file;
-          const bIsDir = !node[b]._file;
-          if (aIsDir !== bIsDir) return aIsDir ? -1 : 1;
-          return a.localeCompare(b);
-        });
-
-        entries.forEach((name, idx) => {
-          const isLastEntry = idx === entries.length - 1;
-          const connector = isLastEntry ? '└── ' : '├── ';
-          const childPrefix = prefix + (isLastEntry ? '    ' : '│   ');
-          const entry = node[name];
-
-          if (entry._file) {
-            const f = entry._file;
-            html += '<details style="margin:var(--sp-0);border:none">';
-            html += '<summary style="padding:var(--sp-1) var(--sp-0);cursor:pointer;font-family:var(--font-mono);font-size:0.8rem;list-style:none;display:flex;align-items:center;gap:var(--sp-2)">';
-            html += '<span style="color:var(--muted);white-space:pre">' + escapeHtml(prefix + connector) + '</span>';
-            html += '<span>📄 ' + escapeHtml(name) + '</span>';
-            html += '<span style="font-size:var(--fs-xs);color:var(--muted);margin-left:var(--sp-2)">' + f.content.length + ' chars</span>';
-            html += '</summary>';
-            html += '<pre style="padding:12px 12px 12px 40px;margin:var(--sp-0);font-size:0.72rem;overflow-x:auto;background:var(--bg);white-space:pre-wrap;border-left:2px solid var(--border);margin-left:' + (prefix.length * 8 + 24) + 'px">' + escapeHtml(f.content) + '</pre>';
-            html += '</details>';
-          } else {
-            html += '<div style="padding:var(--sp-1) var(--sp-0);font-family:var(--font-mono);font-size:0.8rem;display:flex;align-items:center;gap:var(--sp-2)">';
-            html += '<span style="color:var(--muted);white-space:pre">' + escapeHtml(prefix + connector) + '</span>';
-            html += '<span>📁 <strong>' + escapeHtml(name) + '/</strong></span>';
-            html += '</div>';
-            html += renderNode(entry, childPrefix, isLastEntry);
-          }
-        });
-        return html;
-      }
-
-      let html = '<div style="background:var(--card-bg);border:1px solid var(--border);border-radius:8px;padding:var(--sp-6);font-family:var(--font-mono)">';
-      html += '<div style="font-size:var(--fs-base);font-weight:600;margin-bottom:var(--sp-4)">📦 Project Files (' + files.length + ')</div>';
-      html += renderNode(root, '', true);
-      html += '</div>';
-      return html;
-    }
-
-    function startInceptionGreenfield() {
-      _inceptionState = { phase: 'capture', mode: 'greenfield' };
-      renderInception();
-    }
-
-    async function startInceptionBrownfield() {
-      const url = await hivePrompt({title: 'Add to existing repo', label: 'Enter the GitHub repo URL:', placeholder: 'https://github.com/owner/repo'});
-      if (!url) return;
-      try {
-        const r = await fetch('/api/inception/scan', {
-          method: 'POST',
-          headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ repo_url: url })
-        });
-        const data = await r.json();
-        if (data.ok) { _inceptionState = data.state; renderInception(); loadCampaigns(); }
-        else showToast(data.error || 'Failed to start scan', 'error');
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
-
-    async function submitInceptionIdea() {
-      const el = document.getElementById('inception-idea');
-      const idea = el ? el.value.trim() : '';
-      if (!idea) { showToast('Please describe your idea', 'error'); return; }
-      try {
-        const r = await fetch('/api/inception/start', {
-          method: 'POST',
-          headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ idea })
-        });
-        const data = await r.json();
-        if (data.ok) { _inceptionState = data.state; renderInception(); loadCampaigns(); }
-        else showToast(data.error || 'Failed to start inception', 'error');
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
-
-    async function submitInceptionAnswers() {
-      const questions = _inceptionState.questions || [];
-      const answers = {};
-      questions.forEach(q => {
-        const el = document.getElementById('inception-q-' + q.id);
-        if (el) answers[q.id] = el.value.trim();
-      });
-      const btn = document.querySelector('#inception-panel button[onclick*="submitInceptionAnswers"]');
-      if (btn) { btn.disabled = true; btn.textContent = 'Submitting...'; btn.style.opacity = '0.6'; }
-      try {
-        const r = await fetch('/api/inception/answer', {
-          method: 'POST',
-          headers: _inceptionAuthHeaders(),
-          body: JSON.stringify({ answers })
-        });
-        const data = await r.json();
-        if (data.ok) { _inceptionState = data.state; renderInception(); }
-        else { showToast(data.error || 'Failed to submit answers', 'error'); if (btn) { btn.disabled = false; btn.textContent = 'Submit'; btn.style.opacity = '1'; } }
-      } catch (e) { showToast('Error: ' + e.message, 'error'); if (btn) { btn.disabled = false; btn.textContent = 'Submit'; btn.style.opacity = '1'; } }
-    }
-
-    async function loadInceptionScaffoldPreview() {
-      const preview = document.getElementById('inception-scaffold-preview');
-      if (!preview) return;
-      preview.innerHTML = '<div class="text-muted fs-base">Loading...</div>';
-      try {
-        const r = await fetch('/api/inception/scaffold', {headers: _inceptionAuthHeaders()});
-        const data = await r.json();
-        if (!data.ok || !data.scaffold) { preview.innerHTML = '<div class="text-muted">No scaffold available yet.</div>'; return; }
-        preview.innerHTML = renderFileTree(data.scaffold.files || []);
-      } catch (e) { preview.innerHTML = '<div style="color:var(--error)">Error: ' + escapeHtml(e.message) + '</div>'; }
-    }
-
-    async function loadInceptionIdeationFacts() {
-      try {
-        const r = await fetch('/api/inception/ideation-facts', {headers: _inceptionAuthHeaders()});
-        const data = await r.json();
-        if (data.ok && data.facts && data.facts.length > 0) {
-          let msg = 'Ideation Facts (' + data.facts.length + '):\n\n';
-          data.facts.forEach(f => { msg += '- [' + f.type + '] ' + f.title + '\n'; });
-          await hiveAlert(msg, 'Ideation Facts');
-        } else {
-          showToast('No ideation facts yet. The brainstorm agent is still working.', 'info');
-        }
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
-
-    async function approveInception() {
-      try {
-        const r = await fetch('/api/inception/approve', { method: 'POST', headers: _inceptionAuthHeaders() });
-        const data = await r.json();
-        if (data.ok) { _inceptionState.phase = 'complete'; renderInception(); }
-        else showToast(data.error || 'Failed to approve', 'error');
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
-
-    async function stopInception() {
-      stopInceptionPoll();
-      try {
-        await fetch('/api/pause/brainstorm', { method: 'POST' });
-      } catch (e) { /* ignore */ }
-      await loadInceptionState();
-    }
-
-    async function clearInception() {
-      stopInceptionPoll();
-      try {
-        const hasFilesResp = await fetch('/api/inception/has-files', {headers: _inceptionAuthHeaders()});
-        const hasFilesData = await hasFilesResp.json();
-        if (hasFilesData.has_files) {
-          const choice = await hiveConfirm({title: 'Download scaffold?', message: 'Download existing scaffold before clearing?', confirmLabel: 'Download'});
-          if (choice) {
-            await downloadInceptionZip();
-          }
-        }
-        await fetch('/api/inception/reset', { method: 'POST', headers: _inceptionAuthHeaders() });
-        _inceptionState = null;
-        renderInception();
-        loadCampaigns();
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
-
-    async function resetInception() {
-      await clearInception();
-    }
-
-    async function downloadInceptionZip() {
-      try {
-        const r = await fetch('/api/inception/download', {headers: _inceptionAuthHeaders()});
-        if (!r.ok) { showToast('Download failed', 'error'); return; }
-        hiveBinaryExportNotice('Inception project ZIP', 'Inception scaffold ZIP files are binary archives.');
-      } catch (e) { showToast('Download error: ' + e.message, 'error'); }
-    }
-
-    // Load inception state on section navigate
-    const _origOcNavigate = typeof ocNavigate === 'function' ? ocNavigate : null;
+    // Dashboard boot hooks that used to share this file with the removed
+    // Inception wizard (the section is now Inception (spek), sessions.js).
     document.addEventListener('DOMContentLoaded', () => {
-      loadInceptionState();
       applySectionCollapse('advisory-digest-section');
       /* OpenRouter scan-to-fund return: show the result and clear the flag so a
          reload doesn't re-toast. */
@@ -51362,8 +50650,9 @@ function burnAreaChart() {
     }
     // ── Sessions section ──
     // Named, grouped, shared CLI-agent terminal sessions. When the spoke has
-    // `GET /api/sessions` -> {enabled:true} this section replaces the Inception
-    // wizard UI (the legacy section stays untouched when disabled). The server
+    // `GET /api/sessions` -> {enabled:true} (the default) this section is shown
+    // as "Inception (spek)"; it replaced the Inception wizard UI. Disabled, the
+    // section stays hidden. The server
     // is the source of truth; localStorage only remembers the selected tab and
     // collapsed groups as a convenience. Each session gets one lazily created
     // ttyd iframe that is kept alive (just hidden) while another tab is shown.
@@ -51397,6 +50686,25 @@ function burnAreaChart() {
     // once the holder released it or has been idle for the server's grace.
     const SESSIONS_KEYBOARD_TAKE = 'take';
     const SESSIONS_KEYBOARD_RELEASE = 'release';
+    // Voice notes: the browser's Web Speech API dictates into the Send
+    // textarea as an editable preview. Nothing is sent until Send / Send and
+    // run, and the audio never reaches Hive: the browser vendor's speech
+    // service transcribes it. One utterance per click (silence ends it).
+    const SESSIONS_VOICE_NOTICE_KEY = 'hive.sessions.voiceNoticeSeen';
+    const SESSIONS_VOICE_NOTICE = 'Voice notes are transcribed by your browser vendor\'s speech service (Chrome sends the audio to Google), not by Hive.';
+    const SESSIONS_VOICE_TITLE = 'Dictate into the text box (click again or pause to stop). Nothing is sent until you press Send.';
+    const SESSIONS_VOICE_STOP_TITLE = 'Stop dictating';
+    const SESSIONS_VOICE_UNSUPPORTED = 'Voice notes are unavailable: this browser has no Web Speech API (for example Firefox).';
+    const SESSIONS_VOICE_LABEL = 'Voice';
+    const SESSIONS_VOICE_STOP_LABEL = 'Stop';
+    const SESSIONS_VOICE_ERRORS = Object.freeze({
+      'not-allowed': 'Microphone permission was denied. Allow the microphone for this site to use voice notes.',
+      'service-not-allowed': 'The browser\'s speech service is not allowed here, so voice notes are unavailable.',
+      'no-speech': 'No speech was heard. Click Voice and try again.',
+      'audio-capture': 'No microphone was found.',
+      'network': 'The browser\'s speech service could not be reached (network error).',
+      'aborted': 'Voice note stopped before any text was recognised.'
+    });
 
     let _sessionsData = { enabled: false, sessions: [], vendors: [], limits: {}, workspace: {} };
     let _sessionsRole = '';
@@ -51407,6 +50715,7 @@ function burnAreaChart() {
     let _sessionsLogTimerOn = false;
     let _sessionsAssertionTimerOn = false;
     let _sessionsPrepPollOn = false;
+    let _sessionsVoice = null;
     const _sessionsFrames = {};
     const _sessionsFrameFailed = {};
     // Extension slot for the input bar: other features (for example future
@@ -51587,6 +50896,76 @@ function burnAreaChart() {
       return '/terminal/?arg=' + encodeURIComponent(sessionsTmuxName(id)) + (code ? '&code=' + encodeURIComponent(code) : '');
     }
     function sessionsIsEnabled() { return window._sessionsEnabled === true; }
+    // ── Voice notes helpers (unit-tested with a fake SpeechRecognition) ──
+    function sessionsVoiceCtor(win) {
+      if (!win) return null;
+      return win.SpeechRecognition || win.webkitSpeechRecognition || null;
+    }
+    // Same gate as Send (read-write, owner on a running session) plus browser support.
+    function sessionsCanVoice(role, session, win) {
+      return sessionsCanSend(role, session) && !!sessionsVoiceCtor(win);
+    }
+    function sessionsVoiceErrorText(code) {
+      return SESSIONS_VOICE_ERRORS[code] || ('Voice note failed: ' + (code || 'unknown error') + '.');
+    }
+    // Append dictated text to what is already in the box, one space apart.
+    function sessionsVoiceJoin(base, addition) {
+      const add = String(addition || '').trim();
+      const head = String(base || '');
+      if (!add) return head;
+      if (!head || /\s$/.test(head)) return head + add;
+      return head + ' ' + add;
+    }
+    // Split a SpeechRecognitionEvent into newly final text and the live interim tail.
+    function sessionsVoiceResults(ev) {
+      const out = { final: '', interim: '' };
+      const results = ev && ev.results;
+      if (!results) return out;
+      for (let i = Number(ev.resultIndex) || 0; i < results.length; i++) {
+        const r = results[i];
+        const alt = r && r[0];
+        const text = alt && alt.transcript ? String(alt.transcript) : '';
+        if (r && r.isFinal) out.final = sessionsVoiceJoin(out.final, text);
+        else out.interim = sessionsVoiceJoin(out.interim, text);
+      }
+      return out;
+    }
+    // Build (not start) a recognizer. hooks: onFinal(text), onInterim(text),
+    // onError(message), onEnd(). It never sends anything anywhere itself.
+    function sessionsVoiceRecognizer(Ctor, lang, hooks) {
+      const h = hooks || {};
+      const rec = new Ctor();
+      rec.lang = lang || '';
+      rec.interimResults = true;
+      rec.continuous = false;
+      rec.maxAlternatives = 1;
+      rec.onresult = function(ev) {
+        const r = sessionsVoiceResults(ev);
+        if (r.final && h.onFinal) h.onFinal(r.final);
+        if (h.onInterim) h.onInterim(r.interim);
+      };
+      rec.onerror = function(ev) {
+        if (h.onError) h.onError(sessionsVoiceErrorText(ev && ev.error));
+      };
+      rec.onend = function() {
+        if (h.onInterim) h.onInterim('');
+        if (h.onEnd) h.onEnd();
+      };
+      return rec;
+    }
+    // The mic button, its live interim line and the first-use notice. Hidden
+    // (with the reason in its title) when the browser has no Web Speech API.
+    function sessionsVoiceHtml(s, win, noticeSeen) {
+      if (!s) return '';
+      const id = esc(s.id);
+      const supported = !!sessionsVoiceCtor(win);
+      const btn = '<button type="button" class="hv-btn btn-secondary btn-sm sessions-voice-btn" id="sessions-voice-btn-' + id + '" data-action="sessionsVoiceToggle" data-arg0="' + id + '"'
+        + ' aria-pressed="false" aria-controls="sessions-input-text-' + id + '" title="' + esc(supported ? SESSIONS_VOICE_TITLE : SESSIONS_VOICE_UNSUPPORTED) + '"' + (supported ? '' : ' hidden') + '>' + esc(SESSIONS_VOICE_LABEL) + '</button>';
+      if (!supported) return btn;
+      return btn
+        + (noticeSeen ? '' : '<span class="sessions-voice-notice" id="sessions-voice-notice-' + id + '">' + esc(SESSIONS_VOICE_NOTICE) + '</span>')
+        + '<span class="sessions-voice-interim" id="sessions-voice-interim-' + id + '" aria-live="polite"></span>';
+    }
 
     // ── Storage conveniences (never required) ──
     function sessionsStoreGet(key) { try { return localStorage.getItem(key) || ''; } catch (e) { return ''; } }
@@ -51651,15 +51030,13 @@ function burnAreaChart() {
       dashboardSetInterval('sessions-poll', loadSessions, SESSIONS_POLL_MS);
     }
 
-    // ── Visibility: Sessions replaces Inception when enabled ──
+    // ── Visibility: Inception (spek) shows only while sessions are enabled ──
     function sessionsApplyVisibility() {
       const on = sessionsIsEnabled();
-      [['sessions-section', on], ['inception-section', !on]].forEach(function(pair) {
-        const el = document.getElementById(pair[0]);
-        if (el) el.hidden = !pair[1];
-        const nav = document.querySelector('.oc-nav-item[data-section="' + pair[0] + '"]');
-        if (nav) nav.hidden = !pair[1];
-      });
+      const el = document.getElementById('sessions-section');
+      if (el) el.hidden = !on;
+      const nav = document.querySelector('.oc-nav-item[data-section="sessions-section"]');
+      if (nav) nav.hidden = !on;
       if (typeof dashboardApplyLayout === 'function' && typeof dashboardLayoutNormalize === 'function') {
         dashboardApplyLayout(dashboardLayoutNormalize(dashboardLayoutRead()));
       }
@@ -51725,7 +51102,7 @@ function burnAreaChart() {
     }
     function sessionsToolbarHtml() {
       const can = sessionsCanCreate(_sessionsRole, _sessionsData);
-      return '<div class="sessions-toolbar"><div id="sessions-tabs" class="sessions-tabs" role="tablist" aria-label="Sessions">' + sessionsTabsHtml() + '</div>'
+      return '<div class="sessions-toolbar"><div id="sessions-tabs" class="sessions-tabs" role="tablist" aria-label="Inception (spek) sessions">' + sessionsTabsHtml() + '</div>'
         + '<button type="button" class="hv-btn btn-primary btn-sm sessions-new-btn" data-action="sessionsToggleNew"' + (can.ok ? '' : ' disabled title="' + esc(can.reason) + '"') + '>+ New session</button></div>'
         + '<div id="sessions-new" class="sessions-new" role="group" aria-label="New session"' + (_sessionsNewOpen && can.ok ? '' : ' hidden') + '>' + (_sessionsNewOpen && can.ok ? sessionsNewFormHtml() : '') + '</div>';
     }
@@ -51792,6 +51169,7 @@ function burnAreaChart() {
         + '<div class="sessions-input-actions">'
         + '<button type="button" class="hv-btn btn-secondary btn-sm sessions-send-btn" data-action="sessionsSend" data-arg0="0" title="Queue the text; it is typed into the terminal, without Enter, once the prompt is idle">' + esc(sessionsQueueLabel('Send', s.queue)) + '</button>'
         + '<button type="button" class="hv-btn btn-primary btn-sm sessions-send-run-btn" data-action="sessionsSend" data-arg0="1" title="Queue the text; it is typed and run once the prompt is idle">' + esc(sessionsQueueLabel('Send and run', s.queue)) + '</button>'
+        + sessionsVoiceHtml(s, window, !!sessionsStoreGet(SESSIONS_VOICE_NOTICE_KEY))
         + '<label class="hv-btn btn-secondary btn-sm sessions-attach" title="Upload a file into the session workspace and type its path">Attach file'
         + '<input type="file" class="sessions-file" id="sessions-file-' + esc(s.id) + '" data-change-action="sessionsFilePicked" data-arg-types="t"></label>' + more
         + '<span class="sessions-input-count" id="sessions-input-count-' + esc(s.id) + '" aria-live="polite">' + (max ? '0 / ' + sessionsFormatBytes(max) : '') + '</span></div>'
@@ -52030,6 +51408,7 @@ function burnAreaChart() {
     // ── Actions (data-action handlers) ──
     function sessionsSelect(id) {
       if (!id || id === _sessionsSelected) return;
+      sessionsVoiceStop();
       _sessionsSelected = id;
       sessionsStoreSet(SESSIONS_SELECTED_KEY, id);
       renderSessions();
@@ -52229,6 +51608,57 @@ function burnAreaChart() {
         showToast('Uploaded ' + file.name + '; its path is queued to be typed into the session.', 'success');
       } catch (e) { showToast('Could not attach the file: ' + e.message, 'error'); }
       el.value = '';
+    }
+    // ── Voice notes (browser Web Speech API) ──
+    // Click to start, click again (or pause) to stop. Final text lands in the
+    // Send textarea for editing; nothing is posted until Send / Send and run.
+    function sessionsVoiceSyncButton(id, on) {
+      const btn = document.getElementById('sessions-voice-btn-' + id);
+      if (!btn) return;
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      btn.textContent = on ? SESSIONS_VOICE_STOP_LABEL : SESSIONS_VOICE_LABEL;
+      btn.title = on ? SESSIONS_VOICE_STOP_TITLE : SESSIONS_VOICE_TITLE;
+    }
+    function sessionsVoiceStop() {
+      const cur = _sessionsVoice;
+      if (!cur) return;
+      try { cur.rec.stop(); } catch (e) { /* already stopped */ }
+    }
+    function sessionsVoiceToggle(id) {
+      if (_sessionsVoice) {
+        const same = _sessionsVoice.id === id;
+        sessionsVoiceStop();
+        if (same) return;
+      }
+      const s = (_sessionsData.sessions || []).find(function(x) { return x.id === id; });
+      if (!sessionsCanSend(_sessionsRole, s)) return;
+      const Ctor = sessionsVoiceCtor(window);
+      if (!Ctor) { showToast(SESSIONS_VOICE_UNSUPPORTED, 'error'); return; }
+      const box = document.getElementById('sessions-input-text-' + id);
+      if (!box) return;
+      const interim = document.getElementById('sessions-voice-interim-' + id);
+      const rec = sessionsVoiceRecognizer(Ctor, (typeof navigator !== 'undefined' && navigator.language) || '', {
+        onFinal: function(text) {
+          box.value = sessionsVoiceJoin(box.value, text);
+          sessionsInputChanged(box);
+        },
+        onInterim: function(text) { if (interim) interim.textContent = text || ''; },
+        onError: function(msg) { showToast(msg, 'error'); },
+        onEnd: function() {
+          if (_sessionsVoice && _sessionsVoice.rec === rec) _sessionsVoice = null;
+          sessionsVoiceSyncButton(id, false);
+          if (box.isConnected !== false && box.focus) box.focus();
+        }
+      });
+      _sessionsVoice = { id: id, rec: rec };
+      try { rec.start(); }
+      catch (e) {
+        _sessionsVoice = null;
+        showToast('Could not start the voice note: ' + e.message, 'error');
+        return;
+      }
+      sessionsStoreSet(SESSIONS_VOICE_NOTICE_KEY, '1');
+      sessionsVoiceSyncButton(id, true);
     }
     // Registry slot: features add entries to the input bar's "More" menu.
     function sessionsRegisterInputAction(action) {
@@ -57651,7 +57081,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Experiment Lab', key: 'dashboard.experiment_lab', text: 'experiment_lab Experiment Lab dashboard feature experimental planner' },
-      { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Sessions', key: 'dashboard.sessions.enabled', text: 'sessions enabled shared cli terminal tmux ttyd inception replace HIVE_SESSIONS_ENABLED dashboard.sessions.enabled' },
+      { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Inception (spek) sessions', key: 'dashboard.sessions.enabled', text: 'sessions enabled shared cli terminal tmux ttyd inception spek replace HIVE_SESSIONS_ENABLED dashboard.sessions.enabled' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Session limits', key: 'dashboard.sessions.max_sessions', text: 'sessions limits max running per user idle close hours ttl HIVE_SESSIONS_MAX HIVE_SESSIONS_MAX_PER_USER HIVE_SESSIONS_IDLE_TTL_HOURS dashboard.sessions.max_sessions dashboard.sessions.max_per_user dashboard.sessions.idle_ttl_hours' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Subscription usage gauge in header', key: 'dashboard.subscription_gauge_header', text: 'subscription_gauge_header subscription usage gauge fuel header chip claude usage claude plan weekly 5-hour limit left remaining quota headroom' },
       { tab: 'Project Observability', section: 'Target platforms', label: 'Project observability targets', key: 'governor.project_observability.open_source[]', text: 'project observability telemetry operations open source kube native commercial references endpoint env credential secret' },
@@ -59590,7 +59020,7 @@ function burnAreaChart() {
       const envNote = sessions.env_override ? ' <span class="text-muted">Overridden by <code>HIVE_SESSIONS_ENABLED</code> on this hive; the switch shows the saved value.</span>' : '';
       const limit = (key, label, help) =>
         '<div class="config-field"><label>' + label + ' ' + yamlHint('dashboard.sessions.' + key) + '</label><input type="number" min="0" step="1" value="' + esc(String(sessions[key] || 0)) + '" data-change-action="markDashboardSessions" data-arg0="' + key + '" data-arg-types="s,v"><div class="config-help">' + help + '</div></div>';
-      return '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.enabled ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="enabled"></div><span class="config-toggle-label">Sessions ' + yamlHint('dashboard.sessions.enabled') + ' ' + settingHelpMark('settings', 'dashboard', 'Sessions', 'Turns on the Sessions section: named, shared CLI-agent terminals inside the dashboard. It replaces the Inception section while on. Off by default. The HIVE_SESSIONS_ENABLED environment variable, when set, overrides this switch.') + envNote + '</span></div>' +
+      return '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.enabled ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="enabled"></div><span class="config-toggle-label">Inception (spek) sessions ' + yamlHint('dashboard.sessions.enabled') + ' ' + settingHelpMark('settings', 'dashboard', 'Sessions', 'Turns on the Inception (spek) section: named, shared CLI-agent terminals inside the dashboard. On by default; turning it off hides the section. The HIVE_SESSIONS_ENABLED environment variable, when set, overrides this switch.') + envNote + '</span></div>' +
         '<div class="config-field-row">' +
           limit('max_sessions', 'Max running sessions', 'Live sessions per hive. 0 uses the default (12); HIVE_SESSIONS_MAX overrides.') +
           limit('max_per_user', 'Max per user', 'Live sessions one person may create. 0 uses the default (4); HIVE_SESSIONS_MAX_PER_USER overrides.') +
@@ -77783,7 +77213,7 @@ function burnAreaChart() {
       { id: 'budget', label: 'Budget', desc: 'set a weekly token budget and watch the burn rate (Settings → Budget).', action: 'welcomeShowConfigTab', actionArg: 'Budget' },
       { id: 'notifications', label: 'Notifications', desc: 'route alerts to your channels (Settings → Notifications).', action: 'welcomeShowConfigTab', actionArg: 'Notifications' },
       { id: 'knowledge', label: 'Knowledge Base', desc: 'seed facts and patterns the agents reuse across passes.', action: 'welcomeShowSection', actionArg: 'knowledge-section' },
-      { id: 'inception', label: 'Inception', desc: 'turn a raw idea (or an existing project) into knowledge-base facts and a starter project scaffold, step by step.', action: 'welcomeShowSection', actionArg: 'inception-section' },
+      { id: 'inception', label: 'Inception (spek)', desc: 'open a shared CLI-agent session in the hive\'s spek workspace and work an idea into specs and plans together.', action: 'welcomeShowSection', actionArg: 'sessions-section' },
       { id: 'contributors', label: 'Contributor agent (ClankeR)', desc: 'let outside contributors lend their own agents to your hive, with a leaderboard.', action: 'welcomeShowSection', actionArg: 'contributors-section' },
       { id: 'hub', label: 'Hub visibility', desc: 'make this hive public or private on the hub (Settings → Hub).', action: 'welcomeShowConfigTab', actionArg: 'Hub' },
       { id: 'backup', label: 'Backups', desc: 'set a backup encryption key, then download an encrypted archive of this hive from your account menu. No deployment or cluster access needed — the key is set right here (Settings → Security → Backup). Backups are refused while no key is set, so an archive is never written unencrypted.', action: 'welcomeShowConfigTab', actionArg: 'Security' },
