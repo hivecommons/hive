@@ -1,0 +1,1 @@
+- The agent tiles in the dashboard's top bar are no longer cut off at the bottom when a `+1` style count is showing. The count chip was drawn 10px taller than a tile, which stretched the row past the strip's one-row height, so every tile lost its bottom edge. The count is now the same height as a tile.
