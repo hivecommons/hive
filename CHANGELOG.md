@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.263.4)
+
+### Fixed
+
+- The signed-commit reconciler now logs transient GitHub read failures (timeouts, rate limits, 5xx) at INFO and retries on its next pass, so a slow GitHub minute no longer files an unclassified runtime-error self-report; permission and not-found failures still warn.
+
 ## 2026-11-14 (v5.263.3)
 
 ### Fixed

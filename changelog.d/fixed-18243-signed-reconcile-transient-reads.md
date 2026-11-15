@@ -1,1 +1,0 @@
-- The signed-commit reconciler now logs transient GitHub read failures (timeouts, rate limits, 5xx) at INFO and retries on its next pass, so a slow GitHub minute no longer files an unclassified runtime-error self-report; permission and not-found failures still warn.
