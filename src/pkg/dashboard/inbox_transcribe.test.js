@@ -116,7 +116,7 @@ const formRoot = fields => ({
 });
 
 const settingsHarness = () => new Function('escapeHtml', 'yamlHint', 'INBOX_TX_BYTES_PER_MB',
-  fnSrc('inboxTranscriptionFormHtml') + '\n' + fnSrc('inboxReadTranscription') + '\nreturn { inboxTranscriptionFormHtml, inboxReadTranscription };',
+  fnSrc('inboxTranscriptionFormHtml') + '\n' + fnSrc('inboxTranscriptionUsageHtml') + '\n' + fnSrc('inboxReadTranscription') + '\nreturn { inboxTranscriptionFormHtml, inboxTranscriptionUsageHtml, inboxReadTranscription };',
 )(escapeHtml, p => '<code>' + p + '</code>', BYTES_PER_MB);
 
 test('settings section shows the consent notice, key status and every yaml key', () => {
@@ -158,4 +158,20 @@ test('reading the section enforces consent and converts the size limit', () => {
   assert.strictEqual(off.transcription.mode, 'manual');
   assert.strictEqual(inboxReadTranscription(null), null);
   assert.strictEqual(inboxReadTranscription({ querySelector: () => null }), null, 'no section, no transcription payload');
+});
+
+test('settings section shows month usage, egress and the auto-mode source hint', () => {
+  const { inboxTranscriptionFormHtml, inboxTranscriptionUsageHtml } = settingsHarness();
+  let out = inboxTranscriptionUsageHtml({ month_minutes_used: 123.456, monthly_budget_minutes: 600, today_items: 3, daily_max_items: 20, egress_hosts: ['api.deepgram.com'] });
+  assert.match(out, /data-status="ok">123\.5 of 600 minutes used/);
+  assert.match(out, /today: 3 of 20 recordings/);
+  assert.match(out, /<code>api\.deepgram\.com:443<\/code>/);
+  assert.doesNotMatch(out, /none are listed/);
+  out = inboxTranscriptionUsageHtml({ month_minutes_used: 590, monthly_budget_minutes: 600, mode: 'auto', sources: [] });
+  assert.match(out, /data-status="syncing">590 of 600/);
+  assert.match(out, /none are listed/);
+  assert.doesNotMatch(out, /Egress/);
+  assert.match(inboxTranscriptionUsageHtml({ month_minutes_used: 700, monthly_budget_minutes: 600 }), /data-status="error"/);
+  assert.match(inboxTranscriptionUsageHtml(undefined), /0 of 0 minutes used/);
+  assert.match(inboxTranscriptionFormHtml({ month_minutes_used: 1, monthly_budget_minutes: 600 }), /data-inbox-tx-usage="1"/);
 });

@@ -258,7 +258,9 @@ func (m *Manager) deliverKickLocked(agent *AgentProcess, message, trigger string
 	// change the lock alone made it impossible. Two typists sharing one pane
 	// would interleave their chunks into a single corrupt prompt.
 	if !agent.kickDelivering.CompareAndSwap(false, true) {
-		m.logger.Warn("kick delivery skipped: another kick is already being typed into this pane",
+		// Expected back-pressure, not a defect: callers treat ErrAgentBusy
+		// as "retry later". Info keeps it out of the warn-level selfreport.
+		m.logger.Info("kick delivery skipped: another kick is already being typed into this pane",
 			"agent", agent.Name, "trigger", trigger)
 		return fmt.Errorf("%w: agent %s kick delivery already in progress", crux.ErrAgentBusy, agent.Name)
 	}

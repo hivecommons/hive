@@ -10,8 +10,6 @@
 # Known patterns:
 #   - DU discord/** and DU/UD .github/workflows/discord-syntax.yml: v6 removed
 #     discord/ (#9277) while v5 still develops it. Keep v6's deletion.
-#   - UU src/pkg/config/config.go: v6 split the monolith into topical files
-#     (#9386, #9956). Keep v6's side.
 #   - UU CHANGELOG.md: both lines prepend their own release sections under
 #     "## Unreleased" on every release, so the top of the file conflicts on
 #     almost every top-up. Keep both sides' lines (v6's block first, then
@@ -25,6 +23,17 @@
 #     it as the byte-exact concatenation of static-src/manifest.txt (what
 #     webstatic.ConcatIndex and TestIndexHTMLIsGenerated do), provided no
 #     static-src file is itself conflicted.
+#
+# Deliberately NOT a known pattern:
+#   - UU src/pkg/config/config.go. v6 split the monolith into topical files
+#     (#9386, #9956), and an earlier version of this script kept v6's side of
+#     any config.go conflict. A conflict there means v5 changed config.go since
+#     the last top-up, and keeping v6's side drops that change without a trace:
+#     #18222's keystore sealing survived only because it was hand-ported into
+#     v6's load.go/save.go. A config.go conflict always goes to a human, who
+#     ports v5's change into the matching split file. Whether v6 already has an
+#     equivalent change cannot be decided mechanically (the code moved), so
+#     there is no "safe subset" to auto-resolve.
 set -euo pipefail
 
 PIN_FILE=.github/scripts/integration-governance.cjs
@@ -35,10 +44,14 @@ PIN_RE="^const TRUSTED_SCRIPTS_TREE = '[0-9a-f]{40}';\$"
 unmerged="$(git status --porcelain | grep -E '^(DD|AU|UD|UA|DU|AA|UU) ' || true)"
 [ -n "$unmerged" ] || { echo "v6-topup-autoresolve: no conflicts to resolve"; exit 1; }
 
-known='^DU discord/|^(DU|UD) \.github/workflows/discord-syntax\.yml$|^UU src/pkg/config/config\.go$|^UU CHANGELOG\.md$|^UU \.github/scripts/integration-governance\.cjs$|^UU src/pkg/dashboard/static/index\.html$'
+known='^DU discord/|^(DU|UD) \.github/workflows/discord-syntax\.yml$|^UU CHANGELOG\.md$|^UU \.github/scripts/integration-governance\.cjs$|^UU src/pkg/dashboard/static/index\.html$'
 if unknown="$(printf '%s\n' "$unmerged" | grep -vE "$known")"; then
   echo "v6-topup-autoresolve: conflicts outside the known patterns:"
   printf '%s\n' "$unknown"
+  if printf '%s\n' "$unknown" | grep -q ' src/pkg/config/config\.go$'; then
+    echo "v6-topup-autoresolve: v5 changed src/pkg/config/config.go, which v6 split into topical files;"
+    echo "  port v5's change by hand: git diff \$(git merge-base HEAD MERGE_HEAD) MERGE_HEAD -- src/pkg/config/config.go"
+  fi
   exit 1
 fi
 
@@ -69,10 +82,6 @@ while IFS= read -r entry; do
   case "$status $file" in
     "DU "*|"UD "*)
       git rm -q -- "$file"
-      ;;
-    "UU src/pkg/config/config.go")
-      git checkout --ours -- "$file"
-      git add -- "$file"
       ;;
     "UU CHANGELOG.md")
       tmp="$(mktemp -d)"
@@ -107,7 +116,11 @@ if [ "$regen_index" = 1 ]; then
   while IFS= read -r line || [ -n "$line" ]; do
     line="$(printf '%s' "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
     case "$line" in ''|'#'*) continue ;; esac
-    case "$line" in /*|..*) echo "v6-topup-autoresolve: unsafe manifest path $line"; exit 1 ;; esac
+    # The same clean-relative-path rule as webstatic.ParseIndexManifest.
+    case "$line" in
+      /*|..*|./*|*/|*//*|*/./*|*/../*|*/.|*/..)
+        echo "v6-topup-autoresolve: unsafe manifest path $line"; exit 1 ;;
+    esac
     cat "$STATIC_SRC/$line" >> "$INDEX_FILE"
   done < "$STATIC_SRC/manifest.txt"
   git add -- "$INDEX_FILE"

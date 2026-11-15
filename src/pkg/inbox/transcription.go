@@ -60,6 +60,9 @@ type TranscriptionSettings struct {
 	// MonthMinutesUsed / TodayItems are this spoke's recorded spend.
 	MonthMinutesUsed float64 `json:"month_minutes_used"`
 	TodayItems       int     `json:"today_items"`
+	// EgressHosts are the hosts the hive must reach while transcription is
+	// enabled (api.deepgram.com), for egress allowlists.
+	EgressHosts []string `json:"egress_hosts"`
 }
 
 // TranscribeAudit is one inbox_transcribe audit entry. It never carries the
@@ -128,6 +131,7 @@ func (s *Service) TranscriptionSettings() TranscriptionSettings {
 		DailyMaxItems: t.EffectiveDailyMaxItems(), ConsentAcknowledged: t.ConsentAcknowledged,
 	}
 	out.KeyPresent = strings.TrimSpace(s.getenv(out.APIKeyEnv)) != ""
+	out.EgressHosts = TranscriptionEgressHosts(t)
 	if store := s.transcriptStore(); store != nil {
 		u := store.Usage(s.now())
 		out.MonthMinutesUsed, out.TodayItems = u.MonthSeconds/time.Minute.Seconds(), u.TodayItems
