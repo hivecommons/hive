@@ -2610,6 +2610,7 @@
       else if (type === 'discord') html += kbPlaudAuthLine(c.name, type) + kbDiscordHelpHtml(c.name, c);
       else if (type === 'google-meet') html += kbPlaudAuthLine(c.name, type) + kbGoogleMeetPasteHtml(c.name, c);
       else if (type === 'webex') html += kbPlaudAuthLine(c.name, type) + kbWebexPasteHtml(c.name, c);
+      else if (type === 'slack-huddles') html += kbPlaudAuthLine(c.name, type) + kbSlackHuddlesHelpHtml(c.name, c);
       if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
@@ -2657,6 +2658,7 @@
       if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);
       if (type === 'google-meet') html += kbMeetingAuthFormHTML(type, c);
       if (type === 'webex') html += kbMeetingAuthFormHTML(type, c);
+      if (type === 'slack-huddles') html += '<p class="muted-xs" data-kb-slack-huddles-note>Set the credential source to <strong>Environment variable</strong> (or a secret file) holding a Slack token: a bot token (<code>xoxb-</code>) of an app installed in the workspace and invited to each channel, or a user token (<code>xoxp-</code>) for DMs. Scopes: <code>channels:history</code> and <code>groups:history</code> (plus <code>im:history</code> / <code>mpim:history</code> for DMs), <code>canvases:read</code> and <code>files:read</code> for the notes canvas, <code>users:read</code> for names and <code>channels:read</code> / <code>groups:read</code> for channel names. List the channel ids (C…, G…, D…) under Channels.</p>';
       if (type === 'discord') html += '<p class="muted-xs" data-kb-discord-note>Set the credential source to <strong>Environment variable</strong> and enter the NAME of the variable that holds the bot token (for example <code>DISCORD_BOT_TOKEN</code>); the value never passes through the dashboard. List the server id for scheduled events and the ids of the channels where finished recordings are posted.</p>';
       html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
       html += '<div class="hive-dialog-error" role="alert" data-kb-kc-msg></div>';
@@ -2795,7 +2797,7 @@
     // Cached per connector name; loaded lazily when the card renders. The
     // kbPlaud* functions serve every KB_AUTH_TYPES type; the label follows
     // the connector type.
-    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex' };
+    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack' };
     const _kbPlaudAuth = {};
     function kbAuthLabel(name, type) {
       if (!type) { const c = (_kcState.connectors || []).find(x => x.name === name); type = c && c.type; }
@@ -2899,6 +2901,18 @@
         '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="2" placeholder="' + escapeHtml(redirect) + '?code=…&amp;state=…"></textarea>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
     }
+    // Slack huddles: a bot or user token has no browser step; the card says
+    // what Slack keeps for a huddle (the AI notes canvas, with its transcript
+    // when allowed; never audio) and what the token needs.
+    function kbSlackHuddlesHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const chans = (c && c.scope && c.scope.channels) || '';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Huddle notes are triaged in the Inbox, not here.</span></div>';
+      const scopeHint = /needs scope/i.test(a.message || '') ? '<div class="kc-error" data-kb-slack-huddles-scope>The Slack token is missing a scope: add it on the app (OAuth &amp; Permissions), reinstall the app and click Check.</div>' : '';
+      const channelHint = /\/invite/.test(a.message || '') ? '<div class="kc-error" data-kb-slack-huddles-invite>The app is not in ' + (chans ? '<code>' + escapeHtml(chans) + '</code>' : 'the channel') + ': run <code>/invite @your-app</code> there and click Check.</div>' : '';
+      return scopeHint + channelHint + '<p class="muted-xs" data-kb-slack-huddles-help>Slack never records huddle audio. What it keeps is the <strong>AI notes canvas</strong> Slack posts in the huddle thread when someone turns on AI notes (paid plans), with the transcript embedded when the workspace allows it. The hive reads the huddle messages of ' + (chans ? '<code>' + escapeHtml(chans) + '</code>' : 'the configured channels') + ' (<code>conversations.history</code>), finds the notes canvas in the thread and reads it with <code>canvases.getContent</code>; huddles without notes are skipped. Inbox items are text only, with no playback.</p>';
+    }
     async function kbPlaudAuthLoad(name, refresh) {
       try {
         const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth' + (refresh ? '?refresh=1' : ''));
@@ -2974,6 +2988,7 @@
     function kbOpenDiscordIntegration() { _kbIntegrationSelected = 'discord'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenGoogleMeetIntegration() { _kbIntegrationSelected = 'google-meet'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenWebexIntegration() { _kbIntegrationSelected = 'webex'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenSlackHuddlesIntegration() { _kbIntegrationSelected = 'slack-huddles'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
 
     // ── Wispr Flow (local dictation history, no sign-in) ──
     function kbWisprFlowSourceLine(c) {

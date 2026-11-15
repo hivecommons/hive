@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex | slack-huddles
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -753,6 +753,72 @@ knowledge:
 - A `401` or a dead refresh token reads as *not connected* with a pointer to
   the card; a `403` keeps Webex's reason. `429` and `5xx` are retried
   honouring `Retry-After`. The bearer token is only sent to `webexapis.com`.
+
+## Slack huddle notes (`type: slack-huddles`)
+
+Slack does not record huddle audio or video and has no huddle-recording API.
+What it keeps is the **AI notes canvas** it posts in the huddle's thread when
+someone turns on AI notes (paid plans; not in huddles with external people),
+which embeds the transcript when the workspace allows transcripts. The
+connector reads those canvases: one fact per ended huddle that has notes,
+with the canvas title (else *Huddle in #channel*), start time, duration,
+host, participants, the notes as the summary and the transcript section as
+the transcript. Items land in the **📥 Inbox** as text only.
+
+```yaml
+knowledge:
+  connectors:
+    - name: huddles
+      type: slack-huddles
+      layer: project
+      interval: 15m
+      auth:
+        env: SLACK_HUDDLES_TOKEN       # variable NAME holding an xoxb- (bot) or xoxp- (user) token
+      scope:
+        channels: C0123ABC, G0456DEF   # conversation ids whose huddles to read
+        since_days: "30"
+        max_recordings: "200"
+        include_participants: "true"   # users.info (users:read)
+        tags: "huddles"
+```
+
+### Setup
+
+1. Create a Slack app (api.slack.com/apps), add the scopes
+   `channels:history`, `groups:history` (private channels), `canvases:read`,
+   `files:read`, `users:read` and `channels:read` / `groups:read`, install it
+   in the workspace and `/invite` it to each channel. For huddles in DMs use
+   a user token with `im:history` / `mpim:history` instead.
+2. Put the token in the hive's environment and add the connector from
+   **Knowledge → 🔌 Integrations → Slack huddle notes** with the credential
+   source *Environment variable* naming that variable. **Connect** / **Check**
+   call `auth.test` and read one message of the first channel, so a missing
+   scope (`needs scope …`) or a missing channel membership shows on the card.
+
+### Behaviour
+
+- Each sync pages [`conversations.history`](https://docs.slack.dev/reference/methods/conversations.history)
+  from the newest huddle seen (minus 48 h, which also catches notes Slack
+  writes a little after the huddle ends) back to `since_days`, following
+  `response_metadata.next_cursor`, and keeps the `huddle_thread` messages
+  whose [`room`](https://docs.slack.dev/reference/objects/conversation-object)
+  has ended (`has_ended` / `date_end`). Per huddle it reads the thread
+  (`conversations.replies`) and the room's `attached_file_ids`
+  (`files.info`) for canvases, prefers the one titled as huddle notes, and
+  reads it as markdown with [`canvases.getContent`](https://docs.slack.dev/reference/methods/canvases.getContent);
+  without `canvases:read` it falls back to the canvas file's private
+  download (`files:read`, HTML converted). A `Transcript` heading in the
+  canvas splits notes from transcript. Huddles without a notes canvas are
+  skipped: nothing else exists to file.
+- Facts carry `source: slack-huddles`, `attr_slack_huddle_recording_id`
+  (`<channel>:<message ts>`, the Inbox item id), `attr_slack_huddle_meeting_id`
+  (the room id), `attr_recorded_at`, `attr_duration_ms`, `attr_host`,
+  `attr_participants`; the recording page is the huddle message permalink.
+- Playback: none (▶ Play answers 404, Slack keeps no audio). Slack answers
+  `ok: false` with HTTP 200: `invalid_auth`, `token_revoked` and the like
+  read as *not connected*; `missing_scope` names the scope needed;
+  `not_in_channel` asks for `/invite`. `429` is retried honouring
+  `Retry-After`. The token is only sent to `slack.com` hosts.
 
 ## Wispr Flow (dictation, `type: wisprflow`)
 

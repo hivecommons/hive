@@ -203,7 +203,7 @@ func TestKnowledgeIntegrationsModalMeetingCards(t *testing.T) {
 		`'teams': { label: 'Microsoft Teams recordings'`,
 		`'zoom': [['users', 'Recording owners (me, or user ids/emails for Server-to-Server)', 'me']`,
 		`'teams': [['users', 'Meeting organizers (object ids or UPNs, comma-separated)'`,
-		`const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex' };`,
+		`const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack' };`,
 		`else if (type === 'zoom') html += kbPlaudAuthLine(c.name, type) + kbZoomPasteHtml(c.name, c);`,
 		`else if (type === 'teams') html += kbPlaudAuthLine(c.name, type) + kbTeamsConsentHtml(c.name, c);`,
 		`if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);`,
@@ -358,6 +358,42 @@ func TestKnowledgeIntegrationsModalWebexCard(t *testing.T) {
 	}
 }
 
+// TestKnowledgeIntegrationsModalSlackHuddlesCard guards the Slack huddles
+// entry: token through the generic credential source, the help that says
+// Slack keeps notes but never audio, the scope and invite hints, and no
+// browser-native dialog.
+func TestKnowledgeIntegrationsModalSlackHuddlesCard(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`'slack-huddles': { label: 'Slack huddle notes'`,
+		`'slack-huddles': [['channels', 'Channel ids whose huddles to read (comma-separated)'`,
+		`else if (type === 'slack-huddles') html += kbPlaudAuthLine(c.name, type) + kbSlackHuddlesHelpHtml(c.name, c);`,
+		`data-kb-slack-huddles-note`,
+		`function kbSlackHuddlesHelpHtml(name, c)`,
+		`function kbOpenSlackHuddlesIntegration()`,
+		`data-kb-slack-huddles-help`,
+		`'slack-huddles': '💬'`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing Slack huddles card snippet %q", want)
+		}
+	}
+	start := strings.Index(html, "function kbSlackHuddlesHelpHtml(name, c)")
+	end := strings.Index(html, "async function kbPlaudAuthLoad(name, refresh)")
+	if start < 0 || end < start {
+		t.Fatal("Slack huddles card block not found")
+	}
+	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
+		if strings.Contains(html[start:end], native) {
+			t.Errorf("Slack huddles card block uses a browser-native dialog %q", native)
+		}
+	}
+}
+
 // TestKnowledgeIntegrationsModalWisprFlowCard guards the Wispr Flow entry:
 // it is a plain local-file connector (no sign-in buttons), the card shows
 // the configured path, the Knowledge pane links to it and documents the
@@ -384,7 +420,7 @@ func TestKnowledgeIntegrationsModalWisprFlowCard(t *testing.T) {
 			t.Errorf("index.html missing Wispr Flow card snippet %q", want)
 		}
 	}
-	if !strings.Contains(html, `'sharepoint', 'teams', 'webex', 'wisprflow', 'zoom']`) {
+	if !strings.Contains(html, `'sharepoint', 'slack-huddles', 'teams', 'webex', 'wisprflow', 'zoom']`) {
 		t.Error("wisprflow missing from KB_CONNECTOR_TYPE_ORDER")
 	}
 	start := strings.Index(html, "function kbWisprFlowSourceLine(c)")
