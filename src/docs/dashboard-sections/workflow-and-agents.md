@@ -198,6 +198,8 @@ Named terminal sessions where a command-line AI agent runs inside Hive; everyone
 
 **What it is good for.** Use it to run a CLI agent without leaving the dashboard, hand a long task to a teammate by sharing a tab and passing them the keyboard, or let someone who logs in later follow along. People with the `read` role watch a shared session's live terminal read-only (and can read its scrollback) but never type, Send or upload. Only `owner` and `read-write` roles can start sessions, hold the keyboard, Send or upload.
 
+**Voice notes.** In browsers with the Web Speech API (Chrome, Edge), people who can Send also see a **Voice** button in the input bar: click it, speak, and click again (or pause) to stop. The words appear live under the bar while you speak, and the final transcript is added to the Send text box for you to edit; nothing is sent until you press Send or Send and run. Transcription is done by your browser vendor's speech service (Chrome sends the audio to Google), not by Hive, and a one-line notice says so next to the button until you first use it. The dictation language follows your browser's language. Browsers without the API (for example Firefox) do not show the button. If the microphone permission is denied, nothing was heard, or the speech service is unreachable, a toast says so.
+
 **Example.** You start a session named "fix flaky test" in the group "ci" with the Claude CLI, paste the failing log into the input bar and press Send and run. A teammate opens the same tab and watches.
 
 **When it appears.** Only when sessions are enabled on the hive (`GET /api/sessions` reports `enabled: true`); otherwise the Inception section is shown.

@@ -62,6 +62,13 @@
     .sessions-attach:focus-within { outline: var(--focus-ring-width) solid var(--accent); }
     .sessions-input-count { margin-left: auto; color: var(--muted); font-size: var(--fs-xs); }
     .sessions-input-count.over { color: var(--red); }
+    /* Voice notes: the mic is accented while dictating; the live interim
+       line and the first-use vendor notice are muted helper text. */
+    .sessions-voice-btn[aria-pressed="true"] { color: var(--red); border-color: var(--red); }
+    .sessions-voice-btn[hidden] { display: none; }
+    .sessions-voice-interim { color: var(--muted); font-size: var(--fs-xs); font-style: italic; }
+    .sessions-voice-interim:empty { display: none; }
+    .sessions-voice-notice { color: var(--muted); font-size: var(--fs-xs); }
     /* Presence and the keyboard lease (pane header). The holder's own line is
        accented; a viewer without the keyboard sees the muted "watching" pill. */
     .sessions-presence { color: var(--muted); font-size: var(--fs-xs); cursor: help; }
