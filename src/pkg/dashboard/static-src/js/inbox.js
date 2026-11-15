@@ -474,9 +474,25 @@
         field('max_mb', 'Largest upload (MB)', sizeMB, '500', 'number') +
         '</div>' +
         '<label class="muted-note inbox-toggle mt-2"><input type="checkbox" data-inbox-tx-field="diarize"' + (tx.diarize !== false ? ' checked' : '') + '> Label speakers (Speaker 1, Speaker 2, …)</label>' +
+        inboxTranscriptionUsageHtml(tx) +
         '<p class="muted-xs">Key <code>$' + escapeHtml(env) + '</code>: ' + (tx.key_present ? '<span class="kc-pill" data-status="ok">key present</span>' : '<span class="kc-pill" data-status="error">key missing</span> set it in this hive\'s environment (it is never stored in hive.yaml)') + '. ' +
         yamlHint('inbox.transcription.mode') + ' ' + yamlHint('inbox.transcription.sources[]') + ' ' + yamlHint('inbox.transcription.api_key_env') + ' ' + yamlHint('inbox.transcription.provider') + ' ' + yamlHint('inbox.transcription.model') + ' ' + yamlHint('inbox.transcription.diarize') + ' ' + yamlHint('inbox.transcription.language') + ' ' +
         yamlHint('inbox.transcription.max_duration_minutes') + ' ' + yamlHint('inbox.transcription.max_bytes') + ' ' + yamlHint('inbox.transcription.monthly_budget_minutes') + ' ' + yamlHint('inbox.transcription.daily_max_items') + '</p></div>';
+    }
+    // This month's spend on the owner's own Deepgram account, today's runs,
+    // the egress the hive needs, and a hint when auto mode has no sources.
+    function inboxTranscriptionUsageHtml(tx) {
+      tx = tx || {};
+      const used = Math.round((Number(tx.month_minutes_used) || 0) * 10) / 10;
+      const budget = Number(tx.monthly_budget_minutes) || 0;
+      const pct = budget > 0 ? Math.min(100, Math.round(used / budget * 100)) : 0;
+      const state = pct >= 100 ? 'error' : (pct >= 80 ? 'syncing' : 'ok');
+      let html = '<p class="muted-xs inbox-tx-usage" data-inbox-tx-usage="1">This month: <span class="kc-pill" data-status="' + state + '">' + used + ' of ' + budget + ' minutes used</span>' +
+        ' · today: ' + (Number(tx.today_items) || 0) + ' of ' + (Number(tx.daily_max_items) || 0) + ' recordings (UTC).</p>';
+      const hosts = Array.isArray(tx.egress_hosts) ? tx.egress_hosts : [];
+      if (hosts.length) html += '<p class="muted-xs">Egress: this hive must reach ' + hosts.map(h => '<code>' + escapeHtml(h) + ':443</code>').join(', ') + ' while transcription is enabled.</p>';
+      if (tx.mode === 'auto' && !(tx.sources || []).length) html += '<p class="kc-error muted-xs">Auto mode transcribes only the sources listed above; none are listed, so nothing is transcribed automatically.</p>';
+      return html;
     }
     // inboxReadTranscription reads the section back into inbox.transcription.
     // It returns { error } when enabling without the consent box.

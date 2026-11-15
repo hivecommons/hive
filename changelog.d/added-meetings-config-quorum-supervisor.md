@@ -1,0 +1,1 @@
+- Meetings groundwork: a `meetings:` config block (off by default, every key overridable by a `HIVE_MEETINGS_*` env var, Vexa tenant key and Discord bot token kept in keystore-sealed secret files) and a supervisor that runs the Quorum meeting server as a loopback child process with a per-boot bearer token, health checks and restart backoff (#18289).

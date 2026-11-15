@@ -63,7 +63,6 @@ case_all_known() {
   echo v5bot > discord/bot.go
   printf '# Changelog\n\n## Unreleased\n\n## 1.1.0 (v5)\n\n- v5 entry\n\n## 1.0.0\n\n- base\n' > CHANGELOG.md
   echo v5 > src/scripts/b.sh
-  echo 'package config // v5 monolith edit' > src/pkg/config/config.go
   echo A5 > src/pkg/dashboard/static-src/a.html
   printf 'A5\nB\n' > src/pkg/dashboard/static/index.html
   git add -A && git commit -qm v5 && finish_pin v5
@@ -79,7 +78,7 @@ case_all_known() {
   bash "$RESOLVER"
   git commit -q --no-edit
   [ ! -e discord/bot.go ] || { echo "discord not deleted"; return 1; }
-  grep -q 'v6 slim' src/pkg/config/config.go || { echo "config.go not v6"; return 1; }
+  grep -q 'v6 slim' src/pkg/config/config.go || { echo "config.go lost v6's one-sided edit"; return 1; }
   grep -q '6.1.0 (v6)' CHANGELOG.md && grep -q '1.1.0 (v5)' CHANGELOG.md || { echo "changelog lost a side"; return 1; }
   ! grep -qE '^(<<<<<<<|=======|>>>>>>>)' CHANGELOG.md .github/scripts/integration-governance.cjs || { echo "markers left"; return 1; }
   [ "$(cat src/pkg/dashboard/static/index.html)" = "$(printf 'A5\nB6')" ] || { echo "index not regenerated"; return 1; }
@@ -106,7 +105,33 @@ case_pin_file_real_edit() {
   bash "$RESOLVER"
 }
 
+# v5 adds a real field to the monolith config.go while v6 has split it. The
+# resolver must refuse (keeping v6's side would drop the field silently) and
+# must leave config.go unmerged for the human, even when every other conflict
+# is a known pattern.
+case_config_real_field() {
+  new_repo "$WORK/config" && cd "$WORK/config"
+  printf 'package config // base\n\ntype Config struct {\n\tMeetings MeetingsConfig `yaml:"meetings"`\n}\n' > src/pkg/config/config.go
+  printf '# Changelog\n\n## Unreleased\n\n## 1.1.0 (v5)\n\n- v5 entry\n\n## 1.0.0\n\n- base\n' > CHANGELOG.md
+  git commit -qam "v5 adds a config field"
+  git checkout -q v6
+  echo 'package config // v6 slim (structs moved to types.go)' > src/pkg/config/config.go
+  printf '# Changelog\n\n## Unreleased\n\n## 6.1.0 (v6)\n\n- v6 entry\n\n## 1.0.0\n\n- base\n' > CHANGELOG.md
+  git commit -qam "v6 splits config.go"
+  git merge --no-ff -q v5 -m merge >/dev/null 2>&1 && { echo "expected conflicts"; return 1; }
+  # Exit 0 here means the resolver accepted the conflict, which is the bug;
+  # `expect ... fail` turns that into a test failure.
+  local out rc=0
+  out="$(bash "$RESOLVER" 2>&1)" || rc=$?
+  printf '%s\n' "$out"
+  [ "$rc" -ne 0 ] || return 0
+  git status --porcelain | grep -q '^UU src/pkg/config/config.go$' || { echo "config.go was resolved"; return 0; }
+  printf '%s\n' "$out" | grep -q 'port v5.s change by hand' || { echo "no hand-port hint"; return 0; }
+  return 1
+}
+
 expect all-known-patterns-resolve ok case_all_known
+expect config-go-real-field-refused fail case_config_real_field
 expect unknown-conflict-refused fail case_unknown_conflict
 expect pin-file-real-edit-refused fail case_pin_file_real_edit
 
