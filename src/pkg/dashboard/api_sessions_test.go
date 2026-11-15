@@ -254,8 +254,8 @@ func (e *sessionTestEnv) createWith(t *testing.T, c sessionCaller, name string, 
 // sessionTestSettleTimeout bounds the wait for a background start in tests.
 const sessionTestSettleTimeout = 5 * time.Second
 
-// waitFor polls cond until it holds or the settle timeout passes.
-func waitFor(t *testing.T, what string, cond func() bool) {
+// waitSessionsFor polls cond until it holds or the settle timeout passes.
+func waitSessionsFor(t *testing.T, what string, cond func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(sessionTestSettleTimeout)
 	for !cond() {
