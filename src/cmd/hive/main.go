@@ -3584,9 +3584,16 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		if mgr, store := wireMeetingsManager(b.cfg, sup, b.logger); mgr != nil {
 			b.meetingsMgr = mgr
 			b.cleanup.push(mgr.Close)
-			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, nil, b.logger); lr != nil {
+			// Research intents go to the research agent pool (#18294).
+			var rt any
+			if b.agentMgr != nil {
+				rt = b.agentMgr
+			}
+			researchPool := wireMeetingsResearch(b.cfg, rt, b.logger)
+			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, researchPool, b.logger); lr != nil {
 				b.meetingsLive = lr
 				b.cleanup.push(lr.Close)
+				b.cleanup.push(routeResearch(researchPool, lr))
 			}
 			// Owner API, live panel and /api/events frames (#18292).
 			b.dashSrv.SetMeetingsService(&meetingsDashboard{mgr: mgr, live: b.meetingsLive})
