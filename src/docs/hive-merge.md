@@ -614,23 +614,27 @@ Green CI is not enough for a Renovate PR that Renovate itself says a person
 should merge. The lane recognises a Renovate PR by its `renovate/` head
 branch or the Renovate footer link in its description, whatever account it
 runs as (`renovate[bot]`, a self-hosted `mergeraptor[bot]`, …), and holds it
-on either of Renovate's own signals:
+on Renovate's own signals:
 
-- the description says `🚦 **Automerge**: Disabled …` (the repository's
-  Renovate config turns automerge off for this update, for example a major
-  under `automerge: false`): lane reason `renovate-automerge-disabled`.
-  Set `auto_merge.trusted_bot_honor_renovate_automerge: false` (Settings →
-  Auto-merge → "Leave Renovate PRs with automerge off to a person") on a
-  hive whose Renovate config leaves automerge off everywhere because the
-  hive does the merging;
 - the bot that opened the PR commented `### ⚠️ Artifact update problem`
   (Renovate could not update a lock file or other artifact on the branch):
-  lane reason `renovate-artifact-problem`, whatever the switch says.
-  Renovate deletes that comment once a later run updates the artifacts, and
-  the PR then merges as usual.
+  lane reason `renovate-artifact-problem`, always. Renovate deletes that
+  comment once a later run updates the artifacts, and the PR then merges as
+  usual;
+- with `auto_merge.trusted_bot_honor_renovate_automerge: true` (Settings →
+  Auto-merge → "Leave Renovate PRs with automerge off to a person"; default
+  **off**), the description says `🚦 **Automerge**: Disabled …` (the
+  repository's Renovate config turns automerge off for this update, for
+  example a major under `automerge: false`): lane reason
+  `renovate-automerge-disabled`. It is off by default because many Renovate
+  configs set `automerge: false` precisely so that the hive, not Renovate,
+  merges those updates, and the description does not say which rule produced
+  the line. Turn it on only where `automerge: false` always means "a person
+  merges"; otherwise hold such updates with a Renovate `addLabels` hold
+  label on the rule.
 
-Both park the PR at 090 Ready for human merge, like a breaking change: no
-approval releases them, the owner merges it (or closes it) on GitHub. The
+Either hold parks the PR at 090 Ready for human merge, like a breaking
+change: no approval releases it, the owner merges it (or closes it) on GitHub. The
 comment is read only for a Renovate PR whose head is otherwise ready to
 merge (projectbluefin/testsuite#1230: a TypeScript major merged three
 minutes after Renovate reported that it could not update `package-lock.json`).

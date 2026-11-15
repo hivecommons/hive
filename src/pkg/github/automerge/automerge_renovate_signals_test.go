@@ -1,9 +1,9 @@
 package automerge
 
 // Renovate's own "merge this manually" signals hold a trusted bot's Renovate
-// PR for the owner (projectbluefin/testsuite#1230): automerge disabled by
-// its config, unless auto_merge.trusted_bot_honor_renovate_automerge is off,
-// and an "Artifact update problem" comment by the bot, always.
+// PR for the owner (projectbluefin/testsuite#1230): an "Artifact update
+// problem" comment by the bot, always, and automerge disabled by its config
+// while auto_merge.trusted_bot_honor_renovate_automerge is on (default off).
 
 import (
 	"context"
@@ -90,18 +90,20 @@ func TestIsRenovatePR(t *testing.T) {
 }
 
 func TestTrustedBotHonorsRenovateAutomergeDefault(t *testing.T) {
-	if !(config.AutoMergeConfig{}).TrustedBotHonorsRenovateAutomerge() {
-		t.Fatal("trusted_bot_honor_renovate_automerge must default to true")
+	if (config.AutoMergeConfig{}).TrustedBotHonorsRenovateAutomerge() {
+		t.Fatal("trusted_bot_honor_renovate_automerge must default to false")
 	}
-	off := false
-	if (config.AutoMergeConfig{TrustedBotHonorRenovateAutomerge: &off}).TrustedBotHonorsRenovateAutomerge() {
-		t.Fatal("trusted_bot_honor_renovate_automerge: false must be honored")
+	on := true
+	if !(config.AutoMergeConfig{TrustedBotHonorRenovateAutomerge: &on}).TrustedBotHonorsRenovateAutomerge() {
+		t.Fatal("trusted_bot_honor_renovate_automerge: true must be honored")
 	}
 }
 
 // The sweep holds a trusted bot's Renovate PR on either signal and merges
 // it otherwise. The App's own PR and a non-Renovate bot's PR are never
 // checked.
+var renovateOn, renovateOff = true, false
+
 func TestTrustedBotLaneRenovateManualMergeGate(t *testing.T) {
 	artifact := []map[string]any{{"id": 1, "user": map[string]any{"login": renovateTestBot}, "body": renovateArtifactBody}}
 	forged := []map[string]any{{"id": 2, "user": map[string]any{"login": "mallory"}, "body": renovateArtifactBody}}
@@ -110,17 +112,18 @@ func TestTrustedBotLaneRenovateManualMergeGate(t *testing.T) {
 		author     string
 		body       string
 		comments   []map[string]any
-		honorOff   bool
+		honor      *bool // nil leaves the switch unset (default off)
 		wantReason string
 	}{
-		{name: "automerge disabled", author: renovateTestBot, body: renovateDisabledLine + renovateFooter, wantReason: prstage.AutoMergeReasonRenovateAutomergeDisabled},
-		{name: "automerge disabled, switch off", author: renovateTestBot, body: renovateDisabledLine + renovateFooter, honorOff: true},
+		{name: "automerge disabled, switch on", author: renovateTestBot, body: renovateDisabledLine + renovateFooter, honor: &renovateOn, wantReason: prstage.AutoMergeReasonRenovateAutomergeDisabled},
+		{name: "automerge disabled, switch off", author: renovateTestBot, body: renovateDisabledLine + renovateFooter, honor: &renovateOff},
+		{name: "automerge disabled, switch unset", author: renovateTestBot, body: renovateDisabledLine + renovateFooter},
 		{name: "artifact problem", author: renovateTestBot, body: renovateEnabledLine + renovateFooter, comments: artifact, wantReason: prstage.AutoMergeReasonRenovateArtifactProblem},
-		{name: "artifact problem, switch off", author: renovateTestBot, body: renovateEnabledLine + renovateFooter, comments: artifact, honorOff: true, wantReason: prstage.AutoMergeReasonRenovateArtifactProblem},
+		{name: "artifact problem, automerge disabled, switch unset", author: renovateTestBot, body: renovateDisabledLine + renovateFooter, comments: artifact, wantReason: prstage.AutoMergeReasonRenovateArtifactProblem},
 		{name: "artifact comment by someone else", author: renovateTestBot, body: renovateEnabledLine + renovateFooter, comments: forged},
 		{name: "automerge enabled, no comment", author: renovateTestBot, body: renovateEnabledLine + renovateFooter},
-		{name: "not a Renovate PR", author: "dependabot[bot]", body: renovateDisabledLine},
-		{name: "the App's own PR", author: testHiveAppBotLogin, body: renovateDisabledLine + renovateFooter},
+		{name: "not a Renovate PR", author: "dependabot[bot]", body: renovateDisabledLine, honor: &renovateOn},
+		{name: "the App's own PR", author: testHiveAppBotLogin, body: renovateDisabledLine + renovateFooter, honor: &renovateOn},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			merges := 0
@@ -128,8 +131,10 @@ func TestTrustedBotLaneRenovateManualMergeGate(t *testing.T) {
 			defer api.Close()
 			c := newAutoMergeSweepClient(api.URL)
 			c.trustedBotAuthors = func() map[string]bool { return map[string]bool{renovateTestBot: true, "dependabot[bot]": true} }
-			honor := !tc.honorOff
-			c.trustedBotHonorRenovateAutomerge = func() bool { return honor }
+			if tc.honor != nil {
+				honor := *tc.honor
+				c.trustedBotHonorRenovateAutomerge = func() bool { return honor }
+			}
 			event, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true)
 			if err != nil {
 				t.Fatalf("trySweepSelfAuthoredPR error: %v", err)

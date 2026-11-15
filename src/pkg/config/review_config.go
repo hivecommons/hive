@@ -586,9 +586,11 @@ type AutoMergeConfig struct {
 	// merging a Renovate PR whose description says Renovate's own config
 	// disables automerge for that update ("🚦 **Automerge**: Disabled …",
 	// e.g. a major under `automerge: false`): the owner merges it instead.
-	// nil/unset means true; set false on a hive whose Renovate config leaves
-	// automerge off everywhere because the hive does the merging. Renovate's
-	// "Artifact update problem" comment holds the PR either way.
+	// nil/unset means false: many Renovate configs set `automerge: false`
+	// precisely so that the hive, not Renovate, does the merging, and the
+	// description does not say which rule produced the line. Set true on a
+	// hive whose `automerge: false` always means "a person merges".
+	// Renovate's "Artifact update problem" comment holds the PR either way.
 	TrustedBotHonorRenovateAutomerge *bool `yaml:"trusted_bot_honor_renovate_automerge,omitempty" json:"trusted_bot_honor_renovate_automerge,omitempty"`
 	// BotTakeover lets the sweep re-author a trusted `github-actions[bot]` PR
 	// whose required `pull_request` checks can never run because the bot
@@ -1262,9 +1264,9 @@ func (a AutoMergeConfig) TrustedBotSkipsReview() bool {
 
 // TrustedBotHonorsRenovateAutomerge reports whether the trusted-bot lane
 // leaves a Renovate PR whose own config disables automerge to the owner
-// (auto_merge.trusted_bot_honor_renovate_automerge, default true).
+// (auto_merge.trusted_bot_honor_renovate_automerge, default false).
 func (a AutoMergeConfig) TrustedBotHonorsRenovateAutomerge() bool {
-	return a.TrustedBotHonorRenovateAutomerge == nil || *a.TrustedBotHonorRenovateAutomerge
+	return a.TrustedBotHonorRenovateAutomerge != nil && *a.TrustedBotHonorRenovateAutomerge
 }
 
 func (t TrustedAuthorAutoMergeConfig) EffectiveRequireRole() string {

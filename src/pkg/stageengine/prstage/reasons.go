@@ -30,9 +30,9 @@ const (
 	AutoMergeReasonHumanMergeRequired = "human-merge-required"
 	// AutoMergeReasonRenovateAutomergeDisabled: a trusted bot's Renovate PR
 	// whose description says its own config disables automerge for this
-	// update ("🚦 **Automerge**: Disabled …"). The owner merges it, like a
-	// breaking change; auto_merge.trusted_bot_honor_renovate_automerge
-	// turns the check off.
+	// update ("🚦 **Automerge**: Disabled …"), while
+	// auto_merge.trusted_bot_honor_renovate_automerge is on (default off).
+	// The owner merges it, like a breaking change.
 	AutoMergeReasonRenovateAutomergeDisabled = "renovate-automerge-disabled"
 	// AutoMergeReasonRenovateArtifactProblem: the bot that opened the PR
 	// commented "⚠️ Artifact update problem" (Renovate could not update a

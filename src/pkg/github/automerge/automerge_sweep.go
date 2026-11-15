@@ -190,7 +190,7 @@ type Options struct {
 	// auto_merge.trusted_bot_honor_renovate_automerge switch: the trusted-bot
 	// lane leaves a Renovate PR whose own config disables automerge to the
 	// owner (config.AutoMergeConfig.TrustedBotHonorsRenovateAutomerge). nil
-	// means true.
+	// means false.
 	TrustedBotHonorRenovateAutomerge func() bool
 	// BotTakeoverEnabled returns the live auto_merge.bot_takeover.enabled
 	// switch: re-author a trusted github-actions[bot] PR whose

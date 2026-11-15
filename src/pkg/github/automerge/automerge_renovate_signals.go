@@ -7,8 +7,12 @@ package automerge
 // The trusted-bot lane merges on green CI alone, so without these checks it
 // merged both kinds (projectbluefin/testsuite#1230: a TypeScript major whose
 // package-lock.json Renovate could not update, merged three minutes after
-// the "Artifact update problem" comment). Both hold the PR at 090 for the
-// owner's merge click, like a breaking change: no approval releases them.
+// the "Artifact update problem" comment). The comment always holds the PR;
+// the description line holds it only when
+// auto_merge.trusted_bot_honor_renovate_automerge is on (default off: many
+// Renovate configs set `automerge: false` so that the hive does the
+// merging). Either hold parks the PR at 090 for the owner's merge click,
+// like a breaking change: no approval releases it.
 
 import (
 	"context"
@@ -84,9 +88,9 @@ func renovateArtifactProblemComment(comments []*gh.IssueComment, author string) 
 }
 
 // trustedBotHonorsRenovateAutomerge is the live
-// auto_merge.trusted_bot_honor_renovate_automerge switch; nil means on.
+// auto_merge.trusted_bot_honor_renovate_automerge switch; nil means off.
 func (c *Engine) trustedBotHonorsRenovateAutomerge() bool {
-	return c.trustedBotHonorRenovateAutomerge == nil || c.trustedBotHonorRenovateAutomerge()
+	return c.trustedBotHonorRenovateAutomerge != nil && c.trustedBotHonorRenovateAutomerge()
 }
 
 // renovateManualMergeGate holds a trusted-bot lane PR that Renovate itself
