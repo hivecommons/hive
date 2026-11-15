@@ -216,7 +216,7 @@ type InboxListResponse struct {
 
 func (s *Server) inboxService(w http.ResponseWriter) (*inbox.Service, bool) {
 	if s == nil || s.deps == nil || s.deps.Inbox == nil {
-		jsonError(w, "inbox is not available: configure a voice or meeting knowledge connector (plaud, wisprflow, zoom, teams, discord, google-meet)", http.StatusNotFound)
+		jsonError(w, "inbox is not available: configure a voice or meeting knowledge connector (plaud, wisprflow, zoom, teams, discord, google-meet, webex)", http.StatusNotFound)
 		return nil, false
 	}
 	return s.deps.Inbox, true

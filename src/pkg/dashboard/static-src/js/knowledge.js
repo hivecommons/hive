@@ -2609,6 +2609,7 @@
       else if (type === 'teams') html += kbPlaudAuthLine(c.name, type) + kbTeamsConsentHtml(c.name, c);
       else if (type === 'discord') html += kbPlaudAuthLine(c.name, type) + kbDiscordHelpHtml(c.name, c);
       else if (type === 'google-meet') html += kbPlaudAuthLine(c.name, type) + kbGoogleMeetPasteHtml(c.name, c);
+      else if (type === 'webex') html += kbPlaudAuthLine(c.name, type) + kbWebexPasteHtml(c.name, c);
       if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
@@ -2655,6 +2656,7 @@
       if (type === 'plaud') html += '<p class="muted-xs" data-kb-plaud-note>Leave the credential source as None: Plaud signs in with its own OAuth flow (Connect on the entry above) and keeps the token in the MCP server\'s own store. Requires Node.js ≥ 20 on the hive host and costs nothing beyond your Plaud plan.</p>';
       if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);
       if (type === 'google-meet') html += kbMeetingAuthFormHTML(type, c);
+      if (type === 'webex') html += kbMeetingAuthFormHTML(type, c);
       if (type === 'discord') html += '<p class="muted-xs" data-kb-discord-note>Set the credential source to <strong>Environment variable</strong> and enter the NAME of the variable that holds the bot token (for example <code>DISCORD_BOT_TOKEN</code>); the value never passes through the dashboard. List the server id for scheduled events and the ids of the channels where finished recordings are posted.</p>';
       html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
       html += '<div class="hive-dialog-error" role="alert" data-kb-kc-msg></div>';
@@ -2725,6 +2727,11 @@
         html += field('client_secret_env', 'OAuth client secret env var (user-level only)', 'GOOGLE_MEET_CLIENT_SECRET');
         html += '</div>';
         html += '<p class="muted-xs" data-kb-google-meet-note>User-level OAuth: leave the credential source as None. In Google Cloud enable the <strong>Google Meet REST API</strong> and the <strong>Google Drive API</strong>, configure the OAuth consent screen with the scopes <code>meetings.space.readonly</code> and <code>drive.meet.readonly</code>, create an OAuth client (Web application) whose authorized redirect URI is the redirect URL above, and put its id and secret in the hive\'s environment under the variable names you enter here. Tokens are kept at <code>/data/knowledge/connector-state/&lt;name&gt;/home/.google-meet/tokens.json</code> (0600). Service account: leave the client id/secret fields empty, set the credential source to the environment variable or file holding the service-account key JSON, list the Workspace users to read under Users, and have a Workspace super admin authorize the service account\'s client id for <code>https://www.googleapis.com/auth/meetings.space.readonly</code> and <code>https://www.googleapis.com/auth/drive.meet.readonly</code> in Admin console → Security → API controls → Domain-wide delegation.</p>';
+      } else if (type === 'webex') {
+        html += field('client_id_env', 'Integration client ID env var', 'WEBEX_CLIENT_ID');
+        html += field('client_secret_env', 'Integration client secret env var', 'WEBEX_CLIENT_SECRET');
+        html += '</div>';
+        html += '<p class="muted-xs" data-kb-webex-note>Leave the credential source as None. On developer.webex.com create an <strong>Integration</strong> with the redirect URL above and the scopes <code>meeting:recordings_read</code>, <code>meeting:transcripts_read</code>, <code>meeting:summaries_read</code> (needs Webex AI Assistant), <code>meeting:participants_read</code> and <code>spark:people_read</code>, and put its client id and secret in the hive\'s environment under the variable names you enter here (narrow the request with the <code>oauth_scopes</code> scope key when the integration has fewer). Tokens are kept at <code>/data/knowledge/connector-state/&lt;name&gt;/home/.webex/tokens.json</code> (0600).</p>';
       } else {
         html += field('tenant_id_env', 'Tenant ID env var', 'TEAMS_TENANT_ID');
         html += field('client_id_env', 'Client (application) ID env var', 'TEAMS_CLIENT_ID');
@@ -2788,7 +2795,7 @@
     // Cached per connector name; loaded lazily when the card renders. The
     // kbPlaud* functions serve every KB_AUTH_TYPES type; the label follows
     // the connector type.
-    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet' };
+    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord', 'google-meet': 'Google Meet', webex: 'Webex' };
     const _kbPlaudAuth = {};
     function kbAuthLabel(name, type) {
       if (!type) { const c = (_kcState.connectors || []).find(x => x.name === name); type = c && c.type; }
@@ -2878,6 +2885,20 @@
         '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="2" placeholder="' + escapeHtml(redirect) + '?state=…&amp;code=…"></textarea>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
     }
+    // Webex integration on a hosted hive: the registered redirect is a
+    // localhost address the browser cannot reach, so the operator pastes the
+    // URL it landed on (same endpoint as Plaud, Zoom and Google Meet).
+    function kbWebexPasteHtml(name, c) {
+      const n = escapeHtml(name);
+      const a = _kbPlaudAuth[name] || {};
+      const redirect = (c && c.scope && c.scope.redirect_uri) || 'http://localhost:8199/webex/callback';
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs" data-kb-webex-playback>Recordings play in the Inbox through Webex\'s temporary direct download link (minted per click, valid 3 hours); transcripts and AI Assistant summaries sync as text.</span></div>';
+      return '<details class="kb-plaud-paste mt-2" data-kb-webex-paste><summary class="muted-xs">Finish Webex sign-in by pasting the redirect URL</summary>' +
+        '<p class="muted-xs">Registration: on developer.webex.com → My Webex Apps create an <strong>Integration</strong> with <code>' + escapeHtml(redirect) + '</code> as its redirect URI and the scopes <code>meeting:recordings_read</code>, <code>meeting:transcripts_read</code>, <code>meeting:summaries_read</code>, <code>meeting:participants_read</code>, <code>spark:people_read</code>, and put its client id and secret in the hive environment under the variable names in the form. Then click <strong>Connect Webex</strong>, approve in the browser, and paste the <code>' + escapeHtml(redirect) + '?code=…&amp;state=…</code> URL the browser lands on (a connection error page is expected) within 10 minutes.</p>' +
+        '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="2" placeholder="' + escapeHtml(redirect) + '?code=…&amp;state=…"></textarea>' +
+        '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
+    }
     async function kbPlaudAuthLoad(name, refresh) {
       try {
         const r = await fetch('/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth' + (refresh ? '?refresh=1' : ''));
@@ -2952,6 +2973,7 @@
     function kbOpenTeamsIntegration() { _kbIntegrationSelected = 'teams'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenDiscordIntegration() { _kbIntegrationSelected = 'discord'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenGoogleMeetIntegration() { _kbIntegrationSelected = 'google-meet'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenWebexIntegration() { _kbIntegrationSelected = 'webex'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
 
     // ── Wispr Flow (local dictation history, no sign-in) ──
     function kbWisprFlowSourceLine(c) {

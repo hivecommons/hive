@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams | discord | google-meet | webex
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -21,7 +21,7 @@ knowledge:
         # file: /run/secrets/wiki-token   # an absolute secret file path
 ```
 
-Only one of `auth.env` / `auth.file` may be set. Inline secrets (an `auth.token`, or secret-looking scope keys such as `api_key`) are rejected everywhere, including by the dashboard. Connectors that talk to an OAuth app the operator registered (`zoom`, `teams`, `google-meet`) name that registration the same way, through `auth.client_id_env`, `auth.client_secret_env` and `auth.account_id_env` / `auth.tenant_id_env`: environment variable **names**, never values, plus `auth.mode` (`user_oauth` or `server_to_server`).
+Only one of `auth.env` / `auth.file` may be set. Inline secrets (an `auth.token`, or secret-looking scope keys such as `api_key`) are rejected everywhere, including by the dashboard. Connectors that talk to an OAuth app the operator registered (`zoom`, `teams`, `google-meet`, `webex`) name that registration the same way, through `auth.client_id_env`, `auth.client_secret_env` and `auth.account_id_env` / `auth.tenant_id_env`: environment variable **names**, never values, plus `auth.mode` (`user_oauth` or `server_to_server`).
 
 ## How it works
 
@@ -675,6 +675,84 @@ knowledge:
   Google's reason (API not enabled, scope not granted). `429` and `5xx` are
   retried honouring `Retry-After`. The bearer token is only sent to the Meet
   and Drive API hosts.
+
+## Webex recordings (`type: webex`)
+
+The Webex connector reads Webex Meetings through a Webex **integration**
+(OAuth as the signed-in user): one fact per ended meeting instance that has
+a recording or a transcript, with the topic, start time, duration, host,
+participants, the Webex AI Assistant summary (notes and action items, when
+the site has AI Assistant) and the transcript rendered as `[mm:ss] Speaker:
+text` lines from Webex's VTT. Meetings land in the **📥 Inbox** with inline
+playback.
+
+```yaml
+knowledge:
+  connectors:
+    - name: webex
+      type: webex
+      layer: personal
+      interval: 15m
+      auth:
+        client_id_env: WEBEX_CLIENT_ID          # environment variable NAMES, never values
+        client_secret_env: WEBEX_CLIENT_SECRET
+      scope:
+        since_days: "30"
+        max_recordings: "200"
+        include_summary: "true"                 # GET /meetingSummaries (meeting:summaries_read, AI Assistant)
+        include_participants: "true"            # GET /meetingParticipants (host only)
+        include_video_link: "false"             # also store the Webex playback link in the fact
+        # site_url: acme.webex.com              # default: every site of the user
+        redirect_uri: http://localhost:8199/webex/callback
+        # oauth_scopes: meeting:recordings_read meeting:transcripts_read   # narrow the request
+        tags: "meetings"
+```
+
+### Setup
+
+1. On [developer.webex.com](https://developer.webex.com/my-apps) create an
+   **Integration** with the redirect URI (default
+   `http://localhost:8199/webex/callback`) and the scopes
+   `meeting:recordings_read`, `meeting:transcripts_read`,
+   `meeting:summaries_read` (Webex AI Assistant), `meeting:participants_read`
+   and `spark:people_read`. If the integration has fewer scopes, list the ones
+   it has in `scope.oauth_scopes`: Webex rejects an authorization request for
+   scopes the integration was not registered with.
+2. Put the client id and secret in the hive's environment and add the
+   connector from **Knowledge → 🔌 Integrations → Webex recordings**.
+3. Click **Connect Webex**, approve, and paste the
+   `…/webex/callback?code=…&state=…` URL the browser lands on into **Finish
+   Webex sign-in by pasting** within 10 minutes. The hive exchanges the code
+   and keeps the tokens at
+   `/data/knowledge/connector-state/<name>/home/.webex/tokens.json` (mode
+   0600); access tokens last 14 days and refresh tokens 90 days, and a
+   rotated refresh token is written back on every refresh.
+
+### Behaviour
+
+- Each sync lists [`GET /recordings`](https://developer.webex.com/docs/api/v1/recordings/list-recordings)
+  and [`GET /meetingTranscripts`](https://developer.webex.com/docs/api/v1/meeting-transcripts/list-meeting-transcripts)
+  in explicit 30-day `from`/`to` windows (the API defaults a missing bound to
+  7 days), `max=100`, following the `Link: rel="next"` header, and groups
+  both by meeting instance id (`meetingId`, the Inbox item id). Deleted
+  recordings and transcripts are skipped. Per meeting it downloads the newest
+  transcript as VTT (`/meetingTranscripts/{id}/download?format=vtt`), asks
+  [`/meetingSummaries`](https://developer.webex.com/docs/api/v1/meeting-summaries)
+  for the AI Assistant notes (HTML, converted) and action items, and lists
+  the participants; a missing scope or feature only drops that section.
+- Meetings with a recording but no transcript or summary are
+  `attr_meeting_content: pending` and re-read on later syncs (25 at most).
+- Facts carry `source: webex`, `attr_webex_recording_id` and
+  `attr_webex_meeting_id` (both the meeting instance id), `attr_recorded_at`,
+  `attr_duration_ms`, `attr_host`, `attr_participants`.
+- Playback: ▶ Play asks [`GET /recordings/{id}`](https://developer.webex.com/docs/api/v1/recordings/get-recording-details)
+  for its `temporaryDirectDownloadLinks` and returns the audio link (else the
+  MP4), which needs no token and expires 3 hours after the request; nothing
+  is stored. With *Prevent downloading* on, Webex returns no link and the
+  error names the playback page.
+- A `401` or a dead refresh token reads as *not connected* with a pointer to
+  the card; a `403` keeps Webex's reason. `429` and `5xx` are retried
+  honouring `Retry-After`. The bearer token is only sent to `webexapis.com`.
 
 ## Wispr Flow (dictation, `type: wisprflow`)
 
