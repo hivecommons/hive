@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/meetings"
 	"github.com/hivecommons/hive/pkg/meetings/quorumproc"
 )
@@ -141,7 +142,10 @@ func TestNewQuorumSupervisorDefault(t *testing.T) {
 }
 
 func TestWireMeetingsManager(t *testing.T) {
-	if wireMeetingsManager(nil, &fakeQuorumSup{}, nil) != nil || wireMeetingsManager(&config.Config{}, nil, nil) != nil {
+	if m, _ := wireMeetingsManager(nil, &fakeQuorumSup{}, nil); m != nil {
+		t.Fatal("nil config must not build a manager")
+	}
+	if m, _ := wireMeetingsManager(&config.Config{}, nil, nil); m != nil {
 		t.Fatal("nil inputs must not build a manager")
 	}
 	dir := t.TempDir()
@@ -154,8 +158,8 @@ func TestWireMeetingsManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logs bytes.Buffer
-	mgr := wireMeetingsManager(cfg, &fakeQuorumSup{}, slog.New(slog.NewTextHandler(&logs, nil)))
-	if mgr == nil {
+	mgr, mstore := wireMeetingsManager(cfg, &fakeQuorumSup{}, slog.New(slog.NewTextHandler(&logs, nil)))
+	if mgr == nil || mstore == nil {
 		t.Fatal("want a manager")
 	}
 	mgr.Close()
@@ -167,8 +171,78 @@ func TestWireMeetingsManager(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg.Meetings.DataDir = filepath.Join(blocker, "sub")
-	if wireMeetingsManager(cfg, &fakeQuorumSup{}, slog.New(slog.DiscardHandler)) != nil ||
-		wireMeetingsManager(cfg, &fakeQuorumSup{}, nil) != nil {
+	if m, _ := wireMeetingsManager(cfg, &fakeQuorumSup{}, slog.New(slog.DiscardHandler)); m != nil {
 		t.Fatal("an unusable store must leave meetings unwired")
+	}
+	if m, _ := wireMeetingsManager(cfg, &fakeQuorumSup{}, nil); m != nil {
+		t.Fatal("an unusable store must leave meetings unwired")
+	}
+}
+
+func TestWireMeetingsLive(t *testing.T) {
+	if wireMeetingsLive(nil, nil, nil, nil, nil, nil) != nil {
+		t.Fatal("nil inputs must not build a live loop")
+	}
+	dir := t.TempDir()
+	store, err := meetings.NewStore(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mgr, err := meetings.NewManager(meetings.Options{Store: store, Quorum: meetings.NewClient("http://127.0.0.1:1", "t", nil)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+	cfg := &config.Config{Meetings: config.MeetingsConfig{Enabled: true}}
+	r := wireMeetingsLive(cfg, mgr, store, &knowledge.KnowledgeAPI{}, nil, slog.New(slog.DiscardHandler))
+	if r == nil {
+		t.Fatal("want a live runner")
+	}
+	r.Close()
+	args := meetingSpekArgs(meetings.Meeting{ID: "mtg-1", Title: "Standup"}, "/ctx")
+	if got := strings.Join(args, " "); !strings.HasPrefix(got, "meeting --from stdin --format jsonl --title Meeting notes: Standup") || !strings.HasSuffix(got, "--context /ctx") {
+		t.Fatalf("args %q", got)
+	}
+}
+
+func TestMeetingSpekEnv(t *testing.T) {
+	get := func(k string) string {
+		return map[string]string{"PATH": "/bin", "HIVE_GITHUB_TOKEN": "ghp_x", "HTTPS_PROXY": "http://p"}[k]
+	}
+	asMap := func(env []string) map[string]string {
+		out := map[string]string{}
+		for _, kv := range env {
+			k, v, _ := strings.Cut(kv, "=")
+			out[k] = v
+		}
+		return out
+	}
+	openai := asMap(meetingSpekEnv(get, config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeOpenAI, Endpoint: "https://llm", Model: "m", APIKey: "k", TimeoutMS: 2500, MaxInFlight: 4},
+		"/usr/local/bin/hive", "/data/meetings/mtg-1/llm-usage.jsonl", "/data/meetings/.llm-slots", 1000))
+	if openai["SPEK_MEETING_LLM"] != "command" || openai["SPEK_MEETING_LLM_CMD"] != "/usr/local/bin/hive meeting-llm" ||
+		openai["HIVE_MEETING_LLM_API_KEY"] != "k" || openai["HIVE_MEETING_LLM_MAX_TOKENS"] != "1000" || openai["PATH"] != "/bin" || openai["HTTPS_PROXY"] != "http://p" {
+		t.Fatalf("openai env %v", openai)
+	}
+	if _, leaked := openai["HIVE_GITHUB_TOKEN"]; leaked {
+		t.Fatal("hive secrets must not reach spek")
+	}
+	noKey := asMap(meetingSpekEnv(get, config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeOpenAI, Endpoint: "e", Model: "m"}, "h", "u", "s", 0))
+	if _, ok := noKey["HIVE_MEETING_LLM_API_KEY"]; ok {
+		t.Fatal("no key, no key variable")
+	}
+	anth := asMap(meetingSpekEnv(get, config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeAnthropic, AnthropicKey: "ak", AnthropicModel: "claude-x", TimeoutMS: 2500}, "h", "u", "s", 0))
+	if anth["SPEK_MEETING_LLM"] != "anthropic" || anth["ANTHROPIC_API_KEY"] != "ak" || anth["SPEK_MEETING_MODEL"] != "claude-x" {
+		t.Fatalf("anthropic env %v", anth)
+	}
+	if _, ok := asMap(meetingSpekEnv(get, config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeAnthropic, AnthropicKey: "ak"}, "h", "u", "s", 0))["SPEK_MEETING_MODEL"]; ok {
+		t.Fatal("no model override without anthropic_model")
+	}
+	none := asMap(meetingSpekEnv(get, config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeNone}, "h", "u", "s", 0))
+	if none["SPEK_MEETING_LLM"] != "none" {
+		t.Fatalf("none env %v", none)
+	}
+	store, _ := meetings.NewStore(t.TempDir())
+	if !strings.HasSuffix(meetingUsageFile(store, "mtg-1"), "mtg-1/llm-usage.jsonl") {
+		t.Fatal("usage file path")
 	}
 }

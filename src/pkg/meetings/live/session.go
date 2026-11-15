@@ -1,0 +1,552 @@
+package live
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"log/slog"
+	"strings"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/meetings"
+	"github.com/hivecommons/hive/pkg/meetings/meetllm"
+)
+
+// sessionInbox is the depth of a session's input queue.
+const sessionInbox = 1024
+
+// Session errors.
+var (
+	ErrUnknownResearch = errors.New("meetings: unknown research item")
+	ErrNotPending      = errors.New("meetings: research item is not waiting for approval")
+	ErrSessionEnded    = errors.New("meetings: live session has ended")
+)
+
+// budgetNotice is posted once when a meeting's budget runs out.
+const budgetNotice = "Hive reached its budget for this meeting. It keeps taking notes but will not ask questions or start research."
+
+type approveReq struct {
+	rid   string
+	reply chan error
+}
+
+// session runs one meeting's live loop on a single goroutine: every input
+// (meeting updates, Spek intents, research signals, approvals) is applied in
+// order, so the state needs no lock beyond the snapshot copy.
+type session struct {
+	r     *Runner
+	id    string
+	spek  Spek
+	state State
+	rate  rateLimiter
+	// fileTokens is the usage-ledger total already charged.
+	fileTokens int
+
+	updates  chan meetings.Update
+	signals  chan ResearchSignal
+	approves chan approveReq
+	snaps    chan chan State
+	ended    chan struct{}
+	done     chan struct{}
+}
+
+func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
+	s := &session{
+		r: r, id: m.ID, spek: spek,
+		rate:     rateLimiter{n: r.opts.Policy.ChatPostsPerMinute, window: rateWindow},
+		updates:  make(chan meetings.Update, sessionInbox),
+		signals:  make(chan ResearchSignal, sessionInbox),
+		approves: make(chan approveReq),
+		snaps:    make(chan chan State),
+		ended:    make(chan struct{}),
+		done:     make(chan struct{}),
+	}
+	if err := r.opts.Store.LoadDoc(m.ID, StateDoc, &s.state); err != nil && !errors.Is(err, meetings.ErrNotFound) {
+		r.log.Warn("[meetings] live state unreadable; starting fresh", "meeting", m.ID, "error", err)
+	}
+	if s.state.Notes == nil {
+		s.state.Notes = map[string][]string{}
+	}
+	s.state.SpekMode, s.state.SpekStatus = r.opts.SpekMode, ""
+	if r.opts.UsageFile != nil {
+		s.fileTokens, _ = meetllm.UsageTotal(r.opts.UsageFile(m.ID))
+	}
+	return s
+}
+
+func (s *session) log() *slog.Logger { return s.r.log.With("meeting", s.id) }
+
+func (s *session) now() time.Time { return s.r.opts.Now() }
+
+func (s *session) save() {
+	if err := s.r.opts.Store.SaveDoc(s.id, StateDoc, s.state); err != nil {
+		s.log().Warn("[meetings] saving live state", "error", err)
+	}
+}
+
+// run is the session goroutine.
+func (s *session) run(ctx context.Context) {
+	defer close(s.done)
+	lines := s.spek.Lines()
+	ending, spekGone := false, false
+	for {
+		select {
+		case <-ctx.Done():
+			s.spek.Close(nil)
+			s.save()
+			return
+		case u := <-s.updates:
+			if ending {
+				continue
+			}
+			if u.Meeting.State.Terminal() {
+				ending = true
+				close(s.ended)
+				if spekGone {
+					s.save()
+					return
+				}
+				// Close blocks until Spek has flushed its last notes, which
+				// arrive on lines; keep draining them here meanwhile.
+				go s.spek.Close(map[string]string{"type": "end"})
+				continue
+			}
+			s.onUpdate(u)
+		case line, ok := <-lines:
+			if !ok {
+				if ending {
+					s.save()
+					return
+				}
+				// Spek stopped (or this spektacular has no `meeting` verb)
+				// while the meeting goes on: keep the session for the panel,
+				// research signals and approvals; only Spek's questions and
+				// notes stop.
+				spekGone, lines = true, nil
+				s.state.SpekStatus = "Spektacular live mode is not running for this meeting (needs a spektacular with the meeting command, hivecommons/spektacular#126); the transcript and research still work, questions and notes do not"
+				s.log().Warn("[meetings] spektacular live mode stopped; continuing without it")
+				s.emit(Event{Kind: EventSpek, Reason: s.state.SpekStatus})
+				s.save()
+				continue
+			}
+			s.onIntent(ctx, line)
+		case sig := <-s.signals:
+			s.onSignal(ctx, sig)
+		case a := <-s.approves:
+			a.reply <- s.approve(ctx, a.rid)
+		case reply := <-s.snaps:
+			reply <- s.snapshot()
+		}
+	}
+}
+
+func (s *session) snapshot() State {
+	b, _ := json.Marshal(s.state)
+	var out State
+	_ = json.Unmarshal(b, &out)
+	return out
+}
+
+func (s *session) emit(ev Event) {
+	ev.MeetingID, ev.At = s.id, s.now()
+	s.r.emit(ev)
+}
+
+// onUpdate forwards people's final segments and chat lines to Spek and
+// matches replies to open asks. Hive's own lines never reach here: the
+// manager drops them before notifying.
+func (s *session) onUpdate(u meetings.Update) {
+	ev := u.Event
+	if ev == nil {
+		return
+	}
+	switch {
+	case ev.Type == meetings.EventSegment && ev.Final, ev.Type == meetings.EventChat:
+	default:
+		return
+	}
+	if len(ev.Raw) > 0 {
+		if err := s.spek.SendLine(ev.Raw); err != nil {
+			s.log().Warn("[meetings] forwarding to spek", "error", err)
+		}
+	}
+	s.matchAnswer(ev)
+}
+
+// matchAnswer is the answer heuristic: the first line from a person after
+// an ask, within the answer window, answers the oldest open ask. Asks past
+// the window expire unanswered. It is deliberately simple; Spek receives
+// the whole transcript and can re-ask if the match was wrong.
+func (s *session) matchAnswer(ev *meetings.Event) {
+	now := s.now()
+	window := s.r.opts.Policy.AnswerWindow
+	changed := false
+	answered := false
+	for i := range s.state.Asks {
+		a := &s.state.Asks[i]
+		if a.AnsweredAt != nil || a.Expired {
+			continue
+		}
+		if now.Sub(a.AskedAt) > window {
+			a.Expired, changed = true, true
+			continue
+		}
+		if answered || strings.TrimSpace(ev.Text) == "" {
+			continue
+		}
+		a.Answer, a.AnsweredBy, a.AnsweredAt = ev.Text, ev.Who(), &now
+		answered, changed = true, true
+		if err := s.spek.Send(map[string]string{"type": "answer", "qid": a.QID, "text": ev.Text, "by": ev.Who()}); err != nil {
+			s.log().Warn("[meetings] sending answer to spek", "error", err)
+		}
+	}
+	if changed {
+		s.save()
+	}
+}
+
+func (s *session) onIntent(ctx context.Context, line []byte) {
+	var in intent
+	if err := json.Unmarshal(line, &in); err != nil {
+		s.log().Warn("[meetings] spek wrote a non-JSON line; skipped", "error", err)
+		return
+	}
+	if in.Type == intentHeartbeat {
+		now := s.now()
+		s.state.LastHeartbeat = &now
+		return
+	}
+	s.emit(Event{Kind: EventIntent, Intent: append(json.RawMessage(nil), line...)})
+	s.account(ctx, in)
+	switch in.Type {
+	case intentChatPost:
+		if s.spendable() {
+			s.post(ctx, in.Text)
+		}
+	case intentAsk:
+		if s.spendable() && s.post(ctx, in.Text) {
+			s.state.Asks = append(s.state.Asks, Ask{QID: in.QID, Text: in.Text, AskedAt: s.now()})
+		}
+	case intentNotesAppend:
+		s.appendNote(ctx, in.Section, in.Text)
+	case intentResearch:
+		if s.spendable() {
+			s.research(ctx, in)
+		}
+	case intentSay:
+		if s.spendable() {
+			s.say(ctx, in.Text)
+		}
+	default:
+		s.log().Info("[meetings] unknown spek intent; skipped", "type", in.Type)
+	}
+	s.save()
+}
+
+// account charges an intent to the budget: reported tokens when Spek
+// sends usage, else one intent.
+func (s *session) account(ctx context.Context, in intent) {
+	p := s.r.opts.Policy
+	if s.r.opts.UsageFile != nil {
+		if total, err := meetllm.UsageTotal(s.r.opts.UsageFile(s.id)); err == nil && total > s.fileTokens {
+			s.state.Tokens += total - s.fileTokens
+			s.r.opts.Ledger.Add(s.now(), total-s.fileTokens)
+			s.fileTokens = total
+		}
+	}
+	if in.Usage != nil {
+		t := in.Usage.total()
+		s.state.Tokens += t
+		s.r.opts.Ledger.Add(s.now(), t)
+	} else {
+		s.state.Intents++
+	}
+	over := (p.MaxTokensPerMeeting > 0 && s.state.Tokens > p.MaxTokensPerMeeting) ||
+		(p.MaxIntentsPerMeeting > 0 && s.state.Intents > p.MaxIntentsPerMeeting) ||
+		s.r.opts.Ledger.Exceeded(s.now())
+	if over && !s.state.BudgetExhausted {
+		s.state.BudgetExhausted = true
+		s.log().Warn("[meetings] meeting budget exhausted", "tokens", s.state.Tokens, "intents", s.state.Intents)
+		s.deliver(ctx, budgetNotice)
+	}
+}
+
+// spendable reports whether intents that cost the meeting attention or LLM
+// budget are still allowed. Notes always are.
+func (s *session) spendable() bool {
+	if s.state.BudgetExhausted {
+		s.drop("budget")
+		return false
+	}
+	return true
+}
+
+func (s *session) drop(reason string) {
+	s.state.Dropped++
+	s.emit(Event{Kind: EventDropped, Reason: reason})
+}
+
+// post is the rate-limited chat path for Spek-originated text.
+func (s *session) post(ctx context.Context, text string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	if !s.rate.allow(s.now()) {
+		s.drop("rate_limited")
+		return false
+	}
+	return s.deliver(ctx, text)
+}
+
+// deliver posts without the rate limit (consent and one summary per
+// research item).
+func (s *session) deliver(ctx context.Context, text string) bool {
+	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
+	defer cancel()
+	if err := s.r.opts.Meetings.PostChat(cctx, s.id, truncate(text, ChatMaxChars)); err != nil {
+		s.log().Warn("[meetings] chat post refused", "error", err)
+		s.drop("chat_failed")
+		return false
+	}
+	return true
+}
+
+// say speaks only when the meeting has voice on and voice_on_address is
+// allowed; otherwise, or when the bot has no voice, it answers in chat.
+func (s *session) say(ctx context.Context, text string) {
+	m, err := s.r.opts.Meetings.Get(s.id)
+	if err == nil && m.VoiceEnabled && s.r.opts.Policy.VoiceOnAddress {
+		cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
+		err = s.r.opts.Meetings.Say(cctx, s.id, text)
+		cancel()
+		if err == nil {
+			return
+		}
+		s.log().Info("[meetings] voice unavailable; answering in chat", "error", err)
+	}
+	s.post(ctx, text)
+}
+
+func (s *session) appendNote(ctx context.Context, section, text string) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return
+	}
+	known := false
+	for _, k := range noteSections {
+		if k == section {
+			known = true
+		}
+	}
+	if !known {
+		section = SectionNotes
+	}
+	s.state.Notes[section] = append(s.state.Notes[section], text)
+	s.emit(Event{Kind: EventNotes})
+	m, _ := s.r.opts.Meetings.Get(s.id)
+	s.upsertFact(ctx, NotesTitle(m), RenderNotes(m, s.state.Notes), []string{"meeting-notes"})
+}
+
+func (s *session) upsertFact(ctx context.Context, title, body string, tags []string) {
+	if s.r.opts.Notes == nil {
+		return
+	}
+	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
+	defer cancel()
+	if err := s.r.opts.Notes.Upsert(cctx, title, body, append([]string{"meetings", s.id}, tags...)); err != nil {
+		s.log().Warn("[meetings] writing knowledge fact", "title", title, "error", err)
+	}
+}
+
+// NotesTitle is the title of a meeting's notes fact.
+func NotesTitle(m meetings.Meeting) string {
+	return "Meeting notes: " + meetingLabel(m)
+}
+
+func meetingLabel(m meetings.Meeting) string {
+	name := strings.TrimSpace(m.Title)
+	if name == "" {
+		name = strings.TrimSpace(strings.ReplaceAll(m.Platform, "_", " ") + " meeting")
+	}
+	day := m.CreatedAt.UTC().Format("2006-01-02")
+	return fmt.Sprintf("%s %s (%s)", name, day, m.ID)
+}
+
+// RenderNotes renders the notes sections as Markdown.
+func RenderNotes(m meetings.Meeting, notes map[string][]string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Notes hive took in %s.\n", meetingLabel(m))
+	for _, sec := range noteSections {
+		items := notes[sec]
+		if len(items) == 0 {
+			continue
+		}
+		fmt.Fprintf(&b, "\n## %s\n\n", strings.ToUpper(sec[:1])+sec[1:])
+		for _, it := range items {
+			fmt.Fprintf(&b, "- %s\n", it)
+		}
+	}
+	return b.String()
+}
+
+func (s *session) find(rid string) *ResearchItem {
+	for i := range s.state.Research {
+		if s.state.Research[i].RID == rid {
+			return &s.state.Research[i]
+		}
+	}
+	return nil
+}
+
+func (s *session) findKick(kick string) *ResearchItem {
+	for i := range s.state.Research {
+		if s.state.Research[i].KickID == kick {
+			return &s.state.Research[i]
+		}
+	}
+	return nil
+}
+
+func (s *session) dispatchedCount() int {
+	n := 0
+	for _, it := range s.state.Research {
+		if it.Status != ResearchPendingApproval {
+			n++
+		}
+	}
+	return n
+}
+
+func (s *session) update(it *ResearchItem, status, summary string) {
+	it.Status, it.UpdatedAt = status, s.now()
+	msg := map[string]string{"type": "research_update", "rid": it.RID, "status": status}
+	if summary != "" {
+		msg["summary"] = summary
+	}
+	if err := s.spek.Send(msg); err != nil {
+		s.log().Warn("[meetings] sending research update to spek", "error", err)
+	}
+	cp := *it
+	s.emit(Event{Kind: EventResearch, Research: &cp})
+}
+
+// research applies a research intent: dispatch within the per-meeting cap,
+// else hold for owner approval.
+func (s *session) research(ctx context.Context, in intent) {
+	rid, query := strings.TrimSpace(in.RID), strings.TrimSpace(in.Query)
+	if rid == "" || query == "" || s.find(rid) != nil {
+		s.drop("research_invalid_or_duplicate")
+		return
+	}
+	now := s.now()
+	limit := s.r.opts.Policy.ResearchPerMeeting
+	overCap := limit > 0 && s.dispatchedCount() >= limit
+	s.state.Research = append(s.state.Research, ResearchItem{RID: rid, Query: query, Reason: in.Reason, CreatedAt: now})
+	it := &s.state.Research[len(s.state.Research)-1]
+	if overCap {
+		s.update(it, ResearchPendingApproval, "")
+		// Spek only knows the contract statuses; tell it the item is queued
+		// behind an approval.
+		_ = s.spek.Send(map[string]string{"type": "research_update", "rid": rid, "status": ResearchQueued, "summary": "waiting for approval in the hive dashboard"})
+		return
+	}
+	s.dispatch(ctx, it)
+}
+
+func (s *session) dispatch(ctx context.Context, it *ResearchItem) {
+	if s.r.opts.Research == nil {
+		s.update(it, ResearchFailed, "research is not available on this hive")
+		return
+	}
+	meta := map[string]string{
+		"source": "meeting", "meeting_id": s.id, "rid": it.RID, "reason": it.Reason,
+		// The query is meeting speech: untrusted input for a read-only,
+		// propose-only research agent.
+		"untrusted": "true",
+	}
+	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
+	kick, err := s.r.opts.Research.Dispatch(cctx, it.Query, meta)
+	cancel()
+	if err != nil {
+		s.log().Warn("[meetings] research dispatch failed", "rid", it.RID, "error", err)
+		s.update(it, ResearchFailed, "could not start research")
+		return
+	}
+	it.KickID = kick
+	s.r.registerKick(kick, s.id)
+	s.update(it, ResearchQueued, "")
+}
+
+func (s *session) approve(ctx context.Context, rid string) error {
+	it := s.find(rid)
+	if it == nil {
+		return ErrUnknownResearch
+	}
+	if it.Status != ResearchPendingApproval {
+		return ErrNotPending
+	}
+	s.dispatch(ctx, it)
+	s.save()
+	return nil
+}
+
+// onSignal applies a research kick's [FINDING]/[COMPLETE]/[ERROR].
+func (s *session) onSignal(ctx context.Context, sig ResearchSignal) {
+	it := s.findKick(sig.KickID)
+	if it == nil {
+		return
+	}
+	text := strings.TrimSpace(sig.Text)
+	switch sig.Kind {
+	case SignalFinding:
+		if text != "" && len(it.Findings) < maxFindings {
+			it.Findings = append(it.Findings, text)
+		}
+		s.update(it, ResearchRunning, text)
+	case SignalComplete:
+		it.Summary = text
+		s.update(it, ResearchDone, text)
+		if !it.Posted {
+			it.Posted = true
+			summary := text
+			if summary == "" && len(it.Findings) > 0 {
+				summary = it.Findings[len(it.Findings)-1]
+			}
+			s.deliver(ctx, fmt.Sprintf("Research on %q: %s", it.Query, summary))
+		}
+		s.upsertFact(ctx, researchTitle(s.id, it), renderResearch(it), []string{"meeting-research"})
+		s.r.unregisterKick(sig.KickID)
+	case SignalError:
+		s.update(it, ResearchFailed, text)
+		s.r.unregisterKick(sig.KickID)
+	default:
+		return
+	}
+	s.save()
+}
+
+func researchTitle(meetingID string, it *ResearchItem) string {
+	return fmt.Sprintf("Meeting research: %s (%s %s)", truncate(it.Query, maxTitleQuery), meetingID, it.RID)
+}
+
+// maxTitleQuery bounds the query quoted in a fact title.
+const maxTitleQuery = 80
+
+func renderResearch(it *ResearchItem) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Research requested in a meeting: %s\n", it.Query)
+	if it.Reason != "" {
+		fmt.Fprintf(&b, "\nReason: %s\n", it.Reason)
+	}
+	if it.Summary != "" {
+		fmt.Fprintf(&b, "\n## Summary\n\n%s\n", it.Summary)
+	}
+	if len(it.Findings) > 0 {
+		b.WriteString("\n## Findings\n\n")
+		for _, f := range it.Findings {
+			fmt.Fprintf(&b, "- %s\n", f)
+		}
+	}
+	return b.String()
+}

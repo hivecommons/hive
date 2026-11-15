@@ -211,3 +211,48 @@ func (s *Store) PurgeTranscript(id string) error {
 	}
 	return nil
 }
+
+// validDocName keeps side document names to a plain file name.
+var validDocName = regexp.MustCompile(`^[a-z0-9_-]{1,32}\.json$`)
+
+// SaveDoc writes a side document (session state, notes) for a meeting
+// atomically as JSON.
+func (s *Store) SaveDoc(id, name string, v any) error {
+	if !validDocName.MatchString(name) {
+		return fmt.Errorf("meetings: invalid document name %q", name)
+	}
+	p, err := s.path(id, name)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(v, "", "  ")
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.MkdirAll(filepath.Dir(p), storeDirMode); err != nil {
+		return fmt.Errorf("meetings: creating meeting dir: %w", err)
+	}
+	return writeAtomic(p, data)
+}
+
+// LoadDoc reads a side document into v. A missing document returns
+// ErrNotFound.
+func (s *Store) LoadDoc(id, name string, v any) error {
+	if !validDocName.MatchString(name) {
+		return fmt.Errorf("meetings: invalid document name %q", name)
+	}
+	p, err := s.path(id, name)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(p)
+	if errors.Is(err, os.ErrNotExist) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal(data, v)
+}

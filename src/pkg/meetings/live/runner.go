@@ -1,0 +1,249 @@
+package live
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"sync"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/meetings"
+)
+
+// DefaultCallTimeout bounds one call the loop makes (chat post, dispatch,
+// fact write).
+const DefaultCallTimeout = 30 * time.Second
+
+// Options configures a Runner.
+type Options struct {
+	Meetings Meetings
+	Store    *meetings.Store
+	NewSpek  SpekFactory
+	Research ResearchDispatcher
+	Notes    NotesSink
+	Policy   Policy
+	// Ledger is the hive-wide hourly/daily budget; nil means none.
+	Ledger      *Ledger
+	Logger      *slog.Logger
+	CallTimeout time.Duration
+	Now         func() time.Time
+	// SpekMode is the panel's description of the model Spek uses.
+	SpekMode string
+	// UsageFile returns the meeting's model usage ledger written by
+	// `hive meeting-llm` (meetllm); nil when Spek reports usage itself or
+	// uses no hive-run model.
+	UsageFile func(meetingID string) string
+}
+
+// Runner starts a live session when a meeting goes live and ends it when
+// the meeting ends. Safe for concurrent use.
+type Runner struct {
+	opts Options
+	log  *slog.Logger
+
+	mu        sync.Mutex
+	sessions  map[string]*session
+	byKick    map[string]string
+	observers map[int]func(Event)
+	nextObs   int
+	unsub     func()
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
+}
+
+// NewRunner builds a runner. Start subscribes it to meeting updates.
+func NewRunner(opts Options) (*Runner, error) {
+	if opts.Meetings == nil || opts.Store == nil || opts.NewSpek == nil {
+		return nil, errors.New("meetings: live runner needs meetings, a store and a spek factory")
+	}
+	if opts.CallTimeout <= 0 {
+		opts.CallTimeout = DefaultCallTimeout
+	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
+	opts.Policy = opts.Policy.withDefaults()
+	log := opts.Logger
+	if log == nil {
+		log = slog.New(slog.DiscardHandler)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	return &Runner{
+		opts: opts, log: log,
+		sessions: map[string]*session{}, byKick: map[string]string{}, observers: map[int]func(Event){},
+		ctx: ctx, cancel: cancel,
+	}, nil
+}
+
+// Start subscribes to meeting updates and starts sessions for meetings
+// that are already live.
+func (r *Runner) Start() {
+	r.mu.Lock()
+	if r.unsub != nil {
+		r.mu.Unlock()
+		return
+	}
+	r.unsub = r.opts.Meetings.Subscribe(r.onUpdate)
+	r.mu.Unlock()
+	if list, err := r.opts.Store.List(); err == nil {
+		for _, m := range list {
+			if m.State == meetings.StateLive {
+				r.onUpdate(meetings.Update{Meeting: m})
+			}
+		}
+	}
+}
+
+// Close ends every session (Spek gets {"type":"end"}) and unsubscribes.
+func (r *Runner) Close() {
+	r.mu.Lock()
+	unsub := r.unsub
+	r.unsub = nil
+	r.mu.Unlock()
+	if unsub != nil {
+		unsub()
+	}
+	r.cancel()
+	r.wg.Wait()
+}
+
+// Observe registers a live-panel observer; the returned func removes it.
+// fn must not block.
+func (r *Runner) Observe(fn func(Event)) func() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	id := r.nextObs
+	r.nextObs++
+	r.observers[id] = fn
+	return func() {
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		delete(r.observers, id)
+	}
+}
+
+func (r *Runner) emit(ev Event) {
+	r.mu.Lock()
+	fns := make([]func(Event), 0, len(r.observers))
+	for _, fn := range r.observers {
+		fns = append(fns, fn)
+	}
+	r.mu.Unlock()
+	for _, fn := range fns {
+		fn(ev)
+	}
+}
+
+func (r *Runner) registerKick(kick, meetingID string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.byKick[kick] = meetingID
+}
+
+func (r *Runner) unregisterKick(kick string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	delete(r.byKick, kick)
+}
+
+// onUpdate routes one meeting update: start a session when the meeting is
+// live, hand everything else to the running session.
+func (r *Runner) onUpdate(u meetings.Update) {
+	r.mu.Lock()
+	s, ok := r.sessions[u.Meeting.ID]
+	if !ok && u.Meeting.State == meetings.StateLive && r.ctx.Err() == nil {
+		s = r.startLocked(u.Meeting)
+		ok = s != nil
+	}
+	r.mu.Unlock()
+	if !ok {
+		return
+	}
+	select {
+	case s.updates <- u:
+	case <-s.done:
+	}
+}
+
+// startLocked starts a session; r.mu is held.
+func (r *Runner) startLocked(m meetings.Meeting) *session {
+	spek := r.opts.NewSpek(m)
+	if err := spek.Start(r.ctx); err != nil {
+		r.log.Error("[meetings] spektacular live mode did not start; the meeting continues without it", "meeting", m.ID, "error", err)
+		return nil
+	}
+	s := r.newSession(m, spek)
+	for _, it := range s.state.Research {
+		if it.KickID != "" && (it.Status == ResearchQueued || it.Status == ResearchRunning) {
+			r.byKick[it.KickID] = m.ID
+		}
+	}
+	r.sessions[m.ID] = s
+	r.wg.Add(1)
+	go func() {
+		defer r.wg.Done()
+		s.run(r.ctx)
+		r.mu.Lock()
+		delete(r.sessions, m.ID)
+		r.mu.Unlock()
+	}()
+	r.log.Info("[meetings] live session started", "meeting", m.ID)
+	return s
+}
+
+func (r *Runner) session(id string) (*session, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	s, ok := r.sessions[id]
+	return s, ok
+}
+
+// DeliverResearch routes a research kick's signal to its meeting. It
+// reports whether the kick belongs to a live meeting.
+func (r *Runner) DeliverResearch(sig ResearchSignal) bool {
+	r.mu.Lock()
+	id, ok := r.byKick[sig.KickID]
+	s := r.sessions[id]
+	r.mu.Unlock()
+	if !ok || s == nil {
+		return false
+	}
+	select {
+	case s.signals <- sig:
+		return true
+	case <-s.done:
+		return false
+	}
+}
+
+// Approve dispatches a research item that is waiting for approval.
+func (r *Runner) Approve(meetingID, rid string) error {
+	s, ok := r.session(meetingID)
+	if !ok {
+		return ErrSessionEnded
+	}
+	reply := make(chan error, 1)
+	select {
+	case s.approves <- approveReq{rid: rid, reply: reply}:
+		return <-reply
+	case <-s.done:
+		return ErrSessionEnded
+	}
+}
+
+// State returns a meeting's live-loop state: the running session's, or
+// the stored one after the meeting ended.
+func (r *Runner) State(meetingID string) (State, error) {
+	if s, ok := r.session(meetingID); ok {
+		reply := make(chan State, 1)
+		select {
+		case s.snaps <- reply:
+			return <-reply, nil
+		case <-s.done:
+		}
+	}
+	var st State
+	err := r.opts.Store.LoadDoc(meetingID, StateDoc, &st)
+	return st, err
+}

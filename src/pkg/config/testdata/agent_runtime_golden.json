@@ -753,7 +753,8 @@
     "quorum": {},
     "vexa": {},
     "discord": {},
-    "budget": {}
+    "budget": {},
+    "llm": {}
   },
   "swarm": {},
   "autonomy": {},

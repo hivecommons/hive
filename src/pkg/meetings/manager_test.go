@@ -575,3 +575,44 @@ func TestStateTerminal(t *testing.T) {
 		t.Fatal("want a parse error")
 	}
 }
+
+func TestStoreDocs(t *testing.T) {
+	st, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	type doc struct{ A int }
+	if err := st.SaveDoc("mtg-a", "Bad Name", doc{}); err == nil {
+		t.Fatal("want a name error")
+	}
+	if err := st.LoadDoc("mtg-a", "../x.json", &doc{}); err == nil {
+		t.Fatal("want a name error")
+	}
+	if err := st.SaveDoc("../x", "session.json", doc{}); err == nil {
+		t.Fatal("want an id error")
+	}
+	if err := st.LoadDoc("../x", "session.json", &doc{}); err == nil {
+		t.Fatal("want an id error")
+	}
+	if err := st.SaveDoc("mtg-a", "session.json", func() {}); err == nil {
+		t.Fatal("want a marshal error")
+	}
+	var d doc
+	if err := st.LoadDoc("mtg-a", "session.json", &d); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing = %v", err)
+	}
+	if err := st.SaveDoc("mtg-a", "session.json", doc{A: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if err := st.LoadDoc("mtg-a", "session.json", &d); err != nil || d.A != 3 {
+		t.Fatalf("LoadDoc = %+v, %v", d, err)
+	}
+	_ = os.MkdirAll(filepath.Join(st.Dir(), "mtg-a", "notes.json"), 0o700)
+	if err := st.LoadDoc("mtg-a", "notes.json", &d); err == nil {
+		t.Fatal("want a read error")
+	}
+	_ = os.WriteFile(filepath.Join(st.Dir(), "mtg-f"), []byte("x"), 0o600)
+	if err := st.SaveDoc("mtg-f", "session.json", doc{}); err == nil {
+		t.Fatal("want a mkdir error")
+	}
+}
