@@ -99,6 +99,18 @@ class NativeQueueWorkflows(unittest.TestCase):
         self.assertIn("steps.label-flip.outputs.cosmetic != 'true'", wait["if"])
         self.assertLess(steps.index(gate), steps.index(wait))
 
+    def test_red_provider_is_reported_not_thrown(self):
+        # A PR's own red provider must surface as a named per-PR verdict, not
+        # an "Unhandled error" stack trace that reads like a broken shared
+        # workflow and gets filed as an incident (#18280).
+        steps = workflow("native-queue-policy.yml")["jobs"]["policy"]["steps"]
+        wait = next(s for s in steps if s.get("name", "").startswith("Validate exact-head evidence"))
+        script = wait["with"]["script"]
+        self.assertIn("error instanceof ProviderVerdict", script)
+        verdict = script[script.index("error instanceof ProviderVerdict"):]
+        self.assertLess(verdict.index("core.setFailed(error.message)"),
+                        verdict.index("instanceof PendingEvidence"))
+
     def test_dependabot_runs_the_same_trusted_pr_verifier(self):
         verifier = workflow("pr-verifier.yml")
         events = verifier.get("on", verifier.get(True))

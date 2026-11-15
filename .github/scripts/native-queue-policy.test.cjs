@@ -5,7 +5,7 @@ const {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict,
-  ProviderUnavailable, FORWARD_MERGE, PROW,
+  ProviderUnavailable, ProviderVerdict, PROVIDER_VERDICT_NOTE, FORWARD_MERGE, PROW,
   DCO_ENUMERATION_SUMMARY_PREFIX,
   DCO_ENUMERATION_SUMMARY_FALLBACK,
   DCO_PROVIDER_UNAVAILABLE_TEXT,
@@ -203,7 +203,30 @@ test('UNKNOWN reporting requires trusted exact-head completed DCO and the specif
       error => !(error instanceof ProviderUnavailable));
   }
   assert.throws(() => evidenceForHead([{ ...dco, conclusion: 'failure' }], sha(11), { DCO: null }),
-    error => !(error instanceof ProviderUnavailable) && error.message === 'DCO: failure');
+    error => !(error instanceof ProviderUnavailable) && error instanceof ProviderVerdict &&
+      error.message.startsWith(`DCO: failure on ${sha(11)} `));
+});
+
+test('a red provider is named as a per-PR verdict, not a shared CI incident (#18280)', async () => {
+  for (const [name, conclusion] of [
+    ['DCO', 'action_required'], ['changelog-fragment-guard', 'failure'],
+    ['verify PR contents', 'cancelled'], ['Sign-off survives the squash', 'timed_out'],
+  ]) {
+    const f = fixture('pull_request_target');
+    f.state.runs.get(sha(11)).find(r => r.name === name).conclusion = conclusion;
+    await assert.rejects(evaluate(f), error => {
+      assert.ok(error instanceof ProviderVerdict, `${name} must be a ProviderVerdict`);
+      assert.ok(!(error instanceof PendingEvidence), 'a completed verdict is not worth waiting on');
+      assert.equal(error.provider, name);
+      assert.equal(error.conclusion, conclusion);
+      assert.ok(error.message.startsWith(`${name}: ${conclusion} on ${sha(11)} (`), error.message);
+      assert.ok(error.message.includes(PROVIDER_VERDICT_NOTE), error.message);
+      return true;
+    });
+  }
+  // A path-scoped skip of a technical job is still not a verdict.
+  const runs = checks(sha(11), BUILD_CHECKS).map(r => ({ ...r, conclusion: 'skipped' }));
+  assert.doesNotThrow(() => evidenceForHead(runs, sha(11), BUILD_CHECKS));
 });
 
 // #17030: v6-topup.yml's PR whose probot DCO rejects a commit already on v5.
@@ -277,19 +300,20 @@ test('another head branch, base, fork or author keeps requiring probot DCO', asy
   ]) {
     const f = forwardMergeFixture();
     change(f.state.prs[0]);
-    await assert.rejects(evaluate(f), error => error.message === 'DCO: action_required');
+    await assert.rejects(evaluate(f), error => error.message === `DCO: action_required on ${sha(11)} (${PROVIDER_VERDICT_NOTE})`);
     assert.equal(f.state.seen.length, 0);
   }
   const v5 = forwardMergeFixture();
   v5.state.prs[0].base.ref = 'v5';
   v5.context.payload.pull_request.base.ref = 'v5';
-  await assert.rejects(evaluate(v5), error => error.message === 'DCO: action_required');
+  await assert.rejects(evaluate(v5), error => error.message === `DCO: action_required on ${sha(11)} (${PROVIDER_VERDICT_NOTE})`);
 });
 
 test('forward-merge path fails without a successful prow-created dco status', async () => {
   const failed = forwardMergeFixture();
   failed.state.statuses.push({ id: 2, context: 'dco', state: 'failure', creator: { login: PROW.login, id: PROW.id } });
-  await assert.rejects(evaluate(failed), /prow dco: failure.*DCO path: prow dco/);
+  await assert.rejects(evaluate(failed), error => error instanceof ProviderVerdict &&
+    /prow dco: failure on .*per-PR provider verdict.*DCO path: prow dco/.test(error.message));
   // Any workflow token can post a `dco` status; it never stands in for prow.
   const forged = forwardMergeFixture();
   forged.state.statuses = [{ id: 3, context: 'dco', state: 'success', creator: { login: 'github-actions[bot]', id: 41898282 } }];

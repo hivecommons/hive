@@ -7837,6 +7837,13 @@
     .sessions-attach:focus-within { outline: var(--focus-ring-width) solid var(--accent); }
     .sessions-input-count { margin-left: auto; color: var(--muted); font-size: var(--fs-xs); }
     .sessions-input-count.over { color: var(--red); }
+    /* Voice notes: the mic is accented while dictating; the live interim
+       line and the first-use vendor notice are muted helper text. */
+    .sessions-voice-btn[aria-pressed="true"] { color: var(--red); border-color: var(--red); }
+    .sessions-voice-btn[hidden] { display: none; }
+    .sessions-voice-interim { color: var(--muted); font-size: var(--fs-xs); font-style: italic; }
+    .sessions-voice-interim:empty { display: none; }
+    .sessions-voice-notice { color: var(--muted); font-size: var(--fs-xs); }
     /* Presence and the keyboard lease (pane header). The holder's own line is
        accented; a viewer without the keyboard sees the muted "watching" pill. */
     .sessions-presence { color: var(--muted); font-size: var(--fs-xs); cursor: help; }
@@ -50679,6 +50686,25 @@ function burnAreaChart() {
     // once the holder released it or has been idle for the server's grace.
     const SESSIONS_KEYBOARD_TAKE = 'take';
     const SESSIONS_KEYBOARD_RELEASE = 'release';
+    // Voice notes: the browser's Web Speech API dictates into the Send
+    // textarea as an editable preview. Nothing is sent until Send / Send and
+    // run, and the audio never reaches Hive: the browser vendor's speech
+    // service transcribes it. One utterance per click (silence ends it).
+    const SESSIONS_VOICE_NOTICE_KEY = 'hive.sessions.voiceNoticeSeen';
+    const SESSIONS_VOICE_NOTICE = 'Voice notes are transcribed by your browser vendor\'s speech service (Chrome sends the audio to Google), not by Hive.';
+    const SESSIONS_VOICE_TITLE = 'Dictate into the text box (click again or pause to stop). Nothing is sent until you press Send.';
+    const SESSIONS_VOICE_STOP_TITLE = 'Stop dictating';
+    const SESSIONS_VOICE_UNSUPPORTED = 'Voice notes are unavailable: this browser has no Web Speech API (for example Firefox).';
+    const SESSIONS_VOICE_LABEL = 'Voice';
+    const SESSIONS_VOICE_STOP_LABEL = 'Stop';
+    const SESSIONS_VOICE_ERRORS = Object.freeze({
+      'not-allowed': 'Microphone permission was denied. Allow the microphone for this site to use voice notes.',
+      'service-not-allowed': 'The browser\'s speech service is not allowed here, so voice notes are unavailable.',
+      'no-speech': 'No speech was heard. Click Voice and try again.',
+      'audio-capture': 'No microphone was found.',
+      'network': 'The browser\'s speech service could not be reached (network error).',
+      'aborted': 'Voice note stopped before any text was recognised.'
+    });
 
     let _sessionsData = { enabled: false, sessions: [], vendors: [], limits: {}, workspace: {} };
     let _sessionsRole = '';
@@ -50689,6 +50715,7 @@ function burnAreaChart() {
     let _sessionsLogTimerOn = false;
     let _sessionsAssertionTimerOn = false;
     let _sessionsPrepPollOn = false;
+    let _sessionsVoice = null;
     const _sessionsFrames = {};
     const _sessionsFrameFailed = {};
     // Extension slot for the input bar: other features (for example future
@@ -50869,6 +50896,76 @@ function burnAreaChart() {
       return '/terminal/?arg=' + encodeURIComponent(sessionsTmuxName(id)) + (code ? '&code=' + encodeURIComponent(code) : '');
     }
     function sessionsIsEnabled() { return window._sessionsEnabled === true; }
+    // ── Voice notes helpers (unit-tested with a fake SpeechRecognition) ──
+    function sessionsVoiceCtor(win) {
+      if (!win) return null;
+      return win.SpeechRecognition || win.webkitSpeechRecognition || null;
+    }
+    // Same gate as Send (read-write, owner on a running session) plus browser support.
+    function sessionsCanVoice(role, session, win) {
+      return sessionsCanSend(role, session) && !!sessionsVoiceCtor(win);
+    }
+    function sessionsVoiceErrorText(code) {
+      return SESSIONS_VOICE_ERRORS[code] || ('Voice note failed: ' + (code || 'unknown error') + '.');
+    }
+    // Append dictated text to what is already in the box, one space apart.
+    function sessionsVoiceJoin(base, addition) {
+      const add = String(addition || '').trim();
+      const head = String(base || '');
+      if (!add) return head;
+      if (!head || /\s$/.test(head)) return head + add;
+      return head + ' ' + add;
+    }
+    // Split a SpeechRecognitionEvent into newly final text and the live interim tail.
+    function sessionsVoiceResults(ev) {
+      const out = { final: '', interim: '' };
+      const results = ev && ev.results;
+      if (!results) return out;
+      for (let i = Number(ev.resultIndex) || 0; i < results.length; i++) {
+        const r = results[i];
+        const alt = r && r[0];
+        const text = alt && alt.transcript ? String(alt.transcript) : '';
+        if (r && r.isFinal) out.final = sessionsVoiceJoin(out.final, text);
+        else out.interim = sessionsVoiceJoin(out.interim, text);
+      }
+      return out;
+    }
+    // Build (not start) a recognizer. hooks: onFinal(text), onInterim(text),
+    // onError(message), onEnd(). It never sends anything anywhere itself.
+    function sessionsVoiceRecognizer(Ctor, lang, hooks) {
+      const h = hooks || {};
+      const rec = new Ctor();
+      rec.lang = lang || '';
+      rec.interimResults = true;
+      rec.continuous = false;
+      rec.maxAlternatives = 1;
+      rec.onresult = function(ev) {
+        const r = sessionsVoiceResults(ev);
+        if (r.final && h.onFinal) h.onFinal(r.final);
+        if (h.onInterim) h.onInterim(r.interim);
+      };
+      rec.onerror = function(ev) {
+        if (h.onError) h.onError(sessionsVoiceErrorText(ev && ev.error));
+      };
+      rec.onend = function() {
+        if (h.onInterim) h.onInterim('');
+        if (h.onEnd) h.onEnd();
+      };
+      return rec;
+    }
+    // The mic button, its live interim line and the first-use notice. Hidden
+    // (with the reason in its title) when the browser has no Web Speech API.
+    function sessionsVoiceHtml(s, win, noticeSeen) {
+      if (!s) return '';
+      const id = esc(s.id);
+      const supported = !!sessionsVoiceCtor(win);
+      const btn = '<button type="button" class="hv-btn btn-secondary btn-sm sessions-voice-btn" id="sessions-voice-btn-' + id + '" data-action="sessionsVoiceToggle" data-arg0="' + id + '"'
+        + ' aria-pressed="false" aria-controls="sessions-input-text-' + id + '" title="' + esc(supported ? SESSIONS_VOICE_TITLE : SESSIONS_VOICE_UNSUPPORTED) + '"' + (supported ? '' : ' hidden') + '>' + esc(SESSIONS_VOICE_LABEL) + '</button>';
+      if (!supported) return btn;
+      return btn
+        + (noticeSeen ? '' : '<span class="sessions-voice-notice" id="sessions-voice-notice-' + id + '">' + esc(SESSIONS_VOICE_NOTICE) + '</span>')
+        + '<span class="sessions-voice-interim" id="sessions-voice-interim-' + id + '" aria-live="polite"></span>';
+    }
 
     // ── Storage conveniences (never required) ──
     function sessionsStoreGet(key) { try { return localStorage.getItem(key) || ''; } catch (e) { return ''; } }
@@ -51072,6 +51169,7 @@ function burnAreaChart() {
         + '<div class="sessions-input-actions">'
         + '<button type="button" class="hv-btn btn-secondary btn-sm sessions-send-btn" data-action="sessionsSend" data-arg0="0" title="Queue the text; it is typed into the terminal, without Enter, once the prompt is idle">' + esc(sessionsQueueLabel('Send', s.queue)) + '</button>'
         + '<button type="button" class="hv-btn btn-primary btn-sm sessions-send-run-btn" data-action="sessionsSend" data-arg0="1" title="Queue the text; it is typed and run once the prompt is idle">' + esc(sessionsQueueLabel('Send and run', s.queue)) + '</button>'
+        + sessionsVoiceHtml(s, window, !!sessionsStoreGet(SESSIONS_VOICE_NOTICE_KEY))
         + '<label class="hv-btn btn-secondary btn-sm sessions-attach" title="Upload a file into the session workspace and type its path">Attach file'
         + '<input type="file" class="sessions-file" id="sessions-file-' + esc(s.id) + '" data-change-action="sessionsFilePicked" data-arg-types="t"></label>' + more
         + '<span class="sessions-input-count" id="sessions-input-count-' + esc(s.id) + '" aria-live="polite">' + (max ? '0 / ' + sessionsFormatBytes(max) : '') + '</span></div>'
@@ -51310,6 +51408,7 @@ function burnAreaChart() {
     // ── Actions (data-action handlers) ──
     function sessionsSelect(id) {
       if (!id || id === _sessionsSelected) return;
+      sessionsVoiceStop();
       _sessionsSelected = id;
       sessionsStoreSet(SESSIONS_SELECTED_KEY, id);
       renderSessions();
@@ -51509,6 +51608,57 @@ function burnAreaChart() {
         showToast('Uploaded ' + file.name + '; its path is queued to be typed into the session.', 'success');
       } catch (e) { showToast('Could not attach the file: ' + e.message, 'error'); }
       el.value = '';
+    }
+    // ── Voice notes (browser Web Speech API) ──
+    // Click to start, click again (or pause) to stop. Final text lands in the
+    // Send textarea for editing; nothing is posted until Send / Send and run.
+    function sessionsVoiceSyncButton(id, on) {
+      const btn = document.getElementById('sessions-voice-btn-' + id);
+      if (!btn) return;
+      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
+      btn.textContent = on ? SESSIONS_VOICE_STOP_LABEL : SESSIONS_VOICE_LABEL;
+      btn.title = on ? SESSIONS_VOICE_STOP_TITLE : SESSIONS_VOICE_TITLE;
+    }
+    function sessionsVoiceStop() {
+      const cur = _sessionsVoice;
+      if (!cur) return;
+      try { cur.rec.stop(); } catch (e) { /* already stopped */ }
+    }
+    function sessionsVoiceToggle(id) {
+      if (_sessionsVoice) {
+        const same = _sessionsVoice.id === id;
+        sessionsVoiceStop();
+        if (same) return;
+      }
+      const s = (_sessionsData.sessions || []).find(function(x) { return x.id === id; });
+      if (!sessionsCanSend(_sessionsRole, s)) return;
+      const Ctor = sessionsVoiceCtor(window);
+      if (!Ctor) { showToast(SESSIONS_VOICE_UNSUPPORTED, 'error'); return; }
+      const box = document.getElementById('sessions-input-text-' + id);
+      if (!box) return;
+      const interim = document.getElementById('sessions-voice-interim-' + id);
+      const rec = sessionsVoiceRecognizer(Ctor, (typeof navigator !== 'undefined' && navigator.language) || '', {
+        onFinal: function(text) {
+          box.value = sessionsVoiceJoin(box.value, text);
+          sessionsInputChanged(box);
+        },
+        onInterim: function(text) { if (interim) interim.textContent = text || ''; },
+        onError: function(msg) { showToast(msg, 'error'); },
+        onEnd: function() {
+          if (_sessionsVoice && _sessionsVoice.rec === rec) _sessionsVoice = null;
+          sessionsVoiceSyncButton(id, false);
+          if (box.isConnected !== false && box.focus) box.focus();
+        }
+      });
+      _sessionsVoice = { id: id, rec: rec };
+      try { rec.start(); }
+      catch (e) {
+        _sessionsVoice = null;
+        showToast('Could not start the voice note: ' + e.message, 'error');
+        return;
+      }
+      sessionsStoreSet(SESSIONS_VOICE_NOTICE_KEY, '1');
+      sessionsVoiceSyncButton(id, true);
     }
     // Registry slot: features add entries to the input bar's "More" menu.
     function sessionsRegisterInputAction(action) {
