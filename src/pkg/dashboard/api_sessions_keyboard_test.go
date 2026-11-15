@@ -440,6 +440,14 @@ func (c *fakeQueueClock) Advance(d time.Duration) {
 	c.cur = c.cur.Add(d)
 }
 
+// waitPolls waits until the pane has been read n more times, which gives a
+// "nothing else happened" assertion real polls to be wrong in, without a sleep.
+func (e *sessionTestEnv) waitPolls(t *testing.T, n int) {
+	t.Helper()
+	target := e.rt.captureCount() + n
+	waitSessionsFor(t, "more pane polls", func() bool { return e.rt.captureCount() >= target })
+}
+
 func TestSessionsSendFailsOpenAfterTheDeadline(t *testing.T) {
 	const deadline = time.Minute
 	e := newSessionTestEnv(t, true)
@@ -457,7 +465,7 @@ func TestSessionsSendFailsOpenAfterTheDeadline(t *testing.T) {
 		return sessionOf(t, e, callerRW, id)["queue"].(map[string]any)["items"].([]any)[0].(map[string]any)["delivering"] == true
 	})
 	clock.Advance(deadline - time.Second)
-	time.Sleep(10 * e.s.sessionQueuePoll())
+	e.waitPolls(t, 10)
 	if typed := e.rt.typedTexts(); len(typed) != 0 {
 		t.Fatalf("delivered before the deadline: %v", typed)
 	}
@@ -465,7 +473,7 @@ func TestSessionsSendFailsOpenAfterTheDeadline(t *testing.T) {
 	clock.Advance(2 * time.Second)
 	waitSessionsFor(t, "fail-open delivery", func() bool { return len(e.rt.typedTexts()) == 1 })
 	waitSessionsFor(t, "queue to drain", func() bool { return sessionOf(t, e, callerRW, id)["queue"].(map[string]any)["length"] == float64(0) })
-	time.Sleep(10 * e.s.sessionQueuePoll())
+	// The worker has exited with the queue empty, so nothing can type again.
 	if typed := e.rt.typedTexts(); len(typed) != 1 || typed[0] != "eventually" {
 		t.Errorf("typed = %v, want exactly one delivery of the queued text", typed)
 	}
