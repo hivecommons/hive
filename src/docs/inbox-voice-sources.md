@@ -122,6 +122,12 @@ file, an event description or chat). Setup (bot token in `auth.env`, the
 Message Content intent, View Channel + Read Message History) is in
 [knowledge-connectors.md](knowledge-connectors.md#discord-meetings-type-discord).
 
+Such a pending item can also be transcribed on the hive itself: with
+`inbox.transcription` enabled, owners and read-write sessions get a
+**🎧 Transcribe** button that sends the audio to Deepgram under the hive
+owner's own key and stores the transcript on this hive only. See
+[Inbox transcription](inbox-transcription.md).
+
 ## Configuration
 
 ```yaml
@@ -184,7 +190,8 @@ or a channel).
 See [api-reference/knowledge.md](api-reference/knowledge.md) for
 `GET /api/inbox`, `POST /api/inbox/route`, `POST /api/inbox/dismiss`,
 `GET|POST /api/inbox/settings`, `GET /api/inbox/{source}/{id}/content`,
-`GET /api/inbox/{source}/{id}/audio` and
+`GET /api/inbox/{source}/{id}/audio`,
+`POST /api/inbox/{source}/{id}/transcribe` ([Inbox transcription](inbox-transcription.md)) and
 `POST /api/knowledge/connectors/{name}/auth/complete`.
 
 `GET /api/inbox` always answers `200`: on a hive with no voice connector

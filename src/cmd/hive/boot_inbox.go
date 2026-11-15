@@ -21,7 +21,8 @@ const inboxSweepTimeout = 2 * time.Minute
 // plaud/wisprflow); with none configured the service still exists and lists
 // nothing, so the dashboard shows the empty state. Items are read from the connector vaults under <baseDir>/connectors;
 // route state persists at <baseDir>/connector-state/_inbox.json (connector
-// names cannot start with "_", so it never collides with a connector).
+// names cannot start with "_", so it never collides with a connector), and
+// machine transcripts under <baseDir>/connector-state/transcripts.
 func (b *boot) bootInbox(baseDir string) {
 	srcs := b.inboxSources(baseDir, b.cfg.Knowledge.Connectors, b.knowledgeConnectors)
 	token := func(ctx context.Context, _ string) (string, error) {
@@ -46,6 +47,9 @@ func (b *boot) bootInbox(baseDir string) {
 	store := inbox.NewStore(filepath.Join(baseDir, "connector-state", "_inbox.json"))
 	svc := inbox.NewService(b.cfg.Inbox, store, srcs, dashboard.NewInboxDestinations(b.cfg, token, kick), b.logger)
 	svc.SetReadiness(dashboard.InboxReadiness(b.cfg))
+	// Machine transcripts stay on this spoke's own data volume; runs only
+	// happen once inbox.transcription is enabled and consented to.
+	svc.EnableTranscription(inbox.NewTranscriptStore(filepath.Join(baseDir, "connector-state", "transcripts")))
 	b.inboxSvc = svc
 	b.logger.Info("inbox started", "sources", len(srcs), "rules", len(b.cfg.Inbox.Rules))
 }

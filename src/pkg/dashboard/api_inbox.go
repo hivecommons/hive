@@ -29,6 +29,7 @@ func (s *Server) registerInboxRoutes() {
 	s.mux.HandleFunc("GET /api/inbox/{source}/{id}/content", s.handleInboxContent)
 	s.mux.HandleFunc("GET /api/inbox/{source}/{id}/audio", s.handleInboxAudio)
 	s.mux.HandleFunc("POST /api/knowledge/connectors/{name}/auth/complete", s.handleKnowledgeConnectorAuthComplete)
+	s.mux.HandleFunc("POST /api/inbox/{source}/{id}/transcribe", s.handleInboxTranscribe)
 }
 
 // inboxSourceReadTimeout bounds one read that may spawn the source's MCP
@@ -139,6 +140,56 @@ func (s *Server) handleInboxAudio(w http.ResponseWriter, r *http.Request) {
 	s.auditFromRequest(r, "inbox_audio", auditDetail("source", it.Source, "item", it.ID), "")
 	w.Header().Set("Cache-Control", "no-store")
 	jsonResponse(w, InboxAudioResponse{Source: it.Source, ItemID: it.ID, URL: link.URL, ExpiresAt: link.ExpiresAt})
+}
+
+// InboxTranscribeResponse is POST /api/inbox/{source}/{id}/transcribe.
+type InboxTranscribeResponse struct {
+	Source string                   `json:"source"`
+	ItemID string                   `json:"item_id"`
+	State  inbox.TranscriptionState `json:"state"`
+}
+
+// handleInboxTranscribe (owner or read-write) queues a machine transcription
+// of one pending item on this hive, with the owner's own provider key. The
+// hive downloads the audio itself and streams it to the provider; the
+// presigned link is never forwarded or logged. Each run is audited as
+// inbox_transcribe with its outcome. 202 queued, 200 skipped up front
+// (no audio, too long, budget), 409 busy/already transcribed/has text,
+// 412 transcription disabled or not consented.
+func (s *Server) handleInboxTranscribe(w http.ResponseWriter, r *http.Request) {
+	if !requireInboxPlaybackRole(w, r) {
+		return
+	}
+	svc, ok := s.inboxService(w)
+	if !ok {
+		return
+	}
+	it, ok := s.inboxFindItem(w, r, svc)
+	if !ok {
+		return
+	}
+	opts := inbox.TranscribeOptions{Actor: requestUser(r), Audit: func(a inbox.TranscribeAudit) {
+		if s.audit != nil {
+			s.audit.Log(a.Actor, "inbox_transcribe", auditDetail(a.Fields()...), "")
+		}
+	}}
+	st, err := svc.Transcribe(r.Context(), it, opts)
+	switch {
+	case errors.Is(err, inbox.ErrTranscriptionDisabled), errors.Is(err, inbox.ErrTranscriptionConsent):
+		jsonError(w, err.Error(), http.StatusPreconditionFailed)
+		return
+	case errors.Is(err, inbox.ErrTranscriptionBusy), errors.Is(err, inbox.ErrAlreadyTranscribed), errors.Is(err, inbox.ErrNotPending):
+		jsonError(w, err.Error(), http.StatusConflict)
+		return
+	case err != nil:
+		jsonError(w, "transcription failed: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+	code := http.StatusAccepted
+	if st.Status == inbox.TranscriptionSkipped {
+		code = http.StatusOK
+	}
+	jsonStatusResponse(w, code, InboxTranscribeResponse{Source: it.Source, ItemID: it.ID, State: st})
 }
 
 // InboxSourceStatus is one configured source as the Inbox header shows it.
@@ -380,10 +431,12 @@ type inboxSettingsRequest struct {
 	Rules    *[]config.InboxRule `json:"rules,omitempty"`
 	SpekRepo *string             `json:"spek_repo,omitempty"`
 	DibsURL  *string             `json:"dibs_url,omitempty"`
+	// Transcription replaces inbox.transcription whole when present.
+	Transcription *config.InboxTranscription `json:"transcription,omitempty"`
 }
 
 // handleInboxSettingsPost (owner) updates inbox.rules / inbox.spek.repo /
-// inbox.dibs.url and persists hive.yaml.
+// inbox.dibs.url / inbox.transcription and persists hive.yaml.
 func (s *Server) handleInboxSettingsPost(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -411,6 +464,9 @@ func (s *Server) handleInboxSettingsPost(w http.ResponseWriter, r *http.Request)
 	if req.DibsURL != nil {
 		next.Dibs.URL = strings.TrimRight(strings.TrimSpace(*req.DibsURL), "/")
 	}
+	if req.Transcription != nil {
+		next.Transcription = *req.Transcription
+	}
 	if err := config.ValidateInbox(next); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
@@ -421,7 +477,7 @@ func (s *Server) handleInboxSettingsPost(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "saving config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.auditFromRequest(r, "inbox_settings", auditDetail("rules", strconv.Itoa(len(next.Rules)), "spek_repo", next.Spek.Repo, "dibs_url", next.Dibs.URL), "")
+	s.auditFromRequest(r, "inbox_settings", auditDetail("rules", strconv.Itoa(len(next.Rules)), "spek_repo", next.Spek.Repo, "dibs_url", next.Dibs.URL, "transcription", strconv.FormatBool(next.Transcription.Active()), "transcription_mode", next.Transcription.EffectiveMode()), "")
 	jsonResponse(w, svc.Settings())
 }
 
