@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.276.1)
+
+### Fixed
+
+- Per-issue bot comment budget suppression now warns once per issue per day (debug afterwards), so it no longer floods fleet self-reports as a repeated unclassified error (#18345).
+
 ## 2026-11-15 (v5.276.0)
 
 ### Added
