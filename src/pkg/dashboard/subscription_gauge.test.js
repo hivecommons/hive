@@ -147,13 +147,23 @@ test('live shape from a v6 hive with rotation off (weekly + model-scoped, no 5-h
   assert.equal(m.worstStatus, 'ok');
 });
 
+test('builtin source names the scoped model the way /usage does', () => {
+  const m = model(resp({ limits: [
+    { id: 'weekly_all', kind: 'weekly', percent_used: 59, pct_remaining: 41, resets_at: '2026-11-16T07:00:00Z', duration_mins: 10080 },
+    { id: 'weekly_scoped', kind: 'weekly_scoped', percent_used: 30, pct_remaining: 70, resets_at: '2026-11-16T07:00:00Z', duration_mins: 10080, scope: { model: 'Fable' } },
+  ] }), NOW);
+  assert.deepEqual(plain(m.dials.map(d => d.label)), ['Weekly', 'Weekly (Fable)']);
+  const id = model(resp({ limits: [limit('weekly_scoped', 'weekly_scoped', 70, 10080, { scope: { model: 'claude-fable' } })] }), NOW);
+  assert.equal(id.dials[0].label, 'Weekly (claude-fable)');
+});
+
 test('ccleft source: model-specific weekly arrives as kind weekly with id seven_day_<model>', () => {
   const m = model(resp({ limits: [
     { id: 'seven_day', kind: 'weekly', percent_used: 20, pct_remaining: 80, resets_at: '2026-11-16T07:00:00Z', duration_mins: 10080 },
     { id: 'seven_day_opus', kind: 'weekly', percent_used: 85, pct_remaining: 15, resets_at: '2026-11-16T07:00:00Z', duration_mins: 10080, scope: { scope: 'opus', binding: 'false' } },
     { id: 'five_hour', kind: 'five_hour', percent_used: 10, pct_remaining: 90, resets_at: '2026-11-13T23:00:00Z', duration_mins: 300 },
   ] }), NOW);
-  assert.deepEqual(plain(m.dials.map(d => d.label)), ['Weekly', 'Weekly (opus)', '5-hour']);
+  assert.deepEqual(plain(m.dials.map(d => d.label)), ['Weekly', 'Weekly (Opus)', '5-hour']);
   assert.equal(m.needle.shortName, 'model');
   assert.equal(m.needle.pctLeft, 15);
   assert.equal(m.worstStatus, 'warn');

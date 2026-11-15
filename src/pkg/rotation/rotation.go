@@ -383,10 +383,33 @@ var sharedCLIHomePath = sharedCLIHome
 
 type claudeUsageResponse struct {
 	Limits []struct {
-		Kind     string     `json:"kind"`
-		Percent  *float64   `json:"percent"`
-		ResetsAt *time.Time `json:"resets_at"`
+		Kind     string            `json:"kind"`
+		Percent  *float64          `json:"percent"`
+		ResetsAt *time.Time        `json:"resets_at"`
+		Scope    *claudeUsageScope `json:"scope"`
 	} `json:"limits"`
+}
+
+// claudeUsageScope names the model a weekly_scoped window counts, e.g.
+// {"model":{"id":"claude-fable","display_name":"Fable"}}; it is null on the
+// all-models windows.
+type claudeUsageScope struct {
+	Model *struct {
+		ID          string `json:"id"`
+		DisplayName string `json:"display_name"`
+	} `json:"model"`
+}
+
+// modelName is the scoped model's display name, else its id; "" for a window
+// that counts every model.
+func (s *claudeUsageScope) modelName() string {
+	if s == nil || s.Model == nil {
+		return ""
+	}
+	if name := strings.TrimSpace(s.Model.DisplayName); name != "" {
+		return name
+	}
+	return strings.TrimSpace(s.Model.ID)
 }
 
 func (p ClaudeProber) Provider() string { return "anthropic" }
@@ -518,6 +541,11 @@ func claudeHeadroom(provider string, thresholdPct int, body []byte) (Headroom, e
 		}
 		if l.ResetsAt != nil {
 			lw.ResetAt = *l.ResetsAt
+		}
+		if model := l.Scope.modelName(); model != "" {
+			// The usage gauge labels this window with the model Claude Code's
+			// /usage names ("Current week (Fable)").
+			lw.Scope = map[string]string{"model": model}
 		}
 		limits = append(limits, lw)
 		// The binding window is the most-used one; reporting a roomier window
