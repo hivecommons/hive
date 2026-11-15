@@ -1,1 +1,0 @@
-- A kick refused because another kick is already being typed into the same pane is now logged at info instead of warn, so this expected back-pressure no longer floods the fleet self-report as an unclassified repeated error ([#18276](https://github.com/hivecommons/hive/issues/18276)).
