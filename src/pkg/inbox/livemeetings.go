@@ -101,11 +101,3 @@ func (s *LiveMeetingSource) Fetch(ctx context.Context, it Item) (Content, error)
 func (s *LiveMeetingSource) HandedOff(ctx context.Context, it Item, _ string) error {
 	return s.Reader.HandOff(ctx, it.ID)
 }
-
-func truncateRunes(s string, n int) string {
-	r := []rune(s)
-	if len(r) <= n {
-		return s
-	}
-	return string(r[:n])
-}

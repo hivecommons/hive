@@ -85,9 +85,6 @@ func TestLiveMeetingSourceListAndFetch(t *testing.T) {
 	if _, err := src.List(context.Background()); err == nil {
 		t.Fatal("want the list error")
 	}
-	if truncateRunes("abc", 2) != "ab" || truncateRunes("ab", 5) != "ab" {
-		t.Fatal("truncate")
-	}
 }
 
 func TestLiveMeetingHandOffAfterRouteAndDismiss(t *testing.T) {
