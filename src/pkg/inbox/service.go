@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -152,11 +153,14 @@ func (s *Service) Items(ctx context.Context) ([]Item, error) {
 	cfg := s.Config()
 	var out []Item
 	var errs []error
-	for _, typ := range cfg.EffectiveSources() {
+	seen := map[string]bool{}
+	types := append(append([]string(nil), cfg.EffectiveSources()...), s.builtinTypes()...)
+	for _, typ := range types {
 		src := s.source(typ)
-		if src == nil {
+		if src == nil || seen[typ] {
 			continue
 		}
+		seen[typ] = true
 		items, err := src.List(ctx)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s: %w", typ, err))
@@ -167,6 +171,26 @@ func (s *Service) Items(ctx context.Context) ([]Item, error) {
 	s.applyTranscripts(out)
 	sortItems(out)
 	return out, errors.Join(errs...)
+}
+
+// BuiltinSource marks a source hive provides itself (the meetings it
+// attended): it is listed whether or not inbox.sources names it.
+type BuiltinSource interface {
+	Builtin() bool
+}
+
+// builtinTypes returns the registered builtin source types, sorted.
+func (s *Service) builtinTypes() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var out []string
+	for typ, src := range s.sources {
+		if b, ok := src.(BuiltinSource); ok && b.Builtin() {
+			out = append(out, typ)
+		}
+	}
+	sort.Strings(out)
+	return out
 }
 
 func (s *Service) source(typ string) Source {

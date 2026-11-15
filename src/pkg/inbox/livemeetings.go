@@ -97,6 +97,9 @@ func (s *LiveMeetingSource) Fetch(ctx context.Context, it Item) (Content, error)
 	}, nil
 }
 
+// Builtin implements BuiltinSource: hive's own meetings are always listed.
+func (s *LiveMeetingSource) Builtin() bool { return true }
+
 // HandedOff implements HandOffSource.
 func (s *LiveMeetingSource) HandedOff(ctx context.Context, it Item, _ string) error {
 	return s.Reader.HandOff(ctx, it.ID)

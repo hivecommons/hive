@@ -133,3 +133,12 @@ func TestHandOffIgnoresOtherSources(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestBuiltinSourceListedOnce(t *testing.T) {
+	src := &LiveMeetingSource{Reader: liveFixture()}
+	svc := newTestService(t, config.InboxConfig{Sources: []string{"plaud", LiveMeetingType}}, src)
+	items, err := svc.Items(context.Background())
+	if err != nil || len(items) != 2 {
+		t.Fatalf("items %d, %v", len(items), err)
+	}
+}
