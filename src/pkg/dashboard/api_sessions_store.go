@@ -77,6 +77,12 @@ type sessionRecord struct {
 	// the dashboard, redacted of tokens before they are stored.
 	Message string `json:"message,omitempty"`
 	Error   string `json:"error,omitempty"`
+	// KeyboardHolder is the one user whose terminal attach is writable (the
+	// keyboard lease, api_sessions_keyboard.go); everyone else attaches
+	// read-only. The creator holds it from the start; "" means released.
+	// KeyboardSince is when the current holder took it (RFC3339).
+	KeyboardHolder string `json:"keyboard_holder,omitempty"`
+	KeyboardSince  string `json:"keyboard_since,omitempty"`
 }
 
 type sessionStore struct {

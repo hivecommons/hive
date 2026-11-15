@@ -6,18 +6,30 @@ Sessions are interactive, named CLI-agent terminals. Each runs as its own unpriv
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/sessions` | Dashboard auth/session | Sessions, vendors and limits | `pkg/dashboard/api_sessions.go:139` |
-| `POST` | `/api/sessions` | Owner or read-write | Create a session `{name, group, vendor, shared?}`; answers 202 at once with the session `preparing`, the start runs in the background | `pkg/dashboard/api_sessions.go:140` |
-| `PATCH` | `/api/sessions/{id}` | Session creator or owner | Rename, regroup or (un)share `{name?, group?, shared?}` | `pkg/dashboard/api_sessions.go:141` |
-| `DELETE` | `/api/sessions/{id}` | Session creator or owner | Close a running session (metadata kept, marked `ended`); on an ended session, remove its metadata and delete its sandbox files | `pkg/dashboard/api_sessions.go:142` |
-| `GET` | `/api/sessions/{id}/log` | Dashboard auth/session | Redacted scrollback `?lines=N` (capped at 5000) | `pkg/dashboard/api_sessions.go:143` |
-| `POST` | `/api/sessions/{id}/input` | Owner or read-write | Type `{text, submit}` into the pane (size-capped, audited without the text) | `pkg/dashboard/api_sessions.go:144` |
-| `POST` | `/api/sessions/{id}/upload` | Owner or read-write | Multipart `file`; returns the absolute path inside the session directory | `pkg/dashboard/api_sessions.go:145` |
-| `POST` | `/api/sessions/{id}/resume` | Owner or read-write | Reopen an ended session's last conversation where the vendor supports it (409 otherwise); answers 202 with the session `preparing` | `pkg/dashboard/api_sessions.go:146` |
+| `GET` | `/api/sessions` | Dashboard auth/session | Sessions, vendors and limits | `pkg/dashboard/api_sessions.go:156` |
+| `POST` | `/api/sessions` | Owner or read-write | Create a session `{name, group, vendor, shared?}`; answers 202 at once with the session `preparing`, the start runs in the background | `pkg/dashboard/api_sessions.go:157` |
+| `PATCH` | `/api/sessions/{id}` | Session creator or owner | Rename, regroup or (un)share `{name?, group?, shared?}` | `pkg/dashboard/api_sessions.go:158` |
+| `DELETE` | `/api/sessions/{id}` | Session creator or owner | Close a running session (metadata kept, marked `ended`); on an ended session, remove its metadata and delete its sandbox files | `pkg/dashboard/api_sessions.go:159` |
+| `GET` | `/api/sessions/{id}/log` | Dashboard auth/session | Redacted scrollback `?lines=N` (capped at 5000) | `pkg/dashboard/api_sessions.go:160` |
+| `POST` | `/api/sessions/{id}/input` | Owner or read-write | Queue `{text, submit}` for the pane; answers 202 with `{queued: {id, position}, queue}` and the text is typed once the CLI prompt is idle (size-capped, audited at delivery without the text) | `pkg/dashboard/api_sessions.go:161` |
+| `DELETE` | `/api/sessions/{id}/input/{queue_id}` | Owner or read-write | Cancel your own queued send (the creator or an owner may cancel anyone's); 409 while it is being delivered | `pkg/dashboard/api_sessions.go:165` |
+| `POST` | `/api/sessions/{id}/upload` | Owner or read-write | Multipart `file`; returns the absolute path inside the session directory | `pkg/dashboard/api_sessions.go:162` |
+| `POST` | `/api/sessions/{id}/resume` | Owner or read-write | Reopen an ended session's last conversation where the vendor supports it (409 otherwise); answers 202 with the session `preparing` | `pkg/dashboard/api_sessions.go:163` |
+| `POST` | `/api/sessions/{id}/keyboard` | Owner or read-write | `{"action":"take"\|"release"}` the keyboard lease: the one writable terminal | `pkg/dashboard/api_sessions.go:164` |
 
 ## Session object
 
-`{id, name, group, vendor, creator, created_at, last_activity, status, attached, tmux_name, resumable, shared, workspace_repo, workspace, message, error}` where `status` is `preparing`, `running`, `failed` or `ended`, `attached` is the number of live attached tmux clients (each list probe detaches clients whose process is gone or no longer descends from the terminal attacher, so a stale client never counts) and `tmux_name` is `hive-sess-<id>`. `resumable`, `shared`, `workspace_repo`, `workspace`, `message` and `error` are additive. `GET /api/sessions` lists only sessions the caller created, owners (all) and `shared` sessions; the log, input, upload, resume and terminal routes answer 404 for a session the caller cannot see and 403 when it is visible but not usable.
+`{id, name, group, vendor, creator, created_at, last_activity, status, attached, tmux_name, resumable, shared, workspace_repo, workspace, message, error, keyboard_holder, keyboard_since, keyboard_mine, viewers, queue}` where `status` is `preparing`, `running`, `failed` or `ended`, `attached` is the number of live attached tmux clients (each list probe detaches clients whose process is gone or no longer descends from the terminal attacher, so a stale client never counts) and `tmux_name` is `hive-sess-<id>`. `resumable`, `shared`, `workspace_repo`, `workspace`, `message`, `error` and the keyboard, presence and queue fields are additive. `keyboard_holder` is the user whose terminal is writable (`""` when released), `keyboard_since` when they took it and `keyboard_mine` whether that is the caller. `viewers` is `[{user, attached_since, keyboard}]`, one entry per person with a live terminal on the session (several tabs collapse into one). `queue` is `{length, head, position, items: [{id, user, bytes, submit, queued_at, delivering, mine}]}`: the pending sends, never their text, with `position` the caller's own first item (0 when none). `GET /api/sessions` lists only sessions the caller created, owners (all) and `shared` sessions; the log, input, upload, resume, keyboard and terminal routes answer 404 for a session the caller cannot see and 403 when it is visible but not usable.
+
+## Roles
+
+| Role | List, log, watch the live terminal | Send (`/input`), upload, keyboard | Rename, share, close, resume, delete |
+|---|---|---|---|
+| `read` (shared session only) | yes, read-only | no | no |
+| `read-write` (creator, or any writer on a shared session) | yes | yes | creator only |
+| `owner` | yes | yes | yes |
+
+A private session is visible only to its creator and owners, whatever the role. The `read` role never types: its terminal attach is read-only and `/input`, `/upload` and `/keyboard` answer 403.
 
 ## Lifecycle
 
@@ -29,7 +41,24 @@ Every session's CLI starts inside the hive's **session workspace**: one persiste
 
 ## Attaching a terminal
 
-`POST /api/terminal/handoff` accepts an optional body `{"session":"<id>"}`. The response is unchanged (`{code, expires_in}`); the UI then opens `/terminal/?arg=hive-sess-<id>&code=<code>`. The code is bound to that session id and caller, opens only `?arg=hive-sess-<id>`, and is refused (503) when the hive has no ttyd attach key. The terminal itself stays owner/read-write only, and only for the creator, owners or a `shared` session. Keystrokes typed in the terminal are not attributable to a user; only `/input` and `/upload` are audited (`session_input`, `session_upload`, with user, session id and byte count, never the text).
+`POST /api/terminal/handoff` accepts an optional body `{"session":"<id>"}`. The response is unchanged (`{code, expires_in}`); the UI then opens `/terminal/?arg=hive-sess-<id>&code=<code>`. The code is bound to that session id and caller, opens only `?arg=hive-sess-<id>`, and is refused (503) when the hive has no ttyd attach key. Anyone who can see the session may attach (the `read` role included, on a shared session); an agent-terminal code still needs owner or read-write.
+
+**Keyboard lease.** Exactly one person at a time holds a session's keyboard; everyone else is attached read-only (`tmux attach-session -r`). The creator holds it from the start and whoever resumes an ended session takes it. The dashboard decides the mode of every attach: it appends the per-session attach token as ttyd's second arg and, for the holder only, a second **write token** (`HMAC-SHA256(HIVE_TTYD_ATTACH_KEY, "hive-ttyd-attach-rw-v1\0hive-sess-<id>")`) as the third; `ttyd-tmux.sh` verifies both and attaches read-only when the write token is missing or wrong. The browser sends one arg (the session name), so nothing it adds can make an attach writable. `POST /api/sessions/{id}/keyboard` with `{"action":"take"}`: owners and the creator always get it; another read-write user gets it only when it is released or the holder has been idle (not attached, or no pane activity since the later of the hand-over and the last activity) for `HIVE_SESSIONS_KEYBOARD_GRACE_SEC` (default 60), otherwise 409 `{holder, grace_seconds}`. `{"action":"release"}` is for the holder, the creator or an owner. A hand-over detaches the previous holder's writable tmux client at once; both browsers re-attach with a fresh handoff in their new mode. Every hand-over is audited as `session_keyboard` with `from` and `to`, so keystrokes typed in the terminal are attributable to the holder of record at that time.
+
+**Presence.** `viewers` in the session object is the set of live terminal websockets per user, with `keyboard` true for the holder.
+
+## Queued Send
+
+`POST /api/sessions/{id}/input` validates the text (UTF-8, no control characters but tab and newline) and queues it: 202 with `{queued: {id, position}, queue}`. One worker per session delivers the head only when the pane is **idle**, waits for idle again, then delivers the next. Idle means: none of the vendor's busy markers or a spinner glyph (`⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏`) in the last 12 lines, and, among the last 4 non-decoration lines (box-drawing stripped), a line that is exactly the prompt prefix with nothing typed after it:
+
+| Vendor | Empty prompt line | Busy markers (case-insensitive) |
+|---|---|---|
+| `claude` | `›` or `>` | `esc to interrupt`, `to interrupt` |
+| `copilot` | `>` or `›` | `esc to interrupt`, `to interrupt`, `to cancel` |
+| `codex` | `›` or `>` | `esc to interrupt`, `to interrupt`, `working` |
+| any other | `›`, `>` or `❯` | `to interrupt` |
+
+A permission prompt, a half-typed line or a run in progress therefore holds the queue. The heuristic fails open: an item that has waited `HIVE_SESSIONS_SEND_WAIT_SEC` (default 45) is delivered anyway, so a send is never stuck. The queue holds at most 32 items (429 beyond); it is dropped when the session ends. `DELETE /api/sessions/{id}/input/{queue_id}` cancels your own item (the creator or an owner may cancel anyone's), 409 once it is being delivered. Each delivery is audited as `session_input` with the user who queued it, the byte count, `submit` and `queued_sec`, never the text; `session_upload` is audited at upload time as before.
 
 ## Limits
 

@@ -38654,7 +38654,7 @@
           "Sessions"
         ],
         "summary": "List sessions, vendors and limits",
-        "description": "Any role. While the feature is off returns enabled=false with empty lists. Also reports workspace {repo, path}: the shared checkout new sessions open in; each session carries workspace_repo and workspace. A session's status is `preparing` (background start in flight; `message` says what it waits on), `running`, `failed` (`error` says why; DELETE removes it) or `ended`.",
+        "description": "Any role. While the feature is off returns enabled=false with empty lists. Also reports workspace {repo, path}: the shared checkout new sessions open in; each session carries workspace_repo and workspace. A session's status is `preparing` (background start in flight; `message` says what it waits on), `running`, `failed` (`error` says why; DELETE removes it) or `ended`. Each running session also carries keyboard_holder / keyboard_since / keyboard_mine (the keyboard lease), viewers [{user, attached_since, keyboard}] (live terminals) and queue {length, head, position, items[{id, user, bytes, submit, queued_at, delivering, mine}]} (pending sends, never their text).",
         "responses": {
           "200": {
             "description": "OK"
@@ -38818,11 +38818,14 @@
         "tags": [
           "Sessions"
         ],
-        "summary": "Type text into a session (owner or read-write)",
-        "description": "Literal paste, never key names. Audited with user and byte count, not the text.",
+        "summary": "Queue text for a session (owner or read-write)",
+        "description": "Literal paste, never key names. QUEUED: answers 202 with {queued: {id, position}, queue}; a per-session worker types the head once the CLI prompt is idle (no run in progress, empty prompt line; fails open after HIVE_SESSIONS_SEND_WAIT_SEC, default 45). Audited at delivery with the queuing user and byte count, not the text. The read role never sends (403).",
         "responses": {
-          "200": {
-            "description": "OK"
+          "202": {
+            "description": "Queued; body carries the item id, its position and the session's queue"
+          },
+          "429": {
+            "description": "Queue full (32 items)"
           },
           "400": {
             "description": "Invalid text"
@@ -38849,6 +38852,96 @@
                   },
                   "submit": {
                     "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{id}/input/{queue_id}": {
+      "delete": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Cancel a queued send (owner or read-write)",
+        "description": "Removes your own queued item; the session's creator or an owner may cancel anyone's.",
+        "responses": {
+          "200": {
+            "description": "Cancelled; body carries the updated queue"
+          },
+          "403": {
+            "description": "Not your item, or role not allowed"
+          },
+          "404": {
+            "description": "Unknown session or item"
+          },
+          "409": {
+            "description": "The item is being delivered"
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "queue_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{id}/keyboard": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Take or release the session's keyboard (owner or read-write)",
+        "description": "One person at a time holds the keyboard: the only writable terminal attach; everyone else watches read-only (tmux attach-session -r, decided by the server). {\"action\":\"take\"}: owners and the creator always may; another read-write user only when the keyboard is released or the holder has been idle for HIVE_SESSIONS_KEYBOARD_GRACE_SEC (default 60), else 409 {holder, grace_seconds}. {\"action\":\"release\"}: the holder, the creator or an owner. A hand-over detaches the previous holder's tmux client and is audited as session_keyboard with from/to.",
+        "responses": {
+          "200": {
+            "description": "OK; body carries the session with keyboard_holder, keyboard_mine, viewers"
+          },
+          "400": {
+            "description": "Unknown action"
+          },
+          "403": {
+            "description": "Role not allowed, or not the holder on release"
+          },
+          "409": {
+            "description": "The holder is active; or the session is not running"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "action": {
+                    "type": "string",
+                    "enum": ["take", "release"]
                   }
                 }
               }

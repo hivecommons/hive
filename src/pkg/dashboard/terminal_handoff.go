@@ -43,18 +43,20 @@ func (s *Server) handleCreateTerminalHandoff(w http.ResponseWriter, r *http.Requ
 	if role == "" {
 		role = config.RoleOwner
 	}
-	if !terminalRoleAllowed(role) {
-		jsonStatusResponse(w, http.StatusForbidden, map[string]string{"error": "terminal access requires owner or read-write role"})
-		return
-	}
 	// Optional body {"session":"<id>"} attaches a user session (tmux
 	// hive-sess-<id>); an absent body keeps the agent-terminal behaviour. A
-	// session code is BOUND to that id (and to the caller, who must be the
-	// session's creator, an owner, or a writer on a shared session): it
-	// authenticates only /terminal/?arg=hive-sess-<id>, and an unbound code
-	// never opens a user session.
+	// session code is BOUND to that id (and to the caller, who must be able to
+	// see the session: its creator, an owner, or anyone on a shared session):
+	// it authenticates only /terminal/?arg=hive-sess-<id>, and an unbound code
+	// never opens a user session. The read role may mint a session code (it
+	// watches read-only; guardTerminalSession decides who types) but never an
+	// agent-terminal one.
 	sessionID, ok := readHandoffSession(w, r)
 	if !ok {
+		return
+	}
+	if sessionID == "" && !terminalRoleAllowed(role) {
+		jsonStatusResponse(w, http.StatusForbidden, map[string]string{"error": "terminal access requires owner or read-write role"})
 		return
 	}
 	if sessionID != "" && !s.sessionHandoffTarget(w, r, sessionID) {

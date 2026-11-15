@@ -39,6 +39,8 @@ type fakeSessionRuntime struct {
 	removeErr error
 	// resumeDirs records the workDir each ResumeInfo call was given.
 	resumeDirs []string
+	// detached records each DetachWritableClients call (keyboard hand-over).
+	detached []string
 }
 
 func newFakeSessionRuntime(t *testing.T) *fakeSessionRuntime {
@@ -89,7 +91,37 @@ func (f *fakeSessionRuntime) Kill(id string) error {
 	return nil
 }
 func (f *fakeSessionRuntime) Capture(id string, lines int) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.capture, nil
+}
+
+// setCapture replaces what Capture returns (the pane's last lines).
+func (f *fakeSessionRuntime) setCapture(text string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.capture = text
+}
+
+// typedTexts copies the texts delivered so far.
+func (f *fakeSessionRuntime) typedTexts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.typed...)
+}
+
+func (f *fakeSessionRuntime) DetachWritableClients(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.detached = append(f.detached, id)
+	return nil
+}
+
+// detachedIDs copies the sessions whose writable clients were detached.
+func (f *fakeSessionRuntime) detachedIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.detached...)
 }
 func (f *fakeSessionRuntime) SendText(id, text string, submit bool) error {
 	f.mu.Lock()
@@ -364,11 +396,11 @@ func TestSessionsRoleMatrix(t *testing.T) {
 		who                  sessionCaller
 		create, input, patch int // expected status codes
 	}
-	// Create answers 202 (the workspace is prepared in the background); create/input need owner or read-write; patch needs creator or owner and
+	// Create and input answer 202 (the workspace is prepared, and the text delivered, in the background); create/input need owner or read-write; patch needs creator or owner and
 	// every non-owner here is not the creator of the owner's session.
 	rows := []row{
-		{callerOwner, 202, 200, 200},
-		{callerRW, 202, 200, 403},
+		{callerOwner, 202, 202, 200},
+		{callerRW, 202, 202, 403},
 		{callerMerger, 403, 403, 403},
 		{callerRead, 403, 403, 403},
 		{callerForgedOwn, 403, 403, 403},
@@ -664,13 +696,21 @@ func TestSessionsResumeFailureKeepsSessionEnded(t *testing.T) {
 func TestSessionsInputCapsAndAudit(t *testing.T) {
 	e := newSessionTestEnv(t, true)
 	t.Setenv(sessionsMaxInputBytesEnv, "32")
+	fastSessionQueue(t, e)
 	id := e.create(t, callerRW, "typing")
+	e.rt.setCapture(claudeIdlePane)
 	secret := "my-secret-passphrase"
-	if rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/input", map[string]any{"text": secret, "submit": true}); rec.Code != http.StatusOK {
+	// Input is queued (202) and delivered by the session's worker once the
+	// pane is idle (it is, here), then audited as the sender.
+	if rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/input", map[string]any{"text": secret, "submit": true}); rec.Code != http.StatusAccepted {
 		t.Fatalf("input = %d: %s", rec.Code, rec.Body.String())
 	}
-	if len(e.rt.typed) != 1 || e.rt.typed[0] != secret || !e.rt.submits[0] {
-		t.Errorf("typed = %v submits = %v", e.rt.typed, e.rt.submits)
+	waitSessionsFor(t, "queued input to be delivered", func() bool { return len(e.rt.typedTexts()) == 1 })
+	e.rt.mu.Lock()
+	typed, submits := append([]string(nil), e.rt.typed...), append([]bool(nil), e.rt.submits...)
+	e.rt.mu.Unlock()
+	if len(typed) != 1 || typed[0] != secret || !submits[0] {
+		t.Errorf("typed = %v submits = %v", typed, submits)
 	}
 	if rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/input", map[string]any{"text": strings.Repeat("x", 33)}); rec.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("oversized input = %d, want 413", rec.Code)
@@ -1140,8 +1180,17 @@ func TestTerminalHandoffWithSession(t *testing.T) {
 	if rec := post(callerRW, nil); rec.Code != http.StatusOK {
 		t.Errorf("handoff without body = %d, want unchanged behaviour", rec.Code)
 	}
-	if rec := post(callerRead, map[string]string{"session": id}); rec.Code != http.StatusForbidden {
-		t.Errorf("read role handoff = %d, want 403", rec.Code)
+	// The read role cannot see a private session (404, the id is not disclosed)
+	// but may watch a shared one read-only, so a session-bound code is minted.
+	if rec := post(callerRead, map[string]string{"session": id}); rec.Code != http.StatusNotFound {
+		t.Errorf("read role handoff on a private session = %d, want 404", rec.Code)
+	}
+	if rec := post(callerRead, nil); rec.Code != http.StatusForbidden {
+		t.Errorf("read role agent-terminal handoff = %d, want 403", rec.Code)
+	}
+	e.do(t, callerRW, "PATCH", "/api/sessions/"+id, map[string]any{"shared": true})
+	if rec := post(callerRead, map[string]string{"session": id}); rec.Code != http.StatusOK {
+		t.Errorf("read role handoff on a shared session = %d, want 200 (read-only viewer)", rec.Code)
 	}
 	if rec := post(callerRW, map[string]string{"session": "ffffffffffff"}); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown session handoff = %d, want 404", rec.Code)
