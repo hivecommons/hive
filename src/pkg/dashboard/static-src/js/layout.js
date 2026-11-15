@@ -4,7 +4,7 @@
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','inbox-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','inception-section','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','inbox-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
@@ -16,7 +16,7 @@
     var DASHBOARD_LAYOUT_PRESET_LIMIT=5;
     var DASHBOARD_LAYOUT_DEFAULT_NAME='My layout';
     var DASHBOARD_REVIEW_MIGRATION_KEY='hive.dashboard.reviewSectionMigrated';
-    function dashboardAliasSectionId(id){return id==='review-pipeline-section'?'review-queue-section':id;}
+    function dashboardAliasSectionId(id){if(id==='review-pipeline-section')return 'review-queue-section';if(id==='inception-section')return 'sessions-section';return id;}
     function dashboardMigrateReviewSectionStorage(){try{if(localStorage.getItem(DASHBOARD_REVIEW_MIGRATION_KEY)==='1')return;['hive-section-collapsed-review-queue-section','hive-section-collapsed-review-pipeline-section'].forEach(function(k){localStorage.removeItem(k);});var raw=localStorage.getItem(DASHBOARD_HIDDEN_SECTIONS_KEY);if(raw){var arr=JSON.parse(raw);if(Array.isArray(arr)){arr=arr.map(dashboardAliasSectionId).filter(function(id,i,a){return id!=='review-queue-section'&&dashboardCanHideSection(id)&&a.indexOf(id)===i;});if(arr.length)localStorage.setItem(DASHBOARD_HIDDEN_SECTIONS_KEY,JSON.stringify(arr));else localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);}}var layoutRaw=localStorage.getItem(DASHBOARD_LAYOUT_KEY);if(layoutRaw){var layout=JSON.parse(layoutRaw);if(layout&&Array.isArray(layout.main)){layout.main=layout.main.map(dashboardAliasSectionId).filter(function(id,i,a){return a.indexOf(id)===i;});localStorage.setItem(DASHBOARD_LAYOUT_KEY,JSON.stringify(layout));}}localStorage.setItem(DASHBOARD_REVIEW_MIGRATION_KEY,'1');}catch(e){}}
     dashboardSeedCollapseDefaults();
     dashboardMigrateReviewSectionStorage();
@@ -25,7 +25,7 @@
     function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
     function experimentLabEnabled(){return dashboardFeatureEnabled('experiment_lab');}
     function sessionsFeatureEnabled(){return window._sessionsEnabled===true;}
-    function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);if(id==='sessions-section')return !sessionsFeatureEnabled();if(id==='inception-section')return sessionsFeatureEnabled();return id==='nous-section'&&!experimentLabEnabled();}
+    function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);if(id==='sessions-section')return !sessionsFeatureEnabled();return id==='nous-section'&&!experimentLabEnabled();}
     function dashboardCanHideSection(id){id=dashboardAliasSectionId(id);return DASHBOARD_LAYOUT_TEMPLATE.main.indexOf(id)>=0&&DASHBOARD_HIDE_DENYLIST.indexOf(id)<0&&!dashboardFeatureSectionHidden(id);}
     function dashboardHiddenSectionsRead(){try{var raw=localStorage.getItem(DASHBOARD_HIDDEN_SECTIONS_KEY),arr=raw?JSON.parse(raw):[];return Array.isArray(arr)?arr.filter(function(id,i){return dashboardCanHideSection(id)&&arr.indexOf(id)===i;}):[];}catch(e){return [];}}
     function dashboardHiddenSectionsWrite(ids){try{var valid=(ids||[]).filter(function(id,i,a){return dashboardCanHideSection(id)&&a.indexOf(id)===i;});if(valid.length)localStorage.setItem(DASHBOARD_HIDDEN_SECTIONS_KEY,JSON.stringify(valid));else localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);}catch(e){}dashboardUpdateLayoutMenuState();}

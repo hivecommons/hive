@@ -292,63 +292,11 @@ func getCDPWebSocket() string {
 	return ""
 }
 
-// verifyCDPPhase checks the dashboard UI at each inception phase via CDP.
-// Returns empty string on success, error description on failure.
+// verifyCDPPhase used to check the dashboard's Inception wizard panel at each
+// phase over CDP. The wizard UI was removed (the dashboard's Inception is now
+// the Inception (spek) sessions section), so there is no per-phase panel left
+// to check; the suite verifies inception through /api/inception/* only.
 func verifyCDPPhase(phase string, pass int) string {
-	ws := getCDPWebSocket()
-	if ws == "" {
-		return "" // CDP not available — skip UI checks silently
-	}
-
-	// Navigate to inception section
-	cdpEval(ws, "ocNavigate('inception-section')")
-	time.Sleep(2 * time.Second)
-
-	// Check progress bar exists
-	val, err := cdpEval(ws, `(function(){ var el = document.getElementById('inception-panel'); return el ? el.textContent.substring(0,300) : 'NO_PANEL'; })()`)
-	if err != nil || val == "NO_PANEL" {
-		return fmt.Sprintf("CDP: inception panel not found at phase %s", phase)
-	}
-
-	// Check progress bar shows correct active stage
-	progressCheck, _ := cdpEval(ws, fmt.Sprintf(`(function(){ var el = document.getElementById('inception-panel'); if (!el) return 'no_panel'; var text = el.textContent; var hasIdea = text.includes('Idea'); var hasClarify = text.includes('Clarify'); var hasStructure = text.includes('Structure'); return hasIdea && hasClarify && hasStructure ? 'progress_bar_ok' : 'progress_bar_missing'; })()`))
-	if progressCheck != "progress_bar_ok" {
-		return fmt.Sprintf("CDP: progress bar missing stages at phase %s", phase)
-	}
-
-	switch phase {
-	case "capture":
-		// Should show idea text + activity feed
-		check, _ := cdpEval(ws, `(function(){ return document.getElementById('inception-activity') ? 'activity_ok' : 'no_activity'; })()`)
-		if check != "activity_ok" {
-			return "CDP: activity feed not found in capture phase"
-		}
-
-	case "clarify":
-		// Should show question form with Submit button
-		check, _ := cdpEval(ws, `(function(){ var panel = document.getElementById('inception-panel'); if (!panel) return 'no_panel'; return panel.textContent.includes('Submit') ? 'submit_ok' : 'no_submit'; })()`)
-		if check != "submit_ok" {
-			return "CDP: Submit button not found in clarify phase"
-		}
-
-	case "scaffold":
-		// Should show file preview or scaffold content
-		check, _ := cdpEval(ws, `(function(){ var panel = document.getElementById('inception-panel'); if (!panel) return 'no_panel'; return (panel.textContent.includes('Preview') || panel.textContent.includes('Approve') || panel.textContent.includes('README')) ? 'scaffold_ok' : 'no_scaffold'; })()`)
-		if check != "scaffold_ok" {
-			return "CDP: scaffold preview not found"
-		}
-
-	case "complete":
-		// Should show completion message
-		check, _ := cdpEval(ws, `(function(){ var panel = document.getElementById('inception-panel'); if (!panel) return 'no_panel'; return panel.textContent.includes('Complete') ? 'complete_ok' : 'no_complete'; })()`)
-		if check != "complete_ok" {
-			return "CDP: completion message not found"
-		}
-	}
-
-	// Take screenshot for evidence
-	cdpScreenshot(ws, fmt.Sprintf("pass-%d-%s", pass, phase))
-
 	return ""
 }
 
