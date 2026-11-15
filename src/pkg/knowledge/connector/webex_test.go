@@ -323,7 +323,7 @@ func TestWebexConnectCompleteAndSync(t *testing.T) {
 		t.Fatalf("cursor = %q", next)
 	}
 	a := pages[1]
-	for _, want := range []string{"# Weekly sync", "[00:02] Andy Anderson: Kick-off", "[01:10] Pat Lee: Ship Friday", "## Summary (Webex)", "The team agreed to **ship**.", "### Action items", "- Andy opens the PR", "- **Participants:** Andy Anderson, pat@example.com", "- **Duration:** 30m0s", "- **Host:** andy@example.com"} {
+	for _, want := range []string{"# Weekly sync", "[00:02] Andy Anderson: Kick-off", "[01:10] Pat Lee: Ship Friday", "## Summary (Webex)", "The team agreed to ship.", "### Action items", "- Andy opens the PR", "- **Participants:** Andy Anderson, pat@example.com", "- **Duration:** 30m0s", "- **Host:** andy@example.com"} {
 		if !strings.Contains(a.Markdown, want) {
 			t.Fatalf("meeting a lacks %q:\n%s", want, a.Markdown)
 		}
@@ -331,8 +331,8 @@ func TestWebexConnectCompleteAndSync(t *testing.T) {
 	if a.Attrs["webex_recording_id"] != "mtg-a" || a.Attrs["webex_meeting_id"] != "mtg-a" || a.Attrs[meetingContentAttr] != plaudContentReady {
 		t.Fatalf("attrs = %v", a.Attrs)
 	}
-	if strings.Contains(a.Markdown, "recordingservice/play") {
-		t.Fatal("the playback link is stored only with include_video_link")
+	if strings.Contains(a.Markdown, "- **Recording (Webex):**") {
+		t.Fatal("the media line is written only with include_video_link")
 	}
 	b := pages[2]
 	if b.Attrs[meetingContentAttr] != plaudContentPending || !strings.Contains(b.Markdown, MeetingPendingText) {
