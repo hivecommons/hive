@@ -6068,7 +6068,7 @@
     .inbox-media:not(:empty) { margin-top: var(--sp-2); }
     .inbox-audio { width: 100%; max-width: 520px; display: block; }
     .inbox-transcript { margin-top: var(--sp-2); }
-    .inbox-transcript-text { white-space: pre-wrap; font-family: inherit; font-size: var(--fs-sm); max-height: 24em; overflow: auto; margin: var(--sp-1) 0 0; padding: var(--sp-2); border: 1px solid var(--border); border-radius: 6px; background: var(--bg); }
+    .inbox-transcript-text { white-space: pre-wrap; font-family: inherit; font-size: var(--fs-sm); max-height: 24em; overflow: auto; margin: var(--sp-1) 0 0; padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
     .inbox-highlights { margin-top: var(--sp-2); }
     .inbox-field { display: block; margin-top: var(--sp-4); }
     .inbox-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
@@ -47243,7 +47243,7 @@ function burnAreaChart() {
         target.appendChild(audio);
         const note = document.createElement('div');
         note.className = 'muted-xs';
-        note.textContent = 'Fresh link' + (data.expires_at ? ', valid until ' + new Date(data.expires_at).toLocaleString() : '') + '. Click ▶ Play recording again for a new one.';
+        note.textContent = 'Fresh link' + (data.expires_at ? ', valid until ' + formatDashboardDateTime(data.expires_at) : '') + '. Click ▶ Play recording again for a new one.';
         target.appendChild(note);
       } catch (e) {
         if (mount) mount.innerHTML = '';

@@ -183,7 +183,7 @@
         target.appendChild(audio);
         const note = document.createElement('div');
         note.className = 'muted-xs';
-        note.textContent = 'Fresh link' + (data.expires_at ? ', valid until ' + new Date(data.expires_at).toLocaleString() : '') + '. Click ▶ Play recording again for a new one.';
+        note.textContent = 'Fresh link' + (data.expires_at ? ', valid until ' + formatDashboardDateTime(data.expires_at) : '') + '. Click ▶ Play recording again for a new one.';
         target.appendChild(note);
       } catch (e) {
         if (mount) mount.innerHTML = '';
