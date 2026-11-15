@@ -89,6 +89,10 @@ func itemFromFact(fm map[string]string, body, layer, path string) Item {
 	if it.Title == "" {
 		it.Title = it.ID
 	}
+	sections := splitSections(body)
+	it.Summary = truncateRunes(sections["summary"], SummaryRunes)
+	it.HasTranscript = sections["transcript"] != ""
+	it.Pending = it.Summary == "" && !it.HasTranscript
 	for _, key := range []string{"attr_recorded_at", "synthesized"} {
 		if t, err := time.Parse(time.RFC3339, fm[key]); err == nil {
 			it.RecordedAt = t.UTC()
@@ -124,7 +128,9 @@ func (f *FactSource) Fetch(_ context.Context, it Item) (Content, error) {
 	if c.Title == "" {
 		c.Title = it.Title
 	}
-	c.Summary, c.Transcript = splitSections(body)
+	sections := splitSections(body)
+	c.Summary, c.Transcript, c.Highlights = sections["summary"], sections["transcript"], sections["highlights"]
+	c.Pending = c.Summary == "" && c.Transcript == ""
 	return c, nil
 }
 
@@ -155,41 +161,62 @@ func splitFrontMatter(content string) (map[string]string, string) {
 	return out, rest
 }
 
-// splitSections returns the text under a "## Summary…" heading and under
-// "## Transcript". Headings may carry a suffix such as "(Plaud)".
-func splitSections(body string) (summary, transcript string) {
-	var cur *string
-	var sb, tb strings.Builder
+// sectionKeys are the "## …" headings splitSections collects, keyed by the
+// heading's first word (lower-cased): "## Summary (Plaud)" → summary.
+var sectionKeys = []string{"summary", "transcript", "highlights"}
+
+// splitSections returns the text under each known "## …" heading, keyed by
+// sectionKeys. Headings may carry a suffix such as "(Plaud)"; unknown
+// headings end the current section.
+func splitSections(body string) map[string]string {
+	builders := map[string]*strings.Builder{}
+	var cur *strings.Builder
 	for _, line := range strings.Split(body, "\n") {
 		if strings.HasPrefix(line, "## ") {
 			h := strings.ToLower(line[3:])
-			switch {
-			case strings.HasPrefix(h, "summary"):
-				cur = &summary
-			case strings.HasPrefix(h, "transcript"):
-				cur = &transcript
-			default:
-				cur = nil
+			cur = nil
+			for _, key := range sectionKeys {
+				if strings.HasPrefix(h, key) {
+					if builders[key] == nil {
+						builders[key] = &strings.Builder{}
+					}
+					cur = builders[key]
+					break
+				}
 			}
 			continue
 		}
-		if cur == &summary {
-			sb.WriteString(line)
-			sb.WriteByte('\n')
-		} else if cur == &transcript {
-			tb.WriteString(line)
-			tb.WriteByte('\n')
+		if cur != nil {
+			cur.WriteString(line)
+			cur.WriteByte('\n')
 		}
 	}
-	return strings.TrimSpace(sb.String()), strings.TrimSpace(tb.String())
+	out := make(map[string]string, len(sectionKeys))
+	for _, key := range sectionKeys {
+		if b := builders[key]; b != nil {
+			out[key] = strings.TrimSpace(b.String())
+		}
+	}
+	return out
+}
+
+// truncateRunes bounds s to n runes with an ellipsis.
+func truncateRunes(s string, n int) string {
+	if utf8.RuneCountInString(s) <= n {
+		return s
+	}
+	r := []rune(s)
+	return strings.TrimSpace(string(r[:n])) + "…"
 }
 
 // excerpt returns the first prose lines of body, bounded to excerptRunes.
+// Headings, bold labels and the connector's "- **Recorded:**"/"- **Duration:**"
+// metadata bullets are skipped (the Inbox shows those fields itself).
 func excerpt(body string) string {
 	var b strings.Builder
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "**") {
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "**") || strings.HasPrefix(line, "- **") {
 			continue
 		}
 		if b.Len() > 0 {
@@ -200,10 +227,5 @@ func excerpt(body string) string {
 			break
 		}
 	}
-	s := b.String()
-	if utf8.RuneCountInString(s) > excerptRunes {
-		r := []rune(s)
-		s = strings.TrimSpace(string(r[:excerptRunes])) + "…"
-	}
-	return s
+	return truncateRunes(b.String(), excerptRunes)
 }

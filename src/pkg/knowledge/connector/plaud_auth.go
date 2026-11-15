@@ -298,7 +298,7 @@ func renderPlaudTranscript(text string) string {
 	case []any:
 		segs = t
 	case map[string]any:
-		for _, key := range []string{"source_list", "segments", "transcript", "items", "data"} {
+		for _, key := range []string{"source_list", "segments", "utterances", "transcript", "items", "data", "results", "entries", "sentences"} {
 			if arr, ok := t[key].([]any); ok {
 				segs = arr
 				break

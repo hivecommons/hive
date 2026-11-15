@@ -26,7 +26,119 @@ func (s *Server) registerInboxRoutes() {
 	s.mux.HandleFunc("POST /api/inbox/dismiss", s.handleInboxDismiss)
 	s.mux.HandleFunc("GET /api/inbox/settings", s.handleInboxSettingsGet)
 	s.mux.HandleFunc("POST /api/inbox/settings", s.handleInboxSettingsPost)
+	s.mux.HandleFunc("GET /api/inbox/{source}/{id}/content", s.handleInboxContent)
+	s.mux.HandleFunc("GET /api/inbox/{source}/{id}/audio", s.handleInboxAudio)
 	s.mux.HandleFunc("POST /api/knowledge/connectors/{name}/auth/complete", s.handleKnowledgeConnectorAuthComplete)
+}
+
+// inboxSourceReadTimeout bounds one read that may spawn the source's MCP
+// process (a direct Plaud content read or an audio link).
+const inboxSourceReadTimeout = 90 * time.Second
+
+// InboxContentResponse is GET /api/inbox/{source}/{id}/content.
+type InboxContentResponse struct {
+	Source string `json:"source"`
+	ItemID string `json:"item_id"`
+	inbox.Content
+}
+
+// InboxAudioResponse is GET /api/inbox/{source}/{id}/audio: a presigned link
+// minted for this request. It is never stored by the hive; clients must not
+// cache it beyond expires_at.
+type InboxAudioResponse struct {
+	Source    string    `json:"source"`
+	ItemID    string    `json:"item_id"`
+	URL       string    `json:"url"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+// inboxFindItem resolves the {source}/{id} path of an item request.
+func (s *Server) inboxFindItem(w http.ResponseWriter, r *http.Request, svc *inbox.Service) (inbox.Item, bool) {
+	source, id := strings.TrimSpace(r.PathValue("source")), strings.TrimSpace(r.PathValue("id"))
+	if source == "" || id == "" {
+		jsonError(w, "source and id are required", http.StatusBadRequest)
+		return inbox.Item{}, false
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), inboxListTimeout)
+	defer cancel()
+	it, found, err := svc.Find(ctx, source, id)
+	if !found {
+		msg := "unknown inbox item"
+		if err != nil {
+			msg += ": " + err.Error()
+		}
+		jsonError(w, msg, http.StatusNotFound)
+		return inbox.Item{}, false
+	}
+	return it, true
+}
+
+// handleInboxContent returns the full summary/transcript/highlights of one
+// item (dashboard auth, like the listing).
+func (s *Server) handleInboxContent(w http.ResponseWriter, r *http.Request) {
+	svc, ok := s.inboxService(w)
+	if !ok {
+		return
+	}
+	it, ok := s.inboxFindItem(w, r, svc)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), inboxSourceReadTimeout)
+	defer cancel()
+	c, err := svc.Content(ctx, it)
+	if err != nil {
+		jsonError(w, "reading item: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	jsonResponse(w, InboxContentResponse{Source: it.Source, ItemID: it.ID, Content: c})
+}
+
+// requireInboxPlaybackRole admits owners (verified) and read-write sessions:
+// playing a recording is a read of private audio, not an operator mutation.
+func requireInboxPlaybackRole(w http.ResponseWriter, r *http.Request) bool {
+	role := r.Header.Get("X-Hive-Role")
+	if isOwnerRole(role) && r.Header.Get(ownerRoleVerifiedHeader) != "true" {
+		jsonError(w, "owner or read-write access required", http.StatusForbidden)
+		return false
+	}
+	if !config.RoleAtLeast(role, config.RoleReadWrite) {
+		jsonError(w, "owner or read-write access required", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// handleInboxAudio (owner or read-write) mints a fresh presigned audio link
+// through the item's connector. The link is returned once and never written
+// to facts or state; the connector's include_audio option only decides
+// whether a sync also stores a link in the fact, playback never depends on it.
+func (s *Server) handleInboxAudio(w http.ResponseWriter, r *http.Request) {
+	if !requireInboxPlaybackRole(w, r) {
+		return
+	}
+	svc, ok := s.inboxService(w)
+	if !ok {
+		return
+	}
+	it, ok := s.inboxFindItem(w, r, svc)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), inboxSourceReadTimeout)
+	defer cancel()
+	link, err := svc.AudioLink(ctx, it)
+	switch {
+	case errors.Is(err, inbox.ErrNoAudio), errors.Is(err, connector.ErrPlaudNoAudio):
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	case err != nil:
+		jsonError(w, "audio link: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	s.auditFromRequest(r, "inbox_audio", auditDetail("source", it.Source, "item", it.ID), "")
+	w.Header().Set("Cache-Control", "no-store")
+	jsonResponse(w, InboxAudioResponse{Source: it.Source, ItemID: it.ID, URL: link.URL, ExpiresAt: link.ExpiresAt})
 }
 
 // InboxSourceStatus is one configured source as the Inbox header shows it.

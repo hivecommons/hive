@@ -38064,6 +38064,207 @@
         }
       }
     },
+    "/api/inbox/{source}/{id}/content": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Read one inbox item's full text",
+        "description": "Summary, transcript and highlights of one recording, read from its Knowledge fact or live from the source while the fact still has no text. `pending` is true when the source has produced neither a summary nor a transcript yet (for Plaud: the recording was never transcribed in the app).",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Source type (`plaud`, `wisprflow`, ...)"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Upstream item id (for Plaud, the file id)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Item content",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "item_id": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "summary": {
+                      "type": "string"
+                    },
+                    "transcript": {
+                      "type": "string"
+                    },
+                    "highlights": {
+                      "type": "string"
+                    },
+                    "markdown": {
+                      "type": "string"
+                    },
+                    "pending": {
+                      "type": "boolean"
+                    },
+                    "provenance": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Source unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/{source}/{id}/audio": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Mint a fresh audio link for one inbox item",
+        "description": "Owner or read-write. Asks the item's connector for a presigned audio URL (Plaud: `get_file`, valid 24h) and returns it once with `Cache-Control: no-store`; the hive never stores the link in facts or state. Playback does not depend on the connector's `include_audio` option, which only decides whether a sync also writes a link into the fact. Audited as `inbox_audio`.",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Source type (`plaud`, `wisprflow`, ...)"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Upstream item id (for Plaud, the file id)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Presigned audio link",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "source": {
+                      "type": "string"
+                    },
+                    "item_id": {
+                      "type": "string"
+                    },
+                    "url": {
+                      "type": "string"
+                    },
+                    "expires_at": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown item, or no audio for this item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "502": {
+            "description": "Source unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/inbox/settings": {
       "get": {
         "tags": [

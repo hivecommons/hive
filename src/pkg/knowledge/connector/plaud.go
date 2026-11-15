@@ -48,10 +48,13 @@ const (
 	plaudHomeInherit = "inherit"
 )
 
-// plaudConnector syncs Plaud recordings: list_files → get_transcript +
-// get_note → one page per recording. Scope keys: command, home, since_days,
-// max_files, include_audio, query, tags. No auth.env/auth.file: Plaud's
-// OAuth token lives in the MCP server's own store ($HOME/.plaud).
+// plaudConnector syncs Plaud recordings: list_files → get_file (block
+// inventory) → get_note / get_transcript for the blocks that exist → one page
+// per recording. Scope keys: command, home, since_days, max_files,
+// include_audio (also store the 24h audio link in the fact; on-demand
+// playback in the Inbox never depends on it), query, tags. No
+// auth.env/auth.file: Plaud's OAuth token lives in the MCP server's own store
+// ($HOME/.plaud).
 type plaudConnector struct {
 	cfg      ConnectorConfig
 	logger   *slog.Logger
@@ -64,6 +67,9 @@ type plaudConnector struct {
 	// callbackBase is where a pasted OAuth redirect is forwarded while a
 	// login session is alive (the MCP server's fixed localhost listener).
 	callbackBase string
+	// vaultDir is where this connector's facts are written
+	// (<KnowledgeDir>/connectors/<layer>); empty disables pending refetch.
+	vaultDir string
 
 	mu    sync.Mutex
 	login *plaudLogin
@@ -97,6 +103,9 @@ func newPlaudConnector(cfg ConnectorConfig, deps Deps) (Connector, error) {
 	c.dial = stdioMCPDialer(command, home)
 	c.home = home
 	c.callbackBase = plaudCallbackBase
+	if deps.KnowledgeDir != "" && cfg.Layer != "" {
+		c.vaultDir = filepath.Join(deps.KnowledgeDir, "connectors", cfg.Layer)
+	}
 	return c, nil
 }
 
@@ -174,6 +183,13 @@ func (c *plaudConnector) Sync(ctx context.Context, cur Cursor, emit func(Page) e
 	if err != nil {
 		return cur, err
 	}
+	listed := make(map[string]bool, len(files))
+	for _, f := range files {
+		listed[f.ID] = true
+	}
+	// Recordings whose fact still has no text (not transcribed when last
+	// seen) are re-read even when the listing window no longer covers them.
+	files = append(files, c.pendingRefetch(listed)...)
 	total := len(files)
 	reportProgress(ctx, func(p *Progress) { p.Phase, p.ItemsTotal = ProgressFetching, total })
 	newest := parsePlaudCursor(cur)
@@ -253,17 +269,17 @@ func (c *plaudConnector) listFiles(ctx context.Context, client mcpClient, since 
 	return out, nil
 }
 
-// fetchPage builds the knowledge page for one recording.
+// fetchPage builds the knowledge page for one recording. A recording Plaud
+// has not transcribed yet still becomes a page (so the Inbox lists it and the
+// audio can be played) marked plaud_content: pending for later refetch.
 func (c *plaudConnector) fetchPage(ctx context.Context, client mcpClient, f plaudFile) (Page, error) {
-	note, transcript, err := c.fetchNoteAndTranscript(ctx, client, f.ID)
+	content, err := c.fetchContent(ctx, client, f.ID)
 	if err != nil {
 		return Page{}, err
 	}
 	audioURL := ""
 	if c.includeAudio() {
-		if text, err := client.Call(ctx, "get_file", map[string]any{"file_id": f.ID}); err == nil {
-			audioURL = plaudPresignedURL(text)
-		}
+		audioURL = content.AudioURL
 	}
 	title := plaudPageTitle(f)
 	var md strings.Builder
@@ -280,17 +296,28 @@ func (c *plaudConnector) fetchPage(ctx context.Context, client mcpClient, f plau
 		fmt.Fprintf(&md, "- **Audio (24h link):** %s\n", audioURL)
 	}
 	md.WriteString("\n")
-	if strings.TrimSpace(note) != "" {
+	if content.Pending() {
+		md.WriteString("_" + PlaudPendingText + "_\n\n")
+	}
+	if s := strings.TrimSpace(content.Summary); s != "" {
 		md.WriteString("## Summary (Plaud)\n\n")
-		md.WriteString(strings.TrimSpace(note))
+		md.WriteString(s)
 		md.WriteString("\n\n")
 	}
-	if strings.TrimSpace(transcript) != "" {
+	if t := strings.TrimSpace(content.Transcript); t != "" {
 		md.WriteString("## Transcript\n\n")
-		md.WriteString(strings.TrimSpace(transcript))
+		md.WriteString(t)
+		md.WriteString("\n\n")
+	}
+	if h := strings.TrimSpace(content.Highlights); h != "" {
+		md.WriteString("## Highlights\n\nMoments flagged with the device button:\n\n")
+		md.WriteString(h)
 		md.WriteString("\n")
 	}
-	attrs := map[string]string{"plaud_file_id": f.ID}
+	attrs := map[string]string{"plaud_file_id": f.ID, plaudContentAttr: plaudContentReady}
+	if content.Pending() {
+		attrs[plaudContentAttr] = plaudContentPending
+	}
 	if f.DurationMS > 0 {
 		attrs["duration_ms"] = strconv.FormatInt(f.DurationMS, 10)
 	}
@@ -475,26 +502,4 @@ func plaudTime(m map[string]any, keys ...string) time.Time {
 		}
 	}
 	return time.Time{}
-}
-
-// fetchNoteAndTranscript renders the note and transcript of one recording.
-// It fails only when neither is available.
-func (c *plaudConnector) fetchNoteAndTranscript(ctx context.Context, client mcpClient, id string) (note, transcript string, err error) {
-	noteText, noteErr := client.Call(ctx, "get_note", map[string]any{"file_id": id})
-	transcriptText, trErr := client.Call(ctx, "get_transcript", map[string]any{"file_id": id})
-	if noteErr != nil && trErr != nil {
-		return "", "", plaudAuthError(trErr)
-	}
-	if noteErr != nil {
-		noteText = ""
-	}
-	if trErr != nil {
-		transcriptText = ""
-	}
-	note = renderPlaudNote(noteText)
-	transcript = renderPlaudTranscript(transcriptText)
-	if strings.TrimSpace(note) == "" && strings.TrimSpace(transcript) == "" {
-		return "", "", fmt.Errorf("no note or transcript available yet")
-	}
-	return note, transcript, nil
 }
