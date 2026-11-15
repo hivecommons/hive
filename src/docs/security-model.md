@@ -472,6 +472,17 @@ importance:
 - **Resume ids** never start with `-` and a resume command may carry only the
   vendor binary, a fixed set of resume words and a flag-free id, so a planted
   transcript name cannot add `--dangerously-skip-permissions`.
+- **Voice notes stay in the browser.** The input bar's Voice button (write
+  roles only) uses the browser's Web Speech API, so transcription is done by
+  the browser vendor's speech service (Chrome sends the audio to Google), not
+  by Hive; the audio never reaches the Hive backend. The transcript only fills
+  the Send textarea and goes through the same queued `/input` path as typed
+  text when the user presses Send. To allow it, the gateway's
+  `Permissions-Policy` for the dashboard document is
+  `geolocation=(), camera=(), microphone=(self)` (`src/deploy/nginx.conf`,
+  `map $uri $hive_document_permissions_policy`); the ttyd terminal iframe
+  (`/terminal/`) and `/api/` responses keep `microphone=()`, and no other origin
+  is ever granted the microphone.
 
 Audit: `session_created`, `session_started` (the outcome of the background
 start), `session_closed`, `session_renamed`, `session_input` and
