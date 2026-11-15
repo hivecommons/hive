@@ -2,6 +2,7 @@ package inbox
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"time"
@@ -61,19 +62,41 @@ func (p *PlaudSource) Fetch(ctx context.Context, it Item) (Content, error) {
 	}
 	var md strings.Builder
 	md.WriteString("# " + it.Title + "\n")
+	if c.Pending {
+		md.WriteString("\n_" + connector.PlaudPendingText + "_\n")
+	}
 	if c.Summary != "" {
 		md.WriteString("\n## Summary\n\n" + c.Summary + "\n")
 	}
 	if c.Transcript != "" {
 		md.WriteString("\n## Transcript\n\n" + c.Transcript + "\n")
 	}
+	if c.Highlights != "" {
+		md.WriteString("\n## Highlights\n\n" + c.Highlights + "\n")
+	}
 	return Content{
 		Title:      it.Title,
 		Summary:    c.Summary,
 		Transcript: c.Transcript,
+		Highlights: c.Highlights,
+		Pending:    c.Pending,
 		Markdown:   strings.TrimSpace(md.String()),
 		Provenance: PlaudType + "://recordings/" + it.ID,
 	}, nil
+}
+
+// AudioLink implements AudioSource: a fresh presigned link from Plaud. The
+// link is returned to the caller only; nothing is written.
+func (p *PlaudSource) AudioLink(ctx context.Context, it Item) (AudioLink, error) {
+	audio, ok := p.Reader.(connector.PlaudAudioReader)
+	if !ok {
+		return AudioLink{}, ErrNoAudio
+	}
+	link, err := audio.AudioLink(ctx, it.ID)
+	if err != nil {
+		return AudioLink{}, err
+	}
+	return AudioLink{URL: link.URL, ExpiresAt: link.ExpiresAt}, nil
 }
 
 // directListTTL bounds how long a direct Plaud listing is reused before it
@@ -84,16 +107,25 @@ const directListTTL = 5 * time.Minute
 // directListTimeout bounds one background direct listing.
 const directListTimeout = 2 * time.Minute
 
+// DirectSource is a vendor-backed source (PlaudSource, MeetingSource) that
+// PreferDirect can put in front of the fact-backed one.
+type DirectSource interface {
+	Source
+	AudioSource
+	// Available reports whether the connector can be read right now.
+	Available(ctx context.Context) bool
+}
+
 // PreferDirect lists through Direct while it is available and healthy and
-// falls back to Facts otherwise, so the Inbox keeps working before Plaud is
-// signed in or when the MCP server is unreachable.
+// falls back to Facts otherwise, so the Inbox keeps working before the
+// vendor (Plaud, Zoom, Teams) is signed in or when it is unreachable.
 //
 // The direct listing is cached for TTL and refreshed in the background:
 // List returns whatever is cached (or just facts while nothing is) and
-// never blocks on the Plaud process. Direct items are merged with the facts
+// never blocks on the vendor call. Direct items are merged with the facts
 // of the same id so they keep FactSlug/FactPath/Layer/Excerpt.
 type PreferDirect struct {
-	Direct *PlaudSource
+	Direct DirectSource
 	Facts  Source
 	// TTL overrides directListTTL; zero means the default.
 	TTL time.Duration
@@ -181,6 +213,7 @@ func mergeDirect(direct, facts []Item) []Item {
 	for _, it := range direct {
 		if f, ok := byID[it.ID]; ok {
 			it.FactSlug, it.FactPath, it.Layer, it.Excerpt = f.FactSlug, f.FactPath, f.Layer, f.Excerpt
+			it.Summary, it.HasTranscript, it.Pending = f.Summary, f.HasTranscript, f.Pending
 			if it.Title == "" {
 				it.Title = f.Title
 			}
@@ -198,10 +231,21 @@ func mergeDirect(direct, facts []Item) []Item {
 }
 
 // Fetch implements Source: fact-backed items (FactPath set) read their fact,
-// direct items read Plaud.
+// direct items read Plaud. A fact that still has no text falls through to
+// Plaud while it is reachable, so the Inbox shows text as soon as Plaud has
+// it rather than after the next sync.
 func (s *PreferDirect) Fetch(ctx context.Context, it Item) (Content, error) {
-	if it.FactPath != "" {
+	if it.FactPath != "" && !(it.Pending && s.Direct.Available(ctx)) {
 		return s.Facts.Fetch(ctx, it)
 	}
 	return s.Direct.Fetch(ctx, it)
+}
+
+// AudioLink implements AudioSource through the direct source; audio is
+// never read from facts.
+func (s *PreferDirect) AudioLink(ctx context.Context, it Item) (AudioLink, error) {
+	if !s.Direct.Available(ctx) {
+		return AudioLink{}, fmt.Errorf("%w: %s is not connected", ErrNoAudio, s.Type())
+	}
+	return s.Direct.AudioLink(ctx, it)
 }

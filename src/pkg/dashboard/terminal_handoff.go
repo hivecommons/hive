@@ -17,8 +17,11 @@ const (
 )
 
 type terminalHandoff struct {
-	Username  string
-	Role      string
+	Username string
+	Role     string
+	// Session, when set, binds the code to one user session id: it only
+	// authenticates a request for exactly ?arg=hive-sess-<Session>.
+	Session   string
 	ExpiresAt time.Time
 }
 
@@ -40,16 +43,23 @@ func (s *Server) handleCreateTerminalHandoff(w http.ResponseWriter, r *http.Requ
 	if role == "" {
 		role = config.RoleOwner
 	}
-	if !terminalRoleAllowed(role) {
+	// Optional body {"session":"<id>"} attaches a user session (tmux
+	// hive-sess-<id>); an absent body keeps the agent-terminal behaviour. A
+	// session code is BOUND to that id (and to the caller, who must be able to
+	// see the session: its creator, an owner, or anyone on a shared session):
+	// it authenticates only /terminal/?arg=hive-sess-<id>, and an unbound code
+	// never opens a user session. The read role may mint a session code (it
+	// watches read-only; guardTerminalSession decides who types) but never an
+	// agent-terminal one.
+	sessionID, ok := readHandoffSession(w, r)
+	if !ok {
+		return
+	}
+	if sessionID == "" && !terminalRoleAllowed(role) {
 		jsonStatusResponse(w, http.StatusForbidden, map[string]string{"error": "terminal access requires owner or read-write role"})
 		return
 	}
-	// Optional body {"session":"<id>"} attaches a user session (tmux
-	// hive-sess-<id>); an absent body keeps the agent-terminal behaviour. The
-	// minted code is unchanged: the UI opens /terminal/?arg=hive-sess-<id>.
-	if sessionID, ok := readHandoffSession(w, r); !ok {
-		return
-	} else if sessionID != "" && !s.sessionHandoffTarget(w, sessionID) {
+	if sessionID != "" && !s.sessionHandoffTarget(w, r, sessionID) {
 		return
 	}
 	user := requestUser(r)
@@ -58,7 +68,7 @@ func (s *Server) handleCreateTerminalHandoff(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	s.setTerminalAssertionCookie(w, r, user, role)
-	code := s.createTerminalHandoff(user, role)
+	code := s.createTerminalHandoffFor(user, role, sessionID)
 	if code == "" {
 		jsonStatusResponse(w, http.StatusInternalServerError, map[string]string{"error": "failed to create terminal handoff"})
 		return
@@ -94,6 +104,10 @@ func (s *Server) canMintTerminalAssertion() bool {
 }
 
 func (s *Server) createTerminalHandoff(username, role string) string {
+	return s.createTerminalHandoffFor(username, role, "")
+}
+
+func (s *Server) createTerminalHandoffFor(username, role, session string) string {
 	code := newSessionID()
 	if code == "" {
 		return ""
@@ -108,14 +122,36 @@ func (s *Server) createTerminalHandoff(username, role string) string {
 			delete(s.terminalHandoffs, k)
 		}
 	}
-	s.terminalHandoffs[code] = terminalHandoff{Username: username, Role: role, ExpiresAt: now.Add(terminalHandoffTTL)}
+	s.terminalHandoffs[code] = terminalHandoff{Username: username, Role: role, Session: session, ExpiresAt: now.Add(terminalHandoffTTL)}
 	s.terminalHandoffMu.Unlock()
 	return code
 }
 
 func (s *Server) redeemTerminalHandoff(code string) (username, role string, ok bool) {
+	username, role, _, ok = s.redeemTerminalHandoffBound(code)
+	return username, role, ok
+}
+
+// handoffBindingMatches reports whether a redeemed code may authenticate a
+// request carrying these ttyd ?arg= values. A session-bound code opens exactly
+// its own session; an unbound code never opens a user session.
+func handoffBindingMatches(bound string, args []string) bool {
+	if bound == "" {
+		for _, a := range args {
+			if strings.HasPrefix(a, sessionTmuxPrefix) {
+				return false
+			}
+		}
+		return true
+	}
+	return len(args) == 1 && args[0] == sessionTmuxPrefix+bound
+}
+
+// redeemTerminalHandoffBound burns the code and also returns the session id it
+// was bound to ("" for an unbound code).
+func (s *Server) redeemTerminalHandoffBound(code string) (username, role, session string, ok bool) {
 	if code == "" {
-		return "", "", false
+		return "", "", "", false
 	}
 	s.terminalHandoffMu.Lock()
 	h, found := s.terminalHandoffs[code]
@@ -124,12 +160,12 @@ func (s *Server) redeemTerminalHandoff(code string) (username, role string, ok b
 	}
 	s.terminalHandoffMu.Unlock()
 	if !found || time.Now().After(h.ExpiresAt) || h.Username == "" {
-		return "", "", false
+		return "", "", "", false
 	}
 	if h.Role == "" {
 		h.Role = config.RoleRead
 	}
-	return h.Username, h.Role, true
+	return h.Username, h.Role, h.Session, true
 }
 
 func (s *Server) terminalAssertionFromRequest(r *http.Request) (username, role string, ok bool) {

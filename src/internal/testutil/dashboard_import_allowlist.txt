@@ -76,6 +76,11 @@ github.com/hivecommons/hive/pkg/hubbackup
 github.com/hivecommons/hive/pkg/inbox
 github.com/hivecommons/hive/pkg/inferencehealth
 github.com/hivecommons/hive/pkg/ioscan
+# pkg/keystore: every secret VALUE the dashboard writes to the data volume
+# (LiteLLM, Bob, gateway and backup keys, the Copilot login, the NPS relay
+# identity) is sealed at rest through the keystore's WriteFile/ReadFile
+# (hivecommons/hive#18214); no existing seam carries a secret-file write.
+github.com/hivecommons/hive/pkg/keystore
 github.com/hivecommons/hive/pkg/knowledge
 github.com/hivecommons/hive/pkg/maintainernotes
 github.com/hivecommons/hive/pkg/mention

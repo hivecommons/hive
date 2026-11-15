@@ -28,7 +28,7 @@ func connectorConfigs(entries []config.KnowledgeConnector) []connector.Connector
 			Interval: interval,
 			Layer:    e.Layer,
 			Scope:    e.Scope,
-			Auth:     connector.Auth{Env: e.Auth.Env, File: e.Auth.File},
+			Auth:     dashboard.KnowledgeConnectorAuth(e.Auth),
 		})
 	}
 	return out

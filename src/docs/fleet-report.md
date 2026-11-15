@@ -266,6 +266,35 @@ designed, not a repeated runtime defect (hivecommons/hive#17924). The WARN and
 its `reason` stay in local logs; other reconciler failures and the same message
 at ERROR remain reportable.
 
+The same reconciler logs a failed read (listing open PRs, a PR's commits or its
+comments) at INFO, not WARN, when the failure is transient: a transport
+timeout, a deadline, a rate limit, a 5xx or a shutdown cancellation
+(`logSignedReadFailure`, `pkg/github/pr_signed_reconcile.go`). Every such read
+is retried on the next pass a minute later, so one slow GitHub minute across a
+few active repos is network weather, not a repeated runtime defect
+(hivecommons/hive#18243). A 401, 403, 404 or malformed response stays a WARN.
+
+It also skips the exact WARN `proxy request blocked` (`recordViolation`,
+`src/crux/proxy/github_proxy_violations.go`): the GitHub proxy refusing a
+request that the agent's mode, write-surface or issue-shape policy forbids is
+sandbox enforcement working as designed. The agent receives a denial body,
+the refusal is counted per agent and audited, and the WARN already fires only
+once per distinct (agent, method, path), so one agent trying a handful of
+forbidden endpoints is not a repeated runtime defect
+(hivecommons/hive#18230). The WARN and its `agent` / `method` / `path` stay in
+local logs; proxy dial, certificate and TLS failures remain reportable.
+
+It also skips the exact WARNs `provider quota exhausted: withholding agent
+kicks`, `provider spending limit: withholding agent kicks` and `provider
+spending limit: withholding all but the probe kick` (`runEvalCycle`,
+`src/cmd/hive/main_eval_cycle.go`): withholding kicks from an agent whose
+provider quota is exhausted (hivecommons/hive#18112) or while the spending
+limit is clipped (#15809) is backpressure working as designed. The notice
+repeats every eval cycle until the quota resets and a probe kick clears the
+hold, so a long hold crossed the repeat threshold on its own
+(hivecommons/hive#18239). The WARNs and their `withheld` / `probe` fields stay
+in local logs; failures to gate, probe or deliver kicks remain reportable.
+
 The re-engagement sweep logs `re-engagement kick undeliverable; budget not
 charged` at INFO rather than WARN when the cause is `shared session pool is
 busy` (`deliverReEngagement`, `src/cmd/hive/main_sweeps.go`): a saturated shared CLI

@@ -18,6 +18,12 @@
         markDirtyNativeQueue(key, isOn);
         return;
       }
+      // dashboard.sessions.* is one nested block under the dashboard section.
+      if (section === 'dashboard-sessions') {
+        el.setAttribute('aria-checked', String(isOn));
+        markDashboardSessions(key, isOn);
+        return;
+      }
       markDirty(section, key, isOn);
       if (section === 'dashboard' && key === 'experiment_lab') noteExperimentLabToggle(isOn);
       if (section === 'review' && (key === 'fan_out' || key === 'combined_perspectives')) refreshReviewerAgentSummary();

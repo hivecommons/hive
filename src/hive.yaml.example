@@ -1221,6 +1221,7 @@ dashboard:
   #   max_sessions: 12                  # live sessions per spoke (env HIVE_SESSIONS_MAX)
   #   max_per_user: 4                   # live sessions per creator (env HIVE_SESSIONS_MAX_PER_USER)
   #   idle_ttl_hours: 72                # close after this idle time (env HIVE_SESSIONS_IDLE_TTL_HOURS)
+  #   workspace_repo: org/repo          # shared checkout sessions open in; default project.org/primary_repo (env HIVE_SESSIONS_WORKSPACE_REPO)
   # stage_tracker:
   #   cache_ttl_s: 300                    # Hive activity monitor payload cache; default = governor.eval_interval_s
   # theme: hive                         # Built-in theme id from /api/themes (for example hive, hive-dark, hive-light, star-wars, dungeons-and-dragons, star-trek, cyberpunk, terminal, solarized-dark, nord); or custom

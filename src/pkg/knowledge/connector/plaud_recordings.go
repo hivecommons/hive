@@ -21,6 +21,12 @@ type PlaudRecording struct {
 type PlaudContent struct {
 	Summary    string
 	Transcript string
+	// Highlights lists the moments flagged on the device, one "- mm:ss" line
+	// each; empty when the button was never pressed.
+	Highlights string
+	// Pending is true when Plaud has produced neither a summary nor a
+	// transcript yet (the recording was never transcribed in the app).
+	Pending bool
 }
 
 // PlaudReader reads recordings straight from Plaud without going through
@@ -68,16 +74,22 @@ func (c *plaudConnector) ListRecordings(ctx context.Context) ([]PlaudRecording, 
 	return out, nil
 }
 
-// ReadRecording fetches the note and transcript of one recording.
+// ReadRecording fetches the note, transcript and highlights of one
+// recording. A recording without text is not an error: Pending is set.
 func (c *plaudConnector) ReadRecording(ctx context.Context, id string) (PlaudContent, error) {
 	client, err := c.dial(ctx)
 	if err != nil {
 		return PlaudContent{}, err
 	}
 	defer func() { _ = client.Close() }()
-	note, transcript, err := c.fetchNoteAndTranscript(ctx, client, id)
+	content, err := c.fetchContent(ctx, client, id)
 	if err != nil {
 		return PlaudContent{}, err
 	}
-	return PlaudContent{Summary: strings.TrimSpace(note), Transcript: strings.TrimSpace(transcript)}, nil
+	return PlaudContent{
+		Summary:    strings.TrimSpace(content.Summary),
+		Transcript: strings.TrimSpace(content.Transcript),
+		Highlights: strings.TrimSpace(content.Highlights),
+		Pending:    content.Pending(),
+	}, nil
 }

@@ -32,6 +32,27 @@ var knowledgeConnectorsMu sync.Mutex
 type knowledgeConnectorAuthJSON struct {
 	Env  string `json:"env,omitempty"`
 	File string `json:"file,omitempty"`
+	// OAuth client registration references (zoom, teams): grant mode and the
+	// environment variable NAMES holding client id, secret, account/tenant id.
+	Mode            string `json:"mode,omitempty"`
+	ClientIDEnv     string `json:"client_id_env,omitempty"`
+	ClientSecretEnv string `json:"client_secret_env,omitempty"`
+	AccountIDEnv    string `json:"account_id_env,omitempty"`
+	TenantIDEnv     string `json:"tenant_id_env,omitempty"`
+}
+
+// KnowledgeConnectorAuth converts a config auth block to the connector form.
+// Both carry references (env var names, file paths) only.
+func KnowledgeConnectorAuth(a config.KnowledgeConnectorAuth) connector.Auth {
+	return connector.Auth{
+		Env:             strings.TrimSpace(a.Env),
+		File:            strings.TrimSpace(a.File),
+		Mode:            strings.TrimSpace(a.Mode),
+		ClientIDEnv:     strings.TrimSpace(a.ClientIDEnv),
+		ClientSecretEnv: strings.TrimSpace(a.ClientSecretEnv),
+		AccountIDEnv:    strings.TrimSpace(a.AccountIDEnv),
+		TenantIDEnv:     strings.TrimSpace(a.TenantIDEnv),
+	}
 }
 
 // knowledgeConnectorJSON is the dashboard form of one knowledge.connectors
@@ -70,6 +91,11 @@ type knowledgeConnectorStatusRow struct {
 	Pages     int    `json:"pages"`
 	Facts     int    `json:"facts"`
 	LastError string `json:"last_error,omitempty"`
+	// Running and Progress carry the live sync state the Integrations card
+	// polls while a sync runs (phase, items done/total, current item,
+	// started_at). Progress is absent when the syncer is not running.
+	Running  bool                `json:"running"`
+	Progress *connector.Progress `json:"progress,omitempty"`
 }
 
 // context7APIKey resolves the Context7 key for c: the referenced auth source,
@@ -96,7 +122,11 @@ func knowledgeConnectorToJSON(c config.KnowledgeConnector) knowledgeConnectorJSO
 		Interval:      c.Interval,
 		Layer:         c.Layer,
 		Scope:         c.Scope,
-		Auth:          knowledgeConnectorAuthJSON{Env: c.Auth.Env, File: c.Auth.File},
+		Auth: knowledgeConnectorAuthJSON{
+			Env: c.Auth.Env, File: c.Auth.File, Mode: c.Auth.Mode,
+			ClientIDEnv: c.Auth.ClientIDEnv, ClientSecretEnv: c.Auth.ClientSecretEnv,
+			AccountIDEnv: c.Auth.AccountIDEnv, TenantIDEnv: c.Auth.TenantIDEnv,
+		},
 	}
 }
 
@@ -118,7 +148,11 @@ func (c knowledgeConnectorJSON) toConfig() config.KnowledgeConnector {
 		Interval: strings.TrimSpace(c.Interval),
 		Layer:    strings.TrimSpace(c.Layer),
 		Scope:    scope,
-		Auth:     config.KnowledgeConnectorAuth{Env: strings.TrimSpace(c.Auth.Env), File: strings.TrimSpace(c.Auth.File)},
+		Auth: config.KnowledgeConnectorAuth{
+			Env: strings.TrimSpace(c.Auth.Env), File: strings.TrimSpace(c.Auth.File), Mode: strings.TrimSpace(c.Auth.Mode),
+			ClientIDEnv: strings.TrimSpace(c.Auth.ClientIDEnv), ClientSecretEnv: strings.TrimSpace(c.Auth.ClientSecretEnv),
+			AccountIDEnv: strings.TrimSpace(c.Auth.AccountIDEnv), TenantIDEnv: strings.TrimSpace(c.Auth.TenantIDEnv),
+		},
 	}
 }
 
@@ -135,7 +169,7 @@ func knowledgeConnectorRuntimeConfig(c config.KnowledgeConnector) (connector.Con
 		Interval: d,
 		Layer:    c.Layer,
 		Scope:    c.Scope,
-		Auth:     connector.Auth{Env: c.Auth.Env, File: c.Auth.File},
+		Auth:     KnowledgeConnectorAuth(c.Auth),
 	}, nil
 }
 
@@ -216,7 +250,7 @@ func (s *Server) handleKnowledgeConnectorsPut(w http.ResponseWriter, r *http.Req
 		dec := json.NewDecoder(strings.NewReader(string(raw)))
 		dec.DisallowUnknownFields()
 		if err := dec.Decode(&c); err != nil {
-			jsonError(w, "connectors["+strconv.Itoa(i)+"]: "+err.Error()+" (auth accepts only env or file)", http.StatusBadRequest)
+			jsonError(w, "connectors["+strconv.Itoa(i)+"]: "+err.Error()+" (auth accepts env or file, plus mode and the *_env client-registration references)", http.StatusBadRequest)
 			return
 		}
 		next = append(next, c.toConfig())
@@ -284,12 +318,13 @@ func (s *Server) handleKnowledgeConnectorsPut(w http.ResponseWriter, r *http.Req
 }
 
 // knowledgeConnectorPill maps a connector's runtime state to ok / syncing /
-// error / disabled, or "pending" before its first sync attempt.
+// error / disabled, or "pending" before its first sync attempt. "syncing"
+// follows the live progress phase as well as the running flag.
 func knowledgeConnectorPill(enabled bool, st *connector.Status) string {
 	switch {
 	case !enabled:
 		return "disabled"
-	case st != nil && st.Running:
+	case st != nil && st.Syncing():
 		return "syncing"
 	case st != nil && st.LastError != "":
 		return "error"
@@ -314,6 +349,9 @@ func (s *Server) knowledgeConnectorStatusRows() []knowledgeConnectorStatusRow {
 		if st, ok := byName[c.Name]; ok {
 			stp = &st
 			row.Pages, row.Facts, row.LastError = st.Pages, st.Facts, st.LastError
+			row.Running = st.Running
+			progress := st.Progress
+			row.Progress = &progress
 			if !st.LastSync.IsZero() {
 				row.LastSync = st.LastSync.UTC().Format(time.RFC3339)
 			}
@@ -359,7 +397,7 @@ func (s *Server) handleKnowledgeConnectorsValidate(w http.ResponseWriter, r *htt
 		err = dec.Decode(&c)
 	}
 	if err != nil {
-		jsonError(w, "invalid body: "+err.Error()+" (auth accepts only env or file)", http.StatusBadRequest)
+		jsonError(w, "invalid body: "+err.Error()+" (auth accepts env or file, plus mode and the *_env client-registration references)", http.StatusBadRequest)
 		return
 	}
 	entry := c.toConfig()

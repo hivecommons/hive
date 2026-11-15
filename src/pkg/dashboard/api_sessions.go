@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -15,11 +16,22 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-// Sessions: interactive, named CLI terminals shared by everyone on a spoke.
-// The tmux/ttyd engine sits behind SessionRuntime so it can be swapped; this
-// file holds policy (roles, limits, validation, audit) and the JSON API.
-// The terminal itself is attached through /terminal (terminal_handoff.go);
-// keystrokes typed there are NOT attributable, only /input and /upload are.
+// Sessions: interactive, named CLI terminals. The tmux/ttyd engine sits behind
+// SessionRuntime so it can be swapped; this file holds policy (roles, limits,
+// validation, ownership, audit) and the JSON API. The terminal itself is
+// attached through /terminal (terminal_handoff.go, terminal_session_gate.go).
+// Keystrokes typed there are attributable only to the keyboard holder (one
+// writable attach at a time, api_sessions_keyboard.go); /input is queued and
+// audited per sender at delivery (api_sessions_queue.go), /upload at once.
+//
+// Ownership model. A session is PRIVATE by default: only its creator and
+// owners may see it, read its log, watch its terminal, type into it or upload
+// to it. The creator (or an owner) may mark it shared, which makes it visible
+// to every role and usable (Send, upload, keyboard) by every read-write user:
+// the "jam session" mode. The read role only ever watches: the scrollback and
+// a read-only live terminal, never the keyboard, Send or upload. Whatever the
+// flag, only the creator or an owner may rename, close, resume or delete a
+// session or change the flag.
 
 const (
 	sessionsLogDefaultLines = 1000
@@ -50,10 +62,18 @@ const (
 	sessionUploadFormName = "file"
 
 	auditSessionCreated = "session_created"
+	// auditSessionStarted records the OUTCOME of a background start
+	// (outcome=running or outcome=failed with the reason), since the create
+	// entry is written before the workspace is even cloned.
+	auditSessionStarted = "session_started"
 	auditSessionClosed  = "session_closed"
 	auditSessionRenamed = "session_renamed"
 	auditSessionInput   = "session_input"
 	auditSessionUpload  = "session_upload"
+
+	// sessionTmuxPrefix is the tmux session name prefix of a user session
+	// (crux/agent.UserSessionTmuxPrefix).
+	sessionTmuxPrefix = "hive-sess-"
 )
 
 // SessionRuntime is the engine behind Sessions (implemented by
@@ -62,12 +82,26 @@ type SessionRuntime interface {
 	Vendors() []crux.UserSessionVendor
 	SupportsResume(vendor string) bool
 	WorkDir(id string) string
+	// WorkspaceDir is the path sessions of the "org/repo" workspace open in
+	// ("" for an empty or malformed repo). Start clones it on first use.
+	WorkspaceDir(repo string) string
 	Start(spec crux.UserSessionSpec) error
 	Probe(id string) crux.UserSessionProbe
 	Kill(id string) error
 	Capture(id string, lines int) (string, error)
 	SendText(id, text string, submit bool) error
-	ResumeInfo(id, vendor string) (crux.UserSessionResume, bool)
+	// DetachWritableClients detaches every tmux client of the session that is
+	// not read-only: the previous keyboard holder's browser, when the keyboard
+	// changes hands, so it cannot keep typing until it re-attaches (read-only).
+	DetachWritableClients(id string) error
+	// ResumeInfo captures the vendor's newest conversation for the session;
+	// workDir is where the CLI ran ("" = the session's own work dir).
+	ResumeInfo(id, vendor, workDir string) (crux.UserSessionResume, bool)
+	// StoreUpload writes src as the named file under the session's uploads
+	// directory, as the session's own uid, and returns its absolute path.
+	StoreUpload(id, fileName string, src io.Reader, maxBytes int64, maxFiles int) (string, int64, error)
+	// Remove ends the session and deletes everything it owned on disk.
+	Remove(id string) error
 }
 
 type sessionLimits struct {
@@ -93,6 +127,29 @@ type sessionView struct {
 	// Resumable (additive) is true for an ended session whose vendor can
 	// reopen its last conversation.
 	Resumable bool `json:"resumable"`
+	// Shared (additive) is true when every read-write user may type into the
+	// session and every role may watch it; false means creator + owners only.
+	Shared bool `json:"shared"`
+	// WorkspaceRepo and Workspace (additive) are the "org/repo" and path of the
+	// hive's shared checkout the session runs in; empty when it runs in its
+	// own empty work dir.
+	WorkspaceRepo string `json:"workspace_repo"`
+	Workspace     string `json:"workspace"`
+	// Message (additive) says what a `preparing` session is waiting on; Error
+	// (additive) is why a `failed` session, or a resume that fell back to
+	// `ended`, did not start.
+	Message string `json:"message"`
+	Error   string `json:"error"`
+	// KeyboardHolder and KeyboardSince (additive) are the keyboard lease: the
+	// one user whose terminal is writable and since when ("" = released).
+	// KeyboardMine is true when the caller holds it.
+	KeyboardHolder string `json:"keyboard_holder"`
+	KeyboardSince  string `json:"keyboard_since"`
+	KeyboardMine   bool   `json:"keyboard_mine"`
+	// Viewers (additive) is who has a live terminal on the session and whether
+	// theirs is the writable one; Queue (additive) is the pending Send queue.
+	Viewers []sessionViewer  `json:"viewers"`
+	Queue   sessionQueueView `json:"queue"`
 }
 
 func (s *Server) registerSessionRoutes() {
@@ -104,6 +161,8 @@ func (s *Server) registerSessionRoutes() {
 	s.mux.HandleFunc("POST /api/sessions/{id}/input", s.handleSessionInput)
 	s.mux.HandleFunc("POST /api/sessions/{id}/upload", s.handleSessionUpload)
 	s.mux.HandleFunc("POST /api/sessions/{id}/resume", s.handleSessionResume)
+	s.mux.HandleFunc("POST /api/sessions/{id}/keyboard", s.handleSessionKeyboard)
+	s.mux.HandleFunc("DELETE /api/sessions/{id}/input/{queue_id}", s.handleSessionInputCancel)
 }
 
 // sessionsRuntime returns the runtime when the feature is enabled and wired.
@@ -172,6 +231,27 @@ func (s *Server) sessionActorOf(r *http.Request) sessionActor {
 	return a
 }
 
+func (a sessionActor) isCreatorOf(rec sessionRecord) bool {
+	return a.user != "" && rec.Creator == a.user
+}
+
+// canViewSession: owners, the creator, and everyone for a shared session.
+func canViewSession(a sessionActor, rec sessionRecord) bool {
+	return a.owner || a.isCreatorOf(rec) || rec.Shared
+}
+
+// canUseSession (input, upload, terminal): owners, the writing creator, and
+// writers for a shared session. The read role never types.
+func canUseSession(a sessionActor, rec sessionRecord) bool {
+	return a.owner || (a.write && (a.isCreatorOf(rec) || rec.Shared))
+}
+
+// canManageSession (rename, share flag, close, resume, delete): the creator
+// with a write role, or an owner. Sharing never grants this.
+func canManageSession(a sessionActor, rec sessionRecord) bool {
+	return a.owner || (a.write && a.isCreatorOf(rec))
+}
+
 func (s *Server) auditSession(user, action, detail string) {
 	if s.audit != nil {
 		s.audit.Log(user, action, detail, "")
@@ -182,7 +262,9 @@ func (st sessionRecord) view(p *crux.UserSessionProbe, rt SessionRuntime) sessio
 	v := sessionView{
 		ID: st.ID, Name: st.Name, Group: st.Group, Vendor: st.Vendor, Creator: st.Creator,
 		CreatedAt: st.CreatedAt, LastActivity: st.LastActivity, Status: st.Status,
-		TmuxName: "hive-sess-" + st.ID,
+		TmuxName: sessionTmuxPrefix + st.ID, Shared: st.Shared,
+		WorkspaceRepo: st.WorkspaceRepo, Workspace: st.Workspace,
+		Message: st.Message, Error: st.Error,
 	}
 	if st.Status == sessionStatusRunning && p != nil {
 		v.Attached = p.Attached
@@ -193,6 +275,22 @@ func (st sessionRecord) view(p *crux.UserSessionProbe, rt SessionRuntime) sessio
 		}
 	}
 	v.Resumable = st.Status == sessionStatusEnded && st.ResumeCommand != "" && rt.SupportsResume(st.Vendor)
+	v.KeyboardHolder, v.KeyboardSince = st.KeyboardHolder, st.KeyboardSince
+	v.Viewers = []sessionViewer{}
+	v.Queue = sessionQueueView{Items: []sessionQueueItemView{}}
+	return v
+}
+
+// sessionViewFor is view() plus the per-caller and live parts: whether the
+// caller holds the keyboard, who is attached, and the Send queue with the
+// caller's own items marked.
+func (s *Server) sessionViewFor(rec sessionRecord, p *crux.UserSessionProbe, rt SessionRuntime, actor sessionActor) sessionView {
+	v := rec.view(p, rt)
+	v.KeyboardMine = holdsKeyboard(actor, rec)
+	if rec.Status == sessionStatusRunning {
+		v.Viewers = s.sessionViewers(rec.ID)
+		v.Queue = s.sessionQueueSnapshot(rec.ID, actor.user)
+	}
 	return v
 }
 
@@ -204,6 +302,16 @@ func (s *Server) reconcileSessions(rt SessionRuntime, st *sessionStore) map[stri
 	probes := map[string]crux.UserSessionProbe{}
 	now := time.Now().UTC().Format(time.RFC3339)
 	for _, rec := range st.list() {
+		if rec.Status == sessionStatusPreparing && !s.sessionStartInFlight(rec.ID) {
+			// Only a restart leaves a preparing record with no goroutine
+			// behind it; nothing will ever move it on, so say so.
+			status := sessionStatusFailed
+			if rec.ResumeCommand != "" {
+				status = sessionStatusEnded
+			}
+			s.markSessionFailed(st, rec.ID, status, sessionRestartedWhilePreparing, now)
+			continue
+		}
 		if rec.Status != sessionStatusRunning {
 			continue
 		}
@@ -219,7 +327,7 @@ func (s *Server) reconcileSessions(rt SessionRuntime, st *sessionStore) map[stri
 
 func (s *Server) markSessionEnded(rt SessionRuntime, st *sessionStore, rec sessionRecord, now string) {
 	resume := ""
-	if info, ok := rt.ResumeInfo(rec.ID, rec.Vendor); ok {
+	if info, ok := rt.ResumeInfo(rec.ID, rec.Vendor, rec.Workspace); ok {
 		resume = info.Command
 	}
 	if _, _, err := st.update(rec.ID, func(r *sessionRecord) {
@@ -231,6 +339,8 @@ func (s *Server) markSessionEnded(rt SessionRuntime, st *sessionStore, rec sessi
 	}); err != nil && s.logger != nil {
 		s.logger.Warn("sessions: persisting ended state failed", "id", rec.ID, "error", err)
 	}
+	// Nothing queued can be delivered to an ended session.
+	s.dropSessionQueue(rec.ID)
 }
 
 func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
@@ -241,13 +351,18 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 	}
 	st := s.sessionStoreOrNil()
 	probes := s.reconcileSessions(rt, st)
+	actor := s.sessionActorOf(r)
 	views := []sessionView{}
 	for _, rec := range st.list() {
+		// Ids of sessions the caller may not see are not disclosed at all.
+		if !canViewSession(actor, rec) {
+			continue
+		}
 		var p *crux.UserSessionProbe
 		if pr, ok := probes[rec.ID]; ok {
 			p = &pr
 		}
-		views = append(views, rec.view(p, rt))
+		views = append(views, s.sessionViewFor(rec, p, rt, actor))
 	}
 	vendors := []crux.UserSessionVendor{}
 	for _, v := range rt.Vendors() {
@@ -256,7 +371,29 @@ func (s *Server) handleSessionsList(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	w.Header().Set("Cache-Control", "no-store")
-	jsonResponse(w, map[string]any{"enabled": true, "sessions": views, "vendors": vendors, "limits": s.sessionLimits()})
+	repo := s.sessionsWorkspaceRepo(rt)
+	jsonResponse(w, map[string]any{"enabled": true, "sessions": views, "vendors": vendors, "limits": s.sessionLimits(),
+		"workspace": map[string]string{"repo": repo, "path": rt.WorkspaceDir(repo)}})
+}
+
+// sessionsWorkspaceRepo is the "org/repo" new sessions open in: the
+// configured override, else the hive's project repo. "" when the repo is
+// unset or malformed, in which case sessions open in their own empty dir.
+func (s *Server) sessionsWorkspaceRepo(rt SessionRuntime) string {
+	repo := s.deps.Config.SessionsWorkspaceRepo()
+	if repo == "" || rt.WorkspaceDir(repo) == "" {
+		return ""
+	}
+	return repo
+}
+
+// sessionsSpektacularBinary is the spektacular executable sessions init their
+// workspace with (runs.spektacular.binary, default resolved through PATH).
+func (s *Server) sessionsSpektacularBinary() string {
+	if bin := strings.TrimSpace(s.deps.Config.Runs.Spektacular.Binary); bin != "" {
+		return bin
+	}
+	return config.DefaultSpektacularBinary
 }
 
 // sessionsGate answers 404 when the feature is off or unwired.
@@ -278,9 +415,16 @@ func readSmallJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
+// sessionIsLive reports whether a record holds (or is about to hold) a tmux
+// server: running sessions and those still being prepared both count against
+// the caps, or two quick clicks would overshoot them.
+func sessionIsLive(rec sessionRecord) bool {
+	return rec.Status == sessionStatusRunning || rec.Status == sessionStatusPreparing
+}
+
 func (s *Server) liveSessionCounts(st *sessionStore, user string) (total, mine int) {
 	for _, rec := range st.list() {
-		if rec.Status == sessionStatusRunning {
+		if sessionIsLive(rec) {
 			total++
 			if rec.Creator == user {
 				mine++
@@ -319,6 +463,7 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		Name   string `json:"name"`
 		Group  string `json:"group"`
 		Vendor string `json:"vendor"`
+		Shared bool   `json:"shared"`
 	}
 	if !readSmallJSON(w, r, &body) {
 		return
@@ -363,21 +508,113 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	rec := sessionRecord{ID: id, Name: body.Name, Group: body.Group, Vendor: vendor.ID, Creator: actor.user, CreatedAt: now, LastActivity: now, Status: sessionStatusRunning}
-	if err := rt.Start(crux.UserSessionSpec{ID: id, Vendor: vendor.ID}); err != nil {
-		if s.logger != nil {
-			s.logger.Warn("sessions: start failed", "id", id, "vendor", vendor.ID, "error", err)
-		}
-		jsonError(w, "could not start the session", http.StatusInternalServerError)
-		return
-	}
+	repo := s.sessionsWorkspaceRepo(rt)
+	// The record is saved (and answered) as `preparing` BEFORE anything is
+	// started: the first session on a hive clones the whole project
+	// repository, hands it to the sessions group and runs spek init, which
+	// takes minutes and used to outlive the ingress's request timeout (a 504
+	// in the browser for a session that then started anyway). The start runs
+	// in the background and moves the record to running or failed.
+	// The creator holds the keyboard from the start (api_sessions_keyboard.go).
+	rec := sessionRecord{ID: id, Name: body.Name, Group: body.Group, Vendor: vendor.ID, Creator: actor.user, CreatedAt: now, LastActivity: now, Status: sessionStatusPreparing, UIDSlot: st.freeSlot(), Shared: body.Shared,
+		WorkspaceRepo: repo, Workspace: rt.WorkspaceDir(repo), Message: s.sessionPreparingMessage(rt, repo, vendor.Label),
+		KeyboardHolder: actor.user, KeyboardSince: now}
+	s.setSessionStartInFlightLocked(id, true)
 	if err := st.put(rec); err != nil {
-		_ = rt.Kill(id)
+		s.setSessionStartInFlightLocked(id, false)
 		jsonError(w, "could not save the session", http.StatusInternalServerError)
 		return
 	}
-	s.auditSession(actor.user, auditSessionCreated, auditDetail("session", id, "vendor", vendor.ID))
-	jsonStatusResponse(w, http.StatusCreated, map[string]any{"ok": true, "session": rec.view(&crux.UserSessionProbe{}, rt)})
+	s.auditSession(actor.user, auditSessionCreated, auditDetail("session", id, "vendor", vendor.ID, "status", sessionStatusPreparing))
+	spec := crux.UserSessionSpec{ID: id, Vendor: vendor.ID, UIDSlot: rec.UIDSlot, WorkspaceRepo: repo, SpektacularBinary: s.sessionsSpektacularBinary()}
+	go s.startSessionInBackground(rt, st, spec, actor.user, sessionStatusFailed)
+	jsonStatusResponse(w, http.StatusAccepted, map[string]any{"ok": true, "session": rec.view(&crux.UserSessionProbe{}, rt)})
+}
+
+// sessionRestartedWhilePreparing is the error a preparing record is given when
+// the hive comes back up with no start behind it.
+const sessionRestartedWhilePreparing = "the hive restarted while this session was being prepared; start it again"
+
+// sessionPreparingMessage is the human line a preparing session shows: the
+// first session for a repository clones it, later ones only wait for the
+// vendor to start.
+func (s *Server) sessionPreparingMessage(rt SessionRuntime, repo, vendorLabel string) string {
+	if repo == "" {
+		return "starting " + vendorLabel
+	}
+	if _, err := os.Lstat(rt.WorkspaceDir(repo)); err != nil {
+		return "preparing workspace: cloning " + repo + " (first session on this hive)"
+	}
+	return "preparing workspace " + repo + ", starting " + vendorLabel
+}
+
+// sessionStartInFlight reports whether this process is starting the session.
+func (s *Server) sessionStartInFlight(id string) bool {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	return s.sessionsPreparing[id]
+}
+
+// setSessionStartInFlightLocked records (or clears) an in-flight start. The
+// caller holds sessionsMu.
+func (s *Server) setSessionStartInFlightLocked(id string, inFlight bool) {
+	if s.sessionsPreparing == nil {
+		s.sessionsPreparing = map[string]bool{}
+	}
+	if inFlight {
+		s.sessionsPreparing[id] = true
+		return
+	}
+	delete(s.sessionsPreparing, id)
+}
+
+// startSessionInBackground runs the runtime's Start for a record that was saved
+// as `preparing` and moves it to running, or to failStatus with the error on
+// the record (`failed` for a create, whose sandbox is removed; `ended` for a
+// resume, which keeps the session resumable). Concurrent starts that need the
+// same workspace are serialised inside the runtime, so a second click while
+// the clone runs waits for that clone instead of starting another. Nothing
+// here is tied to the request that asked: the runtime's privileged steps run
+// under their own deadlines.
+func (s *Server) startSessionInBackground(rt SessionRuntime, st *sessionStore, spec crux.UserSessionSpec, user, failStatus string) {
+	err := rt.Start(spec)
+	now := time.Now().UTC().Format(time.RFC3339)
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	s.setSessionStartInFlightLocked(spec.ID, false)
+	if err != nil {
+		if s.logger != nil {
+			s.logger.Warn("sessions: start failed", "id", spec.ID, "vendor", spec.Vendor, "error", err)
+		}
+		if failStatus == sessionStatusFailed {
+			s.removeSessionFiles(rt, spec.ID)
+		}
+		reason := redactTokens(err.Error())
+		s.markSessionFailed(st, spec.ID, failStatus, reason, now)
+		s.auditSession(user, auditSessionStarted, auditDetail("session", spec.ID, "vendor", spec.Vendor, "outcome", failStatus, "error", reason))
+		return
+	}
+	if _, _, err := st.update(spec.ID, func(r *sessionRecord) {
+		r.Status, r.LastActivity, r.EndedAt, r.Message, r.Error = sessionStatusRunning, now, "", "", ""
+	}); err != nil && s.logger != nil {
+		s.logger.Warn("sessions: persisting running state failed", "id", spec.ID, "error", err)
+	}
+	s.auditSession(user, auditSessionStarted, auditDetail("session", spec.ID, "vendor", spec.Vendor, "outcome", sessionStatusRunning))
+}
+
+// markSessionFailed records why a start did not happen: status is `failed`
+// for a session that never ran, `ended` for a resume that fell through (the
+// session stays resumable).
+func (s *Server) markSessionFailed(st *sessionStore, id, status, reason, now string) {
+	if _, _, err := st.update(id, func(r *sessionRecord) {
+		r.Status = status
+		if r.EndedAt == "" {
+			r.EndedAt = now
+		}
+		r.Message, r.Error = "", reason
+	}); err != nil && s.logger != nil {
+		s.logger.Warn("sessions: persisting failed state failed", "id", id, "error", err)
+	}
 }
 
 // sessionOwnedBy loads the record and enforces creator-or-owner.
@@ -388,7 +625,11 @@ func (s *Server) sessionForMutation(w http.ResponseWriter, r *http.Request, st *
 		return rec, sessionActor{}, false
 	}
 	actor := s.sessionActorOf(r)
-	if !actor.owner && !(actor.write && rec.Creator == actor.user) {
+	if !canViewSession(actor, rec) {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return rec, actor, false
+	}
+	if !canManageSession(actor, rec) {
 		jsonError(w, "only the session's creator or an owner may change it", http.StatusForbidden)
 		return rec, actor, false
 	}
@@ -405,13 +646,14 @@ func (s *Server) handleSessionPatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		Name  *string `json:"name"`
-		Group *string `json:"group"`
+		Name   *string `json:"name"`
+		Group  *string `json:"group"`
+		Shared *bool   `json:"shared"`
 	}
 	if !readSmallJSON(w, r, &body) {
 		return
 	}
-	if body.Name == nil && body.Group == nil {
+	if body.Name == nil && body.Group == nil && body.Shared == nil {
 		jsonError(w, "nothing to change", http.StatusBadRequest)
 		return
 	}
@@ -430,7 +672,11 @@ func (s *Server) handleSessionPatch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	updated, _, err := st.update(rec.ID, func(x *sessionRecord) { x.Name, x.Group = name, group })
+	shared := rec.Shared
+	if body.Shared != nil {
+		shared = *body.Shared
+	}
+	updated, _, err := st.update(rec.ID, func(x *sessionRecord) { x.Name, x.Group, x.Shared = name, group, shared })
 	if err != nil {
 		jsonError(w, "could not save the session", http.StatusInternalServerError)
 		return
@@ -452,9 +698,21 @@ func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	if rec.Status == sessionStatusEnded {
-		if err := rt.Kill(rec.ID); err != nil && s.logger != nil {
-			s.logger.Warn("sessions: killing ended session's leftover tmux failed", "id", rec.ID, "error", err)
+	if rec.Status == sessionStatusPreparing {
+		// A start is in flight; the record changes under it as soon as it
+		// finishes, so the client is asked to come back then.
+		jsonError(w, "session is still being prepared; close it once it is running or failed", http.StatusConflict)
+		return
+	}
+	if rec.Status == sessionStatusEnded || rec.Status == sessionStatusFailed {
+		// Files first: if they cannot be removed the record (and its uid slot)
+		// stays, so the slot is never handed to a new session over old data.
+		if err := rt.Remove(rec.ID); err != nil {
+			if s.logger != nil {
+				s.logger.Warn("sessions: removing session files failed", "id", rec.ID, "error", err)
+			}
+			jsonError(w, "could not remove the session's files", http.StatusInternalServerError)
+			return
 		}
 		if err := st.remove(rec.ID); err != nil {
 			jsonError(w, "could not save the session store", http.StatusInternalServerError)
@@ -483,7 +741,7 @@ func (s *Server) handleSessionLog(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec, found := st.get(r.PathValue("id"))
-	if !found {
+	if !found || !canViewSession(s.sessionActorOf(r), rec) {
 		jsonError(w, "session not found", http.StatusNotFound)
 		return
 	}
@@ -527,13 +785,8 @@ func (s *Server) handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "sending input requires owner or read-write role", http.StatusForbidden)
 		return
 	}
-	rec, found := st.get(r.PathValue("id"))
-	if !found {
-		jsonError(w, "session not found", http.StatusNotFound)
-		return
-	}
-	if rec.Status != sessionStatusRunning {
-		jsonError(w, "session is not running", http.StatusConflict)
+	rec, ok := s.sessionForUse(w, st, r.PathValue("id"), actor)
+	if !ok {
 		return
 	}
 	lim := s.sessionLimits()
@@ -559,18 +812,48 @@ func (s *Server) handleSessionInput(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "nothing to send", http.StatusBadRequest)
 		return
 	}
-	if err := rt.SendText(rec.ID, body.Text, body.Submit); err != nil {
-		if strings.Contains(err.Error(), "control character") || strings.Contains(err.Error(), "UTF-8") {
-			jsonError(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		jsonError(w, "could not send input to the session", http.StatusBadGateway)
+	// Validate now (so the sender hears about an escape character at once),
+	// deliver later: the text is queued and typed by the session's worker when
+	// the pane is idle (api_sessions_queue.go), audited then, as this user.
+	clean, err := crux.SanitizeUserSessionInput(body.Text)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	s.touchSession(st, rec.ID)
-	// Who typed, how much, and into which session; never the text itself.
-	s.auditSession(actor.user, auditSessionInput, auditDetail("session", rec.ID, "bytes", strconv.Itoa(len(body.Text)), "submit", strconv.FormatBool(body.Submit)))
-	jsonResponse(w, map[string]any{"ok": true})
+	item, pos, ok := s.enqueueSessionInput(rec.ID, sessionQueueItem{User: actor.user, Text: clean, Submit: body.Submit})
+	if !ok {
+		jsonError(w, fmt.Sprintf("this session already has %d queued sends; wait for some to be delivered", sessionQueueMaxItems), http.StatusTooManyRequests)
+		return
+	}
+	s.ensureSessionQueueWorker(rt, st, rec.ID)
+	jsonStatusResponse(w, http.StatusAccepted, map[string]any{"ok": true, "queued": map[string]any{"id": item.ID, "position": pos},
+		"queue": s.sessionQueueSnapshot(rec.ID, actor.user)})
+}
+
+// sessionForUse loads a running session the actor may type into, writing the
+// 404 (not visible), 403 (visible, not usable) or 409 (not running) itself.
+func (s *Server) sessionForUse(w http.ResponseWriter, st *sessionStore, id string, actor sessionActor) (sessionRecord, bool) {
+	rec, found := st.get(id)
+	if !found || !canViewSession(actor, rec) {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return rec, false
+	}
+	if !canUseSession(actor, rec) {
+		jsonError(w, "only the session's creator or an owner may use a private session", http.StatusForbidden)
+		return rec, false
+	}
+	if rec.Status != sessionStatusRunning {
+		jsonError(w, "session is not running", http.StatusConflict)
+		return rec, false
+	}
+	return rec, true
+}
+
+// removeSessionFiles deletes a session's on-disk state, logging a failure.
+func (s *Server) removeSessionFiles(rt SessionRuntime, id string) {
+	if err := rt.Remove(id); err != nil && s.logger != nil {
+		s.logger.Warn("sessions: removing session files failed", "id", id, "error", err)
+	}
 }
 
 func (s *Server) touchSession(st *sessionStore, id string) {
@@ -589,8 +872,16 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rec, found := st.get(r.PathValue("id"))
-	if !found {
+	if !found || !canViewSession(actor, rec) {
 		jsonError(w, "session not found", http.StatusNotFound)
+		return
+	}
+	if !canManageSession(actor, rec) {
+		jsonError(w, "only the session's creator or an owner may resume it", http.StatusForbidden)
+		return
+	}
+	if rec.UIDSlot < 1 {
+		jsonError(w, "this session predates per-session isolation and cannot be resumed; start a new one", http.StatusConflict)
 		return
 	}
 	if rec.Status != sessionStatusEnded {
@@ -603,7 +894,7 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 	}
 	cmd := rec.ResumeCommand
 	if cmd == "" {
-		if info, ok := rt.ResumeInfo(rec.ID, rec.Vendor); ok {
+		if info, ok := rt.ResumeInfo(rec.ID, rec.Vendor, rec.Workspace); ok {
 			cmd = info.Command
 		}
 	}
@@ -620,23 +911,35 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 	if !s.checkSessionCapacity(w, st, actor.user) {
 		return
 	}
-	if err := rt.Start(crux.UserSessionSpec{ID: rec.ID, Vendor: rec.Vendor, ResumeCommand: cmd}); err != nil {
-		if s.logger != nil {
-			s.logger.Warn("sessions: resume failed", "id", rec.ID, "error", err)
+	// A resume reopens the workspace the session was created in (or its own
+	// work dir for a record without one), never a repo configured since. Like
+	// a create it is answered as `preparing` and started in the background
+	// (the workspace may have to be cloned again, spek init may run); a
+	// failure puts the session back to ended with the reason, still resumable.
+	vendorLabel := rec.Vendor
+	for _, v := range rt.Vendors() {
+		if v.ID == rec.Vendor && v.Label != "" {
+			vendorLabel = v.Label
 		}
-		jsonError(w, "could not resume the session", http.StatusInternalServerError)
-		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
+	message := s.sessionPreparingMessage(rt, rec.WorkspaceRepo, vendorLabel)
+	s.setSessionStartInFlightLocked(rec.ID, true)
+	// Whoever resumes the session holds its keyboard.
 	updated, _, err := st.update(rec.ID, func(x *sessionRecord) {
-		x.Status, x.EndedAt, x.LastActivity = sessionStatusRunning, "", now
+		x.Status, x.LastActivity, x.Message, x.Error = sessionStatusPreparing, now, message, ""
+		x.KeyboardHolder, x.KeyboardSince = actor.user, now
 	})
 	if err != nil {
+		s.setSessionStartInFlightLocked(rec.ID, false)
 		jsonError(w, "could not save the session", http.StatusInternalServerError)
 		return
 	}
-	s.auditSession(actor.user, auditSessionCreated, auditDetail("session", rec.ID, "vendor", rec.Vendor, "resumed", "true"))
-	jsonResponse(w, map[string]any{"ok": true, "session": updated.view(&crux.UserSessionProbe{}, rt)})
+	s.auditSession(actor.user, auditSessionCreated, auditDetail("session", rec.ID, "vendor", rec.Vendor, "resumed", "true", "status", sessionStatusPreparing))
+	spec := crux.UserSessionSpec{ID: rec.ID, Vendor: rec.Vendor, UIDSlot: rec.UIDSlot, ResumeCommand: cmd,
+		WorkspaceRepo: rec.WorkspaceRepo, SpektacularBinary: s.sessionsSpektacularBinary()}
+	go s.startSessionInBackground(rt, st, spec, actor.user, sessionStatusEnded)
+	jsonStatusResponse(w, http.StatusAccepted, map[string]any{"ok": true, "session": updated.view(&crux.UserSessionProbe{}, rt)})
 }
 
 // StartSessionSweeper reconciles sessions at start (hive restarted or the pod
@@ -690,32 +993,56 @@ func (s *Server) sweepSessions(now time.Time) {
 				s.logger.Warn("sessions: idle kill failed", "id", rec.ID, "error", err)
 			}
 			s.auditSession("system", auditSessionClosed, auditDetail("session", rec.ID, "reason", "idle"))
-		case sessionStatusEnded:
+		case sessionStatusEnded, sessionStatusFailed:
 			if ended, err := time.Parse(time.RFC3339, rec.EndedAt); err == nil && now.Sub(ended) > sessionEndedRetention {
+				// Files first; a failure keeps the record (and its uid slot)
+				// so the next sweep retries instead of orphaning the data.
+				if err := rt.Remove(rec.ID); err != nil {
+					if s.logger != nil {
+						s.logger.Warn("sessions: pruning session files failed", "id", rec.ID, "error", err)
+					}
+					continue
+				}
 				_ = st.remove(rec.ID)
 			}
 		}
 	}
 }
 
+// sessionForWatch loads a running session the actor may at least watch (the
+// read role attaches read-only), writing the 404 or 409 itself.
+func (s *Server) sessionForWatch(w http.ResponseWriter, st *sessionStore, id string, actor sessionActor) (sessionRecord, bool) {
+	rec, found := st.get(id)
+	if !found || !canViewSession(actor, rec) {
+		jsonError(w, "session not found", http.StatusNotFound)
+		return rec, false
+	}
+	if rec.Status != sessionStatusRunning {
+		jsonError(w, "session is not running", http.StatusConflict)
+		return rec, false
+	}
+	return rec, true
+}
+
 // sessionHandoffTarget validates a terminal handoff request for a session id:
-// the feature must be on and the session must be running. It writes the error
-// response itself.
-func (s *Server) sessionHandoffTarget(w http.ResponseWriter, id string) bool {
+// the feature must be on, the caller must be allowed to see the session (a
+// viewer attaches read-only; only the keyboard holder's attach is writable,
+// decided in guardTerminalSession), the session must be running and the hive
+// must hold the ttyd attach key. It writes the error response itself.
+func (s *Server) sessionHandoffTarget(w http.ResponseWriter, r *http.Request, id string) bool {
 	rt, st, ok := s.sessionsGate(w)
 	if !ok {
 		return false
 	}
-	rec, found := st.get(id)
-	if !found {
-		jsonError(w, "session not found", http.StatusNotFound)
+	rec, ok := s.sessionForWatch(w, st, id, s.sessionActorOf(r))
+	if !ok {
 		return false
 	}
-	if rec.Status != sessionStatusRunning {
-		jsonError(w, "session is not running", http.StatusConflict)
+	if ttydAttachKey() == "" {
+		jsonError(w, "session terminals are unavailable: the ttyd attach key is not configured", http.StatusServiceUnavailable)
 		return false
 	}
-	if p := rt.Probe(id); !p.Exists {
+	if p := rt.Probe(rec.ID); !p.Exists {
 		jsonError(w, "session is not running", http.StatusConflict)
 		return false
 	}

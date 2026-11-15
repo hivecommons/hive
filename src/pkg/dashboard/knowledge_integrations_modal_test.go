@@ -154,11 +154,11 @@ func TestKnowledgeIntegrationsModalPlaudCard(t *testing.T) {
 	html := string(b)
 	for _, want := range []string{
 		`'plaud': { label: 'Plaud voice notes'`,
-		`'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@latest']`,
-		`else if (type === 'plaud') html += kbPlaudAuthLine(c.name) + kbPlaudPasteHtml(c.name);`,
+		`'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@0.3.14']`,
+		`else if (type === 'plaud') html += kbPlaudAuthLine(c.name, type) + kbPlaudPasteHtml(c.name);`,
 		`data-action="kbPlaudPasteComplete"`,
 		`'/api/knowledge/connectors/' + encodeURIComponent(name) + '/auth/complete'`,
-		`if (type === 'plaud') html += kbPlaudAuthButtons(c.name, notLoaded ? disabledAttr : '');`,
+		`if (KB_AUTH_TYPES[type]) html += kbPlaudAuthButtons(c.name, notLoaded ? disabledAttr : '', type);`,
 		`data-action="kbPlaudConnect"`,
 		`data-action="kbPlaudDisconnect"`,
 		`data-action="kbPlaudRefreshAuth"`,
@@ -183,6 +183,58 @@ func TestKnowledgeIntegrationsModalPlaudCard(t *testing.T) {
 	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
 		if strings.Contains(block, native) {
 			t.Errorf("Plaud sign-in block uses a browser-native dialog %q", native)
+		}
+	}
+}
+
+// TestKnowledgeIntegrationsModalMeetingCards guards the Zoom and Teams
+// entries: they share the Plaud sign-in line and buttons (type-aware
+// labels), Zoom offers the pasted-redirect fallback and Teams the
+// admin-consent status, both carry the app-registration form whose fields
+// reference settings keys, and no browser-native dialog is used.
+func TestKnowledgeIntegrationsModalMeetingCards(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`'zoom': { label: 'Zoom recordings'`,
+		`'teams': { label: 'Microsoft Teams recordings'`,
+		`'zoom': [['users', 'Recording owners (me, or user ids/emails for Server-to-Server)', 'me']`,
+		`'teams': [['users', 'Meeting organizers (object ids or UPNs, comma-separated)'`,
+		`const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams' };`,
+		`else if (type === 'zoom') html += kbPlaudAuthLine(c.name, type) + kbZoomPasteHtml(c.name, c);`,
+		`else if (type === 'teams') html += kbPlaudAuthLine(c.name, type) + kbTeamsConsentHtml(c.name, c);`,
+		`if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);`,
+		`function kbAuthLabel(name, type)`,
+		`function kbZoomPasteHtml(name, c)`,
+		`function kbTeamsConsentHtml(name, c)`,
+		`function kbMeetingAuthFormHTML(type, c)`,
+		`function kbOpenZoomIntegration()`,
+		`function kbOpenTeamsIntegration()`,
+		`data-kb-zoom-paste`,
+		`data-kb-teams-consent`,
+		`Requires Entra admin consent for OnlineMeetingRecording.Read.All and OnlineMeetingTranscript.Read.All`,
+		`client_id_env: 'knowledge.connectors[].auth.client_id_env',`,
+		`tenant_id_env: 'knowledge.connectors[].auth.tenant_id_env'`,
+		`data-setting-key="' + KB_MEETING_AUTH_SETTING_KEYS[key] + '"`,
+		`data-setting-key="knowledge.connectors[].auth.mode"`,
+		`box.querySelectorAll('[data-kb-kc-auth-field]')`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing meeting card snippet %q", want)
+		}
+	}
+	start := strings.Index(html, "function kbZoomPasteHtml(name, c)")
+	end := strings.Index(html, "async function kbPlaudAuthLoad(name, refresh)")
+	if start < 0 || end < start {
+		t.Fatal("meeting card block not found")
+	}
+	block := html[start:end]
+	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
+		if strings.Contains(block, native) {
+			t.Errorf("meeting card block uses a browser-native dialog %q", native)
 		}
 	}
 }
@@ -213,7 +265,7 @@ func TestKnowledgeIntegrationsModalWisprFlowCard(t *testing.T) {
 			t.Errorf("index.html missing Wispr Flow card snippet %q", want)
 		}
 	}
-	if !strings.Contains(html, `'sharepoint', 'wisprflow']`) {
+	if !strings.Contains(html, `'sharepoint', 'teams', 'wisprflow', 'zoom']`) {
 		t.Error("wisprflow missing from KB_CONNECTOR_TYPE_ORDER")
 	}
 	start := strings.Index(html, "function kbWisprFlowSourceLine(c)")

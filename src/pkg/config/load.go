@@ -75,6 +75,9 @@ func loadWithOverrides(path, envPath string, validateOpts ValidateOptions) (*Con
 	if err := yaml.Unmarshal([]byte(expanded), &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config %s: %w", path, err)
 	}
+	if err := cfg.openPersistedSecrets(); err != nil {
+		return nil, fmt.Errorf("config %s: %w", path, err)
+	}
 
 	if envPath != "-" {
 		if envPath == "" {

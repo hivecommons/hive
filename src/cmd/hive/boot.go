@@ -10,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/proxy"
+	cruxruntime "github.com/hivecommons/hive/crux/runtime"
 	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/crux/trajectory"
 	"github.com/hivecommons/hive/crux/watchdog"
@@ -138,16 +139,20 @@ type boot struct {
 	startTime time.Time
 	// startID ties hive log lines to this start; startRecord is the start
 	// record (#11945), nil when none could be written.
-	startID                       string
-	startRecord                   *startrec.Recorder
-	configPath                    string
-	logger                        *slog.Logger
-	cfg                           *config.Config
-	ctx                           context.Context
-	preShutdownHooks              shutdownHooks
-	ghAuth                        githubAuth
-	ghClient                      *github.Client
-	appAuth                       *github.AppAuth
+	startID          string
+	startRecord      *startrec.Recorder
+	configPath       string
+	logger           *slog.Logger
+	cfg              *config.Config
+	ctx              context.Context
+	preShutdownHooks shutdownHooks
+	ghAuth           githubAuth
+	ghClient         *github.Client
+	appAuth          *github.AppAuth
+	// userSessions is the one Sessions runtime behind /api/sessions; the
+	// dashboard dependencies are rebuilt, the runtime (and its workspace
+	// lock) is not. See userSessionRuntime.
+	userSessions                  *cruxruntime.UserSessions
 	ciFailureKicker               *ciFailureKicker
 	gov                           *governor.Governor
 	sched                         *scheduler.Scheduler
@@ -272,6 +277,10 @@ type boot struct {
 	// boot pass, config reloads and the periodic re-derive
 	// (hivecommons/hive#18159); nil until wireReferenceRepos ran.
 	referenceRepos *referenceRepoRuntime
+	// ownerIdentity is the hive owner's connected GitHub account that
+	// write-tier reference repos are written as (hivecommons/hive#18197);
+	// created with the proxy, shared with the dashboard's consent routes.
+	ownerIdentity *github.OwnerIdentityStore
 	// inferenceSink is the one per-agent inference usage ledger; the proxy
 	// records into it in-process and the hive callback's usage capability
 	// records into it for a sidecar runtime (#14138 stage 4).

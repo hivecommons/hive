@@ -78,12 +78,15 @@ func TestReferenceRepoCardRendersDerivedEntryReadOnly(t *testing.T) {
 		extractJSFunction(t, html, "renderReferenceRepoDerived") + "\n    }\n" + `
 const assert = require('node:assert/strict');
 assert.equal(renderReferenceRepoDerived({full: 'hivecommons/hive', reference_tier: 'read-only'}), '');
-const w = renderReferenceRepoDerived({full: 'hivecommons/docs', derived_from: 'cncf/techdocs#395', derived_from_url: 'https://github.com/cncf/techdocs/issues/395', credential_state: 'write-tier'});
+const w = renderReferenceRepoDerived({full: 'hivecommons/docs', derived_from: 'cncf/techdocs#395', derived_from_url: 'https://github.com/cncf/techdocs/issues/395', credential_state: 'write-tier', credential_login: 'nate-double-u'});
 assert.match(w, /🔒 from <a class="repo-reference-source" href="https:\/\/github.com\/cncf\/techdocs\/issues\/395"[^>]*>cncf\/techdocs#395<\/a>/);
-assert.match(w, /data-credential-state="write-tier"[^>]*>🔑 App installation</);
-const r = renderReferenceRepoDerived({full: 'acme/docs', derived_from: 'cncf/techdocs#395', credential_state: 'read-only', credential_reason: 'the hive\'s GitHub App is not installed on acme'});
+assert.match(w, /data-credential-state="write-tier"[^>]*>🔑 as nate-double-u</);
+assert.doesNotMatch(w, /App installation/);
+const w2 = renderReferenceRepoDerived({full: 'hivecommons/docs', derived_from: 'cncf/techdocs#395', credential_state: 'write-tier'});
+assert.match(w2, />🔑 owner account</);
+const r = renderReferenceRepoDerived({full: 'acme/docs', derived_from: 'cncf/techdocs#395', credential_state: 'read-only', credential_reason: 'the hive owner\'s token is no longer valid'});
 assert.match(r, /<span class="repo-reference-source">cncf\/techdocs#395<\/span>/);
-assert.match(r, /data-credential-state="read-only" title="the hive&#39;s GitHub App is not installed on acme">read-only</);
+assert.match(r, /data-credential-state="read-only" title="the hive owner&#39;s token is no longer valid">read-only</);
 for (const out of [w, r]) {
   assert.doesNotMatch(out, /<button|<input|data-action=/, 'derived entries must offer no edit or delete control');
 }

@@ -43,7 +43,14 @@ type Status struct {
 	// Truncated reports that the last successful sync stopped at the
 	// connector's page cap; the remainder is picked up by later syncs.
 	Truncated bool `json:"truncated"`
+	// Progress is the live state of the running sync (or the last one):
+	// phase, items done/total, current item, timings. Not persisted.
+	Progress Progress `json:"progress"`
 }
+
+// Syncing reports whether a sync is in progress, from the running flag or an
+// active progress phase.
+func (st Status) Syncing() bool { return st.Running || st.Progress.Active() }
 
 // SyncerOptions configures NewSyncer.
 type SyncerOptions struct {
@@ -122,6 +129,7 @@ func NewSyncer(cfgs []ConnectorConfig, opts SyncerOptions) (*Syncer, error) {
 	for _, cfg := range cfgs {
 		st := persisted[cfg.Name]
 		st.Running = false
+		st.Progress = Progress{Phase: ProgressIdle}
 		e := s.newEntry(cfg, &sync.Mutex{}, &st)
 		s.entries[cfg.Name] = e
 		s.order = append(s.order, cfg.Name)
@@ -183,6 +191,9 @@ func (s *Syncer) Reconfigure(cfgs []ConnectorConfig) error {
 		}
 		syncMu := &sync.Mutex{}
 		st := s.status[cfg.Name]
+		if st.Progress.Phase == "" {
+			st.Progress.Phase = ProgressIdle
+		}
 		if ok {
 			s.stopLoopLocked(old)
 			syncMu = old.syncMu
@@ -285,10 +296,11 @@ func (s *Syncer) syncEntry(ctx context.Context, name string, e *entry) (Status, 
 	s.update(name, func(st *Status) {
 		st.Running = true
 		st.LastAttempt = s.opts.Now().UTC()
+		st.Progress = Progress{Phase: ProgressListing, StartedAt: st.LastAttempt}
 		cur = st.Cursor
 	})
 
-	pages, next, truncated, err := s.runSync(ctx, e, cur)
+	pages, next, truncated, err := s.runSync(ctx, name, e, cur)
 
 	var counts map[string]string
 	var dir string
@@ -299,6 +311,15 @@ func (s *Syncer) syncEntry(ctx context.Context, name string, e *entry) (Status, 
 	}
 	st := s.update(name, func(st *Status) {
 		st.Running = false
+		st.Progress.FinishedAt = s.opts.Now().UTC()
+		st.Progress.Current = ""
+		st.Progress.Phase = ProgressDone
+		if err != nil {
+			st.Progress.LastError = err.Error()
+			if !IsPartial(err) {
+				st.Progress.Phase = ProgressFailed
+			}
+		}
 		if counts != nil {
 			st.Facts, st.Deprecated = 0, 0
 			for _, v := range counts {
@@ -336,13 +357,20 @@ func (s *Syncer) syncEntry(ctx context.Context, name string, e *entry) (Status, 
 	return st, err
 }
 
-func (s *Syncer) runSync(ctx context.Context, e *entry, cur Cursor) (int, Cursor, bool, error) {
+// runSync runs e's Sync with a progress reporter in the context: the syncer
+// records every emitted page (writing → fetching, items done, bytes), and
+// connectors that know their item count (Plaud) report it themselves.
+func (s *Syncer) runSync(ctx context.Context, name string, e *entry, cur Cursor) (int, Cursor, bool, error) {
 	dir, err := s.opts.VaultDir(e.cfg.Layer)
 	if err != nil {
 		return 0, cur, false, fmt.Errorf("resolving vault for layer %q: %w", e.cfg.Layer, err)
 	}
 	ctx, cancel := context.WithTimeout(ctx, s.opts.SyncTimeout)
 	defer cancel()
+	report := func(fn func(*Progress)) {
+		s.update(name, func(st *Status) { fn(&st.Progress) })
+	}
+	ctx = withProgressReporter(ctx, report)
 
 	w := &FactWriter{Dir: dir, MaxPageBytes: s.opts.MaxPageBytes, Now: s.opts.Now}
 	full := isFullListing(e.conn, cur)
@@ -352,12 +380,21 @@ func (s *Syncer) runSync(ctx context.Context, e *entry, cur Cursor) (int, Cursor
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		title := progressTitle(p.Title)
+		report(func(pr *Progress) { pr.Phase, pr.Current = ProgressWriting, title })
 		slug, _, err := w.Write(e.cfg, p)
 		if err != nil {
 			return fmt.Errorf("writing page %q: %w", p.ID, err)
 		}
 		seen[slug] = true
 		pages++
+		size := int64(len(p.Markdown))
+		report(func(pr *Progress) {
+			pr.Phase = ProgressFetching
+			pr.ItemsDone++
+			pr.FactsWritten++
+			pr.BytesWritten += size
+		})
 		return nil
 	}
 	next, err := e.conn.Sync(ctx, cur, emit)

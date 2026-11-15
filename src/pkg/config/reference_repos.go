@@ -24,9 +24,11 @@ import (
 // Write is the rare opt-in for an assessor who also files findings upstream.
 // It is deliberately narrow — open an issue, open a PR on a topic branch,
 // comment on the hive's own items — and the credential behind it has to be one
-// GitHub actually honours for that repo: the App's installation on the TARGET
-// org (minted on demand, scoped to this one repo) or an operator-supplied
-// write_token_file. Boot refuses a write-mode entry that has neither.
+// GitHub actually honours for that repo: the hive OWNER's own GitHub account,
+// connected once on the dashboard (hivecommons/hive#18197), or an
+// operator-supplied write_token_file on a hand-written entry. Boot refuses a
+// hand-written write-mode entry that has neither; a derived one is served
+// read-only until the owner connects.
 type ReferenceRepo struct {
 	// Repo is the explicit "owner/name" reference. Bare names are rejected:
 	// a reference repo is by definition outside the project's own list, so
@@ -36,8 +38,8 @@ type ReferenceRepo struct {
 	// the read-only default.
 	Write []string `yaml:"write,omitempty" json:"write,omitempty"`
 	// WriteTokenFile is a path on the hive host holding a token that is
-	// authorized for Repo, used instead of minting from the App installation
-	// on the target org. Only meaningful with Write.
+	// authorized for Repo, used instead of the hive owner's connected account.
+	// Only meaningful with Write on a hand-written entry.
 	WriteTokenFile string `yaml:"write_token_file,omitempty" json:"write_token_file,omitempty"`
 	// DerivedFrom is the "owner/repo#N" of the accepted request issue this
 	// entry was derived from (hivecommons/hive#18139), empty for an entry an
@@ -46,31 +48,31 @@ type ReferenceRepo struct {
 	// an overlay or the runtime config, where it would outlive the grant
 	// (see hivecommons/hive#18137). The dashboard reads it as JSON.
 	DerivedFrom string `yaml:"-" json:"derived_from,omitempty"`
-	// CredentialState is the resolved credential tier of a derived entry
-	// (hivecommons/hive#18158): ReferenceCredentialWriteTier when the App is
-	// installed on the target org, ReferenceCredentialReadOnly when it is not
-	// and the entry was downgraded in memory. Empty for a hand-written entry,
-	// whose credential is verified at boot instead. Never serialized to YAML:
-	// it is re-resolved on every load.
+	// CredentialState is the resolved credential tier of a write entry
+	// (hivecommons/hive#18158, #18197): ReferenceCredentialWriteTier when a
+	// credential backs the writes (the hive owner's connected GitHub account,
+	// or write_token_file on a hand-written entry), ReferenceCredentialReadOnly
+	// when a derived entry was downgraded in memory because none does. Empty
+	// for a read-only entry. Never serialized to YAML: it is re-resolved on
+	// every load.
 	CredentialState string `yaml:"-" json:"credential_state,omitempty"`
 	// CredentialReason says why CredentialState is read-only, in words the
 	// request issue comment and the Settings editor can show.
 	CredentialReason string `yaml:"-" json:"credential_reason,omitempty"`
+	// CredentialLogin is the GitHub login the writes appear under (the owner's
+	// login, or the write_token_file's user); empty when CredentialState is
+	// not write-tier. The kick names it so agents know whose fork to push to.
+	CredentialLogin string `yaml:"-" json:"credential_login,omitempty"`
 }
 
-// Credential states of a derived reference repo.
+// Credential states of a write-tier reference repo.
 const (
-	// ReferenceCredentialWriteTier: the App has an installation on the target
-	// org, the entry keeps its issues+prs opt-in.
+	// ReferenceCredentialWriteTier: a credential backs the entry, it keeps its
+	// write opt-in and CredentialLogin names the account.
 	ReferenceCredentialWriteTier = "write-tier"
-	// ReferenceCredentialReadOnly: no installation, the entry was downgraded
-	// to read-only in memory and the request issue told why.
+	// ReferenceCredentialReadOnly: no credential, the derived entry was
+	// downgraded to read-only in memory and the request issue told why.
 	ReferenceCredentialReadOnly = "read-only"
-	// ReferenceCredentialUnresolved: installation discovery failed for a
-	// transient reason (network, 5xx); the entry is served read-only for
-	// this load without telling the request issue, and is retried on the
-	// next reload.
-	ReferenceCredentialUnresolved = "unresolved"
 )
 
 // Derived reports whether the entry came from an accepted request issue

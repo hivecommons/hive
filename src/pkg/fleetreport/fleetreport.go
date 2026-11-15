@@ -946,6 +946,17 @@ func IsBenignMessage(msg string) bool {
 	if strings.TrimSpace(m) == "sentinel alert" {
 		return true
 	}
+	// The GitHub proxy refusing a request its mode, write-surface or
+	// issue-shape policy forbids (recordViolation, crux/proxy) is sandbox
+	// enforcement working as designed: the agent gets a denial body, the
+	// refusal is counted per agent and audited. The WARN fires once per
+	// distinct (agent, method, path), so one agent probing a few forbidden
+	// endpoints crossed the repeat threshold (hivecommons/hive#18230). Match
+	// only the refusal notice; proxy forwarding and read failures stay
+	// reportable.
+	if strings.TrimSpace(m) == "proxy request blocked" {
+		return true
+	}
 	// A CI gate refusal is the merge safety policy working as designed, even
 	// when a required check remains unsuccessful across repeated polls (#14364).
 	// Keep the operator warning, but do not turn it into a runtime defect.
@@ -964,6 +975,18 @@ func IsBenignMessage(msg string) bool {
 	// though the proxy already warns only once per agent per window (#14346).
 	switch strings.TrimSpace(m) {
 	case "agent github api hourly cap reached", "agent github api hourly budget above soft threshold":
+		return true
+	}
+	// The eval cycle withholding kicks from agents out of provider quota
+	// (#18112) or behind a clipped spending limit (#15809) is backpressure
+	// working as designed: the notice repeats every cycle until the quota
+	// resets and a probe kick clears it, so it crossed the repeat threshold on
+	// its own (hivecommons/hive#18239). Match only the complete notices;
+	// failures to gate, probe or deliver kicks stay reportable.
+	switch strings.TrimSpace(m) {
+	case "provider quota exhausted: withholding agent kicks",
+		"provider spending limit: withholding agent kicks",
+		"provider spending limit: withholding all but the probe kick":
 		return true
 	}
 	// Contributor tier limits are normal policy enforcement on each poll,

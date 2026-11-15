@@ -53,6 +53,7 @@ function load() {
     function fetchBeadSynthStatus() {}
     function fetchFactHistory() {}
     function viewerIsOwner() { return false; }
+    function kbSyncProgressTick() { return Promise.resolve(); }
     function stageTrackerNoteMerges() {}
     function stageTrackerReconcileMerges() {}
     function stageTrackerNoteOpened() {}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -15,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/terminalassert"
 )
@@ -32,6 +34,13 @@ type fakeSessionRuntime struct {
 	capture string
 	resume  map[string]crux.UserSessionResume
 	startFn func(crux.UserSessionSpec) error
+	removed []string
+	// removeErr, when set, makes Remove fail (the files could not be deleted).
+	removeErr error
+	// resumeDirs records the workDir each ResumeInfo call was given.
+	resumeDirs []string
+	// detached records each DetachWritableClients call (keyboard hand-over).
+	detached []string
 }
 
 func newFakeSessionRuntime(t *testing.T) *fakeSessionRuntime {
@@ -51,6 +60,12 @@ func newFakeSessionRuntime(t *testing.T) *fakeSessionRuntime {
 func (f *fakeSessionRuntime) Vendors() []crux.UserSessionVendor { return f.vendors }
 func (f *fakeSessionRuntime) SupportsResume(v string) bool      { return v == "claude" }
 func (f *fakeSessionRuntime) WorkDir(id string) string          { return filepath.Join(f.workDir, id) }
+func (f *fakeSessionRuntime) WorkspaceDir(repo string) string {
+	if repo == "" || !strings.Contains(repo, "/") {
+		return ""
+	}
+	return filepath.Join(f.workDir, "workspace", repo)
+}
 func (f *fakeSessionRuntime) Start(spec crux.UserSessionSpec) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -76,7 +91,37 @@ func (f *fakeSessionRuntime) Kill(id string) error {
 	return nil
 }
 func (f *fakeSessionRuntime) Capture(id string, lines int) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	return f.capture, nil
+}
+
+// setCapture replaces what Capture returns (the pane's last lines).
+func (f *fakeSessionRuntime) setCapture(text string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.capture = text
+}
+
+// typedTexts copies the texts delivered so far.
+func (f *fakeSessionRuntime) typedTexts() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.typed...)
+}
+
+func (f *fakeSessionRuntime) DetachWritableClients(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.detached = append(f.detached, id)
+	return nil
+}
+
+// detachedIDs copies the sessions whose writable clients were detached.
+func (f *fakeSessionRuntime) detachedIDs() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]string(nil), f.detached...)
 }
 func (f *fakeSessionRuntime) SendText(id, text string, submit bool) error {
 	f.mu.Lock()
@@ -88,7 +133,45 @@ func (f *fakeSessionRuntime) SendText(id, text string, submit bool) error {
 	f.submits = append(f.submits, submit)
 	return nil
 }
-func (f *fakeSessionRuntime) ResumeInfo(id, vendor string) (crux.UserSessionResume, bool) {
+func (f *fakeSessionRuntime) Remove(id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.removeErr != nil {
+		return f.removeErr
+	}
+	f.removed = append(f.removed, id)
+	delete(f.alive, id)
+	return os.RemoveAll(filepath.Join(f.workDir, id))
+}
+
+// StoreUpload mimics the real runtime's contract: an exclusive 0600 file under
+// <work dir>/uploads, a file-count cap and a byte cap with the typed errors.
+func (f *fakeSessionRuntime) StoreUpload(id, fileName string, src io.Reader, maxBytes int64, maxFiles int) (string, int64, error) {
+	dir := filepath.Join(f.WorkDir(id), sessionUploadsDirName)
+	if err := os.MkdirAll(dir, sessionUploadDirMode); err != nil {
+		return "", 0, err
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) >= maxFiles {
+		return "", 0, crux.ErrUserSessionUploadLimit
+	}
+	b, err := io.ReadAll(io.LimitReader(src, maxBytes+1))
+	if err != nil {
+		return "", 0, err
+	}
+	if int64(len(b)) > maxBytes {
+		return "", int64(len(b)), crux.ErrUserSessionUploadTooLarge
+	}
+	dest := filepath.Join(dir, fileName)
+	if err := os.WriteFile(dest, b, sessionUploadFileMode); err != nil {
+		return "", 0, err
+	}
+	return dest, int64(len(b)), nil
+}
+
+func (f *fakeSessionRuntime) ResumeInfo(id, vendor, workDir string) (crux.UserSessionResume, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.resumeDirs = append(f.resumeDirs, workDir)
 	r, ok := f.resume[id]
 	return r, ok
 }
@@ -102,7 +185,7 @@ func newSessionTestEnv(t *testing.T, enabled bool) *sessionTestEnv {
 	t.Helper()
 	t.Setenv(sessionsDirEnv, t.TempDir())
 	t.Setenv(config.EnvSessionsEnabled, "")
-	for _, e := range []string{config.EnvSessionsMax, config.EnvSessionsMaxPerUser, config.EnvSessionsIdleTTLHours,
+	for _, e := range []string{config.EnvSessionsMax, config.EnvSessionsMaxPerUser, config.EnvSessionsIdleTTLHours, config.EnvSessionsWorkspaceRepo,
 		sessionsMaxInputBytesEnv, sessionsMaxUploadBytesEnv, sessionsMaxUploadsEnv} {
 		t.Setenv(e, "")
 	}
@@ -169,8 +252,22 @@ func decodeSessionJSON(t *testing.T, rec *httptest.ResponseRecorder) map[string]
 
 func (e *sessionTestEnv) create(t *testing.T, c sessionCaller, name string) string {
 	t.Helper()
-	rec := e.do(t, c, "POST", "/api/sessions", map[string]string{"name": name, "group": "rfc", "vendor": "claude"})
-	if rec.Code != http.StatusCreated {
+	return e.createWith(t, c, name, false)
+}
+
+// createShared makes a session every role can see and every writer can use.
+func (e *sessionTestEnv) createShared(t *testing.T, c sessionCaller, name string) string {
+	t.Helper()
+	return e.createWith(t, c, name, true)
+}
+
+// createWith posts a create, which answers 202 with the session `preparing`
+// (the start runs in the background), and waits for that start to finish so
+// the caller gets a RUNNING session as the synchronous API used to give.
+func (e *sessionTestEnv) createWith(t *testing.T, c sessionCaller, name string, shared bool) string {
+	t.Helper()
+	rec := e.do(t, c, "POST", "/api/sessions", map[string]any{"name": name, "group": "rfc", "vendor": "claude", "shared": shared})
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("create = %d: %s", rec.Code, rec.Body.String())
 	}
 	sess, _ := decodeSessionJSON(t, rec)["session"].(map[string]any)
@@ -178,7 +275,42 @@ func (e *sessionTestEnv) create(t *testing.T, c sessionCaller, name string) stri
 	if id == "" {
 		t.Fatalf("no id in %s", rec.Body.String())
 	}
+	if sess["status"] != sessionStatusPreparing {
+		t.Fatalf("create answered status %v, want %s", sess["status"], sessionStatusPreparing)
+	}
+	if got := e.waitSettled(t, id); got.Status != sessionStatusRunning {
+		t.Fatalf("session %s settled as %s (%s), want running", id, got.Status, got.Error)
+	}
 	return id
+}
+
+// sessionTestSettleTimeout bounds the wait for a background start in tests.
+const sessionTestSettleTimeout = 5 * time.Second
+
+// waitSessionsFor polls cond until it holds or the settle timeout passes.
+func waitSessionsFor(t *testing.T, what string, cond func() bool) {
+	t.Helper()
+	testutil.Eventually(t, sessionTestSettleTimeout, cond, "timed out waiting for %s", what)
+}
+
+// waitSettled waits until the background start of id has moved the record out
+// of `preparing` and returns the record.
+func (e *sessionTestEnv) waitSettled(t *testing.T, id string) sessionRecord {
+	t.Helper()
+	var rec sessionRecord
+	waitSessionsFor(t, "session "+id+" to leave preparing", func() bool {
+		var ok bool
+		rec, ok = e.s.sessionStoreOrNil().get(id)
+		return ok && rec.Status != sessionStatusPreparing
+	})
+	return rec
+}
+
+// startedSpecs copies the specs the fake runtime was asked to start.
+func (f *fakeSessionRuntime) startedSpecs() []crux.UserSessionSpec {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]crux.UserSessionSpec(nil), f.started...)
 }
 
 func (e *sessionTestEnv) auditActions() []AuditEntry { return e.s.audit.Recent(0) }
@@ -257,18 +389,18 @@ func TestSessionsListShapeVendorsAndLimits(t *testing.T) {
 
 func TestSessionsRoleMatrix(t *testing.T) {
 	e := newSessionTestEnv(t, true)
-	id := e.create(t, callerOwner, "owner session")
+	id := e.createShared(t, callerOwner, "owner session")
 	post := map[string]string{"name": "n", "group": "g", "vendor": "claude"}
 
 	type row struct {
 		who                  sessionCaller
 		create, input, patch int // expected status codes
 	}
-	// Create/input need owner or read-write; patch needs creator or owner and
+	// Create and input answer 202 (the workspace is prepared, and the text delivered, in the background); create/input need owner or read-write; patch needs creator or owner and
 	// every non-owner here is not the creator of the owner's session.
 	rows := []row{
-		{callerOwner, 201, 200, 200},
-		{callerRW, 201, 200, 403},
+		{callerOwner, 202, 202, 200},
+		{callerRW, 202, 202, 403},
 		{callerMerger, 403, 403, 403},
 		{callerRead, 403, 403, 403},
 		{callerForgedOwn, 403, 403, 403},
@@ -284,7 +416,7 @@ func TestSessionsRoleMatrix(t *testing.T) {
 			t.Errorf("%s patch = %d, want %d", r.who.role, rec.Code, r.patch)
 		}
 	}
-	// Reads are open to every role, including read.
+	// A SHARED session is readable by every role, including read.
 	for _, who := range []sessionCaller{callerOwner, callerRW, callerMerger, callerRead} {
 		if rec := e.do(t, who, "GET", "/api/sessions", nil); rec.Code != http.StatusOK {
 			t.Errorf("%s list = %d", who.role, rec.Code)
@@ -301,7 +433,7 @@ func TestSessionsRoleMatrix(t *testing.T) {
 
 func TestSessionsCreatorOrOwnerMayRenameAndClose(t *testing.T) {
 	e := newSessionTestEnv(t, true)
-	id := e.create(t, callerRW, "ritas session")
+	id := e.createShared(t, callerRW, "ritas session")
 	if rec := e.do(t, callerRW2, "PATCH", "/api/sessions/"+id, map[string]string{"group": "x"}); rec.Code != http.StatusForbidden {
 		t.Errorf("other read-write patched = %d", rec.Code)
 	}
@@ -336,7 +468,7 @@ func TestSessionsCreateValidation(t *testing.T) {
 		{"unknown vendor", map[string]string{"name": "ok", "vendor": "emacs"}, 400},
 		{"shell vendor", map[string]string{"name": "ok", "vendor": "bash"}, 400},
 		{"not installed", map[string]string{"name": "ok", "vendor": "goose"}, 409},
-		{"ok", map[string]string{"name": "Good name (v2)", "group": "RFC-1", "vendor": "claude"}, 201},
+		{"ok", map[string]string{"name": "Good name (v2)", "group": "RFC-1", "vendor": "claude"}, http.StatusAccepted},
 	}
 	for _, tc := range cases {
 		if rec := e.do(t, callerOwner, "POST", "/api/sessions", tc.body); rec.Code != tc.want {
@@ -350,10 +482,11 @@ func TestSessionsCreateValidation(t *testing.T) {
 	if rec := e.do(t, callerOwner, "POST", "/api/sessions", map[string]string{"name": "x", "vendor": "claude"}); rec.Code != http.StatusForbidden {
 		t.Errorf("denied backend = %d, want 403", rec.Code)
 	}
-	if len(e.rt.started) != 1 {
-		t.Errorf("started %d sessions, want only the one valid create", len(e.rt.started))
+	waitSessionsFor(t, "the one valid create to start", func() bool { return len(e.rt.startedSpecs()) >= 1 })
+	if n := len(e.rt.startedSpecs()); n != 1 {
+		t.Errorf("started %d sessions, want only the one valid create", n)
 	}
-	for _, spec := range e.rt.started {
+	for _, spec := range e.rt.startedSpecs() {
 		if spec.ResumeCommand != "" {
 			t.Errorf("fresh create carried a resume command")
 		}
@@ -379,31 +512,205 @@ func TestSessionsLimits(t *testing.T) {
 	}
 }
 
-func TestSessionsStartFailureLeavesNoRecord(t *testing.T) {
+// A start that fails in the background leaves a `failed` record carrying the
+// reason (tokens redacted) so the tab can show it; its sandbox is removed, and
+// DELETE on it removes the record. The failure is audited with its outcome.
+func TestSessionsStartFailureMarksRecordFailed(t *testing.T) {
 	e := newSessionTestEnv(t, true)
-	e.rt.startFn = func(crux.UserSessionSpec) error { return errors.New("secret internal detail") }
-	rec := e.do(t, callerOwner, "POST", "/api/sessions", map[string]string{"name": "x", "vendor": "claude"})
-	if rec.Code != http.StatusInternalServerError {
-		t.Fatalf("start failure = %d", rec.Code)
+	e.rt.startFn = func(crux.UserSessionSpec) error {
+		return errors.New("preparing session workspace: git clone acme/widgets: exit 128 (token ghp_abcdefghijklmnopqrstuvwxyz0123456789)")
 	}
-	if strings.Contains(rec.Body.String(), "secret internal detail") {
-		t.Error("internal error detail leaked to the client")
+	rec := e.do(t, callerOwner, "POST", "/api/sessions", map[string]string{"name": "x", "vendor": "claude"})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create = %d: %s", rec.Code, rec.Body.String())
+	}
+	id, _ := decodeSessionJSON(t, rec)["session"].(map[string]any)["id"].(string)
+	got := e.waitSettled(t, id)
+	if got.Status != sessionStatusFailed || !strings.Contains(got.Error, "git clone acme/widgets") || got.EndedAt == "" {
+		t.Fatalf("record after failed start = %+v", got)
+	}
+	if strings.Contains(got.Error, "ghp_abcdefghijklmnopqrstuvwxyz0123456789") {
+		t.Error("a token in the start error reached the record unredacted")
+	}
+	waitSessionsFor(t, "sandbox removal", func() bool {
+		e.rt.mu.Lock()
+		defer e.rt.mu.Unlock()
+		return len(e.rt.removed) == 1
+	})
+	list := decodeSessionJSON(t, e.do(t, callerOwner, "GET", "/api/sessions", nil))
+	view, _ := list["sessions"].([]any)[0].(map[string]any)
+	if view["status"] != sessionStatusFailed || view["error"] != got.Error || view["message"] != "" {
+		t.Errorf("failed view = %v", view)
+	}
+	var outcome string
+	for _, a := range e.auditActions() {
+		if a.Action == auditSessionStarted {
+			outcome = a.Detail
+		}
+	}
+	if !strings.Contains(outcome, "outcome="+sessionStatusFailed) {
+		t.Errorf("session_started audit = %q, want the failed outcome", outcome)
+	}
+	if rec := e.do(t, callerOwner, "DELETE", "/api/sessions/"+id, nil); rec.Code != http.StatusOK {
+		t.Fatalf("delete failed session = %d: %s", rec.Code, rec.Body.String())
 	}
 	if got := e.s.sessionStoreOrNil().list(); len(got) != 0 {
-		t.Errorf("records after failed start: %v", got)
+		t.Errorf("records after deleting the failed session: %v", got)
+	}
+}
+
+// The create answers before the start finishes: the record is `preparing`
+// with a message, listed as such, counted against the caps, refused for input
+// and close, and moves to running (audited) once the runtime returns.
+func TestSessionsCreateAnswersBeforeTheStartFinishes(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	e.s.deps.Config.Project.Org, e.s.deps.Config.Project.PrimaryRepo = "acme", "widgets"
+	release := make(chan struct{})
+	e.rt.startFn = func(crux.UserSessionSpec) error { <-release; return nil }
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() {
+		done <- e.do(t, callerRW, "POST", "/api/sessions", map[string]string{"name": "slow", "vendor": "claude"})
+	}()
+	var rec *httptest.ResponseRecorder
+	select {
+	case rec = <-done:
+	case <-time.After(sessionTestSettleTimeout):
+		t.Fatal("create blocked on the start")
+	}
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create = %d: %s", rec.Code, rec.Body.String())
+	}
+	sess, _ := decodeSessionJSON(t, rec)["session"].(map[string]any)
+	id, _ := sess["id"].(string)
+	if sess["status"] != sessionStatusPreparing || !strings.Contains(sess["message"].(string), "cloning acme/widgets") {
+		t.Fatalf("create answered %v", sess)
+	}
+	list := decodeSessionJSON(t, e.do(t, callerRW, "GET", "/api/sessions", nil))
+	views, _ := list["sessions"].([]any)
+	if len(views) != 1 || views[0].(map[string]any)["status"] != sessionStatusPreparing {
+		t.Fatalf("list while preparing = %v", list["sessions"])
+	}
+	if got := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/input", map[string]any{"text": "x"}).Code; got != http.StatusConflict {
+		t.Errorf("input while preparing = %d, want 409", got)
+	}
+	if got := e.do(t, callerRW, "DELETE", "/api/sessions/"+id, nil).Code; got != http.StatusConflict {
+		t.Errorf("close while preparing = %d, want 409", got)
+	}
+	t.Setenv(config.EnvSessionsMaxPerUser, "1")
+	if got := e.do(t, callerRW, "POST", "/api/sessions", map[string]string{"name": "second", "vendor": "claude"}).Code; got != http.StatusTooManyRequests {
+		t.Errorf("a preparing session does not count against the cap: %d", got)
+	}
+	close(release)
+	got := e.waitSettled(t, id)
+	if got.Status != sessionStatusRunning || got.Message != "" || got.Error != "" {
+		t.Fatalf("record after start = %+v", got)
+	}
+	var outcome string
+	for _, a := range e.auditActions() {
+		if a.Action == auditSessionStarted {
+			outcome = a.Detail
+		}
+	}
+	if !strings.Contains(outcome, "outcome="+sessionStatusRunning) {
+		t.Errorf("session_started audit = %q, want the running outcome", outcome)
+	}
+}
+
+// Two creates while the first start is still running are both accepted as
+// preparing and both finish; the runtime serialises the shared clone (that
+// invariant is asserted on the runtime itself in crux/agent).
+func TestSessionsConcurrentCreatesBothPrepare(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	release := make(chan struct{})
+	e.rt.startFn = func(crux.UserSessionSpec) error { <-release; return nil }
+	var ids []string
+	for _, name := range []string{"one", "two"} {
+		rec := e.do(t, callerRW, "POST", "/api/sessions", map[string]string{"name": name, "vendor": "claude"})
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("create %s = %d: %s", name, rec.Code, rec.Body.String())
+		}
+		id, _ := decodeSessionJSON(t, rec)["session"].(map[string]any)["id"].(string)
+		ids = append(ids, id)
+	}
+	for _, id := range ids {
+		if rec, _ := e.s.sessionStoreOrNil().get(id); rec.Status != sessionStatusPreparing {
+			t.Errorf("%s = %s while the starts run, want preparing", id, rec.Status)
+		}
+	}
+	close(release)
+	for _, id := range ids {
+		if got := e.waitSettled(t, id); got.Status != sessionStatusRunning {
+			t.Errorf("%s settled as %s (%s)", id, got.Status, got.Error)
+		}
+	}
+	if n := len(e.rt.startedSpecs()); n != 2 {
+		t.Errorf("started %d, want 2", n)
+	}
+}
+
+// A `preparing` record with no start behind it (the hive restarted mid-clone)
+// is marked failed with a reason on the next list, never left spinning.
+func TestSessionsPreparingLeftoverFromRestartIsFailed(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	st := e.s.sessionStoreOrNil()
+	now := time.Now().UTC().Format(time.RFC3339)
+	if err := st.put(sessionRecord{ID: "abcdef012345", Name: "orphan", Vendor: "claude", Creator: callerRW.user, CreatedAt: now, LastActivity: now, Status: sessionStatusPreparing, UIDSlot: 1, Message: "preparing workspace"}); err != nil {
+		t.Fatal(err)
+	}
+	list := decodeSessionJSON(t, e.do(t, callerRW, "GET", "/api/sessions", nil))
+	view, _ := list["sessions"].([]any)[0].(map[string]any)
+	if view["status"] != sessionStatusFailed || view["error"] != sessionRestartedWhilePreparing {
+		t.Errorf("leftover view = %v", view)
+	}
+}
+
+// A resume is asynchronous too; when its start fails the session goes back to
+// ended, with the reason, and stays resumable.
+func TestSessionsResumeFailureKeepsSessionEnded(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	id := e.create(t, callerRW, "resumable")
+	e.rt.resume[id] = crux.UserSessionResume{SessionID: "abc", Command: "claude --resume abc"}
+	e.do(t, callerRW, "DELETE", "/api/sessions/"+id, nil)
+	e.rt.startFn = func(crux.UserSessionSpec) error { return errors.New("spoke is out of session uids") }
+	rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/resume", nil)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("resume = %d: %s", rec.Code, rec.Body.String())
+	}
+	got := e.waitSettled(t, id)
+	if got.Status != sessionStatusEnded || !strings.Contains(got.Error, "out of session uids") || got.ResumeCommand == "" {
+		t.Fatalf("record after failed resume = %+v", got)
+	}
+	e.rt.mu.Lock()
+	removed := len(e.rt.removed)
+	e.rt.mu.Unlock()
+	if removed != 0 {
+		t.Error("a failed resume removed the session's files")
+	}
+	list := decodeSessionJSON(t, e.do(t, callerRW, "GET", "/api/sessions", nil))
+	view, _ := list["sessions"].([]any)[0].(map[string]any)
+	if view["resumable"] != true || view["error"] != got.Error {
+		t.Errorf("view after failed resume = %v", view)
 	}
 }
 
 func TestSessionsInputCapsAndAudit(t *testing.T) {
 	e := newSessionTestEnv(t, true)
 	t.Setenv(sessionsMaxInputBytesEnv, "32")
+	fastSessionQueue(t, e)
 	id := e.create(t, callerRW, "typing")
+	e.rt.setCapture(claudeIdlePane)
 	secret := "my-secret-passphrase"
-	if rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/input", map[string]any{"text": secret, "submit": true}); rec.Code != http.StatusOK {
+	// Input is queued (202) and delivered by the session's worker once the
+	// pane is idle (it is, here), then audited as the sender.
+	if rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/input", map[string]any{"text": secret, "submit": true}); rec.Code != http.StatusAccepted {
 		t.Fatalf("input = %d: %s", rec.Code, rec.Body.String())
 	}
-	if len(e.rt.typed) != 1 || e.rt.typed[0] != secret || !e.rt.submits[0] {
-		t.Errorf("typed = %v submits = %v", e.rt.typed, e.rt.submits)
+	waitSessionsFor(t, "queued input to be delivered", func() bool { return len(e.rt.typedTexts()) == 1 })
+	e.rt.mu.Lock()
+	typed, submits := append([]string(nil), e.rt.typed...), append([]bool(nil), e.rt.submits...)
+	e.rt.mu.Unlock()
+	if len(typed) != 1 || typed[0] != secret || !submits[0] {
+		t.Errorf("typed = %v submits = %v", typed, submits)
 	}
 	if rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/input", map[string]any{"text": strings.Repeat("x", 33)}); rec.Code != http.StatusRequestEntityTooLarge {
 		t.Errorf("oversized input = %d, want 413", rec.Code)
@@ -546,7 +853,7 @@ func TestSessionsUploadRolesCapsAndFieldName(t *testing.T) {
 
 func TestSessionsLogRedactsAndCaps(t *testing.T) {
 	e := newSessionTestEnv(t, true)
-	id := e.create(t, callerOwner, "log")
+	id := e.createShared(t, callerOwner, "log")
 	e.rt.capture = "line one\nghp_abcdefghijklmnopqrstuvwxyz0123456789 token\n" + strings.Repeat("filler\n", 9000)
 	rec := e.do(t, callerRead, "GET", "/api/sessions/"+id+"/log?lines=3", nil)
 	if rec.Code != http.StatusOK {
@@ -629,7 +936,7 @@ func TestSessionsRenameAudited(t *testing.T) {
 
 func TestSessionsResume(t *testing.T) {
 	e := newSessionTestEnv(t, true)
-	id := e.create(t, callerRW, "resumable")
+	id := e.createShared(t, callerRW, "resumable")
 	e.rt.resume[id] = crux.UserSessionResume{SessionID: "abc", Command: "claude --resume abc"}
 	if rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/resume", nil); rec.Code != http.StatusConflict {
 		t.Errorf("resume of running session = %d, want 409", rec.Code)
@@ -644,15 +951,19 @@ func TestSessionsResume(t *testing.T) {
 		t.Errorf("read resume = %d", rec.Code)
 	}
 	rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/resume", nil)
-	if rec.Code != http.StatusOK {
+	if rec.Code != http.StatusAccepted {
 		t.Fatalf("resume = %d: %s", rec.Code, rec.Body.String())
 	}
-	last := e.rt.started[len(e.rt.started)-1]
+	if got := decodeSessionJSON(t, rec)["session"].(map[string]any)["status"]; got != sessionStatusPreparing {
+		t.Errorf("status answered by resume = %v, want preparing", got)
+	}
+	if got := e.waitSettled(t, id); got.Status != sessionStatusRunning || got.EndedAt != "" {
+		t.Fatalf("record after resume = %+v", got)
+	}
+	started := e.rt.startedSpecs()
+	last := started[len(started)-1]
 	if last.ID != id || last.ResumeCommand != "claude --resume abc" {
 		t.Errorf("resume start = %+v", last)
-	}
-	if got := decodeSessionJSON(t, rec)["session"].(map[string]any)["status"]; got != "running" {
-		t.Errorf("status after resume = %v", got)
 	}
 
 	// A vendor without resume support yields 409.
@@ -713,7 +1024,7 @@ func TestSessionsStoreRoundTripAndPermissions(t *testing.T) {
 
 func TestSessionsResumeCommandNeverExposed(t *testing.T) {
 	e := newSessionTestEnv(t, true)
-	id := e.create(t, callerRW, "x")
+	id := e.createShared(t, callerRW, "x")
 	e.rt.resume[id] = crux.UserSessionResume{Command: "claude --resume abc-secret-id"}
 	e.do(t, callerRW, "DELETE", "/api/sessions/"+id, nil)
 	rec := e.do(t, callerRead, "GET", "/api/sessions", nil)
@@ -727,7 +1038,7 @@ func TestSessionsReconcileMarksVanishedSessionsEnded(t *testing.T) {
 	live := e.create(t, callerRW, "live")
 	gone := e.create(t, callerRW, "gone")
 	delete(e.rt.alive, gone) // tmux did not survive the restart
-	list := decodeSessionJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil))
+	list := decodeSessionJSON(t, e.do(t, callerOwner, "GET", "/api/sessions", nil))
 	status := map[string]string{}
 	for _, v := range list["sessions"].([]any) {
 		m := v.(map[string]any)
@@ -746,7 +1057,7 @@ func TestSessionsAttachedCountSurfaced(t *testing.T) {
 	e := newSessionTestEnv(t, true)
 	id := e.create(t, callerRW, "x")
 	e.rt.alive[id] = crux.UserSessionProbe{Exists: true, Attached: 3, Activity: time.Now()}
-	sess := decodeSessionJSON(t, e.do(t, callerRead, "GET", "/api/sessions", nil))["sessions"].([]any)[0].(map[string]any)
+	sess := decodeSessionJSON(t, e.do(t, callerOwner, "GET", "/api/sessions", nil))["sessions"].([]any)[0].(map[string]any)
 	if sess["attached"] != float64(3) || sess["tmux_name"] != "hive-sess-"+id {
 		t.Errorf("session = %v", sess)
 	}
@@ -838,6 +1149,7 @@ func TestSanitizeUploadName(t *testing.T) {
 // Terminal handoff with a session id.
 func TestTerminalHandoffWithSession(t *testing.T) {
 	t.Setenv("HIVE_TERMINAL_KEY", "test-terminal-key-0123456789")
+	t.Setenv(ttydAttachKeyEnv, "test-attach-key")
 	e := newSessionTestEnv(t, true)
 	e.s.deps.Config.HiveID = "hosted-alpha"
 	if terminalassert.SigningKey() == "" {
@@ -868,8 +1180,17 @@ func TestTerminalHandoffWithSession(t *testing.T) {
 	if rec := post(callerRW, nil); rec.Code != http.StatusOK {
 		t.Errorf("handoff without body = %d, want unchanged behaviour", rec.Code)
 	}
-	if rec := post(callerRead, map[string]string{"session": id}); rec.Code != http.StatusForbidden {
-		t.Errorf("read role handoff = %d, want 403", rec.Code)
+	// The read role cannot see a private session (404, the id is not disclosed)
+	// but may watch a shared one read-only, so a session-bound code is minted.
+	if rec := post(callerRead, map[string]string{"session": id}); rec.Code != http.StatusNotFound {
+		t.Errorf("read role handoff on a private session = %d, want 404", rec.Code)
+	}
+	if rec := post(callerRead, nil); rec.Code != http.StatusForbidden {
+		t.Errorf("read role agent-terminal handoff = %d, want 403", rec.Code)
+	}
+	e.do(t, callerRW, "PATCH", "/api/sessions/"+id, map[string]any{"shared": true})
+	if rec := post(callerRead, map[string]string{"session": id}); rec.Code != http.StatusOK {
+		t.Errorf("read role handoff on a shared session = %d, want 200 (read-only viewer)", rec.Code)
 	}
 	if rec := post(callerRW, map[string]string{"session": "ffffffffffff"}); rec.Code != http.StatusNotFound {
 		t.Errorf("unknown session handoff = %d, want 404", rec.Code)

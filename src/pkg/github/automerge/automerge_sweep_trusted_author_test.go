@@ -46,6 +46,9 @@ func newTrustedSweepAPI(t *testing.T, fx *trustedSweepFixture) *httptest.Server 
 	t.Helper()
 	fetches := 0
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		if serveUnprotectedSweepBase(w, r) {
 			return
 		}
@@ -416,6 +419,9 @@ func TestPrefilterTrustedAuthorPRIgnoresSentinelExcludedLabel(t *testing.T) {
 func TestTrustedAuthorGitHubSignalErrorsAndEdges(t *testing.T) {
 	page := 0
 	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if servePRCommitsSigned(w, r) {
+			return
+		}
 		switch {
 		case r.URL.Path == "/repos/acme/widget/collaborators/ghost/permission":
 			http.Error(w, "boom", http.StatusInternalServerError)

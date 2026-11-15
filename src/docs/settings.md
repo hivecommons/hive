@@ -125,7 +125,9 @@ The OpenAI-compatible gateways (LiteLLM, OpenRouter, vLLM, and others) agents se
 
 ## Dashboard
 
-Settings for the dashboard itself (`dashboard.*`): its port and agent poll interval, the Experiment Lab, whether the header also shows the usage gauge, hub-proxied auth, the dashboard auth token, the access allowlist, and the issue bands.
+Settings for the dashboard itself (`dashboard.*`): its port and agent poll interval, the Experiment Lab, whether the header also shows the usage gauge, hub-proxied auth, Sessions, the dashboard auth token, the access allowlist, and the issue bands.
+
+**Sessions** (`dashboard.sessions.enabled`, off by default) turns on the [Sessions](dashboard-sections.md#sessions) section, named shared CLI-agent terminals inside the dashboard, which takes the place of Inception while it is on. The `HIVE_SESSIONS_ENABLED` environment variable, when set, overrides the switch, and the dialog says so. Beside it are the three limits, `dashboard.sessions.max_sessions`, `dashboard.sessions.max_per_user` and `dashboard.sessions.idle_ttl_hours`; 0 keeps the built-in default (12, 4 and 72), and `HIVE_SESSIONS_MAX`, `HIVE_SESSIONS_MAX_PER_USER` and `HIVE_SESSIONS_IDLE_TTL_HOURS` override them. See the [Sessions API](api-reference/sessions.md).
 
 **Also show the usage gauge in the header** (`dashboard.subscription_gauge_header`, off by default) adds a small fuel-dial chip to the header on every page, showing how much is left in the limit closest to running out across the plans the hive's agents spend (Claude, Copilot and others). The full gauge, with a row per provider, is on the Overview by default for the owner and can be hidden there from the Overview settings. Both show the measurements hive already makes; only the owner sees them; and they show the providers' plans, not the hive's token budget. See [Usage gauge](dashboard.md#usage-gauge).
 

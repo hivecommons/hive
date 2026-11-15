@@ -54,6 +54,24 @@ that status is the thing to check before treating a page as current behaviour:
   impossible rather than merely unwise, including why `POST /api/contribute/invite` cannot work
   from a role-derived credential at all — and the one real gap it does not close: writes audit as
   `local`, so an assistant-mediated action is indistinguishable from a dashboard one.
+- [Meeting recordings in the Inbox: Zoom and Microsoft Teams](meeting-recordings.md) -
+  **Zoom shipped; Teams scaffold shipped, live verification blocked on tenant
+  consent.** Zoom cloud recordings (user-level OAuth with the hosted paste
+  flow, or Server-to-Server) and Teams recordings/transcripts (Graph
+  application permissions) become one fact per recorded meeting and Inbox
+  items next to Plaud, sharing a VTT renderer and the audio endpoint; records
+  the auth model per platform, polling over webhooks, the fact shape, the
+  Teams playback gap and the privacy posture.
+
+- [Email to Inbox: a per-hive inbound address](email-inbox.md) - **design only /
+  proposed.** Gives every hive a unique, unguessable inbound address
+  (`<uid>@inbox.<hub domain>`, plus-addressing as routing tags) whose mail lands
+  as an Inbox item and is triaged like Plaud recordings today. Recommends a
+  hub-owned inbound domain fed by a provider webhook and relayed to the spoke
+  over the existing signed webhook-relay channel, with a heartbeat pull for
+  push-reported spokes, and records the fail-closed guard set (provider
+  DKIM/DMARC verdicts, allowlist, caps, ioscan, audit). Nothing is built.
+
 - [Crux: the agent runtime boundary](crux.md) — **Stage 1 shipped (v5); Stage 2 blocked on `pkg/config`.** RFC [#13536](https://github.com/hivecommons/hive/issues/13536): names the agent runtime inside Hive (`pkg/agent` and its ring) as Crux, lists what stays in Hive, records the staged plan (in-repo boundary → nested module → `crux serve`) and the naming decision. Inbound and outbound ratchets in `src/internal/testutil/crux_*_ratchet_test.go`, the tmux funnel, `crux.Runtime`, Crux-owned value types, CI path filters and the `crux` CLI are live; the nested module waits on an agent-runtime config leaf (the doc lists the measured outbound edges and prerequisites).
 
 - [Draining CLI auto-memory into draft knowledge](cli-memory-drain.md) — **Partly shipped** (phase 1: manager-side drain, dedup tags, spool, draft create path; phase 3: review flow, draft exclusion, legacy drain; phase 2, the Claude Code `SessionEnd` hook, is open). #17033: turns each coding CLI's hidden memory store (Claude Code `projects/*/memory`, Codex `memories`, Gemini `GEMINI.md`) into `draft` knowledge facts tagged `cli-memory` and `agent:<name>`. Claude Code drains through a `SessionEnd` hook; the others drain on the manager side at kick time, before `clear_on_kick`. Decides content-hash dedup across agents, an ingest-only drain with the existing curator as the only promoter, and untrusted-content handling (never primed while draft). Implementation is split into three child issues.

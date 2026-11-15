@@ -10,7 +10,7 @@ For the shared configuration fields, the fact format and how connectors relate t
 knowledge:
   connectors:
     - name: team-wiki          # lowercase letters, digits, dashes
-      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow
+      type: github-wiki        # confluence | context7 | notion | git | document | github-wiki | google-drive | sharepoint | plaud | wisprflow | zoom | teams
       enabled: true
       interval: 15m            # minimum 1m; blank = 15m
       layer: project           # personal | project | org | community
@@ -21,7 +21,7 @@ knowledge:
         # file: /run/secrets/wiki-token   # an absolute secret file path
 ```
 
-Only one of `auth.env` / `auth.file` may be set. Inline secrets (an `auth.token`, or secret-looking scope keys such as `api_key`) are rejected everywhere, including by the dashboard.
+Only one of `auth.env` / `auth.file` may be set. Inline secrets (an `auth.token`, or secret-looking scope keys such as `api_key`) are rejected everywhere, including by the dashboard. Connectors that talk to an OAuth app the operator registered (`zoom`, `teams`) name that registration the same way, through `auth.client_id_env`, `auth.client_secret_env` and `auth.account_id_env` / `auth.tenant_id_env`: environment variable **names**, never values, plus `auth.mode` (`user_oauth` or `server_to_server`).
 
 ## How it works
 
@@ -70,6 +70,8 @@ The same connectors remain available under **Settings → Knowledge → Connecto
 | Pages / facts | Pages emitted by the last sync / active facts the connector owns |
 | Last error | Truncated; hover for the full text |
 
+While a sync runs, the connector's card (and the status cell of the Settings table) shows live progress instead of waiting for the sync to finish: a progress bar, determinate once the connector knows how many items it will process (Plaud reports the recording count right after `list_files`; other connectors count pages as they are written, so their bar is indeterminate), a line such as `fetching 12 of 200 · Standup ideas` naming the current item, and the elapsed time. The `syncing` pill follows the same live state. The dashboard polls the status endpoint every 2.5 s while any connector is syncing and stops when the last one finishes; a sync that fails shows its error inline under the bar. The Knowledge section header carries a compact `syncing: <name> 12/200` indicator so a running sync is visible without opening Integrations.
+
 Owners can **Sync now**, **Edit**, **Disable/Enable** and **Remove** a connector and **Add** new ones from Settings; the Knowledge-card Integrations modal provides the same save, validate, enable/disable and sync actions grouped by connector type. Non-owners see the table read-only. **Validate** inside the Add/Edit dialog is a conservative dry-run: it applies the config rules and the connector's own scope/auth checks and confirms the named environment variable is set (or the file is readable and non-empty). It performs no network access and never echoes the credential.
 
 Status and **Sync now** need the connector syncer, which `hive` starts at boot whenever `knowledge.connectors` is non-empty. When it is not running, the table shows configuration only and Sync now answers `503`.
@@ -80,7 +82,7 @@ Status and **Sync now** need the connector syncer, which `hive` starts at boot w
 | --- | --- | --- |
 | `GET /api/config/knowledge/connectors` | dashboard session | Configured connectors and registered types |
 | `PUT /api/config/knowledge/connectors` | owner | Replace the list (`{"connectors": [...]}`); the whole list is validated first |
-| `GET /api/config/knowledge/connectors/status` | dashboard session | Status rows for the table |
+| `GET /api/config/knowledge/connectors/status` | dashboard session | Status rows for the table, each with `running` and the live `progress` block below |
 | `POST /api/config/knowledge/connectors/validate` | owner | Dry-run validate one entry |
 | `POST /api/config/knowledge/connectors/{name}/sync` | owner | Start a background sync (`202`; `409` if running) |
 | `GET /api/knowledge/connectors` | dashboard session | `{"connectors": [...]}`: one status per configured connector, in config order |
@@ -103,6 +105,19 @@ Each status object returned by `GET /api/knowledge/connectors` contains:
 | `cursor` | The incremental cursor. |
 | `running` | `true` while a sync is in progress. |
 | `truncated` | `true` when the last sync stopped at `max_pages`. |
+| `progress` | Live state of the running sync, or of the last one. Not persisted across restarts (starts as `idle`). |
+
+The `progress` object (also on each row of `GET /api/config/knowledge/connectors/status`) has:
+
+| Field | Meaning |
+|-------|---------|
+| `phase` | `idle` (no sync yet in this process), `listing`, `fetching`, `writing`, `done` or `failed`. The dashboard treats `listing`/`fetching`/`writing` as syncing. |
+| `items_total` | Items this sync will process, when known (Plaud: recordings listed); omitted when unknown. |
+| `items_done` | Items processed so far: pages written plus items the connector skipped. |
+| `current` | Title of the item being fetched or written, truncated to 80 characters; never a credential. |
+| `started_at`, `finished_at` | When the sync started and, once over, ended. |
+| `last_error` | Error that ended a `failed` sync, or the partial-sync error of a `done` one. |
+| `bytes_written`, `facts_written` | Page markdown bytes and pages written to the vault so far. |
 
 ```sh
 curl -H "Authorization: Bearer $HIVE_TOKEN" https://hive.example/api/knowledge/connectors
@@ -226,7 +241,7 @@ duration, Plaud's AI summary and the full speaker-labelled transcript. Agents
 search and cite them like any other fact, so a voice memo recorded on the way
 to work can inform the issue or PR an agent picks up an hour later.
 
-It talks to the **official, free Plaud MCP server** (`npx -y @plaud-ai/mcp`)
+It talks to the **official, free Plaud MCP server** (`npx -y @plaud-ai/mcp@0.3.14`)
 over stdio as an MCP client — there is no Zapier/Make/IFTTT hop and nothing to
 pay beyond your existing Plaud plan. Plaud lists the MCP server as a Preview
 feature on every tier including Starter; Plaud's docs note that preview
@@ -240,10 +255,10 @@ knowledge:
       layer: personal
       interval: 15m
       scope:
-        command: npx -y @plaud-ai/mcp@latest   # default; any stdio MCP command
+        command: npx -y @plaud-ai/mcp@0.3.14   # default (pinned); any stdio MCP command
         since_days: "30"                       # how far back the first sync reaches
         max_files: "200"                       # recordings fetched per sync
-        include_audio: "false"                 # add Plaud's 24h presigned MP3 link
+        include_audio: "false"                 # also store Plaud's 24h presigned MP3 link in the fact (Inbox playback never needs it)
         query: ""                              # optional name filter (list_files query)
         tags: "voice, ideas"                   # extra tags written as attr_tags
         # home: /data/knowledge/connector-state/plaud/home   # token store; default shown, or "inherit"
@@ -261,8 +276,13 @@ the hive process environment. It is started with an allowlist only — `PATH`,
 `HOME`, locale, `TMPDIR`, `TERM`, the `HTTP(S)_PROXY`/`NO_PROXY` and CA-bundle
 variables, `NODE_*`/`npm_config_*` and `PLAUD_*` — and never the hub-injected
 credentials (`DASHBOARD_AUTH_TOKEN`, `HIVE_TERMINAL_KEY`, `HIVE_UPSTREAM_PROXY_URL`,
-provider API keys). Pin `scope.command` to a specific `@plaud-ai/mcp@<version>`
-if you do not want a sync to pull a new upstream release unreviewed.
+provider API keys). The default command is **pinned** to `@plaud-ai/mcp@0.3.14`
+(the `plaudMCPVersion` constant in `src/pkg/knowledge/connector/plaud.go`), so a
+sync never pulls a new upstream release unreviewed: the floating `@latest` it
+replaced is how 0.3.14's reply envelope broke every sync until
+[#18212](https://github.com/hivecommons/hive/pull/18212). The pin is bumped by
+hand, as the CLI pins in [cli-pins.md](cli-pins.md) are; a `scope.command` you
+set yourself is never rewritten, so an explicit `@latest` still floats.
 
 ### Setup
 
@@ -281,7 +301,7 @@ if you do not want a sync to pull a new upstream release unreviewed.
      card and paste either the `localhost:8199/auth/callback?…` URL the
      browser landed on after approving, or the contents of
      `~/.plaud/tokens-mcp.json` from a laptop where `npx -y
-     @plaud-ai/mcp@latest install` signed in. See
+     @plaud-ai/mcp@0.3.14 install` signed in. See
      [Inbox and voice sources](inbox-voice-sources.md#hosted-hives-signing-in-to-plaud).
 4. Click **Sync now**. New recordings are picked up every `interval` and
    appear in the **📥 Inbox**, where you file them as a spektacular RFC, send
@@ -294,10 +314,21 @@ if you do not want a sync to pull a new upstream release unreviewed.
   overlap, or `since_days` back on the first run), then `get_note` and
   `get_transcript` for each recording. A recording whose transcript and
   summary are both still processing is skipped and retried next sync; the
-  status reports it as a partial sync.
+  status reports it as a partial sync. The card shows the recording count
+  as soon as the listing is in and the recording being fetched after that
+  (`progress.items_total`, `progress.current`); a first sync of 200
+  recordings is two or three MCP calls each, so the bar is what tells you
+  it is moving.
 - Facts carry `source: plaud`, `attr_plaud_file_id`, `attr_recorded_at`,
-  `attr_duration_ms` and `attr_device_serial`. Audio is never downloaded;
-  with `include_audio: true` the fact links Plaud's 24-hour presigned URL.
+  `attr_duration_ms`, `attr_device_serial` and `attr_plaud_content`
+  (`ready`, or `pending` while Plaud has produced neither a summary nor a
+  transcript; pending facts are re-fetched on every sync, 25 at most). The
+  body has `## Summary (Plaud)`, `## Transcript` (the best block the
+  recording has: `transaction_polish`, `transaction`, `outline`) and
+  `## Highlights` (device-button marks) sections. Audio is never downloaded;
+  with `include_audio: true` the fact also links Plaud's 24-hour presigned
+  URL. The Inbox plays audio through a per-click link regardless (see
+  [inbox-voice-sources.md](inbox-voice-sources.md)).
 - The listing is incremental, so recordings deleted in Plaud are not
   tombstoned automatically; remove the fact file or the connector.
 - Sign-in state (`connected as`, pending authorization, last error) comes from
@@ -315,6 +346,155 @@ if you do not want a sync to pull a new upstream release unreviewed.
   Obsidian entry in 🔌 Integrations), or import single files with a
   `document` connector (`file_path`). No code, still $0, and no MCP sign-in.
 - Everything in this section costs **$0** beyond your Plaud subscription.
+
+## Zoom cloud recordings (`type: zoom`)
+
+The Zoom connector turns cloud recordings into knowledge facts: one fact per
+recorded meeting with the topic, start time, duration, host, participants,
+Zoom's AI meeting summary (when the account produces one) and the transcript
+rendered as `[mm:ss] Speaker: text` lines from Zoom's VTT file. Recordings
+land in the **📥 Inbox** with inline playback, next to Plaud recordings. The
+design record is [design/meeting-recordings.md](design/meeting-recordings.md).
+
+```yaml
+knowledge:
+  connectors:
+    - name: calls
+      type: zoom
+      layer: personal
+      interval: 15m
+      auth:
+        mode: user_oauth                 # my own recordings; or server_to_server for the account
+        client_id_env: ZOOM_CLIENT_ID    # environment variable NAMES, never values
+        client_secret_env: ZOOM_CLIENT_SECRET
+        # account_id_env: ZOOM_ACCOUNT_ID   # server_to_server only
+      scope:
+        users: me                        # server_to_server: user ids or emails, comma-separated
+        since_days: "30"
+        max_recordings: "200"
+        include_summary: "true"          # GET /meetings/{uuid}/meeting_summary (meeting_summary:read)
+        include_participants: "true"     # GET /past_meetings/{uuid}/participants
+        include_video_link: "false"      # also store the Zoom play link in the fact (playback never needs it)
+        redirect_uri: http://localhost:8199/zoom/callback   # user_oauth: the redirect registered on the app
+        tags: "meetings"
+```
+
+### Setup
+
+1. On the [Zoom App Marketplace](https://marketplace.zoom.us) create an OAuth
+   app: **General app** (user-managed) for your own recordings, or
+   **Server-to-Server OAuth** for every user of the account. Add the scopes
+   `cloud_recording:read:list_user_recordings`,
+   `cloud_recording:read:list_recording_files` and `user:read:user` (classic
+   names: `recording:read`, `user:read`), and optionally
+   `meeting_summary:read` and `meeting:read:list_past_participants` for the AI
+   summary and the participant list; Server-to-Server apps use the `:admin`
+   variants. For a General app add the redirect URL (default
+   `http://localhost:8199/zoom/callback`) to the OAuth allow list.
+2. Put the client id and secret (and the account id for Server-to-Server) in
+   the hive's environment, and add the connector from **Knowledge → 🔌
+   Integrations → Zoom recordings**, naming those variables in the form.
+3. Click **Connect Zoom**. User-level: the card shows the authorization URL;
+   approve it, then paste the `…/zoom/callback?code=…&state=…` URL the
+   browser lands on (a connection error page is expected) into **Finish Zoom
+   sign-in by pasting** within 10 minutes. The hive exchanges the code and
+   keeps the refresh token at
+   `/data/knowledge/connector-state/<name>/home/.zoom/tokens.json` (mode
+   0600); refresh tokens rotate on every refresh and the new one is written
+   back. Server-to-Server: Connect requests an account token and reports
+   "connected" at once. Click **Check** any time to re-probe.
+4. Click **Sync now**. Recordings appear in the Inbox; ▶ Play fetches the
+   audio-only file (else the video) with a one-hour download token appended
+   as `access_token`, minted per click and never stored.
+
+### Behaviour
+
+- Each sync lists `GET /users/{user}/recordings` in month-sized `from`/`to`
+  windows from the newest recording seen (minus 48 h) back, following
+  `next_page_token`, de-duplicated by meeting instance UUID; the first sync
+  reaches `since_days` back and stops at `max_recordings` (reported as
+  truncated). Per recording it downloads the `TRANSCRIPT` file with the
+  bearer token and renders it as VTT, asks for the meeting summary and the
+  participants when enabled (a missing scope only drops that section), and
+  writes the fact. Recordings without transcript or summary are marked
+  `attr_meeting_content: pending` and re-read on later syncs (25 at most).
+- Facts carry `source: zoom`, `attr_zoom_recording_id` (meeting UUID, the
+  Inbox item id), `attr_zoom_meeting_id`, `attr_recorded_at`,
+  `attr_duration_ms`, `attr_host`, `attr_participants` and `attr_tags`; the
+  body has `## Summary (Zoom)` and `## Transcript` sections.
+- A `401` from Zoom reads as *not connected* with a pointer to the card; the
+  download link host must be a `zoom.us` host, so the token never leaves
+  Zoom.
+
+## Microsoft Teams recordings (`type: teams`)
+
+The Teams connector reads meeting recordings and transcripts for the
+organizers you list through Microsoft Graph **application permissions**
+(client credentials, no signed-in user): one fact per recorded meeting with
+the subject, start time, duration, organizer, attendees and the transcript
+rendered from Graph's VTT. It is complete except where the tenant
+administrator has to act; the Integrations card says so when Graph refuses.
+
+```yaml
+knowledge:
+  connectors:
+    - name: meetings
+      type: teams
+      layer: project
+      auth:
+        tenant_id_env: TEAMS_TENANT_ID   # environment variable NAMES, never values
+        client_id_env: TEAMS_CLIENT_ID
+        client_secret_env: TEAMS_CLIENT_SECRET
+      scope:
+        users: 8b081ef6-4792-4def-b2c9-c363a1bf41d5, someone@contoso.example   # meeting organizers
+        # group: <group object id>       # or every member of a group (GroupMember.Read.All)
+        since_days: "30"
+        max_recordings: "200"
+        include_video_link: "false"      # also store the Teams meeting link in the fact
+```
+
+### Setup (tenant administrator)
+
+1. In Microsoft Entra → App registrations, register an app and create a
+   client secret. Under API permissions add the **application** permissions
+   `OnlineMeetingRecording.Read.All` and `OnlineMeetingTranscript.Read.All`;
+   optionally `OnlineMeetings.Read.All` (meeting subject, times, attendees),
+   `User.Read.All` (list organizers by UPN instead of object id) and
+   `GroupMember.Read.All` (`scope.group`). Grant **admin consent**.
+2. Create an application access policy for the app and grant it to the
+   organizers (or the tenant): `New-CsApplicationAccessPolicy -Identity
+   hive-recordings -AppIds "<client id>"` then
+   `Grant-CsApplicationAccessPolicy -PolicyName hive-recordings -Identity
+   "<user object id>"` (or `-Global`). Changes take up to 30 minutes.
+3. Make sure the tenant allows Graph API access to meeting transcripts
+   (Teams admin setting); otherwise Graph answers `403
+   GraphAccessToTranscriptsDisabled`.
+4. Put the tenant id, client id and secret in the hive's environment and add
+   the connector from **Knowledge → 🔌 Integrations → Microsoft Teams
+   recordings**. **Connect** fetches a token and probes the first organizer's
+   recordings; when consent or the policy is missing the card shows
+   *Requires Entra admin consent for OnlineMeetingRecording.Read.All and
+   OnlineMeetingTranscript.Read.All* with the admin-consent link.
+
+### Behaviour
+
+- Each sync calls, per organizer,
+  `GET /users/{id}/onlineMeetings/getAllRecordings(meetingOrganizerUserId='{id}',startDateTime=…,endDateTime=…)`
+  and `getAllTranscripts(...)` following `@odata.nextLink`, groups the
+  artifacts by `meetingId`, reads the meeting (`GET
+  /users/{id}/onlineMeetings/{meetingId}`, best effort) and the newest
+  transcript's `/content` as `text/vtt`, falling back to the unattributed
+  `application/vnd.microsoft.graph.transcript+text` when the tenant forbids
+  speaker attribution.
+- Facts carry `source: teams`, `attr_teams_recording_id` (the callRecording
+  id, or `transcript:<id>` for a transcript-only meeting),
+  `attr_teams_meeting_id`, `attr_recorded_at`, `attr_duration_ms`,
+  `attr_host`, `attr_participants`; the body has a `## Transcript` section
+  (Graph exposes no meeting summary).
+- Playback: Graph serves recording content behind a bearer token, which a
+  browser media element cannot send, so ▶ Play answers *no playable media*
+  for Teams items until a streaming proxy exists (tracked in the design
+  record). Transcripts and metadata sync regardless.
 
 ## Wispr Flow (dictation, `type: wisprflow`)
 

@@ -367,6 +367,11 @@ env:
   # commits and release metadata, not bot-authored commits. Skip bots here so
   # release automation is not paged for bracketed bot-address edge cases that
   # the separate pre-merge DCO/probot checks already cover.
+  #
+  # The skip is the identity MATCH only: a bot-authored commit with no
+  # Signed-off-by at all is still reported as missing-signoff. Skipping those
+  # too is how f33758f5a (the hive's squash of #18079, trailer dropped by the
+  # squash body) sat unseen on v5 until a forward merge failed DCO (#18203).
   DCO_SKIP_BOT_AUTHORS: 'true'
 
 jobs:

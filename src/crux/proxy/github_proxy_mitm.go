@@ -84,7 +84,7 @@ func (p *GitHubProxy) proxyHTTPHost(client net.Conn, upstream net.Conn, host str
 		// tier — is what the agent reads, and an allowed opt-in write is
 		// remembered so the repo filter and the PR hard-deny below do not
 		// undo it (the credential it will carry is the reference repo's
-		// own, so App-bot authorship is already guaranteed).
+		// own, so authorship under the policy's Login is already guaranteed).
 		referenceWrite := false
 		if agentName != internalCallerName {
 			if pol, isRef := p.referenceRepoFor(repoScopePath(req)); isRef {

@@ -424,6 +424,13 @@ type Server struct {
 	// any anonymous poller could race the operator and steal the session).
 	deviceFlowID string
 
+	// ownerIdentityFlow is the in-progress consent for the hive owner's
+	// GitHub identity (hivecommons/hive#18197, api_github_owner_identity.go);
+	// separate from the login device flow above because it asks for a scope
+	// and persists a token, which login never does.
+	ownerIdentityFlowMu sync.Mutex
+	ownerIdentityFlow   *ownerIdentityFlow
+
 	// userSessions maps a random opaque session id (stored in the client's
 	// hive_session cookie on direct-route spokes) to the authenticated user.
 	// This replaces the previous single shared s.authToken cookie so two
@@ -436,11 +443,27 @@ type Server struct {
 
 	// Sessions (api_sessions.go): lazily opened metadata store and the mutex
 	// serialising create/resume so the per-spoke and per-user caps hold.
-	sessionsOnce      sync.Once
-	sessionStore      *sessionStore
-	sessionsMu        sync.Mutex
-	terminalHandoffMu sync.Mutex
-	terminalHandoffs  map[string]terminalHandoff
+	sessionsOnce sync.Once
+	sessionStore *sessionStore
+	sessionsMu   sync.Mutex
+	// sessionsPreparing holds the ids whose background start is in flight in
+	// THIS process; a `preparing` record without one is left over from a
+	// restart and is marked failed on the next reconcile. Guarded by sessionsMu.
+	sessionsPreparing map[string]bool
+	// sessionAttaches are the live terminal websockets of user sessions
+	// (presence and the keyboard lease, api_sessions_keyboard.go); keyed by
+	// attach id, guarded by sessionAttachMu.
+	sessionAttachMu  sync.Mutex
+	sessionAttaches  map[string]*sessionAttach
+	sessionAttachSeq uint64
+	// sessionQueues holds the per-session Send queues and their workers
+	// (api_sessions_queue.go); guarded by sessionQueuesMu.
+	sessionQueuesMu sync.Mutex
+	sessionQueues   map[string]*sessionQueue
+	// sessionQueueTiming overrides the workers' pacing (tests); zero = defaults.
+	sessionQueueTiming sessionQueuePacing
+	terminalHandoffMu  sync.Mutex
+	terminalHandoffs   map[string]terminalHandoff
 
 	claudeOAuthFlow claudeOAuthFlow
 
@@ -1389,6 +1412,9 @@ type FrontendReferenceRepo struct {
 	// CredentialReason says why when it is not write-tier.
 	CredentialState  string `json:"credential_state,omitempty"`
 	CredentialReason string `json:"credential_reason,omitempty"`
+	// CredentialLogin is the GitHub login the writes appear under
+	// (hivecommons/hive#18197): the hive owner's, or a write_token_file's.
+	CredentialLogin string `json:"credential_login,omitempty"`
 }
 
 type FrontendRepo struct {
@@ -2101,6 +2127,21 @@ func (s *Server) withServerTiming(next http.Handler) http.Handler {
 	})
 }
 
+// isSessionTerminalRequest reports whether r is a /terminal request that names
+// a user session (?arg=hive-sess-<id>), the only terminal document the
+// dashboard embeds in an iframe.
+func isSessionTerminalRequest(r *http.Request) bool {
+	if !isTerminalPath(r.URL.Path) {
+		return false
+	}
+	for _, a := range r.URL.Query()["arg"] {
+		if strings.HasPrefix(a, sessionTmuxPrefix) {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		frameAncestors := "'none'"
@@ -2112,7 +2153,19 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		// X-Frame-Options cannot express an origin allowlist. When /snapshot has
 		// an explicit CSP frame-ancestors allowlist, omit XFO for that document
 		// only; every other route keeps DENY, and an empty allowlist fails closed.
-		if !snapshotAllowlist {
+		//
+		// A user-session terminal (/terminal?arg=hive-sess-<id>) is the one
+		// document the dashboard itself embeds: the Sessions section renders it
+		// in a same-origin iframe. With 'none'/DENY the browser fetches ttyd's
+		// page and then refuses to display it, so the pane stays blank and the
+		// terminal never opens its websocket. Framing is allowed for that
+		// document from this origin only; agent terminals and everything else
+		// keep 'none'/DENY. Authorisation is unchanged (guardTerminalSession).
+		switch {
+		case isSessionTerminalRequest(r):
+			frameAncestors = "'self'"
+			w.Header().Set("X-Frame-Options", "SAMEORIGIN")
+		case !snapshotAllowlist:
 			w.Header().Set("X-Frame-Options", "DENY")
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -2446,8 +2499,14 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		// first use. When the request is not otherwise trusted, a valid code also
 		// authenticates the initial ttyd document load and establishes the
 		// Path=/terminal assertion cookie for subsequent asset/websocket requests.
+		//
+		// A code bound to a user session was minted only after the caller was
+		// found able to see that session, and opens nothing but it; the read
+		// role is admitted on that path as a read-only viewer
+		// (guardTerminalSession decides the attach mode). Agent terminals
+		// keep requiring owner or read-write.
 		if isTerminalPath(r.URL.Path) {
-			if user, role, ok := s.redeemTerminalHandoff(r.URL.Query().Get(terminalHandoffCodeParam)); ok && terminalRoleAllowed(role) {
+			if user, role, bound, ok := s.redeemTerminalHandoffBound(r.URL.Query().Get(terminalHandoffCodeParam)); ok && (terminalRoleAllowed(role) || bound != "") && handoffBindingMatches(bound, r.URL.Query()["arg"]) {
 				if !trusted {
 					r.Header.Set("X-Hive-User", user)
 					r.Header.Set("X-Hive-Role", role)
@@ -2461,7 +2520,7 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 		}
 
 		if !trusted && isTerminalPath(r.URL.Path) {
-			if user, role, ok := s.terminalAssertionFromRequest(r); ok && terminalRoleAllowed(role) {
+			if user, role, ok := s.terminalAssertionFromRequest(r); ok && (terminalRoleAllowed(role) || requestNamesUserSession(r)) {
 				r.Header.Set("X-Hive-User", user)
 				r.Header.Set("X-Hive-Role", role)
 				if isOwnerRole(role) {
@@ -2572,7 +2631,9 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			}
 			return
 		}
-		if isTerminalPath(r.URL.Path) && !terminalRoleAllowed(r.Header.Get("X-Hive-Role")) {
+		// A user-session terminal is the exception: the read role watches it
+		// read-only, authorised per session by guardTerminalSession.
+		if isTerminalPath(r.URL.Path) && !terminalRoleAllowed(r.Header.Get("X-Hive-Role")) && !requestNamesUserSession(r) {
 			writeTerminalRoleForbidden(w, r)
 			return
 		}

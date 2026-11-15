@@ -140,7 +140,10 @@ knowledge store holds typed facts with sources and confidence. Neither stores
 conversation text. Agents are primed with a bounded set of facts in the task
 prompt; they cannot query the store, so a poisoned fact cannot be amplified.
 Untrusted text is scanned by `ioscan` before it reaches a prompt
-([ioscan.md](ioscan.md)); canaries are planted per task and agent output is
+([ioscan.md](ioscan.md)). Inbox item text (voice and meeting transcripts,
+summaries, messages) is fenced in a nonce-tagged `<untrusted-inbox-data>`
+envelope before it reaches spektacular or an agent prompt
+([inbox-voice-sources.md](inbox-voice-sources.md)); canaries are planted per task and agent output is
 scanned for them. Session state is pruned and logs are scrubbed
 ([security.md](security.md)).
 
@@ -155,6 +158,32 @@ file on the volume, never from `hive.yaml`, which records only paths and
 variable names. The dashboard never returns a key value. Agents using cloud
 CLI backends (Claude, Copilot, Codex, Goose) run with the provider credential
 you connected, because the CLI needs it.
+
+**Secrets at rest.** The secret values a spoke stores on its data volume
+(the owner-only key files under `/data/secrets`, the Copilot device-flow
+token, and the `github.token` value in the persisted runtime config) are
+sealed through a keystore provider interface
+([#18214](https://github.com/hivecommons/hive/issues/18214)). Each value is
+written as a single-line envelope, `hive-enc:v1:<provider>:<key
+generation>:<ciphertext>`, bound with additional authenticated data to the
+slot it belongs in, so a ciphertext moved from one file to another does not
+open. The default provider derives an AES-256-GCM key with HKDF-SHA256 from
+`HIVE_SECRETS_KEY` (or a key file), falling back to the per-hive
+`HIVE_HEARTBEAT_KEY` the hub already injects into the Deployment; a distinct
+info string keeps the encryption key separate from the signing key it is
+derived from. The threat this closes is the data volume on its own: a PVC
+snapshot, a backup archive or a copied disk no longer yields the credentials.
+It does not protect against an attacker who also holds the Deployment
+environment or the hub master key. Files written before the keystore existed
+are re-sealed on their first read, and a boot sweep converges the ones
+nothing reads, so an existing hive needs no migration step; a retired key
+generation is accepted for decryption through `HIVE_SECRETS_KEY_PREVIOUS`
+while that happens. A hive with no key material keeps plaintext storage and
+says so once at `WARN`; it never seals with a key stored beside the data.
+OpenBao Transit is available as an opt-in provider
+([#18216](https://github.com/hivecommons/hive/issues/18216)). Agent-facing
+credential files and the read-only `/secrets` Kubernetes mount are not
+touched. Variables: [env-vars.md](env-vars.md#secrets-at-rest-keystore).
 
 **GitHub blast radius.** The recommended authentication is a GitHub App,
 whose reach is limited to the repositories it is installed on. Hive mints a
@@ -358,20 +387,111 @@ against `X-Hub-Signature-256`. Terminal access uses short-lived signed
 assertions. Systemd units refuse to run code from a directory an
 unprivileged user could have created.
 
-**Sessions.** With `dashboard.sessions.enabled` (default off) the dashboard
+**Sessions.** With `dashboard.sessions.enabled` (default off; Settings →
+Dashboard → Sessions, overridden by `HIVE_SESSIONS_ENABLED`) the dashboard
 offers interactive CLI terminals (`/api/sessions`, [API
 reference](api-reference/sessions.md)). A session is a plain vendor CLI, never
 a shell, launched with none of the permission-bypass flags agents run with, so
-the CLI's own approval prompts stay on. Each session has its own tmux server,
-HOME, `CODEX_HOME` and XDG directories, and its environment is built from an
-allowlist: no dashboard token, terminal, hub, heartbeat or ttyd secret and no
-GitHub token reaches it (only vendor login files are bridged from the shared
-home, never `gh`'s `hosts.yml`). Creating, typing, uploading and attaching a
-terminal need owner or read-write; the scrollback snapshot is readable by any
-role and is token-redacted. Audit limits: `session_created`, `session_closed`,
-`session_renamed`, `session_input` and `session_upload` record the user and
-session id (never input text), but keystrokes typed inside the attached
-terminal go through ttyd and are not attributable to a user.
+the CLI's own approval prompts stay on. The isolation model, in order of
+importance:
+
+- **Its own unprivileged uid.** Each session's tmux server and CLI run as a uid
+  from a reserved range (`HIVE_SESSION_UID_BASE`, default 20001, with
+  `HIVE_SESSION_UID_SLOTS` slots) that cannot collide with agent uids
+  (`HIVE_UID_BASE`, 2001 upward) or the hive's own, through the same `su-exec`
+  hop agents use. The slot is allocated by the dashboard store, persisted in
+  the session record and reused on resume; the runtime refuses a range that
+  overlaps the agent uid map and recovers a session's uid from the owner of
+  its home directory, never from the id. The uid has its own gid, is not in
+  group `node` (all agents) and not in `hive-launch` (`su-exec`), so it cannot
+  read `/secrets/*.pem`, `/data/secrets`, `/data/.hive`, the shared vendor
+  logins in `/data/home` (group-only, 2770, re-asserted by the entrypoint), the
+  hive's `/proc/<pid>/environ`, or another session's sandbox, and it cannot
+  reach another session's tmux server.
+- **A private sandbox.** `HIVE_SESSIONS_SANDBOX_DIR` (default
+  `/data/session-sandbox`) holds one `root:hive-launch 0751` directory per
+  session with session-owned `home`, `work` (uploads) and `tmp` below it, so
+  the session cannot replace its own top-level directories and the hive reads
+  transcripts for resume only through the launcher group. Deleting or pruning a
+  session removes the sandbox and the uid's tmux socket directory before the
+  slot can be reused; if removal fails the record and slot are kept and retried.
+- **A shared workspace, no shared credential.** Sessions open in one
+  per-repository checkout (`HIVE_SESSIONS_WORKSPACE_DIR`, default
+  `<sandbox root>/workspace/<org>/<repo>`) that the hive clones once as itself,
+  with a short-lived App token in a one-shot `git -c credential.helper` file
+  removed right after, so neither the clone's config nor its remote holds a
+  credential; root then hands the tree to the sessions-only group
+  (`HIVE_SESSIONS_GID`, default 20000) as `root:<gid> 2770`, group read-write,
+  nothing for "other". That group is every session's single group (su-exec
+  gives a numeric uid exactly one), which is what lets sessions share the
+  checkout; it is refused when it is the hive's own group, the reader group or
+  inside the session uid range, and session sandboxes stay `hive-launch`
+  group-only, so sessions still cannot read each other's homes. `spektacular
+  init` runs in the workspace as the session uid. Pushing from a session uses
+  the person's own login; the hive's token never enters a session.
+- **Environment.** Built from an allowlist: no dashboard token, terminal, hub,
+  heartbeat, ttyd or attach-key secret and no GitHub token reaches it.
+- **Logins are read-only copies, not links.** A fixed allowlist of bare login
+  files (`.claude/.credentials.json`, `.copilot/config.json`,
+  `.gemini/oauth_creds.json`, `.gemini/google_accounts.json`,
+  `.codex/auth.json`, `opencode/auth.json`) is copied into the session home
+  mode 0400, session-owned. `settings.json`, hooks, MCP or extension config,
+  `gh`'s `hosts.yml` and `~/.config` are never bridged, so a session can neither
+  rewrite shared configuration nor plant a hook an agent would run.
+- **Terminal access is bound.** ttyd listens on loopback without a secret a
+  session uid could not read (its `-c` credential is visible in `/proc`), so
+  session attaches are gated by a per-session token, HMAC-SHA256 of the tmux
+  session name under a per-boot `HIVE_TTYD_ATTACH_KEY` that only the hive and
+  ttyd hold. The dashboard proxy appends it after authorising the request;
+  `ttyd-tmux.sh` refuses any `hive-sess-*` attach without a valid token,
+  refuses a socket not owned by a reserved session uid and runs the attach
+  with a scrubbed environment. No key means no session terminal. A handoff code
+  minted for a session is bound to that session id and its caller (anyone who
+  may see the session) and opens only `?arg=hive-sess-<id>`; an agent-terminal
+  code never opens a session and still needs owner or read-write.
+- **One keyboard at a time.** Every attach is read-only (`tmux attach-session
+  -r`) unless the proxy also appends the session's *write token*, a second
+  HMAC under the same key (`hive-ttyd-attach-rw-v1`), which it does only for
+  the one user holding the session's keyboard lease. The browser's request
+  carries a single arg, the session name; an extra arg is rejected as
+  malformed before it reaches ttyd, and `ttyd-tmux.sh` treats a missing or
+  wrong write token as read-only, so a viewer cannot promote itself. The
+  creator holds the keyboard from the start; owners and the creator may take
+  it at any time, another read-write user only after it is released or the
+  holder has been idle for `HIVE_SESSIONS_KEYBOARD_GRACE_SEC` (default 60).
+  Taking it detaches the previous holder's writable tmux client immediately.
+- **Ownership.** A session is private by default: only its creator and owners
+  can list, read, watch, type into or upload to it. The creator or an owner may
+  set `shared`, which lists it for every role (the read role gets the
+  token-redacted scrollback and a read-only live terminal, never the keyboard,
+  Send or upload) and lets read-write users Send, upload and take the
+  keyboard. Renaming, closing, resuming, deleting and the `shared` flag stay
+  with the creator and owners. Ids of sessions a caller may not see are never
+  disclosed.
+- **Resume ids** never start with `-` and a resume command may carry only the
+  vendor binary, a fixed set of resume words and a flag-free id, so a planted
+  transcript name cannot add `--dangerously-skip-permissions`.
+
+Audit: `session_created`, `session_started` (the outcome of the background
+start), `session_closed`, `session_renamed`, `session_input` and
+`session_upload` record the user and session id (never input text).
+`session_input` is written when a queued Send is actually typed into the pane,
+as the user who queued it, so attribution follows the sender, not the moment
+of delivery. `session_keyboard` records every keyboard hand-over (`from`,
+`to`); since only the holder's attach is writable, keystrokes typed inside the
+terminal are attributable to the holder of record at that time. Keystrokes are
+still not logged individually.
+
+Operator requirements the code cannot enforce: the container needs the
+`su-exec` helper with `CAP_SETUID`, `CAP_SETGID` and `CAP_CHOWN` (the standard
+agent layout; a rootless or single-uid runtime cannot run sessions and they fail
+closed). `/proc` should be mounted `hidepid=2` (or the pod run with a
+non-dumpable, PID-namespaced layout) where possible: `ttyd`'s command line
+exposes its basic-auth credential to every uid, and agent terminals on the same
+loopback ttyd are not covered by the session attach token, so a session user on
+a hive that also runs agents can still reach them there until ttyd moves to a
+credential only the hive can read. Reserve `HIVE_SESSION_UID_BASE` above every
+agent uid and keep `/data` and `/data/home` closed to "other".
 
 **Dashboard headers.** Content Security Policy, `X-Frame-Options` and related
 headers are always set. The metrics endpoint is off unless
@@ -381,7 +501,10 @@ headers are always set. The metrics endpoint is off unless
 images are pinned by digest. Tools such as tmux, ttyd, `gh`, goose and
 `su-exec` are checksum-verified at build. Third-party Actions are pinned to
 commit SHAs. CI runs `govulncheck`, `gosec` and `golangci-lint` as separate
-jobs, OpenSSF Scorecard, Dependabot, an Action-pin check, a setuid inventory
+jobs; the agent image ships the same pinned `govulncheck` and `gosec` so the
+sec-check lane runs them on Go targets inside the pod without downloading
+anything (`GOVULNCHECK_VERSION`, `GOSEC_VERSION` in `src/Dockerfile`).
+CI also runs OpenSSF Scorecard, Dependabot, an Action-pin check, a setuid inventory
 check, DCO trailer checks, a documentation link check and formal-model
 checks. Image attestations are turned off because they broke
 multi-architecture manifests, and a guard workflow keeps them off. An SPDX
