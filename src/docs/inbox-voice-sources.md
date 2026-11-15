@@ -5,8 +5,8 @@ dictations from voice sources land so you can turn them into work without
 leaving the dashboard. It is source-agnostic: Plaud is the first source,
 Wispr Flow (`type: wisprflow`) plugs in with the same model, Zoom and
 Microsoft Teams meeting recordings (`type: zoom`, `type: teams`, see
-[design/meeting-recordings.md](design/meeting-recordings.md)) are its
-siblings, and later sources (file drop, webhook, …) add nothing to the UI.
+[design/meeting-recordings.md](design/meeting-recordings.md)) and Discord
+meetings (`type: discord`) are its siblings, and later sources (file drop, webhook, …) add nothing to the UI.
 
 Tracker RFC: *Voice recorders as first-class input sources (Inbox)* —
 see the issue linked from the changelog entry.
@@ -14,13 +14,14 @@ see the issue linked from the changelog entry.
 ## Model
 
 - **Source** — a knowledge connector whose facts are recordings (`plaud`,
-  `wisprflow`, `zoom`, `teams`). Connecting a source happens in **Knowledge →
+  `wisprflow`, `zoom`, `teams`, `discord`). Connecting a source happens in **Knowledge →
   🔌 Integrations**; that card shows only the connection state and an **Open
   Inbox** button.
 - **Item** — one recording, keyed `(source, item_id)` (for Plaud, the
   `attr_plaud_file_id`; for Zoom the meeting instance UUID in
   `attr_zoom_recording_id`; for Teams the callRecording id in
-  `attr_teams_recording_id`). When the source is connected the Inbox lists
+  `attr_teams_recording_id`; for Discord `m:<channel>:<message>` or
+  `e:<event>` in `attr_discord_recording_id`). When the source is connected the Inbox lists
   recordings directly from it, so an item may appear before the sync has
   written its Knowledge fact; the Inbox only tracks what you did with it.
   "📚 Fact" opens the fact in Knowledge once that fact exists.
@@ -104,11 +105,28 @@ and the admin steps are in
 the design record with the data flow, auth model, limits and privacy notes is
 [design/meeting-recordings.md](design/meeting-recordings.md).
 
+## Discord meetings
+
+Discord has no cloud recordings or transcripts, so a Discord item is either a
+**recording posted to a recordings channel** (an audio upload, or a recording
+bot's download link such as Craig's, forwarded there) or a **scheduled event**
+of the server (name, time, creator, interested users, description, and the
+event channel's chat between start and end). **▶ Play recording** works for
+audio uploads: the hive re-reads the message for a freshly signed Discord CDN
+link. A recording without a transcript file is marked
+`attr_meeting_content: pending` and shown as *not transcribed yet*; the hive
+does not transcribe audio itself. Chat and event descriptions reach the fact,
+the Inbox and spek inside an untrusted-data envelope, because any server
+member can write them. **→ RFC** works once the item has text (a transcript
+file, an event description or chat). Setup (bot token in `auth.env`, the
+Message Content intent, View Channel + Read Message History) is in
+[knowledge-connectors.md](knowledge-connectors.md#discord-meetings-type-discord).
+
 ## Configuration
 
 ```yaml
 inbox:
-  sources: [plaud, wisprflow, zoom, teams]   # default: every configured voice/meeting connector
+  sources: [plaud, wisprflow, zoom, teams, discord]   # default: every configured voice/meeting connector
   spek:
     repo: hivecommons/hive        # default RFC target
     binary: spektacular           # or an absolute path; empty = look on PATH
@@ -148,7 +166,9 @@ shows the authorization URL of the app you registered (with a `state`), and
 the `…/zoom/callback?code=…&state=…` URL the browser lands on is pasted into
 **Finish Zoom sign-in by pasting**; the hive exchanges the code itself and
 keeps the refresh token in the connector token store. Server-to-Server Zoom
-apps and Teams need no browser step.
+apps, Teams and Discord need no browser step (Discord's Connect probes the
+bot token and shows the bot invite link when the bot cannot read the server
+or a channel).
 
 ## Requirements on the hive image
 

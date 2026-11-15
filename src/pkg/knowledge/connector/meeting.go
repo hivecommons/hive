@@ -170,7 +170,8 @@ func meetingScopeList(cfg ConnectorConfig, key string) []string {
 	return out
 }
 
-// validateMeetingScope checks the scope keys both meeting connectors share.
+// validateMeetingScope checks the scope keys the meeting connectors (zoom,
+// teams, discord) share.
 func validateMeetingScope(platform string, cfg ConnectorConfig) error {
 	for _, key := range []string{"since_days", "max_recordings"} {
 		if v := cfg.ScopeValue(key); v != "" {
@@ -180,7 +181,7 @@ func validateMeetingScope(platform string, cfg ConnectorConfig) error {
 			}
 		}
 	}
-	for _, key := range []string{"include_video_link", "include_summary", "include_participants"} {
+	for _, key := range []string{"include_video_link", "include_summary", "include_participants", "include_events", "include_chat"} {
 		if v := cfg.ScopeValue(key); v != "" {
 			if _, err := strconv.ParseBool(v); err != nil {
 				return fmt.Errorf("%s: scope.%s must be true or false", platform, key)

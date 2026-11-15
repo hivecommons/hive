@@ -46856,6 +46856,7 @@ function burnAreaChart() {
       else if (type === 'plaud') html += kbPlaudAuthLine(c.name, type) + kbPlaudPasteHtml(c.name);
       else if (type === 'zoom') html += kbPlaudAuthLine(c.name, type) + kbZoomPasteHtml(c.name, c);
       else if (type === 'teams') html += kbPlaudAuthLine(c.name, type) + kbTeamsConsentHtml(c.name, c);
+      else if (type === 'discord') html += kbPlaudAuthLine(c.name, type) + kbDiscordHelpHtml(c.name, c);
       if (type === 'wisprflow') html += kbWisprFlowSourceLine(c);
       html += '</div>';
       if (owner) {
@@ -46901,6 +46902,7 @@ function burnAreaChart() {
       if (type === 'wisprflow') html += '<p class="muted-xs" data-kb-wisprflow-note>Leave the credential source as None: the connector reads Wispr Flow\'s local history read-only with the sqlite3 CLI. Leave the path empty for the default app location on the hive host (macOS: ~/Library/Application Support/Wispr Flow/flow.sqlite; Windows: %APPDATA%\\Wispr Flow\\flow.sqlite), or point it at a copy of flow.sqlite or a folder of exported .json/.ndjson/.csv/.md files. New dictations need no connector at all — dictate into + New Fact directly.</p>';
       if (type === 'plaud') html += '<p class="muted-xs" data-kb-plaud-note>Leave the credential source as None: Plaud signs in with its own OAuth flow (Connect on the entry above) and keeps the token in the MCP server\'s own store. Requires Node.js ≥ 20 on the hive host and costs nothing beyond your Plaud plan.</p>';
       if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);
+      if (type === 'discord') html += '<p class="muted-xs" data-kb-discord-note>Set the credential source to <strong>Environment variable</strong> and enter the NAME of the variable that holds the bot token (for example <code>DISCORD_BOT_TOKEN</code>); the value never passes through the dashboard. List the server id for scheduled events and the ids of the channels where finished recordings are posted.</p>';
       html += '<label class="muted-note kb-integration-enabled"><input type="checkbox" data-kb-kc-enabled' + (c.enabled ? ' checked' : '') + '> Enabled</label>';
       html += '<div class="hive-dialog-error" role="alert" data-kb-kc-msg></div>';
       html += '<div class="row-end kb-integration-form-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbIntegrationValidate">Validate</button><button type="button" class="hv-btn btn-primary btn-sm" data-action="kbIntegrationSave">Save</button></div></div>';
@@ -47026,7 +47028,7 @@ function burnAreaChart() {
     // Cached per connector name; loaded lazily when the card renders. The
     // kbPlaud* functions serve every KB_AUTH_TYPES type; the label follows
     // the connector type.
-    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams' };
+    const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord' };
     const _kbPlaudAuth = {};
     function kbAuthLabel(name, type) {
       if (!type) { const c = (_kcState.connectors || []).find(x => x.name === name); type = c && c.type; }
@@ -47039,7 +47041,7 @@ function burnAreaChart() {
         setTimeout(() => kbPlaudAuthLoad(name, false), 0);
         return '<div class="muted-xs" data-kb-plaud-auth="' + escapeHtml(name) + '">' + label + ': checking sign-in…</div>';
       }
-      const link = a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">open the ' + label + (type === 'teams' ? ' admin consent' : ' authorization') + ' page ↗</a>' : '';
+      const link = a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">open the ' + label + (type === 'teams' ? ' admin consent' : type === 'discord' ? ' bot invite' : ' authorization') + ' page ↗</a>' : '';
       let text;
       if (a.error) text = label + ': ' + escapeHtml(a.error);
       else if (a.pending) text = label + ': waiting for authorization' + (link || ' (URL pending…)');
@@ -47085,6 +47087,18 @@ function burnAreaChart() {
       if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Recordings are triaged in the Inbox, not here.</span></div>';
       const consent = /admin consent/i.test(a.message || '') ? '<div class="kc-error" data-kb-teams-consent>Requires Entra admin consent for OnlineMeetingRecording.Read.All and OnlineMeetingTranscript.Read.All' + (a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">grant consent ↗</a>' : '') + '</div>' : '';
       return consent + '<p class="muted-xs" data-kb-teams-help>Microsoft Graph application permissions: Connect fetches a client-credentials token with the tenant id, client id and secret from the environment variables named in the form and probes the recordings of ' + (users ? '<code>' + escapeHtml(users) + '</code>' : 'the configured organizers') + '. A tenant administrator must grant admin consent to <code>OnlineMeetingRecording.Read.All</code> and <code>OnlineMeetingTranscript.Read.All</code> and assign an application access policy covering those organizers; without it Graph answers 403 and the card shows the consent link. Playback of Teams recordings in the Inbox is not available yet (Graph serves them behind a bearer token); transcripts and metadata sync.</p>';
+    }
+    // Discord: a bot token has no browser step; what can be missing is the
+    // bot's membership in the server or its channel permissions (the card
+    // then offers the bot invite link), or the Message Content intent.
+    function kbDiscordHelpHtml(name, c) {
+      const a = _kbPlaudAuth[name] || {};
+      const scope = (c && c.scope) || {};
+      const openInbox = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="ocNavigate" data-arg0="inbox-section">📥 Open Inbox</button>';
+      if (a.connected) return '<div class="kc-actions mt-2">' + openInbox + '<span class="muted-xs">Recordings and event notes are triaged in the Inbox, not here.</span></div>';
+      const where = [scope.guild ? 'server <code>' + escapeHtml(scope.guild) + '</code>' : '', scope.channels ? 'channels <code>' + escapeHtml(scope.channels) + '</code>' : ''].filter(Boolean).join(' and ') || 'the configured server and channels';
+      const access = /invite it/i.test(a.message || '') ? '<div class="kc-error" data-kb-discord-access>The bot cannot read ' + where + (a.auth_url ? ' — <a href="' + escapeHtml(a.auth_url) + '" target="_blank" rel="noopener">invite the bot ↗</a>' : '') + '</div>' : '';
+      return access + '<p class="muted-xs" data-kb-discord-help>Discord has no cloud recordings or transcripts, so the hive reads what a meeting leaves behind: finished recordings posted to the recording channels (an audio upload, or a recording bot\'s download link such as Craig\'s, forwarded there), and scheduled events with their channel chat. Create an application in the Discord Developer Portal, add a bot, enable the <strong>Message Content</strong> intent, put the bot token in the hive environment, and invite the bot with View Channel and Read Message History. Connect probes ' + where + ' with that token. Audio uploads play in the Inbox; items without a transcript stay marked as not transcribed.</p>';
     }
     async function kbPlaudAuthLoad(name, refresh) {
       try {
@@ -47158,6 +47172,7 @@ function burnAreaChart() {
     function kbOpenPlaudIntegration() { _kbIntegrationSelected = 'plaud'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenZoomIntegration() { _kbIntegrationSelected = 'zoom'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
     function kbOpenTeamsIntegration() { _kbIntegrationSelected = 'teams'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
+    function kbOpenDiscordIntegration() { _kbIntegrationSelected = 'discord'; _kbIntegrationEditName = ''; kbOpenIntegrations(); }
 
     // ── Wispr Flow (local dictation history, no sign-in) ──
     function kbWisprFlowSourceLine(c) {
@@ -47172,7 +47187,7 @@ function burnAreaChart() {
     // dibs happens inside the hive via POST /api/inbox/route.
     const INBOX_POLL_MS = 60000;
     const INBOX_BUSY_POLL_MS = 5000;
-    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', 'file-drop': '📎', webhook: '🔗' };
+    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'file-drop': '📎', webhook: '🔗' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
     // Summaries longer than this many characters start collapsed.
     const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
@@ -47248,6 +47263,7 @@ function burnAreaChart() {
       }
       if (it.pending || (cached && cached.pending)) {
         if (it.source === 'zoom' || it.source === 'teams') return '<div class="inbox-pending muted-xs" title="The platform reports no transcript or summary for this recording yet">Not transcribed yet: ' + (it.source === 'zoom' ? 'Zoom' : 'Teams') + ' has no transcript or summary for this recording (cloud transcription may still be processing or is disabled); the hive re-checks it on every sync.</div>';
+        if (it.source === 'discord') return '<div class="inbox-pending muted-xs" title="Discord has no transcripts; none was posted with this recording">Not transcribed yet: Discord has no built-in transcription and no transcript file was posted with this recording; play it here, or post a .vtt/.txt transcript in the same message. The hive re-checks it on every sync.</div>';
         return '<div class="inbox-pending muted-xs" title="The MCP reports no transcript or summary block for this recording">Not transcribed yet in Plaud: open the recording in the Plaud app and run transcription; the hive re-checks it on every sync.</div>';
       }
       return it.excerpt ? '<div class="kb-fact-snippet">' + escapeHtml(it.excerpt) + '</div>' : '';
@@ -58961,7 +58977,7 @@ function burnAreaChart() {
     }
 
     // ---- Settings → Knowledge → Connectors (#11075) ----
-    const KB_CONNECTOR_TYPE_ORDER = ['confluence', 'context7', 'document', 'git', 'github-wiki', 'google-drive', 'notion', 'plaud', 'repo-wiki', 'sharepoint', 'teams', 'wisprflow', 'zoom'];
+    const KB_CONNECTOR_TYPE_ORDER = ['confluence', 'context7', 'discord', 'document', 'git', 'github-wiki', 'google-drive', 'notion', 'plaud', 'repo-wiki', 'sharepoint', 'teams', 'wisprflow', 'zoom'];
     const KC_TYPE_INFO = {
       'confluence': { label: 'Confluence', description: 'Sync Confluence Cloud or Data Center pages into knowledge facts.' },
       'context7': { label: 'Context7', description: 'Sync documentation for default Context7 libraries. The API key is a reference to an environment variable or secret file; the value is never shown.' },
@@ -58970,6 +58986,7 @@ function burnAreaChart() {
       'github-wiki': { label: 'GitHub Wiki', description: 'Clone and index one or more GitHub wiki repositories.' },
       'google-drive': { label: 'Google Drive', description: 'Sync Google Docs, Sheets, markdown, and text files from Drive folders or shared drives.' },
       'notion': { label: 'Notion', description: 'Sync Notion pages and database rows visible to an internal integration.' },
+      'discord': { label: 'Discord meetings', description: 'Sync Discord meetings with a bot token: finished recordings posted to a channel (audio uploads or recording-bot links) and scheduled events with their channel chat. One fact per recording or event; items land in the Inbox.' },
       'plaud': { label: 'Plaud voice notes', description: 'Sync Plaud Note recordings (Plaud summary + transcript) through the free official Plaud MCP server. Sign-in is Plaud OAuth in your browser; hive never stores the token.' },
       'repo-wiki': { label: 'Repo wiki', description: 'Sync .hive/wiki (or another directory) from one or more GitHub repositories.' },
       'sharepoint': { label: 'SharePoint / OneDrive', description: 'Sync markdown, text, and HTML files from SharePoint document libraries or OneDrive drives.' },
@@ -58993,6 +59010,7 @@ function burnAreaChart() {
       'wisprflow': 'M3 10h2v4H3zm4-3h2v10H7zm4-5h2v20h-2zm4 5h2v10h-2zm4 3h2v4h-2z',
       // Generic glyphs (no vendor): a camera for meeting recordings, two heads for a team.
       'zoom': 'M3 6a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v3.2l4.2-2.8a.8.8 0 0 1 1.3.7v9.8a.8.8 0 0 1-1.3.7L16 14.8V18a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zm2 0v12h9V6z',
+      'discord': 'M12 3a8 8 0 0 0-8 8v5a3 3 0 0 0 3 3h1v-7H6v-1a6 6 0 0 1 12 0v1h-2v7h1a3 3 0 0 0 3-3v-5a8 8 0 0 0-8-8z',
       'teams': 'M9 11a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm8 1a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5zM3 19a6 6 0 0 1 12 0v1H3zm13.5 1v-1c0-1.6-.5-3-1.3-4.2.5-.2 1.1-.3 1.8-.3a4 4 0 0 1 4 4v1.5z',
       'repo-wiki': 'M4 3h7.2c1.1 0 2 .55 2.8 1.3.8-.75 1.7-1.3 2.8-1.3H20v16h-3.2c-1 0-1.95.4-2.8 1.1V22h-4v-1.9c-.85-.7-1.8-1.1-2.8-1.1H4zm2 2v12h1.2c1.3 0 2.5.4 3.6 1.1V6.2C10.4 5.55 9.6 5 8.8 5zm12 0h-1.2c-.8 0-1.6.55-2 1.2v12.1c1.1-.7 2.3-1.1 3.6-1.1H18z'
     };
@@ -59012,6 +59030,7 @@ function burnAreaChart() {
       'plaud': [['command', 'MCP command', 'npx -y @plaud-ai/mcp@0.3.14'], ['since_days', 'Days back on first sync', '30'], ['max_files', 'Max recordings per sync', '200'], ['include_audio', 'Also store 24h audio link in the fact (Inbox playback never needs it)', 'false'], ['query', 'Name filter (optional)', 'standup'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['home', 'Token store HOME (optional)', '/data/knowledge/connector-state/plaud/home']],
       'repo-wiki': [['repos', 'Repositories (comma-separated)', 'org/repo-a, org/repo-b'], ['branch', 'Branch', 'v5'], ['dir', 'Wiki directory', '.hive/wiki']],
       'sharepoint': [['drive_ids', 'Drive IDs', 'b!drive-id'], ['site_ids', 'Site IDs', 'contoso.sharepoint.com,site-id,web-id'], ['folder_path', 'Folder path', '/Docs/Sub'], ['include_files', 'Include file extensions', '.md,.txt,.html']],
+      'discord': [['guild', 'Server (guild) id, for scheduled events', '111111111111111111'], ['channels', 'Recording channel ids (comma-separated; where recordings are posted)', '222222222222222222'], ['recorder_bots', 'Only messages from these user ids (optional, e.g. the recording bot)', ''], ['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max items per sync', '200'], ['include_events', 'Scheduled events as meeting items', 'true'], ['include_chat', 'Include the event channel chat', 'true'], ['include_participants', 'List interested users', 'true'], ['include_video_link', 'Also store the recording-bot download link in the fact', 'false'], ['link_hosts', 'Recording-bot link hosts (comma-separated)', 'craig.horse, craig.chat'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
       'teams': [['users', 'Meeting organizers (object ids or UPNs, comma-separated)', '8b081ef6-4792-4def-b2c9-c363a1bf41d5, someone@contoso.example'], ['group', 'Or an Entra group object id (members are the organizers)', ''], ['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max recordings per sync', '200'], ['include_video_link', 'Also store the Teams meeting link in the fact', 'false'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
       'zoom': [['users', 'Recording owners (me, or user ids/emails for Server-to-Server)', 'me'], ['since_days', 'Days back on first sync', '30'], ['max_recordings', 'Max recordings per sync', '200'], ['include_summary', 'Fetch the Zoom AI meeting summary (meeting_summary:read)', 'true'], ['include_participants', 'Fetch the participant list (meeting:read past participants)', 'true'], ['include_video_link', 'Also store the Zoom play link in the fact (Inbox playback never needs it)', 'false'], ['redirect_uri', 'OAuth redirect URL registered on the Zoom app (user-level)', 'http://localhost:8199/zoom/callback'], ['tags', 'Extra tags (comma-separated)', 'meetings']],
       'wisprflow': [['path', 'flow.sqlite or export folder (empty = app default)', '/Users/me/Library/Application Support/Wispr Flow/flow.sqlite'], ['since_days', 'Days back on first sync', '30'], ['max_items', 'Max dictations per sync', '500'], ['min_words', 'Skip dictations shorter than (words)', '3'], ['group', 'Fact per dictation or day', 'dictation'], ['apps', 'Only these apps (comma-separated, optional)', 'slack, obsidian, vscode'], ['include_raw', 'Include raw ASR text', 'false'], ['tags', 'Extra tags (comma-separated)', 'voice, ideas'], ['sqlite3', 'sqlite3 command (optional)', 'sqlite3']]

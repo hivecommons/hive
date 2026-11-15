@@ -203,7 +203,7 @@ func TestKnowledgeIntegrationsModalMeetingCards(t *testing.T) {
 		`'teams': { label: 'Microsoft Teams recordings'`,
 		`'zoom': [['users', 'Recording owners (me, or user ids/emails for Server-to-Server)', 'me']`,
 		`'teams': [['users', 'Meeting organizers (object ids or UPNs, comma-separated)'`,
-		`const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams' };`,
+		`const KB_AUTH_TYPES = { plaud: 'Plaud', zoom: 'Zoom', teams: 'Teams', discord: 'Discord' };`,
 		`else if (type === 'zoom') html += kbPlaudAuthLine(c.name, type) + kbZoomPasteHtml(c.name, c);`,
 		`else if (type === 'teams') html += kbPlaudAuthLine(c.name, type) + kbTeamsConsentHtml(c.name, c);`,
 		`if (type === 'zoom' || type === 'teams') html += kbMeetingAuthFormHTML(type, c);`,
@@ -235,6 +235,46 @@ func TestKnowledgeIntegrationsModalMeetingCards(t *testing.T) {
 	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
 		if strings.Contains(block, native) {
 			t.Errorf("meeting card block uses a browser-native dialog %q", native)
+		}
+	}
+}
+
+// TestKnowledgeIntegrationsModalDiscordCard guards the Discord entry: it
+// shares the sign-in line and buttons (Connect probes the bot token), the
+// card explains the bot setup and offers the invite link when the bot lacks
+// access, the form takes the bot token by environment variable name, and no
+// browser-native dialog is used.
+func TestKnowledgeIntegrationsModalDiscordCard(t *testing.T) {
+	b, err := staticFS.ReadFile("static/index.html")
+	if err != nil {
+		t.Fatalf("reading embedded static/index.html: %v", err)
+	}
+	html := string(b)
+	for _, want := range []string{
+		`'discord': { label: 'Discord meetings'`,
+		`'discord': [['guild', 'Server (guild) id, for scheduled events'`,
+		`else if (type === 'discord') html += kbPlaudAuthLine(c.name, type) + kbDiscordHelpHtml(c.name, c);`,
+		`function kbDiscordHelpHtml(name, c)`,
+		`function kbOpenDiscordIntegration()`,
+		`data-kb-discord-access`,
+		`data-kb-discord-help`,
+		`data-kb-discord-note`,
+		`type === 'discord' ? ' bot invite' : ' authorization'`,
+		`discord: '🎧'`,
+	} {
+		if !strings.Contains(html, want) {
+			t.Errorf("index.html missing Discord card snippet %q", want)
+		}
+	}
+	start := strings.Index(html, "function kbDiscordHelpHtml(name, c)")
+	end := strings.Index(html, "async function kbPlaudAuthLoad(name, refresh)")
+	if start < 0 || end < start {
+		t.Fatal("Discord card block not found")
+	}
+	block := html[start:end]
+	for _, native := range []string{"window.confirm(", "window.alert(", " confirm(", " alert(", "prompt("} {
+		if strings.Contains(block, native) {
+			t.Errorf("Discord card block uses a browser-native dialog %q", native)
 		}
 	}
 }
