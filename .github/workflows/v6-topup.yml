@@ -93,7 +93,6 @@ jobs:
           # them with their history):
           #   - discord/ + discord-syntax.yml modify/delete: keep v6's
           #     deletion (#9277, #11551).
-          #   - src/pkg/config/config.go: keep v6's split (#9386, #9956).
           #   - CHANGELOG.md: both lines prepend release sections, keep both.
           #   - integration-governance.cjs TRUSTED_SCRIPTS_TREE literal only:
           #     re-pin to the merged src/scripts tree.
@@ -101,6 +100,8 @@ jobs:
           # When the ONLY conflicts match those patterns, resolve them and
           # finish the merge. Anything else (other content conflicts, other
           # deletions, other hunks in the pin file) still fails loudly below.
+          # src/pkg/config/config.go is deliberately NOT auto-resolved: v6
+          # split it, so keeping v6's side would silently drop v5's change.
           # The resolver runs from the copy taken off the triggering ref
           # before the checkout, not from v6's tree.
           elif bash "$RUNNER_TEMP/v6-topup-autoresolve.sh"; then

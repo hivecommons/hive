@@ -362,6 +362,37 @@ Part 2 of [RFC #4492](https://github.com/hivecommons/hive/issues/4492): the hive
 
 Inside an **agent** session (set by the hive, never by the operator): ISSUES_ONLY+ agents receive `LINEAR_ACCESS_TOKEN` (the connected app's OAuth token, `Authorization: Bearer`) or, when no workspace is connected, `LINEAR_API_KEY` (the work-source key, bare `Authorization`). Advisory agents receive neither and have both stripped. See [linear-agent.md](linear-agent.md#github-issue-parity-agents-writing-to-linear).
 
+## Meetings (Quorum)
+
+Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive/issues/18284)). Each variable overrides the matching `meetings.*` key in `hive.yaml`; with `meetings.enabled` off nothing starts. The default consent notice is: "Hive has joined to take notes and help with research. It records this meeting's transcript. Type 'hive leave' to remove it." Other `QUORUM_*` variables set on hive (the contract's numeric limits, for example `QUORUM_CHAT_MAX_CHARS`) pass through to the Quorum child unchanged.
+
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `HIVE_MEETINGS_ENABLED` | No | `meetings.enabled` (off) | Turns meetings on: hive starts the Quorum child and can join live meetings. Accepts `1/true/yes/on` and `0/false/no/off`. |
+| `HIVE_MEETINGS_QUORUM_BINARY` | No | `/usr/local/lib/quorum/quorum.mjs` | Quorum bundle (run through `node` when it ends in `.mjs` or `.js`) or executable. Overrides `meetings.quorum.binary`. |
+| `HIVE_MEETINGS_QUORUM_LISTEN` | No | `127.0.0.1:8765` | Loopback address Quorum listens on (passed as `QUORUM_LISTEN`). Non-loopback values are rejected. |
+| `HIVE_MEETINGS_VEXA_URL` | Yes for Meet, Teams and Zoom | none | Vexa gateway base URL (passed as `QUORUM_VEXA_URL`). Overrides `meetings.vexa.url`. |
+| `HIVE_MEETINGS_VEXA_API_KEY` | No | none | Vexa tenant key. Secret. Wins over the keystore-sealed secret file; prefer the file, which the dashboard writes. |
+| `HIVE_MEETINGS_VEXA_API_KEY_FILE` | No | `/data/secrets/meetings_vexa_api_key` | Keystore-sealed secret file holding the Vexa tenant key. Overrides `meetings.vexa.api_key_file`. |
+| `HIVE_MEETINGS_DISCORD_TOKEN` | No | none | Per-hive Discord bot token. Secret. Wins over the secret file. Without a token Discord is unavailable. |
+| `HIVE_MEETINGS_DISCORD_TOKEN_FILE` | No | `/data/secrets/meetings_discord_token` | Keystore-sealed secret file holding the Discord bot token. Overrides `meetings.discord.token_file`. |
+| `HIVE_MEETINGS_TRANSCRIBE_URL` | No | none | Shared transcription service for Discord audio (passed as `QUORUM_TRANSCRIBE_URL`). |
+| `HIVE_MEETINGS_DELIVERY` | No | `chat` | Default delivery for meeting output. Only `chat` is supported. |
+| `HIVE_MEETINGS_VOICE_ON_ADDRESS` | No | `true` | Lets hive speak when addressed by name in a meeting whose voice is enabled; otherwise it answers in chat. |
+| `HIVE_MEETINGS_BOT_NAME` | No | `hive (notes)` | Display name the meeting bot joins with. |
+| `HIVE_MEETINGS_INVITE_POLICY` | No | `owner` | Who may send hive to a meeting. Only `owner` is supported. |
+| `HIVE_MEETINGS_RESEARCH_POOL_SIZE` | No | `2` | Number of research agents (`research-1..N`). |
+| `HIVE_MEETINGS_RESEARCH_PER_MEETING` | No | `5` | Research items one meeting may start before each further item needs dashboard approval. |
+| `HIVE_MEETINGS_CHAT_POSTS_PER_MINUTE` | No | `6` | Cap on hive's chat posts into one meeting. |
+| `HIVE_MEETINGS_LOBBY_TIMEOUT_S` | No | `600` | Seconds hive waits in a meeting lobby before leaving. |
+| `HIVE_MEETINGS_RETENTION_DAYS` | No | `30` | Days an ended meeting's transcript is kept before it is purged. |
+| `HIVE_MEETINGS_CONSENT_TEXT` | No | the notice above | Notice posted in the meeting chat on join, before anything else. At most 2000 characters. |
+| `HIVE_MEETINGS_DATA_DIR` | No | `/data/meetings` | Where meeting records and transcripts are stored. |
+| `HIVE_MEETINGS_MAX_TOKENS_PER_MEETING` | No | `200000` | Per-meeting LLM token budget for Spektacular live mode. |
+| `HIVE_MEETINGS_MAX_TOKENS_PER_HOUR` | No | `500000` | Hive-wide hourly token ceiling across meetings. |
+| `HIVE_MEETINGS_MAX_TOKENS_PER_DAY` | No | `2000000` | Hive-wide daily token ceiling across meetings. |
+| `HIVE_MEETINGS_MAX_INTENTS_PER_MEETING` | No | `500` | Per-meeting budget counted in Spek intents when Spek reports no token usage. |
+
 ## Backend launch controls
 
 | Variable | Required | Default | Purpose |

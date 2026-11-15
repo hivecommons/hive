@@ -21,6 +21,23 @@ const (
 	// KickEventFailed: a queued kick will not be delivered or its turn was
 	// abandoned. Detail is the reason.
 	KickEventFailed = "kick-failed"
+	// KickEventOutputSignal: the agent printed a structured output marker
+	// (#18287). Signal names which, Text is the line after the marker and
+	// Detail the whole line, both length-bounded.
+	KickEventOutputSignal = "output-signal"
+)
+
+// Output signals: the structured markers an agent prints to report progress
+// (#18287). Each is recognised only as the first token of an output line.
+const (
+	// OutputSignalStatus: "[STATUS] <text>" progress note.
+	OutputSignalStatus = "status"
+	// OutputSignalFinding: "[FINDING] <one-line>" result fragment.
+	OutputSignalFinding = "finding"
+	// OutputSignalComplete: "[COMPLETE] <summary>" the task is done.
+	OutputSignalComplete = "complete"
+	// OutputSignalError: "[ERROR] <text>" the task failed.
+	OutputSignalError = "error"
 )
 
 // KickEvent is one kick lifecycle event as fan-out observers receive it.
@@ -34,6 +51,11 @@ type KickEvent struct {
 	// KickID is the queued kick the event belongs to, or "" for a kick that
 	// did not come through the kick queue.
 	KickID string `json:"kickId,omitempty"`
+	// Signal is the OutputSignal* kind for a KickEventOutputSignal event.
+	Signal string `json:"signal,omitempty"`
+	// Text is the payload after the marker for a KickEventOutputSignal
+	// event.
+	Text string `json:"text,omitempty"`
 	// At is when the runtime emitted the event.
 	At time.Time `json:"at"`
 }

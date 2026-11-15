@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -52,6 +53,11 @@ func (b *boot) bootInbox(baseDir string) {
 	svc.EnableTranscription(inbox.NewTranscriptStore(filepath.Join(baseDir, "connector-state", "transcripts")))
 	b.inboxSvc = svc
 	b.logger.Info("inbox started", "sources", len(srcs), "rules", len(b.cfg.Inbox.Rules))
+	if tx := b.cfg.Inbox.Transcription; tx.Enabled {
+		// Transcription uploads audio from the hive process itself, so a
+		// locked-down spoke must allow this egress (network-requirements.md).
+		b.logger.Info("inbox transcription enabled", "mode", tx.EffectiveMode(), "provider", tx.EffectiveProvider(), "egress", strings.Join(inbox.TranscriptionEgressHosts(tx), ","))
+	}
 }
 
 // inboxSources returns one source per configured voice type (inbox.sources)
@@ -120,7 +126,22 @@ func (b *boot) inboxSource(baseDir, typ string, entries []config.KnowledgeConnec
 	return facts
 }
 
-// inboxAfterSync runs the auto-routing rules once a voice connector synced.
+// inboxTranscribeSweep queues machine transcriptions for opted-in sources
+// (inbox.transcription.mode: auto). Runs are audited as inbox_transcribe
+// with the AutoTranscribeActor actor.
+func (b *boot) inboxTranscribeSweep(ctx context.Context, svc *inbox.Service) {
+	opts := inbox.TranscribeOptions{Actor: inbox.AutoTranscribeActor, Audit: func(a inbox.TranscribeAudit) {
+		if b.dashSrv != nil {
+			b.dashSrv.AuditLog(a.Actor, "inbox_transcribe", a.Detail(), "")
+		}
+	}}
+	if n, err := svc.TranscribeSweep(ctx, opts); err != nil || n > 0 {
+		b.logger.Info("inbox transcription sweep", "queued", n, "error", err)
+	}
+}
+
+// inboxAfterSync runs the auto-routing rules once a voice connector synced,
+// then the transcription sweep.
 func (b *boot) inboxAfterSync(st connector.Status) {
 	svc := b.inboxSvc
 	if svc == nil {
@@ -136,6 +157,7 @@ func (b *boot) inboxAfterSync(st connector.Status) {
 			if n, err := svc.Sweep(ctx); err != nil {
 				b.logger.Warn("inbox sweep", "error", err, "routed", n)
 			}
+			b.inboxTranscribeSweep(ctx, svc)
 		}()
 		return
 	}

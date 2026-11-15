@@ -345,6 +345,10 @@ type boot struct {
 	// cruxSupervision is the sidecar runtime's child supervisor and probe
 	// loop (hivecommons/hive#14138 stage 4); nil in-process.
 	cruxSupervision *cruxRuntimeSupervision
+
+	// meetingsQuorum is the Quorum child supervisor
+	// (hivecommons/hive#18289); nil when meetings are off.
+	meetingsQuorum quorumSupervisor
 }
 
 // deferStack stands in for the `defer` statements that used to sit in
