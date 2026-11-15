@@ -1095,6 +1095,14 @@ jobs:
         working-directory: .
         run: bash src/deploy/test_ttyd_session_attach_token.sh
 
+      # The browser terminal's tmux client must end when the browser does:
+      # ttyd's SIGHUP has to reach the attach helper (not be inherited ignored
+      # from the entrypoint) and the helper has to detach its client, or every
+      # reload leaves one more client attached ("26 attached").
+      - name: ttyd-tmux.sh ends its tmux client when ttyd hangs up
+        working-directory: .
+        run: bash src/deploy/test_ttyd_attach_hangup.sh
+
       # #5435: hive-discord.service ran `node bot.js` with
       # WorkingDirectory=/tmp/hive/discord, resolving the executed code out of a
       # world-writable parent that is cleared on every reboot — a local user who

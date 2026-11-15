@@ -3206,9 +3206,19 @@ fi
 echo "[entrypoint] Starting ttyd on ${TTYD_BIND}:${TTYD_PORT}"
 # Wrap ttyd in a respawn loop: ttyd exits on SIGHUP (its close signal),
 # and orphaned LISTEN sockets block rebind, so we wait before retrying.
+#
+# The loop must survive a HUP but must NOT ignore it: an ignored signal is
+# inherited across exec, so `trap '' HUP` here made ttyd AND every
+# ttyd-tmux.sh it spawned ignore SIGHUP (visible as SigIgn on their
+# /proc status). SIGHUP is exactly the signal ttyd sends its child when the
+# browser closes the terminal, and a non-interactive bash can neither trap nor
+# reset a signal it inherited ignored, so no attach ever ended and tmux clients
+# piled up on every session ("26 attached"). A handler that does nothing
+# (`trap ':' HUP`) keeps the loop alive the same way, but a caught signal
+# resets to its default disposition on exec, so ttyd's children see SIGHUP.
 TTYD_RESPAWN_DELAY_SECS=5
 (
-  trap '' HUP
+  trap ':' HUP
   while true; do
     # -a/--url-arg lets ttyd forward the ?arg=<session> that the dashboard puts in
     # every terminal link (src/pkg/dashboard/static/index.html) through to
