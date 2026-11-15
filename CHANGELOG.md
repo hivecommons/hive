@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-15 (v5.269.0)
+
+### Added
+
+- Crux gains ID-addressed, queued kicks: `Manager.EnqueueKick(agent, kickID, message)` appends a kick to a bounded per-agent FIFO (`HIVE_KICK_QUEUE_SIZE`, default 8) and returns its kick ID (caller-supplied or generated), delivering each kick once the agent is idle. `Manager.KickStatus(kickID)` reports `queued`, `pending`, `delivered`, `completed` (with the turn's outcome) or `failed`; waits and turns are bounded by `HIVE_KICK_QUEUE_WAIT_TIMEOUT` (30m) and `HIVE_KICK_QUEUE_TURN_TIMEOUT` (60m). The optional `crux.KickQueuer` interface exposes it; `SendKick` and `SendKickAsync` are unchanged. Groundwork for meeting research kicks ([#18285](https://github.com/hivecommons/hive/issues/18285), parent [#18284](https://github.com/hivecommons/hive/issues/18284)).
+- Crux kick observers fan out: `Manager.AddKickObserver(func(crux.KickEvent)) (remove func())` registers any number of observers, each receiving every kick event in order on its own goroutine (a slow observer has events dropped rather than stalling the runtime). Events carry the kick ID of the queued kick they belong to, and the kick queue adds `kick-queued`, `kick-completed` and `kick-failed`. `SetKickObserver` keeps its single slot and its two events, so the Linear agent behaves exactly as before ([#18286](https://github.com/hivecommons/hive/issues/18286), parent [#18284](https://github.com/hivecommons/hive/issues/18284)).
+- Inbox: Google Meet meetings as a knowledge integration — a `google-meet` connector (user-level OAuth with the hosted paste flow, or a service account with domain-wide delegation) that syncs conference records with a recording, transcript or Gemini notes into one fact each, with the event title, participants, Gemini notes as the summary and the transcript entries as `[mm:ss] Speaker: text` lines; a default `inbox.sources` entry with a Connect / Check / Sync now card (Meet recordings are Drive files behind a bearer token, so Inbox playback links the Drive page).
+
 ## 2026-11-15 (v5.268.0)
 
 ### Added
