@@ -82,11 +82,12 @@ func (b *boot) refreshInboxSources(entries []config.KnowledgeConnector, syncer *
 	b.logger.Info("inbox sources refreshed", "sources", len(srcs))
 }
 
-// inboxSource returns the fact-backed source for typ. For Plaud it prefers
-// reading recordings directly from the connector while it is signed in.
+// inboxSource returns the fact-backed source for typ. For Plaud and the
+// meeting platforms (zoom, teams) it prefers reading recordings directly
+// from the connector while it is signed in.
 func (b *boot) inboxSource(baseDir, typ string, entries []config.KnowledgeConnector, syncer *connector.Syncer) inbox.Source {
 	facts := &inbox.FactSource{ConnectorsDir: filepath.Join(baseDir, "connectors"), SourceType: typ}
-	if typ != inbox.PlaudType || syncer == nil {
+	if syncer == nil {
 		return facts
 	}
 	for _, c := range entries {
@@ -94,13 +95,21 @@ func (b *boot) inboxSource(baseDir, typ string, entries []config.KnowledgeConnec
 			continue
 		}
 		conn, ok := syncer.Connector(c.Name)
-		reader, isReader := conn.(connector.PlaudReader)
-		if !ok || !isReader {
+		if !ok {
 			continue
 		}
-		direct := &inbox.PlaudSource{Name: c.Name, Reader: reader}
+		var direct inbox.DirectSource
+		ready := func(context.Context) bool { return true }
 		if auth, ok := conn.(connector.Authenticator); ok {
-			direct.Ready = func(ctx context.Context) bool { return auth.AuthStatus(ctx, false).Connected }
+			ready = func(ctx context.Context) bool { return auth.AuthStatus(ctx, false).Connected }
+		}
+		switch r := conn.(type) {
+		case connector.PlaudReader:
+			direct = &inbox.PlaudSource{Name: c.Name, Reader: r, Ready: ready}
+		case connector.MeetingReader:
+			direct = &inbox.MeetingSource{SourceType: typ, Name: c.Name, Reader: r, Ready: ready}
+		default:
+			continue
 		}
 		return &inbox.PreferDirect{Direct: direct, Facts: facts}
 	}
