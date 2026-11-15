@@ -131,7 +131,9 @@ see [Experiment Lab](experiment-lab.md).
 When the hive uses Claude, the owner sees a fuel gauge at the top of the
 **Overview** card: one dial for each usage limit the Claude plan reports (the
 weekly limit, plus a 5-hour or model-specific weekly limit when the plan has
-one), each with the percentage left and when it resets. A dial turns amber at
+one), each with the percentage left and when it resets. A model-specific limit
+is named after its model the way Claude Code's `/usage` names it, for example
+"Weekly (Fable)". A dial turns amber at
 25% left or less and red at 10% or less, and the gauge says how old the reading
 is and greys out when it is more than 15 minutes old. When there is no reading,
 it says so and why (for example, the hive is not signed in to Claude) instead
