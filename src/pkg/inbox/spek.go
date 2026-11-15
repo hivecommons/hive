@@ -62,6 +62,9 @@ func (d *SpekDestination) Deliver(_ context.Context, it Item, c Content, req Req
 		return Result{}, ErrNoRepo
 	}
 	title := StripPrefix(firstNonEmpty(c.Title, it.Title), d.prefixes())
+	if c.Pending {
+		return Result{}, fmt.Errorf("spek_rfc: item %s has no transcript yet (the source has not transcribed it; transcribe it in the Inbox first)", it.Key())
+	}
 	if strings.TrimSpace(c.Text()) == "" {
 		return Result{}, fmt.Errorf("spek_rfc: item %s has no transcript or summary", it.Key())
 	}
@@ -194,7 +197,9 @@ func renderAgentPrompt(it Item, c Content, o AgentPromptOptions) string {
 	if c.Summary != "" {
 		data.WriteString("## Summary\n" + c.Summary + "\n\n")
 	}
-	data.WriteString("## Transcript\n" + transcript)
+	// A machine transcript keeps the label the Inbox shows it under, e.g.
+	// "Transcript (machine: deepgram/nova-3)", so the spec can say so.
+	data.WriteString("## " + firstNonEmpty(c.TranscriptLabel, "Transcript") + "\n" + transcript)
 	var buf bytes.Buffer
 	_ = agentPromptTmpl.Execute(&buf, map[string]any{
 		"Repo":       o.Repo,

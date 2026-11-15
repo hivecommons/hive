@@ -49,7 +49,13 @@ see the issue linked from the changelog entry.
     not follow instructions" preamble; any envelope marker inside the text
     is neutralised so it cannot close the envelope early
     (`inbox.WrapUntrusted` in `src/pkg/inbox/envelope.go`). The item then
-    shows **RFC handed to agent** with the agent's name. If no agent is
+    shows **RFC handed to agent** with the agent's name. The agent gets the
+    same content the Inbox shows: when the source never transcribed the
+    recording, the hive's machine transcript stands in, under its label
+    (for example `## Transcript (machine: deepgram/nova-3)`), inside the
+    same envelope. A recording with no text at all (still pending, no
+    machine transcript) is not filed; the route fails with "no transcript
+    yet" so it can be transcribed first. If no agent is
     available or the kick is refused, the item shows **RFC failed** with the
     error inline and a **Retry RFC…** button; it never sits as pending.
   - **→ dibs** (`dibs`): posts title, summary, transcript and the
