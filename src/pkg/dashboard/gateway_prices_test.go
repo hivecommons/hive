@@ -111,7 +111,8 @@ func TestConfiguredGatewayPriceOverride(t *testing.T) {
 
 func gatewayPriceServer(t *testing.T, gws []config.GatewayConfig, agents map[string]config.AgentConfig) *Server {
 	t.Helper()
-	cfg := &config.Config{Agents: agents}
+	cfg := &config.Config{}
+	cfg.Agents = agents
 	cfg.Governor.Gateways = gws
 	return &Server{deps: &Dependencies{Config: cfg}}
 }
