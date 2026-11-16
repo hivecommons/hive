@@ -95,14 +95,9 @@ func (c *Client) applyIssueModelReply(ctx context.Context, owner, repo string, n
 	if err := c.clearIssueParkingLabels(ctx, owner, repo, number, labels, actor, needsHuman.lift); err != nil {
 		return IssueUnparkEvent{}, err
 	}
-	applied := ""
-	if eff.Label != "" && !labelPresent(labels, eff.Label) {
-		if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{eff.Label}); err != nil { // writeback:solicited a maintainer answered the gate with this model verb (comment or dashboard)
-			return IssueUnparkEvent{}, fmt.Errorf("adding %s to %s/%s#%d: %w", eff.Label, owner, repo, number, err)
-		}
-		c.recordWriteAudit(AuditActionHiveLabelApplied, hiveWriteMeta(),
-			WriteTarget{Repo: owner + "/" + repo, Number: number}, "label", eff.Label, "reply", eff.Verb)
-		applied = eff.Label
+	applied, err := c.applyModelReplyLabel(ctx, owner, repo, number, labels, eff)
+	if err != nil {
+		return IssueUnparkEvent{}, err
 	}
 	decision := eff.Verb
 	if t := strings.TrimSpace(text); t != "" {
@@ -126,18 +121,7 @@ func (c *Client) applyIssueModelReply(ctx context.Context, owner, repo string, n
 // same sentence as a built-in decision so the `Decision:` round-trip the
 // decision history reads is unchanged, then says what the model did with it.
 func renderModelReplyAccepted(actor, decision string, eff workflowmodel.ReplyEffect, applied string, needsHuman bool, outcome unparkNeedsHumanOutcome) string {
-	b := renderUnparkAcceptedReply(actor, decision, needsHuman, outcome)
-	var tail strings.Builder
-	fmt.Fprintf(&tail, "\n\nWorkflow reply `%s`", eff.Verb)
-	switch {
-	case eff.To != "" && applied != "":
-		fmt.Fprintf(&tail, " moves the item from `%s` to `%s`; `%s` applied.", eff.From, eff.To, applied)
-	case eff.To != "":
-		fmt.Fprintf(&tail, " moves the item from `%s` to `%s`; the model maps no label to that state, so the reply is recorded here only.", eff.From, eff.To)
-	default:
-		tail.WriteString(" is recorded; the model declares no transition for it.")
-	}
-	return b + tail.String()
+	return renderUnparkAcceptedReply(actor, decision, needsHuman, outcome) + modelReplyEffectSentence(eff, applied)
 }
 
 // RecordOperatorIssueModelReply is RecordOperatorIssueDecision for a model

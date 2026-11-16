@@ -251,10 +251,14 @@ type IssueUnparkSweepResult struct {
 	// completed (hivecommons/dibs#459); Decision carries the note after the
 	// command, if any.
 	Closed []IssueUnparkEvent
+	// ModelReplies lists the bound workflow model's reply verbs answered on
+	// items off the parked-issue path — PRs and issues that are not parked
+	// (hivecommons/hive#18357). Parked issues report theirs in Unparked.
+	ModelReplies []IssueUnparkEvent
 }
 
 func (r *IssueUnparkSweepResult) actions() int {
-	return len(r.Unparked) + r.Replies + len(r.LabelApproved) + len(r.PRDecisions) + len(r.Closed)
+	return len(r.Unparked) + r.Replies + len(r.LabelApproved) + len(r.PRDecisions) + len(r.Closed) + len(r.ModelReplies)
 }
 
 // SweepIssueUnparkCommands lets a maintainer re-queue a parked issue with a
@@ -332,6 +336,24 @@ func (c *Client) SweepIssueUnparkCommands(ctx context.Context, opts IssueUnparkS
 				c.logger.Warn("unpark sweep skipped attention commands", "repo", repo, "item", issue.GetNumber(), "error", err)
 			}
 			labels := issueLabelNames(issue.Labels)
+			// A bound model's reply verbs follow the item's current model
+			// state (hivecommons/hive#18357): on a PR or an issue that is not
+			// parked, a `/hive <verb>` the state offers is answered here.
+			// Parked issues keep the path below, which also clears their
+			// park labels.
+			if issue.IsPullRequest() || !hasIssueParkingLabel(labels) {
+				acted, err := c.tryItemModelReply(ctx, repo, owner, repoName, issue, cutoff, profile, result)
+				if err != nil {
+					if c.logger != nil {
+						c.logger.Warn("unpark sweep skipped workflow model reply", "repo", repo, "item", issue.GetNumber(), "error", err)
+					}
+					result.Skipped++
+					continue
+				}
+				if acted {
+					continue
+				}
+			}
 			if issue.IsPullRequest() {
 				// `/hive approve` on any PR gets an acknowledgement or an
 				// explanation of why the lane cannot use it
