@@ -275,7 +275,7 @@ func TestSessionSeedAuditAndRoutedMark(t *testing.T) {
 	}
 	items, _ := e.s.deps.Inbox.Items(context.Background())
 	for _, it := range items {
-		if it.ID == "rec-3" {
+		if it.ID != "rec-1" && it.ID != "rec-2" {
 			continue
 		}
 		r := it.Routes[inbox.DestSession]
