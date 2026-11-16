@@ -3,11 +3,16 @@ module github.com/hivecommons/hive
 go 1.26.11
 
 require (
+	blitiri.com.ar/go/spf v1.6.0
 	github.com/charmbracelet/bubbletea v1.3.10
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/charmbracelet/x/ansi v0.11.9
 	github.com/charmbracelet/x/exp/teatest v0.0.0-20260823001701-96af6d2cb5f6
 	github.com/charmbracelet/x/term v0.2.2
+	github.com/emersion/go-ical v0.0.0-20261112170022-46c5b53a1723
+	github.com/emersion/go-message v0.18.2
+	github.com/emersion/go-msgauth v0.7.0
+	github.com/emersion/go-smtp v0.26.0
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/cel-go v0.31.0
@@ -29,19 +34,15 @@ require (
 	go.opentelemetry.io/otel/sdk/metric v1.47.0
 	go.opentelemetry.io/otel/trace v1.47.0
 	golang.org/x/image v0.48.0
+	golang.org/x/time v0.16.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (
-	blitiri.com.ar/go/spf v1.6.0 // indirect
 	github.com/ai-openshell/sdk-go v0.1.8 // indirect
 	github.com/antithesishq/antithesis-sdk-go v0.9.0-default-no-op // indirect
-	github.com/emersion/go-ical v0.0.0-20261112170022-46c5b53a1723 // indirect
-	github.com/emersion/go-message v0.18.2 // indirect
-	github.com/emersion/go-msgauth v0.7.0 // indirect
 	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect
-	github.com/emersion/go-smtp v0.26.0 // indirect
 	github.com/google/go-tpm v0.9.8 // indirect
 	github.com/klauspost/compress v1.20.4 // indirect
 	github.com/minio/highwayhash v1.0.4 // indirect
@@ -52,7 +53,6 @@ require (
 	golang.org/x/crypto v0.58.0 // indirect
 	golang.org/x/oauth2 v0.37.0 // indirect
 	golang.org/x/sync v0.25.0 // indirect
-	golang.org/x/time v0.16.0 // indirect
 )
 
 require (
