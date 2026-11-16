@@ -134,7 +134,7 @@ OpenRouter is both a Model Gateway kind (`kind: openrouter`) and a guided fundin
 1. Open **Governor Config → Model Gateways**.
 2. Add a gateway named `openrouter` with kind `openrouter`. The UI preset fills the endpoint as `https://openrouter.ai/api/v1`.
 3. Store the key as a secret value in the UI, or point `api_key_env` / `api_key_file` at a key that already exists. Hive stores only the file path or env-var name in `hive.yaml`.
-4. Pick a `default_model` from discovery or enter an OpenRouter model id manually. The curated fallback default is `deepseek/deepseek-chat`.
+4. Pick a `default_model` from discovery or enter an OpenRouter model id manually. The curated fallback default is `deepseek/deepseek-v4.1-flash`. For OpenRouter the Default Model field is a searchable picker: type to filter the live catalog (about 470 models), browse by provider prefix (`z-ai/`, `deepseek/`, `anthropic/`, …), and read each model's price per 1M input/output tokens and context window. The curated suggestions (DeepSeek V4.1 Flash, GLM-5.3, GLM-5.3 Flash, Claude Sonnet 5.5, Gemini 3.8 Flash) sit on top, and any suggestion OpenRouter has retired is hidden. Typing an id the catalog does not list still works.
 5. Assign an agent with `backend: openrouter` (the gateway name) and either leave `model:` empty to use the default or set an explicit OpenRouter model id.
 
 Equivalent YAML looks like:
@@ -146,13 +146,13 @@ governor:
       kind: openrouter
       endpoint: https://openrouter.ai/api/v1
       api_key_file: /data/secrets/gateway_openrouter_api_key
-      default_model: deepseek/deepseek-chat
+      default_model: deepseek/deepseek-v4.1-flash
       key_name: openrouter-prod-key  # optional: audit label shown in the dashboard, not a secret
 
 agents:
   guide:
     backend: openrouter
-    model: deepseek/deepseek-chat
+    model: deepseek/deepseek-v4.1-flash
 ```
 
 ### Scan-to-fund flow

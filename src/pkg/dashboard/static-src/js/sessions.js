@@ -373,9 +373,35 @@
       if (wasEnabled !== _sessionsData.enabled) sessionsApplyVisibility();
       if (!_sessionsData.enabled) { dashboardClearInterval('sessions-poll'); return; }
       if (!_sessionsRole) await sessionsLoadRole();
-      _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, _sessionsSelected || sessionsStoreGet(SESSIONS_SELECTED_KEY));
+      _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, sessionsClaimFocus(_sessionsData.sessions) || _sessionsSelected || sessionsStoreGet(SESSIONS_SELECTED_KEY));
       renderSessions();
     }
+    // Deep link: #section-sessions-section?session=<id> opens the section
+    // (the generic section hash does that) and selects that session's tab.
+    // Inbox share pills for spek shares link here.
+    const SESSIONS_FOCUS_HASH = '#section-sessions-section?session=';
+    function sessionsFocusIdFromHash(hash) {
+      const h = String(hash || '');
+      const at = h.indexOf(SESSIONS_FOCUS_HASH);
+      if (at < 0) return '';
+      try { return decodeURIComponent(h.slice(at + SESSIONS_FOCUS_HASH.length).split('&')[0]); } catch (e) { return ''; }
+    }
+    let _sessionsFocusId = sessionsFocusIdFromHash(location.hash);
+    // sessionsClaimFocus returns the deep-linked session id once it exists in
+    // sessions (and forgets it), or '' while there is nothing to select.
+    function sessionsClaimFocus(sessions) {
+      if (!_sessionsFocusId || !(sessions || []).some(function(s) { return s.id === _sessionsFocusId; })) return '';
+      const id = _sessionsFocusId;
+      _sessionsFocusId = '';
+      return id;
+    }
+    window.addEventListener('hashchange', function(e) {
+      const id = sessionsFocusIdFromHash((e && e.newURL) || location.hash);
+      if (!id) return;
+      _sessionsFocusId = id;
+      const wanted = sessionsClaimFocus(_sessionsData.sessions);
+      if (wanted) sessionsSelect(wanted);
+    });
     function sessionsStartPolling() {
       dashboardSetInterval('sessions-poll', loadSessions, SESSIONS_POLL_MS);
     }

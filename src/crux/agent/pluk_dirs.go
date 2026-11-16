@@ -40,8 +40,7 @@ var plukLogFileMode = os.FileMode(0o660)
 
 // plukSessionLogPath is where pluk's events for one tmux session are appended.
 // It mirrors what pluk's own `attach` builds — <run-dir>/logs/<session>.jsonl —
-// and is the path src/deploy/hive-panes.sh globs and
-// src/pkg/dashboard/inception_watcher.go tails.
+// and is the path src/deploy/hive-panes.sh globs.
 func plukSessionLogPath(runDir, session string) string {
 	return filepath.Join(runDir, "logs", session+".jsonl")
 }
@@ -147,9 +146,8 @@ func ensurePlukRunDirs(runDir string) error {
 // createWriteStream, appendFile, writeFile or openSync in any module — and
 // pipe-pane only feeds the pane into the command's stdin; it does nothing with
 // the command's stdout. So without the `>>` here the events are produced and
-// discarded, /var/run/pluk/logs stays empty, and both consumers
-// (src/deploy/hive-panes.sh, src/pkg/dashboard/inception_watcher.go) wait on
-// files that never appear.
+// discarded, /var/run/pluk/logs stays empty, and the consumer
+// (src/deploy/hive-panes.sh) waits on files that never appear.
 //
 // The redirect and --include-raw were lost together in #1759, which replaced
 // the Go `pluk-publish` binary — a publisher, which wrote the log itself — with

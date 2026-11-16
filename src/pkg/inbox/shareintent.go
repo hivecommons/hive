@@ -31,11 +31,13 @@ type ShareIntent struct {
 	Repo string `json:"repo,omitempty"`
 	// Params carries other short dialog choices (e.g. a spek session name or
 	// "new session" flag). Values are choices, not item content.
-	Params    map[string]string `json:"params,omitempty"`
-	Status    string            `json:"status"`
-	Error     string            `json:"error,omitempty"`
-	CreatedAt time.Time         `json:"created_at"`
-	UpdatedAt time.Time         `json:"updated_at"`
+	Params map[string]string `json:"params,omitempty"`
+	// RecordID is the share-history record that tracks this share.
+	RecordID  string    `json:"record_id,omitempty"`
+	Status    string    `json:"status"`
+	Error     string    `json:"error,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // IntentRunner performs a share for an item that now has text. Built in for
@@ -77,7 +79,7 @@ func (s *Service) intentRunner(dest string) (IntentRunner, bool) {
 	switch dest {
 	case DestSpekRFC, DestDismiss:
 		return func(ctx context.Context, it Item, in ShareIntent) error {
-			_, err := s.Route(ctx, it, Request{Destination: in.Destination, Repo: in.Repo})
+			_, err := s.Route(ctx, it, Request{Destination: in.Destination, Repo: in.Repo, Actor: in.Actor, ShareID: in.RecordID})
 			return err
 		}, true
 	}
@@ -112,7 +114,13 @@ func (s *Service) ShareWhenReady(ctx context.Context, it Item, in ShareIntent, o
 		return ShareOutcome{}, fmt.Errorf("%w: %s", ErrTranscribeUnavailable, reason)
 	}
 	in.Status, in.Error, in.CreatedAt, in.UpdatedAt = IntentWaiting, "", s.now(), s.now()
+	id, rerr := s.RecordShare(it.Key(), ShareRecord{Destination: shareDestFor(in.Destination), Actor: in.Actor, Status: ShareTranscribing})
+	if rerr != nil {
+		return ShareOutcome{}, rerr
+	}
+	in.RecordID = id
 	if err := s.Store.SetIntent(it.Key(), in); err != nil {
+		_ = s.FinishShare(it.Key(), id, ShareFailed, err.Error(), nil)
 		return ShareOutcome{}, err
 	}
 	st, err := s.Transcribe(ctx, it, opts)
@@ -121,12 +129,15 @@ func (s *Service) ShareWhenReady(ctx context.Context, it Item, in ShareIntent, o
 		// A run is already in flight; the intent rides on it.
 	case errors.Is(err, ErrAlreadyTranscribed):
 		s.Store.ClearIntent(it.Key(), in.Destination)
+		// Run now, continuing the record created above.
 		return s.ShareWhenReady(ctx, withText(it), in, opts)
 	case err != nil:
 		s.Store.ClearIntent(it.Key(), in.Destination)
+		_ = s.FinishShare(it.Key(), id, ShareFailed, err.Error(), nil)
 		return ShareOutcome{}, err
 	case st.Status == TranscriptionSkipped:
 		s.Store.ClearIntent(it.Key(), in.Destination)
+		_ = s.FinishShare(it.Key(), id, ShareFailed, st.Reason, nil)
 		return ShareOutcome{}, fmt.Errorf("%w: %s", ErrTranscribeUnavailable, st.Reason)
 	}
 	return ShareOutcome{Waiting: true}, nil
@@ -168,6 +179,9 @@ func (s *Service) finishIntents(it Item, rec TranscriptRecord) {
 }
 
 func (s *Service) failIntent(key, dest, reason string) {
+	if in := s.Store.Intents(key)[dest]; in != nil && in.RecordID != "" {
+		_ = s.FinishShare(key, in.RecordID, ShareFailed, reason, nil)
+	}
 	s.Logger.Warn("inbox: share after transcription failed", "item", key, "destination", dest, "reason", reason)
 	if err := s.Store.FailIntent(key, dest, strings.TrimSpace(reason)); err != nil {
 		s.Logger.Warn("inbox: persist failed share intent", "item", key, "error", err)
