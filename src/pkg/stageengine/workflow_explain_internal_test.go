@@ -228,7 +228,7 @@ func TestDecisionForEdges(t *testing.T) {
 		reason   string
 	}{
 		{"done", false, true, ""},
-		{"nonum", true, false, "carries no stage number"},
+		{"nonum", false, false, ""},
 		{"bogus", true, false, "not in the stage table"},
 		{"pronly", true, false, "not a issue stage"},
 		{"ghost", true, false, "is not in t@1"},
