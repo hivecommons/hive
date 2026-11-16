@@ -391,10 +391,27 @@ func (r *Router) try(ctx context.Context, p Provider, key string, extra map[stri
 	case resp.StatusCode == http.StatusRequestTimeout || resp.StatusCode >= 500:
 		a.Outcome = OutcomeUnavailable
 		return turn.LLMResponse{}, a, orDefault(retry, DefaultUnavailableCooldown)
+	case resp.StatusCode == http.StatusBadRequest && modelOutputFault(a.Detail):
+		// The provider failed to parse the model's own generation (seen live:
+		// Workers AI code 3030, glm-4.7-flash emitted "<tool_call>…" that the
+		// server's tool parser rejected as json_invalid). The request was
+		// fine; another provider or a retry can serve it.
+		a.Outcome = OutcomeMalformed
+		return turn.LLMResponse{}, a, DefaultUnavailableCooldown
 	default:
 		a.Outcome = OutcomeRejected
 		return turn.LLMResponse{}, a, 0
 	}
+}
+
+// modelOutputFault reports a 400 body that blames the model's generation
+// (a server-side tool-call parse failure) rather than the request.
+func modelOutputFault(body string) bool {
+	b := strings.ToLower(body)
+	return strings.Contains(b, "<tool_call>") ||
+		(strings.Contains(b, "json_invalid") && strings.Contains(b, "tool")) ||
+		strings.Contains(b, "failed to parse tool call") ||
+		strings.Contains(b, "tool_use_failed")
 }
 
 // dailyQuotaBody reports whether a 429 body names a per-day limit.

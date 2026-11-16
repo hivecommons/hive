@@ -422,3 +422,26 @@ func TestHistoryNamesMapBackWhenNotOffered(t *testing.T) {
 		t.Fatalf("tool_choice = %v", a.lastBody["tool_choice"])
 	}
 }
+
+// A 400 that blames the model's own tool-call output fails over (Workers AI
+// code 3030 seen live); a plain 400 still does not (TestRejectedRequestDoesNotFailOver).
+func TestModelOutputFault400FailsOver(t *testing.T) {
+	a := &fakeProvider{handler: func(w http.ResponseWriter) {
+		w.WriteHeader(400)
+		_, _ = io.WriteString(w, `{"errors":[{"message":"AiError: 1 validation error for list[function-wrap[__log_extra_fields__()]] Invalid JSON: expected value [type=json_invalid, input_value='<tool_call>repo__list_di...</tool_call>']","code":3030}]}`)
+	}}
+	b := &fakeProvider{handler: okText("b")}
+	sa, sb := a.server(t), b.server(t)
+	var first Attempt
+	r, _ := New([]Provider{prov("a", sa.URL), prov("b", sb.URL)}, WithEnv(allKeys()), WithAttemptHook(func(at Attempt) {
+		if at.Provider == "a" {
+			first = at
+		}
+	}))
+	if got, err := r.Generate(context.Background(), msgs(), nil); err != nil || got.Content != "b" {
+		t.Fatalf("Generate = %+v, %v", got, err)
+	}
+	if first.Outcome != OutcomeMalformed {
+		t.Fatalf("outcome = %s", first.Outcome)
+	}
+}
