@@ -3340,6 +3340,9 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 	deps.startWorkspaceCleanup(b.ctx, b.logger, b.dashSrv.GetAudit())
 
 	deps.ensureNousDirs(b.logger)
+	if deps.exportRetiredCampaigns != nil {
+		deps.exportRetiredCampaigns(b.cfg, b.logger)
+	}
 	b.nousState = deps.loadNousState(b.logger)
 	b.nousState.SnapshotDir = nousSnapshotDir
 

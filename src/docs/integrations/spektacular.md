@@ -121,7 +121,7 @@ Use `pkg/spektacular/testdata/spektacular-fake/spektacular`, which implements th
 - Auth and secrets: Hive invokes a local binary; any Spektacular backend credentials belong to that tool's own environment, not to Hive's dashboard token.
 - Rate limits: tune `poll_interval_s`; every active `spec` or `plan` stage is polled at that cadence (`src/pkg/config/runs_config.go:145`).
 - Failure modes: missing artifacts become typed not-found errors; stale/replaced documents are refused rather than silently rebound; expired leases retry until `max_stage_retries` then escalate (`src/pkg/spektacular/runner.go:300`, `src/pkg/spektacular/runner.go:520`).
-- What is exposable: status JSON, plan export JSON, run-stage work items, stage receipts, and campaign projections through `/api/campaigns`.
+- What is exposable: status JSON, plan export JSON, run-stage work items and stage receipts. (The `/api/campaigns` projection was retired with inception campaigns.)
 - What is not exposable: Hive does not open Spektacular files directly, does not provide a generic planning-engine registry, and does not let a third-party engine mutate Hive's leases except through the configured runner boundary.
 
 ## Gaps

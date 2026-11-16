@@ -11,11 +11,10 @@ see a session watches it live, one person at a time holds the keyboard, and
 and the [Sessions API](api-reference/sessions.md).
 
 The dashboard's old step-by-step Inception wizard was removed; Inception (spek)
-replaces it. The **Campaigns** tab that carried the wizard's campaigns and Jam
-view over into Inception (spek) has been retired too: start a session for new
-inception work, and find Spektacular runs in [Runs](runs.md). The
-`/api/campaigns` endpoints, campaign Jam and campaign recheck are being retired
-in follow-up changes.
+replaces it. Campaigns, their Jam workspace and campaign recheck have been
+retired too: start a session for new inception work, and find Spektacular runs
+in [Runs](runs.md). See [Retired campaigns export](#retired-campaigns-export)
+for where their data went.
 
 The rest of this guide covers the ACMM **L1 ("Inception")** workflow behind
 `/api/inception/*`, which is unchanged and still available to API callers. It
@@ -117,8 +116,8 @@ owner role for state-changing calls) drives them:
 7. If anything goes wrong, `POST /api/inception/reset` first archives the
    current state and wiki files as an Inception campaign, then clears the
    active state and state file under `inception/campaigns/<id>/`, so a reset
-   does not discard completed work. The dashboard no longer lists these
-   archives.
+   does not discard completed work. Nothing lists these archives any more;
+   see [Retired campaigns export](#retired-campaigns-export).
 
 Optional wiki-management calls, usable at any point once an inception has
 produced wiki files:
@@ -182,39 +181,38 @@ in `clarify`, produce fact beads in `structure`, emit scaffold content in
 "Normal Ideation Mode" — general feature/architecture/strategy proposals
 recorded as advisory beads, unrelated to any specific inception run.
 
-## Campaigns and resume
+## Retired campaigns export
 
-The dashboard no longer shows campaigns: the **Campaigns** tab of the
-Inception (spek) section was retired in favour of
+Campaigns (`/api/campaigns`, the resume/release/revise/delete actions), campaign
+Jam and campaign recheck were retired in favour of
 [Inception (spek) sessions](dashboard-sections/workflow-and-agents.md#inception-spek).
-Until the endpoints are retired, `GET /api/campaigns` still lists them for API
-callers. Each entry is a unit of work keyed by its stable session/spec id:
+Their endpoints are gone, and `runs.spektacular.recheck` in `hive.yaml` is
+accepted but ignored with a one-line deprecation warning.
 
-- Archived L1 sessions have type `inception` and engine `Spec Kit`.
-  `POST /api/campaigns/{id}/resume` takes a durable
-  campaign lease and restores the saved inception state and wiki working
-  files, so the API workflow above continues from the archived phase (the
-  dashboard has no wizard to reopen). A second operator gets
-  a 409 until the holder calls `POST /api/campaigns/{id}/release` or the lease
-  expires.
-- Spektacular (Spek)-backed runs have type `spektacular`, engine `Spektacular`, and a
-  `/api/runs/{key}` link. Resume returns the retained run detail and a CLI
-  status command; Spek itself reloads state from its working files and
-  speks.
-- The list supports `search`/`q`, `repo`, `stage`, `status`, and `owner`
-  filters and keeps shipped/completed work visible.
-- **Revise** calls `POST /api/campaigns/{id}/revise` and creates a new
-  campaign linked with `revision_of`/`revision`, so changed requirements branch
-  from the shipped campaign instead of erasing its trail. The list marks the
-  older campaign with `superseded_by`.
-- `DELETE /api/campaigns/{id}` (owner only) removes only
-  the campaign record: the saved Inception state and the archived wiki
-  snapshot under `inception/campaigns/<id>/`. Knowledge-base facts, Jam
-  threads, scaffolded repo files and the other revisions in the chain are
-  kept. Deleting the campaign that is also the live L1 session clears that
-  session. Run-backed Spektacular campaigns return `409 Conflict`; their rows
-  come and go with the run. The deletion is audit-logged as
-  `campaign_delete`.
+So nothing is lost, the first start after the upgrade writes a one-time,
+read-only export when either of these exists:
+
+- `/data/inception/campaigns/` (archived Inception sessions: each campaign's
+  `state.json` and wiki snapshot), and
+- `campaign-jam.json` in the metrics directory (`data.metrics_dir`, falling back
+  to `data.logs_dir`, then `data.agents_dir`): Jam threads, suggestions, polls,
+  decisions and spec revisions.
+
+The export is `/data/exports/campaigns-<YYYY-MM-DD>.tar.gz`, written with mode
+`0600` (directory `0700`). Hive logs its path once, at `WARN`, as
+`retired campaigns exported`. Inside the tarball, archive files keep their
+`inception/campaigns/<id>/...` paths, the Jam store is `campaign-jam.json`, and
+`inception/state.json` is included when present. Once any
+`campaigns-*.tar.gz` exists in `/data/exports/`, Hive does not write another.
+
+The original files stay where they are for one release and are never deleted
+by this change. Knowledge-base facts recorded by past inception runs (the
+`inception-wiki` vault and the knowledge store) are separate from these files
+and stay as they are. To read the export:
+
+```sh
+tar -tzf /data/exports/campaigns-*.tar.gz
+```
 
 ## Configuring the brainstorm agent
 

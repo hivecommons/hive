@@ -55,9 +55,9 @@ const (
 //     supersession_sweep, compliance.posture_checks, planning, swarm
 //     and tool_approval.inbox_path (featuresPlatformBody in
 //     api_governor_features_platform.go)
-//   - runs.checkpoints, runs.wait_*, runs.triage scalars, runs.spektacular.recheck
-//     scalars, the Flue endpoint, every workflow_version and the vibe-kanban
-//     host (featuresRunsBody in api_governor_features_runs.go)
+//   - runs.checkpoints, runs.wait_*, runs.triage scalars, the Flue endpoint,
+//     every workflow_version and the vibe-kanban host (featuresRunsBody in
+//     api_governor_features_runs.go)
 //
 // Every field is a pointer so an absent key leaves the corresponding config
 // untouched — the same "only what you send is changed" contract the other
