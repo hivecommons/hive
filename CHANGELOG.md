@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.283.1)
+
+### Fixed
+
+- **Inbox machine transcripts now become knowledge, and the "📚 Fact" button is gone.** A finished machine transcription (whisper, Gemini or Deepgram) is written into the item's Knowledge fact, fenced as untrusted data and marked `attr_<x>_content: machine` with `attr_transcript_provider`, so knowledge search, nous and agents see the words instead of a pending placeholder; later syncs keep it until the source produces its own text, which then replaces it. The action row no longer has a "📚 Fact" button: a status pill (*Pending text*, *In knowledge (machine text)*, *In knowledge*) shows what the fact holds, and an *open in Knowledge* link in the metadata line opens it.
+
 ## 2026-11-16 (v5.283.0)
 
 ### Added

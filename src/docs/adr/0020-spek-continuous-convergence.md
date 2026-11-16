@@ -2,7 +2,10 @@
 
 ## Status
 
-Accepted.
+Accepted, then retired. Campaign recheck was removed together with inception
+campaigns, `/api/campaigns` and campaign Jam in favour of Inception (spek)
+sessions. `runs.spektacular.recheck` is still accepted in `hive.yaml` but has
+no effect and logs a deprecation warning once. This record is kept for history.
 
 **Spek** is the Spektacular spec → plan → implement workflow. A **campaign** is
 one tracked run; a **revision** is a linked new run that rechecks it without

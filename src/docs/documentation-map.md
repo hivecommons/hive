@@ -174,6 +174,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [How Hive injects knowledge and memory into agents](agent-knowledge-and-memory.md) — the three context layers (Hive knowledge primer, CLI conversation, CLI persistent memory), the kick-primer path and its scoping/caps, why repo `AGENTS.md` is injected rather than read natively, which per-agent home directories are fleet-shared, and what survives a kick, `/clear`, pod restart or a new agent.
 - [Knowledge connectors](knowledge-connectors.md) — **Owner configuration:** connect, validate, and sync external document/wiki sources; includes scope and API reference.
 - [Inbox and voice sources](inbox-voice-sources.md) — triage Plaud/Wispr Flow recordings into spektacular RFCs, dibs ideas, or knowledge only; hosted-hive Plaud sign-in.
+- [Add files and links to the Inbox](inbox-uploads.md) — drop or paste md, txt, json, jsonl, yaml, csv and tsv files onto the Inbox: content sniffing, limits, retention and privacy.
 - [Inbox transcription](inbox-transcription.md) — spoke-local Deepgram transcription of recordings without text, with the owner's own key, budget and consent gate.
 - [Meetings](meetings.md) — send hive into Google Meet, Teams, Zoom or Discord meetings to take notes, ask questions and run research; consent, setup and settings.
 - [Knowledge curator](knowledge-curator.md) — configure fact extraction, sources, vaults, document imports, code maps, and retention.

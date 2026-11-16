@@ -69,10 +69,6 @@
       "description": "Greenfield project scaffolding and ideation workflow"
     },
     {
-      "name": "Campaigns",
-      "description": "Resumable Inception and Spektacular campaigns"
-    },
-    {
       "name": "Knowledge",
       "description": "Knowledge base facts, vaults, git sources, documents, and channels"
     },
@@ -35129,914 +35125,6 @@
         }
       }
     },
-    "/api/campaigns": {
-      "get": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "List resumable campaigns",
-        "description": "Lists archived Inception sessions and retained Spektacular runs. Supports search/q, repo, stage, status, and owner query filters.",
-        "parameters": [
-          {
-            "name": "search",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "q",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "repo",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "stage",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "status",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "owner",
-            "in": "query",
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Campaign list",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean"
-                    },
-                    "campaigns": {
-                      "type": "array",
-                      "items": {
-                        "type": "object",
-                        "required": [
-                          "id",
-                          "title",
-                          "current_stage",
-                          "status",
-                          "engine",
-                          "type"
-                        ],
-                        "properties": {
-                          "id": {
-                            "type": "string"
-                          },
-                          "title": {
-                            "type": "string"
-                          },
-                          "source": {
-                            "type": "string"
-                          },
-                          "repos": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          },
-                          "current_stage": {
-                            "type": "string"
-                          },
-                          "current_step": {
-                            "type": "string"
-                          },
-                          "artifacts": {
-                            "type": "array",
-                            "items": {
-                              "type": "object",
-                              "properties": {
-                                "kind": {
-                                  "type": "string"
-                                },
-                                "label": {
-                                  "type": "string"
-                                },
-                                "url": {
-                                  "type": "string"
-                                }
-                              }
-                            }
-                          },
-                          "linked_prs": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          },
-                          "linked_issues": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          },
-                          "contributors": {
-                            "type": "array",
-                            "items": {
-                              "type": "string"
-                            }
-                          },
-                          "last_activity": {
-                            "type": "string"
-                          },
-                          "status": {
-                            "type": "string"
-                          },
-                          "engine": {
-                            "type": "string"
-                          },
-                          "type": {
-                            "type": "string"
-                          },
-                          "run_key": {
-                            "type": "string"
-                          },
-                          "run_url": {
-                            "type": "string"
-                          },
-                          "lease_owner": {
-                            "type": "string"
-                          }
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/campaigns/{id}": {
-      "get": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Get a campaign",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Campaign detail",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean"
-                    },
-                    "campaign": {
-                      "type": "object",
-                      "required": [
-                        "id",
-                        "title",
-                        "current_stage",
-                        "status",
-                        "engine",
-                        "type"
-                      ],
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "title": {
-                          "type": "string"
-                        },
-                        "source": {
-                          "type": "string"
-                        },
-                        "repos": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        },
-                        "current_stage": {
-                          "type": "string"
-                        },
-                        "current_step": {
-                          "type": "string"
-                        },
-                        "artifacts": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "kind": {
-                                "type": "string"
-                              },
-                              "label": {
-                                "type": "string"
-                              },
-                              "url": {
-                                "type": "string"
-                              }
-                            }
-                          }
-                        },
-                        "linked_prs": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        },
-                        "linked_issues": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        },
-                        "contributors": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        },
-                        "last_activity": {
-                          "type": "string"
-                        },
-                        "status": {
-                          "type": "string"
-                        },
-                        "engine": {
-                          "type": "string"
-                        },
-                        "type": {
-                          "type": "string"
-                        },
-                        "run_key": {
-                          "type": "string"
-                        },
-                        "run_url": {
-                          "type": "string"
-                        },
-                        "lease_owner": {
-                          "type": "string"
-                        }
-                      }
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Campaign not found"
-          }
-        }
-      },
-      "delete": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Delete a campaign record",
-        "description": "Owner only. Removes the archived Inception state and wiki snapshot for the stable campaign id and audit-logs campaign_delete. Knowledge-base facts, Jam threads, scaffolded repo files and other revisions in the same chain are kept; deleting the live L1 session clears it. Run-backed Spektacular campaigns return 409.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Campaign record deleted",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean"
-                    },
-                    "id": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "403": {
-            "description": "Owner access required"
-          },
-          "404": {
-            "description": "Campaign not found"
-          },
-          "409": {
-            "description": "Run-backed campaign cannot be deleted here"
-          }
-        }
-      }
-    },
-    "/api/campaigns/{id}/resume": {
-      "post": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Resume or pick up a campaign",
-        "description": "Restores archived Inception state and wiki files, or returns the retained Spektacular run plus a CLI status command.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": false,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "surface": {
-                    "type": "string",
-                    "enum": [
-                      "chat",
-                      "contributor",
-                      "cli",
-                      "dashboard"
-                    ]
-                  }
-                }
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Resume response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "type": "object",
-                  "properties": {
-                    "ok": {
-                      "type": "boolean"
-                    },
-                    "campaign": {
-                      "type": "object",
-                      "required": [
-                        "id",
-                        "title",
-                        "current_stage",
-                        "status",
-                        "engine",
-                        "type"
-                      ],
-                      "properties": {
-                        "id": {
-                          "type": "string"
-                        },
-                        "title": {
-                          "type": "string"
-                        },
-                        "source": {
-                          "type": "string"
-                        },
-                        "repos": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        },
-                        "current_stage": {
-                          "type": "string"
-                        },
-                        "current_step": {
-                          "type": "string"
-                        },
-                        "artifacts": {
-                          "type": "array",
-                          "items": {
-                            "type": "object",
-                            "properties": {
-                              "kind": {
-                                "type": "string"
-                              },
-                              "label": {
-                                "type": "string"
-                              },
-                              "url": {
-                                "type": "string"
-                              }
-                            }
-                          }
-                        },
-                        "linked_prs": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        },
-                        "linked_issues": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        },
-                        "contributors": {
-                          "type": "array",
-                          "items": {
-                            "type": "string"
-                          }
-                        },
-                        "last_activity": {
-                          "type": "string"
-                        },
-                        "status": {
-                          "type": "string"
-                        },
-                        "engine": {
-                          "type": "string"
-                        },
-                        "type": {
-                          "type": "string"
-                        },
-                        "run_key": {
-                          "type": "string"
-                        },
-                        "run_url": {
-                          "type": "string"
-                        },
-                        "lease_owner": {
-                          "type": "string"
-                        }
-                      }
-                    },
-                    "state": {
-                      "type": "object"
-                    },
-                    "run": {
-                      "type": "object"
-                    },
-                    "resume_command": {
-                      "type": "string"
-                    },
-                    "message": {
-                      "type": "string"
-                    }
-                  }
-                }
-              }
-            }
-          },
-          "404": {
-            "description": "Campaign not found"
-          },
-          "409": {
-            "description": "Campaign lease held by another user"
-          }
-        }
-      }
-    },
-    "/api/campaigns/{id}/release": {
-      "post": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Release a campaign lease",
-        "description": "Clears the caller's active campaign lease and records a release audit event.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Campaign lease released"
-          },
-          "404": {
-            "description": "Campaign not found"
-          },
-          "409": {
-            "description": "Campaign is leased by another user or has no active lease"
-          }
-        }
-      }
-    },
-    "/api/campaigns/{id}/revise": {
-      "post": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Branch a new campaign revision",
-        "description": "Creates a linked revision campaign so shipped or parked work can be revisited without losing the previous campaign trail.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Campaign revision created"
-          },
-          "404": {
-            "description": "Campaign not found"
-          }
-        }
-      }
-    },
-    "/api/campaigns/{id}/recheck": {
-      "post": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Create a Spek recheck revision",
-        "description": "Creates an immediate linked Spektacular recheck revision using the same cadence path. Returns 409 when a recheck revision is already in flight and 404 when recheck is disabled unless force=true is supplied.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          },
-          {
-            "name": "force",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "boolean"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Spek recheck revision created"
-          },
-          "404": {
-            "description": "Campaign not found or recheck disabled"
-          },
-          "409": {
-            "description": "A recheck revision is already in flight"
-          }
-        }
-      }
-    },
-    "/api/campaigns/{id}/jam": {
-      "get": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Get campaign Jam state",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Jam state"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Record a Jam spec revision",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Updated Jam state"
-          },
-          "403": {
-            "description": "Read-write access required"
-          }
-        }
-      }
-    },
-    "/api/campaigns/{id}/jam/threads": {
-      "get": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "List Jam threads",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Thread list"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Create a Jam thread or comment",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Updated Jam state"
-          },
-          "403": {
-            "description": "Read-write access required"
-          }
-        }
-      }
-    },
-    "/api/campaigns/{id}/jam/agents": {
-      "post": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Invite an agent to a Jam thread",
-        "description": "Maintainer-only endpoint that posts an attributed Spektacular or configured-agent reply in a Jam thread and creates an open human-reviewable suggestion without applying a spec revision.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Updated Jam state"
-          },
-          "403": {
-            "description": "Maintainer access required"
-          }
-        }
-      }
-    },
-    "/api/campaigns/{id}/jam/suggestions": {
-      "get": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "List Jam suggestions",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Suggestion list"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Create or resolve a Jam suggestion",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Updated Jam state"
-          },
-          "403": {
-            "description": "Read-write or maintainer access required"
-          }
-        }
-      }
-    },
-    "/api/campaigns/{id}/jam/polls": {
-      "get": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "List Jam polls",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Poll list"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Create, vote, or decide a Jam poll",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Updated Jam state"
-          },
-          "403": {
-            "description": "Read-write or maintainer access required"
-          }
-        }
-      }
-    },
-    "/api/campaigns/{id}/jam/project-sync": {
-      "get": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Get Jam GitHub Projects sync status",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Project sync status"
-          }
-        }
-      },
-      "post": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Configure or run Jam GitHub Projects sync",
-        "description": "Maintainer-only endpoint for enabling/disabling sync, publishing campaign specs/decisions/derived issues, and recording inbound project status updates.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Updated project sync state"
-          },
-          "403": {
-            "description": "Maintainer access required"
-          }
-        }
-      }
-    },
-    "/api/campaigns/{id}/jam/ws": {
-      "get": {
-        "tags": [
-          "Campaigns"
-        ],
-        "summary": "Join Jam live presence and co-editing",
-        "description": "Upgrades to a WebSocket. Clients receive presence snapshots, section focus updates, accepted live edits and conflict messages. Live edits include base_revision_id and are rejected when stale.",
-        "parameters": [
-          {
-            "name": "id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string"
-            }
-          }
-        ],
-        "responses": {
-          "101": {
-            "description": "WebSocket upgrade accepted"
-          },
-          "403": {
-            "description": "Read access required"
-          }
-        }
-      }
-    },
     "/api/swarm": {
       "get": {
         "tags": [
@@ -39530,6 +38618,497 @@
                   "properties": {
                     "error": {
                       "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/uploads": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Add dropped files to the Inbox",
+        "description": "Owner or read-write. Each multipart `file` field is typed by its content (magic bytes, UTF-8 validation and a parse check), never by its name or client MIME type alone. Markdown, text, JSON, JSON Lines, YAML, CSV and TSV become `upload` Inbox items with extracted markdown, stored under `connector-state/uploads/<id>/` (0700 directory, 0600 files) and written as a Knowledge fact with the text inside an `<untrusted-inbox-data>` envelope. Limits come from `inbox.uploads` (`max_file_bytes`, default 25 MiB; `max_files_per_drop`, default 20; `quota_bytes`, default 2 GiB). Requests marked `Sec-Fetch-Site: cross-site` are refused. Every file is audited as `inbox_upload` with its outcome.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "format": "binary"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Several files: one result per file (some may be refused)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "filename": {
+                            "type": "string"
+                          },
+                          "ok": {
+                            "type": "boolean"
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "upload"
+                            ]
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "markdown",
+                              "text",
+                              "json",
+                              "jsonl",
+                              "yaml",
+                              "csv",
+                              "tsv"
+                            ]
+                          },
+                          "code": {
+                            "type": "string",
+                            "enum": [
+                              "empty",
+                              "too_large",
+                              "unsupported_type",
+                              "parse_failed",
+                              "quota_exceeded",
+                              "too_many_files",
+                              "internal"
+                            ]
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "201": {
+            "description": "One file added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "filename": {
+                            "type": "string"
+                          },
+                          "ok": {
+                            "type": "boolean"
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "upload"
+                            ]
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "markdown",
+                              "text",
+                              "json",
+                              "jsonl",
+                              "yaml",
+                              "csv",
+                              "tsv"
+                            ]
+                          },
+                          "code": {
+                            "type": "string",
+                            "enum": [
+                              "empty",
+                              "too_large",
+                              "unsupported_type",
+                              "parse_failed",
+                              "quota_exceeded",
+                              "too_many_files",
+                              "internal"
+                            ]
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a multipart upload, no file, an empty file, or too many files",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "filename": {
+                            "type": "string"
+                          },
+                          "ok": {
+                            "type": "boolean"
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "upload"
+                            ]
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "markdown",
+                              "text",
+                              "json",
+                              "jsonl",
+                              "yaml",
+                              "csv",
+                              "tsv"
+                            ]
+                          },
+                          "code": {
+                            "type": "string",
+                            "enum": [
+                              "empty",
+                              "too_large",
+                              "unsupported_type",
+                              "parse_failed",
+                              "quota_exceeded",
+                              "too_many_files",
+                              "internal"
+                            ]
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write, or a cross-site request"
+          },
+          "404": {
+            "description": "The hive has no upload store"
+          },
+          "413": {
+            "description": "A file is larger than inbox.uploads.max_file_bytes, or the request is too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "filename": {
+                            "type": "string"
+                          },
+                          "ok": {
+                            "type": "boolean"
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "upload"
+                            ]
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "markdown",
+                              "text",
+                              "json",
+                              "jsonl",
+                              "yaml",
+                              "csv",
+                              "tsv"
+                            ]
+                          },
+                          "code": {
+                            "type": "string",
+                            "enum": [
+                              "empty",
+                              "too_large",
+                              "unsupported_type",
+                              "parse_failed",
+                              "quota_exceeded",
+                              "too_many_files",
+                              "internal"
+                            ]
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Unsupported type (executable, archive, PDF, Office, media, non-UTF-8 text, or an extension the Inbox does not read)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "filename": {
+                            "type": "string"
+                          },
+                          "ok": {
+                            "type": "boolean"
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "upload"
+                            ]
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "markdown",
+                              "text",
+                              "json",
+                              "jsonl",
+                              "yaml",
+                              "csv",
+                              "tsv"
+                            ]
+                          },
+                          "code": {
+                            "type": "string",
+                            "enum": [
+                              "empty",
+                              "too_large",
+                              "unsupported_type",
+                              "parse_failed",
+                              "quota_exceeded",
+                              "too_many_files",
+                              "internal"
+                            ]
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "The file does not parse as the format its extension names",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "filename": {
+                            "type": "string"
+                          },
+                          "ok": {
+                            "type": "boolean"
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "upload"
+                            ]
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "markdown",
+                              "text",
+                              "json",
+                              "jsonl",
+                              "yaml",
+                              "csv",
+                              "tsv"
+                            ]
+                          },
+                          "code": {
+                            "type": "string",
+                            "enum": [
+                              "empty",
+                              "too_large",
+                              "unsupported_type",
+                              "parse_failed",
+                              "quota_exceeded",
+                              "too_many_files",
+                              "internal"
+                            ]
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "The per-hive upload quota is full",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "filename": {
+                            "type": "string"
+                          },
+                          "ok": {
+                            "type": "boolean"
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "upload"
+                            ]
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "markdown",
+                              "text",
+                              "json",
+                              "jsonl",
+                              "yaml",
+                              "csv",
+                              "tsv"
+                            ]
+                          },
+                          "code": {
+                            "type": "string",
+                            "enum": [
+                              "empty",
+                              "too_large",
+                              "unsupported_type",
+                              "parse_failed",
+                              "quota_exceeded",
+                              "too_many_files",
+                              "internal"
+                            ]
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
                     }
                   }
                 }
