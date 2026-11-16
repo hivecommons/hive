@@ -44,7 +44,7 @@ func TestMeetingsTTS(t *testing.T) {
 		t.Fatalf("env token must win, got %q", v)
 	}
 	t.Setenv(MeetingsTTSURLEnv, "")
-	bad := MeetingsConfig{TTSURL: "kokoro"}
+	bad := MeetingsConfig{Enabled: true, TTSURL: "kokoro"}
 	if err := bad.Validate(); err == nil || !strings.Contains(err.Error(), "tts_url") {
 		t.Fatalf("validate %v", err)
 	}
