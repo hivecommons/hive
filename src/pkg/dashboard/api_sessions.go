@@ -510,6 +510,9 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	// reads the items; it is repeated under the lock below.
 	var seed *sessionSeed
 	if len(body.SeedItems) > 0 {
+		if !requireInboxShareRole(w, r) {
+			return
+		}
 		s.sessionsMu.Lock()
 		capOK := s.checkSessionCapacity(w, st, actor.user)
 		s.sessionsMu.Unlock()
@@ -555,8 +558,23 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	if seed != nil {
 		// Parked under sessionsMu before the start goroutine exists, which
 		// takes it under the same lock once the session is running.
-		s.setPendingSessionSeedLocked(id, seed)
-		resp["seed"] = map[string]any{"items": len(seed.files), "files": seed.rels(), "status": "pending"}
+		if len(seed.files) > 0 {
+			s.setPendingSessionSeedLocked(id, &sessionSeed{user: seed.user, files: seed.files})
+		}
+		resp["seed"] = map[string]any{"items": len(seed.files) + len(seed.waiting), "files": seed.rels(), "waiting": seed.waitingKeys(), "status": "pending"}
+		if len(seed.waiting) > 0 {
+			// Transcribe-first items: their intents are queued once this
+			// handler has released sessionsMu (a runner may need it), with
+			// their own deadline; a refusal is audited as failed.
+			name := body.Name
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), sessionSeedReadTimeout)
+				defer cancel()
+				if err := s.startSessionSeedIntents(ctx, id, name, seed); err != nil && s.logger != nil {
+					s.logger.Warn("sessions: transcribe-first seed failed", "id", id, "error", err)
+				}
+			}()
+		}
 	}
 	spec := crux.UserSessionSpec{ID: id, Vendor: vendor.ID, UIDSlot: rec.UIDSlot, WorkspaceRepo: repo, SpektacularBinary: s.sessionsSpektacularBinary()}
 	go s.startSessionInBackground(rt, st, spec, actor.user, sessionStatusFailed)

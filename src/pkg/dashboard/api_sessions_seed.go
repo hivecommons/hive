@@ -39,6 +39,9 @@ const (
 	// sessionSeedOutcomeQueued / Failed are the inbox_to_session outcomes.
 	sessionSeedOutcomeQueued = "queued"
 	sessionSeedOutcomeFailed = "failed"
+	// sessionSeedOutcomeWaiting: an audio-only item is being transcribed and
+	// seeds the session when its transcript is ready.
+	sessionSeedOutcomeWaiting = "waiting_transcript"
 )
 
 // sessionSeedItemRef names one Inbox item; item_id is accepted as an alias
@@ -57,10 +60,21 @@ type sessionSeedFile struct {
 	data []byte
 }
 
-// sessionSeed is a prepared seed: who sent it and the files to write.
+// sessionSeed is a prepared seed: who sent it, the files to write and the
+// audio-only items that are transcribed first (each seeds the session when
+// its transcript is ready, through the "spek" share intent).
 type sessionSeed struct {
-	user  string
-	files []sessionSeedFile
+	user    string
+	files   []sessionSeedFile
+	waiting []inbox.Item
+}
+
+func (sd *sessionSeed) waitingKeys() []string {
+	out := make([]string, 0, len(sd.waiting))
+	for _, it := range sd.waiting {
+		out = append(out, it.Key())
+	}
+	return out
 }
 
 func (sd *sessionSeed) keys() string {
@@ -112,11 +126,6 @@ func (s *Server) prepareSessionSeed(w http.ResponseWriter, r *http.Request, user
 	for _, it := range items {
 		byKey[it.Key()] = it
 	}
-	publicURL := ""
-	if s.deps.Config != nil {
-		publicURL = s.deps.Config.Dashboard.PublicURL
-	}
-	maxBytes := int(sessionEnvInt64(sessionSeedMaxFileBytesEnv, inbox.DefaultSessionFileMaxBytes))
 	seed := &sessionSeed{user: user}
 	seen := map[string]bool{}
 	now := time.Now().UTC()
@@ -149,6 +158,12 @@ func (s *Server) prepareSessionSeed(w http.ResponseWriter, r *http.Request, user
 			return nil, false
 		}
 		if err := inbox.CheckSessionText(it, c); err != nil {
+			// Audio-only and transcribable now (or already transcribing):
+			// transcribe first, then seed (the "spek" intent runner).
+			if sessionSeedCanWait(it) {
+				seed.waiting = append(seed.waiting, it)
+				continue
+			}
 			var se *inbox.SessionSeedError
 			if errors.As(err, &se) {
 				jsonStatusResponse(w, http.StatusConflict, sessionSeedError{Error: se.Error(), Reason: sessionSeedReasonNoText, Item: se.Key, Transcribe: se.Transcribe})
@@ -157,13 +172,33 @@ func (s *Server) prepareSessionSeed(w http.ResponseWriter, r *http.Request, user
 			jsonError(w, err.Error(), http.StatusConflict)
 			return nil, false
 		}
-		data := inbox.RenderSessionFile(it, c, inbox.SessionFileOptions{
-			InboxURL: inbox.ItemDeepLink(publicURL, it.Source, it.ID),
-			SentBy:   user, SentAt: now, MaxBytes: maxBytes,
-		})
-		seed.files = append(seed.files, sessionSeedFile{item: it, name: inbox.SessionFileName(it.Source, it.ID), rel: inbox.SessionFilePath(it.Source, it.ID), data: data})
+		seed.files = append(seed.files, s.renderSessionSeedFile(it, c, user, now))
 	}
 	return seed, true
+}
+
+// sessionSeedCanWait reports whether an item without text will get one from
+// a machine transcription: it is transcribable now, or a run is in flight.
+func sessionSeedCanWait(it inbox.Item) bool {
+	if it.Transcribable {
+		return true
+	}
+	st := it.Transcription
+	return st != nil && (st.Status == inbox.TranscriptionQueued || st.Status == inbox.TranscriptionRunning)
+}
+
+// renderSessionSeedFile renders one item's seed file from its content.
+func (s *Server) renderSessionSeedFile(it inbox.Item, c inbox.Content, user string, now time.Time) sessionSeedFile {
+	publicURL := ""
+	if s.deps != nil && s.deps.Config != nil {
+		publicURL = s.deps.Config.Dashboard.PublicURL
+	}
+	data := inbox.RenderSessionFile(it, c, inbox.SessionFileOptions{
+		InboxURL: inbox.ItemDeepLink(publicURL, it.Source, it.ID),
+		SentBy:   user, SentAt: now,
+		MaxBytes: int(sessionEnvInt64(sessionSeedMaxFileBytesEnv, inbox.DefaultSessionFileMaxBytes)),
+	})
+	return sessionSeedFile{item: it, name: inbox.SessionFileName(it.Source, it.ID), rel: inbox.SessionFilePath(it.Source, it.ID), data: data}
 }
 
 // sessionSeedResult is what one delivered seed wrote and queued.
@@ -172,6 +207,9 @@ type sessionSeedResult struct {
 	Instruction string   `json:"instruction"`
 	QueueID     string   `json:"queue_id"`
 	Position    int      `json:"position"`
+	// Waiting are the audio-only items transcribed first; each seeds the
+	// session (its own file and Send) when its transcript is ready.
+	Waiting []string `json:"waiting"`
 }
 
 // errSessionSeedQueueFull is returned when the session's Send queue is full.
@@ -234,6 +272,11 @@ func (s *Server) handleSessionSeed(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	// The Inbox share rule (owner verified, or read-write), the same as every
+	// other Share → Hive destination.
+	if !requireInboxShareRole(w, r) {
+		return
+	}
 	actor := s.sessionActorOf(r)
 	if !actor.write {
 		jsonError(w, "sending Inbox items into a session requires owner or read-write role", http.StatusForbidden)
@@ -253,7 +296,19 @@ func (s *Server) handleSessionSeed(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	res, err := s.deliverSessionSeed(rt, st, rec.ID, seed)
+	// Audio-only items first: their transcriptions are queued (or, if one
+	// already has text by now, they are seeded at once), so a refusal there
+	// leaves the session untouched.
+	if err := s.startSessionSeedIntents(r.Context(), rec.ID, rec.Name, seed); err != nil {
+		s.writeSessionSeedIntentError(w, err)
+		return
+	}
+	res := sessionSeedResult{Files: []string{}}
+	var err error
+	if len(seed.files) > 0 {
+		res, err = s.deliverSessionSeed(rt, st, rec.ID, seed)
+	}
+	res.Waiting = seed.waitingKeys()
 	switch {
 	case errors.Is(err, errSessionSeedQueueFull):
 		jsonError(w, err.Error(), http.StatusTooManyRequests)
@@ -271,6 +326,95 @@ func (s *Server) handleSessionSeed(w http.ResponseWriter, r *http.Request) {
 	p := rt.Probe(rec.ID)
 	cur, _ := st.get(rec.ID)
 	jsonStatusResponse(w, http.StatusAccepted, map[string]any{"ok": true, "session": s.sessionViewFor(cur, &p, rt, actor), "seed": res})
+}
+
+// inboxSpekIntentDest is the Inbox share destination the seed registers as an
+// intent runner: an audio-only item is transcribed first, then seeds the
+// session. sessionSeedParamSession / ...Name are its ShareIntent.Params.
+const (
+	inboxSpekIntentDest     = "spek"
+	sessionSeedParamSession = "session"
+	sessionSeedParamName    = "session_name"
+)
+
+// registerInboxSpekRunner hooks the seed into the Inbox's transcribe-first
+// path. Only the seed endpoints create "spek" intents (POST /api/inbox/route
+// refuses the destination), after their role and session checks, so the
+// session id in the params is one the actor was allowed to use.
+func (s *Server) registerInboxSpekRunner() {
+	if s.deps != nil && s.deps.Inbox != nil {
+		s.deps.Inbox.RegisterIntentRunner(inboxSpekIntentDest, s.runSpekIntent)
+	}
+}
+
+// startSessionSeedIntents queues a "spek" share intent per audio-only item of
+// the seed, for session id.
+func (s *Server) startSessionSeedIntents(ctx context.Context, id, name string, seed *sessionSeed) error {
+	if len(seed.waiting) == 0 {
+		return nil
+	}
+	svc := s.deps.Inbox
+	for _, it := range seed.waiting {
+		in := inbox.ShareIntent{Destination: inboxSpekIntentDest, Actor: seed.user, Params: map[string]string{sessionSeedParamSession: id, sessionSeedParamName: name}}
+		if _, err := svc.ShareWhenReady(ctx, it, in, s.inboxTranscribeOptions(seed.user)); err != nil {
+			s.auditSession(seed.user, auditInboxToSession, auditDetail("session", id, "items", it.Key(), "transcribe_first", "true", "error", redactTokens(err.Error()), "outcome", sessionSeedOutcomeFailed))
+			return err
+		}
+		s.auditSession(seed.user, auditInboxToSession, auditDetail("session", id, "items", it.Key(), "transcribe_first", "true", "outcome", sessionSeedOutcomeWaiting))
+	}
+	return nil
+}
+
+// writeSessionSeedIntentError maps a transcribe-first refusal to a response.
+func (s *Server) writeSessionSeedIntentError(w http.ResponseWriter, err error) {
+	var se *inbox.SessionSeedError
+	switch {
+	case errors.As(err, &se):
+		jsonStatusResponse(w, http.StatusConflict, sessionSeedError{Error: se.Error(), Reason: sessionSeedReasonNoText, Item: se.Key, Transcribe: se.Transcribe})
+	case errors.Is(err, inbox.ErrTranscribeUnavailable):
+		jsonError(w, "this item has audio but no text yet, and "+err.Error(), http.StatusPreconditionFailed)
+	case errors.Is(err, errSessionSeedNotRunning):
+		jsonError(w, err.Error(), http.StatusConflict)
+	default:
+		jsonError(w, "could not transcribe the item first: "+redactTokens(err.Error()), http.StatusInternalServerError)
+	}
+}
+
+// runSpekIntent is the "spek" intent runner: the item now has text, so its
+// seed file is rendered and written into the session and the instruction
+// queued (or, while the session is still being prepared, parked for the
+// start like a create's seed).
+func (s *Server) runSpekIntent(ctx context.Context, it inbox.Item, in inbox.ShareIntent) error {
+	rt, ok := s.sessionsRuntime()
+	if !ok {
+		return errors.New("sessions are not enabled on this hive")
+	}
+	st := s.sessionStoreOrNil()
+	id := strings.TrimSpace(in.Params[sessionSeedParamSession])
+	if _, found := st.get(id); id == "" || !found {
+		return errors.New("the session this item was sent to is gone")
+	}
+	c, err := s.deps.Inbox.Content(ctx, it)
+	if err != nil {
+		return fmt.Errorf("reading %s: %w", it.Key(), err)
+	}
+	if err := inbox.CheckSessionText(it, c); err != nil {
+		return err
+	}
+	seed := &sessionSeed{user: in.Actor, files: []sessionSeedFile{s.renderSessionSeedFile(it, c, in.Actor, time.Now().UTC())}}
+	s.sessionsMu.Lock()
+	if rec, found := st.get(id); found && rec.Status == sessionStatusPreparing && s.sessionsPreparing[id] {
+		if prev := s.sessionSeeds[id]; prev != nil {
+			prev.files = append(prev.files, seed.files...)
+		} else {
+			s.setPendingSessionSeedLocked(id, seed)
+		}
+		s.sessionsMu.Unlock()
+		return nil
+	}
+	s.sessionsMu.Unlock()
+	_, err = s.deliverSessionSeed(rt, st, id, seed)
+	return err
 }
 
 // setPendingSessionSeedLocked parks a seed for a session being created; the

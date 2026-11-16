@@ -46,20 +46,40 @@ const (
 // text yet, transcribable).
 func withSeedInbox(t *testing.T, e *sessionTestEnv) *seedTestSource {
 	t.Helper()
+	return withSeedInboxSource(t, e, false)
+}
+
+// seedAudioSource is a seedTestSource whose items have audio, so an item
+// without text needs a machine transcript first.
+type seedAudioSource struct{ *seedTestSource }
+
+func (s seedAudioSource) AudioLink(context.Context, inbox.Item) (inbox.AudioLink, error) {
+	return inbox.AudioLink{URL: "https://audio.example/x", ExpiresAt: time.Now().Add(time.Hour)}, nil
+}
+
+func withSeedInboxSource(t *testing.T, e *sessionTestEnv, audio bool) *seedTestSource {
+	t.Helper()
 	src := &seedTestSource{
 		items: []inbox.Item{
 			{Source: "plaud", ID: "rec-1", Title: seedInjectionTitle, RecordedAt: time.Date(2026, 11, 15, 9, 0, 0, 0, time.UTC)},
 			{Source: "plaud", ID: "rec-2", Title: "nate v2 - workflow - cost considerations"},
 			{Source: "plaud", ID: "rec-3", Title: "audio only", Pending: true, Transcribable: true},
+			{Source: "plaud", ID: "rec-4", Title: "nothing yet", Pending: true},
 		},
 		contents: map[string]inbox.Content{
 			"rec-1": {Title: seedInjectionTitle, Summary: seedInjectionSummary, Transcript: seedInjectionTranscript, TranscriptLabel: "Transcript (machine: whisper/base.en)", Highlights: "00:12 cost", Provenance: "plaud://recordings/rec-1"},
 			"rec-2": {Title: "nate v2 - workflow - cost considerations", Summary: "costs", Provenance: "plaud://recordings/rec-2"},
 			"rec-3": {Title: "audio only", Pending: true, Provenance: "plaud://recordings/rec-3"},
+			"rec-4": {Title: "nothing yet", Pending: true, Provenance: "plaud://recordings/rec-4"},
 		},
 	}
-	svc := inbox.NewService(config.InboxConfig{}, inbox.NewStore(filepath.Join(t.TempDir(), "inbox.json")), []inbox.Source{src}, nil, nil)
+	var source inbox.Source = src
+	if audio {
+		source = seedAudioSource{src}
+	}
+	svc := inbox.NewService(config.InboxConfig{}, inbox.NewStore(filepath.Join(t.TempDir(), "inbox.json")), []inbox.Source{source}, nil, nil)
 	e.s.deps.Inbox = svc
+	e.s.registerInboxSpekRunner()
 	e.s.deps.Config.Dashboard.PublicURL = "https://hive.example.org"
 	// Deliver at once: the pane fake shows an idle prompt.
 	e.s.sessionQueueTiming = sessionQueuePacing{poll: time.Millisecond, postDeliver: time.Millisecond}
@@ -309,9 +329,9 @@ func TestSessionCreateWithSeedWaitsForRunning(t *testing.T) {
 func TestSessionCreateWithSeedRefusesItemWithoutTextBeforeCreating(t *testing.T) {
 	e := newSessionTestEnv(t, true)
 	withSeedInbox(t, e)
-	rec := e.do(t, callerOwner, "POST", "/api/sessions", map[string]any{"name": "x", "vendor": "claude", "seed_items": []map[string]string{{"source": "plaud", "id": "rec-3"}}})
+	rec := e.do(t, callerOwner, "POST", "/api/sessions", map[string]any{"name": "x", "vendor": "claude", "seed_items": []map[string]string{{"source": "plaud", "id": "rec-4"}}})
 	if rec.Code != http.StatusConflict {
-		t.Fatalf("create with an audio-only seed = %d, want 409", rec.Code)
+		t.Fatalf("create with a seed item that has no text and cannot be transcribed = %d, want 409", rec.Code)
 	}
 	if got := len(e.s.sessionStoreOrNil().list()); got != 0 {
 		t.Errorf("a refused seed left %d sessions", got)
@@ -336,5 +356,89 @@ func TestSessionCreateWithSeedFailedStartAuditsFailure(t *testing.T) {
 	})
 	if files := e.rt.storedInboxFiles(); len(files) != 0 {
 		t.Errorf("wrote into a session that never started: %+v", files)
+	}
+}
+
+// The "spek" intent runner seeds a running session once the item has text.
+func TestSpekIntentRunnerSeedsRunningSession(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	src := withSeedInbox(t, e)
+	id := e.create(t, callerOwner, "later")
+	// The transcript arrived: the content now has text.
+	src.contents["rec-3"] = inbox.Content{Title: "audio only", Transcript: "machine words", TranscriptLabel: "Transcript (machine: whisper/base.en)", Provenance: "plaud://recordings/rec-3"}
+	it := inbox.Item{Source: "plaud", ID: "rec-3", Title: "audio only"}
+	if err := e.s.runSpekIntent(context.Background(), it, inbox.ShareIntent{Destination: inboxSpekIntentDest, Actor: callerOwner.user, Params: map[string]string{sessionSeedParamSession: id}}); err != nil {
+		t.Fatal(err)
+	}
+	files := e.rt.storedInboxFiles()
+	if len(files) != 1 || files[0].name != "plaud-rec-3.md" || !strings.Contains(string(files[0].data), "machine words") {
+		t.Fatalf("files = %+v", files)
+	}
+	waitSessionsFor(t, "the instruction", func() bool { return len(e.rt.typedTexts()) == 1 })
+	if got := e.rt.typedTexts()[0]; strings.Contains(got, "machine words") || !strings.Contains(got, ".hive/inbox/plaud-rec-3.md") {
+		t.Errorf("instruction = %q", got)
+	}
+	// A gone session fails the intent (the Inbox shows it with Retry).
+	if err := e.s.runSpekIntent(context.Background(), it, inbox.ShareIntent{Actor: callerOwner.user, Params: map[string]string{sessionSeedParamSession: "deadbeef0000"}}); err == nil {
+		t.Error("a missing session must fail the intent")
+	}
+}
+
+// While the session is still being prepared, the runner parks the file for
+// the start, which delivers it once the session is running.
+func TestSpekIntentRunnerParksWhilePreparing(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	src := withSeedInbox(t, e)
+	release, entered := make(chan struct{}), make(chan struct{})
+	var once sync.Once
+	e.rt.startFn = func(crux.UserSessionSpec) error { close(entered); <-release; return nil }
+	t.Cleanup(func() { once.Do(func() { close(release) }) })
+	rec := e.do(t, callerOwner, "POST", "/api/sessions", map[string]any{"name": "prep", "vendor": "claude"})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("create = %d", rec.Code)
+	}
+	id := decodeSessionJSON(t, rec)["session"].(map[string]any)["id"].(string)
+	<-entered
+	src.contents["rec-3"] = inbox.Content{Transcript: "now text", Provenance: "plaud://recordings/rec-3"}
+	if err := e.s.runSpekIntent(context.Background(), inbox.Item{Source: "plaud", ID: "rec-3"}, inbox.ShareIntent{Actor: callerOwner.user, Params: map[string]string{sessionSeedParamSession: id}}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(e.rt.WorkDir(id), ".hive", "inbox", "plaud-rec-3.md")); err == nil {
+		t.Fatal("wrote into a preparing session")
+	}
+	once.Do(func() { close(release) })
+	waitSessionsFor(t, "the parked file after running", func() bool { return len(e.rt.storedInboxFiles()) == 1 })
+	waitSessionsFor(t, "the instruction", func() bool { return len(e.rt.typedTexts()) == 1 })
+}
+
+// An audio-only item with transcription off is refused with 412 and nothing
+// is written or queued.
+func TestSessionSeedAudioOnlyTranscriptionUnavailableIs412(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	withSeedInboxSource(t, e, true)
+	id := e.create(t, callerOwner, "s")
+	rec := e.do(t, callerOwner, "POST", "/api/sessions/"+id+"/seed", seedBody("rec-2", "rec-3"))
+	if rec.Code != http.StatusPreconditionFailed {
+		t.Fatalf("seed = %d, want 412: %s", rec.Code, rec.Body.String())
+	}
+	if files := e.rt.storedInboxFiles(); len(files) != 0 {
+		t.Errorf("a refused transcribe-first seed wrote files: %+v", files)
+	}
+	if got := e.s.deps.Inbox.Store.Intents("plaud/rec-3"); len(got) != 0 {
+		t.Errorf("intent stored though transcription is off: %+v", got)
+	}
+}
+
+// The route API never takes a spek session target from the client.
+func TestInboxRouteRefusesSpekDestination(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	withSeedInbox(t, e)
+	e.s.registerInboxRoutes()
+	rec := e.do(t, callerOwner, "POST", "/api/inbox/route", map[string]any{"source": "plaud", "item_id": "rec-2", "destination": inboxSpekIntentDest, "params": map[string]string{sessionSeedParamSession: "abc"}})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("route to spek = %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	if files := e.rt.storedInboxFiles(); len(files) != 0 {
+		t.Errorf("route wrote into a session: %+v", files)
 	}
 }

@@ -150,6 +150,14 @@ test('confirm (running session): posts to /seed and focuses that tab', async () 
   assert.deepStrictEqual(calls.focused, [RUNNING]);
 });
 
+test('items transcribing first are named in the toast', async () => {
+  const fields = { 'inbox-session-existing': { value: 'run1' } };
+  const { api, calls } = harness({ items: [ITEM, ITEM2], form: { mode: 'existing', fields }, post: { status: 202, body: { ok: true, session: RUNNING, seed: { files: ['.hive/inbox/plaud-rec-1.md'], waiting: ['plaud/rec-2'] } } } });
+  await api.inboxOpenSessionSelected();
+  await api.inboxConfirmSession();
+  assert.deepStrictEqual(calls.toasts, [['Sent 2 items to jam (1 transcribing first; it goes in when the transcript is ready)', 'success']]);
+});
+
 test('an item without text keeps the dialog open with the Transcribe hint', async () => {
   const fields = { 'inbox-session-existing': { value: 'run1' } };
   const { api, calls, elements } = harness({ items: [ITEM], form: { mode: 'existing', fields },
@@ -161,29 +169,30 @@ test('an item without text keeps the dialog open with the Transcribe hint', asyn
   assert.strictEqual(calls.focused.length, 0);
 });
 
-test('Share → Hive lists spek… second, for owners and read-write, disabled without text', () => {
+test('Share → Hive lists spek… second, for owners and read-write; audio-only items transcribe first', () => {
   const ctx = { window: { _hiveRole: 'owner' }, cache: { repos: ['o/r'], settings: {} }, opened: [] };
   const h = new Function('ctx', 'escapeHtml',
     'const window = ctx.window; const _inboxCache = ctx.cache; const _inboxSelected = new Set(["plaud/rec-1", "plaud/rec-2"]);\n' +
-    'const inboxOpenRoute = () => {}; const inboxDismiss = () => {}; const inboxUndismiss = () => {}; const inboxDismissSelected = () => {};\n' +
+    'const inboxOpenRoute = () => {}; const inboxDismiss = () => {}; const inboxUndismiss = () => {}; const inboxDismissSelected = () => {}; const inboxOpenSettings = () => {};\n' +
     'const inboxShareCopy = () => {}; const inboxShareNative = () => {}; const inboxItemKey = it => it.source + "/" + it.id;\n' +
     'const inboxOpenSessionDialog = keys => ctx.opened.push(keys);\n' +
-    constSrc('inboxShareHiveActions') + '\n' + constSrc('inboxShareLinkActions') + '\n' + constSrc('INBOX_NO_TEXT_REASON') + '\n' +
-    fnSrc('inboxDibsReady') + '\n' + fnSrc('inboxShareMenuGroups') + '\n' + fnSrc('inboxBulkMenuGroups') + '\n' + fnSrc('inboxBulkMenuRun') + '\n' + fnSrc('inboxSessionCanSend') + '\n' +
+    constSrc('inboxShareHiveActions') + '\n' + constSrc('inboxShareLinkActions') + '\n' +
+    ['inboxDibsReady', 'inboxCanShare', 'inboxTxBlocked', 'inboxTxUnavailableText', 'inboxShareGate', 'inboxIntentLabel', 'inboxShareMenuGroups', 'inboxBulkMenuGroups', 'inboxBulkMenuRun'].map(fnSrc).join('\n') + '\n' +
     'return { inboxShareHiveActions, inboxShareMenuGroups, inboxBulkMenuGroups, inboxBulkMenuRun };');
   const api = h(ctx, escapeHtml);
   const hive = g => (g.find(x => x.id === 'hive') || { items: [] }).items;
   let items = hive(api.inboxShareMenuGroups(ITEM));
   assert.deepStrictEqual(items.slice(0, 2).map(a => [a.id, a.label]), [['rfc', 'RFC…'], ['spek', 'spek…']]);
   ctx.window._hiveRole = 'read-write';
-  items = hive(api.inboxShareMenuGroups(ITEM));
-  assert.deepStrictEqual(items.map(a => a.id), ['spek'], 'read-write gets spek… only');
+  assert.ok(hive(api.inboxShareMenuGroups(ITEM)).some(a => a.id === 'spek' && !a.disabled), 'read-write gets spek…');
   ctx.window._hiveRole = 'read';
-  assert.deepStrictEqual(hive(api.inboxShareMenuGroups(ITEM)), [], 'read role: no Hive group entry');
+  assert.deepStrictEqual(hive(api.inboxShareMenuGroups(ITEM)), [], 'read role: no Hive group');
   ctx.window._hiveRole = 'owner';
-  const pending = hive(api.inboxShareMenuGroups(Object.assign({ pending: true }, ITEM))).find(a => a.id === 'spek');
-  assert.strictEqual(pending.disabled, true);
-  assert.match(pending.hint, /Transcribe/);
+  const transcribable = hive(api.inboxShareMenuGroups(Object.assign({ pending: true, transcribable: true }, ITEM))).find(a => a.id === 'spek');
+  assert.strictEqual(transcribable.disabled, false, 'audio-only and transcribable: enabled (transcribe first)');
+  const blocked = hive(api.inboxShareMenuGroups(Object.assign({ pending: true, transcribe_unavailable: 'disabled' }, ITEM))).find(a => a.id === 'spek');
+  assert.strictEqual(blocked.disabled, true);
+  assert.match(blocked.hint, /transcript is needed first/);
   api.inboxShareHiveActions.find(a => a.id === 'spek').run(ITEM);
   assert.deepStrictEqual(ctx.opened.pop(), ['plaud/rec-1']);
   assert.ok(hive(api.inboxBulkMenuGroups()).some(a => a.id === 'spek' && a.label === 'spek…'), 'bulk Hive menu has spek…');

@@ -40661,7 +40661,7 @@
           "Sessions"
         ],
         "summary": "Send Inbox items into a running session (owner or read-write who may use it)",
-        "description": "Body {items:[{source,id}]} (at most 20). The hive reads each item's current content and writes one markdown file per item to <cwd>/.hive/inbox/<source>-<id>.md in the session's workspace, as the session's uid with the sessions group and mode 0640: hive-generated provenance, then title, summary, transcript (or machine transcript) and highlights inside an untrusted-inbox-data envelope. It then queues a fixed Send through the queued-Send path (delivered when the prompt is idle, audited as session_input for the caller) that names only the sanitised file paths, never item text. Audited as inbox_to_session; each item gets a `session` route (`routed: session/<id>`). Answers 202 with `session` and `seed` ({files, instruction, queue_id, position}).",
+        "description": "Body {items:[{source,id}]} (at most 20). The hive reads each item's current content and writes one markdown file per item to <cwd>/.hive/inbox/<source>-<id>.md in the session's workspace, as the session's uid with the sessions group and mode 0640: hive-generated provenance, then title, summary, transcript (or machine transcript) and highlights inside an untrusted-inbox-data envelope. It then queues a fixed Send through the queued-Send path (delivered when the prompt is idle, audited as session_input for the caller) that names only the sanitised file paths, never item text. Audited as inbox_to_session; each item gets a `session` route (`routed: session/<id>`). An audio-only item the hive can transcribe is transcribed first (a `spek` share intent) and seeds the session when its transcript is ready; such items are listed in `seed.waiting`. Answers 202 with `session` and `seed` ({files, instruction, queue_id, position, waiting}).",
         "responses": {
           "202": {
             "description": "Files written and the instruction queued"
@@ -40677,6 +40677,9 @@
           },
           "409": {
             "description": "Session not running, or an item has no text yet: body {reason:\"no_text\", item, transcribe} (transcribe=true when 🎧 Transcribe can produce a machine transcript)"
+          },
+          "412": {
+            "description": "An audio-only item cannot be transcribed now (transcription disabled, no consent, budget used or no provider)"
           },
           "429": {
             "description": "The session's Send queue is full"

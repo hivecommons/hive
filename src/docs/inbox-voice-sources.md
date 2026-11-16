@@ -107,8 +107,12 @@ The typed instruction only ever names the files; the recording's words never
 go into it. The dashboard switches to Inception (spek) on that session's tab
 (a new session shows its preparing spinner until it runs, and the Send waits
 for it), a toast reads "Sent 1 item to <session>", and the item shows
-`routed: session/<id>` with an **open session** button. A recording with no
-text yet is refused with a pointer to 🎧 Transcribe. Each send is audited as
+`routed: session/<id>` with an **open session** button. A recording with
+audio but no text yet is **transcribed first** (the same transcribe-first
+path as RFC…): the item reads "Transcribing, then → spek", and when the
+transcript is ready its file is written and its own Send queued in that
+session; if transcription fails nothing is sent and the menu offers Retry.
+When transcription cannot run, spek… is disabled with the reason. Each send is audited as
 `inbox_to_session`. API: `POST /api/sessions/{id}/seed`, or `seed_items` on
 `POST /api/sessions` ([Sessions API](api-reference/sessions.md#seeding-from-the-inbox)).
 

@@ -785,6 +785,7 @@
       let body = '<p class="muted-note m-0"><strong>' + (items.length === 1 ? titles[0] : items.length + ' items') + '</strong></p>';
       if (items.length > 1) body += '<ul class="muted-xs inbox-session-items">' + titles.map(t => '<li>' + t + '</li>').join('') + '</ul>';
       body += '<p class="muted-note">The hive writes ' + (items.length === 1 ? 'the item' : 'each item') + ' (title, summary, transcript, highlights) to <code>.hive/inbox/</code> in the session\'s workspace and queues a Send asking the CLI to start a spec with the spek-new skill. The text goes in as untrusted data, never as instructions.</p>';
+      if (items.some(it => it.pending)) body += '<p class="muted-xs">An item with audio but no text yet is transcribed first (🎧 Transcribe) and goes into the session when its transcript is ready.</p>';
       body += '<fieldset class="inbox-session-mode"><label class="muted-note"><input type="radio" name="inbox-session-mode" value="new" checked data-inbox-session-mode="new"> Start a new session</label>' +
         '<div class="inbox-settings-grid">' +
         '<label class="muted-note inbox-field">Name<input class="kb-search-box mt-2" id="inbox-session-name" maxlength="' + INBOX_SESSION_NAME_MAX + '" autocomplete="off" value="' + escapeHtml(inboxSessionName(items)) + '"></label>' +
@@ -853,7 +854,9 @@
       if (mode === 'new' && fields.vendor) { try { localStorage.setItem(INBOX_SESSION_VENDOR_KEY, fields.vendor); } catch (e) { /* convenience only */ } }
       for (const k of keys) _inboxSelected.delete(k);
       const sess = data.session || { id: fields.session };
-      showToast('Sent ' + keys.length + ' item' + (keys.length === 1 ? '' : 's') + ' to ' + (sess.name || fields.name || 'the session'), 'success');
+      const waiting = ((data.seed || {}).waiting || []).length;
+      showToast('Sent ' + keys.length + ' item' + (keys.length === 1 ? '' : 's') + ' to ' + (sess.name || fields.name || 'the session') +
+        (waiting ? ' (' + waiting + ' transcribing first; ' + (waiting === 1 ? 'it goes' : 'they go') + ' in when the transcript is ready)' : ''), 'success');
       if (typeof sessionsFocus === 'function') sessionsFocus(sess);
       fetchInbox();
     }
