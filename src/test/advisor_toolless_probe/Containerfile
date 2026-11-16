@@ -1,0 +1,15 @@
+# Disposable image for the advisor tool-less probe (probe.sh builds it).
+# The CLI versions come from src/Dockerfile's pins via --build-arg.
+FROM docker.io/library/node:22-bookworm-slim
+ARG CODEX_VERSION
+ARG COPILOT_VERSION
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
+# --ignore-scripts as in src/Dockerfile: both packages ship their platform
+# binary as an optionalDependency, which npm installs regardless.
+RUN test -n "$CODEX_VERSION" && test -n "$COPILOT_VERSION" \
+    && npm install -g --ignore-scripts --no-fund --no-audit \
+       "@openai/codex@${CODEX_VERSION}" "@github/copilot@${COPILOT_VERSION}" \
+    && npm cache clean --force
+COPY probe.mjs /probe/probe.mjs
+ENTRYPOINT ["node", "/probe/probe.mjs"]
