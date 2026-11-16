@@ -242,7 +242,7 @@ func TestSentinelStatusSectionShape(t *testing.T) {
 	for _, want := range []string{
 		SentinelNoticeCardMarker + " 0123456789abcdef -->",
 		"(trusted author)",
-		"`0123456`",
+		"Head `" + shortSHA("0123456789abcdef") + "` matched",
 		"(`a`, `b`, `c`, `d`, `e`, +2 more)",
 		"- `custom`: no paths\n",
 		"No `sentinel-alert` label",
