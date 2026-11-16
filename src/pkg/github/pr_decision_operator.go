@@ -417,7 +417,7 @@ func (c *Client) RecordOperatorPullRequestApprovalWith(ctx context.Context, repo
 		return PullRequestApprovalEvent{}, errors.New("approval target changed since the decision; gather and validate again")
 	}
 	if opts.VerifyActorWrite {
-		if labelPresent(labels, "hold") || opts.GuardSentinelLabel != "" && labelPresent(labels, opts.GuardSentinelLabel) {
+		if labelPresent(labels, LegacyHiveHoldLabel) || HasHiveGateLabel(labels) || opts.GuardSentinelLabel != "" && labelPresent(labels, opts.GuardSentinelLabel) {
 			return PullRequestApprovalEvent{}, errors.New("approval target gained a hold or sentinel; delegate must not release it")
 		}
 		permission, _, err := c.client.Repositories.GetPermissionLevel(ctx, owner, name, actor)
