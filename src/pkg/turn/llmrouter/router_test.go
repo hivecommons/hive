@@ -364,7 +364,7 @@ func TestHealthHookFeedsInferenceHealth(t *testing.T) {
 }
 
 func TestToolNameMapping(t *testing.T) {
-	n, err := newToolNames([]toolapprove.ToolRequest{{Tool: "repo.read_file"}, {Tool: "task.complete"}, {Tool: "Bash"}})
+	n, err := newToolNames([]toolapprove.ToolRequest{{Tool: "repo.read_file"}, {Tool: "task.complete"}, {Tool: "Bash"}}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -376,7 +376,7 @@ func TestToolNameMapping(t *testing.T) {
 	if n.hive("unknown_tool") != "unknown_tool" {
 		t.Error("unknown wire names must pass through unchanged")
 	}
-	if _, err := newToolNames([]toolapprove.ToolRequest{{Tool: "a.b"}, {Tool: "a__b"}}); err == nil {
+	if _, err := newToolNames([]toolapprove.ToolRequest{{Tool: "a.b"}, {Tool: "a__b"}}, nil); err == nil {
 		t.Error("colliding wire names must be rejected")
 	}
 	if got := wireToolName("x y/" + strings.Repeat("z", 80)); len(got) != maxWireToolName || strings.ContainsAny(got, " /") {
@@ -395,5 +395,30 @@ func TestDegenerate(t *testing.T) {
 		if got := degenerate(s); got != want {
 			t.Errorf("degenerate(%.20q…) = %v, want %v", s, got, want)
 		}
+	}
+}
+
+// A finish phase offers only task.complete, but the model may still emit a
+// name it saw earlier; it must map back to the Hive name (seen live:
+// repo__search_code reached toolapprove unmapped).
+func TestHistoryNamesMapBackWhenNotOffered(t *testing.T) {
+	a := &fakeProvider{handler: func(w http.ResponseWriter) {
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":"","tool_calls":[{"id":"z","function":{"name":"repo__search_code","arguments":"{}"}}]},"finish_reason":"tool_calls"}]}`)
+	}}
+	sa := a.server(t)
+	r, _ := New([]Provider{prov("a", sa.URL)}, WithEnv(allKeys()), WithToolChoice("required"))
+	history := append(msgs(),
+		turn.Message{Role: turn.RoleAssistant, ToolCalls: []turn.ToolCall{{ID: "c1", Name: "repo.search_code", Arguments: `{}`}}},
+		turn.Message{Role: turn.RoleTool, ToolCallID: "c1", Name: "repo.search_code", Content: "hits"},
+	)
+	got, err := r.Generate(context.Background(), history, []toolapprove.ToolRequest{{Tool: "task.complete"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ToolCalls[0].Name != "repo.search_code" {
+		t.Fatalf("name = %q, want repo.search_code", got.ToolCalls[0].Name)
+	}
+	if a.lastBody["tool_choice"] != "required" {
+		t.Fatalf("tool_choice = %v", a.lastBody["tool_choice"])
 	}
 }

@@ -205,6 +205,25 @@ func (r *Runner) Step(ctx context.Context, env SessionEnvelope, in TurnInput) (S
 	// 6. Process Tool Calls through Tool Approval and Execution
 	if len(llmResp.ToolCalls) > 0 {
 		for _, call := range llmResp.ToolCalls {
+			if !r.offered(call.Name) {
+				// A model may name a tool it saw earlier or invented. The
+				// offered set is the capability boundary for this turn (a
+				// finish phase offers only terminal tools), so an unoffered
+				// call is denied before approval, never executed.
+				verdict := toolapprove.Verdict{
+					Decision:  toolapprove.DecisionDeny,
+					Rationale: fmt.Sprintf("tool %q was not offered this turn; available: %s", call.Name, r.offeredNames()),
+					Tool:      call.Name,
+					ACMMLevel: outEnv.ACMMLevel,
+					Agent:     outEnv.Agent.Name,
+				}
+				output.Verdicts = append(output.Verdicts, verdict)
+				outEnv.AddToolApprovalOperation(call, verdict)
+				msg := outEnv.AddToolResultMessage(call.ID, call.Name, "", "Tool denied: "+verdict.Rationale)
+				output.NewMessages = append(output.NewMessages, msg)
+				output.ToolResults = append(output.ToolResults, ToolResult{ToolCallID: call.ID, Name: call.Name, Error: "Tool denied: " + verdict.Rationale})
+				continue
+			}
 			req := toolapprove.ToolRequest{
 				Tool:         call.Name,
 				RawArguments: call.Arguments,
@@ -287,6 +306,29 @@ func (r *Runner) Step(ctx context.Context, env SessionEnvelope, in TurnInput) (S
 	}
 
 	return outEnv, output, nil
+}
+
+// offered reports whether name is in AvailableTools. An empty list means
+// the caller did not restrict tools (the CLI-backed paths), so every name is
+// offered and approval alone decides.
+func (r *Runner) offered(name string) bool {
+	if len(r.AvailableTools) == 0 {
+		return true
+	}
+	for _, t := range r.AvailableTools {
+		if t.Tool == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Runner) offeredNames() string {
+	names := make([]string, 0, len(r.AvailableTools))
+	for _, t := range r.AvailableTools {
+		names = append(names, t.Tool)
+	}
+	return strings.Join(names, ", ")
 }
 
 func parseArguments(raw string) map[string]any {

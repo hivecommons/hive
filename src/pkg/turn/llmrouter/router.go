@@ -177,12 +177,13 @@ func (e *CapacityError) Unwrap() error { return ErrCapacityExhausted }
 
 // Router implements turn.LLMClient over an ordered provider list.
 type Router struct {
-	providers []Provider
-	ledger    Ledger
-	client    *http.Client
-	getenv    func(string) string
-	now       func() time.Time
-	onAttempt func(Attempt)
+	providers  []Provider
+	ledger     Ledger
+	client     *http.Client
+	getenv     func(string) string
+	now        func() time.Time
+	onAttempt  func(Attempt)
+	toolChoice string
 }
 
 // Option configures a Router.
@@ -196,6 +197,13 @@ func WithHTTPClient(c *http.Client) Option { return func(r *Router) { r.client =
 
 // WithAttemptHook receives every attempt, for metrics and inferencehealth.
 func WithAttemptHook(f func(Attempt)) Option { return func(r *Router) { r.onAttempt = f } }
+
+// WithToolChoice sets the OpenAI tool_choice ("required", "auto", "none")
+// sent whenever tools are offered. "required" forces a call on providers
+// that honour it; measured 2026-11-16 on Workers AI: llama-4-scout and
+// glm-4.7-flash honour it, gpt-oss-120b ignores it (and still reports
+// finish_reason "tool_calls"), so callers must not rely on it alone.
+func WithToolChoice(choice string) Option { return func(r *Router) { r.toolChoice = choice } }
 
 // WithEnv overrides the key lookup (tests).
 func WithEnv(getenv func(string) string) Option { return func(r *Router) { r.getenv = getenv } }
@@ -238,11 +246,11 @@ var _ turn.LLMClient = (*Router)(nil)
 // models. A request the provider rejects as malformed (other 4xx) is returned
 // immediately: resending it elsewhere would only spend more budget.
 func (r *Router) Generate(ctx context.Context, messages []turn.Message, tools []toolapprove.ToolRequest) (turn.LLMResponse, error) {
-	names, err := newToolNames(tools)
+	names, err := newToolNames(tools, messages)
 	if err != nil {
 		return turn.LLMResponse{}, err
 	}
-	wireBody, err := buildRequestBody(messages, tools, names)
+	wireBody, err := buildRequestBody(messages, tools, names, r.toolChoice)
 	if err != nil {
 		return turn.LLMResponse{}, err
 	}
@@ -460,14 +468,15 @@ type wireFunctionDef struct {
 }
 
 type wireRequest struct {
-	Model    string        `json:"model"`
-	Messages []wireMessage `json:"messages"`
-	Tools    []wireTool    `json:"tools,omitempty"`
+	Model      string        `json:"model"`
+	Messages   []wireMessage `json:"messages"`
+	Tools      []wireTool    `json:"tools,omitempty"`
+	ToolChoice string        `json:"tool_choice,omitempty"`
 }
 
 // buildRequestBody renders everything except the model, which differs per
 // provider and is spliced in by withModel.
-func buildRequestBody(messages []turn.Message, tools []toolapprove.ToolRequest, names toolNames) ([]byte, error) {
+func buildRequestBody(messages []turn.Message, tools []toolapprove.ToolRequest, names toolNames, toolChoice string) ([]byte, error) {
 	req := wireRequest{Messages: make([]wireMessage, 0, len(messages))}
 	for _, m := range messages {
 		wm := wireMessage{Role: string(m.Role)}
@@ -509,6 +518,9 @@ func buildRequestBody(messages []turn.Message, tools []toolapprove.ToolRequest, 
 			params = map[string]any{"type": "object", "properties": map[string]any{}}
 		}
 		req.Tools = append(req.Tools, wireTool{Type: "function", Function: wireFunctionDef{Name: names.wire(t.Tool), Description: t.Content, Parameters: params}})
+	}
+	if len(req.Tools) > 0 && toolChoice != "" {
+		req.ToolChoice = toolChoice
 	}
 	return json.Marshal(req)
 }

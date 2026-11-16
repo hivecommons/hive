@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/hivecommons/hive/crux/toolapprove"
+	"github.com/hivecommons/hive/pkg/turn"
 )
 
 // maxWireToolName is the OpenAI function-name length limit.
@@ -21,15 +22,40 @@ type toolNames struct {
 	toHive map[string]string
 }
 
-func newToolNames(tools []toolapprove.ToolRequest) (toolNames, error) {
+// newToolNames builds the mapping from the offered tools and from every
+// tool name already in the conversation: a model offered a narrower set
+// (e.g. only task.complete in a finish phase) still emits names it saw
+// earlier, and those must map back to the Hive name so toolapprove and the
+// Runner's offered-tool check see what was actually requested.
+func newToolNames(tools []toolapprove.ToolRequest, history []turn.Message) (toolNames, error) {
 	n := toolNames{toWire: map[string]string{}, toHive: map[string]string{}}
-	for _, t := range tools {
-		w := wireToolName(t.Tool)
-		if prev, dup := n.toHive[w]; dup && prev != t.Tool {
-			return toolNames{}, fmt.Errorf("llmrouter: tools %q and %q map to the same wire name %q", prev, t.Tool, w)
+	add := func(name string) error {
+		w := wireToolName(name)
+		if prev, dup := n.toHive[w]; dup && prev != name {
+			return fmt.Errorf("llmrouter: tools %q and %q map to the same wire name %q", prev, name, w)
 		}
-		n.toWire[t.Tool] = w
-		n.toHive[w] = t.Tool
+		n.toWire[name] = w
+		n.toHive[w] = name
+		return nil
+	}
+	for _, t := range tools {
+		if err := add(t.Tool); err != nil {
+			return toolNames{}, err
+		}
+	}
+	for _, m := range history {
+		for _, c := range m.ToolCalls {
+			if c.Name != "" && c.Name != wireToolName(c.Name) {
+				if err := add(c.Name); err != nil {
+					return toolNames{}, err
+				}
+			}
+		}
+		if m.Role == turn.RoleTool && m.Name != "" && m.Name != wireToolName(m.Name) {
+			if err := add(m.Name); err != nil {
+				return toolNames{}, err
+			}
+		}
 	}
 	return n, nil
 }

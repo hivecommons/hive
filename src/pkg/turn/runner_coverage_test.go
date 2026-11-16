@@ -149,6 +149,45 @@ func TestStepCapacityErrorParksSessionAndResumes(t *testing.T) {
 	}
 }
 
+// TestStepDeniesUnofferedTool: AvailableTools is the turn's capability set.
+// A model naming a tool it was not offered (seen live in a finish phase that
+// offered only task.complete) is denied before approval and never executed.
+func TestStepDeniesUnofferedTool(t *testing.T) {
+	var seen []toolapprove.ToolRequest
+	llm := &toolCapturingLLM{capture: &seen, response: LLMResponse{ToolCalls: []ToolCall{
+		{ID: "a", Name: "read", Arguments: `{}`},
+		{ID: "b", Name: "task.complete", Arguments: `{"summary":"x"}`},
+	}}}
+	exec := &countingExecutor{}
+	runner := NewRunner(llm, exec, WithAvailableTools([]toolapprove.ToolRequest{{Tool: "task.complete"}}))
+	env, out, err := runner.Step(context.Background(), SessionEnvelope{SessionID: "s-offer", ACMMLevel: 6}, TurnInput{UserMessage: "finish"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Verdicts) != 2 || !out.Verdicts[0].Denied() || !strings.Contains(out.Verdicts[0].Rationale, "not offered") {
+		t.Fatalf("verdicts = %+v", out.Verdicts)
+	}
+	if exec.calls["read"] != 0 {
+		t.Fatal("unoffered tool was executed")
+	}
+	if len(out.ToolResults) == 0 || !strings.Contains(out.ToolResults[0].Error, "available: task.complete") {
+		t.Fatalf("tool results = %+v", out.ToolResults)
+	}
+	if env.Operations[0].Status == OperationStatusApproved {
+		t.Fatalf("denied call recorded as approved: %+v", env.Operations[0])
+	}
+}
+
+type countingExecutor struct{ calls map[string]int }
+
+func (c *countingExecutor) Execute(ctx context.Context, call ToolCall) (ToolResult, error) {
+	if c.calls == nil {
+		c.calls = map[string]int{}
+	}
+	c.calls[call.Name]++
+	return ToolResult{ToolCallID: call.ID, Name: call.Name, Output: "ok"}, nil
+}
+
 // TestDefaultCompactorWindowing covers the compaction branch: head preserved,
 // middle dropped, tail retained.
 func TestDefaultCompactorWindowing(t *testing.T) {
