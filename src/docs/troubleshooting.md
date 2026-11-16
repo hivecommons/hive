@@ -939,6 +939,38 @@ A failed self-upgrade also exits the process with code **17**
 (`selfUpgradeFailureExitCode`) rather than 0, so the failure is visible in the
 container's termination state instead of looking like a clean shutdown.
 
+### Upgrade stuck: cannot unmarshal string "dashboard" into json.Number
+
+Every self-upgrade attempt fails, and the retry log or the `⚠ auto-update
+failed` tooltip shows:
+
+```text
+patching deployment <namespace>/hive: decoding startup probe before upgrade: json: cannot unmarshal string "dashboard" into Go value of type json.Number
+```
+
+Builds that include [#18010](https://github.com/hivecommons/hive/pull/18010)
+read the hive container's readiness and liveness probes before upgrading, so
+they can add a missing startupProbe. Those builds expected a numeric
+`httpGet.port`. A Deployment whose probes use the named container port
+`dashboard` failed to decode, and the whole upgrade aborted. Builds with the fix
+for [#18479](https://github.com/hivecommons/hive/issues/18479) accept named
+ports, and they never let a probe decode problem block the image upgrade.
+
+The bug is in the running binary, so an affected hive cannot upgrade itself to
+the fixed build. Change the probe ports to the numeric dashboard port once
+(replace `<namespace>` with the hive's namespace; `oc` takes the same
+arguments as `kubectl`):
+
+```bash
+kubectl -n <namespace> patch deployment hive --type=strategic -p \
+  '{"spec":{"template":{"spec":{"containers":[{"name":"hive","readinessProbe":{"httpGet":{"port":3002}},"livenessProbe":{"httpGet":{"port":3002}}}]}}}}'
+```
+
+The patch rolls the pod once. When it is Ready again, let the upgrade retry: the
+next instructed upgrade (from the hub, or **Self Upgrade** on the dashboard)
+decodes the numeric ports and lands. If the retry budget was already spent, the
+next new target gets a fresh budget, as described above.
+
 ## Podman (Quadlet) deployments: failure modes Docker does not have
 
 These are specific to running Hive as systemd units. Everything else in this guide applies unchanged; the install-side counterpart is the **Traps** section of [podman-standalone-quadlet.md](podman-standalone-quadlet.md).
