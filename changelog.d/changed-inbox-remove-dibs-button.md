@@ -1,1 +1,0 @@
-- The Inbox item row now has only Play, Transcript and a 🔗 Share ▾ menu with a Hive group (RFC…, Knowledge, DIBS) and a Link group (Copy link, Share…); the "→ dibs…", "→ RFC…" and "Knowledge only" row buttons are gone and the selection bar gets a Hive menu. Auto-routing and config are unchanged.
