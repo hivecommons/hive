@@ -36,7 +36,7 @@ var localized = map[string]phrases{
 		digged: "I dug into %q: %s",
 	},
 	"es": {
-		acks:   []string{"Déjame revisarlo.", "Un momento.", "Buena pregunta, lo miro.", "A ver."},
+		acks:   []string{"Déjame revisarlo.", "Un segundo.", "Buena pregunta, lo miro.", "A ver."},
 		digIn:  "Lo investigo y les cuento.",
 		digged: "Investigué %q: %s",
 	},
@@ -51,12 +51,12 @@ var localized = map[string]phrases{
 		digged: "Ich habe zu %q recherchiert: %s",
 	},
 	"pt": {
-		acks:   []string{"Deixa eu verificar.", "Um momento.", "Boa pergunta, vou ver.", "Vamos ver."},
+		acks:   []string{"Deixa eu verificar.", "Só um instante.", "Boa pergunta, vou ver.", "Vamos ver."},
 		digIn:  "Vou pesquisar e já volto com a resposta.",
 		digged: "Pesquisei %q: %s",
 	},
 	"it": {
-		acks:   []string{"Controllo subito.", "Un momento.", "Bella domanda, verifico.", "Vediamo."},
+		acks:   []string{"Controllo subito.", "Un attimo.", "Bella domanda, verifico.", "Vediamo."},
 		digIn:  "Approfondisco e vi faccio sapere.",
 		digged: "Ho approfondito %q: %s",
 	},

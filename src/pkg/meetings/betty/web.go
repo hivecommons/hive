@@ -37,7 +37,7 @@ func stripHTML(s string) string {
 	s = html.UnescapeString(s)
 	// A second pass catches markup that was entity-encoded.
 	s = htmlTag.ReplaceAllString(s, " ")
-	return sanitize(strings.Join(strings.Fields(s), " "))
+	return strings.Join(strings.Fields(sanitize(s)), " ")
 }
 
 // WebRetriever searches the web through a self-hosted SearXNG instance
