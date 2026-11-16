@@ -385,8 +385,10 @@ func (s *Server) handleMeetingsWS(w http.ResponseWriter, r *http.Request) {
 // MeetingsSettings is GET/POST /api/meetings/settings. Secrets are never
 // returned, only whether they are set. Settings, Meetings controls
 // meetings.enabled, meetings.vexa.url, the Vexa tenant key
-// (meetings.vexa.api_key_file) and the Discord bot token
-// (meetings.discord.token_file); the other meetings keys are shown read-only.
+// (meetings.vexa.api_key_file), the Discord bot token
+// (meetings.discord.token_file) and the transcription service token
+// (meetings.transcribe_token_file); the other meetings keys are shown
+// read-only.
 type MeetingsSettings struct {
 	Enabled            bool   `json:"enabled"`
 	EnabledEnvOverride bool   `json:"enabled_env_override,omitempty"`
@@ -394,6 +396,7 @@ type MeetingsSettings struct {
 	VexaURL            string `json:"vexa_url"`
 	VexaKeySet         bool   `json:"vexa_key_set"`
 	DiscordTokenSet    bool   `json:"discord_token_set"`
+	TranscribeTokenSet bool   `json:"transcribe_token_set"`
 	RestartRequired    bool   `json:"restart_required,omitempty"`
 	// SpekModel is the model Spektacular live mode would use (never a key).
 	SpekModel string            `json:"spek_model"`
@@ -405,6 +408,9 @@ type meetingsSettingsRequest struct {
 	VexaURL      *string `json:"vexa_url,omitempty"`
 	VexaAPIKey   *string `json:"vexa_api_key,omitempty"`
 	DiscordToken *string `json:"discord_token,omitempty"`
+	// TranscribeToken is the transcription service token Quorum posts
+	// Discord audio with (QUORUM_TRANSCRIBE_TOKEN_FILE).
+	TranscribeToken *string `json:"transcribe_token,omitempty"`
 }
 
 // meetingsSecretSet reports whether a secret resolves to a value, without
@@ -423,6 +429,7 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 		VexaURL:            m.VexaURL(),
 		VexaKeySet:         meetingsSecretSet(ctx, m.VexaAPIKey),
 		DiscordTokenSet:    meetingsSecretSet(ctx, m.DiscordToken),
+		TranscribeTokenSet: meetingsSecretSet(ctx, m.TranscribeToken),
 		SpekModel:          s.meetingsSpekModel(ctx),
 		Effective: map[string]string{
 			"meetings.quorum.binary":                  m.QuorumBinary(),
@@ -475,8 +482,9 @@ func (s *Server) handleMeetingsSettingsGet(w http.ResponseWriter, r *http.Reques
 }
 
 // handleMeetingsSettingsPost (owner) updates meetings.enabled and
-// meetings.vexa.url in hive.yaml and writes the Vexa tenant key and
-// Discord bot token to their keystore-sealed secret files (an empty string
+// meetings.vexa.url in hive.yaml and writes the Vexa tenant key, the
+// Discord bot token and the transcription service token to their
+// keystore-sealed secret files (an empty string
 // clears one). The Quorum child reads them at boot, so a change reports
 // restart_required.
 func (s *Server) handleMeetingsSettingsPost(w http.ResponseWriter, r *http.Request) {
@@ -520,13 +528,21 @@ func (s *Server) handleMeetingsSettingsPost(w http.ResponseWriter, r *http.Reque
 		}
 		changed = true
 	}
+	if req.TranscribeToken != nil {
+		if err := config.WriteMeetingsSecret(r.Context(), next.TranscribeTokenFileOrDefault(), *req.TranscribeToken); err != nil {
+			jsonError(w, "saving the transcription token: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		changed = true
+	}
 	s.deps.Config.Meetings = next
 	if err := s.saveConfig(); err != nil {
 		jsonError(w, "saving config: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
 	s.auditFromRequest(r, "meetings_settings", auditDetail("enabled", boolString(next.Enabled), "vexa_url", next.Vexa.URL,
-		"vexa_key_changed", boolString(req.VexaAPIKey != nil), "discord_token_changed", boolString(req.DiscordToken != nil)), "")
+		"vexa_key_changed", boolString(req.VexaAPIKey != nil), "discord_token_changed", boolString(req.DiscordToken != nil),
+		"transcribe_token_changed", boolString(req.TranscribeToken != nil)), "")
 	out := s.meetingsSettings(r.Context(), next)
 	out.RestartRequired = changed
 	jsonResponse(w, out)

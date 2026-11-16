@@ -310,7 +310,7 @@
           "Meetings"
         ],
         "summary": "Get meetings settings",
-        "description": "meetings.enabled, the Vexa gateway URL, whether the Vexa tenant key and Discord bot token are set (never their values), and the effective values of the other meetings keys. Owner only.",
+        "description": "meetings.enabled, the Vexa gateway URL, whether the Vexa tenant key, Discord bot token and transcription service token are set (never their values), and the effective values of the other meetings keys. Owner only.",
         "responses": {
           "200": {
             "description": "Settings",
@@ -335,6 +335,9 @@
                       "type": "boolean"
                     },
                     "discord_token_set": {
+                      "type": "boolean"
+                    },
+                    "transcribe_token_set": {
                       "type": "boolean"
                     },
                     "restart_required": {
@@ -364,7 +367,7 @@
           "Meetings"
         ],
         "summary": "Update meetings settings",
-        "description": "Sets meetings.enabled and meetings.vexa.url in hive.yaml and writes the Vexa tenant key and Discord bot token to keystore-sealed secret files (an empty string clears one). Takes effect after a restart. Owner only.",
+        "description": "Sets meetings.enabled and meetings.vexa.url in hive.yaml and writes the Vexa tenant key, Discord bot token and transcription service token to keystore-sealed secret files (an empty string clears one). Takes effect after a restart. Owner only.",
         "requestBody": {
           "required": true,
           "content": {
@@ -383,6 +386,10 @@
                   },
                   "discord_token": {
                     "type": "string"
+                  },
+                  "transcribe_token": {
+                    "type": "string",
+                    "description": "Transcription service token Quorum posts Discord audio with (write-only)"
                   }
                 }
               }
@@ -407,6 +414,9 @@
                       "type": "boolean"
                     },
                     "discord_token_set": {
+                      "type": "boolean"
+                    },
+                    "transcribe_token_set": {
                       "type": "boolean"
                     },
                     "restart_required": {

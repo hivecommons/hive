@@ -59,6 +59,10 @@ func TestWireMeetingsStarts(t *testing.T) {
 	if err := os.WriteFile(keyFile, []byte("tenant\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	txFile := filepath.Join(dir, "transcribe")
+	if err := os.WriteFile(txFile, []byte("tx-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	fake := &fakeQuorumSup{}
 	var got quorumproc.Options
 	withQuorumSupervisor(t, func(o quorumproc.Options) (quorumSupervisor, error) {
@@ -70,10 +74,12 @@ func TestWireMeetingsStarts(t *testing.T) {
 		t.Fatal(err)
 	}
 	cfg := &config.Config{Meetings: config.MeetingsConfig{
-		Enabled: true,
-		Quorum:  config.MeetingsQuorumConfig{Binary: bin},
-		Vexa:    config.MeetingsVexaConfig{URL: "https://vexa/", APIKeyFile: keyFile},
-		Discord: config.MeetingsDiscordConfig{TokenFile: filepath.Join(dir, "missing")},
+		Enabled:             true,
+		Quorum:              config.MeetingsQuorumConfig{Binary: bin},
+		Vexa:                config.MeetingsVexaConfig{URL: "https://vexa/", APIKeyFile: keyFile},
+		Discord:             config.MeetingsDiscordConfig{TokenFile: filepath.Join(dir, "missing")},
+		TranscribeURL:       "http://vexa-transcription.meetings.svc.cluster.local:8000",
+		TranscribeTokenFile: txFile,
 	}}
 	var logs bytes.Buffer
 	sup := wireMeetings(context.Background(), cfg, slog.New(slog.NewTextHandler(&logs, nil)))
@@ -81,11 +87,12 @@ func TestWireMeetingsStarts(t *testing.T) {
 		t.Fatal("want a started supervisor")
 	}
 	if got.VexaAPIKey != "tenant" || got.VexaURL != "https://vexa" || got.DiscordToken != "" ||
-		got.Listen != config.DefaultMeetingsQuorumListen || got.Binary != bin {
+		got.Listen != config.DefaultMeetingsQuorumListen || got.Binary != bin ||
+		got.TranscribeToken != "tx-secret" || got.TranscribeURL != "http://vexa-transcription.meetings.svc.cluster.local:8000" {
 		t.Fatalf("options %+v", got)
 	}
-	if strings.Contains(logs.String(), "tenant") {
-		t.Fatal("the tenant key must never be logged")
+	if strings.Contains(logs.String(), "tenant") || strings.Contains(logs.String(), "tx-secret") {
+		t.Fatal("the tenant key and transcription token must never be logged")
 	}
 }
 
@@ -120,15 +127,17 @@ func TestWireMeetingsFailures(t *testing.T) {
 func TestMeetingsQuorumOptionsUnreadableSecrets(t *testing.T) {
 	dir := t.TempDir()
 	m := config.MeetingsConfig{
-		Vexa:    config.MeetingsVexaConfig{APIKeyFile: dir},
-		Discord: config.MeetingsDiscordConfig{TokenFile: dir},
+		Vexa:                config.MeetingsVexaConfig{APIKeyFile: dir},
+		Discord:             config.MeetingsDiscordConfig{TokenFile: dir},
+		TranscribeTokenFile: dir,
 	}
 	var logs bytes.Buffer
 	o := meetingsQuorumOptions(context.Background(), m, slog.New(slog.NewTextHandler(&logs, nil)))
-	if o.VexaAPIKey != "" || o.DiscordToken != "" {
+	if o.VexaAPIKey != "" || o.DiscordToken != "" || o.TranscribeToken != "" {
 		t.Fatal("unreadable secrets must be left unset")
 	}
-	if !strings.Contains(logs.String(), "Vexa tenant key unreadable") || !strings.Contains(logs.String(), "Discord bot token unreadable") {
+	if !strings.Contains(logs.String(), "Vexa tenant key unreadable") || !strings.Contains(logs.String(), "Discord bot token unreadable") ||
+		!strings.Contains(logs.String(), "transcription service token unreadable") {
 		t.Fatalf("logs %q", logs.String())
 	}
 }
