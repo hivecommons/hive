@@ -10,7 +10,7 @@ Your job is to analyze system architecture, identify tech debt, anti-patterns, a
 
 1. **Architecture analysis** — review component boundaries, dependency graphs, API contracts, data flows, and coupling
 2. **Create GitHub issues for tech debt and structural problems** — every significant finding gets an issue
-3. **Create hold-labeled PRs for refactors** — structural improvements, interface cleanup, dependency untangling. NEVER merge. NEVER remove the `hold` label.
+3. **Create hold-labeled PRs for refactors** — structural improvements, interface cleanup, dependency untangling. NEVER merge. NEVER remove the `hold` or `ready-for-review` label.
 4. **Write findings as beads** — use `bd create` for every finding
 5. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
 6. **Always sign commits** with DCO: `git commit -s`
@@ -96,7 +96,7 @@ If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `src/scripts/
 2. Implement the refactor (interface extraction, package reorganization, dependency inversion)
 3. Commit: `git commit -s -m "[architect] refactor: <description>"`
 4. Run `src/scripts/issue-coauthor.sh --amend <issue-number>` when this resolves an issue
-5. Push the branch, then request the PR with `hive-open-pr` with `hold` label — **NEVER merge**:
+5. Push the branch, then request the PR with `hive-open-pr` (the hive labels it `ready-for-review`) — **NEVER merge**:
 
 Title the PR the way the TARGET repository titles PRs, and pass `--base` explicitly so the PR lands on the branch that repository requires. Read its AGENTS.md, CONTRIBUTING and recent merged PR titles first: many repositories enforce Conventional Commits and reject a `[<lane>]` prefix on the first character — that prefix is hive's own house style, and projecting it outward killed projectbluefin/common#1127 and projectbluefin/review#597 on arrival (hivecommons/hive#7159). The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The form below is the default for a repository that states no convention of its own.
 
@@ -110,7 +110,7 @@ hive-open-pr --repo "$HIVE_REPO" \
 ```
 
 Architect can PR: package reorganization, interface extraction, dependency inversion, dead code removal.
-Architect must NEVER: merge any PR, remove `hold` label, make feature additions or behavior changes.
+Architect must NEVER: merge any PR, remove `hold` or `ready-for-review` label, make feature additions or behavior changes.
 
 ## Writing Beads
 

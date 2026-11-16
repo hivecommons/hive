@@ -137,7 +137,7 @@ func TestReleaseSelfAuthorizationHoldListEventsError(t *testing.T) {
 func selfAuthHoldEvents() []map[string]any {
 	return []map[string]any{{
 		"event":      "labeled",
-		"label":      map[string]string{"name": "hold"},
+		"label":      map[string]string{"name": hgithub.DefaultDecisionNeededLabel},
 		"actor":      map[string]string{"login": testHiveAppBotLogin},
 		"created_at": "2026-09-11T11:59:59Z",
 	}}
@@ -157,7 +157,7 @@ func TestReleaseSelfAuthorizationHoldRemoveLabelError(t *testing.T) {
 		}
 	})
 	released, err := c.releaseSelfAuthorizationHoldIfEligible(context.Background(), "acme/widget", "acme", "widget", 11)
-	if released || err == nil || !strings.Contains(err.Error(), "removing hold label") {
+	if released || err == nil || !strings.Contains(err.Error(), "removing decision-needed label") {
 		t.Fatalf("(%v, %v), want removing-hold-label failure and no release", released, err)
 	}
 }
@@ -210,11 +210,11 @@ func TestReleaseSelfAuthorizationHoldPaginatesCommentsAndEvents(t *testing.T) {
 				fmt.Fprint(w, `[null,
 					{"event":"assigned","created_at":"2026-09-11T11:00:00Z"},
 					{"event":"labeled","label":{"name":"quality"},"created_at":"2026-09-11T11:00:01Z"},
-					{"event":"reopened","label":{"name":"hold"},"created_at":"2026-09-11T11:00:02Z"}]`)
+					{"event":"reopened","label":{"name":"decision-needed"},"created_at":"2026-09-11T11:00:02Z"}]`)
 				return
 			}
 			json.NewEncoder(w).Encode(selfAuthHoldEvents())
-		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/hold":
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/"+hgithub.DefaultDecisionNeededLabel:
 			removed = true
 			json.NewEncoder(w).Encode([]map[string]any{})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/acme/widget/issues/11/comments":
@@ -246,12 +246,12 @@ func TestReleaseSelfAuthorizationHoldSkipsWhenLatestHoldEventIsUnlabeled(t *test
 			// nothing must be released.
 			json.NewEncoder(w).Encode([]map[string]any{{
 				"event":      "labeled",
-				"label":      map[string]string{"name": "hold"},
+				"label":      map[string]string{"name": hgithub.DefaultDecisionNeededLabel},
 				"actor":      map[string]string{"login": testHiveAppBotLogin},
 				"created_at": "2026-09-11T11:00:00Z",
 			}, {
 				"event":      "unlabeled",
-				"label":      map[string]string{"name": "hold"},
+				"label":      map[string]string{"name": hgithub.DefaultDecisionNeededLabel},
 				"actor":      map[string]string{"login": testHiveAppBotLogin},
 				"created_at": "2026-09-11T11:30:00Z",
 			}})

@@ -517,7 +517,7 @@ func (s *Server) decideDelegatedOne(ctx context.Context, repoFull string, number
 	// and write nothing (hivecommons/hive#15099).
 	if in.Kind == delegatedecision.KindIssue {
 		if b := s.delegatedBlocker(ctx, repoFull, number, s.delegatedCommentTexts(ctx, repoFull, number)); b != nil {
-			held := slices.Contains(in.Labels, delegatedecision.LabelHold)
+			held := delegatedecision.HeldByLabels(in.Labels)
 			res := blockerNoEffectResult(rowActionTarget(repoFull, rowActionTargetIssue, number), *b, held, s.blockerOptionsContext())
 			d := delegatedecision.Decision{Verdict: delegatedecision.VerdictRefused, Rule: "blocker:" + b.Kind, Text: res.Outcome, Rationale: res.Outcome, KeepsPark: true}
 			notes := []string{"blocked: " + b.Short + "; nothing written"}

@@ -86,11 +86,11 @@ This reference replaces the former nine-column table with one headed entry per c
 
 Any label containing a configured hold substring is held; held issues/PRs leave agent kicks, PR merge lanes, and the task-list sweep. Held red PRs still route back to their owning agent for CI repair, with instructions not to remove the hold.
 
-**Who applies it:** Human, Hive level gate, #5117 gate, holdguard, SHA-hold.
+**Who applies it:** A person. The hive never applies `hold` itself ([#18468](https://github.com/hivecommons/hive/issues/18468)): a `hold` means "do not merge / do not act", and the hive never implements, decomposes, relays or merges a held item, and never removes the label. When one of the hive's own gates needs a person it applies [`ready-for-review` or `decision-needed`](#ready-for-review-decision-needed) instead. Builds before #18468 applied literal `hold` from the level gate, #5117, reporter trust, holdguard, owner-only delegated decisions and SHA-hold; the boot migration swaps those (see below).
 
 **Checked by:** GitHub enumeration, auto-merge sweeps, task-list sweep. **When:** Enumeration and sweeps.
 
-**Release or override.** Remove the matching label; Hive releases only literal `hold` it applied itself (level gate, #5117, SHA-hold)
+**Release or override.** A person removes the label. Hive does not remove a `hold`; the one exception is the SHA-hold sweep lifting a `hold` an older build of that sweep applied, once a SHA appears.
 
 **Configuration and implementation.** Built-in `HoldLabels`; dashboard exact hold via `Client.SetHoldLabels` (`src/pkg/github/client.go:1317`, `src/pkg/github/client.go:3314-3369`, `src/pkg/scheduler/policy_overlays.go:210-220`)
 
@@ -108,39 +108,56 @@ Exact, hive-scoped dashboard hold. It is not provenance and intentionally avoids
 
 **Configuration and implementation.** Canonicalized from hive id (`src/pkg/github/client.go:3371-3380`, `src/pkg/github/client.go:3386-3392`, `src/docs/dashboard.md:80-96`)
 
-#### `hold` from ACMM level gate
+#### `ready-for-review`, `decision-needed`
+
+**Applies to:** Issues, PRs. **Kind:** Hard merge gate, applied by the hive.
+
+The labels the hive applies instead of `hold` ([#18468](https://github.com/hivecommons/hive/issues/18468)). Each blocks merges and agent work exactly like `hold` (exact-match members of the hold set: `github.IsHiveGateLabel`, read by `HasHoldLabelWith`, the merge-eligibility classifier and the stage engine), and each is created with a GitHub label description saying who acts next:
+
+| Label | Description | Applied by |
+|---|---|---|
+| `ready-for-review` | Hive's work is done; a maintainer reviews, then removes this label to let it merge. | The ACMM level gate (L3-L5, and cross-repo outreach at every level). |
+| `decision-needed` | Hive is blocked on a human decision; a maintainer decides (see hive's comment). | The #5117 self-authorization gate, the #9665 reporter-trust gate (with `needs-human`), the holdguard re-hold, and an owner-only delegated decision (with `needs-owner`). |
+
+Every gate posts its existing notice comment saying why. Agents cannot add or remove either label through the relay.
+
+**Migration.** On boot, Hive creates both labels (with their descriptions) in each active repository and swaps a literal `hold` for the matching gate label only when the newest `hold` event is a `labeled` by the Hive App **and** an App-authored gate notice is on the thread (level-hold notice → `ready-for-review`; reporter-trust, #5117, holdguard or owner-only decision notice → `decision-needed`). It adds the gate label before removing `hold` and leaves one `<!-- hive:hold-relabel-18468 -->` comment. A `hold` a person applied (or re-applied) is never touched. Bounded to 50 items per repository per boot (`src/pkg/github/hive_gate_label_migration.go`).
+
+**Configuration and implementation.** `governor.labels.ready_for_review` (default `ready-for-review`), `governor.labels.decision_needed` (default `decision-needed`); blank or `hold` keeps the default (`src/pkg/github/hive_gate_labels.go`).
+
+#### `ready-for-review` from ACMM level gate
 
 **Applies to:** PRs. **Kind:** Hard merge gate.
 
-Agent PRs at L3-L5 get literal `hold`; `outreach` PRs whose target repo is not one the hive manages (cross-repo outreach) are held at every level, while same-repo outreach PRs follow the level. The watcher, not the policy prompt, applies it from the PR's target repo (`config.AgentOwnsRepo`).
+Agent PRs at L3-L5 get `ready-for-review` (literal `hold` before #18468); `outreach` PRs whose target repo is not one the hive manages (cross-repo outreach) are held at every level, while same-repo outreach PRs follow the level. The watcher, not the policy prompt, applies it from the PR's target repo (`config.AgentOwnsRepo`).
 
 **Who applies it:** Hive App.
 
 **Checked by:** PR-request watcher, self-authored auto-merge release. **When:** PR creation, later self-authored auto-merge release.
 
-**Release or override.** Auto-release only when current policy no longer requires the level hold, latest hold event was by the App, and the release path runs; otherwise a human removes it
+**Release or override.** A maintainer reviews and removes `ready-for-review`; a deliberate one-off `release_level_holds` during an ACMM level change removes only `ready-for-review` labels whose latest event was by the App beside a level-hold notice
 
 **Configuration and implementation.** Hive-wide ACMM and agent (`src/pkg/github/pr_request_watcher.go:452-524`, `src/pkg/github/pr_level_hold.go:16-124`)
 
-#### `hold` from #5117 self-authorization
+#### `decision-needed` from #5117 self-authorization
 
 **Applies to:** PRs. **Kind:** Hard merge gate.
 
-A PR whose only rationale is unacknowledged hive-filed issues gets literal `hold`. Acknowledging the issue later does not remove an existing PR hold by itself. At ACMM L6 (Autonomous), the unset default is off; lower levels default on.
+A PR whose only rationale is unacknowledged hive-filed issues gets `decision-needed` (literal `hold` before #18468). Acknowledging the issue later does not remove an existing PR hold by itself. At ACMM L6 (Autonomous), the unset default is off; lower levels default on.
 
 **Who applies it:** Hive App.
 
 **Checked by:** PR-request watcher and self-authorization release. **When:** PR creation; evaluated only when no level hold applies.
 
-**Release or override.** Acknowledge the issue and remove the PR `hold`; disabled policy release can remove Hive's own hold. At L6, that release path also clears existing Hive-applied #5117 holds when no explicit config keeps the policy on.
+**Release or override.** Acknowledge the issue and remove the PR's `decision-needed`; disabled policy release can remove Hive's own `decision-needed` (never a `hold`). At L6, that release path also clears existing Hive-applied #5117 holds when no explicit config keeps the policy on.
 
 **Configuration and implementation.** `github.self_authorization_hold`, per-repo `project.repo_policies[].self_authorization_hold`, `HIVE_SELF_AUTHORIZATION_HOLD` (`src/pkg/github/pr_self_authorization.go:14-226`, `src/pkg/github/pr_request_watcher.go:452-524`)
 
-#### `hold` from #9665 reporter trust
+#### `decision-needed` from #9665 reporter trust
 
 **Applies to:** PRs **not authored by the hive**. **Kind:** Hard merge gate.
 
-A PR whose rationale traces to an issue filed by an untrusted reporter gets literal `hold` at **every** ACMM level, including L6, plus `needs-human` (so it surfaces as waiting on a person, #10773) and a marked notice (`<!-- hive:reporter-trust-hold:9665 -->` + `<!-- hive:reporter-trust-metadata {…} -->`) naming the untrusted reporter and stating that the hold concerns the issue reporter, not the PR author. The rationale is **only the linked issues**: closing-keyword links (`Fixes`/`Closes`/`Resolves`) and the request's declared issues — bare `#N` mentions are not consulted, and a link that resolves to a pull request is skipped rather than judged (hivecommons/hive#15020: `Refs #15009 (closed by #15017)` made the gate judge sibling PR #15017 and attribute a `CONTRIBUTOR` who had merely commented).
+A PR whose rationale traces to an issue filed by an untrusted reporter gets `decision-needed` (literal `hold` before #18468) at **every** ACMM level, including L6, plus `needs-human` (so it surfaces as waiting on a person, #10773) and a marked notice (`<!-- hive:reporter-trust-hold:9665 -->` + `<!-- hive:reporter-trust-metadata {…} -->`) naming the untrusted reporter and stating that the hold concerns the issue reporter, not the PR author. The rationale is **only the linked issues**: closing-keyword links (`Fixes`/`Closes`/`Resolves`) and the request's declared issues — bare `#N` mentions are not consulted, and a link that resolves to a pull request is skipped rather than judged (hivecommons/hive#15020: `Refs #15009 (closed by #15017)` made the gate judge sibling PR #15017 and attribute a `CONTRIBUTOR` who had merely commented).
 
 A hive-filed issue (`[selfreport]`, app or AI author) counts as trusted. The gate is **skipped entirely for hive-authored PRs** (App bot, `project.ai_author`, `author/hive`): the hive is the author, so the reporter's trust says nothing about whether its own fix may merge; it still applies to contributor PRs and to PRs opened under a shared PAT account. Any one untrusted citation holds. Evaluated even at hold-gated levels, because the notice is what stops promotion to L6 from releasing the label.
 
@@ -148,17 +165,17 @@ A hive-filed issue (`[selfreport]`, app or AI author) counts as trusted. The gat
 
 **Checked by:** PR-request watcher, level-hold release. **When:** PR creation; re-checked by the level-hold release path.
 
-**Release or override.** A human removes `hold` on a contributor PR; Hive never auto-releases it there. On a **hive-authored** PR still wearing a hive-set reporter-trust hold (newest `hold` event labeled by the App bot with the notice at or after it — a person's hold is left alone), the stage-label pass releases `hold` (and `needs-human` when the notice says the gate added it), posts one `<!-- hive:reporter-trust-release -->` comment and logs `stage labels: releasing self-imposed reporter-trust hold`.
+**Release or override.** A human removes `decision-needed` on a contributor PR; Hive never auto-releases it there. On a **hive-authored** PR still wearing a hive-set reporter-trust `decision-needed` (newest event for it labeled by the App bot with the notice at or after it — a person's `hold` is left alone), the stage-label pass releases `decision-needed` (and `needs-human` when the notice says the gate added it), posts one `<!-- hive:reporter-trust-release -->` comment and logs `stage labels: releasing self-imposed reporter-trust hold`.
 
 The pass also records the hold's provenance (`by`, `source`, `reason`, `since`) on the stage store, so the tracker pill reads *Held by hive · reporter trust (issue #N by @X, contributor)* and the stage entry comment names who set the hold and why (a hold is a gate on the PR's real stage, not a stage of its own — [#17327](https://github.com/hivecommons/hive/issues/17327)). Holdguard re-holds on a new head SHA.
 
 **Configuration and implementation.** `github.reporter_trust_hold` (nil follows `reporter_trust.enabled`), per-repo `project.repo_policies[].reporter_trust_hold`, `HIVE_REPORTER_TRUST_HOLD` (`src/pkg/github/pr_reporter_trust.go`, `src/pkg/github/pr_level_hold.go`, `src/pkg/github/automerge/reporter_trust_release.go`)
 
-#### `hold` from holdguard
+#### `decision-needed` from holdguard
 
 **Applies to:** PRs. **Kind:** Hard merge gate.
 
-If the head SHA changes while held, lifting the hold causes Hive to comment and re-apply literal `hold`; the next human removal is the fresh approval. Exception (#13603): when a human (not a Hive account, not a bot) removed the gate label after the current head arrived on the branch, they reviewed the current head, so the lift clears without a comment or re-hold. The head is accepted only on evidence a contributor cannot forge: the server-stamped `head_ref_force_pushed` timeline event that produced it (dated before the lift), or the hive itself having observed that exact head on the PR while the gate was still on (`observed_held_head_sha` in the holdguard ledger).
+If the head SHA changes while held, lifting the hold causes Hive to comment and re-apply `decision-needed` (literal `hold` before #18468); the next human removal is the fresh approval. Exception (#13603): when a human (not a Hive account, not a bot) removed the gate label after the current head arrived on the branch, they reviewed the current head, so the lift clears without a comment or re-hold. The head is accepted only on evidence a contributor cannot forge: the server-stamped `head_ref_force_pushed` timeline event that produced it (dated before the lift), or the hive itself having observed that exact head on the PR while the gate was still on (`observed_held_head_sha` in the holdguard ledger).
 
 Commit committer dates and SHA-keyed `check_suite` / `status` times are never used; a push after the lift, or a head the hive never saw while held, still re-holds.
 
@@ -166,15 +183,15 @@ Commit committer dates and SHA-keyed `check_suite` / `status` times are never us
 
 **Checked by:** Holdguard ledger. **When:** Governor holdguard pass.
 
-**Release or override.** Human removes the re-applied hold
+**Release or override.** Human removes the re-applied `decision-needed`
 
 **Configuration and implementation.** Built-in `holdguard.ReHoldLabel` (`src/pkg/holdguard/holdguard.go:1-43`)
 
-#### `hold` from SHA-hold
+#### `hold` from SHA-hold (before #18468)
 
 **Applies to:** Issues. **Kind:** Hard issue hold.
 
-Human-filed primary-repo `kind/bug` without a 7-40 hex SHA gets `hold` and a notice carrying `<!-- hive:sha-hold -->`; once a SHA appears in body/comments, Hive removes `hold` only if the current hold is its own (newest `hold` event labeled by the App bot, paired with an App-authored notice at or after it). A human's hold, a re-hold, or another subsystem's hold stays. Reporters whose author association is trusted (`issue_filter.reporter_trust.trusted_associations`, default OWNER/MEMBER/COLLABORATOR) get the soft `needs-sha` row below instead, and a SHA-hold `hold` already on such an issue is swapped for it (#12002).
+Since [#18468](https://github.com/hivecommons/hive/issues/18468) the sweep gives every reporter the `needs-sha` label below and never applies `hold`; an untrusted reporter's issue stays out of automatic work through the reporter-trust gate. Before that, human-filed primary-repo `kind/bug` without a 7-40 hex SHA got `hold` and a notice carrying `<!-- hive:sha-hold -->`; once a SHA appears in body/comments, Hive removes `hold` only if the current hold is its own (newest `hold` event labeled by the App bot, paired with an App-authored notice at or after it). A human's hold, a re-hold, or another subsystem's hold stays. Reporters whose author association is trusted (`issue_filter.reporter_trust.trusted_associations`, default OWNER/MEMBER/COLLABORATOR) get the soft `needs-sha` row below instead, and a SHA-hold `hold` already on such an issue is swapped for it (#12002).
 
 The hard-suppress reconcile also lifts this `hold` once a PR referencing the issue merges after it was applied.
 
@@ -198,7 +215,7 @@ Trusted-reporter `kind/bug` without a SHA gets this soft label plus the same `<!
 
 **Release or override.** Add SHA evidence, or remove the label
 
-**Configuration and implementation.** `issues.sha_hold_trusted_label` (default `needs-sha`; `hold` restores the hard hold for everyone)
+**Configuration and implementation.** `issues.sha_hold_trusted_label` (default `needs-sha`; `hold` is treated as unset, since the sweep never applies `hold`)
 
 ### Issue admission and triage
 

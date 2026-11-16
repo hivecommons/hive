@@ -1,1 +1,0 @@
-- Meetings: hive ships Quorum v0.2.1, which sends Vexa the full join link (`meeting_url`) for Zoom meetings, so sending hive to a Zoom link no longer fails with "unsupported platform 'zoom' without a meeting_url".
