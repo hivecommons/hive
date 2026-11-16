@@ -122,8 +122,8 @@ func TestResumeIntentsRunsShareForFinishedTranscript(t *testing.T) {
 	if err := e.store.Put(rec); err != nil {
 		t.Fatal(err)
 	}
+	// No Wait: the queued transcription job above never runs in this test.
 	e.svc.ResumeIntents(context.Background())
-	e.svc.Wait()
 	if dest.count() != 1 {
 		t.Fatalf("resume did not run the share (delivered %d)", dest.count())
 	}
