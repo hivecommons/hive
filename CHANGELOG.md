@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.282.0)
+
+### Added
+
+- Workflow models: a bound model's `/hive <verb>` replies now follow the item's current model state, so they work on PRs and on issues that are not parked, not only on parked issues. Off the parked path a reply applies only the label the model maps to it and is answered in one comment; no park label is touched, and unbound repositories and `hive-default` behave as before (#18357).
+
 ## 2026-11-16 (v5.281.0)
 
 ### Added
