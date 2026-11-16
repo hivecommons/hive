@@ -15,6 +15,7 @@
     .inbox-more { padding: 0; font-size: var(--fs-xs); }
     .inbox-pending { margin-top: var(--sp-2); font-style: italic; }
     .inbox-media:not(:empty) { margin-top: var(--sp-2); }
+    .inbox-email-image { display: block; max-width: min(100%, 320px); max-height: 240px; margin-top: var(--sp-2); border-radius: var(--radius-sm, 4px); }
     .inbox-audio { width: 100%; max-width: 520px; display: block; }
     .inbox-transcript { margin-top: var(--sp-2); }
     .inbox-transcript-text { white-space: pre-wrap; font-family: inherit; font-size: var(--fs-sm); max-height: 24em; overflow: auto; margin: var(--sp-1) 0 0; padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
