@@ -197,8 +197,8 @@ shapes it has, and the Inbox shows it as a status pill (not a button):
   rewrites the fact with the source's text and `attr_<x>_content: ready`,
   replacing any machine transcript.
 
-An item listed straight from a connected source before its first sync shows
-*Not in knowledge yet*.
+An item listed straight from a connected source before its first sync has
+no fact yet, so it shows no pill and no link.
 
 ## Meeting recordings (Zoom, Teams)
 

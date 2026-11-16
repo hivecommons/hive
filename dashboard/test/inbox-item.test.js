@@ -71,6 +71,21 @@ test('pending item explains that Plaud has no text yet and never shows the MCP e
   assert.doesNotMatch(html, /<audio/, 'no audio element (and no URL) before the owner clicks play');
 });
 
+test('the Knowledge fact is a status pill and a metadata link, never a row button', () => {
+  const ctx = makeContext('owner');
+  const html = vm.runInContext('inboxItemHtml(' + JSON.stringify(Object.assign({}, pendingItem, { fact_state: 'pending' })) + ')', ctx);
+  assert.doesNotMatch(html, /📚 Fact/);
+  assert.doesNotMatch(html, /<button[^>]*data-action="inboxOpenFact"/, 'no Fact button');
+  assert.match(html, /<div class="muted-xs">[^]*<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="plaud-plaud-f_1" data-arg1="personal"[^>]*>open in Knowledge<\/a><\/div>/);
+  assert.match(html, /<span class="kc-pill" role="status" data-status="not loaded" data-fact-state="pending"[^>]*>Pending text<\/span>/);
+  const machine = vm.runInContext('inboxItemHtml(' + JSON.stringify(Object.assign({}, pendingItem, { pending: false, fact_state: 'machine' })) + ')', ctx);
+  assert.match(machine, /data-fact-state="machine"[^>]*>In knowledge \(machine text\)<\/span>/);
+  const ready = vm.runInContext('inboxItemHtml(' + JSON.stringify(Object.assign({}, readyItem, { fact_slug: 'plaud-plaud-f_2', fact_state: 'ready' })) + ')', ctx);
+  assert.match(ready, /data-fact-state="ready"[^>]*>In knowledge<\/span>/);
+  const live = vm.runInContext('inboxItemHtml(' + JSON.stringify(readyItem) + ')', ctx);
+  assert.doesNotMatch(live, /inbox-fact-link|data-fact-state/, 'no fact yet: no pill, no link');
+});
+
 test('summary renders inline and collapses past the threshold with a more toggle', () => {
   const ctx = makeContext('owner');
   let html = vm.runInContext('inboxItemHtml(' + JSON.stringify(readyItem) + ')', ctx);
