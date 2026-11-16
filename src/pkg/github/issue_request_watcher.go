@@ -711,6 +711,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 			if err == nil && !created {
 				c.noteCommentSuppressed()
 			}
+		} else if handled, scanErr := c.relayScannerNote(ctx, req, body, &resp); handled || scanErr != nil {
+			// A scanner CI-triage or rebase note on a PR is the one
+			// scanner note per PR, silent when nothing changed
+			// (hivecommons/hive#18451).
+			err = scanErr
 		} else if note, ok := OriginFooterNote(body); ok && req.BlockedOnPR == 0 {
 			// Free text whose only marker is the identity footer is an
 			// agent note: one upserted comment per item, or a status
