@@ -3512,6 +3512,9 @@ func (b *boot) bootSupervision() {
 		contributorClaimOverrideLookup(contributorClaimGuard.Load, claimsInflightLookup(b.issueClaims, b.cfg.Project.Org)),
 		verifyOnceLookup(b.ctx, b.cfg.Project.Org, b.issueClaims, func() *github.Client { return b.ghClient }, b.logger),
 		claimEscalationLookup(b.ctx, b.cfg, b.issueClaims, func() *github.Client { return b.ghClient }, b.logger)))
+	// #18488: a live claim on a non-App PR (or its linked issue) keeps the
+	// repair queues from sending an agent to push onto that branch.
+	b.sched.SetPRLeaseLookup(claimsPRLeaseLookup(b.issueClaims, b.cfg.Project.Org))
 	// Dashboard maintainer notes on a listed item ride its kick as private
 	// context (pkg/scheduler/kick_maintainer_notes.go).
 	b.sched.SetMaintainerNotesLookup(maintainernotes.Default().List)
@@ -4947,7 +4950,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// Report the fingerprint of every ADDITIONAL per-app-id key already
 				// on the PVC, so the hub delivers the fleet's other App keys once
 				// and then stops re-sending them.
-				GitHubAppKeysHeld: spoke.TimedSection("app_keys_held", appKeys.HeldFingerprints),
+				GitHubAppKeysHeld: spoke.TimedSection("app_keys_held", func() map[string]string { return appKeys.HeldFingerprintsWithin(2 * time.Second) }),
 				// Component reach counters (#3993, phase 2a of #3973): per
 				// (component, running commit) span counts aggregated in-process,
 				// exporter or not (D2) — the heartbeat is the only channel that

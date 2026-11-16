@@ -714,6 +714,7 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 	shown := fairShareByRepo(prs, limit, func(pr github.PullRequest) string { return pr.Repo })
 	verdicts := s.loadReviewVerdicts()
 	links := loadReviewLinks()
+	busyCheck := s.busyBranchChecker(s.cfg.BaseAgentName(agentName))
 	for _, pr := range shown {
 		// The PR title and author login are untrusted external text about to be
 		// injected into an agent kick (F11). PR titles in particular drive
@@ -733,7 +734,7 @@ func (s *Scheduler) formatPRListWithPolicyForAgent(actionable *github.Actionable
 		if skip {
 			continue
 		}
-		annotationText = prKickAnnotation(pr, agentName) + reviewedAnnotation(verdicts, links, pr, s.cfg.Project.Org) + annotationText
+		annotationText = prKickAnnotation(pr, agentName) + reviewedAnnotation(verdicts, links, pr, s.cfg.Project.Org) + annotationText + busyBranchAnnotation(pr, s.cfg.BaseAgentName(agentName), busyCheck)
 		annotation, annotationVerdict := s.enforceTextFrom(annotationText, src)
 		failClosed = failClosed || (s.ioscanFailClosed() && annotationVerdict.HasCriticalInjection())
 		b.WriteString(fmt.Sprintf("  %s#%d by @%s%s %s %s\n", pr.Repo, pr.Number, author, forkAnnotation(pr), annotation, title))

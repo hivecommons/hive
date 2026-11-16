@@ -1,1 +1,0 @@
-- Gateway spend is priced from the gateway: OpenRouter's catalog prices, LiteLLM `/model/info`, or a new per-gateway `prices:` block (input, cached input, output per 1M tokens). Cached prompt tokens are billed at the cache-read rate. Gateway models with no price show as "price unknown" instead of $0 or a tier guess, and the usage gauge gets a spend row per gateway.

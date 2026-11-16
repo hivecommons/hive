@@ -2,8 +2,13 @@ package scheduler
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/hivecommons/hive/crux/agentsmd"
@@ -86,7 +91,10 @@ func sameRepo(sourceRepo, org, repo string) bool {
 // primeAgentsMd reads the repository's AGENTS.md (the cross-tool convention for
 // per-repo agent instructions) plus its requested skills and returns text to
 // prepend to the kick. It is tolerant: a missing or malformed file yields "".
-func (s *Scheduler) primeAgentsMd(repoRoot string) string {
+// repo names the repository the root belongs to; it selects the per-repo cap
+// (repos.<repo>.agents_md_max_bytes) and keys the recorded injection status
+// the dashboard reads (#18495). It may be "" (no per-repo cap, no status).
+func (s *Scheduler) primeAgentsMd(repo, repoRoot string) string {
 	if repoRoot == "" {
 		return ""
 	}
@@ -96,7 +104,7 @@ func (s *Scheduler) primeAgentsMd(repoRoot string) string {
 		s.logger.Warn("agentsmd: parse failed, skipping injection", "root", repoRoot, "error", err)
 		return ""
 	}
-	capBytes := s.agentsMdMaxBytes()
+	capBytes := s.agentsMdMaxBytes(repo)
 	section, omitted := cfg.Render(nil, capBytes)
 	if section == "" {
 		// The silent half of kubestellar/hive#5227: a wired root holding no
@@ -110,16 +118,26 @@ func (s *Scheduler) primeAgentsMd(repoRoot string) string {
 		"requested_skills", len(cfg.RequestedSkills),
 		"chars", len(section),
 	)
-	if omitted.Any() {
+	// capBytes 0 is the config "use default" sentinel; log and report the cap
+	// that applied so the operator can act on it (#17318).
+	effectiveCap := agentsmd.EffectiveMaxBytes(capBytes)
+	source, _ := os.ReadFile(filepath.Join(repoRoot, agentsmd.AgentsFileName))
+	if qualified := s.agentsMdStatusRepo(repo); qualified != "" {
+		agentsmd.RecordStatus(qualified, agentsmd.InjectionStatus{
+			SourceBytes:     len(source),
+			RenderedBytes:   len(section),
+			CapBytes:        effectiveCap,
+			Truncated:       omitted.Any(),
+			WholeFile:       omitted.WholeFile,
+			OmittedSections: omitted.Sections,
+			OmittedBytes:    omitted.Bytes,
+		})
+	}
+	if omitted.Any() && s.agentsMdWarnOnce(repoRoot, effectiveCap, source) {
 		// The kick carries its own warning line; this is the operator-side
 		// half, so the repo owner learns the file outgrew the cap from the log
-		// rather than from an agent that missed a rule (#12129).
-		// capBytes 0 is the config "use default" sentinel; log the cap that
-		// applied so the operator can act on it (#17318).
-		effectiveCap := capBytes
-		if effectiveCap <= 0 {
-			effectiveCap = agentsmd.DefaultMaxInjectionBytes
-		}
+		// rather than from an agent that missed a rule (#12129). It is said
+		// once per file content and cap, not on every kick (#18495).
 		s.logger.Warn("agentsmd: AGENTS.md exceeded the injection cap; sections dropped whole",
 			"root", repoRoot, "cap_bytes", effectiveCap, "whole_file", omitted.WholeFile,
 			"omitted_sections", omitted.Sections, "omitted_bytes", omitted.Bytes)
@@ -127,13 +145,38 @@ func (s *Scheduler) primeAgentsMd(repoRoot string) string {
 	return section
 }
 
-// agentsMdMaxBytes is project.agents_md_max_bytes, or zero for the agentsmd
-// default when no config is loaded.
-func (s *Scheduler) agentsMdMaxBytes() int {
+// agentsMdWarnOnce reports whether the truncation warning for root should be
+// logged: true the first time a given file content and cap is seen, false on
+// every later kick until either changes.
+func (s *Scheduler) agentsMdWarnOnce(root string, capBytes int, source []byte) bool {
+	sum := sha256.Sum256(source)
+	fingerprint := hex.EncodeToString(sum[:]) + "|" + strconv.Itoa(capBytes)
+	prev, loaded := s.agentsMdWarned.Swap(root, fingerprint)
+	return !loaded || prev != fingerprint
+}
+
+// agentsMdStatusRepo is the "owner/repo" key an injection status is recorded
+// under, or "" when repo is blank.
+func (s *Scheduler) agentsMdStatusRepo(repo string) string {
+	repo = strings.TrimSpace(repo)
+	if repo == "" {
+		return ""
+	}
+	org := ""
+	if s.cfg != nil {
+		org = s.cfg.Project.Org
+	}
+	return config.QualifyRepo(org, repo)
+}
+
+// agentsMdMaxBytes is the configured AGENTS.md cap for repo
+// (repos.<repo>.agents_md_max_bytes, else project.agents_md_max_bytes), or
+// zero for the agentsmd default when neither is set or no config is loaded.
+func (s *Scheduler) agentsMdMaxBytes(repo string) int {
 	if s.cfg == nil {
 		return 0
 	}
-	return s.cfg.Project.AgentsMdMaxBytes
+	return s.cfg.AgentsMdMaxBytesFor(repo)
 }
 
 // skillsRegistryDir is the host-local directory the skill registry is loaded
