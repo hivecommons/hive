@@ -703,6 +703,7 @@
         bodyHtml += records.map(rec => {
           const label = rec.skipped ? ('skipped: ' + rec.skipped) : (rec.severity || 'aside');
           const badges = [];
+          if (rec.model) badges.push(rec.reasoning_effort ? rec.model + ' · ' + rec.reasoning_effort + ' effort' : rec.model);
           if (rec.interjected) badges.push('interjected');
           if (rec.downgraded) badges.push('downgraded');
           const tokens = (rec.input_tokens || 0) + (rec.output_tokens || 0);
