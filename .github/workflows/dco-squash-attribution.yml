@@ -39,7 +39,7 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          fetch-depth: 1
           # The merge commit GitHub synthesises for a PR is not what gets
           # squashed; the PR's own commits are. Check those.
           ref: ${{ github.event.pull_request.head.sha }}
@@ -47,16 +47,16 @@ jobs:
       - name: Self-test the attribution checker
         run: bash src/scripts/test-check-squash-signoff-attribution.sh
 
-      - name: Make the default branch resolvable
+      - name: Fetch the history needed for attribution
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          # Commits already on the default branch are excluded from the check
-          # (see the script). Without this ref a sync PR re-flags every commit
-          # it carries forward, so fetch it explicitly rather than relying on
-          # checkout having populated remote-tracking refs.
-          git fetch --no-tags origin \
+          # Fetch only the histories the checker needs, not every branch and tag.
+          # A full checkout can time out before the attribution check starts.
+          git fetch --no-tags --unshallow origin "$HEAD_SHA" "$BASE_SHA" \
             "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
           git rev-parse --verify "refs/remotes/origin/${DEFAULT_BRANCH}^{commit}" >/dev/null
 
