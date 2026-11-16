@@ -34,6 +34,27 @@ you. Good practice:
   notice;
 - do not record people who have not been told.
 
+## Transcription
+
+When you stop, the hive transcribes the recording automatically with its
+[transcription provider](inbox-transcription.md) (`provider: auto` picks the
+built-in whisper first, so the audio stays on the hive), with the same
+progress bar and time-left estimate as any other Inbox transcription. The
+transcriber reads the file from the hive's own disk; nothing is fetched over
+HTTP. The transcript is written into the recording's Knowledge fact.
+
+- Recording does **not** replace the hive-wide transcription consent: nothing
+  is transcribed until an owner enables `inbox.transcription` with
+  `consent_acknowledged: true`. Once that is done, every dashboard recording
+  counts as opted in, whatever `inbox.transcription.mode` says.
+- While transcription is off you can still record; the consent notice says
+  the recording will not be transcribed yet, and the item shows why. The
+  transcription sweep (every 10 minutes and after connector syncs) picks up
+  such recordings once transcription is enabled, as long as their audio has
+  not expired.
+- Transcription limits (`max_bytes`, `max_duration_minutes`, daily and
+  monthly budgets) apply as for every other source.
+
 ## Retention
 
 | What | Kept |

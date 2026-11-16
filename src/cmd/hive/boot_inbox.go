@@ -273,11 +273,20 @@ func (b *boot) startInboxRecordingSweep(svc *inbox.Service) {
 		if b.dashSrv != nil {
 			b.dashSrv.AuditLog(a.Actor, a.Action, a.Detail(), "")
 		}
+	}, TranscribeAudit: func(a inbox.TranscribeAudit) {
+		if b.dashSrv != nil {
+			b.dashSrv.AuditLog(a.Actor, "inbox_transcribe", a.Detail(), "")
+		}
 	}}
 	sweep := func() {
 		if _, err := svc.RecordingSweep(opts); err != nil {
 			b.logger.Warn("inbox recording sweep", "error", err)
 		}
+		// Recordings finished while transcription was off are transcribed
+		// once it is enabled with consent.
+		tctx, cancel := context.WithTimeout(ctx, inboxSweepTimeout)
+		b.inboxTranscribeSweep(tctx, svc)
+		cancel()
 	}
 	go func() {
 		sweep()
