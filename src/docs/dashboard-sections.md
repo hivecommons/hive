@@ -202,7 +202,7 @@ Right after Inbox in the left menu. Each row shows the title, organizer, start a
 
 Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.
 
-Owner only. Approve research past the per-meeting cap and answer Discord join requests here; settings are under Settings, Meetings. Full entry: [Meetings](meetings.md).
+Owner only. Approve research past the per-meeting cap and answer Discord join requests here; settings are under Settings, Meetings, and the persona under Settings, Meeting attendee. Full entry: [Meetings](meetings.md).
 
 ## Contributors
 

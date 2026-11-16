@@ -57,6 +57,34 @@ With `meetings.persona.searxng_url` set (`HIVE_MEETINGS_PERSONA_SEARXNG_URL`), w
 
 On hive-oke, SearXNG runs in the `meetings` namespace as a ClusterIP Service: set `searxng_url` to `http://searxng.meetings.svc.cluster.local:8080`. Its manifests (JSON output on, a small engine set, the limiter off for internal use, the secret key in a Secret) live in hivecommons/quorum `deploy/hive-oke/`. Any SearXNG with `json` in `search.formats` works.
 
+### Meeting attendee settings
+
+Settings, **Meeting attendee** edits all of this from the dashboard ([#18396](https://github.com/hivecommons/hive/issues/18396)). The owner and read-write users can open it; it saves `meetings.persona` (and `meetings.voice_on_address`) to `hive.yaml`. The persona is read when hive starts, so a saved change shows "restart the hive to apply" until the next restart. A field set by an `HIVE_MEETINGS_PERSONA_*` variable is marked **env**, and edits to it have no effect while the variable is set; a field that differs from the preset is marked **custom**.
+
+- **Persona.** Preset cards show each persona's flag, language, accent, voice type and voice id. Picking one fills the form; Save stores it. A value equal to the preset's is stored as no override, so the persona keeps following the preset. The voice list shows the Kokoro voices for the chosen language, and changing the language picks a voice of the same type. The intro has a live preview. **Play sample** speaks a short line in the persona's language through the meetings TTS service; until that service is configured (`meetings.tts_url` and its token, phase B) the button is disabled and the API answers "TTS not configured".
+- **Behaviour.** The unprompted caps above (`per_10m`, `min_gap_s`, `per_meeting`, `answer_wait_s`, `min_confidence`, `queue_depth`, `stale_s`; 0 restores a default) and whether hive may speak aloud when addressed (`meetings.voice_on_address`).
+- **Email.** The attendee address, `hive@<dashboard host>`, with a copy button, the people with access to this hive (owner, read-write and read) with their registered calendar emails and proof status, the invites and files waiting for approval, and switches for calendar invites and mailed-in files. Until email-in is enabled ([#18395](https://github.com/hivecommons/hive/issues/18395)) the section is shown with its controls disabled.
+
+The presets use only voices the self-hosted Kokoro TTS ([Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) v0.10.0) ships. Leave phrases stay in Latin script because the leave matcher uses ASCII word boundaries, and every preset keeps "hive" as an alias and "hive leave" as a leave phrase.
+
+| Preset | Language | Accent | Voice | Voice type |
+|---|---|---|---|---|
+| `betty`: Betty Bee from the hive (default) | `en-US` | American | `af_heart` | female |
+| `barnaby`: Barnaby Bee from the hive | `en-US` | American | `am_michael` | male |
+| `beatrice`: Beatrice Bee from the hive | `en-GB` | British | `bf_emma` | female |
+| `bertie`: Bertie Bee from the hive | `en-GB` | British | `bm_george` | male |
+| `melisa`: Melisa, la abeja de la colmena | `es-ES` | Spanish (Spain) | `ef_dora` | female |
+| `melie`: Mélie, l'abeille de la ruche | `fr-FR` | French | `ff_siwis` | female |
+| `melina`: Melina, l'ape dell'alveare | `it-IT` | Italian | `if_sara` | female |
+| `bia`: Bia, a abelha da colmeia | `pt-BR` | Brazilian | `pf_dora` | female |
+| `madhu`: मधु, छत्ते की मधुमक्खी | `hi-IN` | Indian | `hf_alpha` | female |
+| `mitsu`: ミツバチのミツ | `ja-JP` | Standard Japanese | `jf_alpha` | female |
+| `mimi`: 蜂巢的小蜜蜂蜜蜜 | `zh-CN` | Standard Mandarin | `zf_xiaobei` | female |
+
+A bot-style voice is listed as coming later: Kokoro has no bot-style voice, and one would need a new service.
+
+The API is `/api/meetings/persona` ([API reference](api-reference/knowledge.md)).
+
 ## The model Spek reasons with
 
 Hive owns the model credential and the budget; Spektacular never receives an OpenAI-compatible key.
