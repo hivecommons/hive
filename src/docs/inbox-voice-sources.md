@@ -1,6 +1,6 @@
 # Inbox and voice sources
 
-The **Inbox** (sidebar → Intelligence → 📥 Inbox) is where recordings and
+The **Inbox** (sidebar → Collaborate → 📥 Inbox) is where recordings and
 dictations from voice sources land so you can turn them into work without
 leaving the dashboard. It is source-agnostic: Plaud is the first source,
 Wispr Flow (`type: wisprflow`) plugs in with the same model, Zoom and

@@ -493,7 +493,8 @@ Sidebar groups now map the existing destinations without changing IDs, `data-act
 | Overview | Governor |
 | Agents | Dynamic agent tree, `+ agent`, `+ group` |
 | Resources | Repos, Contributors |
-| Intelligence | Advisory, ACMM Eval, Inception, Knowledge, Experiment Lab |
+| Collaborate | Inbox, Calendar, Meetings, Inception (spek) |
+| Intelligence | Advisory, ACMM Eval, Knowledge, Experiment Lab |
 | Admin | Tokens, Cost, Audit Log |
 | Help | FAQ, Getting Started, API Spec (Redoc), Getting Started Guide, Report an Issue |
 
