@@ -14,7 +14,7 @@
     let _inboxBusyTimer = null;
     // Per-item view state: expanded summaries, open transcript disclosures
     // and fetched content (summary/transcript/highlights). Audio links are
-    // never kept here: a minted link lives only in the <audio> element.
+    // never kept here: the player streams from the hive's own origin.
     let _inboxExpanded = new Set();
     let _inboxTranscriptOpen = new Set();
     let _inboxContent = {};
@@ -297,7 +297,7 @@
       const owner = viewerIsOwner();
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
       let actions = '';
-      if (inboxViewerCanPlay()) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Fetch a fresh 24h audio link and play it here">▶ Play recording</button>';
+      if (inboxViewerCanPlay()) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + ' Transcript</button>';
       if (owner) {
         const retry = (d) => routes[d] && routes[d].status === 'failed' ? 'Retry ' : '→ ';
@@ -306,6 +306,7 @@
         if (!it.dismissed) actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxDismiss" data-arg0="' + src + '" data-arg1="' + id + '" title="Keep it as a Knowledge fact; no RFC, no dibs idea">Knowledge only</button>';
         else actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxUndismiss" data-arg0="' + src + '" data-arg1="' + id + '">Back to inbox</button>';
       }
+      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg0="' + src + '" data-arg1="' + id + '" title="Share a link to this item in the Inbox (not the recording)">🔗 Share</button>';
       if (it.fact_slug) actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenFact" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="This item is already a Knowledge fact">📚 Fact</button>';
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
         (owner ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
@@ -347,36 +348,89 @@
       if (!cached || cached.error) inboxLoadContent(src, id);
     }
 
-    // ▶ Play recording: mint a fresh presigned link through the hive and play
-    // it inline. The link is only ever placed on the <audio> element; the
-    // hive stores nothing and the next click mints a new one.
-    async function inboxPlay(src, id) {
-      const key = src + '/' + id;
-      const mount = document.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
-      if (mount) mount.innerHTML = '<div class="muted-xs">Fetching audio link…</div>';
+    // ▶ Play recording: the player streams from the hive's own origin
+    // (GET …/audio/stream). The hive mints the presigned link and proxies
+    // the bytes, passing Range through for seeking, so the browser never
+    // loads cloud storage directly: the CSP (default-src 'self', no
+    // media-src) refused that with "Media load rejected by URL safety check",
+    // and the presigned link stays off the page.
+    function inboxStreamURL(src, id) { return inboxApiPath(src, id, 'audio/stream'); }
+    // inboxAudioErrorReason explains a failed <audio>: the hive's JSON error
+    // when the stream answered one, else what the browser could not decode.
+    async function inboxAudioErrorReason(src, id, audio) {
       try {
-        const r = await fetch(inboxApiPath(src, id, 'audio'), { cache: 'no-store' });
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
-        if (!data.url) throw new Error('no audio link returned');
-        const target = document.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
-        if (!target) return;
-        target.innerHTML = '';
-        const audio = document.createElement('audio');
-        audio.controls = true;
-        audio.autoplay = true;
-        audio.preload = 'auto';
-        audio.className = 'inbox-audio';
-        audio.src = data.url;
-        target.appendChild(audio);
-        const note = document.createElement('div');
-        note.className = 'muted-xs';
-        note.textContent = 'Fresh link' + (data.expires_at ? ', valid until ' + formatDashboardDateTime(data.expires_at) : '') + '. Click ▶ Play recording again for a new one.';
-        target.appendChild(note);
-      } catch (e) {
-        if (mount) mount.innerHTML = '';
-        showToast('Audio unavailable: ' + e.message, 'error');
+        const r = await fetch(inboxStreamURL(src, id), { cache: 'no-store', headers: { Range: 'bytes=0-0' } });
+        if (!r.ok) {
+          const data = await r.json().catch(() => ({}));
+          return data.error || ('HTTP ' + r.status);
+        }
+        const type = (r.headers.get('content-type') || '').split(';')[0].trim();
+        if (r.body && r.body.cancel) r.body.cancel().catch(() => {});
+        if (type && audio && audio.canPlayType && !audio.canPlayType(type)) return 'this browser cannot play ' + type + ' recordings (Safari cannot play some Ogg Opus files); try another browser';
+      } catch (e) { return e.message; }
+      return 'the browser could not play this recording';
+    }
+    function inboxPlay(src, id) {
+      const key = src + '/' + id;
+      const target = document.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
+      if (!target) return;
+      target.innerHTML = '';
+      const audio = document.createElement('audio');
+      audio.controls = true;
+      audio.autoplay = true;
+      audio.preload = 'auto';
+      audio.className = 'inbox-audio';
+      audio.addEventListener('error', async () => {
+        const reason = await inboxAudioErrorReason(src, id, audio);
+        showToast('Audio unavailable: ' + reason, 'error');
+      });
+      audio.src = inboxStreamURL(src, id);
+      target.appendChild(audio);
+      const note = document.createElement('div');
+      note.className = 'muted-xs';
+      note.textContent = 'Streaming through this hive; the recording is not stored. Click ▶ Play recording again to restart.';
+      target.appendChild(note);
+    }
+
+    // 🔗 Share: a deep link to this item in the Inbox (dashboard URL plus
+    // #section-inbox-section?item=<source/id>), never the media URL. The
+    // recipient still signs in to this hive and needs owner or read-write
+    // access to play the recording.
+    const INBOX_SHARE_HASH = '#section-inbox-section?item=';
+    function inboxShareLink(src, id) {
+      return location.origin + location.pathname + location.search + INBOX_SHARE_HASH + encodeURIComponent(src + '/' + id);
+    }
+    // inboxFocusKeyFromHash returns the source/id an Inbox deep link names.
+    function inboxFocusKeyFromHash(hash) {
+      const h = String(hash || '');
+      const at = h.indexOf(INBOX_SHARE_HASH);
+      if (at < 0) return '';
+      try { return decodeURIComponent(h.slice(at + INBOX_SHARE_HASH.length).split('&')[0]); } catch (e) { return ''; }
+    }
+    async function inboxShare(src, id) {
+      const it = inboxFind(src, id);
+      const url = inboxShareLink(src, id);
+      const title = (it && it.title) || 'Inbox item';
+      if (navigator.share) {
+        try { await navigator.share({ title: title, url: url }); return; }
+        catch (e) { if (e && e.name === 'AbortError') return; }
       }
+      if (await writeClipboardText(url)) showToast('Inbox link copied', 'success');
+      else showToast('Copy this Inbox link: ' + url, 'info', true);
+    }
+    let _inboxFocusKey = inboxFocusKeyFromHash(location.hash);
+    window.addEventListener('hashchange', (e) => {
+      const key = inboxFocusKeyFromHash(e.newURL || location.hash);
+      if (key) { _inboxFocusKey = key; renderInbox(); }
+    });
+    // inboxApplyFocus scrolls a deep-linked item into view once it renders.
+    function inboxApplyFocus(panel) {
+      if (!_inboxFocusKey || !panel) return;
+      const el = panel.querySelector('[data-inbox-key="' + CSS.escape(_inboxFocusKey) + '"]');
+      if (!el) return;
+      _inboxFocusKey = '';
+      el.classList.add('inbox-item-focus');
+      el.scrollIntoView({ block: 'center' });
     }
 
     // A poll must not stop a recording that is playing: live <audio> elements
@@ -421,6 +475,7 @@
         '</div></div>';
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
       if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
+      if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
       const shown = items.filter(it => _inboxShowProcessed || !it.processed);
       if (owner && shown.length) {
         const sel = _inboxSelected.size;
@@ -430,6 +485,7 @@
       if (!shown.length) html += '<div class="muted-note">' + (items.length ? 'Everything is triaged. Toggle “show processed” to see filed and dismissed items.' : 'Nothing yet. Connect Plaud or another voice source under Knowledge → Integrations; new recordings land here after the next sync (a newly added connector starts on the next hive restart).') + '</div>';
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
       inboxPreserveAudio(panel, () => { panel.innerHTML = html; });
+      inboxApplyFocus(panel);
     }
 
     function inboxToggleProcessed() { _inboxShowProcessed = !_inboxShowProcessed; renderInbox(); }

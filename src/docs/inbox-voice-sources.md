@@ -84,12 +84,34 @@ Each Inbox item shows what the source has for the recording:
   transcript block the recording has: `transaction_polish` (AI-cleaned),
   then `transaction` (raw), then `outline`, following `next_cursor` pages.
 - **Duration and recording time** — from the listing.
-- **▶ Play recording** (owner or read-write) — asks the hive for a fresh
-  presigned audio URL (`GET /api/inbox/{source}/{id}/audio`, Plaud:
-  `get_file`, valid 24h) and plays it in an inline HTML5 player. The link is
-  minted per click and never stored in facts or inbox state; the request is
-  audited as `inbox_audio`. The Plaud card's *Include 24h audio link* option
-  only decides whether a sync also writes a link into the fact.
+- **▶ Play recording** (owner or read-write) — plays the recording in an
+  inline HTML5 player that streams from the hive's own origin
+  (`GET /api/inbox/{source}/{id}/audio/stream`). The hive mints a fresh
+  presigned link (Plaud: `get_file`, valid 24h), fetches the audio itself and
+  streams the bytes back, passing a single `Range` through so the player can
+  seek (when storage ignores `Range`, the whole file comes back as 200). The
+  browser never loads the cloud storage directly: the dashboard CSP has no
+  `media-src` for it, so a cross-origin `<audio src>` is refused ("Media load
+  rejected by URL safety check"), and the presigned link would otherwise sit
+  on the page. The link is held in memory only, for the Range requests of one
+  playback (at most 10 minutes, never past its expiry), is never logged or
+  stored in facts or inbox state, and is re-minted once when storage refuses
+  it (expired: 502 with "refused the audio link" when that fails too). One
+  response is capped at 2 GiB (413 over it); replies are
+  `Cache-Control: no-store`; nothing is written to disk. Each minted link is
+  audited as `inbox_audio_stream`. Safari cannot play some Ogg Opus files
+  (Plaud's `.ogg`); the player then says so, use another browser. The hive
+  does not transcode. `GET /api/inbox/{source}/{id}/audio` still returns the
+  presigned link itself (`{url, expires_at}`, audited as `inbox_audio`) for
+  API clients. The Plaud card's *Include 24h audio link* option only decides
+  whether a sync also writes a link into the fact.
+- **🔗 Share** — shares a deep link to the item in the Inbox
+  (`<dashboard URL>#section-inbox-section?item=<source>%2F<id>`), through the
+  browser's share sheet when it has one, else the clipboard. It never shares
+  the media URL: the recipient signs in to this hive and needs owner or
+  read-write access to play. Opening the link opens the Inbox, shows
+  processed items when the item is one, and scrolls to it. The player's own
+  cast/AirPlay control works on the same-origin stream.
 
 A recording that was **never transcribed in the Plaud app** has no summary
 and no transcript: the MCP's inventory (`get_file`) lists no `transaction`

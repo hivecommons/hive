@@ -325,9 +325,10 @@ set yourself is never rewritten, so an explicit `@latest` still floats.
   transcript; pending facts are re-fetched on every sync, 25 at most). The
   body has `## Summary (Plaud)`, `## Transcript` (the best block the
   recording has: `transaction_polish`, `transaction`, `outline`) and
-  `## Highlights` (device-button marks) sections. Audio is never downloaded;
-  with `include_audio: true` the fact also links Plaud's 24-hour presigned
-  URL. The Inbox plays audio through a per-click link regardless (see
+  `## Highlights` (device-button marks) sections. A sync never downloads
+  audio; with `include_audio: true` the fact also links Plaud's 24-hour
+  presigned URL. The Inbox plays audio by streaming it through the hive on
+  demand regardless, nothing is stored (see
   [inbox-voice-sources.md](inbox-voice-sources.md)). Recordings Plaud never
   transcribed can be transcribed on the hive with the owner's own Deepgram
   key ([inbox-transcription.md](inbox-transcription.md)).
