@@ -1,1 +1,0 @@
-- Every hub page (public pages, fleet views, hosted dashboard, contribute landing and error page) now shows the LF Projects legal footer linking to lfprojects.org/policies/.
