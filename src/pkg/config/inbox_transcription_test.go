@@ -70,6 +70,7 @@ func TestValidateInboxTranscriptionRejects(t *testing.T) {
 		"sources":         {Sources: []string{" "}},
 		"consent":         {Enabled: true},
 		"whisper model":   {WhisperModel: "large-v3"},
+		"gemini model":    {GeminiModel: "../files/x"},
 		"whisper threads": {WhisperThreads: -1},
 	}
 	for name, tr := range cases {
@@ -134,5 +135,15 @@ func TestInboxTranscriptionWhisperDefaults(t *testing.T) {
 	}
 	if err := ValidateInboxTranscription(tr); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInboxTranscriptionGeminiModel(t *testing.T) {
+	if got := (InboxTranscription{}).EffectiveGeminiModel(); got != "gemini-3.5-flash" {
+		t.Fatalf("default gemini model = %q", got)
+	}
+	tr := InboxTranscription{GeminiModel: "gemini-3.6-flash"}
+	if tr.EffectiveGeminiModel() != "gemini-3.6-flash" || ValidateInboxTranscription(tr) != nil {
+		t.Fatal("configured gemini model")
 	}
 }

@@ -106,6 +106,9 @@ type InboxTranscription struct {
 	// WhisperThreads is the whisper.cpp thread count; 0 means half the
 	// hive's CPUs (at least one), so agents keep the rest.
 	WhisperThreads int `yaml:"whisper_threads,omitempty" json:"whisper_threads,omitempty"`
+	// GeminiModel is the Gemini model the gemini provider uses; empty means
+	// gemini-3.5-flash.
+	GeminiModel string `yaml:"gemini_model,omitempty" json:"gemini_model,omitempty"`
 	// ConsentAcknowledged records that the owner read the notice: recordings
 	// contain other people's voices, and where the chosen provider sends the
 	// audio (nowhere for whisper; Google or Deepgram otherwise).
@@ -115,6 +118,8 @@ type InboxTranscription struct {
 var (
 	inboxEnvNameRe  = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 	inboxLanguageRe = regexp.MustCompile(`^[A-Za-z]{2,3}(-[A-Za-z0-9]{2,8})*$`)
+	// inboxGeminiModelRe keeps gemini_model a plain id (it lands in a URL path).
+	inboxGeminiModelRe = regexp.MustCompile(`^[a-z0-9][a-z0-9.-]{1,63}$`)
 )
 
 // EffectiveMode returns the mode, defaulting to manual.
@@ -173,6 +178,17 @@ func (t InboxTranscription) EffectiveWhisperThreads(cpus int) int {
 		return t.WhisperThreads
 	}
 	return max(cpus/2, 1)
+}
+
+// DefaultInboxTranscriptionGeminiModel is the gemini provider's model.
+const DefaultInboxTranscriptionGeminiModel = "gemini-3.5-flash"
+
+// EffectiveGeminiModel returns gemini_model, defaulting to gemini-3.5-flash.
+func (t InboxTranscription) EffectiveGeminiModel() string {
+	if m := strings.TrimSpace(t.GeminiModel); m != "" {
+		return m
+	}
+	return DefaultInboxTranscriptionGeminiModel
 }
 
 // EffectiveDiarize returns Diarize, defaulting to true.
@@ -255,6 +271,9 @@ func ValidateInboxTranscription(t InboxTranscription) error {
 	}
 	if m := strings.TrimSpace(t.WhisperModel); m != "" && !slices.Contains(InboxWhisperModels, m) {
 		return fmt.Errorf("inbox.transcription.whisper_model %q: must be one of %s", m, strings.Join(InboxWhisperModels, ", "))
+	}
+	if m := strings.TrimSpace(t.GeminiModel); m != "" && !inboxGeminiModelRe.MatchString(m) {
+		return fmt.Errorf("inbox.transcription.gemini_model %q: must be a Gemini model id such as gemini-3.5-flash", m)
 	}
 	if t.MaxDurationMinutes < 0 || t.MaxBytes < 0 || t.MonthlyBudgetMinutes < 0 || t.DailyMaxItems < 0 || t.WhisperThreads < 0 {
 		return fmt.Errorf("inbox.transcription limits must not be negative")

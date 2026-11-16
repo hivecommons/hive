@@ -49,8 +49,13 @@ func (s *Service) providerStatus(name string, t config.InboxTranscription) Provi
 	case config.InboxTranscriptionProviderWhisper:
 		return s.whisperStatus(t)
 	case config.InboxTranscriptionProviderGemini:
-		return ProviderStatus{Name: name, Status: ProviderNotInstalled, AudioGoesTo: AudioToGoogle,
-			Detail: "Gemini transcription is not part of this hive version"}
+		st := ProviderStatus{Name: name, AudioGoesTo: AudioToGoogle, Model: t.EffectiveGeminiModel()}
+		if _, env := s.geminiKey(); env != "" {
+			st.Available, st.Status, st.Detail = true, ProviderReady, "the hive's Gemini key is present in $"+env
+		} else {
+			st.Status, st.Detail = ProviderNeedsKey, "no Gemini credentials: set GEMINI_API_KEY (or GOOGLE_API_KEY, GOOGLE_GENAI_API_KEY) on this hive"
+		}
+		return st
 	}
 	env := t.EffectiveAPIKeyEnv()
 	st := ProviderStatus{Name: config.InboxTranscriptionProviderDeepgram, AudioGoesTo: AudioToDeepgram, Model: t.EffectiveModel()}
@@ -94,8 +99,11 @@ func TranscriptionEgressHosts(t config.InboxTranscription, provider string) []st
 	if !t.Enabled {
 		return []string{}
 	}
-	if provider == config.InboxTranscriptionProviderDeepgram {
+	switch provider {
+	case config.InboxTranscriptionProviderDeepgram:
 		return []string{transcribe.DeepgramHost}
+	case config.InboxTranscriptionProviderGemini:
+		return []string{transcribe.GeminiHost}
 	}
 	return []string{}
 }
