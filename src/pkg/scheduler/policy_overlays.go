@@ -6,6 +6,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/review"
@@ -205,7 +206,7 @@ func (s *Scheduler) redPRFixSection(agentName string) string {
 	if err != nil {
 		data = nil
 	}
-	return formatRedPRFixDataWithSignals(data, base, github.CIFailureSignals().ForAgent(base))
+	return formatRedPRFixDataGuarded(data, base, github.CIFailureSignals().ForAgent(base), s.busyBranchChecker(base))
 }
 
 // CIFailureKickMessage is the targeted kick a webhook CI-failure signal
@@ -283,30 +284,41 @@ func ciFailureSignalEvidence(sig github.CIFailureSignal) string {
 // own row. A signal whose check the file reports red on the base branch is
 // dropped like any other base-red failure.
 func formatRedPRFixDataWithSignals(data []byte, agent string, signals []github.CIFailureSignal) string {
+	return formatRedPRFixDataGuarded(data, agent, signals, nil)
+}
+
+// formatRedPRFixDataGuarded is formatRedPRFixDataWithSignals with the
+// busy-branch guard (busy_branch.go, hivecommons/hive#18488): a row the guard
+// reports busy is not one of the agent's push targets; it is listed below the
+// gate as "suggest, do not push" and does not hold back new work.
+func formatRedPRFixDataGuarded(data []byte, agent string, signals []github.CIFailureSignal, busy busyBranchCheck) string {
 	type ciFailingRow struct {
-		Number           int      `json:"number"`
-		Repo             string   `json:"repo"`
-		Title            string   `json:"title"`
-		Agent            string   `json:"agent"`
-		FailingChecks    []string `json:"failing_checks"`
-		Excerpt          string   `json:"excerpt"`
-		Escalated        bool     `json:"escalated"`
-		FromFork         bool     `json:"from_fork"`
-		ReachableAction  string   `json:"reachable_action"`
-		Adopted          bool     `json:"adopted"`
-		SentinelAlert    bool     `json:"sentinel_alert"`
-		HeadRepo         string   `json:"head_repo"`
-		Held             bool     `json:"held"`
-		MergeableState   string   `json:"mergeable_state"`
-		Conflict         bool     `json:"conflict"`
-		ReroutedFrom     string   `json:"rerouted_from"`
-		DeferredIncident int      `json:"deferred_incident"`
-		BaseRedChecks    []string `json:"base_red_checks"`
-		BaseRed          bool     `json:"base_red"`
-		RebaseAttempt    int      `json:"rebase_attempt"`
-		RebaseMax        int      `json:"rebase_attempts_max"`
-		BaseRef          string   `json:"base_ref"`
-		TrustedAuthor    bool     `json:"trusted_author"`
+		Number           int        `json:"number"`
+		Repo             string     `json:"repo"`
+		Title            string     `json:"title"`
+		Agent            string     `json:"agent"`
+		FailingChecks    []string   `json:"failing_checks"`
+		Excerpt          string     `json:"excerpt"`
+		Escalated        bool       `json:"escalated"`
+		FromFork         bool       `json:"from_fork"`
+		ReachableAction  string     `json:"reachable_action"`
+		Adopted          bool       `json:"adopted"`
+		SentinelAlert    bool       `json:"sentinel_alert"`
+		HeadRepo         string     `json:"head_repo"`
+		Held             bool       `json:"held"`
+		MergeableState   string     `json:"mergeable_state"`
+		Conflict         bool       `json:"conflict"`
+		ReroutedFrom     string     `json:"rerouted_from"`
+		DeferredIncident int        `json:"deferred_incident"`
+		BaseRedChecks    []string   `json:"base_red_checks"`
+		BaseRed          bool       `json:"base_red"`
+		RebaseAttempt    int        `json:"rebase_attempt"`
+		RebaseMax        int        `json:"rebase_attempts_max"`
+		BaseRef          string     `json:"base_ref"`
+		TrustedAuthor    bool       `json:"trusted_author"`
+		AppAuthored      bool       `json:"app_authored"`
+		HeadPushedAt     *time.Time `json:"head_pushed_at"`
+		Issues           []int      `json:"issues"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -353,6 +365,11 @@ func formatRedPRFixDataWithSignals(data []byte, agent string, signals []github.C
 		}
 	}
 	var mine, deferred, baseRed []ciFailingRow
+	type busyRow struct {
+		row ciFailingRow
+		why string
+	}
+	var busyRows []busyRow
 	forks := 0
 	for _, pr := range payload.Items {
 		if pr.Escalated {
@@ -391,13 +408,31 @@ func formatRedPRFixDataWithSignals(data []byte, agent string, signals []github.C
 			baseRed = append(baseRed, pr)
 			continue
 		}
+		if busy != nil {
+			if why := busy(busyBranchRow{Repo: pr.Repo, Number: pr.Number, Issues: pr.Issues, AppAuthored: pr.AppAuthored, Adopted: pr.Adopted, HeadPushedAt: pr.HeadPushedAt, Own: ownRepairRow(pr.Agent, agent, pr.TrustedAuthor, pr.ReroutedFrom)}); why != "" {
+				busyRows = append(busyRows, busyRow{row: pr, why: why})
+				continue
+			}
+		}
 		mine = append(mine, pr)
 	}
-	if len(mine) == 0 {
+	if len(mine) == 0 && len(busyRows) == 0 {
 		return ""
 	}
 
 	var b strings.Builder
+	// Busy rows go after the gate (or alone): they are not push targets
+	// and must not hold back new work.
+	writeBusy := func() {
+		writeBusyRedPRs(&b, len(busyRows), func(i int) busyRedPR {
+			r := busyRows[i]
+			return busyRedPR{Number: r.row.Number, Repo: r.row.Repo, Title: r.row.Title, FailingChecks: r.row.FailingChecks, Excerpt: r.row.Excerpt, Why: r.why}
+		})
+	}
+	if len(mine) == 0 {
+		writeBusy()
+		return b.String()
+	}
 	b.WriteString(fmt.Sprintf("\n## 🔴 FIX-BEFORE-NEW — your open PRs with failing CI or merge conflicts (%d)\n\n", len(mine)))
 	if forks > 0 {
 		b.WriteString(fmt.Sprintf("(%d red PR(s) from forks are NOT listed here: you cannot push to a fork — they appear under CI_FAILING as comment-only.)\n", forks))
@@ -461,6 +496,7 @@ func formatRedPRFixDataWithSignals(data []byte, agent string, signals []github.C
 		}
 	}
 	b.WriteString("\n")
+	writeBusy()
 	return b.String()
 }
 
