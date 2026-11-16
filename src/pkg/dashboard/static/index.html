@@ -78436,11 +78436,14 @@ function burnAreaChart() {
       let lastErr = null;
       for (let attempt = 0; attempt < HIVE_ROLE_FETCH_ATTEMPTS; attempt++) {
         if (attempt > 0) await new Promise(function(resolve) { setTimeout(resolve, HIVE_ROLE_RETRY_BASE_MS * Math.pow(2, attempt - 1)); });
+        let resp;
         try {
-          const resp = await fetch('/api/role');
+          resp = await fetch('/api/role');
           if (resp.status >= HIVE_ROLE_SERVER_ERROR_STATUS) throw new Error('HTTP ' + resp.status);
-          return await resp.json();
-        } catch (e) { lastErr = e; }
+        } catch (e) { lastErr = e; continue; }
+        // An answer that is not retryable (4xx, an HTML 404 from a static
+        // host) is final: parse it once and let the caller fall back.
+        return await resp.json();
       }
       throw lastErr;
     }
