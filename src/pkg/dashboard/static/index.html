@@ -6149,13 +6149,20 @@
     .inbox-share-more:hover, .inbox-share-more:focus-visible { text-decoration: underline; }
     /* Meetings: hive as a live meeting participant (Quorum) */
     .meetings-panel { display: flex; flex-direction: column; gap: var(--sp-4); }
-    .meetings-join { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto auto; gap: var(--sp-2); align-items: end; }
-    .meetings-join-discord { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-2); }
-    .meetings-join label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
+    .meetings-join { display: flex; flex-direction: column; gap: var(--sp-3); }
+    .meetings-join-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--sp-3); }
+    .meetings-field { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); color: var(--muted); }
+    .meetings-join-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+    .meetings-voice-toggle { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); cursor: pointer; }
     .meetings-list { display: flex; flex-direction: column; gap: var(--sp-2); }
-    .meetings-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
+    .meetings-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--sp-3); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
     .meetings-row.is-open { border-color: var(--accent); }
-    .meetings-row-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meetings-row-main { flex: 1 1 16em; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+    .meetings-row-head { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+    .meetings-row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); font-weight: 600; }
+    .meetings-row-error { font-size: var(--fs-xs); color: var(--red); overflow-wrap: anywhere; }
+    .meetings-row-raw { margin-top: var(--sp-1); font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .meetings-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
     .meetings-live { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--sp-4); }
     .meetings-transcript { max-height: 28em; overflow: auto; font-size: var(--fs-sm); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
     .meetings-line { margin: 0 0 var(--sp-1); white-space: pre-wrap; }
@@ -6170,10 +6177,11 @@
     .meetings-effective { font-size: var(--fs-xs); }
     .meetings-effective td { padding: 0 var(--sp-2) 0 0; vertical-align: top; }
     @media (max-width: 720px) {
-      .meetings-join, .meetings-join-discord, .meetings-live, .meetings-settings-grid { grid-template-columns: 1fr; }
+      .meetings-join-fields, .meetings-live, .meetings-settings-grid { grid-template-columns: 1fr; }
     }
     /* Calendar: scheduled meetings hive joins (#18394) */
-    .calendar-panel { display: flex; flex-direction: column; gap: var(--sp-3); }
+    .calendar-panel { display: flex; flex-direction: column; gap: var(--sp-5); }
+    .calendar-subsection { display: flex; flex-direction: column; gap: var(--sp-2); }
     .calendar-add-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: var(--sp-2); align-items: end; }
     .calendar-add-grid label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
     .calendar-list { display: flex; flex-direction: column; gap: var(--sp-2); }
@@ -10754,6 +10762,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     // keeps the historical all-expanded default forever) or is new ('v1').
     const DASHBOARD_DEFAULT_COLLAPSED_SECTIONS = Object.freeze([
       'pr-throughput-section', 'token-panel', 'cost-panel', 'advisory-section', 'knowledge-section', 'inbox-section',
+      'calendar-section', 'meetings-section',
       'contributors-section', 'sessions-section', 'acmm-eval-section', 'debug-section', 'audit-section',
       'logs-section', 'nous-section', 'faq-section'
     ]);
@@ -12363,7 +12372,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','inbox-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','inbox-section','calendar-section','meetings-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
@@ -50105,7 +50114,20 @@ function burnAreaChart() {
     // Ended meetings are inbox items too (source "meeting").
     if (typeof INBOX_SOURCE_ICONS === 'object' && !INBOX_SOURCE_ICONS.meeting) INBOX_SOURCE_ICONS.meeting = '🎙';
 
+    // Raw errors longer than this collapse behind a "details" toggle.
+    const MEETINGS_ERROR_INLINE_CHARS = 140;
+    const MEETINGS_PLATFORM_LABELS = { google_meet: 'Google Meet', teams: 'Teams', zoom: 'Zoom', discord: 'Discord' };
+    // Meeting state to the kc-pill status palette (green, blue, red, muted).
+    const MEETINGS_PILL_STATUS = { live: 'ok', requested: 'syncing', joining: 'syncing', lobby: 'syncing', failed: 'error', blocked: 'error' };
+
     function meetingsIsOwner() { return window._hiveRole === 'owner'; }
+    // The role is known once /api/role settled (answered, or its retries gave
+    // up). Until then the panel shows a neutral loading state, never the
+    // owner-only notice, and re-renders when gh-auth.js notifies role
+    // listeners (same contract as the Inbox, #18442).
+    function meetingsRoleKnown() { return window._hiveRoleSettled === true || window._hiveRole !== undefined; }
+    function meetingsOnRoleReady() { fetchMeetings(); }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(meetingsOnRoleReady);
     function meetingsLabel(m) {
       if (m.title) return m.title;
       if (m.platform === 'discord') return 'Discord ' + (m.channel_id || '');
@@ -50115,8 +50137,13 @@ function burnAreaChart() {
     async function fetchMeetings() {
       const host = document.getElementById('meetings-panel');
       if (!host) return;
+      if (!meetingsRoleKnown()) {
+        host.innerHTML = '<p class="muted-xs">Loading meetings…</p>';
+        return;
+      }
       if (!meetingsIsOwner()) {
-        host.innerHTML = '<p class="muted-xs">Meetings are visible to the hive owner only.</p>';
+        host.innerHTML = '<p class="empty-dashed">Meetings are visible to the hive owner only.</p>' +
+          (window._hiveRoleFailed && !window._hiveRole ? '<p class="muted-xs">Could not determine your role. It will retry automatically.</p>' : '');
         return;
       }
       try {
@@ -50124,7 +50151,11 @@ function burnAreaChart() {
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { _meetingsList = []; _meetingsError = data.error || ('HTTP ' + r.status); }
         else { _meetingsList = data.meetings || []; _meetingsError = ''; }
-      } catch (e) { return; }
+      } catch (e) {
+        // Keep the last list; say the hive is unreachable instead of leaving "Loading meetings…".
+        if (_meetingsList === null) _meetingsList = [];
+        _meetingsError = 'Meetings are unreachable right now; retrying.';
+      }
       renderMeetings();
     }
     dashboardScheduleWork('meetings', fetchMeetings).catch(console.error);
@@ -50132,14 +50163,48 @@ function burnAreaChart() {
 
     function meetingsJoinFormHtml() {
       return '<div class="meetings-join">' +
-        '<label>Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-meetings-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
-        '<label>Title (optional)<input class="kb-search-box" type="text" data-meetings-field="title" placeholder="Weekly sync" autocomplete="off"></label>' +
-        '<label class="inbox-toggle"><input type="checkbox" data-meetings-field="voice"> Voice</label>' +
+        '<div class="meetings-join-fields">' +
+        '<label class="meetings-field">Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-meetings-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
+        '<label class="meetings-field">Title (optional)<input class="kb-search-box" type="text" data-meetings-field="title" placeholder="Weekly sync" autocomplete="off"></label></div>' +
+        '<details class="meetings-join-more"><summary class="muted-xs">Discord voice channel instead</summary><div class="meetings-join-fields mt-2">' +
+        '<label class="meetings-field">Guild ID<input class="kb-search-box" type="text" data-meetings-field="guild" autocomplete="off"></label>' +
+        '<label class="meetings-field">Voice channel ID<input class="kb-search-box" type="text" data-meetings-field="channel" autocomplete="off"></label></div></details>' +
+        '<div class="meetings-join-actions">' +
+        '<label class="meetings-voice-toggle"><input type="checkbox" data-meetings-field="voice"><span>Voice</span></label>' +
         '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsJoin">Send hive to a meeting</button></div>' +
-        '<details class="mt-2"><summary class="muted-xs">Discord voice channel instead</summary><div class="meetings-join-discord mt-2">' +
-        '<label>Guild ID<input class="kb-search-box" type="text" data-meetings-field="guild" autocomplete="off"></label>' +
-        '<label>Voice channel ID<input class="kb-search-box" type="text" data-meetings-field="channel" autocomplete="off"></label></div></details>' +
-        '<div class="hive-dialog-error" role="alert" data-meetings-field="error"></div>';
+        '<div class="hive-dialog-error" role="alert" data-meetings-field="error"></div></div>';
+    }
+
+    function meetingsFormatTime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      try { return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(d); }
+      catch (e) { return d.toISOString(); }
+    }
+
+    // meetingsFriendlyReason is a plain-language line for a meeting's
+    // state_reason; the raw reason stays available under "details".
+    function meetingsFriendlyReason(m) {
+      const raw = String(m.state_reason || '');
+      if (!raw) return '';
+      if (m.state === 'blocked') return 'The meeting refused a guest bot.';
+      if (/lobby_timeout/.test(raw)) return 'Nobody admitted hive from the lobby in time.';
+      if (/platform_unavailable/.test(raw)) return 'This meeting platform is not available on this hive right now.';
+      if (/invalid_argument/.test(raw)) return 'The meeting service did not accept this meeting link.';
+      if (/upstream_error|Vexa|answered 5\d\d/.test(raw)) return 'The meeting service could not start the bot.';
+      if (m.state === 'failed') return 'Hive could not join this meeting.';
+      return raw.length > MEETINGS_ERROR_INLINE_CHARS ? '' : raw;
+    }
+
+    function meetingsReasonHtml(m) {
+      const raw = String(m.state_reason || '');
+      if (!raw) return '';
+      const friendly = meetingsFriendlyReason(m);
+      const cls = (m.state === 'failed' || m.state === 'blocked') ? 'meetings-row-error' : 'muted-xs';
+      if (friendly === raw) return '<div class="' + cls + '">' + escapeHtml(raw) + '</div>';
+      return '<div class="' + cls + '">' + escapeHtml(friendly || 'Details') + '</div>' +
+        '<details class="meetings-row-details"><summary class="muted-xs">details</summary><div class="meetings-row-raw">' + escapeHtml(raw) + '</div></details>';
     }
 
     function meetingsRowHtml(m) {
@@ -50147,21 +50212,29 @@ function burnAreaChart() {
       const open = _meetingsOpen && _meetingsOpen.id === m.id;
       const request = m.state === 'requested' && m.requested_by;
       if (request) {
-        return '<div class="meetings-row"><span class="badge">join request</span>' +
+        return '<div class="meetings-row" data-state="requested"><div class="meetings-row-main"><div class="meetings-row-head">' +
           '<span class="meetings-row-title">' + escapeHtml((m.requested_by.name || m.requested_by.id || 'someone') + ' asked hive into ' + meetingsLabel(m)) + '</span>' +
+          '<span class="kc-pill" data-status="syncing">join request</span></div></div>' +
+          '<div class="meetings-row-actions">' +
           '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsApproveRequest" data-arg0="' + escapeHtml(m.id) + '">Approve</button>' +
-          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button></div>';
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button></div></div>';
       }
-      return '<div class="meetings-row' + (open ? ' is-open' : '') + '">' +
-        '<span class="badge">' + escapeHtml(m.state || '') + '</span>' +
+      const state = m.state || '';
+      const when = meetingsFormatTime(m.live_at || m.created_at);
+      const meta = [MEETINGS_PLATFORM_LABELS[m.platform] || m.platform || '', when].filter(Boolean).join(' · ');
+      return '<div class="meetings-row' + (open ? ' is-open' : '') + '" data-state="' + escapeHtml(state) + '">' +
+        '<div class="meetings-row-main"><div class="meetings-row-head">' +
         '<span class="meetings-row-title" title="' + escapeHtml(m.url || '') + '">' + escapeHtml(meetingsLabel(m)) + '</span>' +
-        (m.state_reason ? '<span class="muted-xs">' + escapeHtml(m.state_reason) + '</span>' : '') +
-        (m.consent_error && !m.consent_posted_at ? '<span class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</span>' : '') +
-        (m.voice_enabled && !m.voice_capable ? '<span class="muted-xs">joined without voice; replies go to chat</span>' : '') +
+        '<span class="kc-pill" data-status="' + escapeHtml(MEETINGS_PILL_STATUS[state] || '') + '">' + escapeHtml(state) + '</span></div>' +
+        (meta ? '<div class="muted-xs">' + escapeHtml(meta) + '</div>' : '') +
+        meetingsReasonHtml(m) +
+        (m.consent_error && !m.consent_posted_at ? '<div class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</div>' : '') +
+        (m.voice_enabled && !m.voice_capable ? '<div class="muted-xs">joined without voice; replies go to chat</div>' : '') +
+        '</div><div class="meetings-row-actions">' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +
         (active ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsToggleVoice" data-arg0="' + escapeHtml(m.id) + '" data-arg1="' + (m.voice_enabled ? 'false' : 'true') + '">' + (m.voice_enabled ? 'Voice on' : 'Voice off') + '</button>' +
           '<button type="button" class="hv-btn btn-danger btn-sm" data-action="meetingsLeave" data-arg0="' + escapeHtml(m.id) + '">Leave</button>' : '') +
-        '</div>';
+        '</div></div>';
     }
 
     function renderMeetings() {
@@ -50174,7 +50247,7 @@ function burnAreaChart() {
         html += meetingsJoinFormHtml();
       }
       const list = _meetingsList || [];
-      html += '<div class="meetings-list">' + (list.length ? list.map(meetingsRowHtml).join('') : (_meetingsError ? '' : '<p class="muted-xs">No meetings yet.</p>')) + '</div>';
+      html += '<div class="meetings-list">' + (list.length ? list.map(meetingsRowHtml).join('') : (_meetingsError ? '' : '<p class="empty-dashed">No meetings yet.</p>')) + '</div>';
       html += '<div id="meetings-live-panel"></div>';
       host.innerHTML = html;
       const liveCount = list.filter(m => MEETINGS_LIVE_STATES[m.state]).length;
@@ -50424,6 +50497,19 @@ function burnAreaChart() {
       return typeof dashboardRoleAtLeast === 'function' ? dashboardRoleAtLeast(window._hiveRole || 'read', 'read-write') : window._hiveRole === 'owner';
     }
     function calendarIsOwner() { return window._hiveRole === 'owner'; }
+    // The role is known once /api/role settled; until then the Calendar
+    // shows a loading state, never the "not allowed" notice, and re-renders
+    // when gh-auth.js notifies role listeners (same contract as the Inbox).
+    function calendarRoleKnown() { return window._hiveRoleSettled === true || window._hiveRole !== undefined; }
+    function calendarOnRoleReady() {
+      Promise.all([fetchCalendar(), calendarRefreshMeetings(), fetchMeetingDrafts()]).catch(console.error);
+    }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(calendarOnRoleReady);
+    // Schedule and draft status to the kc-pill status palette.
+    const CALENDAR_PILL_STATUS = {
+      live: 'ok', done: 'ok', scheduled: 'syncing', awaiting_approval: 'not loaded', pending: 'not loaded', approving: 'syncing',
+      failed: 'error', blocked: 'error'
+    };
 
     function calendarPlatformLabel(p) { return CALENDAR_PLATFORM_LABELS[p] || p || 'meeting'; }
 
@@ -50498,6 +50584,7 @@ function burnAreaChart() {
     }
 
     async function calendarRefreshMeetings() {
+      if (!calendarRoleKnown()) return;
       if (!calendarIsOwner()) { _calendarMeetings = {}; renderCalendarIndicator(); return; }
       try {
         const r = await fetch('/api/meetings');
@@ -50522,8 +50609,12 @@ function burnAreaChart() {
 
     async function fetchCalendar() {
       const host = document.getElementById('calendar-panel');
+      if (!calendarRoleKnown()) {
+        if (host) host.innerHTML = '<p class="muted-xs">Loading calendar…</p>';
+        return;
+      }
       if (!calendarCanView()) {
-        if (host) host.innerHTML = '<p class="muted-xs">The calendar is visible to the hive owner and read-write users.</p>';
+        if (host) host.innerHTML = '<p class="empty-dashed">The calendar is visible to the hive owner and read-write users.</p>';
         return;
       }
       try {
@@ -50531,7 +50622,9 @@ function burnAreaChart() {
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { _calendarData = null; _calendarError = data.error || ('HTTP ' + r.status); }
         else { _calendarData = data; _calendarError = ''; }
-      } catch (e) { return; }
+      } catch (e) {
+        if (!_calendarData) _calendarError = 'The calendar is unreachable right now; retrying.';
+      }
       renderCalendar();
     }
     dashboardScheduleWork('calendar', () => Promise.all([fetchCalendar(), calendarRefreshMeetings()])).catch(console.error);
@@ -50577,7 +50670,7 @@ function burnAreaChart() {
       const status = e.status || '';
       const times = calendarFormatTime(e.start) + (e.end ? ' – ' + calendarFormatTime(e.end) : '');
       return '<div class="calendar-row" data-calendar-event="' + escapeHtml(e.id) + '" data-status="' + escapeHtml(status) + '">' +
-        '<span class="badge calendar-status" data-status="' + escapeHtml(status) + '">' + escapeHtml(CALENDAR_STATUS_LABELS[status] || status) + '</span>' +
+        '<span class="kc-pill calendar-status" data-status="' + escapeHtml(CALENDAR_PILL_STATUS[status] || '') + '">' + escapeHtml(CALENDAR_STATUS_LABELS[status] || status) + '</span>' +
         '<span class="badge calendar-platform" data-platform="' + escapeHtml(platform) + '">' + (CALENDAR_PLATFORM_ICONS[platform] || '🎙') + ' ' + escapeHtml(calendarPlatformLabel(platform)) + '</span>' +
         '<div class="calendar-row-main"><div class="calendar-row-title" title="' + escapeHtml(e.join_url || '') + '">' + escapeHtml(e.summary || e.join_url || 'Meeting') + '</div>' +
         '<div class="muted-xs">' + escapeHtml(times) + (e.rrule ? ' · repeats' : '') +
@@ -50602,8 +50695,8 @@ function burnAreaChart() {
       const recent = data.recent || [];
       const pending = upcoming.filter(e => e.status === 'awaiting_approval').length;
       host.innerHTML = calendarFormHtml() +
-        '<div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="muted-xs">Nothing scheduled.</p>') + '</div>' +
-        (recent.length ? '<div class="section-label m-0">Recent</div><div class="calendar-list">' + recent.map(calendarRowHtml).join('') + '</div>' : '');
+        '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
+        (recent.length ? '<div class="calendar-subsection"><div class="section-label m-0">Recent</div><div class="calendar-list">' + recent.map(calendarRowHtml).join('') + '</div></div>' : '');
       setSectionSummary('calendar-section', upcoming.length + ' upcoming' + (pending ? ' · ' + pending + ' awaiting approval' : ''));
     }
 
@@ -50670,7 +50763,11 @@ function burnAreaChart() {
     }
 
     async function fetchMeetingDrafts() {
-      if (!calendarCanView()) return;
+      if (!calendarRoleKnown() || !calendarCanView()) {
+        const host = document.getElementById('meeting-drafts-panel');
+        if (host) host.innerHTML = '';
+        return;
+      }
       try {
         const r = await fetch('/api/meetings/actions');
         const data = await r.json().catch(() => ({}));
@@ -50708,7 +50805,7 @@ function burnAreaChart() {
       const where = d.type === 'knowledge' ? 'knowledge vault' : (d.repo || 'no repo set');
       const result = d.result_url ? ' · <a href="' + escapeHtml(d.result_url) + '" target="_blank" rel="noopener">' + escapeHtml(d.result_url) + '</a>' : (d.result_note ? ' · ' + escapeHtml(d.result_note) : '');
       return '<div class="calendar-row" data-meeting-draft="' + id + '" data-status="' + (open ? 'awaiting_approval' : escapeHtml(status)) + '">' +
-        '<span class="badge calendar-status" data-status="' + escapeHtml(status) + '">' + escapeHtml(MEETING_DRAFT_STATUS[status] || status) + '</span>' +
+        '<span class="kc-pill calendar-status" data-status="' + escapeHtml(CALENDAR_PILL_STATUS[status] || '') + '">' + escapeHtml(MEETING_DRAFT_STATUS[status] || status) + '</span>' +
         '<span class="badge">' + escapeHtml(MEETING_DRAFT_TYPES[d.type] || d.type || '') + '</span>' +
         '<div class="calendar-row-main"><div class="calendar-row-title">' + escapeHtml(d.title || '') + '</div>' +
         '<div class="muted-xs">' + escapeHtml(where) + (d.meeting_title ? ' · from ' + escapeHtml(d.meeting_title) : '') +
@@ -50726,14 +50823,14 @@ function burnAreaChart() {
       const host = document.getElementById('meeting-drafts-panel');
       if (!host) return;
       if (_meetingDraftsError) {
-        host.innerHTML = '<div class="section-label m-0">Drafts from meetings</div><p class="kc-error muted-xs">' + escapeHtml(_meetingDraftsError) + '</p>';
+        host.innerHTML = '<div class="calendar-subsection"><div class="section-label m-0">Drafts from meetings</div><p class="kc-error muted-xs">' + escapeHtml(_meetingDraftsError) + '</p></div>';
         return;
       }
       const split = meetingDraftsSplit((_meetingDrafts || {}).drafts);
-      host.innerHTML = '<div class="section-label m-0">Drafts from meetings</div>' +
+      host.innerHTML = '<div class="calendar-subsection"><div class="section-label m-0">Drafts from meetings</div>' +
         '<p class="muted-xs">Issues, RFCs, Spek sessions and knowledge notes people asked for in a meeting. Nothing is created until you approve it.</p>' +
-        '<div class="calendar-list">' + (split.pending.length ? split.pending.map(meetingDraftRowHtml).join('') : '<p class="muted-xs">No drafts waiting.</p>') + '</div>' +
-        (split.decided.length ? '<details><summary class="muted-xs">Recent (' + split.decided.length + ')</summary><div class="calendar-list">' + split.decided.map(meetingDraftRowHtml).join('') + '</div></details>' : '');
+        '<div class="calendar-list">' + (split.pending.length ? split.pending.map(meetingDraftRowHtml).join('') : '<p class="empty-dashed">No drafts waiting.</p>') + '</div>' +
+        (split.decided.length ? '<details><summary class="muted-xs">Recent (' + split.decided.length + ')</summary><div class="calendar-list mt-2">' + split.decided.map(meetingDraftRowHtml).join('') + '</div></details>' : '') + '</div>';
     }
 
     function meetingDraftField(id, name) { return document.querySelector('[data-draft-id="' + CSS.escape(id) + '"][data-draft-field="' + name + '"]'); }
