@@ -19,6 +19,8 @@
 #     would change the derived semver bump);
 #   - the compiled result is exactly what derive-release-version.sh needs:
 #     an added- fragment flips an empty Unreleased to a minor release.
+#   - a fragment stranded under src/changelog.d/ (never compiled) fails the
+#     compile loudly, and the repository itself carries none (#18264);
 #   - the release move targets the real `## Unreleased` heading line, not a
 #     prose/backtick mention that appears before it.
 #
@@ -204,6 +206,52 @@ else
   else
     note_fail "rejection of a none-marker fragment must name the marker and leave fragments untouched: $(cat "$tmp/case5b.out")"
   fi
+fi
+
+# ---------------------------------------------------------------------------
+# Case 5d: a fragment stranded under src/changelog.d/ fails the compile
+# (#18264). That directory is never compiled, so 14 v5 and 81 v6 entries sat
+# there unreleased; the release job must go red instead of shipping without
+# them. This holds even with no root fragments at all (the stray alone must
+# not look like a no-op), and README.md there is the pointer, not a fragment.
+# ---------------------------------------------------------------------------
+dir=$(new_case 5d)
+mkdir -p "$dir/src/changelog.d"
+printf -- 'pointer to the real directory\n' > "$dir/src/changelog.d/README.md"
+cp "$dir/CHANGELOG.md" "$tmp/case5d.before"
+if ( cd "$dir" && bash "$compile" CHANGELOG.md changelog.d ) > "$tmp/case5d-readme.out" 2>&1; then
+  note_ok "a README.md alone under src/changelog.d/ is not a stranded fragment"
+else
+  note_fail "README.md under src/changelog.d/ must not fail the compile: $(cat "$tmp/case5d-readme.out")"
+fi
+printf -- '- a stranded fix ([#14](https://example.invalid/14)).\n' > "$dir/src/changelog.d/fixed-14-stranded.md"
+if ( cd "$dir" && bash "$compile" CHANGELOG.md changelog.d ) > "$tmp/case5d.out" 2>&1; then
+  note_fail "a fragment under src/changelog.d/ must fail the compile even with no root fragments"
+else
+  if grep -q 'src/changelog.d/fixed-14-stranded.md' "$tmp/case5d.out" \
+    && cmp -s "$dir/CHANGELOG.md" "$tmp/case5d.before" \
+    && [[ -f "$dir/src/changelog.d/fixed-14-stranded.md" ]]; then
+    note_ok "a stranded src/changelog.d/ fragment fails loudly, naming the file, with CHANGELOG.md untouched"
+  else
+    note_fail "stranded-fragment failure must name the file and leave everything untouched: $(cat "$tmp/case5d.out")"
+  fi
+fi
+printf -- '- a real fix ([#15](https://example.invalid/15)).\n' > "$dir/changelog.d/fixed-15-real.md"
+if ( cd "$dir" && bash "$compile" CHANGELOG.md changelog.d ) > "$tmp/case5d-mixed.out" 2>&1; then
+  note_fail "a stranded fragment must fail the compile even beside valid root fragments"
+elif [[ -f "$dir/changelog.d/fixed-15-real.md" ]] && cmp -s "$dir/CHANGELOG.md" "$tmp/case5d.before"; then
+  note_ok "a stranded fragment blocks the compile before any root fragment is consumed"
+else
+  note_fail "a stranded fragment must leave root fragments and CHANGELOG.md untouched"
+fi
+
+# The repository itself must carry no stranded fragments: the live
+# src/changelog.d/ holds only its README pointer (#18264).
+repo_stranded=$(find "$script_dir/../changelog.d" -maxdepth 1 -type f -name '*.md' ! -name README.md 2>/dev/null | sort)
+if [[ -z "$repo_stranded" ]]; then
+  note_ok "the repository has no fragments under src/changelog.d/"
+else
+  note_fail "fragments under src/changelog.d/ are never compiled; git mv them to the repo-root changelog.d/: $(echo "$repo_stranded" | tr '\n' ' ')"
 fi
 
 dir=$(new_case 5c)

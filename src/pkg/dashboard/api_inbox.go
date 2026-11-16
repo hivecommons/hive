@@ -31,6 +31,7 @@ func (s *Server) registerInboxRoutes() {
 	s.mux.HandleFunc("GET /api/inbox/{source}/{id}/audio/stream", s.handleInboxAudioStream)
 	s.mux.HandleFunc("POST /api/knowledge/connectors/{name}/auth/complete", s.handleKnowledgeConnectorAuthComplete)
 	s.mux.HandleFunc("POST /api/inbox/{source}/{id}/transcribe", s.handleInboxTranscribe)
+	s.mux.HandleFunc("GET /api/inbox/transcriptions", s.handleInboxTranscriptions)
 }
 
 // inboxSourceReadTimeout bounds one read that may spawn the source's MCP
@@ -262,6 +263,26 @@ func (s *Server) handleInboxTranscribe(w http.ResponseWriter, r *http.Request) {
 		code = http.StatusOK
 	}
 	jsonStatusResponse(w, code, InboxTranscribeResponse{Source: it.Source, ItemID: it.ID, State: st})
+}
+
+// InboxTranscriptionsResponse is GET /api/inbox/transcriptions.
+type InboxTranscriptionsResponse struct {
+	// Active lists queued and running transcriptions in queue order, with
+	// phase, progress, ETA and queue position.
+	Active []inbox.ActiveTranscription `json:"active"`
+}
+
+// handleInboxTranscriptions (dashboard auth, like the listing) returns the
+// live state of queued and running transcriptions only. It reads no source
+// and no connector fact, so the Inbox can poll it every few seconds while a
+// job runs; an item that leaves the list has finished.
+func (s *Server) handleInboxTranscriptions(w http.ResponseWriter, _ *http.Request) {
+	svc, ok := s.inboxService(w)
+	if !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	jsonResponse(w, InboxTranscriptionsResponse{Active: svc.ActiveTranscriptions()})
 }
 
 // InboxSourceStatus is one configured source as the Inbox header shows it.

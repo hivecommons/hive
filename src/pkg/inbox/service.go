@@ -55,11 +55,13 @@ type Service struct {
 	dibsTokenSet func() bool
 
 	// Machine transcription (see transcription.go). transcripts is nil until
-	// EnableTranscription; txMu guards the queue check-and-set, txRun
-	// serialises runs so one job uploads at a time.
+	// EnableTranscription; txMu guards the queue check-and-set. txQueue
+	// holds queued and running jobs in order (the head runs, one at a time)
+	// with their live progress, guarded by txQMu.
 	transcripts *TranscriptStore
 	txMu        sync.Mutex
-	txRun       sync.Mutex
+	txQMu       sync.Mutex
+	txQueue     []*txJob
 	// NewTranscriber builds the provider for a run; nil uses
 	// DefaultTranscriber with the key from Getenv. Tests inject a fake.
 	NewTranscriber func(config.InboxTranscription) (transcribe.Transcriber, error)

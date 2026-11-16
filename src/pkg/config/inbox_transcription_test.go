@@ -10,7 +10,7 @@ import (
 
 func TestInboxTranscriptionDefaults(t *testing.T) {
 	var tr InboxTranscription
-	if tr.Enabled || tr.Active() || tr.EffectiveMode() != "manual" || tr.EffectiveProvider() != "deepgram" || tr.EffectiveModel() != "nova-3" {
+	if tr.Enabled || tr.Active() || tr.EffectiveMode() != "manual" || tr.EffectiveProvider() != "auto" || tr.EffectiveModel() != "nova-3" {
 		t.Fatalf("defaults = %+v", tr)
 	}
 	if tr.EffectiveAPIKeyEnv() != "DEEPGRAM_API_KEY" || !tr.EffectiveDiarize() || tr.EffectiveLanguage() != "auto" {
@@ -63,7 +63,7 @@ func TestInboxTranscriptionConfiguredAndEnvOverrides(t *testing.T) {
 func TestValidateInboxTranscriptionRejects(t *testing.T) {
 	cases := map[string]InboxTranscription{
 		"mode":     {Mode: "sometimes"},
-		"provider": {Provider: "whisper"},
+		"provider": {Provider: "openai"},
 		"key env":  {APIKeyEnv: "not a name"},
 		"language": {Language: "english please"},
 		"negative": {MaxBytes: -1},
@@ -73,6 +73,11 @@ func TestValidateInboxTranscriptionRejects(t *testing.T) {
 	for name, tr := range cases {
 		if err := ValidateInboxTranscription(tr); err == nil {
 			t.Errorf("%s: want error", name)
+		}
+	}
+	for _, p := range InboxTranscriptionProviders {
+		if err := ValidateInboxTranscription(InboxTranscription{Provider: p}); err != nil {
+			t.Errorf("provider %s: %v", p, err)
 		}
 	}
 	err := ValidateInbox(InboxConfig{Transcription: InboxTranscription{Enabled: true}})

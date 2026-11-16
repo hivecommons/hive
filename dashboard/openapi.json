@@ -38983,8 +38983,8 @@
         "tags": [
           "Knowledge"
         ],
-        "summary": "Transcribe one pending inbox item with Deepgram",
-        "description": "Owner or read-write. Queues a machine transcription of a pending item (no summary, no transcript) on this hive, with the hive owner's own Deepgram key (`inbox.transcription.api_key_env`, default `DEEPGRAM_API_KEY`). The hive downloads the audio itself and streams it to Deepgram; the presigned link is never forwarded, stored or logged. The transcript stays on this spoke. Checks that need no upload (no audio, too long, daily cap, monthly budget) are recorded as `skipped` and answered 200. Each run is audited as `inbox_transcribe`.",
+        "summary": "Transcribe one pending inbox item",
+        "description": "Owner or read-write. Queues a machine transcription of a pending item (no summary, no transcript) on this hive with the resolved `inbox.transcription.provider` (`auto` picks whisper, then gemini, then deepgram by availability; see inbox-transcription.md). The hive downloads the audio itself; the presigned link is never forwarded, stored or logged. With deepgram the audio is streamed to Deepgram under the owner's key (`inbox.transcription.api_key_env`, default `DEEPGRAM_API_KEY`). Runs execute one at a time in queue order; the returned state carries `queue_position` while waiting. The transcript stays on this spoke. Checks that need no upload (no audio, too long, daily cap, monthly budget) are recorded as `skipped` and answered 200. Each run is audited as `inbox_transcribe`.",
         "parameters": [
           {
             "name": "source",
@@ -39047,6 +39047,45 @@
                         "updated_at": {
                           "type": "string",
                           "format": "date-time"
+                        },
+                        "phase": {
+                          "type": "string",
+                          "enum": [
+                            "downloading",
+                            "decoding",
+                            "transcribing",
+                            "finalizing"
+                          ],
+                          "description": "Current phase while running"
+                        },
+                        "progress": {
+                          "type": "number",
+                          "description": "0 to 1 while running; estimated runs stop at 0.95 until done"
+                        },
+                        "estimated": {
+                          "type": "boolean",
+                          "description": "Progress and ETA come from the provider's typical or this hive's measured speed, not measured output"
+                        },
+                        "started_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "When the run started (running only)"
+                        },
+                        "audio_seconds": {
+                          "type": "number",
+                          "description": "Recording length in seconds, when known"
+                        },
+                        "processed_seconds": {
+                          "type": "number",
+                          "description": "Audio transcribed so far, when the provider measures it (whisper)"
+                        },
+                        "eta_seconds": {
+                          "type": "number",
+                          "description": "Estimated seconds left; absent when unknown"
+                        },
+                        "queue_position": {
+                          "type": "integer",
+                          "description": "Jobs ahead of this one while queued"
                         }
                       }
                     }
@@ -39096,6 +39135,45 @@
                         "updated_at": {
                           "type": "string",
                           "format": "date-time"
+                        },
+                        "phase": {
+                          "type": "string",
+                          "enum": [
+                            "downloading",
+                            "decoding",
+                            "transcribing",
+                            "finalizing"
+                          ],
+                          "description": "Current phase while running"
+                        },
+                        "progress": {
+                          "type": "number",
+                          "description": "0 to 1 while running; estimated runs stop at 0.95 until done"
+                        },
+                        "estimated": {
+                          "type": "boolean",
+                          "description": "Progress and ETA come from the provider's typical or this hive's measured speed, not measured output"
+                        },
+                        "started_at": {
+                          "type": "string",
+                          "format": "date-time",
+                          "description": "When the run started (running only)"
+                        },
+                        "audio_seconds": {
+                          "type": "number",
+                          "description": "Recording length in seconds, when known"
+                        },
+                        "processed_seconds": {
+                          "type": "number",
+                          "description": "Audio transcribed so far, when the provider measures it (whisper)"
+                        },
+                        "eta_seconds": {
+                          "type": "number",
+                          "description": "Estimated seconds left; absent when unknown"
+                        },
+                        "queue_position": {
+                          "type": "integer",
+                          "description": "Jobs ahead of this one while queued"
                         }
                       }
                     }
@@ -39151,6 +39229,125 @@
           },
           "412": {
             "description": "Transcription is disabled or not consented (inbox.transcription.enabled / consent_acknowledged)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/transcriptions": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Live progress of queued and running Inbox transcriptions",
+        "description": "Dashboard auth, like `GET /api/inbox`. Lists queued and running machine transcriptions in queue order with phase, progress (0 to 1), elapsed start, ETA and queue position. Reads no source or connector fact, so the Inbox polls it every few seconds while a job runs; an item that leaves the list has finished (re-read `GET /api/inbox` for its outcome). `Cache-Control: no-store`.",
+        "responses": {
+          "200": {
+            "description": "Active transcriptions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "active": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string"
+                          },
+                          "id": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "object",
+                            "properties": {
+                              "status": {
+                                "type": "string",
+                                "enum": [
+                                  "queued",
+                                  "running"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "attempts": {
+                                "type": "integer"
+                              },
+                              "provider": {
+                                "type": "string"
+                              },
+                              "model": {
+                                "type": "string"
+                              },
+                              "updated_at": {
+                                "type": "string",
+                                "format": "date-time"
+                              },
+                              "phase": {
+                                "type": "string",
+                                "enum": [
+                                  "downloading",
+                                  "decoding",
+                                  "transcribing",
+                                  "finalizing"
+                                ],
+                                "description": "Current phase while running"
+                              },
+                              "progress": {
+                                "type": "number",
+                                "description": "0 to 1 while running; estimated runs stop at 0.95 until done"
+                              },
+                              "estimated": {
+                                "type": "boolean",
+                                "description": "Progress and ETA come from the provider's typical or this hive's measured speed, not measured output"
+                              },
+                              "started_at": {
+                                "type": "string",
+                                "format": "date-time",
+                                "description": "When the run started (running only)"
+                              },
+                              "audio_seconds": {
+                                "type": "number",
+                                "description": "Recording length in seconds, when known"
+                              },
+                              "processed_seconds": {
+                                "type": "number",
+                                "description": "Audio transcribed so far, when the provider measures it (whisper)"
+                              },
+                              "eta_seconds": {
+                                "type": "number",
+                                "description": "Estimated seconds left; absent when unknown"
+                              },
+                              "queue_position": {
+                                "type": "integer",
+                                "description": "Jobs ahead of this one while queued"
+                              }
+                            }
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "The Inbox is not available",
             "content": {
               "application/json": {
                 "schema": {

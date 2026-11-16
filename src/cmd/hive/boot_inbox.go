@@ -48,9 +48,11 @@ func (b *boot) bootInbox(baseDir string) {
 	b.inboxSvc = svc
 	b.logger.Info("inbox started", "sources", len(srcs), "rules", len(b.cfg.Inbox.Rules))
 	if tx := b.cfg.Inbox.Transcription; tx.Enabled {
-		// Transcription uploads audio from the hive process itself, so a
-		// locked-down spoke must allow this egress (network-requirements.md).
-		b.logger.Info("inbox transcription enabled", "mode", tx.EffectiveMode(), "provider", tx.EffectiveProvider(), "egress", strings.Join(inbox.TranscriptionEgressHosts(tx), ","))
+		// Transcription reaches the provider from the hive process itself,
+		// so a locked-down spoke must allow this egress
+		// (network-requirements.md). auto is logged as what it resolves to.
+		st := svc.TranscriptionSettings()
+		b.logger.Info("inbox transcription enabled", "mode", st.Mode, "provider", st.Provider, "resolved_provider", st.ResolvedProvider, "egress", strings.Join(st.EgressHosts, ","))
 	}
 }
 
