@@ -162,3 +162,89 @@ func TestJamPathFallbacks(t *testing.T) {
 		}
 	}
 }
+
+func skipIfRoot(t *testing.T) {
+	t.Helper()
+	if os.Geteuid() == 0 {
+		t.Skip("permission errors cannot be provoked as root")
+	}
+}
+
+// assertNoExport fails when a tarball or a leftover temp file exists.
+func assertNoExport(t *testing.T, data string) {
+	t.Helper()
+	left, _ := filepath.Glob(filepath.Join(data, ExportsDir, "*"))
+	hidden, _ := filepath.Glob(filepath.Join(data, ExportsDir, ".*"))
+	if len(left)+len(hidden) != 0 {
+		t.Fatalf("a failed export must leave nothing behind: %v %v", left, hidden)
+	}
+}
+
+func TestExportErrorsLeaveSourcesAndNoPartialFile(t *testing.T) {
+	t.Run("exports path is a file", func(t *testing.T) {
+		data := t.TempDir()
+		writeFile(t, filepath.Join(data, CampaignsDir, "a", "state.json"), "{}")
+		writeFile(t, filepath.Join(data, ExportsDir), "not a dir")
+		if path, err := Export(data, "", exportNow); err == nil || path != "" {
+			t.Fatalf("Export = %q, %v; want an error", path, err)
+		}
+	})
+	t.Run("exports dir not writable", func(t *testing.T) {
+		skipIfRoot(t)
+		data := t.TempDir()
+		writeFile(t, filepath.Join(data, CampaignsDir, "a", "state.json"), "{}")
+		exports := filepath.Join(data, ExportsDir)
+		if err := os.MkdirAll(exports, 0o500); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(exports, 0o700) })
+		if path, err := Export(data, "", exportNow); err == nil || path != "" {
+			t.Fatalf("Export = %q, %v; want an error", path, err)
+		}
+	})
+	t.Run("unreadable archive file", func(t *testing.T) {
+		skipIfRoot(t)
+		data := t.TempDir()
+		src := filepath.Join(data, CampaignsDir, "a", "state.json")
+		writeFile(t, src, "{}")
+		if err := os.Chmod(src, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(src, 0o600) })
+		if path, err := Export(data, "", exportNow); err == nil || path != "" {
+			t.Fatalf("Export = %q, %v; want an error", path, err)
+		}
+		assertNoExport(t, data)
+		if _, err := os.Lstat(src); err != nil {
+			t.Fatalf("source must stay: %v", err)
+		}
+	})
+	t.Run("unreadable archive dir", func(t *testing.T) {
+		skipIfRoot(t)
+		data := t.TempDir()
+		dir := filepath.Join(data, CampaignsDir, "a")
+		writeFile(t, filepath.Join(dir, "state.json"), "{}")
+		if err := os.Chmod(dir, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(dir, 0o700) })
+		if path, err := Export(data, "", exportNow); err == nil || path != "" {
+			t.Fatalf("Export = %q, %v; want an error", path, err)
+		}
+		assertNoExport(t, data)
+	})
+	t.Run("unreadable jam file", func(t *testing.T) {
+		skipIfRoot(t)
+		data := t.TempDir()
+		jam := filepath.Join(t.TempDir(), JamFileName)
+		writeFile(t, jam, "{}")
+		if err := os.Chmod(jam, 0); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = os.Chmod(jam, 0o600) })
+		if path, err := Export(data, jam, exportNow); err == nil || path != "" {
+			t.Fatalf("Export = %q, %v; want an error", path, err)
+		}
+		assertNoExport(t, data)
+	})
+}
