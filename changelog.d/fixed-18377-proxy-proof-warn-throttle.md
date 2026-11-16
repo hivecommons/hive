@@ -1,1 +1,0 @@
-- Dashboard: the "rejected hub-proxied request with unverified proxy proof" warning is now logged at most once a minute per reason and path (with a suppressed count) instead of once per request; the request is still rejected with 403 (#18377).
