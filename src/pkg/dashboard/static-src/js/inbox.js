@@ -41,6 +41,12 @@
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
     // Uploaded documents have no audio; uploaded audio/video does.
     function inboxItemHasAudio(it) { return !it || it.source !== 'upload' || it.upload_kind === 'audio' || it.upload_kind === 'video'; }
+    // The role is known once /api/role answered (or gave up: then it is
+    // undefined and every gate treats the viewer as read-only). Before that
+    // the Inbox renders a neutral loading state, never a guessed 'read'.
+    function inboxRoleKnown() { return window._hiveAuthKnown === true || window._hiveRole !== undefined; }
+    function inboxOnRoleReady() { if (_inboxCache) renderInbox(); }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(inboxOnRoleReady);
     function inboxItemKey(it) { return it.source + '/' + it.id; }
     // Playback is a read of private audio: owners and read-write sessions.
     function inboxViewerCanPlay() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
@@ -635,7 +641,7 @@
       const badge = document.getElementById('inbox-sidebar-badge');
       const data = _inboxCache;
       if (!panel) return;
-      if (!data) { panel.innerHTML = '<div class="muted-note">Loading inbox…</div>'; return; }
+      if (!data || !inboxRoleKnown()) { panel.innerHTML = '<div class="muted-note">Loading inbox…</div>'; return; }
       const items = data.items || [];
       const unprocessed = Number(data.unprocessed) || 0;
       if (badge) setSidebarCountBadge(badge, unprocessed, unprocessed + ' unprocessed');
@@ -658,6 +664,7 @@
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
+      if (window._hiveRoleFailed && !window._hiveRole) html += '<div class="muted-xs">Could not determine your role, so actions are read-only. It will retry automatically.</div>';
       if (inboxCanAdd()) html += inboxAddPanelHtml() + inboxUploadsHtml();
       if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
       if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;

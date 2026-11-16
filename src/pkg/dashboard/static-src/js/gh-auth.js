@@ -11,6 +11,11 @@
     // browser as the one that asked.
     let ghFlowID = '';
     const GH_AUTH_CHECK_INTERVAL_MS = 300000;
+    // /api/role is retried on network errors and 5xx before the viewer is
+    // treated as read-only: 3 attempts, waiting 0.5 s then 1 s between them.
+    const HIVE_ROLE_FETCH_ATTEMPTS = 3;
+    const HIVE_ROLE_RETRY_BASE_MS = 500;
+    const HIVE_ROLE_SERVER_ERROR_STATUS = 500;
     const GH_AUTH_SUCCESS_DISMISS_MS = 1500;
 
     function copyDeviceCode() {
@@ -53,10 +58,17 @@
        hard reload does not flash the decision pills disabled; when the
        answer lands, repaint the tracker once — only if something changed. */
     function hiveAuthResolved() {
+      const wasKnown = !!window._hiveAuthKnown;
       const before = (window._hiveAuthKnown ? 'k' : '') + '|' + String(window._hiveUser || '') + '|' + String(window._hiveRole || '');
       window._hiveAuthKnown = true;
       return function() {
         const after = 'k|' + String(window._hiveUser || '') + '|' + String(window._hiveRole || '');
+        /* Sections that gate on the role (the Inbox) hold a neutral loading
+           state until it is known; tell them the first time it resolves and
+           whenever it changes. They push onto window._hiveRoleListeners. */
+        if (!wasKnown || after !== before) {
+          (window._hiveRoleListeners || []).forEach(function(fn) { try { fn(); } catch (e) { console.error(e); } });
+        }
         if (after === before) return;
         if (typeof renderStageTracker === 'function' && typeof _stageTracker !== 'undefined' && _stageTracker) renderStageTracker();
       };
@@ -258,10 +270,23 @@
       showToast('Signed out of GitHub', 'info');
     }
 
+    async function hiveFetchRole() {
+      let lastErr = null;
+      for (let attempt = 0; attempt < HIVE_ROLE_FETCH_ATTEMPTS; attempt++) {
+        if (attempt > 0) await new Promise(function(resolve) { setTimeout(resolve, HIVE_ROLE_RETRY_BASE_MS * Math.pow(2, attempt - 1)); });
+        try {
+          const resp = await fetch('/api/role');
+          if (resp.status >= HIVE_ROLE_SERVER_ERROR_STATUS) throw new Error('HTTP ' + resp.status);
+          return await resp.json();
+        } catch (e) { lastErr = e; }
+      }
+      throw lastErr;
+    }
+
     async function checkGHAuth() {
       try {
-        const roleResp = await fetch('/api/role');
-        const roleData = await roleResp.json();
+        const roleData = await hiveFetchRole();
+        window._hiveRoleFailed = false;
         if (roleData.sentinel_label) window._hiveSentinelLabel = roleData.sentinel_label;
         if (roleData.user) {
           if (roleData.automerge_label) window._hiveAutoMergeLabel = roleData.automerge_label;
@@ -275,7 +300,7 @@
           showGHAuthState(true, roleData.user, ghAvatar, roleData.role, roleData.display_name);
           return;
         }
-      } catch (e) {}
+      } catch (e) { window._hiveRoleFailed = true; }
       try {
         const resp = await fetch('/api/gh-user-auth/status');
         const data = await resp.json();
