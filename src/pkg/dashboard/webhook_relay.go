@@ -24,9 +24,16 @@ import (
 // After the MAC verifies, a timestamp more than webhookRelayMaxSkew from now
 // is rejected as stale, and a delivery ID already accepted inside the replay
 // window is rejected as replayed.
+//
+// Non-GitHub relays (hive-mx mail, hivecommons/hive#18395) carry their
+// delivery ID in X-Hive-Relay-Delivery instead of X-GitHub-Delivery; when
+// that header is present it is the ID the signature is bound to and the one
+// remembered for replay, in its own namespace so the two kinds of ID never
+// collide.
 const (
 	webhookRelaySignatureHeader = "X-Hive-Relay-Signature-256"
 	webhookRelayTimestampHeader = "X-Hive-Relay-Timestamp"
+	webhookRelayDeliveryHeader  = "X-Hive-Relay-Delivery"
 
 	webhookRelayMaxSkew = 5 * time.Minute
 	// webhookRelayReplayTTL covers every timestamp still inside the skew
@@ -107,7 +114,13 @@ func (c *webhookRelayReplayCache) firstSeen(id string, now time.Time) bool {
 // fill the replay cache.
 func (s *Server) verifyWebhookRelay(h http.Header, body []byte, key string, now time.Time) string {
 	ts := h.Get(webhookRelayTimestampHeader)
-	delivery := h.Get("X-GitHub-Delivery")
+	delivery, replayKey := h.Get("X-GitHub-Delivery"), ""
+	if relayed := h.Get(webhookRelayDeliveryHeader); relayed != "" {
+		delivery, replayKey = relayed, "relay:"+relayed
+	}
+	if replayKey == "" {
+		replayKey = "github:" + delivery
+	}
 	if !verifyWebhookRelaySignature(body, ts, delivery, h.Get(webhookRelaySignatureHeader), key) {
 		return webhookRelayReasonBadSignature
 	}
@@ -121,8 +134,22 @@ func (s *Server) verifyWebhookRelay(h http.Header, body []byte, key string, now 
 	if skew := now.Sub(time.Unix(sec, 0)); skew > webhookRelayMaxSkew || skew < -webhookRelayMaxSkew {
 		return webhookRelayReasonStale
 	}
-	if !s.webhookRelaySeen.firstSeen(delivery, now) {
+	if !s.webhookRelaySeen.firstSeen(replayKey, now) {
 		return webhookRelayReasonReplayed
 	}
 	return ""
+}
+
+// verifyRelayedRequest authenticates a non-GitHub hub relay (hive-mx mail)
+// with this hive's relay key: the X-Hive-Relay-Delivery header is required
+// and the same signature, skew and replay rules apply. It returns "" when
+// accepted, otherwise the rejection reason.
+func (s *Server) verifyRelayedRequest(h http.Header, body []byte, key string, now time.Time) string {
+	if key == "" || h.Get(webhookRelaySignatureHeader) == "" {
+		return webhookRelayReasonBadSignature
+	}
+	if h.Get(webhookRelayDeliveryHeader) == "" {
+		return webhookRelayReasonNoDelivery
+	}
+	return s.verifyWebhookRelay(h, body, key, now)
 }
