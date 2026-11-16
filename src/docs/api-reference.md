@@ -150,7 +150,7 @@ summary and the `health_deep_read` diagnostic tool.
 | `DELETE` | `/api/config/variables/{name}` | Owner only | Variable Delete | `pkg/dashboard/api.go:63` |
 
 | `GET` | `/api/config/agent/{name}` | Dashboard auth/session | Agent Config Get | `pkg/dashboard/api.go:208` |
-| `PUT` | `/api/config/agent/{name}/general` | Owner only | Agent Config General | `pkg/dashboard/api.go:209` |
+| `PUT` | `/api/config/agent/{name}/general` | Owner only | Agent Config General. Wrapped by the admin MCP `agent.settings` operation | `pkg/dashboard/api.go:209` |
 | `PUT` | `/api/config/agent/{name}/cadences` | Owner only | Agent Config Cadences; each mode sent becomes operator-owned (`governor.cadence_owners`). Wrapped by the admin MCP `agent.cadences` operation | `pkg/dashboard/api.go:210` |
 | `PUT` | `/api/config/agent/{name}/models` | Owner only | Agent Config Models | `pkg/dashboard/api.go:211` |
 | `PUT` | `/api/config/agent/{name}/pipeline` | Owner only | Agent Config Pipeline | `pkg/dashboard/api.go:212` |

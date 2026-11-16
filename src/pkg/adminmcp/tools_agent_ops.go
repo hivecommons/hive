@@ -40,6 +40,7 @@ func DefaultWriteOps() []WriteOp {
 	ops = append(ops, reviewSettingsWriteOps()...)
 	ops = append(ops, contributorQueueWriteOps()...)
 	ops = append(ops, advisorWriteOps()...)
+	ops = append(ops, agentSettingsWriteOps()...)
 	return append(ops, governorWriteOps()...)
 }
 
