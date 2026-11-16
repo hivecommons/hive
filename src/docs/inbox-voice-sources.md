@@ -65,6 +65,20 @@ see the issue linked from the changelog entry.
     as a private draft idea (Bearer token from `inbox.dibs.token_env`).
   - **Knowledge only** (`dismiss`): leaves the fact where it is and drops the
     item from the unprocessed count.
+- **Share history pills.** Every share of an item (🔗 Share → Hive, the bulk
+  Hive menu, an auto-routing rule or a spek session) appends a record to the
+  item's history and shows a pill next to the status pills, in the form
+  `→ RFC #18412 · andy · 2m ago`, `→ spek: nate-v2 · …`, `→ DIBS · …` or
+  `→ Knowledge · …`. A record carries the destination, the acting user
+  (`inbox-auto` for auto-routing), start and finish times, a status (`queued`,
+  `transcribing`, `in_progress`, `done`, `failed`, with the reason in the
+  pill's tooltip) and the target: the RFC issue or PR URL and number once the
+  agent's publish creates it, the dibs item, the Knowledge fact, or the spek
+  session. A pill links to its target for owners and read-write users; read
+  users see the same pills without links. Only the latest record per
+  destination shows; **+N** expands the full history. The records never hold
+  item text or secrets and are stored with the item state. The list is the
+  `share_history` array of each item in `GET /api/inbox`.
 - **State** per item per destination: `queued → running → filed | failed`
   (`delegated` for → RFC, with a `note` naming the agent), with the RFC/idea
   URL and child issue URLs, and the `error` text on `failed`. Stored in `connector-state/_inbox.json`.
