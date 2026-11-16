@@ -26,7 +26,7 @@ func TestInboxShareMenuRowIsThreeControls(t *testing.T) {
 
 func TestInboxShareMenuBehaviour(t *testing.T) {
 	html := indexHTML(t)
-	script := strings.Join([]string{
+	script := "(function () {\n" + strings.Join([]string{
 		"const assert = require('assert');",
 		"function escapeHtml(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;'); }",
 		"var window = { _hiveRole: 'owner' }; var navigator = {}; var _inboxCache = null;",
@@ -96,6 +96,6 @@ const ids = (gs) => gs.map(g => g.id + ':' + g.items.map(i => i.id).join(','));
   await inboxShareMenuRun('hive', 'spek', 'plaud', 'r1'); assert.deepStrictEqual(ran, ['r1']);
 })().catch(e => { console.error(e); process.exit(1); });
 `,
-	}, "\n")
+	}, "\n") + "\n})();"
 	runStageTrackerRowActionsScript(t, script)
 }
