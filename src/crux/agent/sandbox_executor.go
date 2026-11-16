@@ -229,6 +229,9 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		EnvAllowlist:   spec.EnvAllowlist,
 		NetworkMode:    spec.NetworkMode,
 		ClineProvider:  provider,
+		// hive-review and the other sandbox-safe relays come from hive, not
+		// the project image (#18512).
+		Relays: true,
 	})
 	if provider != nil {
 		sres.Stdout = provider.Redact(sres.Stdout)
