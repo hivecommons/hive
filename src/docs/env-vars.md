@@ -374,7 +374,9 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_VEXA_API_KEY_FILE` | No | `/data/secrets/meetings_vexa_api_key` | Keystore-sealed secret file holding the Vexa tenant key. Overrides `meetings.vexa.api_key_file`. |
 | `HIVE_MEETINGS_DISCORD_TOKEN` | No | none | Per-hive Discord bot token. Secret. Wins over the secret file. Without a token Discord is unavailable. |
 | `HIVE_MEETINGS_DISCORD_TOKEN_FILE` | No | `/data/secrets/meetings_discord_token` | Keystore-sealed secret file holding the Discord bot token. Overrides `meetings.discord.token_file`. |
-| `HIVE_MEETINGS_TRANSCRIBE_URL` | No | none | Shared transcription service for Discord audio (passed as `QUORUM_TRANSCRIBE_URL`). |
+| `HIVE_MEETINGS_TRANSCRIBE_URL` | No | none | Shared transcription service for Discord audio (passed as `QUORUM_TRANSCRIBE_URL`). Overrides `meetings.transcribe_url`. In-cluster: `http://vexa-transcription.meetings.svc.cluster.local:8000`. |
+| `HIVE_MEETINGS_TRANSCRIBE_TOKEN` | No | none | Transcription service token. Secret. Wins over the secret file. Hive passes it to Quorum as `QUORUM_TRANSCRIBE_TOKEN_FILE`; without it Discord audio is not transcribed. |
+| `HIVE_MEETINGS_TRANSCRIBE_TOKEN_FILE` | No | `/data/secrets/meetings_transcribe_token` | Keystore-sealed secret file holding the transcription service token. Overrides `meetings.transcribe_token_file`. |
 | `HIVE_MEETINGS_DELIVERY` | No | `chat` | Default delivery for meeting output. Only `chat` is supported. |
 | `HIVE_MEETINGS_VOICE_ON_ADDRESS` | No | `true` | Lets hive speak when addressed by name in a meeting whose voice is enabled; otherwise it answers in chat. |
 | `HIVE_MEETINGS_BOT_NAME` | No | `hive (notes)` | Display name the meeting bot joins with. |
