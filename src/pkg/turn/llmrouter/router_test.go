@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/inferencehealth"
 	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/pkg/turn"
 )
@@ -160,6 +162,7 @@ func TestGoneAuthAndMalformedFailOver(t *testing.T) {
 		{"auth", status(401, ""), OutcomeAuth},
 		{"malformed", func(w http.ResponseWriter) { _, _ = io.WriteString(w, `{"choices":[]}`) }, OutcomeMalformed},
 		{"error-200", func(w http.ResponseWriter) { _, _ = io.WriteString(w, `{"error":{"message":"overloaded"}}`) }, OutcomeMalformed},
+		{"degenerate", okText(strings.Repeat("!", 300)), OutcomeMalformed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := &fakeProvider{handler: tc.h}
@@ -211,7 +214,7 @@ func TestWireTranslationOfToolsAndToolCalls(t *testing.T) {
 	a := &fakeProvider{handler: func(w http.ResponseWriter) {
 		// Arguments as a bare object and a missing id: both seen from
 		// OpenAI-compatible servers in the wild.
-		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":null,"tool_calls":[{"function":{"name":"repo.read_file","arguments":{"path":"README.md"}}},{"id":"x2","function":{"name":"issue.read","arguments":"{\"number\":7}"}}]},"finish_reason":"tool_calls"}]}`)
+		_, _ = io.WriteString(w, `{"choices":[{"message":{"content":null,"tool_calls":[{"function":{"name":"repo__read_file","arguments":{"path":"README.md"}}},{"id":"x2","function":{"name":"issue__read","arguments":"{\"number\":7}"}}]},"finish_reason":"tool_calls"}]}`)
 	}}
 	sa := a.server(t)
 	r, _ := New([]Provider{prov("a", sa.URL)}, WithEnv(allKeys()))
@@ -220,7 +223,7 @@ func TestWireTranslationOfToolsAndToolCalls(t *testing.T) {
 		turn.Message{Role: turn.RoleTool, ToolCallID: "c1", Name: "issue.read", Content: "body"},
 		turn.Message{Role: turn.RoleSubagent, Name: "triage", Content: "done"},
 	)
-	tools := []toolapprove.ToolRequest{{Tool: "repo.read_file", Content: "Read a file", Arguments: map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}}}, {Tool: "task.complete"}}
+	tools := []toolapprove.ToolRequest{{Tool: "repo.read_file", Content: "Read a file", Arguments: map[string]any{"type": "object", "properties": map[string]any{"path": map[string]any{"type": "string"}}}}, {Tool: "issue.read"}, {Tool: "task.complete"}}
 	got, err := r.Generate(context.Background(), history, tools)
 	if err != nil {
 		t.Fatal(err)
@@ -228,16 +231,17 @@ func TestWireTranslationOfToolsAndToolCalls(t *testing.T) {
 	if got.StopReason != "tool_calls" || len(got.ToolCalls) != 2 {
 		t.Fatalf("got %+v", got)
 	}
-	if got.ToolCalls[0].ID != "call_0" || got.ToolCalls[0].Arguments != `{"path":"README.md"}` || got.ToolCalls[1].Arguments != `{"number":7}` {
+	if got.ToolCalls[0].ID != "call_0" || got.ToolCalls[0].Name != "repo.read_file" || got.ToolCalls[0].Arguments != `{"path":"README.md"}` ||
+		got.ToolCalls[1].Name != "issue.read" || got.ToolCalls[1].Arguments != `{"number":7}` {
 		t.Fatalf("tool calls = %+v", got.ToolCalls)
 	}
 
 	sent := a.lastBody["messages"].([]any)
 	asst := sent[2].(map[string]any)
-	if asst["content"] != nil {
-		t.Fatalf("assistant tool-call message content = %#v, want null", asst["content"])
+	if asst["content"] != "" {
+		t.Fatalf("assistant tool-call message content = %#v, want \"\" (Workers AI rejects null)", asst["content"])
 	}
-	if tc := asst["tool_calls"].([]any)[0].(map[string]any); tc["id"] != "c1" || tc["type"] != "function" {
+	if tc := asst["tool_calls"].([]any)[0].(map[string]any); tc["id"] != "c1" || tc["type"] != "function" || tc["function"].(map[string]any)["name"] != "issue__read" {
 		t.Fatalf("assistant tool_calls = %#v", tc)
 	}
 	if tool := sent[3].(map[string]any); tool["role"] != "tool" || tool["tool_call_id"] != "c1" {
@@ -247,22 +251,25 @@ func TestWireTranslationOfToolsAndToolCalls(t *testing.T) {
 		t.Fatalf("subagent message = %#v", sub)
 	}
 	defs := a.lastBody["tools"].([]any)
-	fn := defs[1].(map[string]any)["function"].(map[string]any)
-	if fn["name"] != "task.complete" || fn["parameters"].(map[string]any)["type"] != "object" {
+	if n := defs[0].(map[string]any)["function"].(map[string]any)["name"]; n != "repo__read_file" {
+		t.Fatalf("wire tool name = %v", n)
+	}
+	fn := defs[2].(map[string]any)["function"].(map[string]any)
+	if fn["name"] != "task__complete" || fn["parameters"].(map[string]any)["type"] != "object" {
 		t.Fatalf("default parameters = %#v", fn)
 	}
 }
 
 func TestNewValidates(t *testing.T) {
-	good := Provider{Name: "a", BaseURL: "https://x", Model: "m", APIKeyEnv: "K"}
+	good := Provider{Name: "a", BaseURL: "https://x", Model: "m"}
 	for _, tc := range []struct {
 		name string
 		ps   []Provider
 	}{
 		{"empty", nil},
 		{"dup", []Provider{good, good}},
-		{"no-key-env", []Provider{{Name: "a", BaseURL: "https://x", Model: "m"}}},
 		{"bad-url", []Provider{{Name: "a", BaseURL: "x", Model: "m", APIKeyEnv: "K"}}},
+		{"no-model", []Provider{{Name: "a", BaseURL: "https://x"}}},
 		{"neg-cap", []Provider{{Name: "a", BaseURL: "https://x", Model: "m", APIKeyEnv: "K", DailyRequestCap: -1}}},
 	} {
 		if _, err := New(tc.ps); err == nil {
@@ -280,5 +287,113 @@ func TestParseRetryAfter(t *testing.T) {
 	}
 	if d := parseRetryAfter("soon", t0); d != 0 {
 		t.Fatalf("junk: %v", d)
+	}
+}
+
+func TestDailyQuota429CoolsDownUntilUTCMidnight(t *testing.T) {
+	a := &fakeProvider{handler: func(w http.ResponseWriter) {
+		w.WriteHeader(429)
+		_, _ = io.WriteString(w, `{"error":{"message":"Rate limit reached for model on requests per day (RPD): Limit 1000, Used 1000"}}`)
+	}}
+	b := &fakeProvider{handler: okText("b")}
+	sa, sb := a.server(t), b.server(t)
+	r, _ := New([]Provider{prov("a", sa.URL), prov("b", sb.URL)}, WithEnv(allKeys()), WithClock(func() time.Time { return t0 }))
+	if _, err := r.Generate(context.Background(), msgs(), nil); err != nil {
+		t.Fatal(err)
+	}
+	ok, until, _ := r.ledger.Acquire("a", 0, t0.Add(2*time.Hour))
+	if ok || !until.Equal(time.Date(2026, 11, 17, 0, 0, 0, 0, time.UTC)) {
+		t.Fatalf("daily-quota cooldown: ok=%v until=%v", ok, until)
+	}
+}
+
+func TestKeylessAndEmptyKeyProviders(t *testing.T) {
+	a := &fakeProvider{handler: okText("never")}
+	b := &fakeProvider{handler: okText("keyless")}
+	sa, sb := a.server(t), b.server(t)
+	pa := prov("a", sa.URL) // configured key source that resolves empty -> skipped
+	pb := Provider{Name: "local-vllm", BaseURL: sb.URL + "/v1", Model: "m"}
+	r, _ := New([]Provider{pa, pb}, WithEnv(env(nil)))
+	got, err := r.Generate(context.Background(), msgs(), nil)
+	if err != nil || got.Content != "keyless" {
+		t.Fatalf("Generate = %+v, %v", got, err)
+	}
+	if a.calls != 0 || b.lastAuth != "" {
+		t.Fatalf("a.calls=%d keyless auth=%q", a.calls, b.lastAuth)
+	}
+}
+
+func TestFromGatewayUsesGatewayKeyAndSharedURLRule(t *testing.T) {
+	f := &fakeProvider{handler: okText("gw")}
+	srv := f.server(t)
+	t.Setenv("LLMROUTER_TEST_GW_KEY", "gwkey")
+	// Endpoint without /v1: the shared rule appends /v1/chat/completions,
+	// exactly as the inference translator does.
+	p, err := FromGateway(cruxconfig.GatewayConfig{Name: "workers-ai", Kind: cruxconfig.GatewayKindCustom, Endpoint: srv.URL, APIKeyEnv: "LLMROUTER_TEST_GW_KEY", DefaultModel: "@cf/x"}, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, _ := New([]Provider{p})
+	if got, err := r.Generate(context.Background(), msgs(), nil); err != nil || got.Content != "gw" {
+		t.Fatalf("Generate = %+v, %v", got, err)
+	}
+	if f.lastAuth != "Bearer gwkey" || f.lastBody["model"] != "@cf/x" {
+		t.Fatalf("auth=%q model=%v", f.lastAuth, f.lastBody["model"])
+	}
+	if _, err := FromGateway(cruxconfig.GatewayConfig{Name: "g", Endpoint: "https://x"}, "", 0); err == nil {
+		t.Fatal("gateway with no model must not validate")
+	}
+}
+
+func TestHealthHookFeedsInferenceHealth(t *testing.T) {
+	store := inferencehealth.NewStore()
+	hook := HealthHook(store, func() time.Time { return t0 })
+	hook(Attempt{Provider: "groq", Outcome: OutcomeRateLimited, Status: 429, Detail: "slow down"})
+	hook(Attempt{Provider: "cf", Outcome: OutcomeUnavailable, Detail: "dial tcp: timeout"})
+	hook(Attempt{Provider: "or", Outcome: OutcomeSkipped})
+	snap := store.Snapshot()
+	if len(snap) != 2 {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+	hook(Attempt{Provider: "groq", Outcome: OutcomeServed, Status: 200})
+	for _, st := range store.Snapshot() {
+		if st.Name == "groq" {
+			t.Fatalf("served attempt did not clear groq: %+v", st)
+		}
+	}
+}
+
+func TestToolNameMapping(t *testing.T) {
+	n, err := newToolNames([]toolapprove.ToolRequest{{Tool: "repo.read_file"}, {Tool: "task.complete"}, {Tool: "Bash"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for hive, wire := range map[string]string{"repo.read_file": "repo__read_file", "task.complete": "task__complete", "Bash": "Bash"} {
+		if n.wire(hive) != wire || n.hive(wire) != hive {
+			t.Errorf("%s <-> %s: got wire=%s hive=%s", hive, wire, n.wire(hive), n.hive(wire))
+		}
+	}
+	if n.hive("unknown_tool") != "unknown_tool" {
+		t.Error("unknown wire names must pass through unchanged")
+	}
+	if _, err := newToolNames([]toolapprove.ToolRequest{{Tool: "a.b"}, {Tool: "a__b"}}); err == nil {
+		t.Error("colliding wire names must be rejected")
+	}
+	if got := wireToolName("x y/" + strings.Repeat("z", 80)); len(got) != maxWireToolName || strings.ContainsAny(got, " /") {
+		t.Errorf("sanitised = %q", got)
+	}
+}
+
+func TestDegenerate(t *testing.T) {
+	for s, want := range map[string]bool{
+		strings.Repeat("!", 300):                 true,
+		strings.Repeat("!", 40):                  false, // too short to judge
+		strings.Repeat("ab", 100):                false,
+		"The root cause is in dependency_bot.go": false,
+		strings.Repeat("! ", 200) + "ok":         true,
+	} {
+		if got := degenerate(s); got != want {
+			t.Errorf("degenerate(%.20q…) = %v, want %v", s, got, want)
+		}
 	}
 }

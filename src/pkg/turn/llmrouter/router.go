@@ -10,9 +10,17 @@
 // coordinator can keep it in its own store across passes; MemoryLedger is the
 // in-process default.
 //
-// Configuration never carries a credential. A Provider names the environment
-// variable that holds its API key; a provider whose variable is unset is
-// skipped, not an error.
+// Providers are Hive Model Gateways: FromGateway builds one from the same
+// crux/config.GatewayConfig the governor's gateway path uses, authenticates
+// through crux/inference.ResolveGatewayAuth (so watsonx IAM minting and key
+// files behave identically), and POSTs to config.LiteLLMChatCompletionsURL,
+// the URL rule the inference translator and Test Connection share. Attempt
+// outcomes can be fed to crux/inferencehealth (HealthHook) so free-tier
+// throttling shows up in the existing gateway-health surface.
+//
+// Configuration never carries a credential. A provider whose configured key
+// source resolves empty is skipped, not an error; a provider with no key
+// source at all is keyless (e.g. a local vLLM).
 package llmrouter
 
 import (
@@ -22,34 +30,70 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
 	"time"
 
+	cruxconfig "github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/inference"
 	"github.com/hivecommons/hive/crux/toolapprove"
 	"github.com/hivecommons/hive/pkg/turn"
 )
 
 // Provider is one OpenAI-compatible endpoint and model. Order in the Router's
-// list is the failover order.
+// list is the failover order. Build it with FromGateway in production; the
+// literal form exists for tests and embedders without a hive config.
 type Provider struct {
-	// Name identifies the provider in the ledger and in attempts, e.g. "groq".
-	Name string `json:"name" yaml:"name"`
-	// BaseURL is the OpenAI-compatible root, e.g.
-	// "https://api.groq.com/openai/v1". "/chat/completions" is appended.
-	BaseURL string `json:"base_url" yaml:"base_url"`
+	// Name identifies the provider in the ledger, attempts and health store;
+	// for a gateway it is the gateway name.
+	Name string
+	// BaseURL is the gateway endpoint. The request URL is
+	// config.LiteLLMChatCompletionsURL(BaseURL), exactly as the inference
+	// translator builds it.
+	BaseURL string
 	// Model is sent verbatim as the request's model field.
-	Model string `json:"model" yaml:"model"`
-	// APIKeyEnv names the environment variable holding the bearer token.
-	APIKeyEnv string `json:"api_key_env" yaml:"api_key_env"`
+	Model string
+	// APIKeyEnv / APIKeyFile name where the bearer token lives (never the
+	// value). Ignored when Auth is set.
+	APIKeyEnv  string
+	APIKeyFile string
+	// Auth, when set, resolves the bearer and extra headers per request
+	// (FromGateway wires crux/inference.ResolveGatewayAuth here).
+	Auth func() (token string, headers map[string]string)
 	// DailyRequestCap is the coordinator-side request budget per UTC day;
 	// zero means no local cap (the provider's 429s still apply).
-	DailyRequestCap int `json:"daily_request_cap,omitempty" yaml:"daily_request_cap,omitempty"`
+	DailyRequestCap int
 	// Headers are extra non-secret request headers (e.g. OpenRouter's
 	// HTTP-Referer / X-Title attribution).
-	Headers map[string]string `json:"headers,omitempty" yaml:"headers,omitempty"`
+	Headers map[string]string
+}
+
+// FromGateway builds a Provider from a configured Hive Model Gateway. model
+// overrides the gateway's DefaultModel; one of them must be set.
+func FromGateway(gw cruxconfig.GatewayConfig, model string, dailyCap int) (Provider, error) {
+	if strings.TrimSpace(model) == "" {
+		model = gw.DefaultModel
+	}
+	gwCopy := gw
+	p := Provider{
+		Name:            gw.Name,
+		BaseURL:         strings.TrimSpace(gw.Endpoint),
+		Model:           strings.TrimSpace(model),
+		APIKeyEnv:       gw.APIKeyEnv,
+		APIKeyFile:      gw.APIKeyFile,
+		DailyRequestCap: dailyCap,
+	}
+	// A gateway with no key source is keyless (some vLLM); only gateways
+	// that name one authenticate, through the gateway path's own resolver.
+	if strings.TrimSpace(gw.APIKeyEnv) != "" || strings.TrimSpace(gw.APIKeyFile) != "" {
+		p.Auth = func() (string, map[string]string) {
+			return inference.ResolveGatewayAuth(&gwCopy, "llmrouter", gwCopy.Name, slog.Default())
+		}
+	}
+	return p, p.Validate()
 }
 
 // Validate reports a configuration error for p.
@@ -58,15 +102,18 @@ func (p Provider) Validate() error {
 	case strings.TrimSpace(p.Name) == "":
 		return errors.New("llmrouter: provider name is required")
 	case !strings.HasPrefix(p.BaseURL, "https://") && !strings.HasPrefix(p.BaseURL, "http://"):
-		return fmt.Errorf("llmrouter: provider %s: base_url must be http(s)", p.Name)
+		return fmt.Errorf("llmrouter: provider %s: endpoint must be http(s)", p.Name)
 	case strings.TrimSpace(p.Model) == "":
-		return fmt.Errorf("llmrouter: provider %s: model is required", p.Name)
-	case strings.TrimSpace(p.APIKeyEnv) == "":
-		return fmt.Errorf("llmrouter: provider %s: api_key_env is required", p.Name)
+		return fmt.Errorf("llmrouter: provider %s: model is required (set one or a gateway default_model)", p.Name)
 	case p.DailyRequestCap < 0:
-		return fmt.Errorf("llmrouter: provider %s: daily_request_cap must be >= 0", p.Name)
+		return fmt.Errorf("llmrouter: provider %s: daily cap must be >= 0", p.Name)
 	}
 	return nil
+}
+
+// hasKeySource reports whether p is configured to authenticate at all.
+func (p Provider) hasKeySource() bool {
+	return p.Auth != nil || strings.TrimSpace(p.APIKeyEnv) != "" || strings.TrimSpace(p.APIKeyFile) != ""
 }
 
 // Outcome classifies one provider attempt.
@@ -191,7 +238,11 @@ var _ turn.LLMClient = (*Router)(nil)
 // models. A request the provider rejects as malformed (other 4xx) is returned
 // immediately: resending it elsewhere would only spend more budget.
 func (r *Router) Generate(ctx context.Context, messages []turn.Message, tools []toolapprove.ToolRequest) (turn.LLMResponse, error) {
-	body, err := buildRequestBody(messages, tools)
+	names, err := newToolNames(tools)
+	if err != nil {
+		return turn.LLMResponse{}, err
+	}
+	wireBody, err := buildRequestBody(messages, tools, names)
 	if err != nil {
 		return turn.LLMResponse{}, err
 	}
@@ -207,9 +258,9 @@ func (r *Router) Generate(ctx context.Context, messages []turn.Message, tools []
 			return turn.LLMResponse{}, err
 		}
 		now := r.now()
-		key := r.getenv(p.APIKeyEnv)
-		if key == "" {
-			attempts = append(attempts, r.report(Attempt{Provider: p.Name, Outcome: OutcomeSkipped, Detail: "no api key in $" + p.APIKeyEnv}))
+		key, extra := r.resolveAuth(p)
+		if key == "" && p.hasKeySource() {
+			attempts = append(attempts, r.report(Attempt{Provider: p.Name, Outcome: OutcomeSkipped, Detail: "configured api key resolved empty"}))
 			continue
 		}
 		ok, until, err := r.ledger.Acquire(p.Name, p.DailyRequestCap, now)
@@ -221,7 +272,7 @@ func (r *Router) Generate(ctx context.Context, messages []turn.Message, tools []
 			attempts = append(attempts, r.report(Attempt{Provider: p.Name, Outcome: OutcomeSkipped, Detail: "unavailable until " + until.UTC().Format(time.RFC3339)}))
 			continue
 		}
-		resp, a, cooldown := r.try(ctx, p, key, body)
+		resp, a, cooldown := r.try(ctx, p, key, extra, wireBody, names)
 		attempts = append(attempts, r.report(a))
 		switch a.Outcome {
 		case OutcomeServed:
@@ -233,7 +284,7 @@ func (r *Router) Generate(ctx context.Context, messages []turn.Message, tools []
 			return turn.LLMResponse{}, ctx.Err()
 		}
 		if cooldown > 0 {
-			until := now.Add(cooldown)
+			until := r.now().Add(cooldown)
 			if err := r.ledger.Cooldown(p.Name, until); err != nil {
 				return turn.LLMResponse{}, fmt.Errorf("llmrouter: ledger: %w", err)
 			}
@@ -241,6 +292,23 @@ func (r *Router) Generate(ctx context.Context, messages []turn.Message, tools []
 		}
 	}
 	return turn.LLMResponse{}, &CapacityError{RetryAt: retryAt, Attempts: attempts}
+}
+
+func (r *Router) resolveAuth(p Provider) (string, map[string]string) {
+	if p.Auth != nil {
+		return p.Auth()
+	}
+	if p.APIKeyEnv != "" {
+		if v := strings.TrimSpace(r.getenv(p.APIKeyEnv)); v != "" {
+			return v, nil
+		}
+	}
+	if p.APIKeyFile != "" {
+		if b, err := os.ReadFile(p.APIKeyFile); err == nil {
+			return strings.TrimSpace(string(b)), nil
+		}
+	}
+	return "", nil
 }
 
 func (r *Router) report(a Attempt) Attempt {
@@ -252,16 +320,21 @@ func (r *Router) report(a Attempt) Attempt {
 
 // try performs one HTTP attempt and returns the response, the attempt record,
 // and the cooldown to apply on failure.
-func (r *Router) try(ctx context.Context, p Provider, key string, body []byte) (turn.LLMResponse, Attempt, time.Duration) {
+func (r *Router) try(ctx context.Context, p Provider, key string, extra map[string]string, body []byte, names toolNames) (turn.LLMResponse, Attempt, time.Duration) {
 	a := Attempt{Provider: p.Name}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(p.BaseURL, "/")+"/chat/completions", bytes.NewReader(withModel(body, p.Model)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cruxconfig.LiteLLMChatCompletionsURL(p.BaseURL), bytes.NewReader(withModel(body, p.Model)))
 	if err != nil {
 		a.Outcome, a.Detail = OutcomeRejected, err.Error()
 		return turn.LLMResponse{}, a, 0
 	}
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+key)
+	if key != "" {
+		req.Header.Set("Authorization", "Bearer "+key)
+	}
 	for k, v := range p.Headers {
+		req.Header.Set(k, v)
+	}
+	for k, v := range extra {
 		req.Header.Set(k, v)
 	}
 	resp, err := r.client.Do(req)
@@ -277,7 +350,7 @@ func (r *Router) try(ctx context.Context, p Provider, key string, body []byte) (
 			a.Outcome, a.Detail = OutcomeUnavailable, err.Error()
 			return turn.LLMResponse{}, a, DefaultUnavailableCooldown
 		}
-		out, err := parseResponse(raw)
+		out, err := parseResponse(raw, names)
 		if err != nil {
 			// Some free routes return 200 with an error object or no
 			// choices when an upstream is overloaded; treat as unavailable.
@@ -293,6 +366,13 @@ func (r *Router) try(ctx context.Context, p Provider, key string, body []byte) (
 	switch {
 	case resp.StatusCode == http.StatusTooManyRequests:
 		a.Outcome = OutcomeRateLimited
+		if retry == 0 && dailyQuotaBody(a.Detail) {
+			// A per-day cap (Groq RPD/TPD, OpenRouter :free daily requests,
+			// Workers AI neurons) will not lift in a minute; retrying every
+			// 60s would only burn the other providers' minute budgets.
+			a.Detail = "daily quota: " + a.Detail
+			return turn.LLMResponse{}, a, untilUTCMidnight(r.now())
+		}
 		return turn.LLMResponse{}, a, orDefault(retry, DefaultRateLimitCooldown)
 	case resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden:
 		a.Outcome = OutcomeAuth
@@ -307,6 +387,22 @@ func (r *Router) try(ctx context.Context, p Provider, key string, body []byte) (
 		a.Outcome = OutcomeRejected
 		return turn.LLMResponse{}, a, 0
 	}
+}
+
+// dailyQuotaBody reports whether a 429 body names a per-day limit.
+func dailyQuotaBody(body string) bool {
+	b := strings.ToLower(body)
+	for _, marker := range []string{"per day", "per-day", "daily", "requests per day", "(rpd)", "(tpd)", "free-models-per-day", "neurons"} {
+		if strings.Contains(b, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func untilUTCMidnight(now time.Time) time.Duration {
+	y, m, d := now.UTC().Date()
+	return time.Date(y, m, d+1, 0, 0, 0, 0, time.UTC).Sub(now)
 }
 
 func orDefault(d, def time.Duration) time.Duration {
@@ -371,7 +467,7 @@ type wireRequest struct {
 
 // buildRequestBody renders everything except the model, which differs per
 // provider and is spliced in by withModel.
-func buildRequestBody(messages []turn.Message, tools []toolapprove.ToolRequest) ([]byte, error) {
+func buildRequestBody(messages []turn.Message, tools []toolapprove.ToolRequest, names toolNames) ([]byte, error) {
 	req := wireRequest{Messages: make([]wireMessage, 0, len(messages))}
 	for _, m := range messages {
 		wm := wireMessage{Role: string(m.Role)}
@@ -380,7 +476,7 @@ func buildRequestBody(messages []turn.Message, tools []toolapprove.ToolRequest) 
 		case turn.RoleSystem, turn.RoleUser:
 		case turn.RoleAssistant:
 			for _, c := range m.ToolCalls {
-				wm.ToolCalls = append(wm.ToolCalls, wireToolCall{ID: c.ID, Type: "function", Function: wireFunctionCall{Name: c.Name, Arguments: c.Arguments}})
+				wm.ToolCalls = append(wm.ToolCalls, wireToolCall{ID: c.ID, Type: "function", Function: wireFunctionCall{Name: names.wire(c.Name), Arguments: c.Arguments}})
 			}
 		case turn.RoleTool:
 			wm.ToolCallID = m.ToolCallID
@@ -393,10 +489,12 @@ func buildRequestBody(messages []turn.Message, tools []toolapprove.ToolRequest) 
 		default:
 			return nil, fmt.Errorf("llmrouter: unsupported message role %q", m.Role)
 		}
-		if !(m.Role == turn.RoleAssistant && content == "" && len(wm.ToolCalls) > 0) {
-			c := content
-			wm.Content = &c
-		}
+		// Always a string, never null: the OpenAI spec allows null content on
+		// an assistant tool-call message, but Workers AI's gpt-oss-120b
+		// rejects it (HTTP 400 "'string' not in 'null'", measured
+		// 2026-11-16) while every provider tested accepts "".
+		c := content
+		wm.Content = &c
 		req.Messages = append(req.Messages, wm)
 	}
 	// Tool definitions ride on toolapprove.ToolRequest (the Runner's type):
@@ -410,7 +508,7 @@ func buildRequestBody(messages []turn.Message, tools []toolapprove.ToolRequest) 
 		if params == nil {
 			params = map[string]any{"type": "object", "properties": map[string]any{}}
 		}
-		req.Tools = append(req.Tools, wireTool{Type: "function", Function: wireFunctionDef{Name: t.Tool, Description: t.Content, Parameters: params}})
+		req.Tools = append(req.Tools, wireTool{Type: "function", Function: wireFunctionDef{Name: names.wire(t.Tool), Description: t.Content, Parameters: params}})
 	}
 	return json.Marshal(req)
 }
@@ -448,7 +546,7 @@ type wireResponse struct {
 	} `json:"error"`
 }
 
-func parseResponse(raw []byte) (turn.LLMResponse, error) {
+func parseResponse(raw []byte, names toolNames) (turn.LLMResponse, error) {
 	var w wireResponse
 	if err := json.Unmarshal(raw, &w); err != nil {
 		return turn.LLMResponse{}, fmt.Errorf("decode response: %w", err)
@@ -474,12 +572,39 @@ func parseResponse(raw []byte) (turn.LLMResponse, error) {
 			// results by id, so mint a positional one.
 			id = "call_" + strconv.Itoa(i)
 		}
-		out.ToolCalls = append(out.ToolCalls, turn.ToolCall{ID: id, Name: tc.Function.Name, Arguments: normalizeArguments(tc.Function.Arguments)})
+		out.ToolCalls = append(out.ToolCalls, turn.ToolCall{ID: id, Name: names.hive(tc.Function.Name), Arguments: normalizeArguments(tc.Function.Arguments)})
 	}
 	if out.Content == "" && len(out.ToolCalls) == 0 {
 		return turn.LLMResponse{}, errors.New("response has neither content nor tool calls")
 	}
+	if len(out.ToolCalls) == 0 && degenerate(out.Content) {
+		return turn.LLMResponse{}, errors.New("degenerate completion (one repeated character)")
+	}
 	return out, nil
+}
+
+// degenerate reports a long completion made almost entirely of one rune.
+// Observed live 2026-11-16: Workers AI gpt-oss-120b returned HTTP 200 whose
+// content was ~300 '!' at ~4k tokens of context. Treating it as malformed
+// fails the turn over to the next provider instead of persisting garbage
+// into the envelope.
+func degenerate(s string) bool {
+	if len(s) < 64 {
+		return false
+	}
+	counts := map[rune]int{}
+	total, maxCount := 0, 0
+	for _, r := range s {
+		if r == ' ' || r == '\n' || r == '\t' {
+			continue
+		}
+		total++
+		counts[r]++
+		if counts[r] > maxCount {
+			maxCount = counts[r]
+		}
+	}
+	return total >= 64 && maxCount*10 >= total*9
 }
 
 // normalizeArguments returns the arguments as a JSON string. The OpenAI shape
