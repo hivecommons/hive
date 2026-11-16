@@ -837,6 +837,7 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 | Let hive decide              | `decisions.delegate_settings`                                                                                                                                                                                         |
 | Code scanning sweep          | `code_scanning.settings`                                                                                                                                                                                              |
 | Review settings              | `review.settings`                                                                                                                                                                                                     |
+| Advisor lane                 | `advisor.settings`, `advisor.agent`, `advisor.roles`                                                                                                                                                                  |
 | Repositories                 | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                                                                                       |
 | Activity monitor row actions | see below                                                                                                                                                                                                             |
 | Budget                       | `budget.update`, `budget.reset`, `budget.ignore`                                                                                                                                                                      |
@@ -863,6 +864,35 @@ installation's shared hourly bucket and the agent reserve floor
 (`github.agent_reserve_floor`); lowering is not. When the current value cannot
 be read, the preview says the change may be widening. See
 [Changing the agent caps](operator-reference/runtime-and-quota.md#changing-the-agent-caps).
+
+The three advisor operations change the same settings as the Advisor Lane
+panel (Settings → Features), through the endpoints it saves with. Only the
+hive's owner can preview or confirm them. An agent picks a change up at its
+next launch.
+
+- `advisor.settings` takes any of `enabled`, `model` (a model id, `@<role>`, or
+  `""` for the trajectory reviewer's model), `instructions`,
+  `daily_budget_tokens` (0 = no cap), `timeout_s` and `max_consecutive_blocks`.
+  Only the named fields are sent.
+- `advisor.agent` takes `agent` and `override`: an object with the same fields,
+  which replaces the agent's override whole (`{"enabled": false}` opts the agent
+  out), or `inherit` to clear it. The preview names each field the new override
+  clears.
+- `advisor.roles` takes `set` (role name to `{model, backend,
+  reasoning_effort}`) and `remove` (role names). Roles not named keep their
+  value. A role the advisor still names cannot be removed.
+
+```json
+{"operation": "advisor.settings", "args": {"enabled": true, "model": "@advisor", "daily_budget_tokens": 200000}}
+{"operation": "advisor.agent", "args": {"agent": "scanner", "override": {"enabled": false}}}
+{"operation": "advisor.roles", "args": {"set": {"advisor": {"model": "claude-haiku-5-5"}}}}
+```
+
+The preview reads the current advisor settings and shows each change before and
+after. Turning the advisor on for an agent, raising or removing its daily
+budget, or raising its blocker limit is disclosed as widening. `write_confirm`
+refuses if the advisor settings changed after the preview. None of these change
+what the advisor says; `advisor_records` reads that.
 
 The issue filter and Sentinel operations change the same settings as
 Settings → Labels and Settings → Security, through the endpoints those tabs
