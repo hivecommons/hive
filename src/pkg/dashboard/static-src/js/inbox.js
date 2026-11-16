@@ -41,10 +41,10 @@
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
     // Uploaded documents have no audio; uploaded audio/video does.
     function inboxItemHasAudio(it) { return !it || it.source !== 'upload' || it.upload_kind === 'audio' || it.upload_kind === 'video'; }
-    // The role is known once /api/role answered (or gave up: then it is
-    // undefined and every gate treats the viewer as read-only). Before that
-    // the Inbox renders a neutral loading state, never a guessed 'read'.
-    function inboxRoleKnown() { return window._hiveAuthKnown === true || window._hiveRole !== undefined; }
+    // The role is known once /api/role settled (answered, or retries gave up:
+    // then it is undefined and every gate treats the viewer as read-only).
+    // Before that the Inbox renders a neutral loading state, never a guessed 'read'.
+    function inboxRoleKnown() { return window._hiveRoleSettled === true || window._hiveRole !== undefined; }
     function inboxOnRoleReady() { if (_inboxCache) renderInbox(); }
     (window._hiveRoleListeners = window._hiveRoleListeners || []).push(inboxOnRoleReady);
     function inboxItemKey(it) { return it.source + '/' + it.id; }

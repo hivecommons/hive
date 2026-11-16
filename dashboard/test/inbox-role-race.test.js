@@ -25,12 +25,12 @@ function extractFunction(name) {
   throw new Error(`unterminated ${name}`);
 }
 
-const NAMES = ['inboxRoleKnown', 'inboxOnRoleReady', 'inboxCanShare', 'inboxViewerCanPlay', 'renderInbox', 'hiveAuthResolved', 'hiveFetchRole'];
+const NAMES = ['inboxRoleKnown', 'inboxOnRoleReady', 'inboxCanShare', 'inboxViewerCanPlay', 'renderInbox', 'hiveFetchRoleOnce', 'hiveRoleSettled', 'hiveApplyRoleData', 'hiveRetryRole'];
 
 function makeSandbox(opts) {
   const panel = { innerHTML: '' };
   const sb = {
-    window: Object.assign({ _hiveRoleListeners: [] }, opts.window || {}),
+    window: { _hiveRoleListeners: [] },
     document: { getElementById: (id) => (id === 'inbox-panel' ? panel : null) },
     panel,
     _inboxCache: { items: [{ source: 'plaud', id: 'a', processed: false }], sources: [], settings: {} },
@@ -47,6 +47,8 @@ function makeSandbox(opts) {
     inboxItemHtml: () => '<div class="item"></div>',
     inboxPreserveAudio: (p, fn) => fn(),
     inboxApplyFocus: () => {},
+    // Same effect as the real showGHAuthState: it records the role.
+    showGHAuthState: (loggedIn, user, avatar, role) => { sb.window._hiveUser = user; if (role) sb.window._hiveRole = role; },
     fetch: opts.fetch,
     setTimeout: (fn) => { fn(); return 0; },
     console, Math, Number, Array, Error, Promise, String,
@@ -72,30 +74,37 @@ test('role arriving as owner re-renders the Inbox with the Hive actions', () => 
   const sb = makeSandbox({});
   sb.renderInbox();
   assert.match(sb.panel.innerHTML, /Loading inbox/);
-  const resolved = sb.hiveAuthResolved();
   sb.window._hiveRole = 'owner';
-  resolved();
+  sb.hiveRoleSettled(false);
   assert.match(sb.panel.innerHTML, /Select all/);
   assert.equal(sb.inboxViewerCanPlay(), true);
 });
 
 test('role arriving as read keeps the Hive actions hidden', () => {
   const sb = makeSandbox({});
-  const resolved = sb.hiveAuthResolved();
   sb.window._hiveRole = 'read';
-  resolved();
+  sb.hiveRoleSettled(false);
   assert.doesNotMatch(sb.panel.innerHTML, /Loading inbox/);
   assert.doesNotMatch(sb.panel.innerHTML, /Select all/);
   assert.equal(sb.inboxViewerCanPlay(), false);
 });
 
-test('role lookup that stays failed resolves auth and falls back to read-only', async () => {
+test('an unchanged role does not re-render on later auth checks', () => {
+  const sb = makeSandbox({});
+  sb.window._hiveRole = 'owner';
+  sb.hiveRoleSettled(false);
+  sb.panel.innerHTML = 'sentinel';
+  sb.hiveRoleSettled(false);
+  assert.equal(sb.panel.innerHTML, 'sentinel');
+});
+
+test('role lookup that stays failed retries, then falls back to read-only and says so', async () => {
   let calls = 0;
   const sb = makeSandbox({ fetch: async () => { calls++; throw new Error('network'); } });
-  await assert.rejects(sb.hiveFetchRole());
-  assert.equal(calls, 3, 'retried before giving up');
-  sb.window._hiveRoleFailed = true;
-  sb.hiveAuthResolved()();
+  sb.renderInbox();
+  assert.match(sb.panel.innerHTML, /Loading inbox/);
+  await sb.hiveRetryRole();
+  assert.equal(calls, 2, 'retried after the first attempt (made by checkGHAuth)');
   assert.doesNotMatch(sb.panel.innerHTML, /Loading inbox/);
   assert.doesNotMatch(sb.panel.innerHTML, /Select all/);
   assert.match(sb.panel.innerHTML, /Could not determine your role/);
@@ -103,8 +112,14 @@ test('role lookup that stays failed resolves auth and falls back to read-only', 
 
 test('role lookup recovers when a retry succeeds', async () => {
   let calls = 0;
-  const sb = makeSandbox({ fetch: async () => { calls++; return calls < 2 ? { status: 503, json: async () => ({}) } : { status: 200, json: async () => ({ role: 'owner' }) }; } });
-  const data = await sb.hiveFetchRole();
-  assert.equal(data.role, 'owner');
+  const sb = makeSandbox({ fetch: async () => { calls++; return calls < 2 ? { status: 503, json: async () => ({}) } : { status: 200, json: async () => ({ user: 'andy', role: 'owner' }) }; } });
+  await sb.hiveRetryRole();
   assert.equal(calls, 2);
+  assert.match(sb.panel.innerHTML, /Select all/);
+  assert.doesNotMatch(sb.panel.innerHTML, /Could not determine your role/);
+});
+
+test('a non-retryable answer is not retried', async () => {
+  const sb = makeSandbox({ fetch: async () => ({ status: 404, json: async () => { throw new Error('not json'); } }) });
+  await assert.rejects(sb.hiveFetchRoleOnce(), (e) => !e.retryable);
 });
