@@ -66,6 +66,9 @@ func (b *boot) bootInbox(baseDir string) {
 		Fetcher: &inbox.LinkFetcher{UserAgent: "hive-inbox/" + version},
 	}
 	svc.EnableUploads(uploads)
+	// Files mailed to hive@<host> through hive-mx (#18395) are spooled on
+	// this spoke's data volume (0700 dirs, 0600 files).
+	svc.EnableEmail(&inbox.EmailSource{Dir: filepath.Join(baseDir, "connector-state", "email", "items")})
 	b.startInboxUploadRetention(uploads)
 	// Dashboard recordings (● Record): audio under connector-state/recordings
 	// until inbox.recording.retention_days, facts in the personal layer.

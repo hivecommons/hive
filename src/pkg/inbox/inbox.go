@@ -6,6 +6,7 @@ package inbox
 import (
 	"context"
 	"errors"
+	"io"
 	"time"
 )
 
@@ -91,6 +92,12 @@ type Item struct {
 	AudioExpired bool `json:"audio_expired,omitempty"`
 	// AudioRetentionDays is how long a hive recording's audio is kept.
 	AudioRetentionDays int `json:"audio_retention_days,omitempty"`
+	// AwaitingApproval marks an item from outside the hive's allowlist (the
+	// email source, #18395): it cannot be routed, shared or transcribed until
+	// the owner approves it.
+	AwaitingApproval bool `json:"awaiting_approval,omitempty"`
+	// Sender is the From address of an emailed item.
+	Sender string `json:"sender,omitempty"`
 }
 
 // Key returns the stable "source/id" key used by the state store.
@@ -152,6 +159,14 @@ type AudioSource interface {
 
 // ErrNoAudio is returned when an item's source offers no audio.
 var ErrNoAudio = errors.New("no audio is available for this item")
+
+// AudioOpener is optionally implemented by sources that hold an item's audio
+// themselves (the email spool) instead of minting a download link: the
+// transcriber reads it directly. It returns the audio, its MIME type and its
+// size.
+type AudioOpener interface {
+	OpenAudio(ctx context.Context, it Item) (io.ReadCloser, string, int64, error)
+}
 
 // SummaryRunes bounds Item.Summary in listings.
 const SummaryRunes = 2000

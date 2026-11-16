@@ -104,6 +104,9 @@ type Service struct {
 	// recordings is the dashboard recording source (see recordingsource.go);
 	// nil until EnableRecordings.
 	recordings *RecordingSource
+	// email holds files mailed to hive@<host> (email_source.go); nil until
+	// EnableEmail.
+	email *EmailSource
 }
 
 // NewService builds a service for cfg with the given sources/destinations.
@@ -138,6 +141,9 @@ func (s *Service) SetSources(sources []Source) {
 			next[RecordingType] = s.recordings
 		}
 	}
+	if s.email != nil {
+		next[EmailType] = s.email
+	}
 	s.sources = next
 	s.mu.Unlock()
 }
@@ -154,6 +160,23 @@ func (s *Service) EnableUploads(u *UploadSource) {
 	if u != nil {
 		s.sources[UploadType] = u
 	}
+}
+
+// EnableEmail registers the email spool source (#18395).
+func (s *Service) EnableEmail(e *EmailSource) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.email = e
+	if e != nil {
+		s.sources[EmailType] = e
+	}
+}
+
+// Email returns the email source, or nil when it is not enabled.
+func (s *Service) Email() *EmailSource {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.email
 }
 
 // Uploads returns the upload source, or nil when uploads are not enabled.
@@ -364,6 +387,9 @@ var ErrUnknownDestination = errors.New("unknown destination")
 // Route queues it for dest and runs the delivery in the background. The
 // returned state is the queued state; callers poll Items for progress.
 func (s *Service) Route(ctx context.Context, it Item, req Request) (RouteState, error) {
+	if it.AwaitingApproval && req.Destination != DestDismiss {
+		return RouteState{}, ErrAwaitingApproval
+	}
 	if req.Destination == DestDismiss {
 		if req.ShareID != "" {
 			ref := refFromResult(it, DestDismiss, Result{})
@@ -481,7 +507,9 @@ func (s *Service) Sweep(ctx context.Context) (routed int, err error) {
 	items, lerr := s.Items(ctx)
 	rules := s.Config().Rules
 	for _, it := range items {
-		if s.Store.Seen(it.Key()) {
+		if s.Store.Seen(it.Key()) || it.AwaitingApproval {
+			// An unapproved item is not marked seen: once the owner
+			// approves it, the rules apply on the next sweep.
 			continue
 		}
 		rule, ok := FirstRule(rules, it)

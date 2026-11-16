@@ -39289,6 +39289,197 @@
         }
       }
     },
+    "/api/inbox/email": {
+      "post": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Receive mail-in files (hub relay)",
+        "description": "Markdown, audio and image attachments hive-mx received for hive@<host>. A sender whose From address passed DMARC alignment and is a proven calendar email of a user with access becomes normal Inbox items; anyone else's items await the owner's approval. Relay signature: X-Hive-Relay-Timestamp, X-Hive-Relay-Signature-256 (HMAC-SHA256 with this hive's relay key over timestamp.delivery.body) and X-Hive-Relay-Delivery; no session.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "hive-mx delivery (pkg/mailin/wire.Delivery) of kind files: id, kind, recipient, message_id, received_at, auth, files {title, attachments[] {name, kind, content_type, size, sha256, data}}"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "awaiting_approval": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid delivery"
+          },
+          "401": {
+            "description": "Relay signature rejected"
+          },
+          "409": {
+            "description": "Mail-in files are off or unavailable"
+          },
+          "413": {
+            "description": "Delivery too large"
+          },
+          "503": {
+            "description": "This hive holds no relay key"
+          },
+          "507": {
+            "description": "The email spool is full"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/{id}/approve": {
+      "post": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Approve a mailed-in item",
+        "description": "Lets an item from outside the allowlist be shared, routed and transcribed. Owner only. Audited as inbox-email-approve.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Email item id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Inbox item"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "No such email item"
+          },
+          "503": {
+            "description": "Mail-in files are not available"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/{id}/decline": {
+      "post": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Decline a mailed-in item",
+        "description": "Deletes the item and its file. Owner only. Audited as inbox-email-decline.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Email item id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "declined": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "No such email item"
+          },
+          "503": {
+            "description": "Mail-in files are not available"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/{id}/file": {
+      "get": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Download a mailed-in file",
+        "description": "The stored attachment with its sniffed type (Markdown as text/plain), inline for images and as a download otherwise, X-Content-Type-Options nosniff and a sandbox Content-Security-Policy. Owner or read-write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Email item id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such email item"
+          },
+          "503": {
+            "description": "Mail-in files are not available"
+          }
+        }
+      }
+    },
     "/api/inbox/route": {
       "post": {
         "tags": [

@@ -196,8 +196,14 @@ func (s *Service) transcriber(t config.InboxTranscription) (transcribe.Transcrib
 
 // hasAudio reports whether the item's source can mint audio links.
 func (s *Service) hasAudio(it Item) bool {
-	_, ok := s.source(it.Source).(AudioSource)
-	return ok && !it.AudioExpired
+	src := s.source(it.Source)
+	if _, ok := src.(AudioSource); ok {
+		return !it.AudioExpired
+	}
+	if _, ok := src.(AudioOpener); ok {
+		return it.Pending
+	}
+	return false
 }
 
 // Reason codes for Item.TranscribeUnavailable. no_key means the resolved
@@ -259,7 +265,7 @@ func (s *Service) applyTranscripts(items []Item) {
 			}
 		}
 		busy := ok && (rec.Status == TranscriptionQueued || rec.Status == TranscriptionRunning || rec.Status == TranscriptionDone)
-		it.Transcribable = active && it.Pending && !busy && s.hasAudio(*it)
+		it.Transcribable = active && it.Pending && !busy && !it.AwaitingApproval && s.hasAudio(*it)
 		if it.Pending && !busy && s.hasAudio(*it) {
 			if !blockedKnown {
 				blocked, blockedKnown = s.transcribeBlockedReason(txCfg, store), true
@@ -499,6 +505,35 @@ func (s *Service) transcribeItem(ctx context.Context, it Item, cfg config.InboxT
 				return nil, transcribe.ErrTooLarge
 			}
 			return readCloser{Reader: transcribe.LimitReader(resp.Body, maxBytes), Closer: resp.Body}, nil
+		},
+	}
+	return tr.Transcribe(ctx, audio)
+}
+
+// transcribeOpened transcribes audio a source holds itself (AudioOpener).
+func (s *Service) transcribeOpened(ctx context.Context, tr transcribe.Transcriber, op AudioOpener, it Item, cfg config.InboxTranscription, rec *TranscriptRecord, job *txJob) (transcribe.Result, error) {
+	probe, mime, size, err := op.OpenAudio(ctx, it)
+	if err != nil {
+		return transcribe.Result{}, err
+	}
+	_ = probe.Close()
+	maxBytes := cfg.EffectiveMaxBytes()
+	if maxBytes > 0 && size > maxBytes {
+		return transcribe.Result{}, transcribe.ErrTooLarge
+	}
+	rec.AudioSize = size
+	s.Logger.Info("inbox: transcribing", "item", it.Key(), "provider", tr.Name(), "audio_host", "local")
+	audio := transcribe.Audio{
+		MIME:     mime,
+		Duration: time.Duration(it.DurationMS) * time.Millisecond,
+		Lang:     cfg.EffectiveLanguage(),
+		Progress: func(p transcribe.Progress) { s.txProgress(job, p) },
+		Open: func(ctx context.Context) (io.ReadCloser, error) {
+			rc, _, _, err := op.OpenAudio(ctx, it)
+			if err != nil {
+				return nil, err
+			}
+			return readCloser{Reader: transcribe.LimitReader(rc, maxBytes), Closer: rc}, nil
 		},
 	}
 	return tr.Transcribe(ctx, audio)
