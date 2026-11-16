@@ -50,6 +50,24 @@ If the meeting platform's chat is unavailable, hive cannot post the consent noti
 
 The same operations are available over the [meetings API](api-reference/knowledge.md) (`/api/meetings`).
 
+## Calendar
+
+The **Calendar** section, right after **Inbox** in the left menu, lists the meetings hive is scheduled to join. The scheduler checks every 15 seconds (`HIVE_MEETINGS_SCHEDULE_TICK_S`) and sends hive in 60 seconds before each start (`HIVE_MEETINGS_SCHEDULE_LEAD_S`), the same way **Send hive to a meeting** does. A meeting without an end time is still joined up to 15 minutes after it starts; after that it is marked skipped as missed.
+
+- **Add meeting:** paste a Google Meet, Teams or Zoom link (the platform comes from the link), pick the start and optionally the end, a title and a repeat (daily, every weekday, weekly, monthly). Times are entered and shown in your browser's time zone; a repeating meeting keeps its local time across daylight saving changes. The owner's own meetings are scheduled at once. A read-write user can add one too, and it waits for the owner.
+- **Each row** shows the title, organizer, start and end, platform, the next occurrence of a repeating meeting, the source (email invite, added here, or Discord) and the status: scheduled, awaiting approval, live, ended, cancelled, declined, failed, blocked or skipped.
+- **Approve** or **Decline** a meeting awaiting approval (owner only). A declined invite stays declined when its organizer updates it.
+- **Skip** skips the next occurrence: a single meeting becomes skipped, a repeating one moves on to the one after. **Cancel** stops hive joining it at all; a meeting already live is not left (use **Leave** in Meetings).
+- **Open live panel** while hive is in the meeting and **Notes** once it ended open that meeting in the Meetings section.
+
+The schedule lives in `<meetings.data_dir>/schedule.json` (by default `/data/meetings/schedule.json`), rewritten atomically. Each occurrence is recorded before hive joins it, so a restart never joins the same occurrence twice; a join cut off by a restart is shown as failed rather than retried. Finished meetings stay listed for 14 days and are removed after 30.
+
+Entries are keyed by their calendar UID and RECURRENCE-ID, ready for calendar invites (planned: inviting hive by email). An update with a higher SEQUENCE replaces the entry, an equal or lower one is ignored, and a cancellation marks it cancelled. Until invites arrive, everything not added by the owner waits for approval.
+
+While hive is in at least one meeting (joining, in the lobby or live), the top bar shows an indicator such as "🐝 Betty is in a meeting" or "🐝 Betty is in 2 meetings". The name comes from the bot display name (`meetings.bot_name`, "Betty Bee from the hive" shows as "Betty Bee"; the default `hive (notes)` shows as "Hive"). Hover it for each meeting's platform and title; click it to open the live panel, or the Calendar when there are several. The **Calendar** menu badge counts the meetings hive is in plus those awaiting approval. Both follow the dashboard's live event stream, so they update without polling.
+
+The schedule API is `/api/meetings/schedule` ([API reference](api-reference/knowledge.md)).
+
 ## Setup
 
 ### Hosted hives

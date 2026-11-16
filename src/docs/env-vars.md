@@ -396,6 +396,8 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_RETENTION_DAYS` | No | `30` | Days an ended meeting's transcript is kept before it is purged. |
 | `HIVE_MEETINGS_CONSENT_TEXT` | No | the notice above | Notice posted in the meeting chat on join, before anything else. At most 2000 characters. |
 | `HIVE_MEETINGS_DATA_DIR` | No | `/data/meetings` | Where meeting records and transcripts are stored. |
+| `HIVE_MEETINGS_SCHEDULE_TICK_S` | No | `15` | Seconds between the meeting scheduler's checks for a Calendar meeting to join. |
+| `HIVE_MEETINGS_SCHEDULE_LEAD_S` | No | `60` | Seconds before a scheduled meeting's start that hive joins it (`0` joins at the start). |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_MEETING` | No | `200000` | Per-meeting LLM token budget for Spektacular live mode. |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_HOUR` | No | `500000` | Hive-wide hourly token ceiling across meetings. |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_DAY` | No | `2000000` | Hive-wide daily token ceiling across meetings. |
