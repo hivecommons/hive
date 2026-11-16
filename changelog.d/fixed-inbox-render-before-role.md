@@ -1,1 +1,0 @@
-- The dashboard Inbox now waits for the viewer's role before its first render and re-renders as soon as the role resolves, so owners no longer lose Share → Hive actions, ▶ Play and the bulk Hive menu until the next 60-second refresh; a failed role lookup is retried with backoff and falls back to read-only.
