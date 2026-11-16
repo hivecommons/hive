@@ -48,6 +48,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -333,10 +334,10 @@ func (c *AgentsConfig) Resolve(names []string) string {
 // block ready to prepend to an agent kick. requestedSkills are the skills the
 // caller wants included; when nil, the config's own RequestedSkills (from
 // front-matter) are used. Returns "" when there is nothing to inject. The
-// block is bounded to DefaultMaxInjectionBytes; see Render for the cap
-// contract and for a configurable cap.
+// block is bounded to the default cap (DefaultMaxBytes); see Render for the
+// cap contract and for a configurable cap.
 func (c *AgentsConfig) InjectionText(requestedSkills []string) string {
-	out, _ := c.Render(requestedSkills, DefaultMaxInjectionBytes)
+	out, _ := c.Render(requestedSkills, 0)
 	return out
 }
 
@@ -346,10 +347,20 @@ func (c *AgentsConfig) InjectionText(requestedSkills []string) string {
 // says so where the agent will read it, naming the sections, so the agent
 // knows to open the file itself and the repo owner knows to shorten it.
 const (
-	// DefaultMaxInjectionBytes caps the rendered AGENTS.md block when no
-	// project.agents_md_max_bytes is configured. It matches the skills cap
-	// (scheduler maxSkillsInjectionBytes), which is the model this follows.
-	DefaultMaxInjectionBytes = 8192
+	// DefaultMaxInjectionBytes caps the rendered AGENTS.md block when neither
+	// repos.<repo>.agents_md_max_bytes nor project.agents_md_max_bytes is
+	// configured and MaxBytesEnv is unset. It was 8192 until #18495; real
+	// repositories' files outgrew that (a 13 KB AGENTS.md lost whole
+	// sections), so the default now holds a large file in full.
+	DefaultMaxInjectionBytes = 32 * 1024
+	// MaxInjectionBytesCeiling is the hard ceiling every cap is lowered to,
+	// whatever its source (per-repo, project, env), so one misconfigured
+	// repo cannot crowd the rest of the kick out of the model's context.
+	MaxInjectionBytesCeiling = 256 * 1024
+	// MaxBytesEnv overrides DefaultMaxInjectionBytes hive-wide, for operators
+	// who set defaults by environment (hosted spokes). A value that is not a
+	// positive integer is ignored. Config keys still win over it.
+	MaxBytesEnv = "HIVE_AGENTS_MD_MAX_BYTES"
 	// minInjectionBytes is the floor a configured cap is raised to: the header,
 	// precedence sentence and warning reserve alone take ~1 KiB, so anything
 	// lower could never carry a rule.
@@ -462,13 +473,32 @@ func (c *AgentsConfig) skillSections(names []string) []injectionSection {
 	return out
 }
 
-// injectionMaxBytes applies the default and floor to a configured cap.
+// DefaultMaxBytes is the cap that applies when no config key sets one:
+// MaxBytesEnv when it holds a positive integer, else DefaultMaxInjectionBytes.
+func DefaultMaxBytes() int {
+	if v := strings.TrimSpace(os.Getenv(MaxBytesEnv)); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 {
+			return n
+		}
+	}
+	return DefaultMaxInjectionBytes
+}
+
+// EffectiveMaxBytes is the cap Render applies for a configured value n: the
+// default (DefaultMaxBytes) when n is zero or negative, raised to the floor
+// and lowered to MaxInjectionBytesCeiling.
+func EffectiveMaxBytes(n int) int { return injectionMaxBytes(n) }
+
+// injectionMaxBytes applies the default, floor and ceiling to a configured cap.
 func injectionMaxBytes(n int) int {
 	if n <= 0 {
-		n = DefaultMaxInjectionBytes
+		n = DefaultMaxBytes()
 	}
 	if n < minInjectionBytes {
 		n = minInjectionBytes
+	}
+	if n > MaxInjectionBytesCeiling {
+		n = MaxInjectionBytesCeiling
 	}
 	return n
 }
@@ -508,8 +538,8 @@ func injectionWarning(capBytes int, o InjectionOmitted) string {
 	return b.String()
 }
 
-// Render is InjectionText bounded to maxBytes (DefaultMaxInjectionBytes when
-// zero, never below minInjectionBytes). The header and precedence statement
+// Render is InjectionText bounded to maxBytes (DefaultMaxBytes when zero,
+// never below minInjectionBytes nor above MaxInjectionBytesCeiling). The header and precedence statement
 // always render. Body sections (split at "#"/"##" headings) and then resolved
 // skills are visited in document order and each is kept only if it fits the
 // remaining budget whole; one that does not fit is dropped whole and later,
