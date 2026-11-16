@@ -59,9 +59,11 @@ type Service struct {
 	// holds queued and running jobs in order (the head runs, one at a time)
 	// with their live progress, guarded by txQMu.
 	transcripts *TranscriptStore
-	txMu        sync.Mutex
-	txQMu       sync.Mutex
-	txQueue     []*txJob
+	// intentRunners are the registered transcribe-then-share handlers.
+	intentRunners map[string]IntentRunner
+	txMu          sync.Mutex
+	txQMu         sync.Mutex
+	txQueue       []*txJob
 	// NewTranscriber builds the provider for a run; nil uses
 	// DefaultTranscriber with the key from Getenv. Tests inject a fake.
 	NewTranscriber func(config.InboxTranscription) (transcribe.Transcriber, error)
@@ -355,6 +357,7 @@ func (s *Service) fail(key, dest string, err error) {
 // marks every listed item seen, so a rule added later never back-fires on
 // old recordings. It is called after each connector sync.
 func (s *Service) Sweep(ctx context.Context) (routed int, err error) {
+	s.ResumeIntents(ctx)
 	items, lerr := s.Items(ctx)
 	rules := s.Config().Rules
 	for _, it := range items {

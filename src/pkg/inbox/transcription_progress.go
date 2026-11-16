@@ -244,3 +244,9 @@ func expectedSpeed(store *TranscriptStore, provider, model string) transcribe.Sp
 	}
 	return transcribe.TypicalSpeed(provider)
 }
+
+// txIsLive reports whether a transcription job for the item is in the queue.
+func (s *Service) txIsLive(source, id string) bool {
+	var st TranscriptionState
+	return s.txLive(source, id, &st)
+}

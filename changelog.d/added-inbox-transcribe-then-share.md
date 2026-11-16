@@ -1,0 +1,1 @@
+- Sharing from the Inbox 🔗 Share → Hive menu is open to read-write users as well as owners (read users still only get Link), and RFC… / Knowledge on an audio-only item now transcribe it first and share when the transcript completes, with a "Transcribing, then → RFC" progress label; DIBS still sends straight away.
