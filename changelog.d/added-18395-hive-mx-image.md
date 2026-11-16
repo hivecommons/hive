@@ -1,0 +1,1 @@
+- `ghcr.io/hivecommons/hive-mx`: a multi-arch (amd64, arm64) image for the hive-mx mail receiver, a static binary on distroless running as non-root, published with the other hive images.

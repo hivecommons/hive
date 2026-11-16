@@ -268,6 +268,11 @@ Concretely, per release:
    should never trigger in the normal path; see below).
 3. `docker buildx imagetools create` retags `hive`, `hive-contributor`, and
    `hive-hub` at `:<7-hex-sha>` as `:v<version>`.
+   `hive-mx` (the mail receiver, `src/Dockerfile.mx`) is built and published
+   by `docker.yml` on every release-line push like the others (`:<7-hex-sha>`,
+   `:<branch>-latest`, `:latest`, `:candidate`), but is not yet retagged as
+   `:v<version>`, promoted to `:stable` or pruned: deploy it pinned by tag
+   and digest.
 4. `changelog.d/` fragments are compiled into `## Unreleased`
    (`src/scripts/compile-changelog.sh` — the same compile the decide job ran
    working-tree-only, now on the release job's fresh checkout), then the
