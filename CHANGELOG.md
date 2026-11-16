@@ -11,6 +11,21 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.289.0)
+
+### Added
+
+- Settings, Meeting attendee now shows Betty's email address with everyone's calendar emails and proof status, lets each user add, prove and remove their own calendar emails, lists mailed-in files waiting for approval, and lets the owner turn calendar invites and mail-in files on or off.
+- Mail Markdown, audio and image files to `hive@<your hive's host>` and they land in the Inbox as email items: from an allowlisted calendar email they are routable, shareable and transcribed like voice items; from anyone else they wait for the owner's Approve or Decline.
+- The hub sign-in, access-needed and link-preview pages now also show the LF Projects legal footer.
+- Every hub page (public pages, fleet views, hosted dashboard, contribute landing and error page) now shows the LF Projects legal footer linking to lfprojects.org/policies/.
+
+### Fixed
+
+- Dashboard: the "rejected hub-proxied request with unverified proxy proof" warning is now logged at most once a minute per reason and path (with a suppressed count) instead of once per request; the request is still rejected with 403 (#18377).
+- Hub heartbeat collect no longer times out when the PVC scan behind `app_keys_held` stalls: the scan is bounded to 2s and falls back to the last completed result (#18484).
+- The scanner (and every repair queue) no longer pushes onto a PR branch the hive App did not open while someone else is working on it ([#18488](https://github.com/hivecommons/hive/issues/18488)). A red or conflicted non-App PR whose head was pushed within `HIVE_SCANNER_BUSY_BRANCH_MINUTES` (default 60), or whose PR or linked issue another worker holds a live claim on, moves from FIX-BEFORE-NEW and the CI_FAILING push queue to a "BUSY BRANCHES — suggest, do not push" list, and the agent posts the fix as one suggestion comment for the worker to apply as its own signed commit. Idle branches, App-authored lane branches and in-place adoptions are listed exactly as before.
+
 ## 2026-11-16 (v5.288.0)
 
 ### Added

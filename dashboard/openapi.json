@@ -6103,6 +6103,173 @@
         }
       }
     },
+    "/api/config/prompt-sources": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get prompt and definition source repos",
+        "description": "Lists the hive's managed repos and whether agents' prompt_source / definition_source may read from each, via the config-volume allowlist or an owner approval (#18490). Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "Prompt source gate state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "managed": {
+                            "type": "boolean"
+                          },
+                          "owner_approved": {
+                            "type": "boolean"
+                          },
+                          "seed_allowed": {
+                            "type": "boolean"
+                          },
+                          "allowed": {
+                            "type": "boolean"
+                          },
+                          "approved_by": {
+                            "type": "string"
+                          },
+                          "approved_at": {
+                            "type": "string",
+                            "description": "RFC 3339 time of the owner approval."
+                          }
+                        }
+                      },
+                      "description": "One row per managed repo (project.repos), then any owner approval whose repo is no longer managed (inert)."
+                    },
+                    "seed_enabled": {
+                      "type": "boolean",
+                      "description": "variables.security.allow_github_prompt from the config volume."
+                    },
+                    "seed_allowlist": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trust_notice": {
+                      "type": "string"
+                    },
+                    "seed_only_note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config/prompt-sources/owner-repos": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Approve or revoke a managed repo as a prompt source",
+        "description": "Approves (allowed: true, with acknowledge_trust: true) or revokes (allowed: false) one of the hive's managed repos as a prompt_source / definition_source repo. A repo outside project.repos, a malformed slug, or an approval without acknowledge_trust is refused with 400 and nothing changes. Persisted to variables.security.owner_github_prompt_repos in the running config and audit-logged. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "allowed"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "description": "owner/repo slug of a managed repo."
+                  },
+                  "allowed": {
+                    "type": "boolean"
+                  },
+                  "acknowledge_trust": {
+                    "type": "boolean",
+                    "description": "Must be true to approve: anyone who can merge to the repo can steer the hive's agents."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated prompt source gate state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "managed": {
+                            "type": "boolean"
+                          },
+                          "owner_approved": {
+                            "type": "boolean"
+                          },
+                          "seed_allowed": {
+                            "type": "boolean"
+                          },
+                          "allowed": {
+                            "type": "boolean"
+                          },
+                          "approved_by": {
+                            "type": "string"
+                          },
+                          "approved_at": {
+                            "type": "string",
+                            "description": "RFC 3339 time of the owner approval."
+                          }
+                        }
+                      },
+                      "description": "One row per managed repo (project.repos), then any owner approval whose repo is no longer managed (inert)."
+                    },
+                    "seed_enabled": {
+                      "type": "boolean",
+                      "description": "variables.security.allow_github_prompt from the config volume."
+                    },
+                    "seed_allowlist": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trust_notice": {
+                      "type": "string"
+                    },
+                    "seed_only_note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/config/reference-repos": {
       "get": {
         "tags": [
@@ -41347,6 +41514,97 @@
           },
           "409": {
             "description": "Already ended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/hive-recording/{id}": {
+      "delete": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Delete a hive recording",
+        "description": "An owner, or the read-write member who recorded it. Deletes a finished recording for good: its stored audio and chunks, the Inbox item and its state, and its Knowledge fact with the machine transcript. What was already shared from it (RFC, issues, DIBS ideas, spek seeds) is not touched. Audited as `inbox_recording_delete`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recording id (the Inbox item id)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "deleted": {
+                      "type": "boolean"
+                    },
+                    "fact_removed": {
+                      "type": "boolean"
+                    },
+                    "shares_kept": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Read role, or a read-write member deleting someone else's recording",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown recording",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Still in progress, or being transcribed",
             "content": {
               "application/json": {
                 "schema": {

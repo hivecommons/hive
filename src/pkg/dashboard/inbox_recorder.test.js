@@ -27,7 +27,8 @@ const escapeHtml = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replac
 
 const FNS = ['inboxRecSupport', 'inboxRecRoleCanRecord', 'inboxRecAvailable', 'inboxRecFmtClock', 'inboxRecLevel', 'inboxRecSplit',
   'inboxRecConsentText', 'inboxRecDefaultTitle', 'inboxRecConsentHtml', 'inboxRecMemoryQueue', 'inboxRecUploader', 'inboxRecorderMachine',
-  'inboxRecResumePending', 'inboxRecUploadText', 'inboxRecMeterHtml', 'inboxRecPanelHtml', 'inboxRecTabSupport', 'inboxRecSourcesHtml', 'inboxRecCaptureTab'];
+  'inboxRecResumePending', 'inboxRecUploadText', 'inboxRecMeterHtml', 'inboxRecPanelHtml', 'inboxRecTabSupport', 'inboxRecSourcesHtml', 'inboxRecCaptureTab',
+  'inboxRecDoneOutcome', 'inboxRecDoneText'];
 const lib = new Function('escapeHtml', consts() + '\n' + FNS.map(fnSrc).join('\n') + '\nreturn {' + FNS.join(',') + ', CONSENT: INBOX_REC_CONSENT_VERSION, ACK: INBOX_REC_CONSENT_ACK };')(escapeHtml);
 
 const flush = async (n = 20) => { for (let i = 0; i < n; i++) await new Promise(r => setImmediate(r)); };
@@ -396,4 +397,39 @@ test('cancelling the tab picker records the microphone only', async () => {
   assert.strictEqual(m.state, 'recording');
   assert.match(m.warning, /No tab was shared/);
   assert.strictEqual(hive.start.includes_tab_audio, false);
+});
+
+test('the saved panel follows the item: transcribed, failed, off, stalled, waiting', () => {
+  const o = (it, transcribes = true, why = '', waited = false) => lib.inboxRecDoneOutcome(it, transcribes, why, waited);
+  assert.deepStrictEqual(o(null), { state: 'waiting', reason: '' });
+  assert.deepStrictEqual(o(null, false), { state: 'off', reason: '' });
+  assert.strictEqual(o({ transcription: { status: 'running' } }).state, 'waiting');
+  assert.strictEqual(o({ transcription: { status: 'done' } }).state, 'transcribed');
+  assert.strictEqual(o({ fact_state: 'machine' }).state, 'transcribed');
+  assert.strictEqual(o({ has_transcript: true }, false).state, 'transcribed', 'text wins over transcription being off');
+  assert.deepStrictEqual(o({ transcription: { status: 'failed', reason: 'whisper crashed' } }), { state: 'failed', reason: 'whisper crashed' });
+  assert.deepStrictEqual(o({ transcribe_unavailable: 'budget' }, true, 'Monthly budget used'), { state: 'failed', reason: 'Monthly budget used' });
+  assert.strictEqual(o({ transcribe_unavailable: 'disabled' }).state, 'off');
+  assert.strictEqual(o({}, true, '', true).state, 'stalled');
+  assert.strictEqual(o({ transcription: { status: 'queued' } }, true, '', true).state, 'waiting', 'a queued job is still followed');
+
+  assert.strictEqual(lib.inboxRecDoneText({ state: 'transcribed' }), 'Transcribed. See the item below.');
+  assert.match(lib.inboxRecDoneText({ state: 'failed', reason: 'whisper crashed' }), /^Transcription failed: whisper crashed\. The recording is saved/);
+  assert.match(lib.inboxRecDoneText({ state: 'waiting' }), /transcribing it now/);
+  assert.match(lib.inboxRecDoneText({ state: 'off' }), /Transcription is off on this hive/);
+
+  const done = { state: 'done', title: 'Standup', levels: {}, elapsedMs: () => 4000, outcome: { state: 'transcribed', reason: '' } };
+  let out = lib.inboxRecPanelHtml(done);
+  assert.match(out, /data-inbox-rec-outcome="transcribed">Transcribed\. See the item below\.</);
+  assert.doesNotMatch(out, /transcribing it now/, 'the stale line is gone');
+  assert.match(out, /data-action="inboxRecClose"/, 'Close stays');
+  out = lib.inboxRecPanelHtml(Object.assign({}, done, { outcome: { state: 'failed', reason: 'no audio' } }));
+  assert.match(out, /class="kc-error muted-xs"[^>]*data-inbox-rec-outcome="failed">Transcription failed: no audio\./);
+});
+
+test('the saved panel auto-dismisses with the toast countdown, not its own timer', () => {
+  const src = fnSrc('inboxRecArmDismiss');
+  assert.match(src, /toastCountdownBar\(panel, TOAST_DURATION_MS,/);
+  assert.match(fnSrc('inboxRecSyncDone'), /inboxRecArmDismiss\(m\)/);
+  assert.match(fnSrc('fetchInbox'), /inboxRecSyncDone\(_inboxCache\.items\)/);
 });

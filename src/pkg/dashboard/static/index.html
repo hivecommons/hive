@@ -6117,7 +6117,12 @@
     .inbox-add-url { flex: 1 1 16rem; min-width: 0; }
     .inbox-upload .kc-error { flex-basis: 100%; }
     /* ● Record (inbox-recorder.js): panel, red indicator, level meters */
-    .inbox-rec-panel { margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--surface); }
+    .inbox-rec-panel { position: relative; overflow: hidden; margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--surface); }
+    /* The saved panel auto-dismisses with the toast countdown bar (toastCountdownBar). */
+    .inbox-rec-panel .toast-bar { background: color-mix(in srgb, var(--green) 40%, transparent); }
+    .inbox-rec-panel[data-outcome="failed"] .toast-bar { background: color-mix(in srgb, var(--red) 40%, transparent); }
+    .inbox-rec-panel[data-outcome="stalled"] .toast-bar { background: color-mix(in srgb, var(--status-warn) 40%, transparent); }
+    .inbox-rec-panel[data-outcome="off"] .toast-bar { background: color-mix(in srgb, var(--blue) 40%, transparent); }
     .inbox-rec-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
     .inbox-rec-dot { color: var(--red); }
     .inbox-rec-dot.is-live { animation: inbox-rec-pulse 1.2s ease-in-out infinite; }
@@ -47819,6 +47824,7 @@ function burnAreaChart() {
         }
         _inboxCache = await r.json();
         renderInbox();
+        if (typeof inboxRecSyncDone === 'function') inboxRecSyncDone(_inboxCache.items);
         clearTimeout(_inboxBusyTimer);
         if (inboxRouteBusy(_inboxCache.items)) _inboxBusyTimer = setTimeout(fetchInbox, INBOX_BUSY_POLL_MS);
         if (inboxTxAnyBusy(_inboxCache.items)) inboxTxPollSchedule();
@@ -48169,6 +48175,11 @@ function burnAreaChart() {
       } else {
         actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
       }
+      if (inboxCanDeleteRecording(it, window._hiveRole, window._hiveUser)) {
+        const busy = it.transcription && (it.transcription.status === 'queued' || it.transcription.status === 'running');
+        actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-delete" data-action="inboxDeleteRecording" data-arg0="' + id + '"' +
+          (busy ? ' disabled aria-disabled="true" title="Being transcribed: delete it once the transcription finishes"' : ' title="Delete the audio, this Inbox item and its transcript; anything already shared from it stays"') + '>🗑 Delete</button>';
+      }
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
         (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
@@ -48232,6 +48243,19 @@ function burnAreaChart() {
       } catch (e) { return e.message; }
       return 'the browser could not play this recording';
     }
+    // inboxAudioNoteText is the line under the player. Audio this hive
+    // stores itself (its own recordings, dropped audio files) is kept until
+    // retention deletes it (audio_expires_at); a third-party source's audio
+    // is only streamed through and never stored here.
+    function inboxAudioNoteText(it, fmtDate) {
+      const restart = ' Click ▶ Play recording again to restart.';
+      if (it && (it.source === 'hive-recording' || it.source === 'upload')) {
+        const exp = it.audio_expires_at && !String(it.audio_expires_at).startsWith('0001') ? it.audio_expires_at : '';
+        const when = exp && fmtDate ? fmtDate(exp) : '';
+        return (when ? 'The audio is kept on this hive until ' + when + ', then deleted; the transcript stays.' : 'The audio is kept on this hive.') + restart;
+      }
+      return 'Streaming through this hive; the recording is not stored.' + restart;
+    }
     function inboxPlay(src, id) {
       const key = src + '/' + id;
       const target = document.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
@@ -48250,7 +48274,7 @@ function burnAreaChart() {
       target.appendChild(audio);
       const note = document.createElement('div');
       note.className = 'muted-xs';
-      note.textContent = 'Streaming through this hive; the recording is not stored. Click ▶ Play recording again to restart.';
+      note.textContent = inboxAudioNoteText(inboxFind(src, id), d => formatDashboardDate(d, { year: 'numeric', month: 'short', day: 'numeric' }));
       target.appendChild(note);
     }
 
@@ -48521,6 +48545,39 @@ function burnAreaChart() {
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
       return data;
+    }
+    // inboxCanDeleteRecording: a hive recording may be deleted by an owner,
+    // or by the read-write member who recorded it; read members never.
+    function inboxCanDeleteRecording(it, role, user) {
+      if (!it || it.source !== 'hive-recording') return false;
+      if (role === 'owner') return true;
+      return role === 'read-write' && !!user && !!it.recorded_by && String(it.recorded_by).toLowerCase() === String(user).toLowerCase();
+    }
+    // inboxDeleteRecordingText is the confirm text; with share history it
+    // says that the shared copies stay.
+    function inboxDeleteRecordingText(it) {
+      const shared = ((it && it.share_history) || []).length;
+      let text = 'This deletes the audio stored on this hive, this Inbox item and its transcript in Knowledge. It cannot be undone.';
+      if (shared) text += ' What was already shared from it (' + shared + ' share' + (shared === 1 ? '' : 's') + ': RFCs, issues, DIBS ideas, spek seeds) stays where it is.';
+      return text;
+    }
+    async function inboxDeleteRecording(id) {
+      const it = inboxFind('hive-recording', id);
+      if (!it) return;
+      const ok = await hiveConfirm({ title: 'Delete this recording?', message: inboxDeleteRecordingText(it), confirmLabel: 'Delete', danger: true });
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/inbox/hive-recording/' + encodeURIComponent(id), { method: 'DELETE' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        const key = 'hive-recording/' + id;
+        delete _inboxContent[key];
+        _inboxSelected.delete(key);
+        showToast('Recording deleted', 'success');
+      } catch (e) {
+        showToast('Could not delete the recording: ' + e.message, 'error');
+      }
+      await fetchInbox();
     }
     // Approval queue for mailed-in files from outside the allowlist (#18395).
     async function inboxEmailAct(id, action) {
@@ -49243,6 +49300,12 @@ function burnAreaChart() {
     // A live recorder holds a Web Lock with this prefix, so another tab of
     // the same browser never finalizes a recording that is still running.
     const INBOX_REC_LOCK_PREFIX = 'hive-inbox-recording-';
+    // After a recording is saved the panel follows its Inbox item: the
+    // Inbox is re-read this often while the item shows no transcription
+    // state yet (a running job is followed by the transcription poll), for
+    // at most INBOX_REC_DONE_WAIT_MS before the panel stops waiting.
+    const INBOX_REC_DONE_POLL_MS = 5000;
+    const INBOX_REC_DONE_WAIT_MS = 120000;
 
     let _inboxRec = null;
 
@@ -49801,7 +49864,10 @@ function burnAreaChart() {
       if (m.uploader) html += '<div class="muted-xs inbox-rec-upload" data-inbox-rec-upload aria-live="polite">' + escapeHtml(inboxRecUploadText(m.uploader.state)) + '</div>';
       if (m.warning) html += '<div class="kc-error muted-xs" role="alert">' + escapeHtml(m.warning) + '</div>';
       if (m.error) html += '<div class="kc-error muted-xs" role="alert">' + escapeHtml(m.error) + '</div>';
-      if (m.state === 'done') html += '<div class="muted-xs">' + escapeHtml(m.transcribes ? 'The hive is transcribing it now; follow the progress on the item in the Inbox below.' : 'It appears in the Inbox below. Transcription is off on this hive, so it is not transcribed yet.') + '</div>';
+      if (m.state === 'done') {
+        const o = m.outcome || inboxRecDoneOutcome(null, m.transcribes, '', false);
+        html += '<div class="' + (o.state === 'failed' ? 'kc-error ' : '') + 'muted-xs" role="status" data-inbox-rec-outcome="' + escapeHtml(o.state) + '">' + escapeHtml(inboxRecDoneText(o)) + '</div>';
+      }
       html += '<div class="kc-actions mt-2">';
       if (m.state === 'recording') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecPause">⏸ Pause</button>';
       if (m.state === 'paused') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecResume">⏺ Resume</button>';
@@ -49810,6 +49876,61 @@ function burnAreaChart() {
       if (m.state === 'error' && m.activeId) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecFinishEarlier" data-arg0="' + escapeHtml(m.activeId) + '">Finish the earlier recording</button>';
       if (m.state === 'done' || m.state === 'error') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecClose">Close</button>';
       return html + '</div>';
+    }
+    // inboxRecDoneOutcome is where a saved recording's Inbox item stands:
+    // transcribed (the item has text), failed (the job failed or was
+    // skipped, or the hive cannot transcribe it; reason says why), off
+    // (transcription is off on this hive), stalled (no job appeared within
+    // INBOX_REC_DONE_WAIT_MS: waitedOut) or waiting. Every state but waiting
+    // starts the panel's auto-dismiss countdown.
+    function inboxRecDoneOutcome(it, transcribes, unavailableText, waitedOut) {
+      const tx = (it && it.transcription) || null;
+      if (it && (it.has_transcript || it.fact_state === 'machine' || (tx && tx.status === 'done'))) return { state: 'transcribed', reason: '' };
+      if (tx && (tx.status === 'failed' || tx.status === 'skipped')) return { state: 'failed', reason: tx.reason || '' };
+      if (tx && (tx.status === 'queued' || tx.status === 'running')) return { state: 'waiting', reason: '' };
+      if (!transcribes || (it && it.transcribe_unavailable === 'disabled')) return { state: 'off', reason: '' };
+      if (it && it.transcribe_unavailable) return { state: 'failed', reason: unavailableText || '' };
+      if (waitedOut) return { state: 'stalled', reason: '' };
+      return { state: 'waiting', reason: '' };
+    }
+    // inboxRecDoneText is the panel line for an outcome.
+    function inboxRecDoneText(o) {
+      switch (o && o.state) {
+        case 'transcribed': return 'Transcribed. See the item below.';
+        case 'failed': return 'Transcription failed' + (o.reason ? ': ' + o.reason : '') + '. The recording is saved in the Inbox below; retry the transcription from the item.';
+        case 'off': return 'It appears in the Inbox below. Transcription is off on this hive, so it is not transcribed yet.';
+        case 'stalled': return 'Saved in the Inbox below. Transcription has not started yet; follow it on the item.';
+        default: return 'The hive is transcribing it now; follow the progress on the item in the Inbox below.';
+      }
+    }
+    // inboxRecSyncDone runs after every Inbox read: it finds the saved
+    // recording's item, updates the panel line, and once the outcome is
+    // final starts the same auto-dismiss countdown toasts use (bar, duration
+    // and pause on hover or focus). Close still dismisses at once.
+    function inboxRecSyncDone(items) {
+      const m = _inboxRec;
+      if (!m || m.state !== 'done' || !m.id) return;
+      if (!m.doneAt) m.doneAt = Date.now();
+      const it = (items || []).find(x => x && x.source === 'hive-recording' && x.id === m.id) || null;
+      const waitedOut = Date.now() - m.doneAt >= INBOX_REC_DONE_WAIT_MS;
+      const why = it && it.transcribe_unavailable && typeof inboxTxUnavailableText === 'function' ? inboxTxUnavailableText(it.transcribe_unavailable) : '';
+      const o = inboxRecDoneOutcome(it, m.transcribes, why, waitedOut);
+      const changed = !m.outcome || m.outcome.state !== o.state || m.outcome.reason !== o.reason;
+      m.outcome = o;
+      if (changed) inboxRecRender();
+      clearTimeout(m.donePoll);
+      m.donePoll = 0;
+      if (o.state !== 'waiting') { inboxRecArmDismiss(m); return; }
+      // A running job is followed by the Inbox's own transcription poll.
+      const busy = it && it.transcription && (it.transcription.status === 'queued' || it.transcription.status === 'running');
+      if (!busy && typeof fetchInbox === 'function') m.donePoll = setTimeout(() => { if (_inboxRec === m) fetchInbox(); }, INBOX_REC_DONE_POLL_MS);
+    }
+    function inboxRecArmDismiss(m) {
+      const panel = document.getElementById('inbox-rec-panel');
+      if (!panel || m.dismissArmed || typeof toastCountdownBar !== 'function') return;
+      m.dismissArmed = true;
+      if (m.outcome) panel.dataset.outcome = m.outcome.state;
+      toastCountdownBar(panel, TOAST_DURATION_MS, () => { if (_inboxRec === m) inboxRecClose(); });
     }
     // The timer and meters redraw on a dashboard interval (paused while the
     // page is hidden); the length limit has its own timeout so it holds in
@@ -49828,12 +49949,27 @@ function burnAreaChart() {
       const m = _inboxRec;
       const panel = document.getElementById('inbox-rec-panel');
       const html = inboxRecPanelHtml(m);
-      if (panel) { panel.hidden = !html; panel.innerHTML = html; }
+      if (panel) {
+        // A countdown belongs to the saved recording it was armed for.
+        if (panel._countdown && !(m && m.state === 'done' && m.dismissArmed) && typeof toastCountdownCancel === 'function') toastCountdownCancel(panel);
+        panel.hidden = !html;
+        if (m && m.outcome) panel.dataset.outcome = m.outcome.state; else delete panel.dataset.outcome;
+        if (panel._html !== html) {
+          panel._html = html;
+          panel.innerHTML = html;
+          // The rewrite dropped the countdown bar; put it back where it was.
+          if (panel._countdown && panel._countdown.bar) panel.appendChild(panel._countdown.bar);
+        }
+      }
       inboxRecIndicator(m);
       const live = m && (m.state === 'recording' || m.state === 'paused');
       if (live && !_inboxRecTicker) { _inboxRecTicker = true; dashboardSetInterval('inbox-recorder', inboxRecTick, INBOX_REC_TICK_MS); }
       if (!live && _inboxRecTicker) { _inboxRecTicker = false; dashboardClearInterval('inbox-recorder'); }
-      if (m && m.state === 'done' && !m.listed) { m.listed = true; inboxRecWakeLock(false); if (typeof fetchInbox === 'function') fetchInbox(); }
+      if (m && m.state === 'done' && !m.listed) {
+        m.listed = true; inboxRecWakeLock(false);
+        if (!m.transcribes) { m.outcome = inboxRecDoneOutcome(null, false, '', false); inboxRecArmDismiss(m); }
+        if (typeof fetchInbox === 'function') fetchInbox();
+      }
       if (m && m.state === 'error') inboxRecWakeLock(false);
       const btn = document.querySelector('#inbox-panel .inbox-rec-btn');
       if (btn) btn.outerHTML = inboxRecordButtonHtml((_inboxCache || {}).settings || {});
@@ -49888,7 +50024,7 @@ function burnAreaChart() {
       _inboxRec = null;
       inboxRecRender();
     }
-    function inboxRecClose() { _inboxRec = null; inboxRecRender(); }
+    function inboxRecClose() { if (_inboxRec) clearTimeout(_inboxRec.donePoll); _inboxRec = null; inboxRecRender(); }
     // inboxRecFinishEarlier finalizes the user's earlier recording that is
     // still open on the hive (another tab or device stopped sending), so a
     // new one can start.
@@ -73209,6 +73345,13 @@ function burnAreaChart() {
       const writeSurface = `
         <div id="gov-write-surface-host"><div style="color:var(--muted);font-size:var(--fs-base)">Loading…</div></div>`;
 
+      /* Prompt sources (#18490): owner approval of the hive's own managed
+         repos for prompt_source / definition_source, from its own
+         owner-only endpoint. */
+      loadPromptSourcesPanel();
+      const promptSources = `
+        <div id="gov-prompt-sources-host"><div style="color:var(--muted);font-size:var(--fs-base)">Loading…</div></div>`;
+
       /* Suspicious Activity (sentinel): flags PRs that look like security
          overrides, privilege escalation or codebase damage. Untrusted authors
          get the blocking alert label; trusted authors default to notice-only. */
@@ -73262,6 +73405,7 @@ function burnAreaChart() {
         ${renderSecuritySection('Suspicious Activity', suspicious + suspiciousFindings)}
         ${renderSecuritySection('Isolation', isolation)}
         ${renderSecuritySection('Write Surface', writeSurface)}
+        ${renderSecuritySection('Prompt sources', promptSources)}
         ${renderSecuritySection('GitHub App permissions', securityCapabilitiesHtml((window._lastStatus || {}).capabilities, (window._lastStatus || {}).githubAppInstallURL))}
         ${renderSecuritySection('Backup', backupKey)}`;
     }
@@ -73387,6 +73531,96 @@ function burnAreaChart() {
           setStatus(e.message, 'var(--red)');
         }
       });
+    }
+
+    /* Prompt sources (#18490): lists the hive's managed repos and whether an
+       agent's prompt_source / definition_source may read from each. The owner
+       approves one repo at a time behind a confirm that names the trust
+       implication; the server refuses repos outside project.repos, audits
+       the change and persists it to the running config. Rendered with DOM
+       nodes and textContent only. */
+    async function loadPromptSourcesPanel() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/prompt-sources');
+        host = document.getElementById('gov-prompt-sources-host');
+        if (!host) return;
+        if (r.status === 403) {
+          host.textContent = '';
+          host.appendChild(writeSurfaceNode('div', 'color:var(--muted);font-size:0.8rem',
+            'Only the hive owner can approve repos as prompt and definition sources.'));
+          return;
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        renderPromptSourcesPanel(host, await r.json());
+      } catch (e) {
+        host = host || document.getElementById('gov-prompt-sources-host');
+        if (!host) return;
+        host.textContent = '';
+        host.appendChild(writeSurfaceNode('div', 'color:var(--red);font-size:0.8rem',
+          'Failed to load prompt sources: ' + e.message));
+      }
+    }
+
+    async function setPromptSourceRepo(host, repo, allowed, notice) {
+      if (allowed) {
+        const ok = await hiveConfirm({
+          title: 'Trust ' + repo + ' as a prompt source?',
+          message: notice + '\n\nAgents whose prompt_source or definition_source points at ' + repo + ' will load it on their next kick or reload. This is audit-logged.',
+          confirmLabel: 'Approve ' + repo,
+          danger: true
+        });
+        if (!ok) return;
+      }
+      try {
+        const res = await fetch('/api/config/prompt-sources/owner-repos', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ repo, allowed, acknowledge_trust: !!allowed })
+        });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        renderPromptSourcesPanel(host, await res.json());
+        showToast(allowed ? repo + ' approved as a prompt source' : repo + ' approval revoked', 'success');
+      } catch (e) {
+        showToast('Prompt source change failed: ' + e.message, 'error');
+      }
+    }
+
+    function renderPromptSourcesPanel(host, d) {
+      if (!host) return;
+      d = d || {};
+      host.textContent = '';
+      const card = writeSurfaceNode('div', 'border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--surface);max-width:640px');
+      card.appendChild(writeSurfaceNode('div', 'font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-4)', 'Repo-sourced prompts and definitions'));
+      card.appendChild(writeSurfaceNode('div', 'font-size:0.74rem;color:var(--muted);line-height:1.5;margin-bottom:var(--sp-4)',
+        'An agent can load its kick prompt from a GitHub repo with prompt_source, or its whole definition with definition_source. ' +
+        (d.trust_notice || '') + ' ' + (d.seed_only_note || '')));
+      const repos = d.repos || [];
+      if (!repos.length) {
+        card.appendChild(writeSurfaceNode('div', 'font-size:0.8rem;color:var(--muted)', 'This hive has no managed repos.'));
+      }
+      repos.forEach(row => {
+        const line = writeSurfaceNode('div', 'display:flex;align-items:center;gap:10px;padding:var(--sp-2) var(--sp-0);border-top:1px solid var(--border);font-size:0.8rem');
+        line.appendChild(writeSurfaceNode('code', 'flex:1', row.repo));
+        let state = 'Not allowed';
+        if (row.seed_allowed) state = 'Allowed by the config volume';
+        else if (row.owner_approved && row.managed) state = 'Owner-approved' + (row.approved_by ? ' by ' + row.approved_by : '') + (row.approved_at ? ' on ' + row.approved_at.slice(0, 10) : '');
+        else if (row.owner_approved) state = 'Approval inert: no longer a managed repo';
+        line.appendChild(writeSurfaceNode('span', 'color:' + (row.allowed ? 'var(--green)' : 'var(--muted)'), state));
+        if (row.owner_approved) {
+          const btn = writeSurfaceNode('button', '', 'Revoke');
+          btn.className = 'hv-btn btn-secondary btn-sm';
+          btn.addEventListener('click', () => setPromptSourceRepo(host, row.repo, false, d.trust_notice || ''));
+          line.appendChild(btn);
+        } else if (row.managed && !row.seed_allowed) {
+          const btn = writeSurfaceNode('button', '', 'Approve…');
+          btn.className = 'hv-btn btn-primary btn-sm';
+          btn.addEventListener('click', () => setPromptSourceRepo(host, row.repo, true, d.trust_notice || ''));
+          line.appendChild(btn);
+        }
+        card.appendChild(line);
+      });
+      host.appendChild(card);
     }
 
     /* loadBackupKeyStatus fetches presence-only backup-key status and paints
