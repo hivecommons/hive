@@ -49,6 +49,9 @@ type Runtime struct {
 	TimeoutS             int
 	DailyBudgetTokens    int
 	MaxConsecutiveBlocks int
+	// ReasoningEffort is the advisor model role's reasoning_effort, sent
+	// with each review and recorded; empty sends none.
+	ReasoningEffort string
 }
 
 // Request is what the hook posts for one finished turn.
@@ -193,10 +196,11 @@ func (s *Server) handleAdvise(w http.ResponseWriter, r *http.Request) {
 // answers with a non-blocking response: the lane FAILS OPEN.
 func (s *Server) review(ctx context.Context, agent string, rt Runtime, req Request) Response {
 	base := Record{
-		Agent:  agent,
-		Turn:   strings.TrimSpace(req.Turn),
-		Model:  rt.Model,
-		Heeded: HeededUndetermined,
+		Agent:           agent,
+		Turn:            strings.TrimSpace(req.Turn),
+		Model:           rt.Model,
+		ReasoningEffort: rt.ReasoningEffort,
+		Heeded:          HeededUndetermined,
 	}
 
 	// Guard invariant: ioscan on the inbound text, before any model sees it.
@@ -221,11 +225,12 @@ func (s *Server) review(ctx context.Context, agent string, rt Runtime, req Reque
 		newEval = NewEvaluator
 	}
 	eval, err := newEval(Config{
-		Endpoint:     rt.Endpoint,
-		APIKey:       rt.APIKey,
-		Model:        rt.Model,
-		Instructions: rt.Instructions,
-		TimeoutS:     rt.TimeoutS,
+		Endpoint:        rt.Endpoint,
+		APIKey:          rt.APIKey,
+		Model:           rt.Model,
+		Instructions:    rt.Instructions,
+		TimeoutS:        rt.TimeoutS,
+		ReasoningEffort: rt.ReasoningEffort,
 	})
 	if err != nil {
 		if s.Logger != nil {

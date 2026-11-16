@@ -32195,6 +32195,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         bodyHtml += records.map(rec => {
           const label = rec.skipped ? ('skipped: ' + rec.skipped) : (rec.severity || 'aside');
           const badges = [];
+          if (rec.model) badges.push(rec.reasoning_effort ? rec.model + ' · ' + rec.reasoning_effort + ' effort' : rec.model);
           if (rec.interjected) badges.push('interjected');
           if (rec.downgraded) badges.push('downgraded');
           const tokens = (rec.input_tokens || 0) + (rec.output_tokens || 0);
@@ -79667,7 +79668,8 @@ function burnAreaChart() {
       const agentRows = agents.map(a => {
         const e = a.effective || {};
         const s = e.sources || {};
-        const model = e.resolved_model && e.resolved_model !== e.model ? `${esc(e.model || '')} → ${esc(e.resolved_model)}` : esc(e.resolved_model || e.model || '—');
+        const resolved = e.resolved_model ? esc(e.resolved_model) + (e.resolved_reasoning_effort ? ' · ' + esc(e.resolved_reasoning_effort) + ' effort' : '') : '';
+        const model = resolved && e.resolved_model !== e.model ? `${esc(e.model || '')} → ${resolved}` : (resolved || esc(e.model || '—'));
         const active = a.active ? '<span class="text-success">active</span>' : `<span class="advisor-src" title="${esc(a.active_reason || '')}">not active</span>`;
         return `<tr><td><strong>${esc(a.name)}</strong>${a.override ? ' <span class="advisor-src advisor-src-agent">override</span>' : ''}</td><td>${esc(a.backend || '—')}</td><td>${active}</td>
           <td>${e.enabled ? 'on' : 'off'} ${advisorSourceBadge(s.enabled)}</td>

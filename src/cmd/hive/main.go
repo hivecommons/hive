@@ -4775,6 +4775,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						TimeoutS:             rt.TimeoutS,
 						DailyBudgetTokens:    rt.DailyBudgetTokens,
 						MaxConsecutiveBlocks: rt.MaxConsecutiveBlocks,
+						ReasoningEffort:      rt.ReasoningEffort,
 					}, true
 				},
 				Store:  advisorStore,

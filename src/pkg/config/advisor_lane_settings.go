@@ -29,12 +29,16 @@ type AdvisorEffective struct {
 	// ResolvedModel is the model the advisor calls: the role's model when
 	// Model names a role, otherwise Model, falling back to the trajectory
 	// reviewer model when unset.
-	ResolvedModel        string            `json:"resolved_model,omitempty"`
-	Instructions         string            `json:"instructions,omitempty"`
-	DailyBudgetTokens    int               `json:"daily_budget_tokens"`
-	TimeoutS             int               `json:"timeout_s"`
-	MaxConsecutiveBlocks int               `json:"max_consecutive_blocks"`
-	Sources              map[string]string `json:"sources"`
+	ResolvedModel string `json:"resolved_model,omitempty"`
+	// ResolvedReasoningEffort is the reasoning effort the advisor sends: the
+	// role's reasoning_effort when Model names a role, otherwise empty (the
+	// endpoint's default applies).
+	ResolvedReasoningEffort string            `json:"resolved_reasoning_effort,omitempty"`
+	Instructions            string            `json:"instructions,omitempty"`
+	DailyBudgetTokens       int               `json:"daily_budget_tokens"`
+	TimeoutS                int               `json:"timeout_s"`
+	MaxConsecutiveBlocks    int               `json:"max_consecutive_blocks"`
+	Sources                 map[string]string `json:"sources"`
 }
 
 // ValidateAdvisorLane runs the model_roles / advisor / per-agent override
@@ -85,10 +89,7 @@ func (c *Config) AdvisorEffectiveFor(agentName string) AdvisorEffective {
 	if out.MaxConsecutiveBlocks <= 0 {
 		out.MaxConsecutiveBlocks = DefaultAdvisorMaxConsecutiveBlocks
 	}
-	out.ResolvedModel = out.Model
-	if role, ok := c.ResolveModelRole(out.Model); ok && strings.HasPrefix(out.Model, ModelRoleRefPrefix) {
-		out.ResolvedModel = strings.TrimSpace(role.Model)
-	}
+	out.ResolvedModel, out.ResolvedReasoningEffort = c.resolveAdvisorModel(out.Model)
 	if out.ResolvedModel == "" {
 		// Same fallback ResolveAdvisorRuntime takes through ResolveReviewer,
 		// without resolving the reviewer's key: a settings read must not

@@ -79,7 +79,8 @@
       const agentRows = agents.map(a => {
         const e = a.effective || {};
         const s = e.sources || {};
-        const model = e.resolved_model && e.resolved_model !== e.model ? `${esc(e.model || '')} → ${esc(e.resolved_model)}` : esc(e.resolved_model || e.model || '—');
+        const resolved = e.resolved_model ? esc(e.resolved_model) + (e.resolved_reasoning_effort ? ' · ' + esc(e.resolved_reasoning_effort) + ' effort' : '') : '';
+        const model = resolved && e.resolved_model !== e.model ? `${esc(e.model || '')} → ${resolved}` : (resolved || esc(e.model || '—'));
         const active = a.active ? '<span class="text-success">active</span>' : `<span class="advisor-src" title="${esc(a.active_reason || '')}">not active</span>`;
         return `<tr><td><strong>${esc(a.name)}</strong>${a.override ? ' <span class="advisor-src advisor-src-agent">override</span>' : ''}</td><td>${esc(a.backend || '—')}</td><td>${active}</td>
           <td>${e.enabled ? 'on' : 'off'} ${advisorSourceBadge(s.enabled)}</td>

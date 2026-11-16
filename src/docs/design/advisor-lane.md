@@ -209,6 +209,15 @@ instructions, daily budget, timeout, consecutive-block limit — and a per-agent
 change any part of it or opt the agent out, in the spirit of the trajectory lane's
 `exempt_agents`. The roles map sits beside it.
 
+The advisor's reasoning effort comes from the role its model names: with `model: "@advisor"`,
+each review sends that role's `reasoning_effort` to the reviewer endpoint as the chat request's
+`reasoning_effort`, on every backend, and the review record names it beside the model. A literal
+model id, or the trajectory reviewer fallback, sends no effort, so the endpoint's default applies.
+A review that asks for an effort may use up to 16 000 output tokens, because a reasoning model
+spends its thinking from the same allowance as the verdict; `timeout_s` and the daily budget
+still bound it, and a higher effort usually needs a longer `timeout_s`. The endpoint must accept
+the value: an effort it refuses makes every review a `skipped: unreachable` record.
+
 All of it is editable from the dashboard's Settings area, which shows the effective value per
 agent, and all of it is expressible in `hive.yaml`, so a fleet can be configured without the
 dashboard. A change from either place takes effect for an agent by its next launch. Hive

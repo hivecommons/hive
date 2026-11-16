@@ -517,7 +517,7 @@ backend* for it, with no records produced.
 "Synchronous" means the hook holds the turn until the verdict (or the advisor
 timeout) arrives, so an interjection reaches the model before it continues.
 Every supported backend records the same fields: one record per review,
-including a skipped review, carrying agent, turn reference, advisor model,
+including a skipped review, carrying agent, turn reference, advisor model, reasoning effort,
 severity, text, whether it interjected, delivery mode, tokens, cost and skip
 reason. Those records feed the agent page, the aggregated advisor spend beside
 agent spend, and the `advisor_records` admin MCP tool.
