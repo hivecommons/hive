@@ -9,15 +9,20 @@ import (
 func TestRateLimiter(t *testing.T) {
 	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
 	l := NewRateLimiter(6, time.Hour, 2, func() time.Time { return now })
-	if !l.Allow("a") || !l.Allow("a") || l.Allow("a") {
-		t.Fatal("burst of 2")
+	for i, want := range []bool{true, true, false} {
+		if got := l.Allow("a"); got != want {
+			t.Fatalf("burst of 2: call %d allowed=%v", i, got)
+		}
 	}
 	if !l.Allow("b") {
 		t.Fatal("keys are independent")
 	}
 	now = now.Add(10 * time.Minute) // one token per 10 minutes
-	if !l.Allow("a") || l.Allow("a") {
+	if !l.Allow("a") {
 		t.Fatal("refill")
+	}
+	if l.Allow("a") {
+		t.Fatal("only one token refilled")
 	}
 
 	var nilLim *RateLimiter

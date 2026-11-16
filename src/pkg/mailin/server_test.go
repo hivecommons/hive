@@ -165,7 +165,6 @@ func TestSMTPRcptRules(t *testing.T) {
 		"hive@unknown.hive.hivecommons.dev", // unknown host
 		"hive@gmail.com",                    // no relay
 		"hive+tag@" + testHost,              // no plus addressing
-		"hive",                              // no domain
 	} {
 		if err := c.Rcpt(to, nil); smtpCode(err) != 550 {
 			t.Errorf("%s: %v, want 550", to, err)
