@@ -4947,7 +4947,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// Report the fingerprint of every ADDITIONAL per-app-id key already
 				// on the PVC, so the hub delivers the fleet's other App keys once
 				// and then stops re-sending them.
-				GitHubAppKeysHeld: spoke.TimedSection("app_keys_held", appKeys.HeldFingerprints),
+				GitHubAppKeysHeld: spoke.TimedSection("app_keys_held", func() map[string]string { return appKeys.HeldFingerprintsWithin(2 * time.Second) }),
 				// Component reach counters (#3993, phase 2a of #3973): per
 				// (component, running commit) span counts aggregated in-process,
 				// exporter or not (D2) — the heartbeat is the only channel that
