@@ -786,8 +786,7 @@ COPY --from=builder /hive-admin-mcp /usr/local/share/hive/hive-admin-mcp
 # change (which stops the OCI-index form that enables the metacopy layout in the
 # first place) and this rewrite are independent, belt-and-suspenders defenses.
 RUN for b in /usr/local/bin/hive /usr/local/bin/bd /usr/local/bin/hive-backup \
-             /usr/local/bin/crux /usr/local/share/hive/hivectl \
-             /usr/local/share/hive/hive-admin-mcp \
+             /usr/local/bin/crux /usr/local/share/hive/hivectl /usr/local/share/hive/hive-admin-mcp \
              /usr/local/bin/govulncheck /usr/local/bin/gosec /usr/local/bin/hive-whisper \
              $(find /opt/hive-whisper -type f); do \
       cp --remove-destination "$b" "$b.fresh" && \

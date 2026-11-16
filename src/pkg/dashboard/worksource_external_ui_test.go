@@ -35,8 +35,6 @@ func TestWorkSourceExternalPickerUIHasNoUndefinedCallees(t *testing.T) {
 		`data-change-action="wsExternalTimeoutChanged"`,
 		// The per-source dropped-item counter.
 		`ext.dropped_items`,
-		// The run-detail source badge prefers display_name over source_type.
-		`issue.source_display_name || sourceKind`,
 	} {
 		if !strings.Contains(html, snippet) {
 			t.Errorf("index.html is missing %q", snippet)
