@@ -217,7 +217,7 @@ Voice recordings and dictations waiting for you to file them as an RFC or keep a
 - Auto-routing rules run once per new item after a sync; the first matching rule wins.
 - The default RFC repository, dibs URL and rules can also be edited under Settings → Inbox.
 
-**What it is good for.** Record an idea on your recorder, then turn it into an RFC with child issues (→ RFC), or just keep it searchable (Knowledge only) without leaving the dashboard. See [Inbox and voice sources](../inbox-voice-sources.md).
+**What it is good for.** Record an idea on your recorder, then turn it into an RFC with child issues (🔗 Share → Hive → RFC…), send it to dibs (DIBS), or just keep it searchable (Knowledge) without leaving the dashboard. See [Inbox and voice sources](../inbox-voice-sources.md).
 
 **Example.** A fact says tests run with `make test`, but your project uses `go test`. You edit the fact.
 

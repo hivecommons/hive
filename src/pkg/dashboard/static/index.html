@@ -47645,13 +47645,7 @@ function burnAreaChart() {
       let actions = '';
       if (inboxViewerCanPlay()) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + ' Transcript</button>';
-      if (owner) {
-        const retry = (d) => routes[d] && routes[d].status === 'failed' ? 'Retry ' : '→ ';
-        actions += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxOpenRoute" data-arg0="' + src + '" data-arg1="' + id + '" data-arg2="spek_rfc">' + retry('spek_rfc') + 'RFC…</button>';
-        if (!it.dismissed) actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxDismiss" data-arg0="' + src + '" data-arg1="' + id + '" title="Keep it as a Knowledge fact; no RFC">Knowledge only</button>';
-        else actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxUndismiss" data-arg0="' + src + '" data-arg1="' + id + '">Back to inbox</button>';
-      }
-      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg0="' + src + '" data-arg1="' + id + '" title="Share a link to this item in the Inbox (not the recording)">🔗 Share</button>';
+      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
         (owner ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
@@ -47751,16 +47745,134 @@ function burnAreaChart() {
       if (at < 0) return '';
       try { return decodeURIComponent(h.slice(at + INBOX_SHARE_HASH.length).split('&')[0]); } catch (e) { return ''; }
     }
-    async function inboxShare(src, id) {
-      const it = inboxFind(src, id);
+    async function inboxShareCopy(src, id) {
       const url = inboxShareLink(src, id);
-      const title = (it && it.title) || 'Inbox item';
-      if (navigator.share) {
-        try { await navigator.share({ title: title, url: url }); return; }
-        catch (e) { if (e && e.name === 'AbortError') return; }
-      }
       if (await writeClipboardText(url)) showToast('Inbox link copied', 'success');
       else showToast('Copy this Inbox link: ' + url, 'info', true);
+    }
+    async function inboxShareNative(src, id) {
+      const it = inboxFind(src, id);
+      try { await navigator.share({ title: (it && it.title) || 'Inbox item', url: inboxShareLink(src, id) }); }
+      catch (e) { if (!e || e.name !== 'AbortError') await inboxShareCopy(src, id); }
+    }
+    // The Share menu has two groups. Hive actions file or keep the item and
+    // are owner-only (the route and dismiss APIs are); Link actions only share
+    // a link. Each entry is {id, label, enabled(item, role), run(item)} where
+    // label is a string or fn(item), and enabled returns true, false (hide) or
+    // a string (show disabled, the string is the reason). Other features add
+    // one entry to inboxShareHiveActions (in menu order), e.g. the spek
+    // session action, instead of a new row button. An entry may also carry
+    // bulk(items) to appear in the multi-select Hive menu.
+    const inboxShareHiveActions = [
+      { id: 'rfc', dest: 'spek_rfc', label: 'RFC…', enabled: (it, role) => role !== 'owner' ? false : it.pending ? INBOX_NO_TEXT_REASON : !(((_inboxCache || {}).repos || []).length) ? 'No RFC repository configured: set one in Settings → Inbox' : true, run: it => inboxOpenRoute(it.source, it.id, 'spek_rfc') },
+      { id: 'knowledge', label: it => it.dismissed ? 'Back to inbox' : 'Knowledge', enabled: (it, role) => role === 'owner', run: it => it.dismissed ? inboxUndismiss(it.source, it.id) : inboxDismiss(it.source, it.id), bulkLabel: 'Knowledge', bulk: () => inboxDismissSelected() },
+      { id: 'dibs', dest: 'dibs', label: 'DIBS', enabled: (it, role) => role !== 'owner' ? false : inboxDibsReady() ? true : 'Not configured: set the dibs URL in Settings → Inbox → dibs URL', run: it => inboxOpenRoute(it.source, it.id, 'dibs') },
+    ];
+    const inboxShareLinkActions = [
+      { id: 'copy', label: 'Copy link', enabled: () => true, run: it => inboxShareCopy(it.source, it.id) },
+      { id: 'native', label: 'Share…', enabled: () => typeof navigator !== 'undefined' && !!navigator.share, run: it => inboxShareNative(it.source, it.id) },
+    ];
+    const INBOX_NO_TEXT_REASON = 'No transcript yet: use 🎧 Transcribe first';
+    function inboxDibsReady() { const st = (_inboxCache || {}).settings || {}; return !!st.dibs_url && !!st.dibs_token_set; }
+    // inboxShareMenuGroups resolves the registries for one item and the
+    // viewer's role into labelled groups; empty groups are dropped.
+    function inboxShareMenuGroups(it) {
+      const role = window._hiveRole;
+      const routes = (it && it.routes) || {};
+      const resolve = (list) => list.map(a => {
+        const en = a.enabled(it, role);
+        if (en === false) return null;
+        let label = typeof a.label === 'function' ? a.label(it) : a.label;
+        if (a.dest && routes[a.dest] && routes[a.dest].status === 'failed') label = 'Retry ' + label;
+        return { id: a.id, label, disabled: typeof en === 'string', hint: typeof en === 'string' ? en : '' };
+      }).filter(Boolean);
+      return [{ id: 'hive', label: 'Hive', items: resolve(inboxShareHiveActions) }, { id: 'link', label: 'Link', items: resolve(inboxShareLinkActions) }].filter(g => g.items.length);
+    }
+    function inboxShareMenuHtml(groups, src, id) {
+      return '<div class="ham-menu ham-menu-hinted inbox-share-menu" role="menu" aria-label="Share" tabindex="-1">' + groups.map((g, gi) =>
+        (gi ? '<div class="ham-menu-sep" role="separator"></div>' : '') +
+        '<div role="group" aria-label="' + escapeHtml(g.label) + '"><div class="ham-menu-head" aria-hidden="true">' + escapeHtml(g.label) + '</div>' + g.items.map(a =>
+          '<button type="button" role="menuitem" class="ham-menu-item' + (a.hint ? ' ham-menu-item-hinted' : '') + '" tabindex="-1" data-inbox-share-group="' + escapeHtml(g.id) + '" data-inbox-share-act="' + escapeHtml(a.id) + '" data-src="' + escapeHtml(src) + '" data-id="' + escapeHtml(id) + '"' + (a.disabled ? ' aria-disabled="true"' : '') + '>' +
+          '<span>' + escapeHtml(a.label) + '</span>' + (a.hint ? '<span class="ham-menu-hint">' + escapeHtml(a.hint) + '</span>' : '') + '</button>').join('') + '</div>').join('') + '</div>';
+    }
+    // inboxShareMenuRun calls the registered handler of one entry.
+    async function inboxShareMenuRun(group, act, src, id) {
+      const it = inboxFind(src, id);
+      const entry = (group === 'hive' ? inboxShareHiveActions : inboxShareLinkActions).find(a => a.id === act);
+      if (it && entry) await entry.run(it);
+    }
+    // Bulk Hive menu: entries with bulk(), owner only.
+    function inboxBulkMenuGroups() {
+      if (window._hiveRole !== 'owner') return [];
+      const items = inboxShareHiveActions.filter(a => typeof a.bulk === 'function').map(a => ({ id: a.id, label: a.bulkLabel || (typeof a.label === 'function' ? a.id : a.label), disabled: false, hint: '' }));
+      return items.length ? [{ id: 'hive', label: 'Hive', items }] : [];
+    }
+    function inboxBulkMenuRun(act) {
+      const entry = inboxShareHiveActions.find(a => a.id === act);
+      if (entry && entry.bulk) return entry.bulk(Array.from(_inboxSelected));
+    }
+    let _inboxShareMenu = null;
+    function inboxShareMenuClose(restore) {
+      const m = _inboxShareMenu;
+      if (!m) return;
+      _inboxShareMenu = null;
+      document.removeEventListener('pointerdown', m.onAway, true);
+      document.removeEventListener('keydown', m.onKey, true);
+      m.el.remove();
+      m.btn.setAttribute('aria-expanded', 'false');
+      if (restore && m.btn.focus) m.btn.focus();
+    }
+    function inboxShareMenuFocus(el, dir, from) {
+      const items = Array.from(el.querySelectorAll('[role="menuitem"]')).filter(b => b.getAttribute('aria-disabled') !== 'true');
+      if (!items.length) { el.focus(); return; }
+      let i = items.indexOf(from);
+      if (dir === 'first') i = 0; else if (dir === 'last') i = items.length - 1; else i = (i + dir + items.length) % items.length;
+      items[i].focus();
+    }
+    function inboxPopMenu(btn, html, onPick) {
+      if (_inboxShareMenu) { const same = _inboxShareMenu.btn === btn; inboxShareMenuClose(false); if (same) return; }
+      const tpl = document.createElement('template');
+      tpl.innerHTML = html;
+      const el = tpl.content.firstElementChild;
+      document.body.appendChild(el);
+      const r = btn.getBoundingClientRect();
+      el.style.setProperty('left', Math.max(0, Math.min(r.left, window.innerWidth - el.offsetWidth)) + 'px');
+      el.style.setProperty('top', r.bottom + 'px');
+      btn.setAttribute('aria-expanded', 'true');
+      const m = { el, btn };
+      m.onAway = e => { if (!el.contains(e.target) && !btn.contains(e.target)) inboxShareMenuClose(false); };
+      m.onKey = e => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); inboxShareMenuClose(true); return; }
+        const b = e.target.closest ? e.target.closest('[role="menuitem"]') : null;
+        switch (e.key) {
+          case 'ArrowDown': e.preventDefault(); inboxShareMenuFocus(el, 1, b); break;
+          case 'ArrowUp': e.preventDefault(); inboxShareMenuFocus(el, -1, b); break;
+          case 'Home': e.preventDefault(); inboxShareMenuFocus(el, 'first'); break;
+          case 'End': e.preventDefault(); inboxShareMenuFocus(el, 'last'); break;
+          case 'Tab': inboxShareMenuClose(true); break;
+        }
+      };
+      el.addEventListener('click', e => {
+        const b = e.target.closest('[data-inbox-share-act]');
+        if (!b || b.getAttribute('aria-disabled') === 'true') return;
+        e.preventDefault();
+        inboxShareMenuClose(true);
+        onPick(b.dataset);
+      });
+      document.addEventListener('pointerdown', m.onAway, true);
+      document.addEventListener('keydown', m.onKey, true);
+      _inboxShareMenu = m;
+      inboxShareMenuFocus(el, 'first');
+    }
+    // inboxShare opens the per-item Share menu under its button.
+    function inboxShare(src, id, btn) {
+      const it = inboxFind(src, id);
+      if (!it) return;
+      inboxPopMenu(btn, inboxShareMenuHtml(inboxShareMenuGroups(it), src, id), d => inboxShareMenuRun(d.inboxShareGroup, d.inboxShareAct, d.src, d.id));
+    }
+    // inboxBulkMenu opens the Hive menu of the multi-select bar.
+    function inboxBulkMenu(btn) {
+      inboxPopMenu(btn, inboxShareMenuHtml(inboxBulkMenuGroups(), '', ''), d => inboxBulkMenuRun(d.inboxShareAct));
     }
     let _inboxFocusKey = inboxFocusKeyFromHash(location.hash);
     window.addEventListener('hashchange', (e) => {
@@ -47824,7 +47936,7 @@ function burnAreaChart() {
       if (owner && shown.length) {
         const sel = _inboxSelected.size;
         html += '<div class="kc-actions mb-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxSelectAll">' + (sel === shown.length ? 'Clear selection' : 'Select all') + '</button>' +
-          (sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxDismissSelected">Knowledge only (' + sel + ')</button>' : '') + '</div>';
+          (sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxBulkMenu" data-arg-types="t" aria-haspopup="menu" aria-expanded="false">Hive (' + sel + ') ▾</button>' : '') + '</div>';
       }
       if (!shown.length) html += '<div class="muted-note">' + (items.length ? 'Everything is triaged. Toggle “show processed” to see filed and dismissed items.' : 'Nothing yet. Connect Plaud or another voice source under Knowledge → Integrations; new recordings land here after the next sync (a newly added connector starts on the next hive restart).') + '</div>';
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
@@ -47885,11 +47997,13 @@ function burnAreaChart() {
         body += '<p class="muted-note">A hive agent drafts a spec from the transcript with spektacular, then runs <code>spektacular publish</code> to file one RFC issue plus child issues on the chosen repository. The children are picked up by the hive like any other issue.</p>' +
           '<label class="muted-note inbox-field">Repository<select class="field-input field-input-block mt-2" id="inbox-route-repo">' + opts + '</select></label>' +
           (repos.length ? '' : '<p class="kc-error muted-xs">No repositories configured on this hive.</p>');
+      } else {
+        body += '<p class="muted-note">Posts the title, summary and transcript to dibs as a private draft idea' + (settings.dibs_url ? ' at <code>' + escapeHtml(settings.dibs_url) + '</code>' : '') + '. Provenance links back to <code>' + escapeHtml(src) + '://recordings/' + escapeHtml(id) + '</code>.</p>';
       }
       body += '<div class="hive-dialog-error" role="alert" id="inbox-route-error"></div>' +
         '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
-        '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxConfirmRoute" data-arg0="' + escapeHtml(src) + '" data-arg1="' + escapeHtml(id) + '" data-arg2="' + escapeHtml(dest) + '">' + 'File RFC' + '</button></div>';
-      kbShowModal('→ RFC (spektacular)', body, { width: '520px' });
+        '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxConfirmRoute" data-arg0="' + escapeHtml(src) + '" data-arg1="' + escapeHtml(id) + '" data-arg2="' + escapeHtml(dest) + '">' + (dest === 'spek_rfc' ? 'File RFC' : 'Send to dibs') + '</button></div>';
+      kbShowModal(dest === 'spek_rfc' ? '→ RFC (spektacular)' : '→ DIBS', body, { width: '520px' });
     }
     async function inboxConfirmRoute(src, id, dest) {
       const repoEl = document.getElementById('inbox-route-repo');
