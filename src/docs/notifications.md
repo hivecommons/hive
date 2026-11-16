@@ -572,7 +572,10 @@ github:
 ```
 
 Quiet mode (`github.notifications.mode: quiet`) folds the hive's PR
-bookkeeping into one edited `hive:status` comment but leaves issue notes as
+bookkeeping into one edited `hive:status` comment (including the auto-merge
+note, under the `auto-merge` section: in `normal` mode it stays its own
+comment, and a merge blocked on a person still gets its 085 / 090 entry
+comment, hivecommons/hive#18452) but leaves issue notes as
 comments of their own, so one issue lifecycle (partial merge, remainder,
 close) could still email its watchers several times. With the pilot on, the
 issue gets the same card, written through the same single status writer

@@ -12,6 +12,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -1017,6 +1018,23 @@ func (c *Engine) commentTrustedAuthorMerge(ctx context.Context, owner, repo stri
 	body := fmt.Sprintf("merged by Hive trusted-author auto-merge: author @%s holds role %s and GitHub permission %s on repo; CI green at %s.", author, role, permission, sha)
 	if login := strings.TrimPrefix(role, trustedAuthorRoleOperatorApprovedPrefix); login != role {
 		body = fmt.Sprintf("merged by Hive on behalf of @%s, who approved this head (%s) with \"Approve and let hive merge\": author @%s holds no trusted-author role; CI green at %s.", login, stagelabels.OperatorApprovalAdmission(login), author, sha)
+	}
+	return c.postAutoMergeNote(ctx, owner, repo, number, body)
+}
+
+// postAutoMergeNote records that the hive merged the PR. Nobody has to act
+// on it, so in github.notifications.mode: quiet (the default) it becomes the
+// auto-merge section of the PR's hive:status card, edited in place: an edit
+// emails nobody, where a fresh comment on every merge emailed the author and
+// every watcher (~32 a day, hivecommons/hive#18452). prstatus.Write
+// neutralises the @logins in it, so the card never notifies either. Mode
+// normal keeps today's standalone comment. A merge that waits on a person
+// is not this note: the 085 / 090 entry comments still post as their own
+// comment.
+func (c *Engine) postAutoMergeNote(ctx context.Context, owner, repo string, number int, body string) error {
+	if c.stagePolicy().QuietNotifications {
+		_, err := c.writeStatusSectionWith(ctx, owner, repo, number, prstatus.KeyAutoMerge, body, prstatus.Write)
+		return err
 	}
 	_, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)})
 	return err
