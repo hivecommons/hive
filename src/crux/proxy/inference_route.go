@@ -37,6 +37,12 @@ type InferenceRoute struct {
 	// client would not send it). Empty for all other backends. Header VALUES
 	// here are identifiers, not secrets (the bearer stays in APIKey).
 	ExtraHeaders map[string]string
+	// KeyResolver, when set, supplies the CURRENT upstream key at request time
+	// and replaces APIKey on each request, so a key rotated in its Secret is
+	// picked up without a restart; an upstream 401 forces one re-resolve and
+	// retry (hive#18532). nil keeps APIKey fixed (vllm/llm-d, watsonx tokens).
+	// Shared by every copy of the route.
+	KeyResolver *InferenceKeyResolver
 }
 
 // DefaultInferencePreamble is injected at the top of the system prompt when
