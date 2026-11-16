@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hivecommons/hive/internal/testutil"
 )
 
 type fakeClient struct {
@@ -418,14 +420,8 @@ func TestTriggerDropsWhenFull(t *testing.T) {
 
 func waitFor(t *testing.T, cond func() bool) {
 	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	t.Fatal("condition not met in time")
+	const waitTimeout = 5 * time.Second
+	testutil.Eventually(t, waitTimeout, cond, "repo agent scan did not land")
 }
 
 func TestPushRescanRepo(t *testing.T) {
