@@ -179,14 +179,15 @@ func TestRuntimeFilesAndEnv(t *testing.T) {
 	t.Setenv("QUORUM_CHAT_MAX_CHARS", "1500")
 	env := map[string]string{"PATH": "/bin", "HIVE_GITHUB_TOKEN": "ghp_secret", "HTTPS_PROXY": "http://proxy"}
 	s, err := New(Options{
-		Listen:        "127.0.0.1:8765",
-		Binary:        "/q.mjs",
-		VexaURL:       "https://vexa",
-		VexaAPIKey:    "tenant",
-		DiscordToken:  "discord",
-		TranscribeURL: "http://whisper",
-		RuntimeDir:    t.TempDir(),
-		Getenv:        func(k string) string { return env[k] },
+		Listen:          "127.0.0.1:8765",
+		Binary:          "/q.mjs",
+		VexaURL:         "https://vexa",
+		VexaAPIKey:      "tenant",
+		DiscordToken:    "discord",
+		TranscribeURL:   "http://whisper",
+		TranscribeToken: "transcribe-secret",
+		RuntimeDir:      t.TempDir(),
+		Getenv:          func(k string) string { return env[k] },
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -210,7 +211,7 @@ func TestRuntimeFilesAndEnv(t *testing.T) {
 			t.Errorf("%s = %q, want %q", k, got[k], want)
 		}
 	}
-	for envKey, want := range map[string]string{"QUORUM_TOKEN_FILE": s.Token(), "QUORUM_VEXA_API_KEY_FILE": "tenant", "QUORUM_DISCORD_TOKEN_FILE": "discord"} {
+	for envKey, want := range map[string]string{"QUORUM_TOKEN_FILE": s.Token(), "QUORUM_VEXA_API_KEY_FILE": "tenant", "QUORUM_DISCORD_TOKEN_FILE": "discord", "QUORUM_TRANSCRIBE_TOKEN_FILE": "transcribe-secret"} {
 		path := got[envKey]
 		fi, err := os.Stat(path)
 		if err != nil || fi.Mode().Perm() != secretFileMode {
@@ -219,6 +220,14 @@ func TestRuntimeFilesAndEnv(t *testing.T) {
 		b, _ := os.ReadFile(path)
 		if string(b) != want {
 			t.Errorf("%s holds %q", envKey, b)
+		}
+		if filepath.Dir(path) != s.dir {
+			t.Errorf("%s at %s is outside the private runtime dir %s", envKey, path, s.dir)
+		}
+	}
+	for _, kv := range s.Env() {
+		if strings.Contains(kv, "transcribe-secret") {
+			t.Fatalf("the transcription token must reach the child only through its file, env has %q", kv)
 		}
 	}
 	if s.TokenFile() != got["QUORUM_TOKEN_FILE"] {
@@ -243,7 +252,7 @@ func TestOptionalEnvOmitted(t *testing.T) {
 	}
 	defer s.Stop()
 	for _, kv := range s.Env() {
-		for _, k := range []string{"QUORUM_VEXA_URL=", "QUORUM_VEXA_API_KEY_FILE=", "QUORUM_DISCORD_TOKEN_FILE=", "QUORUM_TRANSCRIBE_URL="} {
+		for _, k := range []string{"QUORUM_VEXA_URL=", "QUORUM_VEXA_API_KEY_FILE=", "QUORUM_DISCORD_TOKEN_FILE=", "QUORUM_TRANSCRIBE_URL=", "QUORUM_TRANSCRIBE_TOKEN_FILE="} {
 			if strings.HasPrefix(kv, k) {
 				t.Errorf("unset option leaked as %s", kv)
 			}
