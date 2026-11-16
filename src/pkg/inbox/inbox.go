@@ -22,6 +22,9 @@ const (
 	DestSpekRFC = "spek_rfc"
 	DestDibs    = "dibs"
 	DestDismiss = "dismiss"
+	// DestSession records an item sent into an Inception (spek) session; it
+	// is a route marker only, never a Route destination.
+	DestSession = "session"
 )
 
 // Item is one incoming recording/dictation as the Inbox lists it.
@@ -103,7 +106,10 @@ type RouteState struct {
 	// Children are the RFC's child issue URLs.
 	Children []string `json:"children,omitempty"`
 	// Note says who took the work on a delegated route (the agent name).
-	Note      string    `json:"note,omitempty"`
+	Note string `json:"note,omitempty"`
+	// Session is the Inception (spek) session id a DestSession route sent the
+	// item into (Note holds "session/<id>" plus its name).
+	Session   string    `json:"session,omitempty"`
 	Error     string    `json:"error,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

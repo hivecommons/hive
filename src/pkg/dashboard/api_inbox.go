@@ -33,6 +33,7 @@ func (s *Server) registerInboxRoutes() {
 	s.mux.HandleFunc("POST /api/inbox/{source}/{id}/transcribe", s.handleInboxTranscribe)
 	s.mux.HandleFunc("GET /api/inbox/transcriptions", s.handleInboxTranscriptions)
 	s.registerInboxUploadRoutes()
+	s.registerInboxSpekRunner()
 }
 
 // inboxSourceReadTimeout bounds one read that may spawn the source's MCP
@@ -471,6 +472,13 @@ func (s *Server) handleInboxRoute(w http.ResponseWriter, r *http.Request) {
 			msg += ": " + err.Error()
 		}
 		jsonError(w, msg, http.StatusNotFound)
+		return
+	}
+	if req.Destination == inboxSpekIntentDest {
+		// The session target of a spek share is checked by the seed
+		// endpoints (role, session visibility and use); the route API never
+		// takes one from the client.
+		jsonError(w, "send items into an Inception (spek) session with POST /api/sessions/{id}/seed (Share → Hive → spek…)", http.StatusBadRequest)
 		return
 	}
 	actor := requestUser(r)

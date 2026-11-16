@@ -82,6 +82,12 @@
     function inboxStatePill(dest, st) {
       const label = INBOX_DEST_LABELS[dest] || dest;
       if (!st) return '';
+      // Sent into an Inception (spek) session: "routed: session/<id> (<name>)"
+      // with a button that opens that session's tab.
+      if (dest === 'session') {
+        return '<span class="kc-pill" data-status="ok" title="Sent into an Inception (spek) session">spek session</span> <span class="muted-xs">routed: ' + escapeHtml(st.note || ('session/' + (st.session || ''))) + '</span>' +
+          (st.session ? ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSession" data-arg0="' + escapeHtml(st.session) + '">open session</button>' : '');
+      }
       const status = st.status === 'filed' || st.status === 'delegated' ? 'ok' : (st.status === 'failed' ? 'error' : 'syncing');
       const text = st.status === 'filed' ? label + ' filed' : st.status === 'delegated' ? label + ' handed to agent' : label + ' ' + st.status;
       const title = st.error ? escapeHtml(st.error) : (st.repo ? escapeHtml(st.repo) : '');
@@ -108,7 +114,11 @@
         if (long) html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-more" data-action="inboxToggleSummary" data-arg0="' + src + '" data-arg1="' + id + '">' + (expanded ? 'less' : 'more') + '</button>';
         return html;
       }
-      if (it.pending || (cached && cached.pending)) {
+      // Any text (a machine transcript included) means the item is not
+      // pending any more, whatever the source still reports: the "not
+      // transcribed yet" line would contradict the transcript shown below.
+      const hasText = !!(it.has_transcript || (it.transcription && it.transcription.status === 'done') || (cached && (cached.transcript || cached.summary)));
+      if (!hasText && (it.pending || (cached && cached.pending))) {
         const tx = it.transcribable && !it.transcribe_unavailable ? ' Hive can transcribe this: click 🎧 Transcribe.'
           : (it.transcribe_unavailable ? ' Hive can transcribe this once transcription is set up (see 🎧 Transcribe below).' : '');
         // Meeting platforms whose pending items read "<label> has no transcript"
@@ -452,6 +462,10 @@
     // bulk(items) to appear in the multi-select Hive menu.
     const inboxShareHiveActions = [
       { id: 'rfc', dest: 'spek_rfc', label: 'RFC…', enabled: (it, role) => !inboxCanShare(role) ? false : inboxShareGate(it, 'spek_rfc') || (!(((_inboxCache || {}).repos || []).length) ? 'No RFC repository configured: set one in Settings → Inbox' : true), run: it => inboxOpenRoute(it.source, it.id, 'spek_rfc') },
+      // spek…: send into an Inception (spek) session (the dialog and the
+      // seed API live with the session code below). An audio-only item is
+      // transcribed first and seeds the session when its transcript is ready.
+      { id: 'spek', dest: 'spek', label: 'spek…', enabled: (it, role) => !inboxCanShare(role) ? false : inboxShareGate(it, 'spek') || true, run: it => inboxOpenSessionDialog([inboxItemKey(it)]), bulkLabel: 'spek…', bulk: keys => inboxOpenSessionDialog(keys) },
       { id: 'knowledge', dest: 'dismiss', label: it => it.dismissed ? 'Back to inbox' : 'Knowledge', enabled: (it, role) => !inboxCanShare(role) ? false : (it.dismissed ? true : inboxShareGate(it, 'dismiss') || true), run: it => it.dismissed ? inboxUndismiss(it.source, it.id) : inboxDismiss(it.source, it.id), bulkLabel: 'Knowledge', bulk: () => inboxDismissSelected() },
       { id: 'dibs', dest: 'dibs', label: 'DIBS', enabled: (it, role) => !inboxCanShare(role) ? false : inboxDibsReady() ? true : 'Not configured: set the dibs URL in Settings → Inbox → dibs URL', run: it => inboxOpenRoute(it.source, it.id, 'dibs') },
       { id: 'tx-settings', label: '⚙ Transcription settings…', enabled: (it, role) => role === 'owner' && inboxTxBlocked(it) ? true : false, run: () => inboxOpenSettings() },
@@ -730,6 +744,125 @@
       } catch (e) {
         if (errEl) errEl.textContent = e.message; else showToast('Route failed: ' + e.message, 'error');
       }
+    }
+
+    // Share → Hive → spek…: send items into an interactive Inception (spek)
+    // session, a new one (name from the first item, group "inbox", the last
+    // CLI this browser used) or a running one the viewer may type into. The
+    // hive writes one enveloped file per item under .hive/inbox/ in the
+    // session's workspace and queues a fixed Send that names those files
+    // (POST /api/sessions with seed_items, or POST /api/sessions/{id}/seed).
+    const INBOX_SESSION_GROUP = 'inbox';
+    const INBOX_SESSION_VENDOR_KEY = 'hive.sessions.lastVendor';
+    const INBOX_SESSION_NAME_MAX = 64;
+    let _inboxSessionKeys = [];
+    function inboxSessionCanSend() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
+    function inboxKeyRef(key) { const i = key.indexOf('/'); return { source: key.slice(0, i), id: key.slice(i + 1) }; }
+    function inboxSessionName(items) {
+      const first = (items[0] && (items[0].title || items[0].id)) || 'Inbox';
+      const name = Array.from(String(first).trim()).slice(0, INBOX_SESSION_NAME_MAX).join('');
+      return name || 'Inbox';
+    }
+    function inboxSessionLastVendor() { try { return localStorage.getItem(INBOX_SESSION_VENDOR_KEY) || ''; } catch (e) { return ''; } }
+    // inboxSessionPickVendor: the last-used vendor when it is still available,
+    // else the first available one.
+    function inboxSessionPickVendor(vendors, last) {
+      const avail = (vendors || []).filter(v => v && v.available);
+      const hit = avail.find(v => v.id === last);
+      return hit ? hit.id : (avail[0] ? avail[0].id : '');
+    }
+    // Running sessions the viewer can send into: the list already holds only
+    // sessions the viewer may see, and for owner/read-write seeing a running
+    // session (own or shared) is being allowed to type into it.
+    function inboxSessionTargets(sessions) {
+      return (sessions || []).filter(s => s && s.status === 'running');
+    }
+    function inboxSessionDialogHtml(items, data, last) {
+      const vendors = (data.vendors || []).filter(v => v && v.available);
+      const running = inboxSessionTargets(data.sessions);
+      const pick = inboxSessionPickVendor(vendors, last);
+      const titles = items.map(it => escapeHtml(it.title || it.id));
+      let body = '<p class="muted-note m-0"><strong>' + (items.length === 1 ? titles[0] : items.length + ' items') + '</strong></p>';
+      if (items.length > 1) body += '<ul class="muted-xs inbox-session-items">' + titles.map(t => '<li>' + t + '</li>').join('') + '</ul>';
+      body += '<p class="muted-note">The hive writes ' + (items.length === 1 ? 'the item' : 'each item') + ' (title, summary, transcript, highlights) to <code>.hive/inbox/</code> in the session\'s workspace and queues a Send asking the CLI to start a spec with the spek-new skill. The text goes in as untrusted data, never as instructions.</p>';
+      if (items.some(it => it.pending)) body += '<p class="muted-xs">An item with audio but no text yet is transcribed first (🎧 Transcribe) and goes into the session when its transcript is ready.</p>';
+      body += '<fieldset class="inbox-session-mode"><label class="muted-note"><input type="radio" name="inbox-session-mode" value="new" checked data-inbox-session-mode="new"> Start a new session</label>' +
+        '<div class="inbox-settings-grid">' +
+        '<label class="muted-note inbox-field">Name<input class="kb-search-box mt-2" id="inbox-session-name" maxlength="' + INBOX_SESSION_NAME_MAX + '" autocomplete="off" value="' + escapeHtml(inboxSessionName(items)) + '"></label>' +
+        '<label class="muted-note inbox-field">Group<input class="kb-search-box mt-2" id="inbox-session-group" autocomplete="off" value="' + INBOX_SESSION_GROUP + '"></label>' +
+        '<label class="muted-note inbox-field">CLI<select class="field-input field-input-block mt-2" id="inbox-session-vendor">' +
+        vendors.map(v => '<option value="' + escapeHtml(v.id) + '"' + (v.id === pick ? ' selected' : '') + '>' + escapeHtml(v.label || v.id) + '</option>').join('') + '</select></label></div>' +
+        (vendors.length ? '' : '<p class="kc-error muted-xs">No CLI is installed on this hive.</p>') +
+        '<label class="muted-note"><input type="radio" name="inbox-session-mode" value="existing" data-inbox-session-mode="existing"' + (running.length ? '' : ' disabled') + '> Add to a running session</label>' +
+        '<select class="field-input field-input-block mt-2" id="inbox-session-existing" aria-label="Running session"' + (running.length ? '' : ' disabled') + '>' +
+        (running.length ? running.map(s => '<option value="' + escapeHtml(s.id) + '">' + escapeHtml((s.name || s.id) + (s.group ? ' · ' + s.group : '') + ' (' + (s.vendor || '') + ')') + '</option>').join('') : '<option value="">No running session you can type into</option>') +
+        '</select></fieldset>';
+      body += '<div class="hive-dialog-error" role="alert" id="inbox-session-error"></div>' +
+        '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
+        '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxConfirmSession">Send to session</button></div>';
+      return body;
+    }
+    // inboxOpenSessionDialog(keys): keys are "source/id" (one item, or the
+    // multi-select). The session list is read fresh so it names only
+    // sessions that are running now.
+    async function inboxOpenSessionDialog(keys) {
+      if (!inboxSessionCanSend()) return;
+      keys = (keys || []).filter(Boolean);
+      const items = keys.map(k => { const r = inboxKeyRef(k); return inboxFind(r.source, r.id) || { source: r.source, id: r.id, title: r.id }; });
+      if (!items.length) return;
+      let data = {};
+      try {
+        const r = await fetch('/api/sessions', { headers: _inceptionAuthHeaders(), credentials: 'same-origin', cache: 'no-store' });
+        data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      } catch (e) { showToast('Could not list sessions: ' + e.message, 'error'); return; }
+      if (data.enabled === false) { showToast('Inception (spek) sessions are not enabled on this hive.', 'error'); return; }
+      _inboxSessionKeys = keys;
+      kbShowModal('Send to an Inception (spek) session', inboxSessionDialogHtml(items, data, inboxSessionLastVendor()), { width: '560px' });
+    }
+    function inboxOpenSessionSelected() { return inboxOpenSessionDialog(Array.from(_inboxSelected)); }
+    // inboxSessionRequest builds the POST for the dialog's choice.
+    function inboxSessionRequest(mode, keys, fields) {
+      const items = keys.map(inboxKeyRef);
+      if (mode === 'existing') return { path: '/api/sessions/' + encodeURIComponent(fields.session) + '/seed', body: { items: items } };
+      return { path: '/api/sessions', body: { name: fields.name, group: fields.group, vendor: fields.vendor, shared: false, seed_items: items } };
+    }
+    // inboxSessionErrorText: a 409 for an item without text says how to fix it.
+    function inboxSessionErrorText(status, data) {
+      const msg = (data && data.error) || ('HTTP ' + status);
+      if (status === 409 && data && data.reason === 'no_text') return msg + (data.transcribe ? ' Use 🎧 Transcribe on the item, then send it again.' : '');
+      return msg;
+    }
+    async function inboxConfirmSession() {
+      const val = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+      const modeEl = document.querySelector('[data-inbox-session-mode]:checked');
+      const mode = modeEl ? modeEl.value : 'new';
+      const errEl = document.getElementById('inbox-session-error');
+      const fields = { name: val('inbox-session-name'), group: val('inbox-session-group'), vendor: val('inbox-session-vendor'), session: val('inbox-session-existing') };
+      const fail = m => { if (errEl) errEl.textContent = m; else showToast(m, 'error'); };
+      if (mode === 'new' && (!fields.name || !fields.vendor)) { fail('A new session needs a name and a CLI.'); return; }
+      if (mode === 'existing' && !fields.session) { fail('Pick a running session.'); return; }
+      const keys = _inboxSessionKeys.slice();
+      const req = inboxSessionRequest(mode, keys, fields);
+      let data = {};
+      try {
+        const r = await fetch(req.path, { method: 'POST', headers: _inceptionAuthHeaders(), credentials: 'same-origin', body: JSON.stringify(req.body) });
+        data = await r.json().catch(() => ({}));
+        if (!r.ok || data.ok === false) { fail(inboxSessionErrorText(r.status, data)); return; }
+      } catch (e) { fail(e.message); return; }
+      kbCloseModal();
+      if (mode === 'new' && fields.vendor) { try { localStorage.setItem(INBOX_SESSION_VENDOR_KEY, fields.vendor); } catch (e) { /* convenience only */ } }
+      for (const k of keys) _inboxSelected.delete(k);
+      const sess = data.session || { id: fields.session };
+      const waiting = ((data.seed || {}).waiting || []).length;
+      showToast('Sent ' + keys.length + ' item' + (keys.length === 1 ? '' : 's') + ' to ' + (sess.name || fields.name || 'the session') +
+        (waiting ? ' (' + waiting + ' transcribing first; ' + (waiting === 1 ? 'it goes' : 'they go') + ' in when the transcript is ready)' : ''), 'success');
+      if (typeof sessionsFocus === 'function') sessionsFocus(sess);
+      fetchInbox();
+    }
+    // inboxOpenSession: the "open session" button on a routed item.
+    function inboxOpenSession(id) {
+      if (typeof sessionsFocus === 'function') sessionsFocus({ id: id });
     }
 
     // Settings drawer: default RFC repo, dibs URL, and ordered auto-routing rules.
