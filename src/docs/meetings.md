@@ -61,7 +61,7 @@ The operator who provisions hosted hives:
    - `HIVE_MEETINGS_ENABLED=true`
    - `HIVE_MEETINGS_VEXA_URL=<Vexa gateway base URL>`
    - the tenant key, either as `HIVE_MEETINGS_VEXA_API_KEY` from a Kubernetes Secret, or written once from **Settings, Meetings** (stored keystore-sealed at `/data/secrets/meetings_vexa_api_key`)
-   - optionally `HIVE_MEETINGS_TRANSCRIBE_URL` (the shared transcription service, needed for Discord)
+   - for Discord, `HIVE_MEETINGS_TRANSCRIBE_URL` (the shared transcription service) and its token, either as `HIVE_MEETINGS_TRANSCRIBE_TOKEN` from a Kubernetes Secret, or written once from **Settings, Meetings** (stored keystore-sealed at `/data/secrets/meetings_transcribe_token`)
 3. Restarts the hive.
 
 The hive image carries the pinned Quorum bundle at `/usr/local/lib/quorum/quorum.mjs` and the `spektacular` binary, so nothing else is installed.
@@ -84,7 +84,16 @@ An image built without the Quorum bundle (the `QUORUM_VERSION` build argument em
 
 ### Discord
 
-Create a Discord application with a bot, invite it to your server with permission to connect and speak in voice channels, and paste the bot token in **Settings, Meetings** (or set `HIVE_MEETINGS_DISCORD_TOKEN`). Without a token Discord meetings are unavailable. Discord audio is transcribed by the service at `meetings.transcribe_url`. Discord voice also needs the native `@snazzah/davey` module next to the Quorum bundle; the hive image installs it.
+Create a Discord application with a bot, invite it to your server with permission to connect and speak in voice channels, and paste the bot token in **Settings, Meetings** (or set `HIVE_MEETINGS_DISCORD_TOKEN`). Without a token Discord meetings are unavailable.
+
+Discord audio is transcribed by the shared transcription service, which needs two more settings:
+
+- the transcribe URL, `meetings.transcribe_url` (or `HIVE_MEETINGS_TRANSCRIBE_URL`). Where the service runs in the same cluster as the hive (the `vexa-transcription` Service in the `meetings` namespace), use the in-cluster address `http://vexa-transcription.meetings.svc.cluster.local:8000`;
+- the transcription token, the service's API token. Paste it in the **Transcription token** field in **Settings, Meetings** (or set `HIVE_MEETINGS_TRANSCRIBE_TOKEN`). Hive stores it keystore-sealed at `meetings.transcribe_token_file` (`/data/secrets/meetings_transcribe_token`) and never returns it; the panel only shows whether it is set. At boot hive writes the plaintext to an owner-only file in Quorum's private runtime directory and passes it as `QUORUM_TRANSCRIBE_TOKEN_FILE`.
+
+Without the URL and token Discord meetings join but nothing is transcribed. All three (bot token, transcribe URL, transcription token) apply after a restart.
+
+Discord voice also needs the native `@snazzah/davey` module next to the Quorum bundle; the hive image installs it.
 
 Anyone in the Discord server can ask for hive with `/hive join`. The request shows in **Meetings** as a join request with **Approve** and **Decline**; hive joins only when the owner approves it. (No Discord account is mapped to the hive owner yet, so no request is approved automatically.)
 
@@ -101,6 +110,7 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.vexa.api_key_file` | `/data/secrets/meetings_vexa_api_key` | Keystore-sealed tenant key file. |
 | `meetings.discord.token_file` | `/data/secrets/meetings_discord_token` | Keystore-sealed Discord bot token file. |
 | `meetings.transcribe_url` | none | Transcription service for Discord audio. |
+| `meetings.transcribe_token_file` | `/data/secrets/meetings_transcribe_token` | Keystore-sealed transcription service token file. |
 | `meetings.delivery` | `chat` | Where meeting output goes. |
 | `meetings.voice_on_address` | `true` | Allow speaking when addressed in a voice-enabled meeting. |
 | `meetings.bot_name` | `hive (notes)` | Bot display name. |

@@ -54,3 +54,7 @@ src/crux/.smoke/
 
 # Python bytecode caches (e.g. from running .github/scripts locally)
 __pycache__/
+
+# `go build` output of src/cmd/workflow-survey (a 4.4 MB binary was committed
+# by mistake in #17679). Build product, never source.
+src/cmd/workflow-survey/workflow-survey
