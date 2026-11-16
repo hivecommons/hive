@@ -181,6 +181,20 @@ func (s *Store) Set(key, dest, status string, res Result, errText string) (Route
 	return *st, s.save()
 }
 
+// MarkSession records key as sent into session id: a delegated DestSession
+// route whose note reads "session/<id> (<name>)". Sending again replaces it.
+func (s *Store) MarkSession(key, id, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	note := DestSession + "/" + id
+	if name != "" {
+		note += " (" + name + ")"
+	}
+	s.entry(key).Routes[DestSession] = &RouteState{Status: StatusDelegated, Session: id, Note: note, UpdatedAt: s.now()}
+	return s.save()
+}
+
 // Dismiss marks the item knowledge-only (or clears that mark).
 func (s *Store) Dismiss(key string, dismissed bool) error {
 	s.mu.Lock()

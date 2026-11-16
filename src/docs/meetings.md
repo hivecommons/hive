@@ -46,7 +46,7 @@ Hive attends meetings as a persona: **Betty** ("Betty Bee from the hive", she/he
 A persona is a preset (`meetings.persona.preset`, default `betty`) plus any field set explicitly; every field also has an `HIVE_MEETINGS_PERSONA_*` override ([env-vars.md](env-vars.md#meetings-quorum)).
 
 - `language` is a BCP-47 tag (default `en-US`). Betty replies in that language and its regional conventions (American spelling for `en-US`).
-- `voice` is the text-to-speech voice id (default `af_heart`, a Kokoro voice) kept for spoken replies, which are not built yet. Kokoro voice ids encode accent and gender: `af_*` is American female, `am_*` American male, `bf_*` and `bm_*` British female and male. A future persona picks a different voice id. A "bot-type" voice would be a different TTS voice or an effect, which is not built yet.
+- `voice` is the text-to-speech voice id (default `af_heart`, a Kokoro voice) her spoken replies use: hive passes it to Quorum as `QUORUM_TTS_VOICE` for Discord and as `voice_id` on every `meeting.join`. Kokoro voice ids encode accent and gender: `af_*` is American female, `am_*` American male, `bf_*` and `bm_*` British female and male. A future persona picks a different voice id. A "bot-type" voice would be a different TTS voice or an effect, which is not built yet.
 - `voice_type` (`female`, `male` or `bot`, default `female`), `accent` (free text, default `American`) and `pronouns` (default `she/her`) describe the persona in the intro and her self-description only; they do not change behaviour.
 - `intro_template` placeholders: `{name}`, `{display_name}`, `{pronouns}`, `{leave}` (the first leave phrase), `{accent}`, `{voice_type}`, `{language}`.
 - `searxng_url` is the SearXNG instance she searches the web with; see [Web answers](#web-answers).
@@ -143,6 +143,15 @@ Discord audio is transcribed by the shared transcription service, which needs tw
 
 Without the URL and token Discord meetings join but nothing is transcribed. All three (bot token, transcribe URL, transcription token) apply after a restart.
 
+Spoken replies on Discord (Quorum v0.2.0 and later) go through a text-to-speech service, Kokoro's `/v1/audio/speech`, which needs two settings of its own:
+
+- the TTS URL, `meetings.tts_url` (or `HIVE_MEETINGS_TTS_URL`). On hive-oke the `vexa-tts` Service in the `meetings` namespace answers in-cluster at `http://vexa-tts.meetings.svc.cluster.local:8880`;
+- the TTS token. Paste it in the **TTS token** field in **Settings, Meetings** (or set `HIVE_MEETINGS_TTS_TOKEN`). Like the transcription token it is write-only: hive stores it keystore-sealed at `meetings.tts_token_file` (`/data/secrets/meetings_tts_token`), the API reports only `tts_token_set`, and at boot hive writes the plaintext to an owner-only file in Quorum's private runtime directory and passes it as `QUORUM_TTS_TOKEN_FILE`. On hive-oke the operator copies the token from the Secret `vexa-tts` in the `meetings` namespace.
+
+Hive also passes `QUORUM_TTS_VOICE` (the persona's voice, `meetings.persona.voice`, default `af_heart`) and sends the same voice as `voice_id` on every `meeting.join`, so Betty sounds the same on Discord and on the Vexa platforms. Without the TTS URL and token, Discord replies stay in chat. Both apply after a restart.
+
+Quorum v0.2.0 ignores `voice: false` on Discord (a Discord bot can always speak), so hive's own policy is the gate: it never calls `say` for a meeting whose voice is off, on any platform, and answers in chat instead.
+
 Discord voice also needs the native `@snazzah/davey` module next to the Quorum bundle; the hive image installs it.
 
 Anyone in the Discord server can ask for hive with `/hive join`. The request shows in **Meetings** as a join request with **Approve** and **Decline**; hive joins only when the owner approves it. (No Discord account is mapped to the hive owner yet, so no request is approved automatically.)
@@ -161,6 +170,8 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.discord.token_file` | `/data/secrets/meetings_discord_token` | Keystore-sealed Discord bot token file. |
 | `meetings.transcribe_url` | none | Transcription service for Discord audio. |
 | `meetings.transcribe_token_file` | `/data/secrets/meetings_transcribe_token` | Keystore-sealed transcription service token file. |
+| `meetings.tts_url` | none | Text-to-speech service for Discord speech (`QUORUM_TTS_URL`). |
+| `meetings.tts_token_file` | `/data/secrets/meetings_tts_token` | Keystore-sealed TTS service token file. |
 | `meetings.delivery` | `chat` | Where meeting output goes. |
 | `meetings.voice_on_address` | `true` | Allow speaking when addressed in a voice-enabled meeting. |
 | `meetings.bot_name` | the persona's display name | Bot display name; `hive (notes)` with the persona off. |

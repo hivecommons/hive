@@ -298,7 +298,7 @@
           "Meetings"
         ],
         "summary": "Get meetings settings",
-        "description": "meetings.enabled, the Vexa gateway URL, whether the Vexa tenant key, Discord bot token and transcription service token are set (never their values), and the effective values of the other meetings keys. Owner only.",
+        "description": "meetings.enabled, the Vexa gateway URL, whether the Vexa tenant key, Discord bot token, transcription service token and TTS service token are set (never their values), and the effective values of the other meetings keys. Owner only.",
         "responses": {
           "200": {
             "description": "Settings",
@@ -328,6 +328,9 @@
                     "transcribe_token_set": {
                       "type": "boolean"
                     },
+                    "tts_token_set": {
+                      "type": "boolean"
+                    },
                     "restart_required": {
                       "type": "boolean"
                     },
@@ -355,7 +358,7 @@
           "Meetings"
         ],
         "summary": "Update meetings settings",
-        "description": "Sets meetings.enabled and meetings.vexa.url in hive.yaml and writes the Vexa tenant key, Discord bot token and transcription service token to keystore-sealed secret files (an empty string clears one). Takes effect after a restart. Owner only.",
+        "description": "Sets meetings.enabled and meetings.vexa.url in hive.yaml and writes the Vexa tenant key, Discord bot token, transcription service token and TTS service token to keystore-sealed secret files (an empty string clears one). Takes effect after a restart. Owner only.",
         "requestBody": {
           "required": true,
           "content": {
@@ -378,6 +381,10 @@
                   "transcribe_token": {
                     "type": "string",
                     "description": "Transcription service token Quorum posts Discord audio with (write-only)"
+                  },
+                  "tts_token": {
+                    "type": "string",
+                    "description": "TTS service token Quorum speaks Discord replies with (write-only)"
                   }
                 }
               }
@@ -405,6 +412,9 @@
                       "type": "boolean"
                     },
                     "transcribe_token_set": {
+                      "type": "boolean"
+                    },
+                    "tts_token_set": {
                       "type": "boolean"
                     },
                     "restart_required": {
@@ -40446,7 +40456,7 @@
           "Sessions"
         ],
         "summary": "Create a session (owner or read-write)",
-        "description": "Starts a named CLI session in the hive's shared workspace checkout (spektacular init run for the vendor). Vendor must be a known, allowed, installed backend; never a shell, never a bypass-permissions launch. ASYNCHRONOUS: answers at once with the session in status `preparing` (and a human `message`, e.g. the first session on a hive clones the project repository, which takes minutes); the start runs in the background. Poll GET /api/sessions until the session is `running` or `failed` (then `error` carries the reason and DELETE removes it).",
+        "description": "Starts a named CLI session in the hive's shared workspace checkout (spektacular init run for the vendor). Vendor must be a known, allowed, installed backend; never a shell, never a bypass-permissions launch. ASYNCHRONOUS: answers at once with the session in status `preparing` (and a human `message`, e.g. the first session on a hive clones the project repository, which takes minutes); the start runs in the background. Poll GET /api/sessions until the session is `running` or `failed` (then `error` carries the reason and DELETE removes it). Optional `seed_items` [{source,id}] sends Inbox items into the new session once it is running, exactly like POST /api/sessions/{id}/seed; they are read and checked first, so an item without text answers 409 (reason no_text) and creates nothing, and the 202 carries `seed` {items, files, status:\"pending\"}.",
         "responses": {
           "202": {
             "description": "Accepted; the session is preparing"
@@ -40461,7 +40471,7 @@
             "description": "Sessions disabled"
           },
           "409": {
-            "description": "Vendor not installed"
+            "description": "Vendor not installed, or a seed item has no text yet"
           },
           "429": {
             "description": "Session limit reached"
@@ -40771,6 +40781,74 @@
                   "file": {
                     "type": "string",
                     "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    },
+    "/api/sessions/{id}/seed": {
+      "post": {
+        "tags": [
+          "Sessions"
+        ],
+        "summary": "Send Inbox items into a running session (owner or read-write who may use it)",
+        "description": "Body {items:[{source,id}]} (at most 20). The hive reads each item's current content and writes one markdown file per item to <cwd>/.hive/inbox/<source>-<id>.md in the session's workspace, as the session's uid with the sessions group and mode 0640: hive-generated provenance, then title, summary, transcript (or machine transcript) and highlights inside an untrusted-inbox-data envelope. It then queues a fixed Send through the queued-Send path (delivered when the prompt is idle, audited as session_input for the caller) that names only the sanitised file paths, never item text. Audited as inbox_to_session; each item gets a `session` route (`routed: session/<id>`). An audio-only item the hive can transcribe is transcribed first (a `spek` share intent) and seeds the session when its transcript is ready; such items are listed in `seed.waiting`. Answers 202 with `session` and `seed` ({files, instruction, queue_id, position, waiting}).",
+        "responses": {
+          "202": {
+            "description": "Files written and the instruction queued"
+          },
+          "400": {
+            "description": "No items, too many items or a malformed body"
+          },
+          "403": {
+            "description": "Read role, or a private session of someone else"
+          },
+          "404": {
+            "description": "Unknown session or item, or no Inbox on this hive"
+          },
+          "409": {
+            "description": "Session not running, or an item has no text yet: body {reason:\"no_text\", item, transcribe} (transcribe=true when 🎧 Transcribe can produce a machine transcript)"
+          },
+          "412": {
+            "description": "An audio-only item cannot be transcribed now (transcription disabled, no consent, budget used or no provider)"
+          },
+          "429": {
+            "description": "The session's Send queue is full"
+          }
+        },
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string"
+                        },
+                        "id": {
+                          "type": "string"
+                        }
+                      }
+                    }
                   }
                 }
               }

@@ -16,6 +16,9 @@
     const SESSIONS_UNGROUPED_LABEL = 'Ungrouped';
     const SESSIONS_SELECTED_KEY = 'hive.sessions.selected';
     const SESSIONS_COLLAPSED_KEY = 'hive.sessions.collapsedGroups';
+    // The CLI vendor of the last session this browser started; the Inbox's
+    // Share → Hive → spek… dialog preselects it (inbox.js reads the same key).
+    const SESSIONS_LAST_VENDOR_KEY = 'hive.sessions.lastVendor';
     const SESSIONS_WRITE_ROLES = Object.freeze(['owner', 'read-write']);
     const SESSIONS_STATUS_RUNNING = 'running';
     const SESSIONS_STATUS_ENDED = 'ended';
@@ -777,6 +780,7 @@
     // until polling sees it running (terminal attaches) or failed.
     async function sessionsSubmitCreate(body) {
       const data = await sessionsApi('', 'POST', body);
+      if (body.vendor) sessionsStoreSet(SESSIONS_LAST_VENDOR_KEY, body.vendor);
       if (data.session) {
         _sessionsData.sessions = (_sessionsData.sessions || []).filter(function(x) { return x.id !== data.session.id; });
         _sessionsData.sessions.push(data.session);
@@ -792,6 +796,23 @@
       showToast('Starting session ' + body.name + '…', 'success');
       loadSessions();
       return data.session;
+    }
+    // sessionsFocus opens the Inception (spek) section on one session's tab:
+    // the Inbox calls it after sending items into a session (new or running),
+    // with the session view the API answered, so the tab (and its preparing
+    // spinner) shows before the next poll.
+    function sessionsFocus(session) {
+      if (!session || !session.id) return;
+      const list = _sessionsData.sessions || [];
+      const prev = list.find(function(x) { return x.id === session.id; });
+      if (prev) Object.assign(prev, session);
+      else if (session.status) _sessionsData.sessions = list.concat([session]);
+      _sessionsSelected = session.id;
+      sessionsStoreSet(SESSIONS_SELECTED_KEY, session.id);
+      if (session.vendor) sessionsStoreSet(SESSIONS_LAST_VENDOR_KEY, session.vendor);
+      if (typeof ocNavigate === 'function') ocNavigate('sessions-section');
+      renderSessions();
+      loadSessions();
     }
     // Retry a failed session: its record is deleted and a new one is created
     // with the same name, group, vendor and sharing.

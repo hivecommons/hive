@@ -5,7 +5,8 @@
 // same way hive runs the spektacular binary. It listens on loopback only and
 // requires a bearer token that hive generates once per boot and hands to the
 // child through QUORUM_TOKEN_FILE. Secrets Quorum needs (the Vexa tenant key,
-// the optional Discord bot token and the transcription service token) are
+// the optional Discord bot token, the transcription service token and the
+// TTS service token) are
 // written in plaintext to owner-only files in a private runtime directory
 // that is removed on Stop; their durable, keystore-sealed copies stay under
 // /data/secrets.
@@ -65,6 +66,9 @@ const (
 	// transcribeTokenFileName holds the transcription service bearer token
 	// (QUORUM_TRANSCRIBE_TOKEN_FILE).
 	transcribeTokenFileName = "transcribe_token"
+	// ttsTokenFileName holds the TTS service bearer token
+	// (QUORUM_TTS_TOKEN_FILE).
+	ttsTokenFileName = "tts_token"
 )
 
 // passthroughEnv are the parent environment variables the child inherits.
@@ -99,6 +103,15 @@ type Options struct {
 	// TranscribeToken is the plaintext transcription service token written
 	// to QUORUM_TRANSCRIBE_TOKEN_FILE. Empty leaves it unset.
 	TranscribeToken string
+	// TTSURL is QUORUM_TTS_URL, the Kokoro service Discord speech uses.
+	// Empty leaves it unset.
+	TTSURL string
+	// TTSToken is the plaintext TTS service token written to
+	// QUORUM_TTS_TOKEN_FILE. Empty leaves it unset.
+	TTSToken string
+	// TTSVoice is QUORUM_TTS_VOICE, the default voice id (the persona's
+	// voice). Empty leaves it unset.
+	TTSVoice string
 	// RuntimeDir is the parent of the private runtime directory. Empty means
 	// os.TempDir().
 	RuntimeDir string
@@ -278,6 +291,19 @@ func (s *Supervisor) writeRuntimeFiles() error {
 			return err
 		}
 		env = append(env, "QUORUM_TRANSCRIBE_TOKEN_FILE="+p)
+	}
+	if s.opts.TTSURL != "" {
+		env = append(env, "QUORUM_TTS_URL="+s.opts.TTSURL)
+	}
+	if s.opts.TTSToken != "" {
+		p, err := write(ttsTokenFileName, s.opts.TTSToken)
+		if err != nil {
+			return err
+		}
+		env = append(env, "QUORUM_TTS_TOKEN_FILE="+p)
+	}
+	if s.opts.TTSVoice != "" {
+		env = append(env, "QUORUM_TTS_VOICE="+s.opts.TTSVoice)
 	}
 	s.env = env
 	return nil

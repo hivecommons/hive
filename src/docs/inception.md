@@ -8,7 +8,9 @@ see a session watches it live, one person at a time holds the keyboard, and
 `read` users only watch. It is on by default (`dashboard.sessions.enabled`;
 `HIVE_SESSIONS_ENABLED=false` or `enabled: false` hides it). See
 [Inception (spek)](dashboard-sections/workflow-and-agents.md#inception-spek)
-and the [Sessions API](api-reference/sessions.md).
+and the [Sessions API](api-reference/sessions.md). An Inbox recording can
+seed a session directly (**🔗 Share ▾ → Hive → spek…**, see
+[Inbox and voice sources](inbox-voice-sources.md#from-recording-to-an-inception-spek-session)).
 
 The dashboard's old step-by-step Inception wizard was removed; Inception (spek)
 replaces it. Campaigns, their Jam workspace and campaign recheck have been

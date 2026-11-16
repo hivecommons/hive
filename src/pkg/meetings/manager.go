@@ -108,6 +108,9 @@ type Options struct {
 	// so voice can be turned on later in the meeting; whether hive actually
 	// speaks is still the meeting's voice toggle.
 	VoiceOnAddress bool
+	// VoiceID is meeting.join's voice_id (the persona's TTS voice); empty
+	// leaves Quorum's default.
+	VoiceID string
 	// AutoApprove decides whether a platform join request (Discord
 	// `/hive join`) is approved without the owner. Nil approves none: every
 	// request waits in the dashboard.
@@ -273,7 +276,7 @@ func (m *Manager) Join(ctx context.Context, req JoinRequest) (Meeting, error) {
 	}
 	res, err := m.opts.Quorum.Join(ctx, JoinArgs{
 		URL: req.URL, DisplayName: m.opts.BotName, Platform: req.Platform, GuildID: req.GuildID, ChannelID: req.ChannelID,
-		Voice: voice,
+		Voice: voice, VoiceID: strings.TrimSpace(m.opts.VoiceID),
 	})
 	if err != nil {
 		mt.State, mt.StateReason = StateFailed, err.Error()
