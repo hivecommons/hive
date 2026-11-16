@@ -11,7 +11,7 @@ import (
 // owner-only headroom endpoint for anyone else.
 func TestSubscriptionGaugeOverviewWiring(t *testing.T) {
 	html := indexHTML(t)
-	host := `<div class="overview-usage-gauge" id="overview-usage-gauge" role="region" aria-label="Claude subscription usage" hidden></div>`
+	host := `<div class="overview-usage-gauge" id="overview-usage-gauge" role="region" aria-label="Plan usage" hidden></div>`
 	card := `<div class="overview-card" id="overview-card"></div>`
 	hi, ci := strings.Index(html, host), strings.Index(html, card)
 	if hi < 0 || ci < 0 || hi > ci {
@@ -33,8 +33,8 @@ func TestSubscriptionGaugeOverviewWiring(t *testing.T) {
 		}
 	}
 	popover := jsFunc(t, html, "renderOverviewSettingsPopover")
-	if !strings.Contains(popover, `subscriptionGaugeOwner()`) || !strings.Contains(popover, `data-change-action="setOverviewUsageGauge"`) || !strings.Contains(popover, "Show Claude usage gauge") {
-		t.Fatalf("Overview settings must offer an owner-only Show Claude usage gauge checkbox:\n%s", popover)
+	if !strings.Contains(popover, `subscriptionGaugeOwner()`) || !strings.Contains(popover, `data-change-action="setOverviewUsageGauge"`) || !strings.Contains(popover, "Show usage gauge") {
+		t.Fatalf("Overview settings must offer an owner-only Show usage gauge checkbox:\n%s", popover)
 	}
 
 	wanted := jsFunc(t, html, "subscriptionGaugeWanted")
@@ -57,7 +57,7 @@ func TestSubscriptionGaugeOverviewWiring(t *testing.T) {
 	}
 
 	overview := jsFunc(t, html, "renderSubscriptionGaugeOverview")
-	for _, want := range []string{"subscriptionGaugeOwner()", "subscriptionGaugeOverviewEnabled()", "m.usesClaude", "textContent", "host.hidden = true"} {
+	for _, want := range []string{"subscriptionGaugeOwner()", "subscriptionGaugeOverviewEnabled()", "m.shown", "textContent", "host.hidden = true"} {
 		if !strings.Contains(overview, want) {
 			t.Fatalf("renderSubscriptionGaugeOverview missing %q:\n%s", want, overview)
 		}

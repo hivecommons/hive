@@ -976,6 +976,39 @@ func TestClaudeHeadroomFromFixture(t *testing.T) {
 	}
 }
 
+// TestClaudeHeadroomKeepsScopedModelName pins that the model a weekly_scoped
+// window counts reaches LimitWindow.Scope["model"], so the usage gauge can
+// label it the way Claude Code's /usage does ("Current week (Fable)").
+// Windows without a scope, or with an empty one, carry no Scope.
+func TestClaudeHeadroomKeepsScopedModelName(t *testing.T) {
+	h, err := claudeHeadroom("anthropic", 80, []byte(`{"limits":[
+		{"kind":"weekly_all","percent":59,"resets_at":"2026-11-16T07:00:00Z","scope":null},
+		{"kind":"weekly_scoped","percent":30,"resets_at":"2026-11-16T07:00:00Z","scope":{"model":{"id":"claude-fable","display_name":"Fable"}}},
+		{"kind":"weekly_scoped","percent":10,"resets_at":"2026-11-16T07:00:00Z","scope":{"model":{"id":"claude-opus","display_name":" "}}},
+		{"kind":"weekly_scoped","percent":5,"resets_at":"2026-11-16T07:00:00Z","scope":{"model":null}}]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(h.Limits) != 4 {
+		t.Fatalf("len(Limits) = %d, want 4; Limits=%+v", len(h.Limits), h.Limits)
+	}
+	if h.Limits[0].Scope != nil {
+		t.Errorf("weekly_all Scope = %v, want none", h.Limits[0].Scope)
+	}
+	if got := h.Limits[1].Scope["model"]; got != "Fable" {
+		t.Errorf("scoped model = %q, want Fable (display_name)", got)
+	}
+	if got := h.Limits[2].Scope["model"]; got != "claude-opus" {
+		t.Errorf("scoped model = %q, want claude-opus (id when display_name is blank)", got)
+	}
+	if h.Limits[3].Scope != nil {
+		t.Errorf("model:null Scope = %v, want none", h.Limits[3].Scope)
+	}
+	if h.Limits[1].Kind != "weekly_scoped" {
+		t.Errorf("scoped Kind = %q, want weekly_scoped (the relay guard matches on it)", h.Limits[1].Kind)
+	}
+}
+
 // TestClaudeHeadroomRejectsUnrecognizedSchema pins that an empty or
 // percent-less limits array — or a body missing the field entirely — surfaces
 // as an error (fail-open with ProbeErr set = unknown to the guard), never a
