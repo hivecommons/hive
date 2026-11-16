@@ -375,7 +375,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	// must not be handed a red PR on a repo it cannot push to (#6204).
 	repoInScope := func(repo string) bool { return s.cfg.AgentServesRepo(agentName, repo) }
 	mergeEligibleList := s.buildMergeEligibleListFor(repoInScope)
-	ciFailingList := s.buildCIFailingListFor(repoInScope)
+	ciFailingList := s.buildCIFailingListForAgent(baseName, repoInScope)
 
 	// The built-in per-kick variables. Each value is already computed above, so
 	// the thunks just return it — but wrapping them as resolve.RuntimeContext
