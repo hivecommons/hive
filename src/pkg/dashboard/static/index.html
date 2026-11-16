@@ -6099,6 +6099,24 @@
     .inbox-upload-bar { flex: 1 1 120px; max-width: 240px; }
     .inbox-add-url { flex: 1 1 16rem; min-width: 0; }
     .inbox-upload .kc-error { flex-basis: 100%; }
+    /* ● Record (inbox-recorder.js): panel, red indicator, level meters */
+    .inbox-rec-panel { margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--surface); }
+    .inbox-rec-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .inbox-rec-dot { color: var(--red); }
+    .inbox-rec-dot.is-live { animation: inbox-rec-pulse 1.2s ease-in-out infinite; }
+    .inbox-rec-time { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+    .inbox-rec-meters { display: grid; gap: var(--sp-1); margin-top: var(--sp-2); max-width: 420px; }
+    .inbox-rec-meter-row { display: grid; grid-template-columns: 7em 1fr; align-items: center; gap: var(--sp-2); }
+    .inbox-rec-meter { width: 100%; }
+    .inbox-rec-upload { margin-top: var(--sp-1); }
+    .inbox-rec-btn { color: var(--red); }
+    .inbox-rec-indicator { position: fixed; right: var(--sp-4); bottom: var(--sp-4); z-index: 1000; display: inline-flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-4); border: 1px solid var(--red); border-radius: var(--r-pill); background: var(--surface); color: var(--red); font-weight: 600; cursor: pointer; }
+    .inbox-rec-indicator[hidden] { display: none; }
+    .inbox-rec-notice { margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--bg); }
+    .inbox-rec-ack { display: flex; align-items: flex-start; gap: var(--sp-2); margin-top: var(--sp-3); font-size: var(--fs-sm); }
+    .inbox-rec-sources { display: grid; gap: var(--sp-1); margin-top: var(--sp-2); }
+    @keyframes inbox-rec-pulse { 50% { opacity: 0.35; } }
+    @media (prefers-reduced-motion: reduce) { .inbox-rec-dot.is-live { animation: none; } }
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
     }
@@ -9325,6 +9343,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
   <div class="mt-6 mb-8" id="inbox-section" data-dashboard-section="inbox-section">
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="inbox-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Inbox section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📥 Inbox</h2>
     <div class="section-body">
+      <div id="inbox-rec-panel" class="inbox-rec-panel" role="region" aria-label="Recorder" hidden></div>
       <div id="inbox-panel" class="inbox-panel"></div>
       <div class="inbox-drop-overlay" aria-hidden="true"><span>Drop files to add them to the Inbox</span></div>
       <div id="inbox-upload-status" class="inbox-sr-status" role="status" aria-live="polite"></div>
@@ -47380,7 +47399,7 @@ function burnAreaChart() {
     // dibs happens inside the hive via POST /api/inbox/route.
     const INBOX_POLL_MS = 60000;
     const INBOX_BUSY_POLL_MS = 5000;
-    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗', upload: '📎' };
+    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗', 'hive-recording': '⏺️', upload: '📎' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
     // Summaries longer than this many characters start collapsed.
     const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
@@ -47501,6 +47520,7 @@ function burnAreaChart() {
         // (inline so the extracted function stays self-contained in tests).
         const meetingLabel = { zoom: 'Zoom', teams: 'Teams', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', 'fireflies': 'Fireflies', 'fathom': 'Fathom', 'limitless': 'Limitless', 'granola': 'Granola', 'otter': 'Otter' }[it.source];
         if (meetingLabel) return '<div class="inbox-pending muted-xs" title="The platform reports no transcript or summary for this recording yet">Not transcribed yet: ' + meetingLabel + ' has no transcript or summary for this recording (cloud transcription may still be processing or is disabled); the hive re-checks it on every sync.' + tx + '</div>';
+        if (it.source === 'hive-recording') return '<div class="inbox-pending muted-xs" title="Recorded in this hive\'s dashboard; no transcript yet">Not transcribed yet: recorded in this hive.' + (it.transcribe_unavailable === 'disabled' ? ' Transcription is off on this hive, so it is transcribed once an owner enables it in Inbox ⚙ → Transcription.' : tx) + '</div>';
         if (it.source === 'discord') return '<div class="inbox-pending muted-xs" title="Discord has no transcripts; none was posted with this recording">Not transcribed yet: Discord has no built-in transcription and no transcript file was posted with this recording; play it here, or post a .vtt/.txt transcript in the same message. The hive re-checks it on every sync.' + tx + '</div>';
         return '<div class="inbox-pending muted-xs" title="The MCP reports no transcript or summary block for this recording">Not transcribed yet in Plaud: Plaud has not transcribed this recording (open it in the Plaud app and run transcription); the hive re-checks it on every sync.' + tx + '</div>';
       }
@@ -47704,7 +47724,7 @@ function burnAreaChart() {
       // added them ("upload · notes.md · added 2h ago by ana").
       const meta = it.source === 'upload'
         ? [escapeHtml(it.origin || 'upload'), when ? 'added ' + when : '', it.added_by ? 'by ' + escapeHtml(it.added_by) : '', dur, factLink].filter(Boolean).join(' · ')
-        : [escapeHtml(it.source), when ? 'recorded ' + when : '', dur, factLink].filter(Boolean).join(' · ');
+        : [escapeHtml(it.source), when ? 'recorded ' + when : '', it.recorded_by ? 'by ' + escapeHtml(it.recorded_by) : '', dur, factLink].filter(Boolean).join(' · ');
       const routes = it.routes || {};
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
@@ -47716,7 +47736,9 @@ function burnAreaChart() {
       const owner = viewerIsOwner();
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
       let actions = '';
-      if (inboxViewerCanPlay() && inboxItemHasAudio(it)) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
+      // A hive recording past retention has no audio left: no play control.
+      if (it.audio_expired) actions += '<span class="muted-xs inbox-audio-expired" title="The raw audio was deleted by retention; the transcript and the Knowledge fact are kept">audio expired (kept ' + (Number(it.audio_retention_days) || 5) + ' days)</span>';
+      else if (inboxViewerCanPlay() && inboxItemHasAudio(it)) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + (it.source === 'upload' && !inboxItemHasAudio(it) ? ' Text' : ' Transcript') + '</button>';
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
@@ -48025,6 +48047,7 @@ function burnAreaChart() {
         '<div class="inbox-sources">' + (sources || '<span class="muted-xs">No voice sources configured.</span>') +
         ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenIntegrations">Connect sources</button></div>' +
         '<div class="kc-actions">' +
+        (typeof inboxRecordButtonHtml === 'function' ? inboxRecordButtonHtml(settings) : '') +
         '<label class="muted-xs inbox-toggle"><input type="checkbox" data-change-action="inboxToggleProcessed"' + (_inboxShowProcessed ? ' checked' : '') + '> show processed</label>' +
         (inboxCanAdd() ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxToggleAdd" aria-expanded="' + (_inboxAddOpen ? 'true' : 'false') + '" aria-controls="inbox-add" title="Add files to the Inbox (or drop them anywhere on it, or paste with Ctrl/Cmd+V)">＋ Add</button>' : '') +
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
@@ -48730,6 +48753,688 @@ function burnAreaChart() {
     document.addEventListener('drop', inboxOnDrop);
     document.addEventListener('paste', inboxOnPaste);
     document.addEventListener('pointerdown', e => { _inboxPointerInside = inboxInSection(e.target); }, true);
+    // ── Inbox: ● Record a meeting or note into the Inbox ──
+    // The browser records with MediaRecorder and uploads one chunk every
+    // INBOX_REC_CHUNK_MS (POST /api/inbox/recordings/{id}/chunks?seq=N). Each
+    // chunk sits in an IndexedDB queue until the hive answers 2xx, so a
+    // network drop or a reload resumes the upload instead of losing audio.
+    // The consent notice is shown before every recording; nothing remembers
+    // that it was accepted. A red ● Recording indicator stays on screen for
+    // the whole recording. See src/docs/inbox-recording.md.
+    const INBOX_REC_CONSENT_VERSION = '2026-11-v1';
+    const INBOX_REC_CHUNK_MS = 10000;
+    const INBOX_REC_BITS_PER_SECOND = 32000;
+    const INBOX_REC_MAX_CHUNK_BYTES = 524288;
+    const INBOX_REC_DB = 'hive-inbox-recorder';
+    const INBOX_REC_DB_VERSION = 1;
+    const INBOX_REC_CHUNKS = 'chunks';
+    const INBOX_REC_SESSIONS = 'sessions';
+    // Upload retry: doubles from INBOX_REC_RETRY_BASE_MS up to INBOX_REC_RETRY_MAX_MS.
+    const INBOX_REC_RETRY_BASE_MS = 2000;
+    const INBOX_REC_RETRY_MAX_MS = 30000;
+    // The timer and meters redraw this often while recording.
+    const INBOX_REC_TICK_MS = 250;
+    const INBOX_REC_MS_PER_SECOND = 1000;
+    const INBOX_REC_SECONDS_PER_MINUTE = 60;
+    const INBOX_REC_MINUTES_PER_HOUR = 60;
+    // Analyser FFT size for the level meters, and the gain that maps speech
+    // RMS (about 0.05 to 0.3) onto most of the meter.
+    const INBOX_REC_FFT_SIZE = 1024;
+    const INBOX_REC_LEVEL_GAIN = 3;
+    // Byte time-domain samples are centred on 128.
+    const INBOX_REC_BYTE_MID = 128;
+    // MediaRecorder types in order of preference: WebM/Opus (Chromium,
+    // Firefox), then MP4 (Safari).
+    const INBOX_REC_MIME_PREFERENCE = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4;codecs=mp4a.40.2', 'audio/mp4'];
+    // HTTP statuses the uploader retries (the rest stop the recording).
+    const INBOX_REC_RETRY_STATUSES = [0, 408, 429, 500, 502, 503, 504];
+    // Interrupted uploads are resumed this long after the page loads (the
+    // viewer's role is known by then).
+    const INBOX_REC_RESUME_DELAY_MS = 5000;
+    // A live recorder holds a Web Lock with this prefix, so another tab of
+    // the same browser never finalizes a recording that is still running.
+    const INBOX_REC_LOCK_PREFIX = 'hive-inbox-recording-';
+
+    let _inboxRec = null;
+
+    // inboxRecSupport reports what this browser can record. record needs
+    // MediaRecorder and getUserMedia; mime is the first preferred type the
+    // recorder supports ('' lets the browser choose).
+    function inboxRecSupport(win) {
+      const w = win || {};
+      const nav = w.navigator || {};
+      const MR = w.MediaRecorder;
+      const md = nav.mediaDevices;
+      if (typeof MR !== 'function') return { record: false, reason: 'This browser cannot record audio (no MediaRecorder).', mime: '' };
+      if (!md || typeof md.getUserMedia !== 'function') return { record: false, reason: 'This browser does not give pages microphone access here (a secure https page is required).', mime: '' };
+      let mime = '';
+      if (typeof MR.isTypeSupported === 'function') mime = INBOX_REC_MIME_PREFERENCE.find(t => { try { return MR.isTypeSupported(t); } catch (e) { return false; } }) || '';
+      return { record: true, reason: '', mime };
+    }
+
+    // inboxRecRoleCanRecord: owners and read-write members record; read
+    // members do not see the control.
+    function inboxRecRoleCanRecord(role) { return role === 'owner' || role === 'read-write'; }
+
+    // inboxRecAvailable decides whether ● Record shows: the hive enables it,
+    // the viewer's role allows it and the browser can record.
+    function inboxRecAvailable(settings, role, support) {
+      const rec = (settings && settings.recording) || {};
+      return !!rec.enabled && inboxRecRoleCanRecord(role) && !!(support && support.record);
+    }
+
+    function inboxRecFmtClock(ms) {
+      const total = Math.max(0, Math.floor((Number(ms) || 0) / INBOX_REC_MS_PER_SECOND));
+      const s = total % INBOX_REC_SECONDS_PER_MINUTE;
+      const m = Math.floor(total / INBOX_REC_SECONDS_PER_MINUTE) % INBOX_REC_MINUTES_PER_HOUR;
+      const h = Math.floor(total / (INBOX_REC_SECONDS_PER_MINUTE * INBOX_REC_MINUTES_PER_HOUR));
+      const pad = n => (n < 10 ? '0' : '') + n;
+      return (h ? h + ':' + pad(m) : String(m)) + ':' + pad(s);
+    }
+
+    // inboxRecLevel turns byte time-domain samples into a 0..1 level (RMS,
+    // scaled so speech fills most of the meter).
+    function inboxRecLevel(samples) {
+      const n = samples ? samples.length : 0;
+      if (!n) return 0;
+      let sum = 0;
+      for (let i = 0; i < n; i++) { const v = (samples[i] - INBOX_REC_BYTE_MID) / INBOX_REC_BYTE_MID; sum += v * v; }
+      return Math.min(1, Math.sqrt(sum / n) * INBOX_REC_LEVEL_GAIN);
+    }
+
+    // inboxRecSplit cuts one recorder blob into pieces of at most max bytes
+    // (the hive accepts chunks up to max_chunk_bytes; concatenation is by
+    // byte, so a split is lossless).
+    function inboxRecSplit(blob, max) {
+      const size = blob && typeof blob.size === 'number' ? blob.size : 0;
+      if (!size) return [];
+      if (!(max > 0) || size <= max || typeof blob.slice !== 'function') return [blob];
+      const out = [];
+      for (let off = 0; off < size; off += max) out.push(blob.slice(off, Math.min(size, off + max)));
+      return out;
+    }
+
+    // inboxRecConsentText is the notice shown before every recording.
+    function inboxRecConsentText(opts) {
+      const o = opts || {};
+      const days = Number(o.retentionDays) || 5;
+      const parts = [
+        'This records audio from your microphone' + (o.tab ? ' and from the browser tab you choose' : '') + ' and uploads it to this hive while you record.',
+        'Everyone you record must know that you are recording. Recording laws differ between countries and states, and many require everyone\'s agreement: making sure this recording is lawful is your responsibility.',
+      ];
+      if (o.tab) parts.push('Including tab audio captures the remote participants of that meeting too: they must have been told that you are recording.');
+      parts.push('The raw audio is kept on this hive for ' + days + ' day' + (days === 1 ? '' : 's') + ' and then deleted; its transcript and Knowledge fact are kept.');
+      parts.push(o.transcribes ? 'When you stop, it can be transcribed on this hive with 🎧 Transcribe.' : 'Transcription is off on this hive, so this recording is not transcribed until an owner enables it in Inbox ⚙ → Transcription.');
+      return parts;
+    }
+    const INBOX_REC_CONSENT_ACK = 'I have told everyone who will be recorded, and I am responsible for this recording.';
+
+    function inboxRecDefaultTitle(now) {
+      const d = now ? new Date(now) : new Date();
+      const pad = n => (n < 10 ? '0' : '') + n;
+      return 'Recording ' + d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+    }
+
+    // inboxRecConsentHtml is the modal body: source choice, title, the
+    // notice, the acknowledgement checkbox and Start (disabled until ticked).
+    function inboxRecConsentHtml(opts) {
+      const o = opts || {};
+      const notice = inboxRecConsentText(o).map(p => '<p class="muted-note">' + escapeHtml(p) + '</p>').join('');
+      return '<div class="inbox-rec-consent" data-inbox-rec-consent>' +
+        (o.sourcesHtml || '') +
+        '<label class="muted-note inbox-field" for="inbox-rec-title">Title<input type="text" id="inbox-rec-title" class="field-input field-input-block mt-2" maxlength="200" value="' + escapeHtml(o.title || '') + '"></label>' +
+        '<div class="inbox-rec-notice" id="inbox-rec-notice" role="note">' + notice + '</div>' +
+        '<label class="inbox-rec-ack"><input type="checkbox" id="inbox-rec-ack" data-change-action="inboxRecConsentToggle"> <span>' + escapeHtml(INBOX_REC_CONSENT_ACK) + '</span></label>' +
+        '<div class="hive-dialog-error" role="alert" id="inbox-rec-error"></div>' +
+        '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
+        '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" id="inbox-rec-start" data-action="inboxRecConfirmStart" disabled aria-disabled="true">● Start recording</button></div></div>';
+    }
+
+    // inboxRecMemoryQueue is the queue's in-memory fallback (and the test
+    // double): chunks keyed by recording id and seq, plus one session row
+    // per recording.
+    function inboxRecMemoryQueue() {
+      const chunks = new Map();
+      const sessions = new Map();
+      const key = (id, seq) => id + '#' + String(seq).padStart(8, '0');
+      return {
+        durable: false,
+        putChunk: async (id, seq, blob) => { chunks.set(key(id, seq), { id, seq, blob }); },
+        chunks: async (id) => Array.from(chunks.values()).filter(c => c.id === id).sort((a, b) => a.seq - b.seq),
+        deleteChunk: async (id, seq) => { chunks.delete(key(id, seq)); },
+        putSession: async (row) => { sessions.set(row.id, Object.assign({}, row)); },
+        sessions: async () => Array.from(sessions.values()),
+        deleteSession: async (id) => { sessions.delete(id); for (const k of Array.from(chunks.keys())) if (k.startsWith(id + '#')) chunks.delete(k); },
+      };
+    }
+
+    // inboxRecIDBQueue keeps the queue in IndexedDB so chunks survive a
+    // reload; it falls back to memory when IndexedDB is unavailable.
+    function inboxRecIDBQueue(idb) {
+      if (!idb || typeof idb.open !== 'function') return inboxRecMemoryQueue();
+      let dbp = null;
+      const open = () => dbp || (dbp = new Promise((resolve, reject) => {
+        let req;
+        try { req = idb.open(INBOX_REC_DB, INBOX_REC_DB_VERSION); } catch (e) { reject(e); return; }
+        req.onupgradeneeded = () => {
+          const db = req.result;
+          if (!db.objectStoreNames.contains(INBOX_REC_CHUNKS)) db.createObjectStore(INBOX_REC_CHUNKS, { keyPath: ['id', 'seq'] });
+          if (!db.objectStoreNames.contains(INBOX_REC_SESSIONS)) db.createObjectStore(INBOX_REC_SESSIONS, { keyPath: 'id' });
+        };
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error || new Error('IndexedDB open failed'));
+      }));
+      const tx = (store, mode, run) => open().then(db => new Promise((resolve, reject) => {
+        const t = db.transaction(store, mode);
+        const req = run(t.objectStore(store));
+        t.oncomplete = () => resolve(req ? req.result : undefined);
+        t.onerror = () => reject(t.error || new Error('IndexedDB transaction failed'));
+        t.onabort = t.onerror;
+      }));
+      return {
+        durable: true,
+        putChunk: (id, seq, blob) => tx(INBOX_REC_CHUNKS, 'readwrite', s => s.put({ id, seq, blob })),
+        chunks: (id) => tx(INBOX_REC_CHUNKS, 'readonly', s => s.getAll(IDBKeyRange.bound([id, 0], [id, Number.MAX_SAFE_INTEGER]))).then(rows => (rows || []).sort((a, b) => a.seq - b.seq)),
+        deleteChunk: (id, seq) => tx(INBOX_REC_CHUNKS, 'readwrite', s => s.delete([id, seq])),
+        putSession: (row) => tx(INBOX_REC_SESSIONS, 'readwrite', s => s.put(row)),
+        sessions: () => tx(INBOX_REC_SESSIONS, 'readonly', s => s.getAll()).then(rows => rows || []),
+        deleteSession: (id) => tx(INBOX_REC_CHUNKS, 'readwrite', s => s.delete(IDBKeyRange.bound([id, 0], [id, Number.MAX_SAFE_INTEGER]))).then(() => tx(INBOX_REC_SESSIONS, 'readwrite', s => s.delete(id))),
+      };
+    }
+
+    // inboxRecUploader drains one recording's queue in seq order. A chunk
+    // leaves the queue only on a 2xx (a re-send the hive already has answers
+    // 200 duplicate). A 409 with expected_seq beyond a chunk means the hive
+    // stored it before the ack was lost; network errors and 5xx retry with
+    // backoff; other refusals are fatal.
+    function inboxRecUploader(env) {
+      const e = env || {};
+      const state = { id: e.id, pending: 0, adding: 0, failing: false, retryInMs: 0, attempt: 0, fatal: '', busy: false, timer: null, closed: false };
+      const changed = () => { if (e.onChange) e.onChange(state); };
+      const count = async () => { state.pending = (await e.queue.chunks(state.id)).length; };
+      async function pump() {
+        if (state.busy) { state.again = true; return; }
+        // While a retry is scheduled, new chunks wait for it (no bypass of the backoff).
+        if (state.fatal || state.closed || state.timer) return;
+        state.busy = true;
+        try {
+          for (;;) {
+            const list = await e.queue.chunks(state.id);
+            state.pending = list.length;
+            changed();
+            if (!list.length) break;
+            const c = list[0];
+            let res = null;
+            try {
+              res = await e.fetch('/api/inbox/recordings/' + encodeURIComponent(state.id) + '/chunks?seq=' + c.seq, { method: 'POST', headers: { 'Content-Type': 'application/octet-stream' }, body: c.blob });
+            } catch (err) { res = { ok: false, status: 0, json: async () => ({ error: (err && err.message) || 'network error' }) }; }
+            if (res.ok) { await e.queue.deleteChunk(state.id, c.seq); state.failing = false; state.attempt = 0; continue; }
+            const body = await (res.json ? res.json().catch(() => ({})) : Promise.resolve({}));
+            if (res.status === 409 && typeof body.expected_seq === 'number' && body.expected_seq > c.seq) {
+              // Stored by the hive already (the ack was lost): drop it.
+              await e.queue.deleteChunk(state.id, c.seq);
+              continue;
+            }
+            if (INBOX_REC_RETRY_STATUSES.indexOf(res.status) >= 0) {
+              state.failing = true;
+              state.retryInMs = Math.min(INBOX_REC_RETRY_MAX_MS, INBOX_REC_RETRY_BASE_MS * Math.pow(2, state.attempt));
+              state.attempt++;
+              changed();
+              state.timer = e.setTimeout(() => { state.timer = null; pump(); }, state.retryInMs);
+              break;
+            }
+            state.fatal = body.error || ('HTTP ' + res.status);
+            changed();
+            break;
+          }
+        } finally { state.busy = false; }
+        if (state.again && !state.timer) { state.again = false; return pump(); }
+        state.again = false;
+        if (!state.fatal && !state.failing && e.onDrained && state.pending === 0 && state.adding === 0) e.onDrained();
+      }
+      return {
+        state,
+        pump,
+        count,
+        add: async (seq, blob) => { state.adding++; try { await e.queue.putChunk(state.id, seq, blob); } finally { state.adding--; } await count(); changed(); return pump(); },
+        close: () => { state.closed = true; if (state.timer) e.clearTimeout(state.timer); state.timer = null; },
+        retryNow: () => { if (state.timer) e.clearTimeout(state.timer); state.timer = null; state.failing = false; pump(); },
+      };
+    }
+
+    // inboxRecorderMachine runs one recording:
+    //   idle → starting → recording ⇄ paused → stopping → finishing → done
+    // (error from any state). start() needs the consent version of the
+    // notice the user just acknowledged; it is never remembered between
+    // recordings. env injects the browser: navigator, MediaRecorder,
+    // AudioContext, fetch, queue, now, setTimeout, clearTimeout, onChange.
+    function inboxRecorderMachine(env) {
+      const e = env || {};
+      const m = {
+        state: 'idle', id: '', title: '', error: '', warning: '', mime: '',
+        startedAt: 0, pausedAt: 0, pausedMs: 0, maxSeconds: 0, retentionDays: 0, transcribes: false,
+        seq: 0, streams: [], recorder: null, uploader: null, levels: { mic: 0, tab: 0 }, analysers: {}, audioCtx: null, tab: false,
+      };
+      const changed = () => { if (e.onChange) e.onChange(m); };
+      const now = () => (e.now ? e.now() : Date.now());
+      m.elapsedMs = () => {
+        if (!m.startedAt) return 0;
+        const end = m.state === 'paused' ? m.pausedAt : (m.stoppedAt || now());
+        return Math.max(0, end - m.startedAt - m.pausedMs);
+      };
+      const fail = (msg) => { m.state = 'error'; m.error = msg; cleanup(); changed(); };
+      function cleanup() {
+        for (const s of m.streams) for (const t of (s.getTracks ? s.getTracks() : [])) { try { t.stop(); } catch (err) { /* already stopped */ } }
+        m.streams = [];
+        if (m.audioCtx && m.audioCtx.close) { try { m.audioCtx.close(); } catch (err) { /* closed */ } }
+        m.audioCtx = null;
+        m.analysers = {};
+      }
+      async function captureStream(opts) {
+        const md = e.navigator.mediaDevices;
+        const mic = await md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        m.streams.push(mic);
+        if (!opts.tab || typeof e.captureTab !== 'function') return { stream: mic, mic, tab: null };
+        return e.captureTab(m, mic);
+      }
+      async function start(opts) {
+        const o = opts || {};
+        if (m.state !== 'idle') throw new Error('a recording is already running');
+        if (o.consentVersion !== INBOX_REC_CONSENT_VERSION) throw new Error('the consent notice must be acknowledged before every recording');
+        m.state = 'starting'; m.title = o.title || ''; m.tab = !!o.tab; changed();
+        let captured;
+        try { captured = await captureStream(o); } catch (err) {
+          fail(err && err.name === 'NotAllowedError' ? 'Microphone permission was refused: allow the microphone for this site to record.' : 'Could not start the microphone: ' + ((err && err.message) || err));
+          return m;
+        }
+        if (captured.warning) m.warning = captured.warning;
+        let res;
+        try {
+          res = await e.fetch('/api/inbox/recordings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ title: m.title, mime: o.mime || '', consent_version: o.consentVersion, includes_tab_audio: !!captured.tab }) });
+        } catch (err) { fail('Could not reach the hive: ' + ((err && err.message) || err)); return m; }
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok) { m.activeId = body.active_id || ''; fail(body.error || ('HTTP ' + res.status)); return m; }
+        m.id = body.id; m.maxSeconds = Number(body.max_seconds) || 0; m.retentionDays = Number(body.retention_days) || 0; m.transcribes = !!body.transcribes;
+        const maxChunk = Number(body.max_chunk_bytes) || INBOX_REC_MAX_CHUNK_BYTES;
+        m.uploader = inboxRecUploader({ id: m.id, queue: e.queue, fetch: e.fetch, setTimeout: e.setTimeout, clearTimeout: e.clearTimeout, onChange: changed, onDrained: () => { if (m.state === 'finishing') finish(); } });
+        await e.queue.putSession({ id: m.id, title: m.title, startedAt: now(), stopped: false, durationMs: 0 });
+        let rec;
+        try {
+          rec = new e.MediaRecorder(captured.stream, o.mime ? { mimeType: o.mime, audioBitsPerSecond: INBOX_REC_BITS_PER_SECOND } : { audioBitsPerSecond: INBOX_REC_BITS_PER_SECOND });
+        } catch (err) {
+          fail('This browser cannot record this audio: ' + ((err && err.message) || err));
+          // Release the hive-side recording at once instead of leaving it to the idle sweep.
+          await e.queue.deleteSession(m.id);
+          try { await e.fetch('/api/inbox/recordings/' + encodeURIComponent(m.id), { method: 'DELETE' }); } catch (derr) { /* the idle sweep removes it */ }
+          return m;
+        }
+        m.recorder = rec;
+        m.releaseLock = e.holdLock ? e.holdLock(INBOX_REC_LOCK_PREFIX + m.id) : null;
+        m.mime = rec.mimeType || o.mime || '';
+        rec.ondataavailable = (ev) => {
+          for (const piece of inboxRecSplit(ev && ev.data, maxChunk)) m.uploader.add(m.seq++, piece);
+        };
+        rec.onstop = () => { m.stoppedAt = m.stoppedAt || now(); afterStop(); };
+        rec.onerror = (ev) => { m.warning = 'The recorder reported an error: ' + ((ev && ev.error && ev.error.message) || 'unknown'); changed(); };
+        for (const t of (captured.mic && captured.mic.getAudioTracks ? captured.mic.getAudioTracks() : [])) {
+          // iOS stops capture when the screen locks: end the recording with what arrived.
+          t.onended = () => { if (m.state === 'recording' || m.state === 'paused') { m.warning = 'The microphone stopped (the screen locked or another app took it); the recording ends here.'; stop(); } };
+        }
+        m.analysers = e.analyse ? e.analyse(m, captured) : {};
+        rec.start(INBOX_REC_CHUNK_MS);
+        m.startedAt = now();
+        m.state = 'recording';
+        changed();
+        return m;
+      }
+      function pause() {
+        if (m.state !== 'recording') return;
+        m.recorder.pause();
+        m.pausedAt = now();
+        m.state = 'paused';
+        changed();
+      }
+      function resume() {
+        if (m.state !== 'paused') return;
+        m.recorder.resume();
+        m.pausedMs += now() - m.pausedAt;
+        m.pausedAt = 0;
+        m.state = 'recording';
+        changed();
+      }
+      function stop() {
+        if (m.state !== 'recording' && m.state !== 'paused') return;
+        if (m.state === 'paused') { m.pausedMs += now() - m.pausedAt; m.pausedAt = 0; }
+        m.stoppedAt = now();
+        m.state = 'stopping';
+        changed();
+        try { m.recorder.stop(); } catch (err) { afterStop(); }
+      }
+      async function afterStop() {
+        if (m.state !== 'stopping') return;
+        cleanup();
+        m.state = 'finishing';
+        await e.queue.putSession({ id: m.id, title: m.title, stopped: true, durationMs: m.elapsedMs() });
+        changed();
+        await m.uploader.pump();
+      }
+      async function finish() {
+        if (m.state !== 'finishing' || m.finalizing) return;
+        m.finalizing = true;
+        let res;
+        try {
+          res = await e.fetch('/api/inbox/recordings/' + encodeURIComponent(m.id) + '/finalize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ duration_ms: m.elapsedMs() }) });
+        } catch (err) { res = { ok: false, status: 0, json: async () => ({}) }; }
+        m.finalizing = false;
+        if (!res.ok && res.status !== 409) {
+          m.warning = 'Finishing the recording failed; it is retried.';
+          changed();
+          e.setTimeout(finish, INBOX_REC_RETRY_BASE_MS);
+          return;
+        }
+        await e.queue.deleteSession(m.id);
+        m.uploader.close();
+        if (m.releaseLock) m.releaseLock();
+        m.state = 'done';
+        changed();
+      }
+      async function abort() {
+        const id = m.id;
+        if (m.recorder && (m.state === 'recording' || m.state === 'paused')) { m.state = 'aborting'; m.recorder.ondataavailable = null; try { m.recorder.stop(); } catch (err) { /* stopped */ } }
+        cleanup();
+        if (m.uploader) m.uploader.close();
+        if (id) {
+          await e.queue.deleteSession(id);
+          try { await e.fetch('/api/inbox/recordings/' + encodeURIComponent(id), { method: 'DELETE' }); } catch (err) { /* the idle sweep removes it */ }
+        }
+        if (m.releaseLock) m.releaseLock();
+        m.state = 'idle'; m.id = '';
+        changed();
+      }
+      m.start = start; m.pause = pause; m.resume = resume; m.stop = stop; m.abort = abort; m.finish = finish;
+      return m;
+    }
+
+    // inboxRecResumePending finishes recordings a reload interrupted: their
+    // queued chunks are uploaded, then the recording is finalized.
+    async function inboxRecResumePending(env) {
+      const e = env || {};
+      const rows = await e.queue.sessions();
+      const live = e.liveIds ? await e.liveIds() : [];
+      const done = [];
+      for (const row of rows) {
+        if (live.indexOf(row.id) >= 0) continue;
+        await new Promise(resolve => {
+          const up = inboxRecUploader({ id: row.id, queue: e.queue, fetch: e.fetch, setTimeout: e.setTimeout, clearTimeout: e.clearTimeout, onChange: e.onChange, onDrained: resolve });
+          up.pump().then(() => { if (up.state.fatal) resolve(); });
+        });
+        const res = await e.fetch('/api/inbox/recordings/' + encodeURIComponent(row.id) + '/finalize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ duration_ms: row.durationMs || 0 }) }).catch(() => ({ ok: false, status: 0 }));
+        if (res.ok || res.status === 404 || res.status === 409 || res.status === 400) { await e.queue.deleteSession(row.id); done.push(row.id); }
+      }
+      return done;
+    }
+
+    // ── Panel, indicator and wiring ──
+    function inboxRecBrowserSupport() { return inboxRecSupport(typeof window !== 'undefined' ? window : {}); }
+    function inboxRecordButtonHtml(settings) {
+      if (!inboxRecAvailable(settings, window._hiveRole, inboxRecBrowserSupport())) return '';
+      const busy = _inboxRec && _inboxRec.state !== 'idle' && _inboxRec.state !== 'done' && _inboxRec.state !== 'error';
+      return '<button type="button" class="hv-btn btn-secondary btn-sm inbox-rec-btn" data-action="' + (busy ? 'inboxRecFocus' : 'inboxRecOpen') + '" title="Record a meeting or a note into the Inbox">' + (busy ? '● Recording…' : '● Record') + '</button>';
+    }
+    // inboxRecordShortcutHtml is the Inception (spek) shortcut.
+    function inboxRecordShortcutHtml() {
+      const settings = (_inboxCache || {}).settings || {};
+      if (!inboxRecAvailable(settings, window._hiveRole, inboxRecBrowserSupport())) return '';
+      return '<button type="button" class="hv-btn btn-secondary btn-sm inbox-rec-btn" data-action="inboxRecOpen" title="Record a meeting or a note; it lands in the Inbox">● Record into Inbox</button>';
+    }
+    function inboxRecSourcesHtml() { return ''; }
+    function inboxRecOpen() {
+      if (_inboxRec && ['starting', 'recording', 'paused', 'stopping', 'finishing'].indexOf(_inboxRec.state) >= 0) { inboxRecFocus(); return; }
+      const settings = ((_inboxCache || {}).settings || {}).recording || {};
+      const body = inboxRecConsentHtml({ title: inboxRecDefaultTitle(), retentionDays: settings.retention_days, transcribes: !!settings.transcribes, tab: false, sourcesHtml: inboxRecSourcesHtml() });
+      kbShowModal('● Record into the Inbox', body, { width: '560px' });
+      const ack = document.getElementById('inbox-rec-ack');
+      if (ack) ack.checked = false;
+    }
+    function inboxRecConsentToggle() {
+      const ack = document.getElementById('inbox-rec-ack');
+      const btn = document.getElementById('inbox-rec-start');
+      if (!btn) return;
+      const on = !!(ack && ack.checked);
+      btn.disabled = !on;
+      btn.setAttribute('aria-disabled', on ? 'false' : 'true');
+    }
+    function inboxRecWantsTab() { return false; }
+    async function inboxRecConfirmStart() {
+      const ack = document.getElementById('inbox-rec-ack');
+      const errEl = document.getElementById('inbox-rec-error');
+      if (!ack || !ack.checked) { if (errEl) errEl.textContent = 'Tick the acknowledgement to start recording.'; return; }
+      const titleEl = document.getElementById('inbox-rec-title');
+      const title = titleEl ? titleEl.value.trim() : '';
+      const tab = inboxRecWantsTab();
+      kbCloseModal();
+      const support = inboxRecBrowserSupport();
+      _inboxRec = inboxRecorderMachine(inboxRecEnv());
+      inboxRecRender();
+      await _inboxRec.start({ title, consentVersion: INBOX_REC_CONSENT_VERSION, mime: support.mime, tab });
+      if (_inboxRec.state === 'recording') { inboxRecWakeLock(true); inboxRecArmMaxStop(_inboxRec); }
+      inboxRecRender();
+    }
+    let _inboxRecQueue = null;
+    function inboxRecQueue() { return _inboxRecQueue || (_inboxRecQueue = inboxRecIDBQueue(typeof indexedDB !== 'undefined' ? indexedDB : null)); }
+    function inboxRecEnv() {
+      return {
+        navigator, MediaRecorder: window.MediaRecorder, fetch: (u, o) => fetch(u, o), queue: inboxRecQueue(), now: () => Date.now(),
+        setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: t => clearTimeout(t), onChange: () => inboxRecRender(),
+        holdLock: inboxRecHoldLock, analyse: inboxRecAnalyse, captureTab: typeof inboxRecCaptureTab === 'function' ? inboxRecCaptureTab : null,
+      };
+    }
+    // inboxRecAnalyse attaches an AnalyserNode to each captured stream for
+    // the level meters (no audio is played back or processed otherwise).
+    function inboxRecAnalyse(m, captured) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (!AC) return {};
+      try {
+        const ctx = m.audioCtx || new AC();
+        m.audioCtx = ctx;
+        const out = {};
+        for (const [name, stream] of [['mic', captured.mic], ['tab', captured.tab]]) {
+          if (!stream) continue;
+          const a = ctx.createAnalyser();
+          a.fftSize = INBOX_REC_FFT_SIZE;
+          ctx.createMediaStreamSource(stream).connect(a);
+          out[name] = { node: a, buf: new Uint8Array(a.fftSize) };
+        }
+        return out;
+      } catch (e) { return {}; }
+    }
+    function inboxRecReadLevels(m) {
+      for (const name of Object.keys(m.analysers || {})) {
+        const a = m.analysers[name];
+        a.node.getByteTimeDomainData(a.buf);
+        m.levels[name] = m.state === 'recording' ? inboxRecLevel(a.buf) : 0;
+      }
+    }
+    let _inboxRecWake = null;
+    function inboxRecWakeLock(on) {
+      if (!on) { const s = _inboxRecWake; _inboxRecWake = null; try { if (s && s.release) s.release().catch(() => {}); } catch (e) { /* released */ } return; }
+      if (typeof navigator === 'undefined' || !navigator.wakeLock || typeof navigator.wakeLock.request !== 'function') return;
+      try { navigator.wakeLock.request('screen').then(s => { _inboxRecWake = s; }, () => {}); } catch (e) { /* refused */ }
+    }
+    // inboxRecUploadText is the upload status line.
+    function inboxRecUploadText(up) {
+      if (!up) return '';
+      if (up.fatal) return 'Upload stopped: ' + up.fatal;
+      if (!up.pending) return 'All chunks saved on the hive';
+      const n = up.pending + ' chunk' + (up.pending === 1 ? '' : 's') + ' waiting to upload';
+      return up.failing ? n + ' (connection problem; retrying in ' + Math.ceil(up.retryInMs / INBOX_REC_MS_PER_SECOND) + ' s)' : n;
+    }
+    function inboxRecMeterHtml(name, label, level) {
+      return '<label class="inbox-rec-meter-row muted-xs"><span>' + escapeHtml(label) + '</span><meter class="inbox-rec-meter" data-inbox-rec-meter="' + name + '" min="0" max="1" low="0.1" high="0.85" optimum="0.5" value="' + (Number(level) || 0).toFixed(2) + '" aria-label="' + escapeHtml(label + ' level') + '"></meter></label>';
+    }
+    // inboxRecPanelHtml renders the recording panel for machine state m.
+    function inboxRecPanelHtml(m) {
+      if (!m || m.state === 'idle') return '';
+      const live = m.state === 'recording' || m.state === 'paused';
+      let html = '<div class="inbox-rec-head"><span class="inbox-rec-dot' + (m.state === 'recording' ? ' is-live' : '') + '" aria-hidden="true">●</span> <strong>' + escapeHtml(m.title || 'Recording') + '</strong>';
+      const status = { starting: 'Starting…', recording: 'Recording', paused: 'Paused', stopping: 'Stopping…', finishing: 'Saving…', done: 'Saved to the Inbox', error: 'Not recording' }[m.state] || m.state;
+      html += ' <span class="inbox-rec-time" data-inbox-rec-time>' + escapeHtml(inboxRecFmtClock(m.elapsedMs ? m.elapsedMs() : 0)) + '</span> <span class="muted-xs" role="status">' + escapeHtml(status) + '</span></div>';
+      if (live) {
+        html += '<div class="inbox-rec-meters">' + inboxRecMeterHtml('mic', 'Microphone', m.levels.mic) + (m.analysers && m.analysers.tab ? inboxRecMeterHtml('tab', 'Tab audio', m.levels.tab) : '') + '</div>';
+        if (m.maxSeconds) html += '<div class="muted-xs">Stops by itself at ' + escapeHtml(inboxRecFmtClock(m.maxSeconds * INBOX_REC_MS_PER_SECOND)) + '. Keep this screen open: phones stop recording when the screen locks.</div>';
+      }
+      if (m.uploader) html += '<div class="muted-xs inbox-rec-upload" data-inbox-rec-upload aria-live="polite">' + escapeHtml(inboxRecUploadText(m.uploader.state)) + '</div>';
+      if (m.warning) html += '<div class="kc-error muted-xs" role="alert">' + escapeHtml(m.warning) + '</div>';
+      if (m.error) html += '<div class="kc-error muted-xs" role="alert">' + escapeHtml(m.error) + '</div>';
+      if (m.state === 'done') html += '<div class="muted-xs">' + escapeHtml(m.transcribes ? 'It appears in the Inbox below; use 🎧 Transcribe on it.' : 'It appears in the Inbox below. Transcription is off on this hive, so it is not transcribed yet.') + '</div>';
+      html += '<div class="kc-actions mt-2">';
+      if (m.state === 'recording') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecPause">⏸ Pause</button>';
+      if (m.state === 'paused') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecResume">⏺ Resume</button>';
+      if (live) html += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxRecStop">⏹ Stop and save</button><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecAbort">Discard</button>';
+      if (m.uploader && m.uploader.state.failing) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecRetry">Retry upload now</button>';
+      if (m.state === 'error' && m.activeId) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecFinishEarlier" data-arg0="' + escapeHtml(m.activeId) + '">Finish the earlier recording</button>';
+      if (m.state === 'done' || m.state === 'error') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecClose">Close</button>';
+      return html + '</div>';
+    }
+    // The timer and meters redraw on a dashboard interval (paused while the
+    // page is hidden); the length limit has its own timeout so it holds in
+    // the background too.
+    let _inboxRecTicker = false;
+    function inboxRecArmMaxStop(m) {
+      if (!m || !m.maxSeconds) return;
+      const left = m.maxSeconds * INBOX_REC_MS_PER_SECOND - m.elapsedMs();
+      setTimeout(() => {
+        if (_inboxRec !== m || (m.state !== 'recording' && m.state !== 'paused')) return;
+        if (m.state === 'recording' && m.elapsedMs() >= m.maxSeconds * INBOX_REC_MS_PER_SECOND) { m.warning = 'The recording reached this hive\'s length limit and was stopped.'; m.stop(); return; }
+        inboxRecArmMaxStop(m);
+      }, Math.max(INBOX_REC_TICK_MS, left));
+    }
+    function inboxRecRender() {
+      const m = _inboxRec;
+      const panel = document.getElementById('inbox-rec-panel');
+      const html = inboxRecPanelHtml(m);
+      if (panel) { panel.hidden = !html; panel.innerHTML = html; }
+      inboxRecIndicator(m);
+      const live = m && (m.state === 'recording' || m.state === 'paused');
+      if (live && !_inboxRecTicker) { _inboxRecTicker = true; dashboardSetInterval('inbox-recorder', inboxRecTick, INBOX_REC_TICK_MS); }
+      if (!live && _inboxRecTicker) { _inboxRecTicker = false; dashboardClearInterval('inbox-recorder'); }
+      if (m && m.state === 'done' && !m.listed) { m.listed = true; inboxRecWakeLock(false); if (typeof fetchInbox === 'function') fetchInbox(); }
+      if (m && m.state === 'error') inboxRecWakeLock(false);
+      const btn = document.querySelector('#inbox-panel .inbox-rec-btn');
+      if (btn) btn.outerHTML = inboxRecordButtonHtml((_inboxCache || {}).settings || {});
+    }
+    // inboxRecTick redraws the timer and meters in place, and stops at max_seconds.
+    function inboxRecTick() {
+      const m = _inboxRec;
+      if (!m) return;
+      inboxRecReadLevels(m);
+      if (m.maxSeconds && m.state === 'recording' && m.elapsedMs() >= m.maxSeconds * INBOX_REC_MS_PER_SECOND) { m.warning = 'The recording reached this hive\'s length limit and was stopped.'; m.stop(); return; }
+      const t = document.querySelector('[data-inbox-rec-time]');
+      if (t) t.textContent = inboxRecFmtClock(m.elapsedMs());
+      for (const name of Object.keys(m.levels)) {
+        const el = document.querySelector('[data-inbox-rec-meter="' + name + '"]');
+        if (el) el.value = m.levels[name];
+      }
+      const ind = document.getElementById('inbox-rec-indicator-time');
+      if (ind) ind.textContent = inboxRecFmtClock(m.elapsedMs());
+    }
+    // inboxRecIndicator keeps a red ● Recording pill on screen, whatever
+    // section is in view, for as long as the recording runs.
+    function inboxRecIndicator(m) {
+      let el = document.getElementById('inbox-rec-indicator');
+      const live = m && ['starting', 'recording', 'paused', 'stopping'].indexOf(m.state) >= 0;
+      if (!live) { if (el) el.hidden = true; return; }
+      if (!el) {
+        el = document.createElement('button');
+        el.type = 'button';
+        el.id = 'inbox-rec-indicator';
+        el.className = 'inbox-rec-indicator';
+        el.setAttribute('data-action', 'inboxRecFocus');
+        document.body.appendChild(el);
+      }
+      el.hidden = false;
+      el.setAttribute('aria-label', (m.state === 'paused' ? 'Recording paused' : 'Recording') + ': open the recorder');
+      el.innerHTML = '<span class="inbox-rec-dot' + (m.state === 'recording' ? ' is-live' : '') + '" aria-hidden="true">●</span> ' + (m.state === 'paused' ? 'Paused' : 'Recording') + ' <span id="inbox-rec-indicator-time">' + escapeHtml(inboxRecFmtClock(m.elapsedMs())) + '</span>';
+    }
+    function inboxRecFocus() {
+      if (typeof ocNavigate === 'function') ocNavigate('inbox-section');
+      const panel = document.getElementById('inbox-rec-panel');
+      if (panel && panel.scrollIntoView) panel.scrollIntoView({ block: 'center' });
+    }
+    function inboxRecPause() { if (_inboxRec) _inboxRec.pause(); }
+    function inboxRecResume() { if (_inboxRec) _inboxRec.resume(); }
+    function inboxRecStop() { if (_inboxRec) _inboxRec.stop(); }
+    function inboxRecRetry() { if (_inboxRec && _inboxRec.uploader) _inboxRec.uploader.retryNow(); }
+    async function inboxRecAbort() {
+      if (!_inboxRec) return;
+      if (!(await hiveConfirm('Discard this recording? Nothing of it is kept.', 'Discard'))) return;
+      await _inboxRec.abort();
+      inboxRecWakeLock(false);
+      _inboxRec = null;
+      inboxRecRender();
+    }
+    function inboxRecClose() { _inboxRec = null; inboxRecRender(); }
+    // inboxRecFinishEarlier finalizes the user's earlier recording that is
+    // still open on the hive (another tab or device stopped sending), so a
+    // new one can start.
+    async function inboxRecFinishEarlier(id) {
+      if (!(await hiveConfirm('Finish the earlier recording with what the hive received so far? If it is still running in another tab or device, that recording stops there.', 'Finish it'))) return;
+      try {
+        const r = await fetch('/api/inbox/recordings/' + encodeURIComponent(id) + '/finalize', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok && r.status !== 409) throw new Error(data.error || ('HTTP ' + r.status));
+        showToast(r.ok ? 'The earlier recording was saved to the Inbox' : 'The earlier recording has already ended', 'success');
+        _inboxRec = null;
+        inboxRecRender();
+        if (typeof fetchInbox === 'function') fetchInbox();
+      } catch (e) { showToast('Could not finish it: ' + e.message, 'error'); }
+    }
+    // inboxRecHoldLock holds a Web Lock until the returned release is
+    // called (no-op where Web Locks are missing).
+    function inboxRecHoldLock(name) {
+      const locks = typeof navigator !== 'undefined' && navigator.locks;
+      if (!locks || typeof locks.request !== 'function') return null;
+      let release = null;
+      const held = new Promise(res => { release = res; });
+      try { locks.request(name, () => held).catch(() => {}); } catch (e) { return null; }
+      return () => { if (release) release(); };
+    }
+    // inboxRecLiveIds lists recordings a recorder in this browser holds.
+    async function inboxRecLiveIds() {
+      const locks = typeof navigator !== 'undefined' && navigator.locks;
+      if (!locks || typeof locks.query !== 'function') return [];
+      try {
+        const st = await locks.query();
+        return (st.held || []).map(l => String(l.name || '')).filter(n => n.indexOf(INBOX_REC_LOCK_PREFIX) === 0).map(n => n.slice(INBOX_REC_LOCK_PREFIX.length));
+      } catch (e) { return []; }
+    }
+    // While recording, warn when the tab is hidden (desktop browsers keep
+    // recording; phones stop when the screen locks) and take the wake lock
+    // back when the page is visible again.
+    if (typeof document !== 'undefined') document.addEventListener('visibilitychange', () => {
+      const m = _inboxRec;
+      if (!m || (m.state !== 'recording' && m.state !== 'paused')) return;
+      if (document.visibilityState === 'hidden') { m.warning = 'This page was hidden while recording. A desktop browser keeps recording; on a phone, keep this screen open and unlocked or the recording stops.'; }
+      else { inboxRecWakeLock(true); inboxRecRender(); }
+    });
+    // Leaving the page mid-recording loses what has not been recorded yet;
+    // queued chunks survive and upload on the next visit.
+    if (typeof window !== 'undefined') window.addEventListener('beforeunload', (ev) => {
+      const m = _inboxRec;
+      if (m && (m.state === 'recording' || m.state === 'paused' || (m.uploader && m.uploader.state.pending))) { ev.preventDefault(); ev.returnValue = ''; }
+    });
+    // A reload or a network drop left chunks behind: upload and finish them.
+    async function inboxRecResumeOnLoad() {
+      try {
+        const q = inboxRecQueue();
+        const rows = await q.sessions();
+        if (!rows.length) return;
+        showToast('Finishing ' + rows.length + ' interrupted recording upload' + (rows.length === 1 ? '' : 's') + '…', 'info');
+        const done = await inboxRecResumePending({ queue: q, fetch: (u, o) => fetch(u, o), setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: t => clearTimeout(t), liveIds: inboxRecLiveIds });
+        if (done.length) { showToast('Interrupted recording saved to the Inbox', 'success'); if (typeof fetchInbox === 'function') fetchInbox(); }
+      } catch (e) { /* IndexedDB unavailable: nothing to resume */ }
+    }
+    if (typeof window !== 'undefined') setTimeout(() => { if (inboxRecRoleCanRecord(window._hiveRole) && !_inboxRec) inboxRecResumeOnLoad(); }, INBOX_REC_RESUME_DELAY_MS);
     // ── Meetings: hive as a live meeting participant (Quorum, #18284) ──
     // Owner-only. The list comes from GET /api/meetings; an opened meeting
     // streams its transcript, Spek intents and research over
@@ -52903,6 +53608,7 @@ function burnAreaChart() {
     function sessionsToolbarHtml() {
       const can = sessionsCanCreate(_sessionsRole, _sessionsData);
       return '<div class="sessions-toolbar"><div id="sessions-tabs" class="sessions-tabs" role="tablist" aria-label="Inception (spek) sessions">' + sessionsTabsHtml() + '</div>'
+        + (typeof inboxRecordShortcutHtml === 'function' ? inboxRecordShortcutHtml() : '')
         + '<button type="button" class="hv-btn btn-primary btn-sm sessions-new-btn" data-action="sessionsToggleNew"' + (can.ok ? '' : ' disabled title="' + esc(can.reason) + '"') + '>+ New session</button></div>'
         + '<div id="sessions-new" class="sessions-new" role="group" aria-label="New session"' + (_sessionsNewOpen && can.ok ? '' : ' hidden') + '>' + (_sessionsNewOpen && can.ok ? sessionsNewFormHtml() : '') + '</div>';
     }
