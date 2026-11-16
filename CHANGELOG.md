@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.283.0)
+
+### Added
+
+- **Binding a workflow model now proposes its checks to the repository.** When an owner binds a model that declares checks (Settings → Repos), hive opens — or updates in place — one pull request on the hive-owned `hive/workflow-checks` branch that adds `.hive/workflows/checks.yml`, rendered from the model's `checks` with their kind, required flag and source citation. The file only ever arrives as a GitHub-signed commit through that PR, never a push to the base branch; a model with no checks, or a file that already matches, emits nothing, and a failed emit is reported as a warning on the binding response and retried on the next bind ([#18355](https://github.com/hivecommons/hive/issues/18355)).
+
 ## 2026-11-16 (v5.282.0)
 
 ### Added
