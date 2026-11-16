@@ -148,6 +148,9 @@ func (s *Service) EnableUploads(u *UploadSource) {
 	if u != nil && u.Limits == nil {
 		u.Limits = func() config.InboxUploads { return s.Config().Uploads }
 	}
+	if u != nil && u.RecordingLimits == nil {
+		u.RecordingLimits = func() config.InboxRecording { return s.Config().Recording }
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.uploads = u
@@ -174,6 +177,27 @@ func (s *Service) AddUpload(ctx context.Context, in UploadInput) (Item, error) {
 		return Item{}, err
 	}
 	return u.item(m), nil
+}
+
+// AddMedia stores one dropped audio or video file and, when transcription
+// is enabled and consented, queues its machine transcription at once
+// (opts audits the run like a manual Transcribe).
+func (s *Service) AddMedia(ctx context.Context, in MediaInput, opts TranscribeOptions) (Item, error) {
+	u := s.Uploads()
+	if u == nil {
+		return Item{}, ErrUploadsDisabled
+	}
+	m, err := u.AddMedia(ctx, in)
+	if err != nil {
+		return Item{}, err
+	}
+	it := u.item(m)
+	if s.Config().Transcription.Active() && s.transcriptStore() != nil {
+		if _, err := s.Transcribe(ctx, it, opts); err != nil {
+			s.Logger.Warn("inbox: upload transcription not queued", "item", it.Key(), "error", err)
+		}
+	}
+	return it, nil
 }
 
 // AddLink fetches one URL and returns its Inbox item.

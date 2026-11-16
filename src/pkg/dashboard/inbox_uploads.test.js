@@ -290,3 +290,12 @@ test('links: the Add field and a pasted URL are fetched by the hive, errors stay
   assert.match(api.inboxAddPanelHtml(), /id="inbox-add-url"[^>]*data-enter-action="inboxAddUrlFromField"/);
   assert.match(api.inboxUploadRowHtml({ id: 9, name: 'e.example', link: 'https://e.example/', status: 'uploading' }), /Fetching/);
 });
+
+test('audio and video use the recording cap and are accepted by extension', () => {
+  const { api } = harness();
+  const limits = Object.assign({}, UPLOADS, { max_files_per_drop: 10, media_extensions: ['.m4a', '.mp3', '.mp4'], max_media_bytes: 200 * MB });
+  const rows = api.inboxUploadPlan([file('memo.m4a', 120 * MB), file('talk.mp4', 201 * MB), file('notes.md', 26 * MB), file('song.flac', 3)], limits);
+  assert.deepStrictEqual(rows.map(r => r.code || r.status), ['queued', 'too_large', 'too_large', 'unsupported_type']);
+  assert.match(rows[1].error, /the limit is 200\.0 MB/);
+  assert.match(rows[2].error, /the limit is 25\.0 MB/);
+});

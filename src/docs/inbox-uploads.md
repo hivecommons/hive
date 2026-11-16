@@ -32,6 +32,8 @@ and opens as a Word document.
 | CSV / TSV | `.csv`, `.tsv`, `.tab` | row and column counts and a markdown table of the first 20 rows (20 columns at most) |
 | Word | `.docx` | headings (Title and Heading 1 to 6 styles) as `#`, paragraphs, bulleted and numbered lists (by level) as `-` items, and tables as markdown tables; deleted text and field codes are left out; the title comes from the document properties, else the first heading. Read in Go with `archive/zip` and `encoding/xml` (standard library): at most 1000 zip entries, 200 MiB declared uncompressed in all, 50 MiB per part (checked while inflating, not only from the header) and a 100:1 compression ratio per entry; a part with a DOCTYPE or an entity the decoder does not know is refused (XXE), and nothing is fetched |
 | PDF | `.pdf` (or a file without an extension that starts with `%PDF-`) | one `## Page N` section per page with text, a page-count summary, and the document title from its Info dictionary. Parsed **out of process** in the `hive-pdftext` sandbox with `github.com/ledongthuc/pdf` (BSD-3-Clause, pure Go): at most 200 pages and 1 MiB of text; a PDF without a text layer is refused with "no text layer (scanned PDF); OCR not supported yet" |
+| Audio | `.mp3`, `.m4a`, `.aac`, `.wav`, `.ogg`, `.opus`, `.webm` | an audio item with ▶ Play through the same-origin stream (served from this hive's disk) and 🎧 Transcribe; when transcription is enabled and consented, the hive queues the transcription as soon as the file is added. The content must carry the container's signature (ID3 or MPEG frame sync, ADTS, `ftyp`, RIFF/WAVE, Ogg, EBML) |
+| Video | `.mp4`, `.mov` | the same as audio: only the audio track is used (for transcription and playback); there is no video playback |
 | HTML | `.html`, `.htm`, and web pages behind a link | readable markdown: the `<title>` names the item; the `<article>` or `<main>` (else `<body>`) is kept with headings, paragraphs, lists, quotes, code, tables, link targets and image alt text; scripts, styles, forms, navigation, footers, asides and hidden elements are dropped. Parsed with `golang.org/x/net/html` (BSD-3-Clause); nothing is executed and nothing the page references is loaded |
 
 Text is validated as UTF-8 (a UTF-8 BOM is dropped; UTF-16 is refused with
@@ -47,7 +49,6 @@ Not supported (the item is refused with a message saying what to do):
 | RTF, OpenDocument `.odt` | save it as .docx, PDF or plain text |
 | PowerPoint `.pptx` | export the slides as PDF |
 | Excel `.xlsx` | export the sheet as CSV |
-| Audio and video | not supported yet |
 | Executables, archives, images, anything else | unsupported file type |
 
 ## What happens to a file
@@ -71,6 +72,25 @@ Not supported (the item is refused with a message saying what to do):
 Every file, accepted or refused, is audited as `inbox_upload` with the user,
 the item id, the detected kind, the size and the outcome or refusal code; the
 file's content and name are not written to the audit log.
+
+## Audio and video
+
+An audio or video file is streamed straight to `connector-state/uploads/<id>/original`
+(never held in memory), capped by `inbox.recording.max_bytes` and the uploads
+quota, and its item starts **pending**: it has no text until it is
+transcribed. ▶ Play streams it from this hive's disk through the same
+same-origin endpoint recordings use (`GET /api/inbox/upload/<id>/audio/stream`,
+with Range for seeking), and transcription reads the same file locally, so
+with whisper the audio never leaves the hive. When `inbox.transcription` is
+enabled and consented, the transcription is queued as soon as the file is
+added (audited as `inbox_transcribe`, actor = who added it); otherwise the
+item shows the usual reason 🎧 Transcribe is unavailable. The machine
+transcript is written into the item's Knowledge fact like any recording's.
+The original is deleted after `inbox.uploads.media_retention_days`, which
+defaults to `inbox.recording.retention_days` (5 days); the transcript, the
+item and the fact stay. Video files keep only their audio track: there is
+no video playback. The browser request may take up to 20 minutes to arrive
+(the dashboard's 30-second read timeout is lifted for uploads).
 
 ## PDF sandbox
 
@@ -141,7 +161,8 @@ through).
 | `inbox.uploads.max_files_per_drop` | `HIVE_INBOX_UPLOADS_MAX_FILES_PER_DROP` | `20` | files in one drop or one request |
 | `inbox.uploads.quota_bytes` | `HIVE_INBOX_UPLOADS_QUOTA_BYTES` | `2147483648` (2 GiB) | everything stored under `connector-state/uploads` |
 | `inbox.uploads.document_retention_days` | `HIVE_INBOX_UPLOADS_DOCUMENT_RETENTION_DAYS` | `0` (keep) | delete a document's original after this many days |
-| `inbox.uploads.media_retention_days` | `HIVE_INBOX_UPLOADS_MEDIA_RETENTION_DAYS` | `5` | delete an audio or video original after this many days |
+| `inbox.uploads.media_retention_days` | `HIVE_INBOX_UPLOADS_MEDIA_RETENTION_DAYS` | `inbox.recording.retention_days` (5) | delete an audio or video original after this many days |
+| `inbox.recording.max_bytes` | | `209715200` (200 MiB) | largest audio or video file (the recording cap) |
 
 ```yaml
 inbox:

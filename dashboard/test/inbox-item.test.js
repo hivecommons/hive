@@ -184,3 +184,13 @@ test('share history pills sit with the other pills and read users get no link', 
   assert.match(html, /<span class="kc-pill inbox-share-pill"[^>]*>→ RFC #18412/);
   assert.doesNotMatch(html, /href="https:\/\/github/);
 });
+
+test('an uploaded audio file is pending with its own note and keeps the player', () => {
+  const ctx = makeContext('read-write');
+  const audio = { source: 'upload', id: '20261116t093000-0a1b2c3e', title: 'standup', origin: 'upload · standup.m4a', added_by: 'ana', upload_kind: 'audio', pending: true, transcribable: true, fact_slug: 'upload-x', fact_state: 'pending' };
+  const html = vm.runInContext('inboxItemHtml(' + JSON.stringify(audio) + ')', ctx);
+  assert.match(html, /this audio was added to the Inbox without text/);
+  assert.doesNotMatch(html, /Plaud/);
+  assert.match(html, /data-action="inboxPlay"/);
+  assert.match(html, /▸ Transcript<\/button>/);
+});
