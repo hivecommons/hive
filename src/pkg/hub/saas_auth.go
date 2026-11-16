@@ -16,6 +16,7 @@ import (
 	"golang.org/x/net/publicsuffix"
 
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/mailin/wire"
 )
 
 func (s *HubServer) requireAuth(next http.HandlerFunc) http.HandlerFunc {
@@ -879,6 +880,12 @@ var publicExactPaths = map[string]struct{}{
 	"/tokens.css":          {},
 	spokeWidgetSummaryPath: {},
 	spokeWebhookRelayPath:  {},
+	// The hive-mx mail relay targets (#18395, mail_relay.go). Like the
+	// webhook receiver, each spoke handler fails closed without a valid
+	// hub relay signature.
+	wire.SpokeInvitesPath: {},
+	wire.SpokeFilesPath:   {},
+	wire.SpokeProofPath:   {},
 }
 
 var publicTreePaths = []string{"/api/contribute", "/api/leaderboard", "/contribute", "/leaderboard", "/snapshot"}
