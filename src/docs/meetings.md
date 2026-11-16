@@ -142,6 +142,26 @@ What `hive-mx` does with a message:
 
 The result goes to the hub as JSON with a bearer token from a mounted Secret. If the hub cannot take it, the sender's mail server is told to retry later.
 
+## Asking Betty to do things
+
+People in the meeting can ask Betty, spoken or typed in the meeting chat, to draft something in the hive ([#18406](https://github.com/hivecommons/hive/issues/18406)):
+
+| Ask | Draft | Created on approval |
+|---|---|---|
+| "Betty, open an issue for the lobby timeout" | an issue | through the hive's GitHub issue path (the App, with the `origin/dashboard` provenance label) on the chosen monitored repo |
+| "make that an RFC, Betty" | an RFC | the same path, titled `RFC: ...` with the `rfc` label (the convention RFC notifications read) |
+| "Betty, start a Spek session on calendar sync" | a Spek session | handed to the Inbox `spek_rfc` destination: a hive agent drafts the spec with spektacular and publishes it to the repo |
+| "Betty, save that as a knowledge note" | a knowledge note | written to the `meetings` knowledge vault, the same write meeting notes use |
+
+- **Recognising a request.** The line must be addressed to her (her name opens or closes it, with or without a comma before a verb such as "open", "file", "make", "start" or "save") and ask to make an item ("issue", "bug", "ticket", "RFC", "Spek session", "knowledge note"). Questions about an item ("what's the issue with the lobby?") and negations ("don't open an issue") are not requests.
+- **Drafting.** Betty drafts a short title and body from the request and the last three minutes of the meeting, with a link back to the meeting (the dashboard's Meetings section, when `dashboard.public_url` is set) and a transcript excerpt. The repo is a monitored repo the request names ("in spektacular", "hivecommons/spektacular"), else `meetings.persona.actions.default_repo`, else `inbox.spek.repo`, else `project.primary_repo`, else the first repo. A repo the model suggests is used only when it is a monitored repo. With no meetings model she drafts from the request itself.
+- **Confirmation.** She replies in the meeting chat: "Drafted an issue: '<title>'. It's waiting for approval in the hive." If the request does not say what the item is about and nothing was said before it, she asks one clarifying question ("Happy to draft an issue. What should it be about?") and drafts from the asker's next line (or "never mind" drops it). The model may ask that one question too; it never asks twice.
+- **Approval.** Speaker identity in a meeting is only a display name, so nothing is created from the meeting. Every draft lands in **Drafts from meetings** in the Calendar section, with the meeting, who asked (display name), the body and the transcript excerpt. The hive owner or a read-write user can **Edit** (type, title, body, repo), **Approve** or **Reject** it. Approval creates the item; a failed creation stays in the list with its error and can be approved again after a fix.
+- **Result.** Once created, Betty posts the link in the meeting chat while the meeting is live ("Approved: an issue \"Lobby timeout\" is open: https://..."); after the meeting it is added to the meeting's notes instead.
+- **Auto-approve.** Off for every type. Only knowledge notes can be auto-approved (`meetings.persona.actions.auto_approve.knowledge: true`); issues, RFCs and Spek sessions always wait for a person, and config validation refuses anything else.
+- **Honesty and safety.** Betty never says an item exists before it was approved and created. Meeting speech reaches the model only as data, the type comes from the request and never from the model, `@` mentions in meeting text are removed before anything is filed, and the excerpt is quoted as a code block.
+- **Settings.** `meetings.persona.actions` turns requests on or off, limits the allowed types and sets the default repo and auto-approve; `GET`/`PUT /api/meetings/actions/settings` read and save it (the Meeting attendee settings tab uses it). A saved change applies at once. The queue lives in `<meetings.data_dir>/actions.json`; decided drafts are kept for 30 days (at most 200).
+
 ## Setup
 
 ### Hosted hives
@@ -250,6 +270,10 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.persona.intro_template` | the preset's intro | Intro text. |
 | `meetings.persona.leave_phrases` | `[betty leave, hive leave]` | Phrases that remove the bot. |
 | `meetings.persona.humor` | `light` | `light` or `off`. |
+| `meetings.persona.actions.enabled` | `true` | Let people ask Betty to draft issues, RFCs, Spek sessions and knowledge notes; each waits for approval. |
+| `meetings.persona.actions.types` | all four | Allowed types: `issue`, `rfc`, `spek`, `knowledge`. |
+| `meetings.persona.actions.default_repo` | `inbox.spek.repo`, then `project.primary_repo`, then the first repo | `owner/repo` a draft targets when the request names no monitored repo. |
+| `meetings.persona.actions.auto_approve.knowledge` | `false` | Save knowledge notes without approval. No other type may be auto-approved. |
 | `meetings.persona.unprompted.per_10m` | `2` | Unprompted answers per ten minutes. |
 | `meetings.persona.unprompted.min_gap_s` | `90` | Seconds between unprompted answers. |
 | `meetings.persona.unprompted.per_meeting` | `12` | Unprompted answers per meeting. |

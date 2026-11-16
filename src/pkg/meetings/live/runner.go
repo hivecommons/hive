@@ -62,6 +62,9 @@ type Runner struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
+
+	// actions builds each meeting's draft sink (actions.go, #18406).
+	actions actionsHook
 }
 
 // NewRunner builds a runner. Start subscribes it to meeting updates.
