@@ -71,6 +71,12 @@ type Service struct {
 	// TranscribeBackoff is the wait between upload attempts; nil doubles
 	// from five seconds.
 	TranscribeBackoff func(attempt int) time.Duration
+
+	// Same-origin playback (see audiostream.go). AudioStreamMaxBytes caps
+	// one proxied response; 0 uses DefaultAudioStreamMaxBytes. streamLinks
+	// keeps minted links in memory only, so seeking does not re-mint.
+	AudioStreamMaxBytes int64
+	streamLinks         audioLinkCache
 }
 
 // NewService builds a service for cfg with the given sources/destinations.

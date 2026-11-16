@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -27,6 +28,7 @@ func (s *Server) registerInboxRoutes() {
 	s.mux.HandleFunc("POST /api/inbox/settings", s.handleInboxSettingsPost)
 	s.mux.HandleFunc("GET /api/inbox/{source}/{id}/content", s.handleInboxContent)
 	s.mux.HandleFunc("GET /api/inbox/{source}/{id}/audio", s.handleInboxAudio)
+	s.mux.HandleFunc("GET /api/inbox/{source}/{id}/audio/stream", s.handleInboxAudioStream)
 	s.mux.HandleFunc("POST /api/knowledge/connectors/{name}/auth/complete", s.handleKnowledgeConnectorAuthComplete)
 	s.mux.HandleFunc("POST /api/inbox/{source}/{id}/transcribe", s.handleInboxTranscribe)
 }
@@ -139,6 +141,77 @@ func (s *Server) handleInboxAudio(w http.ResponseWriter, r *http.Request) {
 	s.auditFromRequest(r, "inbox_audio", auditDetail("source", it.Source, "item", it.ID), "")
 	w.Header().Set("Cache-Control", "no-store")
 	jsonResponse(w, InboxAudioResponse{Source: it.Source, ItemID: it.ID, URL: link.URL, ExpiresAt: link.ExpiresAt})
+}
+
+// handleInboxAudioStream (owner or read-write) plays an item's audio on the
+// dashboard's own origin: the hive fetches the presigned link and streams the
+// bytes back, passing a single Range through so the player can seek. The
+// browser never sees the link (the CSP has no media-src for cloud storage and
+// must not), nothing is written to disk, and errors name the storage host
+// only. A fresh link is audited as inbox_audio_stream; the Range requests of
+// one playback reuse it from memory.
+func (s *Server) handleInboxAudioStream(w http.ResponseWriter, r *http.Request) {
+	if !requireInboxPlaybackRole(w, r) {
+		return
+	}
+	svc, ok := s.inboxService(w)
+	if !ok {
+		return
+	}
+	it, ok := s.inboxFindItem(w, r, svc)
+	if !ok {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	st, err := svc.OpenAudioStream(r.Context(), it, r.Header.Get("Range"))
+	switch {
+	case errors.Is(err, inbox.ErrNoAudio), errors.Is(err, connector.ErrPlaudNoAudio):
+		jsonError(w, err.Error(), http.StatusNotFound)
+		return
+	case errors.Is(err, inbox.ErrAudioLinkRefused):
+		jsonError(w, err.Error(), http.StatusBadGateway)
+		return
+	case errors.Is(err, inbox.ErrAudioTooLarge):
+		jsonError(w, err.Error(), http.StatusRequestEntityTooLarge)
+		return
+	case err != nil:
+		jsonError(w, "audio stream: "+err.Error(), http.StatusBadGateway)
+		return
+	}
+	if st.Minted {
+		s.auditFromRequest(r, "inbox_audio_stream", auditDetail("source", it.Source, "item", it.ID), "")
+	}
+	h := w.Header()
+	if st.Status == http.StatusRequestedRangeNotSatisfiable {
+		if st.ContentRange != "" {
+			h.Set("Content-Range", st.ContentRange)
+		}
+		w.WriteHeader(st.Status)
+		return
+	}
+	defer st.Body.Close()
+	h.Set("Content-Type", st.ContentType)
+	h.Set("X-Content-Type-Options", "nosniff")
+	h.Set("Content-Disposition", "inline")
+	if st.AcceptRanges {
+		h.Set("Accept-Ranges", "bytes")
+	}
+	if st.ContentRange != "" {
+		h.Set("Content-Range", st.ContentRange)
+	}
+	if st.ContentLength >= 0 {
+		h.Set("Content-Length", strconv.FormatInt(st.ContentLength, 10))
+	}
+	if st.ETag != "" {
+		h.Set("ETag", st.ETag)
+	}
+	if st.LastModified != "" {
+		h.Set("Last-Modified", st.LastModified)
+	}
+	w.WriteHeader(st.Status)
+	// A client that stops listening (seek, pause, tab closed) ends the copy
+	// through the request context; the error is expected and not logged.
+	_, _ = io.Copy(w, st.Body)
 }
 
 // InboxTranscribeResponse is POST /api/inbox/{source}/{id}/transcribe.

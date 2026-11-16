@@ -4,6 +4,7 @@
     .inbox-toggle { display: inline-flex; align-items: center; gap: var(--sp-2); }
     .inbox-list { max-height: none; }
     .inbox-item { cursor: default; }
+    .inbox-item-focus { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r); }
     .inbox-check { display: flex; align-items: flex-start; padding-top: var(--sp-1); }
     .inbox-icon { flex-shrink: 0; font-size: var(--fs-lg); line-height: 1; padding-top: var(--sp-1); }
     .inbox-pills { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
