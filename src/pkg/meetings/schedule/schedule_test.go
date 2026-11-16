@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hivecommons/hive/internal/testutil"
 	"github.com/hivecommons/hive/pkg/meetings"
 )
 
@@ -638,10 +639,7 @@ func TestStartCloseAndOptions(t *testing.T) {
 	s.Start()
 	s.Start()
 	ownerAdd(t, s, ManualRequest{Start: t0.Add(time.Second)})
-	deadline := time.Now().Add(5 * time.Second)
-	for j.count() == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
+	testutil.Eventually(t, 5*time.Second, func() bool { return j.count() > 0 }, "the scheduler loop never joined")
 	s.Close()
 	s.Close()
 	if j.count() != 1 {
