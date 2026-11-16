@@ -34,6 +34,8 @@ import (
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
+	"github.com/hivecommons/hive/pkg/workflowmodel/checksfile"
 	"github.com/hivecommons/hive/pkg/workflowmodel/ingest/cluster"
 )
 
@@ -59,6 +61,11 @@ type Dependencies struct {
 	// stage and model labels now, for PUT /api/workflows/enabled turning
 	// derivation on. Nil leaves provisioning to the next sweep pass.
 	WorkflowProvisionLabels func(ctx context.Context, repo string) error
+	// WorkflowEmitChecks proposes a newly bound model's declared checks to
+	// the repository as .hive/workflows/checks.yml through the checks PR
+	// (hivecommons/hive#18355), for PUT /api/workflows/bindings. Nil leaves
+	// the file unemitted.
+	WorkflowEmitChecks func(ctx context.Context, repo string, m *workflowmodel.Model) (checksfile.Result, error)
 	// WorkflowClusterRunner runs kubectl for POST /api/workflows/ingest/cluster
 	// (RFC #17620 phase 6). Nil means no kube access is configured on this
 	// spoke and the route answers 422.

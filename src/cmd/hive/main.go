@@ -1125,6 +1125,7 @@ func (b *boot) wireBootClosures() {
 			},
 			WorkflowRepoFile:        workflowRepoFile(func() *github.Client { return b.ghClient }),
 			WorkflowProvisionLabels: workflowProvisionLabels(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
+			WorkflowEmitChecks:      workflowEmitChecks(b.cfg, func() *github.Client { return b.ghClient }),
 			WorkflowClusterRunner:   workflowClusterRunner(),
 			WorkflowSpecLLM:         newWorkflowSpecRunner(func() *config.Config { return b.cfg }),
 			AgentMgr:                b.agentMgr,
