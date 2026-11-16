@@ -116,6 +116,78 @@ func TestStepLLMFailureMarksSessionFailed(t *testing.T) {
 	}
 }
 
+// TestStepCapacityErrorParksSessionAndResumes: an LLMClient reporting
+// ErrInferenceCapacity (every free-tier provider rate limited) parks the
+// session as paused without consuming a turn, and the next served inference
+// resumes it.
+func TestStepCapacityErrorParksSessionAndResumes(t *testing.T) {
+	var seen []toolapprove.ToolRequest
+	llm := &toolCapturingLLM{capture: &seen, fail: fmt.Errorf("all providers 429: %w", ErrInferenceCapacity)}
+	runner := NewRunner(llm, &mockExecutor{})
+	env, out, err := runner.Step(context.Background(), SessionEnvelope{SessionID: "s-cap", MaxTurns: 5}, TurnInput{UserMessage: "go"})
+	if !errors.Is(err, ErrInferenceCapacity) {
+		t.Fatalf("err = %v, want ErrInferenceCapacity", err)
+	}
+	if env.Status != StatusPaused || out.Status != StatusPaused || out.Done {
+		t.Fatalf("expected paused, not done; got env=%s out=%+v", env.Status, out)
+	}
+	if env.TurnCount != 0 {
+		t.Fatalf("TurnCount = %d, want 0 (no model ran)", env.TurnCount)
+	}
+	if len(env.Messages) != 1 {
+		t.Fatalf("user input must survive the pause, messages=%+v", env.Messages)
+	}
+
+	llm.fail = nil
+	llm.response = LLMResponse{Content: "done"}
+	env, out, err = runner.Step(context.Background(), env, TurnInput{Trigger: "resume"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Status != StatusCompleted || !out.Done || env.TurnCount != 1 {
+		t.Fatalf("resume: env=%s turns=%d out=%+v", env.Status, env.TurnCount, out)
+	}
+}
+
+// TestStepDeniesUnofferedTool: AvailableTools is the turn's capability set.
+// A model naming a tool it was not offered (seen live in a finish phase that
+// offered only task.complete) is denied before approval and never executed.
+func TestStepDeniesUnofferedTool(t *testing.T) {
+	var seen []toolapprove.ToolRequest
+	llm := &toolCapturingLLM{capture: &seen, response: LLMResponse{ToolCalls: []ToolCall{
+		{ID: "a", Name: "read", Arguments: `{}`},
+		{ID: "b", Name: "task.complete", Arguments: `{"summary":"x"}`},
+	}}}
+	exec := &countingExecutor{}
+	runner := NewRunner(llm, exec, WithAvailableTools([]toolapprove.ToolRequest{{Tool: "task.complete"}}))
+	env, out, err := runner.Step(context.Background(), SessionEnvelope{SessionID: "s-offer", ACMMLevel: 6}, TurnInput{UserMessage: "finish"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(out.Verdicts) != 2 || !out.Verdicts[0].Denied() || !strings.Contains(out.Verdicts[0].Rationale, "not offered") {
+		t.Fatalf("verdicts = %+v", out.Verdicts)
+	}
+	if exec.calls["read"] != 0 {
+		t.Fatal("unoffered tool was executed")
+	}
+	if len(out.ToolResults) == 0 || !strings.Contains(out.ToolResults[0].Error, "available: task.complete") {
+		t.Fatalf("tool results = %+v", out.ToolResults)
+	}
+	if env.Operations[0].Status == OperationStatusApproved {
+		t.Fatalf("denied call recorded as approved: %+v", env.Operations[0])
+	}
+}
+
+type countingExecutor struct{ calls map[string]int }
+
+func (c *countingExecutor) Execute(ctx context.Context, call ToolCall) (ToolResult, error) {
+	if c.calls == nil {
+		c.calls = map[string]int{}
+	}
+	c.calls[call.Name]++
+	return ToolResult{ToolCallID: call.ID, Name: call.Name, Output: "ok"}, nil
+}
+
 // TestDefaultCompactorWindowing covers the compaction branch: head preserved,
 // middle dropped, tail retained.
 func TestDefaultCompactorWindowing(t *testing.T) {
