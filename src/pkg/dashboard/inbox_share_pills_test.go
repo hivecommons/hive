@@ -31,7 +31,7 @@ let h = inboxSharePillsHtml(item([rec({ ref: { number: 18412, url: 'https://gith
 assert(h.includes('→ RFC #18412 · clubanderson · 2m ago') && h.includes('data-status="ok"'));
 assert(h.includes('<a ') && h.includes('href="https://github.com/o/r/issues/18412"') && h.includes('noopener') && !h.includes('<button'));
 h = inboxSharePillsHtml(item([rec({ destination: 'spek', status: 'in_progress', actor: 'andy', ref: { id: 'sess-1', name: 'nate-v2' } })]), 'plaud/r1');
-assert(h.includes('→ spek: nate-v2 … · andy') && h.includes('data-status="syncing"') && h.includes('inbox-tx-spinner') && h.includes('href="#section-sessions?session=sess-1"'));
+assert(h.includes('→ spek: nate-v2 … · andy') && h.includes('data-status="syncing"') && h.includes('inbox-tx-spinner') && h.includes('href="#section-sessions-section?session=sess-1"'));
 h = inboxSharePillsHtml(item([rec({ destination: 'dibs', ref: { url: 'https://dibs.example/i/7', id: '7' } })]), 'plaud/r1');
 assert(h.includes('→ DIBS · ') && h.includes('href="https://dibs.example/i/7"'));
 h = inboxSharePillsHtml(item([rec({ destination: 'knowledge', actor: 'inbox-auto', ref: { id: 'plaud-r1' } })]), 'plaud/r1');
@@ -59,6 +59,29 @@ assert.strictEqual((h.match(/inbox-share-pill/g) || []).length, 3, 'full history
 assert(h.includes('>less<') && h.includes('failed'));
 inboxToggleHistory('plaud', 'r1');
 assert(!_inboxHistoryOpen.has('plaud/r1'));
+`,
+	}, "\n") + "\n})();"
+	runStageTrackerRowActionsScript(t, script)
+}
+
+// The spek pill's deep link opens the Inception section and selects the
+// session's tab: the hash is parsed once and claimed when the session exists.
+func TestSessionsFocusDeepLink(t *testing.T) {
+	html := indexHTML(t)
+	script := "(function () {\n" + strings.Join([]string{
+		"const assert = require('assert');",
+		jsConstLine(t, html, "SESSIONS_FOCUS_HASH"),
+		jsFunc(t, html, "sessionsFocusIdFromHash"),
+		jsFunc(t, html, "sessionsClaimFocus"),
+		`
+assert.strictEqual(sessionsFocusIdFromHash('#section-sessions-section?session=ab%2Fc'), 'ab/c');
+assert.strictEqual(sessionsFocusIdFromHash('#section-sessions-section'), '');
+assert.strictEqual(sessionsFocusIdFromHash('#section-inbox-section?item=x'), '');
+assert.strictEqual(sessionsFocusIdFromHash('#section-sessions-section?session=%E0%A4%A'), '', 'malformed escape is ignored');
+var _sessionsFocusId = sessionsFocusIdFromHash('https://h.example/#section-sessions-section?session=s2');
+assert.strictEqual(sessionsClaimFocus([{ id: 's1' }]), '', 'unknown session: keep waiting');
+assert.strictEqual(sessionsClaimFocus([{ id: 's1' }, { id: 's2' }]), 's2');
+assert.strictEqual(sessionsClaimFocus([{ id: 's2' }]), '', 'claimed once');
 `,
 	}, "\n") + "\n})();"
 	runStageTrackerRowActionsScript(t, script)

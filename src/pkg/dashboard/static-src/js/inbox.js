@@ -342,7 +342,7 @@
       const ref = rec.ref || {};
       if (!canOpen) return '';
       if ((rec.destination === 'rfc' || rec.destination === 'dibs') && /^https?:\/\//.test(ref.url || '')) return ref.url;
-      if (rec.destination === 'spek' && ref.id) return '#section-sessions?session=' + encodeURIComponent(ref.id);
+      if (rec.destination === 'spek' && ref.id) return '#section-sessions-section?session=' + encodeURIComponent(ref.id);
       return '';
     }
     function inboxSharePillHtml(rec, it) {
