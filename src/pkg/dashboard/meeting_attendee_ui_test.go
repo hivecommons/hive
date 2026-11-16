@@ -63,6 +63,7 @@ func TestMeetingAttendeeTabBehaviour(t *testing.T) {
 		"const yamlHint = p => '<code>' + p + '</code>';",
 		"const document = { getElementById: () => null, querySelector: () => null };",
 		"let _maState = null;",
+		"let _owner = true; const viewerIsOwner = () => _owner;",
 	}
 	for _, c := range []string{"MA_LANGUAGE_LABELS", "MA_FLAG_BASE", "MA_PERSONA_FIELDS", "MA_LIST_FIELDS", "MA_CAP_FIELDS"} {
 		parts = append(parts, jsConstBlock(t, html, c))
@@ -70,7 +71,7 @@ func TestMeetingAttendeeTabBehaviour(t *testing.T) {
 	for _, f := range []string{"maLanguageLabel", "maFlag", "maRenderIntro", "renderGovMeetingAttendee", "maSetData", "maPreset",
 		"maOverrideNote", "maPresetCardHtml", "maField", "maTextInput", "maVoiceOptions", "maLanguageOptions", "maVoiceTypeOptions",
 		"maPersonaHtml", "maBehaviourHtml", "maEmailHtml", "maRender", "maRefreshPreview", "maInput", "maCapInput",
-		"maLanguageChanged", "maPickPreset", "maRequestBody", "maSampleSrc"} {
+		"maLanguageChanged", "maPickPreset", "maRequestBody", "maSampleSrc", "maMyEmailsHtml", "maEmailToggle"} {
 		parts = append(parts, jsFunc(t, html, f))
 	}
 	parts = append(parts,
@@ -103,12 +104,24 @@ func TestMeetingAttendeeTabBehaviour(t *testing.T) {
 		`assert.strictEqual(body.preset, 'melie'); assert.strictEqual(body.enabled, false); assert.ok('voice_on_address' in body);`,
 		`let email = maEmailHtml();`,
 		`assert.ok(email.includes('Available once email-in is enabled'), 'pending note');`,
-		`assert.ok(email.includes('data-ma-email="calendar_invites" disabled>'), 'toggles disabled until email-in');`,
-		`_maState.data.email = { available: true, address: 'hive@h.example', calendar_invites: true, inviters: [{login: 'bob', role: 'read-write', display_name: 'Bob', emails: [{address: 'bob@example.com', proof: 'verified'}]}], approvals: [{kind: 'invite', from: 'x@y', subject: 'Sync'}] };`,
+		`assert.ok(email.includes('data-arg0="calendar_invites" data-arg-types="s,c" disabled>'), 'toggles disabled until email-in');`,
+		`assert.ok(!email.includes('My calendar emails'), 'no own-email list until email-in');`,
+		`maSetData(Object.assign({}, _maState.data, { email: { available: true, address: 'hive@h.example', calendar_invites: true, inviters: [{login: 'bob', role: 'read-write', display_name: 'Bob', emails: [{address: 'bob@example.com', proof: 'verified'}]}], approvals: [{kind: 'invite', from: 'x@y', subject: 'Sync'}] } }));`,
 		`email = maEmailHtml();`,
 		`assert.ok(!email.includes('Available once email-in'), 'no pending note once available');`,
-		`assert.ok(email.includes('data-ma-email="calendar_invites" checked>'), 'toggle enabled');`,
+		`assert.ok(email.includes('data-arg0="calendar_invites" data-arg-types="s,c" checked>'), 'toggle enabled for the owner');`,
 		`assert.ok(email.includes('bob@example.com') && email.includes('ma-verified') && email.includes('invite from x@y'), email);`,
+		`assert.ok(email.includes('My calendar emails') && email.includes('Loading'), 'own list loading');`,
+		`_maState.mine = { address: 'hive@h.example', emails: [{ email: 'me@x.org', proven: false, code: 'hive-proof-aaaaaaaaaaaa', active: true, last_error: 'the proof mail came from a different address' }, { email: 'old@x.org', proven: true, active: false }] };`,
+		`email = maEmailHtml();`,
+		`assert.ok(email.includes('hive-proof-aaaaaaaaaaaa') && email.includes('data-action="maRemoveMyEmail" data-arg0="me@x.org"') && email.includes('different address') && email.includes('not on the allowlist'), email);`,
+		`_maState.mine = { emails: [] }; assert.ok(maEmailHtml().includes('not added a calendar email'));`,
+		`_maState.mine = { error: 'boom' }; assert.ok(maEmailHtml().includes('boom'));`,
+		`_maState.mine = { address: 'a', emails: [{ email: 'e@x.org', proven: false }] }; assert.ok(maEmailHtml().includes('code expired'));`,
+		`assert.ok(!('email' in maRequestBody()), 'untouched switches are not sent');`,
+		`maEmailToggle('mail_in_files', true); assert.deepStrictEqual(maRequestBody().email, { calendar_invites: true, mail_in_files: true });`,
+		`_owner = false; email = maEmailHtml(); assert.ok(email.includes('Only the owner') && email.includes('data-arg-types="s,c" checked disabled>'), 'switches are owner-only');`,
+		`_maState.form.email = null; maEmailToggle('x', true); _owner = true;`,
 		`_maState.data.overridden = { name: 'env', pronouns: 'config' };`,
 		`assert.ok(maOverrideNote('name').includes('env') && maOverrideNote('pronouns').includes('custom') && maOverrideNote('voice') === '');`,
 		`assert.ok(maBehaviourHtml(_maState.form).includes('data-ma-cap="answer_wait_s"'));`,

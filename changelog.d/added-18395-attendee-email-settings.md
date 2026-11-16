@@ -1,0 +1,1 @@
+- Settings, Meeting attendee now shows Betty's email address with everyone's calendar emails and proof status, lets each user add, prove and remove their own calendar emails, lists mailed-in files waiting for approval, and lets the owner turn calendar invites and mail-in files on or off.
