@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.279.0)
+
+### Added
+
+- Inbox: built-in Whisper transcription, so every hive can transcribe recordings with no third-party account and without the audio leaving the spoke. The hive image now bundles whisper.cpp v1.9.5 (MIT, all CPU variants for amd64 and arm64) and a minimal LGPL FFmpeg 8.1.3 decoder (about 12 MB together). Both run in the new `hive-whisper` sandbox as the `hive-transcribe` uid, with an empty environment, a private 0700 work dir, rlimits, `nice`, a wall-clock timeout and no network. The pinned `base.en` model (148 MB, SHA-256 checked) downloads on first use into `/data/models/whisper`, or can be pre-seeded on air-gapped hives (`HIVE_WHISPER_MODEL_DOWNLOAD=false`). `provider: auto` now picks whisper first. A 5-minute recording takes about 1 to 3 minutes on 2 to 4 vCPU with half the CPUs (`inbox.transcription.whisper_threads`), and the progress bar shows measured progress. `inbox.transcription.whisper_model` selects tiny, base or small.
+
 ## 2026-11-16 (v5.278.0)
 
 ### Added
