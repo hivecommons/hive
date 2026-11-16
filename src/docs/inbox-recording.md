@@ -13,6 +13,49 @@ API answers them 403. Each member may have one recording in progress at a
 time. An owner can abort anyone's recording; everyone else can only stop or
 abort their own.
 
+## Recording a meeting tab
+
+Choose **Microphone and a meeting tab's audio** in the ● Record dialog to
+record a video meeting running in another browser tab together with your own
+voice. The browser asks which tab to share: pick the meeting tab and tick
+**Share tab audio**. The hive keeps only the audio (the video track is
+dropped at once) and mixes it with the microphone in the browser. The
+recorder panel shows a level meter for each.
+
+If the shared tab has no audio track (Share tab audio was not ticked, or a
+window or screen was shared instead), the recorder warns and records the
+microphone only. Stopping the share in the browser bar keeps the recording
+going with the microphone. The dashboard's `Permissions-Policy` allows
+display capture for its own origin only (`display-capture=(self)`); the
+terminal and API responses keep it closed.
+
+## Browser support
+
+| Browser | Microphone | Microphone + tab audio | Format |
+| --- | --- | --- | --- |
+| Chrome, Edge, Brave (desktop) | yes | yes | WebM/Opus |
+| Firefox (desktop) | yes | no (Firefox shares no tab audio) | WebM/Opus |
+| Safari (macOS) | yes | no (Safari shares no tab audio) | MP4/AAC (fragmented) |
+| Safari, Chrome (iPhone, iPad) | yes, while the screen stays on | no (no tab sharing) | MP4/AAC |
+| Chrome (Android) | yes, while the page stays in front | no (no tab sharing) | WebM/Opus |
+
+Where tab audio is not available the option is hidden and the dialog says
+why. ● Record itself is hidden where the browser has no `MediaRecorder` or no
+microphone access (the dashboard must be served over https).
+
+### Phones and tablets
+
+- **Keep the screen open.** iOS stops capture when the screen locks or
+  another app takes the microphone; the recorder then ends the recording with
+  what it has. The recorder asks for a Wake Lock so the screen stays on, and
+  warns when the page is hidden.
+- Android stops capture when the browser goes to the background on many
+  devices; keep the dashboard in front.
+- A network drop does not lose audio: chunks wait in the browser (IndexedDB)
+  and upload when the connection is back. If the page is reloaded or closed,
+  the queued chunks upload and the recording is finished on the next visit
+  (what had not been recorded yet is, of course, not there).
+
 ## Consent
 
 The dashboard shows a consent notice before **every** recording, and a red
@@ -33,6 +76,27 @@ you. Good practice:
   are recorded too: tell them, or use the meeting platform's own recording
   notice;
 - do not record people who have not been told.
+
+## Transcription
+
+When you stop, the hive transcribes the recording automatically with its
+[transcription provider](inbox-transcription.md) (`provider: auto` picks the
+built-in whisper first, so the audio stays on the hive), with the same
+progress bar and time-left estimate as any other Inbox transcription. The
+transcriber reads the file from the hive's own disk; nothing is fetched over
+HTTP. The transcript is written into the recording's Knowledge fact.
+
+- Recording does **not** replace the hive-wide transcription consent: nothing
+  is transcribed until an owner enables `inbox.transcription` with
+  `consent_acknowledged: true`. Once that is done, every dashboard recording
+  counts as opted in, whatever `inbox.transcription.mode` says.
+- While transcription is off you can still record; the consent notice says
+  the recording will not be transcribed yet, and the item shows why. The
+  transcription sweep (every 10 minutes and after connector syncs) picks up
+  such recordings once transcription is enabled, as long as their audio has
+  not expired.
+- Transcription limits (`max_bytes`, `max_duration_minutes`, daily and
+  monthly budgets) apply as for every other source.
 
 ## Retention
 

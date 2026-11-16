@@ -345,6 +345,15 @@ func (m *Manager) credentialFileProves(agentName string, uid int, backend string
 			}
 		}
 	case "copilot":
+		// Evaluate the file the agent's CLI actually reads (#18443). When its
+		// ~/.copilot/config.json is a private copy that no longer follows the
+		// shared login (the CLI's atomic save replaced the symlink), neither
+		// the shared file nor the in-memory token proves anything about this
+		// agent: report no proof, so the poller repairs the link instead of
+		// restarting a CLI that will read the same broken copy again.
+		if link, target, ok := copilotConfigBridgePaths(agentName, uid, backend); ok && copilotConfigDiverged(link, target) {
+			return false
+		}
 		if m != nil {
 			m.mu.RLock()
 			tok := m.copilotAuthToken

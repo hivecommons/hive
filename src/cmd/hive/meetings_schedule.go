@@ -149,7 +149,7 @@ func wireMeetingsSchedule(cfg *config.Config, mgr *meetings.Manager, logger *slo
 	}
 	tick, lead := schedule.DurationsFromEnv(os.Getenv)
 	sched, err := schedule.New(schedule.Options{
-		Store: st, Joiner: mgr, Approver: schedule.OwnerApprover{}, Tick: tick, Lead: lead, Logger: logger,
+		Store: st, Joiner: mgr, Approver: schedule.AllowlistApprover{}, Tick: tick, Lead: lead, Logger: logger,
 	})
 	if err != nil {
 		if logger != nil {

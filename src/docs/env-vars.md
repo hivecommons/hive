@@ -121,6 +121,7 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_DELEGATION_CHAIN_ENABLED` | No | disabled | Enables delegation chain minting (`1`, `true`, `yes`, `on` — same spelling as `HIVE_METRICS_ENABLED`). Read on each call rather than cached, so disabling it on a misbehaving spoke does not require a pod roll. |
 | `HIVE_ALLOW_PRIVATE_GIT_SOURCE` | No | `false` | Exact `true` opt-in read by `pkg/knowledge/gitsource.go` to allow knowledge Git sources whose host resolves to a private/internal address (self-hosted GitLab and similar). Off by default as SSRF protection. |
 | `HIVE_SHARED_AGENT_HOME` | No | per-agent HOME | Escape hatch (`1`) restoring the legacy shared-HOME layout for agents. |
+| `HIVE_COPILOT_CONFIG_TMP_MAX_AGE` | No | `1h` | Age (Go duration) a leftover Copilot CLI `config.json.tmp.*` save file must reach before the agent-launch sweep removes it from the shared and per-agent `~/.copilot` directories. Invalid or non-positive values fall back to the default. See [the Copilot login troubleshooting entry](troubleshooting.md#one-copilot-agent-stays-at-the-login-prompt-after-a-dashboard-login). |
 | `HIVE_WORKSPACE_CLEANUP_ENABLED` | No | enabled | Set `0` to opt out of automatic agent workspace cleanup. |
 | `HIVE_GITHUB_OWNER_TOKEN_FILE` | No | `/data/secrets/github-owner-token` | Where the spoke keeps the hive owner's GitHub token for write-tier reference repos (`src/pkg/github/owner_identity.go`, #18197): an owner-only JSON file written by the Settings consent flow, never by hand and never in `hive.yaml`. Move it only together with the secrets volume. |
 | `HIVE_REMOTE_ITEMS_FILE` | No | `/data/turn/remote-items.json` | The tracker for issues and PRs the hive opened in write-tier reference repos (`src/pkg/remoteitems`, #18199): cursors per item and the feedback queued for an agent's next kick. |
@@ -410,6 +411,8 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_DATA_DIR` | No | `/data/meetings` | Where meeting records and transcripts are stored. |
 | `HIVE_MEETINGS_SCHEDULE_TICK_S` | No | `15` | Seconds between the meeting scheduler's checks for a Calendar meeting to join. |
 | `HIVE_MEETINGS_SCHEDULE_LEAD_S` | No | `60` | Seconds before a scheduled meeting's start that hive joins it (`0` joins at the start). |
+| `HIVE_MEETINGS_EMAIL_INVITES_ENABLED` | No | `true` | Accept calendar invites mailed to `hive@<host>` through hive-mx. Overrides `meetings.email.invites_enabled`. |
+| `HIVE_MEETINGS_EMAIL_FILES_ENABLED` | No | `true` | Accept Markdown, audio and image attachments mailed to `hive@<host>` as Inbox items. Overrides `meetings.email.files_enabled`. |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_MEETING` | No | `200000` | Per-meeting LLM token budget for Spektacular live mode. |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_HOUR` | No | `500000` | Hive-wide hourly token ceiling across meetings. |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_DAY` | No | `2000000` | Hive-wide daily token ceiling across meetings. |

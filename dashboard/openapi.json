@@ -66,7 +66,7 @@
     },
     {
       "name": "Inception",
-      "description": "Greenfield project scaffolding and ideation workflow"
+      "description": "Retired inception API: every route answers 410 Gone and points to Inception (spek) sessions"
     },
     {
       "name": "Knowledge",
@@ -680,6 +680,299 @@
           },
           "503": {
             "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/invites": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Receive email calendar invites (hub relay)",
+        "description": "Calendar invites hive-mx received for hive@<host>, relayed and signed by the hub. Each invite is scheduled at once when the sender is its organizer, passed DMARC alignment and is on the calendar email allowlist; otherwise it awaits approval. A change to a meeting already on the calendar, including a CANCEL, applies only when the mail is authenticated as its organizer. Relay signature: X-Hive-Relay-Timestamp, X-Hive-Relay-Signature-256 (HMAC-SHA256 with this hive's relay key over timestamp.delivery.body) and X-Hive-Relay-Delivery; no session.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "hive-mx delivery (pkg/mailin/wire.Delivery) of kind invite: id, kind, recipient, message_id, received_at, auth {from, spf, dkim, dmarc, dmarc_aligned, ...}, and invites[] / files / proof"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Per-invite results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "uid, event_id, status"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid delivery"
+          },
+          "401": {
+            "description": "Relay signature rejected"
+          },
+          "409": {
+            "description": "Invites or meetings are off on this hive"
+          },
+          "413": {
+            "description": "Delivery too large"
+          },
+          "422": {
+            "description": "No invite in the delivery could be scheduled"
+          },
+          "503": {
+            "description": "This hive holds no relay key"
+          }
+        }
+      }
+    },
+    "/api/meetings/calendar-emails/proof": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Receive a calendar email proof mail (hub relay)",
+        "description": "A mail whose subject carried a proof code. The matching address is proven only when the mail came from it and passed DMARC alignment. Relay signature: X-Hive-Relay-Timestamp, X-Hive-Relay-Signature-256 (HMAC-SHA256 with this hive's relay key over timestamp.delivery.body) and X-Hive-Relay-Delivery; no session.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "hive-mx delivery (pkg/mailin/wire.Delivery) of kind proof: id, kind, recipient, message_id, received_at, auth {from, spf, dkim, dmarc, dmarc_aligned, ...}, and invites[] / files / proof"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Proven",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "proven": {
+                      "type": "boolean"
+                    },
+                    "email": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid delivery"
+          },
+          "401": {
+            "description": "Relay signature rejected"
+          },
+          "409": {
+            "description": "Calendar emails are not available"
+          },
+          "413": {
+            "description": "Delivery too large"
+          },
+          "422": {
+            "description": "Unknown or expired code, or the mail was not authenticated for the address"
+          },
+          "503": {
+            "description": "This hive holds no relay key"
+          }
+        }
+      }
+    },
+    "/api/meetings/calendar-emails": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "List my calendar emails",
+        "description": "The signed-in user's calendar email addresses with proof status and pending codes, the hive's address (hive@<host>) and the meetings.email switches. ?all=1 adds the whole allowlist for the owner. Any role.",
+        "parameters": [
+          {
+            "name": "all",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "1: include the allowlist (owner only)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Calendar emails",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string"
+                    },
+                    "emails": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                      }
+                    },
+                    "allowlist": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                      }
+                    },
+                    "invites_enabled": {
+                      "type": "boolean"
+                    },
+                    "files_enabled": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Sign-in required"
+          },
+          "503": {
+            "description": "Calendar emails are not available"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Add a calendar email",
+        "description": "Registers an address for the signed-in user and returns a proof code with the instruction: send an email from that address to hive@<host> with the code in the subject. At most 10 per user; re-adding an unproven address issues a new code. Audited as calendar-email-add.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "email"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "email": {
+                      "type": "object",
+                      "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                    },
+                    "address": {
+                      "type": "string"
+                    },
+                    "instruction": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a valid email address"
+          },
+          "403": {
+            "description": "Sign-in required"
+          },
+          "409": {
+            "description": "Too many calendar emails"
+          },
+          "503": {
+            "description": "Calendar emails are not available"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Remove a calendar email",
+        "description": "Removes one of the signed-in user's addresses; the owner may name another user with login. Audited as calendar-email-remove.",
+        "parameters": [
+          {
+            "name": "email",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "login",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Owner only: the user whose address to remove"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "removed": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Sign-in required"
+          },
+          "404": {
+            "description": "No such calendar email"
+          },
+          "503": {
+            "description": "Calendar emails are not available"
           }
         }
       }
@@ -23196,22 +23489,33 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Download the produced scaffold as a zip",
-        "description": "Produces the current inception scaffold and streams it as a zip file attachment (application/zip). No JSON body on success.",
+        "summary": "Retired: download the produced scaffold as a zip",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Zip archive of scaffold files",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
-              "application/zip": {
+              "application/json": {
                 "schema": {
-                  "type": "string",
-                  "format": "binary"
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
-          },
-          "404": {
-            "description": "Inception engine not initialized, no scaffold, or no files to download"
           }
         }
       }
@@ -23221,11 +23525,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Check whether the inception wiki has files",
-        "description": "Reports whether the inception knowledge wiki currently has any files on disk.",
+        "summary": "Retired: check whether the inception wiki has files",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Has-files flag",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23234,8 +23539,14 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "has_files": {
-                      "type": "boolean"
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
@@ -23250,11 +23561,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "List ideation facts",
-        "description": "Returns the facts gathered so far during ideation, preferring the knowledge store's ideation facts and falling back to the inception engine's in-memory gathered facts.",
+        "summary": "Retired: list ideation facts",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Ideation facts",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23263,20 +23575,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "facts": {
-                      "type": "array",
-                      "items": {
-                        "type": "object"
-                      },
-                      "description": "knowledge.Fact entries"
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "503": {
-            "description": "Knowledge API not initialized"
           }
         }
       }
@@ -23286,11 +23597,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Produce (or fetch) the project scaffold",
-        "description": "Produces the scaffold result from the current inception state (file list/content). Not owner-gated.",
+        "summary": "Retired: produce (or fetch) the project scaffold",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Scaffold result",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23299,20 +23611,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "scaffold": {
-                      "type": "object",
-                      "description": "Scaffold result including a Files list; shape not fully enumerated here — see inception.ProduceScaffold."
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "404": {
-            "description": "No scaffold available"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23322,11 +23633,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Get current inception state",
-        "description": "Returns the current inception engine state (idea capture / question / structure phase, etc). State shape is dynamic (inception engine internal state struct).",
+        "summary": "Retired: get current inception state",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Inception state",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23335,21 +23647,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "state": {
-                      "type": "object",
-                      "nullable": true,
-                      "description": "Inception engine state; null when no session is active."
+                    "error": {
+                      "type": "string"
                     },
-                    "active": {
-                      "type": "boolean"
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23359,29 +23669,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Submit answers to inception questions",
-        "description": "Submits a map of question-id to answer text, advancing the inception session. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "answers": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "string"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
+        "summary": "Retired: submit answers to inception questions",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Updated state",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23390,19 +23683,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "state": {
-                      "type": "object"
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Invalid body or submission rejected by the engine"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23412,11 +23705,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Approve inception and complete it",
-        "description": "Advances the inception session to complete and re-pauses the brainstorm agent (on-demand only afterward). Requires owner role.",
+        "summary": "Retired: approve inception and complete it",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Approved",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23424,17 +23718,20 @@
                   "properties": {
                     "ok": {
                       "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Could not advance to complete"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23444,30 +23741,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Record ideation facts",
-        "description": "Records a batch of ideation facts against the knowledge base. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "facts": {
-                    "type": "array",
-                    "items": {
-                      "type": "object"
-                    },
-                    "description": "knowledge.IdeationFact entries"
-                  }
-                }
-              }
-            }
-          }
-        },
+        "summary": "Retired: record ideation facts",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Recorded",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23475,17 +23754,20 @@
                   "properties": {
                     "ok": {
                       "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Invalid body or record failure"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23495,46 +23777,33 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Import a wiki zip into the inception wiki directory",
-        "description": "Accepts a multipart/form-data upload (field name 'file') of a zip archive (max 10 MiB) and extracts it into the inception wiki directory. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "file": {
-                    "type": "string",
-                    "format": "binary"
-                  }
-                },
-                "required": [
-                  "file"
-                ]
-              }
-            }
-          }
-        },
+        "summary": "Retired: import a wiki zip into the inception wiki directory",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Import result",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Missing file, unreadable upload, or invalid zip"
-          },
-          "500": {
-            "description": "Failed to create wiki directory"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23544,30 +23813,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Set inception clarifying questions",
-        "description": "Sets the list of clarifying questions for the active inception session. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "questions": {
-                    "type": "array",
-                    "items": {
-                      "type": "object"
-                    },
-                    "description": "knowledge.Question entries"
-                  }
-                }
-              }
-            }
-          }
-        },
+        "summary": "Retired: set inception clarifying questions",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Set",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23575,17 +23826,20 @@
                   "properties": {
                     "ok": {
                       "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Invalid body or rejected by engine"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23595,11 +23849,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Reset the inception session",
-        "description": "Resets the inception engine state, clears any open brainstorm/inception beads, and re-pauses the brainstorm agent. Requires owner role.",
+        "summary": "Retired: reset the inception session",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Reset",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23607,17 +23862,20 @@
                   "properties": {
                     "ok": {
                       "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "500": {
-            "description": "Reset failed"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23627,29 +23885,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Start a brownfield repo scan",
-        "description": "Starts inception in brownfield mode against an existing repo URL. Optional force=true resets any existing session first (pausing brainstorm and clearing its beads). Kicks the brainstorm agent. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "repo_url": {
-                    "type": "string"
-                  },
-                  "force": {
-                    "type": "boolean"
-                  }
-                }
-              }
-            }
-          }
-        },
+        "summary": "Retired: start a brownfield repo scan",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Started",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23658,19 +23899,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "state": {
-                      "type": "object"
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Invalid body or scan could not start"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23680,29 +23921,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Start a greenfield inception session",
-        "description": "Starts a new inception session from a free-text idea. Optional force=true resets any existing session first (pausing brainstorm and clearing its beads). Kicks the brainstorm agent. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "idea": {
-                    "type": "string"
-                  },
-                  "force": {
-                    "type": "boolean"
-                  }
-                }
-              }
-            }
-          }
-        },
+        "summary": "Retired: start a greenfield inception session",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Started",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23711,19 +23935,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "state": {
-                      "type": "object"
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Invalid body or start failed"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23733,30 +23957,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Rename the inception wiki",
-        "description": "Renames the inception knowledge vault (max 80 characters) and persists the name in inception state. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "maxLength": 80
-                  }
-                },
-                "required": [
-                  "name"
-                ]
-              }
-            }
-          }
-        },
+        "summary": "Retired: rename the inception wiki",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Renamed",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23765,22 +23971,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "name": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
                       "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Missing/too-long name"
-          },
-          "404": {
-            "description": "Inception wiki vault not found"
-          },
-          "503": {
-            "description": "Knowledge or inception not initialized"
           }
         }
       }
@@ -39086,6 +39289,197 @@
         }
       }
     },
+    "/api/inbox/email": {
+      "post": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Receive mail-in files (hub relay)",
+        "description": "Markdown, audio and image attachments hive-mx received for hive@<host>. A sender whose From address passed DMARC alignment and is a proven calendar email of a user with access becomes normal Inbox items; anyone else's items await the owner's approval. Relay signature: X-Hive-Relay-Timestamp, X-Hive-Relay-Signature-256 (HMAC-SHA256 with this hive's relay key over timestamp.delivery.body) and X-Hive-Relay-Delivery; no session.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "hive-mx delivery (pkg/mailin/wire.Delivery) of kind files: id, kind, recipient, message_id, received_at, auth, files {title, attachments[] {name, kind, content_type, size, sha256, data}}"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "awaiting_approval": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid delivery"
+          },
+          "401": {
+            "description": "Relay signature rejected"
+          },
+          "409": {
+            "description": "Mail-in files are off or unavailable"
+          },
+          "413": {
+            "description": "Delivery too large"
+          },
+          "503": {
+            "description": "This hive holds no relay key"
+          },
+          "507": {
+            "description": "The email spool is full"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/{id}/approve": {
+      "post": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Approve a mailed-in item",
+        "description": "Lets an item from outside the allowlist be shared, routed and transcribed. Owner only. Audited as inbox-email-approve.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Email item id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Inbox item"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "No such email item"
+          },
+          "503": {
+            "description": "Mail-in files are not available"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/{id}/decline": {
+      "post": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Decline a mailed-in item",
+        "description": "Deletes the item and its file. Owner only. Audited as inbox-email-decline.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Email item id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "declined": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "No such email item"
+          },
+          "503": {
+            "description": "Mail-in files are not available"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/{id}/file": {
+      "get": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Download a mailed-in file",
+        "description": "The stored attachment with its sniffed type (Markdown as text/plain), inline for images and as a download otherwise, X-Content-Type-Options nosniff and a sandbox Content-Security-Policy. Owner or read-write.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Email item id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The file",
+            "content": {
+              "application/octet-stream": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such email item"
+          },
+          "503": {
+            "description": "Mail-in files are not available"
+          }
+        }
+      }
+    },
     "/api/inbox/route": {
       "post": {
         "tags": [
@@ -39970,7 +40364,7 @@
           "Knowledge"
         ],
         "summary": "Add dropped files to the Inbox",
-        "description": "Owner or read-write. Each multipart `file` field is typed by its content (magic bytes, UTF-8 validation and a parse check), never by its name or client MIME type alone. Markdown, text, JSON, JSON Lines, YAML, CSV, TSV, HTML, Word (.docx, read with zip-bomb caps and no DTDs or external entities) and PDF (parsed out of process in the hive-pdftext sandbox; a PDF without a text layer is refused) become `upload` Inbox items with extracted markdown, stored under `connector-state/uploads/<id>/` (0700 directory, 0600 files) and written as a Knowledge fact with the text inside an `<untrusted-inbox-data>` envelope. Limits come from `inbox.uploads` (`max_file_bytes`, default 25 MiB; `max_files_per_drop`, default 20; `quota_bytes`, default 2 GiB). Requests marked `Sec-Fetch-Site: cross-site` are refused. Every file is audited as `inbox_upload` with its outcome.",
+        "description": "Owner or read-write. Each multipart `file` field is typed by its content (magic bytes, UTF-8 validation and a parse check), never by its name or client MIME type alone. Markdown, text, JSON, JSON Lines, YAML, CSV, TSV, HTML, Word (.docx, read with zip-bomb caps and no DTDs or external entities) and PDF (parsed out of process in the hive-pdftext sandbox; a PDF without a text layer is refused) become; audio and video (mp3, m4a, aac, wav, ogg, opus, webm, mp4, mov, checked by container signature) are streamed to disk under `inbox.recording.max_bytes`, played back from disk through the same-origin stream and transcribed when transcription is on, and their originals are deleted after the recordings retention. Upload items otherwise become `upload` Inbox items with extracted markdown, stored under `connector-state/uploads/<id>/` (0700 directory, 0600 files) and written as a Knowledge fact with the text inside an `<untrusted-inbox-data>` envelope. Limits come from `inbox.uploads` (`max_file_bytes`, default 25 MiB; `max_files_per_drop`, default 20; `quota_bytes`, default 2 GiB). Requests marked `Sec-Fetch-Site: cross-site` are refused. Every file is audited as `inbox_upload` with its outcome.",
         "requestBody": {
           "required": true,
           "content": {
@@ -40033,7 +40427,9 @@
                               "tsv",
                               "html",
                               "docx",
-                              "pdf"
+                              "pdf",
+                              "audio",
+                              "video"
                             ]
                           },
                           "code": {
@@ -40101,7 +40497,9 @@
                               "tsv",
                               "html",
                               "docx",
-                              "pdf"
+                              "pdf",
+                              "audio",
+                              "video"
                             ]
                           },
                           "code": {
@@ -40169,7 +40567,9 @@
                               "tsv",
                               "html",
                               "docx",
-                              "pdf"
+                              "pdf",
+                              "audio",
+                              "video"
                             ]
                           },
                           "code": {
@@ -40243,7 +40643,9 @@
                               "tsv",
                               "html",
                               "docx",
-                              "pdf"
+                              "pdf",
+                              "audio",
+                              "video"
                             ]
                           },
                           "code": {
@@ -40311,7 +40713,9 @@
                               "tsv",
                               "html",
                               "docx",
-                              "pdf"
+                              "pdf",
+                              "audio",
+                              "video"
                             ]
                           },
                           "code": {
@@ -40379,7 +40783,9 @@
                               "tsv",
                               "html",
                               "docx",
-                              "pdf"
+                              "pdf",
+                              "audio",
+                              "video"
                             ]
                           },
                           "code": {
@@ -40447,7 +40853,9 @@
                               "tsv",
                               "html",
                               "docx",
-                              "pdf"
+                              "pdf",
+                              "audio",
+                              "video"
                             ]
                           },
                           "code": {
@@ -41218,7 +41626,9 @@
                               "tsv",
                               "html",
                               "docx",
-                              "pdf"
+                              "pdf",
+                              "audio",
+                              "video"
                             ]
                           },
                           "code": {

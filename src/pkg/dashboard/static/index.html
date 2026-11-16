@@ -3790,6 +3790,7 @@
     .overview-usage-gauge__row + .overview-usage-gauge__row { padding-top: var(--sp-3); border-top: 1px solid var(--border); }
     .overview-usage-gauge__provider { font-weight: var(--fw-semibold); }
     .overview-usage-gauge__users { font-size: var(--fs-sm); color: var(--text-muted); overflow-wrap: anywhere; }
+    .overview-usage-gauge__spend { font-size: var(--fs-base); font-weight: 600; }
     .overview-usage-gauge__dials { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-4); }
     .overview-usage-gauge__dial { display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); text-align: center; }
     .overview-usage-gauge__label { font-weight: var(--fw-semibold); }
@@ -4168,6 +4169,7 @@
     .cost-session-active { color: var(--green); font-weight: 600; }
     .cost-subtable-title { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: var(--sp-6) var(--sp-0) var(--sp-2); }
     .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
+    .cost-price-unknown { color: var(--muted); font-style: italic; white-space: nowrap; }
     .cost-recording-notice { border: var(--line-width) solid var(--status-warn); border-radius: var(--r-lg); color: var(--status-warn); font-size: var(--fs-sm); font-weight: var(--fw-bold); line-height: 1.4; margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); }
     .cost-recording-notice a { color: inherit; text-decoration: underline; }
     .cost-recording-incomplete { color: var(--status-warn); font-weight: var(--fw-bold); }
@@ -5134,6 +5136,20 @@
       .config-body { --config-body-pad: 14px; padding: var(--sp-0) var(--config-body-pad) var(--config-body-pad); }
       .config-field-row, .config-field-row4 { grid-template-columns: 1fr; }
     }
+    /* Searchable, grouped gateway model picker (js/model-picker.js). Tokens only. */
+    .model-combo { position: relative; }
+    .model-combo-input { width: 100%; box-sizing: border-box; }
+    .model-combo-list { position: absolute; left: 0; right: 0; top: 100%; z-index: 30; margin: var(--sp-1) var(--sp-0) var(--sp-0); padding: var(--sp-2) var(--sp-0); list-style: none; max-height: 320px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); }
+    .model-combo-list[hidden] { display: none; }
+    .model-combo-group { padding: var(--sp-3) var(--sp-4) var(--sp-1); font-size: var(--fs-xs); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .model-combo-option { display: flex; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-2) var(--sp-4); font-size: var(--fs-sm); color: var(--fg); cursor: pointer; }
+    .model-combo-option:hover, .model-combo-option[aria-selected="true"] { background: var(--bg); outline: 1px solid var(--cyan); outline-offset: -1px; }
+    .model-combo-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .model-combo-detail, .model-combo-current { color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+    .model-combo-current { margin-top: var(--sp-2); white-space: normal; }
+    .model-combo-current:empty { display: none; }
+    .model-combo-custom { color: var(--cyan); }
+    .model-combo-empty { padding: var(--sp-2) var(--sp-4); font-size: var(--fs-sm); color: var(--muted); }
     /* Settings → Forge App → GitHub webhooks (hivecommons/hive#18017) */
     .wh-section-title { font-weight: 600; font-size: var(--fs-base); margin: var(--sp-5) 0 var(--sp-2); }
     .wh-intro { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-3); }
@@ -6071,6 +6087,7 @@
     .inbox-more { padding: 0; font-size: var(--fs-xs); }
     .inbox-pending { margin-top: var(--sp-2); font-style: italic; }
     .inbox-media:not(:empty) { margin-top: var(--sp-2); }
+    .inbox-email-image { display: block; max-width: min(100%, 320px); max-height: 240px; margin-top: var(--sp-2); border-radius: var(--radius-sm, 4px); }
     .inbox-audio { width: 100%; max-width: 520px; display: block; }
     .inbox-transcript { margin-top: var(--sp-2); }
     .inbox-transcript-text { white-space: pre-wrap; font-family: inherit; font-size: var(--fs-sm); max-height: 24em; overflow: auto; margin: var(--sp-1) 0 0; padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
@@ -6120,6 +6137,11 @@
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
     }
+    /* Share history pills: status links, not buttons. */
+    a.inbox-share-pill { text-decoration: none; color: inherit; cursor: pointer; }
+    a.inbox-share-pill:hover, a.inbox-share-pill:focus-visible { text-decoration: underline; }
+    .inbox-share-more { text-decoration: none; color: var(--text-faint); }
+    .inbox-share-more:hover, .inbox-share-more:focus-visible { text-decoration: underline; }
     /* Meetings: hive as a live meeting participant (Quorum) */
     .meetings-panel { display: flex; flex-direction: column; gap: var(--sp-4); }
     .meetings-join { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto auto; gap: var(--sp-2); align-items: end; }
@@ -9499,7 +9521,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
 
         <details class="faq-q" id="faq-l1-l2">
           <summary>What are L1 and L2 for?</summary>
-          <p><strong>L1 is inception; L2 is calibration.</strong> At L1 the <strong>brainstorm</strong> agent can turn a raw idea or existing repo into structured facts and a scaffold through the <code>/api/inception</code> workflow; it asks clarifying questions and stops when you approve. In the dashboard, the <strong>Inception (spek)</strong> section is where you work an idea interactively in a shared CLI-agent session. At L2 the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
+          <p><strong>L1 is inception; L2 is calibration.</strong> At L1 you work an idea interactively in the dashboard's <strong>Inception (spek)</strong> section, a shared CLI-agent session; the old <code>/api/inception</code> workflow was retired and now answers 410 Gone. The <strong>brainstorm</strong> agent proposes ideas as advisory beads. At L2 the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
           <p>The job at L2 is not to fix everything in the ledger. It is to decide whether you believe the hive's judgement: point your own local agent — <code>claude</code>, <code>bob</code>, or <code>copilot</code> — at the 🐝 Hive Advisory Report and ask whether the findings hold up before you give Hive more authority.</p>
         </details>
 
@@ -38173,6 +38195,307 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       </div>`;
     }
 
+    // Searchable, grouped model picker for gateways with large catalogs
+    // (OpenRouter lists ~470 models). A combobox: type to filter, options are
+    // grouped by provider prefix (z-ai/, deepseek/, anthropic/, …), curated
+    // suggestions are pinned on top, and each option shows its price per 1M
+    // input/output tokens and context window when the catalog publishes them.
+    // The typed text IS the value, so a model the catalog does not list yet is
+    // always enterable ("Custom…"). ARIA: input[role=combobox] owning a
+    // ul[role=listbox]; ArrowUp/ArrowDown move, Enter picks, Escape closes.
+    // The helpers above modelComboboxHtml are pure (no DOM) so node tests can
+    // run them.
+
+    // Below this many options a plain <select> stays simpler to use.
+    const MODEL_COMBOBOX_MIN_OPTIONS = 20;
+    const MODEL_TOKENS_PER_MILLION = 1000000;
+    const MODEL_CTX_MILLION = 1000000;
+    const MODEL_CTX_THOUSAND = 1000;
+    // Prices under this many dollars per 1M get extra significant digits so
+    // $0.0042 does not render as $0.00.
+    const MODEL_PRICE_SMALL_USD = 0.1;
+    const MODEL_PRICE_SIG_DIGITS = 2;
+    const MODEL_PRICE_FIXED_DIGITS = 2;
+    const MODEL_GROUP_OTHER = 'other';
+    const MODEL_GROUP_SUGGESTED = 'Suggested';
+
+    // modelProviderOf returns the provider prefix of a namespaced id
+    // ("z-ai/glm-5.3" → "z-ai"); '' for a bare id. A leading "~" (OpenRouter's
+    // "-latest" aliases) is ignored so ~anthropic/... groups with anthropic.
+    function modelProviderOf(id) {
+      const s = String(id || '').replace(/^~/, '');
+      const i = s.indexOf('/');
+      return i > 0 ? s.slice(0, i) : '';
+    }
+
+    // modelInfoIndex turns a model_info array into an id → info map.
+    function modelInfoIndex(info) {
+      const idx = {};
+      (Array.isArray(info) ? info : []).forEach(m => { if (m && m.id) idx[m.id] = m; });
+      return idx;
+    }
+
+    // formatModelPricePerM renders a per-token USD price as dollars per 1M
+    // tokens; '' when unknown. Zero is a real price ("$0", free models).
+    function formatModelPricePerM(perToken) {
+      if (perToken === null || perToken === undefined || perToken === '') return '';
+      const v = Number(perToken) * MODEL_TOKENS_PER_MILLION;
+      if (!Number.isFinite(v) || v < 0) return '';
+      if (v === 0) return '$0';
+      if (v < MODEL_PRICE_SMALL_USD) return '$' + Number(v.toPrecision(MODEL_PRICE_SIG_DIGITS));
+      return '$' + v.toFixed(MODEL_PRICE_FIXED_DIGITS);
+    }
+
+    // formatModelContext renders a context window ("1M ctx", "200K ctx").
+    function formatModelContext(n) {
+      const v = Number(n);
+      if (!Number.isFinite(v) || v <= 0) return '';
+      if (v >= MODEL_CTX_MILLION) return Number((v / MODEL_CTX_MILLION).toFixed(1)) + 'M ctx';
+      return Math.round(v / MODEL_CTX_THOUSAND) + 'K ctx';
+    }
+
+    // modelPriceLabel is the right-hand detail of an option: price per 1M
+    // input / output tokens (and cached input when published) plus context.
+    // A model with no published price says so instead of looking free.
+    function modelPriceLabel(info) {
+      if (!info) return '';
+      const p = info.pricing || {};
+      const parts = [];
+      const inP = formatModelPricePerM(p.prompt);
+      const outP = formatModelPricePerM(p.completion);
+      if (inP && outP) {
+        const cached = formatModelPricePerM(p.input_cache_read);
+        parts.push(inP + ' in · ' + outP + ' out /1M' + (cached ? ' · ' + cached + ' cached' : ''));
+      } else {
+        parts.push('price unknown');
+      }
+      const ctx = formatModelContext(info.context_length);
+      if (ctx) parts.push(ctx);
+      return parts.join(' · ');
+    }
+
+    // filterModelOptions keeps ids whose id or display name contains EVERY
+    // whitespace-separated term of query (case-insensitive). An empty query
+    // keeps everything.
+    function filterModelOptions(ids, query, infoIdx) {
+      const terms = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+      const list = Array.isArray(ids) ? ids : [];
+      if (!terms.length) return list.slice();
+      const idx = infoIdx || {};
+      return list.filter(id => {
+        const hay = (String(id) + ' ' + ((idx[id] && idx[id].name) || '')).toLowerCase();
+        return terms.every(t => hay.indexOf(t) !== -1);
+      });
+    }
+
+    // groupModelOptions buckets ids by provider prefix, groups sorted by name
+    // and ids kept in their given order; bare ids land in "other", last.
+    // Suggested ids (when given and present) form a first "Suggested" group
+    // and are not repeated below.
+    function groupModelOptions(ids, suggested) {
+      const list = Array.isArray(ids) ? ids : [];
+      const present = new Set(list);
+      const pinned = (Array.isArray(suggested) ? suggested : [])
+        .map(s => (s && typeof s === 'object') ? s.id : s)
+        .filter(id => id && present.has(id));
+      const pinnedSet = new Set(pinned);
+      const byProvider = {};
+      list.forEach(id => {
+        if (pinnedSet.has(id)) return;
+        const prov = modelProviderOf(id) || MODEL_GROUP_OTHER;
+        (byProvider[prov] = byProvider[prov] || []).push(id);
+      });
+      const names = Object.keys(byProvider).sort((a, b) => {
+        if (a === MODEL_GROUP_OTHER) return 1;
+        if (b === MODEL_GROUP_OTHER) return -1;
+        return a.localeCompare(b);
+      });
+      const groups = names.map(name => ({ provider: name, ids: byProvider[name] }));
+      if (pinned.length) groups.unshift({ provider: MODEL_GROUP_SUGGESTED, ids: pinned, suggested: true });
+      return groups;
+    }
+
+    // In-page state per combobox: its full id list, info index and
+    // suggestions, so typing re-filters without another fetch.
+    const _modelCombos = {};
+
+    function _modelComboOptionId(comboId, i) { return comboId + '-opt-' + i; }
+
+    // modelComboListHtml renders the listbox body for a query: grouped
+    // options, then a custom entry for the typed text when it is not an exact
+    // catalog id. Options carry data-value; the active one is aria-selected.
+    function modelComboListHtml(comboId, query) {
+      const st = _modelCombos[comboId] || { ids: [], info: {}, suggested: [] };
+      const labels = {};
+      (st.suggested || []).forEach(s => { if (s && s.id) labels[s.id] = s.label; });
+      const matches = filterModelOptions(st.ids, query, st.info);
+      const groups = groupModelOptions(matches, query ? [] : st.suggested);
+      let n = 0;
+      let html = '';
+      groups.forEach(g => {
+        html += `<li role="presentation" class="model-combo-group">${esc(g.provider)}</li>`;
+        g.ids.forEach(id => {
+          const detail = modelPriceLabel(st.info[id]);
+          const name = labels[id] || id;
+          html += `<li role="option" id="${esc(_modelComboOptionId(comboId, n))}" tabindex="-1" class="model-combo-option" aria-selected="false" data-value="${esc(id)}" data-action="modelComboPick" data-arg0="${esc(comboId)}" data-arg1="${esc(id)}">`
+            + `<span class="model-combo-name">${esc(name)}</span>`
+            + (detail ? `<span class="model-combo-detail">${esc(detail)}</span>` : '')
+            + '</li>';
+          n++;
+        });
+      });
+      const typed = String(query || '').trim();
+      const exact = typed && st.ids.indexOf(typed) !== -1;
+      const customText = typed && !exact ? `Use “${typed}” as a custom model id` : 'Custom… (type any model id)';
+      html += `<li role="option" id="${esc(_modelComboOptionId(comboId, n))}" tabindex="-1" class="model-combo-option model-combo-custom" aria-selected="false" data-value="${esc(typed && !exact ? typed : '')}" data-custom="1" data-action="modelComboPick" data-arg0="${esc(comboId)}" data-arg1="${esc(typed && !exact ? typed : '')}">${esc(customText)}</li>`;
+      if (!matches.length && typed) {
+        html = `<li role="presentation" class="model-combo-empty">No catalog model matches “${esc(typed)}”.</li>` + html;
+      }
+      return html;
+    }
+
+    // modelComboboxHtml renders the combobox and records its data. opts:
+    // { id, ids, info (model_info array), suggested ([{id,label}]), current,
+    //   placeholder, inputId, label }.
+    function modelComboboxHtml(opts) {
+      const o = opts || {};
+      const comboId = o.id;
+      _modelCombos[comboId] = {
+        ids: Array.isArray(o.ids) ? o.ids.slice() : [],
+        info: modelInfoIndex(o.info),
+        suggested: Array.isArray(o.suggested) ? o.suggested : [],
+      };
+      const listId = comboId + '-list';
+      const inputId = o.inputId || (comboId + '-input');
+      const cur = o.current || '';
+      const curDetail = modelPriceLabel(_modelCombos[comboId].info[cur]);
+      return `<div class="model-combo" data-model-combo="${esc(comboId)}">`
+        + `<input type="text" id="${esc(inputId)}" class="model-combo-input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${esc(listId)}"`
+        + (o.label ? ` aria-label="${esc(o.label)}"` : '')
+        + ` autocomplete="off" spellcheck="false" value="${esc(cur)}" placeholder="${esc(o.placeholder || 'Search models or type an id…')}"`
+        + ` data-model-combo-input="${esc(comboId)}" data-input-action="modelComboInput" data-keydown-action="modelComboKeydown" data-keys="*" data-arg0="${esc(comboId)}" data-arg-types="s,e"`
+        + ` data-action="modelComboOpen">`
+        + `<ul id="${esc(listId)}" class="model-combo-list" role="listbox" hidden></ul>`
+        + `<div class="model-combo-current" data-model-combo-detail="${esc(comboId)}">${esc(curDetail)}</div>`
+        + '</div>';
+    }
+
+    function _modelComboEls(comboId) {
+      const root = document.querySelector(`[data-model-combo="${CSS.escape(comboId)}"]`);
+      if (!root) return null;
+      return { root, input: root.querySelector('[role="combobox"]'), list: root.querySelector('[role="listbox"]'), detail: root.querySelector('[data-model-combo-detail]') };
+    }
+
+    function _modelComboSetOpen(els, open) {
+      els.list.hidden = !open;
+      els.input.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (!open) els.input.removeAttribute('aria-activedescendant');
+    }
+
+    function _modelComboRender(comboId, query) {
+      const els = _modelComboEls(comboId);
+      if (!els) return null;
+      els.list.innerHTML = modelComboListHtml(comboId, query);
+      _modelComboSetOpen(els, true);
+      return els;
+    }
+
+    // modelComboOpen opens the full (unfiltered) list on click.
+    function modelComboOpen(comboId) {
+      if (comboId) _modelComboRender(comboId, '');
+    }
+
+    function modelComboInput(comboId) {
+      const els = _modelComboEls(comboId);
+      if (!els) return;
+      _modelComboRender(comboId, els.input.value);
+      _modelComboUpdateDetail(comboId);
+    }
+
+    function _modelComboUpdateDetail(comboId) {
+      const els = _modelComboEls(comboId);
+      const st = _modelCombos[comboId];
+      if (!els || !st || !els.detail) return;
+      els.detail.textContent = modelPriceLabel(st.info[els.input.value.trim()]);
+    }
+
+    function _modelComboMove(els, delta) {
+      const opts = Array.from(els.list.querySelectorAll('[role="option"]'));
+      if (!opts.length) return;
+      let i = opts.findIndex(o => o.getAttribute('aria-selected') === 'true');
+      if (i >= 0) opts[i].setAttribute('aria-selected', 'false');
+      i = i < 0 ? (delta > 0 ? 0 : opts.length - 1) : (i + delta + opts.length) % opts.length;
+      opts[i].setAttribute('aria-selected', 'true');
+      els.input.setAttribute('aria-activedescendant', opts[i].id);
+      if (opts[i].scrollIntoView) opts[i].scrollIntoView({ block: 'nearest' });
+    }
+
+    function modelComboKeydown(comboId, e) {
+      const els = _modelComboEls(comboId);
+      if (!els || !e) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (els.list.hidden) _modelComboRender(comboId, els.input.value);
+        _modelComboMove(els, e.key === 'ArrowDown' ? 1 : -1);
+      } else if (e.key === 'Enter') {
+        if (els.list.hidden) return;
+        e.preventDefault();
+        const active = els.list.querySelector('[role="option"][aria-selected="true"]');
+        modelComboPick(comboId, active ? active.dataset.value : els.input.value.trim());
+      } else if (e.key === 'Escape') {
+        if (!els.list.hidden) { e.preventDefault(); e.stopPropagation(); _modelComboSetOpen(els, false); }
+      }
+    }
+
+    // modelComboPick commits a value (a catalog id or typed custom text). An
+    // empty custom pick clears the field and keeps focus for typing.
+    function modelComboPick(comboId, value) {
+      const els = _modelComboEls(comboId);
+      if (!els) return;
+      const v = String(value || '').trim();
+      if (!v) {
+        els.input.value = '';
+        els.input.focus();
+        _modelComboRender(comboId, '');
+        return;
+      }
+      els.input.value = v;
+      _modelComboSetOpen(els, false);
+      _modelComboUpdateDetail(comboId);
+      els.input.dispatchEvent(new Event('change', { bubbles: true }));
+      els.input.focus();
+    }
+
+    // modelComboValue reads a combobox's committed text ('' when absent).
+    function modelComboValue(comboId) {
+      const els = _modelComboEls(comboId);
+      return els ? els.input.value.trim() : '';
+    }
+
+    // Close an open list when focus leaves the combobox entirely (options are
+    // tabindex=-1, so clicking one keeps focus inside and the pick lands).
+    document.addEventListener('focusout', (e) => {
+      const root = e.target && e.target.closest ? e.target.closest('[data-model-combo]') : null;
+      if (!root || (e.relatedTarget && root.contains(e.relatedTarget))) return;
+      const input = root.querySelector('[role="combobox"]');
+      const list = root.querySelector('[role="listbox"]');
+      if (input && list) _modelComboSetOpen({ input, list }, false);
+    });
+
+    // shouldGroupModelOptions: a native <select> (the per-agent model pickers,
+    // which other code drives by value) gets <optgroup>s by provider once the
+    // list is large and spans more than one provider.
+    function shouldGroupModelOptions(values) {
+      const list = Array.isArray(values) ? values : [];
+      return list.length >= MODEL_COMBOBOX_MIN_OPTIONS && new Set(list.map(modelProviderOf)).size > 1;
+    }
+
+    // modelOptgroupsHtml renders values as provider <optgroup>s, each option
+    // produced by render(value) so callers keep their own selected/label logic.
+    function modelOptgroupsHtml(values, render) {
+      return groupModelOptions(values).map(g =>
+        `<optgroup label="${esc(g.provider)}">${g.ids.map(render).join('')}</optgroup>`).join('');
+    }
     // ── Centralized backend/model config (mirrors backends.conf) ──────────
     // 'openrouter' is a first-class inference method (an OpenAI-compatible gateway
     // preset), so it appears in every backend/method picker even before a matching
@@ -38511,10 +38834,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // consistent "<value> ▾" look across both dropdown buttons.
         return `<option value="${esc(m.value)}"${sel ? ' selected' : ''}>${esc(m.label)}${sel ? ' ▾' : ''}</option>`;
       });
-      if (cur && !matched) {
-        opts.unshift(`<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())} (current) ▾</option>`);
+      // Large gateway catalogs (OpenRouter) group by provider so ~hundreds
+      // of ids stay scannable; the option values and selection are unchanged.
+      let body = opts.join('');
+      if (typeof shouldGroupModelOptions === 'function' && shouldGroupModelOptions(models.map(m => m.value))) {
+        const byValue = {};
+        models.forEach((m, i) => { if (!(m.value in byValue)) byValue[m.value] = opts[i]; });
+        body = modelOptgroupsHtml(Object.keys(byValue), v => byValue[v]);
       }
-      return opts.join('');
+      if (cur && !matched) {
+        body = `<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())} (current) ▾</option>` + body;
+      }
+      return body;
     }
     async function fetchInferenceModels(backend, force) {
       const now = Date.now();
@@ -38551,6 +38882,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // none; entitledModels: the FULL set the gateway's team may use, so
           // a stored model outside it can be flagged (#9945).
           defaultModel: data.default_model || '',
+          // modelInfo: id → {name, context_length, pricing} for OpenRouter
+          // gateways (prices per token), so pickers can show $/1M.
+          modelInfo: (typeof modelInfoIndex === 'function') ? modelInfoIndex(data.model_info) : {},
           entitledModels: Array.isArray(data.entitled_models) ? data.entitled_models : null,
         };
         // A real (non-fallback) discovery may have changed the entitlement-
@@ -39802,6 +40136,11 @@ function burnAreaChart() {
       const est = cost.estimated || { total_usd: 0, by_model: [], by_agent: [], unpriced_models: [] };
       const gateways = cost.gateways || [];
       const isTierEstimated = (row) => row && (row.source === 'unpriced' || row.source === 'estimated_tier');
+      // source "unknown": a gateway model with no published or configured
+      // price. Its tokens are not in the total, so the cell says so instead
+      // of showing $0.
+      const isPriceUnknown = (row) => row && row.source === 'unknown';
+      const priceUnknownCell = (row) => `<span class="cost-price-unknown" title="This gateway publishes no price for this model and none is configured (prices: on the gateway). Not counted in the total.">price unknown${row && row.usd > 0 ? ' (+' + fmtUSD(row.usd) + ' priced)' : ''}</span>`;
       const usageWindow = estimatedUsageWindowLabel(est);
 
       // Native gateway cards (OpenRouter / LiteLLM real spend).
@@ -39874,7 +40213,7 @@ function burnAreaChart() {
       }), 'model', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
       const modelRows = models.map(m => {
         const approx = isTierEstimated(m);
-        const usdCell = approx
+        const usdCell = isPriceUnknown(m) ? priceUnknownCell(m) : approx
           ? `<span title="unknown exact price — tier estimate, not billed spend">~${fmtUSD(m.usd)}</span>`
           : fmtUSD(m.usd);
         const users = m._users || [];
@@ -39890,9 +40229,11 @@ function burnAreaChart() {
         </tr>`;
       }).join('');
 
-      const unpricedNote = (est.unpriced_models && est.unpriced_models.length)
+      const unpricedNote = ((est.unpriced_models && est.unpriced_models.length)
         ? `<div class="cost-disclaimer">Tier-estimated (no exact list price, marked ~ and included in the total): ${est.unpriced_models.map(esc).join(', ')}.</div>`
-        : '';
+        : '') + ((est.unknown_price_models && est.unknown_price_models.length)
+        ? `<div class="cost-disclaimer">Price unknown (gateway models with no published or configured price; NOT in the total, which is therefore a floor): ${est.unknown_price_models.map(esc).join(', ')}. Add <code>prices:</code> to the gateway in hive.yaml to cost them.</div>`
+        : '');
 
       // ── Per-sandbox (per-agent) estimated cost ──
       // In hive each agent runs in its own sandbox, so "usage by sandbox" is the
@@ -39900,7 +40241,7 @@ function burnAreaChart() {
       const bySandbox = sortCostRows(est.by_agent || [], 'sandbox', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
       const sandboxRows = bySandbox.map(a => {
         const approx = isTierEstimated(a);
-        const usdCell = approx
+        const usdCell = isPriceUnknown(a) ? priceUnknownCell(a) : approx
           ? `<span title="unknown exact price — tier estimate for this sandbox's model">~${fmtUSD(a.usd)}</span>`
           : fmtUSD(a.usd);
         return `<tr>
@@ -39933,7 +40274,7 @@ function burnAreaChart() {
       };
       const sessionRows = bySession.map(sn => {
         const approx = isTierEstimated(sn);
-        const usdCell = approx
+        const usdCell = isPriceUnknown(sn) ? priceUnknownCell(sn) : approx
           ? `<span title="unknown exact price — tier estimate for this model">~${fmtUSD(sn.usd)}</span>`
           : fmtUSD(sn.usd);
         // "started → ended" in local time; a still-active session (latest event
@@ -47399,7 +47740,7 @@ function burnAreaChart() {
     // dibs happens inside the hive via POST /api/inbox/route.
     const INBOX_POLL_MS = 60000;
     const INBOX_BUSY_POLL_MS = 5000;
-    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗', 'hive-recording': '⏺️', upload: '📎' };
+    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗', 'hive-recording': '⏺️', upload: '📎', email: '✉️' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
     // Summaries longer than this many characters start collapsed.
     const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
@@ -47434,8 +47775,17 @@ function burnAreaChart() {
     let _inboxPointerInside = false;
 
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
-    // Uploaded documents have no audio; uploaded audio/video does.
-    function inboxItemHasAudio(it) { return !it || it.source !== 'upload' || it.upload_kind === 'audio' || it.upload_kind === 'video'; }
+    // Uploaded documents have no audio; uploaded audio/video does. Mailed-in
+    // audio (source email) is opened as a file, not streamed.
+    function inboxItemHasAudio(it) { return !it || (it.source !== 'upload' && it.source !== 'email') || (it.source === 'upload' && (it.upload_kind === 'audio' || it.upload_kind === 'video')); }
+    // Mailed-in files (source email) are opened from the hive itself: GET /api/inbox/email/{id}/file.
+    function inboxEmailFileUrl(it) { return '/api/inbox/email/' + encodeURIComponent(it.id) + '/file'; }
+    // The role is known once /api/role settled (answered, or retries gave up:
+    // then it is undefined and every gate treats the viewer as read-only).
+    // Before that the Inbox renders a neutral loading state, never a guessed 'read'.
+    function inboxRoleKnown() { return window._hiveRoleSettled === true || window._hiveRole !== undefined; }
+    function inboxOnRoleReady() { if (_inboxCache) renderInbox(); }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(inboxOnRoleReady);
     function inboxItemKey(it) { return it.source + '/' + it.id; }
     // Playback is a read of private audio: owners and read-write sessions.
     function inboxViewerCanPlay() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
@@ -47521,6 +47871,7 @@ function burnAreaChart() {
         const meetingLabel = { zoom: 'Zoom', teams: 'Teams', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', 'fireflies': 'Fireflies', 'fathom': 'Fathom', 'limitless': 'Limitless', 'granola': 'Granola', 'otter': 'Otter' }[it.source];
         if (meetingLabel) return '<div class="inbox-pending muted-xs" title="The platform reports no transcript or summary for this recording yet">Not transcribed yet: ' + meetingLabel + ' has no transcript or summary for this recording (cloud transcription may still be processing or is disabled); the hive re-checks it on every sync.' + tx + '</div>';
         if (it.source === 'hive-recording') return '<div class="inbox-pending muted-xs" title="Recorded in this hive\'s dashboard; no transcript yet">Not transcribed yet: recorded in this hive.' + (it.transcribe_unavailable === 'disabled' ? ' Transcription is off on this hive, so it is transcribed once an owner enables it in Inbox ⚙ → Transcription.' : tx) + '</div>';
+        if (it.source === 'upload') return '<div class="inbox-pending muted-xs" title="Added to the Inbox as audio; it has no text until it is transcribed">Not transcribed yet: this audio was added to the Inbox without text.' + tx + '</div>';
         if (it.source === 'discord') return '<div class="inbox-pending muted-xs" title="Discord has no transcripts; none was posted with this recording">Not transcribed yet: Discord has no built-in transcription and no transcript file was posted with this recording; play it here, or post a .vtt/.txt transcript in the same message. The hive re-checks it on every sync.' + tx + '</div>';
         return '<div class="inbox-pending muted-xs" title="The MCP reports no transcript or summary block for this recording">Not transcribed yet in Plaud: Plaud has not transcribed this recording (open it in the Plaud app and run transcription); the hive re-checks it on every sync.' + tx + '</div>';
       }
@@ -47534,7 +47885,7 @@ function burnAreaChart() {
       if (!c) return '<div class="inbox-transcript muted-xs">Loading transcript…</div>';
       if (c.error) return '<div class="inbox-transcript kc-error muted-xs">' + escapeHtml(c.error) + '</div>';
       // A dropped document's text is the markdown the hive extracted.
-      if (it.source === 'upload' && !c.transcript) return '<div class="inbox-transcript"><div class="muted-xs"><strong>Extracted text</strong></div><pre class="inbox-transcript-text">' + escapeHtml(c.markdown || '') + '</pre></div>';
+      if (it.source === 'upload' && !inboxItemHasAudio(it) && !c.transcript) return '<div class="inbox-transcript"><div class="muted-xs"><strong>Extracted text</strong></div><pre class="inbox-transcript-text">' + escapeHtml(c.markdown || '') + '</pre></div>';
       let html = '<div class="inbox-transcript">';
       if (c.transcript && c.transcript_label) html += '<div class="muted-xs"><strong>' + escapeHtml(c.transcript_label) + '</strong></div>';
       if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
@@ -47712,6 +48063,70 @@ function burnAreaChart() {
       await fetchInbox();
     }
 
+    // Share history pills: one per share record, in the form
+    // "→ RFC #18412 · andy · 2m ago". They are status, not controls: a plain
+    // link to the target when there is one (never for read-only viewers),
+    // otherwise a span. Only the latest record per destination shows; "+N"
+    // expands the rest.
+    const _inboxHistoryOpen = new Set();
+    const INBOX_SHARE_LABELS = { rfc: 'RFC', dibs: 'DIBS', knowledge: 'Knowledge', spek: 'spek' };
+    function inboxSharePillText(rec) {
+      const dest = rec.destination;
+      const ref = rec.ref || {};
+      let label = '→ ' + (INBOX_SHARE_LABELS[dest] || dest);
+      if (dest === 'rfc' && ref.number) label += ' #' + ref.number;
+      if (dest === 'spek' && ref.name) label += ': ' + ref.name;
+      const busy = rec.status === 'queued' || rec.status === 'transcribing' || rec.status === 'in_progress';
+      if (rec.status === 'failed') label += ' failed';
+      else if (rec.status === 'transcribing') label += ' (transcribing)';
+      else if (busy) label += ' …';
+      const when = rec.started_at && !String(rec.started_at).startsWith('0001') ? relativeTimeShort(rec.started_at) : '';
+      return label + ' · ' + (rec.actor || 'unknown') + (when ? ' · ' + when : '');
+    }
+    // inboxShareTargetHref returns the link target of a record, or '' when
+    // it has none or the viewer may not open it.
+    function inboxShareTargetHref(rec, canOpen) {
+      const ref = rec.ref || {};
+      if (!canOpen) return '';
+      if ((rec.destination === 'rfc' || rec.destination === 'dibs') && /^https?:\/\//.test(ref.url || '')) return ref.url;
+      if (rec.destination === 'spek' && ref.id) return '#section-sessions-section?session=' + encodeURIComponent(ref.id);
+      return '';
+    }
+    function inboxSharePillHtml(rec, it) {
+      const busy = rec.status === 'queued' || rec.status === 'transcribing' || rec.status === 'in_progress';
+      const status = rec.status === 'failed' ? 'error' : (rec.status === 'done' ? 'ok' : 'syncing');
+      const stamp = rec.finished_at || rec.started_at;
+      const title = (rec.status === 'failed' && rec.reason ? rec.reason + ' · ' : (rec.reason && busy ? rec.reason + ' · ' : '')) + (stamp ? formatDashboardDateTime(stamp) : '');
+      const inner = (busy ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> ' : '') + escapeHtml(inboxSharePillText(rec));
+      const attrs = ' class="kc-pill inbox-share-pill" data-status="' + status + '" data-share-dest="' + escapeHtml(rec.destination) + '" title="' + escapeHtml(title) + '"';
+      const canOpen = inboxViewerCanPlay();
+      const href = inboxShareTargetHref(rec, canOpen);
+      if (href) return '<a' + attrs + ' href="' + escapeHtml(href) + '"' + (/^https?:/.test(href) ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + inner + '</a>';
+      if (canOpen && rec.destination === 'knowledge' && (rec.ref || {}).id && it && it.fact_slug) {
+        return '<a' + attrs + ' href="#" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '">' + inner + '</a>';
+      }
+      return '<span' + attrs + '>' + inner + '</span>';
+    }
+    function inboxSharePillsHtml(it, key) {
+      const hist = (it && it.share_history) || [];
+      if (!hist.length) return '';
+      const open = _inboxHistoryOpen.has(key);
+      const latest = {};
+      hist.forEach(r => { latest[r.destination] = r; });
+      const shown = hist.filter(r => open || latest[r.destination] === r);
+      const hidden = hist.length - shown.length;
+      let html = shown.map(r => inboxSharePillHtml(r, it)).join(' ');
+      if (hidden > 0 || (open && hist.length > Object.keys(latest).length)) {
+        html += ' <a href="#" class="muted-xs inbox-share-more" data-action="inboxToggleHistory" data-prevent="1" data-arg0="' + escapeHtml(it.source) + '" data-arg1="' + escapeHtml(it.id) + '" aria-expanded="' + (open ? 'true' : 'false') + '" title="' + (open ? 'Show only the latest share per destination' : 'Show the full share history') + '">' + (open ? 'less' : '+' + hidden) + '</a>';
+      }
+      return html;
+    }
+    function inboxToggleHistory(src, id) {
+      const key = src + '/' + id;
+      if (_inboxHistoryOpen.has(key)) _inboxHistoryOpen.delete(key); else _inboxHistoryOpen.add(key);
+      renderInbox();
+    }
+
     function inboxItemHtml(it) {
       const key = inboxItemKey(it);
       const checked = _inboxSelected.has(key) ? ' checked' : '';
@@ -47724,11 +48139,15 @@ function burnAreaChart() {
       // added them ("upload · notes.md · added 2h ago by ana").
       const meta = it.source === 'upload'
         ? [escapeHtml(it.origin || 'upload'), when ? 'added ' + when : '', it.added_by ? 'by ' + escapeHtml(it.added_by) : '', dur, factLink].filter(Boolean).join(' · ')
-        : [escapeHtml(it.source), when ? 'recorded ' + when : '', it.recorded_by ? 'by ' + escapeHtml(it.recorded_by) : '', dur, factLink].filter(Boolean).join(' · ');
+        : it.source === 'email'
+          ? ['email', it.sender ? 'from ' + escapeHtml(it.sender) : '', when ? 'received ' + when : '', escapeHtml(it.upload_kind || '')].filter(Boolean).join(' · ')
+          : [escapeHtml(it.source), when ? 'recorded ' + when : '', it.recorded_by ? 'by ' + escapeHtml(it.recorded_by) : '', dur, factLink].filter(Boolean).join(' · ');
       const routes = it.routes || {};
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
       if (it.dismissed) pills += '<span class="kc-pill" title="Kept as a Knowledge fact only">knowledge only</span>';
+      if (it.awaiting_approval) pills += '<span class="kc-pill" data-status="warn" title="Mailed in by a sender outside this hive\'s allowlist: it cannot be shared or transcribed until the owner approves it">awaiting approval</span> ';
+      pills += inboxSharePillsHtml(it, key);
       for (const d of Object.keys(it.share_intents || {})) {
         const si = it.share_intents[d];
         if (si && si.status === 'failed') pills += '<span class="kc-pill" data-status="error" title="' + escapeHtml(si.error || '') + '">→ ' + escapeHtml(inboxIntentLabel(d)) + ' failed</span> <span class="kc-error muted-xs" role="alert">' + escapeHtml(si.error || '') + '</span> ';
@@ -47740,7 +48159,13 @@ function burnAreaChart() {
       if (it.audio_expired) actions += '<span class="muted-xs inbox-audio-expired" title="The raw audio was deleted by retention; the transcript and the Knowledge fact are kept">audio expired (kept ' + (Number(it.audio_retention_days) || 5) + ' days)</span>';
       else if (inboxViewerCanPlay() && inboxItemHasAudio(it)) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + (it.source === 'upload' && !inboxItemHasAudio(it) ? ' Text' : ' Transcript') + '</button>';
-      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
+      if (it.source === 'email' && inboxViewerCanPlay()) actions += '<a class="hv-btn btn-secondary btn-sm" href="' + escapeHtml(inboxEmailFileUrl(it)) + '" target="_blank" rel="noopener noreferrer" title="Open the mailed-in file">📎 Open file</a>';
+      if (it.awaiting_approval) {
+        if (owner) actions += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxEmailApprove" data-arg0="' + id + '" title="Let this mailed-in item be shared and transcribed like any other">✓ Approve</button>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxEmailDecline" data-arg0="' + id + '" title="Delete this mailed-in item">✕ Decline</button>';
+      } else {
+        actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
+      }
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
         (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
@@ -47748,6 +48173,7 @@ function burnAreaChart() {
         '<div class="muted-xs">' + meta + '</div>' +
         inboxSummaryHtml(it, key) +
         '<div class="inbox-media" data-inbox-media="' + escapeHtml(key) + '"></div>' +
+        (it.source === 'email' && it.upload_kind === 'image' && inboxViewerCanPlay() ? '<img class="inbox-email-image" loading="lazy" src="' + escapeHtml(inboxEmailFileUrl(it)) + '" alt="' + escapeHtml(it.title || 'mailed-in image') + '">' : '') +
         (pills ? '<div class="inbox-pills">' + pills + '</div>' : '') +
         inboxTranscriptionHtml(it, key) +
         '<div class="kc-actions mt-2">' + actions + '</div>' +
@@ -48030,7 +48456,7 @@ function burnAreaChart() {
       const badge = document.getElementById('inbox-sidebar-badge');
       const data = _inboxCache;
       if (!panel) return;
-      if (!data) { panel.innerHTML = '<div class="muted-note">Loading inbox…</div>'; return; }
+      if (!data || !inboxRoleKnown()) { panel.innerHTML = '<div class="muted-note">Loading inbox…</div>'; return; }
       const items = data.items || [];
       const unprocessed = Number(data.unprocessed) || 0;
       if (badge) setSidebarCountBadge(badge, unprocessed, unprocessed + ' unprocessed');
@@ -48053,6 +48479,7 @@ function burnAreaChart() {
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
+      if (window._hiveRoleFailed && !window._hiveRole) html += '<div class="muted-xs">Could not determine your role, so actions are read-only. It will retry automatically.</div>';
       if (inboxCanAdd()) html += inboxAddPanelHtml() + inboxUploadsHtml();
       if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
       if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
@@ -48092,6 +48519,21 @@ function burnAreaChart() {
       if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
       return data;
     }
+    // Approval queue for mailed-in files from outside the allowlist (#18395).
+    async function inboxEmailAct(id, action) {
+      try {
+        const r = await fetch('/api/inbox/email/' + encodeURIComponent(id) + '/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        showToast(action === 'approve' ? 'Approved' : 'Declined and deleted', 'success');
+      } catch (e) {
+        showToast('Could not ' + action + ': ' + e.message, 'error');
+      }
+      await fetchInbox();
+    }
+    function inboxEmailApprove(id) { return inboxEmailAct(id, 'approve'); }
+    function inboxEmailDecline(id) { return inboxEmailAct(id, 'decline'); }
+
     async function inboxDismiss(src, id) {
       try { const d = await inboxPostDismiss([{ source: src, item_id: id }], false); showToast(d && d.waiting_transcript ? 'Transcribing, then → Knowledge' : 'Kept as a Knowledge fact only', 'success'); await fetchInbox(); }
       catch (e) { showToast('Dismiss failed: ' + e.message, 'error'); }
@@ -48570,13 +49012,17 @@ function burnAreaChart() {
     // decides from the content.
     function inboxUploadPlan(files, limits) {
       const maxFiles = Number(limits.max_files_per_drop) || 0;
-      const maxBytes = Number(limits.max_file_bytes) || 0;
-      const exts = Array.isArray(limits.extensions) ? limits.extensions : [];
+      const maxDoc = Number(limits.max_file_bytes) || 0;
+      // Audio and video use the recording cap (max_media_bytes).
+      const media = Array.isArray(limits.media_extensions) ? limits.media_extensions : [];
+      const maxMedia = Number(limits.max_media_bytes) || maxDoc;
+      const exts = (Array.isArray(limits.extensions) ? limits.extensions : []).concat(media);
       return Array.from(files || []).map((f, i) => {
         const name = (f && f.name) || 'pasted file';
         const row = { name, size: Number(f && f.size) || 0, file: f, status: 'queued', progress: 0 };
         const dot = name.lastIndexOf('.');
         const ext = dot > 0 ? name.slice(dot).toLowerCase() : '';
+        const maxBytes = media.indexOf(ext) >= 0 ? maxMedia : maxDoc;
         if (maxFiles && i >= maxFiles) { row.status = 'error'; row.code = 'too_many_files'; row.error = 'Too many files in one drop: at most ' + maxFiles + ' at a time.'; }
         else if (!row.size) { row.status = 'error'; row.code = 'empty'; row.error = 'The file is empty.'; }
         else if (maxBytes && row.size > maxBytes) { row.status = 'error'; row.code = 'too_large'; row.error = 'Too large: ' + inboxFmtBytes(row.size) + ' (the limit is ' + inboxFmtBytes(maxBytes) + ').'; }
@@ -48606,8 +49052,8 @@ function burnAreaChart() {
     function inboxAddPanelHtml() {
       if (!_inboxAddOpen) return '';
       const u = inboxUploadSettings();
-      const exts = Array.isArray(u.extensions) ? u.extensions : [];
-      const limit = (u.max_files_per_drop ? 'up to ' + u.max_files_per_drop + ' files' : 'several files') + (u.max_file_bytes ? ' of ' + inboxFmtBytes(u.max_file_bytes) + ' each' : '');
+      const exts = (Array.isArray(u.extensions) ? u.extensions : []).concat(Array.isArray(u.media_extensions) ? u.media_extensions : []);
+      const limit = (u.max_files_per_drop ? 'up to ' + u.max_files_per_drop + ' files' : 'several files') + (u.max_file_bytes ? ' of ' + inboxFmtBytes(u.max_file_bytes) + ' each' : '') + (u.max_media_bytes ? ' (audio and video up to ' + inboxFmtBytes(u.max_media_bytes) + ', transcribed when transcription is on)' : '');
       return '<div class="inbox-add" id="inbox-add" role="group" aria-label="Add files to the Inbox">' +
         '<p class="muted-xs m-0">Drop files anywhere on the Inbox, paste them with Ctrl/Cmd+V, or choose them here: ' + escapeHtml(limit) + '. Supported: ' + escapeHtml(exts.join(' ')) + '. Files stay on this hive; their text reaches an LLM only when you share the item.</p>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxChooseFiles">Choose files…</button>' +
@@ -48864,7 +49310,7 @@ function burnAreaChart() {
       ];
       if (o.tab) parts.push('Including tab audio captures the remote participants of that meeting too: they must have been told that you are recording.');
       parts.push('The raw audio is kept on this hive for ' + days + ' day' + (days === 1 ? '' : 's') + ' and then deleted; its transcript and Knowledge fact are kept.');
-      parts.push(o.transcribes ? 'When you stop, it can be transcribed on this hive with 🎧 Transcribe.' : 'Transcription is off on this hive, so this recording is not transcribed until an owner enables it in Inbox ⚙ → Transcription.');
+      parts.push(o.transcribes ? 'When you stop, this hive transcribes the recording automatically.' : 'Transcription is off on this hive, so this recording is not transcribed until an owner enables it in Inbox ⚙ → Transcription.');
       return parts;
     }
     const INBOX_REC_CONSENT_ACK = 'I have told everyone who will be recorded, and I am responsible for this recording.';
@@ -49035,7 +49481,7 @@ function burnAreaChart() {
         const mic = await md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
         m.streams.push(mic);
         if (!opts.tab || typeof e.captureTab !== 'function') return { stream: mic, mic, tab: null };
-        return e.captureTab(m, mic);
+        return e.captureTab(m, mic, e);
       }
       async function start(opts) {
         const o = opts || {};
@@ -49187,11 +49633,74 @@ function burnAreaChart() {
       if (!inboxRecAvailable(settings, window._hiveRole, inboxRecBrowserSupport())) return '';
       return '<button type="button" class="hv-btn btn-secondary btn-sm inbox-rec-btn" data-action="inboxRecOpen" title="Record a meeting or a note; it lands in the Inbox">● Record into Inbox</button>';
     }
-    function inboxRecSourcesHtml() { return ''; }
+    // inboxRecTabSupport: tab audio needs getDisplayMedia with audio, which
+    // only Chromium browsers (Chrome, Edge, Brave, ...) on a computer offer:
+    // Safari and Firefox share no tab audio, phones have no tab sharing.
+    function inboxRecTabSupport(win) {
+      const w = win || {};
+      const nav = w.navigator || {};
+      const md = nav.mediaDevices;
+      if (!md || typeof md.getDisplayMedia !== 'function') return { tab: false, reason: 'This browser cannot share a tab (phones and tablets have no tab sharing), so only the microphone is recorded.' };
+      const brands = (nav.userAgentData && Array.isArray(nav.userAgentData.brands)) ? nav.userAgentData.brands.map(b => String(b.brand || '')) : [];
+      const ua = String(nav.userAgent || '');
+      const chromium = brands.some(b => /Chromium|Google Chrome|Microsoft Edge/.test(b)) || (/(Chrome|Chromium|Edg)\//.test(ua) && !/Firefox\//.test(ua));
+      const mobile = (nav.userAgentData && nav.userAgentData.mobile) || /Android|iPhone|iPad|Mobile/.test(ua);
+      if (!chromium || mobile) return { tab: false, reason: 'Recording a tab\'s audio needs Chrome or Edge on a computer (Safari and Firefox do not share tab audio), so only the microphone is recorded here.' };
+      return { tab: true, reason: '' };
+    }
+    function inboxRecSourcesHtml(tabSupport) {
+      const t = tabSupport || { tab: false, reason: '' };
+      let html = '<fieldset class="inbox-rec-sources"><legend class="muted-note">Record</legend>' +
+        '<label class="muted-note"><input type="radio" name="inbox-rec-source" value="mic" data-change-action="inboxRecSourceChange" checked> Microphone only</label>';
+      if (t.tab) html += '<label class="muted-note"><input type="radio" name="inbox-rec-source" value="tab" data-change-action="inboxRecSourceChange"> Microphone and a meeting tab\'s audio (you pick the tab and tick “Share tab audio”)</label>';
+      else html += '<p class="muted-xs" data-inbox-rec-tab-unsupported>' + escapeHtml(t.reason) + '</p>';
+      return html + '</fieldset>';
+    }
+    // inboxRecSourceChange redraws the notice for the chosen source: with
+    // tab audio it names the remote participants.
+    function inboxRecSourceChange() {
+      const settings = ((_inboxCache || {}).settings || {}).recording || {};
+      const el = document.getElementById('inbox-rec-notice');
+      if (!el) return;
+      el.innerHTML = inboxRecConsentText({ tab: inboxRecWantsTab(), retentionDays: settings.retention_days, transcribes: !!settings.transcribes }).map(p => '<p class="muted-note">' + escapeHtml(p) + '</p>').join('');
+      const ack = document.getElementById('inbox-rec-ack');
+      if (ack) { ack.checked = false; inboxRecConsentToggle(); }
+    }
+    // inboxRecCaptureTab asks for a tab with getDisplayMedia({audio, video}),
+    // drops the video track, and mixes the tab audio with the microphone
+    // through Web Audio (MediaStreamAudioDestinationNode). A share without an
+    // audio track (the user did not tick "Share tab audio", or picked a
+    // window) records the microphone only, with a warning.
+    async function inboxRecCaptureTab(m, mic, env) {
+      const e = env || {};
+      let display;
+      try {
+        display = await e.navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+      } catch (err) {
+        m.warning = 'No tab was shared, so only the microphone is recorded.';
+        return { stream: mic, mic, tab: null };
+      }
+      m.streams.push(display);
+      for (const v of display.getVideoTracks()) { try { v.stop(); } catch (err) { /* stopped */ } display.removeTrack(v); }
+      const audio = display.getAudioTracks();
+      if (!audio.length) {
+        m.warning = 'The shared tab has no audio: share a browser tab and tick “Share tab audio”. Only the microphone is recorded.';
+        return { stream: mic, mic, tab: null };
+      }
+      const AC = e.AudioContext;
+      if (!AC) { m.warning = 'This browser cannot mix tab audio; only the microphone is recorded.'; return { stream: mic, mic, tab: null }; }
+      const ctx = new AC();
+      m.audioCtx = ctx;
+      const dest = ctx.createMediaStreamDestination();
+      ctx.createMediaStreamSource(mic).connect(dest);
+      ctx.createMediaStreamSource(display).connect(dest);
+      for (const t of audio) t.onended = () => { if (m.state === 'recording' || m.state === 'paused') { m.warning = 'Tab sharing stopped; the recording continues with the microphone only.'; if (e.onChange) e.onChange(m); } };
+      return { stream: dest.stream, mic, tab: display };
+    }
     function inboxRecOpen() {
       if (_inboxRec && ['starting', 'recording', 'paused', 'stopping', 'finishing'].indexOf(_inboxRec.state) >= 0) { inboxRecFocus(); return; }
       const settings = ((_inboxCache || {}).settings || {}).recording || {};
-      const body = inboxRecConsentHtml({ title: inboxRecDefaultTitle(), retentionDays: settings.retention_days, transcribes: !!settings.transcribes, tab: false, sourcesHtml: inboxRecSourcesHtml() });
+      const body = inboxRecConsentHtml({ title: inboxRecDefaultTitle(), retentionDays: settings.retention_days, transcribes: !!settings.transcribes, tab: false, sourcesHtml: inboxRecSourcesHtml(inboxRecTabSupport(window)) });
       kbShowModal('● Record into the Inbox', body, { width: '560px' });
       const ack = document.getElementById('inbox-rec-ack');
       if (ack) ack.checked = false;
@@ -49204,7 +49713,10 @@ function burnAreaChart() {
       btn.disabled = !on;
       btn.setAttribute('aria-disabled', on ? 'false' : 'true');
     }
-    function inboxRecWantsTab() { return false; }
+    function inboxRecWantsTab() {
+      const el = document.querySelector('input[name="inbox-rec-source"]:checked');
+      return !!(el && el.value === 'tab');
+    }
     async function inboxRecConfirmStart() {
       const ack = document.getElementById('inbox-rec-ack');
       const errEl = document.getElementById('inbox-rec-error');
@@ -49226,7 +49738,7 @@ function burnAreaChart() {
       return {
         navigator, MediaRecorder: window.MediaRecorder, fetch: (u, o) => fetch(u, o), queue: inboxRecQueue(), now: () => Date.now(),
         setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: t => clearTimeout(t), onChange: () => inboxRecRender(),
-        holdLock: inboxRecHoldLock, analyse: inboxRecAnalyse, captureTab: typeof inboxRecCaptureTab === 'function' ? inboxRecCaptureTab : null,
+        holdLock: inboxRecHoldLock, analyse: inboxRecAnalyse, captureTab: inboxRecCaptureTab, AudioContext: window.AudioContext || window.webkitAudioContext,
       };
     }
     // inboxRecAnalyse attaches an AnalyserNode to each captured stream for
@@ -49286,7 +49798,7 @@ function burnAreaChart() {
       if (m.uploader) html += '<div class="muted-xs inbox-rec-upload" data-inbox-rec-upload aria-live="polite">' + escapeHtml(inboxRecUploadText(m.uploader.state)) + '</div>';
       if (m.warning) html += '<div class="kc-error muted-xs" role="alert">' + escapeHtml(m.warning) + '</div>';
       if (m.error) html += '<div class="kc-error muted-xs" role="alert">' + escapeHtml(m.error) + '</div>';
-      if (m.state === 'done') html += '<div class="muted-xs">' + escapeHtml(m.transcribes ? 'It appears in the Inbox below; use 🎧 Transcribe on it.' : 'It appears in the Inbox below. Transcription is off on this hive, so it is not transcribed yet.') + '</div>';
+      if (m.state === 'done') html += '<div class="muted-xs">' + escapeHtml(m.transcribes ? 'The hive is transcribing it now; follow the progress on the item in the Inbox below.' : 'It appears in the Inbox below. Transcription is off on this hive, so it is not transcribed yet.') + '</div>';
       html += '<div class="kc-actions mt-2">';
       if (m.state === 'recording') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecPause">⏸ Pause</button>';
       if (m.state === 'paused') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecResume">⏺ Resume</button>';
@@ -52920,19 +53432,45 @@ function burnAreaChart() {
         ? Object.keys(usedBy).filter((id) => Array.isArray(usedBy[id]) && usedBy[id].length > 0)
           .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
         : ['anthropic'];
+      // Gateways (OpenRouter, LiteLLM, vLLM, …) have no plan to measure, so
+      // they get a spend row in dollars at the gateway's prices instead of a
+      // dial. Models with no published or configured price are listed as
+      // "price unknown", never counted as $0.
+      const spend = (resp && Array.isArray(resp.gateway_spend) ? resp.gateway_spend : [])
+        .filter((g) => g && g.gateway && Array.isArray(g.agents) && g.agents.length)
+        .map((g) => {
+          const unknown = Array.isArray(g.unknown_price_models) ? g.unknown_price_models.map(String) : [];
+          const usd = Number(g.usd) || 0;
+          return {
+            gateway: String(g.gateway), kind: String(g.kind || ''), usedBy: g.agents.map(String),
+            usd: usd, tokens: Number(g.tokens) || 0, unknownModels: unknown,
+            state: unknown.length && usd === 0 ? 'unknown' : (unknown.length ? 'partial' : 'priced'),
+          };
+        });
       const rows = ids.map((id) => providerRow(id, readingFor(id), usedBy ? usedBy[id].map(String) : null, !!usedBy))
         .filter((row) => row.shown);
       if (!rows.length) {
         const legacy = !usedBy ? providerRow('anthropic', readingFor('anthropic'), null, false) : null;
         return legacy && legacy.state === 'no-reading' && legacy.cause !== 'absent'
-          ? Object.assign(legacy, { rows: [] })
-          : { state: 'no-reading', shown: false, rows: [], cause: 'absent', reason: 'Usage measurement is not running on this hive.' };
+          ? Object.assign(legacy, { rows: [], spend: spend })
+          : { state: 'no-reading', shown: false, rows: [], spend: spend, cause: 'absent', reason: 'Usage measurement is not running on this hive.' };
       }
       // The needle row is the one with the least left; rows without a
       // reading only lead when no row has one.
       let lead = rows.find((row) => row.state === 'reading') || rows[0];
       rows.forEach((row) => { if (row.state === 'reading' && row.needle.pctLeft < lead.needle.pctLeft) lead = row; });
-      return Object.assign({}, lead, { shown: true, rows: rows });
+      return Object.assign({}, lead, { shown: true, rows: rows, spend: spend });
+    }
+
+    // subscriptionGaugeSpendText is a gateway spend row's one-line summary:
+    // "$1.23 at gateway prices", "$1.23 + price unknown for qwen", or
+    // "price unknown (qwen)" when nothing could be costed.
+    function subscriptionGaugeSpendText(row) {
+      const usd = '$' + (Number(row.usd) || 0).toFixed(2);
+      const unknown = (row.unknownModels || []).join(', ');
+      if (row.state === 'unknown') return 'Price unknown (' + unknown + '): this gateway publishes no price. Set prices: on the gateway to cost it.';
+      if (row.state === 'partial') return usd + ' at gateway prices, plus price unknown for ' + unknown + ' (not counted).';
+      return usd + ' at gateway prices (estimate from token counts).';
     }
 
     // Shared loader. The headroom endpoint is owner-only and the fetch
@@ -53043,7 +53581,8 @@ function burnAreaChart() {
       const host = document.getElementById('overview-usage-gauge');
       if (!host) return;
       const m = subscriptionGaugeCurrentModel();
-      if (!subscriptionGaugeOwner() || !subscriptionGaugeOverviewEnabled() || !m || !m.shown) {
+      const spend = (m && m.spend) || [];
+      if (!subscriptionGaugeOwner() || !subscriptionGaugeOverviewEnabled() || !m || (!m.shown && !spend.length)) {
         host.hidden = true;
         host.replaceChildren();
         return;
@@ -53054,8 +53593,8 @@ function burnAreaChart() {
         if (text !== undefined) n.textContent = text;
         return n;
       };
-      const rows = m.rows && m.rows.length ? m.rows : [m];
-      const single = rows.length === 1;
+      const rows = !m.shown ? [] : (m.rows && m.rows.length ? m.rows : [m]);
+      const single = rows.length === 1 && !spend.length;
       const metaFor = (row) => {
         const meta = [];
         if (row.state === 'reading') {
@@ -53065,7 +53604,7 @@ function burnAreaChart() {
         return meta.join(' · ');
       };
       const head = el('div', 'overview-usage-gauge__head');
-      head.appendChild(el('div', 'overview-usage-gauge__title', single ? rows[0].name + ' usage left' : 'Usage left'));
+      head.appendChild(el('div', 'overview-usage-gauge__title', single ? rows[0].name + ' usage left' : (rows.length ? 'Usage left' : 'Gateway spend')));
       head.appendChild(el('div', 'overview-usage-gauge__meta', single ? metaFor(rows[0]) : ''));
       const parts = [head];
       rows.forEach((row) => {
@@ -53097,6 +53636,24 @@ function burnAreaChart() {
         }
         parts.push(box);
       });
+      spend.forEach((row) => {
+        const box = el('div', 'overview-usage-gauge__row');
+        box.dataset.gateway = row.gateway;
+        const rowHead = el('div', 'overview-usage-gauge__head');
+        rowHead.appendChild(el('div', 'overview-usage-gauge__provider', row.gateway + ' (gateway)'));
+        box.appendChild(rowHead);
+        if (row.usedBy.length) box.appendChild(el('div', 'overview-usage-gauge__users', 'Used by ' + subscriptionGaugeUsers(row.usedBy)));
+        const line = el('div', row.state === 'priced' ? 'overview-usage-gauge__spend' : 'overview-usage-gauge__note', subscriptionGaugeSpendText(row));
+        line.dataset.priceState = row.state;
+        box.appendChild(line);
+        parts.push(box);
+      });
+      if (!rows.length) {
+        parts.push(el('div', 'overview-usage-gauge__note', 'Gateway spend is estimated from token counts at each gateway\'s published or configured prices.'));
+        host.replaceChildren.apply(host, parts);
+        host.hidden = false;
+        return;
+      }
       parts.push(el('div', 'overview-usage-gauge__note', single
         ? (rows[0].accountNote || 'Reflects the ' + rows[0].name + ' account this hive is signed in with.') + ' This is the ' + rows[0].name + ' plan, not the hive token budget.'
         : 'Each row reflects the account this hive is signed in with for that provider. These are the providers\' plans, not the hive token budget.'));
@@ -53534,9 +54091,35 @@ function burnAreaChart() {
       if (wasEnabled !== _sessionsData.enabled) sessionsApplyVisibility();
       if (!_sessionsData.enabled) { dashboardClearInterval('sessions-poll'); return; }
       if (!_sessionsRole) await sessionsLoadRole();
-      _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, _sessionsSelected || sessionsStoreGet(SESSIONS_SELECTED_KEY));
+      _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, sessionsClaimFocus(_sessionsData.sessions) || _sessionsSelected || sessionsStoreGet(SESSIONS_SELECTED_KEY));
       renderSessions();
     }
+    // Deep link: #section-sessions-section?session=<id> opens the section
+    // (the generic section hash does that) and selects that session's tab.
+    // Inbox share pills for spek shares link here.
+    const SESSIONS_FOCUS_HASH = '#section-sessions-section?session=';
+    function sessionsFocusIdFromHash(hash) {
+      const h = String(hash || '');
+      const at = h.indexOf(SESSIONS_FOCUS_HASH);
+      if (at < 0) return '';
+      try { return decodeURIComponent(h.slice(at + SESSIONS_FOCUS_HASH.length).split('&')[0]); } catch (e) { return ''; }
+    }
+    let _sessionsFocusId = sessionsFocusIdFromHash(location.hash);
+    // sessionsClaimFocus returns the deep-linked session id once it exists in
+    // sessions (and forgets it), or '' while there is nothing to select.
+    function sessionsClaimFocus(sessions) {
+      if (!_sessionsFocusId || !(sessions || []).some(function(s) { return s.id === _sessionsFocusId; })) return '';
+      const id = _sessionsFocusId;
+      _sessionsFocusId = '';
+      return id;
+    }
+    window.addEventListener('hashchange', function(e) {
+      const id = sessionsFocusIdFromHash((e && e.newURL) || location.hash);
+      if (!id) return;
+      _sessionsFocusId = id;
+      const wanted = sessionsClaimFocus(_sessionsData.sessions);
+      if (wanted) sessionsSelect(wanted);
+    });
     function sessionsStartPolling() {
       dashboardSetInterval('sessions-poll', loadSessions, SESSIONS_POLL_MS);
     }
@@ -62414,6 +62997,10 @@ function burnAreaChart() {
     // the models discovered for the add/edit form's endpoint+key.
     let _gateways = [];
     let _gatewayFormModels = [];
+    // Catalog details (prices, context) and curated suggestions the discover
+    // probe returns for OpenRouter gateways; empty for other kinds.
+    let _gatewayFormModelInfo = [];
+    let _gatewayFormSuggested = [];
     const _gatewayProbeResults = {};
     // Set by maybeOpenMethodConfig when a method switch jumps the user here to
     // configure a missing gateway; consumed once by loadGateways to auto-open a
@@ -62904,16 +63491,24 @@ function burnAreaChart() {
         const r = await fetch('/api/openrouter/models');
         if (r.ok) models = await r.json();
       } catch (e) { /* fall back to manual entry */ }
+      // Curated suggestions pinned on top (the server already hid any the
+      // live catalog retired), then the full live catalog grouped by
+      // provider with prices. Unreadable catalog: suggestions only, and the
+      // typed text still works as a manual id.
       const sug = (models.suggested || []);
-      const opts = sug.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('')
-        + `<option value="__manual__">Enter a model id manually…</option>`;
+      const liveIds = Array.isArray(models.models) ? models.models : [];
+      const ids = liveIds.length ? liveIds : sug.map(m => m.id);
+      const picker = modelComboboxHtml({
+        id: 'or-model-combo', inputId: 'or-model-input', ids,
+        info: models.model_info, suggested: sug, current: models.default || (sug[0] && sug[0].id) || '',
+        label: 'Default model for the new gateway', placeholder: 'Search models or type an id…',
+      });
       host.innerHTML = `
         <div style="border:1px solid var(--cyan);border-radius:8px;padding:14px;margin-bottom:var(--sp-5);background:var(--surface)">
           <div style="font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-2)">⚡ Fund this hive with OpenRouter</div>
           <div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px">Scan the QR (or open the link) to authorize on OpenRouter. A scoped key funded from your OpenRouter credits is stored as the <code>openrouter</code> gateway — the key never leaves this hive.</div>
-          <label style="display:block;font-size:0.74rem;color:var(--muted);margin-bottom:var(--sp-2)">Default model for the new gateway</label>
-          <select id="or-model-select" data-change-action="orModelSelectChange" style="width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);margin-bottom:var(--sp-4)">${opts}</select>
-          <input id="or-model-manual" placeholder="e.g. anthropic/claude-opus-4.8" style="display:none;width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);margin-bottom:var(--sp-4);box-sizing:border-box">
+          <label for="or-model-input" class="d-block fs-sm text-muted mb-2">Default model for the new gateway</label>
+          <div class="mb-4">${picker}</div>
           <div style="display:flex;gap:var(--sp-4);margin-top:var(--sp-2)">
             <button class="hv-btn btn-primary" data-action="orStartFlow">Generate QR</button>
             <button class="hv-btn btn-primary" data-action="closeOpenRouterFund">Cancel</button>
@@ -62923,21 +63518,10 @@ function burnAreaChart() {
         </div>`;
     }
 
-    function orModelSelectChange() {
-      const sel = document.getElementById('or-model-select');
-      const man = document.getElementById('or-model-manual');
-      if (!sel || !man) return;
-      man.style.display = sel.value === '__manual__' ? 'block' : 'none';
-    }
-
+    // orChosenModel is the funding picker's committed model id ('' lets the
+    // server apply its default).
     function orChosenModel() {
-      const sel = document.getElementById('or-model-select');
-      if (!sel) return '';
-      if (sel.value === '__manual__') {
-        const man = document.getElementById('or-model-manual');
-        return (man && man.value.trim()) || '';
-      }
-      return sel.value;
+      return modelComboValue('or-model-combo');
     }
 
     async function orStartFlow() {
@@ -63190,6 +63774,8 @@ function burnAreaChart() {
     // it blank keeps it.
     function openGatewayForm(existing) {
       _gatewayFormModels = [];
+      _gatewayFormModelInfo = [];
+      _gatewayFormSuggested = [];
       const host = document.getElementById('gateways-form-host');
       if (!host) return;
       const isEdit = !!existing;
@@ -63292,7 +63878,17 @@ function burnAreaChart() {
       const models = _gatewayFormModels;
       const cur = current || '';
       if (!models.length) {
-        return `<input type="text" id="gw-default-model" value="${esc(cur)}" placeholder="e.g. anthropic/claude-opus-4.8">`;
+        return `<input type="text" id="gw-default-model" value="${esc(cur)}" placeholder="e.g. deepseek/deepseek-v4.1-flash">`;
+      }
+      // Large catalogs (OpenRouter ~470 ids) get the searchable, grouped
+      // combobox; its input is #gw-default-model, so the typed text is the
+      // value and "Custom…" is simply typing an id the catalog lacks.
+      if (models.length >= MODEL_COMBOBOX_MIN_OPTIONS || _gatewayFormModelInfo.length) {
+        return modelComboboxHtml({
+          id: 'gw-default-model-combo', inputId: 'gw-default-model', ids: models,
+          info: _gatewayFormModelInfo, suggested: _gatewayFormSuggested, current: cur,
+          label: 'Default model', placeholder: 'Search ' + models.length + ' models or type an id…',
+        });
       }
       const inList = cur && models.indexOf(cur) !== -1;
       const options = models.map(m =>
@@ -63402,6 +63998,8 @@ function burnAreaChart() {
         });
         const data = await res.json().catch(() => ({}));
         _gatewayFormModels = (res.ok && data.ok && Array.isArray(data.models)) ? data.models : [];
+        _gatewayFormModelInfo = (res.ok && data.ok && Array.isArray(data.model_info)) ? data.model_info : [];
+        _gatewayFormSuggested = (res.ok && data.ok && Array.isArray(data.suggested)) ? data.suggested : [];
         // Never show an empty dropdown with no explanation: a bad key, wrong
         // region/project or an unreachable endpoint must say so, with the
         // server's own error text, rather than looking like "no models exist".
@@ -63419,6 +64017,8 @@ function burnAreaChart() {
         }
       } catch (e) {
         _gatewayFormModels = [];
+        _gatewayFormModelInfo = [];
+        _gatewayFormSuggested = [];
         showGatewayFormProbeError('Network error while discovering models: ' + e.message);
       }
       const host = document.getElementById('gw-default-model-field');
@@ -76784,6 +77384,16 @@ function burnAreaChart() {
       return `(backend default — chosen by the ${backend || 'CLI'} CLI)`;
     }
 
+    // modelOptionPriceSuffix is " — $0.14 in · $0.42 out /1M · 1M ctx" for a
+    // gateway model whose catalog publishes prices (OpenRouter), else ''.
+    function modelOptionPriceSuffix(backend, model) {
+      if (typeof modelPriceLabel !== 'function') return '';
+      const c = _inferenceModelCache[canonicalInferenceBackendName(backend)] || _inferenceModelCache[backend];
+      const info = c && c.modelInfo ? c.modelInfo[model] : null;
+      const label = info ? modelPriceLabel(info) : '';
+      return label ? ' — ' + label : '';
+    }
+
     // modelSelectOptionsHtml builds the agent config dialog's Model options:
     // the backend-default choice first, every offered model with its FULL id,
     // and — when the current model is not offered — a "(current)" option that
@@ -76793,7 +77403,15 @@ function burnAreaChart() {
     function modelSelectOptionsHtml(backend, current, opts) {
       const models = opts || modelsForBackend(backend) || [];
       let html = `<option value="">${esc(modelDefaultOptionLabel(backend))}</option>`;
-      html += models.map(m => `<option value="${esc(m.value)}"${_modelsEqual(current, m.value) ? ' selected' : ''}>${esc(fullModelLabel(m))}</option>`).join('');
+      const renderOpt = m => `<option value="${esc(m.value)}"${_modelsEqual(current, m.value) ? ' selected' : ''}>${esc(fullModelLabel(m))}${esc(modelOptionPriceSuffix(backend, m.value))}</option>`;
+      // Large gateway catalogs (OpenRouter) are grouped by provider prefix.
+      if (typeof shouldGroupModelOptions === 'function' && shouldGroupModelOptions(models.map(m => m.value))) {
+        const byValue = {};
+        models.forEach(m => { if (!(m.value in byValue)) byValue[m.value] = m; });
+        html += modelOptgroupsHtml(Object.keys(byValue), v => renderOpt(byValue[v]));
+      } else {
+        html += models.map(renderOpt).join('');
+      }
       if (current && !models.some(m => _modelsEqual(current, m.value))) {
         const note = modelDisallowedByGateway(backend, current) ? ' (current — not allowed by gateway)' : ' (current)';
         html += `<option value="${esc(current)}" selected>${esc(current)}${note}</option>`;
@@ -78166,6 +78784,11 @@ function burnAreaChart() {
     // browser as the one that asked.
     let ghFlowID = '';
     const GH_AUTH_CHECK_INTERVAL_MS = 300000;
+    // /api/role is retried on network errors and 5xx before the viewer is
+    // treated as read-only: 3 attempts, waiting 0.5 s then 1 s between them.
+    const HIVE_ROLE_FETCH_ATTEMPTS = 3;
+    const HIVE_ROLE_RETRY_BASE_MS = 500;
+    const HIVE_ROLE_SERVER_ERROR_STATUS = 500;
     const GH_AUTH_SUCCESS_DISMISS_MS = 1500;
 
     function copyDeviceCode() {
@@ -78413,24 +79036,78 @@ function burnAreaChart() {
       showToast('Signed out of GitHub', 'info');
     }
 
+    /* One /api/role attempt. Network errors and 5xx are marked retryable; an
+       answer that is not (4xx, an HTML 404 from a static host) is final. */
+    async function hiveFetchRoleOnce() {
+      let resp;
+      try { resp = await fetch('/api/role'); } catch (e) { e.retryable = true; throw e; }
+      if (resp.status >= HIVE_ROLE_SERVER_ERROR_STATUS) {
+        const err = new Error('HTTP ' + resp.status);
+        err.retryable = true;
+        throw err;
+      }
+      return await resp.json();
+    }
+
+    /* The role is "settled" once /api/role answered or gave up. Sections that
+       gate on it (the Inbox) hold a neutral loading state until then and
+       subscribe via window._hiveRoleListeners; they are notified the first
+       time and whenever the role or the failed flag changes. This is separate
+       from _hiveAuthKnown so the tracker never waits on the retries below. */
+    function hiveRoleSettled(failed) {
+      const sig = String(window._hiveRole || '') + '|' + (failed ? 'failed' : 'ok');
+      const changed = !window._hiveRoleSettled || window._hiveRoleSig !== sig;
+      window._hiveRoleFailed = !!failed;
+      window._hiveRoleSettled = true;
+      window._hiveRoleSig = sig;
+      if (!changed) return;
+      (window._hiveRoleListeners || []).forEach(function(fn) { try { fn(); } catch (e) { console.error(e); } });
+    }
+
+    function hiveApplyRoleData(roleData) {
+      if (roleData.sentinel_label) window._hiveSentinelLabel = roleData.sentinel_label;
+      if (!roleData.user) return false;
+      if (roleData.automerge_label) window._hiveAutoMergeLabel = roleData.automerge_label;
+      /* OIDC identity keys ("ibmid:5500…") are not GitHub logins — don't
+         fabricate a github.com/<key>.png avatar for them; showGHAuthState
+         falls back to an initials avatar and the server-resolved
+         display_name. */
+      var ghAvatar = roleData.user.indexOf(':') === -1
+        ? 'https://github.com/' + roleData.user + '.png'
+        : '';
+      showGHAuthState(true, roleData.user, ghAvatar, roleData.role, roleData.display_name);
+      return true;
+    }
+
+    /* Background retries after a retryable first failure, with exponential
+       backoff. If they all fail the viewer stays read-only and the Inbox says
+       so. */
+    async function hiveRetryRole() {
+      if (window._hiveRoleRetrying) return;
+      window._hiveRoleRetrying = true;
+      try {
+        for (let attempt = 1; attempt < HIVE_ROLE_FETCH_ATTEMPTS; attempt++) {
+          await new Promise(function(resolve) { setTimeout(resolve, HIVE_ROLE_RETRY_BASE_MS * Math.pow(2, attempt - 1)); });
+          try {
+            const roleData = await hiveFetchRoleOnce();
+            hiveApplyRoleData(roleData);
+            hiveRoleSettled(false);
+            return;
+          } catch (e) { if (!e.retryable) break; }
+        }
+        hiveRoleSettled(true);
+      } finally { window._hiveRoleRetrying = false; }
+    }
+
     async function checkGHAuth() {
       try {
-        const roleResp = await fetch('/api/role');
-        const roleData = await roleResp.json();
-        if (roleData.sentinel_label) window._hiveSentinelLabel = roleData.sentinel_label;
-        if (roleData.user) {
-          if (roleData.automerge_label) window._hiveAutoMergeLabel = roleData.automerge_label;
-          /* OIDC identity keys ("ibmid:5500…") are not GitHub logins — don't
-             fabricate a github.com/<key>.png avatar for them; showGHAuthState
-             falls back to an initials avatar and the server-resolved
-             display_name. */
-          var ghAvatar = roleData.user.indexOf(':') === -1
-            ? 'https://github.com/' + roleData.user + '.png'
-            : '';
-          showGHAuthState(true, roleData.user, ghAvatar, roleData.role, roleData.display_name);
-          return;
-        }
-      } catch (e) {}
+        const roleData = await hiveFetchRoleOnce();
+        const applied = hiveApplyRoleData(roleData);
+        hiveRoleSettled(false);
+        if (applied) return;
+      } catch (e) {
+        if (e && e.retryable) hiveRetryRole(); else hiveRoleSettled(true);
+      }
       try {
         const resp = await fetch('/api/gh-user-auth/status');
         const data = await resp.json();

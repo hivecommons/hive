@@ -4,7 +4,7 @@
     // dibs happens inside the hive via POST /api/inbox/route.
     const INBOX_POLL_MS = 60000;
     const INBOX_BUSY_POLL_MS = 5000;
-    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗', 'hive-recording': '⏺️', upload: '📎' };
+    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗', 'hive-recording': '⏺️', upload: '📎', email: '✉️' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
     // Summaries longer than this many characters start collapsed.
     const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
@@ -39,8 +39,17 @@
     let _inboxPointerInside = false;
 
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
-    // Uploaded documents have no audio; uploaded audio/video does.
-    function inboxItemHasAudio(it) { return !it || it.source !== 'upload' || it.upload_kind === 'audio' || it.upload_kind === 'video'; }
+    // Uploaded documents have no audio; uploaded audio/video does. Mailed-in
+    // audio (source email) is opened as a file, not streamed.
+    function inboxItemHasAudio(it) { return !it || (it.source !== 'upload' && it.source !== 'email') || (it.source === 'upload' && (it.upload_kind === 'audio' || it.upload_kind === 'video')); }
+    // Mailed-in files (source email) are opened from the hive itself: GET /api/inbox/email/{id}/file.
+    function inboxEmailFileUrl(it) { return '/api/inbox/email/' + encodeURIComponent(it.id) + '/file'; }
+    // The role is known once /api/role settled (answered, or retries gave up:
+    // then it is undefined and every gate treats the viewer as read-only).
+    // Before that the Inbox renders a neutral loading state, never a guessed 'read'.
+    function inboxRoleKnown() { return window._hiveRoleSettled === true || window._hiveRole !== undefined; }
+    function inboxOnRoleReady() { if (_inboxCache) renderInbox(); }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(inboxOnRoleReady);
     function inboxItemKey(it) { return it.source + '/' + it.id; }
     // Playback is a read of private audio: owners and read-write sessions.
     function inboxViewerCanPlay() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
@@ -126,6 +135,7 @@
         const meetingLabel = { zoom: 'Zoom', teams: 'Teams', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', 'fireflies': 'Fireflies', 'fathom': 'Fathom', 'limitless': 'Limitless', 'granola': 'Granola', 'otter': 'Otter' }[it.source];
         if (meetingLabel) return '<div class="inbox-pending muted-xs" title="The platform reports no transcript or summary for this recording yet">Not transcribed yet: ' + meetingLabel + ' has no transcript or summary for this recording (cloud transcription may still be processing or is disabled); the hive re-checks it on every sync.' + tx + '</div>';
         if (it.source === 'hive-recording') return '<div class="inbox-pending muted-xs" title="Recorded in this hive\'s dashboard; no transcript yet">Not transcribed yet: recorded in this hive.' + (it.transcribe_unavailable === 'disabled' ? ' Transcription is off on this hive, so it is transcribed once an owner enables it in Inbox ⚙ → Transcription.' : tx) + '</div>';
+        if (it.source === 'upload') return '<div class="inbox-pending muted-xs" title="Added to the Inbox as audio; it has no text until it is transcribed">Not transcribed yet: this audio was added to the Inbox without text.' + tx + '</div>';
         if (it.source === 'discord') return '<div class="inbox-pending muted-xs" title="Discord has no transcripts; none was posted with this recording">Not transcribed yet: Discord has no built-in transcription and no transcript file was posted with this recording; play it here, or post a .vtt/.txt transcript in the same message. The hive re-checks it on every sync.' + tx + '</div>';
         return '<div class="inbox-pending muted-xs" title="The MCP reports no transcript or summary block for this recording">Not transcribed yet in Plaud: Plaud has not transcribed this recording (open it in the Plaud app and run transcription); the hive re-checks it on every sync.' + tx + '</div>';
       }
@@ -139,7 +149,7 @@
       if (!c) return '<div class="inbox-transcript muted-xs">Loading transcript…</div>';
       if (c.error) return '<div class="inbox-transcript kc-error muted-xs">' + escapeHtml(c.error) + '</div>';
       // A dropped document's text is the markdown the hive extracted.
-      if (it.source === 'upload' && !c.transcript) return '<div class="inbox-transcript"><div class="muted-xs"><strong>Extracted text</strong></div><pre class="inbox-transcript-text">' + escapeHtml(c.markdown || '') + '</pre></div>';
+      if (it.source === 'upload' && !inboxItemHasAudio(it) && !c.transcript) return '<div class="inbox-transcript"><div class="muted-xs"><strong>Extracted text</strong></div><pre class="inbox-transcript-text">' + escapeHtml(c.markdown || '') + '</pre></div>';
       let html = '<div class="inbox-transcript">';
       if (c.transcript && c.transcript_label) html += '<div class="muted-xs"><strong>' + escapeHtml(c.transcript_label) + '</strong></div>';
       if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
@@ -317,6 +327,70 @@
       await fetchInbox();
     }
 
+    // Share history pills: one per share record, in the form
+    // "→ RFC #18412 · andy · 2m ago". They are status, not controls: a plain
+    // link to the target when there is one (never for read-only viewers),
+    // otherwise a span. Only the latest record per destination shows; "+N"
+    // expands the rest.
+    const _inboxHistoryOpen = new Set();
+    const INBOX_SHARE_LABELS = { rfc: 'RFC', dibs: 'DIBS', knowledge: 'Knowledge', spek: 'spek' };
+    function inboxSharePillText(rec) {
+      const dest = rec.destination;
+      const ref = rec.ref || {};
+      let label = '→ ' + (INBOX_SHARE_LABELS[dest] || dest);
+      if (dest === 'rfc' && ref.number) label += ' #' + ref.number;
+      if (dest === 'spek' && ref.name) label += ': ' + ref.name;
+      const busy = rec.status === 'queued' || rec.status === 'transcribing' || rec.status === 'in_progress';
+      if (rec.status === 'failed') label += ' failed';
+      else if (rec.status === 'transcribing') label += ' (transcribing)';
+      else if (busy) label += ' …';
+      const when = rec.started_at && !String(rec.started_at).startsWith('0001') ? relativeTimeShort(rec.started_at) : '';
+      return label + ' · ' + (rec.actor || 'unknown') + (when ? ' · ' + when : '');
+    }
+    // inboxShareTargetHref returns the link target of a record, or '' when
+    // it has none or the viewer may not open it.
+    function inboxShareTargetHref(rec, canOpen) {
+      const ref = rec.ref || {};
+      if (!canOpen) return '';
+      if ((rec.destination === 'rfc' || rec.destination === 'dibs') && /^https?:\/\//.test(ref.url || '')) return ref.url;
+      if (rec.destination === 'spek' && ref.id) return '#section-sessions-section?session=' + encodeURIComponent(ref.id);
+      return '';
+    }
+    function inboxSharePillHtml(rec, it) {
+      const busy = rec.status === 'queued' || rec.status === 'transcribing' || rec.status === 'in_progress';
+      const status = rec.status === 'failed' ? 'error' : (rec.status === 'done' ? 'ok' : 'syncing');
+      const stamp = rec.finished_at || rec.started_at;
+      const title = (rec.status === 'failed' && rec.reason ? rec.reason + ' · ' : (rec.reason && busy ? rec.reason + ' · ' : '')) + (stamp ? formatDashboardDateTime(stamp) : '');
+      const inner = (busy ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> ' : '') + escapeHtml(inboxSharePillText(rec));
+      const attrs = ' class="kc-pill inbox-share-pill" data-status="' + status + '" data-share-dest="' + escapeHtml(rec.destination) + '" title="' + escapeHtml(title) + '"';
+      const canOpen = inboxViewerCanPlay();
+      const href = inboxShareTargetHref(rec, canOpen);
+      if (href) return '<a' + attrs + ' href="' + escapeHtml(href) + '"' + (/^https?:/.test(href) ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + inner + '</a>';
+      if (canOpen && rec.destination === 'knowledge' && (rec.ref || {}).id && it && it.fact_slug) {
+        return '<a' + attrs + ' href="#" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '">' + inner + '</a>';
+      }
+      return '<span' + attrs + '>' + inner + '</span>';
+    }
+    function inboxSharePillsHtml(it, key) {
+      const hist = (it && it.share_history) || [];
+      if (!hist.length) return '';
+      const open = _inboxHistoryOpen.has(key);
+      const latest = {};
+      hist.forEach(r => { latest[r.destination] = r; });
+      const shown = hist.filter(r => open || latest[r.destination] === r);
+      const hidden = hist.length - shown.length;
+      let html = shown.map(r => inboxSharePillHtml(r, it)).join(' ');
+      if (hidden > 0 || (open && hist.length > Object.keys(latest).length)) {
+        html += ' <a href="#" class="muted-xs inbox-share-more" data-action="inboxToggleHistory" data-prevent="1" data-arg0="' + escapeHtml(it.source) + '" data-arg1="' + escapeHtml(it.id) + '" aria-expanded="' + (open ? 'true' : 'false') + '" title="' + (open ? 'Show only the latest share per destination' : 'Show the full share history') + '">' + (open ? 'less' : '+' + hidden) + '</a>';
+      }
+      return html;
+    }
+    function inboxToggleHistory(src, id) {
+      const key = src + '/' + id;
+      if (_inboxHistoryOpen.has(key)) _inboxHistoryOpen.delete(key); else _inboxHistoryOpen.add(key);
+      renderInbox();
+    }
+
     function inboxItemHtml(it) {
       const key = inboxItemKey(it);
       const checked = _inboxSelected.has(key) ? ' checked' : '';
@@ -329,11 +403,15 @@
       // added them ("upload · notes.md · added 2h ago by ana").
       const meta = it.source === 'upload'
         ? [escapeHtml(it.origin || 'upload'), when ? 'added ' + when : '', it.added_by ? 'by ' + escapeHtml(it.added_by) : '', dur, factLink].filter(Boolean).join(' · ')
-        : [escapeHtml(it.source), when ? 'recorded ' + when : '', it.recorded_by ? 'by ' + escapeHtml(it.recorded_by) : '', dur, factLink].filter(Boolean).join(' · ');
+        : it.source === 'email'
+          ? ['email', it.sender ? 'from ' + escapeHtml(it.sender) : '', when ? 'received ' + when : '', escapeHtml(it.upload_kind || '')].filter(Boolean).join(' · ')
+          : [escapeHtml(it.source), when ? 'recorded ' + when : '', it.recorded_by ? 'by ' + escapeHtml(it.recorded_by) : '', dur, factLink].filter(Boolean).join(' · ');
       const routes = it.routes || {};
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
       if (it.dismissed) pills += '<span class="kc-pill" title="Kept as a Knowledge fact only">knowledge only</span>';
+      if (it.awaiting_approval) pills += '<span class="kc-pill" data-status="warn" title="Mailed in by a sender outside this hive\'s allowlist: it cannot be shared or transcribed until the owner approves it">awaiting approval</span> ';
+      pills += inboxSharePillsHtml(it, key);
       for (const d of Object.keys(it.share_intents || {})) {
         const si = it.share_intents[d];
         if (si && si.status === 'failed') pills += '<span class="kc-pill" data-status="error" title="' + escapeHtml(si.error || '') + '">→ ' + escapeHtml(inboxIntentLabel(d)) + ' failed</span> <span class="kc-error muted-xs" role="alert">' + escapeHtml(si.error || '') + '</span> ';
@@ -345,7 +423,13 @@
       if (it.audio_expired) actions += '<span class="muted-xs inbox-audio-expired" title="The raw audio was deleted by retention; the transcript and the Knowledge fact are kept">audio expired (kept ' + (Number(it.audio_retention_days) || 5) + ' days)</span>';
       else if (inboxViewerCanPlay() && inboxItemHasAudio(it)) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + (it.source === 'upload' && !inboxItemHasAudio(it) ? ' Text' : ' Transcript') + '</button>';
-      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
+      if (it.source === 'email' && inboxViewerCanPlay()) actions += '<a class="hv-btn btn-secondary btn-sm" href="' + escapeHtml(inboxEmailFileUrl(it)) + '" target="_blank" rel="noopener noreferrer" title="Open the mailed-in file">📎 Open file</a>';
+      if (it.awaiting_approval) {
+        if (owner) actions += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxEmailApprove" data-arg0="' + id + '" title="Let this mailed-in item be shared and transcribed like any other">✓ Approve</button>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxEmailDecline" data-arg0="' + id + '" title="Delete this mailed-in item">✕ Decline</button>';
+      } else {
+        actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
+      }
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
         (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
@@ -353,6 +437,7 @@
         '<div class="muted-xs">' + meta + '</div>' +
         inboxSummaryHtml(it, key) +
         '<div class="inbox-media" data-inbox-media="' + escapeHtml(key) + '"></div>' +
+        (it.source === 'email' && it.upload_kind === 'image' && inboxViewerCanPlay() ? '<img class="inbox-email-image" loading="lazy" src="' + escapeHtml(inboxEmailFileUrl(it)) + '" alt="' + escapeHtml(it.title || 'mailed-in image') + '">' : '') +
         (pills ? '<div class="inbox-pills">' + pills + '</div>' : '') +
         inboxTranscriptionHtml(it, key) +
         '<div class="kc-actions mt-2">' + actions + '</div>' +
@@ -635,7 +720,7 @@
       const badge = document.getElementById('inbox-sidebar-badge');
       const data = _inboxCache;
       if (!panel) return;
-      if (!data) { panel.innerHTML = '<div class="muted-note">Loading inbox…</div>'; return; }
+      if (!data || !inboxRoleKnown()) { panel.innerHTML = '<div class="muted-note">Loading inbox…</div>'; return; }
       const items = data.items || [];
       const unprocessed = Number(data.unprocessed) || 0;
       if (badge) setSidebarCountBadge(badge, unprocessed, unprocessed + ' unprocessed');
@@ -658,6 +743,7 @@
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
+      if (window._hiveRoleFailed && !window._hiveRole) html += '<div class="muted-xs">Could not determine your role, so actions are read-only. It will retry automatically.</div>';
       if (inboxCanAdd()) html += inboxAddPanelHtml() + inboxUploadsHtml();
       if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
       if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
@@ -697,6 +783,21 @@
       if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
       return data;
     }
+    // Approval queue for mailed-in files from outside the allowlist (#18395).
+    async function inboxEmailAct(id, action) {
+      try {
+        const r = await fetch('/api/inbox/email/' + encodeURIComponent(id) + '/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        showToast(action === 'approve' ? 'Approved' : 'Declined and deleted', 'success');
+      } catch (e) {
+        showToast('Could not ' + action + ': ' + e.message, 'error');
+      }
+      await fetchInbox();
+    }
+    function inboxEmailApprove(id) { return inboxEmailAct(id, 'approve'); }
+    function inboxEmailDecline(id) { return inboxEmailAct(id, 'decline'); }
+
     async function inboxDismiss(src, id) {
       try { const d = await inboxPostDismiss([{ source: src, item_id: id }], false); showToast(d && d.waiting_transcript ? 'Transcribing, then → Knowledge' : 'Kept as a Knowledge fact only', 'success'); await fetchInbox(); }
       catch (e) { showToast('Dismiss failed: ' + e.message, 'error'); }
@@ -1175,13 +1276,17 @@
     // decides from the content.
     function inboxUploadPlan(files, limits) {
       const maxFiles = Number(limits.max_files_per_drop) || 0;
-      const maxBytes = Number(limits.max_file_bytes) || 0;
-      const exts = Array.isArray(limits.extensions) ? limits.extensions : [];
+      const maxDoc = Number(limits.max_file_bytes) || 0;
+      // Audio and video use the recording cap (max_media_bytes).
+      const media = Array.isArray(limits.media_extensions) ? limits.media_extensions : [];
+      const maxMedia = Number(limits.max_media_bytes) || maxDoc;
+      const exts = (Array.isArray(limits.extensions) ? limits.extensions : []).concat(media);
       return Array.from(files || []).map((f, i) => {
         const name = (f && f.name) || 'pasted file';
         const row = { name, size: Number(f && f.size) || 0, file: f, status: 'queued', progress: 0 };
         const dot = name.lastIndexOf('.');
         const ext = dot > 0 ? name.slice(dot).toLowerCase() : '';
+        const maxBytes = media.indexOf(ext) >= 0 ? maxMedia : maxDoc;
         if (maxFiles && i >= maxFiles) { row.status = 'error'; row.code = 'too_many_files'; row.error = 'Too many files in one drop: at most ' + maxFiles + ' at a time.'; }
         else if (!row.size) { row.status = 'error'; row.code = 'empty'; row.error = 'The file is empty.'; }
         else if (maxBytes && row.size > maxBytes) { row.status = 'error'; row.code = 'too_large'; row.error = 'Too large: ' + inboxFmtBytes(row.size) + ' (the limit is ' + inboxFmtBytes(maxBytes) + ').'; }
@@ -1211,8 +1316,8 @@
     function inboxAddPanelHtml() {
       if (!_inboxAddOpen) return '';
       const u = inboxUploadSettings();
-      const exts = Array.isArray(u.extensions) ? u.extensions : [];
-      const limit = (u.max_files_per_drop ? 'up to ' + u.max_files_per_drop + ' files' : 'several files') + (u.max_file_bytes ? ' of ' + inboxFmtBytes(u.max_file_bytes) + ' each' : '');
+      const exts = (Array.isArray(u.extensions) ? u.extensions : []).concat(Array.isArray(u.media_extensions) ? u.media_extensions : []);
+      const limit = (u.max_files_per_drop ? 'up to ' + u.max_files_per_drop + ' files' : 'several files') + (u.max_file_bytes ? ' of ' + inboxFmtBytes(u.max_file_bytes) + ' each' : '') + (u.max_media_bytes ? ' (audio and video up to ' + inboxFmtBytes(u.max_media_bytes) + ', transcribed when transcription is on)' : '');
       return '<div class="inbox-add" id="inbox-add" role="group" aria-label="Add files to the Inbox">' +
         '<p class="muted-xs m-0">Drop files anywhere on the Inbox, paste them with Ctrl/Cmd+V, or choose them here: ' + escapeHtml(limit) + '. Supported: ' + escapeHtml(exts.join(' ')) + '. Files stay on this hive; their text reaches an LLM only when you share the item.</p>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxChooseFiles">Choose files…</button>' +

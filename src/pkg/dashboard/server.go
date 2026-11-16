@@ -33,6 +33,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/mailallow"
 	"github.com/hivecommons/hive/pkg/maintainernotes"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/review/autoscale"
@@ -305,10 +306,6 @@ type Server struct {
 	// terminal (job_terminal.go); zero values take in-cluster defaults.
 	jobTerminal jobTerminalDeps
 
-	kickBrainstormSendKickFn func(name, msg string) error
-	kickBrainstormRestartFn  func(ctx context.Context, name, prompt string) error
-	kickBrainstormDoneFn     func()
-
 	// Sparkline histories, all backed by the generic timeSeries ring buffer
 	// (see timeseries.go). Lazily constructed via the tokenSeries()/factSeries()
 	// /costSeries() accessors so the zero-value Server needs no constructor
@@ -483,6 +480,9 @@ type Server struct {
 	// meetingsAttendee is Settings, Meeting attendee: the boot persona,
 	// the TTS service and the email-in data (hivecommons/hive#18396).
 	meetingsAttendee meetingsAttendeeState
+	// mailAllow is the email allowlist behind the hive-mx email-in endpoints
+	// (hivecommons/hive#18395, api_meetings_email.go); nil until wired.
+	mailAllow atomic.Pointer[mailallow.Store]
 
 	audit *AuditLog
 
@@ -2089,8 +2089,10 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 // auth-signin redirect, which is how #9785 looped. The page names the cause so
 // the hive's operator can act on it instead of seeing a browser error.
 func writeProxyProofRejected(w http.ResponseWriter, r *http.Request, reason string) {
-	slog.Warn("dashboard: rejected hub-proxied request with unverified proxy proof; hub and spoke dashboard tokens disagree or hub omitted the proof",
-		"reason", reason, "path", r.URL.Path, "user", r.Header.Get("X-Hive-User"))
+	if n, ok := proxyProofWarnGate.allow(reason+"|"+r.URL.Path, time.Now()); ok {
+		slog.Warn("dashboard: rejected hub-proxied request with unverified proxy proof; hub and spoke dashboard tokens disagree or hub omitted the proof",
+			"reason", reason, "path", r.URL.Path, "user", r.Header.Get("X-Hive-User"), "suppressed", n)
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		jsonStatusResponse(w, http.StatusForbidden, map[string]string{"error": reason})
@@ -2622,6 +2624,13 @@ func (s *Server) isPublicPath(path string) bool {
 		// Linear agent OAuth return (RFC #4492 Part 2): the installing admin's
 		// browser comes back from linear.app with no hive session. The
 		// single-use state token is the credential, verified server-side.
+		return true
+	case path == meetingsInvitesPath || path == meetingsCalendarProofPath || path == inboxEmailPath:
+		// hive-mx mail relayed by the hub (#18395): hive-mx and the hub hold
+		// no dashboard session. NOT actually open: each handler fails closed
+		// without this hive's relay key and verifies the hub's relay
+		// signature (X-Hive-Relay-Delivery, skew and replay checks) over the
+		// raw body before reading it.
 		return true
 	case path == githubWebhookPath:
 		// GitHub App webhooks (direct or relayed by the hub): GitHub cannot

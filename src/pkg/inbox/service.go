@@ -46,6 +46,9 @@ type Service struct {
 	Logger *slog.Logger
 	// Now is injectable for tests.
 	Now func() time.Time
+	// RFCPublishWait bounds how long a delegated RFC share may stay in
+	// progress; zero means DefaultRFCPublishWait.
+	RFCPublishWait time.Duration
 
 	mu      sync.RWMutex
 	cfg     config.InboxConfig
@@ -66,9 +69,11 @@ type Service struct {
 	transcripts *TranscriptStore
 	// intentRunners are the registered transcribe-then-share handlers.
 	intentRunners map[string]IntentRunner
-	txMu          sync.Mutex
-	txQMu         sync.Mutex
-	txQueue       []*txJob
+	// rfcFinder completes delegated RFC shares; see CheckRFCPublications.
+	rfcFinder RFCFinder
+	txMu      sync.Mutex
+	txQMu     sync.Mutex
+	txQueue   []*txJob
 	// NewTranscriber builds the provider for a run; nil uses
 	// DefaultTranscriber with the key from Getenv. Tests inject a fake.
 	NewTranscriber func(config.InboxTranscription) (transcribe.Transcriber, error)
@@ -99,6 +104,9 @@ type Service struct {
 	// recordings is the dashboard recording source (see recordingsource.go);
 	// nil until EnableRecordings.
 	recordings *RecordingSource
+	// email holds files mailed to hive@<host> (email_source.go); nil until
+	// EnableEmail.
+	email *EmailSource
 }
 
 // NewService builds a service for cfg with the given sources/destinations.
@@ -133,6 +141,9 @@ func (s *Service) SetSources(sources []Source) {
 			next[RecordingType] = s.recordings
 		}
 	}
+	if s.email != nil {
+		next[EmailType] = s.email
+	}
 	s.sources = next
 	s.mu.Unlock()
 }
@@ -143,12 +154,32 @@ func (s *Service) EnableUploads(u *UploadSource) {
 	if u != nil && u.Limits == nil {
 		u.Limits = func() config.InboxUploads { return s.Config().Uploads }
 	}
+	if u != nil && u.RecordingLimits == nil {
+		u.RecordingLimits = func() config.InboxRecording { return s.Config().Recording }
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.uploads = u
 	if u != nil {
 		s.sources[UploadType] = u
 	}
+}
+
+// EnableEmail registers the email spool source (#18395).
+func (s *Service) EnableEmail(e *EmailSource) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.email = e
+	if e != nil {
+		s.sources[EmailType] = e
+	}
+}
+
+// Email returns the email source, or nil when it is not enabled.
+func (s *Service) Email() *EmailSource {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.email
 }
 
 // Uploads returns the upload source, or nil when uploads are not enabled.
@@ -169,6 +200,27 @@ func (s *Service) AddUpload(ctx context.Context, in UploadInput) (Item, error) {
 		return Item{}, err
 	}
 	return u.item(m), nil
+}
+
+// AddMedia stores one dropped audio or video file and, when transcription
+// is enabled and consented, queues its machine transcription at once
+// (opts audits the run like a manual Transcribe).
+func (s *Service) AddMedia(ctx context.Context, in MediaInput, opts TranscribeOptions) (Item, error) {
+	u := s.Uploads()
+	if u == nil {
+		return Item{}, ErrUploadsDisabled
+	}
+	m, err := u.AddMedia(ctx, in)
+	if err != nil {
+		return Item{}, err
+	}
+	it := u.item(m)
+	if s.Config().Transcription.Active() && s.transcriptStore() != nil {
+		if _, err := s.Transcribe(ctx, it, opts); err != nil {
+			s.Logger.Warn("inbox: upload transcription not queued", "item", it.Key(), "error", err)
+		}
+	}
+	return it, nil
 }
 
 // AddLink fetches one URL and returns its Inbox item.
@@ -341,14 +393,35 @@ func (s *Service) Dismiss(source, id string, dismissed bool) error {
 	return s.Store.Dismiss(Key(source, id), dismissed)
 }
 
+// DismissBy marks an item knowledge-only on behalf of actor and records the
+// share in its history. Clearing the mark records nothing.
+func (s *Service) DismissBy(actor, source, id string, dismissed bool) error {
+	if err := s.Store.Dismiss(Key(source, id), dismissed); err != nil || !dismissed {
+		return err
+	}
+	_, err := s.RecordShare(Key(source, id), ShareRecord{Destination: ShareDestKnowledge, Actor: actor, Status: ShareDone, FinishedAt: ptrTime(s.now())})
+	return err
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
+
 // ErrUnknownDestination is returned for a destination the service lacks.
 var ErrUnknownDestination = errors.New("unknown destination")
 
 // Route queues it for dest and runs the delivery in the background. The
 // returned state is the queued state; callers poll Items for progress.
 func (s *Service) Route(ctx context.Context, it Item, req Request) (RouteState, error) {
+	if it.AwaitingApproval && req.Destination != DestDismiss {
+		return RouteState{}, ErrAwaitingApproval
+	}
 	if req.Destination == DestDismiss {
-		if err := s.Dismiss(it.Source, it.ID, true); err != nil {
+		if req.ShareID != "" {
+			ref := refFromResult(it, DestDismiss, Result{})
+			if err := s.Store.Dismiss(it.Key(), true); err != nil {
+				return RouteState{}, err
+			}
+			_ = s.FinishShare(it.Key(), req.ShareID, ShareDone, "", ref)
+		} else if err := s.DismissBy(req.Actor, it.Source, it.ID, true); err != nil {
 			return RouteState{}, err
 		}
 		s.handOff(ctx, it, DestDismiss)
@@ -366,6 +439,15 @@ func (s *Service) Route(ctx context.Context, it Item, req Request) (RouteState, 
 	st, err := s.Store.Begin(it.Key(), req.Destination, req.Repo)
 	if err != nil {
 		return st, err
+	}
+	if req.ShareID == "" {
+		id, rerr := s.RecordShare(it.Key(), ShareRecord{Destination: shareDestFor(req.Destination), Actor: req.Actor, Status: ShareQueued})
+		if rerr != nil {
+			s.Logger.Warn("inbox: record share", "item", it.Key(), "error", rerr)
+		}
+		req.ShareID = id
+	} else {
+		_ = s.FinishShare(it.Key(), req.ShareID, ShareQueued, "", nil)
 	}
 	s.wg.Add(1)
 	run := s.Run
@@ -386,14 +468,17 @@ func (s *Service) deliver(it Item, dest Destination, req Request) {
 	if _, err := s.Store.Set(key, req.Destination, StatusRunning, Result{}, ""); err != nil {
 		s.Logger.Warn("inbox: persist running state", "item", key, "error", err)
 	}
+	if req.ShareID != "" {
+		_ = s.FinishShare(key, req.ShareID, ShareInProgress, "", nil)
+	}
 	content, err := s.Content(ctx, it)
 	if err != nil {
-		s.fail(key, req.Destination, fmt.Errorf("fetch: %w", err))
+		s.fail(key, req.Destination, fmt.Errorf("fetch: %w", err), req.ShareID)
 		return
 	}
 	res, err := dest.Deliver(ctx, it, content, req)
 	if err != nil {
-		s.fail(key, req.Destination, err)
+		s.fail(key, req.Destination, err, req.ShareID)
 		return
 	}
 	status := StatusFiled
@@ -402,6 +487,14 @@ func (s *Service) deliver(it Item, dest Destination, req Request) {
 	}
 	if _, err := s.Store.Set(key, req.Destination, status, res, ""); err != nil {
 		s.Logger.Warn("inbox: persist filed state", "item", key, "error", err)
+	}
+	if req.ShareID != "" {
+		if status == StatusDelegated {
+			// Handed to an agent: still in progress until the RFC exists.
+			_ = s.FinishShare(key, req.ShareID, ShareInProgress, res.Note, nil)
+		} else {
+			_ = s.FinishShare(key, req.ShareID, ShareDone, "", refFromResult(it, req.Destination, res))
+		}
 	}
 	s.Logger.Info("inbox: routed", "item", key, "destination", req.Destination, "status", status, "url", res.URL)
 	s.handOff(ctx, it, req.Destination)
@@ -419,7 +512,10 @@ func (s *Service) handOff(ctx context.Context, it Item, dest string) {
 	}
 }
 
-func (s *Service) fail(key, dest string, err error) {
+func (s *Service) fail(key, dest string, err error, shareID string) {
+	if shareID != "" {
+		_ = s.FinishShare(key, shareID, ShareFailed, err.Error(), nil)
+	}
 	s.Logger.Warn("inbox: route failed", "item", key, "destination", dest, "error", err)
 	if _, perr := s.Store.Set(key, dest, StatusFailed, Result{}, err.Error()); perr != nil {
 		s.Logger.Warn("inbox: persist failed state", "item", key, "error", perr)
@@ -431,10 +527,13 @@ func (s *Service) fail(key, dest string, err error) {
 // old recordings. It is called after each connector sync.
 func (s *Service) Sweep(ctx context.Context) (routed int, err error) {
 	s.ResumeIntents(ctx)
+	s.CheckRFCPublications(ctx)
 	items, lerr := s.Items(ctx)
 	rules := s.Config().Rules
 	for _, it := range items {
-		if s.Store.Seen(it.Key()) {
+		if s.Store.Seen(it.Key()) || it.AwaitingApproval {
+			// An unapproved item is not marked seen: once the owner
+			// approves it, the rules apply on the next sweep.
 			continue
 		}
 		rule, ok := FirstRule(rules, it)
@@ -442,7 +541,7 @@ func (s *Service) Sweep(ctx context.Context) (routed int, err error) {
 			_ = s.Store.MarkSeen(it.Key())
 			continue
 		}
-		if _, rerr := s.Route(ctx, it, Request{Destination: rule.Destination, Repo: rule.Repo}); rerr != nil {
+		if _, rerr := s.Route(ctx, it, Request{Destination: rule.Destination, Repo: rule.Repo, Actor: AutoRouteActor}); rerr != nil {
 			s.Logger.Warn("inbox: auto-route", "item", it.Key(), "error", rerr)
 			_ = s.Store.MarkSeen(it.Key())
 			continue

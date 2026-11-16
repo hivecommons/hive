@@ -277,3 +277,34 @@ func TestInboxUploadURL(t *testing.T) {
 		t.Fatal("fetch_failed must be 502")
 	}
 }
+
+func TestInboxUploadAudioStreamsAndPlays(t *testing.T) {
+	s, svc := newUploadTestServer(t, config.InboxUploads{})
+	audio := "ID3\x04\x00\x00\x00\x00\x00\x00" + strings.Repeat("a", 4096)
+	rec := postUpload(s, "read-write", false, []uploadFile{{"standup.mp3", audio}}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("audio = %d %s", rec.Code, rec.Body.String())
+	}
+	res := decodeUploadResponse(t, rec).Results
+	if len(res) != 1 || res[0].Kind != inbox.UploadKindAudio {
+		t.Fatalf("results = %+v", res)
+	}
+	// The generic same-origin stream serves it from disk.
+	req := httptest.NewRequest(http.MethodGet, "/api/inbox/upload/"+res[0].ItemID+"/audio/stream", nil)
+	req.Header.Set("X-Hive-Role", "read-write")
+	play := httptest.NewRecorder()
+	s.mux.ServeHTTP(play, req)
+	if play.Code != http.StatusOK || play.Body.Len() != len(audio) || !strings.HasPrefix(play.Header().Get("Content-Type"), "audio/mpeg") {
+		t.Fatalf("stream = %d %q %d", play.Code, play.Header().Get("Content-Type"), play.Body.Len())
+	}
+	if rec := postUpload(s, "owner", true, []uploadFile{{"fake.mp3", "just text"}}, nil); rec.Code != http.StatusUnsupportedMediaType {
+		t.Fatalf("fake mp3 = %d", rec.Code)
+	}
+	items, _ := svc.Items(t.Context())
+	if len(items) != 1 || !items[0].Pending {
+		t.Fatalf("items = %+v", items)
+	}
+	if st := svc.Settings().Uploads; st.MaxMediaBytes != config.DefaultInboxRecordingMaxBytes {
+		t.Fatalf("settings = %+v", st)
+	}
+}

@@ -27,7 +27,7 @@ const escapeHtml = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replac
 
 const FNS = ['inboxRecSupport', 'inboxRecRoleCanRecord', 'inboxRecAvailable', 'inboxRecFmtClock', 'inboxRecLevel', 'inboxRecSplit',
   'inboxRecConsentText', 'inboxRecDefaultTitle', 'inboxRecConsentHtml', 'inboxRecMemoryQueue', 'inboxRecUploader', 'inboxRecorderMachine',
-  'inboxRecResumePending', 'inboxRecUploadText', 'inboxRecMeterHtml', 'inboxRecPanelHtml'];
+  'inboxRecResumePending', 'inboxRecUploadText', 'inboxRecMeterHtml', 'inboxRecPanelHtml', 'inboxRecTabSupport', 'inboxRecSourcesHtml', 'inboxRecCaptureTab'];
 const lib = new Function('escapeHtml', consts() + '\n' + FNS.map(fnSrc).join('\n') + '\nreturn {' + FNS.join(',') + ', CONSENT: INBOX_REC_CONSENT_VERSION, ACK: INBOX_REC_CONSENT_ACK };')(escapeHtml);
 
 const flush = async (n = 20) => { for (let i = 0; i < n; i++) await new Promise(r => setImmediate(r)); };
@@ -142,7 +142,7 @@ test('consent text: responsibility, retention, transcription off hint, tab parti
   const tab = lib.inboxRecConsentText({ tab: true, retentionDays: 1, transcribes: true }).join(' ');
   assert.match(tab, /remote participants of that meeting too: they must have been told/);
   assert.match(tab, /1 day and/);
-  assert.match(tab, /can be transcribed on this hive/);
+  assert.match(tab, /transcribes the recording automatically/);
 });
 
 test('upload queue resumes after a network failure and keeps order', async () => {
@@ -298,4 +298,102 @@ test('a live recorder holds a lock and releases it when done', async () => {
   await flush();
   assert.strictEqual(m.state, 'done');
   assert.deepStrictEqual(held, []);
+});
+
+// ── Tab audio (mic + a meeting tab, Chromium only) ──
+const CHROME_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36';
+const SAFARI_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/19.1 Safari/605.1.15';
+const FIREFOX_UA = 'Mozilla/5.0 (Macintosh; Intel Mac OS X 15.7; rv:145.0) Gecko/20100101 Firefox/145.0';
+const ANDROID_UA = 'Mozilla/5.0 (Linux; Android 15) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Mobile Safari/537.36';
+const withDisplay = ua => ({ navigator: { userAgent: ua, mediaDevices: { getUserMedia() {}, getDisplayMedia() {} } } });
+
+test('tab audio is offered on desktop Chromium only, and explained elsewhere', () => {
+  assert.deepStrictEqual(lib.inboxRecTabSupport(withDisplay(CHROME_UA)), { tab: true, reason: '' });
+  assert.strictEqual(lib.inboxRecTabSupport({ navigator: { userAgent: SAFARI_UA, userAgentData: undefined, mediaDevices: { getDisplayMedia() {} } } }).tab, false);
+  for (const ua of [SAFARI_UA, FIREFOX_UA, ANDROID_UA]) {
+    const s = lib.inboxRecTabSupport(withDisplay(ua));
+    assert.strictEqual(s.tab, false, ua);
+    assert.ok(s.reason.length > 0, 'a reason is given for ' + ua);
+  }
+  assert.match(lib.inboxRecTabSupport(withDisplay(FIREFOX_UA)).reason, /Chrome or Edge on a computer/);
+  assert.match(lib.inboxRecTabSupport({ navigator: { userAgent: CHROME_UA, mediaDevices: {} } }).reason, /cannot share a tab/);
+  const brands = { navigator: { userAgent: '', userAgentData: { brands: [{ brand: 'Microsoft Edge' }], mobile: false }, mediaDevices: { getDisplayMedia() {} } } };
+  assert.strictEqual(lib.inboxRecTabSupport(brands).tab, true);
+
+  const hidden = lib.inboxRecSourcesHtml({ tab: false, reason: 'needs Chrome' });
+  assert.doesNotMatch(hidden, /value="tab"/, 'no tab option where unsupported');
+  assert.match(hidden, /data-inbox-rec-tab-unsupported>needs Chrome</);
+  const shown = lib.inboxRecSourcesHtml({ tab: true, reason: '' });
+  assert.match(shown, /value="tab"/);
+  assert.match(shown, /value="mic" data-change-action="inboxRecSourceChange" checked/);
+});
+
+// fakeDisplay returns a getDisplayMedia stream with video and (optionally)
+// audio tracks, recording what happened to them.
+const fakeDisplay = (withAudio) => {
+  const video = Object.assign(fakeTrack(), { kind: 'video' });
+  const audio = Object.assign(fakeTrack(), { kind: 'audio' });
+  const tracks = withAudio ? [video, audio] : [video];
+  const stream = {
+    video, audio, asked: null,
+    getTracks: () => tracks.slice(), getVideoTracks: () => tracks.filter(t => t.kind === 'video'), getAudioTracks: () => tracks.filter(t => t.kind === 'audio'),
+    removeTrack: t => { const i = tracks.indexOf(t); if (i >= 0) tracks.splice(i, 1); },
+  };
+  return stream;
+};
+class FakeAudioContext {
+  constructor() { this.connected = []; FakeAudioContext.last = this; this.mixed = { mixed: true, getTracks: () => [] }; }
+  createMediaStreamDestination() { return { stream: this.mixed }; }
+  createMediaStreamSource(s) { const ctx = this; return { connect: d => ctx.connected.push([s, d]) }; }
+  close() { this.closed = true; }
+}
+
+test('mic + tab: the tab is requested with audio and video, video dropped, both mixed into the recorder', async () => {
+  const display = fakeDisplay(true);
+  let asked = null;
+  const mic = fakeStream();
+  let analysed = null;
+  const { m, hive } = machine({
+    navigator: { mediaDevices: { getUserMedia: async () => mic, getDisplayMedia: async (c) => { asked = c; return display; } } },
+    AudioContext: FakeAudioContext, captureTab: lib.inboxRecCaptureTab, analyse: (mm, captured) => { analysed = captured; return { mic: {}, tab: {} }; },
+  });
+  await m.start({ title: 'Call', consentVersion: lib.CONSENT, tab: true });
+  assert.strictEqual(m.state, 'recording');
+  assert.deepStrictEqual(asked, { audio: true, video: true });
+  assert.ok(display.video.stopped, 'the video track is stopped');
+  assert.deepStrictEqual(display.getVideoTracks(), [], 'and removed');
+  assert.strictEqual(FakeRecorder.last.stream, FakeAudioContext.last.mixed, 'the recorder records the mix');
+  assert.deepStrictEqual(FakeAudioContext.last.connected.map(c => c[0]), [mic, display], 'mic and tab both feed the mix');
+  assert.strictEqual(hive.start.includes_tab_audio, true);
+  assert.strictEqual(analysed.tab, display);
+  assert.match(lib.inboxRecPanelHtml(m), /data-inbox-rec-meter="mic"[\s\S]*data-inbox-rec-meter="tab"/, 'two level meters');
+  m.stop();
+  await flush();
+  assert.ok(display.audio.stopped, 'the tab capture is released on stop');
+});
+
+test('a shared tab without audio warns and records the microphone only', async () => {
+  const mic = fakeStream();
+  const { m, hive } = machine({
+    navigator: { mediaDevices: { getUserMedia: async () => mic, getDisplayMedia: async () => fakeDisplay(false) } },
+    AudioContext: FakeAudioContext, captureTab: lib.inboxRecCaptureTab,
+  });
+  await m.start({ title: 'Call', consentVersion: lib.CONSENT, tab: true });
+  assert.strictEqual(m.state, 'recording');
+  assert.match(m.warning, /no audio: share a browser tab and tick “Share tab audio”/);
+  assert.strictEqual(hive.start.includes_tab_audio, false);
+  assert.strictEqual(FakeRecorder.last.stream, mic);
+  assert.match(lib.inboxRecPanelHtml(m), /role="alert">The shared tab has no audio/);
+});
+
+test('cancelling the tab picker records the microphone only', async () => {
+  const mic = fakeStream();
+  const { m, hive } = machine({
+    navigator: { mediaDevices: { getUserMedia: async () => mic, getDisplayMedia: async () => { const e = new Error('cancel'); e.name = 'NotAllowedError'; throw e; } } },
+    AudioContext: FakeAudioContext, captureTab: lib.inboxRecCaptureTab,
+  });
+  await m.start({ title: 'Call', consentVersion: lib.CONSENT, tab: true });
+  assert.strictEqual(m.state, 'recording');
+  assert.match(m.warning, /No tab was shared/);
+  assert.strictEqual(hive.start.includes_tab_audio, false);
 });

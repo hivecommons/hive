@@ -109,7 +109,7 @@
       ];
       if (o.tab) parts.push('Including tab audio captures the remote participants of that meeting too: they must have been told that you are recording.');
       parts.push('The raw audio is kept on this hive for ' + days + ' day' + (days === 1 ? '' : 's') + ' and then deleted; its transcript and Knowledge fact are kept.');
-      parts.push(o.transcribes ? 'When you stop, it can be transcribed on this hive with 🎧 Transcribe.' : 'Transcription is off on this hive, so this recording is not transcribed until an owner enables it in Inbox ⚙ → Transcription.');
+      parts.push(o.transcribes ? 'When you stop, this hive transcribes the recording automatically.' : 'Transcription is off on this hive, so this recording is not transcribed until an owner enables it in Inbox ⚙ → Transcription.');
       return parts;
     }
     const INBOX_REC_CONSENT_ACK = 'I have told everyone who will be recorded, and I am responsible for this recording.';
@@ -280,7 +280,7 @@
         const mic = await md.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
         m.streams.push(mic);
         if (!opts.tab || typeof e.captureTab !== 'function') return { stream: mic, mic, tab: null };
-        return e.captureTab(m, mic);
+        return e.captureTab(m, mic, e);
       }
       async function start(opts) {
         const o = opts || {};
@@ -432,11 +432,74 @@
       if (!inboxRecAvailable(settings, window._hiveRole, inboxRecBrowserSupport())) return '';
       return '<button type="button" class="hv-btn btn-secondary btn-sm inbox-rec-btn" data-action="inboxRecOpen" title="Record a meeting or a note; it lands in the Inbox">● Record into Inbox</button>';
     }
-    function inboxRecSourcesHtml() { return ''; }
+    // inboxRecTabSupport: tab audio needs getDisplayMedia with audio, which
+    // only Chromium browsers (Chrome, Edge, Brave, ...) on a computer offer:
+    // Safari and Firefox share no tab audio, phones have no tab sharing.
+    function inboxRecTabSupport(win) {
+      const w = win || {};
+      const nav = w.navigator || {};
+      const md = nav.mediaDevices;
+      if (!md || typeof md.getDisplayMedia !== 'function') return { tab: false, reason: 'This browser cannot share a tab (phones and tablets have no tab sharing), so only the microphone is recorded.' };
+      const brands = (nav.userAgentData && Array.isArray(nav.userAgentData.brands)) ? nav.userAgentData.brands.map(b => String(b.brand || '')) : [];
+      const ua = String(nav.userAgent || '');
+      const chromium = brands.some(b => /Chromium|Google Chrome|Microsoft Edge/.test(b)) || (/(Chrome|Chromium|Edg)\//.test(ua) && !/Firefox\//.test(ua));
+      const mobile = (nav.userAgentData && nav.userAgentData.mobile) || /Android|iPhone|iPad|Mobile/.test(ua);
+      if (!chromium || mobile) return { tab: false, reason: 'Recording a tab\'s audio needs Chrome or Edge on a computer (Safari and Firefox do not share tab audio), so only the microphone is recorded here.' };
+      return { tab: true, reason: '' };
+    }
+    function inboxRecSourcesHtml(tabSupport) {
+      const t = tabSupport || { tab: false, reason: '' };
+      let html = '<fieldset class="inbox-rec-sources"><legend class="muted-note">Record</legend>' +
+        '<label class="muted-note"><input type="radio" name="inbox-rec-source" value="mic" data-change-action="inboxRecSourceChange" checked> Microphone only</label>';
+      if (t.tab) html += '<label class="muted-note"><input type="radio" name="inbox-rec-source" value="tab" data-change-action="inboxRecSourceChange"> Microphone and a meeting tab\'s audio (you pick the tab and tick “Share tab audio”)</label>';
+      else html += '<p class="muted-xs" data-inbox-rec-tab-unsupported>' + escapeHtml(t.reason) + '</p>';
+      return html + '</fieldset>';
+    }
+    // inboxRecSourceChange redraws the notice for the chosen source: with
+    // tab audio it names the remote participants.
+    function inboxRecSourceChange() {
+      const settings = ((_inboxCache || {}).settings || {}).recording || {};
+      const el = document.getElementById('inbox-rec-notice');
+      if (!el) return;
+      el.innerHTML = inboxRecConsentText({ tab: inboxRecWantsTab(), retentionDays: settings.retention_days, transcribes: !!settings.transcribes }).map(p => '<p class="muted-note">' + escapeHtml(p) + '</p>').join('');
+      const ack = document.getElementById('inbox-rec-ack');
+      if (ack) { ack.checked = false; inboxRecConsentToggle(); }
+    }
+    // inboxRecCaptureTab asks for a tab with getDisplayMedia({audio, video}),
+    // drops the video track, and mixes the tab audio with the microphone
+    // through Web Audio (MediaStreamAudioDestinationNode). A share without an
+    // audio track (the user did not tick "Share tab audio", or picked a
+    // window) records the microphone only, with a warning.
+    async function inboxRecCaptureTab(m, mic, env) {
+      const e = env || {};
+      let display;
+      try {
+        display = await e.navigator.mediaDevices.getDisplayMedia({ audio: true, video: true });
+      } catch (err) {
+        m.warning = 'No tab was shared, so only the microphone is recorded.';
+        return { stream: mic, mic, tab: null };
+      }
+      m.streams.push(display);
+      for (const v of display.getVideoTracks()) { try { v.stop(); } catch (err) { /* stopped */ } display.removeTrack(v); }
+      const audio = display.getAudioTracks();
+      if (!audio.length) {
+        m.warning = 'The shared tab has no audio: share a browser tab and tick “Share tab audio”. Only the microphone is recorded.';
+        return { stream: mic, mic, tab: null };
+      }
+      const AC = e.AudioContext;
+      if (!AC) { m.warning = 'This browser cannot mix tab audio; only the microphone is recorded.'; return { stream: mic, mic, tab: null }; }
+      const ctx = new AC();
+      m.audioCtx = ctx;
+      const dest = ctx.createMediaStreamDestination();
+      ctx.createMediaStreamSource(mic).connect(dest);
+      ctx.createMediaStreamSource(display).connect(dest);
+      for (const t of audio) t.onended = () => { if (m.state === 'recording' || m.state === 'paused') { m.warning = 'Tab sharing stopped; the recording continues with the microphone only.'; if (e.onChange) e.onChange(m); } };
+      return { stream: dest.stream, mic, tab: display };
+    }
     function inboxRecOpen() {
       if (_inboxRec && ['starting', 'recording', 'paused', 'stopping', 'finishing'].indexOf(_inboxRec.state) >= 0) { inboxRecFocus(); return; }
       const settings = ((_inboxCache || {}).settings || {}).recording || {};
-      const body = inboxRecConsentHtml({ title: inboxRecDefaultTitle(), retentionDays: settings.retention_days, transcribes: !!settings.transcribes, tab: false, sourcesHtml: inboxRecSourcesHtml() });
+      const body = inboxRecConsentHtml({ title: inboxRecDefaultTitle(), retentionDays: settings.retention_days, transcribes: !!settings.transcribes, tab: false, sourcesHtml: inboxRecSourcesHtml(inboxRecTabSupport(window)) });
       kbShowModal('● Record into the Inbox', body, { width: '560px' });
       const ack = document.getElementById('inbox-rec-ack');
       if (ack) ack.checked = false;
@@ -449,7 +512,10 @@
       btn.disabled = !on;
       btn.setAttribute('aria-disabled', on ? 'false' : 'true');
     }
-    function inboxRecWantsTab() { return false; }
+    function inboxRecWantsTab() {
+      const el = document.querySelector('input[name="inbox-rec-source"]:checked');
+      return !!(el && el.value === 'tab');
+    }
     async function inboxRecConfirmStart() {
       const ack = document.getElementById('inbox-rec-ack');
       const errEl = document.getElementById('inbox-rec-error');
@@ -471,7 +537,7 @@
       return {
         navigator, MediaRecorder: window.MediaRecorder, fetch: (u, o) => fetch(u, o), queue: inboxRecQueue(), now: () => Date.now(),
         setTimeout: (f, ms) => setTimeout(f, ms), clearTimeout: t => clearTimeout(t), onChange: () => inboxRecRender(),
-        holdLock: inboxRecHoldLock, analyse: inboxRecAnalyse, captureTab: typeof inboxRecCaptureTab === 'function' ? inboxRecCaptureTab : null,
+        holdLock: inboxRecHoldLock, analyse: inboxRecAnalyse, captureTab: inboxRecCaptureTab, AudioContext: window.AudioContext || window.webkitAudioContext,
       };
     }
     // inboxRecAnalyse attaches an AnalyserNode to each captured stream for
@@ -531,7 +597,7 @@
       if (m.uploader) html += '<div class="muted-xs inbox-rec-upload" data-inbox-rec-upload aria-live="polite">' + escapeHtml(inboxRecUploadText(m.uploader.state)) + '</div>';
       if (m.warning) html += '<div class="kc-error muted-xs" role="alert">' + escapeHtml(m.warning) + '</div>';
       if (m.error) html += '<div class="kc-error muted-xs" role="alert">' + escapeHtml(m.error) + '</div>';
-      if (m.state === 'done') html += '<div class="muted-xs">' + escapeHtml(m.transcribes ? 'It appears in the Inbox below; use 🎧 Transcribe on it.' : 'It appears in the Inbox below. Transcription is off on this hive, so it is not transcribed yet.') + '</div>';
+      if (m.state === 'done') html += '<div class="muted-xs">' + escapeHtml(m.transcribes ? 'The hive is transcribing it now; follow the progress on the item in the Inbox below.' : 'It appears in the Inbox below. Transcription is off on this hive, so it is not transcribed yet.') + '</div>';
       html += '<div class="kc-actions mt-2">';
       if (m.state === 'recording') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecPause">⏸ Pause</button>';
       if (m.state === 'paused') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecResume">⏺ Resume</button>';

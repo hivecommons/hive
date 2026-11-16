@@ -10,7 +10,6 @@
 # workflowmodel: /api/workflows handlers compile lifecycle models (Compile, Profile diagnostics) and the tracker emits per-repo workflow columns; the store and bindings already route through Dependencies (hivecommons/hive#17620 P2).
 # egressmark: deployment_upgrade.go dials the in-cluster Kubernetes API for the hive's own rollout; the dial must carry the forced-egress SO_MARK or nodes without xt_owner redirect it into the MITM proxy (hivecommons/hive#17817).
 github.com/hivecommons/hive/crux
-github.com/hivecommons/hive/crux/agentparse
 github.com/hivecommons/hive/crux/claude
 github.com/hivecommons/hive/crux/egressmark
 github.com/hivecommons/hive/crux/kubejob
@@ -60,6 +59,11 @@ github.com/hivecommons/hive/pkg/ioscan
 # (hivecommons/hive#18214); no existing seam carries a secret-file write.
 github.com/hivecommons/hive/pkg/keystore
 github.com/hivecommons/hive/pkg/knowledge
+# mailallow, mailin (only its stdlib-only wire subpackage): the email-in
+# endpoints (/api/meetings/invites, calendar-emails, /api/inbox/email) read
+# hive-mx deliveries and the calendar email allowlist (#18395).
+github.com/hivecommons/hive/pkg/mailallow
+github.com/hivecommons/hive/pkg/mailin
 github.com/hivecommons/hive/pkg/maintainernotes
 github.com/hivecommons/hive/pkg/modelfamily
 github.com/hivecommons/hive/pkg/notify

@@ -83,9 +83,12 @@ const (
 )
 
 // DefaultModel is the gateway default_model used when the sponsor picks none.
-// A cheap, widely-available model so a freshly-funded hive works out of the box
-// without spending on a premium model by accident.
-const DefaultModel = "deepseek/deepseek-chat"
+// DeepSeek V4.1 Flash: the cheapest capable model once prompt caching kicks in
+// (Nov 2026: $0.14/M input, $0.0042/M cache read, $0.42/M output), so a
+// freshly-funded hive works out of the box without spending on a premium model
+// by accident. TestSuggestedModelsExistInCatalogFixture pins it to the
+// recorded catalog.
+const DefaultModel = "deepseek/deepseek-v4.1-flash"
 
 // SuggestedModel is one curated option offered on the funding screen: an id and
 // a short human label. The list is a starting point — the UI also fetches the
@@ -95,16 +98,17 @@ type SuggestedModel struct {
 	Label string `json:"label"`
 }
 
-// SuggestedModels is the curated short list shown on the funding screen. It
-// spans a premium option (Claude Opus) and cheaper ones (DeepSeek, Llama), so a
-// sponsor can pick a sensible default without fetching the full catalog. IDs are
-// OpenRouter model ids.
+// SuggestedModels is the curated short list shown on the funding screen and at
+// the top of the gateway model picker. Deliberately short and opinionated, with
+// honest labels; every id must exist in testdata/models.json (a recorded copy
+// of the live catalog, refreshed in the same PR that edits this list), and the
+// handlers hide any entry the LIVE catalog no longer lists (AvailableSuggested).
 var SuggestedModels = []SuggestedModel{
-	{ID: "anthropic/claude-opus-4.8", Label: "Claude Opus 4.8 (premium)"},
-	{ID: "anthropic/claude-3.5-sonnet", Label: "Claude 3.5 Sonnet"},
-	{ID: "deepseek/deepseek-chat", Label: "DeepSeek Chat (cheap)"},
-	{ID: "meta-llama/llama-3.3-70b-instruct", Label: "Llama 3.3 70B (cheap)"},
-	{ID: "google/gemini-flash-1.5", Label: "Gemini Flash 1.5 (cheap)"},
+	{ID: "deepseek/deepseek-v4.1-flash", Label: "DeepSeek V4.1 Flash (default, cheapest with caching)"},
+	{ID: "z-ai/glm-5.3", Label: "GLM-5.3 (strong, cheap)"},
+	{ID: "z-ai/glm-5.3-flash", Label: "GLM-5.3 Flash (cheapest)"},
+	{ID: "anthropic/claude-sonnet-5.5", Label: "Claude Sonnet 5.5 (premium)"},
+	{ID: "google/gemini-3.8-flash", Label: "Gemini 3.8 Flash (fast, mid-price)"},
 }
 
 // GeneratePKCE creates a random code_verifier and its S256 code_challenge.
@@ -251,43 +255,16 @@ func FetchCredit(key string) (*Credit, error) {
 	return &out.Data, nil
 }
 
-// modelsListTimeout bounds the public /v1/models fetch used by the funding
-// picker. Kept short — it's a best-effort enrichment, not on the critical path.
-const modelsListTimeout = 5 * time.Second
-
 // PublicModelIDs best-effort fetches OpenRouter's public model catalog (no key
 // required) and returns the list of model ids. On any failure it returns nil, so
-// callers fall back to the curated SuggestedModels + manual entry. The response
-// is the standard OpenAI-style {data:[{id}]} shape.
+// callers fall back to the curated SuggestedModels + manual entry. Uncached;
+// see CachedPublicModels for the cached, priced catalog.
 func PublicModelIDs() []string {
-	req, err := http.NewRequest(http.MethodGet, BaseURL+"/models", nil)
+	models, err := FetchPublicModels()
 	if err != nil {
 		return nil
 	}
-	client := &http.Client{Timeout: modelsListTimeout}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if resp.StatusCode != http.StatusOK {
-		return nil
-	}
-	var out struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&out); err != nil {
-		return nil
-	}
-	ids := make([]string, 0, len(out.Data))
-	for _, m := range out.Data {
-		if m.ID != "" {
-			ids = append(ids, m.ID)
-		}
-	}
-	return ids
+	return ModelIDs(models)
 }
 
 // QRPNG returns a scannable QR code PNG encoding the given text (an authorize

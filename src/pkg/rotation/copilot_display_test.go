@@ -4,10 +4,14 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	ccleft "github.com/tuna-os/ccleft"
+
+	"github.com/hivecommons/hive/crux/agent/copilottoken"
+	"github.com/hivecommons/hive/crux/keystore"
 )
 
 type recordingCCLeftClient struct {
@@ -124,5 +128,39 @@ func TestContributorReadingPublisherCopilotIsDisplayOnly(t *testing.T) {
 	}
 	if resp := m.HeadroomResponse(); len(resp.Providers) != 1 || resp.Providers[0].Provider != "github" {
 		t.Errorf("served providers = %+v, want the github reading", resp.Providers)
+	}
+}
+
+// hivecommons/hive#18444: with a keystore provider active the dashboard's
+// Copilot login is sealed on disk; the gauge must open it, not send the
+// envelope to GitHub as the token.
+func TestCopilotAgentTokenOpensSealedLogin(t *testing.T) {
+	dir := t.TempDir()
+	oldPath, oldHome := copilotUserTokenPath, sharedCLIHomePath
+	t.Cleanup(func() { copilotUserTokenPath, sharedCLIHomePath = oldPath, oldHome })
+	copilotUserTokenPath = filepath.Join(dir, "copilot-user-token")
+	sharedCLIHomePath = filepath.Join(dir, "home")
+	t.Setenv("COPILOT_GITHUB_TOKEN", "")
+
+	keystore.ResetForTest()
+	t.Cleanup(keystore.ResetForTest)
+	prov, err := keystore.NewEnvKeyProvider([]byte("0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	keystore.SetActive(prov)
+
+	if err := copilottoken.WriteDurableToken(copilotUserTokenPath, "durable-token"); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(copilotUserTokenPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "durable-token") {
+		t.Fatal("login file holds the plaintext token, want a sealed envelope")
+	}
+	if got := copilotAgentToken(); got != "durable-token" {
+		t.Fatalf("sealed login: token = %q, want durable-token", got)
 	}
 }

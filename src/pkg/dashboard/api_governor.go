@@ -1932,7 +1932,7 @@ func describeEgressProxy(req *http.Request) string {
 // still sent as the Bearer — for watsonx the caller passes the minted IAM token
 // as apiKey, not the raw key.
 func probeModelsWithHeaders(endpoint, apiKey string, extraHeaders map[string]string) (int, error) {
-	modelsURL := strings.TrimRight(endpoint, "/") + "/v1/models"
+	modelsURL := openAIModelsURL(endpoint)
 	req, err := http.NewRequest("GET", modelsURL, nil)
 	if err != nil {
 		return 0, fmt.Errorf("building request: %w", err)
