@@ -276,7 +276,7 @@ func (c *Engine) recoverOrphanedAdoptionFromMarker(ctx context.Context, store *s
 	switch {
 	case sup.GetMerged():
 		c.info("stage labels: adoption marker found with a merged copy; closing the original", logArgs...)
-		return c.closeSupersededOriginal(ctx, store, key, obs, rec, sup, now)
+		return c.closeSupersededOriginal(ctx, store, key, obs, rec, policy, sup, now)
 	case strings.EqualFold(sup.GetState(), "closed"):
 		if AdoptionLoopFromMarkers(scan, now) {
 			// The marker path has no first-orphan record; the comment

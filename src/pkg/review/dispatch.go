@@ -661,6 +661,10 @@ const (
 	// keeps regenerating (otherBotAuthor): a fix pushed there is
 	// overwritten on the bot's next run, so it spends no fix attempt.
 	FixDispatchExcludedOtherBotAuthor = "other-bot-author"
+	// FixDispatchExcludedSupersededByHive is a PR the hive adopted by
+	// supersession (PullRequest.SupersededByHive): its fixes go to the
+	// hive's copy, never to the original's branch.
+	FixDispatchExcludedSupersededByHive = "superseded-by-hive-copy"
 )
 
 func LoadDispatchState(path string) (DispatchState, error) {
@@ -1604,15 +1608,32 @@ func hiveAuthored(pr PullRequest, opts DispatchOptions) bool {
 // place (`stage/074-adopted-by-hive`): adoption is the explicit decision that the
 // hive owns the branch and fixes it there (hivecommons/hive#12987).
 //
+// A supersede adoption is not that decision. The original keeps the 074
+// label while the hive's copy (hive/adopt-<n>) is worked, but its branch
+// stays its author's, so the hive never pushes to it, whoever opened it: the
+// copy is where fixes go (SupersededByHive). projectbluefin/chairlift#787, a
+// Renovate PR superseded by #796, took a review fix on its own branch and
+// was then left open as "moved on" when the copy merged.
+//
 // A bot-shaped login is not enough on its own: a PR another bot opened
 // (otherBotAuthor) is that bot's branch, regenerated and force-pushed on its
 // next run, so a fix pushed there is lost and can leave the PR red until
 // then. The hive does not push to it; the finding belongs on the base branch.
 func fixPushAllowed(pr PullRequest, opts DispatchOptions) bool {
-	if hasLabelFold(pr.Labels, stagelabels.AdoptedByHive.Label()) {
+	if pr.SupersededByHive {
+		return false
+	}
+	if adoptedOwnsBranch(pr) {
 		return true
 	}
 	return fixPushAuthorOK(pr.Author) && !otherBotAuthor(pr, opts)
+}
+
+// adoptedOwnsBranch reports the 074 exception: the stage reconciler adopted
+// pr (`stage/074-adopted-by-hive`) and did not do it by supersession, so the
+// hive owns the PR's own branch (hivecommons/hive#12987).
+func adoptedOwnsBranch(pr PullRequest) bool {
+	return !pr.SupersededByHive && hasLabelFold(pr.Labels, stagelabels.AdoptedByHive.Label())
 }
 
 // otherBotAuthor reports whether pr was opened by a bot other than this hive:
@@ -1647,7 +1668,7 @@ func ownLoginKey(login string) string {
 // proposeFixesBotAuthor is the PromptOptions.ProposeFixesBotAuthor value for
 // pr: its author's login when that is another bot, else "".
 func proposeFixesBotAuthor(pr PullRequest, opts DispatchOptions) string {
-	if hasLabelFold(pr.Labels, stagelabels.AdoptedByHive.Label()) || !otherBotAuthor(pr, opts) {
+	if adoptedOwnsBranch(pr) || !otherBotAuthor(pr, opts) {
 		return ""
 	}
 	return strings.TrimSpace(pr.Author)
@@ -1725,6 +1746,14 @@ func (p *DispatchPlan) withholdFix(pr PullRequest, agg Aggregate, opts DispatchO
 	if bot := proposeFixesBotAuthor(pr, opts); bot != "" {
 		reason = "PR was opened by another bot (" + bot + "), which regenerates its branch, so a pushed fix would be overwritten; the finding belongs on the base branch, so review published, fix not pushed"
 		setting, enabled, excluded = WithheldFixBotSetting, true, FixDispatchExcludedOtherBotAuthor
+	}
+	if pr.SupersededByHive {
+		copyRef := "the hive's superseding copy"
+		if pr.SupersedingPR > 0 {
+			copyRef = fmt.Sprintf("%s #%d", copyRef, pr.SupersedingPR)
+		}
+		reason = "PR was adopted by supersession: its commits went to " + copyRef + ", which takes the fixes, and this branch stays its author's; review published, fix not pushed"
+		excluded = FixDispatchExcludedSupersededByHive
 	}
 	w := WithheldFix{
 		Repo:           pr.Repo,
@@ -1830,7 +1859,7 @@ func pendingFixExpired(f PendingFix, opts DispatchOptions, now time.Time) bool {
 }
 
 func adoptedHiveOwnedFix(pr PullRequest, opts DispatchOptions) bool {
-	return hasLabelFold(pr.Labels, stagelabels.AdoptedByHive.Label()) && hiveAuthored(pr, opts)
+	return adoptedOwnsBranch(pr) && hiveAuthored(pr, opts)
 }
 
 func (p *DispatchPlan) recordFixExclusion(pr PullRequest, reason string, attempts int) {
