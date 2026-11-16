@@ -1,1 +1,0 @@
-- Workflow-model repositories no longer flap `stage/020-claimed` every cycle: the in-progress sweep leaves a stage label the bound model derives for the issue (TechDocs "Accepted") in place and does not treat it as a claim, and out-of-cycle stage facts derive through the same bound model as the sweeps (#18434).

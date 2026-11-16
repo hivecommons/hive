@@ -1,1 +1,0 @@
-- The AGENTS.md injection cap defaults to 32 KiB (was 8 KiB), so a 13 KB AGENTS.md now reaches agents in full; set `repos.<repo>.agents_md_max_bytes` to override it per repo (hard ceiling 256 KiB) or `HIVE_AGENTS_MD_MAX_BYTES` for the default, the truncation warning is logged once per file change, and `/api/status` repos report each repo's AGENTS.md size and any dropped sections.
