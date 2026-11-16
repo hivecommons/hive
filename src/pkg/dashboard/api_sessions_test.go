@@ -504,11 +504,16 @@ func TestSessionsCreateValidation(t *testing.T) {
 	if rec := e.do(t, callerOwner, "POST", "/api/sessions", []byte("{not json")); rec.Code != http.StatusBadRequest {
 		t.Errorf("malformed body = %d", rec.Code)
 	}
+	waitSessionsFor(t, "the one valid create to start", func() bool { return len(e.rt.startedSpecs()) >= 1 })
+	// Let the valid create's background worker finish before mutating the
+	// shared config, which that worker reads.
+	for _, spec := range e.rt.startedSpecs() {
+		e.waitSettled(t, spec.ID)
+	}
 	e.s.deps.Config.Backends.Deny = []string{"claude"}
 	if rec := e.do(t, callerOwner, "POST", "/api/sessions", map[string]string{"name": "x", "vendor": "claude"}); rec.Code != http.StatusForbidden {
 		t.Errorf("denied backend = %d, want 403", rec.Code)
 	}
-	waitSessionsFor(t, "the one valid create to start", func() bool { return len(e.rt.startedSpecs()) >= 1 })
 	if n := len(e.rt.startedSpecs()); n != 1 {
 		t.Errorf("started %d sessions, want only the one valid create", n)
 	}
