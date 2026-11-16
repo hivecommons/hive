@@ -1,0 +1,1 @@
+- The Inbox no longer offers a "→ dibs…" item action. Recordings are filed with "→ RFC…"; dibs remains available as an auto-routing destination for existing configs.

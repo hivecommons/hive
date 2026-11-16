@@ -10815,7 +10815,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'sessions-section': { heading: 'Inception (spek)', help: 'Named terminal sessions running command-line AI tools inside Hive; everyone who can see one watches live and one person at a time holds the keyboard.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'meetings-section': { heading: 'Meetings', help: 'Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.' },
-      'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC, send to dibs, or keep as knowledge.' },
+      'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
@@ -47648,8 +47648,7 @@ function burnAreaChart() {
       if (owner) {
         const retry = (d) => routes[d] && routes[d].status === 'failed' ? 'Retry ' : '→ ';
         actions += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxOpenRoute" data-arg0="' + src + '" data-arg1="' + id + '" data-arg2="spek_rfc">' + retry('spek_rfc') + 'RFC…</button>';
-        actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenRoute" data-arg0="' + src + '" data-arg1="' + id + '" data-arg2="dibs">' + retry('dibs') + 'dibs…</button>';
-        if (!it.dismissed) actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxDismiss" data-arg0="' + src + '" data-arg1="' + id + '" title="Keep it as a Knowledge fact; no RFC, no dibs idea">Knowledge only</button>';
+        if (!it.dismissed) actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxDismiss" data-arg0="' + src + '" data-arg1="' + id + '" title="Keep it as a Knowledge fact; no RFC">Knowledge only</button>';
         else actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxUndismiss" data-arg0="' + src + '" data-arg1="' + id + '">Back to inbox</button>';
       }
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg0="' + src + '" data-arg1="' + id + '" title="Share a link to this item in the Inbox (not the recording)">🔗 Share</button>';
@@ -47886,14 +47885,11 @@ function burnAreaChart() {
         body += '<p class="muted-note">A hive agent drafts a spec from the transcript with spektacular, then runs <code>spektacular publish</code> to file one RFC issue plus child issues on the chosen repository. The children are picked up by the hive like any other issue.</p>' +
           '<label class="muted-note inbox-field">Repository<select class="field-input field-input-block mt-2" id="inbox-route-repo">' + opts + '</select></label>' +
           (repos.length ? '' : '<p class="kc-error muted-xs">No repositories configured on this hive.</p>');
-      } else {
-        body += '<p class="muted-note">Posts the title, summary and transcript to dibs as a private draft idea' + (settings.dibs_url ? ' at <code>' + escapeHtml(settings.dibs_url) + '</code>' : '') + '. Provenance links back to <code>' + escapeHtml(src) + '://recordings/' + escapeHtml(id) + '</code>.</p>' +
-          (!settings.dibs_url ? '<p class="kc-error muted-xs">dibs is not configured — set the URL under ⚙ Auto-routing and <code>inbox.dibs.token_env</code> in the hive config.</p>' : !settings.dibs_token_set ? '<p class="kc-error muted-xs">dibs token missing — set the environment variable named by <code>inbox.dibs.token_env</code>.</p>' : '');
       }
       body += '<div class="hive-dialog-error" role="alert" id="inbox-route-error"></div>' +
         '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
-        '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxConfirmRoute" data-arg0="' + escapeHtml(src) + '" data-arg1="' + escapeHtml(id) + '" data-arg2="' + escapeHtml(dest) + '">' + (dest === 'spek_rfc' ? 'File RFC' : 'Send to dibs') + '</button></div>';
-      kbShowModal(dest === 'spek_rfc' ? '→ RFC (spektacular)' : '→ dibs', body, { width: '520px' });
+        '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxConfirmRoute" data-arg0="' + escapeHtml(src) + '" data-arg1="' + escapeHtml(id) + '" data-arg2="' + escapeHtml(dest) + '">' + 'File RFC' + '</button></div>';
+      kbShowModal('→ RFC (spektacular)', body, { width: '520px' });
     }
     async function inboxConfirmRoute(src, id, dest) {
       const repoEl = document.getElementById('inbox-route-repo');

@@ -314,8 +314,7 @@
       if (owner) {
         const retry = (d) => routes[d] && routes[d].status === 'failed' ? 'Retry ' : '→ ';
         actions += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxOpenRoute" data-arg0="' + src + '" data-arg1="' + id + '" data-arg2="spek_rfc">' + retry('spek_rfc') + 'RFC…</button>';
-        actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenRoute" data-arg0="' + src + '" data-arg1="' + id + '" data-arg2="dibs">' + retry('dibs') + 'dibs…</button>';
-        if (!it.dismissed) actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxDismiss" data-arg0="' + src + '" data-arg1="' + id + '" title="Keep it as a Knowledge fact; no RFC, no dibs idea">Knowledge only</button>';
+        if (!it.dismissed) actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxDismiss" data-arg0="' + src + '" data-arg1="' + id + '" title="Keep it as a Knowledge fact; no RFC">Knowledge only</button>';
         else actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxUndismiss" data-arg0="' + src + '" data-arg1="' + id + '">Back to inbox</button>';
       }
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg0="' + src + '" data-arg1="' + id + '" title="Share a link to this item in the Inbox (not the recording)">🔗 Share</button>';
@@ -552,14 +551,11 @@
         body += '<p class="muted-note">A hive agent drafts a spec from the transcript with spektacular, then runs <code>spektacular publish</code> to file one RFC issue plus child issues on the chosen repository. The children are picked up by the hive like any other issue.</p>' +
           '<label class="muted-note inbox-field">Repository<select class="field-input field-input-block mt-2" id="inbox-route-repo">' + opts + '</select></label>' +
           (repos.length ? '' : '<p class="kc-error muted-xs">No repositories configured on this hive.</p>');
-      } else {
-        body += '<p class="muted-note">Posts the title, summary and transcript to dibs as a private draft idea' + (settings.dibs_url ? ' at <code>' + escapeHtml(settings.dibs_url) + '</code>' : '') + '. Provenance links back to <code>' + escapeHtml(src) + '://recordings/' + escapeHtml(id) + '</code>.</p>' +
-          (!settings.dibs_url ? '<p class="kc-error muted-xs">dibs is not configured — set the URL under ⚙ Auto-routing and <code>inbox.dibs.token_env</code> in the hive config.</p>' : !settings.dibs_token_set ? '<p class="kc-error muted-xs">dibs token missing — set the environment variable named by <code>inbox.dibs.token_env</code>.</p>' : '');
       }
       body += '<div class="hive-dialog-error" role="alert" id="inbox-route-error"></div>' +
         '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
-        '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxConfirmRoute" data-arg0="' + escapeHtml(src) + '" data-arg1="' + escapeHtml(id) + '" data-arg2="' + escapeHtml(dest) + '">' + (dest === 'spek_rfc' ? 'File RFC' : 'Send to dibs') + '</button></div>';
-      kbShowModal(dest === 'spek_rfc' ? '→ RFC (spektacular)' : '→ dibs', body, { width: '520px' });
+        '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxConfirmRoute" data-arg0="' + escapeHtml(src) + '" data-arg1="' + escapeHtml(id) + '" data-arg2="' + escapeHtml(dest) + '">' + 'File RFC' + '</button></div>';
+      kbShowModal('→ RFC (spektacular)', body, { width: '520px' });
     }
     async function inboxConfirmRoute(src, id, dest) {
       const repoEl = document.getElementById('inbox-route-repo');

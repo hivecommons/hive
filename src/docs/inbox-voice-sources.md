@@ -60,7 +60,7 @@ see the issue linked from the changelog entry.
     yet" so it can be transcribed first. If no agent is
     available or the kick is refused, the item shows **RFC failed** with the
     error inline and a **Retry RFC…** button; it never sits as pending.
-  - **→ dibs** (`dibs`): posts title, summary, transcript and the
+  - **dibs** (`dibs`, auto-routing only; the item-level **→ dibs…** button was removed): posts title, summary, transcript and the
     `plaud://recordings/<id>` provenance to `POST {inbox.dibs.url}/api/ideas`
     as a private draft idea (Bearer token from `inbox.dibs.token_env`).
   - **Knowledge only** (`dismiss`): leaves the fact where it is and drops the

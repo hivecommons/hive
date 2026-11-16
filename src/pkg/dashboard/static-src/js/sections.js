@@ -163,7 +163,7 @@
       'sessions-section': { heading: 'Inception (spek)', help: 'Named terminal sessions running command-line AI tools inside Hive; everyone who can see one watches live and one person at a time holds the keyboard.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'meetings-section': { heading: 'Meetings', help: 'Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.' },
-      'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC, send to dibs, or keep as knowledge.' },
+      'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
