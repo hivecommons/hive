@@ -596,8 +596,58 @@ func (s *Server) handleGovernorGatewaysDiscover(w http.ResponseWriter, r *http.R
 	probe := map[string]interface{}{"ok": true, "model_count": len(models)}
 	probe["diagnostic"] = gatewayProbeDiagnosticText(probeGW, probe, key)
 	s.appendInferenceRouteForForm(probeGW, probe)
-	jsonResponse(w, map[string]interface{}{"ok": true, "models": models, "diagnostic": probe["diagnostic"], "probe": probe})
+	resp := map[string]interface{}{"ok": true, "models": models, "diagnostic": probe["diagnostic"], "probe": probe}
+	s.attachOpenRouterModelInfo(resp, kind, endpoint, models)
+	jsonResponse(w, resp)
 }
+
+// attachOpenRouterModelInfo adds the public catalog's name, context length and
+// prices for the discovered ids ("model_info") plus the curated suggestions
+// still live ("suggested") when the gateway is OpenRouter, so the form's model
+// picker can show "$/1M in · out · ctx" and pin the curated short list on top.
+// Other kinds publish no prices on /v1/models and are left untouched.
+func (s *Server) attachOpenRouterModelInfo(resp map[string]interface{}, kind, endpoint string, models []string) {
+	if !isOpenRouterGateway(kind, endpoint) {
+		return
+	}
+	or := s.openRouter()
+	if or == nil {
+		return
+	}
+	catalog := or.PublicModels()
+	if len(catalog) == 0 {
+		return
+	}
+	want := make(map[string]bool, len(models))
+	for _, m := range models {
+		want[m] = true
+	}
+	info := make([]OpenRouterModel, 0, len(models))
+	for _, m := range catalog {
+		if want[m.ID] {
+			info = append(info, m)
+		}
+	}
+	resp["model_info"] = info
+	resp["suggested"] = availableOpenRouterSuggested(or.SuggestedModels(), models)
+}
+
+// isOpenRouterGateway reports whether a gateway is OpenRouter, by kind or —
+// for a "custom" entry someone pointed at OpenRouter by hand — by endpoint
+// host.
+func isOpenRouterGateway(kind, endpoint string) bool {
+	if strings.EqualFold(kind, config.GatewayKindOpenRouter) {
+		return true
+	}
+	u, err := url.Parse(strings.TrimSpace(endpoint))
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Hostname(), openRouterAPIHost)
+}
+
+// openRouterAPIHost is the public OpenRouter API host.
+const openRouterAPIHost = "openrouter.ai"
 
 // handleGovernorGatewaysTest runs a live /v1/models probe against a named
 // gateway's resolved endpoint + key and returns {ok, model_count, error}.
