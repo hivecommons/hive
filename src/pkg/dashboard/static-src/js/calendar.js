@@ -26,6 +26,19 @@
       return typeof dashboardRoleAtLeast === 'function' ? dashboardRoleAtLeast(window._hiveRole || 'read', 'read-write') : window._hiveRole === 'owner';
     }
     function calendarIsOwner() { return window._hiveRole === 'owner'; }
+    // The role is known once /api/role settled; until then the Calendar
+    // shows a loading state, never the "not allowed" notice, and re-renders
+    // when gh-auth.js notifies role listeners (same contract as the Inbox).
+    function calendarRoleKnown() { return window._hiveRoleSettled === true || window._hiveRole !== undefined; }
+    function calendarOnRoleReady() {
+      Promise.all([fetchCalendar(), calendarRefreshMeetings(), fetchMeetingDrafts()]).catch(console.error);
+    }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(calendarOnRoleReady);
+    // Schedule and draft status to the kc-pill status palette.
+    const CALENDAR_PILL_STATUS = {
+      live: 'ok', done: 'ok', scheduled: 'syncing', awaiting_approval: 'not loaded', pending: 'not loaded', approving: 'syncing',
+      failed: 'error', blocked: 'error'
+    };
 
     function calendarPlatformLabel(p) { return CALENDAR_PLATFORM_LABELS[p] || p || 'meeting'; }
 
@@ -100,6 +113,7 @@
     }
 
     async function calendarRefreshMeetings() {
+      if (!calendarRoleKnown()) return;
       if (!calendarIsOwner()) { _calendarMeetings = {}; renderCalendarIndicator(); return; }
       try {
         const r = await fetch('/api/meetings');
@@ -124,8 +138,12 @@
 
     async function fetchCalendar() {
       const host = document.getElementById('calendar-panel');
+      if (!calendarRoleKnown()) {
+        if (host) host.innerHTML = '<p class="muted-xs">Loading calendar…</p>';
+        return;
+      }
       if (!calendarCanView()) {
-        if (host) host.innerHTML = '<p class="muted-xs">The calendar is visible to the hive owner and read-write users.</p>';
+        if (host) host.innerHTML = '<p class="empty-dashed">The calendar is visible to the hive owner and read-write users.</p>';
         return;
       }
       try {
@@ -133,7 +151,9 @@
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { _calendarData = null; _calendarError = data.error || ('HTTP ' + r.status); }
         else { _calendarData = data; _calendarError = ''; }
-      } catch (e) { return; }
+      } catch (e) {
+        if (!_calendarData) _calendarError = 'The calendar is unreachable right now; retrying.';
+      }
       renderCalendar();
     }
     dashboardScheduleWork('calendar', () => Promise.all([fetchCalendar(), calendarRefreshMeetings()])).catch(console.error);
@@ -179,7 +199,7 @@
       const status = e.status || '';
       const times = calendarFormatTime(e.start) + (e.end ? ' – ' + calendarFormatTime(e.end) : '');
       return '<div class="calendar-row" data-calendar-event="' + escapeHtml(e.id) + '" data-status="' + escapeHtml(status) + '">' +
-        '<span class="badge calendar-status" data-status="' + escapeHtml(status) + '">' + escapeHtml(CALENDAR_STATUS_LABELS[status] || status) + '</span>' +
+        '<span class="kc-pill calendar-status" data-status="' + escapeHtml(CALENDAR_PILL_STATUS[status] || '') + '">' + escapeHtml(CALENDAR_STATUS_LABELS[status] || status) + '</span>' +
         '<span class="badge calendar-platform" data-platform="' + escapeHtml(platform) + '">' + (CALENDAR_PLATFORM_ICONS[platform] || '🎙') + ' ' + escapeHtml(calendarPlatformLabel(platform)) + '</span>' +
         '<div class="calendar-row-main"><div class="calendar-row-title" title="' + escapeHtml(e.join_url || '') + '">' + escapeHtml(e.summary || e.join_url || 'Meeting') + '</div>' +
         '<div class="muted-xs">' + escapeHtml(times) + (e.rrule ? ' · repeats' : '') +
@@ -204,8 +224,8 @@
       const recent = data.recent || [];
       const pending = upcoming.filter(e => e.status === 'awaiting_approval').length;
       host.innerHTML = calendarFormHtml() +
-        '<div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="muted-xs">Nothing scheduled.</p>') + '</div>' +
-        (recent.length ? '<div class="section-label m-0">Recent</div><div class="calendar-list">' + recent.map(calendarRowHtml).join('') + '</div>' : '');
+        '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
+        (recent.length ? '<div class="calendar-subsection"><div class="section-label m-0">Recent</div><div class="calendar-list">' + recent.map(calendarRowHtml).join('') + '</div></div>' : '');
       setSectionSummary('calendar-section', upcoming.length + ' upcoming' + (pending ? ' · ' + pending + ' awaiting approval' : ''));
     }
 
@@ -272,7 +292,11 @@
     }
 
     async function fetchMeetingDrafts() {
-      if (!calendarCanView()) return;
+      if (!calendarRoleKnown() || !calendarCanView()) {
+        const host = document.getElementById('meeting-drafts-panel');
+        if (host) host.innerHTML = '';
+        return;
+      }
       try {
         const r = await fetch('/api/meetings/actions');
         const data = await r.json().catch(() => ({}));
@@ -310,7 +334,7 @@
       const where = d.type === 'knowledge' ? 'knowledge vault' : (d.repo || 'no repo set');
       const result = d.result_url ? ' · <a href="' + escapeHtml(d.result_url) + '" target="_blank" rel="noopener">' + escapeHtml(d.result_url) + '</a>' : (d.result_note ? ' · ' + escapeHtml(d.result_note) : '');
       return '<div class="calendar-row" data-meeting-draft="' + id + '" data-status="' + (open ? 'awaiting_approval' : escapeHtml(status)) + '">' +
-        '<span class="badge calendar-status" data-status="' + escapeHtml(status) + '">' + escapeHtml(MEETING_DRAFT_STATUS[status] || status) + '</span>' +
+        '<span class="kc-pill calendar-status" data-status="' + escapeHtml(CALENDAR_PILL_STATUS[status] || '') + '">' + escapeHtml(MEETING_DRAFT_STATUS[status] || status) + '</span>' +
         '<span class="badge">' + escapeHtml(MEETING_DRAFT_TYPES[d.type] || d.type || '') + '</span>' +
         '<div class="calendar-row-main"><div class="calendar-row-title">' + escapeHtml(d.title || '') + '</div>' +
         '<div class="muted-xs">' + escapeHtml(where) + (d.meeting_title ? ' · from ' + escapeHtml(d.meeting_title) : '') +
@@ -328,14 +352,14 @@
       const host = document.getElementById('meeting-drafts-panel');
       if (!host) return;
       if (_meetingDraftsError) {
-        host.innerHTML = '<div class="section-label m-0">Drafts from meetings</div><p class="kc-error muted-xs">' + escapeHtml(_meetingDraftsError) + '</p>';
+        host.innerHTML = '<div class="calendar-subsection"><div class="section-label m-0">Drafts from meetings</div><p class="kc-error muted-xs">' + escapeHtml(_meetingDraftsError) + '</p></div>';
         return;
       }
       const split = meetingDraftsSplit((_meetingDrafts || {}).drafts);
-      host.innerHTML = '<div class="section-label m-0">Drafts from meetings</div>' +
+      host.innerHTML = '<div class="calendar-subsection"><div class="section-label m-0">Drafts from meetings</div>' +
         '<p class="muted-xs">Issues, RFCs, Spek sessions and knowledge notes people asked for in a meeting. Nothing is created until you approve it.</p>' +
-        '<div class="calendar-list">' + (split.pending.length ? split.pending.map(meetingDraftRowHtml).join('') : '<p class="muted-xs">No drafts waiting.</p>') + '</div>' +
-        (split.decided.length ? '<details><summary class="muted-xs">Recent (' + split.decided.length + ')</summary><div class="calendar-list">' + split.decided.map(meetingDraftRowHtml).join('') + '</div></details>' : '');
+        '<div class="calendar-list">' + (split.pending.length ? split.pending.map(meetingDraftRowHtml).join('') : '<p class="empty-dashed">No drafts waiting.</p>') + '</div>' +
+        (split.decided.length ? '<details><summary class="muted-xs">Recent (' + split.decided.length + ')</summary><div class="calendar-list mt-2">' + split.decided.map(meetingDraftRowHtml).join('') + '</div></details>' : '') + '</div>';
     }
 
     function meetingDraftField(id, name) { return document.querySelector('[data-draft-id="' + CSS.escape(id) + '"][data-draft-field="' + name + '"]'); }

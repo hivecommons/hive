@@ -1,12 +1,19 @@
     /* Meetings: hive as a live meeting participant (Quorum) */
     .meetings-panel { display: flex; flex-direction: column; gap: var(--sp-4); }
-    .meetings-join { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto auto; gap: var(--sp-2); align-items: end; }
-    .meetings-join-discord { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--sp-2); }
-    .meetings-join label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
+    .meetings-join { display: flex; flex-direction: column; gap: var(--sp-3); }
+    .meetings-join-fields { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr); gap: var(--sp-3); }
+    .meetings-field { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); color: var(--muted); }
+    .meetings-join-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-3); }
+    .meetings-voice-toggle { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); cursor: pointer; }
     .meetings-list { display: flex; flex-direction: column; gap: var(--sp-2); }
-    .meetings-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
+    .meetings-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--sp-3); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
     .meetings-row.is-open { border-color: var(--accent); }
-    .meetings-row-title { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .meetings-row-main { flex: 1 1 16em; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
+    .meetings-row-head { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
+    .meetings-row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); font-weight: 600; }
+    .meetings-row-error { font-size: var(--fs-xs); color: var(--red); overflow-wrap: anywhere; }
+    .meetings-row-raw { margin-top: var(--sp-1); font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
+    .meetings-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
     .meetings-live { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--sp-4); }
     .meetings-transcript { max-height: 28em; overflow: auto; font-size: var(--fs-sm); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
     .meetings-line { margin: 0 0 var(--sp-1); white-space: pre-wrap; }
@@ -21,5 +28,5 @@
     .meetings-effective { font-size: var(--fs-xs); }
     .meetings-effective td { padding: 0 var(--sp-2) 0 0; vertical-align: top; }
     @media (max-width: 720px) {
-      .meetings-join, .meetings-join-discord, .meetings-live, .meetings-settings-grid { grid-template-columns: 1fr; }
+      .meetings-join-fields, .meetings-live, .meetings-settings-grid { grid-template-columns: 1fr; }
     }
