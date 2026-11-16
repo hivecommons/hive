@@ -369,6 +369,8 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolClaudeAuthStatus, "Read which Claude auth mode is active through the existing /api/claude-auth/status endpoint: mode is \"long-lived token\" (an operator-supplied claude setup-token token) or \"dashboard sign-in\", with logged_in. Never returns token material. Read-only."},
 		{ToolAutonomyReadiness, "Read autonomy/readiness status through the existing Nous status endpoint."},
 		{ToolSpendRead, "Read spend and budget status through the existing cost endpoint."},
+		{ToolPRModelsRead, prModelsReadDescription},
+		{ToolContributorModelStatsRead, contributorModelStatsReadDescription},
 		{ToolGitHubAPIUsage, gitHubAPIUsageDescription},
 		{ToolContributorsList, "Read the capped list of contributors known to this hive."},
 		{ToolKnowledgeRead, "Read knowledge-system health and statistics."},
@@ -409,7 +411,7 @@ func AllowedTool(name string) bool {
 	}
 	switch name {
 	case ToolHiveStatus, ToolFleetStatus, ToolVersionRead, ToolClaudeAuthStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
-		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead, ToolGitHubAPIUsage,
+		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead, ToolPRModelsRead, ToolContributorModelStatsRead, ToolGitHubAPIUsage,
 		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAdvisorRecords, ToolAgentNudgeStatus,
 		ToolIssuesByBand, ToolPrsByBand, ToolReviewQueue, ToolContributorQueue, ToolStageTrackerRead, ToolDelegatedDecisionStatus, ToolGovernorSetup, ToolLogRead, ToolLogSources, ToolWritePreview, ToolWriteConfirm,
 		ToolExclusionCatalogue, ToolRefuseOperation:
@@ -473,6 +475,10 @@ func inputSchema(name string) map[string]any {
 		props = contributorQueueReadSchema()
 	case ToolGitHubAPIUsage:
 		props = gitHubAPIUsageSchema()
+	case ToolPRModelsRead:
+		props = prModelsReadSchema()
+	case ToolContributorModelStatsRead:
+		props = contributorModelStatsReadSchema()
 	case ToolStageTrackerRead:
 		props = stageTrackerReadSchema()
 	case ToolDelegatedDecisionStatus:
@@ -842,6 +848,11 @@ func ReadPath(tool string, limit int) (string, bool) {
 		return "/api/nous/status", true
 	case ToolSpendRead:
 		return "/api/cost", true
+	case ToolPRModelsRead, ToolContributorModelStatsRead:
+		// With arguments these go through ModelEffectivenessReadPath, which
+		// checks window and days; this is their default window.
+		path, err := ModelEffectivenessReadPath(tool, nil)
+		return path, err == nil
 	case ToolContributorsList:
 		return "/api/contributors" + suffix, true
 	case ToolKnowledgeRead:

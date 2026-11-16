@@ -380,6 +380,22 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 		}
 		return adminmcp.GitHubAPIUsageResult(data, args)
 	}
+	if adminmcp.ModelEffectivenessTool(tool) {
+		// window or days is checked before the call; see the dashboard provider.
+		path, err := adminmcp.ModelEffectivenessReadPath(tool, args)
+		if err != nil {
+			return nil, err
+		}
+		client, _, err := p.roster.activeClient()
+		if err != nil {
+			return nil, err
+		}
+		data, err := getPath(ctx, client, path)
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.ModelEffectivenessResult(tool, data, args)
+	}
 	if tool == adminmcp.ToolSettingsRead {
 		// An unknown section or a missing agent is refused with its reason.
 		if _, err := adminmcp.SettingsReadPath(args); err != nil {

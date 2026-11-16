@@ -816,3 +816,154 @@ func TestClaudeAuthStatusToolReadsStatusEndpoint(t *testing.T) {
 		t.Fatal("claude_auth_status tool not listed")
 	}
 }
+
+// pr_models_read and contributor_model_stats_read are listed read-only, take
+// no write role, and describe their window argument and its bounds.
+func TestModelEffectivenessToolsAreListedReadOnly(t *testing.T) {
+	want := map[string]string{ToolPRModelsRead: "window", ToolContributorModelStatsRead: "days"}
+	for _, tool := range Tools() {
+		name, _ := tool["name"].(string)
+		arg, ok := want[name]
+		if !ok {
+			continue
+		}
+		delete(want, name)
+		if !AllowedTool(name) {
+			t.Errorf("%s is listed but not allowed", name)
+		}
+		annotations, _ := tool["annotations"].(map[string]any)
+		if annotations["readOnlyHint"] != true {
+			t.Errorf("%s annotations = %#v, want read-only", name, annotations)
+		}
+		if meta, _ := tool["metadata"].(ToolMetadata); meta.Writes {
+			t.Errorf("%s metadata says it writes", name)
+		}
+		schema, _ := tool["inputSchema"].(map[string]any)
+		props, _ := schema["properties"].(map[string]any)
+		if _, ok := props[arg]; !ok {
+			t.Errorf("%s schema has no %q: %#v", name, arg, props)
+		}
+		if _, ok := props["limit"]; !ok {
+			t.Errorf("%s schema has no limit: %#v", name, props)
+		}
+	}
+	for name := range want {
+		t.Errorf("%s is not listed", name)
+	}
+	window, _ := inputSchema(ToolPRModelsRead)["properties"].(map[string]any)["window"].(map[string]any)
+	if enum, _ := window["enum"].([]string); strings.Join(enum, ",") != "7d,30d,all" {
+		t.Errorf("window enum = %#v, want 7d, 30d, all", window["enum"])
+	}
+	days, _ := inputSchema(ToolContributorModelStatsRead)["properties"].(map[string]any)["days"].(map[string]any)
+	if days["minimum"] != 0 || days["maximum"] != 365 {
+		t.Errorf("days bounds = %v-%v, want 0-365", days["minimum"], days["maximum"])
+	}
+}
+
+// Each tool reads the endpoint the dashboard reads, with the dashboard's
+// default window when none is given: 7d for PRs by model, 7 days for the
+// contributor run stats.
+func TestModelEffectivenessReadPaths(t *testing.T) {
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{ToolPRModelsRead, nil, "/api/governor/pr-models?window=7d"},
+		{ToolPRModelsRead, map[string]any{}, "/api/governor/pr-models?window=7d"},
+		{ToolPRModelsRead, map[string]any{"window": ""}, "/api/governor/pr-models?window=7d"},
+		{ToolPRModelsRead, map[string]any{"window": "30d"}, "/api/governor/pr-models?window=30d"},
+		{ToolPRModelsRead, map[string]any{"window": " ALL "}, "/api/governor/pr-models?window=all"},
+		{ToolContributorModelStatsRead, nil, "/api/contribute/run-stats/models?days=7"},
+		{ToolContributorModelStatsRead, map[string]any{"days": float64(0)}, "/api/contribute/run-stats/models?days=0"},
+		{ToolContributorModelStatsRead, map[string]any{"days": float64(365)}, "/api/contribute/run-stats/models?days=365"},
+		{ToolContributorModelStatsRead, map[string]any{"days": 30}, "/api/contribute/run-stats/models?days=30"},
+		{ToolContributorModelStatsRead, map[string]any{"days": "14"}, "/api/contribute/run-stats/models?days=14"},
+	} {
+		got, err := ModelEffectivenessReadPath(tc.tool, tc.args)
+		if err != nil || got != tc.want {
+			t.Errorf("%s %v path = %q, %v; want %q", tc.tool, tc.args, got, err, tc.want)
+		}
+	}
+	for tool, want := range map[string]string{
+		ToolPRModelsRead:              "/api/governor/pr-models?window=7d",
+		ToolContributorModelStatsRead: "/api/contribute/run-stats/models?days=7",
+	} {
+		if got, ok := ReadPath(tool, 5); !ok || got != want {
+			t.Errorf("ReadPath(%s) = %q, %v; want %q", tool, got, ok, want)
+		}
+	}
+}
+
+// The endpoints answer an unknown window with their default, so the tools
+// refuse one with its reason instead of passing it through.
+func TestModelEffectivenessRefusesBadWindows(t *testing.T) {
+	for _, tc := range []struct {
+		tool string
+		args map[string]any
+		want string
+	}{
+		{ToolPRModelsRead, map[string]any{"window": "14d"}, "window must be one of 7d, 30d, all"},
+		{ToolPRModelsRead, map[string]any{"window": "7d&x=1"}, "window must be one of"},
+		{ToolPRModelsRead, map[string]any{"window": float64(7)}, "window must be one of"},
+		{ToolContributorModelStatsRead, map[string]any{"days": float64(-1)}, "days must be a whole number from 0 to 365"},
+		{ToolContributorModelStatsRead, map[string]any{"days": float64(366)}, "days must be a whole number from 0 to 365"},
+		{ToolContributorModelStatsRead, map[string]any{"days": 1.5}, "days must be a whole number"},
+		{ToolContributorModelStatsRead, map[string]any{"days": "week"}, "days must be a whole number"},
+		{ToolContributorModelStatsRead, map[string]any{"days": true}, "days must be a whole number"},
+	} {
+		path, err := ModelEffectivenessReadPath(tc.tool, tc.args)
+		if err == nil || !strings.Contains(err.Error(), tc.want) {
+			t.Errorf("%s %v = %q, %v; want a refusal containing %q", tc.tool, tc.args, path, err, tc.want)
+		}
+	}
+}
+
+// An answer within limit is returned as the endpoint sent it. A longer one
+// has its per-model rows cut to limit and says so.
+func TestModelEffectivenessResultCapsModelRows(t *testing.T) {
+	rows := []any{map[string]any{"model": "a"}, map[string]any{"model": "b"}, map[string]any{"model": "c"}}
+	body := map[string]any{"window": "30d", "total": float64(9), "buckets": rows, "fixer_queue": map[string]any{}}
+	same, err := ModelEffectivenessResult(ToolPRModelsRead, body, map[string]any{"limit": float64(3)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if a, b := mustJSON(t, same), mustJSON(t, body); a != b {
+		t.Fatalf("uncapped answer changed:\n got %s\nwant %s", a, b)
+	}
+	capped, err := ModelEffectivenessResult(ToolPRModelsRead, body, map[string]any{"limit": float64(2)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := capped.(map[string]any)
+	if got, _ := out["buckets"].([]any); len(got) != 2 || out["buckets_total"] != 3 {
+		t.Fatalf("capped buckets = %#v, total %v", out["buckets"], out["buckets_total"])
+	}
+	meta, _ := out["_admin_mcp"].(map[string]any)
+	if meta["truncated"] != true || meta["limit"] != 2 || meta["total"] != 3 || !strings.Contains(fmt.Sprint(meta["note"]), "first 2 of 3") {
+		t.Fatalf("capped disclosure = %#v", meta)
+	}
+	if len(body["buckets"].([]any)) != 3 {
+		t.Fatal("capping modified the endpoint's answer")
+	}
+	stats := map[string]any{"window_days": float64(7), "models": rows}
+	cappedStats, err := ModelEffectivenessResult(ToolContributorModelStatsRead, stats, map[string]any{"limit": float64(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := cappedStats.(map[string]any)["models"].([]any); len(got) != 1 {
+		t.Fatalf("capped models = %#v", cappedStats)
+	}
+	if _, err := ModelEffectivenessResult(ToolPRModelsRead, []any{}, nil); err == nil {
+		t.Fatal("a non-object answer was accepted")
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
