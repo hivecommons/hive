@@ -187,7 +187,7 @@ test('upload rows: progress bar while uploading, escaped names and errors', () =
 
 test('client checks: empty, unsupported extension, files without an extension go to the hive', () => {
   const { api } = harness();
-  const rows = api.inboxUploadPlan([file('e.md', 0), file('a.EXE', 9), file('README', 9), file('ok.MD', 9)], UPLOADS);
+  const rows = api.inboxUploadPlan([file('e.md', 0), file('a.EXE', 9), file('README', 9), file('ok.MD', 9)], Object.assign({}, UPLOADS, { max_files_per_drop: 10 }));
   assert.deepStrictEqual(rows.map(r => r.code || r.status), ['empty', 'unsupported_type', 'queued', 'queued']);
   assert.match(rows[1].error, /Unsupported type \.exe: the Inbox reads \.csv \.json \.md \.txt/);
 });

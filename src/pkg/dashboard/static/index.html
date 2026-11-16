@@ -48287,6 +48287,7 @@ function burnAreaChart() {
     function renderGovInbox() {
       return '<div class="config-section" data-config-section="Inbox"><h3>Inbox</h3>' +
         '<p class="text-muted fs-base">Default RFC repository, dibs URL, auto-routing rules and machine transcription (whisper, Gemini or Deepgram) for voice recordings. ' + yamlHint('inbox.spek.repo') + ' ' + yamlHint('inbox.dibs.url') + ' ' + yamlHint('inbox.rules') + ' ' + yamlHint('inbox.transcription') + '</p>' +
+        '<p class="text-muted fs-base">Files dropped onto the Inbox: largest file, files per drop, per-hive quota and how long originals are kept (the extracted text always stays). ' + yamlHint('inbox.uploads.max_file_bytes') + ' ' + yamlHint('inbox.uploads.max_files_per_drop') + ' ' + yamlHint('inbox.uploads.quota_bytes') + ' ' + yamlHint('inbox.uploads.document_retention_days') + ' ' + yamlHint('inbox.uploads.media_retention_days') + '</p>' +
         '<div id="inbox-settings-inline"><p class="muted-xs">Loading…</p></div></div>';
     }
     async function loadInboxSettingsInline() {
