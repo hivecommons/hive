@@ -601,3 +601,17 @@
       .config-body { --config-body-pad: 14px; padding: var(--sp-0) var(--config-body-pad) var(--config-body-pad); }
       .config-field-row, .config-field-row4 { grid-template-columns: 1fr; }
     }
+    /* Searchable, grouped gateway model picker (js/model-picker.js). Tokens only. */
+    .model-combo { position: relative; }
+    .model-combo-input { width: 100%; box-sizing: border-box; }
+    .model-combo-list { position: absolute; left: 0; right: 0; top: 100%; z-index: 30; margin: var(--sp-1) var(--sp-0) var(--sp-0); padding: var(--sp-2) var(--sp-0); list-style: none; max-height: 320px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); }
+    .model-combo-list[hidden] { display: none; }
+    .model-combo-group { padding: var(--sp-3) var(--sp-4) var(--sp-1); font-size: var(--fs-xs); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .model-combo-option { display: flex; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-2) var(--sp-4); font-size: var(--fs-sm); color: var(--fg); cursor: pointer; }
+    .model-combo-option:hover, .model-combo-option[aria-selected="true"] { background: var(--bg); outline: 1px solid var(--cyan); outline-offset: -1px; }
+    .model-combo-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .model-combo-detail, .model-combo-current { color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+    .model-combo-current { margin-top: var(--sp-2); white-space: normal; }
+    .model-combo-current:empty { display: none; }
+    .model-combo-custom { color: var(--cyan); }
+    .model-combo-empty { padding: var(--sp-2) var(--sp-4); font-size: var(--fs-sm); color: var(--muted); }

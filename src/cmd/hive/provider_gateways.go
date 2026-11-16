@@ -54,6 +54,10 @@ func (openRouterGateway) SuggestedModels() []dashboard.OpenRouterSuggestedModel 
 	return out
 }
 
+func (openRouterGateway) PublicModels() []dashboard.OpenRouterModel {
+	return convertOpenRouterCatalog(openrouter.CachedPublicModels())
+}
+
 func (openRouterGateway) QRPNG(text string) ([]byte, error) { return openrouter.QRPNG(text) }
 
 func (openRouterGateway) ExchangeCode(code, verifier string) (string, error) {
@@ -279,4 +283,26 @@ func (svc *linearAgentService) AgentEventObserver() func(agentName, event, detai
 		return nil
 	}
 	return svc.responder.HandleAgentEvent
+}
+
+// convertOpenRouterCatalog maps the provider catalog onto the dashboard's
+// mirror types (pkg/dashboard deliberately does not import pkg/openrouter).
+func convertOpenRouterCatalog(models []openrouter.Model) []dashboard.OpenRouterModel {
+	if len(models) == 0 {
+		return nil
+	}
+	out := make([]dashboard.OpenRouterModel, 0, len(models))
+	for _, m := range models {
+		out = append(out, dashboard.OpenRouterModel{
+			ID:            m.ID,
+			Name:          m.Name,
+			ContextLength: m.ContextLength,
+			Pricing: dashboard.OpenRouterPricing{
+				Prompt:         m.Pricing.Prompt,
+				Completion:     m.Pricing.Completion,
+				InputCacheRead: m.Pricing.InputCacheRead,
+			},
+		})
+	}
+	return out
 }

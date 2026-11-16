@@ -1779,6 +1779,10 @@
     // the models discovered for the add/edit form's endpoint+key.
     let _gateways = [];
     let _gatewayFormModels = [];
+    // Catalog details (prices, context) and curated suggestions the discover
+    // probe returns for OpenRouter gateways; empty for other kinds.
+    let _gatewayFormModelInfo = [];
+    let _gatewayFormSuggested = [];
     const _gatewayProbeResults = {};
     // Set by maybeOpenMethodConfig when a method switch jumps the user here to
     // configure a missing gateway; consumed once by loadGateways to auto-open a
@@ -2269,16 +2273,24 @@
         const r = await fetch('/api/openrouter/models');
         if (r.ok) models = await r.json();
       } catch (e) { /* fall back to manual entry */ }
+      // Curated suggestions pinned on top (the server already hid any the
+      // live catalog retired), then the full live catalog grouped by
+      // provider with prices. Unreadable catalog: suggestions only, and the
+      // typed text still works as a manual id.
       const sug = (models.suggested || []);
-      const opts = sug.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('')
-        + `<option value="__manual__">Enter a model id manually…</option>`;
+      const liveIds = Array.isArray(models.models) ? models.models : [];
+      const ids = liveIds.length ? liveIds : sug.map(m => m.id);
+      const picker = modelComboboxHtml({
+        id: 'or-model-combo', inputId: 'or-model-input', ids,
+        info: models.model_info, suggested: sug, current: models.default || (sug[0] && sug[0].id) || '',
+        label: 'Default model for the new gateway', placeholder: 'Search models or type an id…',
+      });
       host.innerHTML = `
         <div style="border:1px solid var(--cyan);border-radius:8px;padding:14px;margin-bottom:var(--sp-5);background:var(--surface)">
           <div style="font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-2)">⚡ Fund this hive with OpenRouter</div>
           <div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px">Scan the QR (or open the link) to authorize on OpenRouter. A scoped key funded from your OpenRouter credits is stored as the <code>openrouter</code> gateway — the key never leaves this hive.</div>
-          <label style="display:block;font-size:0.74rem;color:var(--muted);margin-bottom:var(--sp-2)">Default model for the new gateway</label>
-          <select id="or-model-select" data-change-action="orModelSelectChange" style="width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);margin-bottom:var(--sp-4)">${opts}</select>
-          <input id="or-model-manual" placeholder="e.g. anthropic/claude-opus-4.8" style="display:none;width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);margin-bottom:var(--sp-4);box-sizing:border-box">
+          <label for="or-model-input" class="d-block fs-sm text-muted mb-2">Default model for the new gateway</label>
+          <div class="mb-4">${picker}</div>
           <div style="display:flex;gap:var(--sp-4);margin-top:var(--sp-2)">
             <button class="hv-btn btn-primary" data-action="orStartFlow">Generate QR</button>
             <button class="hv-btn btn-primary" data-action="closeOpenRouterFund">Cancel</button>
@@ -2288,21 +2300,10 @@
         </div>`;
     }
 
-    function orModelSelectChange() {
-      const sel = document.getElementById('or-model-select');
-      const man = document.getElementById('or-model-manual');
-      if (!sel || !man) return;
-      man.style.display = sel.value === '__manual__' ? 'block' : 'none';
-    }
-
+    // orChosenModel is the funding picker's committed model id ('' lets the
+    // server apply its default).
     function orChosenModel() {
-      const sel = document.getElementById('or-model-select');
-      if (!sel) return '';
-      if (sel.value === '__manual__') {
-        const man = document.getElementById('or-model-manual');
-        return (man && man.value.trim()) || '';
-      }
-      return sel.value;
+      return modelComboValue('or-model-combo');
     }
 
     async function orStartFlow() {
@@ -2555,6 +2556,8 @@
     // it blank keeps it.
     function openGatewayForm(existing) {
       _gatewayFormModels = [];
+      _gatewayFormModelInfo = [];
+      _gatewayFormSuggested = [];
       const host = document.getElementById('gateways-form-host');
       if (!host) return;
       const isEdit = !!existing;
@@ -2657,7 +2660,17 @@
       const models = _gatewayFormModels;
       const cur = current || '';
       if (!models.length) {
-        return `<input type="text" id="gw-default-model" value="${esc(cur)}" placeholder="e.g. anthropic/claude-opus-4.8">`;
+        return `<input type="text" id="gw-default-model" value="${esc(cur)}" placeholder="e.g. deepseek/deepseek-v4.1-flash">`;
+      }
+      // Large catalogs (OpenRouter ~470 ids) get the searchable, grouped
+      // combobox; its input is #gw-default-model, so the typed text is the
+      // value and "Custom…" is simply typing an id the catalog lacks.
+      if (models.length >= MODEL_COMBOBOX_MIN_OPTIONS || _gatewayFormModelInfo.length) {
+        return modelComboboxHtml({
+          id: 'gw-default-model-combo', inputId: 'gw-default-model', ids: models,
+          info: _gatewayFormModelInfo, suggested: _gatewayFormSuggested, current: cur,
+          label: 'Default model', placeholder: 'Search ' + models.length + ' models or type an id…',
+        });
       }
       const inList = cur && models.indexOf(cur) !== -1;
       const options = models.map(m =>
@@ -2767,6 +2780,8 @@
         });
         const data = await res.json().catch(() => ({}));
         _gatewayFormModels = (res.ok && data.ok && Array.isArray(data.models)) ? data.models : [];
+        _gatewayFormModelInfo = (res.ok && data.ok && Array.isArray(data.model_info)) ? data.model_info : [];
+        _gatewayFormSuggested = (res.ok && data.ok && Array.isArray(data.suggested)) ? data.suggested : [];
         // Never show an empty dropdown with no explanation: a bad key, wrong
         // region/project or an unreachable endpoint must say so, with the
         // server's own error text, rather than looking like "no models exist".
@@ -2784,6 +2799,8 @@
         }
       } catch (e) {
         _gatewayFormModels = [];
+        _gatewayFormModelInfo = [];
+        _gatewayFormSuggested = [];
         showGatewayFormProbeError('Network error while discovering models: ' + e.message);
       }
       const host = document.getElementById('gw-default-model-field');
