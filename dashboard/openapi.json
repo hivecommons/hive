@@ -678,6 +678,300 @@
         }
       }
     },
+    "/api/meetings/schedule": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "List scheduled meetings",
+        "description": "The Calendar section: upcoming events (scheduled, awaiting approval, live) and finished ones from the last 14 days, newest first, plus attendee_name for the in-a-meeting indicator. Owner or read-write.",
+        "responses": {
+          "200": {
+            "description": "The schedule",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "upcoming": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Scheduled meeting event: id, uid, recurrence_id, sequence, method, summary, organizer, attendees, start, end, tzid, rrule, exdates, next_occurrences, join_url, platform, native_meeting_id, passcode (\"set\" when present, never the value), source, status, status_reason, invited_by, approved_by, skipped, joined_occurrence, meeting_id, history, created_at, updated_at"
+                      }
+                    },
+                    "recent": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Scheduled meeting event: id, uid, recurrence_id, sequence, method, summary, organizer, attendees, start, end, tzid, rrule, exdates, next_occurrences, join_url, platform, native_meeting_id, passcode (\"set\" when present, never the value), source, status, status_reason, invited_by, approved_by, skipped, joined_occurrence, meeting_id, history, created_at, updated_at"
+                      }
+                    },
+                    "attendee_name": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Schedule a meeting",
+        "description": "Manual add: a Google Meet, Teams or Zoom link (platform detected from the link) and an RFC 3339 start, optionally an end, a title and an RFC 5545 recurrence rule expanded in timezone. The owner's adds are scheduled; a read-write user's add awaits the owner's approval. Audited as meeting_schedule_add.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "url",
+                  "start"
+                ],
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  },
+                  "start": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "end": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "rrule": {
+                    "type": "string"
+                  },
+                  "timezone": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The scheduled event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Scheduled meeting event: id, uid, recurrence_id, sequence, method, summary, organizer, attendees, start, end, tzid, rrule, exdates, next_occurrences, join_url, platform, native_meeting_id, passcode (\"set\" when present, never the value), source, status, status_reason, invited_by, approved_by, skipped, joined_occurrence, meeting_id, history, created_at, updated_at"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid link, time, recurrence or timezone, or the meeting already ended"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "409": {
+            "description": "The schedule is full"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/schedule/{eid}/approve": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Approve a scheduled meeting",
+        "description": "Schedules an event awaiting approval; hive joins it before it starts. Owner only. Audited as meeting_schedule_approve.",
+        "parameters": [
+          {
+            "name": "eid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Schedule event id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Scheduled meeting event: id, uid, recurrence_id, sequence, method, summary, organizer, attendees, start, end, tzid, rrule, exdates, next_occurrences, join_url, platform, native_meeting_id, passcode (\"set\" when present, never the value), source, status, status_reason, invited_by, approved_by, skipped, joined_occurrence, meeting_id, history, created_at, updated_at"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Unknown event"
+          },
+          "409": {
+            "description": "The event is not in a state that allows this"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/schedule/{eid}/decline": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Decline a scheduled meeting",
+        "description": "Declines an event awaiting approval; later updates of the same invite stay declined. Owner only. Audited as meeting_schedule_decline.",
+        "parameters": [
+          {
+            "name": "eid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Schedule event id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Scheduled meeting event: id, uid, recurrence_id, sequence, method, summary, organizer, attendees, start, end, tzid, rrule, exdates, next_occurrences, join_url, platform, native_meeting_id, passcode (\"set\" when present, never the value), source, status, status_reason, invited_by, approved_by, skipped, joined_occurrence, meeting_id, history, created_at, updated_at"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Unknown event"
+          },
+          "409": {
+            "description": "The event is not in a state that allows this"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/schedule/{eid}/cancel": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Cancel a scheduled meeting",
+        "description": "Stops hive joining the event (every occurrence of a series). A meeting already live is not left. Owner only. Audited as meeting_schedule_cancel.",
+        "parameters": [
+          {
+            "name": "eid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Schedule event id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Scheduled meeting event: id, uid, recurrence_id, sequence, method, summary, organizer, attendees, start, end, tzid, rrule, exdates, next_occurrences, join_url, platform, native_meeting_id, passcode (\"set\" when present, never the value), source, status, status_reason, invited_by, approved_by, skipped, joined_occurrence, meeting_id, history, created_at, updated_at"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Unknown event"
+          },
+          "409": {
+            "description": "The event is not in a state that allows this"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/schedule/{eid}/skip": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Skip the next occurrence",
+        "description": "Skips the next occurrence hive has not joined: a single meeting becomes skipped, a series moves on to the following occurrence. Owner only. Audited as meeting_schedule_skip.",
+        "parameters": [
+          {
+            "name": "eid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Schedule event id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The event",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Scheduled meeting event: id, uid, recurrence_id, sequence, method, summary, organizer, attendees, start, end, tzid, rrule, exdates, next_occurrences, join_url, platform, native_meeting_id, passcode (\"set\" when present, never the value), source, status, status_reason, invited_by, approved_by, skipped, joined_occurrence, meeting_id, history, created_at, updated_at"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Unknown event"
+          },
+          "409": {
+            "description": "The event is not in a state that allows this"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
     "/api/integration-orchestration": {
       "get": {
         "tags": ["System"],

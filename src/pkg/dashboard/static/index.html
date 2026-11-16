@@ -6113,6 +6113,20 @@
     @media (max-width: 720px) {
       .meetings-join, .meetings-join-discord, .meetings-live, .meetings-settings-grid { grid-template-columns: 1fr; }
     }
+    /* Calendar: scheduled meetings hive joins (#18394) */
+    .calendar-panel { display: flex; flex-direction: column; gap: var(--sp-3); }
+    .calendar-add-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: var(--sp-2); align-items: end; }
+    .calendar-add-grid label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
+    .calendar-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+    .calendar-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
+    .calendar-row[data-status="awaiting_approval"] { border-color: var(--accent); }
+    .calendar-row[data-status="live"] { border-color: var(--green); }
+    .calendar-row-main { flex: 1 1 16em; min-width: 0; }
+    .calendar-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .oc-meeting-indicator { cursor: pointer; }
+    @media (max-width: 720px) {
+      .calendar-add-grid { grid-template-columns: 1fr; }
+    }
     /* Collapsible advisory sections (#1546) */
     .collapse-chevron {
       display: inline-block;
@@ -8850,6 +8864,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spek)</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="inbox-section" data-action="ocNavigate" data-arg0="inbox-section"><span class="oc-nav-emoji">📥</span><span class="oc-nav-text">Inbox</span><span id="inbox-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
+      <a class="oc-nav-item" data-section="calendar-section" data-action="ocNavigate" data-arg0="calendar-section"><span class="oc-nav-emoji">📅</span><span class="oc-nav-text">Calendar</span><span id="calendar-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
       <a class="oc-nav-item" data-section="meetings-section" data-action="ocNavigate" data-arg0="meetings-section"><span class="oc-nav-emoji">🎙</span><span class="oc-nav-text">Meetings</span></a>
       <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
     </div>
@@ -8949,6 +8964,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" title="AI providers: all usable" aria-label="AI providers: all usable" hidden></span>
       <button type="button" class="nav-chip nav-chip--status subscription-gauge-chip" id="oc-subscription-gauge" data-action="openSubscriptionGaugeOverview" data-status="neutral" aria-label="Plan usage left" hidden><span class="subscription-gauge-chip__dial" aria-hidden="true"></span><span class="nav-chip__label"></span></button>
       <button type="button" class="nav-chip nav-chip--status nav-chip--attention oc-waiting-on-you" id="oc-waiting-on-you" data-action="showWaitingOnYou" title="Nothing is waiting on you" aria-label="0 waiting on you — show in the activity monitor" hidden><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Waiting on you · 0</span></button>
+      <button type="button" class="nav-chip nav-chip--status nav-chip--ok oc-meeting-indicator" id="oc-meeting-indicator" data-action="calendarIndicatorClick" data-target="" aria-label="Not in a meeting" hidden><span class="nav-chip__label"></span></button>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
       <div id="oc-gh-avatar-wrap" hidden>
@@ -9295,6 +9311,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="inbox-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Inbox section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📥 Inbox</h2>
     <div class="section-body">
       <div id="inbox-panel" class="inbox-panel"></div>
+    </div>
+  </div>
+  <div class="mt-6 mb-8" id="calendar-section" data-dashboard-section="calendar-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="calendar-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Calendar section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📅 Calendar</h2>
+    <div class="section-body">
+      <div id="calendar-panel" class="calendar-panel"><p class="muted-xs">Loading calendar…</p></div>
     </div>
   </div>
   <div class="mt-6 mb-8" id="meetings-section" data-dashboard-section="meetings-section">
@@ -10775,6 +10797,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'sessions-section': { title: '💡 Inception (spek)', summary: '0 running · 0 total', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'inbox-section': { title: '📥 Inbox', summary: '0 to triage' },
+      'calendar-section': { title: '📅 Calendar', summary: 'nothing scheduled' },
       'meetings-section': { title: '🎙 Meetings', summary: 'no live meetings' },
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
@@ -10816,6 +10839,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'meetings-section': { heading: 'Meetings', help: 'Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.' },
       'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge.' },
+      'calendar-section': { heading: 'Calendar', help: 'Meetings hive will join, about a minute before each starts: add one, approve or decline requests, or skip and cancel.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
@@ -48607,6 +48631,258 @@ function burnAreaChart() {
         if (errEl) errEl.textContent = e.message; else showToast('Save failed: ' + e.message, 'error');
       }
     }
+    // ── Calendar: scheduled meetings hive joins (hivecommons/hive#18394) ──
+    // GET /api/meetings/schedule lists upcoming and recent scheduled
+    // meetings; the scheduler joins each one shortly before it starts. The
+    // top-bar "in a meeting" indicator and the Calendar sidebar badge follow
+    // /api/events "meeting" frames over an initial GET /api/meetings.
+    const CALENDAR_POLL_MS = 60000;
+    // Meeting states the indicator counts as "in a meeting".
+    const CALENDAR_ACTIVE_STATES = { joining: 1, lobby: 1, live: 1 };
+    const CALENDAR_DEFAULT_NAME = 'Hive';
+    const CALENDAR_PLATFORM_LABELS = { google_meet: 'Google Meet', teams: 'Teams', zoom: 'Zoom', discord: 'Discord' };
+    const CALENDAR_PLATFORM_ICONS = { google_meet: '🟢', teams: '🟣', zoom: '🔵', discord: '🎧' };
+    const CALENDAR_SOURCE_LABELS = { email: 'email invite', manual: 'added here', discord: 'Discord' };
+    const CALENDAR_STATUS_LABELS = {
+      scheduled: 'scheduled', awaiting_approval: 'awaiting approval', live: 'live', ended: 'ended',
+      cancelled: 'cancelled', declined: 'declined', failed: 'failed', blocked: 'blocked', skipped: 'skipped'
+    };
+    const CALENDAR_REPEAT_RULES = {
+      none: '', daily: 'FREQ=DAILY', weekdays: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR', weekly: 'FREQ=WEEKLY', monthly: 'FREQ=MONTHLY'
+    };
+    let _calendarData = null;
+    let _calendarError = '';
+    // Meetings by id, from GET /api/meetings and "meeting" frames.
+    let _calendarMeetings = {};
+
+    function calendarCanView() {
+      return typeof dashboardRoleAtLeast === 'function' ? dashboardRoleAtLeast(window._hiveRole || 'read', 'read-write') : window._hiveRole === 'owner';
+    }
+    function calendarIsOwner() { return window._hiveRole === 'owner'; }
+
+    function calendarPlatformLabel(p) { return CALENDAR_PLATFORM_LABELS[p] || p || 'meeting'; }
+
+    // The viewer's own time zone: no timeZone option, so Intl uses it.
+    function calendarFormatTime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      try {
+        return new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(d);
+      } catch (e) { return d.toISOString(); }
+    }
+
+    function calendarViewerTimeZone() {
+      try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { return ''; }
+    }
+
+    // calendarIndicatorState is the top-bar indicator for a set of meetings:
+    // hidden with none in joining, lobby or live; one opens its live panel,
+    // several open the Calendar section.
+    function calendarIndicatorState(meetings, name) {
+      const who = name || CALENDAR_DEFAULT_NAME;
+      const active = (meetings || []).filter(m => m && CALENDAR_ACTIVE_STATES[m.state]);
+      if (!active.length) return { count: 0, hidden: true, text: '', title: '', target: '' };
+      const text = '🐝 ' + who + ' is in ' + (active.length === 1 ? 'a meeting' : active.length + ' meetings');
+      const title = active.map(m => (CALENDAR_PLATFORM_ICONS[m.platform] || '🎙') + ' ' + calendarPlatformLabel(m.platform) + ': ' +
+        (m.title || m.url || m.channel_id || m.id) + (m.state === 'live' ? '' : ' (' + m.state + ')')).join('\n');
+      return { count: active.length, hidden: false, text: text, title: title, target: active.length === 1 ? active[0].id : 'calendar-section' };
+    }
+
+    // calendarBadgeCount is the Calendar sidebar badge: meetings hive is in
+    // plus scheduled meetings awaiting the owner's approval.
+    function calendarBadgeCount(meetings, upcoming) {
+      const live = (meetings || []).filter(m => m && CALENDAR_ACTIVE_STATES[m.state]).length;
+      const pending = (upcoming || []).filter(e => e && e.status === 'awaiting_approval').length;
+      return live + pending;
+    }
+
+    function calendarMeetingList() { return Object.keys(_calendarMeetings).map(k => _calendarMeetings[k]); }
+
+    function renderCalendarIndicator() {
+      const el = document.getElementById('oc-meeting-indicator');
+      const name = (_calendarData && _calendarData.attendee_name) || CALENDAR_DEFAULT_NAME;
+      const st = calendarIndicatorState(calendarMeetingList(), name);
+      if (el) {
+        el.hidden = st.hidden;
+        el.dataset.target = st.target;
+        el.title = st.title || '';
+        el.setAttribute('aria-label', st.text || 'Not in a meeting');
+        const label = el.querySelector('.nav-chip__label');
+        if (label) label.textContent = st.text;
+      }
+      const badge = document.getElementById('calendar-sidebar-badge');
+      const upcoming = (_calendarData && _calendarData.upcoming) || [];
+      const n = calendarBadgeCount(calendarMeetingList(), upcoming);
+      if (badge && typeof setSidebarCountBadge === 'function') setSidebarCountBadge(badge, n, n ? n + ' live or awaiting approval' : '');
+    }
+
+    function calendarIndicatorClick() {
+      const el = document.getElementById('oc-meeting-indicator');
+      const target = el ? el.dataset.target : '';
+      if (!target || target === 'calendar-section') { ocNavigate('calendar-section'); return; }
+      calendarOpenMeeting(target);
+    }
+
+    // calendarOpenMeeting shows one meeting's live panel (transcript and
+    // notes) in the Meetings section.
+    function calendarOpenMeeting(id) {
+      if (!id) return;
+      ocNavigate('meetings-section');
+      if (typeof meetingsOpenPanel === 'function' && !(typeof _meetingsOpen !== 'undefined' && _meetingsOpen && _meetingsOpen.id === id)) meetingsOpenPanel(id);
+    }
+
+    async function calendarRefreshMeetings() {
+      if (!calendarIsOwner()) { _calendarMeetings = {}; renderCalendarIndicator(); return; }
+      try {
+        const r = await fetch('/api/meetings');
+        if (!r.ok) return;
+        const data = await r.json().catch(() => ({}));
+        const next = {};
+        (data.meetings || []).forEach(m => { if (m && m.id) next[m.id] = m; });
+        _calendarMeetings = next;
+      } catch (e) { return; }
+      renderCalendarIndicator();
+    }
+
+    // calendarOnMeetingFrame applies one /api/events "meeting" frame
+    // ({meeting_id, meeting}) without polling.
+    function calendarOnMeetingFrame(p) {
+      if (!p || !p.meeting_id) return;
+      if (p.meeting && p.meeting.id) _calendarMeetings[p.meeting_id] = p.meeting;
+      renderCalendarIndicator();
+      const linked = _calendarData && (_calendarData.upcoming || []).some(e => e.meeting_id === p.meeting_id);
+      if (linked) fetchCalendar();
+    }
+
+    async function fetchCalendar() {
+      const host = document.getElementById('calendar-panel');
+      if (!calendarCanView()) {
+        if (host) host.innerHTML = '<p class="muted-xs">The calendar is visible to the hive owner and read-write users.</p>';
+        return;
+      }
+      try {
+        const r = await fetch('/api/meetings/schedule');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { _calendarData = null; _calendarError = data.error || ('HTTP ' + r.status); }
+        else { _calendarData = data; _calendarError = ''; }
+      } catch (e) { return; }
+      renderCalendar();
+    }
+    dashboardScheduleWork('calendar', () => Promise.all([fetchCalendar(), calendarRefreshMeetings()])).catch(console.error);
+    dashboardSetInterval('calendar', fetchCalendar, CALENDAR_POLL_MS);
+
+    function calendarFormHtml() {
+      return '<details class="calendar-add"><summary class="muted-xs">Add meeting</summary><div class="calendar-add-grid mt-2">' +
+        '<label>Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-calendar-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
+        '<label>Title (optional)<input class="kb-search-box" type="text" data-calendar-field="title" maxlength="200" placeholder="Weekly sync" autocomplete="off"></label>' +
+        '<label>Starts<input class="kb-search-box" type="datetime-local" data-calendar-field="start"></label>' +
+        '<label>Ends (optional)<input class="kb-search-box" type="datetime-local" data-calendar-field="end"></label>' +
+        '<label>Repeats<select class="kb-search-box" data-calendar-field="repeat"><option value="none">Does not repeat</option><option value="daily">Daily</option>' +
+        '<option value="weekdays">Every weekday</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>' +
+        '<button type="button" class="hv-btn btn-primary btn-sm" data-action="calendarAdd">Add meeting</button></div>' +
+        '<p class="muted-xs">Times are in your time zone (' + escapeHtml(calendarViewerTimeZone() || 'local') + '). ' +
+        (calendarIsOwner() ? 'Hive joins about a minute before the start.' : 'The hive owner approves meetings you add.') + '</p>' +
+        '<div class="hive-dialog-error" role="alert" data-calendar-field="error"></div></details>';
+    }
+
+    function calendarActionButtons(e) {
+      if (!calendarIsOwner()) return '';
+      const id = escapeHtml(e.id);
+      const btn = (action, label, cls) => '<button type="button" class="hv-btn ' + cls + ' btn-sm" data-action="calendarAct" data-arg0="' + id + '" data-arg1="' + action + '">' + label + '</button>';
+      let out = '';
+      if (e.status === 'awaiting_approval') out += btn('approve', 'Approve', 'btn-primary') + btn('decline', 'Decline', 'btn-secondary');
+      if (e.status === 'scheduled' || e.status === 'awaiting_approval' || (e.status === 'live' && e.rrule)) out += btn('skip', e.rrule ? 'Skip next' : 'Skip', 'btn-secondary');
+      if (e.status === 'scheduled' || e.status === 'awaiting_approval' || e.status === 'live') out += btn('cancel', 'Cancel', 'btn-danger');
+      return out;
+    }
+
+    function calendarMeetingLink(e) {
+      const last = (e.history || []).length ? e.history[e.history.length - 1] : null;
+      const mid = e.meeting_id || (last && last.meeting_id) || '';
+      if (!mid) return '';
+      const live = e.status === 'live' || (last && last.status === 'live');
+      return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="calendarOpenMeeting" data-arg0="' + escapeHtml(mid) + '">' + (live ? 'Open live panel' : 'Notes') + '</button>';
+    }
+
+    function calendarRowHtml(e) {
+      const platform = e.platform || '';
+      const organizer = e.organizer ? (e.organizer.name || e.organizer.email || '') : (e.invited_by || '');
+      const next = (e.next_occurrences || [])[0];
+      const status = e.status || '';
+      const times = calendarFormatTime(e.start) + (e.end ? ' – ' + calendarFormatTime(e.end) : '');
+      return '<div class="calendar-row" data-calendar-event="' + escapeHtml(e.id) + '" data-status="' + escapeHtml(status) + '">' +
+        '<span class="badge calendar-status" data-status="' + escapeHtml(status) + '">' + escapeHtml(CALENDAR_STATUS_LABELS[status] || status) + '</span>' +
+        '<span class="badge calendar-platform" data-platform="' + escapeHtml(platform) + '">' + (CALENDAR_PLATFORM_ICONS[platform] || '🎙') + ' ' + escapeHtml(calendarPlatformLabel(platform)) + '</span>' +
+        '<div class="calendar-row-main"><div class="calendar-row-title" title="' + escapeHtml(e.join_url || '') + '">' + escapeHtml(e.summary || e.join_url || 'Meeting') + '</div>' +
+        '<div class="muted-xs">' + escapeHtml(times) + (e.rrule ? ' · repeats' : '') +
+        (next && e.rrule ? ' · next ' + escapeHtml(calendarFormatTime(next)) : '') +
+        (organizer ? ' · ' + escapeHtml(organizer) : '') + ' · ' + escapeHtml(CALENDAR_SOURCE_LABELS[e.source] || e.source || '') +
+        (e.status_reason ? ' · ' + escapeHtml(e.status_reason) : '') + '</div></div>' +
+        calendarMeetingLink(e) + calendarActionButtons(e) + '</div>';
+    }
+
+    function renderCalendar() {
+      refreshSectionCardShell('calendar-section');
+      const host = document.getElementById('calendar-panel');
+      renderCalendarIndicator();
+      if (!host) return;
+      if (_calendarError) {
+        host.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_calendarError) + '</p>';
+        setSectionSummary('calendar-section', 'unavailable');
+        return;
+      }
+      const data = _calendarData || {};
+      const upcoming = data.upcoming || [];
+      const recent = data.recent || [];
+      const pending = upcoming.filter(e => e.status === 'awaiting_approval').length;
+      host.innerHTML = calendarFormHtml() +
+        '<div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="muted-xs">Nothing scheduled.</p>') + '</div>' +
+        (recent.length ? '<div class="section-label m-0">Recent</div><div class="calendar-list">' + recent.map(calendarRowHtml).join('') + '</div>' : '');
+      setSectionSummary('calendar-section', upcoming.length + ' upcoming' + (pending ? ' · ' + pending + ' awaiting approval' : ''));
+    }
+
+    function calendarField(name) { return document.querySelector('[data-calendar-field="' + name + '"]'); }
+
+    async function calendarPost(path, body) {
+      const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return data;
+    }
+
+    // calendarLocalISO turns a datetime-local value (the viewer's zone) into
+    // an RFC 3339 UTC time.
+    function calendarLocalISO(v) {
+      if (!v) return '';
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? '' : d.toISOString();
+    }
+
+    async function calendarAdd() {
+      const err = calendarField('error');
+      const repeat = (calendarField('repeat') || {}).value || 'none';
+      const body = {
+        url: ((calendarField('url') || {}).value || '').trim(),
+        title: ((calendarField('title') || {}).value || '').trim(),
+        start: calendarLocalISO((calendarField('start') || {}).value),
+        end: calendarLocalISO((calendarField('end') || {}).value),
+        rrule: CALENDAR_REPEAT_RULES[repeat] || '',
+        timezone: calendarViewerTimeZone()
+      };
+      if (!body.url || !body.start) { if (err) err.textContent = 'A meeting link and a start time are required.'; return; }
+      try {
+        const ev = await calendarPost('/api/meetings/schedule', body);
+        showToast(ev && ev.status === 'awaiting_approval' ? 'Meeting added; it waits for the owner to approve' : 'Meeting scheduled', 'success');
+        fetchCalendar();
+      } catch (e) { if (err) err.textContent = e.message; }
+    }
+
+    async function calendarAct(id, action) {
+      try { await calendarPost('/api/meetings/schedule/' + encodeURIComponent(id) + '/' + encodeURIComponent(action)); }
+      catch (e) { showToast('Could not ' + action + ': ' + e.message, 'error'); }
+      fetchCalendar();
+    }
     // ── Vault Management ──
 
     function kbOpenVaults() {
@@ -57885,9 +58161,14 @@ function burnAreaChart() {
       });
 
       // A meeting hive is in changed state: refresh the Meetings list.
-      source.addEventListener('meeting', () => {
+      // The same frame drives the top-bar "in a meeting" indicator and the
+      // Calendar badge (calendar.js).
+      source.addEventListener('meeting', (e) => {
         noteSSEFrame();
         if (typeof fetchMeetings === 'function') fetchMeetings();
+        if (typeof calendarOnMeetingFrame === 'function') {
+          try { calendarOnMeetingFrame(JSON.parse(e.data || '{}')); } catch (err) { /* malformed frame */ }
+        }
       });
 
       source.addEventListener('agent-status', (e) => {

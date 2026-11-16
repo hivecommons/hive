@@ -32,6 +32,7 @@ css/nous.css
 css/knowledge.css
 css/inbox.css
 css/meetings.css
+css/calendar.css
 css/sections-collapse.css
 css/design-system.css
 css/responsive.css
@@ -62,6 +63,7 @@ html/acmm-approvals-audit.html
 html/review-queue.html
 html/nous-inception-knowledge-contributors.html
 html/inbox.html
+html/calendar.html
 html/meetings.html
 html/debug-logs.html
 html/agents.html
@@ -129,6 +131,7 @@ js/nous.js
 js/knowledge.js
 js/inbox.js
 js/meetings.js
+js/calendar.js
 js/vault-audit.js
 js/review-queue.js
 js/contributors.js

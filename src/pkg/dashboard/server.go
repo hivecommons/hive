@@ -470,6 +470,9 @@ type Server struct {
 	// meetings is the meetings feature (hivecommons/hive#18292); nil
 	// holder or service while meetings are off.
 	meetings atomic.Pointer[meetingsHolder]
+	// meetingsSchedule is the meeting scheduler behind the Calendar
+	// section (hivecommons/hive#18394); nil while meetings are off.
+	meetingsSchedule atomic.Pointer[meetingsScheduleHolder]
 
 	audit *AuditLog
 
