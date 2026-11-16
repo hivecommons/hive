@@ -47,8 +47,8 @@ const (
 	// plaudContentAttr is the fact attr recording whether the page carries
 	// text: plaudContentReady or plaudContentPending.
 	plaudContentAttr    = "plaud_content"
-	plaudContentReady   = "ready"
-	plaudContentPending = "pending"
+	plaudContentReady   = FactContentReady
+	plaudContentPending = FactContentPending
 	// PlaudPendingText is written into a fact (and shown by the Inbox) when
 	// Plaud has produced neither a summary nor a transcript for a recording.
 	PlaudPendingText = "Plaud has not transcribed this recording yet. Open it in the Plaud app to run transcription and the AI summary; the hive re-checks it on every sync until text arrives."
@@ -404,10 +404,12 @@ func (c *plaudConnector) pendingRefetch(listed map[string]bool) []plaudFile {
 	return out
 }
 
-// plaudFactNeedsRefetch reports whether a stored fact carries no text yet.
+// plaudFactNeedsRefetch reports whether a stored fact carries no text from
+// Plaud yet: pending, or holding only the hive's machine transcript (so
+// Plaud's own text replaces it once it exists).
 func plaudFactNeedsRefetch(fm map[string]string, body string) bool {
 	switch fm["attr_"+plaudContentAttr] {
-	case plaudContentPending:
+	case plaudContentPending, FactContentMachine:
 		return true
 	case plaudContentReady:
 		return false

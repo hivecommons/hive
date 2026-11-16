@@ -29,7 +29,9 @@ see the issue linked from the changelog entry.
   `<channel>:<message ts>` in `attr_slack_huddle_recording_id`; for Otter the conversation id in `attr_otter_recording_id`; for Granola the note id in `attr_granola_recording_id`; for Limitless the lifelog id in `attr_limitless_recording_id`; for Fathom the recording id in `attr_fathom_recording_id`; for Fireflies the transcript id in `attr_fireflies_recording_id`). When the source is connected the Inbox lists
   recordings directly from it, so an item may appear before the sync has
   written its Knowledge fact; the Inbox only tracks what you did with it.
-  "📚 Fact" opens the fact in Knowledge once that fact exists.
+  Once that fact exists, the item's metadata line carries an *open in
+  Knowledge* link, and a status pill says what the fact holds (see
+  [What knowledge an Inbox item becomes](#what-knowledge-an-inbox-item-becomes)).
 - **Destination** — where an item goes:
   - **→ RFC** (`spek_rfc`): the hive hands the item to a spoke agent with
     a kick prompt: `inbox.spek.agent` if set, otherwise the first enabled,
@@ -125,6 +127,78 @@ content is read live so text shows up as soon as it exists. Run
 transcription/summary in the Plaud app to fill it. Facts written before this
 behaviour, whose body carries the "not available" line, are refreshed the
 same way.
+
+## What knowledge an Inbox item becomes
+
+Every Inbox item is backed by one Knowledge fact, written by its connector's
+sync under `<knowledge base>/connectors/<layer>/<type>-<connector>-<id>.md`.
+That fact, not the Inbox view, is what knowledge search, nous and agents
+read. Its `attr_<x>_content` key (`attr_plaud_content` for Plaud,
+`attr_meeting_content` for the meeting connectors) records which of three
+shapes it has, and the Inbox shows it as a status pill (not a button):
+
+- **Audio only (pending)**, pill *Pending text*. The source has no summary
+  and no transcript. The fact holds metadata only: the title, the
+  recording time, the duration, the device highlights when there are any,
+  and the pending note; it is marked `attr_<x>_content: pending` and the
+  connector re-reads it on every sync. A Plaud example:
+
+  ```markdown
+  ---
+  title: Drive home
+  type: reference
+  layer: personal
+  status: active
+  tags: [connector, plaud, plaud]
+  source: plaud
+  connector: plaud
+  source_id: rec-2
+  source_path: Plaud
+  attr_duration_ms: 61000
+  attr_plaud_content: pending
+  attr_plaud_file_id: rec-2
+  synthesized: 2026-11-11T18:00:00Z
+  synced_at: 2026-11-11T20:00:00Z
+  ---
+
+  # Drive home
+
+  - **Recorded:** 2026-11-11T18:00:00Z
+  - **Duration:** 1m1s
+
+  _Plaud has not transcribed this recording yet. Open it in the Plaud app to run transcription and the AI summary; the hive re-checks it on every sync until text arrives._
+
+  ## Highlights
+
+  Moments flagged with the device button:
+
+  - 05:03
+  ```
+
+  Knowledge search finds the title, never the words that were spoken.
+- **After machine transcription**, pill *In knowledge (machine text)*. When
+  a [machine transcription](inbox-transcription.md) finishes, the hive
+  writes the transcript into the same fact: `attr_<x>_content: machine`,
+  `attr_transcript_provider: <provider>/<model>` (for example
+  `whisper/base.en`), `attr_transcript_language` and `attr_transcribed_at`
+  are set, the pending note is replaced by a `## Transcript (machine:
+  <provider>/<model>)` section ahead of the highlights, and every other
+  attribute, the metadata bullets and the highlights stay. The transcript
+  is spoken by third parties, so it is fenced in the same
+  `<untrusted-inbox-data source=".." id=".." nonce="..">` envelope the
+  Inbox uses when it hands item text to an agent. A transcript that
+  finished before the fact existed is written the next time the Inbox is
+  listed. The connector keeps re-reading the recording, and a sync that
+  still finds no text upstream leaves the machine fact alone; it is never
+  reset to pending.
+- **After upstream transcription**, pill *In knowledge*. When the source
+  produces its own summary or transcript (the owner runs transcription in
+  the Plaud app, the meeting platform finishes processing), the next sync
+  rewrites the fact with the source's text and `attr_<x>_content: ready`,
+  replacing any machine transcript.
+
+An item listed straight from a connected source before its first sync shows
+*Not in knowledge yet*.
 
 ## Meeting recordings (Zoom, Teams)
 

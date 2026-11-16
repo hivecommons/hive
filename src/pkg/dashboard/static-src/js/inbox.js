@@ -181,6 +181,20 @@
         (elapsed ? '<span class="kc-progress-elapsed" title="elapsed">' + escapeHtml(elapsed) + '</span>' : '') + '</div></div>';
     }
 
+    // What the item's Knowledge fact holds, as a status pill (not a
+    // control): the source's own text, this hive's machine transcript, or
+    // metadata only while no text exists yet.
+    const INBOX_FACT_STATES = {
+      ready: { label: 'In knowledge', status: 'ok', title: 'Stored as a Knowledge fact with the source\'s own text; knowledge search and agents see it.' },
+      machine: { label: 'In knowledge (machine text)', status: 'ok', title: 'Stored as a Knowledge fact with this hive\'s machine transcript; the source\'s own text replaces it when it exists.' },
+      pending: { label: 'Pending text', status: 'not loaded', title: 'Stored as a Knowledge fact with metadata only (title, date, duration, highlights); no text yet, so knowledge search finds no words.' },
+    };
+    function inboxFactPillHtml(it) {
+      if (!it.fact_slug) return '<span class="kc-pill" role="status" title="The connector sync has not written this item\'s Knowledge fact yet">Not in knowledge yet</span>';
+      const fs = INBOX_FACT_STATES[it.fact_state] || INBOX_FACT_STATES.ready;
+      return '<span class="kc-pill" role="status" data-status="' + fs.status + '" data-fact-state="' + escapeHtml(it.fact_state || 'ready') + '" title="' + escapeHtml(fs.title) + '">' + escapeHtml(fs.label) + '</span>';
+    }
+
     // Machine transcription: a state pill (spinner while queued/running, the
     // reason when it failed or was skipped), the progress bar while busy, and
     // the 🎧 Transcribe / Retry button on pending items with audio, for
@@ -188,7 +202,7 @@
     function inboxTranscriptionHtml(it, key) {
       const st = it.transcription;
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
-      let html = '';
+      let html = inboxFactPillHtml(it);
       if (st && st.status) {
         const busy = st.status === 'queued' || st.status === 'running';
         const pill = st.status === 'done' ? 'ok' : (st.status === 'failed' ? 'error' : (busy ? 'syncing' : ''));
@@ -289,7 +303,10 @@
       const checked = _inboxSelected.has(key) ? ' checked' : '';
       const when = it.recorded_at && !String(it.recorded_at).startsWith('0001') ? relativeTimeShort(it.recorded_at) : '';
       const dur = inboxFmtDuration(it.duration_ms);
-      const meta = [escapeHtml(it.source), when ? 'recorded ' + when : '', dur].filter(Boolean).join(' · ');
+      // The backing Knowledge fact is a plain link in the metadata line, not
+      // an action: it only opens the fact.
+      const factLink = it.fact_slug ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
+      const meta = [escapeHtml(it.source), when ? 'recorded ' + when : '', dur, factLink].filter(Boolean).join(' · ');
       const routes = it.routes || {};
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
@@ -307,7 +324,6 @@
         else actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxUndismiss" data-arg0="' + src + '" data-arg1="' + id + '">Back to inbox</button>';
       }
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg0="' + src + '" data-arg1="' + id + '" title="Share a link to this item in the Inbox (not the recording)">🔗 Share</button>';
-      if (it.fact_slug) actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenFact" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="This item is already a Knowledge fact">📚 Fact</button>';
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
         (owner ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
