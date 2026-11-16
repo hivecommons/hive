@@ -978,6 +978,403 @@
         }
       }
     },
+    "/api/meetings/actions": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "List drafts from meetings",
+        "description": "Issues, RFCs, Spek sessions and knowledge notes people asked the meeting persona for, newest first, with the number pending. Nothing is created before an owner or read-write user approves. Owner or read-write.",
+        "responses": {
+          "200": {
+            "description": "The drafts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "drafts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Meeting draft: id, meeting_id, meeting_title, meeting_link, type (issue, rfc, spek, knowledge), title, body, repo, excerpt, requested_by (meeting display name), request, spoken, status (pending, approving, done, failed, rejected), auto_approved, result_url, result_note, error, announced (chat or notes), edited_by, decided_by, decided_at, created_at, updated_at"
+                      }
+                    },
+                    "pending": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/actions/settings": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Meeting action settings",
+        "description": "meetings.persona.actions as set and in effect, with the monitored repos a draft may target and the env overrides that are set. Owner or read-write.",
+        "responses": {
+          "200": {
+            "description": "The settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "all_types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "default_repo": {
+                      "type": "string"
+                    },
+                    "effective_default_repo": {
+                      "type": "string"
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "auto_approve": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "boolean"
+                      }
+                    },
+                    "auto_approvable": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "env_overrides": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "503": {
+            "description": "Config is not available"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Save meeting action settings",
+        "description": "Saves meetings.persona.actions; omitted fields are kept and the change applies at once. Only knowledge notes may be auto-approved. Owner only. Audited as meetings_actions_settings.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "types": {
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "enum": [
+                        "issue",
+                        "rfc",
+                        "spek",
+                        "knowledge"
+                      ]
+                    }
+                  },
+                  "default_repo": {
+                    "type": "string",
+                    "description": "owner/repo"
+                  },
+                  "auto_approve": {
+                    "type": "object",
+                    "additionalProperties": {
+                      "type": "boolean"
+                    },
+                    "description": "Per type; only knowledge may be true"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The saved settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "all_types": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "default_repo": {
+                      "type": "string"
+                    },
+                    "effective_default_repo": {
+                      "type": "string"
+                    },
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "auto_approve": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "boolean"
+                      }
+                    },
+                    "auto_approvable": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "env_overrides": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown type, a repo that is not owner/repo, or auto-approve on a type other than knowledge"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config is not available"
+          }
+        }
+      }
+    },
+    "/api/meetings/actions/{aid}/edit": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Edit a meeting draft",
+        "description": "Changes a pending or failed draft's type, title, body or repo (a monitored repo). Owner or read-write. Audited as meeting_action_edit.",
+        "parameters": [
+          {
+            "name": "aid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Meeting draft id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "issue",
+                      "rfc",
+                      "spek",
+                      "knowledge"
+                    ]
+                  },
+                  "title": {
+                    "type": "string"
+                  },
+                  "body": {
+                    "type": "string"
+                  },
+                  "repo": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The draft",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Meeting draft: id, meeting_id, meeting_title, meeting_link, type (issue, rfc, spek, knowledge), title, body, repo, excerpt, requested_by (meeting display name), request, spoken, status (pending, approving, done, failed, rejected), auto_approved, result_url, result_note, error, announced (chat or notes), edited_by, decided_by, decided_at, created_at, updated_at"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid type, empty title or a repo that is not monitored"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "Unknown draft"
+          },
+          "409": {
+            "description": "The draft is not pending or failed, or action requests are turned off"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/actions/{aid}/approve": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Approve a meeting draft",
+        "description": "Creates the draft: an issue or RFC through the hive's GitHub issue path, a Spek session through the Inbox spek_rfc destination, a knowledge note in the meetings vault. The result is posted in the meeting chat while it is live, else added to its notes. The draft comes back done (result_url) or failed (error). Owner or read-write. Audited as meeting_action_approve.",
+        "parameters": [
+          {
+            "name": "aid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Meeting draft id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The draft after creation",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Meeting draft: id, meeting_id, meeting_title, meeting_link, type (issue, rfc, spek, knowledge), title, body, repo, excerpt, requested_by (meeting display name), request, spoken, status (pending, approving, done, failed, rejected), auto_approved, result_url, result_note, error, announced (chat or notes), edited_by, decided_by, decided_at, created_at, updated_at"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The draft has no repo"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "Unknown draft"
+          },
+          "409": {
+            "description": "The draft is not pending or failed, or action requests are turned off"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/actions/{aid}/reject": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Reject a meeting draft",
+        "description": "Rejects a pending or failed draft; nothing is created. Owner or read-write. Audited as meeting_action_reject.",
+        "parameters": [
+          {
+            "name": "aid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Meeting draft id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The draft",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Meeting draft: id, meeting_id, meeting_title, meeting_link, type (issue, rfc, spek, knowledge), title, body, repo, excerpt, requested_by (meeting display name), request, spoken, status (pending, approving, done, failed, rejected), auto_approved, result_url, result_note, error, announced (chat or notes), edited_by, decided_by, decided_at, created_at, updated_at"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "Unknown draft"
+          },
+          "409": {
+            "description": "The draft is not pending or failed, or action requests are turned off"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
     "/api/meetings/persona": {
       "get": {
         "tags": [
@@ -1266,6 +1663,57 @@
                         },
                         "error": {
                           "type": "string"
+                        }
+                      }
+                    },
+                    "actions": {
+                      "type": "object",
+                      "description": "meetings.persona.actions as set and in effect (the same view as GET /api/meetings/actions/settings); saved through PUT /api/meetings/actions/settings",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "all_types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "default_repo": {
+                          "type": "string"
+                        },
+                        "effective_default_repo": {
+                          "type": "string"
+                        },
+                        "repos": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "auto_approve": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "boolean"
+                          }
+                        },
+                        "auto_approvable": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "env_overrides": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
                         }
                       }
                     }
@@ -1659,6 +2107,57 @@
                         },
                         "error": {
                           "type": "string"
+                        }
+                      }
+                    },
+                    "actions": {
+                      "type": "object",
+                      "description": "meetings.persona.actions as set and in effect (the same view as GET /api/meetings/actions/settings); saved through PUT /api/meetings/actions/settings",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "all_types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "default_repo": {
+                          "type": "string"
+                        },
+                        "effective_default_repo": {
+                          "type": "string"
+                        },
+                        "repos": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "auto_approve": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "boolean"
+                          }
+                        },
+                        "auto_approvable": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "env_overrides": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
                         }
                       }
                     }

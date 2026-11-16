@@ -435,6 +435,10 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_PERSONA_UNPROMPTED_MIN_CONFIDENCE` | No | `0.75` | Model confidence (0 to 1) an unprompted answer needs. |
 | `HIVE_MEETINGS_PERSONA_UNPROMPTED_QUEUE_DEPTH` | No | `3` | Room questions waiting for an answer at once. |
 | `HIVE_MEETINGS_PERSONA_UNPROMPTED_STALE_S` | No | `60` | Seconds after which a waiting room question is dropped. |
+| `HIVE_MEETINGS_PERSONA_ACTIONS_ENABLED` | No | `true` | Lets people ask the persona in a meeting to draft issues, RFCs, Spek sessions and knowledge notes; every draft waits for approval in the dashboard. |
+| `HIVE_MEETINGS_PERSONA_ACTIONS_TYPES` | No | `issue,rfc,spek,knowledge` | Comma-separated action types the persona may draft. |
+| `HIVE_MEETINGS_PERSONA_ACTIONS_DEFAULT_REPO` | No | `inbox.spek.repo`, then `project.primary_repo` | `owner/repo` a draft targets when the request names no monitored repo. |
+| `HIVE_MEETINGS_PERSONA_ACTIONS_AUTO_APPROVE_KNOWLEDGE` | No | `false` | Saves knowledge notes drafted in meetings without approval. Issues, RFCs and Spek sessions are never auto-approved. |
 | `HIVE_MEETINGS_LLM_MODE` | No | `auto` | Model Spektacular live mode reasons with: `auto` (an Anthropic key if set, else the OpenAI-compatible endpoint), `openai`, `anthropic` or `none` (rules only). |
 | `HIVE_MEETINGS_LLM_ENDPOINT` | No | `governor.litellm` endpoint | OpenAI-compatible base URL `hive meeting-llm` calls for Spek. |
 | `HIVE_MEETINGS_LLM_MODEL` | No | `governor.litellm.default_model` | Model name for that endpoint. Without an endpoint and model, Spek runs on rules only. With only an Anthropic key it is the model the persona answers with through the Anthropic Messages API (default `claude-haiku-5-5`). |

@@ -1,1 +1,0 @@
-- Meetings: hive ships Quorum v0.2.0 and passes it a text-to-speech service for Discord speech (`meetings.tts_url`, a write-only **TTS token** in Settings, Meetings, and the persona's voice as `QUORUM_TTS_VOICE` and `voice_id` on every join); hive never speaks in a Discord meeting whose voice is off (#18393).

@@ -471,6 +471,9 @@ type Server struct {
 	linearAgentOnce sync.Once
 	linearAgentSvc  LinearAgentGateway
 
+	// meetingsActions is the queue of drafts people asked the meeting
+	// persona for (hivecommons/hive#18406); nil while meetings are off.
+	meetingsActions atomic.Pointer[meetingsActionsHolder]
 	// meetings is the meetings feature (hivecommons/hive#18292); nil
 	// holder or service while meetings are off.
 	meetings atomic.Pointer[meetingsHolder]

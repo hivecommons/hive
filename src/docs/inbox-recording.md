@@ -54,7 +54,7 @@ boot and every 10 minutes, and logs and audits every deletion
 ```yaml
 inbox:
   recording:
-    enabled: false            # show ● Record (owner and read-write only)
+    enabled: true             # show ● Record (owner and read-write only)
     retention_days: 5         # raw audio is deleted this long after the recording ends
     max_seconds: 10800        # 3 hours per recording (wall clock, pauses included)
     max_bytes: 209715200      # 200 MiB per recording
