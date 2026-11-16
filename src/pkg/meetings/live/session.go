@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/meetings"
+	"github.com/hivecommons/hive/pkg/meetings/betty"
 	"github.com/hivecommons/hive/pkg/meetings/meetllm"
 )
 
@@ -23,8 +24,14 @@ var (
 	ErrSessionEnded    = errors.New("meetings: live session has ended")
 )
 
+// defaultPersonaName names the attendee in hive's notices without a
+// persona.
+const defaultPersonaName = "Hive"
+
 // budgetNotice is posted once when a meeting's budget runs out.
-const budgetNotice = "Hive reached its budget for this meeting. It keeps taking notes but will not ask questions or start research."
+func budgetNotice(name string) string {
+	return name + " reached the budget for this meeting and keeps taking notes, but will not ask or answer questions or start research."
+}
 
 type approveReq struct {
 	rid   string
@@ -40,6 +47,11 @@ type session struct {
 	spek  Spek
 	state State
 	rate  rateLimiter
+	// persona is the meeting's attendee persona, nil when it is off. With
+	// it on, it owns the bot's voice in the meeting: Spek's say intents are
+	// dropped, its chat posts are offered to the persona, and its
+	// clarifying questions are restyled in the persona's voice.
+	persona *betty.Engine
 	// fileTokens is the usage-ledger total already charged.
 	fileTokens int
 
@@ -69,6 +81,15 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 		s.state.Notes = map[string][]string{}
 	}
 	s.state.SpekMode, s.state.SpekStatus = r.opts.SpekMode, ""
+	if r.opts.Persona != nil {
+		s.persona = r.opts.Persona(m)
+	}
+	if s.persona != nil {
+		s.state.Persona = s.persona.Name()
+		if s.state.BudgetExhausted {
+			s.persona.SetExhausted()
+		}
+	}
 	if r.opts.UsageFile != nil {
 		s.fileTokens, _ = meetllm.UsageTotal(r.opts.UsageFile(m.ID))
 	}
@@ -76,6 +97,25 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 }
 
 func (s *session) log() *slog.Logger { return s.r.log.With("meeting", s.id) }
+
+// personaName names the attendee in hive's own notices.
+func (s *session) personaName() string {
+	if s.persona != nil {
+		return s.persona.Name()
+	}
+	if n := strings.TrimSpace(s.r.opts.PersonaName); n != "" {
+		return n
+	}
+	return defaultPersonaName
+}
+
+// isLeave reports a leave command.
+func (s *session) isLeave(text string) bool {
+	if s.r.opts.IsLeave != nil {
+		return s.r.opts.IsLeave(text)
+	}
+	return meetings.IsLeaveCommand(text)
+}
 
 func (s *session) now() time.Time { return s.r.opts.Now() }
 
@@ -90,8 +130,18 @@ func (s *session) run(ctx context.Context) {
 	defer close(s.done)
 	lines := s.spek.Lines()
 	ending, spekGone := false, false
+	var replies <-chan betty.Reply
+	if s.persona != nil {
+		s.persona.Start(ctx)
+		defer s.persona.Close()
+		replies = s.persona.Replies()
+	}
 	for {
 		select {
+		case rep := <-replies:
+			if !ending {
+				s.onPersonaReply(ctx, rep)
+			}
 		case <-ctx.Done():
 			s.spek.Close(nil)
 			s.save()
@@ -153,9 +203,9 @@ func (s *session) emit(ev Event) {
 	s.r.emit(ev)
 }
 
-// onUpdate forwards people's final segments and chat lines to Spek and
-// matches replies to open asks. Hive's own lines never reach here: the
-// manager drops them before notifying.
+// onUpdate forwards people's final segments and chat lines to Spek and the
+// persona (without blocking) and matches replies to open asks. Hive's own
+// lines never reach here: the manager drops them before notifying.
 func (s *session) onUpdate(u meetings.Update) {
 	ev := u.Event
 	if ev == nil {
@@ -171,15 +221,20 @@ func (s *session) onUpdate(u meetings.Update) {
 			s.log().Warn("[meetings] forwarding to spek", "error", err)
 		}
 	}
+	if s.persona != nil {
+		s.persona.Observe(betty.Line{Who: ev.Who(), Text: ev.Text, Spoken: ev.Type == meetings.EventSegment})
+	}
 	s.matchAnswer(ev)
 }
 
 // matchAnswer is the answer heuristic: the first line from a person after
 // an ask, within the answer window, answers the oldest open ask. Asks past
-// the window expire unanswered. It is deliberately simple; Spek receives
-// the whole transcript and can re-ask if the match was wrong.
+// the window expire unanswered. Lines addressed to the persona and leave
+// commands never count as answers. It is deliberately simple; Spek
+// receives the whole transcript and can re-ask if the match was wrong.
 func (s *session) matchAnswer(ev *meetings.Event) {
 	now := s.now()
+	skip := strings.TrimSpace(ev.Text) == "" || s.isLeave(ev.Text) || (s.persona != nil && s.persona.Skip(ev.Text))
 	window := s.r.opts.Policy.AnswerWindow
 	changed := false
 	answered := false
@@ -192,7 +247,7 @@ func (s *session) matchAnswer(ev *meetings.Event) {
 			a.Expired, changed = true, true
 			continue
 		}
-		if answered || strings.TrimSpace(ev.Text) == "" {
+		if answered || skip {
 			continue
 		}
 		a.Answer, a.AnsweredBy, a.AnsweredAt = ev.Text, ev.Who(), &now
@@ -222,11 +277,22 @@ func (s *session) onIntent(ctx context.Context, line []byte) {
 	switch in.Type {
 	case intentChatPost:
 		if s.spendable() {
-			s.post(ctx, in.Text)
+			if s.persona != nil {
+				// The persona posts it unless she already covered the topic.
+				s.persona.Offer(in.Text)
+			} else {
+				s.post(ctx, in.Text)
+			}
 		}
 	case intentAsk:
-		if s.spendable() && s.post(ctx, in.Text) {
-			s.state.Asks = append(s.state.Asks, Ask{QID: in.QID, Text: in.Text, AskedAt: s.now()})
+		if s.spendable() {
+			text := in.Text
+			if s.persona != nil {
+				text = s.persona.Restyle(ctx, in.Text)
+			}
+			if s.post(ctx, text) {
+				s.state.Asks = append(s.state.Asks, Ask{QID: in.QID, Text: text, AskedAt: s.now()})
+			}
 		}
 	case intentNotesAppend:
 		s.appendNote(ctx, in.Section, in.Text)
@@ -235,7 +301,11 @@ func (s *session) onIntent(ctx context.Context, line []byte) {
 			s.research(ctx, in)
 		}
 	case intentSay:
-		if s.spendable() {
+		switch {
+		case s.persona != nil:
+			// The persona owns the bot's voice; Spek's say is dropped.
+			s.drop("persona_owns_voice")
+		case s.spendable():
 			s.say(ctx, in.Text)
 		}
 	default:
@@ -268,7 +338,10 @@ func (s *session) account(ctx context.Context, in intent) {
 	if over && !s.state.BudgetExhausted {
 		s.state.BudgetExhausted = true
 		s.log().Warn("[meetings] meeting budget exhausted", "tokens", s.state.Tokens, "intents", s.state.Intents)
-		s.deliver(ctx, budgetNotice)
+		if s.persona != nil {
+			s.persona.SetExhausted()
+		}
+		s.deliver(ctx, budgetNotice(s.personaName()))
 	}
 }
 
@@ -345,7 +418,7 @@ func (s *session) appendNote(ctx context.Context, section, text string) {
 	s.state.Notes[section] = append(s.state.Notes[section], text)
 	s.emit(Event{Kind: EventNotes})
 	m, _ := s.r.opts.Meetings.Get(s.id)
-	s.upsertFact(ctx, NotesTitle(m), RenderNotes(m, s.state.Notes), []string{"meeting-notes"})
+	s.upsertFact(ctx, NotesTitle(m), RenderNotesBy(s.personaName(), m, s.state.Notes), []string{"meeting-notes"})
 }
 
 func (s *session) upsertFact(ctx context.Context, title, body string, tags []string) {
@@ -375,8 +448,13 @@ func meetingLabel(m meetings.Meeting) string {
 
 // RenderNotes renders the notes sections as Markdown.
 func RenderNotes(m meetings.Meeting, notes map[string][]string) string {
+	return RenderNotesBy("hive", m, notes)
+}
+
+// RenderNotesBy renders the notes with the attendee's name in the header.
+func RenderNotesBy(name string, m meetings.Meeting, notes map[string][]string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Notes hive took in %s.\n", meetingLabel(m))
+	fmt.Fprintf(&b, "Notes %s took in %s.\n", name, meetingLabel(m))
 	for _, sec := range noteSections {
 		items := notes[sec]
 		if len(items) == 0 {
@@ -549,4 +627,35 @@ func renderResearch(it *ResearchItem) string {
 		}
 	}
 	return b.String()
+}
+
+// onPersonaReply applies one persona reply through the same policy as
+// Spek's intents: it is charged to the budget (one intent, plus any model
+// tokens in the usage ledger), then posted through the
+// chat rate limit (or spoken, with the chat fallback, for a voice reply).
+func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
+	text := strings.TrimSpace(rep.Text)
+	if text == "" {
+		return
+	}
+	// A Spek offer was charged when Spek sent it.
+	if rep.Trigger != betty.TriggerOffer {
+		s.account(ctx, intent{Type: intentPersona})
+	}
+	if !s.spendable() {
+		s.save()
+		return
+	}
+	posted := true
+	if rep.Kind == betty.KindVoice {
+		s.say(ctx, text)
+	} else {
+		posted = s.post(ctx, text)
+	}
+	if posted {
+		s.state.PersonaReplies++
+	}
+	raw, _ := json.Marshal(rep)
+	s.emit(Event{Kind: EventPersona, Reason: rep.Trigger, Intent: raw})
+	s.save()
 }

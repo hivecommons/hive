@@ -387,7 +387,7 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_TRANSCRIBE_TOKEN_FILE` | No | `/data/secrets/meetings_transcribe_token` | Keystore-sealed secret file holding the transcription service token. Overrides `meetings.transcribe_token_file`. |
 | `HIVE_MEETINGS_DELIVERY` | No | `chat` | Default delivery for meeting output. Only `chat` is supported. |
 | `HIVE_MEETINGS_VOICE_ON_ADDRESS` | No | `true` | Lets hive speak when addressed by name in a meeting whose voice is enabled; otherwise it answers in chat. |
-| `HIVE_MEETINGS_BOT_NAME` | No | `hive (notes)` | Display name the meeting bot joins with. |
+| `HIVE_MEETINGS_BOT_NAME` | No | the persona's display name (`Betty Bee from the hive`), or `hive (notes)` with the persona off | Display name the meeting bot joins with. |
 | `HIVE_MEETINGS_INVITE_POLICY` | No | `owner` | Who may send hive to a meeting. Only `owner` is supported. |
 | `HIVE_MEETINGS_RESEARCH_POOL_SIZE` | No | `2` | Number of research agents (`research-1..N`). |
 | `HIVE_MEETINGS_RESEARCH_PER_MEETING` | No | `5` | Research items one meeting may start before each further item needs dashboard approval. |
@@ -396,10 +396,33 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_RETENTION_DAYS` | No | `30` | Days an ended meeting's transcript is kept before it is purged. |
 | `HIVE_MEETINGS_CONSENT_TEXT` | No | the notice above | Notice posted in the meeting chat on join, before anything else. At most 2000 characters. |
 | `HIVE_MEETINGS_DATA_DIR` | No | `/data/meetings` | Where meeting records and transcripts are stored. |
+| `HIVE_MEETINGS_SCHEDULE_TICK_S` | No | `15` | Seconds between the meeting scheduler's checks for a Calendar meeting to join. |
+| `HIVE_MEETINGS_SCHEDULE_LEAD_S` | No | `60` | Seconds before a scheduled meeting's start that hive joins it (`0` joins at the start). |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_MEETING` | No | `200000` | Per-meeting LLM token budget for Spektacular live mode. |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_HOUR` | No | `500000` | Hive-wide hourly token ceiling across meetings. |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_DAY` | No | `2000000` | Hive-wide daily token ceiling across meetings. |
 | `HIVE_MEETINGS_MAX_INTENTS_PER_MEETING` | No | `500` | Per-meeting budget counted in Spek intents when Spek reports no token usage. |
+| `HIVE_MEETINGS_PERSONA_ENABLED` | No | `true` | Turns the meeting attendee persona (Betty) on or off. Off restores the plain `hive (notes)` attendee. |
+| `HIVE_MEETINGS_PERSONA_PRESET` | No | `betty` | Built-in persona the fields below start from. |
+| `HIVE_MEETINGS_PERSONA_NAME` | No | `Betty` | Name the persona answers to and uses for itself. |
+| `HIVE_MEETINGS_PERSONA_DISPLAY_NAME` | No | `Betty Bee from the hive` | Meeting display name; the default bot name. At most 64 characters. |
+| `HIVE_MEETINGS_PERSONA_ALIASES` | No | `betty,betty bee,hive` | Comma-separated names that address the persona at the start or end of a line. |
+| `HIVE_MEETINGS_PERSONA_PRONOUNS` | No | `she/her` | Pronouns used in the intro and self-description only. |
+| `HIVE_MEETINGS_PERSONA_LANGUAGE` | No | `en-US` | BCP-47 tag; replies use its language and regional conventions. |
+| `HIVE_MEETINGS_PERSONA_VOICE` | No | `af_heart` | TTS voice id for spoken replies (Kokoro; stored for spoken replies, not used yet). |
+| `HIVE_MEETINGS_PERSONA_VOICE_TYPE` | No | `female` | `female`, `male` or `bot`; descriptive only. |
+| `HIVE_MEETINGS_PERSONA_ACCENT` | No | `American` | Free text; descriptive only. |
+| `HIVE_MEETINGS_PERSONA_INTRO_TEMPLATE` | No | the preset's intro | Intro posted when someone asks the persona to introduce itself. Placeholders `{name}`, `{display_name}`, `{pronouns}`, `{leave}`, `{accent}`, `{voice_type}`, `{language}`. |
+| `HIVE_MEETINGS_PERSONA_LEAVE_PHRASES` | No | `betty leave,hive leave` | Comma-separated phrases that remove the persona from the meeting. |
+| `HIVE_MEETINGS_PERSONA_HUMOR` | No | `light` | `light` (at most one light touch, never about a person) or `off`. |
+| `HIVE_MEETINGS_PERSONA_SEARXNG_URL` | No | none | Web search service for the persona (not used yet). |
+| `HIVE_MEETINGS_PERSONA_UNPROMPTED_PER_10M` | No | `2` | Unprompted (question-driven) answers per ten minutes. |
+| `HIVE_MEETINGS_PERSONA_UNPROMPTED_MIN_GAP_S` | No | `90` | Minimum seconds between two unprompted answers. |
+| `HIVE_MEETINGS_PERSONA_UNPROMPTED_PER_MEETING` | No | `12` | Unprompted answers per meeting. |
+| `HIVE_MEETINGS_PERSONA_UNPROMPTED_ANSWER_WAIT_S` | No | `8` | Seconds the persona waits for a person to answer a room question first. |
+| `HIVE_MEETINGS_PERSONA_UNPROMPTED_MIN_CONFIDENCE` | No | `0.75` | Model confidence (0 to 1) an unprompted answer needs. |
+| `HIVE_MEETINGS_PERSONA_UNPROMPTED_QUEUE_DEPTH` | No | `3` | Room questions waiting for an answer at once. |
+| `HIVE_MEETINGS_PERSONA_UNPROMPTED_STALE_S` | No | `60` | Seconds after which a waiting room question is dropped. |
 | `HIVE_MEETINGS_LLM_MODE` | No | `auto` | Model Spektacular live mode reasons with: `auto` (an Anthropic key if set, else the OpenAI-compatible endpoint), `openai`, `anthropic` or `none` (rules only). |
 | `HIVE_MEETINGS_LLM_ENDPOINT` | No | `governor.litellm` endpoint | OpenAI-compatible base URL `hive meeting-llm` calls for Spek. |
 | `HIVE_MEETINGS_LLM_MODEL` | No | `governor.litellm.default_model` | Model name for that endpoint. Without an endpoint and model, Spek runs on rules only. |

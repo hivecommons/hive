@@ -3591,13 +3591,18 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				rt = b.agentMgr
 			}
 			researchPool := wireMeetingsResearch(b.cfg, rt, b.logger)
-			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, researchPool, b.logger); lr != nil {
+			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger); lr != nil {
 				b.meetingsLive = lr
 				b.cleanup.push(lr.Close)
 				b.cleanup.push(routeResearch(researchPool, lr))
 			}
 			// Owner API, live panel and /api/events frames (#18292).
 			b.dashSrv.SetMeetingsService(&meetingsDashboard{mgr: mgr, live: b.meetingsLive})
+			// Scheduled meetings and the Calendar section (#18394).
+			if svc, stop := wireMeetingsSchedule(b.cfg, mgr, b.logger); svc != nil {
+				b.cleanup.push(stop)
+				b.dashSrv.SetMeetingsScheduleService(svc)
+			}
 			// Ended meetings become inbox items; transcripts are purged
 			// after meetings.retention_days (#18293).
 			b.wireMeetingsInbox(mgr, store)

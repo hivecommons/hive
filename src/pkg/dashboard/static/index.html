@@ -6113,6 +6113,20 @@
     @media (max-width: 720px) {
       .meetings-join, .meetings-join-discord, .meetings-live, .meetings-settings-grid { grid-template-columns: 1fr; }
     }
+    /* Calendar: scheduled meetings hive joins (#18394) */
+    .calendar-panel { display: flex; flex-direction: column; gap: var(--sp-3); }
+    .calendar-add-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: var(--sp-2); align-items: end; }
+    .calendar-add-grid label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
+    .calendar-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+    .calendar-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
+    .calendar-row[data-status="awaiting_approval"] { border-color: var(--accent); }
+    .calendar-row[data-status="live"] { border-color: var(--green); }
+    .calendar-row-main { flex: 1 1 16em; min-width: 0; }
+    .calendar-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .oc-meeting-indicator { cursor: pointer; }
+    @media (max-width: 720px) {
+      .calendar-add-grid { grid-template-columns: 1fr; }
+    }
     /* Collapsible advisory sections (#1546) */
     .collapse-chevron {
       display: inline-block;
@@ -7713,7 +7727,6 @@
     .campaigns-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-5); flex-wrap: wrap; }
     .campaigns-title { font-size: var(--fs-md); font-weight: 700; }
     .campaigns-subtitle { color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-1); }
-    .campaigns-filters { display: grid; grid-template-columns: minmax(180px, 2fr) repeat(4, minmax(110px, 1fr)) auto; gap: var(--sp-3); margin-bottom: var(--sp-5); }
     .campaigns-input { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3) var(--sp-4); font: inherit; font-size: var(--fs-sm); min-width: 0; }
     .campaigns-list { display: grid; gap: var(--sp-3); }
     .campaign-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-4); align-items: center; border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: color-mix(in srgb, var(--border) 8%, transparent); }
@@ -7721,27 +7734,9 @@
     .campaign-row-title { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .campaign-row-meta { display: flex; gap: var(--sp-3); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-2); }
     .campaign-pill { border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); }
-    .campaign-revision-pill { border-color: var(--accent); color: var(--accent); }
-    /* Revise chains fold into one row; earlier revisions live in a
-       disclosure with their own Continue / Delete icon buttons (#12698). */
-    .campaign-history-list { display: grid; gap: var(--sp-2); margin-top: var(--sp-2); width: 100%; }
-    .campaign-history-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; border-top: 1px dashed var(--border); padding-top: var(--sp-2); }
-    .campaign-history-row .campaign-row-actions { margin-left: auto; }
     .campaign-row-actions .nous-exp-icon { align-self: center; }
-    .nous-exp-icon-delete:hover, .nous-exp-icon-delete:focus-visible { color: var(--red); }
     .campaign-empty { color: var(--muted); text-align: center; padding: var(--sp-7); border: 1px dashed var(--border); border-radius: var(--r); }
-    .campaign-jam { margin-top: var(--sp-5); display: grid; gap: var(--sp-4); }
-    .campaign-jam-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
-    .campaign-jam-box { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: color-mix(in srgb, var(--border) 6%, transparent); }
-    .campaign-jam-box h4 { margin: 0 0 var(--sp-3); font-size: var(--fs-sm); }
-    .campaign-jam-list { display: grid; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-sm); }
-    .campaign-jam-form { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); }
-    .campaign-jam-form textarea { min-height: 72px; resize: vertical; }
-    .campaign-jam-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
-    .campaign-jam-live { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
-    .campaign-jam-live-pill { border: 1px solid var(--border); border-radius: var(--r-full); padding: var(--sp-1) var(--sp-2); background: var(--bg); color: var(--fg); }
-    @media (max-width: 1100px) { .campaign-jam-grid { grid-template-columns: 1fr; } }
-    @media (max-width: 900px) { .campaigns-filters { grid-template-columns: 1fr 1fr; } .campaign-row { grid-template-columns: minmax(0, 1fr); } .campaign-row > div { min-width: 0; } .campaign-row-actions { justify-content: flex-start; } }
+    @media (max-width: 900px) { .campaign-row { grid-template-columns: minmax(0, 1fr); } .campaign-row > div { min-width: 0; } .campaign-row-actions { justify-content: flex-start; } }
     /* Review queue (#9607) */
     .review-subsection { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--dash-section-header-gap, var(--sp-3)); margin: var(--sp-2) 0 var(--sp-7); }
     .review-subsection + .review-subsection { margin-top: var(--sp-7); }
@@ -8850,6 +8845,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spek)</span></a>
       <a class="oc-nav-item" data-section="knowledge-section" data-action="ocNavigate" data-arg0="knowledge-section"><span class="oc-nav-emoji">📚</span><span class="oc-nav-text">Knowledge</span><span id="knowledge-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="inbox-section" data-action="ocNavigate" data-arg0="inbox-section"><span class="oc-nav-emoji">📥</span><span class="oc-nav-text">Inbox</span><span id="inbox-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
+      <a class="oc-nav-item" data-section="calendar-section" data-action="ocNavigate" data-arg0="calendar-section"><span class="oc-nav-emoji">📅</span><span class="oc-nav-text">Calendar</span><span id="calendar-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
       <a class="oc-nav-item" data-section="meetings-section" data-action="ocNavigate" data-arg0="meetings-section"><span class="oc-nav-emoji">🎙</span><span class="oc-nav-text">Meetings</span></a>
       <a class="oc-nav-item" data-section="nous-section" data-feature="experiment_lab" hidden data-action="ocNavigate" data-arg0="nous-section"><span class="oc-nav-emoji">🧪</span><span class="oc-nav-text">Experiment Lab (nous)</span></a>
     </div>
@@ -8949,6 +8945,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <span class="nav-chip nav-chip--status oc-providers-chip" id="oc-providers" data-status="warn" role="status" title="AI providers: all usable" aria-label="AI providers: all usable" hidden></span>
       <button type="button" class="nav-chip nav-chip--status subscription-gauge-chip" id="oc-subscription-gauge" data-action="openSubscriptionGaugeOverview" data-status="neutral" aria-label="Plan usage left" hidden><span class="subscription-gauge-chip__dial" aria-hidden="true"></span><span class="nav-chip__label"></span></button>
       <button type="button" class="nav-chip nav-chip--status nav-chip--attention oc-waiting-on-you" id="oc-waiting-on-you" data-action="showWaitingOnYou" title="Nothing is waiting on you" aria-label="0 waiting on you — show in the activity monitor" hidden><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Waiting on you · 0</span></button>
+      <button type="button" class="nav-chip nav-chip--status nav-chip--ok oc-meeting-indicator" id="oc-meeting-indicator" data-action="calendarIndicatorClick" data-target="" aria-label="Not in a meeting" hidden><span class="nav-chip__label"></span></button>
       <span class="nav-chip nav-chip--status nav-chip--ok oc-health-badge" id="oc-health"><span class="nav-chip__dot" aria-hidden="true">●</span> <span class="nav-chip__label">Health OK</span></span>
       <button class="nav-chip nav-chip--primary" id="welcome-topbar-btn" style="display:none" data-action="openWelcomeDialog" title="Open the Getting Started guide" aria-label="Guide"><span class="nav-chip__icon" aria-hidden="true">🧭</span><span class="nav-chip__label">Guide</span></button>
       <div id="oc-gh-avatar-wrap" hidden>
@@ -9297,6 +9294,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <div id="inbox-panel" class="inbox-panel"></div>
     </div>
   </div>
+  <div class="mt-6 mb-8" id="calendar-section" data-dashboard-section="calendar-section">
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="calendar-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Calendar section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 📅 Calendar</h2>
+    <div class="section-body">
+      <div id="calendar-panel" class="calendar-panel"><p class="muted-xs">Loading calendar…</p></div>
+    </div>
+  </div>
   <div class="mt-6 mb-8" id="meetings-section" data-dashboard-section="meetings-section">
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="meetings-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Meetings section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🎙 Meetings</h2>
     <div class="section-body">
@@ -9555,7 +9558,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
 
         <details class="faq-q" id="faq-sessions">
           <summary>What is Inception (spek), and where did the Inception wizard go?</summary>
-          <p>The step-by-step Inception wizard was removed; the dashboard's <strong>Inception (spek)</strong> section replaces it (on by default; an owner can turn it off in Settings, which hides the section): named terminal tabs where a command-line AI agent runs inside Hive, shared with everyone on the hive. People with the <code>read</code> role see a read-only scrollback. Typing in a terminal is shared and not attributed to individual people. Campaigns and Jam moved to a Campaigns tab. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections/workflow-and-agents.md#inception-spek" target="_blank" rel="noopener noreferrer">Inception (spek)</a>.</p>
+          <p>The step-by-step Inception wizard was removed; the dashboard's <strong>Inception (spek)</strong> section replaces it (on by default; an owner can turn it off in Settings, which hides the section): named terminal tabs where a command-line AI agent runs inside Hive, shared with everyone on the hive. People with the <code>read</code> role see a read-only scrollback. Typing in a terminal is shared and not attributed to individual people. The Campaigns tab that briefly carried the old campaigns and Jam view was retired as well; Spektacular runs are in Runs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections/workflow-and-agents.md#inception-spek" target="_blank" rel="noopener noreferrer">Inception (spek)</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-external-engines">
@@ -9580,7 +9583,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
 
         <details class="faq-q" id="faq-multiple-experiments">
           <summary>Can I run more than one experiment at once?</summary>
-          <p>Yes. The Experiment Lab lists each running experiment as its own card — research question, scope pills, status and a baseline bar reading <em>N / 672 (≈ 7 days of observations, 4 per hour)</em> — and <strong>+ New experiment</strong> adds another beside them, the same way the Inception section lists its campaigns. The one rule is that two running experiments may not share a repo target (or both be hive-wide): concurrent interventions on the same scope would confound each other's outcomes, so the lab refuses the second one and offers to pause the first or narrow the scope. Archived experiments stay read-only under <em>Previous experiments</em>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">running several experiments at once</a>.</p>
+          <p>Yes. The Experiment Lab lists each running experiment as its own card — research question, scope pills, status and a baseline bar reading <em>N / 672 (≈ 7 days of observations, 4 per hour)</em> — and <strong>+ New experiment</strong> adds another beside them, one card per experiment. The one rule is that two running experiments may not share a repo target (or both be hive-wide): concurrent interventions on the same scope would confound each other's outcomes, so the lab refuses the second one and offers to pause the first or narrow the scope. Archived experiments stay read-only under <em>Previous experiments</em>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">running several experiments at once</a>.</p>
           <p>Each card also says where it is: <em>collecting baseline</em>, <em>ready — generate proposals</em> (one button; the lab switches to Suggest for you), <em>proposals awaiting your review</em>, <em>running</em> or <em>concluded</em>. Entering a question is what creates the card — you never have to find a mode switch first.</p>
         </details>
         </section>
@@ -10775,6 +10778,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'sessions-section': { title: '💡 Inception (spek)', summary: '0 running · 0 total', badgeHtml: '<a class="dash-card-badge" href="https://github.com/jumppad-labs/spektacular" target="_blank" rel="noopener noreferrer" data-stop="1" title="Spektacular project">⚡ Powered by Spektacular</a>' },
       'knowledge-section': { title: '📚 Knowledge', summary: '0 facts' },
       'inbox-section': { title: '📥 Inbox', summary: '0 to triage' },
+      'calendar-section': { title: '📅 Calendar', summary: 'nothing scheduled' },
       'meetings-section': { title: '🎙 Meetings', summary: 'no live meetings' },
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
@@ -10816,6 +10820,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'meetings-section': { heading: 'Meetings', help: 'Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.' },
       'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge.' },
+      'calendar-section': { heading: 'Calendar', help: 'Meetings hive will join, about a minute before each starts: add one, approve or decline requests, or skip and cancel.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
@@ -48607,6 +48612,258 @@ function burnAreaChart() {
         if (errEl) errEl.textContent = e.message; else showToast('Save failed: ' + e.message, 'error');
       }
     }
+    // ── Calendar: scheduled meetings hive joins (hivecommons/hive#18394) ──
+    // GET /api/meetings/schedule lists upcoming and recent scheduled
+    // meetings; the scheduler joins each one shortly before it starts. The
+    // top-bar "in a meeting" indicator and the Calendar sidebar badge follow
+    // /api/events "meeting" frames over an initial GET /api/meetings.
+    const CALENDAR_POLL_MS = 60000;
+    // Meeting states the indicator counts as "in a meeting".
+    const CALENDAR_ACTIVE_STATES = { joining: 1, lobby: 1, live: 1 };
+    const CALENDAR_DEFAULT_NAME = 'Hive';
+    const CALENDAR_PLATFORM_LABELS = { google_meet: 'Google Meet', teams: 'Teams', zoom: 'Zoom', discord: 'Discord' };
+    const CALENDAR_PLATFORM_ICONS = { google_meet: '🟢', teams: '🟣', zoom: '🔵', discord: '🎧' };
+    const CALENDAR_SOURCE_LABELS = { email: 'email invite', manual: 'added here', discord: 'Discord' };
+    const CALENDAR_STATUS_LABELS = {
+      scheduled: 'scheduled', awaiting_approval: 'awaiting approval', live: 'live', ended: 'ended',
+      cancelled: 'cancelled', declined: 'declined', failed: 'failed', blocked: 'blocked', skipped: 'skipped'
+    };
+    const CALENDAR_REPEAT_RULES = {
+      none: '', daily: 'FREQ=DAILY', weekdays: 'FREQ=WEEKLY;BYDAY=MO,TU,WE,TH,FR', weekly: 'FREQ=WEEKLY', monthly: 'FREQ=MONTHLY'
+    };
+    let _calendarData = null;
+    let _calendarError = '';
+    // Meetings by id, from GET /api/meetings and "meeting" frames.
+    let _calendarMeetings = {};
+
+    function calendarCanView() {
+      return typeof dashboardRoleAtLeast === 'function' ? dashboardRoleAtLeast(window._hiveRole || 'read', 'read-write') : window._hiveRole === 'owner';
+    }
+    function calendarIsOwner() { return window._hiveRole === 'owner'; }
+
+    function calendarPlatformLabel(p) { return CALENDAR_PLATFORM_LABELS[p] || p || 'meeting'; }
+
+    // The viewer's own time zone: no timeZone option, so Intl uses it.
+    function calendarFormatTime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      try {
+        return new Intl.DateTimeFormat(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', timeZoneName: 'short' }).format(d);
+      } catch (e) { return d.toISOString(); }
+    }
+
+    function calendarViewerTimeZone() {
+      try { return Intl.DateTimeFormat().resolvedOptions().timeZone || ''; } catch (e) { return ''; }
+    }
+
+    // calendarIndicatorState is the top-bar indicator for a set of meetings:
+    // hidden with none in joining, lobby or live; one opens its live panel,
+    // several open the Calendar section.
+    function calendarIndicatorState(meetings, name) {
+      const who = name || CALENDAR_DEFAULT_NAME;
+      const active = (meetings || []).filter(m => m && CALENDAR_ACTIVE_STATES[m.state]);
+      if (!active.length) return { count: 0, hidden: true, text: '', title: '', target: '' };
+      const text = '🐝 ' + who + ' is in ' + (active.length === 1 ? 'a meeting' : active.length + ' meetings');
+      const title = active.map(m => (CALENDAR_PLATFORM_ICONS[m.platform] || '🎙') + ' ' + calendarPlatformLabel(m.platform) + ': ' +
+        (m.title || m.url || m.channel_id || m.id) + (m.state === 'live' ? '' : ' (' + m.state + ')')).join('\n');
+      return { count: active.length, hidden: false, text: text, title: title, target: active.length === 1 ? active[0].id : 'calendar-section' };
+    }
+
+    // calendarBadgeCount is the Calendar sidebar badge: meetings hive is in
+    // plus scheduled meetings awaiting the owner's approval.
+    function calendarBadgeCount(meetings, upcoming) {
+      const live = (meetings || []).filter(m => m && CALENDAR_ACTIVE_STATES[m.state]).length;
+      const pending = (upcoming || []).filter(e => e && e.status === 'awaiting_approval').length;
+      return live + pending;
+    }
+
+    function calendarMeetingList() { return Object.keys(_calendarMeetings).map(k => _calendarMeetings[k]); }
+
+    function renderCalendarIndicator() {
+      const el = document.getElementById('oc-meeting-indicator');
+      const name = (_calendarData && _calendarData.attendee_name) || CALENDAR_DEFAULT_NAME;
+      const st = calendarIndicatorState(calendarMeetingList(), name);
+      if (el) {
+        el.hidden = st.hidden;
+        el.dataset.target = st.target;
+        el.title = st.title || '';
+        el.setAttribute('aria-label', st.text || 'Not in a meeting');
+        const label = el.querySelector('.nav-chip__label');
+        if (label) label.textContent = st.text;
+      }
+      const badge = document.getElementById('calendar-sidebar-badge');
+      const upcoming = (_calendarData && _calendarData.upcoming) || [];
+      const n = calendarBadgeCount(calendarMeetingList(), upcoming);
+      if (badge && typeof setSidebarCountBadge === 'function') setSidebarCountBadge(badge, n, n ? n + ' live or awaiting approval' : '');
+    }
+
+    function calendarIndicatorClick() {
+      const el = document.getElementById('oc-meeting-indicator');
+      const target = el ? el.dataset.target : '';
+      if (!target || target === 'calendar-section') { ocNavigate('calendar-section'); return; }
+      calendarOpenMeeting(target);
+    }
+
+    // calendarOpenMeeting shows one meeting's live panel (transcript and
+    // notes) in the Meetings section.
+    function calendarOpenMeeting(id) {
+      if (!id) return;
+      ocNavigate('meetings-section');
+      if (typeof meetingsOpenPanel === 'function' && !(typeof _meetingsOpen !== 'undefined' && _meetingsOpen && _meetingsOpen.id === id)) meetingsOpenPanel(id);
+    }
+
+    async function calendarRefreshMeetings() {
+      if (!calendarIsOwner()) { _calendarMeetings = {}; renderCalendarIndicator(); return; }
+      try {
+        const r = await fetch('/api/meetings');
+        if (!r.ok) return;
+        const data = await r.json().catch(() => ({}));
+        const next = {};
+        (data.meetings || []).forEach(m => { if (m && m.id) next[m.id] = m; });
+        _calendarMeetings = next;
+      } catch (e) { return; }
+      renderCalendarIndicator();
+    }
+
+    // calendarOnMeetingFrame applies one /api/events "meeting" frame
+    // ({meeting_id, meeting}) without polling.
+    function calendarOnMeetingFrame(p) {
+      if (!p || !p.meeting_id) return;
+      if (p.meeting && p.meeting.id) _calendarMeetings[p.meeting_id] = p.meeting;
+      renderCalendarIndicator();
+      const linked = _calendarData && (_calendarData.upcoming || []).some(e => e.meeting_id === p.meeting_id);
+      if (linked) fetchCalendar();
+    }
+
+    async function fetchCalendar() {
+      const host = document.getElementById('calendar-panel');
+      if (!calendarCanView()) {
+        if (host) host.innerHTML = '<p class="muted-xs">The calendar is visible to the hive owner and read-write users.</p>';
+        return;
+      }
+      try {
+        const r = await fetch('/api/meetings/schedule');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { _calendarData = null; _calendarError = data.error || ('HTTP ' + r.status); }
+        else { _calendarData = data; _calendarError = ''; }
+      } catch (e) { return; }
+      renderCalendar();
+    }
+    dashboardScheduleWork('calendar', () => Promise.all([fetchCalendar(), calendarRefreshMeetings()])).catch(console.error);
+    dashboardSetInterval('calendar', fetchCalendar, CALENDAR_POLL_MS);
+
+    function calendarFormHtml() {
+      return '<details class="calendar-add"><summary class="muted-xs">Add meeting</summary><div class="calendar-add-grid mt-2">' +
+        '<label>Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-calendar-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
+        '<label>Title (optional)<input class="kb-search-box" type="text" data-calendar-field="title" maxlength="200" placeholder="Weekly sync" autocomplete="off"></label>' +
+        '<label>Starts<input class="kb-search-box" type="datetime-local" data-calendar-field="start"></label>' +
+        '<label>Ends (optional)<input class="kb-search-box" type="datetime-local" data-calendar-field="end"></label>' +
+        '<label>Repeats<select class="kb-search-box" data-calendar-field="repeat"><option value="none">Does not repeat</option><option value="daily">Daily</option>' +
+        '<option value="weekdays">Every weekday</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></label>' +
+        '<button type="button" class="hv-btn btn-primary btn-sm" data-action="calendarAdd">Add meeting</button></div>' +
+        '<p class="muted-xs">Times are in your time zone (' + escapeHtml(calendarViewerTimeZone() || 'local') + '). ' +
+        (calendarIsOwner() ? 'Hive joins about a minute before the start.' : 'The hive owner approves meetings you add.') + '</p>' +
+        '<div class="hive-dialog-error" role="alert" data-calendar-field="error"></div></details>';
+    }
+
+    function calendarActionButtons(e) {
+      if (!calendarIsOwner()) return '';
+      const id = escapeHtml(e.id);
+      const btn = (action, label, cls) => '<button type="button" class="hv-btn ' + cls + ' btn-sm" data-action="calendarAct" data-arg0="' + id + '" data-arg1="' + action + '">' + label + '</button>';
+      let out = '';
+      if (e.status === 'awaiting_approval') out += btn('approve', 'Approve', 'btn-primary') + btn('decline', 'Decline', 'btn-secondary');
+      if (e.status === 'scheduled' || e.status === 'awaiting_approval' || (e.status === 'live' && e.rrule)) out += btn('skip', e.rrule ? 'Skip next' : 'Skip', 'btn-secondary');
+      if (e.status === 'scheduled' || e.status === 'awaiting_approval' || e.status === 'live') out += btn('cancel', 'Cancel', 'btn-danger');
+      return out;
+    }
+
+    function calendarMeetingLink(e) {
+      const last = (e.history || []).length ? e.history[e.history.length - 1] : null;
+      const mid = e.meeting_id || (last && last.meeting_id) || '';
+      if (!mid) return '';
+      const live = e.status === 'live' || (last && last.status === 'live');
+      return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="calendarOpenMeeting" data-arg0="' + escapeHtml(mid) + '">' + (live ? 'Open live panel' : 'Notes') + '</button>';
+    }
+
+    function calendarRowHtml(e) {
+      const platform = e.platform || '';
+      const organizer = e.organizer ? (e.organizer.name || e.organizer.email || '') : (e.invited_by || '');
+      const next = (e.next_occurrences || [])[0];
+      const status = e.status || '';
+      const times = calendarFormatTime(e.start) + (e.end ? ' – ' + calendarFormatTime(e.end) : '');
+      return '<div class="calendar-row" data-calendar-event="' + escapeHtml(e.id) + '" data-status="' + escapeHtml(status) + '">' +
+        '<span class="badge calendar-status" data-status="' + escapeHtml(status) + '">' + escapeHtml(CALENDAR_STATUS_LABELS[status] || status) + '</span>' +
+        '<span class="badge calendar-platform" data-platform="' + escapeHtml(platform) + '">' + (CALENDAR_PLATFORM_ICONS[platform] || '🎙') + ' ' + escapeHtml(calendarPlatformLabel(platform)) + '</span>' +
+        '<div class="calendar-row-main"><div class="calendar-row-title" title="' + escapeHtml(e.join_url || '') + '">' + escapeHtml(e.summary || e.join_url || 'Meeting') + '</div>' +
+        '<div class="muted-xs">' + escapeHtml(times) + (e.rrule ? ' · repeats' : '') +
+        (next && e.rrule ? ' · next ' + escapeHtml(calendarFormatTime(next)) : '') +
+        (organizer ? ' · ' + escapeHtml(organizer) : '') + ' · ' + escapeHtml(CALENDAR_SOURCE_LABELS[e.source] || e.source || '') +
+        (e.status_reason ? ' · ' + escapeHtml(e.status_reason) : '') + '</div></div>' +
+        calendarMeetingLink(e) + calendarActionButtons(e) + '</div>';
+    }
+
+    function renderCalendar() {
+      refreshSectionCardShell('calendar-section');
+      const host = document.getElementById('calendar-panel');
+      renderCalendarIndicator();
+      if (!host) return;
+      if (_calendarError) {
+        host.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_calendarError) + '</p>';
+        setSectionSummary('calendar-section', 'unavailable');
+        return;
+      }
+      const data = _calendarData || {};
+      const upcoming = data.upcoming || [];
+      const recent = data.recent || [];
+      const pending = upcoming.filter(e => e.status === 'awaiting_approval').length;
+      host.innerHTML = calendarFormHtml() +
+        '<div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="muted-xs">Nothing scheduled.</p>') + '</div>' +
+        (recent.length ? '<div class="section-label m-0">Recent</div><div class="calendar-list">' + recent.map(calendarRowHtml).join('') + '</div>' : '');
+      setSectionSummary('calendar-section', upcoming.length + ' upcoming' + (pending ? ' · ' + pending + ' awaiting approval' : ''));
+    }
+
+    function calendarField(name) { return document.querySelector('[data-calendar-field="' + name + '"]'); }
+
+    async function calendarPost(path, body) {
+      const r = await fetch(path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body || {}) });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return data;
+    }
+
+    // calendarLocalISO turns a datetime-local value (the viewer's zone) into
+    // an RFC 3339 UTC time.
+    function calendarLocalISO(v) {
+      if (!v) return '';
+      const d = new Date(v);
+      return isNaN(d.getTime()) ? '' : d.toISOString();
+    }
+
+    async function calendarAdd() {
+      const err = calendarField('error');
+      const repeat = (calendarField('repeat') || {}).value || 'none';
+      const body = {
+        url: ((calendarField('url') || {}).value || '').trim(),
+        title: ((calendarField('title') || {}).value || '').trim(),
+        start: calendarLocalISO((calendarField('start') || {}).value),
+        end: calendarLocalISO((calendarField('end') || {}).value),
+        rrule: CALENDAR_REPEAT_RULES[repeat] || '',
+        timezone: calendarViewerTimeZone()
+      };
+      if (!body.url || !body.start) { if (err) err.textContent = 'A meeting link and a start time are required.'; return; }
+      try {
+        const ev = await calendarPost('/api/meetings/schedule', body);
+        showToast(ev && ev.status === 'awaiting_approval' ? 'Meeting added; it waits for the owner to approve' : 'Meeting scheduled', 'success');
+        fetchCalendar();
+      } catch (e) { if (err) err.textContent = e.message; }
+    }
+
+    async function calendarAct(id, action) {
+      try { await calendarPost('/api/meetings/schedule/' + encodeURIComponent(id) + '/' + encodeURIComponent(action)); }
+      catch (e) { showToast('Could not ' + action + ': ' + e.message, 'error'); }
+      fetchCalendar();
+    }
     // ── Vault Management ──
 
     function kbOpenVaults() {
@@ -50774,397 +51031,6 @@ function burnAreaChart() {
     } else {
       initScrollStabilizer();
     }
-    // ── Campaigns + Jam (Spek / inception campaign archive) ──
-    // Moved out of inception.js so the Campaigns and Jam UI survives the
-    // Inception wizard's removal; it is the Campaigns tab of the Inception
-    // (spek) section (sessions.js). Plain top-level declarations, shared
-    // through the single concatenated dashboard script; keep this file adjacent to it in manifest.txt.
-    let _campaigns = [];
-
-    async function loadCampaigns() {
-      try {
-        const params = new URLSearchParams();
-        ['search', 'repo', 'stage', 'status', 'owner'].forEach(function(name) {
-          const el = document.getElementById('campaign-filter-' + name);
-          if (el && el.value.trim()) params.set(name, el.value.trim());
-        });
-        const qs = params.toString();
-        const r = await fetch('/api/campaigns' + (qs ? '?' + qs : ''), {headers: _inceptionAuthHeaders()});
-        const data = await r.json();
-        if (data.ok) {
-          _campaigns = data.campaigns || [];
-          renderCampaignsList();
-        }
-      } catch (e) { console.error('campaign load failed', e); }
-    }
-
-    function renderCampaignsPanel() {
-      return `
-        <div class="campaigns-card">
-          <div class="campaigns-head">
-            <div><div class="campaigns-title">Campaigns</div><div class="campaigns-subtitle">Resumable Inception and Spek sessions keyed by stable spec ID.</div></div>
-            <button class="hv-btn btn-secondary btn-sm" data-action="loadCampaigns">Refresh</button>
-          </div>
-          <div class="campaigns-filters">
-            <input id="campaign-filter-search" class="campaigns-input" placeholder="Search campaigns" />
-            <input id="campaign-filter-repo" class="campaigns-input" placeholder="Repo" />
-            <input id="campaign-filter-stage" class="campaigns-input" placeholder="Stage" />
-            <input id="campaign-filter-status" class="campaigns-input" placeholder="Status" />
-            <input id="campaign-filter-owner" class="campaigns-input" placeholder="Owner" />
-            <button class="hv-btn btn-secondary btn-sm" data-action="loadCampaigns">Apply</button>
-          </div>
-          <div id="campaigns-list" class="campaigns-list"><div class="campaign-empty">Loading campaigns…</div></div>
-          <div id="campaign-jam-panel" class="campaign-jam"></div>
-        </div>`;
-    }
-
-    // Revise chains (#12698): every Revise mints a linked `<root>-rev-N`
-    // archive with the same title, so the API marks the older ones with
-    // `superseded_by`. Show one row per chain (the newest revision) and fold
-    // the earlier ones into a history disclosure under it.
-    function campaignRevisionChains(campaigns) {
-      const byId = {};
-      (campaigns || []).forEach(function(c) { byId[c.id] = c; });
-      const latest = (campaigns || []).filter(function(c) { return !c.superseded_by || !byId[c.superseded_by]; });
-      return latest.map(function(head) {
-        const earlier = [];
-        const seen = {};
-        let cur = head;
-        while (cur && cur.revision_of && byId[cur.revision_of] && !seen[cur.revision_of]) {
-          seen[cur.revision_of] = true;
-          cur = byId[cur.revision_of];
-          earlier.push(cur);
-        }
-        return { head: head, history: earlier };
-      });
-    }
-
-    function campaignDeleteButton(c) {
-      return nousExpIconButton('deleteCampaign', escapeHtml(c.id), '', 'Delete campaign', '🗑', 'nous-exp-icon-delete campaign-delete');
-    }
-
-    function renderCampaignRow(c, history) {
-      const repo = (c.repos || []).join(', ') || 'no repo';
-      const activity = c.last_activity || 'no activity';
-      const engine = c.engine || 'unknown engine';
-      const rc = c.recheck || {};
-      const recheckText = rc.enabled ? `Rechecks every ${escapeHtml(rc.interval || 'default')} · next ${escapeHtml(rc.next_at ? relativeAge(rc.next_at) : 'not scheduled')} · last delta ${Number(rc.last_delta_count || 0)}` : 'Rechecks off';
-      const drift = c.drift || {};
-      const external = Array.isArray(drift.external) ? drift.external : [];
-      const failed = Array.isArray(rc.sources_failed) ? rc.sources_failed : (Array.isArray(drift.sources_failed) ? drift.sources_failed : []);
-      const recheckExternal = external.length ? `<details class="campaign-row-meta"><summary>${Number(drift.external_count || external.length)} external signals</summary><div class="campaign-jam-list">${external.map(ev => `<div><strong>${escapeHtml(ev.source || '')}</strong> · ${escapeHtml(ev.kind || '')}: ${ev.url ? `<a href="${escapeHtml(ev.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(ev.title || ev.url)}</a>` : escapeHtml(ev.title || '')}${ev.summary ? `<br>${escapeHtml(ev.summary)}` : ''}</div>`).join('')}${failed.length ? `<div>Failed sources: ${failed.map(f => `${escapeHtml(f.name || '')} (${escapeHtml(f.reason || '')})`).join(', ')}</div>` : ''}</div></details>` : (Number(rc.external_count || 0) ? `<div class="campaign-row-meta"><span>${Number(rc.external_count || 0)} external signals</span></div>` : '');
-      const recheckDisabled = rc.in_flight ? ' disabled' : '';
-      const revisionPill = c.revision ? `<span class="campaign-pill campaign-revision-pill" title="Revision ${Number(c.revision)}${c.revision_of ? ' of ' + escapeHtml(c.revision_of) : ''}">rev ${Number(c.revision)}</span>` : '';
-      const hist = Array.isArray(history) ? history : [];
-      const historyBlock = hist.length ? `<details class="campaign-row-meta campaign-history"><summary>${hist.length} earlier ${hist.length === 1 ? 'revision' : 'revisions'}</summary><div class="campaign-history-list">${hist.map(function(h) {
-        return `<div class="campaign-history-row" data-campaign-id="${escapeHtml(h.id)}"><span class="campaign-pill">${h.revision ? 'rev ' + Number(h.revision) : 'original'}</span><span>${escapeHtml(h.id)}</span><span>${escapeHtml(h.status || 'parked')}</span><span>${escapeHtml(h.last_activity || '')}</span><span class="campaign-row-actions">${nousExpIconButton('resumeCampaign', escapeHtml(h.id), '', 'Continue this revision', '▶', 'nous-exp-icon-resume')}${campaignDeleteButton(h)}</span></div>`;
-      }).join('')}</div></details>` : '';
-      return `<div class="campaign-row" data-campaign-id="${escapeHtml(c.id)}">
-          <div>
-            <div class="campaign-row-title">${escapeHtml(c.title || c.id)}</div>
-            <div class="campaign-row-meta">
-              <span class="campaign-pill">${escapeHtml(c.status || 'parked')}</span>
-              ${revisionPill}
-              <span>${escapeHtml(c.current_stage || '')}${c.current_step ? ' / ' + escapeHtml(c.current_step) : ''}</span>
-              <span>${escapeHtml(repo)}</span>
-              <span>${escapeHtml(engine)}</span>
-              <span>${escapeHtml(activity)}</span>
-            </div>
-            <div class="campaign-row-meta"><span>${recheckText}</span></div>
-            ${recheckExternal}
-            ${historyBlock}
-          </div>
-          <div class="campaign-row-actions">
-            <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="recheckCampaign" data-arg0="${escapeHtml(c.id)}"${recheckDisabled}>Recheck</button>
-            <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
-            ${campaignDeleteButton(c)}
-          </div>
-        </div>`;
-    }
-
-    function renderCampaignsList() {
-      const list = document.getElementById('campaigns-list');
-      if (!list) return;
-      if (!_campaigns || _campaigns.length === 0) {
-        list.innerHTML = '<div class="campaign-empty">No campaigns yet. Reset or completed inception runs are archived here.</div>';
-        return;
-      }
-      list.innerHTML = campaignRevisionChains(_campaigns).map(function(chain) { return renderCampaignRow(chain.head, chain.history); }).join('');
-    }
-
-    // Delete only removes the campaign record (saved inception state + wiki
-    // snapshot). KB facts, Jam threads and scaffolded repo files are kept.
-    // In-app hiveConfirm dialog; native browser dialogs are forbidden (#12698).
-    const CAMPAIGN_DELETE_CONFIRM_TITLE = 'Delete this campaign?';
-    function campaignDeleteConfirmMessage(c) {
-      const label = (c && (c.title || c.id)) || 'this campaign';
-      const rev = c && c.revision ? ` (revision ${Number(c.revision)})` : '';
-      return `Removes the campaign record for "${label}"${rev}: its saved Inception state and the archived wiki snapshot. It disappears from this list and cannot be continued or revised.\n\nKept: knowledge-base facts, Jam threads, and anything already scaffolded or pushed to the repo. Other revisions in the same chain are not affected.`;
-    }
-
-    async function deleteCampaign(id) {
-      if (!id) return;
-      const c = (_campaigns || []).find(function(x) { return x.id === id; }) || { id: id };
-      const ok = await hiveConfirm({ title: CAMPAIGN_DELETE_CONFIRM_TITLE, message: campaignDeleteConfirmMessage(c), confirmLabel: 'Delete campaign', cancelLabel: 'Keep', danger: true });
-      if (!ok) return;
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id), { method: 'DELETE', headers: _inceptionAuthHeaders() });
-        const data = await r.json().catch(function() { return {}; });
-        if (!r.ok || !data.ok) { showToast(data.error || 'Failed to delete campaign', 'error'); return; }
-        _campaigns = (_campaigns || []).filter(function(x) { return x.id !== id; });
-        renderCampaignsList();
-        showToast('Campaign deleted — knowledge-base facts and Jam threads kept', 'info');
-        await loadCampaigns();
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
-
-    let _campaignJamSocket = null;
-    let _campaignJamLiveRevision = '';
-
-    async function openCampaignJam(id) {
-      if (!id) return;
-      const panel = document.getElementById('campaign-jam-panel');
-      if (panel) panel.innerHTML = '<div class="campaign-empty">Loading Jam…</div>';
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/jam', {headers: _inceptionAuthHeaders()});
-        const data = await r.json();
-        if (!data.ok) { throw new Error(data.error || 'Failed to load Jam'); }
-        renderCampaignJam(id, data.jam || {});
-        connectCampaignJamLive(id);
-      } catch (e) {
-        if (panel) panel.innerHTML = '<div class="campaign-empty">Jam failed: ' + escapeHtml(e.message) + '</div>';
-      }
-    }
-
-    function renderCampaignJam(id, jam) {
-      const panel = document.getElementById('campaign-jam-panel');
-      if (!panel) return;
-      const threads = jam.threads || [];
-      const suggestions = jam.suggestions || [];
-      const polls = jam.polls || [];
-      const revisions = jam.revisions || [];
-      const projectSync = jam.project_sync || {};
-      _campaignJamLiveRevision = jam.spec_revision_id || '';
-      panel.innerHTML = `
-        <div class="campaigns-head">
-          <div><div class="campaigns-title">Jam: ${escapeHtml(id)}</div><div class="campaigns-subtitle">Async section threads, suggestions, polls, decisions and attributed spec revisions.</div></div>
-          <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(id)}">Refresh Jam</button>
-        </div>
-        <div class="campaign-jam-box">
-          <h4>Live session</h4>
-          <div id="campaign-jam-live-status" class="campaign-jam-live">Connecting…</div>
-          <div class="campaign-jam-form">
-            <input id="jam-live-section" class="campaigns-input" placeholder="Section you are editing" />
-            <textarea id="jam-live-content" class="campaigns-input" placeholder="Draft spec content for conflict-aware live edit">${escapeHtml(jam.spec_content || '')}</textarea>
-            <div class="campaign-jam-actions">
-              <button class="hv-btn btn-secondary btn-sm" data-action="focusCampaignJamLive" data-arg0="${escapeHtml(id)}">Share focus</button>
-              <button class="hv-btn btn-primary btn-sm" data-action="submitCampaignJamLiveEdit" data-arg0="${escapeHtml(id)}">Submit live edit</button>
-            </div>
-          </div>
-        </div>
-        <div class="campaign-jam-grid">
-          <div class="campaign-jam-box">
-            <h4>Threads</h4>
-            <div class="campaign-jam-list">${threads.length ? threads.map(t => `<div><strong>${escapeHtml(t.section || 'section')}</strong>: ${escapeHtml((t.comments && t.comments[0] && t.comments[0].body) || t.title || '')}<div class="campaign-jam-actions"><button class="hv-btn btn-secondary btn-sm" data-action="inviteCampaignJamAgent" data-arg0="${escapeHtml(id)}" data-arg1="${escapeHtml(t.id)}">Invite Spektacular</button></div></div>`).join('') : 'No threads yet.'}</div>
-            <div class="campaign-jam-form">
-              <input id="jam-thread-section" class="campaigns-input" placeholder="Spec section" />
-              <textarea id="jam-thread-body" class="campaigns-input" placeholder="Comment"></textarea>
-              <button class="hv-btn btn-primary btn-sm" data-action="createCampaignJamThread" data-arg0="${escapeHtml(id)}">Add thread</button>
-            </div>
-          </div>
-          <div class="campaign-jam-box">
-            <h4>Suggestions</h4>
-            <div class="campaign-jam-list">${suggestions.length ? suggestions.map(s => `<div><strong>${escapeHtml(s.section || 'section')}</strong> · ${escapeHtml(s.status || 'open')}<br>${escapeHtml(s.proposed_text || '')}<div class="campaign-jam-actions">${s.status === 'open' ? `<button class="hv-btn btn-secondary btn-sm" data-action="resolveCampaignJamSuggestion" data-arg0="${escapeHtml(id)}" data-arg1="${escapeHtml(s.id)}" data-arg2="accept">Accept</button><button class="hv-btn btn-secondary btn-sm" data-action="resolveCampaignJamSuggestion" data-arg0="${escapeHtml(id)}" data-arg1="${escapeHtml(s.id)}" data-arg2="reject">Reject</button>` : ''}</div></div>`).join('') : 'No suggestions yet.'}</div>
-            <div class="campaign-jam-form">
-              <input id="jam-suggestion-section" class="campaigns-input" placeholder="Spec section" />
-              <textarea id="jam-suggestion-text" class="campaigns-input" placeholder="Suggested text"></textarea>
-              <button class="hv-btn btn-primary btn-sm" data-action="createCampaignJamSuggestion" data-arg0="${escapeHtml(id)}">Suggest text</button>
-            </div>
-          </div>
-          <div class="campaign-jam-box">
-            <h4>Polls & decisions</h4>
-            <div class="campaign-jam-list">${polls.length ? polls.map(p => `<div><strong>${escapeHtml(p.question || '')}</strong><br>${(p.options || []).map(o => `${escapeHtml(o.label)}: ${o.count || 0}`).join(' · ')}${p.decision ? `<br>Decision: ${escapeHtml(p.decision.outcome)} — ${escapeHtml(p.decision.rationale)}` : ''}</div>`).join('') : 'No polls yet.'}</div>
-            <div class="campaign-jam-form">
-              <input id="jam-poll-section" class="campaigns-input" placeholder="Spec section" />
-              <input id="jam-poll-question" class="campaigns-input" placeholder="Question" />
-              <input id="jam-poll-options" class="campaigns-input" placeholder="Options separated by commas" />
-              <button class="hv-btn btn-primary btn-sm" data-action="createCampaignJamPoll" data-arg0="${escapeHtml(id)}">Create poll</button>
-            </div>
-          </div>
-        </div>
-        <div class="campaign-jam-box">
-          <h4>Revision history</h4>
-          <div class="campaign-jam-list">${revisions.length ? revisions.map(r => `<div><strong>${escapeHtml(r.id)}</strong> by ${escapeHtml((r.author && r.author.name) || 'unknown')}${r.model ? ' · ' + escapeHtml(r.model) : ''}<br>${escapeHtml(r.reason || 'revision')}</div>`).join('') : 'No spec revisions yet.'}</div>
-        </div>
-        <div class="campaign-jam-box">
-          <h4>GitHub Projects sync</h4>
-          <div class="campaign-jam-list">
-            <div>Status: ${escapeHtml(projectSync.last_status || (projectSync.enabled ? 'enabled' : 'disabled'))}</div>
-            ${projectSync.project_url ? `<div>Project: ${escapeHtml(projectSync.project_url)}</div>` : ''}
-            ${projectSync.last_error ? `<div>Last error: ${escapeHtml(projectSync.last_error)}<br>${escapeHtml(projectSync.retry_advice || 'Retry after checking the project link and token.')}</div>` : ''}
-          </div>
-          <div class="campaign-jam-form">
-            <input id="jam-project-url" class="campaigns-input" placeholder="GitHub Projects URL or ID" value="${escapeHtml(projectSync.project_url || projectSync.project_id || '')}" />
-            <div class="campaign-jam-actions">
-              <button class="hv-btn btn-secondary btn-sm" data-action="enableCampaignJamProjectSync" data-arg0="${escapeHtml(id)}">Enable sync</button>
-              <button class="hv-btn btn-primary btn-sm" data-action="syncCampaignJamProject" data-arg0="${escapeHtml(id)}">Sync now</button>
-              <button class="hv-btn btn-secondary btn-sm" data-action="disableCampaignJamProjectSync" data-arg0="${escapeHtml(id)}">Disable</button>
-            </div>
-          </div>
-        </div>`;
-    }
-
-    function connectCampaignJamLive(id) {
-      if (_campaignJamSocket) {
-        const prev = _campaignJamSocket;
-        _campaignJamSocket = null;
-        prev.onmessage = null;
-        prev.onclose = null;
-        prev.close();
-      }
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = protocol + '//' + window.location.host + '/api/campaigns/' + encodeURIComponent(id) + '/jam/ws';
-      try {
-        const ws = new WebSocket(url);
-        _campaignJamSocket = ws;
-        ws.onmessage = function(event) {
-          const msg = JSON.parse(event.data || '{}');
-          if (msg.jam && msg.jam.spec_revision_id) { _campaignJamLiveRevision = msg.jam.spec_revision_id; }
-          if (msg.type === 'snapshot' || msg.type === 'presence') { renderCampaignJamPresence(msg.presence || []); }
-          if (msg.type === 'edit_applied' && msg.jam) { renderCampaignJam(id, msg.jam); connectCampaignJamLive(id); }
-          if (msg.type === 'conflict') { showToast('Jam edit conflict: refresh or merge against revision ' + (msg.expected_revision_id || 'current'), 'error'); }
-          if (msg.type === 'error') { showToast('Jam live error: ' + (msg.error || 'unknown error'), 'error'); }
-        };
-        ws.onclose = function() { renderCampaignJamPresence([], 'Disconnected; refresh Jam to reconnect.'); };
-      } catch (e) {
-        renderCampaignJamPresence([], 'Live unavailable: ' + e.message);
-      }
-    }
-
-    function renderCampaignJamPresence(presence, message) {
-      const el = document.getElementById('campaign-jam-live-status');
-      if (!el) return;
-      if (message) { el.textContent = message; return; }
-      el.innerHTML = presence.length ? presence.map(function(p) {
-        const name = (p.actor && p.actor.name) || 'participant';
-        return '<span class="campaign-jam-live-pill">' + escapeHtml(name) + (p.section ? ' · ' + escapeHtml(p.section) : '') + '</span>';
-      }).join('') : 'No live participants yet.';
-    }
-
-    function focusCampaignJamLive() {
-      if (!_campaignJamSocket || _campaignJamSocket.readyState !== WebSocket.OPEN) return;
-      const section = document.getElementById('jam-live-section')?.value || '';
-      _campaignJamSocket.send(JSON.stringify({ type: 'focus', section }));
-    }
-
-    function submitCampaignJamLiveEdit() {
-      if (!_campaignJamSocket || _campaignJamSocket.readyState !== WebSocket.OPEN) { showToast('Jam live socket is not connected', 'error'); return; }
-      const content = document.getElementById('jam-live-content')?.value || '';
-      _campaignJamSocket.send(JSON.stringify({ type: 'edit', base_revision_id: _campaignJamLiveRevision, content, reason: 'live co-edit' }));
-    }
-
-    async function createCampaignJamThread(id) {
-      const section = document.getElementById('jam-thread-section')?.value || '';
-      const body = document.getElementById('jam-thread-body')?.value || '';
-      await postCampaignJam(id, 'threads', { section, body });
-    }
-
-    async function inviteCampaignJamAgent(id, thread_id) {
-      const prompt = await promptForJamAgent();
-      if (prompt === null) return;
-      await postCampaignJam(id, 'agents', { thread_id, agent: 'spektacular', prompt });
-    }
-
-    function promptForJamAgent() {
-      return hivePrompt({title: 'Prompt for Jam agent', label: 'Prompt for the Jam agent reply and suggestion', defaultValue: 'Suggest spec text for this thread.'});
-    }
-
-    async function createCampaignJamSuggestion(id) {
-      const section = document.getElementById('jam-suggestion-section')?.value || '';
-      const proposed_text = document.getElementById('jam-suggestion-text')?.value || '';
-      await postCampaignJam(id, 'suggestions', { section, proposed_text });
-    }
-
-    async function resolveCampaignJamSuggestion(id, suggestion_id, action) {
-      await postCampaignJam(id, 'suggestions', { action, suggestion_id });
-    }
-
-    async function createCampaignJamPoll(id) {
-      const section = document.getElementById('jam-poll-section')?.value || '';
-      const question = document.getElementById('jam-poll-question')?.value || '';
-      const options = (document.getElementById('jam-poll-options')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
-      await postCampaignJam(id, 'polls', { section, question, options });
-    }
-
-    async function enableCampaignJamProjectSync(id) {
-      const value = document.getElementById('jam-project-url')?.value || '';
-      const body = value.indexOf('http') === 0 ? { action: 'enable', project_url: value } : { action: 'enable', project_id: value };
-      await postCampaignJam(id, 'project-sync', body);
-    }
-
-    async function syncCampaignJamProject(id) {
-      await postCampaignJam(id, 'project-sync', { action: 'sync' });
-    }
-
-    async function disableCampaignJamProjectSync(id) {
-      await postCampaignJam(id, 'project-sync', { action: 'disable' });
-    }
-
-    async function postCampaignJam(id, lane, body) {
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/jam/' + lane, { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify(body) });
-        const data = await r.json();
-        if (!data.ok) { showToast(data.error || 'Jam update failed', 'error'); return; }
-        renderCampaignJam(id, data.jam || {});
-      } catch (e) { showToast('Jam error: ' + e.message, 'error'); }
-    }
-
-    async function resumeCampaign(id) {
-      if (!id) return;
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/resume', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ surface: 'dashboard' }) });
-        const data = await r.json();
-        if (!data.ok) { showToast(data.error || 'Failed to resume campaign', 'error'); return; }
-        // The dashboard wizard that drove a resumed inception state is gone;
-        // the campaign is resumed server-side and continued from its command.
-        if (data.state && !data.resume_command) showToast('Campaign resumed', 'success');
-        if (data.resume_command) { await hiveAlert('Resume command:\n' + data.resume_command, 'Resume command'); }
-        await loadCampaigns();
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
-
-    async function releaseCampaign(id) {
-      if (!id) return;
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/release', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
-        const data = await r.json();
-        if (!data.ok) { showToast(data.error || 'Failed to release campaign', 'error'); return; }
-        await loadCampaigns();
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
-
-    async function reviseCampaign(id) {
-      if (!id) return;
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/revise', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
-        const data = await r.json();
-        if (!data.ok) { showToast(data.error || 'Failed to revise campaign', 'error'); return; }
-        await loadCampaigns();
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
-
-    async function recheckCampaign(id) {
-      if (!id) return;
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/recheck', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
-        const data = await r.json();
-        if (!data.ok) { showToast(data.error || 'Failed to recheck campaign', 'error'); return; }
-        await loadCampaigns();
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
     // Dashboard boot hooks that used to share this file with the removed
     // Inception wizard (the section is now Inception (spek), sessions.js).
     document.addEventListener('DOMContentLoaded', () => {
@@ -51719,7 +51585,6 @@ function burnAreaChart() {
     const SESSIONS_LOG_LINES = 500;
     const SESSIONS_ASSERTION_RENEW_MS = 600000;
     const SESSIONS_TMUX_PREFIX = 'hive-sess-';
-    const SESSIONS_CAMPAIGNS_TAB = 'campaigns';
     const SESSIONS_UNGROUPED = '';
     const SESSIONS_UNGROUPED_LABEL = 'Ungrouped';
     const SESSIONS_SELECTED_KEY = 'hive.sessions.selected';
@@ -51805,10 +51670,9 @@ function burnAreaChart() {
       return sessionsGroupSessions(sessions).map(function(g) { return g.group; }).filter(Boolean);
     }
     function sessionsPickSelected(sessions, wanted) {
-      if (wanted === SESSIONS_CAMPAIGNS_TAB) return wanted;
       const list = sessions || [];
       if (wanted && list.some(function(s) { return s && s.id === wanted; })) return wanted;
-      return list.length && list[0] ? list[0].id : SESSIONS_CAMPAIGNS_TAB;
+      return list.length && list[0] ? list[0].id : '';
     }
     // Flat tab order as rendered (group order, then session order), used for arrow keys.
     function sessionsTabOrder(sessions, collapsed, selected) {
@@ -51819,7 +51683,6 @@ function burnAreaChart() {
           out.push(s.id);
         });
       });
-      out.push(SESSIONS_CAMPAIGNS_TAB);
       return out;
     }
     function sessionsNextTab(order, current, key) {
@@ -52128,8 +51991,7 @@ function burnAreaChart() {
         + '<span class="sessions-tab-vendor">' + esc(s.vendor || '') + '</span>' + badge + '</button>';
     }
     function sessionsTabsHtml() {
-      const campaignsSel = _sessionsSelected === SESSIONS_CAMPAIGNS_TAB;
-      let html = sessionsGroupSessions(_sessionsData.sessions).map(function(g) {
+      return sessionsGroupSessions(_sessionsData.sessions).map(function(g) {
         const collapsed = !!_sessionsCollapsed[g.group];
         const tabs = g.sessions.filter(function(s) { return !collapsed || s.id === _sessionsSelected; }).map(sessionsTabHtml).join('');
         return '<div class="sessions-group" role="presentation">'
@@ -52137,11 +51999,6 @@ function burnAreaChart() {
           + '<span class="sessions-group-chevron">' + (collapsed ? '▶' : '▼') + '</span>' + esc(g.label) + ' <span class="sessions-group-count">' + g.sessions.length + '</span></button>'
           + '<div class="sessions-group-tabs" role="presentation">' + tabs + '</div></div>';
       }).join('');
-      html += '<div class="sessions-group" role="presentation"><div class="sessions-group-tabs" role="presentation">'
-        + '<button type="button" role="tab" class="sessions-tab' + (campaignsSel ? ' active' : '') + '" id="sessions-tab-' + SESSIONS_CAMPAIGNS_TAB + '" aria-selected="' + campaignsSel + '" aria-controls="sessions-pane-' + SESSIONS_CAMPAIGNS_TAB + '" tabindex="' + (campaignsSel ? '0' : '-1') + '"'
-        + ' data-action="sessionsSelect" data-arg0="' + SESSIONS_CAMPAIGNS_TAB + '" data-keydown-action="sessionsTabKey" data-arg-types="s,e" data-keys="*" data-arg1="">'
-        + '<span class="sessions-tab-name">Campaigns</span></button></div></div>';
-      return html;
     }
     function sessionsNewFormHtml() {
       const vendors = (_sessionsData.vendors || []).filter(function(v) { return v && v.available; });
@@ -52336,15 +52193,14 @@ function burnAreaChart() {
       if (!typing) chrome.innerHTML = sessionsToolbarHtml();
       if (focusId) { const f = document.getElementById(focusId); if (f) f.focus(); }
       const empty = document.getElementById('sessions-empty');
-      empty.hidden = sessions.length > 0 || _sessionsSelected !== SESSIONS_CAMPAIGNS_TAB;
+      empty.hidden = sessions.length > 0;
       empty.textContent = sessions.length ? '' : 'No sessions yet. Start one with “New session” to run a CLI agent here; everyone on this hive can watch or join it.';
       const liveIds = {};
       sessions.forEach(function(s) { liveIds[s.id] = true; sessionsEnsurePane(s); });
       Array.prototype.forEach.call(document.querySelectorAll('#sessions-panes .sessions-pane'), function(pane) {
         const id = pane.id.replace('sessions-pane-', '');
-        if (id !== SESSIONS_CAMPAIGNS_TAB && !liveIds[id]) { delete _sessionsFrames[id]; pane.remove(); }
+        if (!liveIds[id]) { delete _sessionsFrames[id]; pane.remove(); }
       });
-      sessionsEnsureCampaignsPane();
       sessionsShowSelected();
       sessionsSyncPreparingPoll(sessions);
     }
@@ -52360,29 +52216,12 @@ function burnAreaChart() {
       const preparing = (sessions || []).filter(function(s) { return s.status === SESSIONS_STATUS_PREPARING; }).length;
       return running + ' running · ' + (preparing ? preparing + ' preparing · ' : '') + (sessions || []).length + ' total';
     }
-    function sessionsEnsureCampaignsPane() {
-      const host = document.getElementById('sessions-panes');
-      if (!host || document.getElementById('sessions-pane-' + SESSIONS_CAMPAIGNS_TAB)) return;
-      const pane = document.createElement('div');
-      pane.id = 'sessions-pane-' + SESSIONS_CAMPAIGNS_TAB;
-      pane.className = 'sessions-pane';
-      pane.setAttribute('role', 'tabpanel');
-      pane.setAttribute('aria-labelledby', 'sessions-tab-' + SESSIONS_CAMPAIGNS_TAB);
-      pane.setAttribute('data-mode', 'campaigns');
-      host.appendChild(pane);
-    }
     function sessionsShowSelected() {
       Array.prototype.forEach.call(document.querySelectorAll('#sessions-panes .sessions-pane'), function(pane) {
         pane.hidden = pane.id !== 'sessions-pane-' + _sessionsSelected;
       });
-      if (_sessionsSelected === SESSIONS_CAMPAIGNS_TAB) {
-        sessionsStopLogPoll();
-        const pane = document.getElementById('sessions-pane-' + SESSIONS_CAMPAIGNS_TAB);
-        if (pane && !pane.firstChild) { pane.innerHTML = renderCampaignsPanel(); loadCampaigns(); }
-        return;
-      }
       const s = sessionsSelectedSession();
-      if (!s) return;
+      if (!s) { sessionsStopLogPoll(); return; }
       const mode = sessionsViewMode(_sessionsRole, s);
       if (mode === 'preparing' || mode === 'failed') { sessionsStopLogPoll(); return; }
       if (mode === 'terminal' && !_sessionsFrameFailed[s.id]) { sessionsStopLogPoll(); sessionsAttachTerminal(s); } else sessionsStartLogPoll();
@@ -57885,9 +57724,14 @@ function burnAreaChart() {
       });
 
       // A meeting hive is in changed state: refresh the Meetings list.
-      source.addEventListener('meeting', () => {
+      // The same frame drives the top-bar "in a meeting" indicator and the
+      // Calendar badge (calendar.js).
+      source.addEventListener('meeting', (e) => {
         noteSSEFrame();
         if (typeof fetchMeetings === 'function') fetchMeetings();
+        if (typeof calendarOnMeetingFrame === 'function') {
+          try { calendarOnMeetingFrame(JSON.parse(e.data || '{}')); } catch (err) { /* malformed frame */ }
+        }
       });
 
       source.addEventListener('agent-status', (e) => {
@@ -76250,7 +76094,7 @@ function burnAreaChart() {
       { name:'governor', aliases:['gov'], usage:'/governor <query>', description:'Ask about governor cadence, kicks and policy.', example:'/governor next kick', details:'Forwards a focused governor question to Hive Chat search.', run: chatForwardCommand('governor') },
       { name:'knowledge', aliases:['kb'], usage:'/knowledge <query>', description:'Ask the knowledge base and imported docs.', example:'/knowledge relay setup', details:'Forwards a focused knowledge-base question to Hive Chat search.', run: chatForwardCommand('knowledge') },
       { name:'jam', aliases:['swarm'], usage:'/jam <query>', description:'Ask about jam sessions, contributors and live collaboration.', example:'/jam who is free?', details:'Presence questions (who is online / free / here / active) are answered locally from `/api/presence`; anything else is forwarded to Hive Chat search.', run: chatCommandJam },
-      { name:'spek', aliases:['spectacular','spec'], usage:'/spek <query>', description:'Ask about Spektacular/inception campaigns and spec runs (v6/edge when unavailable).', example:'/spek active campaigns', details:'Uses v6/edge Spektacular concepts: inception campaigns, spec runs, relay and campaign state.', run: chatForwardCommand('spek') },
+      { name:'spek', aliases:['spectacular','spec'], usage:'/spek <query>', description:'Ask about Spektacular spec runs and Inception (spek) sessions (v6/edge when unavailable).', example:'/spek spec runs', details:'Uses v6/edge Spektacular concepts: spec runs, Inception (spek) sessions and relay state.', run: chatForwardCommand('spek') },
     ];
     const CHAT_COMMAND_BY_NAME = new Map();
     CHAT_COMMANDS.forEach(c => [c.name].concat(c.aliases || []).forEach(n => CHAT_COMMAND_BY_NAME.set(n, c)));
@@ -76261,7 +76105,7 @@ function burnAreaChart() {
       { group:'Governor', items:['/governor next kick', 'Why is the governor paused?', 'Show recent kick failures'] },
       { group:'Knowledge', items:['/knowledge work sources', 'Search docs for relay setup', 'What changed in v5?'] },
       { group:'Jam', items:['/who', '/jam who is online?', 'Show contributor activity'] },
-      { group:'Spek / Spektacular', spek:true, items:['!runs spec owner/repo#N', '/spek active campaigns', '/spek spec runs', 'Explain inception relay state'] },
+      { group:'Spek / Spektacular', spek:true, items:['!runs spec owner/repo#N', '/spek spec runs', '/spek running sessions', 'Explain inception relay state'] },
     ];
 
     function loadChatSettings() { return safeJsonParse(localStorage.getItem(CHAT_SETTINGS_KEY) || '{}', {}); }

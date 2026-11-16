@@ -35,8 +35,8 @@ const (
 	// ReasonDeclined is the state reason for a platform join request the
 	// owner declined.
 	ReasonDeclined = "declined"
-	// ReasonHiveLeave is the state reason when someone typed or said
-	// "hive leave".
+	// ReasonHiveLeave is the state reason when someone typed or said a
+	// leave phrase ("betty leave", "hive leave").
 	ReasonHiveLeave = "hive_leave"
 	// ReasonOwnerLeave is the state reason when the owner removed hive.
 	ReasonOwnerLeave = "owner_leave"
@@ -45,21 +45,58 @@ const (
 	ReasonQuorumLost = "quorum_lost_meeting"
 )
 
-// leavePattern matches "hive leave" and close variants ("hive, leave",
-// "Hive: please leave"). Heuristic: the words must be adjacent apart from
-// punctuation and an optional "please", which keeps "we should leave hive
-// out of this" from matching.
-var leavePattern = regexp.MustCompile(`(?i)\bhive[\s,.:;!-]*(?:please[\s,]+)?leave\b`)
+// DefaultLeavePhrases is the leave phrase without a persona.
+var DefaultLeavePhrases = []string{"hive leave"}
 
-// IsLeaveCommand reports whether text asks hive to leave.
-func IsLeaveCommand(text string) bool { return leavePattern.MatchString(text) }
+// leaveSep is what may stand between the words of a leave phrase:
+// punctuation and an optional "please" ("hive, leave", "Betty: please
+// leave"). The words must otherwise be adjacent, which keeps "we should
+// leave hive out of this" from matching.
+const leaveSep = `[\s,.:;!-]*(?:please[\s,]+)?`
+
+// LeaveMatcher matches the configured leave phrases ("betty leave", "hive
+// leave") and close variants anywhere in a line.
+type LeaveMatcher struct{ re *regexp.Regexp }
+
+// NewLeaveMatcher builds a matcher; no usable phrase means
+// DefaultLeavePhrases.
+func NewLeaveMatcher(phrases []string) *LeaveMatcher {
+	var alts []string
+	for _, p := range phrases {
+		words := strings.Fields(strings.ToLower(p))
+		if len(words) == 0 {
+			continue
+		}
+		q := make([]string, len(words))
+		for i, w := range words {
+			q[i] = regexp.QuoteMeta(w)
+		}
+		alts = append(alts, strings.Join(q, leaveSep))
+	}
+	if len(alts) == 0 {
+		return NewLeaveMatcher(DefaultLeavePhrases)
+	}
+	return &LeaveMatcher{re: regexp.MustCompile(`(?i)\b(?:` + strings.Join(alts, "|") + `)\b`)}
+}
+
+// Match reports whether text asks the bot to leave.
+func (l *LeaveMatcher) Match(text string) bool { return l.re.MatchString(text) }
+
+var defaultLeave = NewLeaveMatcher(DefaultLeavePhrases)
+
+// IsLeaveCommand reports whether text asks hive to leave with the default
+// phrase ("hive leave").
+func IsLeaveCommand(text string) bool { return defaultLeave.Match(text) }
 
 // Options configures a Manager.
 type Options struct {
-	Store        *Store
-	Quorum       Quorum
-	BotName      string
-	ConsentText  string
+	Store       *Store
+	Quorum      Quorum
+	BotName     string
+	ConsentText string
+	// LeavePhrases remove the bot when typed or said (the persona's
+	// leave_phrases); empty means DefaultLeavePhrases.
+	LeavePhrases []string
 	LobbyTimeout time.Duration
 	Logger       *slog.Logger
 	ReconnectMin time.Duration
@@ -99,8 +136,9 @@ type Update struct {
 
 // Manager runs meeting lifecycles. Safe for concurrent use.
 type Manager struct {
-	opts Options
-	log  *slog.Logger
+	opts  Options
+	log   *slog.Logger
+	leave *LeaveMatcher
 
 	mu        sync.Mutex
 	consentAt map[string]time.Time
@@ -150,7 +188,7 @@ func NewManager(opts Options) (*Manager, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
-		opts: opts, log: log,
+		opts: opts, log: log, leave: NewLeaveMatcher(opts.LeavePhrases),
 		watchers:  map[string]context.CancelFunc{},
 		consentAt: map[string]time.Time{},
 		lobby:     map[string]*time.Timer{},
@@ -540,8 +578,11 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) {
 }
 
 // fromHive reports whether a line is hive's own (its chat posts echo back).
+// Platforms may decorate the bot's display name ("Betty Bee from the hive
+// (Guest)"), so a trailing parenthetical is ignored.
 func (m *Manager) fromHive(ev Event) bool {
-	if ev.Author != nil && m.opts.BotName != "" && strings.EqualFold(ev.Author.Name, m.opts.BotName) {
+	if m.opts.BotName != "" && (ev.Author != nil && IsBotName(ev.Author.Name, m.opts.BotName) ||
+		ev.Speaker != nil && IsBotName(ev.Speaker.Name, m.opts.BotName)) {
 		return true
 	}
 	return ev.Type == EventChat && strings.TrimSpace(ev.Text) == strings.TrimSpace(m.opts.ConsentText)
@@ -567,7 +608,7 @@ func (m *Manager) handleLine(ctx context.Context, id string, ev Event) bool {
 		cur.LastSeq = ev.Seq
 		_ = m.opts.Store.Save(cur)
 	}
-	if IsLeaveCommand(ev.Text) {
+	if m.leave.Match(ev.Text) {
 		m.log.Info("[meetings] leave requested in the meeting", "meeting", id, "by", ev.Who())
 		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
 		defer cancel()
@@ -622,4 +663,23 @@ func (m *Manager) lobbyExpired(id string) {
 	}
 	m.stopWatch(id)
 	_, _ = m.finish(id, StateFailed, CodeLobbyTimeout, nil)
+}
+
+// IsBotName reports whether a participant name is the bot's display name,
+// ignoring case, surrounding space and one trailing parenthetical the
+// platform adds ("(Guest)", "(bot)").
+func IsBotName(name, botName string) bool {
+	name, botName = strings.TrimSpace(name), strings.TrimSpace(botName)
+	if botName == "" {
+		return false
+	}
+	if strings.EqualFold(name, botName) {
+		return true
+	}
+	if strings.HasSuffix(name, ")") {
+		if i := strings.LastIndex(name, "("); i > 0 {
+			return strings.EqualFold(strings.TrimSpace(name[:i]), botName)
+		}
+	}
+	return false
 }

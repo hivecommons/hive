@@ -37,8 +37,9 @@ const (
 	// DefaultMeetingsDelivery is where meeting output is delivered by
 	// default: the meeting chat, so hive never talks over people.
 	DefaultMeetingsDelivery = MeetingsDeliveryChat
-	// DefaultMeetingsBotName is the display name the meeting bot joins with.
-	// It says the bot takes notes.
+	// DefaultMeetingsBotName is the display name the meeting bot joins with
+	// when the persona is off. It says the bot takes notes. With the persona
+	// on (the default), the persona's display_name is the default.
 	DefaultMeetingsBotName = "hive (notes)"
 	// DefaultMeetingsInvitePolicy lets only the hive owner send hive to a
 	// meeting.
@@ -71,8 +72,9 @@ const (
 	// in intents when Spek does not report token usage.
 	DefaultMeetingsMaxIntentsPerMeeting = 500
 	// DefaultMeetingsConsentText is posted in the meeting chat on join,
-	// before anything else.
-	DefaultMeetingsConsentText = "Hive has joined to take notes and help with research. It records this meeting's transcript. Type 'hive leave' to remove it."
+	// before anything else, with the default persona. Other personas get the
+	// same text with their own names (ResolvedMeetingsPersona.ConsentText).
+	DefaultMeetingsConsentText = "Betty Bee from the hive has joined to take notes and help with research. Betty records this meeting's transcript. Type 'betty leave' or 'hive leave' to remove Betty."
 	// DefaultMeetingsDataDir is where meeting records and transcripts live.
 	DefaultMeetingsDataDir = "/data/meetings"
 	// DefaultMeetingsVexaAPIKeyFile is the keystore-sealed secret file that
@@ -178,6 +180,8 @@ type MeetingsConfig struct {
 	ConsentText string `yaml:"consent_text,omitempty" json:"consent_text,omitempty"`
 	// DataDir is where meeting records and transcripts are stored.
 	DataDir string `yaml:"data_dir,omitempty" json:"data_dir,omitempty"`
+	// Persona is the attendee persona (Betty by default).
+	Persona MeetingsPersonaConfig `yaml:"persona,omitempty" json:"persona,omitzero"`
 }
 
 // MeetingsQuorumConfig is meetings.quorum.
@@ -441,9 +445,15 @@ func (m MeetingsConfig) VoiceOnAddressEnabled() bool {
 	return m.VoiceOnAddress == nil || *m.VoiceOnAddress
 }
 
-// BotNameOrDefault returns the bot display name.
+// BotNameOrDefault returns the bot display name: meetings.bot_name (env
+// first), else the persona's display name, else DefaultMeetingsBotName when
+// the persona is off.
 func (m MeetingsConfig) BotNameOrDefault() string {
-	return meetingsEnvString(MeetingsBotNameEnv, m.BotName, DefaultMeetingsBotName)
+	def := DefaultMeetingsBotName
+	if p := m.Persona.Resolve(); p.Enabled {
+		def = p.DisplayName
+	}
+	return meetingsEnvString(MeetingsBotNameEnv, m.BotName, def)
 }
 
 // InvitePolicyOrDefault returns who may invite hive to a meeting.
@@ -476,9 +486,10 @@ func (m MeetingsConfig) RetentionDaysOrDefault() int {
 	return meetingsEnvInt(MeetingsRetentionDaysEnv, m.RetentionDays, DefaultMeetingsRetentionDays)
 }
 
-// ConsentTextOrDefault returns the consent notice.
+// ConsentTextOrDefault returns the consent notice: meetings.consent_text
+// (env first), else the persona's notice.
 func (m MeetingsConfig) ConsentTextOrDefault() string {
-	return meetingsEnvString(MeetingsConsentTextEnv, m.ConsentText, DefaultMeetingsConsentText)
+	return meetingsEnvString(MeetingsConsentTextEnv, m.ConsentText, m.Persona.Resolve().ConsentText())
 }
 
 // DataDirOrDefault returns the meetings data directory.
@@ -600,6 +611,9 @@ func (m MeetingsConfig) Validate() error {
 	}
 	if n := len([]rune(m.ConsentTextOrDefault())); n > meetingsMaxConsentChars {
 		return fmt.Errorf("meetings.consent_text is %d characters, the limit is %d (one chat post)", n, meetingsMaxConsentChars)
+	}
+	if err := m.Persona.Validate(); err != nil {
+		return err
 	}
 	for _, f := range []struct {
 		key string
