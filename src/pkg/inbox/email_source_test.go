@@ -209,7 +209,7 @@ func TestEmailSourceQuotaAndOpen(t *testing.T) {
 func TestEmailItemsGatedInService(t *testing.T) {
 	e, _ := newEmailSource(t)
 	dest := &contentDest{}
-	svc := NewService(config.InboxConfig{Rules: []config.InboxRule{{Source: EmailType, Destination: DestDibs}}}, NewStore(filepath.Join(t.TempDir(), "inbox.json")), nil, []Destination{dest}, nil)
+	svc := NewService(config.InboxConfig{Rules: []config.InboxRule{{Source: EmailType, Tag: EmailType, Destination: DestDibs}}}, NewStore(filepath.Join(t.TempDir(), "inbox.json")), nil, []Destination{dest}, nil)
 	svc.Run = func(fn func()) { fn() }
 	svc.EnableEmail(e)
 	if svc.Email() != e || !svc.HasSource(EmailType) {
