@@ -110,6 +110,14 @@ type PullRequest struct {
 	// owner. It changes slot ordering only, after normal review admission.
 	PreparationOwner bool
 	Priority         string
+	// SupersededByHive is true when the stage store records that the hive
+	// adopted this PR by supersession (stagelabels.Record.SupersedingCopy):
+	// its commits went to the hive's copy, SupersedingPR (0 when no copy
+	// opened). The original still carries stage/074-adopted-by-hive, but
+	// only an in-place adoption owns the PR's branch, so the fix gate never
+	// pushes here; the copy is where fixes go.
+	SupersededByHive bool
+	SupersedingPR    int
 }
 
 func PullRequestBodyDigest(title, body string) string {

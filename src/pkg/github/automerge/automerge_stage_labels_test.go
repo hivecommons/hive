@@ -83,6 +83,8 @@ type stageCommitFixture struct {
 	// parents overrides the default single parent "p"; two entries make
 	// the commit a merge (served as c<i>, so "c0" names the first commit).
 	parents []string
+	// sha, when set, is the SHA served for the commit instead of c<i>.
+	sha string
 }
 
 func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
@@ -215,7 +217,11 @@ func newStageAPI(t *testing.T, api *stageAPI) *httptest.Server {
 							parents = append(parents, map[string]string{"sha": p})
 						}
 					}
-					out = append(out, map[string]any{"sha": fmt.Sprintf("c%d", i), "author": author, "committer": author, "commit": map[string]any{"message": c.message, "author": map[string]any{"name": c.authorName, "email": c.authorEmail}, "committer": map[string]any{"name": c.authorName, "email": c.authorEmail}}, "parents": parents})
+					sha := fmt.Sprintf("c%d", i)
+					if c.sha != "" {
+						sha = c.sha
+					}
+					out = append(out, map[string]any{"sha": sha, "author": author, "committer": author, "commit": map[string]any{"message": c.message, "author": map[string]any{"name": c.authorName, "email": c.authorEmail}, "committer": map[string]any{"name": c.authorName, "email": c.authorEmail}}, "parents": parents})
 				}
 			} else {
 				for i, msg := range api.commits[n] {

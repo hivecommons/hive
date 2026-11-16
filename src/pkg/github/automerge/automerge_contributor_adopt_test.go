@@ -2728,6 +2728,116 @@ func TestAdoptionSupersederMergedDivergedHeadNotesOnce(t *testing.T) {
 	}
 }
 
+// projectbluefin/chairlift#787: the review fixer pushed a commit onto the
+// superseded original after the copy was taken. Every commit past the
+// adopted head is the hive's own, so the original has not moved on: when
+// the copy merges, the original closes instead of being left "diverged".
+func TestAdoptionSupersederMergedOriginalMovedOnlyByHiveCloses(t *testing.T) {
+	h, done := adoptThenLeave074(t)
+	defer done()
+	at072 := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+	h.api.commitDetails = map[int][]stageCommitFixture{7: {
+		{sha: "aaa", message: "feat: widget\n\nSigned-off-by: Mallory <mallory@example.com>", authorLogin: "mallory", authorName: "Mallory", authorEmail: "mallory@example.com"},
+		{sha: "bbb", message: "fix: review finding\n\nSigned-off-by: scanner <12345+hive[bot]@users.noreply.github.com>", authorLogin: testHiveAppBotLogin, authorName: "scanner", authorEmail: "12345+hive[bot]@users.noreply.github.com"},
+	}}
+	h.observe(adoptPR(7, "bbb", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+	h.adopt.setSupersederHead(90, "closed", true, "aaa")
+	h.api.reset()
+	h.clock.advance(adoptCheckInterval)
+	h.observe(adoptPR(7, "bbb", at072...), "check-failing:unit")
+	if len(h.adopt.prEdits) != 1 || h.adopt.prEdits[0] != "7:closed" {
+		t.Fatalf("original moved on only by the hive was not closed: %v", h.adopt.prEdits)
+	}
+	closeNotes, diverged := 0, 0
+	for _, c := range h.api.comments {
+		if strings.HasPrefix(c, adoptionCloseMarker) && strings.Contains(c, "#90") && strings.Contains(c, "the hive's own") {
+			closeNotes++
+		}
+		if strings.HasPrefix(c, AdoptionSupersederMergedDivergedMarker) {
+			diverged++
+		}
+	}
+	if closeNotes != 1 || diverged != 0 {
+		t.Fatalf("close notes=%d diverged=%d: %v", closeNotes, diverged, h.api.comments)
+	}
+	rec, ok := h.e.stageStoreOrShared().Get(stageKey("acme", "widget", 7))
+	if !ok || rec.SupersededBy != 90 || rec.SupersededOpen {
+		t.Fatalf("record not marked superseded: ok=%v rec=%+v", ok, rec)
+	}
+}
+
+// A commit past the adopted head that is not the hive's (another bot's
+// regeneration, or a person's push, even after a hive commit) still means
+// the original moved on: one diverged note, no close.
+func TestAdoptionSupersederMergedOriginalMovedByOthersStaysOpen(t *testing.T) {
+	hive := stageCommitFixture{sha: "h1", message: "fix: review finding\n\nSigned-off-by: scanner <12345+hive[bot]@users.noreply.github.com>", authorLogin: testHiveAppBotLogin, authorName: "scanner", authorEmail: "12345+hive[bot]@users.noreply.github.com"}
+	adopted := stageCommitFixture{sha: "aaa", message: "feat: widget\n\nSigned-off-by: Mallory <mallory@example.com>", authorLogin: "mallory", authorName: "Mallory", authorEmail: "mallory@example.com"}
+	cases := map[string][]stageCommitFixture{
+		"another bot":             {adopted, {sha: "bbb", message: "chore(deps): update\n\nSigned-off-by: renovate[bot] <29139614+renovate[bot]@users.noreply.github.com>", authorLogin: "renovate[bot]", authorName: "renovate[bot]", authorEmail: "29139614+renovate[bot]@users.noreply.github.com"}},
+		"a person after the hive": {adopted, hive, {sha: "bbb", message: "feat: more\n\nSigned-off-by: Mallory <mallory@example.com>", authorLogin: "mallory", authorName: "Mallory", authorEmail: "mallory@example.com"}},
+	}
+	for name, commits := range cases {
+		t.Run(name, func(t *testing.T) {
+			h, done := adoptThenLeave074(t)
+			defer done()
+			at072 := []string{"stage/072-returned-to-contributor", "role/contributor", "author/clanker"}
+			h.api.commitDetails = map[int][]stageCommitFixture{7: commits}
+			h.observe(adoptPR(7, "bbb", "stage/074-adopted-by-hive", "role/contributor", "author/clanker"), "check-failing:unit")
+			h.adopt.setSupersederHead(90, "closed", true, "aaa")
+			h.api.reset()
+			h.clock.advance(adoptCheckInterval)
+			h.observe(adoptPR(7, "bbb", at072...), "check-failing:unit")
+			if len(h.adopt.prEdits) != 0 {
+				t.Fatalf("closed an original that moved on: %v", h.adopt.prEdits)
+			}
+			notes := 0
+			for _, c := range h.api.comments {
+				if strings.HasPrefix(c, AdoptionSupersederMergedDivergedMarker) && strings.Contains(c, "#90") {
+					notes++
+				}
+			}
+			if notes != 1 {
+				t.Fatalf("diverged note: %v", h.api.comments)
+			}
+		})
+	}
+}
+
+func TestCommitsAfterHeadByHive(t *testing.T) {
+	commit := func(sha, login string) *gh.RepositoryCommit {
+		rc := &gh.RepositoryCommit{SHA: gh.Ptr(sha)}
+		if login != "" {
+			rc.Author = &gh.User{Login: gh.Ptr(login)}
+		}
+		return rc
+	}
+	const app = "hive-app[bot]"
+	agent := func(login string) bool { return login == "hive-agent" }
+	cases := []struct {
+		name     string
+		commits  []*gh.RepositoryCommit
+		complete bool
+		want     bool
+	}{
+		{"app commit after the copy", []*gh.RepositoryCommit{commit("a", "renovate[bot]"), commit("b", app)}, true, true},
+		{"app and agent commits", []*gh.RepositoryCommit{commit("a", "mallory"), commit("b", "HIVE-APP"), commit("c", "hive-agent")}, true, true},
+		{"another bot after the copy", []*gh.RepositoryCommit{commit("a", "renovate[bot]"), commit("b", app), commit("c", "renovate[bot]")}, true, false},
+		{"unlinked author", []*gh.RepositoryCommit{commit("a", "mallory"), commit("b", "")}, true, false},
+		{"adopted head not in the list (force-push)", []*gh.RepositoryCommit{commit("x", app), commit("b", app)}, true, false},
+		{"nothing after the adopted head", []*gh.RepositoryCommit{commit("a", "mallory")}, true, false},
+		{"truncated list", []*gh.RepositoryCommit{commit("a", "mallory"), commit("b", app)}, false, false},
+	}
+	for _, tc := range cases {
+		head := tc.commits[len(tc.commits)-1].GetSHA()
+		if got := commitsAfterHeadByHive(tc.commits, tc.complete, "a", head, app, agent); got != tc.want {
+			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
+		}
+	}
+	if commitsAfterHeadByHive([]*gh.RepositoryCommit{commit("a", "m"), commit("b", app)}, true, "a", "zzz", app, nil) {
+		t.Error("list not ending at the observed head read as hive-only")
+	}
+}
+
 // hivecommons/hive#14471: GitHub refuses the close (the App cannot close
 // this fork PR). The note stands, the record is superseded-open so the
 // tracker drops the row, nothing repeats and no error is raised.

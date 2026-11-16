@@ -1772,7 +1772,7 @@ func (c *Engine) settleSuperseder(ctx context.Context, store *stagelabels.Store,
 	}
 	switch {
 	case sup.GetMerged():
-		return c.closeSupersededOriginal(ctx, store, key, obs, rec, sup, now)
+		return c.closeSupersededOriginal(ctx, store, key, obs, rec, policy, sup, now)
 	case strings.EqualFold(sup.GetState(), "closed"):
 		return c.recoverOrphanedAdoption(ctx, store, key, obs, rec, policy, now)
 	}
@@ -1822,22 +1822,33 @@ const AdoptionSupersederMergedDivergedMarker = "<!-- hive:adopted-merged-diverge
 // close never re-posts. A close GitHub refuses (403/404: the App cannot
 // close this fork PR) leaves the original open with the note and the
 // record marked SupersededOpen, which drops the activity monitor row.
-func (c *Engine) closeSupersededOriginal(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, sup *gh.PullRequest, now time.Time) (int, error) {
+// An original whose only commits past the adopted head are the hive's own
+// (originalMovedOnlyByHive) has not moved on, and closes like one that
+// did not move.
+func (c *Engine) closeSupersededOriginal(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, sup *gh.PullRequest, now time.Time) (int, error) {
+	hiveOnly := false
 	if !supersederCarriesHead(rec, obs, sup) {
 		if rec.SupersederMergedNotedHead == obs.HeadSHA {
 			return 0, nil
 		}
-		store.MarkSupersederMergedNoted(key, obs.HeadSHA)
-		body := fmt.Sprintf("%s superseded_by=%d head=%s -->\n#%d (the hive's adoption of this PR, with @%s's commits as of `%s`) has merged, but this PR has moved on to `%s` since. Not closing it automatically: if the later commits are already covered, close this PR; otherwise rebase them on `%s` for review.",
-			AdoptionSupersederMergedDivergedMarker, rec.AdoptedBy, obs.HeadSHA, rec.AdoptedBy, obs.Author, shortSHA(rec.AdoptedHead), shortSHA(obs.HeadSHA), nonEmpty(obs.BaseRef, "the base branch"))
-		if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
-			c.warn("stage labels: adoption diverged note failed", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy, "error", err)
-			return 0, err
+		hiveOnly = c.originalMovedOnlyByHive(ctx, obs, rec, policy)
+		if !hiveOnly {
+			store.MarkSupersederMergedNoted(key, obs.HeadSHA)
+			body := fmt.Sprintf("%s superseded_by=%d head=%s -->\n#%d (the hive's adoption of this PR, with @%s's commits as of `%s`) has merged, but this PR has moved on to `%s` since. Not closing it automatically: if the later commits are already covered, close this PR; otherwise rebase them on `%s` for review.",
+				AdoptionSupersederMergedDivergedMarker, rec.AdoptedBy, obs.HeadSHA, rec.AdoptedBy, obs.Author, shortSHA(rec.AdoptedHead), shortSHA(obs.HeadSHA), nonEmpty(obs.BaseRef, "the base branch"))
+			if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
+				c.warn("stage labels: adoption diverged note failed", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy, "error", err)
+				return 0, err
+			}
+			c.warn("stage labels: adoption superseder merged but the original moved on; left open with a note", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy, "adopted_head", rec.AdoptedHead, "head", obs.HeadSHA)
+			return 1, nil
 		}
-		c.warn("stage labels: adoption superseder merged but the original moved on; left open with a note", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy, "adopted_head", rec.AdoptedHead, "head", obs.HeadSHA)
-		return 1, nil
 	}
 	body := fmt.Sprintf("%s\nClosing: #%d (the hive's adoption of this PR, with @%s's commits) has merged. Thank you!", adoptionCloseMarker, rec.AdoptedBy, obs.Author)
+	if hiveOnly {
+		body += fmt.Sprintf(" The commits on this branch after `%s` are the hive's own, so nothing here is left behind.", shortSHA(rec.AdoptedHead))
+		c.info("stage labels: superseded original moved on only by the hive's own commits; closing it", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy, "adopted_head", rec.AdoptedHead, "head", obs.HeadSHA)
+	}
 	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		c.warn("stage labels: adoption close note failed", "repo", obs.Display, "pr", obs.Number, "error", err)
 		return 0, err
@@ -1860,6 +1871,61 @@ func (c *Engine) closeSupersededOriginal(ctx context.Context, store *stagelabels
 	store.MarkSuperseded(key, rec.AdoptedBy, false, now)
 	c.info("stage labels: adopted PR closed after superseder merged", "repo", obs.Display, "pr", obs.Number, "superseded_by", rec.AdoptedBy)
 	return 1, nil
+}
+
+// originalMovedOnlyByHive reports whether every commit on the superseded
+// original after the adopted head was authored by this hive: GitHub links
+// its author to the App bot or to one of policy.HiveAuthor's logins. Such an
+// original has not moved on; the later commits are the hive's own pushes to
+// its branch (projectbluefin/chairlift#787: the review fixer pushed to a
+// superseded Renovate branch, and the original was then left open as
+// diverged). Only the commit author counts, not the committer, so a hive
+// rebase or cherry-pick of someone else's commit is never read as the
+// hive's. One commit-list read, made only on this path, once per head; a
+// failed or truncated read, or an adopted head missing from the list (a
+// force-push), reads as moved on.
+func (c *Engine) originalMovedOnlyByHive(ctx context.Context, obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy) bool {
+	if rec.AdoptedHead == "" || obs.HeadSHA == "" {
+		return false
+	}
+	commits, complete, err := hgithub.ListPRRepositoryCommits(ctx, c.gh, obs.Owner, obs.Repo, obs.Number)
+	if err != nil {
+		c.warn("stage labels: superseded original commit read failed; treating it as moved on", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "error", err)
+		return false
+	}
+	return commitsAfterHeadByHive(commits, complete, rec.AdoptedHead, obs.HeadSHA, c.transport.AppBotLogin(), policy.HiveAuthor)
+}
+
+// commitsAfterHeadByHive is originalMovedOnlyByHive's decision over the
+// PR's commit list (oldest first): the list is complete and ends at head,
+// adopted is in it with at least one commit after it, and every commit
+// after it has a GitHub author that is appLogin or isHive's.
+func commitsAfterHeadByHive(commits []*gh.RepositoryCommit, complete bool, adopted, head, appLogin string, isHive func(login string) bool) bool {
+	if !complete || len(commits) == 0 || !strings.EqualFold(commits[len(commits)-1].GetSHA(), head) {
+		return false
+	}
+	at := -1
+	for i, rc := range commits {
+		if strings.EqualFold(rc.GetSHA(), adopted) {
+			at = i
+		}
+	}
+	if at < 0 || at == len(commits)-1 {
+		return false
+	}
+	app := normalizeBotLogin(appLogin)
+	for _, rc := range commits[at+1:] {
+		login := strings.TrimSpace(rc.GetAuthor().GetLogin())
+		switch {
+		case login == "":
+			return false
+		case app != "" && normalizeBotLogin(login) == app:
+		case isHive != nil && isHive(login):
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // maintainerPermTTL is how long authorMaintainsRepo trusts a permission
