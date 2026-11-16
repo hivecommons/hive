@@ -77,6 +77,7 @@ var uploadTextExtensions = map[string]string{
 	".html":     UploadKindHTML,
 	".htm":      UploadKindHTML,
 	".docx":     UploadKindDOCX,
+	".pdf":      UploadKindPDF,
 }
 
 // uploadUnsupportedExtensions names formats people commonly drop that this
@@ -103,7 +104,7 @@ func UploadSupportedExtensions() []string {
 }
 
 func uploadSupportedList() string {
-	return "md, txt, json, jsonl, yaml, csv, tsv, html, docx"
+	return "md, txt, json, jsonl, yaml, csv, tsv, html, docx, pdf"
 }
 
 // uploadMagic is a binary signature that is never a text document.
@@ -169,6 +170,11 @@ func SniffUpload(name string, data []byte) (string, *UploadError) {
 	// Word document (guarded against zip bombs and XXE) in extraction.
 	if strings.EqualFold(filepath.Ext(name), ".docx") && docxLooksLikeZip(data) {
 		return UploadKindDOCX, nil
+	}
+	// A PDF is read only when it says so by content and is not named as
+	// something else; it is then parsed in the hive-pdftext sandbox.
+	if pext := strings.ToLower(filepath.Ext(name)); bytes.HasPrefix(data, []byte("%PDF-")) && (pext == ".pdf" || pext == "") {
+		return UploadKindPDF, nil
 	}
 	for _, m := range uploadBinaryMagic {
 		if len(data) >= m.offset+len(m.prefix) && bytes.Equal(data[m.offset:m.offset+len(m.prefix)], m.prefix) {
