@@ -97,7 +97,7 @@ missing dir, non-GitHub forge or absent client skips with a DEBUG line.
 | Block | Cap | Config |
 |---|---|---|
 | `# Relevant Knowledge` | 25 facts, 8192 bytes (floor 512) | `knowledge.primer.max_facts`, `knowledge.primer.max_bytes` |
-| Repo `AGENTS.md` | 8192 bytes (floor 2048), whole sections | `project.agents_md_max_bytes` (`agentsmd.DefaultMaxInjectionBytes`) |
+| Repo `AGENTS.md` | 32768 bytes (floor 2048, ceiling 262144), whole sections | `repos.<repo>.agents_md_max_bytes`, `project.agents_md_max_bytes`, env `HIVE_AGENTS_MD_MAX_BYTES` (`agentsmd.DefaultMaxInjectionBytes`) |
 | Declared skills | 8192 bytes, whole skills | `maxSkillsInjectionBytes` in `kick_priming.go` (fixed) |
 
 **Switches.** `knowledge.enabled` gates the primer only — the bead synthesizer

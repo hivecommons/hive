@@ -145,7 +145,7 @@ func TestAgentsRepoRoot_ThreadedRootReachesTheKick(t *testing.T) {
 	cfg.Project.CheckoutsDir = checkouts
 	s := New(cfg, slog.Default())
 
-	got := s.primeAgentsMd(s.agentsRepoRoot(cfg.Project.PrimaryRepo))
+	got := s.primeAgentsMd(cfg.Project.PrimaryRepo, s.agentsRepoRoot(cfg.Project.PrimaryRepo))
 	if !strings.Contains(got, body) {
 		t.Fatalf("AGENTS.md body did not reach the injection; got %q", got)
 	}
@@ -155,15 +155,15 @@ func TestAgentsRepoRoot_ThreadedRootReachesTheKick(t *testing.T) {
 
 func TestPrimeAgentsMd_EmptyRootIsNoOp(t *testing.T) {
 	s := New(&config.Config{}, slog.Default())
-	if got := s.primeAgentsMd(""); got != "" {
-		t.Errorf("primeAgentsMd(\"\") = %q, want empty", got)
+	if got := s.primeAgentsMd("", ""); got != "" {
+		t.Errorf("primeAgentsMd(\"\", \"\") = %q, want empty", got)
 	}
 }
 
 func TestPrimeAgentsMd_MissingFileYieldsEmpty(t *testing.T) {
 	s := New(&config.Config{}, slog.Default())
 	root := t.TempDir() // no AGENTS.md inside
-	if got := s.primeAgentsMd(root); got != "" {
+	if got := s.primeAgentsMd("", root); got != "" {
 		t.Errorf("primeAgentsMd(root without AGENTS.md) = %q, want empty", got)
 	}
 }
@@ -176,7 +176,7 @@ func TestPrimeAgentsMd_InjectsBody(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := s.primeAgentsMd(root)
+	got := s.primeAgentsMd("", root)
 	if got == "" {
 		t.Fatal("primeAgentsMd returned empty for a root with AGENTS.md")
 	}
@@ -194,7 +194,7 @@ func TestPrimeAgentsMd_EmptyAgentsMdYieldsEmpty(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("   \n\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if got := s.primeAgentsMd(root); got != "" {
+	if got := s.primeAgentsMd("", root); got != "" {
 		t.Errorf("primeAgentsMd(blank AGENTS.md) = %q, want empty", got)
 	}
 }
@@ -253,7 +253,7 @@ func TestAgentsRepoRoot_FetchesFromGitHubWhenNoLocalRoot(t *testing.T) {
 	if f.last != [4]string{"hivecommons", "hive", "AGENTS.md", ""} {
 		t.Errorf("fetched %v, want owner/repo AGENTS.md at the default branch", f.last)
 	}
-	if got := s.primeAgentsMd(root); !strings.Contains(got, body) {
+	if got := s.primeAgentsMd("", root); !strings.Contains(got, body) {
 		t.Fatalf("fetched AGENTS.md did not reach the injection; got %q", got)
 	}
 

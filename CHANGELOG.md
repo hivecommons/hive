@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.288.0)
+
+### Added
+
+- Gateway spend is priced from the gateway: OpenRouter's catalog prices, LiteLLM `/model/info`, or a new per-gateway `prices:` block (input, cached input, output per 1M tokens). Cached prompt tokens are billed at the cache-read rate. Gateway models with no price show as "price unknown" instead of $0 or a tier guess, and the usage gauge gets a spend row per gateway.
+- Inbox recordings are transcribed automatically when you stop, with the hive's transcription provider (auto: the built-in whisper first), with the usual progress bar and time-left estimate. The transcriber reads the recording from the hive's own disk (new `AudioOpener`; no HTTP call to itself). Nothing runs until `inbox.transcription` is enabled with consent; from then on every dashboard recording counts as opted in whatever the mode, and recordings made while it was off are picked up by the transcription sweep.
+- Inbox ● Record can record a meeting tab's audio together with the microphone in Chrome and Edge on a computer: you pick the tab and tick "Share tab audio", the video track is dropped, the two are mixed in the browser (Web Audio) and both get a level meter. The consent notice then says remote participants are recorded too and must have been told. Where the browser cannot share tab audio (Safari, Firefox, phones) the option is hidden with the reason, and a share without an audio track warns and records the microphone only. The dashboard document's Permissions-Policy gains `display-capture=(self)`; `/terminal/` and `/api/` keep it closed.
+- Drop audio and video onto the Inbox (mp3, m4a, aac, wav, ogg, opus, webm, mp4, mov, checked by container signature): the file streams straight to the hive's disk under the recording size cap (`inbox.recording.max_bytes`, 200 MiB), plays back from disk through the same-origin stream, and is transcribed as soon as it is added when transcription is enabled (otherwise 🎧 Transcribe shows why it is unavailable); the machine transcript lands in the item's Knowledge fact. Originals are deleted after the recordings retention (5 days, `inbox.uploads.media_retention_days` overrides) while the transcript and item stay; video keeps only its audio track. Uploads now get a 20-minute read window instead of the dashboard's 30-second read timeout.
+- A weekly workflow compares hive's static model fallbacks and curated OpenRouter suggestions against OpenRouter's public catalog, plus npm release metadata, and keeps one tracking issue listing any drift. A unit test now fails on empty or duplicate static lists and on Go/JS copies that disagree.
+
+### Fixed
+
+- Self-upgrade no longer aborts with `cannot unmarshal string "dashboard" into Go value of type json.Number` when the hive container's probes use a named port; named ports are kept in the backfilled startupProbe, and a probe decode problem now skips the backfill with a warning instead of blocking the image upgrade (#18479).
+
 ## 2026-11-16 (v5.287.0)
 
 ### Added
