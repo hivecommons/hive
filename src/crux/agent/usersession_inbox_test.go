@@ -42,8 +42,8 @@ func TestUserSessionStoreInboxFileRunsAsSessionUIDInWorkDir(t *testing.T) {
 	if len(p.calls) != 1 || p.calls[0].user != testSessionSpecUser {
 		t.Fatalf("the seed file must be written by the session uid:sessions gid only, never root or the hive: %+v", p.calls)
 	}
-	if got := p.calls[0].argv[6]; got != strconv.Itoa(defaultUserSessionGID) {
-		t.Errorf("chgrp target = %q, want the sessions gid", got)
+	if strings.Contains(userSessionInboxScript, "chmod") || strings.Contains(userSessionInboxScript, "chgrp") || !strings.Contains(userSessionInboxScript, "umask 027") || !strings.Contains(userSessionInboxScript, "set -C") {
+		t.Error("the seed file must get its mode at an exclusive create, never from a path-based chmod/chgrp a peer could redirect")
 	}
 	if b, _ := os.ReadFile(path); string(b) != "hello" {
 		t.Errorf("content = %q", b)
@@ -88,7 +88,7 @@ func TestUserSessionStoreInboxFileSymlinkRefused(t *testing.T) {
 
 // TestUserSessionInboxScriptOnRealShell runs the fixed script itself (no
 // su-exec: as the test's own uid and group) and asserts what it leaves
-// behind: mode 0640, the given group, a .gitignore, a replaced re-send, and a
+// behind: mode 0640, the process group, a .gitignore, a replaced re-send, and a
 // refusal at a symlinked .hive.
 func TestUserSessionInboxScriptOnRealShell(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
@@ -97,7 +97,7 @@ func TestUserSessionInboxScriptOnRealShell(t *testing.T) {
 	ws := t.TempDir()
 	gid := strconv.Itoa(os.Getgid())
 	run := func(dir, content string) error {
-		cmd := exec.Command("sh", "-c", userSessionInboxScript, "sh", dir, testInboxFileName, gid)
+		cmd := exec.Command("sh", "-c", userSessionInboxScript, "sh", dir, testInboxFileName)
 		cmd.Stdin = strings.NewReader(content)
 		out, err := cmd.CombinedOutput()
 		if err != nil {
@@ -142,5 +142,17 @@ func TestUserSessionInboxScriptOnRealShell(t *testing.T) {
 	}
 	if ents, _ := os.ReadDir(target); len(ents) != 0 {
 		t.Errorf("wrote through the symlink: %v", ents)
+	}
+
+	// A directory planted at the target name is refused, not written into.
+	planted := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(planted, ".hive", "inbox", testInboxFileName), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := run(planted, "x"); err == nil || !strings.Contains(err.Error(), "exit status "+userSessionInboxSymlinkExitText) {
+		t.Errorf("a directory at the target must be refused: %v", err)
+	}
+	if ents, _ := os.ReadDir(filepath.Join(planted, ".hive", "inbox", testInboxFileName)); len(ents) != 0 {
+		t.Errorf("wrote into the planted directory: %v", ents)
 	}
 }

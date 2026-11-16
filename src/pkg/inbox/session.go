@@ -62,7 +62,8 @@ func CheckSessionText(it Item, c Content) error {
 }
 
 // SessionFileName is the seed file name of one item: "<source>-<id>.md" with
-// every character outside [A-Za-z0-9._-] replaced, no leading dot, and a
+// every character outside [A-Za-z0-9_-] replaced (dots too, so no ".." and
+// no leading dot), starting with a letter or digit, and a
 // short hash of the real key appended whenever sanitising changed or cut the
 // stem, so two items never share a file.
 func SessionFileName(source, id string) string {
@@ -70,20 +71,19 @@ func SessionFileName(source, id string) string {
 	var b strings.Builder
 	for _, r := range raw {
 		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '_', r == '-':
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
 			b.WriteRune(r)
 		default:
 			b.WriteByte('_')
 		}
 	}
-	stem := strings.TrimLeft(b.String(), ".")
+	stem := b.String()
 	if len(stem) > sessionFileStemMax {
 		stem = stem[:sessionFileStemMax]
 	}
 	if stem != raw || stem == "" || !isASCIIAlnum(stem[0]) {
 		sum := sha256.Sum256([]byte(Key(source, id)))
-		stem = strings.TrimRight(stem, ".") + "-" + hex.EncodeToString(sum[:sessionFileHashBytes])
-		stem = strings.TrimLeft(stem, ".-_")
+		stem = strings.TrimLeft(stem+"-"+hex.EncodeToString(sum[:sessionFileHashBytes]), "-_")
 	}
 	return stem + sessionFileExt
 }

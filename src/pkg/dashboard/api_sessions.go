@@ -506,8 +506,16 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	// Seed items are read and rendered BEFORE anything is created, so an item
 	// without text (409) or an unknown one (404) never leaves a session behind.
+	// The cheap capacity check runs first so a create the caps refuse never
+	// reads the items; it is repeated under the lock below.
 	var seed *sessionSeed
 	if len(body.SeedItems) > 0 {
+		s.sessionsMu.Lock()
+		capOK := s.checkSessionCapacity(w, st, actor.user)
+		s.sessionsMu.Unlock()
+		if !capOK {
+			return
+		}
 		var ok bool
 		if seed, ok = s.prepareSessionSeed(w, r, actor.user, body.SeedItems); !ok {
 			return

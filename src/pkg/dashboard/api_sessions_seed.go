@@ -177,6 +177,10 @@ type sessionSeedResult struct {
 // errSessionSeedQueueFull is returned when the session's Send queue is full.
 var errSessionSeedQueueFull = errors.New("this session's Send queue is full; wait for some sends to be delivered")
 
+// errSessionSeedNotRunning is returned when the session stopped before the
+// seed could be written.
+var errSessionSeedNotRunning = errors.New("session is not running")
+
 // deliverSessionSeed writes the seed's files into a RUNNING session and
 // queues the fixed instruction as the sender, then marks the items routed and
 // audits inbox_to_session (with the outcome on failure too).
@@ -195,7 +199,7 @@ func (s *Server) deliverSessionSeed(rt SessionRuntime, st *sessionStore, id stri
 func (s *Server) deliverSessionSeedFiles(rt SessionRuntime, st *sessionStore, id string, seed *sessionSeed) (sessionSeedResult, error) {
 	rec, found := st.get(id)
 	if !found || rec.Status != sessionStatusRunning {
-		return sessionSeedResult{}, errors.New("session is not running")
+		return sessionSeedResult{}, errSessionSeedNotRunning
 	}
 	for _, f := range seed.files {
 		if _, err := rt.StoreInboxFile(rec.ID, rec.Workspace, f.name, f.data); err != nil {
@@ -254,7 +258,7 @@ func (s *Server) handleSessionSeed(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, errSessionSeedQueueFull):
 		jsonError(w, err.Error(), http.StatusTooManyRequests)
 		return
-	case errors.Is(err, crux.ErrUserSessionInboxSymlink):
+	case errors.Is(err, crux.ErrUserSessionInboxSymlink), errors.Is(err, errSessionSeedNotRunning):
 		jsonError(w, err.Error(), http.StatusConflict)
 		return
 	case err != nil:

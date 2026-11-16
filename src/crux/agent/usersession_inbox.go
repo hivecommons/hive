@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/hivecommons/hive/crux"
@@ -23,26 +22,25 @@ import (
 const (
 	// userSessionInboxDir is the seed directory relative to the session cwd.
 	userSessionInboxDir = ".hive/inbox"
-	// userSessionInboxFileMode is the seed file mode: the session uid reads
-	// and writes it, the sessions group (every session of the workspace)
-	// reads it, nobody else.
-	userSessionInboxFileMode = "0640"
 	// userSessionInboxSymlinkExit is the script's exit status for a symlink
-	// at .hive or .hive/inbox.
+	// at .hive or .hive/inbox, or a directory or symlink at the target name.
 	userSessionInboxSymlinkExit     = 76
 	userSessionInboxSymlinkExitText = "76"
 )
 
 // userSessionInboxScript (run as the session uid:sessions gid): $1 the
-// session cwd, $2 the file name, $3 the sessions gid; the content arrives on
-// stdin. Directories are created group-writable (umask 007) so every session
-// of a shared workspace can add its own files (the workspace's setgid bit
-// keeps the sessions group); a `.gitignore` of "*" keeps the transcripts out
-// of commits. The file is written to an exclusive temp name, set to 0640 with
-// the sessions group and renamed over any earlier copy, so a re-send replaces
-// it and a reader never sees half a file.
+// session cwd, $2 the file name; the content arrives on stdin. Directories are
+// created group-writable (umask 007) so every session of a shared workspace
+// can add its own files; a `.gitignore` of "*" keeps the transcripts out of
+// commits. The file is created exclusively (noclobber, which refuses a
+// symlink) under umask 027, so it is 0640 from birth with the group the
+// directory hands down (the sessions group in the setgid workspace), then
+// renamed over any earlier copy. Nothing is chmod-ed or chgrp-ed by path
+// afterwards: in a group-writable directory a peer session could swap the
+// name for a symlink between the write and such a call. A symlink at .hive or
+// .hive/inbox, or a directory at the target name, is refused.
 const userSessionInboxScript = `set -e
-ws=$1; name=$2; g=$3
+ws=$1; name=$2
 d="$ws/` + userSessionInboxDir + `"
 umask 007
 for p in "$ws/.hive" "$d"; do
@@ -52,13 +50,12 @@ mkdir -p -- "$d"
 for p in "$ws/.hive" "$d"; do
   if [ -L "$p" ]; then exit ` + userSessionInboxSymlinkExitText + `; fi
 done
-if [ ! -e "$d/.gitignore" ]; then printf '*\n' > "$d/.gitignore" || true; fi
-t="$d/.$name.$$.tmp"
 set -C
+if [ ! -e "$d/.gitignore" ] && [ ! -L "$d/.gitignore" ]; then printf '*\n' > "$d/.gitignore" 2>/dev/null || true; fi
+umask 027
+t="$d/.$name.$$.tmp"
 cat > "$t"
-set +C
-chgrp -- "$g" "$t"
-chmod ` + userSessionInboxFileMode + ` -- "$t"
+if [ -d "$d/$name" ] || [ -L "$d/$name" ]; then rm -f -- "$t"; exit ` + userSessionInboxSymlinkExitText + `; fi
 mv -f -- "$t" "$d/$name"`
 
 // userSessionInboxCwd validates the working directory a seed is written
@@ -81,7 +78,8 @@ func userSessionInboxCwd(id, workspace string) (string, error) {
 }
 
 // StoreInboxFile writes data as <cwd>/.hive/inbox/<fileName>, as the session
-// uid, owned by that uid and the sessions group with mode 0640, and returns
+// uid, owned by that uid with mode 0640 and the directory's group (the
+// sessions group in the shared workspace), and returns
 // its absolute path. workspace is the session's workspace checkout ("" for a
 // session without one). fileName must be a plain name.
 func (r *UserSessionRuntime) StoreInboxFile(id, workspace, fileName string, data []byte) (string, error) {
@@ -101,7 +99,7 @@ func (r *UserSessionRuntime) StoreInboxFile(id, workspace, fileName string, data
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), userSessionUploadTimeout)
 	defer cancel()
-	out, err := r.priv(ctx, userSessionSpec(uid), bytes.NewReader(data), "sh", "-c", userSessionInboxScript, "sh", cwd, fileName, strconv.Itoa(userSessionGID()))
+	out, err := r.priv(ctx, userSessionSpec(uid), bytes.NewReader(data), "sh", "-c", userSessionInboxScript, "sh", cwd, fileName)
 	if err != nil {
 		var ee *exec.ExitError
 		if errors.As(err, &ee) && ee.ExitCode() == userSessionInboxSymlinkExit {
