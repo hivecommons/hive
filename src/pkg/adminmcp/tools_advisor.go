@@ -10,8 +10,10 @@ import (
 // phase 4 of #9638) for one agent or across the fleet over a time window. It
 // is a read-only wrapper over GET /api/advisor/records, so it returns exactly
 // the records the REST listing returns for the same agent and window, behind
-// the same read-write floor. There is deliberately no advisor write tool: the
-// advisor speaks, it never acts, and nothing here can change what it says.
+// the same read-write floor. Nothing here can change what the advisor says:
+// it speaks, it never acts. Its settings are written through write_preview
+// and write_confirm (advisor.settings, advisor.agent, advisor.roles in
+// tools_advisor_ops.go), owner only, as the dashboard's Advisor Lane panel.
 const ToolAdvisorRecords = "advisor_records"
 
 // AdvisorRecordsReadPath builds the GET /api/advisor/records request for the

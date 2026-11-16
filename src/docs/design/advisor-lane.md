@@ -201,6 +201,9 @@ the dashboard's existing checks:
   client can read them.
 - **The admin MCP**, as a read tool that answers "what did the advisor flag" for an agent or the
   fleet over a window. It is built on the REST surface above and adds no authority beyond it.
+  The admin MCP can also change the advisor settings and roles (`advisor.settings`,
+  `advisor.agent`, `advisor.roles`) through the usual preview-and-confirm writes, owner-only like
+  the dashboard editor. No MCP write touches advisor records or acts on a verdict.
 
 ## Configuration
 
