@@ -224,6 +224,43 @@ func issueUntriaged(in IssueStageInput) (untriaged bool, why string) {
 	return false, ""
 }
 
+// triageClearAllowed is the one decision on whether the hive may take the
+// reporter-trust awaiting label off an issue whose stage settled triage
+// (hivecommons/hive#18387). The hive removes it at most once per issue: a
+// repository's own triage tooling (Prow's require-matching-label, another
+// bot, a person) may own the same label and re-add it seconds later, and
+// removing it again on every pass only feeds a remove / re-add loop. So:
+// label absent → nothing to remove; already yielded → leave it; removed
+// once and back now → yield (yieldNow) and leave it; otherwise → remove.
+func triageClearAllowed(rec stagelabels.Record, labels []string) (remove, yieldNow bool) {
+	switch {
+	case !issueHasLabel(labels, triageAwaitingLabel), rec.TriageClearYielded:
+		return false, false
+	case !rec.TriageClearedAt.IsZero():
+		return false, true
+	}
+	return true, false
+}
+
+// settleTriageClear applies triageClearAllowed to key's stage record: on a
+// fresh yield it marks the record (persisted with the store, so the yield
+// survives a restart) and logs it once. remove says whether the stage
+// write may take the label off; yielded is what
+// IssueFacts.TriageClearYielded carries to the deriver. The issue sweep
+// and the FactSink's enrichment both call it, so the two paths cannot
+// disagree.
+func settleTriageClear(store *stagelabels.Store, key, repo string, number int, labels []string, logger *slog.Logger) (remove, yielded bool) {
+	if store == nil {
+		return issueHasLabel(labels, triageAwaitingLabel), false
+	}
+	rec, _ := store.Get(key)
+	remove, yieldNow := triageClearAllowed(rec, labels)
+	if yieldNow && store.MarkTriageClearYielded(key) && logger != nil {
+		logger.Info("issue stage labels: "+triageAwaitingLabel+" came back after the hive removed it; leaving it on this issue", "repo", repo, "issue", number, "label", triageAwaitingLabel)
+	}
+	return remove, rec.TriageClearYielded || yieldNow
+}
+
 // IssueStageFor classifies one enumerated issue: it resolves the hive's
 // label families into stageengine.Facts (issueFactsFrom) and asks the
 // engine (stageengine.DeriveIssue) for the stage. covered reports whether
@@ -565,6 +602,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		stage, covered, reason := d.Stage, d.Covered, d.Reason
 		var want stagelabels.Desired
 		var tr stagelabels.Transition
+		var triageYielded bool
 		if stage == stagelabels.None {
 			store.ForgetStage(key)
 		} else {
@@ -580,8 +618,12 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			// Decision.Clear takes it off in the stage write, and the
 			// pre-plan here must see the same write as due so an issue
 			// whose stage label is already right is still reconciled
-			// (hivecommons/hive#14586).
-			if stage.SettlesTriage() && issueHasLabel(in.Labels, triageAwaitingLabel) {
+			// (hivecommons/hive#14586). Only once per issue, though: a
+			// label that came back after that removal belongs to another
+			// writer and stays (hivecommons/hive#18387).
+			clearTriage, yielded := settleTriageClear(store, key, in.Repo, in.Number, in.Labels, logger)
+			triageYielded = yielded
+			if stage.SettlesTriage() && clearTriage {
 				want.Clear = []string{triageAwaitingLabel}
 			}
 		}
@@ -632,6 +674,7 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 		facts.Ref.Owner, facts.Ref.Repo = owner, name
 		facts.ObservedAt = now
 		facts.Issue.Stalled = want.Stalled
+		facts.Issue.TriageClearYielded = triageYielded
 		pending = append(pending, issueStagePending{in: in, key: key, want: want, tr: tr, covered: covered, reason: reason, facts: facts})
 	}
 	// The write: one ReconcileBatch for the pass. The reconciler re-reads

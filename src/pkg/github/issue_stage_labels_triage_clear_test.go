@@ -1,6 +1,10 @@
 package github
 
 import (
+	"bytes"
+	"context"
+	"log/slog"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -53,5 +57,103 @@ func TestSyncIssueStageLabels_ClaimClearsNeedsTriage(t *testing.T) {
 	}
 	if got := strings.Join(fake.added[14588], ","); got != stagelabels.TriageNeeded.Label() || len(fake.removed[14588]) != 0 {
 		t.Fatalf("untriaged issue keeps needs-triage: added=%v removed=%v", fake.added[14588], fake.removed[14588])
+	}
+}
+
+// hivecommons/hive#18387: on a repository whose own triage tooling (Prow's
+// require-matching-label action) owns `needs-triage`, the tool re-adds the
+// label seconds after the hive takes it off a claimed or covered issue, and
+// the sweep used to remove it again on every pass (312 removals on 16
+// issues in one night). The hive now removes it once; when it is back on a
+// later read, the hive yields it on that issue for good, logs that once,
+// and remembers the yield across a restart.
+func TestSyncIssueStageLabels_NeedsTriageReAddedIsLeftOn(t *testing.T) {
+	const claimed, covered = 18387, 18388
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logBuf, nil))
+	prStarted := false
+	pass := func(store *stagelabels.Store) {
+		t.Helper()
+		result := &ActionableResult{}
+		// Every pass reads the label on again: the other tool put it back.
+		// The claimed issue keeps wearing 020, so a PR start (prStarted)
+		// derives 030 and makes the engine write.
+		appendRepoWorkIssueDetail(result, Issue{
+			Repo: "acme/widgets", Number: claimed, Author: "hive-app[bot]",
+			Labels:    []string{triageAwaitingLabel, stagelabels.Claimed.Label()},
+			ClaimKind: string(claims.KindAgent), ClaimPRStarted: prStarted,
+		}, workBucketClaimed, "live claim")
+		appendRepoWorkIssueDetail(result, Issue{
+			Repo: "acme/widgets", Number: covered,
+			Labels:       []string{triageAwaitingLabel, stagelabels.CoveredByPR.Label()},
+			ClaimContext: &IssueClaimContext{PRNumber: 40},
+		}, workBucketClaimedByPR, "open PR")
+		fake.seed(result)
+		ResetRateLimitPacingForTest()
+		resetRESTAccountingForTest(t, stageNow())
+		SyncIssueStageLabels(context.Background(), c, result, store, stageNow(), logger)
+	}
+	triageRemovals := func(n int) int {
+		fake.mu.Lock()
+		defer fake.mu.Unlock()
+		count := 0
+		for _, l := range fake.removed[n] {
+			if strings.EqualFold(l, triageAwaitingLabel) {
+				count++
+			}
+		}
+		return count
+	}
+	yieldLogs := func() int { return strings.Count(logBuf.String(), "came back after the hive removed it") }
+	expect := func(when string, store *stagelabels.Store, yielded bool, logs int) {
+		t.Helper()
+		for _, n := range []int{claimed, covered} {
+			if got := triageRemovals(n); got != 1 {
+				t.Fatalf("%s: #%d had %d %s removals, want exactly 1: removed=%v", when, n, got, triageAwaitingLabel, fake.removed[n])
+			}
+			rec, ok := store.Get(stagelabels.Key("acme/widgets", n))
+			if !ok || rec.TriageClearedAt.IsZero() || rec.TriageClearYielded != yielded {
+				t.Fatalf("%s: #%d record %+v: want the removal booked and yielded=%v", when, n, rec, yielded)
+			}
+		}
+		if got := yieldLogs(); got != logs {
+			t.Fatalf("%s: %d yield log lines, want %d:\n%s", when, got, logs, logBuf.String())
+		}
+	}
+
+	path := filepath.Join(t.TempDir(), "stages.json")
+	store := stagelabels.NewStore(path, stageNow)
+	pass(store)
+	expect("pass 1 (first removal)", store, false, 0)
+	pass(store)
+	expect("pass 2 (label re-added: yield)", store, true, 2)
+	if !strings.Contains(logBuf.String(), "issue=18387") || !strings.Contains(logBuf.String(), "label="+triageAwaitingLabel) {
+		t.Fatalf("yield log must name the repo, issue and label:\n%s", logBuf.String())
+	}
+	pass(store)
+	expect("pass 3 (still yielded, no new log)", store, true, 2)
+
+	if err := store.Save(); err != nil {
+		t.Fatal(err)
+	}
+	restarted := stagelabels.NewStore(path, stageNow)
+	if err := restarted.Load(); err != nil {
+		t.Fatal(err)
+	}
+	pass(restarted)
+	expect("after restart", restarted, true, 2)
+
+	// A stage write on a yielded issue (020 → 030) goes through the engine:
+	// the deriver must not ask for the label to come off with it.
+	prStarted = true
+	pass(restarted)
+	expect("stage write on a yielded issue", restarted, true, 2)
+	fake.mu.Lock()
+	added := slices.Clone(fake.added[claimed])
+	fake.mu.Unlock()
+	if !slices.Contains(added, stagelabels.PRInProgress.Label()) {
+		t.Fatalf("020 → 030 must still be written: added=%v", added)
 	}
 }
