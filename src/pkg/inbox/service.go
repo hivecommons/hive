@@ -171,6 +171,19 @@ func (s *Service) AddUpload(ctx context.Context, in UploadInput) (Item, error) {
 	return u.item(m), nil
 }
 
+// AddLink fetches one URL and returns its Inbox item.
+func (s *Service) AddLink(ctx context.Context, in LinkInput) (Item, error) {
+	u := s.Uploads()
+	if u == nil {
+		return Item{}, ErrUploadsDisabled
+	}
+	m, err := u.AddLink(ctx, in)
+	if err != nil {
+		return Item{}, err
+	}
+	return u.item(m), nil
+}
+
 // ErrUploadsDisabled is returned when the hive has no upload store.
 var ErrUploadsDisabled = errors.New("uploads are not available on this hive")
 

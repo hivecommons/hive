@@ -98,6 +98,8 @@ func extractUpload(ctx context.Context, kind string, data []byte) (Extracted, *U
 		return extractTable(ctx, text, ',', "CSV")
 	case UploadKindTSV:
 		return extractTable(ctx, text, '\t', "TSV")
+	case UploadKindHTML:
+		return extractHTML(ctx, text)
 	}
 	return Extracted{}, uploadErr(UploadErrUnsupported, "unsupported file type %q", kind)
 }
