@@ -206,6 +206,9 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 		// Every sandbox kick gets a review spool (hivecommons/hive#14986);
 		// whether the agent may post through it is the relay's decision.
 		ReviewSpoolDir: crux.SandboxReviewSpoolsDir(m.workDir),
+		// A review kick names its PR(s) in its hive-written header; the
+		// sandbox gets them checked out (hivecommons/hive#18513).
+		ReviewPRs: reviewTargetsFromKickMessage(message, m.project.Org+"/"+repo),
 	}
 	if spec.AgentConfig.Backend == "cline" {
 		spec.AgentConfig.Model = agent.effectiveModel()
@@ -226,12 +229,19 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	var pushMinter pushbroker.TokenMinter
 	var prClient PRCreator
 	pushEnabled := false
-	if m.agentMode(agent).CanPush() && m.project.PRsAllowed {
+	// Review-only kicks never get the push broker or the PR client.
+	if m.agentMode(agent).CanPush() && m.project.PRsAllowed && !spec.reviewOnly() {
 		pushMinter = cloneMinter
 		prClient = m.sandboxPRClient
 		pushEnabled = true
 	}
-	go m.runSandboxKick(runCtx, agent.Name, runtime, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, mutationBoundary)
+	// The PR reader is the hive's GitHub client when it offers one; it is
+	// read-only and needed whether or not the kick may push.
+	var prReader crux.PRReviewContextReader
+	if spec.reviewOnly() {
+		prReader, _ = m.sandboxPRClient.(crux.PRReviewContextReader)
+	}
+	go m.runSandboxKick(runCtx, agent.Name, runtime, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, prReader, mutationBoundary)
 	return nil
 }
 
@@ -256,7 +266,7 @@ func (m *Manager) tieredSandboxMinterLocked(tier string) pushbroker.TokenMinter 
 	}
 }
 
-func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator, mutationBoundary effects.Boundary) {
+func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator, prReader crux.PRReviewContextReader, mutationBoundary effects.Boundary) {
 	started := time.Now()
 	exec := &SandboxExecutor{
 		Launcher:    launcher,
@@ -265,6 +275,7 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 		Minter:      minter,
 		PushEnabled: pushEnabled,
 		PRClient:    prClient,
+		PRReader:    prReader,
 		Mutation:    mutationBoundary,
 		Logger:      m.logger,
 	}

@@ -85,7 +85,15 @@ type SandboxKickSpec struct {
 	// relay (crux.SandboxReviewSpoolsDir). Empty disables spooling: the
 	// sandbox then has no way to post a review.
 	ReviewSpoolDir string
+	// ReviewPRs are the PR numbers (in Org/Repo) this kick reviews, taken
+	// from the review kick's hive-written header (hivecommons/hive#18513).
+	// Non-empty makes the kick review-only: workspace prep checks each PR
+	// head out on pr-<n> and writes .hive/pr/<n>.json, and nothing pushes.
+	ReviewPRs []int
 }
+
+// reviewOnly reports whether the kick reviews PRs and so must never push.
+func (s SandboxKickSpec) reviewOnly() bool { return len(s.ReviewPRs) > 0 }
 
 type configSnapshot struct {
 	Backend         string
@@ -148,9 +156,12 @@ type SandboxExecutor struct {
 	Minter      pushbroker.TokenMinter
 	PushEnabled bool
 	PRClient    PRCreator
-	Logger      *slog.Logger
-	Now         func() time.Time
-	Mutation    effects.Boundary
+	// PRReader reads a review target's metadata, diff and comments for the
+	// PR file a review kick gets. Nil still checks the PR head out.
+	PRReader crux.PRReviewContextReader
+	Logger   *slog.Logger
+	Now      func() time.Time
+	Mutation effects.Boundary
 }
 
 func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (SandboxKickResult, error) {
@@ -290,6 +301,14 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		err := fmt.Errorf("%w: %s", ErrSandboxRunReportedFailure, reason)
 		res.Error = err.Error()
 		return res, err
+	}
+	// A review kick never pushes (hivecommons/hive#18513), whatever the
+	// caller wired: commits a reviewer leaves on pr-<n> are discarded.
+	if spec.reviewOnly() {
+		if count > 0 {
+			res.PRWithheld = fmt.Sprintf("review-only kick: %d commit(s) left on %s were not pushed", count, spec.Branch)
+		}
+		return res, nil
 	}
 	if count == 0 {
 		return res, nil
@@ -442,12 +461,11 @@ func sandboxBackendBinary(backend string) string {
 	}
 }
 
+// writeSandboxPrompt writes the kick prompt confined to the workspace: on a
+// review kick the tree is the PR author's, and a .hive symlink in it must not
+// redirect the host's write (hivecommons/hive#18513).
 func writeSandboxPrompt(workspace, message string) error {
-	path := filepath.Join(workspace, sandboxPromptRelPath)
-	if err := os.MkdirAll(filepath.Dir(path), 0o770); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(message), 0o660)
+	return writeWorkspaceFileConfined(workspace, sandboxPromptRelPath, []byte(message))
 }
 
 func writeTranscript(path string, res sandbox.Result) error {
