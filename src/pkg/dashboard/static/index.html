@@ -49296,7 +49296,6 @@ function burnAreaChart() {
     // meetings TTS service. The Email section stays disabled (layout only)
     // until the server reports email.available (email-in, #18395).
     let _maState = null; // { data, form }
-    let _maSampleURL = '';
     // Language tags the presets and Kokoro voices speak, for labels.
     const MA_LANGUAGE_LABELS = {
       'en-US': 'English (US)', 'en-GB': 'English (UK)', 'es-ES': 'Spanish', 'fr-FR': 'French', 'it-IT': 'Italian',
@@ -49563,24 +49562,26 @@ function burnAreaChart() {
       }
     }
 
-    async function maPlaySample() {
+    // maSampleSrc is the same-origin sample URL for the form's unsaved
+    // voice, language and name. The dashboard CSP has no media-src, so the
+    // <audio> element plays the GET endpoint directly.
+    function maSampleSrc(f) {
+      const q = new URLSearchParams({ voice: f.voice || '', language: f.language || '', display_name: f.display_name || '' });
+      return '/api/meetings/persona/sample?' + q.toString();
+    }
+
+    function maPlaySample() {
       if (!_maState) return;
-      const f = _maState.form;
       const status = document.querySelector('[data-ma-sample-status]');
       const audio = document.querySelector('[data-ma-audio]');
+      if (!audio) return;
       if (status) status.textContent = 'Generating…';
-      try {
-        const r = await fetch('/api/meetings/persona/sample', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ voice: f.voice, language: f.language, display_name: f.display_name }) });
-        if (!r.ok) { const data = await r.json().catch(() => ({})); throw new Error(data.error || ('HTTP ' + r.status)); }
-        const blob = await r.blob();
-        if (_maSampleURL) URL.revokeObjectURL(_maSampleURL);
-        _maSampleURL = URL.createObjectURL(blob);
-        if (status) status.textContent = '';
-        if (audio) { audio.hidden = false; audio.src = _maSampleURL; audio.play().catch(() => {}); }
-      } catch (e) {
-        if (status) status.textContent = 'Sample failed: ' + e.message;
-      }
+      audio.hidden = false;
+      audio.addEventListener('playing', () => { if (status) status.textContent = ''; }, { once: true });
+      audio.addEventListener('error', () => { if (status) status.textContent = 'Sample failed: check that the TTS service is reachable and the voice exists.'; }, { once: true });
+      audio.src = maSampleSrc(_maState.form);
+      const p = audio.play();
+      if (p && p.catch) p.catch(() => {});
     }
 
     async function maCopyAddress() {

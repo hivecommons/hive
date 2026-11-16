@@ -163,6 +163,9 @@ func (s *Server) registerMeetingsPersonaRoutes() {
 	s.mux.HandleFunc("GET /api/meetings/persona", s.handleMeetingsPersonaGet)
 	s.mux.HandleFunc("PUT /api/meetings/persona", s.handleMeetingsPersonaPut)
 	s.mux.HandleFunc("POST /api/meetings/persona/sample", s.handleMeetingsPersonaSample)
+	// The browser's <audio> element plays the GET form: the dashboard CSP
+	// has no media-src, so audio must come from the dashboard origin.
+	s.mux.HandleFunc("GET /api/meetings/persona/sample", s.handleMeetingsPersonaSample)
 }
 
 // MeetingsPersonaUnpromptedView is the effective unprompted caps.
@@ -510,8 +513,8 @@ func (s *Server) handleMeetingsPersonaPut(w http.ResponseWriter, r *http.Request
 	jsonResponse(w, s.meetingsPersonaSettings(r))
 }
 
-// meetingsPersonaSampleRequest is POST /api/meetings/persona/sample: an
-// optional voice (default the persona's), language (picks the sample
+// meetingsPersonaSampleRequest is POST /api/meetings/persona/sample (or
+// the same fields as GET query parameters): an optional voice (default the persona's), language (picks the sample
 // line's language) and text (default the persona's sample line).
 type meetingsPersonaSampleRequest struct {
 	Voice       string `json:"voice,omitempty"`
@@ -536,7 +539,10 @@ func (s *Server) handleMeetingsPersonaSample(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	var req meetingsPersonaSampleRequest
-	if r.ContentLength != 0 {
+	if r.Method == http.MethodGet {
+		q := r.URL.Query()
+		req = meetingsPersonaSampleRequest{Voice: q.Get("voice"), Language: q.Get("language"), DisplayName: q.Get("display_name"), Text: q.Get("text")}
+	} else if r.ContentLength != 0 {
 		if err := decodeBody(r, &req); err != nil {
 			jsonError(w, "invalid request body", http.StatusBadRequest)
 			return

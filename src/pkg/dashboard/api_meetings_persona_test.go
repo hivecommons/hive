@@ -325,6 +325,15 @@ func TestMeetingsPersonaSample(t *testing.T) {
 	if rec.Code != http.StatusOK || last.Voice != "jf_alpha" || !strings.Contains(last.Input, "ミツです") {
 		t.Fatalf("japanese sample %d %+v", rec.Code, last)
 	}
+	// The <audio> element's GET form takes the same fields as query parameters.
+	rec = personaReq(s, http.MethodGet, "/api/meetings/persona/sample?voice=bm_george&language=en-GB&display_name=Bertie", "", "read-write", false)
+	last, _ = lastReq()
+	if rec.Code != http.StatusOK || last.Voice != "bm_george" || !strings.HasPrefix(last.Input, "Hi, I'm Bertie.") {
+		t.Fatalf("get sample %d %+v", rec.Code, last)
+	}
+	if rec := personaReq(s, http.MethodGet, "/api/meetings/persona/sample", "", "read", false); rec.Code != http.StatusForbidden {
+		t.Fatalf("get sample as read = %d", rec.Code)
+	}
 	rec = samplePost(s, `{"text":"  hello   there  "}`)
 	last, _ = lastReq()
 	if rec.Code != http.StatusOK || last.Input != "hello there" {

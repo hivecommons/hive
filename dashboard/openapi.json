@@ -1683,6 +1683,72 @@
       }
     },
     "/api/meetings/persona/sample": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Play a persona sample (audio element)",
+        "description": "The same sample as POST, with voice, language, display_name and text as query parameters, so the dashboard's audio element can play it from the dashboard origin (the CSP has no media-src). Owner or read-write.",
+        "parameters": [
+          {
+            "name": "voice",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "text",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The audio",
+            "content": {
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Text too long"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "502": {
+            "description": "The TTS service failed"
+          },
+          "503": {
+            "description": "TTS not configured, or config is not available"
+          }
+        }
+      },
       "post": {
         "tags": [
           "Meetings"

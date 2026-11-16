@@ -23,7 +23,7 @@ func TestSettingsMeetingAttendeeTabWiring(t *testing.T) {
 		`id="meeting-attendee-inline"`,
 		"fetch('/api/meetings/persona')",
 		"fetch('/api/meetings/persona', { method: 'PUT'",
-		"fetch('/api/meetings/persona/sample', { method: 'POST'",
+		"return '/api/meetings/persona/sample?' + q.toString();",
 		`data-action="maPickPreset"`,
 		`data-action="maPlaySample"`,
 		`data-action="maCopyAddress"`,
@@ -70,7 +70,7 @@ func TestMeetingAttendeeTabBehaviour(t *testing.T) {
 	for _, f := range []string{"maLanguageLabel", "maFlag", "maRenderIntro", "renderGovMeetingAttendee", "maSetData", "maPreset",
 		"maOverrideNote", "maPresetCardHtml", "maField", "maTextInput", "maVoiceOptions", "maLanguageOptions", "maVoiceTypeOptions",
 		"maPersonaHtml", "maBehaviourHtml", "maEmailHtml", "maRender", "maRefreshPreview", "maInput", "maCapInput",
-		"maLanguageChanged", "maPickPreset", "maRequestBody"} {
+		"maLanguageChanged", "maPickPreset", "maRequestBody", "maSampleSrc"} {
 		parts = append(parts, jsFunc(t, html, f))
 	}
 	parts = append(parts,
@@ -112,6 +112,7 @@ func TestMeetingAttendeeTabBehaviour(t *testing.T) {
 		`_maState.data.overridden = { name: 'env', pronouns: 'config' };`,
 		`assert.ok(maOverrideNote('name').includes('env') && maOverrideNote('pronouns').includes('custom') && maOverrideNote('voice') === '');`,
 		`assert.ok(maBehaviourHtml(_maState.form).includes('data-ma-cap="answer_wait_s"'));`,
+		"assert.strictEqual(maSampleSrc({voice: 'jf_alpha', language: 'ja-JP', display_name: 'ミツ & co'}), '/api/meetings/persona/sample?voice=jf_alpha&language=ja-JP&display_name=%E3%83%9F%E3%83%84+%26+co');",
 		`maRender(); maRefreshPreview();`,
 		`console.log('ok');`,
 	)
