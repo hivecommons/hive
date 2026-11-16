@@ -24,6 +24,17 @@ func workflowEmitChecks(cfg *config.Config, client func() *github.Client) func(c
 		if gh == nil {
 			return checksfile.Result{}, errNoForgeClient
 		}
-		return checksfile.Emit(ctx, gh, config.QualifyRepo(cfg.Project.Org, repo), "", m)
+		return checksfile.Emit(ctx, checksRepoClient{gh}, config.QualifyRepo(cfg.Project.Org, repo), "", m)
 	}
+}
+
+// checksRepoClient adapts *github.Client to checksfile.RepoClient: on v6 the
+// client's CommitFilesOnBranch takes []github.ArtifactFile, so the text-file
+// commit the emitter needs goes through CommitTextFilesOnBranch.
+type checksRepoClient struct {
+	*github.Client
+}
+
+func (c checksRepoClient) CommitFilesOnBranch(ctx context.Context, repo, branch, expectedHeadSHA, headline, body string, files map[string]string) (string, error) {
+	return c.CommitTextFilesOnBranch(ctx, repo, branch, expectedHeadSHA, headline, body, files)
 }
