@@ -823,28 +823,28 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 
 ### Registered operations
 
-| Area                         | Operations                                                                                                                                                                                                            |
-| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Agents                       | `agent.pause`, `agent.resume`, `agent.nudge`, `agent.restart`, `agent.add`, `agent.remove`, `agent.model`, `agent.backend`, `agent.effort`, `agent.interaction_tier`, `agent.github_api_hourly_cap`, `agent.cadences` |
-| GitHub                       | `github.agent_api_hourly_cap`                                                                                                                                                                                         |
-| Fleet                        | `fleet.autonomy_level`                                                                                                                                                                                                |
-| Plans                        | `plan.propose`, `plan.approve`, `plan.reject`                                                                                                                                                                         |
-| Governor                     | `governor.feature_settings`, `governor.general_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                                         |
-| Issue filter                 | `project.issue_filter`                                                                                                                                                                                                |
-| Sentinel                     | `sentinel.settings`                                                                                                                                                                                                   |
-| Write-back                   | `writeback.kind_policy`                                                                                                                                                                                               |
-| Merge settings               | `auto_merge.update`                                                                                                                                                                                                   |
-| Let hive decide              | `decisions.delegate_settings`                                                                                                                                                                                         |
-| Code scanning sweep          | `code_scanning.settings`                                                                                                                                                                                              |
-| Review settings              | `review.settings`                                                                                                                                                                                                     |
-| Advisor lane                 | `advisor.settings`, `advisor.agent`, `advisor.roles`                                                                                                                                                                  |
-| Repositories                 | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                                                                                       |
-| Activity monitor row actions | see below                                                                                                                                                                                                             |
-| Budget                       | `budget.update`, `budget.reset`, `budget.ignore`                                                                                                                                                                      |
-| Contributor queue            | `contributor_queue.order`, `contributor_queue.hold`, `contributor_queue.hold_clear`                                                                                                                                   |
-| Contributors                 | `contributor.trust`, `contributor.agent_role`, `contributor.agent_role_grants`, `contributor.revoke`, `contributor.requeue`, `contributor.delete`                                                                     |
-| Backup                       | `backup.create` (the archive itself is not returned through MCP)                                                                                                                                                      |
-| Circuit breaker              | `circuit_breaker.engage`, `circuit_breaker.release`                                                                                                                                                                   |
+| Area                         | Operations                                                                                                                                                                                                                              |
+| ---------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Agents                       | `agent.pause`, `agent.resume`, `agent.nudge`, `agent.restart`, `agent.add`, `agent.remove`, `agent.model`, `agent.backend`, `agent.effort`, `agent.interaction_tier`, `agent.settings`, `agent.github_api_hourly_cap`, `agent.cadences` |
+| GitHub                       | `github.agent_api_hourly_cap`                                                                                                                                                                                                           |
+| Fleet                        | `fleet.autonomy_level`                                                                                                                                                                                                                  |
+| Plans                        | `plan.propose`, `plan.approve`, `plan.reject`                                                                                                                                                                                           |
+| Governor                     | `governor.feature_settings`, `governor.general_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                                                           |
+| Issue filter                 | `project.issue_filter`                                                                                                                                                                                                                  |
+| Sentinel                     | `sentinel.settings`                                                                                                                                                                                                                     |
+| Write-back                   | `writeback.kind_policy`                                                                                                                                                                                                                 |
+| Merge settings               | `auto_merge.update`                                                                                                                                                                                                                     |
+| Let hive decide              | `decisions.delegate_settings`                                                                                                                                                                                                           |
+| Code scanning sweep          | `code_scanning.settings`                                                                                                                                                                                                                |
+| Review settings              | `review.settings`                                                                                                                                                                                                                       |
+| Advisor lane                 | `advisor.settings`, `advisor.agent`, `advisor.roles`                                                                                                                                                                                    |
+| Repositories                 | `repository.pause`, `repository.resume`, `repository.item_hold`                                                                                                                                                                         |
+| Activity monitor row actions | see below                                                                                                                                                                                                                               |
+| Budget                       | `budget.update`, `budget.reset`, `budget.ignore`                                                                                                                                                                                        |
+| Contributor queue            | `contributor_queue.order`, `contributor_queue.hold`, `contributor_queue.hold_clear`                                                                                                                                                     |
+| Contributors                 | `contributor.trust`, `contributor.agent_role`, `contributor.agent_role_grants`, `contributor.revoke`, `contributor.requeue`, `contributor.delete`                                                                                       |
+| Backup                       | `backup.create` (the archive itself is not returned through MCP)                                                                                                                                                                        |
+| Circuit breaker              | `circuit_breaker.engage`, `circuit_breaker.release`                                                                                                                                                                                     |
 
 The two GitHub API cap operations change the API proxy's per-agent hourly
 cap, the same settings as the dashboard's Forge App and agent General
@@ -895,6 +895,48 @@ budget, raising its blocker limit, or moving its reviews onto the hive's Claude
 sign-in (`backend: claude-cli`) is disclosed as widening. `write_confirm`
 refuses if the advisor settings changed after the preview. None of these change
 what the advisor says; `advisor_records` reads that.
+
+`agent.settings` changes one agent's General settings, the same fields as the
+General tab of the agent's settings on the dashboard, through the endpoint that
+tab saves with (`PUT /api/config/agent/{name}/general`). Only the hive's owner
+can confirm it: the endpoint refuses any other role. It takes `agent` and only
+the fields that change; only those are sent, and every other field keeps its
+value. For example, to turn the red-team agent off:
+
+```json
+{"operation": "agent.settings", "args": {"agent": "redteam", "enabled": false}}
+```
+
+- **Fields it takes:** `enabled`, `mode` (`ADVISORY`, `ISSUES_ONLY`,
+  `ISSUES_AND_PRS`, `ISSUES_PRS_MERGE`, `NO_GITHUB`, or `""` for the ACMM
+  level's default), `onDemand`, `repos` (the whole list; `[]` clears the scope),
+  `includeRepos`, `replicas`, `staleTimeout`, `restartStrategy`, `clearOnKick`,
+  `continuous`, `continuousBudgetPct`, `continuousCooldown`, `contributorFirst`,
+  `contributorFirstGrace`, `kickTemplate`, `beadRole`, `displayName`,
+  `description`, `emoji`, `color`, `sortOrder`, `aliases`, `laneKeywords`,
+  `detectKeywords` and `bobSessionLabel`. A wrong type, an unknown field or
+  `null` is refused; the endpoint checks ranges and names when you confirm.
+- **Fields it refuses:** `launchCmd` (the command the hive runs), `cliPinned`
+  and `cliPinValue` (which CLI binary runs), `sandboxEnabled` and
+  `sandboxSubstrate` (the agent's isolation), `engine`, `role` (the agent's
+  lane), `promptSource` and `definitionSource` (where its prompt or whole
+  definition comes from). These decide what runs and how it is contained, so
+  they stay on the dashboard, where the owner sees the whole agent. `model` is
+  refused with a pointer to `agent.model`, and `githubApiHourlyCap` with a
+  pointer to `agent.github_api_hourly_cap`.
+- A replica or review head (such as `quality-2`) is refused: it takes its
+  settings from its base agent, so change the base agent.
+
+The preview reads the agent's settings (`settings_read` section `agent`) and
+shows each named field before and after. It names as potential widening
+turning the agent on, a higher GitHub tier (`mode`, in the order
+`ADVISORY` < `ISSUES_ONLY` < `ISSUES_AND_PRS` < `ISSUES_PRS_MERGE`, or a move to
+or from the ACMM default, whose tier it does not read), leaving on-demand, a
+repository scope that gains a repository or is cleared (every repository),
+`includeRepos` turned on, more replicas, continuous mode turned on or allowed
+more budget or a shorter cooldown, and joining the contributor-first lane.
+`write_confirm` refuses if any named field changed after the preview. The
+endpoint records a `config_agent_general` audit entry naming you.
 
 The issue filter and Sentinel operations change the same settings as
 Settings → Labels and Settings → Security, through the endpoints those tabs
