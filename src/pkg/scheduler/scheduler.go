@@ -29,8 +29,11 @@ type Scheduler struct {
 	agentsMdFetcher AgentsMdFetcher
 	// remoteAgents caches the materialised AGENTS.md root per "owner/repo"
 	// for the GitHub fallback in remoteAgentsRepoRoot (#17090).
-	remoteAgents              map[string]remoteAgentsMd
-	remoteAgentsMu            sync.Mutex
+	remoteAgents   map[string]remoteAgentsMd
+	remoteAgentsMu sync.Mutex
+	// agentsMdWarned is root -> "<sha256 of AGENTS.md>|<cap>" last warned
+	// about, so a truncated file is logged once per change, not per kick.
+	agentsMdWarned            sync.Map
 	auditFunc                 AuditFunc
 	advisoryFunc              AdvisoryFunc
 	classifierUnavailableFunc func(error)
@@ -46,6 +49,7 @@ type Scheduler struct {
 	inflight                 InflightLookup
 	prLease                  PRLeaseLookup
 	maintainerNotes          MaintainerNotesLookup
+	topicClaims              TopicClaimLookup
 	runAdmitter              RunAdmitter
 	triageCommenter          TriageCommenter
 	clarity                  clarityGateState

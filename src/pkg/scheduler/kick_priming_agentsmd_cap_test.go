@@ -31,7 +31,7 @@ func TestPrimeAgentsMd_CapIsVisibleInKickAndLog(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got := s.primeAgentsMd(root)
+	got := s.primeAgentsMd("", root)
 	if got == "" {
 		t.Fatal("expected an injection")
 	}
@@ -71,7 +71,7 @@ func TestPrimeAgentsMd_UnderCapHasNoWarning(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte("## Tests\n\nRun `make verify`.\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got := s.primeAgentsMd(root)
+	got := s.primeAgentsMd("", root)
 	if !strings.Contains(got, "Run `make verify`.") {
 		t.Fatalf("body missing:\n%s", got)
 	}
@@ -95,7 +95,7 @@ func TestPrimeAgentsMd_LogsEffectiveCapForDefault(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "AGENTS.md"), []byte(file), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	s.primeAgentsMd(root)
+	s.primeAgentsMd("", root)
 	log := logBuf.String()
 	if !strings.Contains(log, "exceeded the injection cap") {
 		t.Fatalf("expected the cap warning, got:\n%s", log)

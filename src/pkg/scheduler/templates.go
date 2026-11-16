@@ -355,7 +355,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	// agentsmd.ParseNearest for closest-wins nested AGENTS.md. That still has no
 	// caller — nothing on the kick path knows which FILE an agent will touch —
 	// so it stays deferred, unlike the checkout root, which is now threaded.
-	agentsSection := s.primeAgentsMd(repoRoot)
+	agentsSection := s.primeAgentsMd(primaryRepo, repoRoot)
 	if agentsSection != "" {
 		knowledgeSection = agentsSection + "\n" + knowledgeSection
 	}
@@ -401,6 +401,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 		"GH_AUTH":               lit(s.ghAuthInstructions()),
 		"WORK_TRACKER":          lit(s.workTrackerSection()),
 		"IN_FLIGHT":             lit(inflightNote(heldInflight)),
+		"TOPIC_CLAIMS":          lit(topicClaimsSection(s.topicClaimsFor(agentName))),
 		"PROJECT_ORG":           lit(s.cfg.Project.Org),
 		"PROJECT_NAME":          lit(s.cfg.Project.Name),
 		"PROJECT_PRIMARY_REPO":  lit(fullPrimaryRepo),

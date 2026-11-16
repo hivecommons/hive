@@ -569,6 +569,9 @@ type Client struct {
 	stageEngineMu sync.Mutex
 	stageWriter   *stageWriter
 	stageEngines  map[*stagelabels.Store]stageengine.Reconciler
+	// stageWorkflow is the per-repository workflow model lookup the stage
+	// engine derives through (stage_model_owned.go, hivecommons/hive#18434).
+	stageWorkflow atomic.Pointer[stageWorkflowLookup]
 	// baseRefresh is the decision carry's memo (pr_decision_base_refresh.go).
 	baseRefreshOnce sync.Once
 	baseRefresh     *BaseRefreshChecker

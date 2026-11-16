@@ -3,6 +3,8 @@
 # TODO #11854
 agent_sandbox.job.env_from_secrets[] # TODO #11854
 agent_sandbox.job.node_selector.<key> # TODO #11854
+agent_sandbox.job.relay_image # TODO #11854
+agent_sandbox.job.relay_run_as_user # TODO #11854
 agent_sandbox.job.resources.limits.<key> # TODO #11854
 agent_sandbox.job.resources.requests.<key> # TODO #11854
 agent_sandbox.job.tolerations[].effect # TODO #11854
@@ -115,6 +117,8 @@ agents.<key>.sandbox.env_allowlist[] # TODO #11854
 agents.<key>.sandbox.image # TODO #11854
 agents.<key>.sandbox.job.env_from_secrets[] # TODO #11854
 agents.<key>.sandbox.job.node_selector.<key> # TODO #11854
+agents.<key>.sandbox.job.relay_image # TODO #11854
+agents.<key>.sandbox.job.relay_run_as_user # TODO #11854
 agents.<key>.sandbox.job.resources.limits.<key> # TODO #11854
 agents.<key>.sandbox.job.resources.requests.<key> # TODO #11854
 agents.<key>.sandbox.job.scheduler_name # TODO #11854
@@ -511,6 +515,7 @@ project.repo_policies[].self_authorization_hold # TODO #11854
 project.repos[] # TODO #11854
 providers.status.enabled # TODO #11854
 removed_agents[] # TODO #11854
+repos.<key>.agents_md_max_bytes # TODO #18495 (per-repo AGENTS.md cap; Settings control pending)
 review.backlog.labels[] # TODO #11854
 review.bot_author_full_review_paths[] # TODO #14625
 review.bot_author_model # TODO #14625
@@ -621,6 +626,7 @@ data.workflows_dir # workflow-model store root; deployment knob, no Settings con
 project.workflow_bindings[].name # set through the per-repo workflow select on Settings → Repos via PUT /api/workflows/bindings, not a leaf-path control (RFC #17620)
 project.workflow_bindings[].repo # see project.workflow_bindings[].name
 project.workflow_bindings[].version # see project.workflow_bindings[].name
+project.remote_write_identity # Settings control lands in the follow-up PR for #18516
 workflow.label_gc # operator safety knob for model-label garbage collection on rebind; yaml-only, no Settings control planned (RFC #17620)
 inbox.sources[] # which voice connector types feed the Inbox; defaults to every configured plaud/wisprflow connector, yaml-only (Inbox RFC)
 inbox.rules[].source # auto-routing rules are edited as whole rows in Inbox → Auto-routing via POST /api/inbox/settings, not leaf-path controls (Inbox RFC)

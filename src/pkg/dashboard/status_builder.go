@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentsmd"
 	"github.com/hivecommons/hive/crux/paneclass"
 	"github.com/hivecommons/hive/crux/skillreg"
 	"github.com/hivecommons/hive/crux/watchdog"
@@ -2555,6 +2556,9 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 					r.UpstreamLastCheck = sum.LastRunAt.UTC().Format(time.RFC3339)
 				}
 			}
+		}
+		if st, ok := agentsmd.StatusFor(full); ok {
+			r.AgentsMd = &st
 		}
 		if actionable != nil && !r.Paused && !countsPresent {
 			r.CountsIncomplete = true

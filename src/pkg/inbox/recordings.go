@@ -105,6 +105,12 @@ var (
 	ErrRecordingEmpty      = errors.New("no audio was received for this recording")
 	ErrRecordingExpired    = errors.New("the audio of this recording has expired")
 	ErrRecordingBadRequest = errors.New("invalid recording request")
+	// ErrRecordingNotFinished refuses a delete of a recording in progress
+	// (discard it from the recorder instead).
+	ErrRecordingNotFinished = errors.New("this recording is still in progress; discard it from the recorder")
+	// ErrRecordingTranscribing refuses a delete while the recording's
+	// transcription is queued or running.
+	ErrRecordingTranscribing = errors.New("this recording is being transcribed; delete it once the transcription finishes")
 )
 
 // RecordingActiveError is returned when the user already has a recording in
@@ -599,6 +605,34 @@ func (s *RecordingStore) Abort(id, user string, asOwner bool) (RecordingMeta, er
 	}
 	if m.State != RecordingActive {
 		return RecordingMeta{}, ErrRecordingClosed
+	}
+	out := *m
+	if err := os.RemoveAll(s.dir(id)); err != nil {
+		return RecordingMeta{}, err
+	}
+	delete(s.metas, id)
+	return out, nil
+}
+
+// Delete removes a finished recording: its directory (audio, any chunk
+// left over, meta.json) and its metadata. The recorder may delete their own;
+// an owner (asOwner) may delete anyone's. A recording still in progress is
+// aborted, not deleted (ErrRecordingNotFinished).
+func (s *RecordingStore) Delete(id, user string, asOwner bool) (RecordingMeta, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	owner := user
+	if asOwner {
+		owner = ""
+	} else if user == "" {
+		return RecordingMeta{}, ErrRecordingNotYours
+	}
+	m, err := s.get(id, owner)
+	if err != nil {
+		return RecordingMeta{}, err
+	}
+	if m.State != RecordingFinalized {
+		return RecordingMeta{}, ErrRecordingNotFinished
 	}
 	out := *m
 	if err := os.RemoveAll(s.dir(id)); err != nil {
