@@ -53,7 +53,7 @@ A persona is a preset (`meetings.persona.preset`, default `betty`) plus any fiel
 
 ### Web answers
 
-With `meetings.persona.searxng_url` set (`HIVE_MEETINGS_PERSONA_SEARXNG_URL`), web search joins Betty's fast sources. For each question she queries `GET <url>/search?format=json&q=<question>` with a 1.2 second timeout, in parallel with the knowledge, bead and code-map lookups, and keeps the top 3 results (title, URL and snippet, HTML stripped). Results are untrusted data: they reach the model inside the data block and are never followed as instructions. A slow or failing search simply contributes nothing.
+With `meetings.persona.searxng_url` set (`HIVE_MEETINGS_PERSONA_SEARXNG_URL`), web search joins Betty's fast sources. For each question she queries `GET <url>/search?format=json&categories=general,it&q=<question>` (the `it` category brings in GitHub and Stack Overflow) with a 1.2 second timeout, in parallel with the knowledge, bead and code-map lookups, and keeps the top 3 results (title, URL and snippet, HTML stripped). Results are untrusted data: they reach the model inside the data block and are never followed as instructions. A slow or failing search simply contributes nothing.
 
 On hive-oke, SearXNG runs in the `meetings` namespace as a ClusterIP Service: set `searxng_url` to `http://searxng.meetings.svc.cluster.local:8080`. Its manifests (JSON output on, a small engine set, the limiter off for internal use, the secret key in a Secret) live in hivecommons/quorum `deploy/hive-oke/`. Any SearXNG with `json` in `search.formats` works.
 

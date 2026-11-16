@@ -21,6 +21,8 @@ const (
 	webResults = 3
 	// maxWebResponseBytes bounds the SearXNG response read.
 	maxWebResponseBytes = 1 << 20
+	// webCategories are the SearXNG categories searched.
+	webCategories = "general,it"
 	// webSource prefixes a web snippet's source.
 	webSource = "web"
 )
@@ -75,7 +77,9 @@ func (w WebRetriever) Retrieve(ctx context.Context, query string, _ []string, li
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	u := strings.TrimRight(w.BaseURL, "/") + "/search?format=json&q=" + url.QueryEscape(query)
+	// The it category brings in GitHub and Stack Overflow, which SearXNG
+	// leaves out of plain general searches.
+	u := strings.TrimRight(w.BaseURL, "/") + "/search?format=json&categories=" + webCategories + "&q=" + url.QueryEscape(query)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
 		return nil
