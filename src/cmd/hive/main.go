@@ -4760,6 +4760,12 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 			advisorStore := advisor.NewStore(advisor.DefaultRecordsPath)
 			b.dashSrv.SetAdvisorRecords(advisorStore)
 			b.dashSrv.SetAdvisorStatusResolver(cfg.AdvisorActiveForAgent)
+			// The agent's advisor backend (advisor.backend, else
+			// governor.reviewer_backend) picks the path each review takes,
+			// the same way the other reviewer turns resolve theirs: the
+			// reviewer endpoint, or the Claude CLI on the hive's own Claude
+			// login (subscription credentials only ever go through the CLI).
+			advisorCLI := newAdvisorCLIRunner()
 			deps.startAdvisor(&advisor.Server{
 				Identify: b.githubProxy.IdentifyAgentByUID,
 				Resolve: func(agentName string) (advisor.Runtime, bool) {
@@ -4767,17 +4773,9 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 					if !ok {
 						return advisor.Runtime{}, false
 					}
-					return advisor.Runtime{
-						Endpoint:             rt.Endpoint,
-						APIKey:               rt.APIKey,
-						Model:                rt.Model,
-						Instructions:         rt.Instructions,
-						TimeoutS:             rt.TimeoutS,
-						DailyBudgetTokens:    rt.DailyBudgetTokens,
-						MaxConsecutiveBlocks: rt.MaxConsecutiveBlocks,
-						ReasoningEffort:      rt.ReasoningEffort,
-					}, true
+					return advisorRuntimeFor(rt, cfg.Governor.ResolveReviewerTurnVia(rt.Backend, rt.Model, advisorCLI.signedIn())), true
 				},
+				CLI:    advisorCLI.advisorTurn(),
 				Store:  advisorStore,
 				Usage:  inferenceSink,
 				Logger: b.logger,

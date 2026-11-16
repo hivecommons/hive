@@ -149,6 +149,7 @@ type advisorFleetBody struct {
 	DailyBudgetTokens    *int    `json:"daily_budget_tokens"`
 	TimeoutS             *int    `json:"timeout_s"`
 	MaxConsecutiveBlocks *int    `json:"max_consecutive_blocks"`
+	Backend              *string `json:"backend"`
 }
 
 // validateAdvisorInts rejects negative budget/timeout/limit values with the
@@ -206,6 +207,9 @@ func (s *Server) handleAdvisorSettingsPut(w http.ResponseWriter, r *http.Request
 	if body.MaxConsecutiveBlocks != nil {
 		next.MaxConsecutiveBlocks = *body.MaxConsecutiveBlocks
 	}
+	if body.Backend != nil {
+		next.Backend = strings.ToLower(strings.TrimSpace(*body.Backend))
+	}
 	candidate := advisorLaneCandidate(s.deps.Config)
 	candidate.Advisor = next
 	if err := candidate.ValidateAdvisorLane(); err != nil {
@@ -217,7 +221,7 @@ func (s *Server) handleAdvisorSettingsPut(w http.ResponseWriter, r *http.Request
 		prev := cfg.Advisor
 		cfg.Advisor = next
 		return func() { cfg.Advisor = prev }
-	}, "scope", "fleet", "enabled", fmt.Sprint(next.IsEnabled()), "model", next.Model)
+	}, "scope", "fleet", "enabled", fmt.Sprint(next.IsEnabled()), "model", next.Model, "backend", next.Backend)
 }
 
 // handleAdvisorRolesPut serves PUT /api/config/advisor/roles: replaces the
@@ -321,6 +325,10 @@ func (s *Server) handleAdvisorAgentPut(w http.ResponseWriter, r *http.Request) {
 		if o.Instructions != nil {
 			v := strings.TrimSpace(*o.Instructions)
 			o.Instructions = &v
+		}
+		if o.Backend != nil {
+			v := strings.ToLower(strings.TrimSpace(*o.Backend))
+			o.Backend = &v
 		}
 		if *o == (config.AdvisorOverride{}) {
 			o = nil

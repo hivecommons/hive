@@ -9,7 +9,7 @@ function grab(name) {
   assert.ok(m, name + ' not found');
   return m[0];
 }
-const src = ['advisorSourceBadge', 'renderAdvisorSettings', 'advisorIntField', 'advisorTextField', 'saveAdvisorFleet'].map(grab).join('\n');
+const src = ['advisorBackendOptions', 'advisorSourceBadge', 'renderAdvisorSettings', 'advisorIntField', 'advisorTextField', 'saveAdvisorFleet'].map(grab).join('\n');
 const load = (doc, put) => new Function('document', 'putAdvisorSettings', 'esc', 'formatNumber',
   src + '; return { renderAdvisorSettings, saveAdvisorFleet };')(doc, put, s => String(s), n => String(n));
 
@@ -35,4 +35,24 @@ test('saving an unset fleet enabled leaves the lane disabled', () => {
   load(doc, put).saveAdvisorFleet();
   assert.strictEqual(posted.url, '/api/config/advisor');
   assert.strictEqual(posted.body.enabled, false);
+});
+
+// The advisor backend select shows the fleet value, and saving sends it; the
+// empty choice (follow governor.reviewer_backend) is sent as "".
+test('the fleet advisor backend renders selected and is saved', () => {
+  let posted;
+  const put = (url, body) => { posted = { url, body }; return true; };
+  const probe = load({}, put);
+  const markup = probe.renderAdvisorSettings({ fleet: { backend: 'claude-cli' } });
+  const sel = markup.match(/<select id="adv-f-backend"[\s\S]*?<\/select>/)[0];
+  assert.match(sel, /<option value="claude-cli" selected>/);
+  assert.doesNotMatch(sel, /<option value="" selected>/);
+  const unset = probe.renderAdvisorSettings({ fleet: {} }).match(/<select id="adv-f-backend"[\s\S]*?<\/select>/)[0];
+  assert.match(unset, /<option value="" selected>/);
+
+  for (const value of ['claude-cli', '']) {
+    const doc = { getElementById: id => (id === 'adv-f-backend' ? { value } : (id === 'adv-f-enabled' ? { value: 'on' } : { value: '' })) };
+    load(doc, put).saveAdvisorFleet();
+    assert.strictEqual(posted.body.backend, value);
+  }
 });

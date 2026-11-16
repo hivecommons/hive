@@ -10,4 +10,5 @@ type AdvisorOverride struct {
 	DailyBudgetTokens    *int    `yaml:"daily_budget_tokens,omitempty" json:"daily_budget_tokens,omitempty"`
 	TimeoutS             *int    `yaml:"timeout_s,omitempty" json:"timeout_s,omitempty"`
 	MaxConsecutiveBlocks *int    `yaml:"max_consecutive_blocks,omitempty" json:"max_consecutive_blocks,omitempty"`
+	Backend              *string `yaml:"backend,omitempty" json:"backend,omitempty"`
 }

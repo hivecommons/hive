@@ -872,8 +872,9 @@ next launch.
 
 - `advisor.settings` takes any of `enabled`, `model` (a model id, `@<role>`, or
   `""` for the trajectory reviewer's model), `instructions`,
-  `daily_budget_tokens` (0 = no cap), `timeout_s` and `max_consecutive_blocks`.
-  Only the named fields are sent.
+  `daily_budget_tokens` (0 = no cap), `timeout_s`, `max_consecutive_blocks` and
+  `backend` (`http`, `claude-cli` for the hive's Claude sign-in, `auto`, or
+  `""` to follow `governor.reviewer_backend`). Only the named fields are sent.
 - `advisor.agent` takes `agent` and `override`: an object with the same fields,
   which replaces the agent's override whole (`{"enabled": false}` opts the agent
   out), or `inherit` to clear it. The preview names each field the new override
@@ -890,7 +891,8 @@ next launch.
 
 The preview reads the current advisor settings and shows each change before and
 after. Turning the advisor on for an agent, raising or removing its daily
-budget, or raising its blocker limit is disclosed as widening. `write_confirm`
+budget, raising its blocker limit, or moving its reviews onto the hive's Claude
+sign-in (`backend: claude-cli`) is disclosed as widening. `write_confirm`
 refuses if the advisor settings changed after the preview. None of these change
 what the advisor says; `advisor_records` reads that.
 

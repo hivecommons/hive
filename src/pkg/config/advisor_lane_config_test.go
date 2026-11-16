@@ -379,3 +379,45 @@ func TestValidateModelRoleReasoningEffort(t *testing.T) {
 		})
 	}
 }
+
+// The advisor backend in force is the agent's override, else the fleet
+// block, else governor.reviewer_backend (auto when that is unset too); the
+// runtime carries it, and a value naming no path is refused.
+func TestAdvisorBackendFor(t *testing.T) {
+	http := "http"
+	c := &Config{
+		Advisor: AdvisorConfig{Enabled: boolPtr(true)},
+		Agents:  map[string]AgentConfig{"pinned": {Advisor: &AdvisorOverride{Backend: &http}}, "plain": {}},
+	}
+	if got := c.AdvisorBackendFor("plain"); got != ReviewerBackendAuto {
+		t.Errorf("unset everywhere = %q, want auto", got)
+	}
+	c.Governor.ReviewerBackend = "claude-cli"
+	if got := c.AdvisorBackendFor("plain"); got != ReviewerBackendClaudeCLI {
+		t.Errorf("follows governor.reviewer_backend = %q, want claude-cli", got)
+	}
+	c.Advisor.Backend = "HTTP "
+	if got := c.AdvisorBackendFor("plain"); got != ReviewerBackendHTTP {
+		t.Errorf("fleet = %q, want http", got)
+	}
+	c.Advisor.Backend = "claude-cli"
+	if got := c.AdvisorBackendFor("pinned"); got != ReviewerBackendHTTP {
+		t.Errorf("override = %q, want http", got)
+	}
+	if rt, _ := c.ResolveAdvisorRuntime("plain"); rt.Backend != ReviewerBackendClaudeCLI {
+		t.Errorf("runtime backend = %q, want claude-cli", rt.Backend)
+	}
+	if eff := c.AdvisorEffectiveFor("pinned"); eff.Backend != "http" || eff.Sources["backend"] != AdvisorSourceAgent {
+		t.Errorf("settings view = %q (%s), want http from the agent", eff.Backend, eff.Sources["backend"])
+	}
+
+	bad := "codex-cli"
+	for _, cfg := range []*Config{
+		{Advisor: AdvisorConfig{Backend: "codex-cli"}},
+		{Agents: map[string]AgentConfig{"a": {Advisor: &AdvisorOverride{Backend: &bad}}}},
+	} {
+		if err := cfg.validateAdvisorLane(); err == nil || !strings.Contains(err.Error(), "must be one of auto, http, claude-cli") {
+			t.Errorf("backend codex-cli: err = %v", err)
+		}
+	}
+}

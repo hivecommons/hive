@@ -126,6 +126,9 @@ func TestAdvisorSettingsWidening(t *testing.T) {
 		{"blocks below the default", true, map[string]any{"max_consecutive_blocks": float64(2)}, false},
 		{"turn off", true, map[string]any{"enabled": false}, false},
 		{"instructions only", true, map[string]any{"instructions": "Flag scope creep."}, false},
+		{"claude-cli while on", true, map[string]any{"backend": "claude-cli"}, true},
+		{"claude-cli while off", false, map[string]any{"backend": "claude-cli"}, false},
+		{"http while on", true, map[string]any{"backend": "http"}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			p := advisorTestProvider()
@@ -151,6 +154,7 @@ func TestAdvisorSettingsRefusesBadArgs(t *testing.T) {
 		{map[string]any{"model": nil}, "model is null"},
 		{map[string]any{"timeout_s": float64(-1)}, "timeout_s must be a whole number"},
 		{map[string]any{"daily_budget_tokens": 1.5}, "daily_budget_tokens must be a whole number"},
+		{map[string]any{"backend": "codex-cli"}, "backend must be one of auto, http, claude-cli"},
 	} {
 		p := advisorTestProvider()
 		_, err := advisorHandler(p).PreviewWrite(context.Background(), map[string]any{"operation": WriteOpAdvisorSettings, "args": tc.args})
@@ -282,6 +286,17 @@ func TestAdvisorRolesMergesOntoCurrentMap(t *testing.T) {
 	} {
 		if _, err := h.PreviewWrite(context.Background(), map[string]any{"operation": WriteOpAdvisorRoles, "args": args}); err == nil {
 			t.Errorf("%v was not refused", args)
+		}
+	}
+}
+
+// backend is sent normalized, and "" (follow governor.reviewer_backend) is a
+// value, not a missing field.
+func TestAdvisorSettingsBackendBody(t *testing.T) {
+	for in, want := range map[string]string{" Claude-CLI ": `{"backend":"claude-cli"}`, "": `{"backend":""}`} {
+		preview, _ := advisorPreview(t, advisorHandler(advisorTestProvider()), WriteOpAdvisorSettings, map[string]any{"backend": in})
+		if got := bodyJSON(t, preview.Request.Body); got != want {
+			t.Errorf("backend %q: body = %s, want %s", in, got, want)
 		}
 	}
 }

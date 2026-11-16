@@ -79649,6 +79649,21 @@ function burnAreaChart() {
       }
     }
 
+    // advisorBackendOptions renders the advisor backend choices
+    // (advisor.backend: how a review reaches the model) after a first option
+    // for the empty value, which follows governor.reviewer_backend for the
+    // fleet and inherits the fleet value for an agent.
+    function advisorBackendOptions(selected, emptyLabel) {
+      const choices = [
+        ['auto', 'auto — reviewer endpoint, else Claude sign-in'],
+        ['http', 'http — reviewer endpoint (API key)'],
+        ['claude-cli', 'claude-cli — this hive’s Claude sign-in'],
+      ];
+      const sel = selected || '';
+      return `<option value="" ${sel ? '' : 'selected'}>${esc(emptyLabel)}</option>` +
+        choices.map(([v, label]) => `<option value="${v}" ${sel === v ? 'selected' : ''}>${esc(label)}</option>`).join('');
+    }
+
     function advisorSourceBadge(src) {
       return `<span class="advisor-src advisor-src-${esc(src || 'default')}">${esc(src || 'default')}</span>`;
     }
@@ -79677,6 +79692,7 @@ function burnAreaChart() {
           <td>${e.daily_budget_tokens ? formatNumber(Number(e.daily_budget_tokens)) : 'unlimited'} ${advisorSourceBadge(s.daily_budget_tokens)}</td>
           <td>${esc(String(e.timeout_s || ''))}s ${advisorSourceBadge(s.timeout_s)}</td>
           <td>${esc(String(e.max_consecutive_blocks || ''))} ${advisorSourceBadge(s.max_consecutive_blocks)}</td>
+          <td><code>${esc(e.backend || '—')}</code> ${advisorSourceBadge(s.backend)}</td>
           <td><button class="hv-btn btn-secondary btn-sm" data-action="editAdvisorAgent" data-arg0="${esc(a.name)}">Edit</button></td></tr>`;
       }).join('');
       return `<div class="advisor-set-grid">
@@ -79690,6 +79706,8 @@ function burnAreaChart() {
             <input id="adv-f-timeout" class="advisor-set-input" type="number" min="0" value="${f.timeout_s || ''}" placeholder="${esc(String(d.timeout_s || ''))}"></div>
           <div><label class="advisor-set-label" for="adv-f-blocks">Consecutive-block limit (below ${esc(String(d.block_bound || ''))})</label>
             <input id="adv-f-blocks" class="advisor-set-input" type="number" min="0" value="${f.max_consecutive_blocks || ''}" placeholder="${esc(String(d.max_consecutive_blocks || ''))}"></div>
+          <div><label class="advisor-set-label" for="adv-f-backend">Advisor backend</label>
+            <select id="adv-f-backend" class="advisor-set-input">${advisorBackendOptions(f.backend, 'Follow governor.reviewer_backend')}</select></div>
           <div class="advisor-set-wide"><label class="advisor-set-label" for="adv-f-instructions">Instructions for the advisor</label>
             <textarea id="adv-f-instructions" class="advisor-set-input" rows="3">${esc(f.instructions || '')}</textarea></div>
         </div>
@@ -79705,8 +79723,8 @@ function burnAreaChart() {
 
         <div class="advisor-set-h">Per-agent value in force</div>
         <div class="advisor-note">Each value is marked with where it comes from: the agent's own <em>agent</em> override, the <em>fleet</em> default above, or the built-in <em>default</em>.</div>
-        <table class="advisor-set-table"><thead><tr><th>Agent</th><th>Backend</th><th>Advisor</th><th>Enabled</th><th>Model</th><th>Budget</th><th>Timeout</th><th>Blocks</th><th></th></tr></thead>
-          <tbody>${agentRows || '<tr><td colspan="9" class="advisor-note">No agents configured.</td></tr>'}</tbody></table>`;
+        <table class="advisor-set-table"><thead><tr><th>Agent</th><th>Backend</th><th>Advisor</th><th>Enabled</th><th>Model</th><th>Budget</th><th>Timeout</th><th>Blocks</th><th>Advisor backend</th><th></th></tr></thead>
+          <tbody>${agentRows || '<tr><td colspan="10" class="advisor-note">No agents configured.</td></tr>'}</tbody></table>`;
     }
 
     async function putAdvisorSettings(path, body, okMsg) {
@@ -79743,6 +79761,7 @@ function burnAreaChart() {
         daily_budget_tokens: advisorIntField('adv-f-budget') || 0,
         timeout_s: advisorIntField('adv-f-timeout') || 0,
         max_consecutive_blocks: advisorIntField('adv-f-blocks') || 0,
+        backend: advisorTextField('adv-f-backend'),
       }, 'Advisor fleet default saved');
     }
 
@@ -79781,6 +79800,8 @@ function burnAreaChart() {
           ${num('adv-a-budget', 'Daily budget (tokens)', o.daily_budget_tokens, e.daily_budget_tokens || 'unlimited')}
           ${num('adv-a-timeout', 'Review timeout (sec)', o.timeout_s, e.timeout_s)}
           ${num('adv-a-blocks', 'Consecutive-block limit', o.max_consecutive_blocks, e.max_consecutive_blocks)}
+          <div><label class="advisor-set-label" for="adv-a-backend">Advisor backend</label>
+            <select id="adv-a-backend" class="advisor-set-input">${advisorBackendOptions(o.backend, 'Inherit (' + (e.backend || 'default') + ')')}</select></div>
           <div class="advisor-set-wide"><label class="advisor-set-label" for="adv-a-instructions">Instructions</label>
             <textarea id="adv-a-instructions" class="advisor-set-input" rows="3" placeholder="inherit">${esc(o.instructions || '')}</textarea></div>
         </div>
@@ -79799,6 +79820,8 @@ function burnAreaChart() {
       if (model) override.model = model;
       const instructions = advisorTextField('adv-a-instructions');
       if (instructions) override.instructions = instructions;
+      const backend = advisorTextField('adv-a-backend');
+      if (backend) override.backend = backend;
       for (const [id, key] of [['adv-a-budget', 'daily_budget_tokens'], ['adv-a-timeout', 'timeout_s'], ['adv-a-blocks', 'max_consecutive_blocks']]) {
         const v = advisorIntField(id);
         if (v != null) override[key] = v;
