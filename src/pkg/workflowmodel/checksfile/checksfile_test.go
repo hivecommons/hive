@@ -205,3 +205,91 @@ func TestEmitRejectsBadInput(t *testing.T) {
 		t.Fatalf("read error: %v commits=%d", err, len(f.commits))
 	}
 }
+
+// failingRepo wraps fakeRepo and fails the named step.
+type failingRepo struct {
+	*fakeRepo
+	fail string
+}
+
+var errStep = errors.New("step failed")
+
+func (f *failingRepo) step(name string) error {
+	if f.fail == name {
+		return errStep
+	}
+	return nil
+}
+
+func (f *failingRepo) DefaultBranch(ctx context.Context, o, r string) (string, error) {
+	if err := f.step("default"); err != nil {
+		return "", err
+	}
+	return f.fakeRepo.DefaultBranch(ctx, o, r)
+}
+
+func (f *failingRepo) OpenPRForHead(ctx context.Context, repo, b string) (int, string, bool, error) {
+	if err := f.step("openpr"); err != nil {
+		return 0, "", false, err
+	}
+	return f.fakeRepo.OpenPRForHead(ctx, repo, b)
+}
+
+func (f *failingRepo) LatestCommitHash(ctx context.Context, o, r, b string) (string, error) {
+	if err := f.step("latest"); err != nil {
+		return "", err
+	}
+	return f.fakeRepo.LatestCommitHash(ctx, o, r, b)
+}
+
+func (f *failingRepo) ResetBranch(ctx context.Context, repo, b, base string) (string, error) {
+	if err := f.step("reset"); err != nil {
+		return "", err
+	}
+	return f.fakeRepo.ResetBranch(ctx, repo, b, base)
+}
+
+func (f *failingRepo) CommitFilesOnBranch(ctx context.Context, repo, b, exp, h, body string, files map[string]string) (string, error) {
+	if err := f.step("commit"); err != nil {
+		return "", err
+	}
+	return f.fakeRepo.CommitFilesOnBranch(ctx, repo, b, exp, h, body, files)
+}
+
+func (f *failingRepo) CreatePR(ctx context.Context, repo, head, base, title, body string) (hgithub.CreatePRResult, error) {
+	if err := f.step("createpr"); err != nil {
+		return hgithub.CreatePRResult{}, err
+	}
+	return f.fakeRepo.CreatePR(ctx, repo, head, base, title, body)
+}
+
+func TestEmitSurfacesClientErrors(t *testing.T) {
+	m := modelWithChecks(workflowmodel.Check{ID: "c", Name: "c"})
+	for _, step := range []string{"default", "openpr", "reset", "commit", "createpr"} {
+		f := &failingRepo{fakeRepo: newFakeRepo(), fail: step}
+		if _, err := Emit(context.Background(), f, "acme/app", "", m); !errors.Is(err, errStep) {
+			t.Errorf("%s: err = %v, want errStep", step, err)
+		}
+	}
+	// With the checks PR already open, the head lookup replaces the reset.
+	f := &failingRepo{fakeRepo: newFakeRepo(), fail: "latest"}
+	f.openPR = 7
+	if _, err := Emit(context.Background(), f, "acme/app", "", m); !errors.Is(err, errStep) {
+		t.Errorf("latest: err = %v, want errStep", err)
+	}
+}
+
+func TestRenderNilModelAndUnversionedKey(t *testing.T) {
+	if _, ok, err := Render(nil); ok || err != nil {
+		t.Fatalf("nil model: ok=%v err=%v", ok, err)
+	}
+	m := modelWithChecks(workflowmodel.Check{ID: "c", Name: "c"})
+	m.Spec.Meta.Version = " "
+	f := newFakeRepo()
+	if _, err := Emit(context.Background(), f, "acme/app", "", m); err != nil {
+		t.Fatal(err)
+	}
+	if len(f.createdPRs) != 1 || !strings.HasSuffix(f.createdPRs[0], "checks from acme-flow") {
+		t.Fatalf("PRs: %q", f.createdPRs)
+	}
+}
