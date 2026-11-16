@@ -30,6 +30,7 @@ func modelLabelProfile() *workflowmodel.Profile {
 		Rules: []workflowmodel.Rule{
 			{State: "done", When: []workflowmodel.Predicate{{Fact: "open", Op: workflowmodel.OpFalse}}},
 			{State: "working", When: []workflowmodel.Predicate{{Fact: "labels", Op: workflowmodel.OpHas, Value: "trigger/advance"}}},
+			{State: "initial", When: []workflowmodel.Predicate{{Fact: "open", Op: workflowmodel.OpTrue}}},
 		},
 	}
 }
