@@ -46,6 +46,9 @@ type Service struct {
 	Logger *slog.Logger
 	// Now is injectable for tests.
 	Now func() time.Time
+	// RFCPublishWait bounds how long a delegated RFC share may stay in
+	// progress; zero means DefaultRFCPublishWait.
+	RFCPublishWait time.Duration
 
 	mu      sync.RWMutex
 	cfg     config.InboxConfig
@@ -66,9 +69,11 @@ type Service struct {
 	transcripts *TranscriptStore
 	// intentRunners are the registered transcribe-then-share handlers.
 	intentRunners map[string]IntentRunner
-	txMu          sync.Mutex
-	txQMu         sync.Mutex
-	txQueue       []*txJob
+	// rfcFinder completes delegated RFC shares; see CheckRFCPublications.
+	rfcFinder RFCFinder
+	txMu      sync.Mutex
+	txQMu     sync.Mutex
+	txQueue   []*txJob
 	// NewTranscriber builds the provider for a run; nil uses
 	// DefaultTranscriber with the key from Getenv. Tests inject a fake.
 	NewTranscriber func(config.InboxTranscription) (transcribe.Transcriber, error)
@@ -459,6 +464,7 @@ func (s *Service) fail(key, dest string, err error, shareID string) {
 // old recordings. It is called after each connector sync.
 func (s *Service) Sweep(ctx context.Context) (routed int, err error) {
 	s.ResumeIntents(ctx)
+	s.CheckRFCPublications(ctx)
 	items, lerr := s.Items(ctx)
 	rules := s.Config().Rules
 	for _, it := range items {

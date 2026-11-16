@@ -76,7 +76,12 @@ see the issue linked from the changelog entry.
   agent's publish creates it, the dibs item, the Knowledge fact, or the spek
   session. A pill links to its target for owners and read-write users; read
   users see the same pills without links. Only the latest record per
-  destination shows; **+N** expands the full history. The records never hold
+  destination shows; **+N** expands the full history. A delegated RFC stays in progress until the hive finds
+  the issue: after each sync and every 10 minutes it searches the target
+  repository for an issue whose body carries the item's `Reference:` line
+  (the agent prompt asks for it) and then fills the URL and number. If none
+  appears within 6 hours the share fails with that reason and the Share menu
+  offers a retry. The records never hold
   item text or secrets and are stored with the item state. The list is the
   `share_history` array of each item in `GET /api/inbox`.
 - **State** per item per destination: `queued → running → filed | failed`

@@ -357,3 +357,21 @@ func (s *Store) History(key string) []*ShareRecord {
 	}
 	return nil
 }
+
+// PendingRFCKeys lists the items with an RFC share still in progress.
+func (s *Store) PendingRFCKeys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	var out []string
+	for k, e := range s.entries {
+		for _, r := range e.History {
+			if r.Destination == ShareDestRFC && r.Status == ShareInProgress {
+				out = append(out, k)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
