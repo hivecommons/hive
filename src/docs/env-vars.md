@@ -390,6 +390,9 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_TRANSCRIBE_URL` | No | none | Shared transcription service for Discord audio (passed as `QUORUM_TRANSCRIBE_URL`). Overrides `meetings.transcribe_url`. In-cluster: `http://vexa-transcription.meetings.svc.cluster.local:8000`. |
 | `HIVE_MEETINGS_TRANSCRIBE_TOKEN` | No | none | Transcription service token. Secret. Wins over the secret file. Hive passes it to Quorum as `QUORUM_TRANSCRIBE_TOKEN_FILE`; without it Discord audio is not transcribed. |
 | `HIVE_MEETINGS_TRANSCRIBE_TOKEN_FILE` | No | `/data/secrets/meetings_transcribe_token` | Keystore-sealed secret file holding the transcription service token. Overrides `meetings.transcribe_token_file`. |
+| `HIVE_MEETINGS_TTS_URL` | No | none | Text-to-speech service Quorum speaks Discord replies with (passed as `QUORUM_TTS_URL`). Overrides `meetings.tts_url`. In-cluster on hive-oke: `http://vexa-tts.meetings.svc.cluster.local:8880`. |
+| `HIVE_MEETINGS_TTS_TOKEN` | No | none | TTS service token. Secret. Wins over the secret file. Hive passes it to Quorum as `QUORUM_TTS_TOKEN_FILE`, with `QUORUM_TTS_VOICE` set to the persona's voice; without it Discord replies stay in chat. On hive-oke, copied by the operator from Secret `vexa-tts` in namespace `meetings`. |
+| `HIVE_MEETINGS_TTS_TOKEN_FILE` | No | `/data/secrets/meetings_tts_token` | Keystore-sealed secret file holding the TTS service token. Overrides `meetings.tts_token_file`. |
 | `HIVE_MEETINGS_DELIVERY` | No | `chat` | Default delivery for meeting output. Only `chat` is supported. |
 | `HIVE_MEETINGS_VOICE_ON_ADDRESS` | No | `true` | Lets hive speak when addressed by name in a meeting whose voice is enabled; otherwise it answers in chat. |
 | `HIVE_MEETINGS_BOT_NAME` | No | the persona's display name (`Betty Bee from the hive`), or `hive (notes)` with the persona off | Display name the meeting bot joins with. |
@@ -414,7 +417,7 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_PERSONA_ALIASES` | No | `betty,betty bee,hive` | Comma-separated names that address the persona at the start or end of a line. |
 | `HIVE_MEETINGS_PERSONA_PRONOUNS` | No | `she/her` | Pronouns used in the intro and self-description only. |
 | `HIVE_MEETINGS_PERSONA_LANGUAGE` | No | `en-US` | BCP-47 tag; replies use its language and regional conventions. |
-| `HIVE_MEETINGS_PERSONA_VOICE` | No | `af_heart` | TTS voice id for spoken replies (Kokoro; stored for spoken replies, not used yet). |
+| `HIVE_MEETINGS_PERSONA_VOICE` | No | `af_heart` | TTS voice id for spoken replies (a Kokoro voice id), passed to Quorum as `QUORUM_TTS_VOICE` and as `voice_id` on `meeting.join`. |
 | `HIVE_MEETINGS_PERSONA_VOICE_TYPE` | No | `female` | `female`, `male` or `bot`; descriptive only. |
 | `HIVE_MEETINGS_PERSONA_ACCENT` | No | `American` | Free text; descriptive only. |
 | `HIVE_MEETINGS_PERSONA_INTRO_TEMPLATE` | No | the preset's intro | Intro posted when someone asks the persona to introduce itself. Placeholders `{name}`, `{display_name}`, `{pronouns}`, `{leave}`, `{accent}`, `{voice_type}`, `{language}`. |

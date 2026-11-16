@@ -186,6 +186,9 @@ func TestRuntimeFilesAndEnv(t *testing.T) {
 		DiscordToken:    "discord",
 		TranscribeURL:   "http://whisper",
 		TranscribeToken: "transcribe-secret",
+		TTSURL:          "http://kokoro:8880",
+		TTSToken:        "tts-secret",
+		TTSVoice:        "af_heart",
 		RuntimeDir:      t.TempDir(),
 		Getenv:          func(k string) string { return env[k] },
 	})
@@ -206,12 +209,13 @@ func TestRuntimeFilesAndEnv(t *testing.T) {
 	for k, want := range map[string]string{
 		"PATH": "/bin", "HTTPS_PROXY": "http://proxy", "QUORUM_LISTEN": "127.0.0.1:8765",
 		"QUORUM_VEXA_URL": "https://vexa", "QUORUM_TRANSCRIBE_URL": "http://whisper", "QUORUM_CHAT_MAX_CHARS": "1500",
+		"QUORUM_TTS_URL": "http://kokoro:8880", "QUORUM_TTS_VOICE": "af_heart",
 	} {
 		if got[k] != want {
 			t.Errorf("%s = %q, want %q", k, got[k], want)
 		}
 	}
-	for envKey, want := range map[string]string{"QUORUM_TOKEN_FILE": s.Token(), "QUORUM_VEXA_API_KEY_FILE": "tenant", "QUORUM_DISCORD_TOKEN_FILE": "discord", "QUORUM_TRANSCRIBE_TOKEN_FILE": "transcribe-secret"} {
+	for envKey, want := range map[string]string{"QUORUM_TOKEN_FILE": s.Token(), "QUORUM_VEXA_API_KEY_FILE": "tenant", "QUORUM_DISCORD_TOKEN_FILE": "discord", "QUORUM_TRANSCRIBE_TOKEN_FILE": "transcribe-secret", "QUORUM_TTS_TOKEN_FILE": "tts-secret"} {
 		path := got[envKey]
 		fi, err := os.Stat(path)
 		if err != nil || fi.Mode().Perm() != secretFileMode {
@@ -226,7 +230,7 @@ func TestRuntimeFilesAndEnv(t *testing.T) {
 		}
 	}
 	for _, kv := range s.Env() {
-		if strings.Contains(kv, "transcribe-secret") {
+		if strings.Contains(kv, "transcribe-secret") || strings.Contains(kv, "tts-secret") {
 			t.Fatalf("the transcription token must reach the child only through its file, env has %q", kv)
 		}
 	}
@@ -252,7 +256,7 @@ func TestOptionalEnvOmitted(t *testing.T) {
 	}
 	defer s.Stop()
 	for _, kv := range s.Env() {
-		for _, k := range []string{"QUORUM_VEXA_URL=", "QUORUM_VEXA_API_KEY_FILE=", "QUORUM_DISCORD_TOKEN_FILE=", "QUORUM_TRANSCRIBE_URL=", "QUORUM_TRANSCRIBE_TOKEN_FILE="} {
+		for _, k := range []string{"QUORUM_VEXA_URL=", "QUORUM_VEXA_API_KEY_FILE=", "QUORUM_DISCORD_TOKEN_FILE=", "QUORUM_TRANSCRIBE_URL=", "QUORUM_TRANSCRIBE_TOKEN_FILE=", "QUORUM_TTS_URL=", "QUORUM_TTS_TOKEN_FILE=", "QUORUM_TTS_VOICE="} {
 			if strings.HasPrefix(kv, k) {
 				t.Errorf("unset option leaked as %s", kv)
 			}

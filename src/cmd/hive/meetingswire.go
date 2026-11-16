@@ -35,7 +35,7 @@ var newQuorumSupervisor = func(opts quorumproc.Options) (quorumSupervisor, error
 
 // meetingsQuorumOptions builds the Quorum child options from the meetings
 // config, resolving the Vexa tenant key, the optional Discord bot token and
-// the optional transcription service token from the keystore. A secret that cannot be read is logged and left unset:
+// the optional transcription and TTS service tokens from the keystore. A secret that cannot be read is logged and left unset:
 // Quorum then answers platform_unavailable for that platform instead of the
 // hive failing to boot.
 func meetingsQuorumOptions(ctx context.Context, m config.MeetingsConfig, logger *slog.Logger) quorumproc.Options {
@@ -51,6 +51,10 @@ func meetingsQuorumOptions(ctx context.Context, m config.MeetingsConfig, logger 
 	if err != nil && logger != nil {
 		logger.Warn("[meetings] transcription service token unreadable; Discord audio is not transcribed", "error", err)
 	}
+	ttsToken, err := m.TTSToken(ctx)
+	if err != nil && logger != nil {
+		logger.Warn("[meetings] TTS service token unreadable; Discord replies are not spoken", "error", err)
+	}
 	return quorumproc.Options{
 		Binary:          m.QuorumBinary(),
 		Listen:          m.QuorumListen(),
@@ -59,7 +63,11 @@ func meetingsQuorumOptions(ctx context.Context, m config.MeetingsConfig, logger 
 		DiscordToken:    discordToken,
 		TranscribeURL:   m.TranscribeURLOrEmpty(),
 		TranscribeToken: transcribeToken,
-		Logger:          logger,
+		TTSURL:          m.TTSURLOrEmpty(),
+		TTSToken:        ttsToken,
+		// Discord speaks in the persona's voice by default.
+		TTSVoice: m.Persona.Resolve().Voice,
+		Logger:   logger,
 	}
 }
 
@@ -123,6 +131,8 @@ func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.
 		BotName:      cfg.Meetings.BotNameOrDefault(),
 		ConsentText:  cfg.Meetings.ConsentTextOrDefault(),
 		LeavePhrases: cfg.Meetings.Persona.Resolve().LeavePhrases,
+		// meeting.join's voice_id: the persona's voice on every platform.
+		VoiceID:      cfg.Meetings.Persona.Resolve().Voice,
 		LobbyTimeout: time.Duration(cfg.Meetings.LobbyTimeoutSOrDefault()) * time.Second,
 		Logger:       logger,
 		// Vexa fixes speaking ability at join time, so with voice-on-address

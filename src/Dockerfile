@@ -528,8 +528,8 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # Bump note: see src/docs/cli-pins.md (quorum row); update QUORUM_VERSION and
 # QUORUM_SHA256 together from the release's quorum.mjs.sha256, and
 # QUORUM_DAVEY_VERSION from quorum's package-lock.json.
-ARG QUORUM_VERSION=v0.1.0
-ARG QUORUM_SHA256=917aee456e5c87a6b531f1c7c09040fa60d04a39609a1c2755cfdd20d63d7c95
+ARG QUORUM_VERSION=v0.2.0
+ARG QUORUM_SHA256=9233653115baffcd884c3181a0bf7714145ca858e84abb1d2411a4f255e75e03
 ARG QUORUM_DAVEY_VERSION=0.1.12
 RUN if [ -n "${QUORUM_VERSION}" ]; then \
       test -n "${QUORUM_SHA256}" || { echo "QUORUM_SHA256 is required with QUORUM_VERSION" >&2; exit 1; } && \
