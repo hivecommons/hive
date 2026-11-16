@@ -47,6 +47,8 @@ The reference is organized into the sections below. Existing links to this page 
 - [Shared-CI tracking issues (`shared_ci_issues`)](operator-reference/sweeps-and-operations.md#shared-ci-tracking-issues-shared_ci_issues)
 <a id="stale-red-base-refresh-stale_red_base_refresh"></a>
 - [Stale-red base refresh (`stale_red_base_refresh`)](operator-reference/sweeps-and-operations.md#stale-red-base-refresh-stale_red_base_refresh)
+<a id="missing-check-base-refresh-missing_check_base_refresh"></a>
+- [Missing-check base refresh (`missing_check_base_refresh`)](operator-reference/sweeps-and-operations.md#missing-check-base-refresh-missing_check_base_refresh)
 <a id="open-pr-dispatch-guard-and-duplicate-fix-sweep-scanner"></a>
 - [Open-PR dispatch guard and duplicate-fix sweep (`scanner`)](operator-reference/sweeps-and-operations.md#open-pr-dispatch-guard-and-duplicate-fix-sweep-scanner)
 <a id="what-hive-writes-to-github-and-when"></a>
