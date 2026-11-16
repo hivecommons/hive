@@ -71,6 +71,13 @@ type Item struct {
 	// machine-transcribed right now: one of the TranscribeBlocked* codes.
 	// Empty when transcribable, busy, or not applicable. Never carries a key.
 	TranscribeUnavailable string `json:"transcribe_unavailable,omitempty"`
+	// Origin says where an item someone added came from: "upload ·
+	// notes.md" for a dropped file, "link · example.org" for a URL.
+	Origin string `json:"origin,omitempty"`
+	// AddedBy is the dashboard user who added the item (uploads and links).
+	AddedBy string `json:"added_by,omitempty"`
+	// UploadKind is the detected type of an upload (markdown, json, ...).
+	UploadKind string `json:"upload_kind,omitempty"`
 }
 
 // Key returns the stable "source/id" key used by the state store.

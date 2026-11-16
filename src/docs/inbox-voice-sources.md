@@ -8,7 +8,7 @@ Microsoft Teams meeting recordings (`type: zoom`, `type: teams`, see
 [design/meeting-recordings.md](design/meeting-recordings.md)), Discord
 meetings (`type: discord`), Google Meet meetings (`type: google-meet`)
 Webex meetings (`type: webex`) and Slack huddle notes (`type:
-slack-huddles`), Fireflies.ai meetings (`type: fireflies`), Fathom meetings (`type: fathom`), Limitless Pendant lifelogs (`type: limitless`), Granola meeting notes (`type: granola`), Otter.ai conversations (`type: otter`) are its siblings, and later sources (file drop, webhook, …) add nothing to the UI.
+slack-huddles`), Fireflies.ai meetings (`type: fireflies`), Fathom meetings (`type: fathom`), Limitless Pendant lifelogs (`type: limitless`), Granola meeting notes (`type: granola`), Otter.ai conversations (`type: otter`) are its siblings. Files the owner drops onto the Inbox are items too (source `upload`, see [inbox-uploads.md](inbox-uploads.md)), and later sources (webhook, …) add nothing to the UI.
 
 Tracker RFC: *Voice recorders as first-class input sources (Inbox)* —
 see the issue linked from the changelog entry.

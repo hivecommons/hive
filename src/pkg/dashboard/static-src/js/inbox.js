@@ -4,7 +4,7 @@
     // dibs happens inside the hive via POST /api/inbox/route.
     const INBOX_POLL_MS = 60000;
     const INBOX_BUSY_POLL_MS = 5000;
-    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗' };
+    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗', upload: '📎' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
     // Summaries longer than this many characters start collapsed.
     const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
@@ -29,8 +29,18 @@
     // is re-read once for its outcome.
     const INBOX_TX_POLL_MS = 3000;
     let _inboxTxPollTimer = null;
+    // Drag-and-drop ingest state (see the end of this file): upload rows,
+    // the ＋ Add panel, the send queue and whether the last click was inside
+    // the Inbox (for paste).
+    let _inboxUploads = [];
+    let _inboxUploadSeq = 0;
+    let _inboxAddOpen = false;
+    let _inboxUploadQueue = Promise.resolve();
+    let _inboxPointerInside = false;
 
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
+    // Uploaded documents have no audio; uploaded audio/video does.
+    function inboxItemHasAudio(it) { return !it || it.source !== 'upload' || it.upload_kind === 'audio' || it.upload_kind === 'video'; }
     function inboxItemKey(it) { return it.source + '/' + it.id; }
     // Playback is a read of private audio: owners and read-write sessions.
     function inboxViewerCanPlay() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
@@ -117,6 +127,8 @@
       const c = _inboxContent[key];
       if (!c) return '<div class="inbox-transcript muted-xs">Loading transcript…</div>';
       if (c.error) return '<div class="inbox-transcript kc-error muted-xs">' + escapeHtml(c.error) + '</div>';
+      // A dropped document's text is the markdown the hive extracted.
+      if (it.source === 'upload' && !c.transcript) return '<div class="inbox-transcript"><div class="muted-xs"><strong>Extracted text</strong></div><pre class="inbox-transcript-text">' + escapeHtml(c.markdown || '') + '</pre></div>';
       let html = '<div class="inbox-transcript">';
       if (c.transcript && c.transcript_label) html += '<div class="muted-xs"><strong>' + escapeHtml(c.transcript_label) + '</strong></div>';
       if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
@@ -302,7 +314,11 @@
       // The backing Knowledge fact is a plain link in the metadata line, not
       // an action: it only opens the fact.
       const factLink = it.fact_slug ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
-      const meta = [escapeHtml(it.source), when ? 'recorded ' + when : '', dur, factLink].filter(Boolean).join(' · ');
+      // Files and links someone added show where they came from and who
+      // added them ("upload · notes.md · added 2h ago by ana").
+      const meta = it.source === 'upload'
+        ? [escapeHtml(it.origin || 'upload'), when ? 'added ' + when : '', it.added_by ? 'by ' + escapeHtml(it.added_by) : '', dur, factLink].filter(Boolean).join(' · ')
+        : [escapeHtml(it.source), when ? 'recorded ' + when : '', dur, factLink].filter(Boolean).join(' · ');
       const routes = it.routes || {};
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
@@ -314,8 +330,8 @@
       const owner = viewerIsOwner();
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
       let actions = '';
-      if (inboxViewerCanPlay()) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
-      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + ' Transcript</button>';
+      if (inboxViewerCanPlay() && inboxItemHasAudio(it)) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
+      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + (it.source === 'upload' && !inboxItemHasAudio(it) ? ' Text' : ' Transcript') + '</button>';
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
         (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
@@ -620,9 +636,11 @@
         ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenIntegrations">Connect sources</button></div>' +
         '<div class="kc-actions">' +
         '<label class="muted-xs inbox-toggle"><input type="checkbox" data-change-action="inboxToggleProcessed"' + (_inboxShowProcessed ? ' checked' : '') + '> show processed</label>' +
+        (inboxCanAdd() ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxToggleAdd" aria-expanded="' + (_inboxAddOpen ? 'true' : 'false') + '" aria-controls="inbox-add" title="Add files to the Inbox (or drop them anywhere on it, or paste with Ctrl/Cmd+V)">＋ Add</button>' : '') +
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
+      if (inboxCanAdd()) html += inboxAddPanelHtml() + inboxUploadsHtml();
       if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
       if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
       const shown = items.filter(it => _inboxShowProcessed || !it.processed);
@@ -997,3 +1015,161 @@
         '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="3" placeholder="http://localhost:8199/auth/callback?code=…  or  {&quot;access_token&quot;: …}"></textarea>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
     }
+
+    // ── Add files to the Inbox: drop anywhere on the section, ＋ Add, or
+    // paste with Ctrl/Cmd+V while the Inbox has focus. Owner and read-write
+    // only; read sessions see none of it. Each file is sent on its own
+    // request (POST /api/inbox/uploads) so its row can show progress and its
+    // own error; the hive sniffs the content and refuses anything outside the
+    // allowlist, these client checks only spare a pointless upload.
+    const INBOX_UPLOAD_LABELS = { queued: 'Waiting', uploading: 'Uploading', done: 'Added', error: 'Not added' };
+    function inboxUploadSettings() { return (((_inboxCache || {}).settings) || {}).uploads || {}; }
+    function inboxCanAdd() { return inboxViewerCanPlay() && !!inboxUploadSettings().enabled; }
+    function inboxFmtBytes(n) {
+      const b = Number(n) || 0;
+      if (b < 1024) return b + ' B';
+      if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+      return (b / 1048576).toFixed(1) + ' MB';
+    }
+    // inboxUploadPlan checks a drop against the limits before anything is
+    // sent: per file, too many files, too large, empty, or an extension the
+    // hive does not read. Files without an extension go to the hive, which
+    // decides from the content.
+    function inboxUploadPlan(files, limits) {
+      const maxFiles = Number(limits.max_files_per_drop) || 0;
+      const maxBytes = Number(limits.max_file_bytes) || 0;
+      const exts = Array.isArray(limits.extensions) ? limits.extensions : [];
+      return Array.from(files || []).map((f, i) => {
+        const name = (f && f.name) || 'pasted file';
+        const row = { name, size: Number(f && f.size) || 0, file: f, status: 'queued', progress: 0 };
+        const dot = name.lastIndexOf('.');
+        const ext = dot > 0 ? name.slice(dot).toLowerCase() : '';
+        if (maxFiles && i >= maxFiles) { row.status = 'error'; row.code = 'too_many_files'; row.error = 'Too many files in one drop: at most ' + maxFiles + ' at a time.'; }
+        else if (!row.size) { row.status = 'error'; row.code = 'empty'; row.error = 'The file is empty.'; }
+        else if (maxBytes && row.size > maxBytes) { row.status = 'error'; row.code = 'too_large'; row.error = 'Too large: ' + inboxFmtBytes(row.size) + ' (the limit is ' + inboxFmtBytes(maxBytes) + ').'; }
+        else if (ext && exts.length && exts.indexOf(ext) < 0) { row.status = 'error'; row.code = 'unsupported_type'; row.error = 'Unsupported type ' + ext + ': the Inbox reads ' + exts.join(' ') + '.'; }
+        return row;
+      });
+    }
+    function inboxUploadRowHtml(row) {
+      const pct = Math.max(0, Math.min(100, Math.round((Number(row.progress) || 0) * 100)));
+      const pill = row.status === 'done' ? 'ok' : (row.status === 'error' ? 'error' : 'syncing');
+      const label = (INBOX_UPLOAD_LABELS[row.status] || row.status) + (row.status === 'uploading' ? ' ' + pct + '%' : '');
+      let html = '<li class="inbox-upload" data-inbox-upload="' + escapeHtml(String(row.id)) + '" data-status="' + escapeHtml(row.status) + '">' +
+        '<span class="inbox-upload-name">' + escapeHtml(row.name) + '</span> <span class="muted-xs">' + escapeHtml(inboxFmtBytes(row.size)) + '</span> ' +
+        '<span class="kc-pill" data-status="' + pill + '">' + escapeHtml(label) + '</span>';
+      if (row.status === 'uploading' || row.status === 'queued') html += '<progress class="kc-progress-bar inbox-upload-bar" max="100" value="' + pct + '" aria-label="' + escapeHtml('Uploading ' + row.name) + '"></progress>';
+      if (row.status === 'done' && row.key) html += ' <a href="#" class="inbox-link" data-action="inboxFocusItem" data-prevent="1" data-arg0="' + escapeHtml(row.key) + '">show item</a>';
+      if (row.status === 'error' && row.error) html += ' <span class="kc-error muted-xs" role="alert">' + escapeHtml(row.error) + '</span>';
+      return html + '</li>';
+    }
+    function inboxUploadsHtml() {
+      if (!_inboxUploads.length) return '';
+      const finished = _inboxUploads.some(r => r.status === 'done' || r.status === 'error');
+      return '<div class="inbox-uploads"><div class="row-between"><span class="muted-xs">Added files</span>' +
+        (finished ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxClearUploads">Clear finished</button>' : '') +
+        '</div><ul class="inbox-upload-list" aria-label="Files being added">' + _inboxUploads.map(inboxUploadRowHtml).join('') + '</ul></div>';
+    }
+    function inboxAddPanelHtml() {
+      if (!_inboxAddOpen) return '';
+      const u = inboxUploadSettings();
+      const exts = Array.isArray(u.extensions) ? u.extensions : [];
+      const limit = (u.max_files_per_drop ? 'up to ' + u.max_files_per_drop + ' files' : 'several files') + (u.max_file_bytes ? ' of ' + inboxFmtBytes(u.max_file_bytes) + ' each' : '');
+      return '<div class="inbox-add" id="inbox-add" role="group" aria-label="Add files to the Inbox">' +
+        '<p class="muted-xs m-0">Drop files anywhere on the Inbox, paste them with Ctrl/Cmd+V, or choose them here: ' + escapeHtml(limit) + '. Supported: ' + escapeHtml(exts.join(' ')) + '. Files stay on this hive; their text reaches an LLM only when you share the item.</p>' +
+        '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxChooseFiles">Choose files…</button>' +
+        '<input type="file" multiple hidden class="inbox-file-input" id="inbox-file-input" accept="' + escapeHtml(exts.join(',')) + '" data-change-action="inboxPickFiles" data-arg-types="t" aria-label="Files to add to the Inbox"></div></div>';
+    }
+    function inboxToggleAdd() { _inboxAddOpen = !_inboxAddOpen; renderInbox(); if (_inboxAddOpen) { const b = document.querySelector('#inbox-add [data-action="inboxChooseFiles"]'); if (b && b.focus) b.focus(); } }
+    function inboxChooseFiles() { const el = document.getElementById('inbox-file-input'); if (el) el.click(); }
+    function inboxPickFiles(el) { const files = Array.from((el && el.files) || []); if (el) el.value = ''; inboxAddFiles(files); }
+    function inboxClearUploads() { _inboxUploads = _inboxUploads.filter(r => r.status !== 'done' && r.status !== 'error'); renderInbox(); }
+    function inboxFocusItem(key) { _inboxFocusKey = key; renderInbox(); }
+    function inboxAnnounce(msg) { const el = document.getElementById('inbox-upload-status'); if (el) el.textContent = msg; }
+    // inboxUploadRowUpdate redraws one row in place (progress events must
+    // not rebuild the whole Inbox); without the row it re-renders.
+    function inboxUploadRowUpdate(row) {
+      const el = document.querySelector('[data-inbox-upload="' + row.id + '"]');
+      if (el) el.outerHTML = inboxUploadRowHtml(row); else renderInbox();
+    }
+    // inboxAddFiles plans a drop, shows a row per file and sends the
+    // accepted ones one after another; the Inbox is re-read once they finish.
+    function inboxAddFiles(files) {
+      if (!inboxCanAdd()) return Promise.resolve([]);
+      const rows = inboxUploadPlan(files, inboxUploadSettings());
+      if (!rows.length) return Promise.resolve([]);
+      for (const r of rows) r.id = ++_inboxUploadSeq;
+      _inboxUploads = _inboxUploads.concat(rows);
+      renderInbox();
+      const send = rows.filter(r => r.status === 'queued');
+      const refused = rows.length - send.length;
+      inboxAnnounce('Adding ' + send.length + ' file' + (send.length === 1 ? '' : 's') + ' to the Inbox' + (refused ? '; ' + refused + ' not added' : ''));
+      _inboxUploadQueue = _inboxUploadQueue.then(async () => {
+        for (const r of send) await inboxUploadSend(r);
+        const ok = send.filter(r => r.status === 'done').length;
+        inboxAnnounce(ok + ' of ' + rows.length + ' file' + (rows.length === 1 ? '' : 's') + ' added to the Inbox');
+        if (ok) await fetchInbox();
+        return rows;
+      });
+      return _inboxUploadQueue;
+    }
+    function inboxNewXHR() { return new XMLHttpRequest(); }
+    function inboxUploadForm(row) { const fd = new FormData(); fd.append('file', row.file, row.name); return fd; }
+    // inboxUploadSend posts one file with upload progress; it always resolves.
+    function inboxUploadSend(row) {
+      return new Promise(resolve => {
+        const xhr = inboxNewXHR();
+        const finish = () => { inboxUploadRowUpdate(row); resolve(row); };
+        xhr.open('POST', '/api/inbox/uploads');
+        if (xhr.upload) xhr.upload.onprogress = e => { if (e && e.lengthComputable && e.total) { row.progress = e.loaded / e.total; inboxUploadRowUpdate(row); } };
+        xhr.onload = () => {
+          let data = {};
+          try { data = JSON.parse(xhr.responseText || '{}'); } catch (e) { data = {}; }
+          const res = (Array.isArray(data.results) ? data.results : [])[0];
+          if (xhr.status >= 200 && xhr.status < 300 && res && res.ok) {
+            row.status = 'done'; row.progress = 1; row.key = res.source + '/' + res.item_id; row.title = res.title || row.name;
+          } else {
+            row.status = 'error'; row.code = (res && res.code) || ''; row.error = (res && res.error) || data.error || ('HTTP ' + xhr.status);
+          }
+          finish();
+        };
+        xhr.onerror = () => { row.status = 'error'; row.error = 'The upload did not reach the hive (network error).'; finish(); };
+        row.status = 'uploading';
+        inboxUploadRowUpdate(row);
+        xhr.send(inboxUploadForm(row));
+      });
+    }
+    // Drop zone: the whole Inbox section. Only drags that carry files are
+    // taken; the overlay shows while one is over the section.
+    function inboxDragHasFiles(e) { const t = e && e.dataTransfer && e.dataTransfer.types; return !!t && Array.from(t).indexOf('Files') >= 0; }
+    function inboxInSection(node) { return !!(node && node.closest && node.closest('#inbox-section')); }
+    function inboxSetDragOver(on) { const sec = document.getElementById('inbox-section'); if (sec) sec.classList.toggle('inbox-dragover', !!on); }
+    function inboxOnDragOver(e) {
+      if (!inboxCanAdd() || !inboxDragHasFiles(e) || !inboxInSection(e.target)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      inboxSetDragOver(true);
+    }
+    function inboxOnDragLeave(e) { if (inboxInSection(e.target) && !inboxInSection(e.relatedTarget)) inboxSetDragOver(false); }
+    function inboxOnDrop(e) {
+      inboxSetDragOver(false);
+      if (!inboxCanAdd() || !inboxDragHasFiles(e) || !inboxInSection(e.target)) return;
+      e.preventDefault();
+      inboxAddFiles(Array.from((e.dataTransfer && e.dataTransfer.files) || []));
+    }
+    // Paste: files on the clipboard while the Inbox has focus (or was the
+    // last thing clicked) are added like a drop.
+    function inboxOnPaste(e) {
+      if (!inboxCanAdd()) return;
+      if (!(inboxInSection(e.target) || inboxInSection(document.activeElement) || _inboxPointerInside)) return;
+      const files = Array.from((e.clipboardData && e.clipboardData.files) || []);
+      if (!files.length) return;
+      e.preventDefault();
+      inboxAddFiles(files);
+    }
+    document.addEventListener('dragenter', inboxOnDragOver);
+    document.addEventListener('dragover', inboxOnDragOver);
+    document.addEventListener('dragleave', inboxOnDragLeave);
+    document.addEventListener('drop', inboxOnDrop);
+    document.addEventListener('paste', inboxOnPaste);
+    document.addEventListener('pointerdown', e => { _inboxPointerInside = inboxInSection(e.target); }, true);

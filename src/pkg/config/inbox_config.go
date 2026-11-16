@@ -33,6 +33,9 @@ type InboxConfig struct {
 	// Transcription is spoke-local machine transcription of recordings that
 	// arrive without text (off by default; see inbox_transcription.go).
 	Transcription InboxTranscription `yaml:"transcription,omitempty" json:"transcription,omitzero"`
+	// Uploads bounds files and links dropped onto the Inbox (see
+	// inbox_uploads.go).
+	Uploads InboxUploads `yaml:"uploads,omitempty" json:"uploads,omitzero"`
 }
 
 // InboxRule routes items whose source and title/tag match.
@@ -110,6 +113,9 @@ func ValidateInbox(c InboxConfig) error {
 		return fmt.Errorf("inbox.dibs.url %q: must start with http:// or https://", c.Dibs.URL)
 	}
 	if err := ValidateInboxTranscription(c.Transcription); err != nil {
+		return err
+	}
+	if err := ValidateInboxUploads(c.Uploads); err != nil {
 		return err
 	}
 	for i, r := range c.Rules {
