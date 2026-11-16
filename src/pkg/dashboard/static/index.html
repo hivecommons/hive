@@ -73374,7 +73374,7 @@ function burnAreaChart() {
       const card = writeSurfaceNode('div', 'border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--surface);max-width:640px');
       card.appendChild(writeSurfaceNode('div', 'font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-4)', 'Repo-sourced prompts and definitions'));
       card.appendChild(writeSurfaceNode('div', 'font-size:0.74rem;color:var(--muted);line-height:1.5;margin-bottom:var(--sp-4)',
-        'An agent can load its prompt (prompt_source) or whole definition (definition_source) from a GitHub repo. ' +
+        'An agent can load its kick prompt from a GitHub repo with prompt_source, or its whole definition with definition_source. ' +
         (d.trust_notice || '') + ' ' + (d.seed_only_note || '')));
       const repos = d.repos || [];
       if (!repos.length) {
