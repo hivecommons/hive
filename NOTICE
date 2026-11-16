@@ -6063,9 +6063,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  golang.org/x/image
-Version:  v0.47.0
+Version:  v0.48.0
 License:  BSD-3-Clause
-Source:   https://cs.opensource.google/go/x/image/+/v0.47.0:LICENSE
+Source:   https://cs.opensource.google/go/x/image/+/v0.48.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
@@ -6168,9 +6168,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  golang.org/x/sync/singleflight
-Version:  v0.24.0
+Version:  v0.25.0
 License:  BSD-3-Clause
-Source:   https://cs.opensource.google/go/x/sync/+/v0.24.0:LICENSE
+Source:   https://cs.opensource.google/go/x/sync/+/v0.25.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
@@ -6238,9 +6238,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  golang.org/x/text
-Version:  v0.43.0
+Version:  v0.44.0
 License:  BSD-3-Clause
-Source:   https://cs.opensource.google/go/x/text/+/v0.43.0:LICENSE
+Source:   https://cs.opensource.google/go/x/text/+/v0.44.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
