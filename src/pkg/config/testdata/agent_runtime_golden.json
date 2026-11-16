@@ -729,11 +729,7 @@
       "clarity_gate": {},
       "prior_art": {}
     },
-    "spektacular": {
-      "recheck": {
-        "discovery": {}
-      }
-    },
+    "spektacular": {},
     "external": {
       "flue": {
         "enabled": false
