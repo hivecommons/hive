@@ -1299,6 +1299,11 @@ type FrontendReferenceRepo struct {
 	// CredentialLogin is the GitHub login the writes appear under
 	// (hivecommons/hive#18197): the hive owner's, or a write_token_file's.
 	CredentialLogin string `json:"credential_login,omitempty"`
+	// CredentialIdentity says which identity that login is ("bot", "owner"
+	// or "token_file") and CredentialNote why, per
+	// project.remote_write_identity (hivecommons/hive#18516).
+	CredentialIdentity string `json:"credential_identity,omitempty"`
+	CredentialNote     string `json:"credential_note,omitempty"`
 }
 
 type FrontendRepo struct {
