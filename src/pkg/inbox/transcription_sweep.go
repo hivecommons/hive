@@ -32,7 +32,12 @@ const (
 func (s *Service) TranscribeSweep(ctx context.Context, opts TranscribeOptions) (queued int, err error) {
 	cfg := s.Config().Transcription
 	store := s.transcriptStore()
-	if store == nil || !cfg.Active() || cfg.EffectiveMode() != config.InboxTranscriptionModeAuto {
+	// Dashboard recordings are transcribed whatever the mode: recording one
+	// opts it in, once transcription is enabled with consent.
+	if store == nil || !cfg.Active() {
+		return 0, nil
+	}
+	if cfg.EffectiveMode() != config.InboxTranscriptionModeAuto && s.recordingSource() == nil {
 		return 0, nil
 	}
 	items, err := s.Items(ctx)
@@ -45,7 +50,8 @@ func (s *Service) TranscribeSweep(ctx context.Context, opts TranscribeOptions) (
 		if itemsLeft <= 0 {
 			break
 		}
-		if seen[it.Key()] || !it.Transcribable || !(cfg.AutoSource(it.Source) || cfg.AutoSource(it.Connector)) || !autoDue(it.Transcription, now) {
+		optedIn := it.Source == RecordingType || cfg.AutoSource(it.Source) || cfg.AutoSource(it.Connector)
+		if seen[it.Key()] || !it.Transcribable || !optedIn || !autoDue(it.Transcription, now) {
 			continue
 		}
 		seen[it.Key()] = true

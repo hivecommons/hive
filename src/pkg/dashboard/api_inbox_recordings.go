@@ -76,6 +76,10 @@ func (s *Server) inboxRecordingOptions(r *http.Request) inbox.RecordingOptions {
 		if s.audit != nil {
 			s.audit.Log(a.Actor, a.Action, auditDetail(a.Fields...), "")
 		}
+	}, TranscribeAudit: func(a inbox.TranscribeAudit) {
+		if s.audit != nil {
+			s.audit.Log(a.Actor, "inbox_transcribe", auditDetail(a.Fields()...), "")
+		}
 	}}
 }
 

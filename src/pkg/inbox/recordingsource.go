@@ -27,22 +27,6 @@ const (
 	RecordingSweepActor = "inbox-recording-sweep"
 )
 
-// LocalAudio is an audio file on this hive's own disk.
-type LocalAudio struct {
-	File    *os.File
-	Name    string
-	MIME    string
-	Size    int64
-	ModTime time.Time
-}
-
-// AudioOpener is optionally implemented by sources whose audio lives on this
-// hive: playback serves the file directly, and nothing makes an HTTP call to
-// the hive itself.
-type AudioOpener interface {
-	OpenAudio(ctx context.Context, it Item) (LocalAudio, error)
-}
-
 // RecordingSource lists the recordings made in this hive's dashboard. It is
 // a builtin source (listed whatever inbox.sources says). Each finalized
 // recording has a Knowledge fact (personal layer) that starts pending and
@@ -81,26 +65,31 @@ func (r *RecordingSource) List(ctx context.Context) ([]Item, error) {
 		if m.State != RecordingFinalized {
 			continue
 		}
-		it := Item{
-			Source: RecordingType, Connector: RecordingConnector, ID: m.ID, Title: m.Title,
-			RecordedAt: m.CreatedAt, DurationMS: m.DurationMS, Tags: []string{"recording"},
-			RecordedBy: m.RecordedBy, AudioExpired: m.AudioExpired(), AudioRetentionDays: days,
-			Pending: true, FactState: connector.FactContentPending,
-		}
-		if m.IncludesTabAudio {
-			it.Tags = append(it.Tags, "tab-audio")
-		}
-		path := r.factPath(m.ID)
-		if data, err := os.ReadFile(path); err == nil {
-			fm, body := splitFrontMatter(string(data))
-			fact := itemFromFact(fm, body, RecordingLayer, path)
-			it.FactSlug, it.FactPath, it.Layer, it.FactState = fact.FactSlug, fact.FactPath, fact.Layer, fact.FactState
-			it.Summary, it.HasTranscript, it.Pending, it.Excerpt = fact.Summary, fact.HasTranscript, fact.Pending, fact.Excerpt
-		}
-		out = append(out, it)
+		out = append(out, r.item(m, days))
 	}
 	sortItems(out)
 	return out, nil
+}
+
+// item is the Inbox item of one finalized recording, with its fact.
+func (r *RecordingSource) item(m RecordingMeta, retentionDays int) Item {
+	it := Item{
+		Source: RecordingType, Connector: RecordingConnector, ID: m.ID, Title: m.Title,
+		RecordedAt: m.CreatedAt, DurationMS: m.DurationMS, Tags: []string{"recording"},
+		RecordedBy: m.RecordedBy, AudioExpired: m.AudioExpired(), AudioRetentionDays: retentionDays,
+		Pending: true, FactState: connector.FactContentPending,
+	}
+	if m.IncludesTabAudio {
+		it.Tags = append(it.Tags, "tab-audio")
+	}
+	path := r.factPath(m.ID)
+	if data, err := os.ReadFile(path); err == nil {
+		fm, body := splitFrontMatter(string(data))
+		fact := itemFromFact(fm, body, RecordingLayer, path)
+		it.FactSlug, it.FactPath, it.Layer, it.FactState = fact.FactSlug, fact.FactPath, fact.Layer, fact.FactState
+		it.Summary, it.HasTranscript, it.Pending, it.Excerpt = fact.Summary, fact.HasTranscript, fact.Pending, fact.Excerpt
+	}
+	return it
 }
 
 // Fetch implements Source from the recording's fact.
@@ -228,6 +217,9 @@ func (a RecordingAudit) Detail() string {
 type RecordingOptions struct {
 	Actor string
 	Audit func(RecordingAudit)
+	// TranscribeAudit receives the inbox_transcribe entry of the automatic
+	// transcription a finished recording starts.
+	TranscribeAudit func(TranscribeAudit)
 }
 
 func (o RecordingOptions) audit(action string, fields ...string) {
@@ -328,6 +320,33 @@ func (s *Service) recordingFinalized(src *RecordingSource, m RecordingMeta, opts
 	}
 	opts.audit("inbox_recording_finalize", "recording", m.ID, "chunks", strconv.Itoa(m.Chunks), "bytes", strconv.FormatInt(m.Bytes, 10),
 		"duration_ms", strconv.FormatInt(m.DurationMS, 10), "auto", strconv.FormatBool(m.AutoFinalized))
+	s.autoTranscribeRecording(src, m, opts)
+}
+
+// autoTranscribeRecording queues the transcription of a finished recording
+// with the hive's provider (auto: whisper first). Recording does not stand in
+// for the hive-wide transcription consent: nothing runs until
+// inbox.transcription is enabled with consent_acknowledged, and then every
+// recording counts as opted in whatever inbox.transcription.mode says (the
+// transcription sweep picks up recordings finished while it was off).
+func (s *Service) autoTranscribeRecording(src *RecordingSource, m RecordingMeta, opts RecordingOptions) {
+	if !s.Config().Transcription.Active() || m.AudioExpired() {
+		return
+	}
+	it := src.item(m, s.Config().Recording.EffectiveRetentionDays())
+	if !it.Pending {
+		return
+	}
+	actor := opts.Actor
+	if actor == "" {
+		actor = AutoTranscribeActor
+	}
+	st, err := s.Transcribe(context.Background(), it, TranscribeOptions{Actor: actor, Audit: opts.TranscribeAudit})
+	if err != nil {
+		s.Logger.Warn("inbox: auto-transcribe recording", "recording", m.ID, "error", err)
+		return
+	}
+	s.Logger.Info("inbox: recording queued for transcription", "recording", m.ID, "status", st.Status)
 }
 
 // AbortRecording discards an in-progress recording.

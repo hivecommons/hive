@@ -412,7 +412,7 @@ func (s *Service) runTranscription(it Item, cfg config.InboxTranscription, rec T
 		}
 	case errors.Is(err, transcribe.ErrTooLarge):
 		rec.Status, rec.Reason = TranscriptionSkipped, fmt.Sprintf("%s: the audio is larger than %d MB (inbox.transcription.max_bytes)", SkipTooLarge, cfg.EffectiveMaxBytes()/bytesPerMB)
-	case errors.Is(err, ErrNoAudio), errors.Is(err, connector.ErrPlaudNoAudio):
+	case errors.Is(err, ErrNoAudio), errors.Is(err, connector.ErrPlaudNoAudio), errors.Is(err, ErrRecordingExpired):
 		rec.Status, rec.Reason = TranscriptionSkipped, SkipUnsupported+": "+err.Error()
 	default:
 		rec.Status, rec.Reason = TranscriptionFailed, err.Error()
@@ -461,6 +461,16 @@ func (s *Service) transcribeItem(ctx context.Context, it Item, cfg config.InboxT
 	tr, err := s.transcriber(cfg)
 	if err != nil {
 		return transcribe.Result{}, err
+	}
+	if op, ok := s.source(it.Source).(AudioOpener); ok {
+		// Audio kept on this hive (recordings, uploads) is read from disk:
+		// the spoke never makes an HTTP call to itself.
+		audio, cleanup, err := s.localTranscribeAudio(ctx, it, op, cfg, rec, job)
+		if err != nil {
+			return transcribe.Result{}, err
+		}
+		defer cleanup()
+		return tr.Transcribe(ctx, audio)
 	}
 	link, err := s.AudioLink(ctx, it)
 	if err != nil {

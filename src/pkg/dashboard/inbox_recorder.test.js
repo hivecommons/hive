@@ -142,7 +142,7 @@ test('consent text: responsibility, retention, transcription off hint, tab parti
   const tab = lib.inboxRecConsentText({ tab: true, retentionDays: 1, transcribes: true }).join(' ');
   assert.match(tab, /remote participants of that meeting too: they must have been told/);
   assert.match(tab, /1 day and/);
-  assert.match(tab, /can be transcribed on this hive/);
+  assert.match(tab, /transcribes the recording automatically/);
 });
 
 test('upload queue resumes after a network failure and keeps order', async () => {
