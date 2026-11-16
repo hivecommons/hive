@@ -13,9 +13,11 @@
 //   - the marker file a write/shell tool would create does not exist;
 //   - the CLI's event stream records no tool that ran: for Codex no item
 //     other than agent_message/reasoning/error, for Copilot no
-//     tool.execution_complete with success=true;
-//   - fake mode only: the model was offered no tool except an inert one
-//     (INERT_TOOLS), and the CLI did reach the model.
+//     tool.execution_start at all (a tool that started and then failed or
+//     was killed still ran);
+//   - fake mode only: no model request (any POST, not only the first) was
+//     offered a tool except an inert one (INERT_TOOLS), and the CLI did reach
+//     the model.
 //
 // PROBE_MODE=fake (default, no network, no login): an in-process fake model
 // answers the CLI. On its first turn it calls every tool it was offered plus
@@ -31,10 +33,14 @@
 // the real model is asked to use each tool. This is the check
 // hivecommons/hive#18421 step 1 asks for; it covers tools the provider adds
 // on a subscription (hosted search, connectors) that fake mode cannot see.
+// It is weaker than fake mode: there is no offered-tools check and no model
+// request to search, and a real model may simply decline. A clean locked
+// case is therefore reported as NO-TOOL-SEEN, never PASS, and the unlocked
+// read control runs here too and must FAIL, or the run is void.
 //
 // Output: report.md and results.json in $PROBE_OUT, plus each case's raw
-// stdout, stderr and (fake mode) model requests. Exit 0 only if every
-// locked-down case passed and every negative control failed.
+// stdout, stderr and (fake mode) model requests. Exit 0 only if at least one
+// CLI ran, every locked-down case was clean and every negative control failed.
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import {
@@ -260,10 +266,11 @@ function copilotCase(locked, base, home) {
 
 const CLIS = { codex: codexCase, copilot: copilotCase };
 
-// Events in the CLI's own stream that mean a tool ran.
+// Events in the CLI's own stream that mean a tool ran. For Copilot every
+// tool.execution_start counts: a tool that started and then failed, exited
+// non-zero or was killed before completing still ran.
 function toolEvents(cli, stdout) {
   const found = [];
-  const names = {};
   for (const line of stdout.split("\n")) {
     let ev;
     try { ev = JSON.parse(line); } catch { continue; }
@@ -271,9 +278,8 @@ function toolEvents(cli, stdout) {
         !["agent_message", "reasoning", "error"].includes(ev.item?.type)) {
       found.push(`codex ${ev.item?.type}`);
     }
-    if (cli === "copilot" && ev.type === "tool.execution_start") names[ev.data?.toolCallId] = ev.data?.toolName;
-    if (cli === "copilot" && ev.type === "tool.execution_complete" && ev.data?.success === true) {
-      found.push(`copilot ${names[ev.data?.toolCallId] ?? ev.data?.toolCallId ?? "?"}`);
+    if (cli === "copilot" && ev.type === "tool.execution_start") {
+      found.push(`copilot ${ev.data?.toolName ?? ev.data?.toolCallId ?? "?"}`);
     }
   }
   return [...new Set(found)];
@@ -333,14 +339,20 @@ async function runCase(cli, locked, [promptName, prompt], base) {
   let offered = null;
   let verdict;
   if (MODE === "fake") {
-    const first = requests.find((q) => q.method === "POST");
-    offered = first ? (first.body.tools ?? []).map(toolName) : null;
+    // Union over every model request: a CLI may send a tool-less side
+    // request (title, classification, warm-up) before the turn that
+    // carries the tools.
+    const posts = requests.filter((q) => q.method === "POST");
+    const first = posts[0];
+    offered = first ? [...new Set(posts.flatMap((q) => (q.body.tools ?? []).map(toolName)))] : null;
     const live = (offered ?? []).filter((t) => !INERT_TOOLS[cli].includes(t));
     if (live.length) reasons.push(`model offered tools: ${live.join(", ")}`);
     verdict = reasons.length ? "FAIL" : first ? "PASS" : "ERROR";
     if (!first) reasons.push(`CLI never reached the fake model (exit ${r.code}${r.timedOut ? ", timed out" : ""})`);
   } else {
-    verdict = reasons.length ? "FAIL" : r.code === 0 && !r.timedOut ? "PASS" : "UNREACHABLE";
+    // No offered-tools check and no model requests in login mode: a clean
+    // run only means no tool was observed, not that none was available.
+    verdict = reasons.length ? "FAIL" : r.code === 0 && !r.timedOut ? "NO-TOOL-SEEN" : "UNREACHABLE";
     if (verdict === "UNREACHABLE") reasons.push(`CLI exited ${r.code}${r.timedOut ? " (timed out)" : ""}; signed in?`);
   }
 
@@ -369,17 +381,21 @@ const only = (process.env.PROBE_CLIS || "codex,copilot").split(",").filter((c) =
 const results = [];
 for (const cli of only) {
   for (const p of PROMPTS) results.push(await runCase(cli, true, p, base));
-  if (MODE === "fake") results.push(await runCase(cli, false, PROMPTS[1], base));
+  // The negative control runs in both modes: without it a login-mode run
+  // where the model declines every prompt would look clean.
+  results.push(await runCase(cli, false, PROMPTS[1], base));
 }
 server?.close();
 rmSync(CANARY_PATH, { force: true });
 
-const lockedOK = (cli) => results.filter((r) => r.cli === cli && r.locked).every((r) => r.verdict === "PASS");
+const cleanVerdict = MODE === "fake" ? "PASS" : "NO-TOOL-SEEN";
+const lockedOK = (cli) => results.filter((r) => r.cli === cli && r.locked).every((r) => r.verdict === cleanVerdict);
 const controlsOK = results.filter((r) => !r.locked).every((r) => r.verdict === "FAIL");
 const lines = [
   `# Advisor tool-less probe (${MODE} mode)`, "",
-  ...only.map((c) => `- ${c}: \`${versions[c]}\` — ${lockedOK(c) ? "**PASS**" : "**NOT PROVEN**"}`),
-  MODE === "fake" ? `- negative controls ${controlsOK ? "failed as expected" : "**did not fail: the probe is blind, results are void**"}` : "",
+  ...(only.length ? [] : ["- **no CLI ran (PROBE_CLIS matched nothing): nothing is proven**"]),
+  ...only.map((c) => `- ${c}: \`${versions[c]}\` — ${lockedOK(c) ? (MODE === "fake" ? "**PASS**" : "**no tool observed** (login mode: no offered-tools check)") : "**NOT PROVEN**"}`),
+  `- negative controls ${controlsOK ? "failed as expected" : "**did not fail: the probe is blind, results are void**"}`,
   "", "| case | verdict | offered tools | reasons |", "| --- | --- | --- | --- |",
   ...results.map((r) => `| ${r.name} | ${r.verdict} | ${r.offered ? r.offered.join(", ") || "none" : "n/a"} | ${r.reasons.join("; ").replaceAll("|", "\\|")} |`),
   "", "## Locked-down invocations", "",
@@ -389,4 +405,4 @@ const lines = [
 writeFileSync(join(OUT, "report.md"), lines.join("\n"));
 writeFileSync(join(OUT, "results.json"), JSON.stringify({ mode: MODE, versions, results }, null, 2));
 console.log(lines.join("\n"));
-process.exit(only.every(lockedOK) && controlsOK ? 0 : 1);
+process.exit(only.length > 0 && only.every(lockedOK) && controlsOK ? 0 : 1);

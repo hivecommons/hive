@@ -22,8 +22,9 @@
 # COPILOT_VERSION (override the pins), PROBE_CODEX_MODEL /
 # PROBE_COPILOT_MODEL (login mode model).
 #
-# Exit 0 only if every locked-down case passed (and, in fake mode, every
-# negative control failed). The report is printed and kept in PROBE_OUT.
+# Exit 0 only if every locked-down case was clean (PASS in fake mode,
+# NO-TOOL-SEEN in login mode) and every negative control failed, in both
+# modes. The report is printed and kept in PROBE_OUT.
 set -euo pipefail
 
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
