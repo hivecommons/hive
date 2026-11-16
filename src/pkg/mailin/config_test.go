@@ -172,19 +172,14 @@ func TestRunEndToEnd(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 
-	c, err := smtp.Dial(cfg.Listen)
+	// DialStartTLS fails unless the server offers STARTTLS.
+	c, err := smtp.DialStartTLS(cfg.Listen, &tls.Config{InsecureSkipVerify: true}) //nolint:gosec // self-signed test certificate
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer c.Close()
-	if err := c.Hello("client.example.com"); err != nil {
-		t.Fatal(err)
-	}
-	if ok, _ := c.Extension("STARTTLS"); !ok {
-		t.Fatal("STARTTLS not offered with a certificate")
-	}
-	if err := c.StartTLS(&tls.Config{InsecureSkipVerify: true}); err != nil { //nolint:gosec // self-signed test certificate
-		t.Fatal(err)
+	if _, ok := c.TLSConnectionState(); !ok {
+		t.Fatal("connection is not encrypted after STARTTLS")
 	}
 	msg := buildMail("ada@example.com", "notes", part{contentType: "text/markdown", disposition: "attachment; filename=n.md", body: mdData})
 	if err := send(t, c, "bounce@example.com", []string{"hive@" + testHost}, msg); err != nil {
