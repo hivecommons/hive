@@ -59,22 +59,16 @@ func (p *PromptSourceConfig) IsSet() bool {
 // user-writable dashboard overlay can neither widen the allowlist nor point an
 // agent at an arbitrary repo the App happens to be installed on.
 type DefinitionSourceConfig struct {
-	// Type selects the source kind. Only "github" is currently supported; an
-	// empty type defaults to "github" when a repo is set.
+	// Type selects the source kind; only "github" (the default) is supported.
 	Type  string `yaml:"type,omitempty" json:"type,omitempty"`
 	Owner string `yaml:"owner,omitempty" json:"owner,omitempty"`
 	Repo  string `yaml:"repo,omitempty" json:"repo,omitempty"`
 	Path  string `yaml:"path,omitempty" json:"path,omitempty"`
 	Ref   string `yaml:"ref,omitempty" json:"ref,omitempty"`
-	// URL is the human-facing source URL the operator pasted in the import UI
-	// (e.g. the github.com blob URL). Informational only — Owner/Repo/Path/Ref
-	// are authoritative for fetching. Kept so the UI can round-trip it.
+	// URL is the import UI's pasted source URL, kept only so the UI can
+	// round-trip it; Owner/Repo/Path/Ref are authoritative for fetching.
 	URL string `yaml:"url,omitempty" json:"url,omitempty"`
-	// Discovered marks a source the hive found under a managed repo's
-	// .hive/agents/ and an owner approved (hivecommons/hive#18491). For such an
-	// agent the live re-apply keeps backend, model, mode and tools exactly as
-	// the owner set them: a repo file can describe the agent, but it cannot
-	// pick what runs it or what it may do.
+	// Discovered: owner-approved from a repo's .hive/agents/ (#18491); owner keeps backend/model/mode/tools.
 	Discovered bool `yaml:"discovered,omitempty" json:"discovered,omitempty"`
 }
 
