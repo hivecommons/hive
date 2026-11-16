@@ -118,6 +118,8 @@ func TestWhisperEndToEndRun(t *testing.T) {
 	e.svc.NewTranscriber = nil
 	e.svc.Getenv = func(string) string { return "" }
 	e.svc.Whisper = fakeWhisperRuntime(t, true, false)
+	// Each clock read moves a second, so the run has a measurable duration.
+	e.svc.Now = func() time.Time { e.now = e.now.Add(time.Second); return e.now }
 	if _, err := e.svc.Transcribe(context.Background(), e.item(t), e.opts()); err != nil {
 		t.Fatal(err)
 	}

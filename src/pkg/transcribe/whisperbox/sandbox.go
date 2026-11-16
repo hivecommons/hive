@@ -51,8 +51,11 @@ const (
 
 // Options configure one sandbox run.
 type Options struct {
-	// ModelPath is the ggml model; "" reads it from file descriptor 3.
+	// ModelPath is the ggml model; "" reads it from descriptor ModelFD.
 	ModelPath string
+	// ModelFD is the descriptor the model arrives on (0 means 3, where the
+	// hive passes it).
+	ModelFD int
 	// EngineDir holds whisper-cli and ffmpeg.
 	EngineDir string
 	// Threads for whisper-cli (>= 1).
@@ -145,9 +148,10 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 	err = o.engine(decodeCtx, prefix, nil, nil, stderr, "ffmpeg",
 		"-nostdin", "-hide_banner", "-loglevel", "error", "-i", input,
 		"-vn", "-sn", "-dn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-f", "wav", wav)
+	decodeTimedOut := decodeCtx.Err() != nil
 	decodeCancel()
 	if err != nil {
-		return stageError(ctx, decodeCtx, ExitDecode, "decode", err)
+		return stageError(ctx.Err() != nil || decodeTimedOut, ExitDecode, "decode", err)
 	}
 	_ = os.Remove(input)
 	info, err := os.Stat(wav)
@@ -174,7 +178,7 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 	outW.flush()
 	errW.flush()
 	if err != nil {
-		return stageError(ctx, stageCtx, ExitTranscribe, "transcribe", err)
+		return stageError(ctx.Err() != nil || stageCtx.Err() != nil, ExitTranscribe, "transcribe", err)
 	}
 	emit(keyPhase, PhaseFinalizing)
 	f, err := os.Open(out + ".json")
@@ -189,8 +193,9 @@ func Run(ctx context.Context, o Options, stdin io.Reader, stdout, stderr io.Writ
 }
 
 // stageError maps an engine failure: a deadline is a timeout, else code.
-func stageError(whole, stage context.Context, code int, what string, err error) error {
-	if whole.Err() != nil || stage.Err() != nil {
+// timedOut must be read before the stage's context is cancelled.
+func stageError(timedOut bool, code int, what string, err error) error {
+	if timedOut {
 		return fail(ExitTimeout, "%s timed out", what)
 	}
 	return fail(code, "%s failed: %v", what, err)
@@ -205,13 +210,19 @@ func (o Options) model() (string, *os.File, error) {
 		}
 		return o.ModelPath, nil, nil
 	}
-	f := os.NewFile(modelFD, "model")
+	fd := o.ModelFD
+	if fd <= 0 {
+		fd = modelFD
+	}
+	f := os.NewFile(uintptr(fd), "model")
 	if f == nil {
-		return "", nil, fail(ExitSetup, "no model on descriptor %d", modelFD)
+		return "", nil, fail(ExitSetup, "no model on descriptor %d", fd)
 	}
-	if _, err := f.Stat(); err != nil {
-		return "", nil, fail(ExitSetup, "model descriptor: %v", err)
+	if info, err := f.Stat(); err != nil || !info.Mode().IsRegular() {
+		_ = f.Close()
+		return "", nil, fail(ExitSetup, "descriptor %d is not a model file", fd)
 	}
+	// whisper-cli receives the descriptor as its own fd 3 (ExtraFiles).
 	return "/dev/fd/" + strconv.Itoa(modelFD), f, nil
 }
 

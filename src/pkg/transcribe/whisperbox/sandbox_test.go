@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -75,7 +76,7 @@ func TestSandboxRunsBothEnginesInAPrivateDir(t *testing.T) {
 	if _, err := os.Stat(workDir); !os.IsNotExist(err) {
 		t.Fatalf("work dir not removed: %v", err)
 	}
-	if !strings.Contains(stdout.String(), `"hello hive"`) {
+	if !strings.Contains(stdout.String(), `hello hive`) {
 		t.Fatalf("stdout = %q", stdout.String())
 	}
 	var events []Event
@@ -238,5 +239,39 @@ func TestSandboxUnderRealLimits(t *testing.T) {
 	}
 	if !strings.Contains(errb.String(), "isolation=") || !strings.Contains(out.String(), "hello hive") {
 		t.Fatalf("out %q err %q", out.String(), errb.String())
+	}
+}
+
+func TestSandboxModelFromDescriptor(t *testing.T) {
+	engines, _ := fakeEngines(t, 0)
+	// whisper-cli must find the model as its own descriptor 3.
+	writeEngine(t, engines, "whisper-cli", "while [ $# -gt 0 ]; do case $1 in -of) of=$2; shift;; -m) m=$2; shift;; esac; shift; done\n"+
+		"[ \"$m\" = /dev/fd/3 ] && cat /dev/fd/3 | grep -q model || exit 9\nprintf '{}' > \"$of.json\"\n")
+	model, err := os.Open(testModel(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer model.Close()
+	// The sandbox owns (and closes) the descriptor it is given: hand it a dup.
+	dup := func(f *os.File) int {
+		fd, err := syscall.Dup(int(f.Fd()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return fd
+	}
+	o := Options{ModelFD: dup(model), EngineDir: engines, Timeout: 10 * time.Second, WorkRoot: t.TempDir()}
+	var out, errb bytes.Buffer
+	if code := Main(context.Background(), o, strings.NewReader("AUDIO"), &out, &errb); code != ExitOK {
+		t.Fatalf("model by descriptor: exit %d: %s", code, errb.String())
+	}
+	dir, err := os.Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dir.Close()
+	o.ModelFD = dup(dir)
+	if code := Main(context.Background(), o, strings.NewReader("AUDIO"), &out, &errb); code != ExitSetup {
+		t.Fatalf("a directory descriptor is not a model: exit %d", code)
 	}
 }

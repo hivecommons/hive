@@ -16,6 +16,9 @@ func TestVersionAndUsage(t *testing.T) {
 	if code := run(context.Background(), []string{"-version"}, nil, &out, &errb); code != 0 || strings.TrimSpace(out.String()) != version {
 		t.Fatalf("version = %d %q", code, out.String())
 	}
+	if code := runMain([]string{"-version"}); code != 0 {
+		t.Fatalf("runMain version = %d", code)
+	}
 	if code := run(context.Background(), []string{"-bogus"}, nil, &out, &errb); code != whisperbox.ExitUsage {
 		t.Fatalf("bad flag = %d", code)
 	}

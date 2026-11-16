@@ -25,11 +25,13 @@ const version = "hive-whisper 1"
 // defaultTimeout applies when the hive passes no -timeout.
 const defaultTimeout = time.Hour
 
-func main() {
+func main() { os.Exit(runMain(os.Args[1:])) }
+
+// runMain runs with the process's stdio, stopping on SIGTERM/SIGINT/SIGHUP.
+func runMain(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGTERM, syscall.SIGINT, syscall.SIGHUP)
-	code := run(ctx, os.Args[1:], os.Stdin, os.Stdout, os.Stderr)
-	stop()
-	os.Exit(code)
+	defer stop()
+	return run(ctx, args, os.Stdin, os.Stdout, os.Stderr)
 }
 
 // run parses args and executes one sandboxed transcription.

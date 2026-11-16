@@ -68,7 +68,7 @@ const sampleWhisperJSON = `{"systeminfo":"CPU","result":{"language":"en"},"trans
  {"offsets":{"from":4000,"to":6000},"text":" [BLANK_AUDIO]"},
  {"offsets":{"from":65000,"to":70500},"text":" Second thought."}]}`
 
-func audioOf(data string, progress func(Progress)) Audio {
+func whisperAudio(data string, progress func(Progress)) Audio {
 	return Audio{
 		Open:     func(context.Context) (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(data)), nil },
 		Duration: 20 * time.Second, Lang: "en-GB", Progress: progress,
@@ -81,7 +81,7 @@ func TestWhisperTranscribesThroughTheSandbox(t *testing.T) {
 	w := &Whisper{Models: testModelStore(t, true), Model: "test", Threads: 2, Sandbox: sandbox, RunAs: WhisperRunAsSelf}
 	var mu sync.Mutex
 	var got []Progress
-	res, err := w.Transcribe(context.Background(), audioOf("AUDIO", func(p Progress) {
+	res, err := w.Transcribe(context.Background(), whisperAudio("AUDIO", func(p Progress) {
 		mu.Lock()
 		got = append(got, p)
 		mu.Unlock()
@@ -117,21 +117,21 @@ func TestWhisperTranscribesThroughTheSandbox(t *testing.T) {
 func TestWhisperErrors(t *testing.T) {
 	sandbox, _ := fakeSandbox(t, "", 5)
 	w := &Whisper{Models: testModelStore(t, true), Model: "test", Sandbox: sandbox, RunAs: WhisperRunAsSelf}
-	if _, err := w.Transcribe(context.Background(), audioOf("AUDIO", nil)); err == nil || !strings.Contains(err.Error(), "decode failed: invalid data") {
+	if _, err := w.Transcribe(context.Background(), whisperAudio("AUDIO", nil)); err == nil || !strings.Contains(err.Error(), "decode failed: invalid data") {
 		t.Fatalf("decode error = %v", err)
 	}
 	big, _ := fakeSandbox(t, "", 3)
 	w.Sandbox = big
-	if _, err := w.Transcribe(context.Background(), audioOf("AUDIO", nil)); !errors.Is(err, ErrTooLarge) {
+	if _, err := w.Transcribe(context.Background(), whisperAudio("AUDIO", nil)); !errors.Is(err, ErrTooLarge) {
 		t.Fatalf("too large = %v", err)
 	}
 	bad, _ := fakeSandbox(t, "not json", 0)
 	w.Sandbox = bad
-	if _, err := w.Transcribe(context.Background(), audioOf("AUDIO", nil)); err == nil || !strings.Contains(err.Error(), "decode transcript") {
+	if _, err := w.Transcribe(context.Background(), whisperAudio("AUDIO", nil)); err == nil || !strings.Contains(err.Error(), "decode transcript") {
 		t.Fatalf("bad json = %v", err)
 	}
 	missing := &Whisper{Models: testModelStore(t, false), Model: "test", Sandbox: bad, RunAs: WhisperRunAsSelf}
-	if _, err := missing.Transcribe(context.Background(), audioOf("AUDIO", nil)); !errors.Is(err, ErrWhisperModelMissing) {
+	if _, err := missing.Transcribe(context.Background(), whisperAudio("AUDIO", nil)); !errors.Is(err, ErrWhisperModelMissing) {
 		t.Fatalf("missing model = %v", err)
 	}
 }
@@ -252,7 +252,7 @@ func TestPinnedWhisperModels(t *testing.T) {
 }
 
 func TestWhisperGuardsAndHelpers(t *testing.T) {
-	if _, err := (&Whisper{}).Transcribe(context.Background(), audioOf("A", nil)); err == nil {
+	if _, err := (&Whisper{}).Transcribe(context.Background(), whisperAudio("A", nil)); err == nil {
 		t.Fatal("no model store must fail")
 	}
 	if _, err := (&Whisper{Models: testModelStore(t, true)}).Transcribe(context.Background(), Audio{}); err == nil {
