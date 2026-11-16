@@ -29,7 +29,7 @@ a { color: inherit; }
 .activity-nav a.active, .activity-nav a:hover { color: var(--text); }
 .activity-main { padding: var(--sp-6) clamp(1rem, 4vw, 4.5rem) var(--sp-9); }
 /* LF Projects legal footer, required on every hub page. */
-.activity-footer { border-top: 1px solid var(--line); padding: var(--sp-6) clamp(1rem, 4vw, 4.5rem); text-align: center; font-size: .8rem; color: var(--muted); }
+.activity-footer { border-top: 1px solid var(--line); padding: var(--sp-6) clamp(1rem, 4vw, 4.5rem); text-align: center; font-size: var(--fs-sm); color: var(--muted); }
 .activity-footer a { color: inherit; }
 .activity-titlebar h1 { margin: 0 0 var(--sp-2); font-size: 1.4rem; }
 .activity-sub { margin: 0 0 var(--sp-5); color: var(--text-muted); }
