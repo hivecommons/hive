@@ -3,8 +3,12 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net"
 	"net/url"
+	"os"
+	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/hivecommons/hive/crux"
@@ -79,6 +83,30 @@ func TestMintNonTransportErrorKeepsMintFailed(t *testing.T) {
 	}
 	if got := rec.clears(crux.ClassForgeUnreachable); len(got) != 1 {
 		t.Fatalf("forge_unreachable clears = %d, want 1", len(got))
+	}
+}
+
+func TestMintCacheWriteErrorIsNotForgeOutage(t *testing.T) {
+	for name, cause := range map[string]error{
+		"disk full":  syscall.ENOSPC,
+		"permission": syscall.EACCES,
+		"deadline":   context.DeadlineExceeded,
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := fmt.Errorf("writing agent token cache: %w", &os.PathError{Op: "write", Path: "/var/run/hive-metrics/agent-tokens/gh-token-worker.cache", Err: cause})
+			m, a := mintClassManager(t, &failingMinter{err: err})
+			rec := recordConditions(t, m)
+			m.mintAgentTokenUnlocked(context.Background(), a)
+			if got := rec.active(crux.ClassGitHubAppTokenMintFailed); len(got) != 1 || !strings.Contains(got[0].Message, cause.Error()) {
+				t.Fatalf("mint failure = %+v, want the cache error", got)
+			}
+			if got := rec.observations(crux.ClassForgeUnreachable); len(got) != 0 {
+				t.Fatalf("forge outage reported for cache error: %+v", got)
+			}
+			if got := rec.clears(crux.ClassForgeUnreachable); len(got) != 1 {
+				t.Fatalf("forge outage clears = %d, want 1", len(got))
+			}
+		})
 	}
 }
 
