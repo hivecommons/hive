@@ -5,9 +5,10 @@
 // same way hive runs the spektacular binary. It listens on loopback only and
 // requires a bearer token that hive generates once per boot and hands to the
 // child through QUORUM_TOKEN_FILE. Secrets Quorum needs (the Vexa tenant key,
-// the optional Discord bot token) are written in plaintext to owner-only
-// files in a private runtime directory that is removed on Stop; their
-// durable, keystore-sealed copies stay under /data/secrets.
+// the optional Discord bot token and the transcription service token) are
+// written in plaintext to owner-only files in a private runtime directory
+// that is removed on Stop; their durable, keystore-sealed copies stay under
+// /data/secrets.
 //
 // The supervisor starts the child, polls GET /healthz, restarts the child
 // with exponential backoff when it exits or stops answering, and stops it on
@@ -61,6 +62,9 @@ const (
 	tokenFileName   = "token"
 	vexaKeyFileName = "vexa_api_key"
 	discordFileName = "discord_token"
+	// transcribeTokenFileName holds the transcription service bearer token
+	// (QUORUM_TRANSCRIBE_TOKEN_FILE).
+	transcribeTokenFileName = "transcribe_token"
 )
 
 // passthroughEnv are the parent environment variables the child inherits.
@@ -92,6 +96,9 @@ type Options struct {
 	DiscordToken string
 	// TranscribeURL is QUORUM_TRANSCRIBE_URL. Empty leaves it unset.
 	TranscribeURL string
+	// TranscribeToken is the plaintext transcription service token written
+	// to QUORUM_TRANSCRIBE_TOKEN_FILE. Empty leaves it unset.
+	TranscribeToken string
 	// RuntimeDir is the parent of the private runtime directory. Empty means
 	// os.TempDir().
 	RuntimeDir string
@@ -264,6 +271,13 @@ func (s *Supervisor) writeRuntimeFiles() error {
 	}
 	if s.opts.TranscribeURL != "" {
 		env = append(env, "QUORUM_TRANSCRIBE_URL="+s.opts.TranscribeURL)
+	}
+	if s.opts.TranscribeToken != "" {
+		p, err := write(transcribeTokenFileName, s.opts.TranscribeToken)
+		if err != nil {
+			return err
+		}
+		env = append(env, "QUORUM_TRANSCRIBE_TOKEN_FILE="+p)
 	}
 	s.env = env
 	return nil
