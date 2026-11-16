@@ -40,3 +40,9 @@ func TestRunVersionUsageAndExtract(t *testing.T) {
 		t.Fatalf("garbage = %d", code)
 	}
 }
+
+func TestRunMainVersion(t *testing.T) {
+	if code := runMain([]string{"-version"}); code != pdfbox.ExitOK {
+		t.Fatalf("runMain -version = %d", code)
+	}
+}

@@ -123,3 +123,33 @@ func TestPrefixes(t *testing.T) {
 		t.Fatal("Error()")
 	}
 }
+
+type failingReader struct{}
+
+func (failingReader) Read([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+type failingWriter struct{}
+
+func (failingWriter) Write([]byte) (int, error) { return 0, errors.New("closed") }
+
+func TestRunSetupAndIOFailures(t *testing.T) {
+	var pe *Error
+	missing := filepath.Join(t.TempDir(), "does", "not", "exist")
+	if err := Run(context.Background(), Options{WorkRoot: missing}, bytes.NewReader(fixture(t, "text.pdf")), &bytes.Buffer{}); !errors.As(err, &pe) || pe.Code != ExitSetup {
+		t.Fatalf("missing work root = %v", err)
+	}
+	if err := Run(context.Background(), Options{WorkRoot: t.TempDir()}, failingReader{}, &bytes.Buffer{}); !errors.As(err, &pe) || pe.Code != ExitSetup || !strings.Contains(pe.Msg, "read input") {
+		t.Fatalf("stdin error = %v", err)
+	}
+	if err := Run(context.Background(), Options{WorkRoot: t.TempDir()}, bytes.NewReader(fixture(t, "text.pdf")), failingWriter{}); !errors.As(err, &pe) || pe.Code != ExitSetup {
+		t.Fatalf("stdout error = %v", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if err := Run(ctx, Options{WorkRoot: t.TempDir()}, bytes.NewReader(fixture(t, "text.pdf")), &bytes.Buffer{}); !errors.As(err, &pe) || pe.Code != ExitParse || !strings.Contains(pe.Msg, "too long") {
+		t.Fatalf("cancelled = %v", err)
+	}
+	if (Result{Text: []string{" ", ""}}).HasText() {
+		t.Fatal("whitespace is not text")
+	}
+}
