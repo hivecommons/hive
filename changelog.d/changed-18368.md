@@ -1,1 +1,0 @@
-- build(deps): Bump github.com/nats-io/nats-server/v2 from 2.15.2 to 2.15.3 in /src (#18368)
