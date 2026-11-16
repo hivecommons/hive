@@ -1,9 +1,7 @@
 package sandbox
 
 import (
-	"errors"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -40,7 +38,6 @@ const (
 	// transcript says where it came from.
 	relayPreflightName = "hive-relay-preflight"
 	relayShell         = "/bin/sh"
-	relayDirMode       = 0o755
 	relayFileMode      = 0o555
 )
 
@@ -100,10 +97,6 @@ func StageRelays() (string, func(), error) {
 		return "", func() {}, fmt.Errorf("sandbox: staging relays: %w", err)
 	}
 	cleanup := func() { _ = os.RemoveAll(dir) }
-	if err := os.Chmod(dir, relayDirMode); err != nil {
-		cleanup()
-		return "", func() {}, fmt.Errorf("sandbox: staging relays: %w", err)
-	}
 	for _, name := range RelayNames {
 		src, err := relaySource(name)
 		if err == nil {
@@ -118,25 +111,9 @@ func StageRelays() (string, func(), error) {
 }
 
 func copyRelay(src, dst string) error {
-	in, err := os.Open(src)
+	data, err := os.ReadFile(src)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = in.Close() }()
-	info, err := in.Stat()
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return errors.New(src + " is not a regular file")
-	}
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_EXCL, relayFileMode)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		_ = out.Close()
-		return err
-	}
-	return out.Close()
+	return os.WriteFile(dst, data, relayFileMode)
 }

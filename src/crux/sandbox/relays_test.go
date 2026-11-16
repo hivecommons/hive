@@ -144,14 +144,24 @@ func TestStageRelaysUsesPathLookup(t *testing.T) {
 	}
 }
 
+func TestStageRelaysFailsWithoutATempDir(t *testing.T) {
+	t.Setenv(RelaySourceDirEnv, writeRelaySource(t))
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	if _, cleanup, err := StageRelays(); err == nil || !strings.Contains(err.Error(), "staging relays") {
+		t.Errorf("StageRelays = %v, want a staging error", err)
+	} else {
+		cleanup()
+	}
+}
+
 func TestStageRelaysRejectsNonRegularSource(t *testing.T) {
 	src := t.TempDir()
 	if err := os.Mkdir(filepath.Join(src, "hive-review"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv(RelaySourceDirEnv, src)
-	if _, _, err := StageRelays(); err == nil || !strings.Contains(err.Error(), "not a regular file") {
-		t.Errorf("StageRelays = %v, want a not-a-regular-file error", err)
+	if _, _, err := StageRelays(); err == nil || !strings.Contains(err.Error(), "hive-review") {
+		t.Errorf("StageRelays = %v, want an error naming the relay", err)
 	}
 	t.Setenv(RelaySourceDirEnv, filepath.Join(src, "missing"))
 	if _, _, err := StageRelays(); err == nil {
