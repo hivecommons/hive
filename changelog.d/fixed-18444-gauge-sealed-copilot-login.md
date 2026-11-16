@@ -1,1 +1,0 @@
-- Usage gauge: the Copilot row no longer reports "not signed in" on hives with a keystore provider; the gauge now opens the sealed Copilot login instead of sending the encrypted envelope to GitHub as the token (#18444).
