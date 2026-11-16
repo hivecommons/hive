@@ -3790,6 +3790,7 @@
     .overview-usage-gauge__row + .overview-usage-gauge__row { padding-top: var(--sp-3); border-top: 1px solid var(--border); }
     .overview-usage-gauge__provider { font-weight: var(--fw-semibold); }
     .overview-usage-gauge__users { font-size: var(--fs-sm); color: var(--text-muted); overflow-wrap: anywhere; }
+    .overview-usage-gauge__spend { font-size: var(--fs-base); font-weight: 600; }
     .overview-usage-gauge__dials { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-4); }
     .overview-usage-gauge__dial { display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); text-align: center; }
     .overview-usage-gauge__label { font-weight: var(--fw-semibold); }
@@ -4168,6 +4169,7 @@
     .cost-session-active { color: var(--green); font-weight: 600; }
     .cost-subtable-title { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: var(--sp-6) var(--sp-0) var(--sp-2); }
     .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
+    .cost-price-unknown { color: var(--muted); font-style: italic; white-space: nowrap; }
     .cost-recording-notice { border: var(--line-width) solid var(--status-warn); border-radius: var(--r-lg); color: var(--status-warn); font-size: var(--fs-sm); font-weight: var(--fw-bold); line-height: 1.4; margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); }
     .cost-recording-notice a { color: inherit; text-decoration: underline; }
     .cost-recording-incomplete { color: var(--status-warn); font-weight: var(--fw-bold); }
@@ -40133,6 +40135,11 @@ function burnAreaChart() {
       const est = cost.estimated || { total_usd: 0, by_model: [], by_agent: [], unpriced_models: [] };
       const gateways = cost.gateways || [];
       const isTierEstimated = (row) => row && (row.source === 'unpriced' || row.source === 'estimated_tier');
+      // source "unknown": a gateway model with no published or configured
+      // price. Its tokens are not in the total, so the cell says so instead
+      // of showing $0.
+      const isPriceUnknown = (row) => row && row.source === 'unknown';
+      const priceUnknownCell = (row) => `<span class="cost-price-unknown" title="This gateway publishes no price for this model and none is configured (prices: on the gateway). Not counted in the total.">price unknown${row && row.usd > 0 ? ' (+' + fmtUSD(row.usd) + ' priced)' : ''}</span>`;
       const usageWindow = estimatedUsageWindowLabel(est);
 
       // Native gateway cards (OpenRouter / LiteLLM real spend).
@@ -40205,7 +40212,7 @@ function burnAreaChart() {
       }), 'model', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
       const modelRows = models.map(m => {
         const approx = isTierEstimated(m);
-        const usdCell = approx
+        const usdCell = isPriceUnknown(m) ? priceUnknownCell(m) : approx
           ? `<span title="unknown exact price — tier estimate, not billed spend">~${fmtUSD(m.usd)}</span>`
           : fmtUSD(m.usd);
         const users = m._users || [];
@@ -40221,9 +40228,11 @@ function burnAreaChart() {
         </tr>`;
       }).join('');
 
-      const unpricedNote = (est.unpriced_models && est.unpriced_models.length)
+      const unpricedNote = ((est.unpriced_models && est.unpriced_models.length)
         ? `<div class="cost-disclaimer">Tier-estimated (no exact list price, marked ~ and included in the total): ${est.unpriced_models.map(esc).join(', ')}.</div>`
-        : '';
+        : '') + ((est.unknown_price_models && est.unknown_price_models.length)
+        ? `<div class="cost-disclaimer">Price unknown (gateway models with no published or configured price; NOT in the total, which is therefore a floor): ${est.unknown_price_models.map(esc).join(', ')}. Add <code>prices:</code> to the gateway in hive.yaml to cost them.</div>`
+        : '');
 
       // ── Per-sandbox (per-agent) estimated cost ──
       // In hive each agent runs in its own sandbox, so "usage by sandbox" is the
@@ -40231,7 +40240,7 @@ function burnAreaChart() {
       const bySandbox = sortCostRows(est.by_agent || [], 'sandbox', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
       const sandboxRows = bySandbox.map(a => {
         const approx = isTierEstimated(a);
-        const usdCell = approx
+        const usdCell = isPriceUnknown(a) ? priceUnknownCell(a) : approx
           ? `<span title="unknown exact price — tier estimate for this sandbox's model">~${fmtUSD(a.usd)}</span>`
           : fmtUSD(a.usd);
         return `<tr>
@@ -40264,7 +40273,7 @@ function burnAreaChart() {
       };
       const sessionRows = bySession.map(sn => {
         const approx = isTierEstimated(sn);
-        const usdCell = approx
+        const usdCell = isPriceUnknown(sn) ? priceUnknownCell(sn) : approx
           ? `<span title="unknown exact price — tier estimate for this model">~${fmtUSD(sn.usd)}</span>`
           : fmtUSD(sn.usd);
         // "started → ended" in local time; a still-active session (latest event
@@ -53323,19 +53332,45 @@ function burnAreaChart() {
         ? Object.keys(usedBy).filter((id) => Array.isArray(usedBy[id]) && usedBy[id].length > 0)
           .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
         : ['anthropic'];
+      // Gateways (OpenRouter, LiteLLM, vLLM, …) have no plan to measure, so
+      // they get a spend row in dollars at the gateway's prices instead of a
+      // dial. Models with no published or configured price are listed as
+      // "price unknown", never counted as $0.
+      const spend = (resp && Array.isArray(resp.gateway_spend) ? resp.gateway_spend : [])
+        .filter((g) => g && g.gateway && Array.isArray(g.agents) && g.agents.length)
+        .map((g) => {
+          const unknown = Array.isArray(g.unknown_price_models) ? g.unknown_price_models.map(String) : [];
+          const usd = Number(g.usd) || 0;
+          return {
+            gateway: String(g.gateway), kind: String(g.kind || ''), usedBy: g.agents.map(String),
+            usd: usd, tokens: Number(g.tokens) || 0, unknownModels: unknown,
+            state: unknown.length && usd === 0 ? 'unknown' : (unknown.length ? 'partial' : 'priced'),
+          };
+        });
       const rows = ids.map((id) => providerRow(id, readingFor(id), usedBy ? usedBy[id].map(String) : null, !!usedBy))
         .filter((row) => row.shown);
       if (!rows.length) {
         const legacy = !usedBy ? providerRow('anthropic', readingFor('anthropic'), null, false) : null;
         return legacy && legacy.state === 'no-reading' && legacy.cause !== 'absent'
-          ? Object.assign(legacy, { rows: [] })
-          : { state: 'no-reading', shown: false, rows: [], cause: 'absent', reason: 'Usage measurement is not running on this hive.' };
+          ? Object.assign(legacy, { rows: [], spend: spend })
+          : { state: 'no-reading', shown: false, rows: [], spend: spend, cause: 'absent', reason: 'Usage measurement is not running on this hive.' };
       }
       // The needle row is the one with the least left; rows without a
       // reading only lead when no row has one.
       let lead = rows.find((row) => row.state === 'reading') || rows[0];
       rows.forEach((row) => { if (row.state === 'reading' && row.needle.pctLeft < lead.needle.pctLeft) lead = row; });
-      return Object.assign({}, lead, { shown: true, rows: rows });
+      return Object.assign({}, lead, { shown: true, rows: rows, spend: spend });
+    }
+
+    // subscriptionGaugeSpendText is a gateway spend row's one-line summary:
+    // "$1.23 at gateway prices", "$1.23 + price unknown for qwen", or
+    // "price unknown (qwen)" when nothing could be costed.
+    function subscriptionGaugeSpendText(row) {
+      const usd = '$' + (Number(row.usd) || 0).toFixed(2);
+      const unknown = (row.unknownModels || []).join(', ');
+      if (row.state === 'unknown') return 'Price unknown (' + unknown + '): this gateway publishes no price. Set prices: on the gateway to cost it.';
+      if (row.state === 'partial') return usd + ' at gateway prices, plus price unknown for ' + unknown + ' (not counted).';
+      return usd + ' at gateway prices (estimate from token counts).';
     }
 
     // Shared loader. The headroom endpoint is owner-only and the fetch
@@ -53446,7 +53481,8 @@ function burnAreaChart() {
       const host = document.getElementById('overview-usage-gauge');
       if (!host) return;
       const m = subscriptionGaugeCurrentModel();
-      if (!subscriptionGaugeOwner() || !subscriptionGaugeOverviewEnabled() || !m || !m.shown) {
+      const spend = (m && m.spend) || [];
+      if (!subscriptionGaugeOwner() || !subscriptionGaugeOverviewEnabled() || !m || (!m.shown && !spend.length)) {
         host.hidden = true;
         host.replaceChildren();
         return;
@@ -53457,8 +53493,8 @@ function burnAreaChart() {
         if (text !== undefined) n.textContent = text;
         return n;
       };
-      const rows = m.rows && m.rows.length ? m.rows : [m];
-      const single = rows.length === 1;
+      const rows = !m.shown ? [] : (m.rows && m.rows.length ? m.rows : [m]);
+      const single = rows.length === 1 && !spend.length;
       const metaFor = (row) => {
         const meta = [];
         if (row.state === 'reading') {
@@ -53468,7 +53504,7 @@ function burnAreaChart() {
         return meta.join(' · ');
       };
       const head = el('div', 'overview-usage-gauge__head');
-      head.appendChild(el('div', 'overview-usage-gauge__title', single ? rows[0].name + ' usage left' : 'Usage left'));
+      head.appendChild(el('div', 'overview-usage-gauge__title', single ? rows[0].name + ' usage left' : (rows.length ? 'Usage left' : 'Gateway spend')));
       head.appendChild(el('div', 'overview-usage-gauge__meta', single ? metaFor(rows[0]) : ''));
       const parts = [head];
       rows.forEach((row) => {
@@ -53500,6 +53536,24 @@ function burnAreaChart() {
         }
         parts.push(box);
       });
+      spend.forEach((row) => {
+        const box = el('div', 'overview-usage-gauge__row');
+        box.dataset.gateway = row.gateway;
+        const rowHead = el('div', 'overview-usage-gauge__head');
+        rowHead.appendChild(el('div', 'overview-usage-gauge__provider', row.gateway + ' (gateway)'));
+        box.appendChild(rowHead);
+        if (row.usedBy.length) box.appendChild(el('div', 'overview-usage-gauge__users', 'Used by ' + subscriptionGaugeUsers(row.usedBy)));
+        const line = el('div', row.state === 'priced' ? 'overview-usage-gauge__spend' : 'overview-usage-gauge__note', subscriptionGaugeSpendText(row));
+        line.dataset.priceState = row.state;
+        box.appendChild(line);
+        parts.push(box);
+      });
+      if (!rows.length) {
+        parts.push(el('div', 'overview-usage-gauge__note', 'Gateway spend is estimated from token counts at each gateway\'s published or configured prices.'));
+        host.replaceChildren.apply(host, parts);
+        host.hidden = false;
+        return;
+      }
       parts.push(el('div', 'overview-usage-gauge__note', single
         ? (rows[0].accountNote || 'Reflects the ' + rows[0].name + ' account this hive is signed in with.') + ' This is the ' + rows[0].name + ' plan, not the hive token budget.'
         : 'Each row reflects the account this hive is signed in with for that provider. These are the providers\' plans, not the hive token budget.'));

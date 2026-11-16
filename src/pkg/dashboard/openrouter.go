@@ -306,6 +306,7 @@ func (s *Server) upsertOpenRouterGateway(key, model string) error {
 		// and default model are (re)written by the funding flow.
 		gw.APIKeyEnv = gws[idx].APIKeyEnv
 		gw.CABundle = gws[idx].CABundle
+		gw.Prices = gws[idx].Prices
 		gws[idx] = gw
 	} else {
 		gws = append(gws, gw)
