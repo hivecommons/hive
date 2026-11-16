@@ -168,7 +168,7 @@ type MeetingsPersonaConfig struct {
 	// Humor is light or off.
 	Humor string `yaml:"humor,omitempty" json:"humor,omitempty"`
 	// Unprompted bounds question-driven answers nobody asked the persona for.
-	Unprompted MeetingsPersonaUnprompted `yaml:"unprompted,omitempty" json:"unprompted,omitempty"`
+	Unprompted MeetingsPersonaUnprompted `yaml:"unprompted,omitempty" json:"unprompted,omitzero"`
 	// SearxngURL is the web search service (phase B; unused yet).
 	SearxngURL string `yaml:"searxng_url,omitempty" json:"searxng_url,omitempty"`
 }

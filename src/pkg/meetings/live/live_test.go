@@ -194,6 +194,8 @@ type harness struct {
 	r     *Runner
 	store *meetings.Store
 	m     meetings.Meeting
+	// drops records the persona's skipped candidates (persona tests).
+	drops *dropLog
 }
 
 func newHarness(t *testing.T, p Policy, mutate func(*Options)) *harness {

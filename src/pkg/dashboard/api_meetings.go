@@ -422,6 +422,8 @@ func meetingsSecretSet(ctx context.Context, read func(context.Context) (string, 
 
 func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) MeetingsSettings {
 	h := (&s.meetings).Load()
+	// The list keys meetings.persona.aliases[] and
+	// meetings.persona.leave_phrases[] are shown joined with ", ".
 	persona := m.Persona.Resolve()
 	return MeetingsSettings{
 		Enabled:            m.IsEnabled(),

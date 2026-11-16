@@ -181,7 +181,7 @@ type MeetingsConfig struct {
 	// DataDir is where meeting records and transcripts are stored.
 	DataDir string `yaml:"data_dir,omitempty" json:"data_dir,omitempty"`
 	// Persona is the attendee persona (Betty by default).
-	Persona MeetingsPersonaConfig `yaml:"persona,omitempty" json:"persona,omitempty"`
+	Persona MeetingsPersonaConfig `yaml:"persona,omitempty" json:"persona,omitzero"`
 }
 
 // MeetingsQuorumConfig is meetings.quorum.

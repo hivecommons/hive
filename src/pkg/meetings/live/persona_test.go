@@ -66,11 +66,32 @@ func personaHarness(t *testing.T, p Policy, persona config.MeetingsPersonaConfig
 	resolved := persona.Resolve()
 	s := betty.SettingsFrom(resolved)
 	s.AnswerWait, s.MinGap = personaWait, 0
-	return newHarness(t, p, func(o *Options) {
+	drops := &dropLog{m: map[string]int{}}
+	h := newHarness(t, p, func(o *Options) {
 		o.Persona = func(meetings.Meeting) *betty.Engine {
-			return betty.New(s, betty.Deps{LLM: llm, Retrievers: []betty.Retriever{hitRetriever{}}})
+			return betty.New(s, betty.Deps{LLM: llm, Retrievers: []betty.Retriever{hitRetriever{}}, OnDrop: drops.add})
 		}
 		o.IsLeave = meetings.NewLeaveMatcher(resolved.LeavePhrases).Match
+	})
+	h.drops = drops
+	return h
+}
+
+// dropLog counts the persona's skipped candidates by reason.
+type dropLog struct {
+	mu sync.Mutex
+	m  map[string]int
+}
+
+func (d *dropLog) add(reason string) { d.mu.Lock(); d.m[reason]++; d.mu.Unlock() }
+
+// dropped waits until the persona skipped a candidate for reason.
+func (h *harness) dropped(reason string) {
+	h.t.Helper()
+	h.eventually("persona drop "+reason, func() bool {
+		h.drops.mu.Lock()
+		defer h.drops.mu.Unlock()
+		return h.drops.m[reason] > 0
 	})
 }
 
@@ -134,7 +155,8 @@ func TestPersonaTranscriptReplay(t *testing.T) {
 	h.spek.intent(`{"type":"chat.post","text":"FYI: the release ships Friday."}`)
 	h.spek.intent(`{"type":"chat.post","text":"Action item: Bo drafts the changelog."}`)
 	h.eventually("fresh offer", h.posted("Action item: Bo drafts the changelog."))
-	time.Sleep(2 * personaWait)
+	h.dropped("offer_duplicate")
+	h.eventually("spek say dropped", func() bool { return h.state().Dropped >= 1 })
 	if _, says := h.mt.got(); len(says) != 0 {
 		t.Fatalf("spek say must be dropped, got %q", says)
 	}
@@ -159,7 +181,7 @@ func TestPersonaAlreadyAnsweredAndCaps(t *testing.T) {
 	// Someone answers first: Betty stays quiet.
 	h.line(meetings.EventChat, "Ana", "when does the release ship?", false)
 	h.line(meetings.EventChat, "Bo", "the release ships on Friday", false)
-	time.Sleep(3 * personaWait)
+	h.dropped("answered_by_person")
 	if p, _ := h.mt.got(); len(p) != 0 {
 		t.Fatalf("an answered question gets no reply, got %q", p)
 	}
@@ -168,7 +190,7 @@ func TestPersonaAlreadyAnsweredAndCaps(t *testing.T) {
 	h.line(meetings.EventChat, "Ana", "who owns the deploy pipeline?", false)
 	h.eventually("first unprompted", h.posted("deploy pipeline"))
 	h.line(meetings.EventChat, "Ana", "is the release branch frozen yet?", false)
-	time.Sleep(3 * personaWait)
+	h.dropped("cap_per_meeting")
 	if h.countPosts("release") != 0 {
 		t.Fatal("the per-meeting cap holds")
 	}
