@@ -215,10 +215,10 @@ func TestPolicyGuardrailsPresent(t *testing.T) {
 			why:      "PRs must be opened by the App via hive-open-pr, not raw gh or the GitHub MCP create_pull_request",
 		},
 		{
-			name:     "brainstorm-advisory forbids setup during capture",
+			name:     "brainstorm-advisory forbids setup",
 			file:     "brainstorm-advisory.md",
 			fragment: "DO NOT clone repos",
-			why:      "capture phase must not clone or run init commands",
+			why:      "the advisory brainstorm agent must not clone or run init commands",
 		},
 	}
 

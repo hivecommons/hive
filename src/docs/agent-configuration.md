@@ -314,7 +314,7 @@ spec omits `launch_cmd`, Hive still builds the backend command normally.
                                  #   hive-merge / hive-open-issue relays — not merely
                                  #   discouraged. See docs/per-repo-agents.md.
     on_demand: false             # true = never kicked by the governor timer;
-                                 #   only triggered explicitly (e.g. inception)
+                                 #   only triggered explicitly (e.g. by you)
     continuous: false            # legacy shorthand: continuous in every
                                  #   non-quiet governor mode; prefer per-mode
                                  #   cadence: surge: continuous
@@ -846,7 +846,7 @@ governor:
 - **Downtime catch-up.** If Hive was down at a scheduled time, restart/eval grants at most one catch-up kick when the missed occurrence is within the last 10 minutes. Older missed occurrences are skipped and the next future occurrence is used.
 - **Per-agent, per-mode intervals.** Anything Go's duration parser accepts works (`5m`, `2h`) for interval mode.
 - **Pausing.** The value `pause` (or `paused`) suspends an agent for that mode without disabling it.
-- **On-demand agents** (`on_demand: true`) are skipped by the governor timer entirely — they run only when explicitly triggered (the inception workflow drives `brainstorm` this way).
+- **On-demand agents** (`on_demand: true`) are skipped by the governor timer entirely — they run only when explicitly triggered (`brainstorm` works this way).
 - **Continuous agents** take another work prompt after their current turn finishes and a cooldown expires. Configure this per mode in the dashboard's **Cadences** form; see the settings and diagnostics below.
 - **Budget.** When the weekly token budget is exhausted, kicks are suppressed hive-wide (exempt agents excepted) until the period rolls over.
 
@@ -1339,7 +1339,7 @@ is in [acmm-policy-matrix.md](acmm-policy-matrix.md#what-hive-will-say-on-github
 | `display_name`, `emoji`, `color` | the dashboard roster grows past a handful and you want it scannable |
 | a model pin 📌 | you need reproducible behavior and the governor keeps optimizing your model away |
 | `cli_pinned: true` | a CLI update broke an agent once and you never want that surprise again |
-| `on_demand: true` | the agent should run only when something (you, inception) explicitly fires it |
+| `on_demand: true` | the agent should run only when something (usually you) explicitly fires it |
 | cadence overrides | the pack's rhythm doesn't match your project — a hot repo may want `scanner: 15m`, a quiet one `4h` |
 | `pause` in a mode | an agent is noisy exactly when the queue is deep (e.g. pause `architect` during surge) |
 | `stale_timeout` | you changed cadences — keep it above the longest interval |

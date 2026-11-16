@@ -1,4 +1,4 @@
-# Inception — Inception (spek) sessions and the inception API
+# Inception — Inception (spek) sessions
 
 In the dashboard, **Inception (spek)** is the interactive way to turn an idea
 (or an existing repo) into specs, plans and a starting project: named, shared
@@ -12,176 +12,54 @@ and the [Sessions API](api-reference/sessions.md). An Inbox recording can
 seed a session directly (**🔗 Share ▾ → Hive → spek…**, see
 [Inbox and voice sources](inbox-voice-sources.md#from-recording-to-an-inception-spek-session)).
 
-The dashboard's old step-by-step Inception wizard was removed; Inception (spek)
-replaces it. Campaigns, their Jam workspace and campaign recheck have been
-retired too: start a session for new inception work, and find Spektacular runs
-in [Runs](runs.md). See [Retired campaigns export](#retired-campaigns-export)
-for where their data went.
+## Retired: the inception API, watcher and brainstorm inception mode
 
-The rest of this guide covers the ACMM **L1 ("Inception")** workflow behind
-`/api/inception/*`, which is unchanged and still available to API callers. It
-drives the `brainstorm` agent through a fixed phase sequence that turns a raw
-idea (or an existing repo) into structured knowledge-base facts and a
-downloadable project scaffold. It documents only what the code in
-`pkg/dashboard/inception_handlers.go` and `pkg/knowledge/inception.go`
-actually does; see those files for implementation detail.
+The old ACMM L1 inception workflow (a fixed `capture → clarify → structure →
+scaffold → complete` state machine that drove the `brainstorm` agent and
+generated a downloadable project scaffold) was retired in favour of Inception
+(spek) sessions. Its dashboard wizard and Campaigns tab were removed first.
+Now the backend is gone too:
 
-## When to use it
+- **`/api/inception/*`**: all 14 routes (`start`, `scan`, `state`,
+  `questions`, `answer`, `facts`, `scaffold`, `approve`, `reset`,
+  `ideation-facts`, `download`, `has-files`, `wiki-name`, `import`) answer
+  **`410 Gone`** for one release, with a JSON body:
 
-Use inception when you are standing up a brand-new hive at ACMM level 1 and
-want a starting point beyond an empty repo: a `README.md`, `AGENTS.md`,
-`CLAUDE.md`, `CONTRIBUTING.md`, CI workflows, a `.gitignore`, and
-language-specific stubs (Go, Python, TypeScript, JavaScript, Rust, Java, or
-shell), generated from a short description of the project.
+  ```json
+  {"ok": false, "error": "The inception API was retired. ...", "replacement": "/api/sessions", "docs": "https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md"}
+  ```
 
-Two modes are supported:
+  Nothing is read or changed. A later release removes the routes, and they
+  then answer `404`. Scripts that drove the workflow (`curl` against
+  `/api/inception/start` and friends) should start an Inception (spek)
+  session instead (`POST /api/sessions`, see the
+  [Sessions API](api-reference/sessions.md)).
+- **The inception watcher** that turned brainstorm beads into inception
+  questions and facts no longer runs.
+- **Inception approval as a run admission path** is gone. Spektacular runs are
+  admitted through run triage; see [Runs](runs.md).
+- **The brainstorm agent's inception mode** is gone. `brainstorm` is
+  ideation-only: its kick template (`brainstorm-advisory.md`) records feature,
+  architecture, strategy, integration and DX proposals as advisory beads. It
+  is still on-demand and parked at boot. The `${INCEPTION_IDEA}`,
+  `${INCEPTION_PHASE}`, `${INCEPTION_MODE}`, `${INCEPTION_ANSWERS}`,
+  `${INCEPTION_SLUG}` and `${INCEPTION_REPO_URL}` template variables always
+  render empty for one release, so a custom template that still names them
+  keeps rendering. See [`policies/README.md`](../policies/README.md).
 
-- **Greenfield** — you have an idea but no code yet. Inception interviews you
-  and produces a scaffold from scratch.
-- **Brownfield** — you have an existing repo URL. Inception scans it and
-  produces facts/amendments rather than a from-scratch skeleton.
+### What is kept
 
-## Prerequisites
-
-- The hive must be running the `brainstorm` agent (present by default in the
-  `level-1` ACMM pack — see `pkg/config/packs/level-1.yaml`).
-- You must be signed in with the **owner** role. Every state-changing
-  inception endpoint calls `requireOwnerRole`, which checks the
-  `X-Hive-Role` header and the hub's owner-verification proof
-  (`X-Hive-Proxy-Auth`). Read-only endpoints (state, scaffold preview,
-  ideation-facts, download, has-files) do not require owner role.
-- Only one inception run can be in progress at a time. Starting a new one
-  while `phase != complete` returns an error unless you pass `force: true`,
-  which archives the existing run as a campaign before resetting it.
-
-## The phase sequence
-
-Inception state moves through a strict, server-enforced state machine
-(`InceptionPhase` in `pkg/knowledge/types.go`). Each phase transition is
-gated — the corresponding handler rejects the call if the engine isn't in the
-expected phase:
-
-```
-capture → clarify → structure → scaffold → complete
-```
-
-| Phase | What happens | Who acts |
-|---|---|---|
-| `capture` | You submit an idea (or a repo URL for brownfield). The engine seeds a `FactIdea` KB fact and creates the inception state. Hive kicks the `brainstorm` agent, which must generate 5–7 clarification questions as beads. | Operator starts; agent generates questions |
-| `clarify` | Questions are recorded (`POST /api/inception/questions` records them and advances the phase). You answer them. | Operator answers |
-| `structure` | Your answers are submitted (`POST /api/inception/answer`); the agent is re-kicked with the idea + answers and must create fact beads — 1 vision, 1 constitution, 2+ requirements, plus constraints/stakeholders/acceptance criteria as needed. You record them (`POST /api/inception/facts`), which writes each fact to the inception wiki vault and advances to `scaffold`. | Agent produces facts; operator records them |
-| `scaffold` | `GET /api/inception/scaffold` (or `/download`) generates the project scaffold from the recorded facts — README, AGENTS.md, CLAUDE.md, CONTRIBUTING.md, CI workflows, `.gitignore`, and language-specific stubs inferred from the constitution fact (falling back to language cues in the idea text). | Operator reviews the generated files |
-| `complete` | `POST /api/inception/approve` marks the run finished and re-pauses the `brainstorm` agent so the governor doesn't kick it again with generic ideation prompts. If `runs.spektacular.enabled` is on and the approve request identifies a real GitHub issue, Hive also admits that issue as the first `spec` stage of a long-running run. | Operator approves |
-
-Notes on the state machine, verified from `pkg/knowledge/inception.go`:
-
-- `SetQuestions` only succeeds from `capture` and moves to `clarify`.
-- `SubmitAnswers` is accepted in both `clarify` and `structure` (the agent
-  can race ahead of the user submitting answers); it only advances the phase
-  when called from `clarify`.
-- `RecordFacts` only succeeds from `structure` and moves to `scaffold`.
-- `AdvanceToComplete` (approve) only succeeds from `scaffold` (or is a no-op
-  if already `complete`).
-- `ProduceScaffold` (the scaffold/download handlers) can be called from any
-  phase where facts exist — it doesn't itself change phase.
-- Starting a new inception (`Start` / `StartBrownfield`) is rejected unless
-  the previous run reached `complete`, or `force: true` is passed.
-
-## Driving the workflow through the API
-
-The dashboard no longer has a wizard for these steps; an API caller (with the
-owner role for state-changing calls) drives them:
-
-1. Submit an idea (greenfield) with `POST /api/inception/start` or a repo URL
-   (brownfield) with `POST /api/inception/scan`. Both kick the `brainstorm`
-   agent (unpausing it first if the governor had paused it).
-2. Wait for the agent to post 5–7 clarification questions as beads; poll
-   `GET /api/inception/state` until `POST /api/inception/questions` has
-   recorded them.
-3. Answer them with `POST /api/inception/answer`. The agent is re-kicked (via
-   `SendKick`, not a full restart, to avoid losing its clarify-phase context)
-   with the idea, phase, and your answers injected via `${INCEPTION_*}`
-   template variables.
-4. Wait for the agent to create fact beads, then record them via
-   `POST /api/inception/facts`. This writes each fact as a Markdown file
-   with YAML frontmatter into an `inception-wiki` vault directory and
-   connects that vault as a knowledge source for all agents.
-5. Review the generated scaffold (`GET /api/inception/scaffold`) or download
-   it as a zip (`GET /api/inception/download`).
-6. Approve (`POST /api/inception/approve`) to mark the run complete. This
-   also re-pauses `brainstorm` so the L2+ governor doesn't restart it with
-   unrelated ideation prompts. When long-running runs are enabled, include
-   either `issue_url` or `repo`/`issue_number` in the approve body to admit
-   the linked issue as the first `spec` stage. Inception does not create or
-   guess an issue number on its own; if the approve request does not name one,
-   completion remains a no-op for run admission.
-7. If anything goes wrong, `POST /api/inception/reset` first archives the
-   current state and wiki files as an Inception campaign, then clears the
-   active state and state file under `inception/campaigns/<id>/`, so a reset
-   does not discard completed work. Nothing lists these archives any more;
-   see [Retired campaigns export](#retired-campaigns-export).
-
-Optional wiki-management calls, usable at any point once an inception has
-produced wiki files:
-
-- `GET /api/inception/has-files` — whether the inception wiki has any `.md`
-  files.
-- `PUT /api/inception/wiki-name` — rename the inception wiki vault
-  (persisted into inception state).
-- `POST /api/inception/import` — upload a zip of Markdown files
-  (10 MiB max, 1 MiB per file, `.md` only, path-traversal guarded) to seed
-  or supplement the inception wiki without going through the agent.
-
-## API reference
-
-All 14 endpoints live under `/api/inception/*`, registered in
-`pkg/dashboard/api.go` and implemented in `pkg/dashboard/inception_handlers.go`.
-"Owner required" means the handler calls `requireOwnerRole` before doing
-anything else.
-
-| Method | Path | Owner required | Purpose |
-|---|---|---|---|
-| `POST` | `/api/inception/start` | Yes | Begin a greenfield inception from idea text. `force: true` archives then resets any in-progress run first. |
-| `POST` | `/api/inception/scan` | Yes | Begin a brownfield inception against a repo URL (`https://` or `http://` only). `force: true` archives then resets first. |
-| `GET` | `/api/inception/state` | No | Current inception state (`null`/`active: false` if none in progress). |
-| `POST` | `/api/inception/questions` | Yes | Record clarification questions generated by the agent; advances `capture` → `clarify`. |
-| `POST` | `/api/inception/answer` | Yes | Submit answers to clarification questions; advances `clarify` → `structure` (accepted in both phases). |
-| `POST` | `/api/inception/facts` | Yes | Record structured KB facts produced by the agent; advances `structure` → `scaffold`. |
-| `GET` | `/api/inception/scaffold` | No | Generate and return the scaffold file set (does not change phase). |
-| `POST` | `/api/inception/approve` | Yes | Advance `scaffold` → `complete`; re-pauses the `brainstorm` agent. Optional body fields `issue_url` or `repo`/`issue_number` admit the issue as a `spec` run when `runs.spektacular.enabled` is true. |
-| `POST` | `/api/inception/reset` | Yes | Archive the current session as a campaign, then clear active inception state and re-pause `brainstorm`. |
-| `GET` | `/api/inception/ideation-facts` | No | List recorded ideation facts (falls back to the inception engine's own fact gathering if the knowledge API has none). |
-| `GET` | `/api/inception/download` | No | Download the scaffold as a zip, named from the idea slug. |
-| `GET` | `/api/inception/has-files` | No | Whether the inception wiki vault has any `.md` files. |
-| `PUT` | `/api/inception/wiki-name` | Yes | Rename the inception wiki vault (max 80 characters). |
-| `POST` | `/api/inception/import` | Yes | Upload a zip of Markdown files into the inception wiki (10 MiB max upload, 1 MiB max per file). |
-
-See [Dashboard API reference](api-reference.md) for these endpoints in the
-project-wide route index, and the [OpenAPI spec](../../dashboard/openapi.json)
-for a machine-readable version.
-
-## Template variables
-
-The `brainstorm` agent's kick prompt (`pkg/policies/defaults/brainstorm-advisory.md`)
-is built by the scheduler (`pkg/scheduler/templates.go`, `inceptionVars`) with these
-inception-specific substitutions, documented in full in
-[`policies/README.md`](../policies/README.md):
-
-| Variable | Value |
-|---|---|
-| `${INCEPTION_IDEA}` | Current inception idea text. Empty when no run is active — the template then falls through to "Normal Ideation Mode". |
-| `${INCEPTION_PHASE}` | Current phase (`capture`, `clarify`, `structure`, `scaffold`, or `complete`). |
-| `${INCEPTION_MODE}` | `greenfield` or `brownfield`. |
-| `${INCEPTION_ANSWERS}` | Markdown-rendered Q&A, injected during the `clarify`/`structure` kick. |
-| `${INCEPTION_SLUG}` | The idea/repo slug, used as the bead `--external-ref` (`inception/<slug>`) so the engine can distinguish inception beads from ordinary ideation beads on reap. |
-| `${INCEPTION_REPO_URL}` | The scanned repo URL, brownfield mode only. |
-
-The template branches on `${INCEPTION_PHASE}` to give the agent
-phase-specific instructions (generate questions in `capture`, review answers
-in `clarify`, produce fact beads in `structure`, emit scaffold content in
-`scaffold`). When `${INCEPTION_IDEA}` is empty, the agent falls back to
-"Normal Ideation Mode" — general feature/architecture/strategy proposals
-recorded as advisory beads, unrelated to any specific inception run.
+- **Knowledge facts from past inception runs.** The ideation facts those runs
+  recorded (vision, constitution, requirements, constraints, stakeholders,
+  acceptance criteria) live in the knowledge store and as Markdown files in
+  the `/data/inception-wiki` vault. Nothing deletes them. On boot Hive still
+  reconnects `/data/inception-wiki` as a knowledge vault, under the name the
+  run saved (`inception-wiki` by default), so agents keep reading those facts.
+- **Files on the PVC.** `/data/inception/state.json`, `/data/inception-wiki/`
+  and `/data/inception/campaigns/` are left in place. The campaign archives
+  are also bundled into the one-time export described below.
+- **Ideation fact types** (`idea`, `vision`, `constitution`, `requirement`,
+  `constraint`, `stakeholder`, `acceptance`) remain valid knowledge fact types.
 
 ## Retired campaigns export
 
@@ -216,38 +94,13 @@ and stay as they are. To read the export:
 tar -tzf /data/exports/campaigns-*.tar.gz
 ```
 
-## Configuring the brainstorm agent
-
-The `brainstorm` agent is defined per ACMM pack, e.g.
-`pkg/config/packs/level-1.yaml`. Two fields control how it participates in
-inception:
-
-- **`on_demand: true`** — the agent is not kicked on a fixed cadence like
-  other agents; it is driven entirely by the inception workflow (via
-  `kickBrainstorm`/`sendKickBrainstorm` in `inception_handlers.go`) and
-  direct user queries. This is why `approve` and `reset` explicitly re-pause
-  the agent afterward — without `on_demand` semantics the governor would
-  otherwise pick it back up on its normal eval cycle.
-- **`stale_timeout: 7200`** (seconds) — how long the agent's session may sit
-  idle before the supervisor considers it stale. Set this higher than the
-  time you expect a real user to take answering clarification questions,
-  since the session must stay alive across the `capture` → `clarify` →
-  `structure` round trip.
-
-`clear_on_kick: true` is also set — each inception kick clears prior CLI
-context (`/clear`) before sending the new prompt, so multi-turn inception
-state doesn't leak stale context from a previous kick.
-
-See [Agent configuration](agent-configuration.md) for the full field
-reference and [ACMM policy matrix](acmm-policy-matrix.md) for how `brainstorm`
-evolves in mode and responsibility from L1 onward.
-
 ## Related documents
 
+- [Inception (spek)](dashboard-sections/workflow-and-agents.md#inception-spek)
+  and the [Sessions API](api-reference/sessions.md).
 - [ACMM policy matrix](acmm-policy-matrix.md) — L1 agent roster and policy
   mode for `brainstorm`/`guide`.
-- [`policies/README.md`](../policies/README.md) — full template variable
-  reference, including the `${INCEPTION_*}` family.
-- [Dashboard API reference](api-reference.md) — project-wide endpoint index.
+- [`policies/README.md`](../policies/README.md) — template variable reference,
+  including the deprecated `${INCEPTION_*}` family.
 - [Knowledge system design](design/knowledge-system.md) — how the inception
   wiki vault fits into the broader knowledge-base layering.

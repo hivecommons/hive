@@ -1159,7 +1159,6 @@ func (b *boot) wireBootClosures() {
 			GHTokenScopes:           b.ghAuth.TokenScopes,
 			Tokens:                  b.tokenCollector,
 			Knowledge:               b.knowledgeAPI,
-			Inception:               b.inceptionEngine,
 			Nous:                    b.nousState,
 			Scheduler:               b.sched,
 			KnowledgePrimer:         knowledgePrimerControl{b: b},
@@ -3346,39 +3345,17 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 	b.nousState = deps.loadNousState(b.logger)
 	b.nousState.SnapshotDir = nousSnapshotDir
 
-	b.inceptionEngine = deps.newInceptionEngine(b.knowledgeAPI, b.logger)
-	b.sched.SetInception(b.inceptionEngine)
+	// The inception engine was retired in favour of Inception (spek)
+	// sessions. Facts past inception runs wrote to the inception-wiki vault
+	// stay served: reconnect that vault as the engine used to.
+	if deps.reconnectInceptionWiki != nil {
+		deps.reconnectInceptionWiki(b.knowledgeAPI, b.logger)
+	}
 
-	// Brainstorm is on-demand only. Only restart with bootstrap during
-	// capture phase — structure/scaffold phases don't need a fresh kick
-	// and restarting would revert the phase back to capture.
-	// Skip stale inceptions (> 10 min old) — these are leftovers from
-	// previous runs that would interfere with new inceptions.
-	const staleInceptionThreshold = 10 * time.Minute
-	if state := b.inceptionEngine.GetState(); state != nil &&
-		state.Phase != knowledge.PhaseComplete &&
-		state.Phase != knowledge.PhaseScaffold {
-		if time.Since(state.StartedAt) < staleInceptionThreshold {
-			msg := b.sched.BuildAgentMessage("brainstorm", nil, nil)
-			if err := deps.restartBrainstorm(b.ctx, b.agentMgr, msg); err != nil {
-				b.logger.Warn("failed to resume brainstorm for active inception", "error", err)
-			} else {
-				b.logger.Info("brainstorm resumed for active inception", "phase", state.Phase)
-			}
-		} else {
-			b.logger.Info("skipping stale inception resume — resetting",
-				"phase", state.Phase,
-				"age", time.Since(state.StartedAt).Round(time.Second),
-			)
-			_ = b.inceptionEngine.Reset()
-			if err := b.agentMgr.Pause("brainstorm", "startup", "stale inception cleared — on-demand only"); err != nil {
-				b.logger.Debug("brainstorm pause on startup", "error", err)
-			}
-		}
-	} else {
-		if err := b.agentMgr.Pause("brainstorm", "startup", "on-demand agent — triggered by inception only"); err != nil {
-			b.logger.Debug("brainstorm pause on startup", "error", err)
-		}
+	// Brainstorm is on-demand only: park it at boot, as before. Nothing
+	// starts it automatically any more.
+	if err := b.agentMgr.Pause("brainstorm", "startup", "on-demand agent — kicked only on request"); err != nil {
+		b.logger.Debug("brainstorm pause on startup", "error", err)
 	}
 
 	// Provider rotation (RFC #3958): opt-in automatic failover when a
@@ -3812,9 +3789,6 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		}
 	}
 
-	if brainstormBeads, ok := b.beadStores["brainstorm"]; ok {
-		deps.startInceptionWatcher(b.ctx, dashboard.NewInceptionWatcher(brainstormBeads, b.inceptionEngine, b.sched, b.agentMgr, b.gov, b.logger))
-	}
 }
 
 // bootPolicies applies the ACMM pack planACMMBoot chose and starts the
@@ -6273,25 +6247,6 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		restarted := deps.restartCrashed(b.ctx, b.agentMgr)
 		for _, name := range restarted {
 			b.dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
-		}
-		// If brainstorm crashed during inception, re-kick via SendKick.
-		// SendKick waits for the CLI to be ready and sends the message
-		// If brainstorm crashed during inception, re-kick with bootstrap.
-		// The table parser in the watcher will catch questions from the
-		// agent's output even if bd create doesn't execute.
-		for _, name := range restarted {
-			if name == "brainstorm" && b.inceptionEngine != nil {
-				if state := b.inceptionEngine.GetState(); state != nil && state.Phase == knowledge.PhaseCapture {
-					msg := b.sched.BuildAgentMessage("brainstorm", nil, b.sched.GetLastActionable())
-					if err := b.agentMgr.RestartWithBootstrap(b.ctx, "brainstorm", msg); err != nil {
-						b.logger.Warn("inception re-kick after crash failed", "error", err)
-					} else {
-						b.logger.Info("brainstorm re-kicked after crash", "phase", state.Phase)
-						b.dashSrv.AuditLog("system", "kick", "trigger=inception-crash-recovery", "brainstorm")
-					}
-					b.gov.RecordKick("brainstorm")
-				}
-			}
 		}
 		// Watchdog sweep (RFC #4665): synchronous but bounded — every
 		// probe carries a deadline and restarts run detached under a hard
