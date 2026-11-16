@@ -305,10 +305,6 @@ type Server struct {
 	// terminal (job_terminal.go); zero values take in-cluster defaults.
 	jobTerminal jobTerminalDeps
 
-	kickBrainstormSendKickFn func(name, msg string) error
-	kickBrainstormRestartFn  func(ctx context.Context, name, prompt string) error
-	kickBrainstormDoneFn     func()
-
 	// Sparkline histories, all backed by the generic timeSeries ring buffer
 	// (see timeseries.go). Lazily constructed via the tokenSeries()/factSeries()
 	// /costSeries() accessors so the zero-value Server needs no constructor

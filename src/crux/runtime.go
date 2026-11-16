@@ -63,16 +63,15 @@ type Lifecycle interface {
 	// Dashboard: api_agent_config.go, api_agent_control.go.
 	Restart(ctx context.Context, name string) error
 	// RestartWithBootstrap relaunches an agent with a one-off bootstrap
-	// prompt. Dashboard: inception watcher.
+	// prompt.
 	RestartWithBootstrap(ctx context.Context, name, prompt string) error
 	// Pause quiesces an agent with a machine trigger and a human reason.
-	// Dashboard: api_packs.go (ACMM pack level), inception_handlers.go.
+	// Dashboard: api_packs.go (ACMM pack level).
 	Pause(name, trigger, reason string) error
 	// PauseBy is Pause with the acting user recorded. Dashboard:
 	// api_agent_control.go.
 	PauseBy(name, trigger, reason, by string) error
-	// Resume lifts a pause. Dashboard: api_agent_control.go, api_packs.go,
-	// inception_handlers.go.
+	// Resume lifts a pause. Dashboard: api_agent_control.go, api_packs.go.
 	Resume(ctx context.Context, name, trigger, reason string) error
 	// IsPaused reports whether an agent is paused. Dashboard: api_packs.go.
 	IsPaused(name string) bool
@@ -112,7 +111,7 @@ type Observer interface {
 // Kicker delivers prompts to running agents and exposes kick records.
 type Kicker interface {
 	// SendKick types a message into the agent's pane synchronously.
-	// Dashboard: api_linear_agent.go, inception_handlers.go, swarm.go.
+	// Dashboard: api_linear_agent.go, swarm.go.
 	SendKick(name string, message string) error
 	// SendKickAsync queues a kick and returns whether delivery started; the
 	// result is observed through KickDispatchState. Dashboard:

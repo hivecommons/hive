@@ -1,9 +1,9 @@
 level: 1
 name: Inception
 description: >
-  Project inception. Brainstorm turns raw ideas into structured KB facts and
-  project scaffolding while guide provides interactive documentation and setup
-  advice. Both agents remain advisory and conversational; no GitHub write
+  Project inception. Inception (spek) sessions turn raw ideas into specs,
+  plans and a starting project; brainstorm proposes ideas as advisory beads
+  while guide provides interactive documentation and setup advice. Both agents remain advisory and conversational; no GitHub write
   actions or feedback loops run without a human.
 governor:
   modes: none
@@ -41,11 +41,9 @@ agents:
     display_name: brainstorm
     role: brainstorm
     description: >
-      Project inception and ideation agent. At L1, turns a raw idea into
-      structured knowledge — vision, constitution, requirements, constraints,
-      acceptance criteria. Queries community KB for scaffolding patterns and
-      produces project bootstrap files. At higher levels, proposes features,
-      architecture directions, and strategic improvements.
+      Ideation agent. Proposes features, architecture directions, and
+      strategic improvements as advisory beads. (Turning a raw idea into a
+      project now happens in Inception (spek) sessions.)
     emoji: "💡"
     color: "#f39c12"
     sort_order: 5
@@ -58,7 +56,7 @@ agents:
     on_demand: true
     include_repos: false
     stale_timeout: 7200
-    interactions: "Standalone. Driven by inception workflow and user queries."
+    interactions: "Standalone. Kicked on request."
     knowledge_use: >
       Heavy consumer of community wiki patterns, scaffolding templates, and
       language-specific defaults. PRODUCES ideation facts (idea, vision,

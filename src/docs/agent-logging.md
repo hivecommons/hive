@@ -30,11 +30,11 @@ via `tmux pipe-pane`. `<backend>` is the agent's configured CLI backend
 is an inference backend. If the `pluk` binary is not on `PATH`, attachment is
 skipped silently — the agent still runs, it just has no peer-visible log.
 
-Pluk also exposes a `send` subcommand. `pkg/dashboard/inception_handlers.go`
-uses `pluk send hive-<session> --text=<message> --enter` as a fallback way to
-deliver a kick message to an agent's pane when the normal `SendKick` path
-fails, because it writes through a named FIFO and confirms delivery via a
-`command_received` event rather than relying on `tmux send-keys`.
+Pluk also exposes a `send` subcommand (`pluk send hive-<session>
+--text=<message> --enter`), which writes through a named FIFO and confirms
+delivery via a `command_received` event rather than relying on `tmux
+send-keys`. Hive no longer calls it: its only caller was the retired inception
+workflow's fallback kick path.
 
 ## Availability conditions
 
@@ -87,8 +87,7 @@ reads work — leaving creation to the shell's `>>` would take whatever umask th
 pane shell carries and a tight one yields a log no peer can read.
 
 Nothing rotates or caps these files. `hive-panes` only ever reads the last 2000
-lines and the inception subscriber seeks to the end, so no consumer needs the
-history, but the files themselves grow for the life of the container.
+lines, so no consumer needs the history, but the files themselves grow for the life of the container.
 
 The event envelope, as read by Hive's own code, is:
 
@@ -97,14 +96,13 @@ The event envelope, as read by Hive's own code, is:
 ```
 
 `type` is a string discriminator; `data` is a flat string-to-string map whose
-keys depend on `type`. Hive's dashboard subscribes to this stream for the
-`brainstorm` session (`pkg/dashboard/inception_watcher.go`, `plukEvent`) and
-reacts to a subset of event types:
+keys depend on `type`. Hive's dashboard used to subscribe to this stream for
+the `brainstorm` session (the inception watcher, retired with the inception
+workflow); `hive-panes.sh` is the reader today. The event types:
 
 - `raw_output` — captured pane output. The text is on `data.line`, and only
-  there. Both readers now agree: `hive-panes.sh` has always read `data.line`,
-  and the dashboard's Go subscriber (`handlePlukEvent` in
-  `inception_watcher.go`) read `data.message` until
+  there. `hive-panes.sh` has always read `data.line`; the retired dashboard
+  subscriber read `data.message` until
   [#4285](https://github.com/hivecommons/hive/issues/4285) corrected it, which
   had left its whole `raw_output` arm dead. Earlier revisions of this page
   advised new consumers to check both keys; that was wrong, and generalised
@@ -115,20 +113,12 @@ reacts to a subset of event types:
   publisher has to pass `--include-raw` or no such event is ever emitted. It is
   the only event type `hive-panes.sh` consumes, so peer awareness depends on
   that flag.
-- `state_change` — `data.state` is `"working"` or `"idle"`. The inception
-  watcher uses idle transitions to decide when to re-kick a stalled agent or
-  fall back to auto-generating questions/facts.
-- `rate_limit` — `data.message` describes a provider rate limit; the watcher
-  suppresses retries for a cooldown window when it sees this.
-- `error` — `data.message` describes an agent-side error; logged, not acted
-  on beyond that.
-- `tool_call_completed` — no payload used; the watcher treats this as a cue
-  to poll bead state immediately (e.g. after a `bd create`/`bd update`)
-  instead of waiting for the next timer tick.
+- `state_change` — `data.state` is `"working"` or `"idle"`.
+- `rate_limit` — `data.message` describes a provider rate limit.
+- `error` — `data.message` describes an agent-side error.
+- `tool_call_completed` — no payload; emitted after a tool call finishes.
 
-Only the `brainstorm` session is subscribed to for real-time event handling
-today. Other agents' logs exist under the same directory in the same format
-but are not tailed by any in-process Hive consumer — they exist for
+No in-process Hive consumer tails these logs today. They exist for
 `hive-panes` and manual/operator inspection.
 
 ## How `hive-panes` reads it
@@ -173,13 +163,6 @@ lifetime the files grow unbounded from Hive's side. Any rotation behavior
 `@kubestellar/pluk` version's own behavior if you need to reason about disk
 growth, since Hive does not manage it.
 
-The dashboard's own subscriber (`runPlukSubscriber` in
-`inception_watcher.go`) detects rotation defensively: it compares the open
-file handle's inode against the on-disk file on each idle poll and, if they
-differ, logs `"pluk log rotated, restarting subscriber"` and returns so the
-caller can reopen — but this is a consumer-side safeguard, not evidence that
-Hive itself rotates the file.
-
 ## Using peer awareness as an agent
 
 - Use `hive-panes [lines]` when you need situational awareness of what other
@@ -189,7 +172,7 @@ Hive itself rotates the file.
 - Treat its output as recent raw terminal text, not structured data — it is
   ANSI-stripped CLI output, not a machine-readable event feed. Do not parse
   it for automation; if you need structured events, read the JSONL files
-  directly the way `inception_watcher.go` does.
+  directly.
 - Avoid depending on it being present. It requires `hive-panes.sh` to be
   deployed and `pluk` to have attached successfully; on a deployment that
   omits either, `/var/run/pluk/logs` will not exist and the command exits

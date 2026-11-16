@@ -1580,36 +1580,6 @@ func TestCheckModelAllowed_EmptyModelRejected(t *testing.T) {
 	}
 }
 
-// --- handleInceptionStart ---
-
-func TestHandleInceptionStart_NoInception(t *testing.T) {
-	srv := newFullServer(t)
-	srv.deps.Inception = nil
-	req := httptest.NewRequest("POST", "/api/inception/start", strings.NewReader(`{"idea":"test"}`))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	markOwnerRequest(req)
-	srv.handleInceptionStart(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("code = %d, want 503", w.Code)
-	}
-}
-
-func TestHandleInceptionStart_BadBody(t *testing.T) {
-	srv := newFullServer(t)
-	srv.deps.Inception = nil
-	req := httptest.NewRequest("POST", "/api/inception/start", strings.NewReader("not json"))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-	markOwnerRequest(req)
-	srv.handleInceptionStart(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("code = %d, want 503 (inception nil checked first)", w.Code)
-	}
-}
-
 // --- handleKick edge cases ---
 
 func TestHandleKick_AgentNotFound(t *testing.T) {
