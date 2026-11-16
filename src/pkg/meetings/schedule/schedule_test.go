@@ -707,7 +707,7 @@ func TestStoreFileErrors(t *testing.T) {
 	if err := os.Chmod(d3, 0o500); err != nil {
 		t.Fatal(err)
 	}
-	defer os.Chmod(d3, 0o700)
+	defer func() { _ = os.Chmod(d3, 0o700) }()
 	if os.Getuid() != 0 {
 		if _, err := st.Update(EventID("a", nil), func(e *Event) error { e.Summary = "x"; return nil }); err == nil {
 			t.Fatal("write into a read-only dir succeeded")
