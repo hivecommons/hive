@@ -43,6 +43,24 @@
     .inbox-upload-bar { flex: 1 1 120px; max-width: 240px; }
     .inbox-add-url { flex: 1 1 16rem; min-width: 0; }
     .inbox-upload .kc-error { flex-basis: 100%; }
+    /* ● Record (inbox-recorder.js): panel, red indicator, level meters */
+    .inbox-rec-panel { margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--surface); }
+    .inbox-rec-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .inbox-rec-dot { color: var(--red); }
+    .inbox-rec-dot.is-live { animation: inbox-rec-pulse 1.2s ease-in-out infinite; }
+    .inbox-rec-time { font-variant-numeric: tabular-nums; font-family: var(--font-mono); }
+    .inbox-rec-meters { display: grid; gap: var(--sp-1); margin-top: var(--sp-2); max-width: 420px; }
+    .inbox-rec-meter-row { display: grid; grid-template-columns: 7em 1fr; align-items: center; gap: var(--sp-2); }
+    .inbox-rec-meter { width: 100%; }
+    .inbox-rec-upload { margin-top: var(--sp-1); }
+    .inbox-rec-btn { color: var(--red); }
+    .inbox-rec-indicator { position: fixed; right: var(--sp-4); bottom: var(--sp-4); z-index: 1000; display: inline-flex; align-items: center; gap: var(--sp-2); padding: var(--sp-2) var(--sp-4); border: 1px solid var(--red); border-radius: var(--r-pill); background: var(--surface); color: var(--red); font-weight: 600; cursor: pointer; }
+    .inbox-rec-indicator[hidden] { display: none; }
+    .inbox-rec-notice { margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--bg); }
+    .inbox-rec-ack { display: flex; align-items: flex-start; gap: var(--sp-2); margin-top: var(--sp-3); font-size: var(--fs-sm); }
+    .inbox-rec-sources { display: grid; gap: var(--sp-1); margin-top: var(--sp-2); }
+    @keyframes inbox-rec-pulse { 50% { opacity: 0.35; } }
+    @media (prefers-reduced-motion: reduce) { .inbox-rec-dot.is-live { animation: none; } }
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
     }
