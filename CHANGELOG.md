@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v6.37.1)
+
+### Fixed
+
+- The dashboard's hourly ACMM evaluation no longer spends GitHub API calls asking about files under directories it already knows are missing. When a prefetched directory listing (`.claude`, `docs`, `.github/prompts`, …) came back 404, the miss was dropped, so every pattern under that directory paid its own 404; on a hive managing 20 repositories that was about half of the ~790 calls an hour the evaluation made. A 404 is now recorded and answers every pattern below it for free, while a rate limit, 5xx or timeout is still not taken as proof a directory is absent (the glob lookup used to cache those as misses too). The evaluation also waits out a short API budget: while the budget is conserve or critical, an expired cache is not re-evaluated, and `GET /api/acmm/evaluation` serves the last result with `stale: true` and a `stale_reason` the ACMM card shows. Prefetch listings are now attributed to `hive:acmm_prefetch` in the API usage view.
+- A PR opened before a check became required no longer waits forever at `required-check-missing:<check>`. Its head predates the workflow, so nothing ever reports the check, and a missing check is not red, so the stale-red base refresh never touched it (projectbluefin/testsuite#1245 waited about 29 hours for a person to press "Update branch"). The eval cycle now merges the base into such a PR with `update-branch` when the head is behind, its other checks are green, the check has no run or status at all on the head, and the check runs on the base tip or on another open PR. It updates a PR at most once per head and base tip and once per missing check, posts nothing, goes through the `base_refresh` write-back kind, shares the stale-red refresh's caps, and skips drafts, held, parked and conflicting PRs, non-editable forks and dependency-bot branches. Updates are logged as `missing-check base refresh` and audited as `missing-check-base-refresh`.
+
 ## 2026-11-16 (v6.37.0)
 
 ### Added
