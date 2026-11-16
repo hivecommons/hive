@@ -472,35 +472,3 @@ func TestCampaignDeleteRejectsRunBackedSpektacular(t *testing.T) {
 		t.Fatalf("run-backed delete = %d body=%s, want 409", del.Code, del.Body.String())
 	}
 }
-
-// TestCampaignDeleteUI pins the dashboard side of hivecommons/hive#12698: an
-// icon-only 🗑 button in the nous-exp-icon style with aria-label/title
-// "Delete campaign", an in-app hiveConfirm (never window.confirm) that spells
-// out what is removed and what is kept, and Revise chains folded to one row.
-func TestCampaignDeleteUI(t *testing.T) {
-	html := indexHTML(t)
-	for _, want := range []string{
-		`nousExpIconButton('deleteCampaign', escapeHtml(c.id), '', 'Delete campaign', '🗑', 'nous-exp-icon-delete campaign-delete')`,
-		"async function deleteCampaign(id) {",
-		"const CAMPAIGN_DELETE_CONFIRM_TITLE = 'Delete this campaign?';",
-		"await hiveConfirm({ title: CAMPAIGN_DELETE_CONFIRM_TITLE, message: campaignDeleteConfirmMessage(c), confirmLabel: 'Delete campaign', cancelLabel: 'Keep', danger: true });",
-		"Kept: knowledge-base facts, Jam threads, and anything already scaffolded or pushed to the repo.",
-		"fetch('/api/campaigns/' + encodeURIComponent(id), { method: 'DELETE', headers: _inceptionAuthHeaders() })",
-		"function campaignRevisionChains(campaigns) {",
-		`<details class="campaign-row-meta campaign-history"><summary>${hist.length} earlier ${hist.length === 1 ? 'revision' : 'revisions'}</summary>`,
-		`class="campaign-pill campaign-revision-pill"`,
-		".nous-exp-icon-delete:hover, .nous-exp-icon-delete:focus-visible { color: var(--red); }",
-	} {
-		if !strings.Contains(html, want) {
-			t.Errorf("index.html missing %q", want)
-		}
-	}
-	start := strings.Index(html, "async function deleteCampaign(id) {")
-	end := strings.Index(html[start:], "let _campaignJamSocket = null;")
-	if start < 0 || end < 0 {
-		t.Fatalf("could not isolate deleteCampaign block")
-	}
-	if body := html[start : start+end]; strings.Contains(body, "window.confirm(") || strings.Contains(body, " confirm(") || strings.Contains(body, "alert(") {
-		t.Fatalf("deleteCampaign must use the in-app dialog, not native confirm/alert")
-	}
-}

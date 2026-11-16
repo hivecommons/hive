@@ -12,7 +12,6 @@
     const SESSIONS_LOG_LINES = 500;
     const SESSIONS_ASSERTION_RENEW_MS = 600000;
     const SESSIONS_TMUX_PREFIX = 'hive-sess-';
-    const SESSIONS_CAMPAIGNS_TAB = 'campaigns';
     const SESSIONS_UNGROUPED = '';
     const SESSIONS_UNGROUPED_LABEL = 'Ungrouped';
     const SESSIONS_SELECTED_KEY = 'hive.sessions.selected';
@@ -98,10 +97,9 @@
       return sessionsGroupSessions(sessions).map(function(g) { return g.group; }).filter(Boolean);
     }
     function sessionsPickSelected(sessions, wanted) {
-      if (wanted === SESSIONS_CAMPAIGNS_TAB) return wanted;
       const list = sessions || [];
       if (wanted && list.some(function(s) { return s && s.id === wanted; })) return wanted;
-      return list.length && list[0] ? list[0].id : SESSIONS_CAMPAIGNS_TAB;
+      return list.length && list[0] ? list[0].id : '';
     }
     // Flat tab order as rendered (group order, then session order), used for arrow keys.
     function sessionsTabOrder(sessions, collapsed, selected) {
@@ -112,7 +110,6 @@
           out.push(s.id);
         });
       });
-      out.push(SESSIONS_CAMPAIGNS_TAB);
       return out;
     }
     function sessionsNextTab(order, current, key) {
@@ -421,8 +418,7 @@
         + '<span class="sessions-tab-vendor">' + esc(s.vendor || '') + '</span>' + badge + '</button>';
     }
     function sessionsTabsHtml() {
-      const campaignsSel = _sessionsSelected === SESSIONS_CAMPAIGNS_TAB;
-      let html = sessionsGroupSessions(_sessionsData.sessions).map(function(g) {
+      return sessionsGroupSessions(_sessionsData.sessions).map(function(g) {
         const collapsed = !!_sessionsCollapsed[g.group];
         const tabs = g.sessions.filter(function(s) { return !collapsed || s.id === _sessionsSelected; }).map(sessionsTabHtml).join('');
         return '<div class="sessions-group" role="presentation">'
@@ -430,11 +426,6 @@
           + '<span class="sessions-group-chevron">' + (collapsed ? '▶' : '▼') + '</span>' + esc(g.label) + ' <span class="sessions-group-count">' + g.sessions.length + '</span></button>'
           + '<div class="sessions-group-tabs" role="presentation">' + tabs + '</div></div>';
       }).join('');
-      html += '<div class="sessions-group" role="presentation"><div class="sessions-group-tabs" role="presentation">'
-        + '<button type="button" role="tab" class="sessions-tab' + (campaignsSel ? ' active' : '') + '" id="sessions-tab-' + SESSIONS_CAMPAIGNS_TAB + '" aria-selected="' + campaignsSel + '" aria-controls="sessions-pane-' + SESSIONS_CAMPAIGNS_TAB + '" tabindex="' + (campaignsSel ? '0' : '-1') + '"'
-        + ' data-action="sessionsSelect" data-arg0="' + SESSIONS_CAMPAIGNS_TAB + '" data-keydown-action="sessionsTabKey" data-arg-types="s,e" data-keys="*" data-arg1="">'
-        + '<span class="sessions-tab-name">Campaigns</span></button></div></div>';
-      return html;
     }
     function sessionsNewFormHtml() {
       const vendors = (_sessionsData.vendors || []).filter(function(v) { return v && v.available; });
@@ -629,15 +620,14 @@
       if (!typing) chrome.innerHTML = sessionsToolbarHtml();
       if (focusId) { const f = document.getElementById(focusId); if (f) f.focus(); }
       const empty = document.getElementById('sessions-empty');
-      empty.hidden = sessions.length > 0 || _sessionsSelected !== SESSIONS_CAMPAIGNS_TAB;
+      empty.hidden = sessions.length > 0;
       empty.textContent = sessions.length ? '' : 'No sessions yet. Start one with “New session” to run a CLI agent here; everyone on this hive can watch or join it.';
       const liveIds = {};
       sessions.forEach(function(s) { liveIds[s.id] = true; sessionsEnsurePane(s); });
       Array.prototype.forEach.call(document.querySelectorAll('#sessions-panes .sessions-pane'), function(pane) {
         const id = pane.id.replace('sessions-pane-', '');
-        if (id !== SESSIONS_CAMPAIGNS_TAB && !liveIds[id]) { delete _sessionsFrames[id]; pane.remove(); }
+        if (!liveIds[id]) { delete _sessionsFrames[id]; pane.remove(); }
       });
-      sessionsEnsureCampaignsPane();
       sessionsShowSelected();
       sessionsSyncPreparingPoll(sessions);
     }
@@ -653,29 +643,12 @@
       const preparing = (sessions || []).filter(function(s) { return s.status === SESSIONS_STATUS_PREPARING; }).length;
       return running + ' running · ' + (preparing ? preparing + ' preparing · ' : '') + (sessions || []).length + ' total';
     }
-    function sessionsEnsureCampaignsPane() {
-      const host = document.getElementById('sessions-panes');
-      if (!host || document.getElementById('sessions-pane-' + SESSIONS_CAMPAIGNS_TAB)) return;
-      const pane = document.createElement('div');
-      pane.id = 'sessions-pane-' + SESSIONS_CAMPAIGNS_TAB;
-      pane.className = 'sessions-pane';
-      pane.setAttribute('role', 'tabpanel');
-      pane.setAttribute('aria-labelledby', 'sessions-tab-' + SESSIONS_CAMPAIGNS_TAB);
-      pane.setAttribute('data-mode', 'campaigns');
-      host.appendChild(pane);
-    }
     function sessionsShowSelected() {
       Array.prototype.forEach.call(document.querySelectorAll('#sessions-panes .sessions-pane'), function(pane) {
         pane.hidden = pane.id !== 'sessions-pane-' + _sessionsSelected;
       });
-      if (_sessionsSelected === SESSIONS_CAMPAIGNS_TAB) {
-        sessionsStopLogPoll();
-        const pane = document.getElementById('sessions-pane-' + SESSIONS_CAMPAIGNS_TAB);
-        if (pane && !pane.firstChild) { pane.innerHTML = renderCampaignsPanel(); loadCampaigns(); }
-        return;
-      }
       const s = sessionsSelectedSession();
-      if (!s) return;
+      if (!s) { sessionsStopLogPoll(); return; }
       const mode = sessionsViewMode(_sessionsRole, s);
       if (mode === 'preparing' || mode === 'failed') { sessionsStopLogPoll(); return; }
       if (mode === 'terminal' && !_sessionsFrameFailed[s.id]) { sessionsStopLogPoll(); sessionsAttachTerminal(s); } else sessionsStartLogPoll();

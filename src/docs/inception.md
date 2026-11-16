@@ -11,8 +11,11 @@ see a session watches it live, one person at a time holds the keyboard, and
 and the [Sessions API](api-reference/sessions.md).
 
 The dashboard's old step-by-step Inception wizard was removed; Inception (spek)
-replaces it. Its Campaigns and Jam view is the **Campaigns** tab of the
-Inception (spek) section.
+replaces it. The **Campaigns** tab that carried the wizard's campaigns and Jam
+view over into Inception (spek) has been retired too: start a session for new
+inception work, and find Spektacular runs in [Runs](runs.md). The
+`/api/campaigns` endpoints, campaign Jam and campaign recheck are being retired
+in follow-up changes.
 
 The rest of this guide covers the ACMM **L1 ("Inception")** workflow behind
 `/api/inception/*`, which is unchanged and still available to API callers. It
@@ -113,8 +116,9 @@ owner role for state-changing calls) drives them:
    completion remains a no-op for run admission.
 7. If anything goes wrong, `POST /api/inception/reset` first archives the
    current state and wiki files as an Inception campaign, then clears the
-   active state and state file. The Campaigns tab lists that archived
-   session, so a reset does not discard completed work.
+   active state and state file under `inception/campaigns/<id>/`, so a reset
+   does not discard completed work. The dashboard no longer lists these
+   archives.
 
 Optional wiki-management calls, usable at any point once an inception has
 produced wiki files:
@@ -180,15 +184,19 @@ recorded as advisory beads, unrelated to any specific inception run.
 
 ## Campaigns and resume
 
-The **Campaigns** tab of the Inception (spek) section lists campaigns. Each
-row is a resumable unit of work keyed by its stable session/spec id:
+The dashboard no longer shows campaigns: the **Campaigns** tab of the
+Inception (spek) section was retired in favour of
+[Inception (spek) sessions](dashboard-sections/workflow-and-agents.md#inception-spek).
+Until the endpoints are retired, `GET /api/campaigns` still lists them for API
+callers. Each entry is a unit of work keyed by its stable session/spec id:
 
-- Archived L1 sessions have type `inception` and engine `Spec Kit`. Pressing
-  **Continue** calls `POST /api/campaigns/{id}/resume`, takes a durable
+- Archived L1 sessions have type `inception` and engine `Spec Kit`.
+  `POST /api/campaigns/{id}/resume` takes a durable
   campaign lease and restores the saved inception state and wiki working
   files, so the API workflow above continues from the archived phase (the
   dashboard has no wizard to reopen). A second operator gets
-  a 409 until the holder presses **Release** or the lease expires.
+  a 409 until the holder calls `POST /api/campaigns/{id}/release` or the lease
+  expires.
 - Spektacular (Spek)-backed runs have type `spektacular`, engine `Spektacular`, and a
   `/api/runs/{key}` link. Resume returns the retained run detail and a CLI
   status command; Spek itself reloads state from its working files and
@@ -198,12 +206,8 @@ row is a resumable unit of work keyed by its stable session/spec id:
 - **Revise** calls `POST /api/campaigns/{id}/revise` and creates a new
   campaign linked with `revision_of`/`revision`, so changed requirements branch
   from the shipped campaign instead of erasing its trail. The list marks the
-  older campaign with `superseded_by`, and the dashboard shows one row per
-  Revise chain — the newest revision, with a `rev N` pill and an
-  "N earlier revisions" disclosure that can still continue or delete each
-  older revision — instead of one identical row per click.
-- **🗑 Delete** (icon button at the end of each row) calls
-  `DELETE /api/campaigns/{id}` after an in-app confirmation. It removes only
+  older campaign with `superseded_by`.
+- `DELETE /api/campaigns/{id}` (owner only) removes only
   the campaign record: the saved Inception state and the archived wiki
   snapshot under `inception/campaigns/<id>/`. Knowledge-base facts, Jam
   threads, scaffolded repo files and the other revisions in the chain are

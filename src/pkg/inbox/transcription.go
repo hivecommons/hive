@@ -245,6 +245,15 @@ func (s *Service) applyTranscripts(items []Item) {
 			st := rec.State()
 			s.txLive(it.Source, it.ID, &st)
 			it.Transcription = &st
+			if rec.Status == TranscriptionDone && it.FactState == connector.FactContentPending {
+				// A transcript that finished before the fact existed (or
+				// before write-back did) reaches Knowledge now.
+				if changed, err := s.writeMachineFact(*it, rec); err != nil {
+					s.Logger.Warn("inbox: write machine transcript to fact", "item", it.Key(), "error", err)
+				} else if changed {
+					it.FactState = connector.FactContentMachine
+				}
+			}
 			if rec.Status == TranscriptionDone && it.Pending {
 				it.Pending, it.HasTranscript = false, true
 			}
@@ -267,7 +276,9 @@ func (s *Service) withMachineTranscript(it Item, c Content, err error) (Content,
 	if store == nil {
 		return c, err
 	}
-	if err == nil && !c.Pending && (c.Transcript != "" || c.Summary != "") {
+	// Source text wins. A fact holding this hive's own machine transcript
+	// is not source text: the stored record serves it unwrapped, labelled.
+	if err == nil && !c.Pending && !c.machineFact && (c.Transcript != "" || c.Summary != "") {
 		return c, nil
 	}
 	rec, ok := store.Get(it.Source, it.ID)
@@ -414,6 +425,13 @@ func (s *Service) runTranscription(it Item, cfg config.InboxTranscription, rec T
 		}
 	}
 	s.putTranscript(store, rec)
+	if rec.Status == TranscriptionDone {
+		// The transcript becomes the item's Knowledge fact text, so search,
+		// nous and agents see it, not only the Inbox.
+		if _, ferr := s.writeMachineFact(it, rec); ferr != nil {
+			s.Logger.Warn("inbox: write machine transcript to fact", "item", key, "error", ferr)
+		}
+	}
 	s.auditTranscription(opts, rec, billed)
 	s.Logger.Info("inbox: transcription finished", "item", key, "status", rec.Status, "provider", rec.Provider, "model", rec.Model, "audio_seconds", int(billed))
 }

@@ -304,8 +304,8 @@ set yourself is never rewritten, so an explicit `@latest` still floats.
      @plaud-ai/mcp@0.3.14 install` signed in. See
      [Inbox and voice sources](inbox-voice-sources.md#hosted-hives-signing-in-to-plaud).
 4. Click **Sync now**. New recordings are picked up every `interval` and
-   appear in the **📥 Inbox**, where you file them as a spektacular RFC, send
-   them to dibs, or keep them as knowledge only
+   appear in the **📥 Inbox**, where you file them as a spektacular RFC or
+   keep them as knowledge only
    ([Inbox and voice sources](inbox-voice-sources.md)).
 
 ### Behaviour

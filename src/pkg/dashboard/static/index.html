@@ -7713,7 +7713,6 @@
     .campaigns-head { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-4); margin-bottom: var(--sp-5); flex-wrap: wrap; }
     .campaigns-title { font-size: var(--fs-md); font-weight: 700; }
     .campaigns-subtitle { color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-1); }
-    .campaigns-filters { display: grid; grid-template-columns: minmax(180px, 2fr) repeat(4, minmax(110px, 1fr)) auto; gap: var(--sp-3); margin-bottom: var(--sp-5); }
     .campaigns-input { background: var(--bg); color: var(--fg); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3) var(--sp-4); font: inherit; font-size: var(--fs-sm); min-width: 0; }
     .campaigns-list { display: grid; gap: var(--sp-3); }
     .campaign-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--sp-4); align-items: center; border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: color-mix(in srgb, var(--border) 8%, transparent); }
@@ -7721,27 +7720,9 @@
     .campaign-row-title { font-weight: 700; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .campaign-row-meta { display: flex; gap: var(--sp-3); flex-wrap: wrap; color: var(--muted); font-size: var(--fs-sm); margin-top: var(--sp-2); }
     .campaign-pill { border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); }
-    .campaign-revision-pill { border-color: var(--accent); color: var(--accent); }
-    /* Revise chains fold into one row; earlier revisions live in a
-       disclosure with their own Continue / Delete icon buttons (#12698). */
-    .campaign-history-list { display: grid; gap: var(--sp-2); margin-top: var(--sp-2); width: 100%; }
-    .campaign-history-row { display: flex; align-items: center; gap: var(--sp-3); flex-wrap: wrap; border-top: 1px dashed var(--border); padding-top: var(--sp-2); }
-    .campaign-history-row .campaign-row-actions { margin-left: auto; }
     .campaign-row-actions .nous-exp-icon { align-self: center; }
-    .nous-exp-icon-delete:hover, .nous-exp-icon-delete:focus-visible { color: var(--red); }
     .campaign-empty { color: var(--muted); text-align: center; padding: var(--sp-7); border: 1px dashed var(--border); border-radius: var(--r); }
-    .campaign-jam { margin-top: var(--sp-5); display: grid; gap: var(--sp-4); }
-    .campaign-jam-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--sp-4); }
-    .campaign-jam-box { border: 1px solid var(--border); border-radius: var(--r); padding: var(--sp-4); background: color-mix(in srgb, var(--border) 6%, transparent); }
-    .campaign-jam-box h4 { margin: 0 0 var(--sp-3); font-size: var(--fs-sm); }
-    .campaign-jam-list { display: grid; gap: var(--sp-2); color: var(--muted); font-size: var(--fs-sm); }
-    .campaign-jam-form { display: grid; gap: var(--sp-2); margin-top: var(--sp-3); }
-    .campaign-jam-form textarea { min-height: 72px; resize: vertical; }
-    .campaign-jam-actions { display: flex; gap: var(--sp-2); flex-wrap: wrap; }
-    .campaign-jam-live { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; }
-    .campaign-jam-live-pill { border: 1px solid var(--border); border-radius: var(--r-full); padding: var(--sp-1) var(--sp-2); background: var(--bg); color: var(--fg); }
-    @media (max-width: 1100px) { .campaign-jam-grid { grid-template-columns: 1fr; } }
-    @media (max-width: 900px) { .campaigns-filters { grid-template-columns: 1fr 1fr; } .campaign-row { grid-template-columns: minmax(0, 1fr); } .campaign-row > div { min-width: 0; } .campaign-row-actions { justify-content: flex-start; } }
+    @media (max-width: 900px) { .campaign-row { grid-template-columns: minmax(0, 1fr); } .campaign-row > div { min-width: 0; } .campaign-row-actions { justify-content: flex-start; } }
     /* Review queue (#9607) */
     .review-subsection { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--dash-section-header-gap, var(--sp-3)); margin: var(--sp-2) 0 var(--sp-7); }
     .review-subsection + .review-subsection { margin-top: var(--sp-7); }
@@ -9555,7 +9536,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
 
         <details class="faq-q" id="faq-sessions">
           <summary>What is Inception (spek), and where did the Inception wizard go?</summary>
-          <p>The step-by-step Inception wizard was removed; the dashboard's <strong>Inception (spek)</strong> section replaces it (on by default; an owner can turn it off in Settings, which hides the section): named terminal tabs where a command-line AI agent runs inside Hive, shared with everyone on the hive. People with the <code>read</code> role see a read-only scrollback. Typing in a terminal is shared and not attributed to individual people. Campaigns and Jam moved to a Campaigns tab. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections/workflow-and-agents.md#inception-spek" target="_blank" rel="noopener noreferrer">Inception (spek)</a>.</p>
+          <p>The step-by-step Inception wizard was removed; the dashboard's <strong>Inception (spek)</strong> section replaces it (on by default; an owner can turn it off in Settings, which hides the section): named terminal tabs where a command-line AI agent runs inside Hive, shared with everyone on the hive. People with the <code>read</code> role see a read-only scrollback. Typing in a terminal is shared and not attributed to individual people. The Campaigns tab that briefly carried the old campaigns and Jam view was retired as well; Spektacular runs are in Runs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections/workflow-and-agents.md#inception-spek" target="_blank" rel="noopener noreferrer">Inception (spek)</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-external-engines">
@@ -9580,7 +9561,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
 
         <details class="faq-q" id="faq-multiple-experiments">
           <summary>Can I run more than one experiment at once?</summary>
-          <p>Yes. The Experiment Lab lists each running experiment as its own card — research question, scope pills, status and a baseline bar reading <em>N / 672 (≈ 7 days of observations, 4 per hour)</em> — and <strong>+ New experiment</strong> adds another beside them, the same way the Inception section lists its campaigns. The one rule is that two running experiments may not share a repo target (or both be hive-wide): concurrent interventions on the same scope would confound each other's outcomes, so the lab refuses the second one and offers to pause the first or narrow the scope. Archived experiments stay read-only under <em>Previous experiments</em>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">running several experiments at once</a>.</p>
+          <p>Yes. The Experiment Lab lists each running experiment as its own card — research question, scope pills, status and a baseline bar reading <em>N / 672 (≈ 7 days of observations, 4 per hour)</em> — and <strong>+ New experiment</strong> adds another beside them, one card per experiment. The one rule is that two running experiments may not share a repo target (or both be hive-wide): concurrent interventions on the same scope would confound each other's outcomes, so the lab refuses the second one and offers to pause the first or narrow the scope. Archived experiments stay read-only under <em>Previous experiments</em>. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/dashboard-sections.md#experiment-lab" target="_blank" rel="noopener noreferrer">running several experiments at once</a>.</p>
           <p>Each card also says where it is: <em>collecting baseline</em>, <em>ready — generate proposals</em> (one button; the lab switches to Suggest for you), <em>proposals awaiting your review</em>, <em>running</em> or <em>concluded</em>. Entering a question is what creates the card — you never have to find a mode switch first.</p>
         </details>
         </section>
@@ -10815,7 +10796,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'sessions-section': { heading: 'Inception (spek)', help: 'Named terminal sessions running command-line AI tools inside Hive; everyone who can see one watches live and one person at a time holds the keyboard.' },
       'knowledge-section': { heading: 'Knowledge', help: 'The facts Hive has learned about your projects, where they came from, and how much Hive trusts each one.' },
       'meetings-section': { heading: 'Meetings', help: 'Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.' },
-      'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC, send to dibs, or keep as knowledge.' },
+      'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
@@ -47522,7 +47503,16 @@ function burnAreaChart() {
     function inboxTranscriptionHtml(it, key) {
       const st = it.transcription;
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
-      let html = '';
+      // What the item's Knowledge fact holds, as a status pill (not a
+      // control): the source's own text, this hive's machine transcript, or
+      // metadata only while no text exists yet.
+      const factStates = {
+        ready: { label: 'In knowledge', status: 'ok', title: 'Stored as a Knowledge fact with the source\'s own text; knowledge search and agents see it.' },
+        machine: { label: 'In knowledge (machine text)', status: 'ok', title: 'Stored as a Knowledge fact with this hive\'s machine transcript; the source\'s own text replaces it when it exists.' },
+        pending: { label: 'Pending text', status: 'not loaded', title: 'Stored as a Knowledge fact with metadata only (title, date, duration, highlights); no text yet, so knowledge search finds no words.' },
+      };
+      const fs = factStates[it.fact_state] || factStates.ready;
+      let html = it.fact_slug ? '<span class="kc-pill" role="status" data-status="' + fs.status + '" data-fact-state="' + escapeHtml(it.fact_state || 'ready') + '" title="' + escapeHtml(fs.title) + '">' + escapeHtml(fs.label) + '</span>' : '';
       if (st && st.status) {
         const busy = st.status === 'queued' || st.status === 'running';
         const pill = st.status === 'done' ? 'ok' : (st.status === 'failed' ? 'error' : (busy ? 'syncing' : ''));
@@ -47623,7 +47613,10 @@ function burnAreaChart() {
       const checked = _inboxSelected.has(key) ? ' checked' : '';
       const when = it.recorded_at && !String(it.recorded_at).startsWith('0001') ? relativeTimeShort(it.recorded_at) : '';
       const dur = inboxFmtDuration(it.duration_ms);
-      const meta = [escapeHtml(it.source), when ? 'recorded ' + when : '', dur].filter(Boolean).join(' · ');
+      // The backing Knowledge fact is a plain link in the metadata line, not
+      // an action: it only opens the fact.
+      const factLink = it.fact_slug ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
+      const meta = [escapeHtml(it.source), when ? 'recorded ' + when : '', dur, factLink].filter(Boolean).join(' · ');
       const routes = it.routes || {};
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
@@ -47633,15 +47626,7 @@ function burnAreaChart() {
       let actions = '';
       if (inboxViewerCanPlay()) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + ' Transcript</button>';
-      if (owner) {
-        const retry = (d) => routes[d] && routes[d].status === 'failed' ? 'Retry ' : '→ ';
-        actions += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxOpenRoute" data-arg0="' + src + '" data-arg1="' + id + '" data-arg2="spek_rfc">' + retry('spek_rfc') + 'RFC…</button>';
-        actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenRoute" data-arg0="' + src + '" data-arg1="' + id + '" data-arg2="dibs">' + retry('dibs') + 'dibs…</button>';
-        if (!it.dismissed) actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxDismiss" data-arg0="' + src + '" data-arg1="' + id + '" title="Keep it as a Knowledge fact; no RFC, no dibs idea">Knowledge only</button>';
-        else actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxUndismiss" data-arg0="' + src + '" data-arg1="' + id + '">Back to inbox</button>';
-      }
-      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg0="' + src + '" data-arg1="' + id + '" title="Share a link to this item in the Inbox (not the recording)">🔗 Share</button>';
-      if (it.fact_slug) actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenFact" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="This item is already a Knowledge fact">📚 Fact</button>';
+      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
         (owner ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
@@ -47741,16 +47726,134 @@ function burnAreaChart() {
       if (at < 0) return '';
       try { return decodeURIComponent(h.slice(at + INBOX_SHARE_HASH.length).split('&')[0]); } catch (e) { return ''; }
     }
-    async function inboxShare(src, id) {
-      const it = inboxFind(src, id);
+    async function inboxShareCopy(src, id) {
       const url = inboxShareLink(src, id);
-      const title = (it && it.title) || 'Inbox item';
-      if (navigator.share) {
-        try { await navigator.share({ title: title, url: url }); return; }
-        catch (e) { if (e && e.name === 'AbortError') return; }
-      }
       if (await writeClipboardText(url)) showToast('Inbox link copied', 'success');
       else showToast('Copy this Inbox link: ' + url, 'info', true);
+    }
+    async function inboxShareNative(src, id) {
+      const it = inboxFind(src, id);
+      try { await navigator.share({ title: (it && it.title) || 'Inbox item', url: inboxShareLink(src, id) }); }
+      catch (e) { if (!e || e.name !== 'AbortError') await inboxShareCopy(src, id); }
+    }
+    // The Share menu has two groups. Hive actions file or keep the item and
+    // are owner-only (the route and dismiss APIs are); Link actions only share
+    // a link. Each entry is {id, label, enabled(item, role), run(item)} where
+    // label is a string or fn(item), and enabled returns true, false (hide) or
+    // a string (show disabled, the string is the reason). Other features add
+    // one entry to inboxShareHiveActions (in menu order), e.g. the spek
+    // session action, instead of a new row button. An entry may also carry
+    // bulk(items) to appear in the multi-select Hive menu.
+    const inboxShareHiveActions = [
+      { id: 'rfc', dest: 'spek_rfc', label: 'RFC…', enabled: (it, role) => role !== 'owner' ? false : it.pending ? INBOX_NO_TEXT_REASON : !(((_inboxCache || {}).repos || []).length) ? 'No RFC repository configured: set one in Settings → Inbox' : true, run: it => inboxOpenRoute(it.source, it.id, 'spek_rfc') },
+      { id: 'knowledge', label: it => it.dismissed ? 'Back to inbox' : 'Knowledge', enabled: (it, role) => role === 'owner', run: it => it.dismissed ? inboxUndismiss(it.source, it.id) : inboxDismiss(it.source, it.id), bulkLabel: 'Knowledge', bulk: () => inboxDismissSelected() },
+      { id: 'dibs', dest: 'dibs', label: 'DIBS', enabled: (it, role) => role !== 'owner' ? false : inboxDibsReady() ? true : 'Not configured: set the dibs URL in Settings → Inbox → dibs URL', run: it => inboxOpenRoute(it.source, it.id, 'dibs') },
+    ];
+    const inboxShareLinkActions = [
+      { id: 'copy', label: 'Copy link', enabled: () => true, run: it => inboxShareCopy(it.source, it.id) },
+      { id: 'native', label: 'Share…', enabled: () => typeof navigator !== 'undefined' && !!navigator.share, run: it => inboxShareNative(it.source, it.id) },
+    ];
+    const INBOX_NO_TEXT_REASON = 'No transcript yet: use 🎧 Transcribe first';
+    function inboxDibsReady() { const st = (_inboxCache || {}).settings || {}; return !!st.dibs_url && !!st.dibs_token_set; }
+    // inboxShareMenuGroups resolves the registries for one item and the
+    // viewer's role into labelled groups; empty groups are dropped.
+    function inboxShareMenuGroups(it) {
+      const role = window._hiveRole;
+      const routes = (it && it.routes) || {};
+      const resolve = (list) => list.map(a => {
+        const en = a.enabled(it, role);
+        if (en === false) return null;
+        let label = typeof a.label === 'function' ? a.label(it) : a.label;
+        if (a.dest && routes[a.dest] && routes[a.dest].status === 'failed') label = 'Retry ' + label;
+        return { id: a.id, label, disabled: typeof en === 'string', hint: typeof en === 'string' ? en : '' };
+      }).filter(Boolean);
+      return [{ id: 'hive', label: 'Hive', items: resolve(inboxShareHiveActions) }, { id: 'link', label: 'Link', items: resolve(inboxShareLinkActions) }].filter(g => g.items.length);
+    }
+    function inboxShareMenuHtml(groups, src, id) {
+      return '<div class="ham-menu ham-menu-hinted inbox-share-menu" role="menu" aria-label="Share" tabindex="-1">' + groups.map((g, gi) =>
+        (gi ? '<div class="ham-menu-sep" role="separator"></div>' : '') +
+        '<div role="group" aria-label="' + escapeHtml(g.label) + '"><div class="ham-menu-head" aria-hidden="true">' + escapeHtml(g.label) + '</div>' + g.items.map(a =>
+          '<button type="button" role="menuitem" class="ham-menu-item' + (a.hint ? ' ham-menu-item-hinted' : '') + '" tabindex="-1" data-inbox-share-group="' + escapeHtml(g.id) + '" data-inbox-share-act="' + escapeHtml(a.id) + '" data-src="' + escapeHtml(src) + '" data-id="' + escapeHtml(id) + '"' + (a.disabled ? ' aria-disabled="true"' : '') + '>' +
+          '<span>' + escapeHtml(a.label) + '</span>' + (a.hint ? '<span class="ham-menu-hint">' + escapeHtml(a.hint) + '</span>' : '') + '</button>').join('') + '</div>').join('') + '</div>';
+    }
+    // inboxShareMenuRun calls the registered handler of one entry.
+    async function inboxShareMenuRun(group, act, src, id) {
+      const it = inboxFind(src, id);
+      const entry = (group === 'hive' ? inboxShareHiveActions : inboxShareLinkActions).find(a => a.id === act);
+      if (it && entry) await entry.run(it);
+    }
+    // Bulk Hive menu: entries with bulk(), owner only.
+    function inboxBulkMenuGroups() {
+      if (window._hiveRole !== 'owner') return [];
+      const items = inboxShareHiveActions.filter(a => typeof a.bulk === 'function').map(a => ({ id: a.id, label: a.bulkLabel || (typeof a.label === 'function' ? a.id : a.label), disabled: false, hint: '' }));
+      return items.length ? [{ id: 'hive', label: 'Hive', items }] : [];
+    }
+    function inboxBulkMenuRun(act) {
+      const entry = inboxShareHiveActions.find(a => a.id === act);
+      if (entry && entry.bulk) return entry.bulk(Array.from(_inboxSelected));
+    }
+    let _inboxShareMenu = null;
+    function inboxShareMenuClose(restore) {
+      const m = _inboxShareMenu;
+      if (!m) return;
+      _inboxShareMenu = null;
+      document.removeEventListener('pointerdown', m.onAway, true);
+      document.removeEventListener('keydown', m.onKey, true);
+      m.el.remove();
+      m.btn.setAttribute('aria-expanded', 'false');
+      if (restore && m.btn.focus) m.btn.focus();
+    }
+    function inboxShareMenuFocus(el, dir, from) {
+      const items = Array.from(el.querySelectorAll('[role="menuitem"]')).filter(b => b.getAttribute('aria-disabled') !== 'true');
+      if (!items.length) { el.focus(); return; }
+      let i = items.indexOf(from);
+      if (dir === 'first') i = 0; else if (dir === 'last') i = items.length - 1; else i = (i + dir + items.length) % items.length;
+      items[i].focus();
+    }
+    function inboxPopMenu(btn, html, onPick) {
+      if (_inboxShareMenu) { const same = _inboxShareMenu.btn === btn; inboxShareMenuClose(false); if (same) return; }
+      const tpl = document.createElement('template');
+      tpl.innerHTML = html;
+      const el = tpl.content.firstElementChild;
+      document.body.appendChild(el);
+      const r = btn.getBoundingClientRect();
+      el.style.setProperty('left', Math.max(0, Math.min(r.left, window.innerWidth - el.offsetWidth)) + 'px');
+      el.style.setProperty('top', r.bottom + 'px');
+      btn.setAttribute('aria-expanded', 'true');
+      const m = { el, btn };
+      m.onAway = e => { if (!el.contains(e.target) && !btn.contains(e.target)) inboxShareMenuClose(false); };
+      m.onKey = e => {
+        if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); inboxShareMenuClose(true); return; }
+        const b = e.target.closest ? e.target.closest('[role="menuitem"]') : null;
+        switch (e.key) {
+          case 'ArrowDown': e.preventDefault(); inboxShareMenuFocus(el, 1, b); break;
+          case 'ArrowUp': e.preventDefault(); inboxShareMenuFocus(el, -1, b); break;
+          case 'Home': e.preventDefault(); inboxShareMenuFocus(el, 'first'); break;
+          case 'End': e.preventDefault(); inboxShareMenuFocus(el, 'last'); break;
+          case 'Tab': inboxShareMenuClose(true); break;
+        }
+      };
+      el.addEventListener('click', e => {
+        const b = e.target.closest('[data-inbox-share-act]');
+        if (!b || b.getAttribute('aria-disabled') === 'true') return;
+        e.preventDefault();
+        inboxShareMenuClose(true);
+        onPick(b.dataset);
+      });
+      document.addEventListener('pointerdown', m.onAway, true);
+      document.addEventListener('keydown', m.onKey, true);
+      _inboxShareMenu = m;
+      inboxShareMenuFocus(el, 'first');
+    }
+    // inboxShare opens the per-item Share menu under its button.
+    function inboxShare(src, id, btn) {
+      const it = inboxFind(src, id);
+      if (!it) return;
+      inboxPopMenu(btn, inboxShareMenuHtml(inboxShareMenuGroups(it), src, id), d => inboxShareMenuRun(d.inboxShareGroup, d.inboxShareAct, d.src, d.id));
+    }
+    // inboxBulkMenu opens the Hive menu of the multi-select bar.
+    function inboxBulkMenu(btn) {
+      inboxPopMenu(btn, inboxShareMenuHtml(inboxBulkMenuGroups(), '', ''), d => inboxBulkMenuRun(d.inboxShareAct));
     }
     let _inboxFocusKey = inboxFocusKeyFromHash(location.hash);
     window.addEventListener('hashchange', (e) => {
@@ -47814,7 +47917,7 @@ function burnAreaChart() {
       if (owner && shown.length) {
         const sel = _inboxSelected.size;
         html += '<div class="kc-actions mb-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxSelectAll">' + (sel === shown.length ? 'Clear selection' : 'Select all') + '</button>' +
-          (sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxDismissSelected">Knowledge only (' + sel + ')</button>' : '') + '</div>';
+          (sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxBulkMenu" data-arg-types="t" aria-haspopup="menu" aria-expanded="false">Hive (' + sel + ') ▾</button>' : '') + '</div>';
       }
       if (!shown.length) html += '<div class="muted-note">' + (items.length ? 'Everything is triaged. Toggle “show processed” to see filed and dismissed items.' : 'Nothing yet. Connect Plaud or another voice source under Knowledge → Integrations; new recordings land here after the next sync (a newly added connector starts on the next hive restart).') + '</div>';
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
@@ -47876,13 +47979,12 @@ function burnAreaChart() {
           '<label class="muted-note inbox-field">Repository<select class="field-input field-input-block mt-2" id="inbox-route-repo">' + opts + '</select></label>' +
           (repos.length ? '' : '<p class="kc-error muted-xs">No repositories configured on this hive.</p>');
       } else {
-        body += '<p class="muted-note">Posts the title, summary and transcript to dibs as a private draft idea' + (settings.dibs_url ? ' at <code>' + escapeHtml(settings.dibs_url) + '</code>' : '') + '. Provenance links back to <code>' + escapeHtml(src) + '://recordings/' + escapeHtml(id) + '</code>.</p>' +
-          (!settings.dibs_url ? '<p class="kc-error muted-xs">dibs is not configured — set the URL under ⚙ Auto-routing and <code>inbox.dibs.token_env</code> in the hive config.</p>' : !settings.dibs_token_set ? '<p class="kc-error muted-xs">dibs token missing — set the environment variable named by <code>inbox.dibs.token_env</code>.</p>' : '');
+        body += '<p class="muted-note">Posts the title, summary and transcript to dibs as a private draft idea' + (settings.dibs_url ? ' at <code>' + escapeHtml(settings.dibs_url) + '</code>' : '') + '. Provenance links back to <code>' + escapeHtml(src) + '://recordings/' + escapeHtml(id) + '</code>.</p>';
       }
       body += '<div class="hive-dialog-error" role="alert" id="inbox-route-error"></div>' +
         '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
         '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxConfirmRoute" data-arg0="' + escapeHtml(src) + '" data-arg1="' + escapeHtml(id) + '" data-arg2="' + escapeHtml(dest) + '">' + (dest === 'spek_rfc' ? 'File RFC' : 'Send to dibs') + '</button></div>';
-      kbShowModal(dest === 'spek_rfc' ? '→ RFC (spektacular)' : '→ dibs', body, { width: '520px' });
+      kbShowModal(dest === 'spek_rfc' ? '→ RFC (spektacular)' : '→ DIBS', body, { width: '520px' });
     }
     async function inboxConfirmRoute(src, id, dest) {
       const repoEl = document.getElementById('inbox-route-repo');
@@ -50653,397 +50755,6 @@ function burnAreaChart() {
     } else {
       initScrollStabilizer();
     }
-    // ── Campaigns + Jam (Spek / inception campaign archive) ──
-    // Moved out of inception.js so the Campaigns and Jam UI survives the
-    // Inception wizard's removal; it is the Campaigns tab of the Inception
-    // (spek) section (sessions.js). Plain top-level declarations, shared
-    // through the single concatenated dashboard script; keep this file adjacent to it in manifest.txt.
-    let _campaigns = [];
-
-    async function loadCampaigns() {
-      try {
-        const params = new URLSearchParams();
-        ['search', 'repo', 'stage', 'status', 'owner'].forEach(function(name) {
-          const el = document.getElementById('campaign-filter-' + name);
-          if (el && el.value.trim()) params.set(name, el.value.trim());
-        });
-        const qs = params.toString();
-        const r = await fetch('/api/campaigns' + (qs ? '?' + qs : ''), {headers: _inceptionAuthHeaders()});
-        const data = await r.json();
-        if (data.ok) {
-          _campaigns = data.campaigns || [];
-          renderCampaignsList();
-        }
-      } catch (e) { console.error('campaign load failed', e); }
-    }
-
-    function renderCampaignsPanel() {
-      return `
-        <div class="campaigns-card">
-          <div class="campaigns-head">
-            <div><div class="campaigns-title">Campaigns</div><div class="campaigns-subtitle">Resumable Inception and Spek sessions keyed by stable spec ID.</div></div>
-            <button class="hv-btn btn-secondary btn-sm" data-action="loadCampaigns">Refresh</button>
-          </div>
-          <div class="campaigns-filters">
-            <input id="campaign-filter-search" class="campaigns-input" placeholder="Search campaigns" />
-            <input id="campaign-filter-repo" class="campaigns-input" placeholder="Repo" />
-            <input id="campaign-filter-stage" class="campaigns-input" placeholder="Stage" />
-            <input id="campaign-filter-status" class="campaigns-input" placeholder="Status" />
-            <input id="campaign-filter-owner" class="campaigns-input" placeholder="Owner" />
-            <button class="hv-btn btn-secondary btn-sm" data-action="loadCampaigns">Apply</button>
-          </div>
-          <div id="campaigns-list" class="campaigns-list"><div class="campaign-empty">Loading campaigns…</div></div>
-          <div id="campaign-jam-panel" class="campaign-jam"></div>
-        </div>`;
-    }
-
-    // Revise chains (#12698): every Revise mints a linked `<root>-rev-N`
-    // archive with the same title, so the API marks the older ones with
-    // `superseded_by`. Show one row per chain (the newest revision) and fold
-    // the earlier ones into a history disclosure under it.
-    function campaignRevisionChains(campaigns) {
-      const byId = {};
-      (campaigns || []).forEach(function(c) { byId[c.id] = c; });
-      const latest = (campaigns || []).filter(function(c) { return !c.superseded_by || !byId[c.superseded_by]; });
-      return latest.map(function(head) {
-        const earlier = [];
-        const seen = {};
-        let cur = head;
-        while (cur && cur.revision_of && byId[cur.revision_of] && !seen[cur.revision_of]) {
-          seen[cur.revision_of] = true;
-          cur = byId[cur.revision_of];
-          earlier.push(cur);
-        }
-        return { head: head, history: earlier };
-      });
-    }
-
-    function campaignDeleteButton(c) {
-      return nousExpIconButton('deleteCampaign', escapeHtml(c.id), '', 'Delete campaign', '🗑', 'nous-exp-icon-delete campaign-delete');
-    }
-
-    function renderCampaignRow(c, history) {
-      const repo = (c.repos || []).join(', ') || 'no repo';
-      const activity = c.last_activity || 'no activity';
-      const engine = c.engine || 'unknown engine';
-      const rc = c.recheck || {};
-      const recheckText = rc.enabled ? `Rechecks every ${escapeHtml(rc.interval || 'default')} · next ${escapeHtml(rc.next_at ? relativeAge(rc.next_at) : 'not scheduled')} · last delta ${Number(rc.last_delta_count || 0)}` : 'Rechecks off';
-      const drift = c.drift || {};
-      const external = Array.isArray(drift.external) ? drift.external : [];
-      const failed = Array.isArray(rc.sources_failed) ? rc.sources_failed : (Array.isArray(drift.sources_failed) ? drift.sources_failed : []);
-      const recheckExternal = external.length ? `<details class="campaign-row-meta"><summary>${Number(drift.external_count || external.length)} external signals</summary><div class="campaign-jam-list">${external.map(ev => `<div><strong>${escapeHtml(ev.source || '')}</strong> · ${escapeHtml(ev.kind || '')}: ${ev.url ? `<a href="${escapeHtml(ev.url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(ev.title || ev.url)}</a>` : escapeHtml(ev.title || '')}${ev.summary ? `<br>${escapeHtml(ev.summary)}` : ''}</div>`).join('')}${failed.length ? `<div>Failed sources: ${failed.map(f => `${escapeHtml(f.name || '')} (${escapeHtml(f.reason || '')})`).join(', ')}</div>` : ''}</div></details>` : (Number(rc.external_count || 0) ? `<div class="campaign-row-meta"><span>${Number(rc.external_count || 0)} external signals</span></div>` : '');
-      const recheckDisabled = rc.in_flight ? ' disabled' : '';
-      const revisionPill = c.revision ? `<span class="campaign-pill campaign-revision-pill" title="Revision ${Number(c.revision)}${c.revision_of ? ' of ' + escapeHtml(c.revision_of) : ''}">rev ${Number(c.revision)}</span>` : '';
-      const hist = Array.isArray(history) ? history : [];
-      const historyBlock = hist.length ? `<details class="campaign-row-meta campaign-history"><summary>${hist.length} earlier ${hist.length === 1 ? 'revision' : 'revisions'}</summary><div class="campaign-history-list">${hist.map(function(h) {
-        return `<div class="campaign-history-row" data-campaign-id="${escapeHtml(h.id)}"><span class="campaign-pill">${h.revision ? 'rev ' + Number(h.revision) : 'original'}</span><span>${escapeHtml(h.id)}</span><span>${escapeHtml(h.status || 'parked')}</span><span>${escapeHtml(h.last_activity || '')}</span><span class="campaign-row-actions">${nousExpIconButton('resumeCampaign', escapeHtml(h.id), '', 'Continue this revision', '▶', 'nous-exp-icon-resume')}${campaignDeleteButton(h)}</span></div>`;
-      }).join('')}</div></details>` : '';
-      return `<div class="campaign-row" data-campaign-id="${escapeHtml(c.id)}">
-          <div>
-            <div class="campaign-row-title">${escapeHtml(c.title || c.id)}</div>
-            <div class="campaign-row-meta">
-              <span class="campaign-pill">${escapeHtml(c.status || 'parked')}</span>
-              ${revisionPill}
-              <span>${escapeHtml(c.current_stage || '')}${c.current_step ? ' / ' + escapeHtml(c.current_step) : ''}</span>
-              <span>${escapeHtml(repo)}</span>
-              <span>${escapeHtml(engine)}</span>
-              <span>${escapeHtml(activity)}</span>
-            </div>
-            <div class="campaign-row-meta"><span>${recheckText}</span></div>
-            ${recheckExternal}
-            ${historyBlock}
-          </div>
-          <div class="campaign-row-actions">
-            <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(c.id)}">Jam</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="recheckCampaign" data-arg0="${escapeHtml(c.id)}"${recheckDisabled}>Recheck</button>
-            <button class="hv-btn btn-primary btn-sm" data-action="resumeCampaign" data-arg0="${escapeHtml(c.id)}">Continue</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="releaseCampaign" data-arg0="${escapeHtml(c.id)}">Release</button>
-            <button class="hv-btn btn-secondary btn-sm" data-action="reviseCampaign" data-arg0="${escapeHtml(c.id)}">Revise</button>
-            ${campaignDeleteButton(c)}
-          </div>
-        </div>`;
-    }
-
-    function renderCampaignsList() {
-      const list = document.getElementById('campaigns-list');
-      if (!list) return;
-      if (!_campaigns || _campaigns.length === 0) {
-        list.innerHTML = '<div class="campaign-empty">No campaigns yet. Reset or completed inception runs are archived here.</div>';
-        return;
-      }
-      list.innerHTML = campaignRevisionChains(_campaigns).map(function(chain) { return renderCampaignRow(chain.head, chain.history); }).join('');
-    }
-
-    // Delete only removes the campaign record (saved inception state + wiki
-    // snapshot). KB facts, Jam threads and scaffolded repo files are kept.
-    // In-app hiveConfirm dialog; native browser dialogs are forbidden (#12698).
-    const CAMPAIGN_DELETE_CONFIRM_TITLE = 'Delete this campaign?';
-    function campaignDeleteConfirmMessage(c) {
-      const label = (c && (c.title || c.id)) || 'this campaign';
-      const rev = c && c.revision ? ` (revision ${Number(c.revision)})` : '';
-      return `Removes the campaign record for "${label}"${rev}: its saved Inception state and the archived wiki snapshot. It disappears from this list and cannot be continued or revised.\n\nKept: knowledge-base facts, Jam threads, and anything already scaffolded or pushed to the repo. Other revisions in the same chain are not affected.`;
-    }
-
-    async function deleteCampaign(id) {
-      if (!id) return;
-      const c = (_campaigns || []).find(function(x) { return x.id === id; }) || { id: id };
-      const ok = await hiveConfirm({ title: CAMPAIGN_DELETE_CONFIRM_TITLE, message: campaignDeleteConfirmMessage(c), confirmLabel: 'Delete campaign', cancelLabel: 'Keep', danger: true });
-      if (!ok) return;
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id), { method: 'DELETE', headers: _inceptionAuthHeaders() });
-        const data = await r.json().catch(function() { return {}; });
-        if (!r.ok || !data.ok) { showToast(data.error || 'Failed to delete campaign', 'error'); return; }
-        _campaigns = (_campaigns || []).filter(function(x) { return x.id !== id; });
-        renderCampaignsList();
-        showToast('Campaign deleted — knowledge-base facts and Jam threads kept', 'info');
-        await loadCampaigns();
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
-
-    let _campaignJamSocket = null;
-    let _campaignJamLiveRevision = '';
-
-    async function openCampaignJam(id) {
-      if (!id) return;
-      const panel = document.getElementById('campaign-jam-panel');
-      if (panel) panel.innerHTML = '<div class="campaign-empty">Loading Jam…</div>';
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/jam', {headers: _inceptionAuthHeaders()});
-        const data = await r.json();
-        if (!data.ok) { throw new Error(data.error || 'Failed to load Jam'); }
-        renderCampaignJam(id, data.jam || {});
-        connectCampaignJamLive(id);
-      } catch (e) {
-        if (panel) panel.innerHTML = '<div class="campaign-empty">Jam failed: ' + escapeHtml(e.message) + '</div>';
-      }
-    }
-
-    function renderCampaignJam(id, jam) {
-      const panel = document.getElementById('campaign-jam-panel');
-      if (!panel) return;
-      const threads = jam.threads || [];
-      const suggestions = jam.suggestions || [];
-      const polls = jam.polls || [];
-      const revisions = jam.revisions || [];
-      const projectSync = jam.project_sync || {};
-      _campaignJamLiveRevision = jam.spec_revision_id || '';
-      panel.innerHTML = `
-        <div class="campaigns-head">
-          <div><div class="campaigns-title">Jam: ${escapeHtml(id)}</div><div class="campaigns-subtitle">Async section threads, suggestions, polls, decisions and attributed spec revisions.</div></div>
-          <button class="hv-btn btn-secondary btn-sm" data-action="openCampaignJam" data-arg0="${escapeHtml(id)}">Refresh Jam</button>
-        </div>
-        <div class="campaign-jam-box">
-          <h4>Live session</h4>
-          <div id="campaign-jam-live-status" class="campaign-jam-live">Connecting…</div>
-          <div class="campaign-jam-form">
-            <input id="jam-live-section" class="campaigns-input" placeholder="Section you are editing" />
-            <textarea id="jam-live-content" class="campaigns-input" placeholder="Draft spec content for conflict-aware live edit">${escapeHtml(jam.spec_content || '')}</textarea>
-            <div class="campaign-jam-actions">
-              <button class="hv-btn btn-secondary btn-sm" data-action="focusCampaignJamLive" data-arg0="${escapeHtml(id)}">Share focus</button>
-              <button class="hv-btn btn-primary btn-sm" data-action="submitCampaignJamLiveEdit" data-arg0="${escapeHtml(id)}">Submit live edit</button>
-            </div>
-          </div>
-        </div>
-        <div class="campaign-jam-grid">
-          <div class="campaign-jam-box">
-            <h4>Threads</h4>
-            <div class="campaign-jam-list">${threads.length ? threads.map(t => `<div><strong>${escapeHtml(t.section || 'section')}</strong>: ${escapeHtml((t.comments && t.comments[0] && t.comments[0].body) || t.title || '')}<div class="campaign-jam-actions"><button class="hv-btn btn-secondary btn-sm" data-action="inviteCampaignJamAgent" data-arg0="${escapeHtml(id)}" data-arg1="${escapeHtml(t.id)}">Invite Spektacular</button></div></div>`).join('') : 'No threads yet.'}</div>
-            <div class="campaign-jam-form">
-              <input id="jam-thread-section" class="campaigns-input" placeholder="Spec section" />
-              <textarea id="jam-thread-body" class="campaigns-input" placeholder="Comment"></textarea>
-              <button class="hv-btn btn-primary btn-sm" data-action="createCampaignJamThread" data-arg0="${escapeHtml(id)}">Add thread</button>
-            </div>
-          </div>
-          <div class="campaign-jam-box">
-            <h4>Suggestions</h4>
-            <div class="campaign-jam-list">${suggestions.length ? suggestions.map(s => `<div><strong>${escapeHtml(s.section || 'section')}</strong> · ${escapeHtml(s.status || 'open')}<br>${escapeHtml(s.proposed_text || '')}<div class="campaign-jam-actions">${s.status === 'open' ? `<button class="hv-btn btn-secondary btn-sm" data-action="resolveCampaignJamSuggestion" data-arg0="${escapeHtml(id)}" data-arg1="${escapeHtml(s.id)}" data-arg2="accept">Accept</button><button class="hv-btn btn-secondary btn-sm" data-action="resolveCampaignJamSuggestion" data-arg0="${escapeHtml(id)}" data-arg1="${escapeHtml(s.id)}" data-arg2="reject">Reject</button>` : ''}</div></div>`).join('') : 'No suggestions yet.'}</div>
-            <div class="campaign-jam-form">
-              <input id="jam-suggestion-section" class="campaigns-input" placeholder="Spec section" />
-              <textarea id="jam-suggestion-text" class="campaigns-input" placeholder="Suggested text"></textarea>
-              <button class="hv-btn btn-primary btn-sm" data-action="createCampaignJamSuggestion" data-arg0="${escapeHtml(id)}">Suggest text</button>
-            </div>
-          </div>
-          <div class="campaign-jam-box">
-            <h4>Polls & decisions</h4>
-            <div class="campaign-jam-list">${polls.length ? polls.map(p => `<div><strong>${escapeHtml(p.question || '')}</strong><br>${(p.options || []).map(o => `${escapeHtml(o.label)}: ${o.count || 0}`).join(' · ')}${p.decision ? `<br>Decision: ${escapeHtml(p.decision.outcome)} — ${escapeHtml(p.decision.rationale)}` : ''}</div>`).join('') : 'No polls yet.'}</div>
-            <div class="campaign-jam-form">
-              <input id="jam-poll-section" class="campaigns-input" placeholder="Spec section" />
-              <input id="jam-poll-question" class="campaigns-input" placeholder="Question" />
-              <input id="jam-poll-options" class="campaigns-input" placeholder="Options separated by commas" />
-              <button class="hv-btn btn-primary btn-sm" data-action="createCampaignJamPoll" data-arg0="${escapeHtml(id)}">Create poll</button>
-            </div>
-          </div>
-        </div>
-        <div class="campaign-jam-box">
-          <h4>Revision history</h4>
-          <div class="campaign-jam-list">${revisions.length ? revisions.map(r => `<div><strong>${escapeHtml(r.id)}</strong> by ${escapeHtml((r.author && r.author.name) || 'unknown')}${r.model ? ' · ' + escapeHtml(r.model) : ''}<br>${escapeHtml(r.reason || 'revision')}</div>`).join('') : 'No spec revisions yet.'}</div>
-        </div>
-        <div class="campaign-jam-box">
-          <h4>GitHub Projects sync</h4>
-          <div class="campaign-jam-list">
-            <div>Status: ${escapeHtml(projectSync.last_status || (projectSync.enabled ? 'enabled' : 'disabled'))}</div>
-            ${projectSync.project_url ? `<div>Project: ${escapeHtml(projectSync.project_url)}</div>` : ''}
-            ${projectSync.last_error ? `<div>Last error: ${escapeHtml(projectSync.last_error)}<br>${escapeHtml(projectSync.retry_advice || 'Retry after checking the project link and token.')}</div>` : ''}
-          </div>
-          <div class="campaign-jam-form">
-            <input id="jam-project-url" class="campaigns-input" placeholder="GitHub Projects URL or ID" value="${escapeHtml(projectSync.project_url || projectSync.project_id || '')}" />
-            <div class="campaign-jam-actions">
-              <button class="hv-btn btn-secondary btn-sm" data-action="enableCampaignJamProjectSync" data-arg0="${escapeHtml(id)}">Enable sync</button>
-              <button class="hv-btn btn-primary btn-sm" data-action="syncCampaignJamProject" data-arg0="${escapeHtml(id)}">Sync now</button>
-              <button class="hv-btn btn-secondary btn-sm" data-action="disableCampaignJamProjectSync" data-arg0="${escapeHtml(id)}">Disable</button>
-            </div>
-          </div>
-        </div>`;
-    }
-
-    function connectCampaignJamLive(id) {
-      if (_campaignJamSocket) {
-        const prev = _campaignJamSocket;
-        _campaignJamSocket = null;
-        prev.onmessage = null;
-        prev.onclose = null;
-        prev.close();
-      }
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const url = protocol + '//' + window.location.host + '/api/campaigns/' + encodeURIComponent(id) + '/jam/ws';
-      try {
-        const ws = new WebSocket(url);
-        _campaignJamSocket = ws;
-        ws.onmessage = function(event) {
-          const msg = JSON.parse(event.data || '{}');
-          if (msg.jam && msg.jam.spec_revision_id) { _campaignJamLiveRevision = msg.jam.spec_revision_id; }
-          if (msg.type === 'snapshot' || msg.type === 'presence') { renderCampaignJamPresence(msg.presence || []); }
-          if (msg.type === 'edit_applied' && msg.jam) { renderCampaignJam(id, msg.jam); connectCampaignJamLive(id); }
-          if (msg.type === 'conflict') { showToast('Jam edit conflict: refresh or merge against revision ' + (msg.expected_revision_id || 'current'), 'error'); }
-          if (msg.type === 'error') { showToast('Jam live error: ' + (msg.error || 'unknown error'), 'error'); }
-        };
-        ws.onclose = function() { renderCampaignJamPresence([], 'Disconnected; refresh Jam to reconnect.'); };
-      } catch (e) {
-        renderCampaignJamPresence([], 'Live unavailable: ' + e.message);
-      }
-    }
-
-    function renderCampaignJamPresence(presence, message) {
-      const el = document.getElementById('campaign-jam-live-status');
-      if (!el) return;
-      if (message) { el.textContent = message; return; }
-      el.innerHTML = presence.length ? presence.map(function(p) {
-        const name = (p.actor && p.actor.name) || 'participant';
-        return '<span class="campaign-jam-live-pill">' + escapeHtml(name) + (p.section ? ' · ' + escapeHtml(p.section) : '') + '</span>';
-      }).join('') : 'No live participants yet.';
-    }
-
-    function focusCampaignJamLive() {
-      if (!_campaignJamSocket || _campaignJamSocket.readyState !== WebSocket.OPEN) return;
-      const section = document.getElementById('jam-live-section')?.value || '';
-      _campaignJamSocket.send(JSON.stringify({ type: 'focus', section }));
-    }
-
-    function submitCampaignJamLiveEdit() {
-      if (!_campaignJamSocket || _campaignJamSocket.readyState !== WebSocket.OPEN) { showToast('Jam live socket is not connected', 'error'); return; }
-      const content = document.getElementById('jam-live-content')?.value || '';
-      _campaignJamSocket.send(JSON.stringify({ type: 'edit', base_revision_id: _campaignJamLiveRevision, content, reason: 'live co-edit' }));
-    }
-
-    async function createCampaignJamThread(id) {
-      const section = document.getElementById('jam-thread-section')?.value || '';
-      const body = document.getElementById('jam-thread-body')?.value || '';
-      await postCampaignJam(id, 'threads', { section, body });
-    }
-
-    async function inviteCampaignJamAgent(id, thread_id) {
-      const prompt = await promptForJamAgent();
-      if (prompt === null) return;
-      await postCampaignJam(id, 'agents', { thread_id, agent: 'spektacular', prompt });
-    }
-
-    function promptForJamAgent() {
-      return hivePrompt({title: 'Prompt for Jam agent', label: 'Prompt for the Jam agent reply and suggestion', defaultValue: 'Suggest spec text for this thread.'});
-    }
-
-    async function createCampaignJamSuggestion(id) {
-      const section = document.getElementById('jam-suggestion-section')?.value || '';
-      const proposed_text = document.getElementById('jam-suggestion-text')?.value || '';
-      await postCampaignJam(id, 'suggestions', { section, proposed_text });
-    }
-
-    async function resolveCampaignJamSuggestion(id, suggestion_id, action) {
-      await postCampaignJam(id, 'suggestions', { action, suggestion_id });
-    }
-
-    async function createCampaignJamPoll(id) {
-      const section = document.getElementById('jam-poll-section')?.value || '';
-      const question = document.getElementById('jam-poll-question')?.value || '';
-      const options = (document.getElementById('jam-poll-options')?.value || '').split(',').map(s => s.trim()).filter(Boolean);
-      await postCampaignJam(id, 'polls', { section, question, options });
-    }
-
-    async function enableCampaignJamProjectSync(id) {
-      const value = document.getElementById('jam-project-url')?.value || '';
-      const body = value.indexOf('http') === 0 ? { action: 'enable', project_url: value } : { action: 'enable', project_id: value };
-      await postCampaignJam(id, 'project-sync', body);
-    }
-
-    async function syncCampaignJamProject(id) {
-      await postCampaignJam(id, 'project-sync', { action: 'sync' });
-    }
-
-    async function disableCampaignJamProjectSync(id) {
-      await postCampaignJam(id, 'project-sync', { action: 'disable' });
-    }
-
-    async function postCampaignJam(id, lane, body) {
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/jam/' + lane, { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify(body) });
-        const data = await r.json();
-        if (!data.ok) { showToast(data.error || 'Jam update failed', 'error'); return; }
-        renderCampaignJam(id, data.jam || {});
-      } catch (e) { showToast('Jam error: ' + e.message, 'error'); }
-    }
-
-    async function resumeCampaign(id) {
-      if (!id) return;
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/resume', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({ surface: 'dashboard' }) });
-        const data = await r.json();
-        if (!data.ok) { showToast(data.error || 'Failed to resume campaign', 'error'); return; }
-        // The dashboard wizard that drove a resumed inception state is gone;
-        // the campaign is resumed server-side and continued from its command.
-        if (data.state && !data.resume_command) showToast('Campaign resumed', 'success');
-        if (data.resume_command) { await hiveAlert('Resume command:\n' + data.resume_command, 'Resume command'); }
-        await loadCampaigns();
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
-
-    async function releaseCampaign(id) {
-      if (!id) return;
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/release', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
-        const data = await r.json();
-        if (!data.ok) { showToast(data.error || 'Failed to release campaign', 'error'); return; }
-        await loadCampaigns();
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
-
-    async function reviseCampaign(id) {
-      if (!id) return;
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/revise', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
-        const data = await r.json();
-        if (!data.ok) { showToast(data.error || 'Failed to revise campaign', 'error'); return; }
-        await loadCampaigns();
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
-
-    async function recheckCampaign(id) {
-      if (!id) return;
-      try {
-        const r = await fetch('/api/campaigns/' + encodeURIComponent(id) + '/recheck', { method: 'POST', headers: _inceptionAuthHeaders(), body: JSON.stringify({}) });
-        const data = await r.json();
-        if (!data.ok) { showToast(data.error || 'Failed to recheck campaign', 'error'); return; }
-        await loadCampaigns();
-      } catch (e) { showToast('Error: ' + e.message, 'error'); }
-    }
     // Dashboard boot hooks that used to share this file with the removed
     // Inception wizard (the section is now Inception (spek), sessions.js).
     document.addEventListener('DOMContentLoaded', () => {
@@ -51598,7 +51309,6 @@ function burnAreaChart() {
     const SESSIONS_LOG_LINES = 500;
     const SESSIONS_ASSERTION_RENEW_MS = 600000;
     const SESSIONS_TMUX_PREFIX = 'hive-sess-';
-    const SESSIONS_CAMPAIGNS_TAB = 'campaigns';
     const SESSIONS_UNGROUPED = '';
     const SESSIONS_UNGROUPED_LABEL = 'Ungrouped';
     const SESSIONS_SELECTED_KEY = 'hive.sessions.selected';
@@ -51684,10 +51394,9 @@ function burnAreaChart() {
       return sessionsGroupSessions(sessions).map(function(g) { return g.group; }).filter(Boolean);
     }
     function sessionsPickSelected(sessions, wanted) {
-      if (wanted === SESSIONS_CAMPAIGNS_TAB) return wanted;
       const list = sessions || [];
       if (wanted && list.some(function(s) { return s && s.id === wanted; })) return wanted;
-      return list.length && list[0] ? list[0].id : SESSIONS_CAMPAIGNS_TAB;
+      return list.length && list[0] ? list[0].id : '';
     }
     // Flat tab order as rendered (group order, then session order), used for arrow keys.
     function sessionsTabOrder(sessions, collapsed, selected) {
@@ -51698,7 +51407,6 @@ function burnAreaChart() {
           out.push(s.id);
         });
       });
-      out.push(SESSIONS_CAMPAIGNS_TAB);
       return out;
     }
     function sessionsNextTab(order, current, key) {
@@ -52007,8 +51715,7 @@ function burnAreaChart() {
         + '<span class="sessions-tab-vendor">' + esc(s.vendor || '') + '</span>' + badge + '</button>';
     }
     function sessionsTabsHtml() {
-      const campaignsSel = _sessionsSelected === SESSIONS_CAMPAIGNS_TAB;
-      let html = sessionsGroupSessions(_sessionsData.sessions).map(function(g) {
+      return sessionsGroupSessions(_sessionsData.sessions).map(function(g) {
         const collapsed = !!_sessionsCollapsed[g.group];
         const tabs = g.sessions.filter(function(s) { return !collapsed || s.id === _sessionsSelected; }).map(sessionsTabHtml).join('');
         return '<div class="sessions-group" role="presentation">'
@@ -52016,11 +51723,6 @@ function burnAreaChart() {
           + '<span class="sessions-group-chevron">' + (collapsed ? '▶' : '▼') + '</span>' + esc(g.label) + ' <span class="sessions-group-count">' + g.sessions.length + '</span></button>'
           + '<div class="sessions-group-tabs" role="presentation">' + tabs + '</div></div>';
       }).join('');
-      html += '<div class="sessions-group" role="presentation"><div class="sessions-group-tabs" role="presentation">'
-        + '<button type="button" role="tab" class="sessions-tab' + (campaignsSel ? ' active' : '') + '" id="sessions-tab-' + SESSIONS_CAMPAIGNS_TAB + '" aria-selected="' + campaignsSel + '" aria-controls="sessions-pane-' + SESSIONS_CAMPAIGNS_TAB + '" tabindex="' + (campaignsSel ? '0' : '-1') + '"'
-        + ' data-action="sessionsSelect" data-arg0="' + SESSIONS_CAMPAIGNS_TAB + '" data-keydown-action="sessionsTabKey" data-arg-types="s,e" data-keys="*" data-arg1="">'
-        + '<span class="sessions-tab-name">Campaigns</span></button></div></div>';
-      return html;
     }
     function sessionsNewFormHtml() {
       const vendors = (_sessionsData.vendors || []).filter(function(v) { return v && v.available; });
@@ -52215,15 +51917,14 @@ function burnAreaChart() {
       if (!typing) chrome.innerHTML = sessionsToolbarHtml();
       if (focusId) { const f = document.getElementById(focusId); if (f) f.focus(); }
       const empty = document.getElementById('sessions-empty');
-      empty.hidden = sessions.length > 0 || _sessionsSelected !== SESSIONS_CAMPAIGNS_TAB;
+      empty.hidden = sessions.length > 0;
       empty.textContent = sessions.length ? '' : 'No sessions yet. Start one with “New session” to run a CLI agent here; everyone on this hive can watch or join it.';
       const liveIds = {};
       sessions.forEach(function(s) { liveIds[s.id] = true; sessionsEnsurePane(s); });
       Array.prototype.forEach.call(document.querySelectorAll('#sessions-panes .sessions-pane'), function(pane) {
         const id = pane.id.replace('sessions-pane-', '');
-        if (id !== SESSIONS_CAMPAIGNS_TAB && !liveIds[id]) { delete _sessionsFrames[id]; pane.remove(); }
+        if (!liveIds[id]) { delete _sessionsFrames[id]; pane.remove(); }
       });
-      sessionsEnsureCampaignsPane();
       sessionsShowSelected();
       sessionsSyncPreparingPoll(sessions);
     }
@@ -52239,29 +51940,12 @@ function burnAreaChart() {
       const preparing = (sessions || []).filter(function(s) { return s.status === SESSIONS_STATUS_PREPARING; }).length;
       return running + ' running · ' + (preparing ? preparing + ' preparing · ' : '') + (sessions || []).length + ' total';
     }
-    function sessionsEnsureCampaignsPane() {
-      const host = document.getElementById('sessions-panes');
-      if (!host || document.getElementById('sessions-pane-' + SESSIONS_CAMPAIGNS_TAB)) return;
-      const pane = document.createElement('div');
-      pane.id = 'sessions-pane-' + SESSIONS_CAMPAIGNS_TAB;
-      pane.className = 'sessions-pane';
-      pane.setAttribute('role', 'tabpanel');
-      pane.setAttribute('aria-labelledby', 'sessions-tab-' + SESSIONS_CAMPAIGNS_TAB);
-      pane.setAttribute('data-mode', 'campaigns');
-      host.appendChild(pane);
-    }
     function sessionsShowSelected() {
       Array.prototype.forEach.call(document.querySelectorAll('#sessions-panes .sessions-pane'), function(pane) {
         pane.hidden = pane.id !== 'sessions-pane-' + _sessionsSelected;
       });
-      if (_sessionsSelected === SESSIONS_CAMPAIGNS_TAB) {
-        sessionsStopLogPoll();
-        const pane = document.getElementById('sessions-pane-' + SESSIONS_CAMPAIGNS_TAB);
-        if (pane && !pane.firstChild) { pane.innerHTML = renderCampaignsPanel(); loadCampaigns(); }
-        return;
-      }
       const s = sessionsSelectedSession();
-      if (!s) return;
+      if (!s) { sessionsStopLogPoll(); return; }
       const mode = sessionsViewMode(_sessionsRole, s);
       if (mode === 'preparing' || mode === 'failed') { sessionsStopLogPoll(); return; }
       if (mode === 'terminal' && !_sessionsFrameFailed[s.id]) { sessionsStopLogPoll(); sessionsAttachTerminal(s); } else sessionsStartLogPoll();
@@ -76129,7 +75813,7 @@ function burnAreaChart() {
       { name:'governor', aliases:['gov'], usage:'/governor <query>', description:'Ask about governor cadence, kicks and policy.', example:'/governor next kick', details:'Forwards a focused governor question to Hive Chat search.', run: chatForwardCommand('governor') },
       { name:'knowledge', aliases:['kb'], usage:'/knowledge <query>', description:'Ask the knowledge base and imported docs.', example:'/knowledge relay setup', details:'Forwards a focused knowledge-base question to Hive Chat search.', run: chatForwardCommand('knowledge') },
       { name:'jam', aliases:['swarm'], usage:'/jam <query>', description:'Ask about jam sessions, contributors and live collaboration.', example:'/jam who is free?', details:'Presence questions (who is online / free / here / active) are answered locally from `/api/presence`; anything else is forwarded to Hive Chat search.', run: chatCommandJam },
-      { name:'spek', aliases:['spectacular','spec'], usage:'/spek <query>', description:'Ask about Spektacular/inception campaigns and spec runs (v6/edge when unavailable).', example:'/spek active campaigns', details:'Uses v6/edge Spektacular concepts: inception campaigns, spec runs, relay and campaign state.', run: chatForwardCommand('spek') },
+      { name:'spek', aliases:['spectacular','spec'], usage:'/spek <query>', description:'Ask about Spektacular spec runs and Inception (spek) sessions (v6/edge when unavailable).', example:'/spek spec runs', details:'Uses v6/edge Spektacular concepts: spec runs, Inception (spek) sessions and relay state.', run: chatForwardCommand('spek') },
     ];
     const CHAT_COMMAND_BY_NAME = new Map();
     CHAT_COMMANDS.forEach(c => [c.name].concat(c.aliases || []).forEach(n => CHAT_COMMAND_BY_NAME.set(n, c)));
@@ -76140,7 +75824,7 @@ function burnAreaChart() {
       { group:'Governor', items:['/governor next kick', 'Why is the governor paused?', 'Show recent kick failures'] },
       { group:'Knowledge', items:['/knowledge work sources', 'Search docs for relay setup', 'What changed in v5?'] },
       { group:'Jam', items:['/who', '/jam who is online?', 'Show contributor activity'] },
-      { group:'Spek / Spektacular', spek:true, items:['!runs spec owner/repo#N', '/spek active campaigns', '/spek spec runs', 'Explain inception relay state'] },
+      { group:'Spek / Spektacular', spek:true, items:['!runs spec owner/repo#N', '/spek spec runs', '/spek running sessions', 'Explain inception relay state'] },
     ];
 
     function loadChatSettings() { return safeJsonParse(localStorage.getItem(CHAT_SETTINGS_KEY) || '{}', {}); }

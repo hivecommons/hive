@@ -10,8 +10,10 @@ The runner is OFF by default. With `runs.spektacular.enabled` unset or `false`
 Hive never starts a Spek process and every existing lease behaviour is
 unchanged.
 
-Every retained Spek run is also projected as a dashboard campaign under
-`GET /api/campaigns`. The campaign id is the stable run/spec key (the same bare
+Every retained Spek run is also projected as a campaign under
+`GET /api/campaigns` (API only: the dashboard's Campaigns tab was retired in
+favour of Inception (spek) sessions, and the run itself is listed in
+[Runs](runs.md); the endpoint is being retired in a follow-up change). The campaign id is the stable run/spec key (the same bare
 artifact name the status verbs use), the engine is `Spektacular`, and the row
 links back to `/api/runs/{key}` when run detail is available. Picking up a
 Spek campaign does not copy spek contents into Hive; `POST
@@ -21,10 +23,12 @@ spek backend.
 
 ## Jam Sessions
 
-Each campaign also has a Jam workspace for team interaction around the spec.
-The dashboard Campaigns list exposes a **Jam** action, backed by
-`/api/campaigns/{id}/jam` and the `/threads`, `/suggestions`, and `/polls`
-subroutes. Phase 1 is async: participants with read-write access can anchor
+Each campaign also has a Jam workspace for team interaction around the spec,
+backed by `/api/campaigns/{id}/jam` and the `/threads`, `/suggestions`, and
+`/polls` subroutes. The dashboard no longer has a Jam view (it lived in the
+retired Campaigns tab); use a shared
+[Inception (spek) session](dashboard-sections/workflow-and-agents.md#inception-spek)
+to work on a spec together. Phase 1 is async: participants with read-write access can anchor
 threads and suggestions to spec sections, vote in advisory polls, and resume
 the workspace after a restart. Maintainers record poll decisions with a
 rationale; accepted suggestions and decisions create attributed spec revisions
@@ -36,11 +40,13 @@ Live spec edits carry the sender's last seen spec revision; stale edits are
 rejected with a conflict message instead of overwriting newer work, so
 reconnecting clients can refresh and merge intentionally.
 
-Maintainers can opt a campaign into GitHub Projects sync from the Jam tab. The
+Maintainers can opt a campaign into GitHub Projects sync through
+`POST /api/campaigns/{id}/jam/project-sync`. The
 sync publishes the current spec, recorded decisions, and derived suggestion
 items to the linked project; inbound project status updates are recorded on the
 campaign without rewriting local Jam decisions. Sync failures are kept with
-retry guidance so the dashboard shows what to fix before trying again.
+retry guidance in the `project-sync` response so a caller can see what to fix
+before trying again.
 
 Sync posts to `https://api.github.com/graphql` with the hive's `GITHUB_TOKEN`.
 `HIVE_JAM_PROJECT_SYNC_URL` overrides the endpoint; an override must use
@@ -508,9 +514,8 @@ invoke `upstreamwatch`'s multi-page PR and release scanner.
 Campaign list/detail JSON includes
 `recheck: {enabled, interval, last_at, next_at, in_flight, last_delta_count,
 external_count, sources_failed}`; recheck revisions also include the `drift`
-block above. The dashboard Campaigns panel renders the cadence, shows
-`N external signals` with an expandable list, and provides an owner-only
-Recheck action.
+block above. The dashboard no longer renders campaigns (the Campaigns tab was
+retired), so read the cadence and signals from the JSON.
 
 ## Defensive handling of the open questions
 

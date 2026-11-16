@@ -49,6 +49,10 @@ type Item struct {
 	FactSlug string `json:"fact_slug"`
 	FactPath string `json:"fact_path,omitempty"`
 	Layer    string `json:"layer,omitempty"`
+	// FactState is what the backing fact holds: "ready" (the source's own
+	// text), "pending" (metadata only, no text yet) or "machine" (this
+	// hive's machine transcript). Empty when no fact exists yet.
+	FactState string `json:"fact_state,omitempty"`
 	// Routes holds per-destination state; absent means never routed.
 	Routes map[string]*RouteState `json:"routes,omitempty"`
 	// Dismissed marks "knowledge only": the item stays a fact, no further route.
@@ -103,6 +107,9 @@ type Content struct {
 	Pending bool `json:"pending"`
 	// Provenance is a stable reference such as plaud://recordings/<id>.
 	Provenance string `json:"provenance"`
+	// machineFact marks content read from a fact whose text is this hive's
+	// machine transcript (written back by writeMachineFact).
+	machineFact bool
 }
 
 // AudioLink is a fresh, short-lived link to an item's audio. It is minted on

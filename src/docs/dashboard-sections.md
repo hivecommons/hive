@@ -188,7 +188,7 @@ Full entry: [Knowledge](dashboard-sections/workflow-and-agents.md#knowledge).
 
 ## Inbox
 
-Voice recordings and dictations waiting for you to file them as an RFC, send to dibs, or keep as knowledge.
+Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge.
 
 Full entry: [Inbox](dashboard-sections/workflow-and-agents.md#inbox).
 

@@ -77,7 +77,7 @@ reads the vendor directly, with `PreferDirect` merging the two
 emits pages on an interval. Email is push. So the email source is a native
 `inbox.Source` over its own on-disk spool, and it optionally writes a Knowledge
 fact per message through the same `FactWriter` slug scheme
-(`src/pkg/knowledge/connector/factwriter.go:34`) so "📚 Fact" keeps working.
+(`src/pkg/knowledge/connector/factwriter.go:34`) so the Inbox's *open in Knowledge* link keeps working.
 `SetSources` already lets a source appear without restart
 (`src/pkg/inbox/service.go:70-78`).
 
