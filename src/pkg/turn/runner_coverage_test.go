@@ -116,6 +116,39 @@ func TestStepLLMFailureMarksSessionFailed(t *testing.T) {
 	}
 }
 
+// TestStepCapacityErrorParksSessionAndResumes: an LLMClient reporting
+// ErrInferenceCapacity (every free-tier provider rate limited) parks the
+// session as paused without consuming a turn, and the next served inference
+// resumes it.
+func TestStepCapacityErrorParksSessionAndResumes(t *testing.T) {
+	var seen []toolapprove.ToolRequest
+	llm := &toolCapturingLLM{capture: &seen, fail: fmt.Errorf("all providers 429: %w", ErrInferenceCapacity)}
+	runner := NewRunner(llm, &mockExecutor{})
+	env, out, err := runner.Step(context.Background(), SessionEnvelope{SessionID: "s-cap", MaxTurns: 5}, TurnInput{UserMessage: "go"})
+	if !errors.Is(err, ErrInferenceCapacity) {
+		t.Fatalf("err = %v, want ErrInferenceCapacity", err)
+	}
+	if env.Status != StatusPaused || out.Status != StatusPaused || out.Done {
+		t.Fatalf("expected paused, not done; got env=%s out=%+v", env.Status, out)
+	}
+	if env.TurnCount != 0 {
+		t.Fatalf("TurnCount = %d, want 0 (no model ran)", env.TurnCount)
+	}
+	if len(env.Messages) != 1 {
+		t.Fatalf("user input must survive the pause, messages=%+v", env.Messages)
+	}
+
+	llm.fail = nil
+	llm.response = LLMResponse{Content: "done"}
+	env, out, err = runner.Step(context.Background(), env, TurnInput{Trigger: "resume"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.Status != StatusCompleted || !out.Done || env.TurnCount != 1 {
+		t.Fatalf("resume: env=%s turns=%d out=%+v", env.Status, env.TurnCount, out)
+	}
+}
+
 // TestDefaultCompactorWindowing covers the compaction branch: head preserved,
 // middle dropped, tail retained.
 func TestDefaultCompactorWindowing(t *testing.T) {

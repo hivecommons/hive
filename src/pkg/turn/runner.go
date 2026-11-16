@@ -3,6 +3,7 @@ package turn
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -167,12 +168,33 @@ func (r *Runner) Step(ctx context.Context, env SessionEnvelope, in TurnInput) (S
 
 	outEnv.TurnCount++
 	llmResp, err := r.LLM.Generate(ctx, outEnv.Messages, r.AvailableTools)
+	if err != nil && errors.Is(err, ErrInferenceCapacity) {
+		// No model ran, so this was not a turn: undo the count and park the
+		// session for a later pass rather than failing it.
+		outEnv.TurnCount--
+		prev := outEnv.Status
+		outEnv.Status = StatusPaused
+		if r.Hooks != nil && prev != StatusPaused {
+			r.Hooks.OnStatusChange(ctx, outEnv, prev, StatusPaused)
+		}
+		output.Status = StatusPaused
+		output.Rationale = fmt.Sprintf("inference capacity exhausted: %v", err)
+		return outEnv, output, err
+	}
 	if err != nil {
 		outEnv.Status = StatusFailed
 		output.Status = StatusFailed
 		output.Done = true
 		output.Rationale = fmt.Sprintf("LLM inference error: %v", err)
 		return outEnv, output, err
+	}
+
+	// A session parked for capacity resumes on the first served inference.
+	if outEnv.Status == StatusPaused {
+		outEnv.Status = StatusActive
+		if r.Hooks != nil {
+			r.Hooks.OnStatusChange(ctx, outEnv, StatusPaused, StatusActive)
+		}
 	}
 
 	// Append Assistant response message

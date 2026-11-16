@@ -2,6 +2,7 @@ package turn
 
 import (
 	"context"
+	"errors"
 
 	"github.com/hivecommons/hive/crux/toolapprove"
 )
@@ -12,6 +13,13 @@ type LLMResponse struct {
 	ToolCalls  []ToolCall `json:"tool_calls,omitempty"`
 	StopReason string     `json:"stop_reason,omitempty"`
 }
+
+// ErrInferenceCapacity is matched (errors.Is) by an LLMClient error meaning
+// "no inference capacity right now" -- every backend is rate limited, cooling
+// down, or out of its daily budget -- as opposed to a failed request. The
+// Runner parks the session as StatusPaused instead of failing it, so a
+// stateless coordinator can resume the same envelope on a later pass.
+var ErrInferenceCapacity = errors.New("turn: no inference capacity available")
 
 // LLMClient abstracts the language model completion backend.
 type LLMClient interface {
