@@ -372,6 +372,22 @@ func (s *Store) History(key string) []*ShareRecord {
 	return nil
 }
 
+// Forget drops every persisted state of one item (routes, intents, share
+// history). It reports how many shares the history held. The copies those
+// shares made elsewhere are not touched.
+func (s *Store) Forget(key string) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	e := s.entries[key]
+	if e == nil {
+		return 0, nil
+	}
+	n := len(e.History)
+	delete(s.entries, key)
+	return n, s.save()
+}
+
 // PendingRFCKeys lists the items with an RFC share still in progress.
 func (s *Store) PendingRFCKeys() []string {
 	s.mu.Lock()
