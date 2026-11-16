@@ -67,7 +67,8 @@ test('pending item explains that Plaud has no text yet and never shows the MCP e
   assert.match(html, /▶ Play recording/);
   assert.match(html, /data-action="inboxToggleTranscript"/);
   assert.match(html, /data-inbox-media="plaud\/f_1"/);
-  for (const action of ['inboxOpenRoute', 'inboxDismiss', 'inboxOpenFact']) assert.match(html, new RegExp('data-action="' + action + '"'), action + ' action kept');
+  for (const action of ['inboxShare', 'inboxOpenFact']) assert.match(html, new RegExp('data-action="' + action + '"'), action + ' action kept');
+  for (const action of ['inboxOpenRoute', 'inboxDismiss']) assert.doesNotMatch(html, new RegExp('data-action="' + action + '"'), action + ' moved into the Share menu');
   assert.doesNotMatch(html, /<audio/, 'no audio element (and no URL) before the owner clicks play');
 });
 
@@ -131,7 +132,7 @@ test('File RFC route state: a failed hand-off shows its error inline, delegated 
   let html = vm.runInContext('inboxItemHtml(' + JSON.stringify(failed) + ')', ctx);
   assert.match(html, /data-status="error"[^>]*>RFC failed</);
   assert.match(html, /class="kc-error muted-xs" role="alert">spek_rfc: handing the RFC to agent &lt;builder&gt; failed: busy</);
-  assert.match(html, />Retry RFC…</);
+  assert.doesNotMatch(html, />Retry RFC…</, 'Retry RFC… lives in the Share menu');
 
   const delegated = Object.assign({}, readyItem, { routes: { spek_rfc: { status: 'delegated', repo: 'o/r', note: 'handed to agent builder to draft with spek and publish to o/r' } } });
   html = vm.runInContext('inboxItemHtml(' + JSON.stringify(delegated) + ')', ctx);
