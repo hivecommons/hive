@@ -16,6 +16,13 @@
 //	HIVE_MEETING_LLM_MAX_TOKENS   per-meeting token budget (0 = none)
 //	HIVE_MEETING_LLM_SLOTS_DIR    directory of in-flight slot lock files
 //	HIVE_MEETING_LLM_MAX_IN_FLIGHT concurrent calls across meetings
+//	HIVE_MEETING_LLM_BACKEND      agent backend (claude) instead of an endpoint
+//	HIVE_MEETING_LLM_CLI_BINARY   that backend's CLI (default: its name)
+//	HIVE_MEETING_LLM_CLI_HOME     HOME holding the CLI's sign-in
+//
+// With HIVE_MEETING_LLM_BACKEND set the call runs that backend's CLI once
+// in its no-tools completion profile (cli.go, hivecommons/hive#18517) and
+// no endpoint is needed.
 //
 // Usage ledger: one line per call, {"at":"<RFC 3339>","tokens":N}, appended
 // to the meeting's usage file. The live loop sums it for the panel and the
@@ -54,6 +61,9 @@ const (
 	EnvMaxTokens   = "HIVE_MEETING_LLM_MAX_TOKENS"
 	EnvSlotsDir    = "HIVE_MEETING_LLM_SLOTS_DIR"
 	EnvMaxInFlight = "HIVE_MEETING_LLM_MAX_IN_FLIGHT"
+	EnvBackend     = "HIVE_MEETING_LLM_BACKEND"
+	EnvCLIBinary   = "HIVE_MEETING_LLM_CLI_BINARY"
+	EnvCLIHome     = "HIVE_MEETING_LLM_CLI_HOME"
 )
 
 const (
@@ -88,10 +98,25 @@ type Config struct {
 	// `hive meeting-llm` command leaves it empty (Spek's prompt arrives
 	// whole on stdin); in-process callers such as the meeting persona set it.
 	System string
-	// Provider is "" (OpenAI-compatible chat completions) or
+	// Provider is "" (OpenAI-compatible chat completions),
 	// ProviderAnthropic (the Anthropic Messages API, in-process callers
-	// only; Endpoint then defaults to AnthropicEndpoint).
+	// only; Endpoint then defaults to AnthropicEndpoint) or
+	// ProviderAgentBackend (Backend's CLI completion profile).
 	Provider string
+	// Backend is the agent backend on ProviderAgentBackend.
+	Backend string
+	// CLIBinary is the backend's CLI; empty runs the backend's name.
+	CLIBinary string
+	// CLIHome is the HOME the CLI runs with; empty inherits HOME.
+	CLIHome string
+	// RecycleTurns is how many turns a warm session answers before it is
+	// replaced; zero means DefaultRecycleTurns.
+	RecycleTurns int
+	// Session is the meeting's warm CLI. Nil on ProviderAgentBackend runs
+	// one CLI per call.
+	Session *CLISession
+	// Getenv reads the environment the CLI inherits from; nil is os.Getenv.
+	Getenv func(string) string
 }
 
 func envInt(getenv func(string) string, name string, def int) int {
@@ -112,6 +137,18 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		MaxTokens:   envInt(getenv, EnvMaxTokens, 0),
 		SlotsDir:    strings.TrimSpace(getenv(EnvSlotsDir)),
 		MaxInFlight: envInt(getenv, EnvMaxInFlight, 1),
+		Backend:     strings.ToLower(strings.TrimSpace(getenv(EnvBackend))),
+		CLIBinary:   strings.TrimSpace(getenv(EnvCLIBinary)),
+		CLIHome:     strings.TrimSpace(getenv(EnvCLIHome)),
+		Getenv:      getenv,
+	}
+	if c.Backend != "" {
+		c.Provider = ProviderAgentBackend
+		if c.Model == "" {
+			return c, fmt.Errorf("meeting-llm: %s is required with %s", EnvModel, EnvBackend)
+		}
+		_, err := profileFor(c.Backend)
+		return c, err
 	}
 	if c.Endpoint == "" || c.Model == "" {
 		return c, fmt.Errorf("meeting-llm: %s and %s are required", EnvEndpoint, EnvModel)
@@ -236,13 +273,19 @@ func Complete(ctx context.Context, c Config, hc *http.Client, prompt string) (st
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
+	if c.Provider == ProviderAgentBackend && c.Session != nil {
+		return completeSession(ctx, c, prompt)
+	}
 	release, err := acquire(ctx, c.SlotsDir, c.MaxInFlight)
 	if err != nil {
 		return "", err
 	}
 	defer release()
-	if c.Provider == ProviderAnthropic {
+	switch c.Provider {
+	case ProviderAnthropic:
 		return completeAnthropic(ctx, c, hc, prompt)
+	case ProviderAgentBackend:
+		return completeCLIOnce(ctx, c, prompt)
 	}
 	msgs := make([]chatMessage, 0, 2)
 	if strings.TrimSpace(c.System) != "" {

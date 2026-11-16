@@ -178,7 +178,7 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 	binary := cfg.Runs.Spektacular.BinaryOrDefault()
 	llm := cfg.ResolveMeetingsLLM(context.Background())
 	hiveBin, err := os.Executable()
-	if err != nil && llm.Backend == config.MeetingsLLMModeOpenAI {
+	if err != nil && (llm.Backend == config.MeetingsLLMModeOpenAI || llm.Backend == config.MeetingsLLMModeAgentBackend) {
 		llm = config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeNone, Reason: "rules only, the hive binary path is unknown"}
 	}
 	slotsDir := filepath.Join(store.Dir(), meetingLLMSlotsDir)
@@ -206,7 +206,8 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 		UsageFile: func(id string) string {
 			// `hive meeting-llm` (OpenAI-compatible) and the persona's own
 			// calls (either backend) write the meeting's usage ledger.
-			if llm.Backend != config.MeetingsLLMModeOpenAI && llm.Backend != config.MeetingsLLMModeAnthropic {
+			if llm.Backend != config.MeetingsLLMModeOpenAI && llm.Backend != config.MeetingsLLMModeAnthropic &&
+				llm.Backend != config.MeetingsLLMModeAgentBackend {
 				return ""
 			}
 			return meetingUsageFile(store, id)
@@ -284,7 +285,52 @@ func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPe
 			mc.Provider, mc.Model, mc.APIKey = meetllm.ProviderAnthropic, llm.Model, llm.AnthropicKey
 			model = betty.MeetLLM{Client: client, Config: mc}
 		}
-		return betty.New(betty.SettingsFrom(persona), betty.Deps{LLM: model, Retrievers: retrievers, Logger: logger, CanResearch: canResearch})
+		settings := betty.SettingsFrom(persona)
+		if llm.Backend == config.MeetingsLLMModeAgentBackend {
+			if m, ok := meetingCLIModel(llm, mc, mt.ID, logger); ok {
+				model = m
+				applyMeetingCLITimeouts(&settings, llm.CLI)
+			}
+		}
+		return betty.New(settings, betty.Deps{LLM: model, Retrievers: retrievers, Logger: logger, CanResearch: canResearch})
+	}
+}
+
+// meetingCLIModel is the persona's model on an agent backend
+// (hivecommons/hive#18517): one warm CLI for the meeting, in the backend's
+// no-tools completion profile, started now so the first question finds it
+// ready. It reports false when the backend has no profile.
+func meetingCLIModel(llm config.ResolvedMeetingsLLM, mc meetllm.Config, meetingID string, logger *slog.Logger) (betty.MeetLLM, bool) {
+	mc.Provider, mc.Backend, mc.Model = meetllm.ProviderAgentBackend, llm.AgentBackend, llm.Model
+	mc.CLIBinary, mc.CLIHome, mc.RecycleTurns = llm.CLI.Binary, llm.CLI.Home, llm.CLI.RecycleTurns
+	mc.Timeout = time.Duration(llm.CLI.AddressedTimeoutMS) * time.Millisecond
+	sess, err := meetllm.NewCLISession(mc)
+	if err != nil {
+		if logger != nil {
+			logger.Error("[meetings] persona model not started", "meeting", meetingID, "backend", llm.AgentBackend, "error", err)
+		}
+		return betty.MeetLLM{}, false
+	}
+	if err := sess.Warm(); err != nil && logger != nil {
+		// The first call retries the start.
+		logger.Warn("[meetings] persona CLI not warmed", "meeting", meetingID, "backend", llm.AgentBackend, "error", err)
+	}
+	mc.Session = sess
+	return betty.MeetLLM{Config: mc}, true
+}
+
+// applyMeetingCLITimeouts widens the persona's per-call timeouts to the CLI
+// mode's: a warm turn is slower than an API call.
+func applyMeetingCLITimeouts(s *betty.Settings, cli config.ResolvedMeetingsCLI) {
+	ms := func(n int) time.Duration { return time.Duration(n) * time.Millisecond }
+	if cli.AddressedTimeoutMS > 0 {
+		s.AddressedTimeout = ms(cli.AddressedTimeoutMS)
+	}
+	if cli.UnpromptedTimeoutMS > 0 {
+		s.UnpromptedTimeout = ms(cli.UnpromptedTimeoutMS)
+	}
+	if cli.RestyleTimeoutMS > 0 {
+		s.RestyleTimeout = ms(cli.RestyleTimeoutMS)
 	}
 }
 
@@ -334,6 +380,31 @@ func meetingSpekEnv(getenv func(string) string, llm config.ResolvedMeetingsLLM, 
 		)
 		if llm.APIKey != "" {
 			env = append(env, meetllm.EnvAPIKey+"="+llm.APIKey)
+		}
+	case config.MeetingsLLMModeAgentBackend:
+		// One CLI per prompt through `hive meeting-llm`, in the backend's
+		// completion profile, with the cold-start timeout (#18517).
+		env = append(env,
+			"SPEK_MEETING_LLM=command",
+			"SPEK_MEETING_LLM_CMD="+hiveBin+" "+meetllm.Subcommand,
+			"SPEK_MEETING_LLM_TIMEOUT_MS="+strconv.Itoa(llm.CLI.OneShotTimeoutMS),
+			meetllm.EnvBackend+"="+llm.AgentBackend,
+			meetllm.EnvModel+"="+llm.Model,
+			meetllm.EnvTimeoutMS+"="+strconv.Itoa(llm.CLI.OneShotTimeoutMS),
+			meetllm.EnvUsageFile+"="+usageFile,
+			meetllm.EnvMaxTokens+"="+strconv.Itoa(maxTokens),
+			meetllm.EnvSlotsDir+"="+slotsDir,
+			meetllm.EnvMaxInFlight+"="+strconv.Itoa(llm.MaxInFlight),
+		)
+		if llm.CLI.Binary != "" {
+			env = append(env, meetllm.EnvCLIBinary+"="+llm.CLI.Binary)
+		}
+		if llm.CLI.Home != "" {
+			env = append(env, meetllm.EnvCLIHome+"="+llm.CLI.Home)
+		}
+		// The CLI's config-dir override is a path, not a credential.
+		if v := getenv("CLAUDE_CONFIG_DIR"); v != "" {
+			env = append(env, "CLAUDE_CONFIG_DIR="+v)
 		}
 	case config.MeetingsLLMModeAnthropic:
 		env = append(env, "SPEK_MEETING_LLM=anthropic", "ANTHROPIC_API_KEY="+llm.AnthropicKey,

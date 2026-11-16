@@ -13,6 +13,7 @@ package betty
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -247,10 +248,15 @@ func (e *Engine) Close() {
 	e.closeOnce.Do(func() {
 		if e.cancel == nil {
 			close(e.done)
-			return
+		} else {
+			e.cancel()
+			<-e.done
 		}
-		e.cancel()
-		<-e.done
+		// A model holding a process (the warm CLI, #18517) stops with
+		// the meeting.
+		if c, ok := e.d.LLM.(io.Closer); ok {
+			_ = c.Close()
+		}
 	})
 }
 
