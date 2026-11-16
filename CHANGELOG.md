@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.281.0)
+
+### Added
+
+- Bound workflow models now reconcile their state labels on issues and pull requests, including initial intake and triage states.
+
 ## 2026-11-16 (v5.280.0)
 
 ### Added
