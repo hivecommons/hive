@@ -630,8 +630,10 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).parkClankerRequestedPR` | `attention` |  |
 | `github.(*Client).parkUnansweredNoPRIssue` | `attention` | the park note on a stalled 010 issue the hive answered without a PR |
 | `github.(*Client).redirectToExistingPR` | `attention` |  |
+| `github.(*Client).relayScannerNote` | `attention` | scanner PR note: an unchanged or edited note records a suppressed comment (#18451) |
 | `github.(*Client).remindAttention` | `attention` | attention-pilot reminder: at most one per unresolved episode per `reminder_interval`; write-back gate consulted first |
 | `github.(*Client).resolveDuplicateFixGroup` | `attention` |  |
+| `github.(*Client).upsertScannerNote` | `attention` | one scanner note per PR; a new comment only for the first note or when the author must act on a new head (#18451) |
 | `github.attentionDelivery.Post` | `attention` | condition-episode page; live write-back policy rechecked before the write |
 | `main.(*repoForgeRouter).CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.claimEscalationLookup` | `attention` |  |
@@ -819,6 +821,38 @@ nothing. The refs sweep then skips that issue with an `::error::` annotation
 and exits non-zero instead of posting a possible duplicate.
 `.github/scripts/test-hive-status-card.sh` and
 `src/scripts/test-comment-merged-refs.sh` pin this behaviour.
+
+### Scanner note: one comment per PR
+
+The scanner's CI-triage and rebase notes on a PR used to be a new comment on
+every pass: PR #18254 got 17 near-identical triage comments on the same head
+in nine hours ([#18450](https://github.com/hivecommons/hive/issues/18450)).
+The comment relay (`hive-open-issue comment`, which every `gh pr comment`
+from an agent goes through) now keeps one scanner note per PR, marked
+`<!-- hive:scanner-note head=<sha> checks=<fingerprint> told=<sha> -->`
+([#18451](https://github.com/hivecommons/hive/issues/18451)):
+
+| Situation | Write |
+| --- | --- |
+| First scanner note on the PR | **Posts** a new comment carrying the marker. |
+| Same head SHA and same failing-check set as the current note | **Nothing.** The request completes with `already_existed`, and the relay logs `scanner note: unchanged head and failing checks, not re-posting`. |
+| New head, or a different failing set, on a hive-authored PR | **Edits** the note in place. Edits do not notify. |
+| The PR author must act (a non-hive author, something red) and has not been told for this head | **Posts** a new comment. It becomes the current note, and the old note loses its marker. Later changes on that head are edits. |
+
+The failing set is the head's red gating checks (as in the `recommend/*`
+digest), plus `DCO` when the DCO context failed and `merge-conflict` when the
+PR's mergeable state is dirty, so a rebase note is keyed the same way. When
+the head's checks cannot be read, the note is never dropped; it is edited.
+A note on an issue rather than a PR, from another lane, or carrying a
+dedicated marker (a shared-CI incident reference `<!-- hive-shared-ci-<n> -->`,
+a verification marker, any other `<!-- hive:… -->` marker) keeps its
+usual path. In quiet mode or under the attention pilot, the relay's one-line
+state notes (awaiting CI, parking) still fold into the status card first.
+
+The rule lives in the relay, not only in the scanner policy, because a
+prompt-only rule drifts. Set `HIVE_SCANNER_NOTE_UPSERT=off` (or `0`,
+`false`, `no`) on the hive to turn it off. It is on by default.
+`src/pkg/github/scanner_note_test.go` pins this behaviour.
 
 ### Per-PR workflow comments post only on a finding
 

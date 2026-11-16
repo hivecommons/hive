@@ -204,6 +204,12 @@ func (u UsageSink) Record(agent, model string, in, out int64) {
 	u.send(callback.UsageRecord{Agent: agent, Model: model, Kind: callback.UsageKindGateway, InputTokens: in, OutputTokens: out})
 }
 
+// RecordWithCache records a gateway response with its cached prompt tokens
+// split out (in excludes cacheRead).
+func (u UsageSink) RecordWithCache(agent, model string, in, out, cacheRead, cacheCreation int64) {
+	u.send(callback.UsageRecord{Agent: agent, Model: model, Kind: callback.UsageKindGatewayCache, InputTokens: in, OutputTokens: out, CacheRead: cacheRead, CacheCreation: cacheCreation})
+}
+
 func (u UsageSink) RecordCopilot(agent, model string, in, out int64) {
 	u.send(callback.UsageRecord{Agent: agent, Model: model, Kind: callback.UsageKindCopilot, InputTokens: in, OutputTokens: out})
 }

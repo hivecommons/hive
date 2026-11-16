@@ -172,6 +172,14 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 			//   5. A quiet-output window: a genuinely stuck login prompt sits
 			//      silent, while an agent still rendering output may simply be
 			//      discussing login/auth work in its answer.
+			//
+			// A Copilot agent whose config.json diverged from the shared login
+			// (#18443) is relinked first: the credential probe below rejects a
+			// diverged copy, and once relinked it evaluates the shared login, so
+			// the one restart that follows starts a CLI that reads it.
+			if showsLogin && loginStreak >= loginStreakRestartMin {
+				m.repairCopilotConfigOnLoginPrompt(agent)
+			}
 			if showsLogin && loginStreak >= loginStreakRestartMin && m.AgentHasValidCredential(agent.Name) {
 				now := time.Now()
 				m.mu.RLock()

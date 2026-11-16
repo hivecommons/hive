@@ -14,6 +14,11 @@ import (
 type entryState struct {
 	Routes    map[string]*RouteState `json:"routes,omitempty"`
 	Dismissed bool                   `json:"dismissed,omitempty"`
+	// Intents are shares waiting for a transcript; persisted so a restart
+	// resumes them.
+	Intents map[string]*ShareIntent `json:"intents,omitempty"`
+	// History is the append-only share history.
+	History []*ShareRecord `json:"history,omitempty"`
 }
 
 // Store persists route states as one JSON file next to connector state.
@@ -100,6 +105,8 @@ func (s *Store) Apply(items []Item) {
 		}
 		items[i].Dismissed = e.Dismissed
 		items[i].Routes = cloneRoutes(e.Routes)
+		items[i].ShareIntents = cloneIntents(e.Intents)
+		items[i].ShareHistory = cloneHistory(e.History)
 		items[i].Processed = e.Dismissed
 		for _, r := range e.Routes {
 			if r.Status == StatusFiled {
@@ -174,6 +181,20 @@ func (s *Store) Set(key, dest, status string, res Result, errText string) (Route
 	return *st, s.save()
 }
 
+// MarkSession records key as sent into session id: a delegated DestSession
+// route whose note reads "session/<id> (<name>)". Sending again replaces it.
+func (s *Store) MarkSession(key, id, name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	note := DestSession + "/" + id
+	if name != "" {
+		note += " (" + name + ")"
+	}
+	s.entry(key).Routes[DestSession] = &RouteState{Status: StatusDelegated, Session: id, Note: note, UpdatedAt: s.now()}
+	return s.save()
+}
+
 // Dismiss marks the item knowledge-only (or clears that mark).
 func (s *Store) Dismiss(key string, dismissed bool) error {
 	s.mu.Lock()
@@ -216,4 +237,155 @@ func (s *Store) MarkSeen(key string) error {
 	}
 	s.entry(key)
 	return s.save()
+}
+
+// SetIntent records (or replaces) a share waiting on a transcript.
+func (s *Store) SetIntent(key string, in ShareIntent) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	e := s.entry(key)
+	if e.Intents == nil {
+		e.Intents = map[string]*ShareIntent{}
+	}
+	c := in
+	e.Intents[in.Destination] = &c
+	return s.save()
+}
+
+// ClearIntent removes the intent for key/dest.
+func (s *Store) ClearIntent(key, dest string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	if e := s.entries[key]; e != nil && e.Intents[dest] != nil {
+		delete(e.Intents, dest)
+		if len(e.Intents) == 0 {
+			e.Intents = nil
+		}
+		_ = s.save()
+	}
+}
+
+// FailIntent marks the intent failed with a reason; nothing was sent.
+func (s *Store) FailIntent(key, dest, reason string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	e := s.entries[key]
+	if e == nil || e.Intents[dest] == nil {
+		return nil
+	}
+	e.Intents[dest].Status, e.Intents[dest].Error, e.Intents[dest].UpdatedAt = IntentFailed, reason, s.now()
+	return s.save()
+}
+
+// Intents returns a copy of key's share intents.
+func (s *Store) Intents(key string) map[string]*ShareIntent {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	if e := s.entries[key]; e != nil {
+		return cloneIntents(e.Intents)
+	}
+	return nil
+}
+
+// IntentKeys lists the items with a waiting share intent, sorted.
+func (s *Store) IntentKeys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	var out []string
+	for k, e := range s.entries {
+		for _, in := range e.Intents {
+			if in.Status == IntentWaiting {
+				out = append(out, k)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// AppendShare adds a record to key's history (assigning its id) and persists
+// it. The history is append-only: records are only updated in place.
+func (s *Store) AppendShare(key string, rec ShareRecord) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	e := s.entry(key)
+	rec.ID = fmt.Sprintf("sh-%d-%d", rec.StartedAt.UnixNano(), len(e.History))
+	c := rec
+	e.History = append(e.History, &c)
+	if len(e.History) > maxShareRecords {
+		e.History = e.History[len(e.History)-maxShareRecords:]
+	}
+	return rec.ID, s.save()
+}
+
+// UpdateShare applies fn to the record with id.
+func (s *Store) UpdateShare(key, id string, fn func(*ShareRecord)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	e := s.entries[key]
+	if e == nil {
+		return nil
+	}
+	for _, r := range e.History {
+		if r.ID == id {
+			fn(r)
+			return s.save()
+		}
+	}
+	return nil
+}
+
+// FinishLatestShare applies fn to the newest unfinished record for dest.
+func (s *Store) FinishLatestShare(key, dest string, fn func(*ShareRecord)) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	e := s.entries[key]
+	if e == nil {
+		return nil
+	}
+	for i := len(e.History) - 1; i >= 0; i-- {
+		if r := e.History[i]; r.Destination == dest && r.Status != ShareDone && r.Status != ShareFailed {
+			fn(r)
+			return s.save()
+		}
+	}
+	return nil
+}
+
+// History returns a copy of key's share history, oldest first.
+func (s *Store) History(key string) []*ShareRecord {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	if e := s.entries[key]; e != nil {
+		return cloneHistory(e.History)
+	}
+	return nil
+}
+
+// PendingRFCKeys lists the items with an RFC share still in progress.
+func (s *Store) PendingRFCKeys() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.load()
+	var out []string
+	for k, e := range s.entries {
+		for _, r := range e.History {
+			if r.Destination == ShareDestRFC && r.Status == ShareInProgress {
+				out = append(out, k)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }

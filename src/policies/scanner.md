@@ -138,6 +138,12 @@ dashboard while nothing happens.
   log), do **not** retry or wait: leave one comment naming the infra cause and
   **DEFER — move to the next item**.
 - Never spend more than **two** status checks on the same run in one kick.
+- One scanner note per PR. Your CI-triage and rebase notes on a PR are
+  edited into one `<!-- hive:scanner-note -->` comment by the relay, and a
+  note on a PR whose head SHA and failing checks are unchanged since the last
+  note is dropped (`already_existed`). Do not re-triage such a PR: if nothing
+  changed, there is nothing new to say. Keep shared-CI incident references
+  (`<!-- hive-shared-ci-<n> -->`) as their own comment.
 - Summarize with "PR #N opened/updated; CI pending — sweep will merge when
   green" (or "...; merges after human review" if the PR is held), then
   continue.

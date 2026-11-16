@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 func TestDiscardingWriteRecorder(t *testing.T) {
@@ -42,20 +40,6 @@ func TestAdminMCPWritesEnabledParsesEnv(t *testing.T) {
 		t.Setenv("HIVE_ADMIN_MCP_ENABLE_WRITES", raw)
 		if got := adminMCPWritesEnabledFromEnv(); got != want {
 			t.Errorf("%q: got %v want %v", raw, got, want)
-		}
-	}
-}
-
-func TestCampaignArchiveErrorStatus(t *testing.T) {
-	cases := map[error]int{
-		knowledge.ErrCampaignLeaseHeld:   http.StatusConflict,
-		knowledge.ErrCampaignNoLease:     http.StatusConflict,
-		errors.New("campaign not found"): http.StatusNotFound,
-		errors.New("disk on fire"):       http.StatusInternalServerError,
-	}
-	for err, want := range cases {
-		if got := campaignArchiveErrorStatus(err); got != want {
-			t.Errorf("%v: got %d want %d", err, got, want)
 		}
 	}
 }

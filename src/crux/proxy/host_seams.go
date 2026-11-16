@@ -78,6 +78,30 @@ func (p *GitHubProxy) recordUsage(agent, model string, in, out int64) {
 	}
 }
 
+// cacheUsageSink is the optional UsageSink extension that records the
+// cached part of a gateway prompt separately, so it is priced at the
+// cache-read rate. *tokens.InferenceSink and the crux callback sink implement
+// it; a sink without it gets the full prompt as input, as before.
+type cacheUsageSink interface {
+	RecordWithCache(agent, model string, inputTokens, outputTokens, cacheRead, cacheCreation int64)
+}
+
+// recordGatewayUsage records one gateway response. OpenAI-shaped usage counts
+// cached tokens INSIDE prompt_tokens, so the uncached input is the
+// difference; recording the full prompt as input would bill cached tokens at
+// the input rate.
+func (p *GitHubProxy) recordGatewayUsage(agent, model string, u gatewayUsage) {
+	if u.Input <= 0 && u.Output <= 0 {
+		return
+	}
+	cached := min(max(u.Cached, 0), max(u.Input, 0))
+	if cs, ok := p.tokenSink.(cacheUsageSink); ok && cached > 0 {
+		cs.RecordWithCache(agent, model, u.Input-cached, u.Output, cached, 0)
+		return
+	}
+	p.recordUsage(agent, model, u.Input, u.Output)
+}
+
 func (p *GitHubProxy) recordCopilotUsage(agent, model string, in, out int64) {
 	if p.tokenSink != nil {
 		p.tokenSink.RecordCopilot(agent, model, in, out)

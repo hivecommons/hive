@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/inbox"
 	"github.com/hivecommons/hive/pkg/meetings"
 	"github.com/hivecommons/hive/pkg/meetings/live"
@@ -17,6 +18,9 @@ import (
 type meetingsInbox struct {
 	mgr   *meetings.Manager
 	store *meetings.Store
+	// name is the attendee in the notes header: the persona's name, or
+	// "hive" with the persona off.
+	name string
 }
 
 // meetingsInboxStates are the states whose meetings the inbox lists.
@@ -55,10 +59,29 @@ func (mi *meetingsInbox) build(m meetings.Meeting) (inbox.LiveMeeting, error) {
 		out.EndedAt = *m.EndedAt
 	}
 	if len(st.Notes) > 0 {
-		out.Notes = live.RenderNotes(m, st.Notes)
+		out.Notes = live.RenderNotesBy(mi.attendee(), m, st.Notes)
 		out.Summary = strings.Join(st.Notes[live.SectionSummary], "\n")
 	}
 	return out, nil
+}
+
+// attendee names the note taker in the notes header.
+func (mi *meetingsInbox) attendee() string {
+	if n := strings.TrimSpace(mi.name); n != "" {
+		return n
+	}
+	return defaultNotesAttendee
+}
+
+// defaultNotesAttendee names the note taker with the persona off.
+const defaultNotesAttendee = "hive"
+
+// meetingsAttendeeName is the persona's name when it is on.
+func meetingsAttendeeName(p config.ResolvedMeetingsPersona) string {
+	if p.Enabled && strings.TrimSpace(p.Name) != "" {
+		return p.Name
+	}
+	return defaultNotesAttendee
 }
 
 // EndedMeetings implements inbox.LiveMeetingReader.
@@ -104,7 +127,7 @@ const hoursPerDay = 24
 // wireMeetingsInbox adds ended meetings to the inbox and starts the
 // retention sweeper.
 func (b *boot) wireMeetingsInbox(mgr *meetings.Manager, store *meetings.Store) {
-	b.meetingsInboxSrc = &inbox.LiveMeetingSource{Reader: &meetingsInbox{mgr: mgr, store: store}}
+	b.meetingsInboxSrc = &inbox.LiveMeetingSource{Reader: &meetingsInbox{mgr: mgr, store: store, name: meetingsAttendeeName(b.cfg.Meetings.Persona.Resolve())}}
 	b.refreshInboxSources(b.cfg.Knowledge.Connectors, b.knowledgeConnectors)
 	retention := time.Duration(b.cfg.Meetings.RetentionDaysOrDefault()) * hoursPerDay * time.Hour
 	mgr.StartRetention(retention, 0, live.StateDoc)

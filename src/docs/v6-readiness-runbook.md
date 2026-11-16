@@ -492,7 +492,7 @@ Prerequisites:
   `❌ Failed to start inception: … owner access required` reply means the spine's
   dashboard credential cannot do that on this hive. Record it as a blocker and
   do not tick the row.
-- The `brainstorm` agent is enabled (see [Inception](inception.md#prerequisites)),
+- The `brainstorm` agent is enabled (the inception API this row exercises was retired on v5, see [Inception](inception.md#retired-the-inception-api-watcher-and-brainstorm-inception-mode)),
   and no inception is in progress. Only one run can be active; archive an
   earlier one with `!inception reset` first.
 

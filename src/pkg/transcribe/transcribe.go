@@ -5,8 +5,9 @@
 // the spoke owner's own provider key, and the transcript is stored only on
 // that spoke. Nothing here is shared across hives or billed centrally.
 //
-// Adapters: Deepgram (pre-recorded /v1/listen) and Fake (tests). An
-// OpenAI-compatible adapter can be added later behind the same interface.
+// Adapters: Deepgram (pre-recorded /v1/listen) and Fake (tests). Others
+// plug in behind the same interface and report progress through
+// Audio.Progress.
 package transcribe
 
 import (
@@ -39,6 +40,9 @@ type Audio struct {
 	Duration time.Duration
 	// Lang is a BCP-47 language hint; "" or "auto" asks for detection.
 	Lang string
+	// Progress, when set, receives phase changes and measured progress
+	// (see Report). It must be cheap and safe to call from any goroutine.
+	Progress func(Progress)
 }
 
 // Segment is one utterance of the transcript.

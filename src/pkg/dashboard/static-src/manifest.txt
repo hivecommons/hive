@@ -32,6 +32,8 @@ css/nous.css
 css/knowledge.css
 css/inbox.css
 css/meetings.css
+css/calendar.css
+css/meeting-attendee.css
 css/sections-collapse.css
 css/design-system.css
 css/responsive.css
@@ -62,6 +64,7 @@ html/acmm-approvals-audit.html
 html/review-queue.html
 html/nous-inception-knowledge-contributors.html
 html/inbox.html
+html/calendar.html
 html/meetings.html
 html/debug-logs.html
 html/agents.html
@@ -119,6 +122,7 @@ js/label-filter.js
 js/pinned-filters.js
 js/repos-render.js
 js/budget.js
+js/model-picker.js
 js/backends-tokens.js
 js/cost.js
 js/acmm-lifecycle.js
@@ -128,13 +132,15 @@ js/approvals.js
 js/nous.js
 js/knowledge.js
 js/inbox.js
+js/inbox-recorder.js
 js/meetings.js
+js/calendar.js
+js/meeting-attendee.js
 js/vault-audit.js
 js/review-queue.js
 js/contributors.js
 js/refresh.js
 js/scroll-stabilizer.js
-js/campaigns.js
 js/inception.js
 js/subscription-gauge.js
 js/sessions.js

@@ -308,9 +308,15 @@ func meetingParticipants(rec MeetingRecording, content MeetingContent) []string 
 	return out
 }
 
-// meetingFactNeedsRefetch reports whether a stored meeting fact has no text.
+// meetingFactNeedsRefetch reports whether a stored meeting fact has no text
+// from the platform yet: pending, or holding only the hive's machine
+// transcript (so the platform's own text replaces it once it exists).
 func meetingFactNeedsRefetch(fm map[string]string) bool {
-	return fm["attr_"+meetingContentAttr] == plaudContentPending
+	switch fm["attr_"+meetingContentAttr] {
+	case plaudContentPending, FactContentMachine:
+		return true
+	}
+	return false
 }
 
 // --- WebVTT ---

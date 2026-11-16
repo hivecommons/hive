@@ -194,6 +194,8 @@ type harness struct {
 	r     *Runner
 	store *meetings.Store
 	m     meetings.Meeting
+	// drops records the persona's skipped candidates (persona tests).
+	drops *dropLog
 }
 
 func newHarness(t *testing.T, p Policy, mutate func(*Options)) *harness {
@@ -494,7 +496,7 @@ func TestBudgetByIntentsAndTokens(t *testing.T) {
 	h.eventually("notes still taken", func() bool { return len(h.state().Notes[SectionNotes]) == 1 })
 	st := h.state()
 	posts, _ := h.mt.got()
-	if !st.BudgetExhausted || len(posts) != 2 || posts[1] != budgetNotice || st.Dropped != 4 {
+	if !st.BudgetExhausted || len(posts) != 2 || posts[1] != budgetNotice(defaultPersonaName) || st.Dropped != 4 {
 		t.Fatalf("budget state %+v posts %q", st, posts)
 	}
 

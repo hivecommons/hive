@@ -14,7 +14,6 @@ import (
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/ioscan"
-	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
 func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
@@ -43,16 +42,6 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	bang := strings.HasPrefix(safeQuery, "!")
-
-	// While an inception waits in clarify, an owner's unprefixed reply is the
-	// answer to the next unanswered question: hand it to the chat spine, which
-	// owns that routing, before local intents and the fallback claim it (#13215).
-	if !bang && s.inceptionAwaitingAnswers() &&
-		config.RoleAtLeast(r.Header.Get("X-Hive-Role"), config.RoleOwner) &&
-		s.deps.DashboardChatSubmit != nil {
-		s.submitDashboardChat(w, r, safeQuery)
-		return
-	}
 
 	if bang {
 		// `!` commands belong to the shared chat spine, which enforces the
@@ -196,24 +185,6 @@ func (s *Server) submitDashboardChat(w http.ResponseWriter, r *http.Request, tex
 		"seq":      seq,
 	})
 	s.auditFromRequest(r, "chat.dashboard.message", auditDetail("seq", strconv.FormatUint(seq, 10)), "")
-}
-
-// inceptionAwaitingAnswers reports whether the inception engine is in clarify
-// with at least one unanswered question.
-func (s *Server) inceptionAwaitingAnswers() bool {
-	if s.deps == nil || s.deps.Inception == nil {
-		return false
-	}
-	state := s.deps.Inception.GetState()
-	if state == nil || state.Phase != knowledge.PhaseClarify {
-		return false
-	}
-	for _, q := range state.Questions {
-		if strings.TrimSpace(state.Answers[q.ID]) == "" {
-			return true
-		}
-	}
-	return false
 }
 
 func scrubDashboardChatAnswer(answer string) string {
