@@ -1,1 +1,0 @@
-- Inbox: pending recordings now show a disabled 🎧 Transcribe control with the reason (transcription off, missing Deepgram key, consent, or budget) and a link to Inbox ⚙ → Transcription, instead of hiding it; pending text for Plaud, Zoom, Teams, Discord, Meet, Webex, Fireflies, Fathom and Otter now says hive can transcribe with Deepgram.
