@@ -217,7 +217,7 @@ agents:
     sandbox:
       enabled: true
       runtime: job
-      image: registry.example/project-dev:latest   # must include hive-review
+      image: registry.example/project-dev:latest   # needs bash and python3; hive supplies hive-review
       job:
         node_selector: { accelerator: spyre }
         resources:
@@ -237,6 +237,20 @@ While any spool is registered, the watcher scans on its short poll interval: a J
 The relay touches the spool only through an `os.Root` opened at the workspace. A symlink the sandbox plants can't redirect a read, rename or write outside its own workspace, and a request file that is a symlink, FIFO or oversized is set aside as `.rejected`. The relay ignores a manifest directory or manifest that is not owned by its own uid or is group- or world-writable, and a manifest without a spool key. In the sidecar runtime (`CRUX_MODE=sidecar`), the runtime and hive must therefore share both `/data` and a uid. On `sandbox.runtime: job`, the key is in the Job's pod spec, so anything that can read Jobs or Pods in the namespace through the Kubernetes API can read it; agents must not hold that permission. A group member can still delete or alter a request in the spool, which loses the review but cannot post one.
 
 Out of scope: the quality and deps lanes are unchanged, and nothing inside a Job writes to GitHub directly.
+
+### Hive's relays inside the sandbox
+
+The project image does not need to carry `hive-review` or any other hive script ([#18512](https://github.com/hivecommons/hive/issues/18512)). On every sandboxed agent kick, hive supplies its **sandbox-safe relays** itself, read-only at `/opt/hive/relays`, and runs the kick command through a short `/bin/sh` preflight that prepends that directory to `PATH`. Today the only relay is `hive-review`, which works from a sandbox through the review spool above. Relays that need the pod-local drop boxes (`hive-open-pr`, `hive-open-issue`, `hive-merge`, `hive-push-branch`) are left out until they have a spool of their own.
+
+- **Job runtime.** The Job gets an init container, `hive-relays`, from the **running hive image by digest**. Hive reads its own pod (`$POD_NAME`, else `$HOSTNAME`) through the `pods` get grant the launcher already has, and takes the hive container's `imageID`. When the runtime reports no pullable digest, hive falls back to the image as written. Hive's own `imagePullSecrets` are copied onto the Job so the node can pull it. The init container runs `cp /usr/local/bin/hive-review /opt/hive/relays/` into a 16Mi `emptyDir`, and the kick container mounts that `emptyDir` read-only. The init container passes OpenShift's restricted SCC and the Kubernetes `restricted` Pod Security Standard: `runAsNonRoot`, `readOnlyRootFilesystem`, `allowPrivilegeEscalation: false`, every capability dropped, `RuntimeDefault` seccomp. On OpenShift (hive's pod carries the `openshift.io/scc` annotation) it sets no uid, and the SCC assigns one from the namespace range. Elsewhere the hive image's default user is root, which `runAsNonRoot` refuses, so it runs as uid 65534. Two `job` fields override this:
+  - `relay_image` pins the init container's image, for example a mirror on an internal registry. `none` turns the relays off.
+  - `relay_run_as_user` pins its uid. It must be positive.
+
+  The first kick on a node pulls the hive image, which is large. Later kicks reuse it (`imagePullPolicy: IfNotPresent`). If hive cannot read its own pod, the kick fails with a message that names both fields, and no Job is created.
+- **Podman.** Hive copies its own `hive-review` (found on its `PATH`, or in `$HIVE_SANDBOX_RELAY_DIR` when that is set) into a private temporary directory. It bind-mounts that directory with `-v <dir>:/opt/hive/relays:ro,Z` and removes it after the run. If the relay cannot be found, the kick fails with a message that says so.
+- **Preflight.** The relays need `bash` and `python3` in the image. If either is missing, the kick exits with code 78 before the agent starts, and its transcript reads `hive: this sandbox image has no python3 on PATH ... add python3 to the image.` The image also needs `/bin/sh`. A kick that relies on the image's own entrypoint (no command) cannot be wrapped: the relays are mounted but not put on `PATH`.
+- **Precedence.** Hive's copy always comes first on `PATH`, and a copy in the image is ignored. The relay and the spool protocol it speaks ship together in the hive image, so an older or newer copy baked into a project image could sign or shape a request that this hive rejects. There is deliberately no "use the image's copy if newer" option.
+- **OpenShell and Substrate.** Not yet. On these runtimes the gateway or the actor API builds the sandbox pod, and getting hive's image into it needs runtime-specific work: an init container in the OpenShell template, and Landlock read access to `/opt/hive/relays`. Until that follow-up lands, the image still has to include `hive-review` on these runtimes.
 
 ## Running sandboxed kicks in an OpenShell sandbox
 

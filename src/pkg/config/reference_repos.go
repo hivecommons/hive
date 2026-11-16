@@ -63,6 +63,15 @@ type ReferenceRepo struct {
 	// login, or the write_token_file's user); empty when CredentialState is
 	// not write-tier. The kick names it so agents know whose fork to push to.
 	CredentialLogin string `yaml:"-" json:"credential_login,omitempty"`
+	// CredentialIdentity is which identity CredentialLogin is
+	// (ReferenceIdentityBot, ReferenceIdentityOwner or
+	// ReferenceIdentityTokenFile); empty when CredentialState is not
+	// write-tier. project.remote_write_identity decides between bot and owner.
+	CredentialIdentity string `yaml:"-" json:"credential_identity,omitempty"`
+	// CredentialNote is the one-line why behind CredentialIdentity (or behind
+	// a read-only state), e.g. "the hive's GitHub App is installed on
+	// hivecommons", in words the Settings page shows as is.
+	CredentialNote string `yaml:"-" json:"credential_note,omitempty"`
 }
 
 // Credential states of a write-tier reference repo.
@@ -73,6 +82,12 @@ const (
 	// ReferenceCredentialReadOnly: no credential, the derived entry was
 	// downgraded to read-only in memory and the request issue told why.
 	ReferenceCredentialReadOnly = "read-only"
+	// ReferenceCredentialUnresolved: project.remote_write_identity is "bot"
+	// and the App installation lookup on the repo's owner failed for a
+	// transient reason (network, 5xx). The entry is served read-only for
+	// this pass without telling the request issue, and is retried on the
+	// next one, rather than silently posting under a different identity.
+	ReferenceCredentialUnresolved = "unresolved"
 )
 
 // Derived reports whether the entry came from an accepted request issue

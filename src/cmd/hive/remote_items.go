@@ -66,10 +66,16 @@ func resolveMarkerAgent(cfg *config.Config, name string) string {
 }
 
 // remoteItemRepos returns the reference repos the poller watches: write tier
-// with a resolved credential login, which is the owner's login.
+// with a resolved credential login, which is the owner's login. Entries that
+// write as the App bot (project.remote_write_identity) are left out: the
+// poller reads under the owner token and lists creator=<owner>, so it would
+// never find the bot's items there.
 func remoteItemRepos(refs []config.ReferenceRepo) (repos []string, login string) {
 	for _, rr := range refs {
 		if rr.ReadOnly() || rr.CredentialState != config.ReferenceCredentialWriteTier || rr.CredentialLogin == "" {
+			continue
+		}
+		if rr.CredentialIdentity == config.ReferenceIdentityBot {
 			continue
 		}
 		repos = append(repos, rr.Repo)

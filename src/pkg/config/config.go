@@ -1200,6 +1200,14 @@ type ProjectConfig struct {
 	// them, and writes to them are refused unless opted in. See
 	// reference_repos.go.
 	ReferenceRepos []ReferenceRepo `yaml:"reference_repos,omitempty" json:"reference_repos,omitempty"`
+	// RemoteWriteIdentity picks which GitHub identity the hive writes to its
+	// write-tier reference repos as (hivecommons/hive#18196 follow-up):
+	// "bot" (the default when empty) posts as the hive's GitHub App on a
+	// granted repo whose owner installed that App themselves and as the hive
+	// owner's connected account elsewhere; "bot_only" posts as the App where
+	// it is installed and is read-only elsewhere; "owner" always posts as the
+	// hive owner's connected account. See remote_write_identity.go.
+	RemoteWriteIdentity string `yaml:"remote_write_identity,omitempty" json:"remote_write_identity,omitempty"`
 	// RepoPolicies stores optional per-repository policy overrides keyed by
 	// repo name. project.repos remains the watched-repo identity list; this
 	// sidecar list lets existing string-list configs keep round-tripping.
@@ -2866,12 +2874,21 @@ func (g *GovernorConfig) AttributionTrailerEnabled() bool {
 // backend is the agent's backend name (typically "litellm"); it selects which
 // explicit gateway to consult.
 func (g GovernorConfig) ResolveLiteLLMInferenceKey(backend string) string {
+	key, _ := g.ResolveLiteLLMInferenceKeyWithSource(backend)
+	return key
+}
+
+// ResolveLiteLLMInferenceKeyWithSource is ResolveLiteLLMInferenceKey plus the
+// log-safe source ("file:<path>" / "env:<NAME>") the key came from. The
+// inference proxy re-runs it at request time so a rotated key is picked up
+// without a restart (hive#18532).
+func (g GovernorConfig) ResolveLiteLLMInferenceKeyWithSource(backend string) (string, string) {
 	if len(g.Gateways) > 0 {
 		if gw := g.ResolveGateway(backend); gw != nil {
-			return gw.ResolveAPIKey()
+			return gw.ResolveAPIKeyWithSource()
 		}
 	}
-	return g.LiteLLM.ResolveAPIKey()
+	return g.LiteLLM.ResolveAPIKeyWithSource()
 }
 
 // ReplanConfig governs the Phase 3 stall-replan lane: a periodic check that

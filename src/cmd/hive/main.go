@@ -4342,6 +4342,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						APIKey:       apiKey,
 						CABundle:     gw.CABundle,
 						ExtraHeaders: extraHeaders,
+						KeyResolver:  gatewayInferenceKeyResolver(b.cfg, gw, backend),
 					})
 					return
 				}
@@ -4399,6 +4400,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						DefaultModel: defaultModel,
 						APIKey:       apiKey,
 						CABundle:     caBundle,
+						KeyResolver:  litellmInferenceKeyResolver(b.cfg, backend),
 					})
 					return
 				}
