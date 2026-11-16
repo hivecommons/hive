@@ -97,6 +97,10 @@ to a network-attached class.
     agent homes (`agent home prune complete`, 14-day retention — `PruneAgentHomes`,
     added for Ask 3 of #9869). It never follows symlinks and never touches
     credentials, session-state, beads, or repo checkouts.
+  - idle **Claude CLI session scratch** under the temp directory
+    (`<tmp>/claude-<uid>/<project>/<session>`, in the container's writable
+    layer, not `/data`): each session directory whose newest write is older
+    than 24 hours (`claude tmp prune complete` — `PruneClaudeTmp`).
 
 Related: [#2349](https://github.com/hivecommons/hive/issues/2349) (small
 disks / OKE DiskPressure, same symptom on a different cloud).
