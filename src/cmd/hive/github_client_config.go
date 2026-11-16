@@ -170,6 +170,12 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// in-progress sweep: a ledger claim whose 🔒 comment was budget-suppressed
 	// must still read as a claim (claimswire.go, ledgerClaimLookup).
 	client.SetIssueClaimLedger(ledgerClaimLookup(func() *claims.Ledger { return b.issueClaims }))
+	// The bound workflow model lookup the stage engine derives through: the
+	// in-progress sweep and the out-of-cycle stage facts must agree with the
+	// sweeps on a model-bound repository (hivecommons/hive#18434,
+	// stage_model_owned.go). StageReconciler also installs it, but only once
+	// a sweep builds the reconciler for this client.
+	client.SetStageWorkflowFor(stageEngineOptions(b.cfg, b.logger).WorkflowFor)
 	// Duplicate-PR claim ledger fallback for the out-of-cycle stage facts:
 	// a claim release on an issue whose covering PR the ledger already holds
 	// re-derives 040, not 010 (stage_facts_sink.go, ledgerCoveringPR).
