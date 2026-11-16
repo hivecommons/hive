@@ -703,6 +703,20 @@ Phase 5 registers the fleet-level write operations under that contract:
   only settings: nothing reaches what the advisor says to an agent, which stays read-only
   (`advisor_records`). Each endpoint answers with the refreshed section, which `write_confirm`
   returns.
+- `agent.settings` wraps `PUT /api/config/agent/{name}/general`, the endpoint behind the agent's
+  General settings tab. The handler reads only the keys it is sent, so the op sends only the
+  named fields. It offers the operator-intent fields (on/off, GitHub tier, on-demand, repository
+  scope, replicas, continuous mode, contributor-first, labels and keywords) and refuses, with a
+  pointer, the fields that decide what runs and how it is contained (`launchCmd`, `cliPinned`,
+  `cliPinValue`, `sandboxEnabled`, `sandboxSubstrate`, `engine`, `role`, `promptSource`,
+  `definitionSource`), plus `model` and `githubApiHourlyCap`, which have their own ops. Because the
+  handler ignores a value of the wrong type, the op checks types and the `mode`,
+  `restartStrategy` and `beadRole` values itself; the mode order comes from `crux/agentmode`. The
+  preview reads `settings_read` section `agent`, names as widening each change that lets the
+  agent do more or run more, and its `ConfirmGuard` fingerprints the named fields. A replica or
+  review head is refused, because the handler saves the edit and then rebuilds the copy from its
+  base. A test in `pkg/dashboard` parses the handler for the keys it reads and fails when a key
+  is neither offered, refused nor listed as not offered.
 
 The Activity monitor's row actions are registered as the `repository.rescan` and
 `repository.item_*` operations, each sending the request the dashboard's button sends
