@@ -268,9 +268,9 @@ func TestSessionSeedAuditAndRoutedMark(t *testing.T) {
 func TestSessionCreateWithSeedWaitsForRunning(t *testing.T) {
 	e := newSessionTestEnv(t, true)
 	withSeedInbox(t, e)
-	release := make(chan struct{})
+	release, entered := make(chan struct{}), make(chan struct{})
 	var once sync.Once
-	e.rt.startFn = func(crux.UserSessionSpec) error { <-release; return nil }
+	e.rt.startFn = func(crux.UserSessionSpec) error { close(entered); <-release; return nil }
 	t.Cleanup(func() { once.Do(func() { close(release) }) })
 	rec := e.do(t, callerRW, "POST", "/api/sessions", map[string]any{"name": "nate v2", "group": "inbox", "vendor": "claude", "seed_items": []map[string]string{{"source": "plaud", "id": "rec-2"}}})
 	if rec.Code != http.StatusAccepted {
@@ -285,10 +285,10 @@ func TestSessionCreateWithSeedWaitsForRunning(t *testing.T) {
 	if seed, _ := m["seed"].(map[string]any); seed == nil || seed["status"] != "pending" {
 		t.Errorf("seed = %v", m["seed"])
 	}
-	// Still preparing (the fake Start holds the runtime's lock while it
+	// The start is in flight (the fake Start holds the runtime's lock while it
 	// blocks, so only lock-free state is read here): nothing may be written
 	// or queued yet.
-	time.Sleep(20 * time.Millisecond)
+	<-entered
 	if _, err := os.Stat(filepath.Join(e.rt.WorkDir(id), ".hive", "inbox", "plaud-rec-2.md")); err == nil {
 		t.Fatal("seeded before the session was running")
 	}
