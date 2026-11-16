@@ -41,6 +41,12 @@
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
     // Uploaded documents have no audio; uploaded audio/video does.
     function inboxItemHasAudio(it) { return !it || it.source !== 'upload' || it.upload_kind === 'audio' || it.upload_kind === 'video'; }
+    // The role is known once /api/role settled (answered, or retries gave up:
+    // then it is undefined and every gate treats the viewer as read-only).
+    // Before that the Inbox renders a neutral loading state, never a guessed 'read'.
+    function inboxRoleKnown() { return window._hiveRoleSettled === true || window._hiveRole !== undefined; }
+    function inboxOnRoleReady() { if (_inboxCache) renderInbox(); }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(inboxOnRoleReady);
     function inboxItemKey(it) { return it.source + '/' + it.id; }
     // Playback is a read of private audio: owners and read-write sessions.
     function inboxViewerCanPlay() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
@@ -317,6 +323,70 @@
       await fetchInbox();
     }
 
+    // Share history pills: one per share record, in the form
+    // "→ RFC #18412 · andy · 2m ago". They are status, not controls: a plain
+    // link to the target when there is one (never for read-only viewers),
+    // otherwise a span. Only the latest record per destination shows; "+N"
+    // expands the rest.
+    const _inboxHistoryOpen = new Set();
+    const INBOX_SHARE_LABELS = { rfc: 'RFC', dibs: 'DIBS', knowledge: 'Knowledge', spek: 'spek' };
+    function inboxSharePillText(rec) {
+      const dest = rec.destination;
+      const ref = rec.ref || {};
+      let label = '→ ' + (INBOX_SHARE_LABELS[dest] || dest);
+      if (dest === 'rfc' && ref.number) label += ' #' + ref.number;
+      if (dest === 'spek' && ref.name) label += ': ' + ref.name;
+      const busy = rec.status === 'queued' || rec.status === 'transcribing' || rec.status === 'in_progress';
+      if (rec.status === 'failed') label += ' failed';
+      else if (rec.status === 'transcribing') label += ' (transcribing)';
+      else if (busy) label += ' …';
+      const when = rec.started_at && !String(rec.started_at).startsWith('0001') ? relativeTimeShort(rec.started_at) : '';
+      return label + ' · ' + (rec.actor || 'unknown') + (when ? ' · ' + when : '');
+    }
+    // inboxShareTargetHref returns the link target of a record, or '' when
+    // it has none or the viewer may not open it.
+    function inboxShareTargetHref(rec, canOpen) {
+      const ref = rec.ref || {};
+      if (!canOpen) return '';
+      if ((rec.destination === 'rfc' || rec.destination === 'dibs') && /^https?:\/\//.test(ref.url || '')) return ref.url;
+      if (rec.destination === 'spek' && ref.id) return '#section-sessions-section?session=' + encodeURIComponent(ref.id);
+      return '';
+    }
+    function inboxSharePillHtml(rec, it) {
+      const busy = rec.status === 'queued' || rec.status === 'transcribing' || rec.status === 'in_progress';
+      const status = rec.status === 'failed' ? 'error' : (rec.status === 'done' ? 'ok' : 'syncing');
+      const stamp = rec.finished_at || rec.started_at;
+      const title = (rec.status === 'failed' && rec.reason ? rec.reason + ' · ' : (rec.reason && busy ? rec.reason + ' · ' : '')) + (stamp ? formatDashboardDateTime(stamp) : '');
+      const inner = (busy ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> ' : '') + escapeHtml(inboxSharePillText(rec));
+      const attrs = ' class="kc-pill inbox-share-pill" data-status="' + status + '" data-share-dest="' + escapeHtml(rec.destination) + '" title="' + escapeHtml(title) + '"';
+      const canOpen = inboxViewerCanPlay();
+      const href = inboxShareTargetHref(rec, canOpen);
+      if (href) return '<a' + attrs + ' href="' + escapeHtml(href) + '"' + (/^https?:/.test(href) ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + inner + '</a>';
+      if (canOpen && rec.destination === 'knowledge' && (rec.ref || {}).id && it && it.fact_slug) {
+        return '<a' + attrs + ' href="#" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '">' + inner + '</a>';
+      }
+      return '<span' + attrs + '>' + inner + '</span>';
+    }
+    function inboxSharePillsHtml(it, key) {
+      const hist = (it && it.share_history) || [];
+      if (!hist.length) return '';
+      const open = _inboxHistoryOpen.has(key);
+      const latest = {};
+      hist.forEach(r => { latest[r.destination] = r; });
+      const shown = hist.filter(r => open || latest[r.destination] === r);
+      const hidden = hist.length - shown.length;
+      let html = shown.map(r => inboxSharePillHtml(r, it)).join(' ');
+      if (hidden > 0 || (open && hist.length > Object.keys(latest).length)) {
+        html += ' <a href="#" class="muted-xs inbox-share-more" data-action="inboxToggleHistory" data-prevent="1" data-arg0="' + escapeHtml(it.source) + '" data-arg1="' + escapeHtml(it.id) + '" aria-expanded="' + (open ? 'true' : 'false') + '" title="' + (open ? 'Show only the latest share per destination' : 'Show the full share history') + '">' + (open ? 'less' : '+' + hidden) + '</a>';
+      }
+      return html;
+    }
+    function inboxToggleHistory(src, id) {
+      const key = src + '/' + id;
+      if (_inboxHistoryOpen.has(key)) _inboxHistoryOpen.delete(key); else _inboxHistoryOpen.add(key);
+      renderInbox();
+    }
+
     function inboxItemHtml(it) {
       const key = inboxItemKey(it);
       const checked = _inboxSelected.has(key) ? ' checked' : '';
@@ -334,6 +404,7 @@
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
       if (it.dismissed) pills += '<span class="kc-pill" title="Kept as a Knowledge fact only">knowledge only</span>';
+      pills += inboxSharePillsHtml(it, key);
       for (const d of Object.keys(it.share_intents || {})) {
         const si = it.share_intents[d];
         if (si && si.status === 'failed') pills += '<span class="kc-pill" data-status="error" title="' + escapeHtml(si.error || '') + '">→ ' + escapeHtml(inboxIntentLabel(d)) + ' failed</span> <span class="kc-error muted-xs" role="alert">' + escapeHtml(si.error || '') + '</span> ';
@@ -635,7 +706,7 @@
       const badge = document.getElementById('inbox-sidebar-badge');
       const data = _inboxCache;
       if (!panel) return;
-      if (!data) { panel.innerHTML = '<div class="muted-note">Loading inbox…</div>'; return; }
+      if (!data || !inboxRoleKnown()) { panel.innerHTML = '<div class="muted-note">Loading inbox…</div>'; return; }
       const items = data.items || [];
       const unprocessed = Number(data.unprocessed) || 0;
       if (badge) setSidebarCountBadge(badge, unprocessed, unprocessed + ' unprocessed');
@@ -658,6 +729,7 @@
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
+      if (window._hiveRoleFailed && !window._hiveRole) html += '<div class="muted-xs">Could not determine your role, so actions are read-only. It will retry automatically.</div>';
       if (inboxCanAdd()) html += inboxAddPanelHtml() + inboxUploadsHtml();
       if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
       if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;

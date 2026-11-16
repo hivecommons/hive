@@ -38,6 +38,11 @@ project:
       comment: |
         Pub-sub event streaming for tmux sessions running AI coding agents.
         Installed into the hive image at build time.
+    - name: quorum
+      url: https://github.com/hivecommons/quorum
+      comment: |
+        Meeting MCP server: agents join Teams, Meet, Zoom and Discord as a
+        participant. Installed into the hive image at build time.
     - name: hotshot
       url: https://github.com/hivecommons/hotshot
       comment: Screenshot capture delivered into an AI coding assistant's terminal. Standalone tool.
@@ -65,6 +70,11 @@ project:
     - name: homebrew-repo
       url: https://github.com/hivecommons/homebrew-repo
       comment: Homebrew tap for Spektacular. Packaging only.
+    - name: vexa
+      url: https://github.com/hivecommons/vexa
+      comment: |
+        Fork of Vexa-ai/vexa carrying unreleased patches; publishes the
+        vexa-bot images for the shared meeting service quorum drives.
     - name: docs
       url: https://github.com/hivecommons/docs
       comment: Source for docs.hivecommons.dev. Project docs are synced from their repositories at build time.

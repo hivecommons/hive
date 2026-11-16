@@ -27,6 +27,7 @@ func modelSelectHelpersJS(t *testing.T, html string) string {
 		extractJSFunction(t, html, "inferenceBackendDefaultModel") + "\n    }\n" +
 		extractJSFunction(t, html, "modelDisallowedByGateway") + "\n    }\n" +
 		extractJSFunction(t, html, "modelDefaultOptionLabel") + "\n    }\n" +
+		extractJSFunction(t, html, "modelOptionPriceSuffix") + "\n    }\n" +
 		extractJSFunction(t, html, "modelSelectOptionsHtml") + "\n    }\n" +
 		extractJSFunction(t, html, "_modelIdMatches") + "\n    }\n" +
 		`var _inferenceModelCache = (typeof _inferenceModelCache !== 'undefined') ? _inferenceModelCache : {};

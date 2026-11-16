@@ -66,7 +66,7 @@
     },
     {
       "name": "Inception",
-      "description": "Greenfield project scaffolding and ideation workflow"
+      "description": "Retired inception API: every route answers 410 Gone and points to Inception (spek) sessions"
     },
     {
       "name": "Knowledge",
@@ -23196,22 +23196,33 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Download the produced scaffold as a zip",
-        "description": "Produces the current inception scaffold and streams it as a zip file attachment (application/zip). No JSON body on success.",
+        "summary": "Retired: download the produced scaffold as a zip",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Zip archive of scaffold files",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
-              "application/zip": {
+              "application/json": {
                 "schema": {
-                  "type": "string",
-                  "format": "binary"
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
-          },
-          "404": {
-            "description": "Inception engine not initialized, no scaffold, or no files to download"
           }
         }
       }
@@ -23221,11 +23232,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Check whether the inception wiki has files",
-        "description": "Reports whether the inception knowledge wiki currently has any files on disk.",
+        "summary": "Retired: check whether the inception wiki has files",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Has-files flag",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23234,8 +23246,14 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "has_files": {
-                      "type": "boolean"
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
@@ -23250,11 +23268,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "List ideation facts",
-        "description": "Returns the facts gathered so far during ideation, preferring the knowledge store's ideation facts and falling back to the inception engine's in-memory gathered facts.",
+        "summary": "Retired: list ideation facts",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Ideation facts",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23263,20 +23282,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "facts": {
-                      "type": "array",
-                      "items": {
-                        "type": "object"
-                      },
-                      "description": "knowledge.Fact entries"
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "503": {
-            "description": "Knowledge API not initialized"
           }
         }
       }
@@ -23286,11 +23304,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Produce (or fetch) the project scaffold",
-        "description": "Produces the scaffold result from the current inception state (file list/content). Not owner-gated.",
+        "summary": "Retired: produce (or fetch) the project scaffold",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Scaffold result",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23299,20 +23318,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "scaffold": {
-                      "type": "object",
-                      "description": "Scaffold result including a Files list; shape not fully enumerated here — see inception.ProduceScaffold."
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "404": {
-            "description": "No scaffold available"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23322,11 +23340,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Get current inception state",
-        "description": "Returns the current inception engine state (idea capture / question / structure phase, etc). State shape is dynamic (inception engine internal state struct).",
+        "summary": "Retired: get current inception state",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Inception state",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23335,21 +23354,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "state": {
-                      "type": "object",
-                      "nullable": true,
-                      "description": "Inception engine state; null when no session is active."
+                    "error": {
+                      "type": "string"
                     },
-                    "active": {
-                      "type": "boolean"
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23359,29 +23376,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Submit answers to inception questions",
-        "description": "Submits a map of question-id to answer text, advancing the inception session. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "answers": {
-                    "type": "object",
-                    "additionalProperties": {
-                      "type": "string"
-                    }
-                  }
-                }
-              }
-            }
-          }
-        },
+        "summary": "Retired: submit answers to inception questions",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Updated state",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23390,19 +23390,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "state": {
-                      "type": "object"
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Invalid body or submission rejected by the engine"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23412,11 +23412,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Approve inception and complete it",
-        "description": "Advances the inception session to complete and re-pauses the brainstorm agent (on-demand only afterward). Requires owner role.",
+        "summary": "Retired: approve inception and complete it",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Approved",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23424,17 +23425,20 @@
                   "properties": {
                     "ok": {
                       "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Could not advance to complete"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23444,30 +23448,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Record ideation facts",
-        "description": "Records a batch of ideation facts against the knowledge base. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "facts": {
-                    "type": "array",
-                    "items": {
-                      "type": "object"
-                    },
-                    "description": "knowledge.IdeationFact entries"
-                  }
-                }
-              }
-            }
-          }
-        },
+        "summary": "Retired: record ideation facts",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Recorded",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23475,17 +23461,20 @@
                   "properties": {
                     "ok": {
                       "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Invalid body or record failure"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23495,46 +23484,33 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Import a wiki zip into the inception wiki directory",
-        "description": "Accepts a multipart/form-data upload (field name 'file') of a zip archive (max 10 MiB) and extracts it into the inception wiki directory. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "multipart/form-data": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "file": {
-                    "type": "string",
-                    "format": "binary"
-                  }
-                },
-                "required": [
-                  "file"
-                ]
-              }
-            }
-          }
-        },
+        "summary": "Retired: import a wiki zip into the inception wiki directory",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Import result",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object"
+                  "type": "object",
+                  "properties": {
+                    "ok": {
+                      "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
+                    }
+                  }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Missing file, unreadable upload, or invalid zip"
-          },
-          "500": {
-            "description": "Failed to create wiki directory"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23544,30 +23520,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Set inception clarifying questions",
-        "description": "Sets the list of clarifying questions for the active inception session. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "questions": {
-                    "type": "array",
-                    "items": {
-                      "type": "object"
-                    },
-                    "description": "knowledge.Question entries"
-                  }
-                }
-              }
-            }
-          }
-        },
+        "summary": "Retired: set inception clarifying questions",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Set",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23575,17 +23533,20 @@
                   "properties": {
                     "ok": {
                       "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Invalid body or rejected by engine"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23595,11 +23556,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Reset the inception session",
-        "description": "Resets the inception engine state, clears any open brainstorm/inception beads, and re-pauses the brainstorm agent. Requires owner role.",
+        "summary": "Retired: reset the inception session",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Reset",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23607,17 +23569,20 @@
                   "properties": {
                     "ok": {
                       "type": "boolean"
+                    },
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "500": {
-            "description": "Reset failed"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23627,29 +23592,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Start a brownfield repo scan",
-        "description": "Starts inception in brownfield mode against an existing repo URL. Optional force=true resets any existing session first (pausing brainstorm and clearing its beads). Kicks the brainstorm agent. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "repo_url": {
-                    "type": "string"
-                  },
-                  "force": {
-                    "type": "boolean"
-                  }
-                }
-              }
-            }
-          }
-        },
+        "summary": "Retired: start a brownfield repo scan",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Started",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23658,19 +23606,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "state": {
-                      "type": "object"
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Invalid body or scan could not start"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23680,29 +23628,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Start a greenfield inception session",
-        "description": "Starts a new inception session from a free-text idea. Optional force=true resets any existing session first (pausing brainstorm and clearing its beads). Kicks the brainstorm agent. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "idea": {
-                    "type": "string"
-                  },
-                  "force": {
-                    "type": "boolean"
-                  }
-                }
-              }
-            }
-          }
-        },
+        "summary": "Retired: start a greenfield inception session",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Started",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23711,19 +23642,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "state": {
-                      "type": "object"
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
+                      "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Invalid body or start failed"
-          },
-          "503": {
-            "description": "Inception engine not initialized"
           }
         }
       }
@@ -23733,30 +23664,12 @@
         "tags": [
           "Inception"
         ],
-        "summary": "Rename the inception wiki",
-        "description": "Renames the inception knowledge vault (max 80 characters) and persists the name in inception state. Requires owner role.",
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "type": "object",
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "maxLength": 80
-                  }
-                },
-                "required": [
-                  "name"
-                ]
-              }
-            }
-          }
-        },
+        "summary": "Retired: rename the inception wiki",
+        "description": "Retired with the inception API in favour of Inception (spek) sessions. Answers 410 Gone for one release, with a pointer to /api/sessions.",
+        "deprecated": true,
         "responses": {
-          "200": {
-            "description": "Renamed",
+          "410": {
+            "description": "Gone: the inception API was retired in favour of Inception (spek) sessions. Use /api/sessions.",
             "content": {
               "application/json": {
                 "schema": {
@@ -23765,22 +23678,19 @@
                     "ok": {
                       "type": "boolean"
                     },
-                    "name": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "replacement": {
+                      "type": "string"
+                    },
+                    "docs": {
                       "type": "string"
                     }
                   }
                 }
               }
             }
-          },
-          "400": {
-            "description": "Missing/too-long name"
-          },
-          "404": {
-            "description": "Inception wiki vault not found"
-          },
-          "503": {
-            "description": "Knowledge or inception not initialized"
           }
         }
       }
