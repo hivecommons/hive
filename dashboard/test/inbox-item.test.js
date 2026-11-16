@@ -49,7 +49,7 @@ function makeContext(role) {
     Array,
   };
   vm.createContext(ctx);
-  for (const fn of ['inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxItemHtml']) {
+  for (const fn of ['inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemHasAudio', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxItemHtml']) {
     vm.runInContext(extractFunction(fn), ctx);
   }
   return ctx;
@@ -155,4 +155,21 @@ test('transcribe-then-share: the progress bar names the share, a failed intent s
   assert.match(html, /data-status="error"[^>]*>→ Knowledge failed</);
   assert.match(html, /role="alert">transcription failed: provider down</);
   assert.match(html, /inbox-check/, 'read-write can select items for the bulk Hive menu');
+});
+
+test('an uploaded document shows where it came from and who added it, its text, and no Play', () => {
+  const ctx = makeContext('owner');
+  const doc = { source: 'upload', id: '20261116t093000-0a1b2c3d', title: 'Launch plan', origin: 'upload · notes.md', added_by: 'ana@example.com', upload_kind: 'markdown', recorded_at: '2026-11-16T09:30:00Z', summary: 'Ship the drop zone first.', fact_slug: 'upload-20261116t093000-0a1b2c3d', fact_state: 'ready', layer: 'personal' };
+  let html = vm.runInContext('inboxItemHtml(' + JSON.stringify(doc) + ')', ctx);
+  assert.match(html, /upload · notes\.md · added 2h ago · by ana@example\.com/);
+  assert.doesNotMatch(html, /data-action="inboxPlay"/, 'documents have no audio');
+  assert.match(html, /▸ Text<\/button>/);
+  assert.match(html, /In knowledge/);
+  ctx._inboxTranscriptOpen.add('upload/' + doc.id);
+  ctx._inboxContent['upload/' + doc.id] = { markdown: '# Launch plan\n\n<b>bold</b>' };
+  html = vm.runInContext('inboxTranscriptHtml(' + JSON.stringify(doc) + ', ' + JSON.stringify('upload/' + doc.id) + ')', ctx);
+  assert.match(html, /Extracted text/);
+  assert.match(html, /&lt;b&gt;bold&lt;\/b&gt;/);
+  // Uploaded audio keeps the player.
+  assert.match(vm.runInContext('inboxItemHtml(' + JSON.stringify(Object.assign({}, doc, { upload_kind: 'audio' })) + ')', ctx), /data-action="inboxPlay"/);
 });

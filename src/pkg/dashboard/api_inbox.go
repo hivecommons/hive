@@ -32,6 +32,7 @@ func (s *Server) registerInboxRoutes() {
 	s.mux.HandleFunc("POST /api/knowledge/connectors/{name}/auth/complete", s.handleKnowledgeConnectorAuthComplete)
 	s.mux.HandleFunc("POST /api/inbox/{source}/{id}/transcribe", s.handleInboxTranscribe)
 	s.mux.HandleFunc("GET /api/inbox/transcriptions", s.handleInboxTranscriptions)
+	s.registerInboxUploadRoutes()
 }
 
 // inboxSourceReadTimeout bounds one read that may spawn the source's MCP

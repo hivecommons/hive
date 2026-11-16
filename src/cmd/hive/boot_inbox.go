@@ -45,6 +45,17 @@ func (b *boot) bootInbox(baseDir string) {
 	// Machine transcripts stay on this spoke's own data volume; runs only
 	// happen once inbox.transcription is enabled and consented to.
 	svc.EnableTranscription(inbox.NewTranscriptStore(filepath.Join(baseDir, "connector-state", "transcripts")))
+	// Files and links dropped onto the Inbox stay on this spoke's data
+	// volume (0700 dirs, 0600 files); their extracted text becomes a fact in
+	// the personal connectors vault.
+	uploads := &inbox.UploadSource{
+		Store:         inbox.NewUploadStore(filepath.Join(baseDir, "connector-state", "uploads")),
+		ConnectorsDir: filepath.Join(baseDir, "connectors"),
+		FactWritten:   b.inboxUploadFactWritten,
+		Logger:        b.logger,
+	}
+	svc.EnableUploads(uploads)
+	b.startInboxUploadRetention(uploads)
 	b.inboxSvc = svc
 	b.logger.Info("inbox started", "sources", len(srcs), "rules", len(b.cfg.Inbox.Rules))
 	if tx := b.cfg.Inbox.Transcription; tx.Enabled {
@@ -53,6 +64,49 @@ func (b *boot) bootInbox(baseDir string) {
 		// (network-requirements.md). auto is logged as what it resolves to.
 		st := svc.TranscriptionSettings()
 		b.logger.Info("inbox transcription enabled", "mode", st.Mode, "provider", st.Provider, "resolved_provider", st.ResolvedProvider, "egress", strings.Join(st.EgressHosts, ","))
+	}
+}
+
+// inboxUploadRetentionInterval is how often upload retention runs.
+const inboxUploadRetentionInterval = time.Hour
+
+// startInboxUploadRetention deletes upload originals past
+// inbox.uploads.*_retention_days, once at boot and then hourly.
+func (b *boot) startInboxUploadRetention(u *inbox.UploadSource) {
+	if b.ctx == nil {
+		return
+	}
+	go func() {
+		t := time.NewTicker(inboxUploadRetentionInterval)
+		defer t.Stop()
+		for {
+			if n, err := u.SweepRetention(); err != nil || n > 0 {
+				b.logger.Info("inbox upload retention", "removed", n, "error", err)
+			}
+			select {
+			case <-b.ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+}
+
+// inboxUploadFactWritten connects the connectors vault of dir (if no
+// connector did yet) and reindexes it, so a dropped file is searchable at once.
+func (b *boot) inboxUploadFactWritten(dir string) {
+	api := b.knowledgeAPI
+	if api == nil {
+		return
+	}
+	if api.GetVaultStore(dir) == nil {
+		if err := api.ConnectVault(dir, "connectors-"+filepath.Base(dir)); err != nil && api.GetVaultStore(dir) == nil {
+			b.logger.Warn("inbox uploads: vault not connected", "dir", dir, "error", err)
+			return
+		}
+	}
+	if store := api.GetVaultStore(dir); store != nil {
+		store.Reindex()
 	}
 }
 
