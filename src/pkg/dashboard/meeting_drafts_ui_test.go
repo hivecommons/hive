@@ -30,6 +30,11 @@ func TestMeetingDraftsWiring(t *testing.T) {
 		`Nothing is created until you approve it.`,
 		`(display name)`,
 		`dashboardSetInterval('meeting-drafts', fetchMeetingDrafts, MEETING_DRAFTS_POLL_MS)`,
+		// The Meeting attendee tab shows and saves meetings.persona.actions.
+		`<h4 id="ma-actions-h">Action requests</h4>`,
+		`data-action="maSaveActions"`,
+		`fetch('/api/meetings/actions/settings', { method: 'PUT'`,
+		`issues, RFCs and Spek sessions always wait`,
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("drafts wiring missing %q", want)

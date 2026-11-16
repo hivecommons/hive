@@ -187,6 +187,9 @@ func TestMeetingsActionsSettingsAPI(t *testing.T) {
 	if rec := actionsRequest(s, http.MethodPut, "/api/meetings/actions/settings", `{"default_repo":"not a repo"}`, "owner", true); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad repo = %d", rec.Code)
 	}
+	if rec := actionsRequest(s, http.MethodPut, "/api/meetings/actions/settings", `{"types":[" "]}`, "owner", true); rec.Code != http.StatusBadRequest {
+		t.Fatalf("no types = %d", rec.Code)
+	}
 	if rec := actionsRequest(s, http.MethodPut, "/api/meetings/actions/settings", `{bad`, "owner", true); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad body = %d", rec.Code)
 	}
@@ -226,5 +229,17 @@ func TestMeetingsActionsSettingsNoConfig(t *testing.T) {
 	}
 	if rec := actionsRequest(s, http.MethodPut, "/api/meetings/actions/settings", `{}`, "owner", true); rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("no config PUT = %d", rec.Code)
+	}
+}
+
+// The Meeting attendee tab reads meetings.persona.actions from the persona
+// settings JSON.
+func TestMeetingsPersonaSettingsCarryActions(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Meetings.Persona.Actions.AutoApprove = map[string]bool{"knowledge": true}
+	got := personaGet(t, s)
+	a := got.Actions
+	if !a.Enabled || len(a.AllTypes) != 4 || !a.AutoApprove["knowledge"] || len(a.Repos) == 0 {
+		t.Fatalf("persona actions %+v", a)
 	}
 }

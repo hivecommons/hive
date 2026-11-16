@@ -238,6 +238,12 @@ func (s *Server) handleMeetingsActionsSettingsPut(w http.ResponseWriter, r *http
 	}
 	if req.Types != nil {
 		next.Types = normalizeMeetingActionTypes(*req.Types)
+		if len(next.Types) == 0 {
+			// An empty list means every type in hive.yaml; here it would
+			// silently undo "none", so ask for the switch instead.
+			jsonError(w, "pick at least one action type, or turn action requests off with enabled: false", http.StatusBadRequest)
+			return
+		}
 	}
 	if req.DefaultRepo != nil {
 		next.DefaultRepo = strings.Trim(strings.TrimSpace(*req.DefaultRepo), "/")

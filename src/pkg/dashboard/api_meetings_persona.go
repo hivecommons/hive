@@ -9,6 +9,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"reflect"
 	"sort"
 	"strings"
@@ -237,6 +238,10 @@ type MeetingsPersonaSettings struct {
 	Running         bool                      `json:"running"`
 	TTSConfigured   bool                      `json:"tts_configured"`
 	Email           MeetingsAttendeeEmailView `json:"email"`
+	// Actions are meetings.persona.actions, the drafts people may ask the
+	// persona for (#18406); they are saved through
+	// PUT /api/meetings/actions/settings.
+	Actions MeetingsActionsSettingsView `json:"actions"`
 }
 
 // resolvePersonaFields resolves the persona's fields as if it were on: a
@@ -342,6 +347,7 @@ func (s *Server) meetingsPersonaSettings(r *http.Request) MeetingsPersonaSetting
 		Running:         h != nil && h.svc != nil,
 		TTSConfigured:   ttsOK,
 		Email:           s.meetingsAttendeeEmail(r, email),
+		Actions:         meetingsActionsSettingsView(s.deps.Config, os.Getenv),
 	}
 }
 

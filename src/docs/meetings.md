@@ -160,7 +160,7 @@ People in the meeting can ask Betty, spoken or typed in the meeting chat, to dra
 - **Result.** Once created, Betty posts the link in the meeting chat while the meeting is live ("Approved: an issue \"Lobby timeout\" is open: https://..."); after the meeting it is added to the meeting's notes instead.
 - **Auto-approve.** Off for every type. Only knowledge notes can be auto-approved (`meetings.persona.actions.auto_approve.knowledge: true`); issues, RFCs and Spek sessions always wait for a person, and config validation refuses anything else.
 - **Honesty and safety.** Betty never says an item exists before it was approved and created. Meeting speech reaches the model only as data, the type comes from the request and never from the model, `@` mentions in meeting text are removed before anything is filed, and the excerpt is quoted as a code block.
-- **Settings.** `meetings.persona.actions` turns requests on or off, limits the allowed types and sets the default repo and auto-approve; `GET`/`PUT /api/meetings/actions/settings` read and save it (the Meeting attendee settings tab uses it). A saved change applies at once. The queue lives in `<meetings.data_dir>/actions.json`; decided drafts are kept for 30 days (at most 200).
+- **Settings.** `meetings.persona.actions` turns requests on or off, limits the allowed types and sets the default repo and auto-approve; Settings, **Meeting attendee**, **Action requests** shows and saves it (owner), through `GET`/`PUT /api/meetings/actions/settings`; `GET /api/meetings/persona` also carries it as `actions`. A saved change applies at once. The queue lives in `<meetings.data_dir>/actions.json`; decided drafts are kept for 30 days (at most 200).
 
 ## Setup
 

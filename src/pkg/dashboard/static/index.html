@@ -49556,6 +49556,57 @@ function burnAreaChart() {
         '<label class="inbox-toggle"><input type="checkbox" data-ma-field="voice_on_address" data-change-action="maInput" data-arg0="voice_on_address" data-arg-types="s,c"' + (f.voice_on_address ? ' checked' : '') + '> Speak aloud only when addressed by name (never unprompted; off sends every reply to chat)</label></section>';
     }
 
+    // ── Action requests (hivecommons/hive#18406): what people may ask the
+    // persona to draft in a meeting. Saved on its own through
+    // PUT /api/meetings/actions/settings and applied without a restart.
+    const MA_ACTION_LABELS = { issue: 'Issues', rfc: 'RFCs', spek: 'Spek sessions', knowledge: 'Knowledge notes' };
+
+    function maActionsHtml() {
+      const a = (_maState && _maState.data.actions) || null;
+      if (!a) return '';
+      const types = (a.all_types || []).map(t => '<label class="inbox-toggle"><input type="checkbox" data-ma-action-type="' + escapeHtml(t) + '"' +
+        ((a.types || []).indexOf(t) >= 0 ? ' checked' : '') + '> ' + escapeHtml(MA_ACTION_LABELS[t] || t) + '</label>').join('');
+      const repos = (a.repos || []).slice();
+      if (a.effective_default_repo && repos.indexOf(a.effective_default_repo) < 0) repos.unshift(a.effective_default_repo);
+      const repoOpts = '<option value="">Default (' + escapeHtml(a.effective_default_repo || 'none') + ')</option>' +
+        repos.map(r => '<option value="' + escapeHtml(r) + '"' + (r === a.default_repo ? ' selected' : '') + '>' + escapeHtml(r) + '</option>').join('');
+      const env = (a.env_overrides || []).length ? '<p class="muted-xs">Set by the environment, which wins over a saved value: ' + escapeHtml(a.env_overrides.join(', ')) + '</p>' : '';
+      return '<section class="ma-section" aria-labelledby="ma-actions-h"><h4 id="ma-actions-h">Action requests</h4>' +
+        '<p class="muted-xs">People can ask the attendee in a meeting to draft an issue, an RFC, a Spek session or a knowledge note. Every draft waits in Calendar, Drafts from meetings, until the owner or a read-write user approves it.</p>' +
+        '<label class="inbox-toggle"><input type="checkbox" data-ma-actions="enabled"' + (a.enabled ? ' checked' : '') + '> Let people ask for drafts</label>' +
+        '<div class="meetings-settings-grid">' + types + '</div>' +
+        '<label>Default repo<select class="kb-search-box mt-2" data-ma-actions="default_repo">' + repoOpts + '</select></label>' +
+        '<label class="inbox-toggle"><input type="checkbox" data-ma-actions="auto_knowledge"' + ((a.auto_approve || {}).knowledge ? ' checked' : '') + '> Save knowledge notes without approval (issues, RFCs and Spek sessions always wait)</label>' +
+        env + '<div class="hive-dialog-error" role="alert" data-ma-actions-error></div>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="maSaveActions">Save action requests</button></section>';
+    }
+
+    function maActionsBody() {
+      const q = sel => document.querySelector(sel);
+      const types = Array.from(document.querySelectorAll('[data-ma-action-type]')).filter(el => el.checked).map(el => el.dataset.maActionType);
+      return {
+        enabled: !!(q('[data-ma-actions="enabled"]') || {}).checked,
+        types: types,
+        default_repo: (q('[data-ma-actions="default_repo"]') || {}).value || '',
+        auto_approve: { knowledge: !!(q('[data-ma-actions="auto_knowledge"]') || {}).checked }
+      };
+    }
+
+    async function maSaveActions() {
+      const errEl = document.querySelector('[data-ma-actions-error]');
+      if (errEl) errEl.textContent = '';
+      try {
+        const r = await fetch('/api/meetings/actions/settings', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(maActionsBody()) });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        if (_maState) _maState.data.actions = data;
+        maRender();
+        showToast('Action requests saved', 'success');
+      } catch (e) {
+        if (errEl) errEl.textContent = e.message; else showToast('Save failed: ' + e.message, 'error');
+      }
+    }
+
     function maEmailHtml() {
       const em = (_maState.data.email) || {};
       const on = !!em.available;
@@ -49587,7 +49638,7 @@ function burnAreaChart() {
       host.innerHTML =
         (d.restart_required ? '<p class="cmp-banner" role="status">Saved. Restart the hive to apply the new persona.</p>' : '') +
         (d.running ? '' : '<p class="muted-xs">Meetings are not running on this hive; the persona applies once meetings are on (Settings, Meetings).</p>') +
-        maPersonaHtml(f) + maBehaviourHtml(f) + maEmailHtml() +
+        maPersonaHtml(f) + maBehaviourHtml(f) + (typeof maActionsHtml === 'function' ? maActionsHtml() : '') + maEmailHtml() +
         '<div class="hive-dialog-error" role="alert" data-ma-error></div>' +
         '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="maSave">Save</button></div>';
     }

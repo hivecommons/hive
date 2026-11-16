@@ -1665,6 +1665,57 @@
                           "type": "string"
                         }
                       }
+                    },
+                    "actions": {
+                      "type": "object",
+                      "description": "meetings.persona.actions as set and in effect (the same view as GET /api/meetings/actions/settings); saved through PUT /api/meetings/actions/settings",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "all_types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "default_repo": {
+                          "type": "string"
+                        },
+                        "effective_default_repo": {
+                          "type": "string"
+                        },
+                        "repos": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "auto_approve": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "boolean"
+                          }
+                        },
+                        "auto_approvable": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "env_overrides": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        }
+                      }
                     }
                   }
                 }
@@ -2056,6 +2107,57 @@
                         },
                         "error": {
                           "type": "string"
+                        }
+                      }
+                    },
+                    "actions": {
+                      "type": "object",
+                      "description": "meetings.persona.actions as set and in effect (the same view as GET /api/meetings/actions/settings); saved through PUT /api/meetings/actions/settings",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "all_types": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "default_repo": {
+                          "type": "string"
+                        },
+                        "effective_default_repo": {
+                          "type": "string"
+                        },
+                        "repos": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "auto_approve": {
+                          "type": "object",
+                          "additionalProperties": {
+                            "type": "boolean"
+                          }
+                        },
+                        "auto_approvable": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "env_overrides": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
                         }
                       }
                     }
