@@ -57,6 +57,17 @@ type Profile struct {
 	Hash    string `json:"hash"`
 	// Mode is the derivation mode.
 	Mode DerivationMode `json:"mode"`
+	// Initial is the model's initial state.
+	Initial string `json:"initial,omitempty"`
+	// InputLabels are label predicates, including patterns, that represent
+	// external evidence and must not be removed as stale state labels.
+	InputLabels []string `json:"-"`
+	// GuardedLabels are human-gated event inputs; deriving a state must
+	// never manufacture evidence that the gate was released.
+	GuardedLabels []string `json:"-"`
+	// Events and transitions retain the intake edges of ingested models.
+	Events      []Event      `json:"-"`
+	Transitions []Transition `json:"-"`
 	// Columns in display order with their states resolved.
 	Columns []Column `json:"columns"`
 	// States by id, flattened (regions included).
@@ -136,7 +147,28 @@ func (c *compiler) warnf(code, subject, format string, a ...any) {
 
 func (c *compiler) run() {
 	m := c.m
-	c.p = &Profile{Name: m.Metadata.Name, Version: m.Spec.Meta.Version, Hash: m.Hash(), Mode: m.Spec.Derivation.Mode, States: map[string]*State{}, ColumnOf: map[string]string{}, StateOfNumber: map[int]string{}, Terminal: map[string]bool{}, Replies: map[string][]string{}, Labels: m.Spec.Labels}
+	c.p = &Profile{Name: m.Metadata.Name, Version: m.Spec.Meta.Version, Hash: m.Hash(), Mode: m.Spec.Derivation.Mode, Initial: m.Spec.Initial, Events: m.Spec.Events, Transitions: m.Spec.Transitions, States: map[string]*State{}, ColumnOf: map[string]string{}, StateOfNumber: map[int]string{}, Terminal: map[string]bool{}, Replies: map[string][]string{}, Labels: m.Spec.Labels}
+	for _, e := range m.Spec.Events {
+		if e.Fact.Fact == "labels" && e.Fact.Value != "" {
+			c.p.InputLabels = append(c.p.InputLabels, e.Fact.Value)
+			guarded := e.Actor != ""
+			for _, edge := range m.Spec.Transitions {
+				if edge.On == e.ID && edge.GateRef != "" {
+					guarded = true
+				}
+			}
+			if guarded && e.Fact.Op == OpHas {
+				c.p.GuardedLabels = append(c.p.GuardedLabels, e.Fact.Value)
+			}
+		}
+	}
+	for _, r := range m.Spec.Derivation.Rules {
+		for _, pred := range r.When {
+			if pred.Fact == "labels" && pred.Value != "" {
+				c.p.InputLabels = append(c.p.InputLabels, pred.Value)
+			}
+		}
+	}
 	if c.p.Version == "" {
 		c.errorf(CodeNoVersion, "", "spec.meta.version is empty")
 	}
