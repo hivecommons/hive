@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/url"
+	"os"
 
 	"github.com/hivecommons/hive/crux"
 )
@@ -78,19 +79,21 @@ func (m *Manager) mintAgentTokenUnlocked(ctx context.Context, agent *AgentProces
 }
 
 // isForgeTransportErr reports whether a mint error never got an answer from
-// the GitHub host: a deadline, a *url.Error (dial/TLS/timeout from the HTTP
-// client) or any net.Error. An HTTP status from GitHub (401/404/422) is not
-// a transport error and keeps its mint-failed classification. Mirrors the
-// dashboard's forge probe (#17427) so both report the same outage.
+// the GitHub host. Filesystem errors from token delivery are not transport
+// errors, even though *os.PathError also implements net.Error.
 func isForgeTransportErr(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, context.DeadlineExceeded) {
-		return true
-	}
 	var urlErr *url.Error
 	if errors.As(err, &urlErr) {
+		return true
+	}
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return false
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
 		return true
 	}
 	var netErr net.Error
