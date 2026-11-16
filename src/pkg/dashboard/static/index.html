@@ -58760,9 +58760,12 @@ function burnAreaChart() {
 
       const warnEl = document.getElementById('acmm-eval-warning');
       if (warnEl) {
-        if (d.error) {
+        // stale_reason: the server skipped the hourly pass because the
+        // GitHub API budget was short, and these are the last results.
+        const warning = d.error || (d.stale && d.stale_reason) || '';
+        if (warning) {
           warnEl.style.display = 'block';
-          warnEl.textContent = d.error;
+          warnEl.textContent = warning;
         } else {
           warnEl.style.display = 'none';
         }

@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v6.37.0)
+
+### Added
+
+- `toolapprove` now classifies the `hive-tool/v1` names from RFC #18464: reads (`issue.read`, `repo.read_file`, …) are read-only, `issue.comment`/`issue.label` are issue writes, and `repo.patch_files`/`pr.create`/`pr.comment` are PR writes. Agent-mode capability checks therefore apply to them at every ACMM level. No existing backend emits these names, so current verdicts are unchanged.
+
+## 2026-11-16 (v6.36.0)
+
+### Added
+
+- The admin MCP can now change an agent's General settings, which only the agent's settings dialog on the dashboard could change until now: `agent.settings` turns an agent on or off and sets its GitHub tier, on-demand, repository scope, replicas, continuous mode, contributor-first lane, kick template, labels and keywords, through the endpoint that dialog saves with. It sends only the fields you name, goes through `write_preview` and `write_confirm`, and is owner only. The preview shows each field before and after and names turning an agent on, a higher tier, a wider repository scope, more replicas or continuous mode as widening; `write_confirm` refuses if those fields changed after the preview. The launch command, CLI pin, sandbox, engine, role and prompt or definition source stay on the dashboard.
+
 ## 2026-11-16 (v6.35.0)
 
 ### Added
