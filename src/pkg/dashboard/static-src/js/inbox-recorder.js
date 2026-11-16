@@ -109,7 +109,7 @@
       ];
       if (o.tab) parts.push('Including tab audio captures the remote participants of that meeting too: they must have been told that you are recording.');
       parts.push('The raw audio is kept on this hive for ' + days + ' day' + (days === 1 ? '' : 's') + ' and then deleted; its transcript and Knowledge fact are kept.');
-      parts.push(o.transcribes ? 'When you stop, it can be transcribed on this hive with 🎧 Transcribe.' : 'Transcription is off on this hive, so this recording is not transcribed until an owner enables it in Inbox ⚙ → Transcription.');
+      parts.push(o.transcribes ? 'When you stop, this hive transcribes the recording automatically.' : 'Transcription is off on this hive, so this recording is not transcribed until an owner enables it in Inbox ⚙ → Transcription.');
       return parts;
     }
     const INBOX_REC_CONSENT_ACK = 'I have told everyone who will be recorded, and I am responsible for this recording.';
@@ -531,7 +531,7 @@
       if (m.uploader) html += '<div class="muted-xs inbox-rec-upload" data-inbox-rec-upload aria-live="polite">' + escapeHtml(inboxRecUploadText(m.uploader.state)) + '</div>';
       if (m.warning) html += '<div class="kc-error muted-xs" role="alert">' + escapeHtml(m.warning) + '</div>';
       if (m.error) html += '<div class="kc-error muted-xs" role="alert">' + escapeHtml(m.error) + '</div>';
-      if (m.state === 'done') html += '<div class="muted-xs">' + escapeHtml(m.transcribes ? 'It appears in the Inbox below; use 🎧 Transcribe on it.' : 'It appears in the Inbox below. Transcription is off on this hive, so it is not transcribed yet.') + '</div>';
+      if (m.state === 'done') html += '<div class="muted-xs">' + escapeHtml(m.transcribes ? 'The hive is transcribing it now; follow the progress on the item in the Inbox below.' : 'It appears in the Inbox below. Transcription is off on this hive, so it is not transcribed yet.') + '</div>';
       html += '<div class="kc-actions mt-2">';
       if (m.state === 'recording') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecPause">⏸ Pause</button>';
       if (m.state === 'paused') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecResume">⏺ Resume</button>';
