@@ -48776,7 +48776,7 @@ function burnAreaChart() {
     function renderGovMeetings() {
       return '<div class="config-section" data-config-section="Meetings"><h3>Meetings</h3>' +
         '<p class="text-muted fs-base">Send hive into Google Meet, Teams, Zoom or Discord meetings to take notes, ask clarifying questions and run research. ' +
-        yamlHint('meetings.enabled') + ' ' + yamlHint('meetings.vexa.url') + ' ' + yamlHint('meetings.vexa.api_key_file') + ' ' + yamlHint('meetings.discord.token_file') + ' ' + yamlHint('meetings.transcribe_url') + ' ' + yamlHint('meetings.transcribe_token_file') + ' Changes apply after a restart.</p>' +
+        yamlHint('meetings.enabled') + ' ' + yamlHint('meetings.vexa.url') + ' ' + yamlHint('meetings.vexa.api_key_file') + ' ' + yamlHint('meetings.discord.token_file') + ' ' + yamlHint('meetings.transcribe_url') + ' ' + yamlHint('meetings.transcribe_token_file') + ' ' + yamlHint('meetings.tts_url') + ' ' + yamlHint('meetings.tts_token_file') + ' Changes apply after a restart.</p>' +
         '<div id="meetings-settings-inline"><p class="muted-xs">Loading…</p></div></div>';
     }
 
@@ -48790,9 +48790,11 @@ function burnAreaChart() {
         '<label class="muted-note inbox-field">Vexa gateway URL<input class="kb-search-box mt-2" type="url" data-meetings-setting="vexa_url" placeholder="https://vexa.example.org" autocomplete="off" value="' + escapeHtml(s.vexa_url || '') + '"></label>' +
         '<label class="muted-note inbox-field">Vexa tenant key ' + (s.vexa_key_set ? '(set)' : '(not set)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="vexa_api_key" placeholder="leave blank to keep" autocomplete="new-password"></label>' +
         '<label class="muted-note inbox-field">Discord bot token ' + (s.discord_token_set ? '(set)' : '(not set, optional)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="discord_token" placeholder="leave blank to keep" autocomplete="new-password"></label>' +
-        '<label class="muted-note inbox-field">Transcription token ' + (s.transcribe_token_set ? '(set)' : '(not set, needed for Discord)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="transcribe_token" placeholder="leave blank to keep" autocomplete="new-password"></label></div>' +
+        '<label class="muted-note inbox-field">Transcription token ' + (s.transcribe_token_set ? '(set)' : '(not set, needed for Discord)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="transcribe_token" placeholder="leave blank to keep" autocomplete="new-password"></label>' +
+        '<label class="muted-note inbox-field">TTS token ' + (s.tts_token_set ? '(set)' : '(not set, needed for Discord speech)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="tts_token" placeholder="leave blank to keep" autocomplete="new-password"></label></div>' +
         '<p class="muted-xs" data-meetings-setting="discord_hint">Discord needs three things: the Discord bot token, the transcribe URL (<code>meetings.transcribe_url</code> or <code>HIVE_MEETINGS_TRANSCRIBE_URL</code>; where the shared service runs in the same cluster, the in-cluster <code>http://vexa-transcription.meetings.svc.cluster.local:8000</code>) and the transcription token. Transcribe URL now: ' +
-        (eff['meetings.transcribe_url'] ? '<code>' + escapeHtml(eff['meetings.transcribe_url']) + '</code>' : 'not set') + '.</p>' +
+        (eff['meetings.transcribe_url'] ? '<code>' + escapeHtml(eff['meetings.transcribe_url']) + '</code>' : 'not set') + '. Discord speech also needs the TTS URL (<code>meetings.tts_url</code> or <code>HIVE_MEETINGS_TTS_URL</code>; in-cluster <code>http://vexa-tts.meetings.svc.cluster.local:8880</code>) and the TTS token. TTS URL now: ' +
+        (eff['meetings.tts_url'] ? '<code>' + escapeHtml(eff['meetings.tts_url']) + '</code>' : 'not set') + '.</p>' +
         '<details class="mt-4"><summary class="muted-xs">Other meetings settings (hive.yaml or HIVE_MEETINGS_* env)</summary><table class="meetings-effective">' + rows + '</table></details>' +
         '<div class="hive-dialog-error" role="alert" data-meetings-setting="error"></div>' +
         '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="meetingsSaveSettings">Save</button></div></div>';
@@ -48819,9 +48821,11 @@ function burnAreaChart() {
       const key = ((meetingsSetting('vexa_api_key') || {}).value || '').trim();
       const tok = ((meetingsSetting('discord_token') || {}).value || '').trim();
       const tx = ((meetingsSetting('transcribe_token') || {}).value || '').trim();
+      const tts = ((meetingsSetting('tts_token') || {}).value || '').trim();
       if (key) body.vexa_api_key = key;
       if (tok) body.discord_token = tok;
       if (tx) body.transcribe_token = tx;
+      if (tts) body.tts_token = tts;
       try {
         const data = await meetingsPost('/api/meetings/settings', body);
         showToast(data.restart_required ? 'Meetings settings saved; restart the hive to apply' : 'Meetings settings saved', 'success');

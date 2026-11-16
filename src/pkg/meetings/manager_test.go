@@ -668,6 +668,7 @@ func TestPersonaLeavePhraseAndDecoratedEcho(t *testing.T) {
 	m, err := NewManager(Options{
 		Store: st, Quorum: q, BotName: "Betty Bee from the hive", ConsentText: "Betty has joined. Type 'betty leave' to remove Betty.",
 		LeavePhrases: []string{"betty leave", "hive leave"}, ReconnectMin: 5 * time.Millisecond, ConsentRetry: time.Millisecond,
+		VoiceID: " af_heart ",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -677,6 +678,12 @@ func TestPersonaLeavePhraseAndDecoratedEcho(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// meeting.join carries the persona's voice (quorum v0.2.0 voice_id).
+	q.mu.Lock()
+	if len(q.joins) != 1 || q.joins[0].VoiceID != "af_heart" {
+		t.Fatalf("joins %+v", q.joins)
+	}
+	q.mu.Unlock()
 	ch := q.stream("q1")
 	ch <- Event{Type: EventState, MeetingID: "q1", State: StateLive}
 	eventually(t, "consent", func() bool { got, _ := m.Get(mt.ID); return got.ConsentPostedAt != nil })

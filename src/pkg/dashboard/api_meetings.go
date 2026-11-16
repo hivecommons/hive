@@ -387,7 +387,8 @@ func (s *Server) handleMeetingsWS(w http.ResponseWriter, r *http.Request) {
 // meetings.enabled, meetings.vexa.url, the Vexa tenant key
 // (meetings.vexa.api_key_file), the Discord bot token
 // (meetings.discord.token_file) and the transcription service token
-// (meetings.transcribe_token_file); the other meetings keys are shown
+// (meetings.transcribe_token_file) and the TTS service token
+// (meetings.tts_token_file); the other meetings keys are shown
 // read-only.
 type MeetingsSettings struct {
 	Enabled            bool   `json:"enabled"`
@@ -397,6 +398,7 @@ type MeetingsSettings struct {
 	VexaKeySet         bool   `json:"vexa_key_set"`
 	DiscordTokenSet    bool   `json:"discord_token_set"`
 	TranscribeTokenSet bool   `json:"transcribe_token_set"`
+	TTSTokenSet        bool   `json:"tts_token_set"`
 	RestartRequired    bool   `json:"restart_required,omitempty"`
 	// SpekModel is the model Spektacular live mode would use (never a key).
 	SpekModel string            `json:"spek_model"`
@@ -411,6 +413,9 @@ type meetingsSettingsRequest struct {
 	// TranscribeToken is the transcription service token Quorum posts
 	// Discord audio with (QUORUM_TRANSCRIBE_TOKEN_FILE).
 	TranscribeToken *string `json:"transcribe_token,omitempty"`
+	// TTSToken is the TTS service token Quorum speaks Discord replies
+	// with (QUORUM_TTS_TOKEN_FILE).
+	TTSToken *string `json:"tts_token,omitempty"`
 }
 
 // meetingsSecretSet reports whether a secret resolves to a value, without
@@ -433,11 +438,13 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 		VexaKeySet:         meetingsSecretSet(ctx, m.VexaAPIKey),
 		DiscordTokenSet:    meetingsSecretSet(ctx, m.DiscordToken),
 		TranscribeTokenSet: meetingsSecretSet(ctx, m.TranscribeToken),
+		TTSTokenSet:        meetingsSecretSet(ctx, m.TTSToken),
 		SpekModel:          s.meetingsSpekModel(ctx),
 		Effective: map[string]string{
 			"meetings.quorum.binary":                     m.QuorumBinary(),
 			"meetings.quorum.listen":                     m.QuorumListen(),
 			"meetings.transcribe_url":                    m.TranscribeURLOrEmpty(),
+			"meetings.tts_url":                           m.TTSURLOrEmpty(),
 			"meetings.delivery":                          m.DeliveryOrDefault(),
 			"meetings.voice_on_address":                  boolString(m.VoiceOnAddressEnabled()),
 			"meetings.bot_name":                          m.BotNameOrDefault(),
@@ -559,6 +566,13 @@ func (s *Server) handleMeetingsSettingsPost(w http.ResponseWriter, r *http.Reque
 		}
 		changed = true
 	}
+	if req.TTSToken != nil {
+		if err := config.WriteMeetingsSecret(r.Context(), next.TTSTokenFileOrDefault(), *req.TTSToken); err != nil {
+			jsonError(w, "saving the TTS token: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		changed = true
+	}
 	s.deps.Config.Meetings = next
 	if err := s.saveConfig(); err != nil {
 		jsonError(w, "saving config: "+err.Error(), http.StatusInternalServerError)
@@ -566,7 +580,7 @@ func (s *Server) handleMeetingsSettingsPost(w http.ResponseWriter, r *http.Reque
 	}
 	s.auditFromRequest(r, "meetings_settings", auditDetail("enabled", boolString(next.Enabled), "vexa_url", next.Vexa.URL,
 		"vexa_key_changed", boolString(req.VexaAPIKey != nil), "discord_token_changed", boolString(req.DiscordToken != nil),
-		"transcribe_token_changed", boolString(req.TranscribeToken != nil)), "")
+		"transcribe_token_changed", boolString(req.TranscribeToken != nil), "tts_token_changed", boolString(req.TTSToken != nil)), "")
 	out := s.meetingsSettings(r.Context(), next)
 	out.RestartRequired = changed
 	jsonResponse(w, out)
