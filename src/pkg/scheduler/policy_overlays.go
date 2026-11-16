@@ -206,7 +206,7 @@ func (s *Scheduler) redPRFixSection(agentName string) string {
 	if err != nil {
 		data = nil
 	}
-	return formatRedPRFixDataGuarded(data, base, github.CIFailureSignals().ForAgent(base), s.busyBranchChecker(base))
+	return formatRedPRFixDataWithTopics(data, base, github.CIFailureSignals().ForAgent(base), s.busyBranchChecker(base), s.topicClaimsFor(agentName))
 }
 
 // CIFailureKickMessage is the targeted kick a webhook CI-failure signal
@@ -292,6 +292,13 @@ func formatRedPRFixDataWithSignals(data []byte, agent string, signals []github.C
 // reports busy is not one of the agent's push targets; it is listed below the
 // gate as "suggest, do not push" and does not hold back new work.
 func formatRedPRFixDataGuarded(data []byte, agent string, signals []github.CIFailureSignal, busy busyBranchCheck) string {
+	return formatRedPRFixDataWithTopics(data, agent, signals, busy, nil)
+}
+
+// formatRedPRFixDataWithTopics is formatRedPRFixDataGuarded with each listed
+// PR tagged by the topic its owner claimed for it, if any
+// (hivecommons/hive#18493).
+func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CIFailureSignal, busy busyBranchCheck, topics []TopicClaim) string {
 	type ciFailingRow struct {
 		Number           int        `json:"number"`
 		Repo             string     `json:"repo"`
@@ -463,7 +470,7 @@ func formatRedPRFixDataGuarded(data []byte, agent string, signals []github.CIFai
 			b.WriteString(fmt.Sprintf("  … and %d more (full list: %s)\n", len(mine)-i, ciFailingPath))
 			break
 		}
-		b.WriteString(fmt.Sprintf("  #%d %s — %s\n", pr.Number, pr.Repo, pr.Title))
+		b.WriteString(fmt.Sprintf("  #%d %s%s — %s\n", pr.Number, pr.Repo, topicTag(topics, pr.Repo, pr.Number), pr.Title))
 		if pr.Adopted {
 			b.WriteString(fmt.Sprintf("    ADOPTED contributor PR (stage 074, head repo %s): the author is offline; `gh pr checkout` then push to the PR's own branch — maintainer_can_modify grants access.\n", pr.HeadRepo))
 			b.WriteString(adoptedPRStatusRule)
@@ -706,6 +713,7 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 	repoOrder := make([]string, 0, 8)
 	byRepo := make(map[string][]github.HoldItem)
 	heldPRs := make(map[string]github.PullRequest, len(actionable.PRs.Held))
+	topics := s.allTopicClaims()
 	for _, pr := range actionable.PRs.Held {
 		heldPRs[fmt.Sprintf("%s#%d", pr.Repo, pr.Number)] = pr
 	}
@@ -736,7 +744,7 @@ func (s *Scheduler) formatHeldPRClaimsWithPolicy(actionable *github.ActionableRe
 			if reviewState != "" {
 				reviewState = " — " + reviewState
 			}
-			b.WriteString(fmt.Sprintf("  %s#%d %s%s\n", item.Repo, item.Number, title, reviewState))
+			b.WriteString(fmt.Sprintf("  %s#%d%s %s%s\n", item.Repo, item.Number, topicTag(topics, item.Repo, item.Number), title, reviewState))
 			shown++
 		}
 		if omitted := len(items) - limit; omitted > 0 {

@@ -382,9 +382,17 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// governor's cached snapshot now, instead of waiting for GitHub's
 		// `closed` delivery to come back round through the hub.
 		evictHiveClosedPR(b.dashSrv, rec, time.Now())
+		// #18493: a PR the hive merged or closed releases its topic claim.
+		if state := topicStateForAudit(rec.Action); state != "" {
+			releaseTopicClaimsForPR(b.beadStores, rec.Repo, rec.Target, state, b.logger)
+		}
 	})
 	client.SetPRTerminalObservedHook(func(obs github.PRTerminalObservation) {
 		ts := obs.ObservedAt.UTC().Format(time.RFC3339)
+		// #18493: an observed merge or close releases the PR's topic claim.
+		if state := topicStateForTerminal(obs.State); state != "" {
+			releaseTopicClaimsForPR(b.beadStores, obs.Repo, obs.Number, state, b.logger)
+		}
 		switch obs.State {
 		case github.PRStateMerged:
 			path := obs.Attribution

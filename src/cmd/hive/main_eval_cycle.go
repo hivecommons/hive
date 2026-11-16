@@ -1344,6 +1344,9 @@ func runEvalCycle(
 	// stores can become stale between eval cycles. Reload failures are deduped
 	// (WARN once per distinct error, then DEBUG) — see beads_reload.go (#5505).
 	reloadBeadStores(beadStores, logger)
+	// #18493: release topic claims whose PR merged or closed, and follow a
+	// claimed PR's renamed head branch.
+	syncTopicClaims(beadStores, actionable, logger)
 
 	// Phase 4 Part B: `plan`/`epic` label trigger. An actionable issue carrying a
 	// plan label auto-mints an epic and requests decomposition — the same flow as
