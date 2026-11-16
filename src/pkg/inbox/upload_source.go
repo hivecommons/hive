@@ -66,6 +66,10 @@ type UploadSource struct {
 	FactWritten func(dir string)
 	// Fetcher fetches links; nil refuses links.
 	Fetcher *LinkFetcher
+	// RecordingLimits returns inbox.recording: audio and video drops use
+	// its size cap and, unless inbox.uploads.media_retention_days is set,
+	// its retention. nil uses the recording defaults.
+	RecordingLimits func() config.InboxRecording
 	// PDF runs the hive-pdftext sandbox; nil reads HIVE_PDF_* on first use.
 	PDF    *PDFRuntime
 	pdfMu  sync.Mutex
@@ -149,6 +153,18 @@ func (u *UploadSource) item(m UploadMeta) Item {
 		it.FactPath = filepath.Join(u.ConnectorsDir, m.FactLayer, m.FactSlug+".md")
 		it.FactState = connector.FactContentReady
 	}
+	if uploadKindIsMedia(m.Kind) {
+		// Audio and video have no text of their own: pending until the
+		// machine transcript is written into the fact.
+		it.Pending = true
+		it.FactState = connector.FactContentPending
+		if it.FactPath != "" {
+			if data, err := os.ReadFile(it.FactPath); err == nil {
+				fm, _ := splitFrontMatter(string(data))
+				it.FactState = factState(fm, true)
+			}
+		}
+	}
 	return it
 }
 
@@ -179,6 +195,9 @@ func (u *UploadSource) Fetch(_ context.Context, it Item) (Content, error) {
 	text, err := u.Store.Text(it.ID)
 	if err != nil {
 		return Content{}, err
+	}
+	if uploadKindIsMedia(m.Kind) {
+		return Content{Title: firstNonEmpty(m.Title, m.Filename, m.ID), Pending: true, Provenance: UploadProvenance(m)}, nil
 	}
 	return Content{
 		Title:           firstNonEmpty(m.Title, m.Filename, m.ID),
@@ -429,6 +448,10 @@ type UploadSettings struct {
 	MediaRetentionDays    int      `json:"media_retention_days"`
 	DocumentRetentionDays int      `json:"document_retention_days"`
 	Extensions            []string `json:"extensions"`
+	// MediaExtensions are the audio/video extensions, capped by
+	// MaxMediaBytes (inbox.recording.max_bytes) instead of MaxFileBytes.
+	MediaExtensions []string `json:"media_extensions"`
+	MaxMediaBytes   int64    `json:"max_media_bytes"`
 	// Links reports that URLs can be added (the hive has a link fetcher).
 	Links bool `json:"links"`
 }
@@ -443,7 +466,9 @@ func (u *UploadSource) Settings() UploadSettings {
 		MaxFilesPerDrop:       lim.EffectiveMaxFilesPerDrop(),
 		QuotaBytes:            lim.EffectiveQuotaBytes(),
 		UsedBytes:             used,
-		MediaRetentionDays:    lim.EffectiveMediaRetentionDays(),
+		MediaRetentionDays:    u.mediaRetentionDays(),
+		MediaExtensions:       UploadMediaExtensions(),
+		MaxMediaBytes:         u.recordingLimits().EffectiveMaxBytes(),
 		DocumentRetentionDays: lim.EffectiveDocumentRetentionDays(),
 		Extensions:            UploadSupportedExtensions(),
 		Links:                 u.Fetcher != nil,
@@ -452,6 +477,15 @@ func (u *UploadSource) Settings() UploadSettings {
 
 // SweepRetention applies inbox.uploads retention to stored originals.
 func (u *UploadSource) SweepRetention() (int, error) {
+	return u.Store.SweepRetention(u.mediaRetentionDays(), u.limits().EffectiveDocumentRetentionDays())
+}
+
+// mediaRetentionDays is inbox.uploads.media_retention_days when set (or its
+// environment override), else the recordings retention.
+func (u *UploadSource) mediaRetentionDays() int {
 	lim := u.limits()
-	return u.Store.SweepRetention(lim.EffectiveMediaRetentionDays(), lim.EffectiveDocumentRetentionDays())
+	if lim.MediaRetentionDays > 0 || strings.TrimSpace(os.Getenv(config.EnvInboxUploadsMediaRetentionDays)) != "" {
+		return lim.EffectiveMediaRetentionDays()
+	}
+	return u.recordingLimits().EffectiveRetentionDays()
 }
