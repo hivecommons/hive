@@ -538,6 +538,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerInboxRecordingRoutes()
 	s.registerMeetingsRoutes()
 	s.registerMeetingsScheduleRoutes()
+	s.registerMeetingsPersonaRoutes()
 	s.mux.HandleFunc("POST /api/system-alerts/dismiss", s.handleSystemAlertDismiss)
 	// Per-agent Variables tab (#11458, api_variables.go).
 	s.registerAgentVariableRoutes()

@@ -55,6 +55,7 @@
         if (tabId === 'Features') loadLinearAgentStatus();
         if (tabId === 'Inbox') loadInboxSettingsInline();
         if (tabId === 'Meetings') loadMeetingsSettingsInline();
+        if (tabId === 'Meeting attendee') loadMeetingAttendeeInline();
         // The same tab carries the upstream-watch editor and divergence view
         // (#9969, #11211); it loads from its own endpoint.
         if (tabId === 'Features') loadUpstreamWatch();
@@ -269,6 +270,7 @@
         case 'Knowledge': return renderGovKnowledgeSharing();
         case 'Inbox': return renderGovInbox();
         case 'Meetings': return renderGovMeetings();
+        case 'Meeting attendee': return renderGovMeetingAttendee();
         case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
         case 'Work Source': return renderGovWorkSource(d.work_source || {});

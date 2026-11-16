@@ -96,6 +96,11 @@ func TestOpenAPISchemaFieldsExistOnGoTypes(t *testing.T) {
 			path:   "/api/watchdog/activity",
 			goType: reflect.TypeOf(WatchdogActivity{}),
 		},
+		{
+			name:   "GET /api/meetings/persona",
+			path:   "/api/meetings/persona",
+			goType: reflect.TypeOf(MeetingsPersonaSettings{}),
+		},
 	}
 
 	raw, err := os.ReadFile(openAPISpecPath)
