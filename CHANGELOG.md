@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v6.33.3)
+
+### Fixed
+
+- **The session janitor now prunes idle Claude CLI scratch under the temp directory.** The Claude CLI keeps per-session scratch in `<tmp>/claude-<uid>/<project>/<session>/`: task output, scratchpads, and the repositories agents clone or build there. Nothing removed it, and it lives in the container's writable layer rather than on `/data`, so it fills the node's root disk instead of the data volume. On one Docker host, two spokes held 17 GiB and 22 GiB of it after two weeks and filled the disk, which broke every other service on that host. The janitor's 6-hour pass now removes each session directory whose newest write anywhere inside is older than 24 hours (`sessionprune.DefaultTmpRetentionHours`). Like the home sweep, it never follows symlinks and touches nothing outside `claude-*/<project>/<session>`.
+
 ## 2026-11-15 (v6.33.2)
 
 ### Fixed
