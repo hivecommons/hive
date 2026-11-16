@@ -59,6 +59,11 @@ github.com/hivecommons/hive/pkg/ioscan
 # (hivecommons/hive#18214); no existing seam carries a secret-file write.
 github.com/hivecommons/hive/pkg/keystore
 github.com/hivecommons/hive/pkg/knowledge
+# mailallow, mailin (only its stdlib-only wire subpackage): the email-in
+# endpoints (/api/meetings/invites, calendar-emails, /api/inbox/email) read
+# hive-mx deliveries and the calendar email allowlist (#18395).
+github.com/hivecommons/hive/pkg/mailallow
+github.com/hivecommons/hive/pkg/mailin
 github.com/hivecommons/hive/pkg/maintainernotes
 github.com/hivecommons/hive/pkg/modelfamily
 github.com/hivecommons/hive/pkg/notify

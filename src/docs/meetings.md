@@ -122,7 +122,7 @@ The **Calendar** section, right after **Inbox** in the left menu, lists the meet
 
 The schedule lives in `<meetings.data_dir>/schedule.json` (by default `/data/meetings/schedule.json`), rewritten atomically. Each occurrence is recorded before hive joins it, so a restart never joins the same occurrence twice; a join cut off by a restart is shown as failed rather than retried. Finished meetings stay listed for 14 days and are removed after 30.
 
-Entries are keyed by their calendar UID and RECURRENCE-ID, ready for calendar invites (planned: inviting hive by email). An update with a higher SEQUENCE replaces the entry, an equal or lower one is ignored, and a cancellation marks it cancelled. Until invites arrive, everything not added by the owner waits for approval.
+Entries are keyed by their calendar UID and RECURRENCE-ID, as calendar invites carry them (see [Inviting Betty by email](#inviting-betty-by-email)). An update with a higher SEQUENCE replaces the entry, an equal or lower one is ignored, and a cancellation marks it cancelled. Everything not added by the owner or by an allowlisted organizer waits for approval.
 
 While hive is in at least one meeting (joining, in the lobby or live), the top bar shows an indicator such as "🐝 Betty is in a meeting" or "🐝 Betty is in 2 meetings". The name comes from the bot display name (`meetings.bot_name`, "Betty Bee from the hive" shows as "Betty Bee"; the default `hive (notes)` shows as "Hive"). Hover it for each meeting's platform and title; click it to open the live panel, or the Calendar when there are several. The **Calendar** menu badge counts the meetings hive is in plus those awaiting approval. Both follow the dashboard's live event stream, so they update without polling.
 
@@ -141,6 +141,24 @@ What `hive-mx` does with a message:
 - **Proof mails:** a message whose subject carries a proof code (`hive-proof-` and 12 letters or digits) is reported as a proof of the sender address.
 
 The result goes to the hub as JSON with a bearer token from a mounted Secret. If the hub cannot take it, the sender's mail server is told to retry later.
+
+The hub maps the recipient host to the hive, signs the delivery with that hive's own relay key (the key it already uses for relayed GitHub webhooks) and forwards it to the spoke; it stores nothing. The spoke refuses anything without a valid relay signature.
+
+### Who can invite Betty
+
+An invite is scheduled at once only when all of these hold:
+
+- the mail's `From` address passed DMARC alignment,
+- that address is the invite's organizer, and
+- it is a proven calendar email of a user who has owner, read-write or read access to the hive right now.
+
+Everything else, including any invite from someone outside the hive, appears in the **Calendar** as awaiting approval, and the owner approves or declines it there. Attendees never approve anything: being on the invite next to `hive@` does not make a sender trusted. Removing a user's access in **Manage Access** revokes their calendar emails at once.
+
+An update to a meeting already on the calendar (a higher SEQUENCE, or a cancellation) applies only when the mail is authenticated as that meeting's organizer; anything else is ignored, so nobody can move or cancel a meeting by copying its invite. Turn invites off with `meetings.email.invites_enabled: false`; senders then get a bounce.
+
+### Proving calendar emails
+
+Each user registers the addresses their calendar sends invites from, under **Settings, Meeting attendee** (API: `/api/meetings/calendar-emails`). Adding an address shows a proof code such as `hive-proof-k7f3qz2mwx4a` and the instruction: send an email from that address to `hive@<host>` with this code in the subject. When that mail arrives with DMARC alignment for exactly that address, the address is marked proven. A proof mail from another address, or one that fails DMARC, is recorded on the address so the user can see why. Codes are valid for 24 hours and can be reissued; each user can register 10 addresses. Hive never sends mail, so this is how it learns which addresses are yours.
 
 ## Asking Betty to do things
 
@@ -257,6 +275,8 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.llm.anthropic_model` | Spektacular's default | Anthropic model. |
 | `meetings.llm.timeout_ms` | `2500` | Per-call model timeout. |
 | `meetings.llm.max_in_flight` | `4` | Concurrent model calls across meetings. |
+| `meetings.email.invites_enabled` | `true` | Accept calendar invites sent to `hive@<host>` (`HIVE_MEETINGS_EMAIL_INVITES_ENABLED`). |
+| `meetings.email.files_enabled` | `true` | Accept mail-in files as Inbox items (`HIVE_MEETINGS_EMAIL_FILES_ENABLED`). |
 | `meetings.persona.enabled` | `true` | The meeting attendee persona. |
 | `meetings.persona.preset` | `betty` | Built-in persona the fields below start from. |
 | `meetings.persona.name` | `Betty` | Name she answers to. |

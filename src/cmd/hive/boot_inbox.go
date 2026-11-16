@@ -101,6 +101,7 @@ func (b *boot) bootInbox(baseDir string) {
 			}
 		}()
 	}
+	b.wireMailAllowlist(baseDir)
 	b.logger.Info("inbox started", "sources", len(srcs), "rules", len(b.cfg.Inbox.Rules))
 	if tx := b.cfg.Inbox.Transcription; tx.Enabled {
 		// Transcription reaches the provider from the hive process itself,

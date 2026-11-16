@@ -33,6 +33,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github/automerge"
 	"github.com/hivecommons/hive/pkg/hiveadvisor"
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
+	"github.com/hivecommons/hive/pkg/mailallow"
 	"github.com/hivecommons/hive/pkg/maintainernotes"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/review/autoscale"
@@ -479,6 +480,9 @@ type Server struct {
 	// meetingsAttendee is Settings, Meeting attendee: the boot persona,
 	// the TTS service and the email-in data (hivecommons/hive#18396).
 	meetingsAttendee meetingsAttendeeState
+	// mailAllow is the email allowlist behind the hive-mx email-in endpoints
+	// (hivecommons/hive#18395, api_meetings_email.go); nil until wired.
+	mailAllow atomic.Pointer[mailallow.Store]
 
 	audit *AuditLog
 
@@ -2618,6 +2622,13 @@ func (s *Server) isPublicPath(path string) bool {
 		// Linear agent OAuth return (RFC #4492 Part 2): the installing admin's
 		// browser comes back from linear.app with no hive session. The
 		// single-use state token is the credential, verified server-side.
+		return true
+	case path == meetingsInvitesPath || path == meetingsCalendarProofPath || path == inboxEmailPath:
+		// hive-mx mail relayed by the hub (#18395): hive-mx and the hub hold
+		// no dashboard session. NOT actually open: each handler fails closed
+		// without this hive's relay key and verifies the hub's relay
+		// signature (X-Hive-Relay-Delivery, skew and replay checks) over the
+		// raw body before reading it.
 		return true
 	case path == githubWebhookPath:
 		// GitHub App webhooks (direct or relayed by the hub): GitHub cannot
