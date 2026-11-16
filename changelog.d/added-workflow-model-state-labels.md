@@ -1,0 +1,1 @@
+- Bound workflow models now reconcile their state labels on issues and pull requests, including initial intake and triage states.
