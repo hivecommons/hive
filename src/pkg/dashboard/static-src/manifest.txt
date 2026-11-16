@@ -134,7 +134,6 @@ js/review-queue.js
 js/contributors.js
 js/refresh.js
 js/scroll-stabilizer.js
-js/campaigns.js
 js/inception.js
 js/subscription-gauge.js
 js/sessions.js
