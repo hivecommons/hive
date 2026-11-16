@@ -186,3 +186,23 @@ func TestSlots(t *testing.T) {
 		t.Fatalf("busy slot = %v", err)
 	}
 }
+
+func TestCompleteSendsSystemPrompt(t *testing.T) {
+	var got chatRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewDecoder(r.Body).Decode(&got)
+		_, _ = w.Write([]byte(`{"choices":[{"message":{"role":"assistant","content":"ok"}}]}`))
+	}))
+	t.Cleanup(srv.Close)
+	c := Config{Endpoint: srv.URL, Model: "m", Timeout: 5 * time.Second, MaxInFlight: 1, System: "be brief"}
+	if out, err := Complete(context.Background(), c, srv.Client(), "q"); err != nil || out != "ok" {
+		t.Fatalf("complete %q, %v", out, err)
+	}
+	if len(got.Messages) != 2 || got.Messages[0].Role != "system" || got.Messages[0].Content != "be brief" || got.Messages[1].Role != "user" {
+		t.Fatalf("messages %+v", got.Messages)
+	}
+	c.System = "  "
+	if _, err := Complete(context.Background(), c, srv.Client(), "q"); err != nil || len(got.Messages) != 1 {
+		t.Fatalf("blank system prompt must send one message: %+v, %v", got.Messages, err)
+	}
+}

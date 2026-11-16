@@ -494,7 +494,7 @@ func TestBudgetByIntentsAndTokens(t *testing.T) {
 	h.eventually("notes still taken", func() bool { return len(h.state().Notes[SectionNotes]) == 1 })
 	st := h.state()
 	posts, _ := h.mt.got()
-	if !st.BudgetExhausted || len(posts) != 2 || posts[1] != budgetNotice || st.Dropped != 4 {
+	if !st.BudgetExhausted || len(posts) != 2 || posts[1] != budgetNotice(defaultPersonaName) || st.Dropped != 4 {
 		t.Fatalf("budget state %+v posts %q", st, posts)
 	}
 

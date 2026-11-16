@@ -422,6 +422,7 @@ func meetingsSecretSet(ctx context.Context, read func(context.Context) (string, 
 
 func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) MeetingsSettings {
 	h := (&s.meetings).Load()
+	persona := m.Persona.Resolve()
 	return MeetingsSettings{
 		Enabled:            m.IsEnabled(),
 		EnabledEnvOverride: config.MeetingsEnabledEnvSet(),
@@ -458,6 +459,14 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 			"meetings.llm.anthropic_model":            m.LLM.AnthropicModel,
 			"meetings.llm.timeout_ms":                 strconv.Itoa(m.LLM.TimeoutMS),
 			"meetings.llm.max_in_flight":              strconv.Itoa(m.LLM.MaxInFlight),
+			"meetings.persona.enabled":                boolString(persona.Enabled),
+			"meetings.persona.preset":                 persona.Preset,
+			"meetings.persona.name":                   persona.Name,
+			"meetings.persona.display_name":           persona.DisplayName,
+			"meetings.persona.language":               persona.Language,
+			"meetings.persona.voice":                  persona.Voice,
+			"meetings.persona.humor":                  persona.Humor,
+			"meetings.persona.leave_phrases":          strings.Join(persona.LeavePhrases, ", "),
 		},
 	}
 }

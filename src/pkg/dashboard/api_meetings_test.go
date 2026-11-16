@@ -343,7 +343,7 @@ func TestMeetingsSettings(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || rec.Code != http.StatusOK {
 		t.Fatalf("get = %d %s", rec.Code, rec.Body.String())
 	}
-	if got.Enabled || got.VexaKeySet || got.Running || got.Effective["meetings.bot_name"] != "hive (notes)" {
+	if got.Enabled || got.VexaKeySet || got.Running || got.Effective["meetings.bot_name"] != "Betty Bee from the hive" || got.Effective["meetings.persona.name"] != "Betty" {
 		t.Fatalf("defaults %+v", got)
 	}
 	rec = meetingsOwnerPost(s, "/api/meetings/settings", `{"enabled":true,"vexa_url":"https://vexa.example/","vexa_api_key":"tenant","discord_token":"bot"}`)
