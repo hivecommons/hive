@@ -3599,6 +3599,8 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				b.cleanup.push(lr.Close)
 				b.cleanup.push(routeResearch(researchPool, lr))
 			}
+			// Drafts people ask Betty for, approved in the dashboard (#18406).
+			b.wireMeetingsActions(store)
 			// Owner API, live panel and /api/events frames (#18292).
 			b.dashSrv.SetMeetingsService(&meetingsDashboard{mgr: mgr, live: b.meetingsLive})
 			// Scheduled meetings and the Calendar section (#18394).

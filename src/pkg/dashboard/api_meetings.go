@@ -430,6 +430,7 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 	// The list keys meetings.persona.aliases[] and
 	// meetings.persona.leave_phrases[] are shown joined with ", ".
 	persona := m.Persona.Resolve()
+	actions := m.Persona.Actions.Resolve()
 	return MeetingsSettings{
 		Enabled:            m.IsEnabled(),
 		EnabledEnvOverride: config.MeetingsEnabledEnvSet(),
@@ -489,6 +490,13 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 			"meetings.persona.unprompted.min_confidence": strconv.FormatFloat(persona.Unprompted.MinConfidence, 'f', -1, 64),
 			"meetings.persona.unprompted.queue_depth":    strconv.Itoa(persona.Unprompted.QueueDepth),
 			"meetings.persona.unprompted.stale_s":        strconv.Itoa(persona.Unprompted.StaleS),
+			// meetings.persona.actions.types[] is shown joined with ", " and
+			// meetings.persona.actions.auto_approve.<key> as the auto-approved
+			// types (#18406; edited at /api/meetings/actions/settings).
+			"meetings.persona.actions.enabled":      boolString(actions.Enabled),
+			"meetings.persona.actions.types":        strings.Join(actions.Types, ", "),
+			"meetings.persona.actions.default_repo": actions.DefaultRepo,
+			"meetings.persona.actions.auto_approve": strings.Join(meetingsAutoApproved(actions.AutoApprove), ", "),
 		},
 	}
 }

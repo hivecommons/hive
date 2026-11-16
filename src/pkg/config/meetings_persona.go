@@ -314,6 +314,10 @@ const (
 type MeetingsPersonaConfig struct {
 	// Enabled turns the persona on. Nil defaults true.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Actions are the drafts people may ask the persona for in a meeting
+	// (issues, RFCs, Spek sessions, knowledge notes), each approved in the
+	// dashboard (hivecommons/hive#18406).
+	Actions MeetingsPersonaActions `yaml:"actions,omitempty" json:"actions,omitzero"`
 	// Preset is the built-in persona to start from. Default "betty".
 	Preset string `yaml:"preset,omitempty" json:"preset,omitempty"`
 	// Name is what people call the persona ("Betty").
@@ -572,5 +576,5 @@ func (p MeetingsPersonaConfig) Validate() error {
 			return err
 		}
 	}
-	return nil
+	return p.Actions.Validate()
 }

@@ -174,6 +174,8 @@ type Engine struct {
 	match *Matcher
 	leave *meetings.LeaveMatcher
 	log   *slog.Logger
+	// act is the action-request state (actions.go, #18406).
+	act actionState
 
 	in        chan input
 	out       chan Reply
@@ -284,6 +286,9 @@ func (e *Engine) SetExhausted() { e.exhausted.Store(true) }
 // Skip reports whether a line is for the persona rather than an answer to
 // someone's question: addressed to her, or a leave command.
 func (e *Engine) Skip(text string) bool {
+	if _, ok := e.actionAddress(text); ok {
+		return true
+	}
 	return e.leave.Match(text) || e.match.Match(text, false).Addressed
 }
 

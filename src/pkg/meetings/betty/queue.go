@@ -108,6 +108,9 @@ func (e *Engine) onLine(l Line) {
 		e.markAnswered(l, topic)
 	}
 	e.remember(l, now)
+	if e.onActionLine(l, trig, now) {
+		return
+	}
 	switch {
 	case trig.Intro:
 		e.emit(Reply{Text: e.s.Persona.Intro(), Trigger: TriggerIntro, Question: l.Text, VoiceWanted: trig.VoiceWanted})
