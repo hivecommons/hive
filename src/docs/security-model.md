@@ -147,6 +147,19 @@ envelope before it reaches spektacular or an agent prompt
 scanned for them. Session state is pruned and logs are scrubbed
 ([security.md](security.md)).
 
+Untrusted recordings transcribed by the built-in whisper provider are decoded
+and transcribed outside the hive process, in the `hive-whisper` sandbox: a
+separate `hive-transcribe` uid with no home, shell or supplementary groups,
+reached through su-exec; an empty environment (no tokens or keys); the audio
+on stdin and the model as an inherited read-only descriptor; a private 0700
+work dir removed on exit; FFmpeg (an LGPL build with only audio demuxers and
+decoders and no network protocols) and whisper.cpp under rlimits (address
+space, CPU seconds, file size, open files, no core dumps), `nice` and a
+wall-clock timeout scaled to the recording; and an empty network namespace
+where the kernel allows unprivileged user namespaces. With whisper the audio
+never leaves the spoke; with Gemini or Deepgram it is sent to that provider
+under the hive's own account ([inbox-transcription.md](inbox-transcription.md)).
+
 ## 5. Network and credentials
 
 **Inference keys.** An agent using a self-hosted inference gateway is

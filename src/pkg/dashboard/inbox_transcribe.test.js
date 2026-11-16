@@ -129,7 +129,7 @@ test('settings section shows the consent notice, key status and every yaml key',
   assert.match(out, /\$MY_DG<\/code>: <span class="kc-pill" data-status="error">key missing/);
   assert.match(out, /value="500"/, 'max_bytes shown in MB');
   assert.match(out, /value="plaud"/);
-  for (const key of ['enabled', 'mode', 'sources[]', 'api_key_env', 'provider', 'model', 'diarize', 'language', 'max_duration_minutes', 'max_bytes', 'monthly_budget_minutes', 'daily_max_items', 'consent_acknowledged']) {
+  for (const key of ['enabled', 'mode', 'sources[]', 'api_key_env', 'provider', 'model', 'whisper_model', 'whisper_threads', 'diarize', 'language', 'max_duration_minutes', 'max_bytes', 'monthly_budget_minutes', 'daily_max_items', 'consent_acknowledged']) {
     assert.ok(out.includes('inbox.transcription.' + key), 'yaml hint for ' + key);
   }
   out = inboxTranscriptionFormHtml({ enabled: true, consent_acknowledged: true, key_present: true, mode: 'auto' });
@@ -343,4 +343,18 @@ test('settings: provider selector with availability and provider-specific consen
   assert.match(inboxTxConsentText('gemini'), /to Google \(the Gemini API\) under the hive's own Gemini credentials/);
   assert.match(inboxTxConsentText('deepgram'), /to Deepgram under the hive owner's Deepgram account/);
   assert.match(inboxTxConsentText('auto', ''), /stays on this hive \(whisper\) or is sent to Google \(Gemini\) or Deepgram/);
+});
+
+test('settings: whisper model and threads round-trip only when the form has them', () => {
+  const { inboxTranscriptionFormHtml, inboxReadTranscription } = settingsHarness();
+  const out = inboxTranscriptionFormHtml({ provider: 'whisper', whisper_model: 'small.en', whisper_threads: 3 });
+  assert.match(out, /data-inbox-tx-field="whisper_model"/);
+  assert.match(out, /<option value="small.en" selected>small.en \(488 MB, about 3x slower\)<\/option>/);
+  assert.match(out, /<option value="">default: base.en/);
+  assert.match(out, /data-inbox-tx-field="whisper_threads"[^>]*value="3"/);
+  const read = inboxReadTranscription(formRoot({ enabled: { checked: false }, provider: { value: 'whisper' }, whisper_model: { value: 'base' }, whisper_threads: { value: '2' } }), {});
+  assert.strictEqual(read.transcription.whisper_model, 'base');
+  assert.strictEqual(read.transcription.whisper_threads, 2);
+  const legacy = inboxReadTranscription(formRoot({ enabled: { checked: false } }), {});
+  assert.ok(!('whisper_model' in legacy.transcription) && !('whisper_threads' in legacy.transcription), 'no whisper keys without the fields');
 });

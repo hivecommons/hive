@@ -79,6 +79,10 @@ type Service struct {
 	// keeps minted links in memory only, so seeking does not re-mint.
 	AudioStreamMaxBytes int64
 	streamLinks         audioLinkCache
+	// Whisper locates the built-in whisper engine; nil reads the
+	// HIVE_WHISPER_* environment on first use. Tests inject a fake sandbox.
+	Whisper   *WhisperRuntime
+	whisperMu sync.Mutex
 }
 
 // NewService builds a service for cfg with the given sources/destinations.

@@ -22,7 +22,8 @@ const (
 	// TranscriptionMaxAttempts bounds upload attempts per run (429/5xx and
 	// network failures are retried with backoff).
 	TranscriptionMaxAttempts = 3
-	// transcribeJobTimeout bounds one whole run: download, upload, reply.
+	// transcribeJobTimeout bounds one whole run (download, upload, reply);
+	// whisper runs get more for long recordings (jobTimeout).
 	transcribeJobTimeout = 30 * time.Minute
 	// transcribeRetryBase is the first retry wait; it doubles per attempt.
 	transcribeRetryBase = 5 * time.Second
@@ -140,6 +141,9 @@ func (s *Service) TranscriptionSettings() TranscriptionSettings {
 	out.ResolvedProvider, out.ResolvedModel = resolved.Name, resolved.Model
 	out.Providers = s.providerStatuses(t)
 	out.EgressHosts = TranscriptionEgressHosts(t, resolved.Name)
+	if t.Enabled && len(resolved.Egress) > 0 {
+		out.EgressHosts = append(out.EgressHosts, resolved.Egress...)
+	}
 	if store := s.transcriptStore(); store != nil {
 		u := store.Usage(s.now())
 		out.MonthMinutesUsed, out.TodayItems = u.MonthSeconds/time.Minute.Seconds(), u.TodayItems
@@ -170,6 +174,9 @@ func (s *Service) transcriber(t config.InboxTranscription) (transcribe.Transcrib
 	build := s.NewTranscriber
 	if build == nil {
 		build = func(t config.InboxTranscription) (transcribe.Transcriber, error) {
+			if t.EffectiveProvider() == config.InboxTranscriptionProviderWhisper {
+				return s.whisperTranscriber(t)
+			}
 			return DefaultTranscriber(t, s.getenv)
 		}
 	}
@@ -361,7 +368,7 @@ func (s *Service) runTranscription(it Item, cfg config.InboxTranscription, rec T
 	// finished while this one waited.
 	s.txSetSpeed(job, expectedSpeed(store, rec.Provider, rec.Model))
 	key := it.Key()
-	ctx, cancel := context.WithTimeout(context.Background(), transcribeJobTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), jobTimeout(rec.Provider, it.DurationMS))
 	defer cancel()
 	started := s.now()
 	rec.Status, rec.UpdatedAt, rec.StartedAt = TranscriptionRunning, started, started

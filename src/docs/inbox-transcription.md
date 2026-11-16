@@ -41,6 +41,95 @@ ever showing a key, and which provider `auto` currently picks
 Hive versions without the whisper or Gemini engine report them as *not
 ready* (`not_installed`), so `auto` behaves as `deepgram` there.
 
+## Built-in whisper
+
+The hive image bundles [whisper.cpp](https://github.com/ggml-org/whisper.cpp)
+(MIT, v1.9.5) and a minimal FFmpeg (8.1.3), about 12 MB together, built in
+the `whisper-builder` stage of `src/Dockerfile` for amd64 and arm64 from
+tarballs pinned by version and SHA-256. whisper.cpp ships every CPU variant
+of its ggml backend and picks the best at run time (AVX2/AVX-512 on amd64,
+dotprod/fp16/SVE on arm64), so one image runs on old and new cores alike.
+
+**Decoder.** Recordings arrive as mp3, m4a/mp4 (AAC), webm/ogg (Opus,
+Vorbis), FLAC or WAV, and whisper.cpp needs 16 kHz mono WAV. A separate
+FFmpeg binary does the conversion, rather than a whisper.cpp build that links
+a decoder, so decoding is its own process with its own limits and timeout,
+and the decoded length is known before transcription starts (the progress
+bar's total). FFmpeg is built with `--disable-everything`, only the audio
+demuxers, decoders, the WAV muxer and the `file`/`pipe` protocols, no
+network protocols, no autodetected external libraries, and without
+`--enable-gpl` or `--enable-nonfree`. It is therefore LGPL-2.1-or-later, which
+the build asserts. The source is the official `ffmpeg.org` release tarball.
+
+**Model.** The default is `base.en` (148 MB), or `base` when `language`
+names another language. Set `inbox.transcription.whisper_model` to `tiny`,
+`tiny.en`, `base`, `base.en`, `small` or `small.en`. No model ships in the
+image. On the first whisper run the hive downloads the model over HTTPS from
+the official ggml host (`huggingface.co/ggerganov/whisper.cpp`, pinned to
+one repository revision, served from the `*.hf.co` CDN) into
+`/data/models/whisper/ggml-<model>.bin`. The download is capped at the
+pinned size and checked against the pinned SHA-256 before it is renamed
+into place; a file with the wrong size or checksum is replaced. That first
+run needs egress to those hosts, later runs none.
+
+**Air-gapped hives.** Copy the model file into `/data/models/whisper/`
+(`HIVE_WHISPER_MODEL_DIR`) and set `HIVE_WHISPER_MODEL_DOWNLOAD=false`. The
+hive still verifies the size and SHA-256 before using it. The pinned values
+are in `src/pkg/transcribe/whisper_model.go`; for `base.en` they are 147964211
+bytes and `a03779c86df3323075f5e796cb2ce5029f00ec8869eee3fdfb897afe36c6d002`.
+
+**Speed.** `base.en` was chosen because it handles a 5-minute recording in a
+few minutes even with half of 2 vCPU. Measured with the image's own build in
+a 2-CPU container (Apple M2 Pro, arm64), a 301-second recording took 56 s
+with 1 thread and 31 s with 2 threads (0.19x and 0.10x real time). Cloud
+vCPUs are typically two to three times slower per thread, so expect about 1
+to 3 minutes for 5 minutes of audio on a 2 to 4 vCPU hive. `small` is about
+three times slower again. The first estimate assumes 0.6x real time; after
+that the hive uses its own measured speed.
+
+**Threads and concurrency.** One transcription runs at a time per hive.
+whisper uses `inbox.transcription.whisper_threads` threads, by default half
+the CPUs the hive may use (at least one), so agents keep the rest. The
+engines also run at a lower CPU priority (`nice 10`).
+
+**Progress.** whisper reports measured progress: the sandbox reads
+whisper.cpp's `-pp` percentages and the segment timestamps as they stream,
+so the bar moves with the audio actually transcribed.
+
+**Output.** whisper.cpp's JSON (`-oj`) segments become `[mm:ss] text` lines.
+whisper has no speaker labels; non-speech markers such as `[BLANK_AUDIO]`
+are dropped, and `--suppress-nst` keeps it from writing non-speech tokens.
+
+### Sandbox
+
+Recordings are untrusted media, so neither FFmpeg nor whisper.cpp runs inside
+the hive process or as the hive's uid:
+
+- **Separate uid.** The hive (`dev`) starts `/usr/local/bin/hive-whisper`
+  through su-exec as `hive-transcribe` (uid 1901): no home, no shell, no
+  supplementary groups. It cannot read `/data`, the hive's credentials or any
+  agent's files.
+- **No environment, no files.** The sandbox gets an empty environment, the
+  audio on stdin and the model as an inherited read-only file descriptor. It
+  writes the JSON transcript to stdout and progress lines to stderr.
+- **Private, temporary work dir.** The sandbox creates a 0700 directory
+  (umask 077) for the input and the decoded WAV and removes it on exit,
+  including after a timeout.
+- **Limits.** Each engine runs under `prlimit` (address space 3 GiB by
+  default, `HIVE_WHISPER_MEMORY_MB`; CPU seconds; file size; 64 open files;
+  no core dumps) and `nice`, in its own process group, which is killed when
+  its stage times out. The wall-clock limit is 3 minutes plus 4x the
+  recording length, and the transcribe stage gets 1 minute plus 4x the
+  decoded length.
+- **No network.** FFmpeg is built without network protocols and whisper-cli
+  has no network code. Where the kernel allows unprivileged user namespaces,
+  both also run in an empty network namespace (`unshare --user
+  --map-current-user --net`); the sandbox logs which isolation applied.
+- **Fail closed.** Without su-exec or the `hive-transcribe` user, whisper
+  reports *not ready* and `auto` moves on. `HIVE_WHISPER_RUN_AS=self` runs the
+  sandbox as the hive's own uid, still with an empty environment and limits,
+  for development hosts only.
+
 ## Each hive owns its transcriptions
 
 Transcription is spoke-local. Nothing about it is shared or central:
@@ -98,6 +187,8 @@ inbox:
     mode: manual                # manual | auto
     provider: auto              # auto | whisper | gemini | deepgram
     model: nova-3               # Deepgram pre-recorded model
+    whisper_model: ""           # base.en by default (base for other languages)
+    whisper_threads: 0          # 0 = half the CPUs
     api_key_env: DEEPGRAM_API_KEY   # env var holding the owner's key
     sources: []                 # auto mode only transcribes these source names
     diarize: true               # label speakers: Speaker 1, Speaker 2, ...
@@ -214,6 +305,8 @@ today's runs against the daily limit, and the egress the hive needs.
 Egress depends on the provider (always plus the source's audio host, which
 playback already needs; nothing while transcription is off):
 
+- `whisper`: none, except `huggingface.co:443` and its `*.hf.co` CDN for the
+  first-use model download (none at all with a pre-seeded model).
 - `deepgram`: the hive process uploads the audio to `api.deepgram.com:443`.
 
 `settings.transcription.egress_hosts` (for the provider `auto` resolves to)
@@ -230,7 +323,8 @@ still serves the item's content.
 
 ## Cost
 
-whisper costs CPU time on the hive only. Deepgram bills the owner's account per audio minute. The audit entry carries
+whisper costs CPU time on the hive only, so for whisper the monthly minutes
+budget is a CPU-time budget. Deepgram bills the owner's account per audio minute. The audit entry carries
 an estimate from Deepgram's published pay-as-you-go nova-3 price; the
 Deepgram invoice is authoritative. The monthly budget counts the audio length
 Deepgram reports for each finished run.
@@ -248,7 +342,7 @@ speed for the estimate.
 | Method | Path | Access | |
 | --- | --- | --- | --- |
 | `POST` | `/api/inbox/{source}/{id}/transcribe` | Owner or read-write | Queue a transcription (202), or report an up-front skip (200); 409 busy/done/has text, 412 disabled or not consented, 404 unknown item |
-| `GET` | `/api/inbox` | Dashboard auth | Items carry `transcription` (`status`, `reason`, `attempts`, `provider`, `model`, `updated_at`, and the progress fields above while busy) and `transcribable`; `settings.transcription` carries the effective config, `resolved_provider`, `resolved_model`, `providers[]` (`name`, `available`, `status`, `detail`, `audio_goes_to`, `model`), `key_present`, `month_minutes_used` and `today_items` |
+| `GET` | `/api/inbox` | Dashboard auth | Items carry `transcription` (`status`, `reason`, `attempts`, `provider`, `model`, `updated_at`, and the progress fields above while busy) and `transcribable`; `settings.transcription` carries the effective config, `resolved_provider`, `resolved_model`, `providers[]` (`name`, `available`, `status`, `detail`, `audio_goes_to`, `model`, `egress`), `key_present`, `month_minutes_used` and `today_items` |
 | `GET` | `/api/inbox/transcriptions` | Dashboard auth | Queued and running transcriptions in queue order with live progress (`active[]`: `source`, `id`, `state`); reads no source, for polling |
 | `GET` | `/api/inbox/{source}/{id}/content` | Dashboard auth | Falls back to the machine transcript, with `transcript_label` |
 

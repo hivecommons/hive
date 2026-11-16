@@ -694,6 +694,9 @@
         field('api_key_env', 'Deepgram key environment variable', env, 'DEEPGRAM_API_KEY') +
         field('model', 'Deepgram model', tx.model || 'nova-3', 'nova-3') +
         field('language', 'Language', tx.language || 'auto', 'auto or en, de, pt-BR') +
+        '<label class="muted-note inbox-field">Whisper model<select class="field-input field-input-block mt-2" data-inbox-tx-field="whisper_model">' +
+        ['', 'tiny.en', 'tiny', 'base.en', 'base', 'small.en', 'small'].map(m => '<option value="' + m + '"' + ((tx.whisper_model || '') === m ? ' selected' : '') + '>' + (m ? m + ({ 'tiny.en': ' (78 MB, fastest)', tiny: ' (78 MB, any language)', 'base.en': ' (148 MB)', base: ' (148 MB, any language)', 'small.en': ' (488 MB, about 3x slower)', small: ' (488 MB, any language, about 3x slower)' })[m] : 'default: base.en (base for other languages)') + '</option>').join('') + '</select></label>' +
+        field('whisper_threads', 'Whisper threads', tx.whisper_threads || '', 'half the CPUs', 'number') +
         field('monthly_budget_minutes', 'Monthly budget (minutes)', tx.monthly_budget_minutes || '', '600', 'number') +
         field('daily_max_items', 'Daily limit (recordings)', tx.daily_max_items || '', '20', 'number') +
         field('max_duration_minutes', 'Longest recording (minutes)', tx.max_duration_minutes || '', '120', 'number') +
@@ -703,6 +706,7 @@
         inboxTranscriptionUsageHtml(tx) +
         '<p class="muted-xs">Deepgram key <code>$' + escapeHtml(env) + '</code>: ' + (tx.key_present ? '<span class="kc-pill" data-status="ok">key present</span>' : '<span class="kc-pill" data-status="error">key missing</span> set it in this hive\'s environment (it is never stored in hive.yaml)') + '. ' +
         yamlHint('inbox.transcription.mode') + ' ' + yamlHint('inbox.transcription.sources[]') + ' ' + yamlHint('inbox.transcription.api_key_env') + ' ' + yamlHint('inbox.transcription.provider') + ' ' + yamlHint('inbox.transcription.model') + ' ' + yamlHint('inbox.transcription.diarize') + ' ' + yamlHint('inbox.transcription.language') + ' ' +
+        yamlHint('inbox.transcription.whisper_model') + ' ' + yamlHint('inbox.transcription.whisper_threads') + ' ' +
         yamlHint('inbox.transcription.max_duration_minutes') + ' ' + yamlHint('inbox.transcription.max_bytes') + ' ' + yamlHint('inbox.transcription.monthly_budget_minutes') + ' ' + yamlHint('inbox.transcription.daily_max_items') + '</p></div>';
     }
     // This month's minutes (money with Gemini or Deepgram, CPU time with
@@ -744,6 +748,10 @@
         max_duration_minutes: num('max_duration_minutes'),
         max_bytes: num('max_mb') * INBOX_TX_BYTES_PER_MB,
       };
+      // Whisper fields are sent only when the form has them, so an older
+      // payload shape stays exactly as it was.
+      if (el('whisper_model')) tx.whisper_model = val('whisper_model');
+      if (el('whisper_threads')) tx.whisper_threads = num('whisper_threads');
       if (tx.enabled && !tx.consent_acknowledged) return { error: 'Tick the consent box to enable transcription: recordings contain other people\'s voices, and with Gemini or Deepgram the audio is sent to that provider under the hive\'s own account.' };
       return { transcription: tx };
     }
