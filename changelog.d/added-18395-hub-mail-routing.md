@@ -1,0 +1,1 @@
+- The hub routes mail from hive-mx: `GET /api/mail/hosts` lists the hosts it accepts `hive@<host>` for, and `POST /api/mail/inbound` signs each delivery with the target hive's relay key and forwards it to that hive; spokes accept such relays through an `X-Hive-Relay-Delivery` header with the webhook relay's replay protection. Off until `HIVE_HUB_MAIL_TOKEN` is set.
