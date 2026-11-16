@@ -63,6 +63,7 @@ agents.<key>.continuous_budget_pct # TODO #11854
 agents.<key>.continuous_cooldown # TODO #11854
 agents.<key>.continuous_turn_ceiling # TODO #11854
 agents.<key>.converse # TODO #11854
+agents.<key>.definition_source.discovered # TODO #11854
 agents.<key>.definition_source.owner # TODO #11854
 agents.<key>.definition_source.path # TODO #11854
 agents.<key>.definition_source.ref # TODO #11854

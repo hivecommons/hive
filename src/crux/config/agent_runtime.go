@@ -70,6 +70,12 @@ type DefinitionSourceConfig struct {
 	// (e.g. the github.com blob URL). Informational only — Owner/Repo/Path/Ref
 	// are authoritative for fetching. Kept so the UI can round-trip it.
 	URL string `yaml:"url,omitempty" json:"url,omitempty"`
+	// Discovered marks a source the hive found under a managed repo's
+	// .hive/agents/ and an owner approved (hivecommons/hive#18491). For such an
+	// agent the live re-apply keeps backend, model, mode and tools exactly as
+	// the owner set them: a repo file can describe the agent, but it cannot
+	// pick what runs it or what it may do.
+	Discovered bool `yaml:"discovered,omitempty" json:"discovered,omitempty"`
 }
 
 // Slug returns the "owner/repo" identifier used for allowlist matching, or ""

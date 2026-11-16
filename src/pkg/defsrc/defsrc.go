@@ -404,6 +404,20 @@ func MergeAllowedFields(baked config.AgentConfig, def *AgentDefinition) config.A
 	return mergeAllowedFields(baked, def)
 }
 
+// KeepOwnerControlledFields returns merged with the fields an owner keeps for
+// an agent discovered in a repo's .hive/agents/ (hivecommons/hive#18491) copied
+// back from owner: backend, model, mode and tools. A keep-linked import lets
+// its definition set these; a discovered file was written by whoever can push
+// to the repo, so it may describe the agent but never choose what runs it or
+// what it may do.
+func KeepOwnerControlledFields(merged, owner config.AgentConfig) config.AgentConfig {
+	merged.Backend = owner.Backend
+	merged.Model = owner.Model
+	merged.Mode = owner.Mode
+	merged.Tools = owner.Tools
+	return merged
+}
+
 // ApplyToConfig re-resolves every agent that carries a definition_source and
 // merges the live definition's operator-safe fields over the agent's baked
 // config in place. Agents without a definition_source are left untouched, and
@@ -440,6 +454,9 @@ func ApplyToConfig(ctx context.Context, cfg *config.Config, resolver *Resolver, 
 		merged.DefinitionSource = agent.DefinitionSource
 		merged.PromptSource = agent.PromptSource
 		merged.Managed = agent.Managed
+		if agent.DefinitionSource.Discovered {
+			merged = KeepOwnerControlledFields(merged, agent)
+		}
 		cfg.Agents[name] = merged
 		if logger != nil {
 			logger.Info("re-applied live agent definition", "agent", name, "source", res.Source)

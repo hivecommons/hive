@@ -1136,6 +1136,36 @@ The per-agent `prompt_source` (a kick template fetched from GitHub by `pkg/promp
 
 The fetched file must be a valid portable `AgentDefinition`: `kind: AgentDefinition` and a non-empty `metadata.name` are required (`ParseDefinition`, `defsrc.go:138`); everything else is optional. For the full schema and a worked example, see [`../AGENT-DEFINITION.md`](../AGENT-DEFINITION.md) and [`../examples/agents/customized-agent.yaml`](../examples/agents/customized-agent.yaml).
 
+## Agents declared in a managed repo (`.hive/agents/`)
+
+A managed repo can declare agents itself: each `.hive/agents/<name>.yaml` on its default branch is a portable `AgentDefinition`, and the hive picks it up without a hive config edit ([#18491](https://github.com/hivecommons/hive/issues/18491)). Nothing a repo declares runs until an owner approves it.
+
+**Which repos are scanned.** Every repo in `project.repos` (a bare name is qualified with `project.org`) that passes the repo-sourced prompt allowlist, `Config.GitHubDefinitionAllowed`, the same seed-only gate as `definition_source` and `prompt_source` (see the trust boundary above). A repo off the allowlist is never read, and its existing entries are left as they were. Files are read through the hive's GitHub App client, the same path the live definition resolver uses; with no App client, discovery is off.
+
+**When.** Once at startup, then every 15 minutes (`HIVE_REPO_AGENTS_INTERVAL`, a Go duration, at least `1m`), and on a push webhook to a repo's default branch that touches `.hive/agents/` (a push that lists 20 or more commits always rescans, since GitHub truncates the list). A repo holds at most 50 definition files; extras are ignored with a warning.
+
+**What an owner sees.** **Agents → Import → Declared in your repos** in the config dialog lists each file with a status (`GET /api/agents/discovered`):
+
+| Status | Meaning |
+|---|---|
+| `pending` | Parsed cleanly and waits for an owner. |
+| `invalid` | Not a valid `AgentDefinition` (or unreadable); the error is shown. Fix the file and the next scan makes it `pending`. |
+| `approved` | Registered as an agent. |
+| `rejected` | An owner declined it. It stays declined until the file is removed. |
+| `orphaned` | Approved, but the file was removed. The agent is **paused, not deleted**. |
+
+**Approving** (`POST /api/agents/discovered/approve`, owner only) re-reads the file through the allowlist gate and creates the agent exactly like a keep-linked import, with:
+
+- `definition_source` pointing at the file, with `discovered: true`;
+- `prompt_source` pointing at a sibling `.hive/agents/<name>.md` when the repo has one (otherwise a `spec.promptTemplate` is saved as the kick template, as an import does);
+- **backend, model and mode from the owner**, never from the file. They come from the approval request (backend defaults to `copilot`; model and mode stay unset unless given) and can be changed later in the agent's settings. **Tools** start unset for the owner to grant.
+
+Because `discovered: true` is set, every later reload re-applies the file's other allow-listed fields (the table above) but keeps backend, model, mode and tools as the owner set them (`defsrc.KeepOwnerControlledFields`). A keep-linked import without that marker behaves as before.
+
+**Removing a file** marks an approved entry `orphaned` and pauses its agent, recorded with trigger `repo-agent-discovery`. The agent and its config are kept: if the file comes back, the entry is tracked again, but the agent stays paused until an owner resumes it. Removing a pending, invalid or rejected file simply drops the entry. A failed directory listing never orphans anything.
+
+Entries persist in `/data/repo-agents.json` (`HIVE_REPO_AGENTS_STATE` overrides the path). `POST /api/agents/discovered/refresh` rescans now; `POST /api/agents/discovered/reject` declines an entry.
+
 ## Kick templates: what an agent is told to do
 
 `kick_template` names a Markdown file resolved from the hive's policies checkout (`/data/policies/examples/kubestellar/agents/`, or the directory your `policies:` config points at), falling back to the defaults embedded in the binary (`src/pkg/policies/defaults/`). It is the agent's **periodic work prompt**: on every kick, the template is loaded, variables like `${ISSUE_LIST}`, `${PR_LIST}`, `${REVIEW_PERSPECTIVES}`, `${AGENT_NAME}`, `${PROJECT_ORG}`, and `${KNOWLEDGE}` are substituted, and the result is dispatched to the agent's session. The shared kick preamble always tells agents that the governor-supplied issue/PR lists are authoritative and that proxy-blocked `gh pr list`, `gh issue list`, and `gh search` discovery should not be used.
