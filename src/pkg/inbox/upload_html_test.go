@@ -52,8 +52,13 @@ func TestExtractHTMLEdgeCases(t *testing.T) {
 	}
 	// Absurd nesting is cut off instead of recursing without bound.
 	deep := strings.Repeat("<div>", htmlMaxDepth*4) + "bottom" + strings.Repeat("</div>", htmlMaxDepth*4)
-	if ex, err := ExtractUpload(context.Background(), UploadKindHTML, []byte("<p>top</p>"+deep)); err != nil || !strings.Contains(ex.Markdown, "top") {
-		t.Fatalf("deep nesting = %q, %v", ex.Markdown, err)
+	// The parser itself refuses absurd nesting; either way nothing recurses
+	// without bound.
+	if _, err := ExtractUpload(context.Background(), UploadKindHTML, []byte("<p>top</p>"+deep)); err != nil && err.Code != UploadErrParse {
+		t.Fatalf("deep nesting = %v", err)
+	}
+	if ex, err := ExtractUpload(context.Background(), UploadKindHTML, []byte("<p>top</p>"+strings.Repeat("<span>", htmlMaxDepth+20)+"bottom")); err != nil || !strings.Contains(ex.Markdown, "top") || strings.Contains(ex.Markdown, "bottom") {
+		t.Fatalf("depth cap = %+v, %v", ex, err)
 	}
 	if got := wrapInline("**", " "); got != " " {
 		t.Fatalf("empty inline = %q", got)
