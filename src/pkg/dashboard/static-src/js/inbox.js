@@ -89,13 +89,14 @@
         return html;
       }
       if (it.pending || (cached && cached.pending)) {
-        const tx = it.transcribable ? ' Or click 🎧 Transcribe to have this hive transcribe it with Deepgram.' : '';
+        const tx = it.transcribable && !it.transcribe_unavailable ? ' Hive can transcribe it with Deepgram: click 🎧 Transcribe.'
+          : (it.transcribe_unavailable ? ' Hive can transcribe it with Deepgram once that is set up (see 🎧 Transcribe below).' : '');
         // Meeting platforms whose pending items read "<label> has no transcript"
         // (inline so the extracted function stays self-contained in tests).
         const meetingLabel = { zoom: 'Zoom', teams: 'Teams', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', 'fireflies': 'Fireflies', 'fathom': 'Fathom', 'limitless': 'Limitless', 'granola': 'Granola', 'otter': 'Otter' }[it.source];
         if (meetingLabel) return '<div class="inbox-pending muted-xs" title="The platform reports no transcript or summary for this recording yet">Not transcribed yet: ' + meetingLabel + ' has no transcript or summary for this recording (cloud transcription may still be processing or is disabled); the hive re-checks it on every sync.' + tx + '</div>';
         if (it.source === 'discord') return '<div class="inbox-pending muted-xs" title="Discord has no transcripts; none was posted with this recording">Not transcribed yet: Discord has no built-in transcription and no transcript file was posted with this recording; play it here, or post a .vtt/.txt transcript in the same message. The hive re-checks it on every sync.' + tx + '</div>';
-        return '<div class="inbox-pending muted-xs" title="The MCP reports no transcript or summary block for this recording">Not transcribed yet in Plaud: open the recording in the Plaud app and run transcription; the hive re-checks it on every sync.' + tx + '</div>';
+        return '<div class="inbox-pending muted-xs" title="The MCP reports no transcript or summary block for this recording">Not transcribed yet: Plaud has not transcribed this recording (you can also open it in the Plaud app and run transcription); the hive re-checks it on every sync.' + tx + '</div>';
       }
       return it.excerpt ? '<div class="kb-fact-snippet">' + escapeHtml(it.excerpt) + '</div>' : '';
     }
@@ -109,9 +110,19 @@
       let html = '<div class="inbox-transcript">';
       if (c.transcript && c.transcript_label) html += '<div class="muted-xs"><strong>' + escapeHtml(c.transcript_label) + '</strong></div>';
       if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
-      else html += '<div class="muted-xs">No transcript yet' + (c.pending ? (it.source === 'plaud' ? ': Plaud has not transcribed this recording.' : ': the meeting platform has not produced a transcript for this recording.') : '.') + '</div>';
+      else html += '<div class="muted-xs">No transcript yet' + (c.pending ? (it.source === 'plaud' ? ': Plaud has not transcribed this recording.' : ': the meeting platform has not produced a transcript for this recording.') + (it.transcribable || it.transcribe_unavailable ? ' Hive can transcribe it with Deepgram: see 🎧 Transcribe on this item.' : '') : '.') + '</div>';
       if (c.highlights) html += '<div class="muted-xs inbox-highlights"><strong>Highlights</strong> (flagged on the device)<pre class="inbox-transcript-text">' + escapeHtml(c.highlights) + '</pre></div>';
       return html + '</div>';
+    }
+
+    // Why 🎧 Transcribe is unavailable, by the backend's transcribe_unavailable code.
+    function inboxTxUnavailableText(reason) {
+      return {
+        disabled: 'Transcription is off: enable it in Inbox ⚙ → Transcription',
+        no_key: 'Set the DEEPGRAM_API_KEY environment variable (or the name in api_key_env) on this hive',
+        no_consent: 'Consent not acknowledged',
+        budget: 'Monthly budget used'
+      }[reason] || '';
     }
 
     // Machine transcription: a state pill (spinner while queued/running, the
@@ -131,7 +142,14 @@
           (busy ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> ' : '') + escapeHtml(label) + '</span>';
         if (st.reason && (st.status === 'failed' || st.status === 'skipped')) html += ' <span class="muted-xs inbox-tx-reason">' + escapeHtml(st.reason) + '</span>';
       }
-      if (it.transcribable && inboxViewerCanPlay()) {
+      const why = inboxTxUnavailableText(it.transcribe_unavailable);
+      if (why) {
+        // Everyone sees the reason; only owner/read-write see the control and the setup link.
+        const canAct = inboxViewerCanPlay();
+        if (canAct) html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-transcribe" disabled aria-disabled="true" title="' + escapeHtml(why) + '">🎧 Transcribe</button>';
+        html += ' <span class="muted-xs inbox-tx-reason" data-tx-unavailable="' + escapeHtml(it.transcribe_unavailable) + '">' + escapeHtml(why) + '</span>';
+        if (canAct) html += ' <button type="button" class="hv-btn btn-secondary btn-sm inbox-tx-setup" data-action="inboxOpenSettings" title="Open Inbox ⚙ → Transcription">Open Transcription settings</button>';
+      } else if (it.transcribable && inboxViewerCanPlay()) {
         const inflight = _inboxTranscribing.has(key);
         const retry = st && (st.status === 'failed' || st.status === 'skipped');
         html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-transcribe" data-action="inboxTranscribe" data-arg0="' + src + '" data-arg1="' + id + '"' + (inflight ? ' disabled aria-busy="true"' : '') +

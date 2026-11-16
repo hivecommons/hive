@@ -177,6 +177,29 @@ func (s *Service) hasAudio(it Item) bool {
 	return ok
 }
 
+// Reason codes for Item.TranscribeUnavailable.
+const (
+	TranscribeBlockedDisabled = "disabled"
+	TranscribeBlockedNoKey    = "no_key"
+	TranscribeBlockedConsent  = "no_consent"
+	TranscribeBlockedBudget   = "budget"
+)
+
+// transcribeBlockedReason names why transcription is unavailable, or "".
+func (s *Service) transcribeBlockedReason(t config.InboxTranscription, store *TranscriptStore) string {
+	switch {
+	case !t.Enabled:
+		return TranscribeBlockedDisabled
+	case strings.TrimSpace(s.getenv(t.EffectiveAPIKeyEnv())) == "":
+		return TranscribeBlockedNoKey
+	case !t.ConsentAcknowledged:
+		return TranscribeBlockedConsent
+	case store != nil && time.Duration(store.Usage(s.now()).MonthSeconds*float64(time.Second)) >= t.EffectiveMonthlyBudget():
+		return TranscribeBlockedBudget
+	}
+	return ""
+}
+
 // applyTranscripts sets each item's transcription state: a done machine
 // transcript clears Pending (an upstream transcript, once the source has
 // one, already cleared it and wins), and Transcribable marks items the
@@ -186,7 +209,10 @@ func (s *Service) applyTranscripts(items []Item) {
 	if store == nil {
 		return
 	}
-	active := s.Config().Transcription.Active()
+	txCfg := s.Config().Transcription
+	active := txCfg.Active()
+	var blocked string
+	var blockedKnown bool
 	for i := range items {
 		it := &items[i]
 		rec, ok := store.Get(it.Source, it.ID)
@@ -199,6 +225,12 @@ func (s *Service) applyTranscripts(items []Item) {
 		}
 		busy := ok && (rec.Status == TranscriptionQueued || rec.Status == TranscriptionRunning || rec.Status == TranscriptionDone)
 		it.Transcribable = active && it.Pending && !busy && s.hasAudio(*it)
+		if it.Pending && !busy && s.hasAudio(*it) {
+			if !blockedKnown {
+				blocked, blockedKnown = s.transcribeBlockedReason(txCfg, store), true
+			}
+			it.TranscribeUnavailable = blocked
+		}
 	}
 }
 
