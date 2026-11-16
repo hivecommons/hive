@@ -1,0 +1,1 @@
+- Reference repos: new `project.remote_write_identity` (`bot` default, `bot_only`, `owner`) picks whether a hive's writes on a granted remote repo appear as its GitHub App bot (only where the repo's owner installed the App) or as the hive owner's connected account; without the App, `bot` falls back to the owner and `bot_only` stays read-only (#18516).

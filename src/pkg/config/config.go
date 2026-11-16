@@ -1114,6 +1114,14 @@ type VarSecurityConfig struct {
 	// bounds the blast radius to repos the operator explicitly trusts, so the
 	// feature cannot be used to read every repo the App happens to be installed on.
 	GitHubPromptAllowlist []string `yaml:"github_prompt_allowlist,omitempty"`
+	// OwnerGitHubPromptRepos is the owner-approved subset of the hive's own
+	// managed repos that prompt_source and definition_source may read from,
+	// each approved on its own from the dashboard (hivecommons/hive#18490).
+	// Unlike GitHubPromptAllowlist it needs no AllowGitHubPrompt, and an entry
+	// counts only while the repo is still in project.repos. Written only by the
+	// owner-only dashboard endpoint through Save; the overlay cannot set it.
+	// See owner_prompt_repos.go.
+	OwnerGitHubPromptRepos []OwnerPromptRepo `yaml:"owner_github_prompt_repos,omitempty"`
 }
 
 type ProjectConfig struct {
@@ -1192,6 +1200,14 @@ type ProjectConfig struct {
 	// them, and writes to them are refused unless opted in. See
 	// reference_repos.go.
 	ReferenceRepos []ReferenceRepo `yaml:"reference_repos,omitempty" json:"reference_repos,omitempty"`
+	// RemoteWriteIdentity picks which GitHub identity the hive writes to its
+	// write-tier reference repos as (hivecommons/hive#18196 follow-up):
+	// "bot" (the default when empty) posts as the hive's GitHub App on a
+	// granted repo whose owner installed that App themselves and as the hive
+	// owner's connected account elsewhere; "bot_only" posts as the App where
+	// it is installed and is read-only elsewhere; "owner" always posts as the
+	// hive owner's connected account. See remote_write_identity.go.
+	RemoteWriteIdentity string `yaml:"remote_write_identity,omitempty" json:"remote_write_identity,omitempty"`
 	// RepoPolicies stores optional per-repository policy overrides keyed by
 	// repo name. project.repos remains the watched-repo identity list; this
 	// sidecar list lets existing string-list configs keep round-tripping.
@@ -2858,12 +2874,21 @@ func (g *GovernorConfig) AttributionTrailerEnabled() bool {
 // backend is the agent's backend name (typically "litellm"); it selects which
 // explicit gateway to consult.
 func (g GovernorConfig) ResolveLiteLLMInferenceKey(backend string) string {
+	key, _ := g.ResolveLiteLLMInferenceKeyWithSource(backend)
+	return key
+}
+
+// ResolveLiteLLMInferenceKeyWithSource is ResolveLiteLLMInferenceKey plus the
+// log-safe source ("file:<path>" / "env:<NAME>") the key came from. The
+// inference proxy re-runs it at request time so a rotated key is picked up
+// without a restart (hive#18532).
+func (g GovernorConfig) ResolveLiteLLMInferenceKeyWithSource(backend string) (string, string) {
 	if len(g.Gateways) > 0 {
 		if gw := g.ResolveGateway(backend); gw != nil {
-			return gw.ResolveAPIKey()
+			return gw.ResolveAPIKeyWithSource()
 		}
 	}
-	return g.LiteLLM.ResolveAPIKey()
+	return g.LiteLLM.ResolveAPIKeyWithSource()
 }
 
 // ReplanConfig governs the Phase 3 stall-replan lane: a periodic check that
@@ -6606,19 +6631,21 @@ func (c *Config) ResolveRegistryForAgent(agentName string, logger *slog.Logger) 
 // given "owner/repo" slug is permitted to be fetched. This mirrors the seed-only
 // gating used for exec/http resolvers: it consults c.Variables.Security, which
 // LoadWithDashboardOverlay guarantees comes ONLY from the trusted config seed
-// (the dashboard overlay's Variables block is never merged). It returns false
-// unless the feature is explicitly enabled AND the slug is on the seed-declared
+// (the dashboard overlay's Variables block is never merged). The seed path
+// needs the feature explicitly enabled AND the slug on the seed-declared
 // allowlist, so a user-writable overlay can never widen the set of readable repos.
+//
+// It also admits a repo the hive owner approved from the dashboard
+// (OwnerPromptRepoAllowed, hivecommons/hive#18490): one of the hive's own
+// managed repos, approved individually and persisted through Save. That path
+// is bounded to project.repos, so it cannot widen the set beyond repos the
+// hive already manages. Callers (the prompt, definition and perspectives
+// resolvers, and repo-discovered agents) should keep using this function.
 func (c *Config) GitHubPromptAllowed(slug string) bool {
-	if slug == "" || !c.Variables.Security.AllowGitHubPrompt {
+	if slug == "" {
 		return false
 	}
-	for _, allowed := range c.Variables.Security.GitHubPromptAllowlist {
-		if strings.EqualFold(strings.TrimSpace(allowed), slug) {
-			return true
-		}
-	}
-	return false
+	return c.SeedGitHubPromptAllowed(slug) || c.OwnerPromptRepoAllowed(slug)
 }
 
 // GitHubDefinitionAllowed reports whether an agent's definition_source pointing

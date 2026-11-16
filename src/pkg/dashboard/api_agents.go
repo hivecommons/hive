@@ -438,7 +438,7 @@ func (s *Server) handleAgentImport(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !s.deps.Config.GitHubDefinitionAllowed(defSrc.Slug()) {
-			jsonError(w, fmt.Sprintf("keep linked: repo %q is not on the GitHub definition allowlist (an operator must add it to the seed config's variables.security.github_prompt_allowlist and set allow_github_prompt)", defSrc.Slug()), http.StatusBadRequest)
+			jsonError(w, fmt.Sprintf("keep linked: repo %q is not on the GitHub definition allowlist (an operator must add it to the seed config's variables.security.github_prompt_allowlist and set allow_github_prompt; for one of this hive's managed repos the owner can approve it under Settings → Security → Prompt sources)", defSrc.Slug()), http.StatusBadRequest)
 			return
 		}
 		agentCfg.DefinitionSource = defSrc
@@ -524,7 +524,7 @@ func (s *Server) bakePromptSource(ctx context.Context, name string, agent *confi
 	slug := agent.PromptSource.Slug()
 	allow := func(sl string) bool { return s.deps.Config.GitHubPromptAllowed(sl) }
 	if !allow(slug) {
-		return fmt.Errorf("repo %q is not on the GitHub prompt allowlist (an operator must add it to the seed config's variables.security.github_prompt_allowlist and set allow_github_prompt)", slug)
+		return fmt.Errorf("repo %q is not on the GitHub prompt allowlist (an operator must add it to the seed config's variables.security.github_prompt_allowlist and set allow_github_prompt; for one of this hive's managed repos the owner can approve it under Settings → Security → Prompt sources)", slug)
 	}
 	src := promptsrc.Source{
 		Owner: agent.PromptSource.Owner,

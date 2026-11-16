@@ -698,6 +698,21 @@ Set `auto_memory: true` on a single agent to let it keep a private notebook whil
 
 Every Model Gateway (and the bob backend) also accepts an optional `key_name` — a human-chosen LABEL for the configured key, e.g. `key_name: openrouter-prod-key`. It is safe-to-show metadata, not a secret: the dashboard's gateway row displays it as "Using key: `<name>`", or "(unnamed)" when no label is set, so operators can tell keys apart without ever seeing the value. For gateway keys, the row and settings/status APIs also expose `keySHA256`, the lowercase SHA-256 of the exact effective key string Hive will inject through the inference proxy; this lets operators compare Hive with LiteLLM/OpenRouter key-hash displays without revealing the secret. Saving a replacement key refreshes live inference proxy routes for running agents, so the next kick uses the new key without an agent restart. See [`inference-backends.md`](../../docs/inference-backends.md) for a full YAML example.
 
+#### Where a gateway key file may live
+
+`api_key_file` for `governor.litellm` and for every entry under `governor.gateways` is only ever read from the allowed secret dirs: `/secrets` (the Kubernetes Secret projection) and `/data/secrets` (the PVC dir the dashboard writes UI-entered keys to). Any other path is never read, a security gate that stops a config value from turning into an arbitrary file read. To use a Secret, mount it under one of those dirs, for example a `volumeMount` at `/secrets/litellm_api_key`, and point `api_key_file` at the file there.
+
+- **Save.** The dashboard and the config API reject an `api_key_file` outside those dirs with a `400` that lists the allowed dirs and says where to mount the Secret ([#18533](https://github.com/hivecommons/hive/issues/18533)).
+- **Boot.** An existing `hive.yaml` with such a path still boots, because the path was already being ignored and the hive has been running on its fallback key. Boot logs a `WARNING:` line for each one naming the field, the path, the allowed dirs and the fix.
+- **Runtime.** When a configured path is skipped, the hive logs one `WARN` per path, `configured api_key_file is outside the allowed secret dirs and was skipped`, with `skipped_path` and `effective_key_source` (the source actually used: the Secret mount, the PVC copy, or an env var).
+- **Dashboard and API.** The LiteLLM section of `GET /api/config/governor` and each gateway row carry `keySource` (`file:<path>` or `env:<NAME>`), `keySourceDescription` (for example `key from /secrets/litellm_api_key (configured path /secrets-cb/litellm_api_key not allowed)`) and `apiKeyFileAllowed`; the LiteLLM section also lists `allowedKeyFileDirs`. None of them carries key material.
+
+#### Key rotation without a restart
+
+The agent inference proxy (`127.0.0.1:18444`) no longer keeps the key it resolved when an agent's route was set ([#18532](https://github.com/hivecommons/hive/issues/18532)). For `litellm` and named-gateway routes it re-checks the key file every few seconds, and re-reads it when the file's symlink target, mtime or size changed (a Kubernetes Secret update swaps the `..data` symlink). It also re-resolves fully every 30 seconds, so a newly created key file or a changed env var is noticed too. A rotated key therefore reaches the next request without a hive restart.
+
+When the gateway answers `401`, the proxy re-resolves the key once. If that yields a different key, it retries the request once with it, and counts an auth failure only when the retry is also rejected. An unchanged key is not retried. The `inference backend auth failure` WARN carries `key_source` (`file:<path>`, `env:<NAME>`, `static` for a route with a fixed credential such as a minted watsonx IAM token, or `none`) and `key_changed_since_start` (whether the key differs from the first key this process resolved for that backend). It never logs the key.
+
 ### Claude Managed Agents hosted execution
 
 Claude Managed Agents is an external hosted engine, not a `backend:` value.
@@ -1067,7 +1082,7 @@ Two merge rules to know before you rely on this:
 
 ### The trust boundary: allowlisted repos are seed-only
 
-`definition_source` is gated by `Config.GitHubDefinitionAllowed(slug)` (`config.go:4731`), which simply delegates to `Config.GitHubPromptAllowed(slug)` (`config.go:4711`) — the **same** seed-only gate used by `prompt_source`. Fetching requires both:
+`definition_source` is gated by `Config.GitHubDefinitionAllowed(slug)` (`config.go:4731`), which simply delegates to `Config.GitHubPromptAllowed(slug)` (`config.go:4711`) — the **same** seed-only gate used by `prompt_source`. On the seed path, fetching requires both (the owner approval for managed repos is [below](#owner-approval-for-the-hives-own-managed-repos)):
 
 ```yaml
 variables:
@@ -1084,6 +1099,19 @@ This is the property operators most need to understand before enabling the featu
 - A compromised or malicious dashboard overlay can neither widen the set of readable repos nor repoint an agent's `definition_source` at an arbitrary repo — only a seed edit (ConfigMap in Kubernetes, bind-mounted file under Docker, Podman or LXC) can do either.
 
 An empty allowlist denies every repo even with `allow_github_prompt: true` — the allowlist is required, not merely advisory.
+
+### Owner approval for the hive's own managed repos
+
+The seed edit is still the only way to allow a repo outside the hive. For one of the hive's **own managed repos** (an entry of `project.repos`, qualified with `project.org`), the hive owner can approve it from the dashboard instead of editing the volume ([#18490](https://github.com/hivecommons/hive/issues/18490)):
+
+- **Settings → Security → Prompt sources** lists each managed repo and whether `prompt_source` / `definition_source` may read from it. **Approve…** opens a confirm that names the trust implication: anyone who can merge to that repo can change what the hive's agents are told to do and how they are defined. **Revoke** removes the approval.
+- The API is `GET /api/config/prompt-sources` and `PUT /api/config/prompt-sources/owner-repos` with `{"repo": "org/name", "allowed": true, "acknowledge_trust": true}` (`"allowed": false` revokes). Both are owner-only: read, read-write and merger sessions get 403. A repo outside `project.repos` is refused with a 400, and an approval without `acknowledge_trust: true` is refused.
+- Each approval covers that one repo only. It does not need `allow_github_prompt` and does not turn it on, so nothing on `github_prompt_allowlist` starts loading because of it.
+- Approvals are stored in the running config as `variables.security.owner_github_prompt_repos` (`repo`, `approved_by`, `approved_at`), written by the dashboard Save to the PVC runtime config, so they survive a restart. Every change is audit-logged as `config_prompt_source_repo`.
+- The dashboard overlay still cannot approve a repo: its `variables` block is never merged, so only the owner endpoint (or a seed edit) writes the list.
+- An approval counts only while its repo is still in `project.repos`. Removing the repo from the hive lapses the approval; the Prompt sources panel shows it as inert until it is revoked.
+
+`Config.GitHubPromptAllowed(slug)` (and `GitHubDefinitionAllowed`, which delegates to it) admits a repo when either the seed gate or an owner approval allows it, so every caller (prompt, definition and review-perspective resolvers) honors both paths without change.
 
 `review.perspectives_source` (the live-linked review perspective set; see [review-swarm.md](review-swarm.md#live-linked-perspectives-reviewperspectives_source)) uses the same seed-only gate: the resolver is allowed to read a repo only when `GitHubPromptAllowed` permits it, it resolves at the same resolve points (startup and every reload), and it follows the same fallback shape as `Resolve` above (last-known-good, then the inline config).
 

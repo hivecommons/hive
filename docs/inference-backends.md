@@ -113,7 +113,7 @@ Endpoint environment overrides used by v2 include:
 - `HIVE_VLLM_ENDPOINT` for `vllm`
 - `HIVE_LLMD_ENDPOINT` for `llm-d`
 - `HIVE_LITELLM_ENDPOINT` for LiteLLM
-- `HIVE_LITELLM_API_KEY` or `api_key_file` for LiteLLM bearer auth
+- `HIVE_LITELLM_API_KEY` or `api_key_file` for LiteLLM bearer auth. `api_key_file` must be under `/secrets` or `/data/secrets`; any other path is refused at save, warned about at boot and at runtime, and never read. Mount the Secret under one of those dirs. A rotated key file is picked up without a restart. See [Where a gateway key file may live](../src/docs/agent-configuration.md#where-a-gateway-key-file-may-live).
 - `HIVE_LITELLM_MODELS` as a comma-separated fallback model list when discovery fails
 
 Never put the key value itself in YAML.

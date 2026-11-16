@@ -1,5 +1,6 @@
     /* Calendar: scheduled meetings hive joins (#18394) */
-    .calendar-panel { display: flex; flex-direction: column; gap: var(--sp-3); }
+    .calendar-panel { display: flex; flex-direction: column; gap: var(--sp-5); }
+    .calendar-subsection { display: flex; flex-direction: column; gap: var(--sp-2); }
     .calendar-add-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: var(--sp-2); align-items: end; }
     .calendar-add-grid label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
     .calendar-list { display: flex; flex-direction: column; gap: var(--sp-2); }

@@ -44,6 +44,15 @@ type SandboxJobConfig struct {
 	EnvFromSecrets []string           `yaml:"env_from_secrets,omitempty" json:"env_from_secrets,omitempty"`
 	Volumes        []SandboxJobVolume `yaml:"volumes,omitempty" json:"volumes,omitempty"`
 	TTLSeconds     int                `yaml:"ttl_seconds,omitempty" json:"ttl_seconds,omitempty"`
+	// RelayImage is the image of the init container that copies hive's
+	// sandbox relays (hive-review) into the Job (#18512). Empty resolves the
+	// running hive image by digest from hive's own pod; "none" skips the
+	// relays entirely.
+	RelayImage string `yaml:"relay_image,omitempty" json:"relay_image,omitempty"`
+	// RelayRunAsUser pins the relay init container's uid. Unset leaves it to
+	// the cluster on OpenShift (the SCC assigns one from the namespace range)
+	// and uses 65534 elsewhere, since the hive image's default user is root.
+	RelayRunAsUser *int64 `yaml:"relay_run_as_user,omitempty" json:"relay_run_as_user,omitempty"`
 }
 
 // SandboxJobToleration mirrors the subset of a Kubernetes toleration an

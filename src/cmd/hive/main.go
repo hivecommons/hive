@@ -3518,6 +3518,10 @@ func (b *boot) bootSupervision() {
 	// Dashboard maintainer notes on a listed item ride its kick as private
 	// context (pkg/scheduler/kick_maintainer_notes.go).
 	b.sched.SetMaintainerNotesLookup(maintainernotes.Default().List)
+	// #18493: agents' durable topic claims (bd topic) ride their kicks and tag
+	// the PR rows of the FIX-BEFORE-NEW and held-PR blocks. Read b.beadStores
+	// at call time, not at wire time.
+	b.sched.SetTopicClaimLookup(func() []scheduler.TopicClaim { return topicClaimLookup(b.beadStores)() })
 	// #9584: close answered question issues unless the author objects (default off).
 	b.questionAutoclose.Store(wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger))
 	// The pr-request watcher's PR-opened hook (Linear session narration, the
@@ -4338,6 +4342,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						APIKey:       apiKey,
 						CABundle:     gw.CABundle,
 						ExtraHeaders: extraHeaders,
+						KeyResolver:  gatewayInferenceKeyResolver(b.cfg, gw, backend),
 					})
 					return
 				}
@@ -4395,6 +4400,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						DefaultModel: defaultModel,
 						APIKey:       apiKey,
 						CABundle:     caBundle,
+						KeyResolver:  litellmInferenceKeyResolver(b.cfg, backend),
 					})
 					return
 				}

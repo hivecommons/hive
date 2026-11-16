@@ -1,0 +1,1 @@
+- Sandboxed agent kicks now get hive's own `hive-review` relay on `PATH`. The Job runtime copies it in from the running hive image by digest, through a restricted-SCC-safe init container. Podman bind-mounts it read-only. Project images no longer need to include hive's scripts, only bash and python3, and a kick on an image without them fails with a clear message (#18512).

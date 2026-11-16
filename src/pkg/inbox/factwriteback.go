@@ -26,6 +26,12 @@ const (
 	factHighlightsHeading = "## Highlights"
 	// factDateLayout is the day shown in the machine-transcript note.
 	factDateLayout = "2006-01-02"
+	// hiveTranscriptProvenancePrefix opens the provenance line of a
+	// transcript of audio this hive stores itself (hive-recording, upload).
+	hiveTranscriptProvenancePrefix = "Transcript made by this hive with"
+	// machineTranscriptProvenancePrefix opens the provenance line of a
+	// machine transcript of a third-party source's recording.
+	machineTranscriptProvenancePrefix = "Machine transcript made by this hive with"
 )
 
 // factPendingNotes are the pending lines connectors write into a fact with
@@ -161,14 +167,39 @@ func machineFactBody(body string, it Item, rec TranscriptRecord) string {
 	if label == "" {
 		label = "the source"
 	}
-	section := "## " + rec.Label() + "\n\n" +
-		fmt.Sprintf("_Machine transcript made by this hive with %s/%s on %s, because %s has no text for this recording yet. It is replaced when %s produces its own transcript or summary._\n\n",
-			rec.Provider, rec.Model, rec.UpdatedAt.UTC().Format(factDateLayout), label, label) +
+	section := "## " + rec.Label() + "\n\n" + machineProvenance(it.Source, label, rec) + "\n\n" +
 		WrapUntrusted(it.Source, it.ID, rec.Text) + "\n"
 	if i := strings.Index(body, "\n"+factHighlightsHeading); i >= 0 {
 		return collapseBlankLines(strings.TrimRight(body[:i], "\n") + "\n\n" + section + "\n" + strings.TrimLeft(body[i:], "\n"))
 	}
 	return collapseBlankLines(strings.TrimRight(body, "\n") + "\n\n" + section)
+}
+
+// machineProvenance is the italic line above a machine transcript. Audio
+// this hive keeps itself (its own recordings, dropped audio files) has no
+// other text to wait for, so the line only names the provider and the day;
+// a third-party source (Plaud, Zoom, ...) may still produce its own text,
+// which then replaces the machine transcript.
+func machineProvenance(source, label string, rec TranscriptRecord) string {
+	day := rec.UpdatedAt.UTC().Format(factDateLayout)
+	if hiveStoredAudioSource(source) {
+		return fmt.Sprintf("_%s %s/%s on %s._", hiveTranscriptProvenancePrefix, rec.Provider, rec.Model, day)
+	}
+	return fmt.Sprintf("_%s %s/%s on %s, because %s has no text for this recording yet. It is replaced when %s produces its own transcript or summary._",
+		machineTranscriptProvenancePrefix, rec.Provider, rec.Model, day, label, label)
+}
+
+// hiveStoredAudioSource reports a source whose audio is stored on this hive
+// and whose only text is this hive's transcript.
+func hiveStoredAudioSource(source string) bool {
+	return source == RecordingType || source == UploadType
+}
+
+// isMachineProvenance reports the italic provenance line machineProvenance
+// writes, so displays (the Inbox excerpt) can leave it out.
+func isMachineProvenance(line string) bool {
+	line = strings.TrimSpace(line)
+	return strings.HasPrefix(line, "_"+hiveTranscriptProvenancePrefix+" ") || strings.HasPrefix(line, "_"+machineTranscriptProvenancePrefix+" ")
 }
 
 func isPendingNote(line string) bool {

@@ -401,6 +401,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 		"GH_AUTH":               lit(s.ghAuthInstructions()),
 		"WORK_TRACKER":          lit(s.workTrackerSection()),
 		"IN_FLIGHT":             lit(inflightNote(heldInflight)),
+		"TOPIC_CLAIMS":          lit(topicClaimsSection(s.topicClaimsFor(agentName))),
 		"PROJECT_ORG":           lit(s.cfg.Project.Org),
 		"PROJECT_NAME":          lit(s.cfg.Project.Name),
 		"PROJECT_PRIMARY_REPO":  lit(fullPrimaryRepo),

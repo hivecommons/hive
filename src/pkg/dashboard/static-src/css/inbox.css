@@ -45,7 +45,12 @@
     .inbox-add-url { flex: 1 1 16rem; min-width: 0; }
     .inbox-upload .kc-error { flex-basis: 100%; }
     /* ● Record (inbox-recorder.js): panel, red indicator, level meters */
-    .inbox-rec-panel { margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--surface); }
+    .inbox-rec-panel { position: relative; overflow: hidden; margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--surface); }
+    /* The saved panel auto-dismisses with the toast countdown bar (toastCountdownBar). */
+    .inbox-rec-panel .toast-bar { background: color-mix(in srgb, var(--green) 40%, transparent); }
+    .inbox-rec-panel[data-outcome="failed"] .toast-bar { background: color-mix(in srgb, var(--red) 40%, transparent); }
+    .inbox-rec-panel[data-outcome="stalled"] .toast-bar { background: color-mix(in srgb, var(--status-warn) 40%, transparent); }
+    .inbox-rec-panel[data-outcome="off"] .toast-bar { background: color-mix(in srgb, var(--blue) 40%, transparent); }
     .inbox-rec-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
     .inbox-rec-dot { color: var(--red); }
     .inbox-rec-dot.is-live { animation: inbox-rec-pulse 1.2s ease-in-out infinite; }

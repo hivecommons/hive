@@ -1099,6 +1099,9 @@ dashboard:
 #     http_allowlist: []
 #     allow_github_prompt: false
 #     github_prompt_allowlist: []
+#     # Owner-approved managed repos, written by Settings -> Security -> Prompt
+#     # sources (owner-only). Not needed in a hand-written seed.
+#     owner_github_prompt_repos: []
 #   defs:
 #     EXAMPLE_TOKEN:
 #       type: env

@@ -158,6 +158,9 @@ func (u *UploadSource) item(m UploadMeta) Item {
 		// machine transcript is written into the fact.
 		it.Pending = true
 		it.FactState = connector.FactContentPending
+		if days := u.mediaRetentionDays(); days > 0 && m.OriginalDeletedAt == nil {
+			it.AudioExpiresAt = m.AddedAt.Add(time.Duration(days) * hoursPerDay * time.Hour).UTC()
+		}
 		if it.FactPath != "" {
 			if data, err := os.ReadFile(it.FactPath); err == nil {
 				fm, _ := splitFrontMatter(string(data))
