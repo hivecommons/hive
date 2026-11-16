@@ -250,3 +250,76 @@ func TestParseGeminiTranscriptFallbacks(t *testing.T) {
 		t.Fatal("defaults")
 	}
 }
+
+// rawGemini serves fixed bodies per path, for the error branches.
+func rawGemini(t *testing.T, routes map[string]func(http.ResponseWriter, *http.Request)) *Gemini {
+	t.Helper()
+	mux := http.NewServeMux()
+	for pattern, h := range routes {
+		mux.HandleFunc(pattern, h)
+	}
+	srv := httptest.NewServer(mux)
+	t.Cleanup(srv.Close)
+	return &Gemini{APIKey: geminiTestKey, Model: "gemini-test", BaseURL: srv.URL, PollInterval: time.Millisecond}
+}
+
+func body(s string) func(http.ResponseWriter, *http.Request) {
+	return func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, s) }
+}
+
+func TestGeminiReplyAndUploadFailures(t *testing.T) {
+	ctx := context.Background()
+	small := bytesAudio([]byte("a"), "audio/ogg")
+	for name, reply := range map[string]string{
+		"blocked":   `{"promptFeedback":{"blockReason":"SAFETY"}}`,
+		"no answer": `{"candidates":[]}`,
+		"not json":  `<html>`,
+	} {
+		g := rawGemini(t, map[string]func(http.ResponseWriter, *http.Request){"POST /v1beta/models/{m}": body(reply)})
+		if _, err := g.Transcribe(ctx, small); err == nil {
+			t.Errorf("%s: want error", name)
+		}
+	}
+
+	big := bytesAudio(bytes.Repeat([]byte{2}, geminiInlineMaxBytes+1), "audio/webm")
+	noURL := rawGemini(t, map[string]func(http.ResponseWriter, *http.Request){"POST /upload/v1beta/files": body("")})
+	if _, err := noURL.Transcribe(ctx, big); err == nil || !strings.Contains(err.Error(), "no upload URL") {
+		t.Fatalf("no upload url = %v", err)
+	}
+
+	var deleted int
+	var mu sync.Mutex
+	var g *Gemini
+	g = rawGemini(t, map[string]func(http.ResponseWriter, *http.Request){
+		"POST /upload/v1beta/files": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Goog-Upload-Url", g.BaseURL+"/session")
+		},
+		"POST /session":          body(`{"file":{"name":"files/x","uri":"u","state":"PROCESSING"}}`),
+		"GET /v1beta/files/x":    body(`{"name":"files/x","uri":"u","state":"FAILED"}`),
+		"DELETE /v1beta/files/x": func(http.ResponseWriter, *http.Request) { mu.Lock(); deleted++; mu.Unlock() },
+	})
+	if _, err := g.Transcribe(ctx, big); err == nil || !strings.Contains(err.Error(), "did not become usable") {
+		t.Fatalf("failed file = %v", err)
+	}
+	mu.Lock()
+	if deleted == 0 {
+		t.Fatal("a failed upload must be deleted")
+	}
+	mu.Unlock()
+
+	bad := rawGemini(t, map[string]func(http.ResponseWriter, *http.Request){
+		"POST /upload/v1beta/files": func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("X-Goog-Upload-Url", "http://127.0.0.1:1/none")
+		},
+	})
+	if _, err := bad.Transcribe(ctx, big); err == nil || !IsRetryable(err) || strings.Contains(err.Error(), geminiTestKey) {
+		t.Fatalf("unreachable upload = %v", err)
+	}
+	openErr := Audio{Open: func(context.Context) (io.ReadCloser, error) { return nil, errors.New("boom") }}
+	if _, err := g.Transcribe(ctx, openErr); err == nil {
+		t.Fatal("open error must fail")
+	}
+	if _, err := g.Transcribe(ctx, Audio{}); err == nil {
+		t.Fatal("no audio must fail")
+	}
+}
