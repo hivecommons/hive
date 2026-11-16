@@ -4,9 +4,12 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/hivecommons/hive/crux"
 
+	"github.com/hivecommons/hive/pkg/campaignexport"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
@@ -41,7 +44,10 @@ type bootKnowledgeDeps struct {
 	ensureNousDirs        func(logger *slog.Logger)
 	loadNousState         func(logger *slog.Logger) *dashboard.NousState
 	newInceptionEngine    func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine
-	restartBrainstorm     func(ctx context.Context, mgr crux.Runtime, msg string) error
+	// exportRetiredCampaigns writes the one-time read-only export of retired
+	// inception campaign archives and campaign Jam data; nil skips it.
+	exportRetiredCampaigns func(cfg *config.Config, logger *slog.Logger)
+	restartBrainstorm      func(ctx context.Context, mgr crux.Runtime, msg string) error
 	// startConnectorSyncer runs the knowledge.connectors syncer (#11069);
 	// nil leaves it built but not started.
 	startConnectorSyncer func(ctx context.Context, s *connector.Syncer)
@@ -77,10 +83,32 @@ func defaultBootKnowledgeDeps() bootKnowledgeDeps {
 		newInceptionEngine: func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine {
 			return knowledge.NewInceptionEngine(inceptionDataDir, api, logger)
 		},
+		exportRetiredCampaigns: exportRetiredCampaigns,
 		restartBrainstorm: func(ctx context.Context, mgr crux.Runtime, msg string) error {
 			return mgr.RestartWithBootstrap(ctx, "brainstorm", msg)
 		},
 		startConnectorSyncer: func(ctx context.Context, s *connector.Syncer) { go s.Run(ctx) },
 		startPublishMirror:   func(ctx context.Context, m *connector.Mirror) { go m.Start(ctx) },
+	}
+}
+
+// exportRetiredCampaigns bundles retired inception campaign archives and the
+// campaign Jam store into /data/exports/campaigns-<date>.tar.gz (0600) the
+// first time either is found, and logs the path once. The sources are only
+// read; they stay in place for one release. A failure is logged and never
+// blocks boot.
+func exportRetiredCampaigns(cfg *config.Config, logger *slog.Logger) {
+	var metrics, logs, agents string
+	if cfg != nil {
+		metrics, logs, agents = cfg.Data.MetricsDir, cfg.Data.LogsDir, cfg.Data.AgentsDir
+	}
+	path, err := campaignexport.Export(inceptionDataDir, campaignexport.JamPath(metrics, logs, agents), time.Now())
+	if err != nil {
+		logger.Warn("retired campaigns export failed; the original files are untouched", "error", err)
+		return
+	}
+	if path != "" {
+		logger.Warn("retired campaigns exported", "path", path,
+			"detail", "inception campaigns, campaign Jam and recheck were retired in favour of Inception (spek) sessions; the original files stay in place for one release")
 	}
 }
