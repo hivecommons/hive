@@ -82,6 +82,9 @@ func ExtractUpload(ctx context.Context, kind string, data []byte) (Extracted, *U
 }
 
 func extractUpload(ctx context.Context, kind string, data []byte) (Extracted, *UploadError) {
+	if kind == UploadKindDOCX {
+		return extractDOCX(ctx, data)
+	}
 	text := normalizeText(data)
 	switch kind {
 	case UploadKindMarkdown:

@@ -76,6 +76,7 @@ var uploadTextExtensions = map[string]string{
 	".tab":      UploadKindTSV,
 	".html":     UploadKindHTML,
 	".htm":      UploadKindHTML,
+	".docx":     UploadKindDOCX,
 }
 
 // uploadUnsupportedExtensions names formats people commonly drop that this
@@ -102,7 +103,7 @@ func UploadSupportedExtensions() []string {
 }
 
 func uploadSupportedList() string {
-	return "md, txt, json, jsonl, yaml, csv, tsv, html"
+	return "md, txt, json, jsonl, yaml, csv, tsv, html, docx"
 }
 
 // uploadMagic is a binary signature that is never a text document.
@@ -163,6 +164,11 @@ const perMille = 1000
 func SniffUpload(name string, data []byte) (string, *UploadError) {
 	if len(data) == 0 {
 		return "", uploadErr(UploadErrEmpty, "the file is empty")
+	}
+	// A .docx is a zip: it skips the archive refusal and must then open as a
+	// Word document (guarded against zip bombs and XXE) in extraction.
+	if strings.EqualFold(filepath.Ext(name), ".docx") && docxLooksLikeZip(data) {
+		return UploadKindDOCX, nil
 	}
 	for _, m := range uploadBinaryMagic {
 		if len(data) >= m.offset+len(m.prefix) && bytes.Equal(data[m.offset:m.offset+len(m.prefix)], m.prefix) {

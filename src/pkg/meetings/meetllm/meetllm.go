@@ -88,6 +88,10 @@ type Config struct {
 	// `hive meeting-llm` command leaves it empty (Spek's prompt arrives
 	// whole on stdin); in-process callers such as the meeting persona set it.
 	System string
+	// Provider is "" (OpenAI-compatible chat completions) or
+	// ProviderAnthropic (the Anthropic Messages API, in-process callers
+	// only; Endpoint then defaults to AnthropicEndpoint).
+	Provider string
 }
 
 func envInt(getenv func(string) string, name string, def int) int {
@@ -237,6 +241,9 @@ func Complete(ctx context.Context, c Config, hc *http.Client, prompt string) (st
 		return "", err
 	}
 	defer release()
+	if c.Provider == ProviderAnthropic {
+		return completeAnthropic(ctx, c, hc, prompt)
+	}
 	msgs := make([]chatMessage, 0, 2)
 	if strings.TrimSpace(c.System) != "" {
 		msgs = append(msgs, chatMessage{Role: "system", Content: c.System})

@@ -97,21 +97,5 @@ func ParseAnswer(raw string) (Answer, error) {
 
 // ClipChat bounds a chat answer to three sentences and 300 characters.
 func ClipChat(text string) string {
-	text = strings.Join(strings.Fields(text), " ")
-	n, cut := 0, -1
-	for i, r := range text {
-		if r == '.' || r == '!' || r == '?' {
-			if i+1 == len(text) || text[i+1] == ' ' {
-				n++
-				if n == ChatMaxSentences {
-					cut = i + 1
-					break
-				}
-			}
-		}
-	}
-	if cut > 0 {
-		text = text[:cut]
-	}
-	return clip(text, ChatMaxChars)
+	return clipSentences(text, ChatMaxSentences, ChatMaxChars)
 }
