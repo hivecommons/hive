@@ -4,7 +4,7 @@
     // dibs happens inside the hive via POST /api/inbox/route.
     const INBOX_POLL_MS = 60000;
     const INBOX_BUSY_POLL_MS = 5000;
-    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗' };
+    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗', upload: '📎' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
     // Summaries longer than this many characters start collapsed.
     const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
@@ -29,8 +29,18 @@
     // is re-read once for its outcome.
     const INBOX_TX_POLL_MS = 3000;
     let _inboxTxPollTimer = null;
+    // Drag-and-drop ingest state (see the end of this file): upload rows,
+    // the ＋ Add panel, the send queue and whether the last click was inside
+    // the Inbox (for paste).
+    let _inboxUploads = [];
+    let _inboxUploadSeq = 0;
+    let _inboxAddOpen = false;
+    let _inboxUploadQueue = Promise.resolve();
+    let _inboxPointerInside = false;
 
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
+    // Uploaded documents have no audio; uploaded audio/video does.
+    function inboxItemHasAudio(it) { return !it || it.source !== 'upload' || it.upload_kind === 'audio' || it.upload_kind === 'video'; }
     function inboxItemKey(it) { return it.source + '/' + it.id; }
     // Playback is a read of private audio: owners and read-write sessions.
     function inboxViewerCanPlay() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
@@ -72,6 +82,12 @@
     function inboxStatePill(dest, st) {
       const label = INBOX_DEST_LABELS[dest] || dest;
       if (!st) return '';
+      // Sent into an Inception (spek) session: "routed: session/<id> (<name>)"
+      // with a button that opens that session's tab.
+      if (dest === 'session') {
+        return '<span class="kc-pill" data-status="ok" title="Sent into an Inception (spek) session">spek session</span> <span class="muted-xs">routed: ' + escapeHtml(st.note || ('session/' + (st.session || ''))) + '</span>' +
+          (st.session ? ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSession" data-arg0="' + escapeHtml(st.session) + '">open session</button>' : '');
+      }
       const status = st.status === 'filed' || st.status === 'delegated' ? 'ok' : (st.status === 'failed' ? 'error' : 'syncing');
       const text = st.status === 'filed' ? label + ' filed' : st.status === 'delegated' ? label + ' handed to agent' : label + ' ' + st.status;
       const title = st.error ? escapeHtml(st.error) : (st.repo ? escapeHtml(st.repo) : '');
@@ -98,7 +114,11 @@
         if (long) html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-more" data-action="inboxToggleSummary" data-arg0="' + src + '" data-arg1="' + id + '">' + (expanded ? 'less' : 'more') + '</button>';
         return html;
       }
-      if (it.pending || (cached && cached.pending)) {
+      // Any text (a machine transcript included) means the item is not
+      // pending any more, whatever the source still reports: the "not
+      // transcribed yet" line would contradict the transcript shown below.
+      const hasText = !!(it.has_transcript || (it.transcription && it.transcription.status === 'done') || (cached && (cached.transcript || cached.summary)));
+      if (!hasText && (it.pending || (cached && cached.pending))) {
         const tx = it.transcribable && !it.transcribe_unavailable ? ' Hive can transcribe this: click 🎧 Transcribe.'
           : (it.transcribe_unavailable ? ' Hive can transcribe this once transcription is set up (see 🎧 Transcribe below).' : '');
         // Meeting platforms whose pending items read "<label> has no transcript"
@@ -117,6 +137,8 @@
       const c = _inboxContent[key];
       if (!c) return '<div class="inbox-transcript muted-xs">Loading transcript…</div>';
       if (c.error) return '<div class="inbox-transcript kc-error muted-xs">' + escapeHtml(c.error) + '</div>';
+      // A dropped document's text is the markdown the hive extracted.
+      if (it.source === 'upload' && !c.transcript) return '<div class="inbox-transcript"><div class="muted-xs"><strong>Extracted text</strong></div><pre class="inbox-transcript-text">' + escapeHtml(c.markdown || '') + '</pre></div>';
       let html = '<div class="inbox-transcript">';
       if (c.transcript && c.transcript_label) html += '<div class="muted-xs"><strong>' + escapeHtml(c.transcript_label) + '</strong></div>';
       if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
@@ -160,12 +182,13 @@
     // Progress bar for a queued or running transcription, in the connector
     // sync progress styling (kc-progress). Queued shows its place in line;
     // running shows phase, percent, time left (aria-live) and elapsed time.
-    function inboxTxProgressHtml(st, nowMs) {
+    function inboxTxProgressHtml(st, nowMs, then) {
       if (!st || (st.status !== 'queued' && st.status !== 'running')) return '';
       const phases = { downloading: 'Downloading audio', decoding: 'Preparing audio', transcribing: 'Transcribing', finalizing: 'Finishing' };
       if (st.status === 'queued' || !st.started_at) {
         const ahead = Number(st.queue_position) || 0;
-        const wait = ahead > 0 ? 'Waiting: ' + ahead + (ahead === 1 ? ' transcription' : ' transcriptions') + ' ahead (one runs at a time)' : 'Starting…';
+        const thenText = then ? ', then → ' + then : '';
+        const wait = (then ? 'Transcribing' + thenText + ': ' : '') + (ahead > 0 ? 'Waiting: ' + ahead + (ahead === 1 ? ' transcription' : ' transcriptions') + ' ahead (one runs at a time)' : 'Starting…');
         return '<div class="kc-progress" data-inbox-tx-progress data-phase="queued" role="progressbar" aria-label="Transcription queued" aria-valuetext="' + escapeHtml(wait) + '">' +
           '<progress class="kc-progress-bar" aria-hidden="true"></progress>' +
           '<div class="kc-progress-copy"><span class="kc-progress-label">' + escapeHtml(wait) + '</span></div></div>';
@@ -174,7 +197,7 @@
       const phase = phases[st.phase] || 'Transcribing';
       const eta = st.phase === 'finalizing' ? 'almost done' : (inboxTxEtaText(st.eta_seconds) || (pct > 0 ? 'finishing up' : 'estimating time left'));
       const elapsed = inboxTxElapsedText(st.started_at, nowMs);
-      const label = phase + ' · ' + pct + '%';
+      const label = phase + (then ? ', then → ' + then : '') + ' · ' + pct + '%';
       return '<div class="kc-progress" data-inbox-tx-progress data-phase="' + escapeHtml(st.phase || 'transcribing') + '" role="progressbar" aria-label="Transcription progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '" aria-valuetext="' + escapeHtml(label + ', ' + eta) + '">' +
         '<progress class="kc-progress-bar" max="100" value="' + pct + '" aria-hidden="true"></progress>' +
         '<div class="kc-progress-copy"><span class="kc-progress-label" title="' + escapeHtml(st.estimated ? 'Estimated from this provider\'s usual speed' : 'Measured from the transcript so far') + '">' + escapeHtml(label) + ' · <span data-inbox-tx-eta aria-live="polite">' + escapeHtml(eta) + '</span></span>' +
@@ -207,7 +230,7 @@
         html += '<span class="kc-pill" data-status="' + pill + '" title="' + escapeHtml(when ? 'Updated ' + when : '') + '">' +
           (busy ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> ' : '') + escapeHtml(label) + '</span>';
         if (st.reason && (st.status === 'failed' || st.status === 'skipped')) html += ' <span class="muted-xs inbox-tx-reason" role="alert">' + escapeHtml(st.reason) + '</span>';
-        if (busy) html += inboxTxProgressHtml(st);
+        if (busy) html += inboxTxProgressHtml(st, undefined, inboxIntentThen(it));
       }
       const why = inboxTxUnavailableText(it.transcribe_unavailable);
       if (why) {
@@ -301,19 +324,27 @@
       // The backing Knowledge fact is a plain link in the metadata line, not
       // an action: it only opens the fact.
       const factLink = it.fact_slug ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
-      const meta = [escapeHtml(it.source), when ? 'recorded ' + when : '', dur, factLink].filter(Boolean).join(' · ');
+      // Files and links someone added show where they came from and who
+      // added them ("upload · notes.md · added 2h ago by ana").
+      const meta = it.source === 'upload'
+        ? [escapeHtml(it.origin || 'upload'), when ? 'added ' + when : '', it.added_by ? 'by ' + escapeHtml(it.added_by) : '', dur, factLink].filter(Boolean).join(' · ')
+        : [escapeHtml(it.source), when ? 'recorded ' + when : '', dur, factLink].filter(Boolean).join(' · ');
       const routes = it.routes || {};
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
       if (it.dismissed) pills += '<span class="kc-pill" title="Kept as a Knowledge fact only">knowledge only</span>';
+      for (const d of Object.keys(it.share_intents || {})) {
+        const si = it.share_intents[d];
+        if (si && si.status === 'failed') pills += '<span class="kc-pill" data-status="error" title="' + escapeHtml(si.error || '') + '">→ ' + escapeHtml(inboxIntentLabel(d)) + ' failed</span> <span class="kc-error muted-xs" role="alert">' + escapeHtml(si.error || '') + '</span> ';
+      }
       const owner = viewerIsOwner();
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
       let actions = '';
-      if (inboxViewerCanPlay()) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
-      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + ' Transcript</button>';
+      if (inboxViewerCanPlay() && inboxItemHasAudio(it)) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
+      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + (it.source === 'upload' && !inboxItemHasAudio(it) ? ' Text' : ' Transcript') + '</button>';
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
-        (owner ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
+        (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
         '<div class="kb-fact-body"><div class="kb-fact-title">' + escapeHtml(it.title || it.id) + '</div>' +
         '<div class="muted-xs">' + meta + '</div>' +
@@ -422,7 +453,7 @@
       catch (e) { if (!e || e.name !== 'AbortError') await inboxShareCopy(src, id); }
     }
     // The Share menu has two groups. Hive actions file or keep the item and
-    // are owner-only (the route and dismiss APIs are); Link actions only share
+    // need owner or read-write (as do the route and dismiss APIs); Link actions only share
     // a link. Each entry is {id, label, enabled(item, role), run(item)} where
     // label is a string or fn(item), and enabled returns true, false (hide) or
     // a string (show disabled, the string is the reason). Other features add
@@ -430,15 +461,40 @@
     // session action, instead of a new row button. An entry may also carry
     // bulk(items) to appear in the multi-select Hive menu.
     const inboxShareHiveActions = [
-      { id: 'rfc', dest: 'spek_rfc', label: 'RFC…', enabled: (it, role) => role !== 'owner' ? false : it.pending ? INBOX_NO_TEXT_REASON : !(((_inboxCache || {}).repos || []).length) ? 'No RFC repository configured: set one in Settings → Inbox' : true, run: it => inboxOpenRoute(it.source, it.id, 'spek_rfc') },
-      { id: 'knowledge', label: it => it.dismissed ? 'Back to inbox' : 'Knowledge', enabled: (it, role) => role === 'owner', run: it => it.dismissed ? inboxUndismiss(it.source, it.id) : inboxDismiss(it.source, it.id), bulkLabel: 'Knowledge', bulk: () => inboxDismissSelected() },
-      { id: 'dibs', dest: 'dibs', label: 'DIBS', enabled: (it, role) => role !== 'owner' ? false : inboxDibsReady() ? true : 'Not configured: set the dibs URL in Settings → Inbox → dibs URL', run: it => inboxOpenRoute(it.source, it.id, 'dibs') },
+      { id: 'rfc', dest: 'spek_rfc', label: 'RFC…', enabled: (it, role) => !inboxCanShare(role) ? false : inboxShareGate(it, 'spek_rfc') || (!(((_inboxCache || {}).repos || []).length) ? 'No RFC repository configured: set one in Settings → Inbox' : true), run: it => inboxOpenRoute(it.source, it.id, 'spek_rfc') },
+      // spek…: send into an Inception (spek) session (the dialog and the
+      // seed API live with the session code below). An audio-only item is
+      // transcribed first and seeds the session when its transcript is ready.
+      { id: 'spek', dest: 'spek', label: 'spek…', enabled: (it, role) => !inboxCanShare(role) ? false : inboxShareGate(it, 'spek') || true, run: it => inboxOpenSessionDialog([inboxItemKey(it)]), bulkLabel: 'spek…', bulk: keys => inboxOpenSessionDialog(keys) },
+      { id: 'knowledge', dest: 'dismiss', label: it => it.dismissed ? 'Back to inbox' : 'Knowledge', enabled: (it, role) => !inboxCanShare(role) ? false : (it.dismissed ? true : inboxShareGate(it, 'dismiss') || true), run: it => it.dismissed ? inboxUndismiss(it.source, it.id) : inboxDismiss(it.source, it.id), bulkLabel: 'Knowledge', bulk: () => inboxDismissSelected() },
+      { id: 'dibs', dest: 'dibs', label: 'DIBS', enabled: (it, role) => !inboxCanShare(role) ? false : inboxDibsReady() ? true : 'Not configured: set the dibs URL in Settings → Inbox → dibs URL', run: it => inboxOpenRoute(it.source, it.id, 'dibs') },
+      { id: 'tx-settings', label: '⚙ Transcription settings…', enabled: (it, role) => role === 'owner' && inboxTxBlocked(it) ? true : false, run: () => inboxOpenSettings() },
     ];
     const inboxShareLinkActions = [
       { id: 'copy', label: 'Copy link', enabled: () => true, run: it => inboxShareCopy(it.source, it.id) },
       { id: 'native', label: 'Share…', enabled: () => typeof navigator !== 'undefined' && !!navigator.share, run: it => inboxShareNative(it.source, it.id) },
     ];
-    const INBOX_NO_TEXT_REASON = 'No transcript yet: use 🎧 Transcribe first';
+    // Owners and read-write viewers may share (route, Knowledge); read may not.
+    function inboxCanShare(role) { return role === 'owner' || role === 'read-write'; }
+    // An audio-only item (pending, audio, transcription cannot run) cannot be
+    // shared to RFC, spek or Knowledge: they need a transcript first.
+    function inboxTxBlocked(it) { return !!(it && it.pending && it.transcribe_unavailable); }
+    // inboxShareGate returns the disabled reason for a Hive destination that
+    // needs a transcript, or '' when it may proceed (audio-only items are
+    // transcribed first, then shared).
+    function inboxShareGate(it, dest) {
+      const intent = (it.share_intents || {})[dest];
+      if (intent && intent.status === 'waiting') return 'Transcribing, then → ' + inboxIntentLabel(dest);
+      if (inboxTxBlocked(it)) return inboxTxUnavailableText(it.transcribe_unavailable) + ' (a transcript is needed first)';
+      return '';
+    }
+    function inboxIntentLabel(dest) { return ({ spek_rfc: 'RFC', dismiss: 'Knowledge', spek: 'spek' })[dest] || dest; }
+    // The first waiting share intent of an item, for the progress label.
+    function inboxIntentThen(it) {
+      const m = (it && it.share_intents) || {};
+      const d = Object.keys(m).find(k => m[k] && m[k].status === 'waiting');
+      return d ? inboxIntentLabel(d) : '';
+    }
     function inboxDibsReady() { const st = (_inboxCache || {}).settings || {}; return !!st.dibs_url && !!st.dibs_token_set; }
     // inboxShareMenuGroups resolves the registries for one item and the
     // viewer's role into labelled groups; empty groups are dropped.
@@ -449,7 +505,8 @@
         const en = a.enabled(it, role);
         if (en === false) return null;
         let label = typeof a.label === 'function' ? a.label(it) : a.label;
-        if (a.dest && routes[a.dest] && routes[a.dest].status === 'failed') label = 'Retry ' + label;
+        const intents = (it && it.share_intents) || {};
+        if (a.dest && ((routes[a.dest] && routes[a.dest].status === 'failed') || (intents[a.dest] && intents[a.dest].status === 'failed'))) label = 'Retry ' + label;
         return { id: a.id, label, disabled: typeof en === 'string', hint: typeof en === 'string' ? en : '' };
       }).filter(Boolean);
       return [{ id: 'hive', label: 'Hive', items: resolve(inboxShareHiveActions) }, { id: 'link', label: 'Link', items: resolve(inboxShareLinkActions) }].filter(g => g.items.length);
@@ -467,9 +524,9 @@
       const entry = (group === 'hive' ? inboxShareHiveActions : inboxShareLinkActions).find(a => a.id === act);
       if (it && entry) await entry.run(it);
     }
-    // Bulk Hive menu: entries with bulk(), owner only.
+    // Bulk Hive menu: entries with bulk(), owner or read-write.
     function inboxBulkMenuGroups() {
-      if (window._hiveRole !== 'owner') return [];
+      if (!inboxCanShare(window._hiveRole)) return [];
       const items = inboxShareHiveActions.filter(a => typeof a.bulk === 'function').map(a => ({ id: a.id, label: a.bulkLabel || (typeof a.label === 'function' ? a.id : a.label), disabled: false, hint: '' }));
       return items.length ? [{ id: 'hive', label: 'Hive', items }] : [];
     }
@@ -593,13 +650,15 @@
         ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenIntegrations">Connect sources</button></div>' +
         '<div class="kc-actions">' +
         '<label class="muted-xs inbox-toggle"><input type="checkbox" data-change-action="inboxToggleProcessed"' + (_inboxShowProcessed ? ' checked' : '') + '> show processed</label>' +
+        (inboxCanAdd() ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxToggleAdd" aria-expanded="' + (_inboxAddOpen ? 'true' : 'false') + '" aria-controls="inbox-add" title="Add files to the Inbox (or drop them anywhere on it, or paste with Ctrl/Cmd+V)">＋ Add</button>' : '') +
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
+      if (inboxCanAdd()) html += inboxAddPanelHtml() + inboxUploadsHtml();
       if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
       if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
       const shown = items.filter(it => _inboxShowProcessed || !it.processed);
-      if (owner && shown.length) {
+      if (inboxCanShare(window._hiveRole) && shown.length) {
         const sel = _inboxSelected.size;
         html += '<div class="kc-actions mb-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxSelectAll">' + (sel === shown.length ? 'Clear selection' : 'Select all') + '</button>' +
           (sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxBulkMenu" data-arg-types="t" aria-haspopup="menu" aria-expanded="false">Hive (' + sel + ') ▾</button>' : '') + '</div>';
@@ -635,7 +694,7 @@
       return data;
     }
     async function inboxDismiss(src, id) {
-      try { await inboxPostDismiss([{ source: src, item_id: id }], false); showToast('Kept as a Knowledge fact only', 'success'); await fetchInbox(); }
+      try { const d = await inboxPostDismiss([{ source: src, item_id: id }], false); showToast(d && d.waiting_transcript ? 'Transcribing, then → Knowledge' : 'Kept as a Knowledge fact only', 'success'); await fetchInbox(); }
       catch (e) { showToast('Dismiss failed: ' + e.message, 'error'); }
     }
     async function inboxUndismiss(src, id) {
@@ -646,7 +705,7 @@
       const items = Array.from(_inboxSelected).map(k => { const i = k.indexOf('/'); return { source: k.slice(0, i), item_id: k.slice(i + 1) }; });
       if (!items.length) return;
       if (!(await hiveConfirm('Mark ' + items.length + ' item' + (items.length === 1 ? '' : 's') + ' as Knowledge only? They stay searchable as facts; no RFC or dibs idea is created.', 'Knowledge only'))) return;
-      try { await inboxPostDismiss(items, false); _inboxSelected.clear(); await fetchInbox(); }
+      try { const d = await inboxPostDismiss(items, false); _inboxSelected.clear(); if (d && d.waiting_transcript) showToast(d.waiting_transcript + ' item' + (d.waiting_transcript === 1 ? '' : 's') + ' will be kept once transcribed', 'success'); await fetchInbox(); }
       catch (e) { showToast('Dismiss failed: ' + e.message, 'error'); }
     }
 
@@ -680,11 +739,130 @@
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         kbCloseModal();
-        showToast((INBOX_DEST_LABELS[dest] || dest) + ' queued — the pill updates when it finishes.', 'success');
+        showToast(data.waiting_transcript ? 'Transcribing, then → ' + (INBOX_DEST_LABELS[dest] || dest) + '. It is sent when the transcript is ready.' : (INBOX_DEST_LABELS[dest] || dest) + ' queued — the pill updates when it finishes.', 'success');
         await fetchInbox();
       } catch (e) {
         if (errEl) errEl.textContent = e.message; else showToast('Route failed: ' + e.message, 'error');
       }
+    }
+
+    // Share → Hive → spek…: send items into an interactive Inception (spek)
+    // session, a new one (name from the first item, group "inbox", the last
+    // CLI this browser used) or a running one the viewer may type into. The
+    // hive writes one enveloped file per item under .hive/inbox/ in the
+    // session's workspace and queues a fixed Send that names those files
+    // (POST /api/sessions with seed_items, or POST /api/sessions/{id}/seed).
+    const INBOX_SESSION_GROUP = 'inbox';
+    const INBOX_SESSION_VENDOR_KEY = 'hive.sessions.lastVendor';
+    const INBOX_SESSION_NAME_MAX = 64;
+    let _inboxSessionKeys = [];
+    function inboxSessionCanSend() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
+    function inboxKeyRef(key) { const i = key.indexOf('/'); return { source: key.slice(0, i), id: key.slice(i + 1) }; }
+    function inboxSessionName(items) {
+      const first = (items[0] && (items[0].title || items[0].id)) || 'Inbox';
+      const name = Array.from(String(first).trim()).slice(0, INBOX_SESSION_NAME_MAX).join('');
+      return name || 'Inbox';
+    }
+    function inboxSessionLastVendor() { try { return localStorage.getItem(INBOX_SESSION_VENDOR_KEY) || ''; } catch (e) { return ''; } }
+    // inboxSessionPickVendor: the last-used vendor when it is still available,
+    // else the first available one.
+    function inboxSessionPickVendor(vendors, last) {
+      const avail = (vendors || []).filter(v => v && v.available);
+      const hit = avail.find(v => v.id === last);
+      return hit ? hit.id : (avail[0] ? avail[0].id : '');
+    }
+    // Running sessions the viewer can send into: the list already holds only
+    // sessions the viewer may see, and for owner/read-write seeing a running
+    // session (own or shared) is being allowed to type into it.
+    function inboxSessionTargets(sessions) {
+      return (sessions || []).filter(s => s && s.status === 'running');
+    }
+    function inboxSessionDialogHtml(items, data, last) {
+      const vendors = (data.vendors || []).filter(v => v && v.available);
+      const running = inboxSessionTargets(data.sessions);
+      const pick = inboxSessionPickVendor(vendors, last);
+      const titles = items.map(it => escapeHtml(it.title || it.id));
+      let body = '<p class="muted-note m-0"><strong>' + (items.length === 1 ? titles[0] : items.length + ' items') + '</strong></p>';
+      if (items.length > 1) body += '<ul class="muted-xs inbox-session-items">' + titles.map(t => '<li>' + t + '</li>').join('') + '</ul>';
+      body += '<p class="muted-note">The hive writes ' + (items.length === 1 ? 'the item' : 'each item') + ' (title, summary, transcript, highlights) to <code>.hive/inbox/</code> in the session\'s workspace and queues a Send asking the CLI to start a spec with the spek-new skill. The text goes in as untrusted data, never as instructions.</p>';
+      if (items.some(it => it.pending)) body += '<p class="muted-xs">An item with audio but no text yet is transcribed first (🎧 Transcribe) and goes into the session when its transcript is ready.</p>';
+      body += '<fieldset class="inbox-session-mode"><label class="muted-note"><input type="radio" name="inbox-session-mode" value="new" checked data-inbox-session-mode="new"> Start a new session</label>' +
+        '<div class="inbox-settings-grid">' +
+        '<label class="muted-note inbox-field">Name<input class="kb-search-box mt-2" id="inbox-session-name" maxlength="' + INBOX_SESSION_NAME_MAX + '" autocomplete="off" value="' + escapeHtml(inboxSessionName(items)) + '"></label>' +
+        '<label class="muted-note inbox-field">Group<input class="kb-search-box mt-2" id="inbox-session-group" autocomplete="off" value="' + INBOX_SESSION_GROUP + '"></label>' +
+        '<label class="muted-note inbox-field">CLI<select class="field-input field-input-block mt-2" id="inbox-session-vendor">' +
+        vendors.map(v => '<option value="' + escapeHtml(v.id) + '"' + (v.id === pick ? ' selected' : '') + '>' + escapeHtml(v.label || v.id) + '</option>').join('') + '</select></label></div>' +
+        (vendors.length ? '' : '<p class="kc-error muted-xs">No CLI is installed on this hive.</p>') +
+        '<label class="muted-note"><input type="radio" name="inbox-session-mode" value="existing" data-inbox-session-mode="existing"' + (running.length ? '' : ' disabled') + '> Add to a running session</label>' +
+        '<select class="field-input field-input-block mt-2" id="inbox-session-existing" aria-label="Running session"' + (running.length ? '' : ' disabled') + '>' +
+        (running.length ? running.map(s => '<option value="' + escapeHtml(s.id) + '">' + escapeHtml((s.name || s.id) + (s.group ? ' · ' + s.group : '') + ' (' + (s.vendor || '') + ')') + '</option>').join('') : '<option value="">No running session you can type into</option>') +
+        '</select></fieldset>';
+      body += '<div class="hive-dialog-error" role="alert" id="inbox-session-error"></div>' +
+        '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
+        '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxConfirmSession">Send to session</button></div>';
+      return body;
+    }
+    // inboxOpenSessionDialog(keys): keys are "source/id" (one item, or the
+    // multi-select). The session list is read fresh so it names only
+    // sessions that are running now.
+    async function inboxOpenSessionDialog(keys) {
+      if (!inboxSessionCanSend()) return;
+      keys = (keys || []).filter(Boolean);
+      const items = keys.map(k => { const r = inboxKeyRef(k); return inboxFind(r.source, r.id) || { source: r.source, id: r.id, title: r.id }; });
+      if (!items.length) return;
+      let data = {};
+      try {
+        const r = await fetch('/api/sessions', { headers: _inceptionAuthHeaders(), credentials: 'same-origin', cache: 'no-store' });
+        data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      } catch (e) { showToast('Could not list sessions: ' + e.message, 'error'); return; }
+      if (data.enabled === false) { showToast('Inception (spek) sessions are not enabled on this hive.', 'error'); return; }
+      _inboxSessionKeys = keys;
+      kbShowModal('Send to an Inception (spek) session', inboxSessionDialogHtml(items, data, inboxSessionLastVendor()), { width: '560px' });
+    }
+    function inboxOpenSessionSelected() { return inboxOpenSessionDialog(Array.from(_inboxSelected)); }
+    // inboxSessionRequest builds the POST for the dialog's choice.
+    function inboxSessionRequest(mode, keys, fields) {
+      const items = keys.map(inboxKeyRef);
+      if (mode === 'existing') return { path: '/api/sessions/' + encodeURIComponent(fields.session) + '/seed', body: { items: items } };
+      return { path: '/api/sessions', body: { name: fields.name, group: fields.group, vendor: fields.vendor, shared: false, seed_items: items } };
+    }
+    // inboxSessionErrorText: a 409 for an item without text says how to fix it.
+    function inboxSessionErrorText(status, data) {
+      const msg = (data && data.error) || ('HTTP ' + status);
+      if (status === 409 && data && data.reason === 'no_text') return msg + (data.transcribe ? ' Use 🎧 Transcribe on the item, then send it again.' : '');
+      return msg;
+    }
+    async function inboxConfirmSession() {
+      const val = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+      const modeEl = document.querySelector('[data-inbox-session-mode]:checked');
+      const mode = modeEl ? modeEl.value : 'new';
+      const errEl = document.getElementById('inbox-session-error');
+      const fields = { name: val('inbox-session-name'), group: val('inbox-session-group'), vendor: val('inbox-session-vendor'), session: val('inbox-session-existing') };
+      const fail = m => { if (errEl) errEl.textContent = m; else showToast(m, 'error'); };
+      if (mode === 'new' && (!fields.name || !fields.vendor)) { fail('A new session needs a name and a CLI.'); return; }
+      if (mode === 'existing' && !fields.session) { fail('Pick a running session.'); return; }
+      const keys = _inboxSessionKeys.slice();
+      const req = inboxSessionRequest(mode, keys, fields);
+      let data = {};
+      try {
+        const r = await fetch(req.path, { method: 'POST', headers: _inceptionAuthHeaders(), credentials: 'same-origin', body: JSON.stringify(req.body) });
+        data = await r.json().catch(() => ({}));
+        if (!r.ok || data.ok === false) { fail(inboxSessionErrorText(r.status, data)); return; }
+      } catch (e) { fail(e.message); return; }
+      kbCloseModal();
+      if (mode === 'new' && fields.vendor) { try { localStorage.setItem(INBOX_SESSION_VENDOR_KEY, fields.vendor); } catch (e) { /* convenience only */ } }
+      for (const k of keys) _inboxSelected.delete(k);
+      const sess = data.session || { id: fields.session };
+      const waiting = ((data.seed || {}).waiting || []).length;
+      showToast('Sent ' + keys.length + ' item' + (keys.length === 1 ? '' : 's') + ' to ' + (sess.name || fields.name || 'the session') +
+        (waiting ? ' (' + waiting + ' transcribing first; ' + (waiting === 1 ? 'it goes' : 'they go') + ' in when the transcript is ready)' : ''), 'success');
+      if (typeof sessionsFocus === 'function') sessionsFocus(sess);
+      fetchInbox();
+    }
+    // inboxOpenSession: the "open session" button on a routed item.
+    function inboxOpenSession(id) {
+      if (typeof sessionsFocus === 'function') sessionsFocus({ id: id });
     }
 
     // Settings drawer: default RFC repo, dibs URL, and ordered auto-routing rules.
@@ -888,6 +1066,7 @@
     function renderGovInbox() {
       return '<div class="config-section" data-config-section="Inbox"><h3>Inbox</h3>' +
         '<p class="text-muted fs-base">Default RFC repository, dibs URL, auto-routing rules and machine transcription (whisper, Gemini or Deepgram) for voice recordings. ' + yamlHint('inbox.spek.repo') + ' ' + yamlHint('inbox.dibs.url') + ' ' + yamlHint('inbox.rules') + ' ' + yamlHint('inbox.transcription') + '</p>' +
+        '<p class="text-muted fs-base">Files dropped onto the Inbox: largest file, files per drop, per-hive quota and how long originals are kept (the extracted text always stays). ' + yamlHint('inbox.uploads.max_file_bytes') + ' ' + yamlHint('inbox.uploads.max_files_per_drop') + ' ' + yamlHint('inbox.uploads.quota_bytes') + ' ' + yamlHint('inbox.uploads.document_retention_days') + ' ' + yamlHint('inbox.uploads.media_retention_days') + '</p>' +
         '<div id="inbox-settings-inline"><p class="muted-xs">Loading…</p></div></div>';
     }
     async function loadInboxSettingsInline() {
@@ -970,3 +1149,208 @@
         '<textarea class="kb-search-box" id="kb-plaud-paste-' + n + '" rows="3" placeholder="http://localhost:8199/auth/callback?code=…  or  {&quot;access_token&quot;: …}"></textarea>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbPlaudPasteComplete" data-arg0="' + n + '">Submit</button>' + openInbox + '</div></details>';
     }
+
+    // ── Add files to the Inbox: drop anywhere on the section, ＋ Add, or
+    // paste with Ctrl/Cmd+V while the Inbox has focus. Owner and read-write
+    // only; read sessions see none of it. Each file is sent on its own
+    // request (POST /api/inbox/uploads) so its row can show progress and its
+    // own error; the hive sniffs the content and refuses anything outside the
+    // allowlist, these client checks only spare a pointless upload.
+    const INBOX_UPLOAD_LABELS = { queued: 'Waiting', uploading: 'Uploading', done: 'Added', error: 'Not added' };
+    function inboxUploadSettings() { return (((_inboxCache || {}).settings) || {}).uploads || {}; }
+    function inboxCanAdd() { return inboxViewerCanPlay() && !!inboxUploadSettings().enabled; }
+    function inboxFmtBytes(n) {
+      const b = Number(n) || 0;
+      if (b < 1024) return b + ' B';
+      if (b < 1048576) return (b / 1024).toFixed(1) + ' KB';
+      return (b / 1048576).toFixed(1) + ' MB';
+    }
+    // inboxUploadPlan checks a drop against the limits before anything is
+    // sent: per file, too many files, too large, empty, or an extension the
+    // hive does not read. Files without an extension go to the hive, which
+    // decides from the content.
+    function inboxUploadPlan(files, limits) {
+      const maxFiles = Number(limits.max_files_per_drop) || 0;
+      const maxBytes = Number(limits.max_file_bytes) || 0;
+      const exts = Array.isArray(limits.extensions) ? limits.extensions : [];
+      return Array.from(files || []).map((f, i) => {
+        const name = (f && f.name) || 'pasted file';
+        const row = { name, size: Number(f && f.size) || 0, file: f, status: 'queued', progress: 0 };
+        const dot = name.lastIndexOf('.');
+        const ext = dot > 0 ? name.slice(dot).toLowerCase() : '';
+        if (maxFiles && i >= maxFiles) { row.status = 'error'; row.code = 'too_many_files'; row.error = 'Too many files in one drop: at most ' + maxFiles + ' at a time.'; }
+        else if (!row.size) { row.status = 'error'; row.code = 'empty'; row.error = 'The file is empty.'; }
+        else if (maxBytes && row.size > maxBytes) { row.status = 'error'; row.code = 'too_large'; row.error = 'Too large: ' + inboxFmtBytes(row.size) + ' (the limit is ' + inboxFmtBytes(maxBytes) + ').'; }
+        else if (ext && exts.length && exts.indexOf(ext) < 0) { row.status = 'error'; row.code = 'unsupported_type'; row.error = 'Unsupported type ' + ext + ': the Inbox reads ' + exts.join(' ') + '.'; }
+        return row;
+      });
+    }
+    function inboxUploadRowHtml(row) {
+      const pct = Math.max(0, Math.min(100, Math.round((Number(row.progress) || 0) * 100)));
+      const pill = row.status === 'done' ? 'ok' : (row.status === 'error' ? 'error' : 'syncing');
+      const label = row.link && row.status === 'uploading' ? 'Fetching' : (INBOX_UPLOAD_LABELS[row.status] || row.status) + (row.status === 'uploading' ? ' ' + pct + '%' : '');
+      let html = '<li class="inbox-upload" data-inbox-upload="' + escapeHtml(String(row.id)) + '" data-status="' + escapeHtml(row.status) + '">' +
+        '<span class="inbox-upload-name">' + escapeHtml(row.name) + '</span> <span class="muted-xs">' + escapeHtml(row.link ? 'link' : inboxFmtBytes(row.size)) + '</span> ' +
+        '<span class="kc-pill" data-status="' + pill + '">' + escapeHtml(label) + '</span>';
+      if (!row.link && (row.status === 'uploading' || row.status === 'queued')) html += '<progress class="kc-progress-bar inbox-upload-bar" max="100" value="' + pct + '" aria-label="' + escapeHtml('Uploading ' + row.name) + '"></progress>';
+      if (row.status === 'done' && row.key) html += ' <a href="#" class="inbox-link" data-action="inboxFocusItem" data-prevent="1" data-arg0="' + escapeHtml(row.key) + '">show item</a>';
+      if (row.status === 'error' && row.error) html += ' <span class="kc-error muted-xs" role="alert">' + escapeHtml(row.error) + '</span>';
+      return html + '</li>';
+    }
+    function inboxUploadsHtml() {
+      if (!_inboxUploads.length) return '';
+      const finished = _inboxUploads.some(r => r.status === 'done' || r.status === 'error');
+      return '<div class="inbox-uploads"><div class="row-between"><span class="muted-xs">Added files</span>' +
+        (finished ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxClearUploads">Clear finished</button>' : '') +
+        '</div><ul class="inbox-upload-list" aria-label="Files being added">' + _inboxUploads.map(inboxUploadRowHtml).join('') + '</ul></div>';
+    }
+    function inboxAddPanelHtml() {
+      if (!_inboxAddOpen) return '';
+      const u = inboxUploadSettings();
+      const exts = Array.isArray(u.extensions) ? u.extensions : [];
+      const limit = (u.max_files_per_drop ? 'up to ' + u.max_files_per_drop + ' files' : 'several files') + (u.max_file_bytes ? ' of ' + inboxFmtBytes(u.max_file_bytes) + ' each' : '');
+      return '<div class="inbox-add" id="inbox-add" role="group" aria-label="Add files to the Inbox">' +
+        '<p class="muted-xs m-0">Drop files anywhere on the Inbox, paste them with Ctrl/Cmd+V, or choose them here: ' + escapeHtml(limit) + '. Supported: ' + escapeHtml(exts.join(' ')) + '. Files stay on this hive; their text reaches an LLM only when you share the item.</p>' +
+        '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxChooseFiles">Choose files…</button>' +
+        '<input type="file" multiple hidden class="inbox-file-input" id="inbox-file-input" accept="' + escapeHtml(exts.join(',')) + '" data-change-action="inboxPickFiles" data-arg-types="t" aria-label="Files to add to the Inbox"></div>' +
+        (u.links ? '<div class="kc-actions mt-2"><input type="url" class="kb-search-box inbox-add-url" id="inbox-add-url" placeholder="https://… (a page, or a linked md, json, csv… file)" autocomplete="off" aria-label="Link to add to the Inbox" data-enter-action="inboxAddUrlFromField">' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddUrlFromField">Add link</button></div>' +
+          '<p class="muted-xs m-0">The hive fetches the link itself (public http/https addresses only, at most 3 redirects) and reads it like a dropped file.</p>' : '') + '</div>';
+    }
+    function inboxToggleAdd() { _inboxAddOpen = !_inboxAddOpen; renderInbox(); if (_inboxAddOpen) { const b = document.querySelector('#inbox-add [data-action="inboxChooseFiles"]'); if (b && b.focus) b.focus(); } }
+    function inboxChooseFiles() { const el = document.getElementById('inbox-file-input'); if (el) el.click(); }
+    function inboxPickFiles(el) { const files = Array.from((el && el.files) || []); if (el) el.value = ''; inboxAddFiles(files); }
+    function inboxClearUploads() { _inboxUploads = _inboxUploads.filter(r => r.status !== 'done' && r.status !== 'error'); renderInbox(); }
+    function inboxFocusItem(key) { _inboxFocusKey = key; renderInbox(); }
+    function inboxAnnounce(msg) { const el = document.getElementById('inbox-upload-status'); if (el) el.textContent = msg; }
+    // inboxUploadRowUpdate redraws one row in place (progress events must
+    // not rebuild the whole Inbox); without the row it re-renders.
+    function inboxUploadRowUpdate(row) {
+      const el = document.querySelector('[data-inbox-upload="' + row.id + '"]');
+      if (el) el.outerHTML = inboxUploadRowHtml(row); else renderInbox();
+    }
+    // inboxAddFiles plans a drop, shows a row per file and sends the
+    // accepted ones one after another; the Inbox is re-read once they finish.
+    function inboxAddFiles(files) {
+      if (!inboxCanAdd()) return Promise.resolve([]);
+      const rows = inboxUploadPlan(files, inboxUploadSettings());
+      if (!rows.length) return Promise.resolve([]);
+      for (const r of rows) r.id = ++_inboxUploadSeq;
+      _inboxUploads = _inboxUploads.concat(rows);
+      renderInbox();
+      const send = rows.filter(r => r.status === 'queued');
+      const refused = rows.length - send.length;
+      inboxAnnounce('Adding ' + send.length + ' file' + (send.length === 1 ? '' : 's') + ' to the Inbox' + (refused ? '; ' + refused + ' not added' : ''));
+      _inboxUploadQueue = _inboxUploadQueue.then(async () => {
+        for (const r of send) await inboxUploadSend(r);
+        const ok = send.filter(r => r.status === 'done').length;
+        inboxAnnounce(ok + ' of ' + rows.length + ' file' + (rows.length === 1 ? '' : 's') + ' added to the Inbox');
+        if (ok) await fetchInbox();
+        return rows;
+      });
+      return _inboxUploadQueue;
+    }
+    function inboxNewXHR() { return new XMLHttpRequest(); }
+    function inboxUploadForm(row) { const fd = new FormData(); fd.append('file', row.file, row.name); return fd; }
+    // inboxUploadSend posts one file with upload progress; it always resolves.
+    function inboxUploadSend(row) {
+      return new Promise(resolve => {
+        const xhr = inboxNewXHR();
+        const finish = () => { inboxUploadRowUpdate(row); resolve(row); };
+        xhr.open('POST', '/api/inbox/uploads');
+        if (xhr.upload) xhr.upload.onprogress = e => { if (e && e.lengthComputable && e.total) { row.progress = e.loaded / e.total; inboxUploadRowUpdate(row); } };
+        xhr.onload = () => {
+          let data = {};
+          try { data = JSON.parse(xhr.responseText || '{}'); } catch (e) { data = {}; }
+          const res = (Array.isArray(data.results) ? data.results : [])[0];
+          if (xhr.status >= 200 && xhr.status < 300 && res && res.ok) {
+            row.status = 'done'; row.progress = 1; row.key = res.source + '/' + res.item_id; row.title = res.title || row.name;
+          } else {
+            row.status = 'error'; row.code = (res && res.code) || ''; row.error = (res && res.error) || data.error || ('HTTP ' + xhr.status);
+          }
+          finish();
+        };
+        xhr.onerror = () => { row.status = 'error'; row.error = 'The upload did not reach the hive (network error).'; finish(); };
+        row.status = 'uploading';
+        inboxUploadRowUpdate(row);
+        xhr.send(inboxUploadForm(row));
+      });
+    }
+    // Drop zone: the whole Inbox section. Only drags that carry files are
+    // taken; the overlay shows while one is over the section.
+    function inboxDragHasFiles(e) { const t = e && e.dataTransfer && e.dataTransfer.types; return !!t && Array.from(t).indexOf('Files') >= 0; }
+    function inboxInSection(node) { return !!(node && node.closest && node.closest('#inbox-section')); }
+    function inboxSetDragOver(on) { const sec = document.getElementById('inbox-section'); if (sec) sec.classList.toggle('inbox-dragover', !!on); }
+    function inboxOnDragOver(e) {
+      if (!inboxCanAdd() || !inboxDragHasFiles(e) || !inboxInSection(e.target)) return;
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
+      inboxSetDragOver(true);
+    }
+    function inboxOnDragLeave(e) { if (inboxInSection(e.target) && !inboxInSection(e.relatedTarget)) inboxSetDragOver(false); }
+    function inboxOnDrop(e) {
+      inboxSetDragOver(false);
+      if (!inboxCanAdd() || !inboxDragHasFiles(e) || !inboxInSection(e.target)) return;
+      e.preventDefault();
+      inboxAddFiles(Array.from((e.dataTransfer && e.dataTransfer.files) || []));
+    }
+    // Paste: files on the clipboard while the Inbox has focus (or was the
+    // last thing clicked) are added like a drop.
+    function inboxOnPaste(e) {
+      if (!inboxCanAdd()) return;
+      if (!(inboxInSection(e.target) || inboxInSection(document.activeElement) || _inboxPointerInside)) return;
+      const files = Array.from((e.clipboardData && e.clipboardData.files) || []);
+      if (files.length) { e.preventDefault(); inboxAddFiles(files); return; }
+      // A pasted link (one http/https URL) outside a text field is added
+      // like a dropped one; pasting into a field stays a normal paste.
+      const text = String((e.clipboardData && e.clipboardData.getData && e.clipboardData.getData('text')) || '').trim();
+      const field = e.target && e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]');
+      if (field || !inboxUploadSettings().links || !INBOX_URL_RE.test(text)) return;
+      e.preventDefault();
+      inboxAddUrl(text);
+    }
+    const INBOX_URL_RE = /^https?:\/\/[^\s]+$/i;
+    function inboxAddUrlFromField() {
+      const el = document.getElementById('inbox-add-url');
+      const raw = el ? String(el.value || '').trim() : '';
+      if (!raw) return Promise.resolve(null);
+      if (el) el.value = '';
+      return inboxAddUrl(raw);
+    }
+    // inboxAddUrl shows a row for one link and asks the hive to fetch it
+    // (POST /api/inbox/uploads/url); the hive applies the SSRF rules.
+    function inboxAddUrl(raw) {
+      if (!inboxCanAdd() || !inboxUploadSettings().links) return Promise.resolve(null);
+      let host = raw;
+      try { host = new URL(raw).host || raw; } catch (e) { host = raw; }
+      const row = { id: ++_inboxUploadSeq, name: host, size: 0, link: raw, status: 'queued', progress: 0 };
+      if (!INBOX_URL_RE.test(raw)) { row.status = 'error'; row.code = 'link_refused'; row.error = 'Only http and https links can be added.'; }
+      _inboxUploads = _inboxUploads.concat([row]);
+      renderInbox();
+      if (row.status === 'error') return Promise.resolve(row);
+      inboxAnnounce('Fetching ' + host + ' for the Inbox');
+      _inboxUploadQueue = _inboxUploadQueue.then(async () => {
+        row.status = 'uploading';
+        inboxUploadRowUpdate(row);
+        try {
+          const r = await fetch('/api/inbox/uploads/url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: raw }) });
+          const data = await r.json().catch(() => ({}));
+          const res = (Array.isArray(data.results) ? data.results : [])[0];
+          if (r.ok && res && res.ok) { row.status = 'done'; row.key = res.source + '/' + res.item_id; row.title = res.title || host; }
+          else { row.status = 'error'; row.code = (res && res.code) || ''; row.error = (res && res.error) || data.error || ('HTTP ' + r.status); }
+        } catch (e) {
+          row.status = 'error'; row.error = 'The request did not reach the hive (network error).';
+        }
+        inboxUploadRowUpdate(row);
+        inboxAnnounce(row.status === 'done' ? host + ' added to the Inbox' : host + ' not added: ' + row.error);
+        if (row.status === 'done') await fetchInbox();
+        return row;
+      });
+      return _inboxUploadQueue;
+    }
+    document.addEventListener('dragenter', inboxOnDragOver);
+    document.addEventListener('dragover', inboxOnDragOver);
+    document.addEventListener('dragleave', inboxOnDragLeave);
+    document.addEventListener('drop', inboxOnDrop);
+    document.addEventListener('paste', inboxOnPaste);
+    document.addEventListener('pointerdown', e => { _inboxPointerInside = inboxInSection(e.target); }, true);

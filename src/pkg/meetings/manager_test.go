@@ -623,3 +623,79 @@ func TestStoreDocs(t *testing.T) {
 		t.Fatal("want a mkdir error")
 	}
 }
+
+func TestLeaveMatcherPhrases(t *testing.T) {
+	l := NewLeaveMatcher([]string{"Betty leave", "hive leave", "  "})
+	for _, s := range []string{"betty leave", "Betty, please leave", "BETTY: leave now", "ok hive leave"} {
+		if !l.Match(s) {
+			t.Errorf("%q should match", s)
+		}
+	}
+	for _, s := range []string{"leave betty out of it", "betty is leaving soon", "we should leave"} {
+		if l.Match(s) {
+			t.Errorf("%q should not match", s)
+		}
+	}
+	if d := NewLeaveMatcher(nil); !d.Match("hive leave") || d.Match("betty leave") {
+		t.Fatal("no phrases means the default hive leave")
+	}
+}
+
+func TestIsBotName(t *testing.T) {
+	for _, c := range []struct {
+		name, bot string
+		want      bool
+	}{
+		{"Betty Bee from the hive", "Betty Bee from the hive", true},
+		{" betty bee FROM the hive ", "Betty Bee from the hive", true},
+		{"Betty Bee from the hive (Guest)", "Betty Bee from the hive", true},
+		{"Betty", "Betty Bee from the hive", false},
+		{"(Guest)", "Betty Bee from the hive", false},
+		{"anyone", "", false},
+	} {
+		if got := IsBotName(c.name, c.bot); got != c.want {
+			t.Errorf("IsBotName(%q, %q) = %v", c.name, c.bot, got)
+		}
+	}
+}
+
+func TestPersonaLeavePhraseAndDecoratedEcho(t *testing.T) {
+	q := newFakeQuorum()
+	st, err := NewStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	m, err := NewManager(Options{
+		Store: st, Quorum: q, BotName: "Betty Bee from the hive", ConsentText: "Betty has joined. Type 'betty leave' to remove Betty.",
+		LeavePhrases: []string{"betty leave", "hive leave"}, ReconnectMin: 5 * time.Millisecond, ConsentRetry: time.Millisecond,
+		VoiceID: " af_heart ",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(m.Close)
+	mt, err := m.Join(context.Background(), JoinRequest{URL: "https://meet.google.com/abc-defg-hij"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// meeting.join carries the persona's voice (quorum v0.2.0 voice_id).
+	q.mu.Lock()
+	if len(q.joins) != 1 || q.joins[0].VoiceID != "af_heart" {
+		t.Fatalf("joins %+v", q.joins)
+	}
+	q.mu.Unlock()
+	ch := q.stream("q1")
+	ch <- Event{Type: EventState, MeetingID: "q1", State: StateLive}
+	eventually(t, "consent", func() bool { got, _ := m.Get(mt.ID); return got.ConsentPostedAt != nil })
+	// The bot's own lines, under the platform's decorated name or as a
+	// speaker, never trigger the leave.
+	ch <- Event{Type: EventChat, MeetingID: "q1", Seq: 1, Author: &Person{Name: "Betty Bee from the hive (Guest)"}, Text: "say 'betty leave' to remove me"}
+	ch <- Event{Type: EventSegment, MeetingID: "q1", Seq: 2, Speaker: &Person{Name: "Betty Bee from the hive"}, Text: "betty leave", Final: true}
+	ch <- Event{Type: EventChat, MeetingID: "q1", Seq: 3, Author: &Person{Name: "Ana"}, Text: "hello"}
+	eventually(t, "transcript", func() bool { tr, _ := m.Transcript(mt.ID); return len(tr) == 1 })
+	ch <- Event{Type: EventChat, MeetingID: "q1", Seq: 4, Author: &Person{Name: "Ana"}, Text: "Betty, please leave"}
+	eventually(t, "betty leave", stateIs(m, mt.ID, StateEnded))
+	if got, _ := m.Get(mt.ID); got.StateReason != ReasonHiveLeave {
+		t.Fatalf("reason %q", got.StateReason)
+	}
+}

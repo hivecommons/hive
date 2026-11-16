@@ -63,6 +63,10 @@ func TestWireMeetingsStarts(t *testing.T) {
 	if err := os.WriteFile(txFile, []byte("tx-secret\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	ttsFile := filepath.Join(dir, "tts")
+	if err := os.WriteFile(ttsFile, []byte("tts-secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	fake := &fakeQuorumSup{}
 	var got quorumproc.Options
 	withQuorumSupervisor(t, func(o quorumproc.Options) (quorumSupervisor, error) {
@@ -80,6 +84,8 @@ func TestWireMeetingsStarts(t *testing.T) {
 		Discord:             config.MeetingsDiscordConfig{TokenFile: filepath.Join(dir, "missing")},
 		TranscribeURL:       "http://vexa-transcription.meetings.svc.cluster.local:8000",
 		TranscribeTokenFile: txFile,
+		TTSURL:              "http://vexa-tts.meetings.svc.cluster.local:8880",
+		TTSTokenFile:        ttsFile,
 	}}
 	var logs bytes.Buffer
 	sup := wireMeetings(context.Background(), cfg, slog.New(slog.NewTextHandler(&logs, nil)))
@@ -91,8 +97,11 @@ func TestWireMeetingsStarts(t *testing.T) {
 		got.TranscribeToken != "tx-secret" || got.TranscribeURL != "http://vexa-transcription.meetings.svc.cluster.local:8000" {
 		t.Fatalf("options %+v", got)
 	}
-	if strings.Contains(logs.String(), "tenant") || strings.Contains(logs.String(), "tx-secret") {
-		t.Fatal("the tenant key and transcription token must never be logged")
+	if got.TTSToken != "tts-secret" || got.TTSURL != "http://vexa-tts.meetings.svc.cluster.local:8880" || got.TTSVoice != "af_heart" {
+		t.Fatalf("tts options url=%q voice=%q token set=%v", got.TTSURL, got.TTSVoice, got.TTSToken != "")
+	}
+	if strings.Contains(logs.String(), "tenant") || strings.Contains(logs.String(), "tx-secret") || strings.Contains(logs.String(), "tts-secret") {
+		t.Fatal("the tenant key and service tokens must never be logged")
 	}
 }
 
@@ -130,14 +139,15 @@ func TestMeetingsQuorumOptionsUnreadableSecrets(t *testing.T) {
 		Vexa:                config.MeetingsVexaConfig{APIKeyFile: dir},
 		Discord:             config.MeetingsDiscordConfig{TokenFile: dir},
 		TranscribeTokenFile: dir,
+		TTSTokenFile:        dir,
 	}
 	var logs bytes.Buffer
 	o := meetingsQuorumOptions(context.Background(), m, slog.New(slog.NewTextHandler(&logs, nil)))
-	if o.VexaAPIKey != "" || o.DiscordToken != "" || o.TranscribeToken != "" {
+	if o.VexaAPIKey != "" || o.DiscordToken != "" || o.TranscribeToken != "" || o.TTSToken != "" {
 		t.Fatal("unreadable secrets must be left unset")
 	}
 	if !strings.Contains(logs.String(), "Vexa tenant key unreadable") || !strings.Contains(logs.String(), "Discord bot token unreadable") ||
-		!strings.Contains(logs.String(), "transcription service token unreadable") {
+		!strings.Contains(logs.String(), "transcription service token unreadable") || !strings.Contains(logs.String(), "TTS service token unreadable") {
 		t.Fatalf("logs %q", logs.String())
 	}
 }
@@ -189,7 +199,7 @@ func TestWireMeetingsManager(t *testing.T) {
 }
 
 func TestWireMeetingsLive(t *testing.T) {
-	if wireMeetingsLive(nil, nil, nil, nil, nil, nil) != nil {
+	if wireMeetingsLive(nil, nil, nil, nil, nil, nil, nil) != nil {
 		t.Fatal("nil inputs must not build a live loop")
 	}
 	dir := t.TempDir()
@@ -203,7 +213,7 @@ func TestWireMeetingsLive(t *testing.T) {
 	}
 	defer mgr.Close()
 	cfg := &config.Config{Meetings: config.MeetingsConfig{Enabled: true}}
-	r := wireMeetingsLive(cfg, mgr, store, &knowledge.KnowledgeAPI{}, nil, slog.New(slog.DiscardHandler))
+	r := wireMeetingsLive(cfg, mgr, store, &knowledge.KnowledgeAPI{}, nil, nil, slog.New(slog.DiscardHandler))
 	if r == nil {
 		t.Fatal("want a live runner")
 	}

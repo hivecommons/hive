@@ -406,6 +406,13 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 			c.Governor.mergeTrainStallWarnSet = true
 		}
 	}
+	// runs.spektacular.recheck is retired: accept the block, ignore it, and
+	// let WarnDeprecatedSpektacularRecheck say so once.
+	if runs := mappingValueNode(&node, "runs"); runs != nil {
+		if spek := mappingValueNode(runs, "spektacular"); spek != nil && mappingValueNode(spek, "recheck") != nil {
+			c.Runs.Spektacular.deprecatedRecheckSet = true
+		}
+	}
 	return nil
 }
 
@@ -6704,6 +6711,7 @@ func (c *Config) applyDefaults() {
 	// value, after which this is a no-op for the life of the hive.
 	c.MigrateReviewFixHumanPRs()
 	c.WarnDeprecatedReviewAllAuthors()
+	c.WarnDeprecatedSpektacularRecheck()
 	// Repo targets are built as org + "/" + repo, so an entry that already
 	// carries the org resolves to "org/org/repo" and every agent fails. Strip a
 	// matching org prefix off both primary_repo and every repos entry on load.

@@ -84,7 +84,8 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-backup ./cmd/hive-backup && \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hivectl ./cmd/hivectl && \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /crux ./cmd/crux && \
-    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-whisper ./cmd/hive-whisper
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-whisper ./cmd/hive-whisper && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-pdftext ./cmd/hive-pdftext
 
 
 # --- Go security scanners for the sec-check lane (#18192) ---
@@ -528,8 +529,8 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # Bump note: see src/docs/cli-pins.md (quorum row); update QUORUM_VERSION and
 # QUORUM_SHA256 together from the release's quorum.mjs.sha256, and
 # QUORUM_DAVEY_VERSION from quorum's package-lock.json.
-ARG QUORUM_VERSION=v0.1.0
-ARG QUORUM_SHA256=917aee456e5c87a6b531f1c7c09040fa60d04a39609a1c2755cfdd20d63d7c95
+ARG QUORUM_VERSION=v0.2.0
+ARG QUORUM_SHA256=9233653115baffcd884c3181a0bf7714145ca858e84abb1d2411a4f255e75e03
 ARG QUORUM_DAVEY_VERSION=0.1.12
 RUN if [ -n "${QUORUM_VERSION}" ]; then \
       test -n "${QUORUM_SHA256}" || { echo "QUORUM_SHA256 is required with QUORUM_VERSION" >&2; exit 1; } && \
@@ -738,6 +739,9 @@ COPY --from=builder /crux /usr/local/bin/crux
 # whisper.cpp + LGPL FFmpeg engine from the whisper-builder stage. They run as
 # the dedicated hive-transcribe uid (created below), never as dev.
 COPY --from=builder /hive-whisper /usr/local/bin/hive-whisper
+# Inbox PDF uploads are parsed out of process by the hive-pdftext sandbox
+# (pure Go, github.com/ledongthuc/pdf), as the same hive-transcribe uid.
+COPY --from=builder /hive-pdftext /usr/local/bin/hive-pdftext
 COPY --from=whisper-builder /opt/hive-whisper /opt/hive-whisper
 
 # Go security scanners for the sec-check lane (#18192); built in the

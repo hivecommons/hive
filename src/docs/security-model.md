@@ -160,6 +160,29 @@ where the kernel allows unprivileged user namespaces. With whisper the audio
 never leaves the spoke; with Gemini or Deepgram it is sent to that provider
 under the hive's own account ([inbox-transcription.md](inbox-transcription.md)).
 
+Files dropped onto the Inbox (owner and read-write only) are typed by content,
+not by name or client MIME type: magic bytes refuse executables, archives,
+PDFs, Office and media files whatever they are called, then the text must be
+UTF-8 and parse as the format its extension asks for. Extraction runs with a
+timeout and size caps; the original, the extracted text and the meta are
+stored 0600 in a 0700 directory per upload, never executed or served raw, and
+bounded by a per-hive quota. The extracted text is fenced in the same
+`<untrusted-inbox-data>` envelope in its Knowledge fact and before any agent
+prompt ([inbox-uploads.md](inbox-uploads.md)). Uploaded PDFs are never parsed in the hive process: the
+`hive-pdftext` sandbox reads them as the `hive-transcribe` uid through
+su-exec with an empty environment, under prlimit (address space, CPU, file
+size, open files, no core dumps) and nice, in an empty network namespace
+where the kernel allows it, from a private 0700 work dir, with a wall-clock
+timeout that kills the process group. Word documents are read in
+Go with zip-bomb caps (entry count, declared and actual inflated size,
+compression ratio) and an XML decoder that refuses DTDs and unknown entities
+(no XXE). Links dropped onto the Inbox are
+fetched by the hive under an SSRF guard: http/https only, no credentials in
+the URL, the hive's own DNS lookup with the connection pinned to the checked
+address (any private, loopback, link-local, CGNAT, multicast, ULA or metadata
+answer refuses the link), every redirect re-checked (at most 3), the body
+size- and time-capped, and the environment proxy never used.
+
 ## 5. Network and credentials
 
 **Inference keys.** An agent using a self-hosted inference gateway is

@@ -23,7 +23,8 @@ import (
 // call time so a hosted hive's operator can turn meetings on from the
 // deployment without editing hive.yaml. Precedence is env, then hive.yaml,
 // then the default. Secrets (the Vexa tenant key, the optional Discord bot
-// token and the transcription service token) are never stored in hive.yaml:
+// token, the transcription service token and the TTS token) are never
+// stored in hive.yaml:
 // they live in keystore-sealed secret files under /data/secrets, or arrive
 // through an environment variable.
 
@@ -37,8 +38,9 @@ const (
 	// DefaultMeetingsDelivery is where meeting output is delivered by
 	// default: the meeting chat, so hive never talks over people.
 	DefaultMeetingsDelivery = MeetingsDeliveryChat
-	// DefaultMeetingsBotName is the display name the meeting bot joins with.
-	// It says the bot takes notes.
+	// DefaultMeetingsBotName is the display name the meeting bot joins with
+	// when the persona is off. It says the bot takes notes. With the persona
+	// on (the default), the persona's display_name is the default.
 	DefaultMeetingsBotName = "hive (notes)"
 	// DefaultMeetingsInvitePolicy lets only the hive owner send hive to a
 	// meeting.
@@ -71,8 +73,9 @@ const (
 	// in intents when Spek does not report token usage.
 	DefaultMeetingsMaxIntentsPerMeeting = 500
 	// DefaultMeetingsConsentText is posted in the meeting chat on join,
-	// before anything else.
-	DefaultMeetingsConsentText = "Hive has joined to take notes and help with research. It records this meeting's transcript. Type 'hive leave' to remove it."
+	// before anything else, with the default persona. Other personas get the
+	// same text with their own names (ResolvedMeetingsPersona.ConsentText).
+	DefaultMeetingsConsentText = "Betty Bee from the hive has joined to take notes and help with research. Betty records this meeting's transcript. Type 'betty leave' or 'hive leave' to remove Betty."
 	// DefaultMeetingsDataDir is where meeting records and transcripts live.
 	DefaultMeetingsDataDir = "/data/meetings"
 	// DefaultMeetingsVexaAPIKeyFile is the keystore-sealed secret file that
@@ -85,6 +88,10 @@ const (
 	// that holds the bearer token for the shared transcription service
 	// Discord audio is posted to (QUORUM_TRANSCRIBE_TOKEN_FILE).
 	DefaultMeetingsTranscribeTokenFile = WritableSecretsDir + "/meetings_transcribe_token"
+	// DefaultMeetingsTTSTokenFile is the keystore-sealed secret file that
+	// holds the bearer token for the text-to-speech service Quorum speaks
+	// Discord replies with (QUORUM_TTS_TOKEN_FILE).
+	DefaultMeetingsTTSTokenFile = WritableSecretsDir + "/meetings_tts_token"
 
 	// MeetingsDeliveryChat posts meeting output in the meeting chat.
 	MeetingsDeliveryChat = "chat"
@@ -111,6 +118,9 @@ const (
 	MeetingsTranscribeURLEnv       = "HIVE_MEETINGS_TRANSCRIBE_URL"
 	MeetingsTranscribeTokenEnv     = "HIVE_MEETINGS_TRANSCRIBE_TOKEN"
 	MeetingsTranscribeTokenFileEnv = "HIVE_MEETINGS_TRANSCRIBE_TOKEN_FILE"
+	MeetingsTTSURLEnv              = "HIVE_MEETINGS_TTS_URL"
+	MeetingsTTSTokenEnv            = "HIVE_MEETINGS_TTS_TOKEN"
+	MeetingsTTSTokenFileEnv        = "HIVE_MEETINGS_TTS_TOKEN_FILE"
 	MeetingsDeliveryEnv            = "HIVE_MEETINGS_DELIVERY"
 	MeetingsVoiceOnAddressEnv      = "HIVE_MEETINGS_VOICE_ON_ADDRESS"
 	MeetingsBotNameEnv             = "HIVE_MEETINGS_BOT_NAME"
@@ -145,6 +155,13 @@ type MeetingsConfig struct {
 	// transcription service token (QUORUM_TRANSCRIBE_TOKEN_FILE). A path,
 	// never the token.
 	TranscribeTokenFile string `yaml:"transcribe_token_file,omitempty" json:"transcribe_token_file,omitempty"`
+	// TTSURL is the text-to-speech service Quorum speaks Discord replies
+	// with (QUORUM_TTS_URL, a Kokoro /v1/audio/speech endpoint). Empty
+	// leaves Discord without speech.
+	TTSURL string `yaml:"tts_url,omitempty" json:"tts_url,omitempty"`
+	// TTSTokenFile is the keystore-sealed secret file holding the TTS
+	// service token (QUORUM_TTS_TOKEN_FILE). A path, never the token.
+	TTSTokenFile string `yaml:"tts_token_file,omitempty" json:"tts_token_file,omitempty"`
 	// Delivery is where meeting output goes by default. Only "chat".
 	Delivery string `yaml:"delivery,omitempty" json:"delivery,omitempty"`
 	// VoiceOnAddress lets hive speak when the meeting addresses it by name
@@ -178,6 +195,8 @@ type MeetingsConfig struct {
 	ConsentText string `yaml:"consent_text,omitempty" json:"consent_text,omitempty"`
 	// DataDir is where meeting records and transcripts are stored.
 	DataDir string `yaml:"data_dir,omitempty" json:"data_dir,omitempty"`
+	// Persona is the attendee persona (Betty by default).
+	Persona MeetingsPersonaConfig `yaml:"persona,omitempty" json:"persona,omitzero"`
 }
 
 // MeetingsQuorumConfig is meetings.quorum.
@@ -243,6 +262,10 @@ const (
 	// keystore-sealed secret files.
 	DefaultMeetingsLLMKeyFile       = WritableSecretsDir + "/meetings_llm_api_key"
 	DefaultMeetingsAnthropicKeyFile = WritableSecretsDir + "/meetings_anthropic_api_key"
+	// DefaultMeetingsPersonaAnthropicModel is the model the meeting persona
+	// answers with on the Anthropic path when meetings.llm.model is unset:
+	// a fast model, since answers must arrive within seconds.
+	DefaultMeetingsPersonaAnthropicModel = "claude-haiku-5-5"
 	// MeetingsLLMNoModelReason is what the panel shows without a model.
 	MeetingsLLMNoModelReason = "rules only, no model configured"
 )
@@ -265,8 +288,11 @@ const (
 // never log them.
 type ResolvedMeetingsLLM struct {
 	// Backend is openai (hive's meeting-llm command), anthropic or none.
-	Backend        string
-	Endpoint       string
+	Backend  string
+	Endpoint string
+	// Model is the OpenAI-compatible model; on the anthropic backend it is
+	// the model the meeting persona answers with (meetings.llm.model, else
+	// DefaultMeetingsPersonaAnthropicModel). Spek uses AnthropicModel.
 	Model          string
 	APIKey         string
 	AnthropicKey   string
@@ -314,6 +340,7 @@ func (c *Config) ResolveMeetingsLLM(ctx context.Context) ResolvedMeetingsLLM {
 		file := meetingsEnvString(MeetingsAnthropicKeyFileEnv, l.AnthropicKeyFile, DefaultMeetingsAnthropicKeyFile)
 		if key, err := meetingsSecret(ctx, MeetingsAnthropicKeyEnv, file); err == nil && key != "" {
 			r.Backend, r.AnthropicKey = MeetingsLLMModeAnthropic, key
+			r.Model = meetingsEnvString(MeetingsLLMModelEnv, l.Model, DefaultMeetingsPersonaAnthropicModel)
 			return r
 		}
 		if mode == MeetingsLLMModeAnthropic {
@@ -422,6 +449,17 @@ func (m MeetingsConfig) TranscribeTokenFileOrDefault() string {
 	return meetingsEnvString(MeetingsTranscribeTokenFileEnv, m.TranscribeTokenFile, DefaultMeetingsTranscribeTokenFile)
 }
 
+// TTSTokenFileOrDefault returns the secret file path for the TTS service
+// token.
+func (m MeetingsConfig) TTSTokenFileOrDefault() string {
+	return meetingsEnvString(MeetingsTTSTokenFileEnv, m.TTSTokenFile, DefaultMeetingsTTSTokenFile)
+}
+
+// TTSURLOrEmpty returns the text-to-speech service URL.
+func (m MeetingsConfig) TTSURLOrEmpty() string {
+	return strings.TrimRight(meetingsEnvString(MeetingsTTSURLEnv, m.TTSURL, ""), "/")
+}
+
 // TranscribeURLOrEmpty returns the transcription service URL.
 func (m MeetingsConfig) TranscribeURLOrEmpty() string {
 	return strings.TrimRight(meetingsEnvString(MeetingsTranscribeURLEnv, m.TranscribeURL, ""), "/")
@@ -441,9 +479,15 @@ func (m MeetingsConfig) VoiceOnAddressEnabled() bool {
 	return m.VoiceOnAddress == nil || *m.VoiceOnAddress
 }
 
-// BotNameOrDefault returns the bot display name.
+// BotNameOrDefault returns the bot display name: meetings.bot_name (env
+// first), else the persona's display name, else DefaultMeetingsBotName when
+// the persona is off.
 func (m MeetingsConfig) BotNameOrDefault() string {
-	return meetingsEnvString(MeetingsBotNameEnv, m.BotName, DefaultMeetingsBotName)
+	def := DefaultMeetingsBotName
+	if p := m.Persona.Resolve(); p.Enabled {
+		def = p.DisplayName
+	}
+	return meetingsEnvString(MeetingsBotNameEnv, m.BotName, def)
 }
 
 // InvitePolicyOrDefault returns who may invite hive to a meeting.
@@ -476,9 +520,10 @@ func (m MeetingsConfig) RetentionDaysOrDefault() int {
 	return meetingsEnvInt(MeetingsRetentionDaysEnv, m.RetentionDays, DefaultMeetingsRetentionDays)
 }
 
-// ConsentTextOrDefault returns the consent notice.
+// ConsentTextOrDefault returns the consent notice: meetings.consent_text
+// (env first), else the persona's notice.
 func (m MeetingsConfig) ConsentTextOrDefault() string {
-	return meetingsEnvString(MeetingsConsentTextEnv, m.ConsentText, DefaultMeetingsConsentText)
+	return meetingsEnvString(MeetingsConsentTextEnv, m.ConsentText, m.Persona.Resolve().ConsentText())
 }
 
 // DataDirOrDefault returns the meetings data directory.
@@ -543,6 +588,12 @@ func (m MeetingsConfig) TranscribeToken(ctx context.Context) (string, error) {
 	return meetingsSecret(ctx, MeetingsTranscribeTokenEnv, m.TranscribeTokenFileOrDefault())
 }
 
+// TTSToken returns the optional TTS service token: HIVE_MEETINGS_TTS_TOKEN,
+// then the secret file. A secret; never log it.
+func (m MeetingsConfig) TTSToken(ctx context.Context) (string, error) {
+	return meetingsSecret(ctx, MeetingsTTSTokenEnv, m.TTSTokenFileOrDefault())
+}
+
 // WriteMeetingsSecret seals value into the secret file at path through the
 // keystore (owner-only mode). An empty value removes the file.
 func WriteMeetingsSecret(ctx context.Context, path, value string) error {
@@ -579,6 +630,11 @@ func (m MeetingsConfig) Validate() error {
 			return err
 		}
 	}
+	if u := m.TTSURLOrEmpty(); u != "" {
+		if err := validateMeetingsURL("meetings.tts_url", u); err != nil {
+			return err
+		}
+	}
 	switch strings.ToLower(meetingsEnvString(MeetingsLLMModeEnv, m.LLM.Mode, MeetingsLLMModeAuto)) {
 	case MeetingsLLMModeAuto, MeetingsLLMModeOpenAI, MeetingsLLMModeAnthropic, MeetingsLLMModeNone:
 	default:
@@ -600,6 +656,9 @@ func (m MeetingsConfig) Validate() error {
 	}
 	if n := len([]rune(m.ConsentTextOrDefault())); n > meetingsMaxConsentChars {
 		return fmt.Errorf("meetings.consent_text is %d characters, the limit is %d (one chat post)", n, meetingsMaxConsentChars)
+	}
+	if err := m.Persona.Validate(); err != nil {
+		return err
 	}
 	for _, f := range []struct {
 		key string

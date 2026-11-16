@@ -11,6 +11,27 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.284.0)
+
+### Added
+
+- **Hive attends meetings as Betty.** The meeting bot now joins as "Betty Bee from the hive" (`meetings.persona`, on by default), introduces herself on request, answers briefly when addressed by name, and answers room questions nobody else answered within 8 seconds, from the hive's knowledge vaults, beads and code maps, under strict caps (2 unprompted answers per 10 minutes, 90 seconds apart, 12 per meeting, one reply per question). Spek's spoken replies are dropped, its chat posts go through Betty so the meeting never gets two answers, and its clarifying questions are reworded in her voice. The consent notice names Betty and says "betty leave" or "hive leave" removes her; the persona's name, aliases, language, voice, pronouns, humor and caps are configurable, and `meetings.persona.enabled: false` restores the plain `hive (notes)` attendee ([#18392](https://github.com/hivecommons/hive/issues/18392)).
+- Meetings Calendar: schedule meetings for hive to join (it joins a minute before each starts, with daily, weekday, weekly or monthly repeats), approve or decline ones read-write users add, skip or cancel, in a new Calendar section after Inbox; the top bar shows when hive is in a meeting.
+- Sharing from the Inbox 🔗 Share → Hive menu is open to read-write users as well as owners (read users still only get Link), and RFC… / Knowledge on an audio-only item now transcribe it first and share when the transcript completes, with a "Transcribing, then → RFC" progress label; DIBS still sends straight away.
+- Drop files onto the Inbox (or use the new ＋ Add button, or paste with Ctrl/Cmd+V) to turn them into Inbox items: Markdown, plain text, JSON, JSON Lines, YAML, CSV and TSV are typed by their content (magic bytes plus a parse check, never the file name alone), shown as extracted markdown with a short summary, stored on the hive under `connector-state/uploads/` (0700/0600) and written as a Knowledge fact, so they work with the 🔗 Share ▾ menu like any recording. Each file gets its own upload row with progress and a clear per-file error (too large, unsupported type, failed parse); owner and read-write only, audited per user as `inbox_upload`. Limits and retention are configurable under `inbox.uploads.*` with `HIVE_INBOX_UPLOADS_*` overrides; see `docs/inbox-uploads.md`.
+
+### Changed
+
+- The Inbox item row now has only Play, Transcript and a 🔗 Share ▾ menu with a Hive group (RFC…, Knowledge, DIBS) and a Link group (Copy link, Share…); the "→ dibs…", "→ RFC…" and "Knowledge only" row buttons are gone and the selection bar gets a Hive menu. Auto-routing and config are unchanged.
+- Inception campaigns are retired in favour of Inception (spek) sessions. The `/api/campaigns` endpoints are removed, including resume, release, revise, delete, recheck and every `/jam` route. Campaign Jam (threads, suggestions, polls, spec revisions and GitHub Projects sync) and campaign recheck (continuous convergence and outward discovery) go with them. The Spek recheck block in Settings is removed too. Jam no longer feeds achievements, and since Jam was the only source of the review role, Full SDLC Fireteam now counts spec, plan and implement coverage by three distinct actors. Nothing is deleted. On the first start after the upgrade, if `/data/inception/campaigns/` or `campaign-jam.json` exists, Hive writes one read-only export to `/data/exports/campaigns-<date>.tar.gz` (mode 0600) and logs its path once. The original files stay in place for one release. `runs.spektacular.recheck` in `hive.yaml` is still accepted on load and never fails validation, but it has no effect and logs a one-line deprecation warning.
+- Inception (spek): the **Campaigns** tab is removed from the Inception (spek) section, which now lists only sessions. Nothing has created inception campaigns since the wizard was removed, **Continue** had no wizard to return to, and the Spektacular rows repeated what the Runs view already shows. Start a session for new inception work and use Runs for Spektacular runs. The `/api/campaigns` endpoints, campaign Jam and campaign recheck still answer API callers for now and are retired in a follow-up change. Archived campaign files under `/data/inception/campaigns/` are not touched.
+
+## 2026-11-16 (v5.283.1)
+
+### Fixed
+
+- **Inbox machine transcripts now become knowledge, and the "📚 Fact" button is gone.** A finished machine transcription (whisper, Gemini or Deepgram) is written into the item's Knowledge fact, fenced as untrusted data and marked `attr_<x>_content: machine` with `attr_transcript_provider`, so knowledge search, nous and agents see the words instead of a pending placeholder; later syncs keep it until the source produces its own text, which then replaces it. The action row no longer has a "📚 Fact" button: a status pill (*Pending text*, *In knowledge (machine text)*, *In knowledge*) shows what the fact holds, and an *open in Knowledge* link in the metadata line opens it.
+
 ## 2026-11-16 (v5.283.0)
 
 ### Added

@@ -33,6 +33,7 @@ const (
 var factPendingNotes = []string{
 	"_" + connector.PlaudPendingText + "_",
 	"_" + connector.MeetingPendingText + "_",
+	"_" + RecordingPendingText + "_",
 }
 
 // factState is the Item.FactState of a fact: its recorded content state, or

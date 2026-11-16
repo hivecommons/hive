@@ -32,6 +32,11 @@ type Settings struct {
 	// Transcription is inbox.transcription with defaults, key and budget
 	// status applied.
 	Transcription TranscriptionSettings `json:"transcription"`
+	// Uploads are the drop-zone limits; Enabled is false when this hive has
+	// no upload store.
+	Uploads UploadSettings `json:"uploads"`
+	// Recording is inbox.recording with defaults applied.
+	Recording RecordingSettings `json:"recording"`
 }
 
 // Service lists items across sources, applies persisted state, runs
@@ -59,9 +64,11 @@ type Service struct {
 	// holds queued and running jobs in order (the head runs, one at a time)
 	// with their live progress, guarded by txQMu.
 	transcripts *TranscriptStore
-	txMu        sync.Mutex
-	txQMu       sync.Mutex
-	txQueue     []*txJob
+	// intentRunners are the registered transcribe-then-share handlers.
+	intentRunners map[string]IntentRunner
+	txMu          sync.Mutex
+	txQMu         sync.Mutex
+	txQueue       []*txJob
 	// NewTranscriber builds the provider for a run; nil uses
 	// DefaultTranscriber with the key from Getenv. Tests inject a fake.
 	NewTranscriber func(config.InboxTranscription) (transcribe.Transcriber, error)
@@ -86,6 +93,12 @@ type Service struct {
 	// factMu serialises machine-transcript write-backs into Knowledge facts
 	// (see factwriteback.go).
 	factMu sync.Mutex
+	// uploads holds files and links added on the dashboard (see
+	// upload_source.go); nil until EnableUploads.
+	uploads *UploadSource
+	// recordings is the dashboard recording source (see recordingsource.go);
+	// nil until EnableRecordings.
+	recordings *RecordingSource
 }
 
 // NewService builds a service for cfg with the given sources/destinations.
@@ -112,9 +125,67 @@ func (s *Service) SetSources(sources []Source) {
 		next[src.Type()] = src
 	}
 	s.mu.Lock()
+	if s.uploads != nil {
+		next[UploadType] = s.uploads
+	}
+	if s.recordings != nil {
+		if _, ok := next[RecordingType]; !ok {
+			next[RecordingType] = s.recordings
+		}
+	}
 	s.sources = next
 	s.mu.Unlock()
 }
+
+// EnableUploads registers the upload source; it stays registered across
+// SetSources.
+func (s *Service) EnableUploads(u *UploadSource) {
+	if u != nil && u.Limits == nil {
+		u.Limits = func() config.InboxUploads { return s.Config().Uploads }
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.uploads = u
+	if u != nil {
+		s.sources[UploadType] = u
+	}
+}
+
+// Uploads returns the upload source, or nil when uploads are not enabled.
+func (s *Service) Uploads() *UploadSource {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.uploads
+}
+
+// AddUpload stores one dropped file and returns its Inbox item.
+func (s *Service) AddUpload(ctx context.Context, in UploadInput) (Item, error) {
+	u := s.Uploads()
+	if u == nil {
+		return Item{}, ErrUploadsDisabled
+	}
+	m, err := u.Add(ctx, in)
+	if err != nil {
+		return Item{}, err
+	}
+	return u.item(m), nil
+}
+
+// AddLink fetches one URL and returns its Inbox item.
+func (s *Service) AddLink(ctx context.Context, in LinkInput) (Item, error) {
+	u := s.Uploads()
+	if u == nil {
+		return Item{}, ErrUploadsDisabled
+	}
+	m, err := u.AddLink(ctx, in)
+	if err != nil {
+		return Item{}, err
+	}
+	return u.item(m), nil
+}
+
+// ErrUploadsDisabled is returned when the hive has no upload store.
+var ErrUploadsDisabled = errors.New("uploads are not available on this hive")
 
 // HasSource reports whether a source of typ is wired.
 func (s *Service) HasSource(typ string) bool {
@@ -159,6 +230,10 @@ func (s *Service) Settings() Settings {
 		st.DibsTokenSet = s.dibsTokenSet()
 	}
 	st.Transcription = s.TranscriptionSettings()
+	if u := s.Uploads(); u != nil {
+		st.Uploads = u.Settings()
+	}
+	st.Recording = s.RecordingSettings()
 	return st
 }
 
@@ -355,6 +430,7 @@ func (s *Service) fail(key, dest string, err error) {
 // marks every listed item seen, so a rule added later never back-fires on
 // old recordings. It is called after each connector sync.
 func (s *Service) Sweep(ctx context.Context) (routed int, err error) {
+	s.ResumeIntents(ctx)
 	items, lerr := s.Items(ctx)
 	rules := s.Config().Rules
 	for _, it := range items {

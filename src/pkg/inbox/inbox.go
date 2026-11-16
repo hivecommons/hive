@@ -22,6 +22,9 @@ const (
 	DestSpekRFC = "spek_rfc"
 	DestDibs    = "dibs"
 	DestDismiss = "dismiss"
+	// DestSession records an item sent into an Inception (spek) session; it
+	// is a route marker only, never a Route destination.
+	DestSession = "session"
 )
 
 // Item is one incoming recording/dictation as the Inbox lists it.
@@ -55,6 +58,9 @@ type Item struct {
 	FactState string `json:"fact_state,omitempty"`
 	// Routes holds per-destination state; absent means never routed.
 	Routes map[string]*RouteState `json:"routes,omitempty"`
+	// ShareIntents are shares waiting for a machine transcript (or failed
+	// because it did not finish), keyed by destination. See ShareIntent.
+	ShareIntents map[string]*ShareIntent `json:"share_intents,omitempty"`
 	// Dismissed marks "knowledge only": the item stays a fact, no further route.
 	Dismissed bool `json:"dismissed,omitempty"`
 	// Processed is true once any route filed or the item was dismissed.
@@ -68,6 +74,20 @@ type Item struct {
 	// machine-transcribed right now: one of the TranscribeBlocked* codes.
 	// Empty when transcribable, busy, or not applicable. Never carries a key.
 	TranscribeUnavailable string `json:"transcribe_unavailable,omitempty"`
+	// Origin says where an item someone added came from: "upload ·
+	// notes.md" for a dropped file, "link · example.org" for a URL.
+	Origin string `json:"origin,omitempty"`
+	// AddedBy is the dashboard user who added the item (uploads and links).
+	AddedBy string `json:"added_by,omitempty"`
+	// UploadKind is the detected type of an upload (markdown, json, ...).
+	UploadKind string `json:"upload_kind,omitempty"`
+	// RecordedBy is the dashboard user who made a hive recording.
+	RecordedBy string `json:"recorded_by,omitempty"`
+	// AudioExpired reports that retention deleted the raw audio of a hive
+	// recording (the transcript and fact stay); there is nothing to play.
+	AudioExpired bool `json:"audio_expired,omitempty"`
+	// AudioRetentionDays is how long a hive recording's audio is kept.
+	AudioRetentionDays int `json:"audio_retention_days,omitempty"`
 }
 
 // Key returns the stable "source/id" key used by the state store.
@@ -86,7 +106,10 @@ type RouteState struct {
 	// Children are the RFC's child issue URLs.
 	Children []string `json:"children,omitempty"`
 	// Note says who took the work on a delegated route (the agent name).
-	Note      string    `json:"note,omitempty"`
+	Note string `json:"note,omitempty"`
+	// Session is the Inception (spek) session id a DestSession route sent the
+	// item into (Note holds "session/<id>" plus its name).
+	Session   string    `json:"session,omitempty"`
 	Error     string    `json:"error,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

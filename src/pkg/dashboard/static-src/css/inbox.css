@@ -29,6 +29,20 @@
     .inbox-tx-spinner { display: inline-block; flex: none; width: var(--status-dot-size); height: var(--status-dot-size); border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); border-radius: var(--r-pill); animation: spin 0.8s linear infinite; vertical-align: middle; }
     .inbox-tx-notice { margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--r); background: var(--bg); font-size: var(--fs-sm); }
     .kb-plaud-paste textarea { width: 100%; margin-top: var(--sp-2); font-family: var(--font-mono); font-size: var(--fs-xs); }
+    /* Drag-and-drop ingest: drop overlay, ＋ Add panel, per-file upload rows. */
+    #inbox-section .section-body { position: relative; }
+    .inbox-drop-overlay { display: none; position: absolute; inset: 0; z-index: 2; align-items: center; justify-content: center; border: 2px dashed var(--accent); border-radius: var(--r); background: color-mix(in srgb, var(--surface) 85%, transparent); font-size: var(--fs-lg); pointer-events: none; }
+    #inbox-section.inbox-dragover .inbox-drop-overlay { display: flex; }
+    .inbox-sr-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+    .inbox-add { margin-bottom: var(--sp-4); padding: var(--sp-3); border: 1px dashed var(--border); border-radius: var(--r); background: var(--bg); }
+    .inbox-add .kc-actions { flex-wrap: wrap; align-items: center; }
+    .inbox-uploads { margin-bottom: var(--sp-4); }
+    .inbox-upload-list { list-style: none; margin: var(--sp-2) 0 0; padding: 0; display: grid; gap: var(--sp-2); }
+    .inbox-upload { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
+    .inbox-upload-name { font-weight: 600; overflow-wrap: anywhere; }
+    .inbox-upload-bar { flex: 1 1 120px; max-width: 240px; }
+    .inbox-add-url { flex: 1 1 16rem; min-width: 0; }
+    .inbox-upload .kc-error { flex-basis: 100%; }
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
     }
