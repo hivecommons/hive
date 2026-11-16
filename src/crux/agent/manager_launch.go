@@ -275,6 +275,16 @@ func (m *Manager) launchInTmux(ctx context.Context, agent *AgentProcess) error {
 
 	m.fixSharedConfigPerms(agent)
 
+	// A subscription claude agent's own ~/.claude.json gets the onboarding
+	// and workspace-trust answers inference agents get from
+	// ensureClaudeSettings, so a HOME where Claude Code never ran does not
+	// open on "Security notes" and a trust dialog whose default is "No, exit".
+	// After the reap above, so no CLI of this agent is rewriting the file, and
+	// after ensureTmuxSession's session adoption, so it merges into that copy.
+	if backend == "claude" && !isInference {
+		m.seedClaudeFirstRunForAgent(agent)
+	}
+
 	// Repeat-failure check (#14550): write the BASH_ENV route the env prefix
 	// below points at, or remove it when the check is now off.
 	m.provisionRepeatFailureBashEnv(agent, backend)

@@ -45,6 +45,14 @@ const (
 	// the footer may sit in for the notice to count as live (the footer
 	// itself plus a possible status/spinner line under it).
 	claudeAutoModeNoticeFooterLines = 2
+	// ClaudeSecurityNotesLabel identifies Claude Code's first-run "Security
+	// notes" screen in BlockingPrompts.
+	ClaudeSecurityNotesLabel = "claude security notes"
+	// claudeSecurityNotesHeader / claudeSecurityNotesFooter are the screen's
+	// heading line and its last line, verbatim from Claude Code v2.1.325:
+	// " Security notes:" … " Press Enter to continue…".
+	claudeSecurityNotesHeader = "Security notes:"
+	claudeSecurityNotesFooter = "Press Enter to continue"
 )
 
 var ompSplashSkipRe = regexp.MustCompile(`(?i)press (?:⏎|enter) to skip`)
@@ -61,6 +69,27 @@ var BlockingPrompts = []BlockingPrompt{
 		},
 		key:   "Down",
 		label: "claude workspace trust",
+	},
+	{
+		backend: "claude",
+		// Claude Code's first-run "Security notes" screen (numbered notes,
+		// then "Press Enter to continue…"). It is shown once per HOME, before
+		// the workspace trust dialog, until hasCompletedOnboarding is set.
+		// Hive seeds that key wherever it can (ensureClaudeSettings for
+		// inference agents, seedClaudeFirstRunForAgent for an agent's own
+		// per-agent HOME); this entry covers a HOME the seed did not reach.
+		// Unanswered, it holds the startup kick until it times out.
+		// Inference agents are left to dismissInferencePrompts, which already
+		// presses Enter on this screen (see watchForTrustPromptForAgent).
+		//
+		// Matched tightly, because Enter is the answer: the header must be a
+		// line of its own and the footer must START the last non-blank line.
+		// A kick or a message that quotes the screen sits in the input box
+		// ("> …") with the status line below it, or in bash once the CLI is
+		// gone, so it never satisfies both.
+		match: ShowsClaudeSecurityNotes,
+		key:   "",
+		label: ClaudeSecurityNotesLabel,
 	},
 	{
 		backend: "claude",
@@ -259,6 +288,22 @@ func HasBlockingPrompt(pane string) bool {
 func BackendHasBlockingPrompts(backend string) bool {
 	for _, p := range BlockingPrompts {
 		if p.backend == backend {
+			return true
+		}
+	}
+	return false
+}
+
+// ShowsClaudeSecurityNotes reports whether the pane ends on Claude Code's
+// first-run "Security notes" screen: a line that is exactly the header, and a
+// last non-blank line that starts with the "Press Enter to continue" footer
+// (box-drawing borders, if a version draws them, are ignored).
+func ShowsClaudeSecurityNotes(pane string) bool {
+	if !strings.HasPrefix(cleanDialogLine(PaneTail(pane, 1)), claudeSecurityNotesFooter) {
+		return false
+	}
+	for _, line := range strings.Split(pane, "\n") {
+		if cleanDialogLine(line) == claudeSecurityNotesHeader {
 			return true
 		}
 	}
