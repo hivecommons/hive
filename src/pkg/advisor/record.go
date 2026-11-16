@@ -47,6 +47,10 @@ type Record struct {
 	// ReasoningEffort is the reasoning effort the review asked for (the
 	// advisor model role's reasoning_effort); empty when none was sent.
 	ReasoningEffort string `json:"reasoning_effort,omitempty"`
+	// Route is how the review reached the model: http (the reviewer
+	// endpoint), claude-cli (the hive's Claude login) or none (no path was
+	// ready, so the review was skipped).
+	Route string `json:"route,omitempty"`
 	// Severity is aside/concern/blocker; empty on a skipped review.
 	Severity string `json:"severity,omitempty"`
 	Text     string `json:"text,omitempty"`

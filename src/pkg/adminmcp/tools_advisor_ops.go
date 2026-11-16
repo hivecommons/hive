@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 
@@ -62,8 +63,13 @@ type advisorFieldKind int
 const (
 	advisorBool advisorFieldKind = iota
 	advisorString
-	advisorCount // a whole number, 0 or more
+	advisorCount   // a whole number, 0 or more
+	advisorBackend // "" or one of advisorBackends
 )
+
+// advisorBackends are the advisor.backend values, the same as
+// governor.reviewer_backend's; "" follows governor.reviewer_backend.
+var advisorBackends = []string{"auto", "http", "claude-cli"}
 
 // advisorFields are the fields of the fleet block and of an agent override,
 // in the order the endpoints' bodies declare them (advisorFleetBody and
@@ -79,6 +85,7 @@ var advisorFields = []struct {
 	{"daily_budget_tokens", advisorCount},
 	{"timeout_s", advisorCount},
 	{"max_consecutive_blocks", advisorCount},
+	{"backend", advisorBackend},
 }
 
 // AdvisorBodyFields lists the fleet and override fields advisor.settings and
@@ -123,6 +130,13 @@ func parseAdvisorFields(args map[string]any, what string) (map[string]any, error
 				return nil, fmt.Errorf("%s: %s must be a string", what, key)
 			}
 			body[key] = strings.TrimSpace(s)
+		case advisorBackend:
+			s, ok := raw.(string)
+			b := strings.ToLower(strings.TrimSpace(s))
+			if !ok || (b != "" && !slices.Contains(advisorBackends, b)) {
+				return nil, fmt.Errorf("%s: backend must be one of %s, or \"\" to follow governor.reviewer_backend", what, strings.Join(advisorBackends, ", "))
+			}
+			body[key] = b
 		case advisorCount:
 			n, _, err := optionalIntArg(map[string]any{key: raw}, key)
 			if err != nil || n < 0 {
@@ -216,6 +230,11 @@ func advisorWidening(who string, from, to map[string]any, defaultBlocks int) []s
 		if b, a := advisorBlocks(from, defaultBlocks), advisorBlocks(to, defaultBlocks); a > b && b > 0 {
 			out = append(out, fmt.Sprintf("the advisor may hold %s with up to %d blockers in a row instead of %d", who, a, b))
 		}
+		if b, _ := to["backend"].(string); b == "claude-cli" {
+			if was, _ := from["backend"].(string); was != "claude-cli" {
+				out = append(out, "reviews of "+who+" run on this hive's Claude sign-in, which its agents also draw on")
+			}
+		}
 	}
 	return out
 }
@@ -243,7 +262,7 @@ func advisorDisclosure(widening []string) string {
 
 func (advisorSettingsOp) Name() string { return WriteOpAdvisorSettings }
 func (advisorSettingsOp) Description() string {
-	return "Change the fleet advisor-lane settings (the advisor block, Settings → Features → Advisor Lane) through PUT " + advisorSettingsPath + ", the endpoint that panel saves with. Owner only. Pass only what changes: enabled, model (a model id, \"@<role>\" naming a model_roles entry, or \"\" for the trajectory reviewer's model), instructions, daily_budget_tokens (per agent per day, 0 = no cap), timeout_s and max_consecutive_blocks (0 = the built-in default). Only those fields are sent; agents with their own override keep it. The preview reads the current settings and shows each named field before and after; write_confirm refuses if the advisor settings changed after the preview. Agents pick the change up at their next launch."
+	return "Change the fleet advisor-lane settings (the advisor block, Settings → Features → Advisor Lane) through PUT " + advisorSettingsPath + ", the endpoint that panel saves with. Owner only. Pass only what changes: enabled, model (a model id, \"@<role>\" naming a model_roles entry, or \"\" for the trajectory reviewer's model), instructions, daily_budget_tokens (per agent per day, 0 = no cap), timeout_s and max_consecutive_blocks (0 = the built-in default), and backend (http, claude-cli for this hive's Claude sign-in, auto, or \"\" to follow governor.reviewer_backend). Only those fields are sent; agents with their own override keep it. The preview reads the current settings and shows each named field before and after; write_confirm refuses if the advisor settings changed after the preview. Agents pick the change up at their next launch."
 }
 func (advisorSettingsOp) InputSchema() map[string]any {
 	return map[string]any{"type": "object", "properties": advisorFieldsSchema(), "additionalProperties": false}
@@ -333,12 +352,13 @@ func advisorFieldsSchema() map[string]any {
 		"daily_budget_tokens":    map[string]any{"type": "integer", "minimum": 0, "description": "Advisor token budget per agent per day; 0 = no cap."},
 		"timeout_s":              map[string]any{"type": "integer", "minimum": 0, "description": "Seconds one review may hold a turn before the agent goes on; 0 = the built-in default."},
 		"max_consecutive_blocks": map[string]any{"type": "integer", "minimum": 0, "description": "Blockers in a row before the advisor's blockers become asides; must stay below the Copilot CLI bound (8); 0 = the built-in default."},
+		"backend":                map[string]any{"type": "string", "enum": []string{"", "auto", "http", "claude-cli"}, "description": "How a review reaches the model: http (the reviewer endpoint and its API key), claude-cli (this hive's Claude sign-in, every tool off) or auto (the endpoint when one is set, else the Claude sign-in); \"\" follows governor.reviewer_backend."},
 	}
 }
 
 func (advisorAgentOp) Name() string { return WriteOpAdvisorAgent }
 func (advisorAgentOp) Description() string {
-	return "Set or clear one agent's advisor override (agents.<name>.advisor, the per-agent rows of Settings → Features → Advisor Lane) through PUT " + advisorAgentPathPrefix + "{name}. Owner only. override is an object with any of enabled, model, instructions, daily_budget_tokens, timeout_s and max_consecutive_blocks, and replaces the agent's override whole: a field left out of it is cleared and follows the fleet setting again. {\"enabled\": false} opts the agent out. override \"inherit\" (or {}) clears the override, so the agent follows the fleet settings. The preview shows the override and the settings in force before and after; write_confirm refuses if the advisor settings changed after the preview. The agent picks the change up at its next launch."
+	return "Set or clear one agent's advisor override (agents.<name>.advisor, the per-agent rows of Settings → Features → Advisor Lane) through PUT " + advisorAgentPathPrefix + "{name}. Owner only. override is an object with any of enabled, model, instructions, daily_budget_tokens, timeout_s, max_consecutive_blocks and backend, and replaces the agent's override whole: a field left out of it is cleared and follows the fleet setting again. {\"enabled\": false} opts the agent out. override \"inherit\" (or {}) clears the override, so the agent follows the fleet settings. The preview shows the override and the settings in force before and after; write_confirm refuses if the advisor settings changed after the preview. The agent picks the change up at its next launch."
 }
 func (advisorAgentOp) InputSchema() map[string]any {
 	return map[string]any{"type": "object", "properties": map[string]any{

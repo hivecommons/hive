@@ -638,6 +638,7 @@ advisor.instructions # TODO #11854
 advisor.max_consecutive_blocks # TODO #11854
 advisor.model # TODO #11854
 advisor.timeout_s # TODO #11854
+agents.<key>.advisor.backend # TODO #11854
 agents.<key>.advisor.daily_budget_tokens # TODO #11854
 agents.<key>.advisor.enabled # TODO #11854
 agents.<key>.advisor.instructions # TODO #11854

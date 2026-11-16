@@ -86,6 +86,13 @@ type AdvisorConfig struct {
 	// past it, blockers are downgraded to asides and the record says so.
 	// Must stay below AdvisorCopilotBlockBound. 0 → default.
 	MaxConsecutiveBlocks int `yaml:"max_consecutive_blocks,omitempty" json:"max_consecutive_blocks,omitempty"`
+	// Backend is how a review reaches the advisor model, with the values
+	// governor.reviewer_backend takes: http (the reviewer endpoint and its
+	// API key), claude-cli (the Claude CLI on the hive's own Claude login,
+	// every tool off) or auto (the endpoint when one resolves, else the
+	// Claude CLI when Claude is signed in). Empty follows
+	// governor.reviewer_backend.
+	Backend string `yaml:"backend,omitempty" json:"backend,omitempty"`
 }
 
 // IsEnabled reports whether the fleet-wide advisor lane is on. Unlike the
@@ -121,7 +128,20 @@ func (c *Config) EffectiveAdvisor(agentName string) AdvisorConfig {
 	if o.MaxConsecutiveBlocks != nil {
 		eff.MaxConsecutiveBlocks = *o.MaxConsecutiveBlocks
 	}
+	if o.Backend != nil {
+		eff.Backend = *o.Backend
+	}
 	return eff
+}
+
+// AdvisorBackendFor is the advisor backend in force for the named agent:
+// its override, else the fleet block, else governor.reviewer_backend, so an
+// unset advisor backend follows the hive's other reviewer turns.
+func (c *Config) AdvisorBackendFor(agentName string) string {
+	if b := strings.ToLower(strings.TrimSpace(c.EffectiveAdvisor(agentName).Backend)); b != "" {
+		return b
+	}
+	return c.Governor.ReviewerBackendOrDefault()
 }
 
 // AdvisorEnabledFor reports whether the advisor lane is on for the named
@@ -187,6 +207,10 @@ type AdvisorRuntime struct {
 	// model names ("@<role>"); empty for a literal model or a role without
 	// one, and the request then carries none.
 	ReasoningEffort string
+	// Backend is the advisor backend in force (AdvisorBackendFor): the
+	// caller resolves it with the hive's Claude login into the path a review
+	// takes (GovernorConfig.ResolveReviewerTurnVia).
+	Backend string
 }
 
 // ResolveAdvisorRuntime resolves the advisor evaluator's endpoint, key,
@@ -222,6 +246,7 @@ func (c *Config) ResolveAdvisorRuntime(agentName string) (AdvisorRuntime, bool) 
 		DailyBudgetTokens:    eff.DailyBudgetTokens,
 		MaxConsecutiveBlocks: maxBlocks,
 		ReasoningEffort:      effort,
+		Backend:              c.AdvisorBackendFor(agentName),
 	}, true
 }
 
@@ -282,6 +307,9 @@ func (c *Config) validateAdvisorLane() error {
 	if err := validateAdvisorBlockLimit("advisor.max_consecutive_blocks", c.Advisor.MaxConsecutiveBlocks); err != nil {
 		return err
 	}
+	if err := validateAdvisorBackend("advisor.backend", c.Advisor.Backend); err != nil {
+		return err
+	}
 	for name, agent := range c.Agents {
 		if agent.Advisor == nil {
 			continue
@@ -298,8 +326,29 @@ func (c *Config) validateAdvisorLane() error {
 				return err
 			}
 		}
+		if agent.Advisor.Backend != nil {
+			field := fmt.Sprintf("agents.%s.advisor.backend", name)
+			if err := validateAdvisorBackend(field, *agent.Advisor.Backend); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
+}
+
+// validateAdvisorBackend refuses an advisor backend that names no path. Empty
+// passes: it follows governor.reviewer_backend.
+func validateAdvisorBackend(field, backend string) error {
+	b := strings.ToLower(strings.TrimSpace(backend))
+	if b == "" {
+		return nil
+	}
+	for _, ok := range ReviewerBackends() {
+		if b == ok {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s must be one of %s (or empty to follow governor.reviewer_backend), got %q", field, strings.Join(ReviewerBackends(), ", "), backend)
 }
 
 // validateAdvisorModelRef rejects "@role" references that name no

@@ -15,13 +15,16 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/claude"
+	"github.com/hivecommons/hive/pkg/advisor"
+	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 )
 
-// The Claude CLI path for the one-shot reviewer turns (Let hive decide and
-// grounded chat) on a hive that has no OpenAI-compatible reviewer endpoint,
-// only the Claude login its agents run on (governor.reviewer_backend, see
-// config.ResolveReviewerTurn). Subscription credentials are only ever used
+// The Claude CLI path for the one-shot reviewer turns (Let hive decide,
+// grounded chat, and advisor reviews) on a hive that has no OpenAI-compatible
+// reviewer endpoint, only the Claude login its agents run on
+// (governor.reviewer_backend and advisor.backend, see
+// config.ResolveReviewerTurnVia). Subscription credentials are only ever used
 // through the official CLI, never for raw API calls.
 //
 // The user prompt carries untrusted issue, PR and comment text, so the turn is
@@ -70,6 +73,34 @@ var errReviewerCLINotSignedIn = errors.New("claude is not signed in on this hive
 
 // reviewerCLISlots is the process-wide concurrency bound.
 var reviewerCLISlots = make(chan struct{}, reviewerCLIMaxConcurrent)
+
+// advisorCLIMaxConcurrent bounds the advisor's Claude CLI reviews running at
+// once. They take their own slots, so a burst of finished turns cannot hold
+// the slots Let hive decide and grounded chat wait on, nor the reverse.
+const advisorCLIMaxConcurrent = 2
+
+var advisorCLISlots = make(chan struct{}, advisorCLIMaxConcurrent)
+
+// advisorCLIProfile names the advisor's turns in runner errors.
+const advisorCLIProfile = "advisor"
+
+// newAdvisorCLIRunner is the reviewer CLI runner for advisor reviews (an
+// advisor backend of claude-cli, or auto with no reviewer endpoint): the same
+// tool-less, hook-less, session-less launch as its own user, on the advisor's
+// own slots. Each review's own timeout (advisor.timeout_s) ends the turn
+// before the runner's longer bound does.
+func newAdvisorCLIRunner() *reviewerCLIRunner {
+	r := newReviewerCLIRunner()
+	r.slots = advisorCLISlots
+	return r
+}
+
+// advisorTurn adapts the runner to the advisor's CLITurn.
+func (c *reviewerCLIRunner) advisorTurn() advisor.CLITurn {
+	return func(ctx context.Context, system, user, model, effort string) (string, error) {
+		return c.runTurn(ctx, advisorCLIProfile, system, user, model, effort)
+	}
+}
 
 // reviewerCLIRunner runs one reviewer turn through the Claude CLI. Every
 // field is a seam the tests replace.
@@ -137,14 +168,19 @@ func reviewerCLIModel(model string) string {
 }
 
 // reviewerCLIArgs is the CLI's argv after the binary. No prompt text is in it:
-// systemFile is the path of the file holding the system prompt.
-func reviewerCLIArgs(model, systemFile string) []string {
+// systemFile is the path of the file holding the system prompt. effort is
+// passed as --effort only when the Claude CLI accepts it; otherwise the CLI's
+// own default effort applies.
+func reviewerCLIArgs(model, effort, systemFile string) []string {
 	args := []string{"-p", "--output-format", "json",
 		"--tools", "", "--disallowedTools", "mcp__*", "--strict-mcp-config",
 		"--settings", reviewerCLIHooksOff, "--no-session-persistence", "--max-turns", "1",
 		"--system-prompt-file", systemFile}
 	if m := reviewerCLIModel(model); m != "" {
 		args = append(args, "--model", m)
+	}
+	if e := strings.TrimSpace(effort); config.ValidEffort(config.AdvisorClaudeBackend, e) {
+		args = append(args, "--effort", e)
 	}
 	return args
 }
@@ -172,8 +208,15 @@ type reviewerCLIResult struct {
 	Result  *string `json:"result"`
 }
 
-// run runs one turn and returns the model's reply text.
+// run runs one turn at the CLI's default effort and returns the model's reply
+// text.
 func (c *reviewerCLIRunner) run(ctx context.Context, profile, system, user, model string) (string, error) {
+	return c.runTurn(ctx, profile, system, user, model, "")
+}
+
+// runTurn runs one turn at effort (empty for the CLI's default) and returns
+// the model's reply text.
+func (c *reviewerCLIRunner) runTurn(ctx context.Context, profile, system, user, model, effort string) (string, error) {
 	cred := c.credential()
 	if cred == "" {
 		return "", fmt.Errorf("%s: claude cli: %w", profile, errReviewerCLINotSignedIn)
@@ -201,7 +244,7 @@ func (c *reviewerCLIRunner) run(ctx context.Context, profile, system, user, mode
 		return "", fmt.Errorf("%s: claude cli: system prompt: %w", profile, err)
 	}
 
-	argv := append([]string{c.binary}, reviewerCLIArgs(model, systemFile)...)
+	argv := append([]string{c.binary}, reviewerCLIArgs(model, effort, systemFile)...)
 	env := []string{"HOME=" + home, "DISABLE_AUTOUPDATER=1", "CLAUDE_CODE_OAUTH_TOKEN=" + cred}
 	if p, ok := os.LookupEnv("PATH"); ok {
 		env = append(env, "PATH="+p)
@@ -329,4 +372,32 @@ func (b *reviewerCappedBuffer) Write(p []byte) (int, error) {
 		}
 	}
 	return len(p), nil
+}
+
+// advisorRuntimeFor maps one agent's resolved advisor settings and the route
+// its advisor backend resolved to (config.GovernorConfig.ResolveReviewerTurnVia)
+// onto the advisor server's Runtime. On the http path the endpoint and key
+// are the route's; on the claude-cli path neither is set and the model is the
+// CLI's --model (empty keeps the CLI's default). A route that is not ready
+// makes every review a skip, with the route's reason logged.
+func advisorRuntimeFor(rt config.AdvisorRuntime, route config.ReviewerTurnRoute) advisor.Runtime {
+	out := advisor.Runtime{
+		Model:                rt.Model,
+		Instructions:         rt.Instructions,
+		TimeoutS:             rt.TimeoutS,
+		DailyBudgetTokens:    rt.DailyBudgetTokens,
+		MaxConsecutiveBlocks: rt.MaxConsecutiveBlocks,
+		ReasoningEffort:      rt.ReasoningEffort,
+		Route:                route.Path,
+	}
+	switch {
+	case !route.Ready:
+		out.Route = advisor.RouteUnready
+		out.UnreadyReason = route.Reason
+	case route.Path == config.ReviewerPathHTTP:
+		out.Endpoint, out.APIKey, out.Model = route.Endpoint, route.APIKey, route.Model
+	case route.Path == config.ReviewerPathClaudeCLI:
+		out.Route = advisor.RouteClaudeCLI
+	}
+	return out
 }
