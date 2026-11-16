@@ -1,0 +1,1 @@
+- Hive reviewers can now post findings as inline, line-anchored comments: `hive-review --comments-file` sends the summary and every line comment in one GitHub review, so each finding is its own resolvable thread with a single notification, and a finding whose line is not in the diff is moved into the summary instead of failing the review.
