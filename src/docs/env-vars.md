@@ -442,6 +442,28 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_LLM_TIMEOUT_MS` | No | `2500` | Per-call model timeout. |
 | `HIVE_MEETINGS_LLM_MAX_IN_FLIGHT` | No | `4` | Concurrent model calls across all meetings. |
 
+### Mail receiver (`hive-mx`)
+
+`hive-mx` is the cluster's receive-only mail receiver ([#18395](https://github.com/hivecommons/hive/issues/18395)): it accepts mail only for `hive@<hive host>`, keeps calendar invites, mail-in files and proof codes, and posts them to the hub. It never sends mail, offers no AUTH and relays nothing. It reads only these variables; see [meetings.md](meetings.md#inviting-betty-by-email).
+
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `HIVE_MX_HUB_URL` | Yes | none | Hub base URL hive-mx fetches the host list from (`GET /api/mail/hosts`) and posts deliveries to (`POST /api/mail/inbound`). |
+| `HIVE_MX_HUB_TOKEN_FILE` | No | `/var/run/secrets/hive-mx/token` | File holding the hub bearer token (a mounted Secret). Read on every call, so a rotated token needs no restart. |
+| `HIVE_MX_LISTEN` | No | `:2525` | SMTP listen address. The Service maps port 25 to it, so the container runs as non-root. |
+| `HIVE_MX_HEALTH_LISTEN` | No | `:8080` | `/healthz` and `/readyz` (ready once the first host list loaded). |
+| `HIVE_MX_DOMAIN` | No | `mx.hive.hivecommons.dev` | Name hive-mx greets with. |
+| `HIVE_MX_HOSTS_REFRESH_S` | No | `60` | Seconds between host list refreshes. A failed refresh keeps the last list. |
+| `HIVE_MX_MAX_MESSAGE_BYTES` | No | `2097152` | SMTP SIZE limit (2 MB). |
+| `HIVE_MX_MAX_RECIPIENTS` | No | `5` | Recipients per message. |
+| `HIVE_MX_MAX_CONNECTIONS` | No | `100` | Concurrent SMTP connections. |
+| `HIVE_MX_MAX_FILE_BYTES` | No | `2097152` | Largest decoded mail-in attachment. |
+| `HIVE_MX_MAX_FILES` | No | `10` | Mail-in attachments kept per message. |
+| `HIVE_MX_IP_MESSAGES_PER_HOUR` | No | `60` | Messages per remote IP per hour (burst of a quarter of it). |
+| `HIVE_MX_DOMAIN_MESSAGES_PER_HOUR` | No | `120` | Messages per sender (MAIL FROM) organizational domain per hour. |
+| `HIVE_MX_TLS_CERT` | No | none | PEM certificate file; with `HIVE_MX_TLS_KEY` it turns on STARTTLS. Re-read when the file changes. Without it hive-mx accepts plain SMTP only. |
+| `HIVE_MX_TLS_KEY` | No | none | PEM key for `HIVE_MX_TLS_CERT`. |
+
 ## Backend launch controls
 
 | Variable | Required | Default | Purpose |
