@@ -55,7 +55,7 @@ var validGatewayKinds = map[string]bool{
 // struct (both are references, safe to expose), plus a hasKey flag and a masked
 // tail hint resolved from those references.
 func gatewaySectionResponse(gw config.GatewayConfig) map[string]interface{} {
-	key := gw.ResolveAPIKey()
+	key, keySource := gw.ResolveAPIKeyWithSource()
 	keySHA256 := ""
 	if key != "" {
 		keySHA256 = config.APIKeySHA256(key)
@@ -80,6 +80,11 @@ func gatewaySectionResponse(gw config.GatewayConfig) map[string]interface{} {
 		// a name (the dashboard renders that as "(unnamed)"), so no
 		// backwards-compat break.
 		"keyName": gw.KeyName,
+		// hive#18533: where the key actually came from (never the value), and
+		// whether the configured api_key_file is one hive will read.
+		"keySource":            redactSecret(keySource, key),
+		"keySourceDescription": redactSecret(config.DescribeKeySource(keySource, gw.APIKeyFile), key),
+		"apiKeyFileAllowed":    strings.TrimSpace(gw.APIKeyFile) == "" || config.SecretFilePathAllowed(gw.APIKeyFile),
 	}
 }
 
@@ -211,8 +216,8 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		// path, which is precisely why any absolute path used to be accepted and
 		// stored verbatim. ResolveAPIKey enforces the same confinement at read
 		// time for paths that reach hive.yaml by other routes.
-		if keyFile != "" && !config.SecretFilePathAllowed(keyFile) {
-			jsonError(w, "api_key_file must be under /secrets or "+config.WritableSecretsDir, http.StatusBadRequest)
+		if msg := config.SecretFilePathRejection("api_key_file", keyFile); msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
 			return
 		}
 	}

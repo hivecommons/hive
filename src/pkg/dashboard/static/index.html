@@ -64437,9 +64437,13 @@ function burnAreaChart() {
       const keyEnvWarning = litellm.apiKeyEnvLooksLikeKey
         ? `<div style="font-size:0.72rem;margin-top:3px;color:var(--red)">The saved value here (${esc(litellm.apiKeyEnv || '')}) looks like a key VALUE, not an environment variable name — move it to the API Key field above and Save; storing a key clears this field automatically.</div>`
         : '';
+      // hive#18533: a configured path outside the allowed secret dirs is never
+      // read; say so and name the key source actually in use.
       const keyFileWarning = litellm.apiKeyFileLooksLikeKey
         ? `<div style="font-size:0.72rem;margin-top:3px;color:var(--red)">The saved value here (${esc(litellm.apiKeyFile || '')}) looks like a key VALUE, not a file path — move it to the API Key field above and Save.</div>`
-        : '';
+        : (litellm.apiKeyFileAllowed === false
+          ? `<div style="font-size:0.72rem;margin-top:3px;color:var(--red)">This path is outside the allowed secret dirs (${esc((litellm.allowedKeyFileDirs || []).join(', '))}) and is ignored: ${esc(litellm.keySourceDescription || '')}. Mount the Secret under an allowed dir and point this field at the file there.</div>`
+          : '');
       const keyEnvValue = litellm.apiKeyEnvLooksLikeKey ? '' : (litellm.apiKeyEnv || '');
       const keyFileValue = litellm.apiKeyFileLooksLikeKey ? '' : (litellm.apiKeyFile || '');
       return `
