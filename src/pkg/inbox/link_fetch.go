@@ -373,6 +373,7 @@ var linkTypeExtensions = map[string]string{
 	"text/x-yaml":               ".yaml",
 	"text/csv":                  ".csv",
 	"text/tab-separated-values": ".tsv",
+	"application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
 }
 
 // linkPipelineName picks the file name the type pipeline sniffs a fetched

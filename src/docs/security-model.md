@@ -168,7 +168,10 @@ timeout and size caps; the original, the extracted text and the meta are
 stored 0600 in a 0700 directory per upload, never executed or served raw, and
 bounded by a per-hive quota. The extracted text is fenced in the same
 `<untrusted-inbox-data>` envelope in its Knowledge fact and before any agent
-prompt ([inbox-uploads.md](inbox-uploads.md)). Links dropped onto the Inbox are
+prompt ([inbox-uploads.md](inbox-uploads.md)). Word documents are read in
+Go with zip-bomb caps (entry count, declared and actual inflated size,
+compression ratio) and an XML decoder that refuses DTDs and unknown entities
+(no XXE). Links dropped onto the Inbox are
 fetched by the hive under an SSRF guard: http/https only, no credentials in
 the URL, the hive's own DNS lookup with the connection pinned to the checked
 address (any private, loopback, link-local, CGNAT, multicast, ULA or metadata

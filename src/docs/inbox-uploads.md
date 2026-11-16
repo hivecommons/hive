@@ -19,7 +19,8 @@ the browser's MIME type alone: it checks magic bytes first (an executable,
 archive, PDF, Office or media file renamed to `.txt` is refused), then that
 the file is UTF-8 text, then that it parses as the format its extension asks
 for. A file without an extension is read as JSON when it parses as JSON and
-as plain text otherwise.
+as plain text otherwise. A zip archive is refused unless it is named `.docx`
+and opens as a Word document.
 
 | Type | Extensions | What the item shows |
 | --- | --- | --- |
@@ -29,6 +30,7 @@ as plain text otherwise.
 | JSON Lines | `.jsonl`, `.ndjson` | the record count and the first 20 records in a fenced block; every line is validated |
 | YAML | `.yaml`, `.yml` | a one-line summary and the document in a fenced `yaml` block (parsed with `gopkg.in/yaml.v3`) |
 | CSV / TSV | `.csv`, `.tsv`, `.tab` | row and column counts and a markdown table of the first 20 rows (20 columns at most) |
+| Word | `.docx` | headings (Title and Heading 1 to 6 styles) as `#`, paragraphs, bulleted and numbered lists (by level) as `-` items, and tables as markdown tables; deleted text and field codes are left out; the title comes from the document properties, else the first heading. Read in Go with `archive/zip` and `encoding/xml` (standard library): at most 1000 zip entries, 200 MiB declared uncompressed in all, 50 MiB per part (checked while inflating, not only from the header) and a 100:1 compression ratio per entry; a part with a DOCTYPE or an entity the decoder does not know is refused (XXE), and nothing is fetched |
 | HTML | `.html`, `.htm`, and web pages behind a link | readable markdown: the `<title>` names the item; the `<article>` or `<main>` (else `<body>`) is kept with headings, paragraphs, lists, quotes, code, tables, link targets and image alt text; scripts, styles, forms, navigation, footers, asides and hidden elements are dropped. Parsed with `golang.org/x/net/html` (BSD-3-Clause); nothing is executed and nothing the page references is loaded |
 
 Text is validated as UTF-8 (a UTF-8 BOM is dropped; UTF-16 is refused with
@@ -40,7 +42,7 @@ Not supported (the item is refused with a message saying what to do):
 
 | File | Message |
 | --- | --- |
-| PDF, Word `.docx` | not supported yet |
+| PDF | not supported yet |
 | Legacy Word `.doc` (and `.xls`, `.ppt`) | save it as .docx or PDF and try again |
 | RTF, OpenDocument `.odt` | save it as .docx, PDF or plain text |
 | PowerPoint `.pptx` | export the slides as PDF |
