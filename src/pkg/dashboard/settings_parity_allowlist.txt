@@ -622,3 +622,9 @@ inbox.rules[].title_prefix # see inbox.rules[].source
 inbox.rules[].tag # see inbox.rules[].source
 inbox.rules[].destination # see inbox.rules[].source
 inbox.rules[].repo # see inbox.rules[].source
+inbox.recording.enabled # ● Record (dashboard recordings) limits are yaml-only; the recorder reads them from GET /api/inbox settings.recording (see docs/inbox-recording.md)
+inbox.recording.retention_days # see inbox.recording.enabled
+inbox.recording.max_seconds # see inbox.recording.enabled
+inbox.recording.max_bytes # see inbox.recording.enabled
+inbox.recording.quota_bytes # see inbox.recording.enabled
+inbox.recording.idle_finalize_minutes # see inbox.recording.enabled

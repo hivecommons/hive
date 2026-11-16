@@ -176,6 +176,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Inbox and voice sources](inbox-voice-sources.md) — triage Plaud/Wispr Flow recordings into spektacular RFCs, dibs ideas, or knowledge only; hosted-hive Plaud sign-in.
 - [Add files and links to the Inbox](inbox-uploads.md) — drop or paste md, txt, json, jsonl, yaml, csv and tsv files onto the Inbox: content sniffing, limits, retention and privacy.
 - [Inbox transcription](inbox-transcription.md) — spoke-local Deepgram transcription of recordings without text, with the owner's own key, budget and consent gate.
+- [Recording into the Inbox](inbox-recording.md) — record a meeting or note from the dashboard (● Record): consent notice before every recording, chunked upload, 5-day audio retention, browser support.
 - [Meetings](meetings.md) — send hive into Google Meet, Teams, Zoom or Discord meetings to take notes, ask questions and run research; consent, setup and settings.
 - [Knowledge curator](knowledge-curator.md) — configure fact extraction, sources, vaults, document imports, code maps, and retention.
 - [Knowledge confidence scoring](knowledge-confidence.md) — interpret confidence badges and score explanations.

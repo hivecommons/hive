@@ -197,7 +197,7 @@ func (s *Service) transcriber(t config.InboxTranscription) (transcribe.Transcrib
 // hasAudio reports whether the item's source can mint audio links.
 func (s *Service) hasAudio(it Item) bool {
 	_, ok := s.source(it.Source).(AudioSource)
-	return ok
+	return ok && !it.AudioExpired
 }
 
 // Reason codes for Item.TranscribeUnavailable. no_key means the resolved

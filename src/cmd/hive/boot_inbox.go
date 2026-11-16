@@ -17,6 +17,10 @@ import (
 // inboxSweepTimeout bounds the auto-routing sweep run after a connector sync.
 const inboxSweepTimeout = 2 * time.Minute
 
+// inboxRecordingSweepInterval is how often idle recordings are finalized and
+// audio past inbox.recording.retention_days is deleted.
+const inboxRecordingSweepInterval = 10 * time.Minute
+
 // bootInbox builds the Inbox service. Sources are the configured knowledge
 // connectors whose type is a voice source (inbox.sources, default
 // plaud/wisprflow); with none configured the service still exists and lists
@@ -56,7 +60,15 @@ func (b *boot) bootInbox(baseDir string) {
 	}
 	svc.EnableUploads(uploads)
 	b.startInboxUploadRetention(uploads)
+	// Dashboard recordings (● Record): audio under connector-state/recordings
+	// until inbox.recording.retention_days, facts in the personal layer.
+	svc.EnableRecordings(&inbox.RecordingSource{
+		Store:         inbox.NewRecordingStore(filepath.Join(baseDir, "connector-state", "recordings")),
+		FactDir:       filepath.Join(baseDir, "connectors", inbox.RecordingLayer),
+		RetentionDays: func() int { return svc.Config().Recording.EffectiveRetentionDays() },
+	})
 	b.inboxSvc = svc
+	b.startInboxRecordingSweep(svc)
 	b.logger.Info("inbox started", "sources", len(srcs), "rules", len(b.cfg.Inbox.Rules))
 	if tx := b.cfg.Inbox.Transcription; tx.Enabled {
 		// Transcription reaches the provider from the hive process itself,
@@ -214,4 +226,37 @@ func (b *boot) inboxAfterSync(st connector.Status) {
 		}()
 		return
 	}
+}
+
+// startInboxRecordingSweep runs the recording sweep at boot and then every
+// inboxRecordingSweepInterval until the boot context ends. Its changes are
+// logged and audited with the inbox.RecordingSweepActor actor.
+func (b *boot) startInboxRecordingSweep(svc *inbox.Service) {
+	ctx := b.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	opts := inbox.RecordingOptions{Actor: inbox.RecordingSweepActor, Audit: func(a inbox.RecordingAudit) {
+		if b.dashSrv != nil {
+			b.dashSrv.AuditLog(a.Actor, a.Action, a.Detail(), "")
+		}
+	}}
+	sweep := func() {
+		if _, err := svc.RecordingSweep(opts); err != nil {
+			b.logger.Warn("inbox recording sweep", "error", err)
+		}
+	}
+	go func() {
+		sweep()
+		ticker := time.NewTicker(inboxRecordingSweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sweep()
+			}
+		}
+	}()
 }

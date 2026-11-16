@@ -167,6 +167,15 @@ func (s *Server) handleInboxAudioStream(w http.ResponseWriter, r *http.Request) 
 	if !ok {
 		return
 	}
+	if a, local, err := svc.OpenLocalAudio(r.Context(), it); local {
+		// Audio kept on this hive (dashboard recordings) is served from disk.
+		if err != nil {
+			writeInboxLocalAudioError(w, svc, err)
+			return
+		}
+		s.serveLocalAudio(w, r, a, "inbox_audio_stream", auditDetail("source", it.Source, "item", it.ID))
+		return
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	st, err := svc.OpenAudioStream(r.Context(), it, r.Header.Get("Range"))
 	switch {

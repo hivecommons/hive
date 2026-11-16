@@ -36,6 +36,9 @@ type InboxConfig struct {
 	// Uploads bounds files and links dropped onto the Inbox (see
 	// inbox_uploads.go).
 	Uploads InboxUploads `yaml:"uploads,omitempty" json:"uploads,omitzero"`
+	// Recording is recording straight from the dashboard into the Inbox
+	// (see inbox_recording.go).
+	Recording InboxRecording `yaml:"recording,omitempty" json:"recording,omitzero"`
 }
 
 // InboxRule routes items whose source and title/tag match.
@@ -116,6 +119,9 @@ func ValidateInbox(c InboxConfig) error {
 		return err
 	}
 	if err := ValidateInboxUploads(c.Uploads); err != nil {
+		return err
+	}
+	if err := ValidateInboxRecording(c.Recording); err != nil {
 		return err
 	}
 	for i, r := range c.Rules {
