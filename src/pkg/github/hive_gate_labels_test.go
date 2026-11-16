@@ -113,7 +113,6 @@ type migrationFake struct {
 	added    map[int][]string
 	removed  map[int][]string
 	comments map[int][]string
-	created  []string
 }
 
 type migrationItem struct {
