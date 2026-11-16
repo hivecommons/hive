@@ -94,6 +94,12 @@ Stage numbers in a model are Hive's label numbers (`stagelabels.Table`) for now,
 labels, tracker anchors and replies keep working; a state whose number does not apply to the item
 kind is not covered. Models are whole (no inheritance) through phase 4.
 
+When a rules model selects an unnumbered state, it carries no built-in `stage/*` label, even if
+the state is nonterminal; its model-state labels still apply. The stage store treats the move to
+`None` as leaving the built-in pipeline: it forgets the previous stage and regression history
+(preserving an unblock timestamp when present), rather than recording a regression. A later
+numbered state starts a new built-in stage record.
+
 ## Known gaps (phase 1)
 
 - Prow (`kubernetes/*`) is a third syntax not read; those repos render the default columns.

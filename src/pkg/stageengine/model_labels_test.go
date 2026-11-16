@@ -92,6 +92,44 @@ func TestModelLabelsReconcileIssueAndPR(t *testing.T) {
 	}
 }
 
+func TestUnnumberedModelStateLeavesBuiltInPipeline(t *testing.T) {
+	ctx := context.Background()
+	p := modelLabelProfile()
+	w := newFakeWriter()
+	store := stagelabels.NewStore("", nil)
+	r := New(Options{Mode: ModeEnforce, Writer: w, Store: store, Workflow: p})
+	f := Facts{
+		Ref:    Ref{Owner: "acme", Repo: "widget", Number: 1, Kind: stagelabels.IssueItem},
+		Open:   true,
+		Labels: []string{"stage/010-actionable", "trigger/advance"},
+	}
+	if err := w.AddLabels(ctx, f.Ref.Owner, f.Ref.Repo, f.Ref.Number, f.Labels); err != nil {
+		t.Fatal(err)
+	}
+	store.Observe(f.Ref.Key(), stagelabels.Actionable, "previous stage")
+	dec := DeriveFromModel(p, f.Ref.Kind).Derive(f)
+	if dec.Abstain || dec.Terminal || dec.Stage != stagelabels.None || dec.ModelState != "working" {
+		t.Fatalf("decision = %+v", dec)
+	}
+	tr, err := r.Reconcile(ctx, f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if tr.From != stagelabels.Actionable || tr.To != stagelabels.None || tr.Anomaly != "" {
+		t.Fatalf("transition = %+v", tr)
+	}
+	labels, err := w.Labels(ctx, f.Ref.Owner, f.Ref.Repo, f.Ref.Number)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if slices.Contains(labels, "stage/010-actionable") || !slices.Contains(labels, "workflow/working") {
+		t.Fatalf("labels = %v", labels)
+	}
+	if record, ok := store.Get(f.Ref.Key()); ok {
+		t.Fatalf("built-in stage record retained: %+v", record)
+	}
+}
+
 func TestModelLabelPlannerPreservesInputsAndHonorsControls(t *testing.T) {
 	p := modelLabelProfile()
 	d := Decision{ModelProfile: p, ModelState: "working", Clear: []string{"needs-triage"}}

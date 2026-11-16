@@ -6,8 +6,8 @@ import (
 	"github.com/hivecommons/hive/pkg/workflowmodel"
 )
 
-// Decision is one derivation's output: exactly one stage (None = leave the
-// pipeline, remove every hive-owned label) and why.
+// Decision is one derivation's output: a built-in stage or None and why.
+// None clears the built-in stage, including for an unnumbered model state.
 type Decision struct {
 	Stage stagelabels.Stage
 	// ModelState is the selected custom workflow state, including states
@@ -24,7 +24,7 @@ type Decision struct {
 	// MergeCommit is the pass's merge-method verdict (`merge-method/merge`).
 	MergeCommit stagelabels.MergeCommitState
 	Stalled     bool
-	Terminal    bool // Stage == None because the item closed/merged/left
+	Terminal    bool // the selected state is terminal or the item closed/merged/left
 	// Covered is set on an issue whose stage is 040 because an open PR the
 	// lanes have staged at 040 or later covers it: the dwell clock then
 	// belongs to the PR and the sweep does not judge the issue stalled.

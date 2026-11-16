@@ -132,7 +132,7 @@ func (d modelDeriver) rules(f Facts) Decision {
 }
 
 // decisionFor turns a model state into a Decision: its stage number maps
-// to the stage label, a terminal state with no number is Stage None.
+// to the stage label; an unnumbered state has Stage None whether terminal or not.
 func (d modelDeriver) decisionFor(state, reason string, f Facts) Decision {
 	st := d.p.States[state]
 	if st == nil {
