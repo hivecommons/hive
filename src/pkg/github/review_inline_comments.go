@@ -168,7 +168,10 @@ func parseHunkHeader(h string) (oldStart, newStart int, ok bool) {
 	}
 	o, ok1 := start(fields[1])
 	n, ok2 := start(fields[2])
-	return o, n, ok1 && ok2
+	if !ok1 || !ok2 {
+		return 0, 0, false
+	}
+	return o, n, true
 }
 
 // anchorable reports whether rc can be posted on the diff.
