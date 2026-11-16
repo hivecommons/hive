@@ -37,7 +37,9 @@ func TestAdvisorRecordsReadPath(t *testing.T) {
 }
 
 // TestAdvisorRecordsToolIsReadOnly pins the speak-only contract: the advisor
-// has a read tool and no write operation of any kind.
+// records stay read-only, and the only advisor write operations are the
+// owner-only settings ops (enable, model, roles), which change configuration
+// and never act on a verdict.
 func TestAdvisorRecordsToolIsReadOnly(t *testing.T) {
 	var found bool
 	for _, tool := range ToolsWithWritesEnabled(true) {
@@ -64,8 +66,13 @@ func TestAdvisorRecordsToolIsReadOnly(t *testing.T) {
 	if !found {
 		t.Fatal("advisor_records tool not listed")
 	}
+	settingsOps := map[string]bool{
+		WriteOpAdvisorSettings: true,
+		WriteOpAdvisorAgent:    true,
+		WriteOpAdvisorRoles:    true,
+	}
 	for name := range DefaultWriteRegistry().ops {
-		if strings.Contains(name, "advisor") {
+		if strings.Contains(name, "advisor") && !settingsOps[name] {
 			t.Errorf("advisor must stay speak-only; found write op %q", name)
 		}
 	}
