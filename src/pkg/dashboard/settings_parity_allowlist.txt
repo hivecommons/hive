@@ -626,6 +626,7 @@ data.workflows_dir # workflow-model store root; deployment knob, no Settings con
 project.workflow_bindings[].name # set through the per-repo workflow select on Settings → Repos via PUT /api/workflows/bindings, not a leaf-path control (RFC #17620)
 project.workflow_bindings[].repo # see project.workflow_bindings[].name
 project.workflow_bindings[].version # see project.workflow_bindings[].name
+project.remote_write_identity # Settings control lands in the follow-up PR for #18516
 workflow.label_gc # operator safety knob for model-label garbage collection on rebind; yaml-only, no Settings control planned (RFC #17620)
 inbox.sources[] # which voice connector types feed the Inbox; defaults to every configured plaud/wisprflow connector, yaml-only (Inbox RFC)
 inbox.rules[].source # auto-routing rules are edited as whole rows in Inbox → Auto-routing via POST /api/inbox/settings, not leaf-path controls (Inbox RFC)

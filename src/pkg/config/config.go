@@ -1200,6 +1200,14 @@ type ProjectConfig struct {
 	// them, and writes to them are refused unless opted in. See
 	// reference_repos.go.
 	ReferenceRepos []ReferenceRepo `yaml:"reference_repos,omitempty" json:"reference_repos,omitempty"`
+	// RemoteWriteIdentity picks which GitHub identity the hive writes to its
+	// write-tier reference repos as (hivecommons/hive#18196 follow-up):
+	// "bot" (the default when empty) posts as the hive's GitHub App on a
+	// granted repo whose owner installed that App themselves and as the hive
+	// owner's connected account elsewhere; "bot_only" posts as the App where
+	// it is installed and is read-only elsewhere; "owner" always posts as the
+	// hive owner's connected account. See remote_write_identity.go.
+	RemoteWriteIdentity string `yaml:"remote_write_identity,omitempty" json:"remote_write_identity,omitempty"`
 	// RepoPolicies stores optional per-repository policy overrides keyed by
 	// repo name. project.repos remains the watched-repo identity list; this
 	// sidecar list lets existing string-list configs keep round-tripping.
