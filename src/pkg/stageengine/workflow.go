@@ -128,29 +128,6 @@ func (d modelDeriver) rules(f Facts) Decision {
 		}
 		return d.decisionFor(r.State, reason, f)
 	}
-	// Only seed an explicitly labelled initial state on an open, unstaged
-	// item. Existing state evidence must not be reset by a no-match rule.
-	if f.Open && !f.Merged && stagelabels.Current(f.Labels) == stagelabels.None {
-		hasInitial, hasState := false, false
-		for _, entry := range d.p.Labels.Entries {
-			if entry.State == d.p.Initial && entry.Name != "" {
-				hasInitial = true
-			}
-			if entry.State != "" {
-				for _, label := range f.Labels {
-					if strings.EqualFold(label, entry.Name) {
-						hasState = true
-					}
-				}
-			}
-		}
-		if hasInitial && !hasState {
-			st := d.p.States[d.p.Initial]
-			if st != nil && stateApplies(st, want) {
-				return d.decisionFor(d.p.Initial, "workflow: initial state", f)
-			}
-		}
-	}
 	return abstain(fmt.Sprintf("%s: %s@%s has no rule for this %s", ReasonNotCovered, d.p.Name, d.p.Version, want))
 }
 

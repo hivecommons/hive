@@ -15,10 +15,13 @@ func TestModelInitialStateAndUnnumberedStates(t *testing.T) {
 			"triage": {Lifecycle: workflowmodel.StateLifecycle{Kinds: []workflowmodel.ItemKind{workflowmodel.KindIssue}}},
 		},
 		Labels: workflowmodel.LabelSet{Entries: []workflowmodel.LabelEntry{{Name: "model/intake", State: "intake"}, {Name: "model/triage", State: "triage"}}},
-		Rules:  []workflowmodel.Rule{{Kind: workflowmodel.KindIssue, State: "triage", When: []workflowmodel.Predicate{{Fact: "labels", Op: workflowmodel.OpHas, Value: "needs-review"}}}},
+		Rules: []workflowmodel.Rule{
+			{Kind: workflowmodel.KindIssue, State: "triage", When: []workflowmodel.Predicate{{Fact: "labels", Op: workflowmodel.OpHas, Value: "needs-review"}}},
+			{Kind: workflowmodel.KindIssue, State: "intake", When: []workflowmodel.Predicate{{Fact: "labels", Op: workflowmodel.OpHas, Value: "new-request"}}},
+		},
 	}
 	d := DeriveFromModel(p, stagelabels.IssueItem)
-	f := Facts{Ref: Ref{Kind: stagelabels.IssueItem}, Open: true, Issue: &IssueFacts{}}
+	f := Facts{Ref: Ref{Kind: stagelabels.IssueItem}, Open: true, Issue: &IssueFacts{}, Labels: []string{"new-request"}}
 	got := d.Derive(f)
 	if got.Abstain || got.ModelState != "intake" || got.ModelProfile != p {
 		t.Fatalf("initial: %+v", got)
@@ -34,7 +37,7 @@ func TestModelInitialStateAndUnnumberedStates(t *testing.T) {
 	}
 	f.Ref.Kind = stagelabels.PRItem
 	if got = DeriveFromModel(p, stagelabels.PRItem).Derive(f); !got.Abstain {
-		t.Fatalf("issue initial state seeded on PR: %+v", got)
+		t.Fatalf("issue state applied to PR: %+v", got)
 	}
 }
 

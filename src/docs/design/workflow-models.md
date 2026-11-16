@@ -79,6 +79,7 @@ Custom models declare `derivation: rules`: ordered rules, each a conjunction of 
 fact vocabulary in `workflowmodel.Facts` (`open`, `merged`, `draft`, `labels has stage/*`,
 `author.kind is human`, `pr.checks is green`, `pr.review is approved`, `issue.covered`, …); the
 first rule whose predicates all hold names the state, and an item no rule matches is not covered.
+An initial state is selected only when a rule matches it; it is not a fallback for unrelated items.
 Rules reach only the facts the engine already computes; no LLM is ever in the derivation path.
 `testdata/models/techdocs.json` is the hand-written reference model (cncf/techdocs engagement).
 
