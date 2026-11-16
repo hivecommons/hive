@@ -8,8 +8,10 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -155,5 +157,83 @@ func TestSyncIssueStageLabels_NeedsTriageReAddedIsLeftOn(t *testing.T) {
 	fake.mu.Unlock()
 	if !slices.Contains(added, stagelabels.PRInProgress.Label()) {
 		t.Fatalf("020 → 030 must still be written: added=%v", added)
+	}
+}
+
+// hivecommons/hive#18388 review: a released claim drops the issue back to
+// 015, where `needs-triage` is legitimately on again. That read must not
+// book the sticky yield; only a stage that settles triage judges it.
+func TestSyncIssueStageLabels_NeedsTriageBackAtUnsettledStageDoesNotYield(t *testing.T) {
+	const n = 18389
+	fake := newIssueStageServer(t)
+	c := issueStageTestClient(t, fake.srv, true)
+	store := stagelabels.NewStore("", stageNow)
+	key := stagelabels.Key("acme/widgets", n)
+
+	claimedResult := &ActionableResult{}
+	appendRepoWorkIssueDetail(claimedResult, Issue{
+		Repo: "acme/widgets", Number: n, Author: "alice", AuthorIsHuman: true,
+		Labels:    []string{triageAwaitingLabel, stagelabels.Claimed.Label()},
+		ClaimKind: string(claims.KindAgent),
+	}, workBucketClaimed, "live claim")
+	syncSeeded(t, fake, c, claimedResult, store, stageNow())
+	if rec, _ := store.Get(key); rec.TriageClearedAt.IsZero() {
+		t.Fatalf("claimed pass must book the removal: %+v", rec)
+	}
+
+	released := &ActionableResult{}
+	released.Issues = IssueResultFromItems([]Issue{{
+		Repo: "acme/widgets", Number: n, Author: "alice", AuthorIsHuman: true,
+		Labels: []string{triageAwaitingLabel, stagelabels.Claimed.Label()},
+	}})
+	syncSeeded(t, fake, c, released, store, stageNow())
+	rec, _ := store.Get(key)
+	if rec.Stage.SettlesTriage() {
+		t.Fatalf("released claim must leave a stage that does not settle triage, got %s", rec.Stage.Label())
+	}
+	if rec.TriageClearYielded {
+		t.Fatalf("needs-triage back at %s must not book the yield: %+v", rec.Stage.Label(), rec)
+	}
+}
+
+// hivecommons/hive#18388 review: the FactSink path. A claim fact takes
+// `needs-triage` off and books the removal through Reconcile; when the
+// repository's tooling puts it back, the next sink fact reads it back
+// (enrichTriageClearYield), yields, and leaves it on.
+func TestStageFacts_NeedsTriageReAddedIsLeftOnBySink(t *testing.T) {
+	const n = 18390
+	srv := newStageFactsServer(t, triageAwaitingLabel, stagelabels.Actionable.Label())
+	c := testClient(t, srv.srv.URL)
+	ref := c.IssueStageRef("o/r", n)
+	key := ref.Key()
+	store := stagelabels.Shared()
+	t.Cleanup(func() { store.ForgetStage(key) })
+
+	if err := c.StageFacts().Claimed(context.Background(), ref, stageengine.ClaimFact{Holder: "hive-a"}); err != nil {
+		t.Fatal(err)
+	}
+	labels, _, removed := srv.snapshot()
+	if issueHasLabel(labels, triageAwaitingLabel) || !slices.Contains(removed, triageAwaitingLabel) {
+		t.Fatalf("claim fact must take %s off: labels=%v removed=%v", triageAwaitingLabel, labels, removed)
+	}
+	if rec, _ := store.Get(key); rec.TriageClearedAt.IsZero() || rec.TriageClearYielded {
+		t.Fatalf("sink write must book the removal without a yield: %+v", rec)
+	}
+
+	srv.mu.Lock()
+	srv.labels = append(srv.labels, triageAwaitingLabel)
+	srv.mu.Unlock()
+	if err := c.StageFacts().InProgress(context.Background(), ref, "hive-a", stageNow().Add(time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	labels, _, removed = srv.snapshot()
+	if !issueHasLabel(labels, triageAwaitingLabel) {
+		t.Fatalf("re-added %s must stay on: labels=%v", triageAwaitingLabel, labels)
+	}
+	if got := strings.Count(strings.Join(removed, ","), triageAwaitingLabel); got != 1 {
+		t.Fatalf("%s removed %d times, want 1: removed=%v", triageAwaitingLabel, got, removed)
+	}
+	if rec, _ := store.Get(key); !rec.TriageClearYielded {
+		t.Fatalf("sink must book the yield when the label is back: %+v", rec)
 	}
 }

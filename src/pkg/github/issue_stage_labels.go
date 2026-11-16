@@ -620,11 +620,17 @@ func SyncIssueStageLabelsWith(ctx context.Context, client *Client, result *Actio
 			// whose stage label is already right is still reconciled
 			// (hivecommons/hive#14586). Only once per issue, though: a
 			// label that came back after that removal belongs to another
-			// writer and stays (hivecommons/hive#18387).
-			clearTriage, yielded := settleTriageClear(store, key, in.Repo, in.Number, in.Labels, logger)
-			triageYielded = yielded
-			if stage.SettlesTriage() && clearTriage {
-				want.Clear = []string{triageAwaitingLabel}
+			// writer and stays (hivecommons/hive#18387). The yield is only
+			// judged at a stage that settles triage: at 010/015 (say,
+			// after a claim release) the label is legitimately back, and
+			// a sticky yield must not be booked from that read.
+			triageYielded = rec.TriageClearYielded
+			if stage.SettlesTriage() {
+				clearTriage, yielded := settleTriageClear(store, key, in.Repo, in.Number, in.Labels, logger)
+				triageYielded = yielded
+				if clearTriage {
+					want.Clear = []string{triageAwaitingLabel}
+				}
 			}
 		}
 		if stage == stagelabels.PRInProgress || stage == stagelabels.CoveredByPR {
