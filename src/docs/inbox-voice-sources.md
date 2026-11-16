@@ -148,10 +148,11 @@ Each Inbox item shows what the source has for the recording:
 - **🔗 Share ▾** — the only per-item menu besides ▶ Play and Transcript
   (arrow keys move, Esc closes and returns focus). It has two labelled groups.
   **Hive** (owners and read-write users; read users see only Link):
-  **RFC…** (**Retry RFC…** after a failure), **Knowledge** (**Back to inbox**
-  on a kept item) and **DIBS**. An item that has audio but no text yet is
+  **RFC…** (**Retry RFC…** after a failure), **spek…** (into an
+  [Inception (spek) session](#from-recording-to-an-inception-spek-session)),
+  **Knowledge** (**Back to inbox** on a kept item) and **DIBS**. An item that has audio but no text yet is
   **transcribed first** (the same path as 🎧 Transcribe, with its consent,
-  budget and caps): RFC… and Knowledge queue the share with the dialog
+  budget and caps): RFC…, spek… and Knowledge queue the share with the dialog
   choices, the progress bar reads "Transcribing, then → RFC", and the share
   runs when the transcript completes; the choice survives a restart. If
   transcription fails, nothing is sent: the item shows "→ RFC failed" with the
@@ -170,7 +171,7 @@ Each Inbox item shows what the source has for the recording:
   the Inbox): **Copy link** copies a deep link to the item
   (`<dashboard URL>#section-inbox-section?item=<source>%2F<id>`); **Share…**
   opens the browser's share sheet and appears only where the browser has one.
-  The selection bar has a **Hive ▾** menu for bulk Knowledge, which waits for
+  The selection bar has a **Hive ▾** menu for bulk spek… and Knowledge, which waits for
   transcripts the same way.
   Sharing never shares
   the media URL: the recipient signs in to this hive and needs owner or
