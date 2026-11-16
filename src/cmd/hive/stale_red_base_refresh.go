@@ -186,6 +186,18 @@ func staleRedRefreshSkip(pr github.PullRequest) string {
 		return "shared-ci-incident-open"
 	case len(pr.BaseRedChecks) > 0:
 		return "base-red"
+	}
+	return baseRefreshBranchOwnerSkip(pr)
+}
+
+// baseRefreshBranchOwnerSkip names why the hive must not update pr's branch
+// itself, or "" when it may: the head or base is unknown, the branch is a
+// fork's with "allow edits by maintainers" off, or something else owns the
+// branch sync (a dependency bot rebases its own branch, 072's contributor
+// hive pushes there, 074's adoption recovery owns it). The stale-red and the
+// missing-check base refresh share it.
+func baseRefreshBranchOwnerSkip(pr github.PullRequest) string {
+	switch {
 	case strings.TrimSpace(pr.HeadSHA) == "" || strings.TrimSpace(pr.BaseRef) == "":
 		return "head-or-base-unknown"
 	case pr.FromFork && !pr.MaintainerCanModify:

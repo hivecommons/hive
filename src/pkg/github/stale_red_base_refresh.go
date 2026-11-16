@@ -37,6 +37,10 @@ type StaleRedBaseState struct {
 	// Red names those whose latest run concluded red.
 	Completed map[string]bool
 	Red       map[string]bool
+	// Reported names every check with a run on SHA in any state (queued,
+	// running or completed). The stale-red verdict does not read it; the
+	// missing-check refresh takes it as evidence that a check exists today.
+	Reported map[string]bool
 }
 
 // StaleRedBaseVerdict is what the base tip says about a PR's failing checks.
@@ -104,10 +108,14 @@ func (c *Client) StaleRedBaseStateFor(ctx context.Context, repo, baseRef string)
 		}
 		opts.Page = resp.NextPage
 	}
-	st := StaleRedBaseState{SHA: sha, Completed: map[string]bool{}, Red: map[string]bool{}}
+	st := StaleRedBaseState{SHA: sha, Completed: map[string]bool{}, Red: map[string]bool{}, Reported: map[string]bool{}}
 	for _, cr := range latestCheckRunsByNameAndApp(all) {
 		n := cr.GetName()
-		if n == "" || isMetaCheck(n) || cr.GetStatus() != "completed" {
+		if n == "" || isMetaCheck(n) {
+			continue
+		}
+		st.Reported[n] = true
+		if cr.GetStatus() != "completed" {
 			continue
 		}
 		st.Completed[n] = true
@@ -142,31 +150,42 @@ type StaleRedRefreshOutcome struct {
 // first. A repository whose base refresh belongs to the automerge
 // preparation front (auto_merge.require_current_base) is left to it.
 func (c *Client) RefreshStaleRedPR(ctx context.Context, pr PullRequest, base StaleRedBaseState) (StaleRedRefreshOutcome, error) {
+	return c.refreshPRBehindBase(ctx, pr, base.SHA, "hive:stale_red_base_refresh", "failing checks green on the base tip")
+}
+
+// refreshPRBehindBase is the update shared by the stale-red and the
+// missing-check base refresh: it merges baseSHA into pr's branch when the
+// head is behind it, pinned to the evaluated head, after the write-back gate
+// (KindBaseRefresh) allows it. caller names the REST caller for the compare;
+// why ends the gate preview. A repository whose base refresh belongs to the
+// automerge preparation front (auto_merge.require_current_base) is left to
+// it.
+func (c *Client) refreshPRBehindBase(ctx context.Context, pr PullRequest, baseSHA, caller, why string) (StaleRedRefreshOutcome, error) {
 	if c == nil || c.client == nil {
 		return StaleRedRefreshOutcome{}, ErrNoGitHubClient
 	}
 	owner, name := c.splitRepo(pr.Repo)
 	repo := owner + "/" + name
-	if strings.TrimSpace(pr.HeadSHA) == "" || strings.TrimSpace(base.SHA) == "" {
+	if strings.TrimSpace(pr.HeadSHA) == "" || strings.TrimSpace(baseSHA) == "" {
 		return StaleRedRefreshOutcome{Settled: true, Skipped: "head-or-base-unknown"}, nil
 	}
 	if c.baseRefreshScheduled(repo) {
 		return StaleRedRefreshOutcome{Settled: true, Skipped: "automerge-owns-base-refresh"}, nil
 	}
-	preview := fmt.Sprintf("merge %s@%s into %s#%d at %s (failing checks green on the base tip)", repo, shortSHA(base.SHA), repo, pr.Number, shortSHA(pr.HeadSHA))
+	preview := fmt.Sprintf("merge %s@%s into %s#%d at %s (%s)", repo, shortSHA(baseSHA), repo, pr.Number, shortSHA(pr.HeadSHA), why)
 	if d := c.WritebackAllowed(repo, c.WritebackItemForPR(pr), writeback.KindBaseRefresh, preview); !d.Allowed {
 		return StaleRedRefreshOutcome{Settled: true, Skipped: d.Reason}, nil
 	}
-	cmp, _, err := c.client.Repositories.CompareCommits(WithRESTCaller(ctx, "hive:stale_red_base_refresh"), owner, name, base.SHA, pr.HeadSHA, &gh.ListOptions{PerPage: 1})
+	cmp, _, err := c.client.Repositories.CompareCommits(WithRESTCaller(ctx, caller), owner, name, baseSHA, pr.HeadSHA, &gh.ListOptions{PerPage: 1})
 	if err != nil {
-		return StaleRedRefreshOutcome{}, fmt.Errorf("comparing %s@%s with %s#%d head %s: %w", repo, shortSHA(base.SHA), repo, pr.Number, shortSHA(pr.HeadSHA), err)
+		return StaleRedRefreshOutcome{}, fmt.Errorf("comparing %s@%s with %s#%d head %s: %w", repo, shortSHA(baseSHA), repo, pr.Number, shortSHA(pr.HeadSHA), err)
 	}
 	out := StaleRedRefreshOutcome{BehindBy: cmp.GetBehindBy()}
 	if out.BehindBy <= 0 {
 		out.Settled, out.Skipped = true, "current"
 		return out, nil
 	}
-	if err := c.UpdateBranchExpectedHead(ctx, repo, pr.Number, pr.HeadSHA, base.SHA); err != nil { // writeback:gated — WritebackAllowed(KindBaseRefresh) consulted above
+	if err := c.UpdateBranchExpectedHead(ctx, repo, pr.Number, pr.HeadSHA, baseSHA); err != nil { // writeback:gated — WritebackAllowed(KindBaseRefresh) consulted above
 		if IsUpdateBranchStaleHead(err) {
 			out.Skipped = "head-moved"
 			return out, nil
