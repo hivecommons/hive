@@ -261,13 +261,6 @@ func meetingsPersonaView(m config.MeetingsConfig) MeetingsPersonaView {
 	}
 }
 
-func nonNilStrings(in []string) []string {
-	if in == nil {
-		return []string{}
-	}
-	return in
-}
-
 // meetingsAttendeeHost is the dashboard host the attendee address uses:
 // the forwarded host behind a proxy, else the request host, without a port.
 func meetingsAttendeeHost(r *http.Request) string {

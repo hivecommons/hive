@@ -41,35 +41,6 @@ func TestSettingsMeetingAttendeeTabWiring(t *testing.T) {
 	}
 }
 
-// jsConstBlock returns a const declaration whose value may span lines (an
-// object or array literal), through its closing bracket and semicolon.
-func jsConstBlock(t *testing.T, html, name string) string {
-	t.Helper()
-	start := strings.Index(html, "const "+name+" = ")
-	if start < 0 {
-		t.Fatalf("index.html does not declare const %s", name)
-	}
-	body := start + len("const "+name+" = ")
-	if c := html[body]; c != '{' && c != '[' {
-		end := strings.Index(html[body:], ";")
-		return html[start : body+end+1]
-	}
-	depth := 0
-	for i := body; i < len(html); i++ {
-		switch html[i] {
-		case '{', '[':
-			depth++
-		case '}', ']':
-			depth--
-			if depth == 0 {
-				return html[start:i+1] + ";"
-			}
-		}
-	}
-	t.Fatalf("const %s never closes", name)
-	return ""
-}
-
 // TestMeetingAttendeeTabBehaviour executes the tab's rules against the real
 // preset and voice catalog: flags, the intro preview, the voice list
 // filtered by language, picking a preset, a language change keeping a voice
