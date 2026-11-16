@@ -1,0 +1,1 @@
+- The dashboard sidebar has a new Collaborate group holding Inbox, Calendar, Meetings and Inception (spek), moved out of Intelligence.
