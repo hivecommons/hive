@@ -11,6 +11,21 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.278.0)
+
+### Added
+
+- **The Overview usage gauge shows a row for each provider the agents spend, including Copilot.** The gauge used to show only the Claude plan, so a hive whose agents run on the Copilot backend (even with Claude models) saw nothing useful, and a hive mixing backends saw only part of its quota. `/api/providers/headroom` now carries `used_by`, the enabled agents per provider grouped by backend (a Claude model run through Copilot counts against Copilot), and the gauge draws one row per provider in it, naming the agents, with its own dials, reading age and no-reading reason. The default usage reading now also measures Copilot's monthly premium-request quota as Copilot reports it, signed in only with the agents' own Copilot login; the reading is display-only and never published to a contributor pool, so no relay holds work on it. With provider rotation on, list `github` under `governor.rotation.providers` to measure Copilot. A hive whose agents use one provider sees the same single block as before; the header chip's needle follows the lowest limit across providers.
+
+### Changed
+
+- build(deps): Bump github.com/nats-io/nats-server/v2 from 2.15.2 to 2.15.3 in /src (#18368)
+
+### Fixed
+
+- **The Claude usage gauge names the model on the model-specific weekly dial.** Claude's usage reply names the model a model-specific weekly limit counts (`/usage` shows it as "Current week (Fable)"), but the hive's built-in usage reading dropped that name, so the dial could only say "Weekly (model-specific)". The reading now keeps the name in the limit's `scope.model`, and the dial reads "Weekly (Fable)", following whichever model Claude reports. Names from the optional ccleft source, which arrive lower-cased, are capitalized the same way.
+- **Inbox recordings play again, and items can be shared.** ▶ Play recording handed the browser the source's presigned cloud-storage link (Plaud: S3), which the dashboard CSP (`default-src 'self'`, no `media-src`) refused, so the player only said "Error". The player now streams from the hive's own origin through `GET /api/inbox/{source}/{id}/audio/stream`: the hive fetches the link itself, passes a single `Range` through so seeking works (falling back to the whole file when storage ignores it), caps one response at 2 GiB, replies `Cache-Control: no-store`, keeps the link in memory only for one playback's seeks, re-mints it once when storage refuses an expired link, and never writes audio to disk or logs the link. The CSP is unchanged. It works for every source with audio (Plaud, Zoom, Webex, Fireflies, Fathom, Otter, Discord). A new 🔗 Share button shares an Inbox deep link (`#section-inbox-section?item=<source/id>`, through the browser share sheet or the clipboard) that opens the Inbox and scrolls to the item, instead of exposing the media URL; the native cast/AirPlay control works once the same-origin stream plays. Safari cannot play some Ogg Opus recordings; the player now says so instead of showing a bare error.
+
 ## 2026-11-16 (v5.277.0)
 
 ### Added
