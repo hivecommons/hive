@@ -84,7 +84,17 @@ When you stop, the hive transcribes the recording automatically with its
 built-in whisper first, so the audio stays on the hive), with the same
 progress bar and time-left estimate as any other Inbox transcription. The
 transcriber reads the file from the hive's own disk; nothing is fetched over
-HTTP. The transcript is written into the recording's Knowledge fact.
+HTTP. The transcript is written into the recording's Knowledge fact under the
+line `_Transcript made by this hive with whisper/base.en on 2026-11-16._`
+(provider, model and day); the
+Inbox preview shows the transcript text only.
+
+The **Saved to the Inbox** panel above the Inbox follows the item: it says
+**Transcribed. See the item below.** once the transcript lands, or
+**Transcription failed:** with the reason (or that transcription is off), and then
+closes itself with the same countdown bar and duration as the dashboard's
+toasts (hovering or focusing it pauses the countdown). **Close** dismisses it
+at once.
 
 - Recording does **not** replace the hive-wide transcription consent: nothing
   is transcribed until an owner enables `inbox.transcription` with
@@ -106,6 +116,11 @@ HTTP. The transcript is written into the recording's Knowledge fact.
 | Transcript (machine transcript on this hive) | kept |
 | Knowledge fact (personal layer, never published to the hub) | kept |
 | Recording metadata (title, who, when, duration, consent version) | kept |
+
+While the audio is kept, the note under the player says **The audio is kept
+on this hive until** the day the recording ended plus `retention_days`,
+**then deleted; the transcript stays.** Dropped audio files say the same with
+the upload retention.
 
 After the audio is deleted the item shows **audio expired (kept 5 days)**
 (with the configured number of days) and has no play control; the transcript

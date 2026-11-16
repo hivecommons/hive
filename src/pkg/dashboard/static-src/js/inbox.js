@@ -80,6 +80,7 @@
         }
         _inboxCache = await r.json();
         renderInbox();
+        if (typeof inboxRecSyncDone === 'function') inboxRecSyncDone(_inboxCache.items);
         clearTimeout(_inboxBusyTimer);
         if (inboxRouteBusy(_inboxCache.items)) _inboxBusyTimer = setTimeout(fetchInbox, INBOX_BUSY_POLL_MS);
         if (inboxTxAnyBusy(_inboxCache.items)) inboxTxPollSchedule();
@@ -493,6 +494,19 @@
       } catch (e) { return e.message; }
       return 'the browser could not play this recording';
     }
+    // inboxAudioNoteText is the line under the player. Audio this hive
+    // stores itself (its own recordings, dropped audio files) is kept until
+    // retention deletes it (audio_expires_at); a third-party source's audio
+    // is only streamed through and never stored here.
+    function inboxAudioNoteText(it, fmtDate) {
+      const restart = ' Click ▶ Play recording again to restart.';
+      if (it && (it.source === 'hive-recording' || it.source === 'upload')) {
+        const exp = it.audio_expires_at && !String(it.audio_expires_at).startsWith('0001') ? it.audio_expires_at : '';
+        const when = exp && fmtDate ? fmtDate(exp) : '';
+        return (when ? 'The audio is kept on this hive until ' + when + ', then deleted; the transcript stays.' : 'The audio is kept on this hive.') + restart;
+      }
+      return 'Streaming through this hive; the recording is not stored.' + restart;
+    }
     function inboxPlay(src, id) {
       const key = src + '/' + id;
       const target = document.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
@@ -511,7 +525,7 @@
       target.appendChild(audio);
       const note = document.createElement('div');
       note.className = 'muted-xs';
-      note.textContent = 'Streaming through this hive; the recording is not stored. Click ▶ Play recording again to restart.';
+      note.textContent = inboxAudioNoteText(inboxFind(src, id), d => formatDashboardDate(d, { year: 'numeric', month: 'short', day: 'numeric' }));
       target.appendChild(note);
     }
 
