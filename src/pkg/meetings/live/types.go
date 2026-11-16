@@ -76,14 +76,18 @@ const (
 
 // ResearchItem is one research request from the meeting.
 type ResearchItem struct {
-	RID       string    `json:"rid"`
-	Query     string    `json:"query"`
-	Reason    string    `json:"reason,omitempty"`
-	Status    string    `json:"status"`
-	KickID    string    `json:"kick_id,omitempty"`
-	Findings  []string  `json:"findings,omitempty"`
-	Summary   string    `json:"summary,omitempty"`
-	Posted    bool      `json:"posted,omitempty"`
+	RID      string   `json:"rid"`
+	Query    string   `json:"query"`
+	Reason   string   `json:"reason,omitempty"`
+	Status   string   `json:"status"`
+	KickID   string   `json:"kick_id,omitempty"`
+	Findings []string `json:"findings,omitempty"`
+	Summary  string   `json:"summary,omitempty"`
+	Posted   bool     `json:"posted,omitempty"`
+	// Betty marks a deep dive the persona started on an addressed
+	// question (hivecommons/hive#18393): Spek never hears of it, and its
+	// result is reported once, restyled by the persona.
+	Betty     bool      `json:"betty,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 	UpdatedAt time.Time `json:"updated_at"`
 }

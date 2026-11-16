@@ -43,6 +43,8 @@ type pending struct {
 	answered bool
 	asking   bool
 	snips    []Snippet
+	// thoughts: a spoken request with no question.
+	thoughts bool
 }
 
 type retrieval struct {
@@ -131,17 +133,39 @@ func (e *Engine) markAnswered(l Line, topic []string) {
 }
 
 func (e *Engine) addressed(l Line, trig Trigger, now time.Time) {
+	thoughts := false
 	if strings.TrimSpace(trig.Rest) == "" {
-		e.emit(Reply{Text: fallbackHello, Trigger: TriggerAddressed, Question: l.Text, VoiceWanted: trig.VoiceWanted})
-		return
+		// A spoken request with no question gets one clarifying question
+		// or a thought on the recent discussion; anything else, a hello.
+		if !l.Spoken || e.d.LLM == nil || e.exhausted.Load() || len(e.recent) < minThoughtLines {
+			e.emit(Reply{Kind: replyKind(trig), Text: fallbackHello, Trigger: TriggerAddressed, Question: l.Text, VoiceWanted: trig.VoiceWanted})
+			return
+		}
+		thoughts = true
 	}
 	if e.exhausted.Load() {
 		e.drop("budget")
 		return
 	}
+	if trig.VoiceWanted && e.d.LLM != nil {
+		// Speak at once so the room knows she heard; the answer follows.
+		e.emit(Reply{Kind: KindVoice, Text: e.ack(), Trigger: TriggerAck, Question: l.Text, VoiceWanted: true})
+	}
 	p := e.add(l, trig, TopicKey(trig.Rest), true, now)
-	p.waited = true
+	p.waited, p.thoughts = true, thoughts
 	e.retrieve(p, trig.Rest)
+}
+
+// minThoughtLines is the transcript a spoken "Betty?" needs before she
+// offers thoughts instead of a hello: the request itself plus one line.
+const minThoughtLines = 2
+
+// replyKind is a reply's kind: voice when it was asked for.
+func replyKind(t Trigger) string {
+	if t.VoiceWanted {
+		return KindVoice
+	}
+	return KindChat
 }
 
 func (e *Engine) question(l Line, topic []string, now time.Time) {
@@ -273,7 +297,7 @@ func (e *Engine) proceed(p *pending) {
 		return
 	}
 	if e.d.LLM == nil {
-		e.emit(Reply{Text: fallbackNoModel, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted})
+		e.emit(Reply{Kind: replyKind(p.trig), Text: fallbackNoModel, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted})
 		e.finish(p, "")
 		return
 	}
@@ -284,7 +308,7 @@ func (e *Engine) proceed(p *pending) {
 		mode, timeout, recent = modeAddressed, e.s.AddressedTimeout, e.recentLines()
 	}
 	system := SystemPrompt(e.s.Persona)
-	prompt := answerPrompt(mode, p.line.Who, p.line.Text, p.snips, recent)
+	prompt := answerPrompt(mode, p.line.Who, p.line.Text, p.snips, recent, p.addressed && p.trig.VoiceWanted)
 	id := p.id
 	go func() {
 		ctx, cancel := context.WithTimeout(e.ctx, timeout)
@@ -305,15 +329,7 @@ func (e *Engine) onAnswer(p *pending, a answered) {
 	now := e.d.Now()
 	text := ClipChat(a.ans.Answer)
 	if p.addressed {
-		if a.err != nil || text == "" {
-			e.log.Info("[meetings] persona answer unavailable; replying unsure", "error", a.err)
-			text = fallbackUnsure
-		}
-		e.emit(Reply{Text: text, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted,
-			NeedsResearch: a.ans.NeedsResearch, Sources: a.ans.Sources})
-		e.rememberTopic(p.topic)
-		e.rememberTopic(TopicKey(text))
-		e.finish(p, "")
+		e.onAddressedAnswer(p, a)
 		return
 	}
 	switch {
@@ -358,4 +374,50 @@ func (e *Engine) onOffer(text string) {
 	if e.emit(Reply{Text: text, Trigger: TriggerOffer}) {
 		e.rememberTopic(topic)
 	}
+}
+
+// onAddressedAnswer replies to an addressed request: spoken (two
+// sentences, no links) when voice was wanted, else in chat. An addressed
+// question the model could not answer well becomes a deep dive when the
+// meeting has a research path: she says she will dig in, the session
+// dispatches the research, and FollowUp reports back once.
+func (e *Engine) onAddressedAnswer(p *pending, a answered) {
+	clipFn := ClipChat
+	if p.trig.VoiceWanted {
+		clipFn = ClipVoice
+	}
+	text := clipFn(a.ans.Answer)
+	if a.err != nil || text == "" {
+		e.log.Info("[meetings] persona answer unavailable; replying unsure", "error", a.err)
+		text = fallbackUnsure
+	}
+	rep := Reply{Kind: replyKind(p.trig), Text: text, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted,
+		NeedsResearch: a.ans.NeedsResearch, Sources: a.ans.Sources}
+	weak := a.ans.NeedsResearch || a.ans.Confidence < e.s.MinConfidence
+	if a.err == nil && weak && e.d.CanResearch && !p.thoughts && e.isQuestion(p) {
+		dig := phrasesFor(e.s.Persona.Language).digIn
+		rep.Text = dig
+		if answer := clipFn(a.ans.Answer); answer != "" && a.ans.Confidence >= e.s.MinConfidence {
+			rep.Text = answer + " " + dig
+		}
+		rep.NeedsResearch = true
+		rep.Research = clip(researchQuery(p), maxResearchQuery)
+	}
+	e.emit(rep)
+	e.rememberTopic(p.topic)
+	e.rememberTopic(TopicKey(text))
+	e.finish(p, "")
+}
+
+// maxResearchQuery bounds a deep dive's query.
+const maxResearchQuery = 300
+
+// isQuestion reports whether an addressed request asks something.
+func (e *Engine) isQuestion(p *pending) bool {
+	return strings.Contains(p.line.Text, "?") || IsQuestion(p.trig.Rest) || IsQuestion(p.line.Text)
+}
+
+// researchQuery is the request as said, for the research agent.
+func researchQuery(p *pending) string {
+	return strings.TrimSpace(p.line.Text)
 }

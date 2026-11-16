@@ -420,7 +420,7 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_PERSONA_INTRO_TEMPLATE` | No | the preset's intro | Intro posted when someone asks the persona to introduce itself. Placeholders `{name}`, `{display_name}`, `{pronouns}`, `{leave}`, `{accent}`, `{voice_type}`, `{language}`. |
 | `HIVE_MEETINGS_PERSONA_LEAVE_PHRASES` | No | `betty leave,hive leave` | Comma-separated phrases that remove the persona from the meeting. |
 | `HIVE_MEETINGS_PERSONA_HUMOR` | No | `light` | `light` (at most one light touch, never about a person) or `off`. |
-| `HIVE_MEETINGS_PERSONA_SEARXNG_URL` | No | none | Web search service for the persona (not used yet). |
+| `HIVE_MEETINGS_PERSONA_SEARXNG_URL` | No | none | SearXNG instance the persona searches the web with (`GET /search?format=json`, 1.2 s timeout, top 3 results as untrusted data). In-cluster on hive-oke: `http://searxng.meetings.svc.cluster.local:8080`. Empty means no web search. |
 | `HIVE_MEETINGS_PERSONA_UNPROMPTED_PER_10M` | No | `2` | Unprompted (question-driven) answers per ten minutes. |
 | `HIVE_MEETINGS_PERSONA_UNPROMPTED_MIN_GAP_S` | No | `90` | Minimum seconds between two unprompted answers. |
 | `HIVE_MEETINGS_PERSONA_UNPROMPTED_PER_MEETING` | No | `12` | Unprompted answers per meeting. |
@@ -430,10 +430,10 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_PERSONA_UNPROMPTED_STALE_S` | No | `60` | Seconds after which a waiting room question is dropped. |
 | `HIVE_MEETINGS_LLM_MODE` | No | `auto` | Model Spektacular live mode reasons with: `auto` (an Anthropic key if set, else the OpenAI-compatible endpoint), `openai`, `anthropic` or `none` (rules only). |
 | `HIVE_MEETINGS_LLM_ENDPOINT` | No | `governor.litellm` endpoint | OpenAI-compatible base URL `hive meeting-llm` calls for Spek. |
-| `HIVE_MEETINGS_LLM_MODEL` | No | `governor.litellm.default_model` | Model name for that endpoint. Without an endpoint and model, Spek runs on rules only. |
+| `HIVE_MEETINGS_LLM_MODEL` | No | `governor.litellm.default_model` | Model name for that endpoint. Without an endpoint and model, Spek runs on rules only. With only an Anthropic key it is the model the persona answers with through the Anthropic Messages API (default `claude-haiku-5-5`). |
 | `HIVE_MEETINGS_LLM_API_KEY` | No | `governor.litellm` key | Key for that endpoint. Secret. Wins over the secret file. |
 | `HIVE_MEETINGS_LLM_API_KEY_FILE` | No | `/data/secrets/meetings_llm_api_key` | Keystore-sealed key file for the meetings endpoint. |
-| `HIVE_MEETINGS_ANTHROPIC_API_KEY` | No | none | Anthropic key; when set (mode `auto` or `anthropic`) Spek calls Anthropic directly. Secret; passed only into the Spek child's environment. |
+| `HIVE_MEETINGS_ANTHROPIC_API_KEY` | No | none | Anthropic key; when set (mode `auto` or `anthropic`) Spek calls Anthropic directly and the persona answers through the Anthropic Messages API. Secret; passed only into the Spek child's environment and used in-process for the persona's calls. |
 | `HIVE_MEETINGS_ANTHROPIC_API_KEY_FILE` | No | `/data/secrets/meetings_anthropic_api_key` | Keystore-sealed Anthropic key file. |
 | `HIVE_MEETINGS_ANTHROPIC_MODEL` | No | Spektacular's default | Anthropic model override (`SPEK_MEETING_MODEL`). |
 | `HIVE_MEETINGS_LLM_TIMEOUT_MS` | No | `2500` | Per-call model timeout. |

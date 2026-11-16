@@ -247,6 +247,10 @@ const (
 	// keystore-sealed secret files.
 	DefaultMeetingsLLMKeyFile       = WritableSecretsDir + "/meetings_llm_api_key"
 	DefaultMeetingsAnthropicKeyFile = WritableSecretsDir + "/meetings_anthropic_api_key"
+	// DefaultMeetingsPersonaAnthropicModel is the model the meeting persona
+	// answers with on the Anthropic path when meetings.llm.model is unset:
+	// a fast model, since answers must arrive within seconds.
+	DefaultMeetingsPersonaAnthropicModel = "claude-haiku-5-5"
 	// MeetingsLLMNoModelReason is what the panel shows without a model.
 	MeetingsLLMNoModelReason = "rules only, no model configured"
 )
@@ -269,8 +273,11 @@ const (
 // never log them.
 type ResolvedMeetingsLLM struct {
 	// Backend is openai (hive's meeting-llm command), anthropic or none.
-	Backend        string
-	Endpoint       string
+	Backend  string
+	Endpoint string
+	// Model is the OpenAI-compatible model; on the anthropic backend it is
+	// the model the meeting persona answers with (meetings.llm.model, else
+	// DefaultMeetingsPersonaAnthropicModel). Spek uses AnthropicModel.
 	Model          string
 	APIKey         string
 	AnthropicKey   string
@@ -318,6 +325,7 @@ func (c *Config) ResolveMeetingsLLM(ctx context.Context) ResolvedMeetingsLLM {
 		file := meetingsEnvString(MeetingsAnthropicKeyFileEnv, l.AnthropicKeyFile, DefaultMeetingsAnthropicKeyFile)
 		if key, err := meetingsSecret(ctx, MeetingsAnthropicKeyEnv, file); err == nil && key != "" {
 			r.Backend, r.AnthropicKey = MeetingsLLMModeAnthropic, key
+			r.Model = meetingsEnvString(MeetingsLLMModelEnv, l.Model, DefaultMeetingsPersonaAnthropicModel)
 			return r
 		}
 		if mode == MeetingsLLMModeAnthropic {

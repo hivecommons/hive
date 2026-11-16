@@ -376,6 +376,17 @@ func TestResolveMeetingsLLM(t *testing.T) {
 	if r.Backend != MeetingsLLMModeAnthropic || r.AnthropicKey != "akey" || !strings.Contains(r.Label(), "Anthropic") {
 		t.Fatalf("anthropic %+v", r)
 	}
+	// The persona answers with meetings.llm.model on the Anthropic path,
+	// else the fast default.
+	if r.Model != "m1" {
+		t.Fatalf("anthropic persona model %q", r.Model)
+	}
+	saved := cfg.Meetings.LLM.Model
+	cfg.Meetings.LLM.Model = ""
+	if r := cfg.ResolveMeetingsLLM(ctx); r.Model != DefaultMeetingsPersonaAnthropicModel {
+		t.Fatalf("default anthropic persona model %q", r.Model)
+	}
+	cfg.Meetings.LLM.Model = saved
 	cfg.Meetings.LLM.AnthropicModel = "claude-x"
 	if r := cfg.ResolveMeetingsLLM(ctx); r.Label() != "Anthropic claude-x" {
 		t.Fatal(r.Label())
