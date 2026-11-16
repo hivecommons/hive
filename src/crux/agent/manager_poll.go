@@ -469,10 +469,11 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 			}
 			output := m.captureTmuxPaneForAgent(agent)
 			backend := agent.effectiveBackend()
-			if m.routableBackend(backend) {
+			inference := m.routableBackend(backend)
+			if inference {
 				backend = "claude"
 			}
-			if key, label, ok := blockingPromptKey(backend, output); ok && time.Since(answeredAt[label]) > trustReanswerAfter {
+			if key, label, ok := blockingPromptKey(backend, output); ok && !inferenceDismisserOwnsPrompt(inference, label) && time.Since(answeredAt[label]) > trustReanswerAfter {
 				if label == claudePermissionDialogLabel {
 					title, _ := claudePermissionDialog(output)
 					if !agentExpectsSkipPermissions(agent, backend) {
@@ -501,6 +502,15 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 			}
 		}
 	}
+}
+
+// inferenceDismisserOwnsPrompt reports whether the lifetime watcher must leave
+// a recognised prompt to dismissInferencePrompts. That routine already presses
+// Enter on every "Press Enter to continue" screen of an inference agent, so the
+// watcher answering Claude's first-run security notes too would send a second
+// Enter, which lands on whatever screen comes next.
+func inferenceDismisserOwnsPrompt(inference bool, label string) bool {
+	return inference && label == panesignal.ClaudeSecurityNotesLabel
 }
 
 // outputSignalPatterns are substrings in agent output that indicate meaningful

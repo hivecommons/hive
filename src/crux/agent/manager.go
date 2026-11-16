@@ -580,6 +580,7 @@ type Manager struct {
 	lastRateLimitRelaunch time.Time
 	cliMemory             cliMemoryState         // shared-store warning and drain hook, see cli_memory_drain.go
 	strayGitIdentity      strayGitIdentityWarned // warn-once state, see git_identity_warn_dedupe.go
+	claudeFirstRunSkip    claudeFirstRunSkipLog  // warn-once state, see claude_first_run_seed.go
 
 	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on
 	// the output-capture goroutines, and taking m.mu there risks startup
