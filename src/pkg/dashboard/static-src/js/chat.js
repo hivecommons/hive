@@ -132,7 +132,7 @@
       { name:'governor', aliases:['gov'], usage:'/governor <query>', description:'Ask about governor cadence, kicks and policy.', example:'/governor next kick', details:'Forwards a focused governor question to Hive Chat search.', run: chatForwardCommand('governor') },
       { name:'knowledge', aliases:['kb'], usage:'/knowledge <query>', description:'Ask the knowledge base and imported docs.', example:'/knowledge relay setup', details:'Forwards a focused knowledge-base question to Hive Chat search.', run: chatForwardCommand('knowledge') },
       { name:'jam', aliases:['swarm'], usage:'/jam <query>', description:'Ask about jam sessions, contributors and live collaboration.', example:'/jam who is free?', details:'Presence questions (who is online / free / here / active) are answered locally from `/api/presence`; anything else is forwarded to Hive Chat search.', run: chatCommandJam },
-      { name:'spek', aliases:['spectacular','spec'], usage:'/spek <query>', description:'Ask about Spektacular/inception campaigns and spec runs (v6/edge when unavailable).', example:'/spek active campaigns', details:'Uses v6/edge Spektacular concepts: inception campaigns, spec runs, relay and campaign state.', run: chatForwardCommand('spek') },
+      { name:'spek', aliases:['spectacular','spec'], usage:'/spek <query>', description:'Ask about Spektacular spec runs and Inception (spek) sessions (v6/edge when unavailable).', example:'/spek spec runs', details:'Uses v6/edge Spektacular concepts: spec runs, Inception (spek) sessions and relay state.', run: chatForwardCommand('spek') },
     ];
     const CHAT_COMMAND_BY_NAME = new Map();
     CHAT_COMMANDS.forEach(c => [c.name].concat(c.aliases || []).forEach(n => CHAT_COMMAND_BY_NAME.set(n, c)));
@@ -143,7 +143,7 @@
       { group:'Governor', items:['/governor next kick', 'Why is the governor paused?', 'Show recent kick failures'] },
       { group:'Knowledge', items:['/knowledge work sources', 'Search docs for relay setup', 'What changed in v5?'] },
       { group:'Jam', items:['/who', '/jam who is online?', 'Show contributor activity'] },
-      { group:'Spek / Spektacular', spek:true, items:['!runs spec owner/repo#N', '/spek active campaigns', '/spek spec runs', 'Explain inception relay state'] },
+      { group:'Spek / Spektacular', spek:true, items:['!runs spec owner/repo#N', '/spek spec runs', '/spek running sessions', 'Explain inception relay state'] },
     ];
 
     function loadChatSettings() { return safeJsonParse(localStorage.getItem(CHAT_SETTINGS_KEY) || '{}', {}); }

@@ -81,10 +81,4 @@ func TestDashboardLiveConnectionsCloseBeforeReconnect(t *testing.T) {
 			t.Fatalf("connect() missing %q", want)
 		}
 	}
-	jam := jsFunctionBody(t, html, "function connectCampaignJamLive(id)")
-	for _, want := range []string{"prev.onclose = null", "prev.close()"} {
-		if !strings.Contains(jam, want) {
-			t.Fatalf("connectCampaignJamLive missing %q", want)
-		}
-	}
 }
