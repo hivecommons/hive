@@ -28,7 +28,7 @@ func TestMeetingsConfigDefaults(t *testing.T) {
 		{"transcribe token file", m.TranscribeTokenFileOrDefault(), DefaultMeetingsTranscribeTokenFile},
 		{"delivery", m.DeliveryOrDefault(), MeetingsDeliveryChat},
 		{"voice", m.VoiceOnAddressEnabled(), true},
-		{"bot", m.BotNameOrDefault(), "hive (notes)"},
+		{"bot", m.BotNameOrDefault(), "Betty Bee from the hive"},
 		{"invite", m.InvitePolicyOrDefault(), MeetingsInvitePolicyOwner},
 		{"pool", m.ResearchPoolSizeOrDefault(), DefaultMeetingsResearchPoolSize},
 		{"research cap", m.ResearchPerMeetingOrDefault(), DefaultMeetingsResearchPerMeeting},

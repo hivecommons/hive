@@ -128,6 +128,10 @@ type State struct {
 	// SpekStatus is set when Spektacular live mode is not running for the
 	// meeting; the transcript and the panel keep working without it.
 	SpekStatus string `json:"spek_status,omitempty"`
+	// Persona is the attendee persona's name when it is on.
+	Persona string `json:"persona,omitempty"`
+	// PersonaReplies counts the persona's posted replies.
+	PersonaReplies int `json:"persona_replies,omitempty"`
 }
 
 // StateDoc is the side document name the state is stored under.
@@ -140,6 +144,8 @@ const (
 	EventNotes    = "notes"
 	EventDropped  = "dropped"
 	EventSpek     = "spek"
+	// EventPersona is a persona reply; Intent carries it as JSON.
+	EventPersona = "persona"
 )
 
 // Event is what live-panel observers receive.
@@ -186,4 +192,6 @@ const (
 	intentResearch    = "research"
 	intentSay         = "say"
 	intentHeartbeat   = "heartbeat"
+	// intentPersona charges a persona reply; it never comes from Spek.
+	intentPersona = "persona"
 )

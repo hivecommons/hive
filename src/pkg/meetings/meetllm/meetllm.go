@@ -84,6 +84,10 @@ type Config struct {
 	MaxTokens   int
 	SlotsDir    string
 	MaxInFlight int
+	// System is an optional system prompt sent before the user prompt. The
+	// `hive meeting-llm` command leaves it empty (Spek's prompt arrives
+	// whole on stdin); in-process callers such as the meeting persona set it.
+	System string
 }
 
 func envInt(getenv func(string) string, name string, def int) int {
@@ -233,7 +237,12 @@ func Complete(ctx context.Context, c Config, hc *http.Client, prompt string) (st
 		return "", err
 	}
 	defer release()
-	body, _ := json.Marshal(chatRequest{Model: c.Model, Messages: []chatMessage{{Role: "user", Content: prompt}}, MaxTokens: maxReplyTokens})
+	msgs := make([]chatMessage, 0, 2)
+	if strings.TrimSpace(c.System) != "" {
+		msgs = append(msgs, chatMessage{Role: "system", Content: c.System})
+	}
+	msgs = append(msgs, chatMessage{Role: "user", Content: prompt})
+	body, _ := json.Marshal(chatRequest{Model: c.Model, Messages: msgs, MaxTokens: maxReplyTokens})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatURL(c.Endpoint), bytes.NewReader(body))
 	if err != nil {
 		return "", err

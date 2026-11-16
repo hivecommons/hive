@@ -15,15 +15,39 @@ The feature is off until `meetings.enabled` is set.
 
 ## Consent and privacy
 
-- The first thing hive posts in a meeting is the consent notice (`meetings.consent_text`), before any other message. The default is: "Hive has joined to take notes and help with research. It records this meeting's transcript. Type 'hive leave' to remove it."
-- Anyone in the meeting can type or say "hive leave" (also "hive, leave" or "hive, please leave") and hive leaves at once.
-- The bot joins as `hive (notes)` (`meetings.bot_name`), so its name says it takes notes.
+- The first thing hive posts in a meeting is the consent notice (`meetings.consent_text`), before any other message. The default names the persona: "Betty Bee from the hive has joined to take notes and help with research. Betty records this meeting's transcript. Type 'betty leave' or 'hive leave' to remove Betty." With the persona off it is "Hive has joined to take notes and help with research. It records this meeting's transcript. Type 'hive leave' to remove it."
+- Anyone in the meeting can type or say a leave phrase (`meetings.persona.leave_phrases`: "betty leave" or "hive leave", also "Betty, leave" or "hive, please leave") and the bot leaves at once.
+- The bot joins as the persona's display name, `Betty Bee from the hive` (`meetings.persona.display_name`; `meetings.bot_name` overrides it). With the persona off it joins as `hive (notes)`.
 - No audio is stored. Hive keeps the transcript under `/data/meetings` for `meetings.retention_days` (30 by default) after the meeting ends, then purges it. The transcript is deleted from Vexa at hand-off, and at the latest when hive purges it.
 - Hive answers in the meeting chat by default and never talks over people. It speaks aloud only when the meeting has voice turned on (the dashboard toggle) and someone addresses it by name, and only while `meetings.voice_on_address` is true.
 - Meeting speech is untrusted input. Research asked for in a meeting goes to read-only research agents; past `meetings.research_per_meeting` items it waits for the owner's approval in the dashboard.
 - Research agents run in ADVISORY mode with no repository checkouts: the hive proxy lets them make only read requests to GitHub (GET, HEAD, OPTIONS and git fetch), so they cannot write to a repository or GitHub even if the prompt is ignored. Reading the web relies on the backend's own web tools (for Claude Code, its web fetch and search tools); this has not yet been verified end to end on a hosted hive, and a backend or egress policy without web access makes research answer with an error instead of findings.
 - With the sidecar runtime (`CRUX_MODE=sidecar`) the research pool is not available: hive logs it at boot and research items show as failed in the panel.
 - Recording consent law differs by place (two-party consent, GDPR). Review the notice text for where your meetings happen.
+
+## Betty, the meeting attendee
+
+Hive attends meetings as a persona: **Betty** ("Betty Bee from the hive", she/her) by default ([#18391](https://github.com/hivecommons/hive/issues/18391)). Spek still takes the notes and asks the clarifying questions; Betty is the voice in the chat.
+
+- **Addressing her.** Start or end a line with one of her names (`meetings.persona.aliases`: "betty", "betty bee", "hive"), for example "Betty, when does the release ship?", "hey betty, any blockers on the deploy?" or "what do you think, Betty?". Common speech-to-text spellings ("Bettie", "Betty Bea") count. A sentence that merely mentions the name ("push it to the hive", "hive is slow today") does not.
+- **Intro.** "Betty, introduce yourself", "who are you, Betty?" or "who's the bot?" gets the intro (`meetings.persona.intro_template`), which says what she does and how to send her home.
+- **What she answers.** When addressed she answers briefly from the hive's knowledge vaults, its beads (work items) and, when `knowledge.code_maps.enabled` is on, its code maps, plus the last three minutes of the meeting. If she does not know, she says so. A request that is not a question gets one clarifying question or one or two sentences on the recent discussion.
+- **Room questions.** Betty also answers questions people ask the room (a line ending in "?" or starting with "what", "how", "who" and the like, four words or more), but only if nobody answers within `answer_wait_s` (8 seconds), the knowledge sources had a hit, the model is at least `min_confidence` (0.75) sure, and the topic was not already answered. She never posts general commentary.
+- **Caps.** Unprompted answers are capped at `per_10m` (2 per ten minutes), at least `min_gap_s` (90 seconds) apart and `per_meeting` (12) per meeting, with one reply per question, at most `queue_depth` (3) questions waiting and none older than `stale_s` (60 seconds). Addressed requests skip these caps but still go through the chat rate limit (`meetings.chat_posts_per_minute`) and the meeting budget. Chat answers are at most 3 sentences and 300 characters.
+- **Spek.** With Betty on, Spek's spoken replies are dropped, Spek's chat posts go through Betty (posted unless she already covered the topic, so the meeting never gets two answers), and Spek's clarifying questions are reworded in Betty's voice with one quick model call (800 ms; on failure the original text is posted). Notes and research are unchanged. Lines addressed to Betty and leave phrases never count as answers to Spek's questions.
+- **Manners.** Plain, brief language; at most one light touch of humor, never about a person and none when the conversation sounds tense. Set `meetings.persona.humor: off` to turn humor off. Meeting speech, knowledge and work items reach the model as data, never as instructions. She never claims to have done something she did not do.
+- **Model.** Betty answers with the meetings model through the same path as `hive meeting-llm` (an OpenAI-compatible endpoint, charged to the meeting's usage ledger and budget). With only an Anthropic key, or no model, she still introduces herself but says she cannot answer questions.
+- **Turning her off.** `meetings.persona.enabled: false` (or `HIVE_MEETINGS_PERSONA_ENABLED=false`) restores the plain `hive (notes)` attendee.
+
+### Persona settings
+
+A persona is a preset (`meetings.persona.preset`, default `betty`) plus any field set explicitly; every field also has an `HIVE_MEETINGS_PERSONA_*` override ([env-vars.md](env-vars.md#meetings-quorum)).
+
+- `language` is a BCP-47 tag (default `en-US`). Betty replies in that language and its regional conventions (American spelling for `en-US`).
+- `voice` is the text-to-speech voice id (default `af_heart`, a Kokoro voice) kept for spoken replies, which are not built yet. Kokoro voice ids encode accent and gender: `af_*` is American female, `am_*` American male, `bf_*` and `bm_*` British female and male. A future persona picks a different voice id. A "bot-type" voice would be a different TTS voice or an effect, which is not built yet.
+- `voice_type` (`female`, `male` or `bot`, default `female`), `accent` (free text, default `American`) and `pronouns` (default `she/her`) describe the persona in the intro and her self-description only; they do not change behaviour.
+- `intro_template` placeholders: `{name}`, `{display_name}`, `{pronouns}`, `{leave}` (the first leave phrase), `{accent}`, `{voice_type}`, `{language}`.
+- `searxng_url` is reserved for web search (phase B) and unused for now.
 
 ## The model Spek reasons with
 
@@ -131,7 +155,7 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.transcribe_token_file` | `/data/secrets/meetings_transcribe_token` | Keystore-sealed transcription service token file. |
 | `meetings.delivery` | `chat` | Where meeting output goes. |
 | `meetings.voice_on_address` | `true` | Allow speaking when addressed in a voice-enabled meeting. |
-| `meetings.bot_name` | `hive (notes)` | Bot display name. |
+| `meetings.bot_name` | the persona's display name | Bot display name; `hive (notes)` with the persona off. |
 | `meetings.invite_policy` | `owner` | Who may send hive to a meeting. |
 | `meetings.research_pool_size` | `2` | Research agents (`research-1..N`). |
 | `meetings.research_per_meeting` | `5` | Research items per meeting before approval is needed. |
@@ -152,5 +176,26 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.llm.anthropic_model` | Spektacular's default | Anthropic model. |
 | `meetings.llm.timeout_ms` | `2500` | Per-call model timeout. |
 | `meetings.llm.max_in_flight` | `4` | Concurrent model calls across meetings. |
+| `meetings.persona.enabled` | `true` | The meeting attendee persona. |
+| `meetings.persona.preset` | `betty` | Built-in persona the fields below start from. |
+| `meetings.persona.name` | `Betty` | Name she answers to. |
+| `meetings.persona.display_name` | `Betty Bee from the hive` | Meeting display name, at most 64 characters. |
+| `meetings.persona.aliases` | `[betty, betty bee, hive]` | Names that address her. |
+| `meetings.persona.pronouns` | `she/her` | Used in the intro and self-description. |
+| `meetings.persona.language` | `en-US` | BCP-47 reply language and locale. |
+| `meetings.persona.voice` | `af_heart` | TTS voice id (stored for spoken replies). |
+| `meetings.persona.voice_type` | `female` | `female`, `male` or `bot` (descriptive). |
+| `meetings.persona.accent` | `American` | Descriptive. |
+| `meetings.persona.intro_template` | the preset's intro | Intro text. |
+| `meetings.persona.leave_phrases` | `[betty leave, hive leave]` | Phrases that remove the bot. |
+| `meetings.persona.humor` | `light` | `light` or `off`. |
+| `meetings.persona.unprompted.per_10m` | `2` | Unprompted answers per ten minutes. |
+| `meetings.persona.unprompted.min_gap_s` | `90` | Seconds between unprompted answers. |
+| `meetings.persona.unprompted.per_meeting` | `12` | Unprompted answers per meeting. |
+| `meetings.persona.unprompted.answer_wait_s` | `8` | Seconds to wait for a person to answer first. |
+| `meetings.persona.unprompted.min_confidence` | `0.75` | Model confidence an unprompted answer needs. |
+| `meetings.persona.unprompted.queue_depth` | `3` | Room questions waiting at once. |
+| `meetings.persona.unprompted.stale_s` | `60` | Seconds before a waiting question is dropped. |
+| `meetings.persona.searxng_url` | none | Web search service (not used yet). |
 
 When the budget runs out, hive posts one notice in the meeting and keeps taking notes, but stops asking questions, starting research and speaking.

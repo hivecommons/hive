@@ -3,14 +3,17 @@ package main
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
 	"time"
 
+	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/meetings"
+	"github.com/hivecommons/hive/pkg/meetings/betty"
 	"github.com/hivecommons/hive/pkg/meetings/live"
 	"github.com/hivecommons/hive/pkg/meetings/meetllm"
 	"github.com/hivecommons/hive/pkg/meetings/quorumproc"
@@ -119,6 +122,7 @@ func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.
 		Quorum:       meetings.NewClient(sup.BaseURL(), sup.Token(), nil),
 		BotName:      cfg.Meetings.BotNameOrDefault(),
 		ConsentText:  cfg.Meetings.ConsentTextOrDefault(),
+		LeavePhrases: cfg.Meetings.Persona.Resolve().LeavePhrases,
 		LobbyTimeout: time.Duration(cfg.Meetings.LobbyTimeoutSOrDefault()) * time.Second,
 		Logger:       logger,
 		// Vexa fixes speaking ability at join time, so with voice-on-address
@@ -153,9 +157,10 @@ func meetingSpekArgs(m meetings.Meeting, contextDir string) []string {
 // manager (hivecommons/hive#18291): one `spektacular meeting` child per live
 // meeting, its intents applied through the meetings policy. research may be
 // nil until the research pool is wired; research intents then fail visibly
-// in the panel instead of silently.
+// in the panel instead of silently. beadStores feeds the persona's work-item
+// retrieval and may be nil.
 func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings.Store, kapi *knowledge.KnowledgeAPI,
-	research live.ResearchDispatcher, logger *slog.Logger) *live.Runner {
+	beadStores func() map[string]*beads.Store, research live.ResearchDispatcher, logger *slog.Logger) *live.Runner {
 	if cfg == nil || mgr == nil || store == nil {
 		return nil
 	}
@@ -174,6 +179,11 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 	var notes live.NotesSink
 	if kapi != nil {
 		notes = live.KnowledgeNotes{API: kapi}
+	}
+	persona := m.Persona.Resolve()
+	personaName := "Hive"
+	if persona.Enabled {
+		personaName = persona.Name
 	}
 	r, err := live.NewRunner(live.Options{
 		Meetings: mgr,
@@ -198,8 +208,11 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 			MaxTokensPerMeeting:  m.Budget.MaxTokensPerMeetingOrDefault(),
 			MaxIntentsPerMeeting: m.Budget.MaxIntentsPerMeetingOrDefault(),
 		},
-		Ledger: live.NewLedger(m.Budget.MaxTokensPerHourOrDefault(), m.Budget.MaxTokensPerDayOrDefault()),
-		Logger: logger,
+		Ledger:      live.NewLedger(m.Budget.MaxTokensPerHourOrDefault(), m.Budget.MaxTokensPerDayOrDefault()),
+		Logger:      logger,
+		Persona:     meetingPersonaFactory(cfg, persona, llm, store, kapi, beadStores, slotsDir, maxTokens, logger),
+		PersonaName: personaName,
+		IsLeave:     meetings.NewLeaveMatcher(persona.LeavePhrases).Match,
 	})
 	if err != nil {
 		if logger != nil {
@@ -209,6 +222,47 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 	}
 	r.Start()
 	return r
+}
+
+// meetingPersonaFactory builds the meeting attendee persona (Betty,
+// hivecommons/hive#18392) for each live meeting, or returns nil when the
+// persona is off. She retrieves from the in-memory knowledge vaults, code
+// maps (when enabled) and bead stores, and answers through the meetings
+// model (`meetllm`, charged to the meeting's usage file and budget). With no
+// OpenAI-compatible meetings model she still introduces herself but does
+// not answer questions.
+func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPersona, llm config.ResolvedMeetingsLLM,
+	store *meetings.Store, kapi *knowledge.KnowledgeAPI, beadStores func() map[string]*beads.Store,
+	slotsDir string, maxTokens int, logger *slog.Logger) func(meetings.Meeting) *betty.Engine {
+	if !persona.Enabled {
+		return nil
+	}
+	var retrievers []betty.Retriever
+	if kapi != nil {
+		stores := betty.FileStores(kapi.FileStores)
+		retrievers = append(retrievers, betty.KnowledgeRetriever{Stores: stores})
+		if cfg.Knowledge.CodeMaps.IsEnabled() {
+			retrievers = append(retrievers, betty.CodeMapRetriever{Stores: stores})
+		}
+	}
+	if beadStores != nil {
+		retrievers = append(retrievers, betty.BeadRetriever{Stores: beadStores})
+	}
+	client := &http.Client{}
+	return func(mt meetings.Meeting) *betty.Engine {
+		var model betty.LLM
+		if llm.Backend == config.MeetingsLLMModeOpenAI {
+			model = betty.MeetLLM{Client: client, Config: meetllm.Config{
+				Endpoint: llm.Endpoint, Model: llm.Model, APIKey: llm.APIKey,
+				// The engine bounds each call itself (2.5 s unprompted, 4 s
+				// addressed, 800 ms restyle); this is the outer cap.
+				Timeout:   betty.DefaultAddressedTimeout,
+				UsageFile: meetingUsageFile(store, mt.ID), MaxTokens: maxTokens,
+				SlotsDir: slotsDir, MaxInFlight: llm.MaxInFlight,
+			}}
+		}
+		return betty.New(betty.SettingsFrom(persona), betty.Deps{LLM: model, Retrievers: retrievers, Logger: logger})
+	}
 }
 
 // meetingLLMSlotsDir holds the in-flight slot locks `hive meeting-llm`
