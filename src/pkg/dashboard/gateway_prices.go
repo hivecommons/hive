@@ -308,9 +308,11 @@ func (s *Server) gatewayModelPrice(model string) (tokens.ModelPrice, bool, bool)
 	return tokens.ModelPrice{}, false, false
 }
 
-// installGatewayPricer makes every cost estimate in this process consult the
-// configured gateways' prices.
-func (s *Server) installGatewayPricer() {
+// InstallGatewayPricer makes every cost estimate in this process consult the
+// configured gateways' prices (OpenRouter catalog, LiteLLM /model/info,
+// prices: overrides). The pricer is process-wide, so cmd/hive installs it
+// once at boot; unit tests that build servers keep the static price table.
+func (s *Server) InstallGatewayPricer() {
 	tokens.SetGatewayPricer(s.gatewayModelPrice)
 }
 
