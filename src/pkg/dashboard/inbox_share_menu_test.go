@@ -36,10 +36,20 @@ func TestInboxShareMenuBehaviour(t *testing.T) {
 		"function inboxShareCopy(s, i) { calls.push(['copy', s, i]); } async function inboxShareNative(s, i) { calls.push(['native', s, i]); }",
 		"function inboxDismissSelected() { calls.push(['bulk-dismiss']); } const _inboxSelected = new Set(['plaud/r1']);",
 		"function inboxFind(s, i) { return ((_inboxCache || {}).items || []).find(it => it.source === s && it.id === i); }",
-		jsConstLine(t, html, "INBOX_NO_TEXT_REASON"),
+		jsConstLine(t, html, "INBOX_INTENT_LABELS"),
+		"function inboxOpenSettings() { calls.push(['settings']); }",
 		jsConstBlock(t, html, "inboxShareHiveActions"),
 		jsConstBlock(t, html, "inboxShareLinkActions"),
 		jsFunc(t, html, "inboxDibsReady"),
+		jsFunc(t, html, "inboxCanShare"),
+		jsFunc(t, html, "inboxTxBlocked"),
+		jsFunc(t, html, "inboxTxUnavailableText"),
+		jsFunc(t, html, "inboxShareGate"),
+		jsFunc(t, html, "inboxIntentLabel"),
+		jsFunc(t, html, "inboxIntentThen"),
+		jsFunc(t, html, "inboxTxEtaText"),
+		jsFunc(t, html, "inboxTxElapsedText"),
+		jsFunc(t, html, "inboxTxProgressHtml"),
 		jsFunc(t, html, "inboxShareMenuGroups"),
 		jsFunc(t, html, "inboxShareMenuHtml"),
 		jsFunc(t, html, "inboxShareMenuRun"),
@@ -60,14 +70,45 @@ const ids = (gs) => gs.map(g => g.id + ':' + g.items.map(i => i.id).join(','));
   assert.strictEqual((markup.match(/role="menuitem"/g) || []).length, 5);
   navigator = {};
   assert.deepStrictEqual(ids(inboxShareMenuGroups(item())), ['hive:rfc,knowledge,dibs', 'link:copy']);
-  // Role gating: read and read-write only get the Link group.
-  for (const role of ['read', 'read-write']) { window._hiveRole = role; assert.deepStrictEqual(ids(inboxShareMenuGroups(item())), ['link:copy']); }
+  // Role gating: read gets only the Link group; read-write and owner get Hive too.
+  window._hiveRole = 'read'; assert.deepStrictEqual(ids(inboxShareMenuGroups(item())), ['link:copy']);
   assert.deepStrictEqual(inboxBulkMenuGroups(), []);
+  window._hiveRole = 'read-write';
+  assert.deepStrictEqual(ids(inboxShareMenuGroups(item())), ['hive:rfc,knowledge,dibs', 'link:copy']);
+  assert.deepStrictEqual(ids(inboxBulkMenuGroups()), ['hive:knowledge']);
   window._hiveRole = 'owner';
   // Disabled reasons.
   _inboxCache = { items: [], repos: [], settings: {} };
-  let hive = inboxShareMenuGroups(item({ pending: true }))[0].items;
-  assert(hive.find(i => i.id === 'rfc').disabled && hive.find(i => i.id === 'rfc').hint.includes('Transcribe'));
+  // Audio-only item with transcription unavailable: RFC and Knowledge are
+  // disabled with the reason and a link to the Transcription settings; DIBS is not.
+  _inboxCache = { items: [], repos: ['o/r'], settings: { dibs_url: 'u', dibs_token_set: true } };
+  let hive = inboxShareMenuGroups(item({ pending: true, transcribe_unavailable: 'disabled' }))[0].items;
+  for (const id of ['rfc', 'knowledge']) { const e = hive.find(i => i.id === id); assert(e.disabled && e.hint.includes('Transcription is off'), id); }
+  assert(!hive.find(i => i.id === 'dibs').disabled, 'DIBS always sends straight away');
+  assert(hive.some(i => i.id === 'tx-settings'));
+  window._hiveRole = 'read-write';
+  assert(!inboxShareMenuGroups(item({ pending: true, transcribe_unavailable: 'budget' }))[0].items.some(i => i.id === 'tx-settings'), 'settings link is owner-only');
+  window._hiveRole = 'owner';
+  _inboxCache.items = [item()];
+  await inboxShareMenuRun('hive', 'tx-settings', 'plaud', 'r1');
+  assert.deepStrictEqual(calls.splice(0), [['settings']]);
+  // Audio-only item that can be transcribed: enabled (transcribe first, then share).
+  hive = inboxShareMenuGroups(item({ pending: true, transcribable: true }))[0].items;
+  assert(!hive.find(i => i.id === 'rfc').disabled && !hive.find(i => i.id === 'knowledge').disabled);
+  assert(!hive.some(i => i.id === 'tx-settings'));
+  // A waiting intent shows as disabled: Transcribing, then → RFC.
+  hive = inboxShareMenuGroups(item({ pending: true, share_intents: { spek_rfc: { status: 'waiting' } } }))[0].items;
+  assert.strictEqual(hive.find(i => i.id === 'rfc').hint, 'Transcribing, then → RFC');
+  // A failed intent offers Retry.
+  hive = inboxShareMenuGroups(item({ share_intents: { dismiss: { status: 'failed', error: 'x' } } }))[0].items;
+  assert.strictEqual(hive.find(i => i.id === 'knowledge').label, 'Retry Knowledge');
+  // Progress label.
+  assert.strictEqual(inboxIntentThen(item({ share_intents: { spek_rfc: { status: 'waiting' } } })), 'RFC');
+  const bar = inboxTxProgressHtml({ status: 'running', started_at: '2026-11-16T10:00:00Z', phase: 'transcribing', progress: 0.4, eta_seconds: 240 }, Date.parse('2026-11-16T10:01:00Z'), 'RFC');
+  assert(bar.includes('Transcribing, then → RFC · 40%'), bar);
+  assert(!inboxTxProgressHtml({ status: 'running', started_at: '2026-11-16T10:00:00Z', phase: 'transcribing', progress: 0.4 }, 0).includes('then'));
+  assert(inboxTxProgressHtml({ status: 'queued' }, 0, 'Knowledge').includes('Transcribing, then → Knowledge'));
+  _inboxCache = { items: [], repos: [], settings: {} };
   hive = inboxShareMenuGroups(item())[0].items;
   assert(hive.find(i => i.id === 'rfc').hint.includes('RFC repository'));
   const dibs = hive.find(i => i.id === 'dibs');

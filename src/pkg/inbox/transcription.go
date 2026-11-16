@@ -432,6 +432,7 @@ func (s *Service) runTranscription(it Item, cfg config.InboxTranscription, rec T
 			s.Logger.Warn("inbox: write machine transcript to fact", "item", key, "error", ferr)
 		}
 	}
+	s.finishIntents(it, rec)
 	s.auditTranscription(opts, rec, billed)
 	s.Logger.Info("inbox: transcription finished", "item", key, "status", rec.Status, "provider", rec.Provider, "model", rec.Model, "audio_seconds", int(billed))
 }

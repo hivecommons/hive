@@ -160,12 +160,13 @@
     // Progress bar for a queued or running transcription, in the connector
     // sync progress styling (kc-progress). Queued shows its place in line;
     // running shows phase, percent, time left (aria-live) and elapsed time.
-    function inboxTxProgressHtml(st, nowMs) {
+    function inboxTxProgressHtml(st, nowMs, then) {
       if (!st || (st.status !== 'queued' && st.status !== 'running')) return '';
       const phases = { downloading: 'Downloading audio', decoding: 'Preparing audio', transcribing: 'Transcribing', finalizing: 'Finishing' };
       if (st.status === 'queued' || !st.started_at) {
         const ahead = Number(st.queue_position) || 0;
-        const wait = ahead > 0 ? 'Waiting: ' + ahead + (ahead === 1 ? ' transcription' : ' transcriptions') + ' ahead (one runs at a time)' : 'Starting…';
+        const thenText = then ? ', then → ' + then : '';
+        const wait = (then ? 'Transcribing' + thenText + ': ' : '') + (ahead > 0 ? 'Waiting: ' + ahead + (ahead === 1 ? ' transcription' : ' transcriptions') + ' ahead (one runs at a time)' : 'Starting…');
         return '<div class="kc-progress" data-inbox-tx-progress data-phase="queued" role="progressbar" aria-label="Transcription queued" aria-valuetext="' + escapeHtml(wait) + '">' +
           '<progress class="kc-progress-bar" aria-hidden="true"></progress>' +
           '<div class="kc-progress-copy"><span class="kc-progress-label">' + escapeHtml(wait) + '</span></div></div>';
@@ -174,7 +175,7 @@
       const phase = phases[st.phase] || 'Transcribing';
       const eta = st.phase === 'finalizing' ? 'almost done' : (inboxTxEtaText(st.eta_seconds) || (pct > 0 ? 'finishing up' : 'estimating time left'));
       const elapsed = inboxTxElapsedText(st.started_at, nowMs);
-      const label = phase + ' · ' + pct + '%';
+      const label = phase + (then ? ', then → ' + then : '') + ' · ' + pct + '%';
       return '<div class="kc-progress" data-inbox-tx-progress data-phase="' + escapeHtml(st.phase || 'transcribing') + '" role="progressbar" aria-label="Transcription progress" aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + pct + '" aria-valuetext="' + escapeHtml(label + ', ' + eta) + '">' +
         '<progress class="kc-progress-bar" max="100" value="' + pct + '" aria-hidden="true"></progress>' +
         '<div class="kc-progress-copy"><span class="kc-progress-label" title="' + escapeHtml(st.estimated ? 'Estimated from this provider\'s usual speed' : 'Measured from the transcript so far') + '">' + escapeHtml(label) + ' · <span data-inbox-tx-eta aria-live="polite">' + escapeHtml(eta) + '</span></span>' +
@@ -207,7 +208,7 @@
         html += '<span class="kc-pill" data-status="' + pill + '" title="' + escapeHtml(when ? 'Updated ' + when : '') + '">' +
           (busy ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> ' : '') + escapeHtml(label) + '</span>';
         if (st.reason && (st.status === 'failed' || st.status === 'skipped')) html += ' <span class="muted-xs inbox-tx-reason" role="alert">' + escapeHtml(st.reason) + '</span>';
-        if (busy) html += inboxTxProgressHtml(st);
+        if (busy) html += inboxTxProgressHtml(st, undefined, inboxIntentThen(it));
       }
       const why = inboxTxUnavailableText(it.transcribe_unavailable);
       if (why) {
@@ -306,6 +307,10 @@
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
       if (it.dismissed) pills += '<span class="kc-pill" title="Kept as a Knowledge fact only">knowledge only</span>';
+      for (const d of Object.keys(it.share_intents || {})) {
+        const si = it.share_intents[d];
+        if (si && si.status === 'failed') pills += '<span class="kc-pill" data-status="error" title="' + escapeHtml(si.error || '') + '">→ ' + escapeHtml(inboxIntentLabel(d)) + ' failed</span> <span class="kc-error muted-xs" role="alert">' + escapeHtml(si.error || '') + '</span> ';
+      }
       const owner = viewerIsOwner();
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
       let actions = '';
@@ -313,7 +318,7 @@
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + ' Transcript</button>';
       actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
-        (owner ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
+        (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
         '<div class="kb-fact-body"><div class="kb-fact-title">' + escapeHtml(it.title || it.id) + '</div>' +
         '<div class="muted-xs">' + meta + '</div>' +
@@ -422,7 +427,7 @@
       catch (e) { if (!e || e.name !== 'AbortError') await inboxShareCopy(src, id); }
     }
     // The Share menu has two groups. Hive actions file or keep the item and
-    // are owner-only (the route and dismiss APIs are); Link actions only share
+    // need owner or read-write (as do the route and dismiss APIs); Link actions only share
     // a link. Each entry is {id, label, enabled(item, role), run(item)} where
     // label is a string or fn(item), and enabled returns true, false (hide) or
     // a string (show disabled, the string is the reason). Other features add
@@ -430,15 +435,37 @@
     // session action, instead of a new row button. An entry may also carry
     // bulk(items) to appear in the multi-select Hive menu.
     const inboxShareHiveActions = [
-      { id: 'rfc', dest: 'spek_rfc', label: 'RFC…', enabled: (it, role) => role !== 'owner' ? false : it.pending ? INBOX_NO_TEXT_REASON : !(((_inboxCache || {}).repos || []).length) ? 'No RFC repository configured: set one in Settings → Inbox' : true, run: it => inboxOpenRoute(it.source, it.id, 'spek_rfc') },
-      { id: 'knowledge', label: it => it.dismissed ? 'Back to inbox' : 'Knowledge', enabled: (it, role) => role === 'owner', run: it => it.dismissed ? inboxUndismiss(it.source, it.id) : inboxDismiss(it.source, it.id), bulkLabel: 'Knowledge', bulk: () => inboxDismissSelected() },
-      { id: 'dibs', dest: 'dibs', label: 'DIBS', enabled: (it, role) => role !== 'owner' ? false : inboxDibsReady() ? true : 'Not configured: set the dibs URL in Settings → Inbox → dibs URL', run: it => inboxOpenRoute(it.source, it.id, 'dibs') },
+      { id: 'rfc', dest: 'spek_rfc', label: 'RFC…', enabled: (it, role) => !inboxCanShare(role) ? false : inboxShareGate(it, 'spek_rfc') || (!(((_inboxCache || {}).repos || []).length) ? 'No RFC repository configured: set one in Settings → Inbox' : true), run: it => inboxOpenRoute(it.source, it.id, 'spek_rfc') },
+      { id: 'knowledge', dest: 'dismiss', label: it => it.dismissed ? 'Back to inbox' : 'Knowledge', enabled: (it, role) => !inboxCanShare(role) ? false : (it.dismissed ? true : inboxShareGate(it, 'dismiss') || true), run: it => it.dismissed ? inboxUndismiss(it.source, it.id) : inboxDismiss(it.source, it.id), bulkLabel: 'Knowledge', bulk: () => inboxDismissSelected() },
+      { id: 'dibs', dest: 'dibs', label: 'DIBS', enabled: (it, role) => !inboxCanShare(role) ? false : inboxDibsReady() ? true : 'Not configured: set the dibs URL in Settings → Inbox → dibs URL', run: it => inboxOpenRoute(it.source, it.id, 'dibs') },
+      { id: 'tx-settings', label: '⚙ Transcription settings…', enabled: (it, role) => role === 'owner' && inboxTxBlocked(it) ? true : false, run: () => inboxOpenSettings() },
     ];
     const inboxShareLinkActions = [
       { id: 'copy', label: 'Copy link', enabled: () => true, run: it => inboxShareCopy(it.source, it.id) },
       { id: 'native', label: 'Share…', enabled: () => typeof navigator !== 'undefined' && !!navigator.share, run: it => inboxShareNative(it.source, it.id) },
     ];
-    const INBOX_NO_TEXT_REASON = 'No transcript yet: use 🎧 Transcribe first';
+    // Owners and read-write viewers may share (route, Knowledge); read may not.
+    function inboxCanShare(role) { return role === 'owner' || role === 'read-write'; }
+    // An audio-only item (pending, audio, transcription cannot run) cannot be
+    // shared to RFC, spek or Knowledge: they need a transcript first.
+    function inboxTxBlocked(it) { return !!(it && it.pending && it.transcribe_unavailable); }
+    // inboxShareGate returns the disabled reason for a Hive destination that
+    // needs a transcript, or '' when it may proceed (audio-only items are
+    // transcribed first, then shared).
+    function inboxShareGate(it, dest) {
+      const intent = (it.share_intents || {})[dest];
+      if (intent && intent.status === 'waiting') return 'Transcribing, then → ' + inboxIntentLabel(dest);
+      if (inboxTxBlocked(it)) return inboxTxUnavailableText(it.transcribe_unavailable) + ' (a transcript is needed first)';
+      return '';
+    }
+    const INBOX_INTENT_LABELS = { spek_rfc: 'RFC', dismiss: 'Knowledge', spek: 'spek' };
+    function inboxIntentLabel(dest) { return INBOX_INTENT_LABELS[dest] || dest; }
+    // The first waiting share intent of an item, for the progress label.
+    function inboxIntentThen(it) {
+      const m = (it && it.share_intents) || {};
+      const d = Object.keys(m).find(k => m[k] && m[k].status === 'waiting');
+      return d ? inboxIntentLabel(d) : '';
+    }
     function inboxDibsReady() { const st = (_inboxCache || {}).settings || {}; return !!st.dibs_url && !!st.dibs_token_set; }
     // inboxShareMenuGroups resolves the registries for one item and the
     // viewer's role into labelled groups; empty groups are dropped.
@@ -449,7 +476,8 @@
         const en = a.enabled(it, role);
         if (en === false) return null;
         let label = typeof a.label === 'function' ? a.label(it) : a.label;
-        if (a.dest && routes[a.dest] && routes[a.dest].status === 'failed') label = 'Retry ' + label;
+        const intents = (it && it.share_intents) || {};
+        if (a.dest && ((routes[a.dest] && routes[a.dest].status === 'failed') || (intents[a.dest] && intents[a.dest].status === 'failed'))) label = 'Retry ' + label;
         return { id: a.id, label, disabled: typeof en === 'string', hint: typeof en === 'string' ? en : '' };
       }).filter(Boolean);
       return [{ id: 'hive', label: 'Hive', items: resolve(inboxShareHiveActions) }, { id: 'link', label: 'Link', items: resolve(inboxShareLinkActions) }].filter(g => g.items.length);
@@ -467,9 +495,9 @@
       const entry = (group === 'hive' ? inboxShareHiveActions : inboxShareLinkActions).find(a => a.id === act);
       if (it && entry) await entry.run(it);
     }
-    // Bulk Hive menu: entries with bulk(), owner only.
+    // Bulk Hive menu: entries with bulk(), owner or read-write.
     function inboxBulkMenuGroups() {
-      if (window._hiveRole !== 'owner') return [];
+      if (!inboxCanShare(window._hiveRole)) return [];
       const items = inboxShareHiveActions.filter(a => typeof a.bulk === 'function').map(a => ({ id: a.id, label: a.bulkLabel || (typeof a.label === 'function' ? a.id : a.label), disabled: false, hint: '' }));
       return items.length ? [{ id: 'hive', label: 'Hive', items }] : [];
     }
@@ -599,7 +627,7 @@
       if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
       if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
       const shown = items.filter(it => _inboxShowProcessed || !it.processed);
-      if (owner && shown.length) {
+      if (inboxCanShare(window._hiveRole) && shown.length) {
         const sel = _inboxSelected.size;
         html += '<div class="kc-actions mb-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxSelectAll">' + (sel === shown.length ? 'Clear selection' : 'Select all') + '</button>' +
           (sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxBulkMenu" data-arg-types="t" aria-haspopup="menu" aria-expanded="false">Hive (' + sel + ') ▾</button>' : '') + '</div>';
@@ -635,7 +663,7 @@
       return data;
     }
     async function inboxDismiss(src, id) {
-      try { await inboxPostDismiss([{ source: src, item_id: id }], false); showToast('Kept as a Knowledge fact only', 'success'); await fetchInbox(); }
+      try { const d = await inboxPostDismiss([{ source: src, item_id: id }], false); showToast(d && d.waiting_transcript ? 'Transcribing, then → Knowledge' : 'Kept as a Knowledge fact only', 'success'); await fetchInbox(); }
       catch (e) { showToast('Dismiss failed: ' + e.message, 'error'); }
     }
     async function inboxUndismiss(src, id) {
@@ -646,7 +674,7 @@
       const items = Array.from(_inboxSelected).map(k => { const i = k.indexOf('/'); return { source: k.slice(0, i), item_id: k.slice(i + 1) }; });
       if (!items.length) return;
       if (!(await hiveConfirm('Mark ' + items.length + ' item' + (items.length === 1 ? '' : 's') + ' as Knowledge only? They stay searchable as facts; no RFC or dibs idea is created.', 'Knowledge only'))) return;
-      try { await inboxPostDismiss(items, false); _inboxSelected.clear(); await fetchInbox(); }
+      try { const d = await inboxPostDismiss(items, false); _inboxSelected.clear(); if (d && d.waiting_transcript) showToast(d.waiting_transcript + ' item' + (d.waiting_transcript === 1 ? '' : 's') + ' will be kept once transcribed', 'success'); await fetchInbox(); }
       catch (e) { showToast('Dismiss failed: ' + e.message, 'error'); }
     }
 
@@ -680,7 +708,7 @@
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         kbCloseModal();
-        showToast((INBOX_DEST_LABELS[dest] || dest) + ' queued — the pill updates when it finishes.', 'success');
+        showToast(data.waiting_transcript ? 'Transcribing, then → ' + (INBOX_DEST_LABELS[dest] || dest) + '. It is sent when the transcript is ready.' : (INBOX_DEST_LABELS[dest] || dest) + ' queued — the pill updates when it finishes.', 'success');
         await fetchInbox();
       } catch (e) {
         if (errEl) errEl.textContent = e.message; else showToast('Route failed: ' + e.message, 'error');

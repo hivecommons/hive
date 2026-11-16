@@ -55,6 +55,9 @@ type Item struct {
 	FactState string `json:"fact_state,omitempty"`
 	// Routes holds per-destination state; absent means never routed.
 	Routes map[string]*RouteState `json:"routes,omitempty"`
+	// ShareIntents are shares waiting for a machine transcript (or failed
+	// because it did not finish), keyed by destination. See ShareIntent.
+	ShareIntents map[string]*ShareIntent `json:"share_intents,omitempty"`
 	// Dismissed marks "knowledge only": the item stays a fact, no further route.
 	Dismissed bool `json:"dismissed,omitempty"`
 	// Processed is true once any route filed or the item was dismissed.
