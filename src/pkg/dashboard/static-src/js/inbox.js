@@ -4,7 +4,7 @@
     // dibs happens inside the hive via POST /api/inbox/route.
     const INBOX_POLL_MS = 60000;
     const INBOX_BUSY_POLL_MS = 5000;
-    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', 'file-drop': '📎', webhook: '🔗' };
+    const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
     // Summaries longer than this many characters start collapsed.
     const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
@@ -66,6 +66,10 @@
       const text = st.status === 'filed' ? label + ' filed' : st.status === 'delegated' ? label + ' handed to agent' : label + ' ' + st.status;
       const title = st.error ? escapeHtml(st.error) : (st.repo ? escapeHtml(st.repo) : '');
       let html = '<span class="kc-pill" data-status="' + status + '" title="' + title + '">' + escapeHtml(text) + '</span>';
+      // A failed route shows its error inline (not only on hover) so a broken
+      // hand-off never reads as silently pending; delegated shows the agent.
+      if (st.status === 'failed' && st.error) html += ' <span class="kc-error muted-xs" role="alert">' + escapeHtml(st.error) + '</span>';
+      else if (st.status === 'delegated' && st.note) html += ' <span class="muted-xs">' + escapeHtml(st.note) + '</span>';
       if (st.url) html += ' <a class="inbox-link" href="' + escapeHtml(st.url) + '" target="_blank" rel="noopener">open ↗</a>';
       if (Array.isArray(st.children) && st.children.length) html += ' <span class="muted-xs">' + st.children.length + ' child issue' + (st.children.length === 1 ? '' : 's') + '</span>';
       return html;
@@ -88,7 +92,7 @@
         const tx = it.transcribable ? ' Or click 🎧 Transcribe to have this hive transcribe it with Deepgram.' : '';
         // Meeting platforms whose pending items read "<label> has no transcript"
         // (inline so the extracted function stays self-contained in tests).
-        const meetingLabel = { zoom: 'Zoom', teams: 'Teams', 'google-meet': 'Google Meet' }[it.source];
+        const meetingLabel = { zoom: 'Zoom', teams: 'Teams', 'google-meet': 'Google Meet', webex: 'Webex', 'slack-huddles': 'Slack', 'fireflies': 'Fireflies', 'fathom': 'Fathom', 'limitless': 'Limitless', 'granola': 'Granola', 'otter': 'Otter' }[it.source];
         if (meetingLabel) return '<div class="inbox-pending muted-xs" title="The platform reports no transcript or summary for this recording yet">Not transcribed yet: ' + meetingLabel + ' has no transcript or summary for this recording (cloud transcription may still be processing or is disabled); the hive re-checks it on every sync.' + tx + '</div>';
         if (it.source === 'discord') return '<div class="inbox-pending muted-xs" title="Discord has no transcripts; none was posted with this recording">Not transcribed yet: Discord has no built-in transcription and no transcript file was posted with this recording; play it here, or post a .vtt/.txt transcript in the same message. The hive re-checks it on every sync.' + tx + '</div>';
         return '<div class="inbox-pending muted-xs" title="The MCP reports no transcript or summary block for this recording">Not transcribed yet in Plaud: open the recording in the Plaud app and run transcription; the hive re-checks it on every sync.' + tx + '</div>';
@@ -294,7 +298,7 @@
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
-      if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs a <code>spektacular</code> binary on the hive host (<code>inbox.spek.binary</code>) or at least one enabled agent to hand the job to (<code>inbox.spek.agent</code> overrides the default).</p>';
+      if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
       const shown = items.filter(it => _inboxShowProcessed || !it.processed);
       if (owner && shown.length) {
         const sel = _inboxSelected.size;
@@ -356,7 +360,7 @@
       let body = '<p class="muted-note m-0"><strong>' + escapeHtml(it.title || it.id) + '</strong></p>';
       if (dest === 'spek_rfc') {
         const opts = repos.map(r => '<option value="' + escapeHtml(r) + '"' + (r === def ? ' selected' : '') + '>' + escapeHtml(r) + '</option>').join('');
-        body += '<p class="muted-note">A hive-run <code>spektacular voice</code> turns the transcript into a spec, then files one RFC issue plus child issues on the chosen repository. The children are picked up by the hive like any other issue.</p>' +
+        body += '<p class="muted-note">A hive agent drafts a spec from the transcript with spektacular, then runs <code>spektacular publish</code> to file one RFC issue plus child issues on the chosen repository. The children are picked up by the hive like any other issue.</p>' +
           '<label class="muted-note inbox-field">Repository<select class="field-input field-input-block mt-2" id="inbox-route-repo">' + opts + '</select></label>' +
           (repos.length ? '' : '<p class="kc-error muted-xs">No repositories configured on this hive.</p>');
       } else {

@@ -1,0 +1,290 @@
+// Package meetllm is `hive meeting-llm`, the one-shot model command
+// Spektacular live mode calls (SPEK_MEETING_LLM=command,
+// hivecommons/hive#18291). It reads a prompt on stdin, makes one
+// OpenAI-compatible chat completion with the endpoint, key and model hive
+// resolved for meetings, prints the reply on stdout, and charges the tokens
+// to the meeting.
+//
+// Everything arrives in the environment hive gives the Spek child, never in
+// argv (the key must not show in a process listing):
+//
+//	HIVE_MEETING_LLM_ENDPOINT     OpenAI-compatible base URL
+//	HIVE_MEETING_LLM_MODEL        model name
+//	HIVE_MEETING_LLM_API_KEY      bearer key (optional)
+//	HIVE_MEETING_LLM_TIMEOUT_MS   per-call timeout
+//	HIVE_MEETING_LLM_USAGE_FILE   per-meeting usage ledger (JSON lines)
+//	HIVE_MEETING_LLM_MAX_TOKENS   per-meeting token budget (0 = none)
+//	HIVE_MEETING_LLM_SLOTS_DIR    directory of in-flight slot lock files
+//	HIVE_MEETING_LLM_MAX_IN_FLIGHT concurrent calls across meetings
+//
+// Usage ledger: one line per call, {"at":"<RFC 3339>","tokens":N}, appended
+// to the meeting's usage file. The live loop sums it for the panel and the
+// hive-wide hourly/daily ceilings; this command refuses (exit 1, empty
+// stdout, so Spek falls back to its rules) once the per-meeting sum reaches
+// the budget.
+package meetllm
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+	"time"
+)
+
+// Subcommand is the hive CLI verb.
+const Subcommand = "meeting-llm"
+
+// Environment variable names.
+const (
+	EnvEndpoint    = "HIVE_MEETING_LLM_ENDPOINT"
+	EnvModel       = "HIVE_MEETING_LLM_MODEL"
+	EnvAPIKey      = "HIVE_MEETING_LLM_API_KEY"
+	EnvTimeoutMS   = "HIVE_MEETING_LLM_TIMEOUT_MS"
+	EnvUsageFile   = "HIVE_MEETING_LLM_USAGE_FILE"
+	EnvMaxTokens   = "HIVE_MEETING_LLM_MAX_TOKENS"
+	EnvSlotsDir    = "HIVE_MEETING_LLM_SLOTS_DIR"
+	EnvMaxInFlight = "HIVE_MEETING_LLM_MAX_IN_FLIGHT"
+)
+
+const (
+	defaultTimeoutMS = 2500
+	// maxPromptBytes bounds the prompt read from stdin.
+	maxPromptBytes = 1 << 20
+	// maxResponseBytes bounds the model response.
+	maxResponseBytes = 1 << 20
+	// maxReplyTokens bounds the reply length.
+	maxReplyTokens = 512
+	// slotPoll is how often a waiting call retries the slot locks.
+	slotPoll      = 20 * time.Millisecond
+	usageFileMode = 0o600
+	slotFileMode  = 0o600
+	slotDirMode   = 0o700
+)
+
+// ErrBudget is returned when the meeting's token budget is spent.
+var ErrBudget = errors.New("meeting-llm: meeting token budget spent")
+
+// Config is the resolved environment.
+type Config struct {
+	Endpoint    string
+	Model       string
+	APIKey      string
+	Timeout     time.Duration
+	UsageFile   string
+	MaxTokens   int
+	SlotsDir    string
+	MaxInFlight int
+}
+
+func envInt(getenv func(string) string, name string, def int) int {
+	if n, err := strconv.Atoi(strings.TrimSpace(getenv(name))); err == nil && n > 0 {
+		return n
+	}
+	return def
+}
+
+// FromEnv reads the configuration.
+func FromEnv(getenv func(string) string) (Config, error) {
+	c := Config{
+		Endpoint:    strings.TrimRight(strings.TrimSpace(getenv(EnvEndpoint)), "/"),
+		Model:       strings.TrimSpace(getenv(EnvModel)),
+		APIKey:      strings.TrimSpace(getenv(EnvAPIKey)),
+		Timeout:     time.Duration(envInt(getenv, EnvTimeoutMS, defaultTimeoutMS)) * time.Millisecond,
+		UsageFile:   strings.TrimSpace(getenv(EnvUsageFile)),
+		MaxTokens:   envInt(getenv, EnvMaxTokens, 0),
+		SlotsDir:    strings.TrimSpace(getenv(EnvSlotsDir)),
+		MaxInFlight: envInt(getenv, EnvMaxInFlight, 1),
+	}
+	if c.Endpoint == "" || c.Model == "" {
+		return c, fmt.Errorf("meeting-llm: %s and %s are required", EnvEndpoint, EnvModel)
+	}
+	return c, nil
+}
+
+// UsageTotal sums the tokens recorded in a usage file. A missing file is
+// zero.
+func UsageTotal(path string) (int, error) {
+	f, err := os.Open(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, nil
+	}
+	if err != nil {
+		return 0, err
+	}
+	defer f.Close()
+	total := 0
+	sc := bufio.NewScanner(f)
+	for sc.Scan() {
+		var u struct {
+			Tokens int `json:"tokens"`
+		}
+		if json.Unmarshal(sc.Bytes(), &u) == nil && u.Tokens > 0 {
+			total += u.Tokens
+		}
+	}
+	return total, sc.Err()
+}
+
+func recordUsage(path string, tokens int, now time.Time) error {
+	if path == "" || tokens <= 0 {
+		return nil
+	}
+	line, _ := json.Marshal(map[string]any{"at": now.UTC().Format(time.RFC3339), "tokens": tokens})
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, usageFileMode)
+	if err != nil {
+		return err
+	}
+	_, err = f.Write(append(line, '\n'))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
+}
+
+// acquire takes one of n slot locks in dir, waiting until ctx ends. It
+// returns the release func.
+func acquire(ctx context.Context, dir string, n int) (func(), error) {
+	if dir == "" {
+		return func() {}, nil
+	}
+	if err := os.MkdirAll(dir, slotDirMode); err != nil {
+		return nil, err
+	}
+	for {
+		for i := 0; i < n; i++ {
+			f, err := os.OpenFile(filepath.Join(dir, "slot-"+strconv.Itoa(i)), os.O_CREATE|os.O_RDWR, slotFileMode)
+			if err != nil {
+				return nil, err
+			}
+			if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err == nil {
+				return func() {
+					_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
+					_ = f.Close()
+				}, nil
+			}
+			_ = f.Close()
+		}
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("meeting-llm: no free model slot: %w", ctx.Err())
+		case <-time.After(slotPoll):
+		}
+	}
+}
+
+type chatRequest struct {
+	Model     string        `json:"model"`
+	Messages  []chatMessage `json:"messages"`
+	MaxTokens int           `json:"max_tokens"`
+}
+
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type chatResponse struct {
+	Choices []struct {
+		Message chatMessage `json:"message"`
+	} `json:"choices"`
+	Usage struct {
+		PromptTokens     int `json:"prompt_tokens"`
+		CompletionTokens int `json:"completion_tokens"`
+		TotalTokens      int `json:"total_tokens"`
+	} `json:"usage"`
+}
+
+func chatURL(endpoint string) string {
+	if strings.HasSuffix(endpoint, "/chat/completions") {
+		return endpoint
+	}
+	if strings.HasSuffix(endpoint, "/v1") {
+		return endpoint + "/chat/completions"
+	}
+	return endpoint + "/v1/chat/completions"
+}
+
+// Complete makes one call and records its usage. It refuses once the
+// meeting's budget is spent.
+func Complete(ctx context.Context, c Config, hc *http.Client, prompt string) (string, error) {
+	if c.MaxTokens > 0 && c.UsageFile != "" {
+		used, err := UsageTotal(c.UsageFile)
+		if err != nil {
+			return "", err
+		}
+		if used >= c.MaxTokens {
+			return "", ErrBudget
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
+	defer cancel()
+	release, err := acquire(ctx, c.SlotsDir, c.MaxInFlight)
+	if err != nil {
+		return "", err
+	}
+	defer release()
+	body, _ := json.Marshal(chatRequest{Model: c.Model, Messages: []chatMessage{{Role: "user", Content: prompt}}, MaxTokens: maxReplyTokens})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatURL(c.Endpoint), bytes.NewReader(body))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
+	resp, err := hc.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("meeting-llm: request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("meeting-llm: model returned %d", resp.StatusCode)
+	}
+	var cr chatResponse
+	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&cr); err != nil {
+		return "", fmt.Errorf("meeting-llm: decoding response: %w", err)
+	}
+	tokens := cr.Usage.TotalTokens
+	if tokens == 0 {
+		tokens = cr.Usage.PromptTokens + cr.Usage.CompletionTokens
+	}
+	if err := recordUsage(c.UsageFile, tokens, time.Now()); err != nil {
+		return "", fmt.Errorf("meeting-llm: recording usage: %w", err)
+	}
+	if len(cr.Choices) == 0 {
+		return "", errors.New("meeting-llm: model returned no choices")
+	}
+	return cr.Choices[0].Message.Content, nil
+}
+
+// Run is the subcommand entry point. Errors go to stderr without the key;
+// stdout carries only the reply.
+func Run(_ []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(string) string) int {
+	c, err := FromEnv(getenv)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	prompt, err := io.ReadAll(io.LimitReader(stdin, maxPromptBytes))
+	if err != nil {
+		fmt.Fprintln(stderr, "meeting-llm: reading prompt:", err)
+		return 1
+	}
+	reply, err := Complete(context.Background(), c, &http.Client{}, string(prompt))
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 1
+	}
+	fmt.Fprint(stdout, reply)
+	return 0
+}

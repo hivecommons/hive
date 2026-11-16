@@ -54,8 +54,9 @@ The Inbox is source-agnostic by construction:
   (`src/cmd/hive/boot_inbox.go:111-129`).
 - Rules match `source`, `title_prefix` or `tag` (`src/pkg/inbox/rules.go:19-39`);
   the default prefixes are `RFC:` and `Hive:` (`src/pkg/inbox/rules.go:10`).
-- Destinations: `SpekDestination` pipes `Content.Text()` plus the provenance line
-  into `spektacular voice --from stdin --publish` or kicks an agent
+- Destinations: `SpekDestination` kicks an agent with the enveloped item text
+  plus provenance; the agent drafts the spec with spektacular and runs
+  `spektacular publish`
   (`src/pkg/inbox/spek.go:52-102`); `DibsDestination` posts a private draft idea
   (`src/pkg/inbox/dibs.go:44-87`).
 - State lives in `connector-state/_inbox.json` (`src/cmd/hive/boot_inbox.go:46`,

@@ -69,6 +69,7 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/maintainernotes"
 	"github.com/hivecommons/hive/pkg/matrix"
+	"github.com/hivecommons/hive/pkg/meetings/meetllm"
 	"github.com/hivecommons/hive/pkg/msteams"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/nousdeps"
@@ -1490,6 +1491,7 @@ func (b *boot) wireBootClosures() {
 
 		maxAge := time.Duration(retentionDays) * 24 * time.Hour
 		homeMaxAge := time.Duration(sessionprune.DefaultHomeRetentionDays) * 24 * time.Hour
+		tmpMaxAge := time.Duration(sessionprune.DefaultTmpRetentionHours) * time.Hour
 		stop := make(chan struct{})
 
 		go func() {
@@ -1498,6 +1500,7 @@ func (b *boot) wireBootClosures() {
 			runSessionPrune(b.logger, dir, maxAge)
 			runAgentSessionTreePrune(b.logger, agentSessionTreesRoot, maxAge)
 			runAgentHomePrune(b.logger, agentHomesRoot, homeMaxAge)
+			runClaudeTmpPrune(b.logger, claudeTmpRoot, tmpMaxAge)
 
 			ticker := time.NewTicker(sessionPruneInterval)
 			defer ticker.Stop()
@@ -1509,6 +1512,7 @@ func (b *boot) wireBootClosures() {
 					runSessionPrune(b.logger, dir, maxAge)
 					runAgentSessionTreePrune(b.logger, agentSessionTreesRoot, maxAge)
 					runAgentHomePrune(b.logger, agentHomesRoot, homeMaxAge)
+					runClaudeTmpPrune(b.logger, claudeTmpRoot, tmpMaxAge)
 				}
 			}
 		}()
@@ -3808,6 +3812,26 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	if sup := wireMeetings(b.ctx, b.cfg, b.logger); sup != nil {
 		b.meetingsQuorum = sup
 		b.cleanup.push(sup.Stop)
+		if mgr, store := wireMeetingsManager(b.cfg, sup, b.logger); mgr != nil {
+			b.meetingsMgr = mgr
+			b.cleanup.push(mgr.Close)
+			// Research intents go to the research agent pool (#18294).
+			var rt any
+			if b.agentMgr != nil {
+				rt = b.agentMgr
+			}
+			researchPool := wireMeetingsResearch(b.cfg, rt, b.logger)
+			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, researchPool, b.logger); lr != nil {
+				b.meetingsLive = lr
+				b.cleanup.push(lr.Close)
+				b.cleanup.push(routeResearch(researchPool, lr))
+			}
+			// Owner API, live panel and /api/events frames (#18292).
+			b.dashSrv.SetMeetingsService(&meetingsDashboard{mgr: mgr, live: b.meetingsLive})
+			// Ended meetings become inbox items; transcripts are purged
+			// after meetings.retention_days (#18293).
+			b.wireMeetingsInbox(mgr, store)
+		}
 	}
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
 	ghClientFn := func() *github.Client { return b.ghClient }
@@ -7919,6 +7943,10 @@ func dispatchSubcommand(args []string, stdout, stderr io.Writer) (bool, int) {
 		// the engine starts; see pkg/nousdeps/cli.go. Fetches the campaign's
 		// pinned dependencies from allowlisted hosts only and records them.
 		return true, nousdeps.Run(args[1:], stdout, stderr)
+	case meetllm.Subcommand:
+		// Run by Spektacular live mode for one model call per prompt; see
+		// pkg/meetings/meetllm. Reads its endpoint and key from the env.
+		return true, meetllm.Run(args[1:], os.Stdin, stdout, stderr, os.Getenv)
 	case memoryDrainSubcommand:
 		// Run as the agent by the Claude Code memory hooks Hive seeds; see
 		// memory_drain_cmd.go. Always exits 0.

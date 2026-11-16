@@ -108,7 +108,7 @@ func TestServiceDeliverFailures(t *testing.T) {
 	if _, err := svc.Route(context.Background(), items[0], Request{Destination: DestSpekRFC}); err != nil {
 		t.Fatal(err)
 	}
-	if r, ok := svc.Store.Route(items[0].Key(), DestSpekRFC); !ok || r.Status != StatusDelegated || r.Error != "delegated to agent x" {
+	if r, ok := svc.Store.Route(items[0].Key(), DestSpekRFC); !ok || r.Status != StatusDelegated || r.Note != "delegated to agent x" || r.Error != "" {
 		t.Fatalf("delegated route = %+v", r)
 	}
 
@@ -212,19 +212,10 @@ func TestFactSourceEdgeCases(t *testing.T) {
 	}
 }
 
-func TestSpekDestinationRealExecAndLookPath(t *testing.T) {
+func TestSpekDestinationRealLookPath(t *testing.T) {
 	d := &SpekDestination{Binary: "definitely-not-a-binary-" + t.Name(), DefaultRepo: "o/r"}
-	it := Item{Source: "plaud", ID: "r", Title: "RFC: x"}
-	_, err := d.Deliver(context.Background(), it, Content{Transcript: "hi"}, Request{})
-	if err == nil || !strings.Contains(err.Error(), "not installed") {
-		t.Fatalf("missing binary = %v", err)
-	}
-	if d.lookPath("sh") != nil {
-		t.Skip("sh not on PATH")
-	}
-	out, err := d.exec(context.Background(), "sh", []string{"-c", "cat; echo done"}, os.Environ(), "input\n")
-	if err != nil || !strings.Contains(out, "input") || !strings.Contains(out, "done") {
-		t.Fatalf("exec = %q %v", out, err)
+	if d.lookPath(d.Binary) == nil {
+		t.Fatal("missing binary resolved")
 	}
 	if got := lastLines("a\nb\nc\n", 2); got != "b\nc" {
 		t.Fatalf("lastLines = %q", got)
@@ -245,14 +236,9 @@ func TestSpekDestinationErrorPaths(t *testing.T) {
 	}{
 		{"no repo", &SpekDestination{LookPath: ok}, Content{Transcript: "t"}, ErrNoRepo.Error()},
 		{"empty", &SpekDestination{LookPath: ok, DefaultRepo: "o/r"}, Content{}, "no transcript"},
-		{"token", &SpekDestination{LookPath: ok, DefaultRepo: "o/r", Token: func(context.Context, string) (string, error) { return "", errors.New("mint") }}, Content{Transcript: "t"}, "github token: mint"},
-		{"exec", &SpekDestination{LookPath: ok, DefaultRepo: "o/r", Exec: func(context.Context, string, []string, []string, string) (string, error) {
-			return "l1\nl2\nboom", errors.New("exit 2")
-		}}, Content{Transcript: "t"}, "boom"},
-		{"parse", &SpekDestination{LookPath: ok, DefaultRepo: "o/r", Exec: func(context.Context, string, []string, []string, string) (string, error) {
-			return "nothing useful", nil
-		}}, Content{Transcript: "t"}, "spek_rfc:"},
-		{"kick fails", &SpekDestination{LookPath: func(string) error { return errors.New("nope") }, DefaultRepo: "o/r", Agent: "a", Kick: func(string, string) error { return errors.New("kick") }}, Content{Transcript: "t"}, "kick to a failed"},
+		{"no agent", &SpekDestination{LookPath: ok, DefaultRepo: "o/r", Kick: func(string, string) error { return nil }}, Content{Transcript: "t"}, "no agent to draft the RFC"},
+		{"no kicker", &SpekDestination{LookPath: ok, DefaultRepo: "o/r", Agent: "a"}, Content{Transcript: "t"}, "no agent to draft the RFC"},
+		{"kick fails", &SpekDestination{LookPath: func(string) error { return errors.New("nope") }, DefaultRepo: "o/r", Agent: "a", Kick: func(string, string) error { return errors.New("kick") }}, Content{Transcript: "t"}, "handing the RFC to agent a failed: kick"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

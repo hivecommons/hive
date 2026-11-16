@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v6.33.3)
+
+### Fixed
+
+- **The session janitor now prunes idle Claude CLI scratch under the temp directory.** The Claude CLI keeps per-session scratch in `<tmp>/claude-<uid>/<project>/<session>/`: task output, scratchpads, and the repositories agents clone or build there. Nothing removed it, and it lives in the container's writable layer rather than on `/data`, so it fills the node's root disk instead of the data volume. On one Docker host, two spokes held 17 GiB and 22 GiB of it after two weeks and filled the disk, which broke every other service on that host. The janitor's 6-hour pass now removes each session directory whose newest write anywhere inside is older than 24 hours (`sessionprune.DefaultTmpRetentionHours`). Like the home sweep, it never follows symlinks and touches nothing outside `claude-*/<project>/<session>`.
+
+## 2026-11-15 (v6.33.2)
+
+### Fixed
+
+- The agent tiles in the dashboard's top bar are no longer cut off at the bottom when a `+1` style count is showing. The count chip was drawn 10px taller than a tile, which stretched the row past the strip's one-row height, so every tile lost its bottom edge. The count is now the same height as a tile.
+
 ## 2026-11-15 (v6.33.1)
 
 ### Changed
@@ -124,6 +136,56 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 - The signed-commit reconciler's intentional refusal to rewrite a foreign or merge commit no longer files repeated unclassified-error fleet reports; its warning and PR remediation remain visible ([#17924](https://github.com/hivecommons/hive/issues/17924)).
 - Dashboard logs one summary warning per five minutes for dropped SSE events instead of one warning per event, so a stalled browser tab no longer triggers repeated-error fleet reports (#17995).
+
+## 2026-11-15 (v5.274.0)
+
+### Added
+
+- Inbox: Fathom as a knowledge integration — a `fathom` connector (a Fathom API key named in `auth.env`) that pages `GET /meetings` with the transcript, AI summary and action items included into one fact per recording; ▶ Play and the Deepgram fallback use a Fathom recording download (audio at once, video polled), whose signed link lasts about 24 hours; a default `inbox.sources` entry with a Connect / Check / Sync now card.
+- Inbox: Fireflies.ai as a knowledge integration — a `fireflies` connector (a Fireflies API key named in `auth.env`) that reads meetings through the Fireflies GraphQL API (`transcripts`, 50 per page, with sentences and the AI summary in the same query) into one fact each, with the overview and action items as summary and the speaker-labelled sentences as transcript; ▶ Play and the Deepgram fallback use the meeting's 24-hour `audio_url` (Pro plan or higher); a default `inbox.sources` entry with a Connect / Check / Sync now card.
+- Meetings: research asked for in a meeting now runs on the read-only research agent pool (`research-1..N`, sized by `meetings.research_pool_size`) with findings routed back to the meeting by kick ID, and the hive image ships the pinned Quorum v0.1.0 bundle (SHA-256 verified) plus the Discord DAVE module (#18294).
+
+## 2026-11-15 (v5.273.0)
+
+### Added
+
+- Meetings: ended meetings appear in the Inbox as `meeting` items with the final transcript and notes, routable to a spek RFC or dibs; once handed off hive deletes the transcript upstream, and it purges its own copy after `meetings.retention_days` (30). New page `src/docs/meetings.md` covers consent, setup on hosted and self-hosted hives, and every setting (#18293).
+
+## 2026-11-15 (v5.272.0)
+
+### Added
+
+- Meetings dashboard: an owner-only `/api/meetings` API (send hive to a meeting, list, leave, voice toggle, research approval) with a live WebSocket panel showing the transcript, notes, research and Spek intents, `meeting` frames on `/api/events`, and Settings, Meetings for the enable toggle, the Vexa gateway URL and the write-only Vexa tenant key and Discord bot token (#18292).
+
+### Fixed
+
+- Inbox **File RFC** works again: it failed on every spoke because the hive ran `spektacular voice`, which the shipped spektacular 0.31.0 does not have (hivecommons/spektacular#123 was closed unmerged). The route now always hands the item to an agent (`inbox.spek.agent`, default the first enabled agent) with the enveloped title, summary and transcript plus provenance (source, item id, `plaud://recordings/<id>` reference, Inbox link); the agent drafts the spec with the spek-new workflow and files it with `spektacular publish`. The agent gets the content the Inbox shows, including a machine transcript (labelled, e.g. `Transcript (machine: deepgram/nova-3)`) when the source never transcribed the recording; a recording with no text yet fails with "no transcript yet" instead of filing an RFC from a placeholder. A failed hand-off now shows its error inline on the item with a Retry button, and a delegated one names the agent. The Dockerfile comments and docs now describe what 0.31.0 provides.
+
+## 2026-11-15 (v5.271.0)
+
+### Added
+
+- Inbox: Slack huddle notes as a knowledge integration — a `slack-huddles` connector (a Slack bot or user token named in `auth.env`) that reads ended huddles in the listed channels and turns the AI notes canvas Slack posts in the huddle thread into one fact each, with the notes as summary and the embedded transcript as transcript (text only: Slack never records huddle audio); a default `inbox.sources` entry with a Connect / Check / Sync now card.
+- Meetings: the meeting record and store under `/data/meetings`, an MCP client for Quorum's contract tools and its live event stream, and a manager that posts the consent notice as soon as hive is live in a meeting, leaves when someone types or says "hive leave", and gives up after the lobby timeout (#18290).
+- Meetings: hive runs `spektacular meeting` live for each meeting and applies its intents through a policy layer: rate-limited chat posts, clarifying questions matched to the next reply, notes kept as one knowledge fact per meeting in a `meetings` vault, research capped per meeting (more needs dashboard approval) with findings posted back once per item, voice only when the meeting enables it, and a per-meeting plus hive-wide LLM budget (#18291).
+
+## 2026-11-15 (v5.270.0)
+
+### Added
+
+- Agent output markers now reach kick observers: a line that starts with `[STATUS]`, `[FINDING]`, `[COMPLETE]` or `[ERROR]` (after any CLI glyph) is delivered as a `output-signal` kick event carrying the agent, the in-flight queued kick's ID, the signal kind and the text after the marker (bounded to 500 runes), deduplicated per kick so a pane redraw does not repeat a finding. The existing log line is unchanged ([#18287](https://github.com/hivecommons/hive/issues/18287), parent [#18284](https://github.com/hivecommons/hive/issues/18284)).
+- New `pkg/research` research agent pool for the meetings feature: `research-1..N` agents (`meetings.research_pool_size`, default 2, at most 8) defined as `ADVISORY` with no repo checkouts, so the proxy refuses every GitHub write whatever the prompt says. `Pool.Dispatch(ctx, query, meta)` queues the query on the least busy agent (starting it if stopped) and returns the kick ID; `Pool.Observe` reports `queued`, `running`, `finding`, `done` and `failed` per kick from the agent's `[FINDING]` / `[COMPLETE]` / `[ERROR]` output ([#18288](https://github.com/hivecommons/hive/issues/18288), parent [#18284](https://github.com/hivecommons/hive/issues/18284)).
+- **Inbox: automatic transcription sweep for opted-in sources.** With `inbox.transcription.mode: auto`, the hive now transcribes new pending recordings by itself after each connector sync, but only from the sources listed in `inbox.transcription.sources`. The sweep queues only what the day's item cap and the month's minutes budget leave room for (items that do not fit stay pending, no skip records), never queues an item twice, retries failed items after 1h then 2h up to 3 runs, and retries budget skips the next UTC day. Runs are audited as `inbox_transcribe` by `inbox-auto-transcribe`. The ⚙ settings panel shows this month's minutes used, today's runs and the required egress (`api.deepgram.com:443`, only while transcription is enabled), and the network requirements docs list it.
+- Inbox: Webex meetings as a knowledge integration — a `webex` connector (a Webex integration with the hosted paste flow) that syncs ended meetings with a recording or transcript into one fact each, with topic, host, participants, the AI Assistant summary and action items, and the VTT transcript as `[mm:ss] Speaker: text` lines; ▶ Play uses Webex's temporary direct download link minted per click; a default `inbox.sources` entry with a Connect / Check / Sync now card.
+- Meetings groundwork: a `meetings:` config block (off by default, every key overridable by a `HIVE_MEETINGS_*` env var, Vexa tenant key and Discord bot token kept in keystore-sealed secret files) and a supervisor that runs the Quorum meeting server as a loopback child process with a per-boot bearer token, health checks and restart backoff (#18289).
+
+### Changed
+
+- Sessions: the queued-Send fail-open deadline is now measured through an injectable clock (no behaviour change; it makes the deadline test deterministic instead of racing a one-second wall-clock wait under CI load).
+
+### Fixed
+
+- A kick refused because another kick is already being typed into the same pane is now logged at info instead of warn, so this expected back-pressure no longer floods the fleet self-report as an unclassified repeated error ([#18276](https://github.com/hivecommons/hive/issues/18276)).
 
 ## 2026-11-15 (v5.269.0)
 

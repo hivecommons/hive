@@ -114,6 +114,14 @@ alternative for operators who already run a key manager.
 <tr><td><img src="assets/logos/openbao.svg" height="40" alt="OpenBao logo"></td><td>OpenBao Transit keystore provider (Vault-API compatible)</td><td>Opt-in</td><td><a href="integrations/openbao.md">integrations/openbao.md</a></td></tr>
 </table>
 
+## Meetings
+
+| Integration | Status | Notes | Docs |
+| --- | --- | --- | --- |
+| Quorum (hivecommons/quorum) | **Opt-in** | Meeting MCP server hive runs as a loopback child process; `meetings.enabled`. | [meetings.md](meetings.md), [#18284](https://github.com/hivecommons/hive/issues/18284) |
+| Vexa (Google Meet, Microsoft Teams, Zoom bots) | **Opt-in** | Shared meeting-bot gateway Quorum drives; needs `meetings.vexa.url` and a tenant key. | [meetings.md](meetings.md#setup) |
+| Discord voice through Quorum | **Opt-in** | Per-hive bot token; transcription through `meetings.transcribe_url`. | [meetings.md](meetings.md#discord) |
+
 ## Ecosystem and upstream
 
 <table>
