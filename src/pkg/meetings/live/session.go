@@ -91,6 +91,7 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 	s.state.SpekMode, s.state.SpekStatus = r.opts.SpekMode, ""
 	if r.opts.Persona != nil {
 		s.persona = r.opts.Persona(m)
+		r.attachActions(s.persona, m)
 	}
 	if s.persona != nil {
 		s.state.Persona = s.persona.Name()

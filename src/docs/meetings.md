@@ -57,6 +57,34 @@ With `meetings.persona.searxng_url` set (`HIVE_MEETINGS_PERSONA_SEARXNG_URL`), w
 
 On hive-oke, SearXNG runs in the `meetings` namespace as a ClusterIP Service: set `searxng_url` to `http://searxng.meetings.svc.cluster.local:8080`. Its manifests (JSON output on, a small engine set, the limiter off for internal use, the secret key in a Secret) live in hivecommons/quorum `deploy/hive-oke/`. Any SearXNG with `json` in `search.formats` works.
 
+### Meeting attendee settings
+
+Settings, **Meeting attendee** edits all of this from the dashboard ([#18396](https://github.com/hivecommons/hive/issues/18396)). The owner and read-write users can open it; it saves `meetings.persona` (and `meetings.voice_on_address`) to `hive.yaml`. The persona is read when hive starts, so a saved change shows "restart the hive to apply" until the next restart. A field set by an `HIVE_MEETINGS_PERSONA_*` variable is marked **env**, and edits to it have no effect while the variable is set; a field that differs from the preset is marked **custom**.
+
+- **Persona.** Preset cards show each persona's flag, language, accent, voice type and voice id. Picking one fills the form; Save stores it. A value equal to the preset's is stored as no override, so the persona keeps following the preset. The voice list shows the Kokoro voices for the chosen language, and changing the language picks a voice of the same type. The intro has a live preview. **Play sample** speaks a short line in the persona's language through the meetings TTS service (the browser plays it from `GET /api/meetings/persona/sample`, using the form's unsaved voice, language and name); until that service is configured (`meetings.tts_url` and its token, phase B) the button is disabled and the API answers "TTS not configured".
+- **Behaviour.** The unprompted caps above (`per_10m`, `min_gap_s`, `per_meeting`, `answer_wait_s`, `min_confidence`, `queue_depth`, `stale_s`; 0 restores a default) and whether hive may speak aloud when addressed (`meetings.voice_on_address`).
+- **Email.** The attendee address, `hive@<dashboard host>`, with a copy button, the people with access to this hive (owner, read-write and read) with their registered calendar emails and proof status, the invites and files waiting for approval, and switches for calendar invites and mailed-in files. Until email-in is enabled ([#18395](https://github.com/hivecommons/hive/issues/18395)) the section is shown with its controls disabled.
+
+The presets use only voices the self-hosted Kokoro TTS ([Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) v0.10.0) ships. Leave phrases stay in Latin script because the leave matcher uses ASCII word boundaries, and every preset keeps "hive" as an alias and "hive leave" as a leave phrase.
+
+| Preset | Language | Accent | Voice | Voice type |
+|---|---|---|---|---|
+| `betty`: Betty Bee from the hive (default) | `en-US` | American | `af_heart` | female |
+| `barnaby`: Barnaby Bee from the hive | `en-US` | American | `am_michael` | male |
+| `beatrice`: Beatrice Bee from the hive | `en-GB` | British | `bf_emma` | female |
+| `bertie`: Bertie Bee from the hive | `en-GB` | British | `bm_george` | male |
+| `melisa`: Melisa, la abeja de la colmena | `es-ES` | Spanish (Spain) | `ef_dora` | female |
+| `melie`: Mélie, l'abeille de la ruche | `fr-FR` | French | `ff_siwis` | female |
+| `melina`: Melina, l'ape dell'alveare | `it-IT` | Italian | `if_sara` | female |
+| `bia`: Bia, a abelha da colmeia | `pt-BR` | Brazilian | `pf_dora` | female |
+| `madhu`: मधु, छत्ते की मधुमक्खी | `hi-IN` | Indian | `hf_alpha` | female |
+| `mitsu`: ミツバチのミツ | `ja-JP` | Standard Japanese | `jf_alpha` | female |
+| `mimi`: 蜂巢的小蜜蜂蜜蜜 | `zh-CN` | Standard Mandarin | `zf_xiaobei` | female |
+
+A bot-style voice is listed as coming later: Kokoro has no bot-style voice, and one would need a new service.
+
+The API is `/api/meetings/persona` ([API reference](api-reference/knowledge.md)).
+
 ## The model Spek reasons with
 
 Hive owns the model credential and the budget; Spektacular never receives an OpenAI-compatible key.
@@ -113,6 +141,26 @@ What `hive-mx` does with a message:
 - **Proof mails:** a message whose subject carries a proof code (`hive-proof-` and 12 letters or digits) is reported as a proof of the sender address.
 
 The result goes to the hub as JSON with a bearer token from a mounted Secret. If the hub cannot take it, the sender's mail server is told to retry later.
+
+## Asking Betty to do things
+
+People in the meeting can ask Betty, spoken or typed in the meeting chat, to draft something in the hive ([#18406](https://github.com/hivecommons/hive/issues/18406)):
+
+| Ask | Draft | Created on approval |
+|---|---|---|
+| "Betty, open an issue for the lobby timeout" | an issue | through the hive's GitHub issue path (the App, with the `origin/dashboard` provenance label) on the chosen monitored repo |
+| "make that an RFC, Betty" | an RFC | the same path, titled `RFC: ...` with the `rfc` label (the convention RFC notifications read) |
+| "Betty, start a Spek session on calendar sync" | a Spek session | handed to the Inbox `spek_rfc` destination: a hive agent drafts the spec with spektacular and publishes it to the repo |
+| "Betty, save that as a knowledge note" | a knowledge note | written to the `meetings` knowledge vault, the same write meeting notes use |
+
+- **Recognising a request.** The line must be addressed to her (her name opens or closes it, with or without a comma before a verb such as "open", "file", "make", "start" or "save") and ask to make an item ("issue", "bug", "ticket", "RFC", "Spek session", "knowledge note"). Questions about an item ("what's the issue with the lobby?") and negations ("don't open an issue") are not requests.
+- **Drafting.** Betty drafts a short title and body from the request and the last three minutes of the meeting, with a link back to the meeting (the dashboard's Meetings section, when `dashboard.public_url` is set) and a transcript excerpt. The repo is a monitored repo the request names ("in spektacular", "hivecommons/spektacular"), else `meetings.persona.actions.default_repo`, else `inbox.spek.repo`, else `project.primary_repo`, else the first repo. A repo the model suggests is used only when it is a monitored repo. With no meetings model she drafts from the request itself.
+- **Confirmation.** She replies in the meeting chat: "Drafted an issue: '<title>'. It's waiting for approval in the hive." If the request does not say what the item is about and nothing was said before it, she asks one clarifying question ("Happy to draft an issue. What should it be about?") and drafts from the asker's next line (or "never mind" drops it). The model may ask that one question too; it never asks twice.
+- **Approval.** Speaker identity in a meeting is only a display name, so nothing is created from the meeting. Every draft lands in **Drafts from meetings** in the Calendar section, with the meeting, who asked (display name), the body and the transcript excerpt. The hive owner or a read-write user can **Edit** (type, title, body, repo), **Approve** or **Reject** it. Approval creates the item; a failed creation stays in the list with its error and can be approved again after a fix.
+- **Result.** Once created, Betty posts the link in the meeting chat while the meeting is live ("Approved: an issue \"Lobby timeout\" is open: https://..."); after the meeting it is added to the meeting's notes instead.
+- **Auto-approve.** Off for every type. Only knowledge notes can be auto-approved (`meetings.persona.actions.auto_approve.knowledge: true`); issues, RFCs and Spek sessions always wait for a person, and config validation refuses anything else.
+- **Honesty and safety.** Betty never says an item exists before it was approved and created. Meeting speech reaches the model only as data, the type comes from the request and never from the model, `@` mentions in meeting text are removed before anything is filed, and the excerpt is quoted as a code block.
+- **Settings.** `meetings.persona.actions` turns requests on or off, limits the allowed types and sets the default repo and auto-approve; Settings, **Meeting attendee**, **Action requests** shows and saves it (owner), through `GET`/`PUT /api/meetings/actions/settings`; `GET /api/meetings/persona` also carries it as `actions`. A saved change applies at once. The queue lives in `<meetings.data_dir>/actions.json`; decided drafts are kept for 30 days (at most 200).
 
 ## Setup
 
@@ -222,6 +270,10 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.persona.intro_template` | the preset's intro | Intro text. |
 | `meetings.persona.leave_phrases` | `[betty leave, hive leave]` | Phrases that remove the bot. |
 | `meetings.persona.humor` | `light` | `light` or `off`. |
+| `meetings.persona.actions.enabled` | `true` | Let people ask Betty to draft issues, RFCs, Spek sessions and knowledge notes; each waits for approval. |
+| `meetings.persona.actions.types` | all four | Allowed types: `issue`, `rfc`, `spek`, `knowledge`. |
+| `meetings.persona.actions.default_repo` | `inbox.spek.repo`, then `project.primary_repo`, then the first repo | `owner/repo` a draft targets when the request names no monitored repo. |
+| `meetings.persona.actions.auto_approve.knowledge` | `false` | Save knowledge notes without approval. No other type may be auto-approved. |
 | `meetings.persona.unprompted.per_10m` | `2` | Unprompted answers per ten minutes. |
 | `meetings.persona.unprompted.min_gap_s` | `90` | Seconds between unprompted answers. |
 | `meetings.persona.unprompted.per_meeting` | `12` | Unprompted answers per meeting. |

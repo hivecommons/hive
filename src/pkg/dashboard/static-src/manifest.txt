@@ -33,6 +33,7 @@ css/knowledge.css
 css/inbox.css
 css/meetings.css
 css/calendar.css
+css/meeting-attendee.css
 css/sections-collapse.css
 css/design-system.css
 css/responsive.css
@@ -130,8 +131,10 @@ js/approvals.js
 js/nous.js
 js/knowledge.js
 js/inbox.js
+js/inbox-recorder.js
 js/meetings.js
 js/calendar.js
+js/meeting-attendee.js
 js/vault-audit.js
 js/review-queue.js
 js/contributors.js

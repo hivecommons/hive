@@ -63,13 +63,18 @@ func startRecording(t *testing.T, svc *Service, user, mime string) RecordingMeta
 	return m
 }
 
-func TestRecordingDisabledByDefault(t *testing.T) {
+func TestRecordingEnabledFlag(t *testing.T) {
 	svc, _, _ := newRecordingService(t, config.InboxRecording{})
+	if !svc.RecordingSettings().Enabled {
+		t.Fatal("recording is not on by default")
+	}
+	off := false
+	svc, _, _ = newRecordingService(t, config.InboxRecording{Enabled: &off})
 	if _, err := svc.StartRecording(RecordingStart{MIME: "audio/webm", ConsentVersion: RecordingConsentVersion, User: "a"}, RecordingOptions{}); !errors.Is(err, ErrRecordingDisabled) {
-		t.Fatalf("start with the default flag = %v, want ErrRecordingDisabled", err)
+		t.Fatalf("start with enabled: false = %v, want ErrRecordingDisabled", err)
 	}
 	if svc.RecordingSettings().Enabled {
-		t.Fatal("settings report recording enabled with the default flag")
+		t.Fatal("settings report recording enabled with enabled: false")
 	}
 }
 

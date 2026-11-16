@@ -88,9 +88,16 @@ type MeetingsPersonaPreset struct {
 	IntroTemplate      string   `json:"intro_template"`
 	PlainIntroTemplate string   `json:"plain_intro_template"`
 	LeavePhrases       []string `json:"leave_phrases"`
+	// SampleLine is the short line the settings tab's Play sample button
+	// speaks, in the preset's language. Same placeholders as the intro.
+	SampleLine string `json:"sample_line"`
 }
 
-// MeetingsPersonaPresets are the built-in personas, keyed by ID.
+// MeetingsPersonaPresets are the built-in personas, keyed by ID. Every
+// voice is one the self-hosted Kokoro TTS ships (KokoroVoices); the order
+// the settings tab lists them in is MeetingsPersonaPresetOrder. Leave
+// phrases stay in Latin script: the leave matcher uses ASCII word
+// boundaries.
 var MeetingsPersonaPresets = map[string]MeetingsPersonaPreset{
 	"betty": {
 		ID:                 "betty",
@@ -103,11 +110,179 @@ var MeetingsPersonaPresets = map[string]MeetingsPersonaPreset{
 		VoiceType:          MeetingsPersonaVoiceFemale,
 		Accent:             "American",
 		Humor:              MeetingsPersonaHumorLight,
-		IntroTemplate:      "Hi, I'm {display_name} ({pronouns}). I take notes, keep this meeting's transcript, and answer questions from what the hive knows: its knowledge base and work items. Say my name to ask me something. Say \"{leave}\" and I'll buzz off.",
-		PlainIntroTemplate: "Hi, I'm {display_name} ({pronouns}). I take notes, keep this meeting's transcript, and answer questions from the hive's knowledge base and work items. Say my name to ask me something, or say \"{leave}\" to remove me.",
+		IntroTemplate:      meetingsIntroEnglish,
+		PlainIntroTemplate: meetingsPlainIntroEnglish,
 		LeavePhrases:       []string{"betty leave", "hive leave"},
+		SampleLine:         meetingsSampleEnglish,
+	},
+	"barnaby": {
+		ID:                 "barnaby",
+		Name:               "Barnaby",
+		DisplayName:        "Barnaby Bee from the hive",
+		Aliases:            []string{"barnaby", "barnaby bee", "hive"},
+		Pronouns:           "he/him",
+		Language:           "en-US",
+		Voice:              "am_michael",
+		VoiceType:          MeetingsPersonaVoiceMale,
+		Accent:             "American",
+		Humor:              MeetingsPersonaHumorLight,
+		IntroTemplate:      meetingsIntroEnglish,
+		PlainIntroTemplate: meetingsPlainIntroEnglish,
+		LeavePhrases:       []string{"barnaby leave", "hive leave"},
+		SampleLine:         meetingsSampleEnglish,
+	},
+	"beatrice": {
+		ID:                 "beatrice",
+		Name:               "Beatrice",
+		DisplayName:        "Beatrice Bee from the hive",
+		Aliases:            []string{"beatrice", "beatrice bee", "hive"},
+		Pronouns:           "she/her",
+		Language:           "en-GB",
+		Voice:              "bf_emma",
+		VoiceType:          MeetingsPersonaVoiceFemale,
+		Accent:             "British",
+		Humor:              MeetingsPersonaHumorLight,
+		IntroTemplate:      meetingsIntroEnglish,
+		PlainIntroTemplate: meetingsPlainIntroEnglish,
+		LeavePhrases:       []string{"beatrice leave", "hive leave"},
+		SampleLine:         meetingsSampleEnglish,
+	},
+	"bertie": {
+		ID:                 "bertie",
+		Name:               "Bertie",
+		DisplayName:        "Bertie Bee from the hive",
+		Aliases:            []string{"bertie", "bertie bee", "hive"},
+		Pronouns:           "he/him",
+		Language:           "en-GB",
+		Voice:              "bm_george",
+		VoiceType:          MeetingsPersonaVoiceMale,
+		Accent:             "British",
+		Humor:              MeetingsPersonaHumorLight,
+		IntroTemplate:      meetingsIntroEnglish,
+		PlainIntroTemplate: meetingsPlainIntroEnglish,
+		LeavePhrases:       []string{"bertie leave", "hive leave"},
+		SampleLine:         meetingsSampleEnglish,
+	},
+	"melisa": {
+		ID:                 "melisa",
+		Name:               "Melisa",
+		DisplayName:        "Melisa, la abeja de la colmena",
+		Aliases:            []string{"melisa", "abeja", "hive"},
+		Pronouns:           "ella",
+		Language:           "es-ES",
+		Voice:              "ef_dora",
+		VoiceType:          MeetingsPersonaVoiceFemale,
+		Accent:             "Spanish (Spain)",
+		Humor:              MeetingsPersonaHumorLight,
+		IntroTemplate:      "Hola, soy {display_name} ({pronouns}). Tomo notas, guardo la transcripción de esta reunión y respondo preguntas con lo que sabe la colmena: su base de conocimiento y sus tareas. Di mi nombre para preguntarme algo. Di \"{leave}\" y saldré volando.",
+		PlainIntroTemplate: "Hola, soy {display_name} ({pronouns}). Tomo notas, guardo la transcripción de esta reunión y respondo preguntas con la base de conocimiento y las tareas de la colmena. Di mi nombre para preguntarme algo, o di \"{leave}\" para que me vaya.",
+		LeavePhrases:       []string{"melisa vete", "hive leave"},
+		SampleLine:         "Hola, soy {display_name}. Pregúntame lo que quieras sobre el trabajo de la colmena.",
+	},
+	"melie": {
+		ID:                 "melie",
+		Name:               "Mélie",
+		DisplayName:        "Mélie, l'abeille de la ruche",
+		Aliases:            []string{"mélie", "melie", "abeille", "hive"},
+		Pronouns:           "elle",
+		Language:           "fr-FR",
+		Voice:              "ff_siwis",
+		VoiceType:          MeetingsPersonaVoiceFemale,
+		Accent:             "French",
+		Humor:              MeetingsPersonaHumorLight,
+		IntroTemplate:      "Bonjour, je suis {display_name} ({pronouns}). Je prends des notes, je garde la transcription de cette réunion et je réponds aux questions avec ce que sait la ruche : sa base de connaissances et ses tâches. Dites mon nom pour me poser une question. Dites « {leave} » et je m'envole.",
+		PlainIntroTemplate: "Bonjour, je suis {display_name} ({pronouns}). Je prends des notes, je garde la transcription de cette réunion et je réponds aux questions à partir de la base de connaissances et des tâches de la ruche. Dites mon nom pour me poser une question, ou dites « {leave} » pour me retirer.",
+		LeavePhrases:       []string{"melie pars", "hive leave"},
+		SampleLine:         "Bonjour, je suis {display_name}. Posez-moi vos questions sur le travail de la ruche.",
+	},
+	"melina": {
+		ID:                 "melina",
+		Name:               "Melina",
+		DisplayName:        "Melina, l'ape dell'alveare",
+		Aliases:            []string{"melina", "ape", "hive"},
+		Pronouns:           "lei",
+		Language:           "it-IT",
+		Voice:              "if_sara",
+		VoiceType:          MeetingsPersonaVoiceFemale,
+		Accent:             "Italian",
+		Humor:              MeetingsPersonaHumorLight,
+		IntroTemplate:      "Ciao, sono {display_name} ({pronouns}). Prendo appunti, conservo la trascrizione di questa riunione e rispondo alle domande con ciò che sa l'alveare: la sua base di conoscenza e le sue attività. Di' il mio nome per farmi una domanda. Di' \"{leave}\" e volo via.",
+		PlainIntroTemplate: "Ciao, sono {display_name} ({pronouns}). Prendo appunti, conservo la trascrizione di questa riunione e rispondo alle domande con la base di conoscenza e le attività dell'alveare. Di' il mio nome per farmi una domanda, oppure di' \"{leave}\" per farmi uscire.",
+		LeavePhrases:       []string{"melina esci", "hive leave"},
+		SampleLine:         "Ciao, sono {display_name}. Chiedimi pure qualcosa sul lavoro dell'alveare.",
+	},
+	"bia": {
+		ID:                 "bia",
+		Name:               "Bia",
+		DisplayName:        "Bia, a abelha da colmeia",
+		Aliases:            []string{"bia", "abelha", "hive"},
+		Pronouns:           "ela",
+		Language:           "pt-BR",
+		Voice:              "pf_dora",
+		VoiceType:          MeetingsPersonaVoiceFemale,
+		Accent:             "Brazilian",
+		Humor:              MeetingsPersonaHumorLight,
+		IntroTemplate:      "Oi, eu sou a {display_name} ({pronouns}). Faço anotações, guardo a transcrição desta reunião e respondo perguntas com o que a colmeia sabe: a base de conhecimento e as tarefas dela. Diga meu nome para me perguntar algo. Diga \"{leave}\" e eu saio voando.",
+		PlainIntroTemplate: "Oi, eu sou a {display_name} ({pronouns}). Faço anotações, guardo a transcrição desta reunião e respondo perguntas com a base de conhecimento e as tarefas da colmeia. Diga meu nome para me perguntar algo, ou diga \"{leave}\" para me remover.",
+		LeavePhrases:       []string{"bia sai", "hive leave"},
+		SampleLine:         "Oi, eu sou a {display_name}. Pode me perguntar qualquer coisa sobre o trabalho da colmeia.",
+	},
+	"madhu": {
+		ID:                 "madhu",
+		Name:               "मधु",
+		DisplayName:        "मधु, छत्ते की मधुमक्खी",
+		Aliases:            []string{"मधु", "madhu", "hive"},
+		Pronouns:           "वह",
+		Language:           "hi-IN",
+		Voice:              "hf_alpha",
+		VoiceType:          MeetingsPersonaVoiceFemale,
+		Accent:             "Indian",
+		Humor:              MeetingsPersonaHumorLight,
+		IntroTemplate:      "नमस्ते, मैं {display_name} हूँ ({pronouns})। मैं नोट्स लेती हूँ, इस मीटिंग का ट्रांसक्रिप्ट रखती हूँ, और छत्ते की जानकारी, यानी उसके नॉलेज बेस और काम की चीज़ों से सवालों के जवाब देती हूँ। कुछ पूछना हो तो मेरा नाम लीजिए। \"{leave}\" कहिए और मैं उड़ जाऊँगी।",
+		PlainIntroTemplate: "नमस्ते, मैं {display_name} हूँ ({pronouns})। मैं नोट्स लेती हूँ, इस मीटिंग का ट्रांसक्रिप्ट रखती हूँ, और छत्ते के नॉलेज बेस और काम की चीज़ों से सवालों के जवाब देती हूँ। कुछ पूछना हो तो मेरा नाम लीजिए, या मुझे हटाने के लिए \"{leave}\" कहिए।",
+		LeavePhrases:       []string{"madhu leave", "hive leave"},
+		SampleLine:         "नमस्ते, मैं {display_name} हूँ। छत्ते के काम के बारे में मुझसे कुछ भी पूछिए।",
+	},
+	"mitsu": {
+		ID:                 "mitsu",
+		Name:               "ミツ",
+		DisplayName:        "ミツバチのミツ",
+		Aliases:            []string{"ミツ", "ミツさん", "mitsu", "hive"},
+		Pronouns:           "彼女",
+		Language:           "ja-JP",
+		Voice:              "jf_alpha",
+		VoiceType:          MeetingsPersonaVoiceFemale,
+		Accent:             "Standard Japanese",
+		Humor:              MeetingsPersonaHumorLight,
+		IntroTemplate:      "こんにちは、{display_name}です（{pronouns}）。メモを取り、この会議の文字起こしを記録し、ハイブのナレッジベースと作業項目をもとに質問にお答えします。質問があるときは私の名前を呼んでください。「{leave}」と言えば、ぶーんと飛んで帰ります。",
+		PlainIntroTemplate: "こんにちは、{display_name}です（{pronouns}）。メモを取り、この会議の文字起こしを記録し、ハイブのナレッジベースと作業項目をもとに質問にお答えします。質問があるときは私の名前を呼んでください。退出させるには「{leave}」と言ってください。",
+		LeavePhrases:       []string{"mitsu leave", "hive leave"},
+		SampleLine:         "こんにちは、{display_name}です。ハイブの作業について何でも聞いてください。",
+	},
+	"mimi": {
+		ID:                 "mimi",
+		Name:               "蜜蜜",
+		DisplayName:        "蜂巢的小蜜蜂蜜蜜",
+		Aliases:            []string{"蜜蜜", "mimi", "hive"},
+		Pronouns:           "她",
+		Language:           "zh-CN",
+		Voice:              "zf_xiaobei",
+		VoiceType:          MeetingsPersonaVoiceFemale,
+		Accent:             "Standard Mandarin",
+		Humor:              MeetingsPersonaHumorLight,
+		IntroTemplate:      "大家好，我是{display_name}（{pronouns}）。我负责记笔记、保存这次会议的文字记录，并根据蜂巢的知识库和工作项回答问题。想问我问题，就叫我的名字。说“{leave}”，我就嗡嗡飞走啦。",
+		PlainIntroTemplate: "大家好，我是{display_name}（{pronouns}）。我负责记笔记、保存这次会议的文字记录，并根据蜂巢的知识库和工作项回答问题。想问我问题，就叫我的名字；要让我离开，请说“{leave}”。",
+		LeavePhrases:       []string{"mimi leave", "hive leave"},
+		SampleLine:         "大家好，我是{display_name}。关于蜂巢的工作，尽管问我。",
 	},
 }
+
+// The English presets share their intro and sample templates.
+const (
+	meetingsIntroEnglish      = "Hi, I'm {display_name} ({pronouns}). I take notes, keep this meeting's transcript, and answer questions from what the hive knows: its knowledge base and work items. Say my name to ask me something. Say \"{leave}\" and I'll buzz off."
+	meetingsPlainIntroEnglish = "Hi, I'm {display_name} ({pronouns}). I take notes, keep this meeting's transcript, and answer questions from the hive's knowledge base and work items. Say my name to ask me something, or say \"{leave}\" to remove me."
+	meetingsSampleEnglish     = "Hi, I'm {display_name}. Ask me anything about the hive's work and I'll keep it short and sweet."
+)
 
 // Persona env overrides. List values are comma separated.
 const (
@@ -139,6 +314,10 @@ const (
 type MeetingsPersonaConfig struct {
 	// Enabled turns the persona on. Nil defaults true.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Actions are the drafts people may ask the persona for in a meeting
+	// (issues, RFCs, Spek sessions, knowledge notes), each approved in the
+	// dashboard (hivecommons/hive#18406).
+	Actions MeetingsPersonaActions `yaml:"actions,omitempty" json:"actions,omitzero"`
 	// Preset is the built-in persona to start from. Default "betty".
 	Preset string `yaml:"preset,omitempty" json:"preset,omitempty"`
 	// Name is what people call the persona ("Betty").
@@ -397,5 +576,5 @@ func (p MeetingsPersonaConfig) Validate() error {
 			return err
 		}
 	}
-	return nil
+	return p.Actions.Validate()
 }

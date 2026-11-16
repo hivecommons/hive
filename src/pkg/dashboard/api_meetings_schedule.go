@@ -86,6 +86,8 @@ func (s *Server) registerMeetingsScheduleRoutes() {
 	s.mux.HandleFunc("POST /api/meetings/schedule/{eid}/decline", s.meetingsScheduleAction(MeetingScheduleDecline))
 	s.mux.HandleFunc("POST /api/meetings/schedule/{eid}/cancel", s.meetingsScheduleAction(MeetingScheduleCancel))
 	s.mux.HandleFunc("POST /api/meetings/schedule/{eid}/skip", s.meetingsScheduleAction(MeetingScheduleSkip))
+	// Drafts from meetings (#18406) share the Calendar's approvals.
+	s.registerMeetingsActionsRoutes()
 }
 
 // requireMeetingsScheduleRole admits the verified owner and read-write
