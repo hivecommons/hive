@@ -421,11 +421,16 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
     fi
 
 # --- Layer 8.1: spektacular CLI (Inbox -> RFC destination) ---
-# Pinned hivecommons/spektacular release (includes `spektacular voice`,
-# hivecommons/spektacular#123), SHA-256-verified before extraction, installed
-# to /usr/local/bin/spektacular so inbox.spek.binary / runs.spektacular.binary
-# resolve on PATH with no config. Download failures are tolerated (the Inbox
-# falls back to inbox.spek.agent); checksum mismatches hard-fail the build.
+# Pinned hivecommons/spektacular release, SHA-256-verified before extraction,
+# installed to /usr/local/bin/spektacular so inbox.spek.binary /
+# runs.spektacular.binary resolve on PATH with no config. 0.31.0 provides the
+# agent-driven workflow commands (`init`, `skill`, `spec new|goto|file`) and
+# `publish`; it has no `voice` command (hivecommons/spektacular#123 was closed
+# unmerged) and never calls an LLM itself. So Inbox -> RFC always hands the
+# item to an agent (inbox.spek.agent), which drafts the spec with these
+# commands and files it with `spektacular publish`. Download failures are
+# tolerated (the agent prompt then says to install it); checksum mismatches
+# hard-fail the build.
 # Bump note: see src/docs/cli-pins.md (spektacular row); update the version and
 # both digests together from the release's checksums.txt.
 ARG SPEKTACULAR_VERSION=0.31.0
@@ -447,23 +452,31 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
       echo "WARN: spektacular download failed - skipping (Inbox falls back to inbox.spek.agent)"; \
     fi
 
-# --- Layer 8.2: Quorum meeting MCP server (meetings, hivecommons/hive#18289) ---
+# --- Layer 8.2: Quorum meeting MCP server (meetings, hivecommons/hive#18294) ---
 # The pinned hivecommons/quorum release asset `quorum.mjs` (a single-file
 # Node bundle), SHA-256-verified, installed to /usr/local/lib/quorum so the
 # default meetings.quorum.binary resolves with no config. Quorum only runs
-# when meetings.enabled is set. QUORUM_VERSION is empty until the first
-# quorum release is cut; while it is empty the download is skipped and a
-# hive with meetings enabled logs that the bundle is missing. A checksum
-# mismatch hard-fails the build. Bump the version and digest together.
-ARG QUORUM_VERSION=""
-ARG QUORUM_SHA256=""
+# when meetings.enabled is set. Discord's DAVE encryption needs the native
+# @snazzah/davey module next to the bundle (per-platform prebuilt binaries,
+# resolved by npm for the target arch); without it Quorum logs
+# `discord disabled` and Discord tools answer platform_unavailable, so a
+# failed davey install only warns. A checksum mismatch hard-fails the build.
+# Bump note: see src/docs/cli-pins.md (quorum row); update QUORUM_VERSION and
+# QUORUM_SHA256 together from the release's quorum.mjs.sha256, and
+# QUORUM_DAVEY_VERSION from quorum's package-lock.json.
+ARG QUORUM_VERSION=v0.1.0
+ARG QUORUM_SHA256=917aee456e5c87a6b531f1c7c09040fa60d04a39609a1c2755cfdd20d63d7c95
+ARG QUORUM_DAVEY_VERSION=0.1.12
 RUN if [ -n "${QUORUM_VERSION}" ]; then \
       test -n "${QUORUM_SHA256}" || { echo "QUORUM_SHA256 is required with QUORUM_VERSION" >&2; exit 1; } && \
       mkdir -p /usr/local/lib/quorum && \
       curl -fsSL --retry 5 --retry-delay 5 --retry-connrefused "https://github.com/hivecommons/quorum/releases/download/${QUORUM_VERSION}/quorum.mjs" -o /tmp/quorum.mjs && \
       echo "${QUORUM_SHA256}  /tmp/quorum.mjs" | sha256sum -c - && \
       install -m 0644 /tmp/quorum.mjs /usr/local/lib/quorum/quorum.mjs && \
-      rm -f /tmp/quorum.mjs; \
+      rm -f /tmp/quorum.mjs && \
+      ( npm install --prefix /usr/local/lib/quorum --no-save --ignore-scripts --no-audit --no-fund "@snazzah/davey@${QUORUM_DAVEY_VERSION}" \
+        || echo "WARN: @snazzah/davey install failed - Discord meetings unavailable in this image" ) && \
+      ( npm cache clean --force >/dev/null 2>&1 || true ); \
     else \
       echo "QUORUM_VERSION unset - skipping the quorum bundle (meetings unavailable in this image)"; \
     fi

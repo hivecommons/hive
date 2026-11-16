@@ -392,6 +392,16 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_MAX_TOKENS_PER_HOUR` | No | `500000` | Hive-wide hourly token ceiling across meetings. |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_DAY` | No | `2000000` | Hive-wide daily token ceiling across meetings. |
 | `HIVE_MEETINGS_MAX_INTENTS_PER_MEETING` | No | `500` | Per-meeting budget counted in Spek intents when Spek reports no token usage. |
+| `HIVE_MEETINGS_LLM_MODE` | No | `auto` | Model Spektacular live mode reasons with: `auto` (an Anthropic key if set, else the OpenAI-compatible endpoint), `openai`, `anthropic` or `none` (rules only). |
+| `HIVE_MEETINGS_LLM_ENDPOINT` | No | `governor.litellm` endpoint | OpenAI-compatible base URL `hive meeting-llm` calls for Spek. |
+| `HIVE_MEETINGS_LLM_MODEL` | No | `governor.litellm.default_model` | Model name for that endpoint. Without an endpoint and model, Spek runs on rules only. |
+| `HIVE_MEETINGS_LLM_API_KEY` | No | `governor.litellm` key | Key for that endpoint. Secret. Wins over the secret file. |
+| `HIVE_MEETINGS_LLM_API_KEY_FILE` | No | `/data/secrets/meetings_llm_api_key` | Keystore-sealed key file for the meetings endpoint. |
+| `HIVE_MEETINGS_ANTHROPIC_API_KEY` | No | none | Anthropic key; when set (mode `auto` or `anthropic`) Spek calls Anthropic directly. Secret; passed only into the Spek child's environment. |
+| `HIVE_MEETINGS_ANTHROPIC_API_KEY_FILE` | No | `/data/secrets/meetings_anthropic_api_key` | Keystore-sealed Anthropic key file. |
+| `HIVE_MEETINGS_ANTHROPIC_MODEL` | No | Spektacular's default | Anthropic model override (`SPEK_MEETING_MODEL`). |
+| `HIVE_MEETINGS_LLM_TIMEOUT_MS` | No | `2500` | Per-call model timeout. |
+| `HIVE_MEETINGS_LLM_MAX_IN_FLIGHT` | No | `4` | Concurrent model calls across all meetings. |
 
 ## Backend launch controls
 

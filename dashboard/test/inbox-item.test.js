@@ -109,3 +109,18 @@ test('play control follows the role: owner and read-write only', () => {
   const ctx = makeContext('owner');
   assert.equal(vm.runInContext('inboxApiPath("plaud", "a/b c", "audio")', ctx), '/api/inbox/plaud/a%2Fb%20c/audio');
 });
+
+test('File RFC route state: a failed hand-off shows its error inline, delegated names the agent', () => {
+  const ctx = makeContext('owner');
+  const failed = Object.assign({}, readyItem, { routes: { spek_rfc: { status: 'failed', repo: 'o/r', error: 'spek_rfc: handing the RFC to agent <builder> failed: busy' } } });
+  let html = vm.runInContext('inboxItemHtml(' + JSON.stringify(failed) + ')', ctx);
+  assert.match(html, /data-status="error"[^>]*>RFC failed</);
+  assert.match(html, /class="kc-error muted-xs" role="alert">spek_rfc: handing the RFC to agent &lt;builder&gt; failed: busy</);
+  assert.match(html, />Retry RFC…</);
+
+  const delegated = Object.assign({}, readyItem, { routes: { spek_rfc: { status: 'delegated', repo: 'o/r', note: 'handed to agent builder to draft with spek and publish to o/r' } } });
+  html = vm.runInContext('inboxItemHtml(' + JSON.stringify(delegated) + ')', ctx);
+  assert.match(html, /data-status="ok"[^>]*>RFC handed to agent</);
+  assert.match(html, /muted-xs">handed to agent builder to draft with spek and publish to o\/r</);
+  assert.doesNotMatch(html, /role="alert"/);
+});

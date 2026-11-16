@@ -157,6 +157,9 @@ type MeetingsConfig struct {
 	LobbyTimeoutS int `yaml:"lobby_timeout_s,omitempty" json:"lobby_timeout_s,omitempty"`
 	// Budget bounds Spektacular live-mode LLM use.
 	Budget MeetingsBudgetConfig `yaml:"budget,omitempty" json:"budget,omitempty"`
+	// LLM is the model Spektacular live mode reasons with. Hive owns the
+	// credential and the budget; Spek never sees an OpenAI-compatible key.
+	LLM MeetingsLLMConfig `yaml:"llm,omitempty" json:"llm,omitempty"`
 	// RetentionDays is how long an ended meeting's transcript is kept. Zero
 	// or negative means the default.
 	RetentionDays int `yaml:"retention_days,omitempty" json:"retention_days,omitempty"`
@@ -189,6 +192,141 @@ type MeetingsDiscordConfig struct {
 	// TokenFile is the keystore-sealed secret file holding the bot token.
 	// A path, never the token.
 	TokenFile string `yaml:"token_file,omitempty" json:"token_file,omitempty"`
+}
+
+// MeetingsLLMConfig is meetings.llm. With nothing set it resolves like the
+// knowledge advisor: governor.litellm's endpoint, key and default model.
+type MeetingsLLMConfig struct {
+	// Mode is auto (default), openai, anthropic or none.
+	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	// Endpoint is an OpenAI-compatible base URL; empty uses governor.litellm.
+	Endpoint string `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
+	// Model is the model name; empty uses governor.litellm.default_model.
+	Model string `yaml:"model,omitempty" json:"model,omitempty"`
+	// APIKeyFile is the keystore-sealed key for Endpoint; empty, or a
+	// missing file, uses governor.litellm's key.
+	APIKeyFile string `yaml:"api_key_file,omitempty" json:"api_key_file,omitempty"`
+	// AnthropicKeyFile is a keystore-sealed Anthropic key; when set, Spek
+	// calls Anthropic directly (mode auto or anthropic).
+	AnthropicKeyFile string `yaml:"anthropic_key_file,omitempty" json:"anthropic_key_file,omitempty"`
+	// AnthropicModel overrides Spek's default Anthropic model.
+	AnthropicModel string `yaml:"anthropic_model,omitempty" json:"anthropic_model,omitempty"`
+	// TimeoutMS bounds one model call. Zero means DefaultMeetingsLLMTimeoutMS.
+	TimeoutMS int `yaml:"timeout_ms,omitempty" json:"timeout_ms,omitempty"`
+	// MaxInFlight caps concurrent model calls across meetings. Zero means
+	// DefaultMeetingsLLMMaxInFlight.
+	MaxInFlight int `yaml:"max_in_flight,omitempty" json:"max_in_flight,omitempty"`
+}
+
+// Meetings LLM modes and defaults.
+const (
+	MeetingsLLMModeAuto      = "auto"
+	MeetingsLLMModeOpenAI    = "openai"
+	MeetingsLLMModeAnthropic = "anthropic"
+	MeetingsLLMModeNone      = "none"
+	// DefaultMeetingsLLMTimeoutMS matches Spek's own per-call cap.
+	DefaultMeetingsLLMTimeoutMS = 2500
+	// DefaultMeetingsLLMMaxInFlight lets a few meetings reason at once.
+	DefaultMeetingsLLMMaxInFlight = 4
+	// DefaultMeetingsLLMKeyFile and DefaultMeetingsAnthropicKeyFile are the
+	// keystore-sealed secret files.
+	DefaultMeetingsLLMKeyFile       = WritableSecretsDir + "/meetings_llm_api_key"
+	DefaultMeetingsAnthropicKeyFile = WritableSecretsDir + "/meetings_anthropic_api_key"
+	// MeetingsLLMNoModelReason is what the panel shows without a model.
+	MeetingsLLMNoModelReason = "rules only, no model configured"
+)
+
+// Meetings LLM env overrides.
+const (
+	MeetingsLLMModeEnv          = "HIVE_MEETINGS_LLM_MODE"
+	MeetingsLLMEndpointEnv      = "HIVE_MEETINGS_LLM_ENDPOINT"
+	MeetingsLLMModelEnv         = "HIVE_MEETINGS_LLM_MODEL"
+	MeetingsLLMAPIKeyEnv        = "HIVE_MEETINGS_LLM_API_KEY"
+	MeetingsLLMAPIKeyFileEnv    = "HIVE_MEETINGS_LLM_API_KEY_FILE"
+	MeetingsAnthropicKeyEnv     = "HIVE_MEETINGS_ANTHROPIC_API_KEY"
+	MeetingsAnthropicKeyFileEnv = "HIVE_MEETINGS_ANTHROPIC_API_KEY_FILE"
+	MeetingsAnthropicModelEnv   = "HIVE_MEETINGS_ANTHROPIC_MODEL"
+	MeetingsLLMTimeoutEnv       = "HIVE_MEETINGS_LLM_TIMEOUT_MS"
+	MeetingsLLMMaxInFlightEnv   = "HIVE_MEETINGS_LLM_MAX_IN_FLIGHT"
+)
+
+// ResolvedMeetingsLLM is the effective meetings model. Keys are secrets;
+// never log them.
+type ResolvedMeetingsLLM struct {
+	// Backend is openai (hive's meeting-llm command), anthropic or none.
+	Backend        string
+	Endpoint       string
+	Model          string
+	APIKey         string
+	AnthropicKey   string
+	AnthropicModel string
+	TimeoutMS      int
+	MaxInFlight    int
+	// Reason explains Backend none.
+	Reason string
+}
+
+// Label is the panel's one-line description of the model in use.
+func (r ResolvedMeetingsLLM) Label() string {
+	switch r.Backend {
+	case MeetingsLLMModeOpenAI:
+		return "model " + r.Model
+	case MeetingsLLMModeAnthropic:
+		if r.AnthropicModel != "" {
+			return "Anthropic " + r.AnthropicModel
+		}
+		return "Anthropic (Spektacular default model)"
+	default:
+		return r.Reason
+	}
+}
+
+// ResolveMeetingsLLM resolves meetings.llm with env overrides and the
+// governor.litellm fallbacks.
+func (c *Config) ResolveMeetingsLLM(ctx context.Context) ResolvedMeetingsLLM {
+	none := ResolvedMeetingsLLM{Backend: MeetingsLLMModeNone, Reason: MeetingsLLMNoModelReason}
+	if c == nil {
+		return none
+	}
+	l := c.Meetings.LLM
+	mode := strings.ToLower(meetingsEnvString(MeetingsLLMModeEnv, l.Mode, MeetingsLLMModeAuto))
+	if mode == MeetingsLLMModeNone {
+		none.Reason = "rules only, model turned off (meetings.llm.mode: none)"
+		return none
+	}
+	r := ResolvedMeetingsLLM{
+		TimeoutMS:      meetingsEnvInt(MeetingsLLMTimeoutEnv, l.TimeoutMS, DefaultMeetingsLLMTimeoutMS),
+		MaxInFlight:    meetingsEnvInt(MeetingsLLMMaxInFlightEnv, l.MaxInFlight, DefaultMeetingsLLMMaxInFlight),
+		AnthropicModel: meetingsEnvString(MeetingsAnthropicModelEnv, l.AnthropicModel, ""),
+	}
+	if mode == MeetingsLLMModeAuto || mode == MeetingsLLMModeAnthropic {
+		file := meetingsEnvString(MeetingsAnthropicKeyFileEnv, l.AnthropicKeyFile, DefaultMeetingsAnthropicKeyFile)
+		if key, err := meetingsSecret(ctx, MeetingsAnthropicKeyEnv, file); err == nil && key != "" {
+			r.Backend, r.AnthropicKey = MeetingsLLMModeAnthropic, key
+			return r
+		}
+		if mode == MeetingsLLMModeAnthropic {
+			none.Reason = "rules only, no Anthropic key configured"
+			return none
+		}
+	}
+	r.Endpoint = strings.TrimRight(meetingsEnvString(MeetingsLLMEndpointEnv, l.Endpoint, ""), "/")
+	if r.Endpoint == "" {
+		r.Endpoint = strings.TrimRight(c.Governor.LiteLLM.ResolveEndpoint(), "/")
+	}
+	file := meetingsEnvString(MeetingsLLMAPIKeyFileEnv, l.APIKeyFile, DefaultMeetingsLLMKeyFile)
+	if key, err := meetingsSecret(ctx, MeetingsLLMAPIKeyEnv, file); err == nil {
+		r.APIKey = key
+	}
+	if r.APIKey == "" {
+		r.APIKey = c.Governor.LiteLLM.ResolveAPIKey()
+	}
+	r.Model = meetingsEnvString(MeetingsLLMModelEnv, l.Model, strings.TrimSpace(c.Governor.LiteLLM.DefaultModel))
+	if r.Endpoint == "" || r.Model == "" {
+		return none
+	}
+	r.Backend = MeetingsLLMModeOpenAI
+	return r
 }
 
 // MeetingsBudgetConfig is meetings.budget. Zero or negative means the
@@ -233,6 +371,13 @@ func (m MeetingsConfig) IsEnabled() bool {
 		return v
 	}
 	return m.Enabled
+}
+
+// MeetingsEnabledEnvSet reports whether HIVE_MEETINGS_ENABLED overrides
+// meetings.enabled, so the dashboard can say a toggle will not take effect.
+func MeetingsEnabledEnvSet() bool {
+	_, ok := parseBoolEnv(MeetingsEnabledEnv)
+	return ok
 }
 
 // QuorumBinary returns the Quorum bundle or executable path.
@@ -410,6 +555,16 @@ func (m MeetingsConfig) Validate() error {
 			return err
 		}
 	}
+	switch strings.ToLower(meetingsEnvString(MeetingsLLMModeEnv, m.LLM.Mode, MeetingsLLMModeAuto)) {
+	case MeetingsLLMModeAuto, MeetingsLLMModeOpenAI, MeetingsLLMModeAnthropic, MeetingsLLMModeNone:
+	default:
+		return fmt.Errorf("meetings.llm.mode %q is not auto, openai, anthropic or none", m.LLM.Mode)
+	}
+	if u := meetingsEnvString(MeetingsLLMEndpointEnv, m.LLM.Endpoint, ""); u != "" {
+		if err := validateMeetingsURL("meetings.llm.endpoint", u); err != nil {
+			return err
+		}
+	}
 	if d := m.DeliveryOrDefault(); d != MeetingsDeliveryChat {
 		return fmt.Errorf("meetings.delivery %q is not supported (only %q)", d, MeetingsDeliveryChat)
 	}
@@ -435,6 +590,8 @@ func (m MeetingsConfig) Validate() error {
 		{"meetings.budget.max_tokens_per_hour", m.Budget.MaxTokensPerHour},
 		{"meetings.budget.max_tokens_per_day", m.Budget.MaxTokensPerDay},
 		{"meetings.budget.max_intents_per_meeting", m.Budget.MaxIntentsPerMeeting},
+		{"meetings.llm.timeout_ms", m.LLM.TimeoutMS},
+		{"meetings.llm.max_in_flight", m.LLM.MaxInFlight},
 	} {
 		if f.v < 0 {
 			return fmt.Errorf("%s must not be negative (got %d)", f.key, f.v)

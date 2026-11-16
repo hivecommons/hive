@@ -166,6 +166,7 @@ func (s *Store) Set(key, dest, status string, res Result, errText string) (Route
 	st.Status = status
 	st.UpdatedAt = s.now()
 	st.Error = errText
+	st.Note = res.Note
 	if status == StatusFiled {
 		st.URL = res.URL
 		st.Children = append([]string(nil), res.Children...)

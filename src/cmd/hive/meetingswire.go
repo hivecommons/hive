@@ -5,15 +5,24 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/knowledge"
+	"github.com/hivecommons/hive/pkg/meetings"
+	"github.com/hivecommons/hive/pkg/meetings/live"
+	"github.com/hivecommons/hive/pkg/meetings/meetllm"
 	"github.com/hivecommons/hive/pkg/meetings/quorumproc"
+	"github.com/hivecommons/hive/pkg/spektacular"
 )
 
 // quorumSupervisor is the slice of *quorumproc.Supervisor boot uses.
 type quorumSupervisor interface {
 	Start(ctx context.Context) error
 	Stop()
+	BaseURL() string
+	Token() string
 }
 
 // newQuorumSupervisor is the constructor seam; tests replace it.
@@ -83,4 +92,175 @@ func wireMeetings(ctx context.Context, cfg *config.Config, logger *slog.Logger) 
 			"listen", cfg.Meetings.QuorumListen())
 	}
 	return sup
+}
+
+// wireMeetingsManager builds the meeting manager over a running Quorum
+// supervisor (hivecommons/hive#18290) and re-attaches to meetings that were
+// live before a restart. It returns nil (logged) when the store cannot be
+// opened.
+func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.Logger) (*meetings.Manager, *meetings.Store) {
+	if cfg == nil || sup == nil {
+		return nil, nil
+	}
+	store, err := meetings.NewStore(cfg.Meetings.DataDirOrDefault())
+	if err != nil {
+		if logger != nil {
+			logger.Error("[meetings] meeting store unavailable; meetings unavailable", "error", err)
+		}
+		return nil, nil
+	}
+	mgr, err := meetings.NewManager(meetings.Options{
+		Store:        store,
+		Quorum:       meetings.NewClient(sup.BaseURL(), sup.Token(), nil),
+		BotName:      cfg.Meetings.BotNameOrDefault(),
+		ConsentText:  cfg.Meetings.ConsentTextOrDefault(),
+		LobbyTimeout: time.Duration(cfg.Meetings.LobbyTimeoutSOrDefault()) * time.Second,
+		Logger:       logger,
+		// Vexa fixes speaking ability at join time, so with voice-on-address
+		// allowed every bot starts able to speak; the meeting's voice toggle
+		// still decides whether hive does.
+		VoiceOnAddress: cfg.Meetings.VoiceOnAddressEnabled(),
+	})
+	if err != nil {
+		if logger != nil {
+			logger.Error("[meetings] meeting manager not created", "error", err)
+		}
+		return nil, nil
+	}
+	// Discord `/hive join` requests arrive on the all-meetings stream. No
+	// Discord identity is mapped to the hive owner yet, so none is approved
+	// automatically: each waits for the owner in the dashboard.
+	mgr.StartRequests()
+	if n := mgr.Resume(); n > 0 && logger != nil {
+		logger.Info("[meetings] re-attached to meetings", "count", n)
+	}
+	return mgr, store
+}
+
+// meetingSpekArgs is the contract's live-mode command line
+// (quorum.contract/v1 section 2).
+func meetingSpekArgs(m meetings.Meeting, contextDir string) []string {
+	title := live.NotesTitle(m)
+	return []string{"meeting", "--from", "stdin", "--format", "jsonl", "--title", title, "--context", contextDir}
+}
+
+// wireMeetingsLive starts the Spektacular live loop over the meeting
+// manager (hivecommons/hive#18291): one `spektacular meeting` child per live
+// meeting, its intents applied through the meetings policy. research may be
+// nil until the research pool is wired; research intents then fail visibly
+// in the panel instead of silently.
+func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings.Store, kapi *knowledge.KnowledgeAPI,
+	research live.ResearchDispatcher, logger *slog.Logger) *live.Runner {
+	if cfg == nil || mgr == nil || store == nil {
+		return nil
+	}
+	m := cfg.Meetings
+	binary := cfg.Runs.Spektacular.BinaryOrDefault()
+	llm := cfg.ResolveMeetingsLLM(context.Background())
+	hiveBin, err := os.Executable()
+	if err != nil && llm.Backend == config.MeetingsLLMModeOpenAI {
+		llm = config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeNone, Reason: "rules only, the hive binary path is unknown"}
+	}
+	slotsDir := filepath.Join(store.Dir(), meetingLLMSlotsDir)
+	maxTokens := m.Budget.MaxTokensPerMeetingOrDefault()
+	if logger != nil {
+		logger.Info("[meetings] spektacular live mode model", "model", llm.Label())
+	}
+	var notes live.NotesSink
+	if kapi != nil {
+		notes = live.KnowledgeNotes{API: kapi}
+	}
+	r, err := live.NewRunner(live.Options{
+		Meetings: mgr,
+		Store:    store,
+		NewSpek: func(mt meetings.Meeting) live.Spek {
+			env := meetingSpekEnv(os.Getenv, llm, hiveBin, meetingUsageFile(store, mt.ID), slotsDir, maxTokens)
+			return spektacular.StreamExec(binary, meetingSpekArgs(mt, filepath.Join(store.Dir(), mt.ID)), spektacular.StreamOptions{Logger: logger, Env: env})
+		},
+		SpekMode: llm.Label(),
+		UsageFile: func(id string) string {
+			if llm.Backend != config.MeetingsLLMModeOpenAI {
+				return ""
+			}
+			return meetingUsageFile(store, id)
+		},
+		Research: research,
+		Notes:    notes,
+		Policy: live.Policy{
+			ChatPostsPerMinute:   m.ChatPostsPerMinuteOrDefault(),
+			ResearchPerMeeting:   m.ResearchPerMeetingOrDefault(),
+			VoiceOnAddress:       m.VoiceOnAddressEnabled(),
+			MaxTokensPerMeeting:  m.Budget.MaxTokensPerMeetingOrDefault(),
+			MaxIntentsPerMeeting: m.Budget.MaxIntentsPerMeetingOrDefault(),
+		},
+		Ledger: live.NewLedger(m.Budget.MaxTokensPerHourOrDefault(), m.Budget.MaxTokensPerDayOrDefault()),
+		Logger: logger,
+	})
+	if err != nil {
+		if logger != nil {
+			logger.Error("[meetings] live loop not created", "error", err)
+		}
+		return nil
+	}
+	r.Start()
+	return r
+}
+
+// meetingLLMSlotsDir holds the in-flight slot locks `hive meeting-llm`
+// shares across meetings; the leading dot keeps it out of the meeting list.
+const meetingLLMSlotsDir = ".llm-slots"
+
+// meetingUsageFile is a meeting's model usage ledger (meetllm).
+func meetingUsageFile(store *meetings.Store, id string) string {
+	return filepath.Join(store.Dir(), id, "llm-usage.jsonl")
+}
+
+// meetingSpekPassthrough are the hive environment variables the Spek child
+// inherits; hive's own secrets never reach it.
+var meetingSpekPassthrough = []string{
+	"PATH", "HOME", "TMPDIR", "TZ", "LANG", "LC_ALL",
+	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy",
+	"NODE_EXTRA_CA_CERTS", "SSL_CERT_FILE", "SSL_CERT_DIR",
+}
+
+// meetingSpekEnv is the Spek child's environment. Hive owns the model
+// credential and budget: with an OpenAI-compatible model Spek runs
+// SPEK_MEETING_LLM=command against `hive meeting-llm`, which reads the
+// endpoint and key from this environment (never argv) and charges the
+// meeting's usage file; with an Anthropic key Spek calls Anthropic itself;
+// with neither it runs on rules only.
+func meetingSpekEnv(getenv func(string) string, llm config.ResolvedMeetingsLLM, hiveBin, usageFile, slotsDir string, maxTokens int) []string {
+	var env []string
+	for _, k := range meetingSpekPassthrough {
+		if v := getenv(k); v != "" {
+			env = append(env, k+"="+v)
+		}
+	}
+	switch llm.Backend {
+	case config.MeetingsLLMModeOpenAI:
+		env = append(env,
+			"SPEK_MEETING_LLM=command",
+			"SPEK_MEETING_LLM_CMD="+hiveBin+" "+meetllm.Subcommand,
+			"SPEK_MEETING_LLM_TIMEOUT_MS="+strconv.Itoa(llm.TimeoutMS),
+			meetllm.EnvEndpoint+"="+llm.Endpoint,
+			meetllm.EnvModel+"="+llm.Model,
+			meetllm.EnvTimeoutMS+"="+strconv.Itoa(llm.TimeoutMS),
+			meetllm.EnvUsageFile+"="+usageFile,
+			meetllm.EnvMaxTokens+"="+strconv.Itoa(maxTokens),
+			meetllm.EnvSlotsDir+"="+slotsDir,
+			meetllm.EnvMaxInFlight+"="+strconv.Itoa(llm.MaxInFlight),
+		)
+		if llm.APIKey != "" {
+			env = append(env, meetllm.EnvAPIKey+"="+llm.APIKey)
+		}
+	case config.MeetingsLLMModeAnthropic:
+		env = append(env, "SPEK_MEETING_LLM=anthropic", "ANTHROPIC_API_KEY="+llm.AnthropicKey,
+			"SPEK_MEETING_LLM_TIMEOUT_MS="+strconv.Itoa(llm.TimeoutMS))
+		if llm.AnthropicModel != "" {
+			env = append(env, "SPEK_MEETING_MODEL="+llm.AnthropicModel)
+		}
+	default:
+		env = append(env, "SPEK_MEETING_LLM=none")
+	}
+	return env
 }

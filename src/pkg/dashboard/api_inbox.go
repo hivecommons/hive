@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"os"
-	"os/exec"
 	"strconv"
 	"strings"
 	"time"
@@ -216,7 +215,7 @@ type InboxListResponse struct {
 
 func (s *Server) inboxService(w http.ResponseWriter) (*inbox.Service, bool) {
 	if s == nil || s.deps == nil || s.deps.Inbox == nil {
-		jsonError(w, "inbox is not available: configure a voice or meeting knowledge connector (plaud, wisprflow, zoom, teams, discord, google-meet)", http.StatusNotFound)
+		jsonError(w, "inbox is not available: configure a voice or meeting knowledge connector (plaud, wisprflow, zoom, teams, discord, google-meet, webex, slack-huddles, fireflies, fathom, limitless, granola, otter)", http.StatusNotFound)
 		return nil, false
 	}
 	return s.deps.Inbox, true
@@ -518,9 +517,13 @@ func (s *Server) handleKnowledgeConnectorAuthComplete(w http.ResponseWriter, r *
 	jsonResponse(w, st)
 }
 
+// inboxSectionFragment is the dashboard hash that opens the Inbox section.
+const inboxSectionFragment = "/#section-inbox-section"
+
 // NewInboxDestinations builds the spek_rfc and dibs destinations from
-// config; token minting and agent kicks come from the dashboard deps.
-func NewInboxDestinations(cfg *config.Config, token func(ctx context.Context, repo string) (string, error), kick inbox.Kicker) []inbox.Destination {
+// config. File RFC always goes through an agent kick (spektacular has no
+// command that drafts a spec on its own); kick comes from the dashboard deps.
+func NewInboxDestinations(cfg *config.Config, kick inbox.Kicker) []inbox.Destination {
 	binary := cfg.Inbox.Spek.Binary
 	if binary == "" {
 		binary = cfg.Runs.Spektacular.BinaryOrDefault()
@@ -528,9 +531,11 @@ func NewInboxDestinations(cfg *config.Config, token func(ctx context.Context, re
 	spek := &inbox.SpekDestination{
 		Binary:      binary,
 		DefaultRepo: cfg.Inbox.Spek.Repo,
-		Token:       token,
 		Agent:       cfg.InboxSpekAgent(),
 		Kick:        kick,
+	}
+	if base := strings.TrimRight(cfg.Dashboard.PublicURL, "/"); base != "" {
+		spek.InboxURL = base + inboxSectionFragment
 	}
 	dibs := &inbox.DibsDestination{URL: cfg.Inbox.Dibs.URL}
 	if env := cfg.Inbox.Dibs.TokenEnv; env != "" {
@@ -540,17 +545,9 @@ func NewInboxDestinations(cfg *config.Config, token func(ctx context.Context, re
 }
 
 // InboxReadiness returns the probes the settings view reports.
+// File RFC is ready when an agent can take the hand-off.
 func InboxReadiness(cfg *config.Config) (spek func() bool, dibs func() bool) {
-	binary := cfg.Inbox.Spek.Binary
-	if binary == "" {
-		binary = cfg.Runs.Spektacular.BinaryOrDefault()
-	}
-	spek = func() bool {
-		if _, err := exec.LookPath(binary); err == nil {
-			return true
-		}
-		return cfg.InboxSpekAgent() != ""
-	}
+	spek = func() bool { return cfg.InboxSpekAgent() != "" }
 	dibs = func() bool {
 		return cfg.Inbox.Dibs.TokenEnv != "" && os.Getenv(cfg.Inbox.Dibs.TokenEnv) != ""
 	}

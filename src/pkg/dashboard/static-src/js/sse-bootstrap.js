@@ -105,6 +105,12 @@
         } catch (err) { hamNotesLoad(); }
       });
 
+      // A meeting hive is in changed state: refresh the Meetings list.
+      source.addEventListener('meeting', () => {
+        noteSSEFrame();
+        if (typeof fetchMeetings === 'function') fetchMeetings();
+      });
+
       source.addEventListener('agent-status', (e) => {
         noteSSEFrame();
         try {

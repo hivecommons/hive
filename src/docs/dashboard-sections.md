@@ -197,6 +197,12 @@ Voice recordings and dictations waiting for you to file them as an RFC, send to 
 
 Full entry: [Inbox](dashboard-sections/workflow-and-agents.md#inbox).
 
+## Meetings
+
+Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.
+
+Owner only. Approve research past the per-meeting cap and answer Discord join requests here; settings are under Settings, Meetings. Full entry: [Meetings](meetings.md).
+
 ## Contributors
 
 The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.

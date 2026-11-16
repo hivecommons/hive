@@ -33,6 +33,8 @@ import (
 	"github.com/hivecommons/hive/pkg/inbox"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
+	"github.com/hivecommons/hive/pkg/meetings"
+	"github.com/hivecommons/hive/pkg/meetings/live"
 	"github.com/hivecommons/hive/pkg/mention"
 	"github.com/hivecommons/hive/pkg/mergelane"
 	"github.com/hivecommons/hive/pkg/notify"
@@ -349,6 +351,13 @@ type boot struct {
 	// meetingsQuorum is the Quorum child supervisor
 	// (hivecommons/hive#18289); nil when meetings are off.
 	meetingsQuorum quorumSupervisor
+	// meetingsMgr runs meeting lifecycles over the Quorum child
+	// (hivecommons/hive#18290); nil when meetings are off.
+	meetingsMgr *meetings.Manager
+	// meetingsLive is the Spektacular live loop (hivecommons/hive#18291).
+	meetingsLive *live.Runner
+	// meetingsInboxSrc lists ended meetings in the inbox (#18293).
+	meetingsInboxSrc inbox.Source
 }
 
 // deferStack stands in for the `defer` statements that used to sit in
