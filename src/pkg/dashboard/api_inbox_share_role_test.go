@@ -10,7 +10,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 )
 
-func doPostRole(s *Server, path, role string, body any) *httptest.ResponseRecorder {
+func doShareRolePost(s *Server, path, role string, body any) *httptest.ResponseRecorder {
 	var b bytes.Buffer
 	_ = json.NewEncoder(&b).Encode(body)
 	rec := httptest.NewRecorder()
@@ -35,23 +35,23 @@ func TestInboxShareRoleMatrix(t *testing.T) {
 	deps.Inbox = newInboxTestService(t, deps.Config.Inbox, spek)
 	route := map[string]string{"source": "plaud", "item_id": "rec-1", "destination": "spek_rfc"}
 	for _, role := range []string{"", "read-only", "read"} {
-		if rec := doPostRole(s, "/api/inbox/route", role, route); rec.Code != http.StatusForbidden {
+		if rec := doShareRolePost(s, "/api/inbox/route", role, route); rec.Code != http.StatusForbidden {
 			t.Fatalf("role %q route = %d, want 403", role, rec.Code)
 		}
-		if rec := doPostRole(s, "/api/inbox/dismiss", role, map[string]any{"items": []map[string]string{{"source": "plaud", "item_id": "rec-1"}}}); rec.Code != http.StatusForbidden {
+		if rec := doShareRolePost(s, "/api/inbox/dismiss", role, map[string]any{"items": []map[string]string{{"source": "plaud", "item_id": "rec-1"}}}); rec.Code != http.StatusForbidden {
 			t.Fatalf("role %q dismiss = %d, want 403", role, rec.Code)
 		}
 	}
-	if rec := doPostRole(s, "/api/inbox/route", "read-write", route); rec.Code != http.StatusAccepted {
+	if rec := doShareRolePost(s, "/api/inbox/route", "read-write", route); rec.Code != http.StatusAccepted {
 		t.Fatalf("read-write route = %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec := doPostRole(s, "/api/inbox/dismiss", "read-write", map[string]any{"items": []map[string]string{{"source": "plaud", "item_id": "rec-1"}}}); rec.Code != http.StatusOK {
+	if rec := doShareRolePost(s, "/api/inbox/dismiss", "read-write", map[string]any{"items": []map[string]string{{"source": "plaud", "item_id": "rec-1"}}}); rec.Code != http.StatusOK {
 		t.Fatalf("read-write dismiss = %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec := doPostRole(s, "/api/inbox/route", "owner", route); rec.Code != http.StatusAccepted {
+	if rec := doShareRolePost(s, "/api/inbox/route", "owner", route); rec.Code != http.StatusAccepted {
 		t.Fatalf("owner route = %d: %s", rec.Code, rec.Body.String())
 	}
-	if rec := doPostRole(s, "/api/inbox/settings", "read-write", map[string]any{"spek_repo": "o/r"}); rec.Code != http.StatusForbidden {
+	if rec := doShareRolePost(s, "/api/inbox/settings", "read-write", map[string]any{"spek_repo": "o/r"}); rec.Code != http.StatusForbidden {
 		t.Fatalf("read-write settings = %d, want 403 (settings stay owner-only)", rec.Code)
 	}
 }
