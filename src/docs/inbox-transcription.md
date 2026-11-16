@@ -389,3 +389,7 @@ speed for the estimate.
 | `GET` | `/api/inbox/{source}/{id}/content` | Dashboard auth | Falls back to the machine transcript, with `transcript_label` |
 
 See also [api-reference/knowledge.md](api-reference/knowledge.md).
+
+## Transcribe first, then share
+
+Choosing RFC… or Knowledge from 🔗 Share → Hive on an item that has audio but no text starts a transcription for it (the Transcribe path above, with the same consent, budget and daily caps) and keeps the choice as a pending share. The share runs when the transcript completes; the item's progress bar reads "Transcribing, then → RFC". The pending share holds only the dialog choices (destination, who chose it, repository), never item text, and is stored with the item state, so a restart resumes it. If the transcription fails or is skipped, nothing is sent and the item shows the reason with a Retry in the Share menu.

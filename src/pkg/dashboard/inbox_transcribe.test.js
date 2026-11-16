@@ -40,7 +40,7 @@ const itemHarness = ({ role = 'owner', status = 202, body = { state: { status: '
   };
   const h = new Function('ctx', 'fetch', 'escapeHtml', 'formatDashboardDateTime', 'showToast', 'renderInbox', 'fetchInbox', 'INBOX_TX_STATUS_LABELS',
     'const window = ctx.window; const _inboxTranscribing = ctx._inboxTranscribing; const _inboxContent = ctx._inboxContent;\n' +
-    fnSrc('inboxViewerCanPlay') + '\n' + fnSrc('inboxApiPath') + '\n' + fnSrc('inboxTxUnavailableText') + '\n' + fnSrc('inboxTxEtaText') + '\n' + fnSrc('inboxTxElapsedText') + '\n' + fnSrc('inboxTxProgressHtml') + '\n' + fnSrc('inboxTranscriptionHtml') + '\n' + fnSrc('inboxTranscribe') + '\n' +
+    fnSrc('inboxViewerCanPlay') + '\n' + fnSrc('inboxApiPath') + '\n' + fnSrc('inboxTxUnavailableText') + '\n' + fnSrc('inboxTxEtaText') + '\n' + fnSrc('inboxTxElapsedText') + '\n' + fnSrc('inboxTxProgressHtml') + '\n' + fnSrc('inboxIntentThen') + '\n' + fnSrc('inboxIntentLabel') + '\n' + fnSrc('inboxTranscriptionHtml') + '\n' + fnSrc('inboxTranscribe') + '\n' +
     'return { inboxTranscriptionHtml, inboxTranscribe };');
   const api = h(ctx, fetch, escapeHtml, s => 'at ' + s, (msg, kind) => calls.toasts.push([msg, kind]),
     () => { calls.renders++; }, async () => { calls.refreshes++; }, LABELS);
@@ -238,7 +238,7 @@ test('pending text is provider-neutral for every source and keeps the upstream h
 // progressHarness extracts the progress helpers and the live poll merge.
 const progressHarness = () => new Function('escapeHtml',
   'function inboxTxBusy(st) { return !!st && (st.status === "queued" || st.status === "running"); }\n' +
-  fnSrc('inboxTxEtaText') + '\n' + fnSrc('inboxTxElapsedText') + '\n' + fnSrc('inboxTxProgressHtml') + '\n' + fnSrc('inboxTxApplyActive') + '\n' +
+  fnSrc('inboxTxEtaText') + '\n' + fnSrc('inboxTxElapsedText') + '\n' + fnSrc('inboxTxProgressHtml') + '\n' + fnSrc('inboxIntentThen') + '\n' + fnSrc('inboxIntentLabel') + '\n' + fnSrc('inboxTxApplyActive') + '\n' +
   'return { inboxTxEtaText, inboxTxElapsedText, inboxTxProgressHtml, inboxTxApplyActive };')(escapeHtml);
 
 test('ETA text rounds the way people say it', () => {

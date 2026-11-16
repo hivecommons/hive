@@ -30,6 +30,7 @@ function makeContext(role) {
     window: { _hiveRole: role },
     INBOX_SOURCE_ICONS: { plaud: '🎙️' },
     INBOX_DEST_LABELS: { spek_rfc: 'RFC', dibs: 'dibs' },
+    INBOX_INTENT_LABELS: { spek_rfc: 'RFC', dismiss: 'Knowledge', spek: 'spek' },
     INBOX_SUMMARY_COLLAPSE_CHARS: 280,
     _inboxSelected: new Set(),
     _inboxExpanded: new Set(),
@@ -48,7 +49,7 @@ function makeContext(role) {
     Array,
   };
   vm.createContext(ctx);
-  for (const fn of ['inboxSourceIcon', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxItemHtml']) {
+  for (const fn of ['inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxItemHtml']) {
     vm.runInContext(extractFunction(fn), ctx);
   }
   return ctx;
@@ -139,4 +140,19 @@ test('File RFC route state: a failed hand-off shows its error inline, delegated 
   assert.match(html, /data-status="ok"[^>]*>RFC handed to agent</);
   assert.match(html, /muted-xs">handed to agent builder to draft with spek and publish to o\/r</);
   assert.doesNotMatch(html, /role="alert"/);
+});
+
+test('transcribe-then-share: the progress bar names the share, a failed intent shows its reason', () => {
+  const ctx = makeContext('read-write');
+  const running = Object.assign({}, pendingItem, {
+    transcription: { status: 'running', phase: 'transcribing', progress: 0.4, started_at: '2026-11-16T10:00:00Z', eta_seconds: 240 },
+    share_intents: { spek_rfc: { status: 'waiting', actor: 'rw@example.com' } },
+  });
+  let html = vm.runInContext('inboxItemHtml(' + JSON.stringify(running) + ')', ctx);
+  assert.match(html, /Transcribing, then → RFC · 40%/);
+  const failed = Object.assign({}, pendingItem, { share_intents: { dismiss: { status: 'failed', error: 'transcription failed: provider down' } } });
+  html = vm.runInContext('inboxItemHtml(' + JSON.stringify(failed) + ')', ctx);
+  assert.match(html, /data-status="error"[^>]*>→ Knowledge failed</);
+  assert.match(html, /role="alert">transcription failed: provider down</);
+  assert.match(html, /inbox-check/, 'read-write can select items for the bulk Hive menu');
 });

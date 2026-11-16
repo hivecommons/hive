@@ -99,6 +99,9 @@ func (s *Server) handleInboxContent(w http.ResponseWriter, r *http.Request) {
 
 // requireInboxPlaybackRole admits owners (verified) and read-write sessions:
 // playing a recording is a read of private audio, not an operator mutation.
+//
+// Sharing an item (route, Knowledge-only) takes the same owner or read-write
+// admission (requireInboxShareRole); settings stay owner-only.
 func requireInboxPlaybackRole(w http.ResponseWriter, r *http.Request) bool {
 	role := r.Header.Get("X-Hive-Role")
 	if isOwnerRole(role) && r.Header.Get(ownerRoleVerifiedHeader) != "true" {
@@ -404,6 +407,14 @@ type inboxRouteRequest struct {
 	ItemID      string `json:"item_id"`
 	Destination string `json:"destination"`
 	Repo        string `json:"repo,omitempty"`
+	// Params are short dialog choices kept with a transcribe-first share.
+	Params map[string]string `json:"params,omitempty"`
+}
+
+// requireInboxShareRole admits owners (verified) and read-write sessions to
+// share an inbox item; read is denied. Every share is audited with the user.
+func requireInboxShareRole(w http.ResponseWriter, r *http.Request) bool {
+	return requireInboxPlaybackRole(w, r)
 }
 
 // InboxRouteResponse is POST /api/inbox/route.
@@ -412,12 +423,15 @@ type InboxRouteResponse struct {
 	ItemID      string           `json:"item_id"`
 	Destination string           `json:"destination"`
 	State       inbox.RouteState `json:"state"`
+	// WaitingTranscript is true when the item has audio but no text: the hive
+	// transcribes it first and shares when the transcript completes.
+	WaitingTranscript bool `json:"waiting_transcript,omitempty"`
 }
 
-// handleInboxRoute (owner) queues one item for one destination; progress is
+// handleInboxRoute (owner or read-write) queues one item for one destination; progress is
 // read back from GET /api/inbox.
 func (s *Server) handleInboxRoute(w http.ResponseWriter, r *http.Request) {
-	if !requireOwnerRole(w, r) {
+	if !requireInboxShareRole(w, r) {
 		return
 	}
 	svc, ok := s.inboxService(w)
@@ -449,7 +463,17 @@ func (s *Server) handleInboxRoute(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, msg, http.StatusNotFound)
 		return
 	}
-	st, err := svc.Route(ctx, it, inbox.Request{Destination: req.Destination, Repo: req.Repo})
+	actor := requestUser(r)
+	var st inbox.RouteState
+	waiting := false
+	if req.Destination == inbox.DestDibs {
+		// DIBS sends straight away, audio-only items included.
+		st, err = svc.Route(ctx, it, inbox.Request{Destination: req.Destination, Repo: req.Repo})
+	} else {
+		var out inbox.ShareOutcome
+		out, err = svc.ShareWhenReady(ctx, it, inbox.ShareIntent{Destination: req.Destination, Actor: actor, Repo: req.Repo, Params: req.Params}, s.inboxTranscribeOptions(actor))
+		st, waiting = out.State, out.Waiting
+	}
 	switch {
 	case errors.Is(err, inbox.ErrRouteBusy):
 		jsonError(w, "that route is already queued or running", http.StatusConflict)
@@ -457,12 +481,25 @@ func (s *Server) handleInboxRoute(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, inbox.ErrUnknownDestination):
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
+	case errors.Is(err, inbox.ErrTranscribeUnavailable):
+		jsonError(w, "this item has audio but no text yet, and "+err.Error(), http.StatusPreconditionFailed)
+		return
 	case err != nil:
 		jsonError(w, "route failed: "+err.Error(), http.StatusInternalServerError)
 		return
 	}
-	s.auditFromRequest(r, "inbox_route", auditDetail("source", req.Source, "item", req.ItemID, "destination", req.Destination, "repo", req.Repo), "")
-	jsonStatusResponse(w, http.StatusAccepted, InboxRouteResponse{Source: req.Source, ItemID: req.ItemID, Destination: req.Destination, State: st})
+	s.auditFromRequest(r, "inbox_route", auditDetail("source", req.Source, "item", req.ItemID, "destination", req.Destination, "repo", req.Repo, "actor", actor, "transcribe_first", strconv.FormatBool(waiting)), "")
+	jsonStatusResponse(w, http.StatusAccepted, InboxRouteResponse{Source: req.Source, ItemID: req.ItemID, Destination: req.Destination, State: st, WaitingTranscript: waiting})
+}
+
+// inboxTranscribeOptions builds the audited options for a transcription the
+// request caused.
+func (s *Server) inboxTranscribeOptions(actor string) inbox.TranscribeOptions {
+	return inbox.TranscribeOptions{Actor: actor, Audit: func(a inbox.TranscribeAudit) {
+		if s.audit != nil {
+			s.audit.Log(a.Actor, "inbox_transcribe", auditDetail(a.Fields()...), "")
+		}
+	}}
 }
 
 func inboxRepoOK(repo string) bool {
@@ -481,11 +518,15 @@ type inboxDismissRequest struct {
 // InboxDismissResponse is POST /api/inbox/dismiss.
 type InboxDismissResponse struct {
 	Dismissed int `json:"dismissed"`
+	// WaitingTranscript counts items that will be kept once transcribed.
+	WaitingTranscript int `json:"waiting_transcript,omitempty"`
 }
 
-// handleInboxDismiss (owner) marks items "knowledge only" (bulk).
+// handleInboxDismiss (owner or read-write) marks items "knowledge only"
+// (bulk). Audio-only items are transcribed first when transcription is
+// available (the dismissal runs when the transcript completes).
 func (s *Server) handleInboxDismiss(w http.ResponseWriter, r *http.Request) {
-	if !requireOwnerRole(w, r) {
+	if !requireInboxShareRole(w, r) {
 		return
 	}
 	svc, ok := s.inboxService(w)
@@ -497,10 +538,25 @@ func (s *Server) handleInboxDismiss(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, "items[] is required", http.StatusBadRequest)
 		return
 	}
-	n := 0
+	n, waiting := 0, 0
+	actor := requestUser(r)
 	for _, it := range req.Items {
 		if it.Source == "" || it.ItemID == "" {
 			continue
+		}
+		if !req.Undo {
+			if item, found, _ := svc.Find(r.Context(), it.Source, it.ItemID); found {
+				if out, err := svc.ShareWhenReady(r.Context(), item, inbox.ShareIntent{Destination: inbox.DestDismiss, Actor: actor}, s.inboxTranscribeOptions(actor)); err == nil {
+					if out.Waiting {
+						waiting++
+					}
+					n++
+					continue
+				} else if !errors.Is(err, inbox.ErrTranscribeUnavailable) {
+					jsonError(w, "dismiss failed: "+err.Error(), http.StatusInternalServerError)
+					return
+				}
+			}
 		}
 		if err := svc.Dismiss(it.Source, it.ItemID, !req.Undo); err != nil {
 			jsonError(w, "dismiss failed: "+err.Error(), http.StatusInternalServerError)
@@ -508,8 +564,8 @@ func (s *Server) handleInboxDismiss(w http.ResponseWriter, r *http.Request) {
 		}
 		n++
 	}
-	s.auditFromRequest(r, "inbox_dismiss", auditDetail("count", strconv.Itoa(n)), "")
-	jsonResponse(w, InboxDismissResponse{Dismissed: n})
+	s.auditFromRequest(r, "inbox_dismiss", auditDetail("count", strconv.Itoa(n), "actor", actor, "waiting_transcript", strconv.Itoa(waiting)), "")
+	jsonResponse(w, InboxDismissResponse{Dismissed: n, WaitingTranscript: waiting})
 }
 
 func (s *Server) handleInboxSettingsGet(w http.ResponseWriter, r *http.Request) {
