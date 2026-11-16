@@ -22,9 +22,10 @@ import (
 // Every value below can be overridden by an environment variable, read at
 // call time so a hosted hive's operator can turn meetings on from the
 // deployment without editing hive.yaml. Precedence is env, then hive.yaml,
-// then the default. Secrets (the Vexa tenant key and the optional Discord bot
-// token) are never stored in hive.yaml: they live in keystore-sealed secret
-// files under /data/secrets, or arrive through an environment variable.
+// then the default. Secrets (the Vexa tenant key, the optional Discord bot
+// token and the transcription service token) are never stored in hive.yaml:
+// they live in keystore-sealed secret files under /data/secrets, or arrive
+// through an environment variable.
 
 const (
 	// DefaultMeetingsQuorumBinary is where the hive image installs the pinned
@@ -80,6 +81,10 @@ const (
 	// DefaultMeetingsDiscordTokenFile is the keystore-sealed secret file that
 	// holds the optional per-hive Discord bot token.
 	DefaultMeetingsDiscordTokenFile = WritableSecretsDir + "/meetings_discord_token"
+	// DefaultMeetingsTranscribeTokenFile is the keystore-sealed secret file
+	// that holds the bearer token for the shared transcription service
+	// Discord audio is posted to (QUORUM_TRANSCRIBE_TOKEN_FILE).
+	DefaultMeetingsTranscribeTokenFile = WritableSecretsDir + "/meetings_transcribe_token"
 
 	// MeetingsDeliveryChat posts meeting output in the meeting chat.
 	MeetingsDeliveryChat = "chat"
@@ -95,30 +100,32 @@ const (
 
 // Environment overrides for the meetings block. Each one wins over hive.yaml.
 const (
-	MeetingsEnabledEnv            = "HIVE_MEETINGS_ENABLED"
-	MeetingsQuorumBinaryEnv       = "HIVE_MEETINGS_QUORUM_BINARY"
-	MeetingsQuorumListenEnv       = "HIVE_MEETINGS_QUORUM_LISTEN"
-	MeetingsVexaURLEnv            = "HIVE_MEETINGS_VEXA_URL"
-	MeetingsVexaAPIKeyEnv         = "HIVE_MEETINGS_VEXA_API_KEY"
-	MeetingsVexaAPIKeyFileEnv     = "HIVE_MEETINGS_VEXA_API_KEY_FILE"
-	MeetingsDiscordTokenEnv       = "HIVE_MEETINGS_DISCORD_TOKEN"
-	MeetingsDiscordTokenFileEnv   = "HIVE_MEETINGS_DISCORD_TOKEN_FILE"
-	MeetingsTranscribeURLEnv      = "HIVE_MEETINGS_TRANSCRIBE_URL"
-	MeetingsDeliveryEnv           = "HIVE_MEETINGS_DELIVERY"
-	MeetingsVoiceOnAddressEnv     = "HIVE_MEETINGS_VOICE_ON_ADDRESS"
-	MeetingsBotNameEnv            = "HIVE_MEETINGS_BOT_NAME"
-	MeetingsInvitePolicyEnv       = "HIVE_MEETINGS_INVITE_POLICY"
-	MeetingsResearchPoolSizeEnv   = "HIVE_MEETINGS_RESEARCH_POOL_SIZE"
-	MeetingsResearchPerMeetingEnv = "HIVE_MEETINGS_RESEARCH_PER_MEETING"
-	MeetingsChatPostsPerMinuteEnv = "HIVE_MEETINGS_CHAT_POSTS_PER_MINUTE"
-	MeetingsLobbyTimeoutEnv       = "HIVE_MEETINGS_LOBBY_TIMEOUT_S"
-	MeetingsRetentionDaysEnv      = "HIVE_MEETINGS_RETENTION_DAYS"
-	MeetingsConsentTextEnv        = "HIVE_MEETINGS_CONSENT_TEXT"
-	MeetingsDataDirEnv            = "HIVE_MEETINGS_DATA_DIR"
-	MeetingsTokensPerMeetingEnv   = "HIVE_MEETINGS_MAX_TOKENS_PER_MEETING"
-	MeetingsTokensPerHourEnv      = "HIVE_MEETINGS_MAX_TOKENS_PER_HOUR"
-	MeetingsTokensPerDayEnv       = "HIVE_MEETINGS_MAX_TOKENS_PER_DAY"
-	MeetingsIntentsPerMeetingEnv  = "HIVE_MEETINGS_MAX_INTENTS_PER_MEETING"
+	MeetingsEnabledEnv             = "HIVE_MEETINGS_ENABLED"
+	MeetingsQuorumBinaryEnv        = "HIVE_MEETINGS_QUORUM_BINARY"
+	MeetingsQuorumListenEnv        = "HIVE_MEETINGS_QUORUM_LISTEN"
+	MeetingsVexaURLEnv             = "HIVE_MEETINGS_VEXA_URL"
+	MeetingsVexaAPIKeyEnv          = "HIVE_MEETINGS_VEXA_API_KEY"
+	MeetingsVexaAPIKeyFileEnv      = "HIVE_MEETINGS_VEXA_API_KEY_FILE"
+	MeetingsDiscordTokenEnv        = "HIVE_MEETINGS_DISCORD_TOKEN"
+	MeetingsDiscordTokenFileEnv    = "HIVE_MEETINGS_DISCORD_TOKEN_FILE"
+	MeetingsTranscribeURLEnv       = "HIVE_MEETINGS_TRANSCRIBE_URL"
+	MeetingsTranscribeTokenEnv     = "HIVE_MEETINGS_TRANSCRIBE_TOKEN"
+	MeetingsTranscribeTokenFileEnv = "HIVE_MEETINGS_TRANSCRIBE_TOKEN_FILE"
+	MeetingsDeliveryEnv            = "HIVE_MEETINGS_DELIVERY"
+	MeetingsVoiceOnAddressEnv      = "HIVE_MEETINGS_VOICE_ON_ADDRESS"
+	MeetingsBotNameEnv             = "HIVE_MEETINGS_BOT_NAME"
+	MeetingsInvitePolicyEnv        = "HIVE_MEETINGS_INVITE_POLICY"
+	MeetingsResearchPoolSizeEnv    = "HIVE_MEETINGS_RESEARCH_POOL_SIZE"
+	MeetingsResearchPerMeetingEnv  = "HIVE_MEETINGS_RESEARCH_PER_MEETING"
+	MeetingsChatPostsPerMinuteEnv  = "HIVE_MEETINGS_CHAT_POSTS_PER_MINUTE"
+	MeetingsLobbyTimeoutEnv        = "HIVE_MEETINGS_LOBBY_TIMEOUT_S"
+	MeetingsRetentionDaysEnv       = "HIVE_MEETINGS_RETENTION_DAYS"
+	MeetingsConsentTextEnv         = "HIVE_MEETINGS_CONSENT_TEXT"
+	MeetingsDataDirEnv             = "HIVE_MEETINGS_DATA_DIR"
+	MeetingsTokensPerMeetingEnv    = "HIVE_MEETINGS_MAX_TOKENS_PER_MEETING"
+	MeetingsTokensPerHourEnv       = "HIVE_MEETINGS_MAX_TOKENS_PER_HOUR"
+	MeetingsTokensPerDayEnv        = "HIVE_MEETINGS_MAX_TOKENS_PER_DAY"
+	MeetingsIntentsPerMeetingEnv   = "HIVE_MEETINGS_MAX_INTENTS_PER_MEETING"
 )
 
 // MeetingsConfig is the `meetings:` block. The zero value is the feature off.
@@ -134,6 +141,10 @@ type MeetingsConfig struct {
 	// TranscribeURL is the shared transcription service Quorum sends
 	// Discord audio to (QUORUM_TRANSCRIBE_URL). Empty leaves it unset.
 	TranscribeURL string `yaml:"transcribe_url,omitempty" json:"transcribe_url,omitempty"`
+	// TranscribeTokenFile is the keystore-sealed secret file holding the
+	// transcription service token (QUORUM_TRANSCRIBE_TOKEN_FILE). A path,
+	// never the token.
+	TranscribeTokenFile string `yaml:"transcribe_token_file,omitempty" json:"transcribe_token_file,omitempty"`
 	// Delivery is where meeting output goes by default. Only "chat".
 	Delivery string `yaml:"delivery,omitempty" json:"delivery,omitempty"`
 	// VoiceOnAddress lets hive speak when the meeting addresses it by name
@@ -405,6 +416,12 @@ func (m MeetingsConfig) DiscordTokenFile() string {
 	return meetingsEnvString(MeetingsDiscordTokenFileEnv, m.Discord.TokenFile, DefaultMeetingsDiscordTokenFile)
 }
 
+// TranscribeTokenFileOrDefault returns the secret file path for the
+// transcription service token.
+func (m MeetingsConfig) TranscribeTokenFileOrDefault() string {
+	return meetingsEnvString(MeetingsTranscribeTokenFileEnv, m.TranscribeTokenFile, DefaultMeetingsTranscribeTokenFile)
+}
+
 // TranscribeURLOrEmpty returns the transcription service URL.
 func (m MeetingsConfig) TranscribeURLOrEmpty() string {
 	return strings.TrimRight(meetingsEnvString(MeetingsTranscribeURLEnv, m.TranscribeURL, ""), "/")
@@ -517,6 +534,13 @@ func (m MeetingsConfig) VexaAPIKey(ctx context.Context) (string, error) {
 // HIVE_MEETINGS_DISCORD_TOKEN, then the secret file. A secret; never log it.
 func (m MeetingsConfig) DiscordToken(ctx context.Context) (string, error) {
 	return meetingsSecret(ctx, MeetingsDiscordTokenEnv, m.DiscordTokenFile())
+}
+
+// TranscribeToken returns the optional transcription service token:
+// HIVE_MEETINGS_TRANSCRIBE_TOKEN, then the secret file. A secret; never log
+// it.
+func (m MeetingsConfig) TranscribeToken(ctx context.Context) (string, error) {
+	return meetingsSecret(ctx, MeetingsTranscribeTokenEnv, m.TranscribeTokenFileOrDefault())
 }
 
 // WriteMeetingsSecret seals value into the secret file at path through the

@@ -25,6 +25,7 @@ func TestMeetingsConfigDefaults(t *testing.T) {
 		{"vexa key file", m.VexaAPIKeyFile(), DefaultMeetingsVexaAPIKeyFile},
 		{"discord file", m.DiscordTokenFile(), DefaultMeetingsDiscordTokenFile},
 		{"transcribe", m.TranscribeURLOrEmpty(), ""},
+		{"transcribe token file", m.TranscribeTokenFileOrDefault(), DefaultMeetingsTranscribeTokenFile},
 		{"delivery", m.DeliveryOrDefault(), MeetingsDeliveryChat},
 		{"voice", m.VoiceOnAddressEnabled(), true},
 		{"bot", m.BotNameOrDefault(), "hive (notes)"},
@@ -54,23 +55,24 @@ func TestMeetingsConfigDefaults(t *testing.T) {
 func TestMeetingsConfigYAMLValues(t *testing.T) {
 	voice := false
 	m := MeetingsConfig{
-		Enabled:            true,
-		Quorum:             MeetingsQuorumConfig{Binary: "/opt/q.mjs", Listen: "127.0.0.1:9000"},
-		Vexa:               MeetingsVexaConfig{URL: "https://vexa.example/", APIKeyFile: "/data/secrets/vk"},
-		Discord:            MeetingsDiscordConfig{TokenFile: "/data/secrets/dt"},
-		TranscribeURL:      "http://whisper.local/",
-		Delivery:           "CHAT",
-		VoiceOnAddress:     &voice,
-		BotName:            "notes bot",
-		InvitePolicy:       "Owner",
-		ResearchPoolSize:   3,
-		ResearchPerMeeting: 7,
-		ChatPostsPerMinute: 2,
-		LobbyTimeoutS:      60,
-		RetentionDays:      9,
-		ConsentText:        "hello",
-		DataDir:            "/tmp/m",
-		Budget:             MeetingsBudgetConfig{MaxTokensPerMeeting: 10, MaxTokensPerHour: 20, MaxTokensPerDay: 30, MaxIntentsPerMeeting: 40},
+		Enabled:             true,
+		Quorum:              MeetingsQuorumConfig{Binary: "/opt/q.mjs", Listen: "127.0.0.1:9000"},
+		Vexa:                MeetingsVexaConfig{URL: "https://vexa.example/", APIKeyFile: "/data/secrets/vk"},
+		Discord:             MeetingsDiscordConfig{TokenFile: "/data/secrets/dt"},
+		TranscribeURL:       "http://whisper.local/",
+		TranscribeTokenFile: "/data/secrets/tt",
+		Delivery:            "CHAT",
+		VoiceOnAddress:      &voice,
+		BotName:             "notes bot",
+		InvitePolicy:        "Owner",
+		ResearchPoolSize:    3,
+		ResearchPerMeeting:  7,
+		ChatPostsPerMinute:  2,
+		LobbyTimeoutS:       60,
+		RetentionDays:       9,
+		ConsentText:         "hello",
+		DataDir:             "/tmp/m",
+		Budget:              MeetingsBudgetConfig{MaxTokensPerMeeting: 10, MaxTokensPerHour: 20, MaxTokensPerDay: 30, MaxIntentsPerMeeting: 40},
 	}
 	if !m.IsEnabled() || m.QuorumBinary() != "/opt/q.mjs" || m.QuorumListen() != "127.0.0.1:9000" {
 		t.Fatalf("quorum values not honoured: %+v", m.Quorum)
@@ -80,6 +82,9 @@ func TestMeetingsConfigYAMLValues(t *testing.T) {
 	}
 	if m.TranscribeURLOrEmpty() != "http://whisper.local" || m.DeliveryOrDefault() != "chat" || m.VoiceOnAddressEnabled() {
 		t.Fatal("transcribe/delivery/voice not honoured")
+	}
+	if m.TranscribeTokenFileOrDefault() != "/data/secrets/tt" {
+		t.Fatalf("transcribe token file = %q, want /data/secrets/tt", m.TranscribeTokenFileOrDefault())
 	}
 	if m.BotNameOrDefault() != "notes bot" || m.InvitePolicyOrDefault() != "owner" || m.ConsentTextOrDefault() != "hello" || m.DataDirOrDefault() != "/tmp/m" {
 		t.Fatal("string values not honoured")
@@ -99,33 +104,37 @@ func TestMeetingsConfigYAMLValues(t *testing.T) {
 
 func TestMeetingsConfigEnvOverrides(t *testing.T) {
 	env := map[string]string{
-		MeetingsEnabledEnv:            "true",
-		MeetingsQuorumBinaryEnv:       "/env/q.mjs",
-		MeetingsQuorumListenEnv:       "localhost:7000",
-		MeetingsVexaURLEnv:            "https://env.vexa/",
-		MeetingsVexaAPIKeyFileEnv:     "/env/vk",
-		MeetingsDiscordTokenFileEnv:   "/env/dt",
-		MeetingsTranscribeURLEnv:      "https://env.whisper",
-		MeetingsDeliveryEnv:           "chat",
-		MeetingsVoiceOnAddressEnv:     "off",
-		MeetingsBotNameEnv:            "env bot",
-		MeetingsInvitePolicyEnv:       "owner",
-		MeetingsResearchPoolSizeEnv:   "4",
-		MeetingsResearchPerMeetingEnv: "8",
-		MeetingsChatPostsPerMinuteEnv: "3",
-		MeetingsLobbyTimeoutEnv:       "30",
-		MeetingsRetentionDaysEnv:      "5",
-		MeetingsConsentTextEnv:        "env consent",
-		MeetingsDataDirEnv:            "/env/data",
-		MeetingsTokensPerMeetingEnv:   "11",
-		MeetingsTokensPerHourEnv:      "12",
-		MeetingsTokensPerDayEnv:       "13",
-		MeetingsIntentsPerMeetingEnv:  "14",
+		MeetingsEnabledEnv:             "true",
+		MeetingsQuorumBinaryEnv:        "/env/q.mjs",
+		MeetingsQuorumListenEnv:        "localhost:7000",
+		MeetingsVexaURLEnv:             "https://env.vexa/",
+		MeetingsVexaAPIKeyFileEnv:      "/env/vk",
+		MeetingsDiscordTokenFileEnv:    "/env/dt",
+		MeetingsTranscribeURLEnv:       "https://env.whisper",
+		MeetingsTranscribeTokenFileEnv: "/env/tt",
+		MeetingsDeliveryEnv:            "chat",
+		MeetingsVoiceOnAddressEnv:      "off",
+		MeetingsBotNameEnv:             "env bot",
+		MeetingsInvitePolicyEnv:        "owner",
+		MeetingsResearchPoolSizeEnv:    "4",
+		MeetingsResearchPerMeetingEnv:  "8",
+		MeetingsChatPostsPerMinuteEnv:  "3",
+		MeetingsLobbyTimeoutEnv:        "30",
+		MeetingsRetentionDaysEnv:       "5",
+		MeetingsConsentTextEnv:         "env consent",
+		MeetingsDataDirEnv:             "/env/data",
+		MeetingsTokensPerMeetingEnv:    "11",
+		MeetingsTokensPerHourEnv:       "12",
+		MeetingsTokensPerDayEnv:        "13",
+		MeetingsIntentsPerMeetingEnv:   "14",
 	}
 	for k, v := range env {
 		t.Setenv(k, v)
 	}
-	m := MeetingsConfig{ResearchPoolSize: 9, BotName: "yaml bot", Budget: MeetingsBudgetConfig{MaxTokensPerDay: 99}}
+	m := MeetingsConfig{ResearchPoolSize: 9, BotName: "yaml bot", TranscribeTokenFile: "/yaml/tt", Budget: MeetingsBudgetConfig{MaxTokensPerDay: 99}}
+	if got := m.TranscribeTokenFileOrDefault(); got != "/env/tt" {
+		t.Fatalf("transcribe token file env override = %q, want /env/tt", got)
+	}
 	if !m.IsEnabled() || m.QuorumBinary() != "/env/q.mjs" || m.QuorumListen() != "localhost:7000" ||
 		m.VexaURL() != "https://env.vexa" || m.VexaAPIKeyFile() != "/env/vk" || m.DiscordTokenFile() != "/env/dt" ||
 		m.TranscribeURLOrEmpty() != "https://env.whisper" || m.VoiceOnAddressEnabled() || m.BotNameOrDefault() != "env bot" ||
@@ -213,6 +222,7 @@ quorum: {binary: /q.mjs, listen: "127.0.0.1:1"}
 vexa: {url: "https://v", api_key_file: /data/secrets/k}
 discord: {token_file: /data/secrets/d}
 transcribe_url: https://w
+transcribe_token_file: /data/secrets/t
 delivery: chat
 voice_on_address: false
 bot_name: b
@@ -231,6 +241,7 @@ data_dir: /d
 		t.Fatal(err)
 	}
 	if !m.Enabled || m.Quorum.Listen != "127.0.0.1:1" || m.Vexa.APIKeyFile != "/data/secrets/k" || m.Discord.TokenFile != "/data/secrets/d" ||
+		m.TranscribeTokenFile != "/data/secrets/t" ||
 		m.VoiceOnAddress == nil || *m.VoiceOnAddress || m.Budget.MaxIntentsPerMeeting != 9 || m.DataDir != "/d" || m.LobbyTimeoutS != 5 {
 		t.Fatalf("yaml keys not decoded: %+v", m)
 	}
@@ -241,7 +252,8 @@ func TestMeetingsSecrets(t *testing.T) {
 	ctx := context.Background()
 	key := filepath.Join(dir, "secrets", "vexa")
 	tok := filepath.Join(dir, "secrets", "discord")
-	m := MeetingsConfig{Vexa: MeetingsVexaConfig{APIKeyFile: key}, Discord: MeetingsDiscordConfig{TokenFile: tok}}
+	tx := filepath.Join(dir, "secrets", "transcribe")
+	m := MeetingsConfig{Vexa: MeetingsVexaConfig{APIKeyFile: key}, Discord: MeetingsDiscordConfig{TokenFile: tok}, TranscribeTokenFile: tx}
 
 	if v, err := m.VexaAPIKey(ctx); err != nil || v != "" {
 		t.Fatalf("missing file: %q, %v; want empty and no error", v, err)
@@ -261,9 +273,25 @@ func TestMeetingsSecrets(t *testing.T) {
 	if v, err := m.DiscordToken(ctx); err != nil || v != "bot-token" {
 		t.Fatalf("DiscordToken = %q, %v", v, err)
 	}
+	if v, err := m.TranscribeToken(ctx); err != nil || v != "" {
+		t.Fatalf("missing transcribe token file: %q, %v; want empty and no error", v, err)
+	}
+	if err := WriteMeetingsSecret(ctx, tx, " transcribe-token\n"); err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(tx); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("transcribe token file mode: %v, %v", fi, err)
+	}
+	if v, err := m.TranscribeToken(ctx); err != nil || v != "transcribe-token" {
+		t.Fatalf("TranscribeToken = %q, %v", v, err)
+	}
 
 	t.Setenv(MeetingsVexaAPIKeyEnv, "from-env")
 	t.Setenv(MeetingsDiscordTokenEnv, "tok-env")
+	t.Setenv(MeetingsTranscribeTokenEnv, "tx-env")
+	if v, _ := m.TranscribeToken(ctx); v != "tx-env" {
+		t.Fatalf("env transcribe token must win, got %q", v)
+	}
 	if v, _ := m.VexaAPIKey(ctx); v != "from-env" {
 		t.Fatalf("env key must win, got %q", v)
 	}

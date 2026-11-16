@@ -276,6 +276,63 @@ func TestMeetingsWebSocket(t *testing.T) {
 	}
 }
 
+func TestMeetingsSettingsTranscribeToken(t *testing.T) {
+	s, deps := apiServer(t)
+	dir := t.TempDir()
+	tokFile := filepath.Join(dir, "transcribe")
+	deps.Config.Meetings.TranscribeTokenFile = tokFile
+	var got MeetingsSettings
+	rec := doOwnerGet(s, "/api/meetings/settings")
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || rec.Code != http.StatusOK {
+		t.Fatalf("get = %d %s", rec.Code, rec.Body.String())
+	}
+	if got.TranscribeTokenSet {
+		t.Fatal("the transcription token must default to not set")
+	}
+	const secret = "tx-secret-value"
+	rec = meetingsOwnerPost(s, "/api/meetings/settings", `{"transcribe_token":"`+secret+`"}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("post = %d %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), secret) {
+		t.Fatal("the transcription token must never be returned")
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if !got.TranscribeTokenSet || !got.RestartRequired {
+		t.Fatalf("after post %+v", got)
+	}
+	if fi, err := os.Stat(tokFile); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Fatalf("transcription token file: %v, %v", fi, err)
+	}
+	if v, err := deps.Config.Meetings.TranscribeToken(context.Background()); err != nil || v != secret {
+		t.Fatalf("stored transcription token = %q, %v", v, err)
+	}
+	rec = doOwnerGet(s, "/api/meetings/settings")
+	if strings.Contains(rec.Body.String(), secret) {
+		t.Fatal("GET must never echo the transcription token")
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if !got.TranscribeTokenSet {
+		t.Fatal("GET must report the transcription token as set")
+	}
+	rec = meetingsOwnerPost(s, "/api/meetings/settings", `{"transcribe_token":""}`)
+	_ = json.Unmarshal(rec.Body.Bytes(), &got)
+	if got.TranscribeTokenSet {
+		t.Fatal("an empty transcription token clears it")
+	}
+	if _, err := os.Stat(tokFile); !os.IsNotExist(err) {
+		t.Fatalf("cleared transcription token file still present: %v", err)
+	}
+	blocker := filepath.Join(dir, "file")
+	if err := os.WriteFile(blocker, []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	deps.Config.Meetings.TranscribeTokenFile = filepath.Join(blocker, "t")
+	if rec := meetingsOwnerPost(s, "/api/meetings/settings", `{"transcribe_token":"x"}`); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("unwritable transcription token = %d", rec.Code)
+	}
+}
+
 func TestMeetingsSettings(t *testing.T) {
 	s, deps := apiServer(t)
 	dir := t.TempDir()
