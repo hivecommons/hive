@@ -234,15 +234,23 @@ func TestReferenceRepoIdentity_TransientLookupStaysReadOnly(t *testing.T) {
 			},
 		}
 	}
-	refs := []config.ReferenceRepo{{Repo: "hivecommons/docs", Write: []string{"issues", "prs"}, DerivedFrom: "cncf/techdocs#395"}}
+	refs := []config.ReferenceRepo{
+		{Repo: "hivecommons/docs", Write: []string{"issues", "prs"}, DerivedFrom: "cncf/techdocs#395"},
+		{Repo: "hivecommons/hive", Write: []string{"issues", "prs"}},
+	}
 	res, err := buildReferenceRepoPolicies(context.Background(), refs, deps, testLogger())
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("a blip must never refuse boot: %v", err)
 	}
-	if p := res.policies[0]; p.Token != nil || p.Issues || p.PRs {
-		t.Fatalf("unresolved entry must carry no credential: %+v", p)
+	for i, p := range res.policies {
+		if p.Token != nil || p.Issues || p.PRs || p.Login != "" {
+			t.Fatalf("unresolved entry must get a read-only policy: %+v", p)
+		}
+		if rr := res.repos[i]; rr.CredentialState != config.ReferenceCredentialUnresolved || rr.DerivedReadOnly() {
+			t.Fatalf("unresolved entry state = %+v", rr)
+		}
 	}
-	if rr := res.repos[0]; rr.CredentialState != config.ReferenceCredentialUnresolved || rr.DerivedReadOnly() {
-		t.Fatalf("unresolved entry state = %+v", rr)
+	if !res.repos[1].WritesPRs() {
+		t.Fatalf("a hand-written entry keeps its Write opt-in in config: %+v", res.repos[1])
 	}
 }

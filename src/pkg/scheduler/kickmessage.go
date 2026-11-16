@@ -922,6 +922,18 @@ const derivedReadOnlyNoReason = "no write credential for this repository"
 // (hivecommons/hive#18159): where the grant came from, and for one served
 // read-only, why. Empty for a hand-written entry.
 func referenceRepoProvenance(rr config.ReferenceRepo) string {
+	if rr.CredentialState == config.ReferenceCredentialUnresolved {
+		// hivecommons/hive#18516: the identity could not be resolved this
+		// pass, so the proxy refuses the writes the tier above names.
+		why := strings.TrimSpace(rr.CredentialReason)
+		if why == "" {
+			why = derivedReadOnlyNoReason
+		}
+		if rr.Derived() {
+			return " (from " + rr.DerivedFrom + "; read-only this pass: " + why + ")"
+		}
+		return " (read-only this pass: " + why + ")"
+	}
 	if !rr.Derived() {
 		return ""
 	}

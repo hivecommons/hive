@@ -273,8 +273,9 @@ func lookupReferenceApp(ctx context.Context, rr config.ReferenceRepo, app Refere
 // write_token_file wins over the setting. A hand-written write entry left
 // with no credential is ErrReferenceRepoNoCredential, as before; a derived
 // one is downgraded to read-only instead. A transient App lookup failure
-// serves the entry read-only for this pass (CredentialState unresolved)
-// rather than posting under another identity, and is never an error.
+// serves the entry read-only for this pass (CredentialState unresolved, and
+// an empty credential the caller must build a read-only policy from) rather
+// than posting under another identity, and is never an error.
 func ResolveReferenceRepoCredential(ctx context.Context, rr config.ReferenceRepo, setting string, owner OwnerCredential, app ReferenceRepoApp, whoAmI func(ctx context.Context, token string) (string, error)) (config.ReferenceRepo, ReferenceRepoCredential, error) {
 	if rr.ReadOnly() {
 		if rr.Derived() {
@@ -300,7 +301,14 @@ func ResolveReferenceRepoCredential(ctx context.Context, rr config.ReferenceRepo
 		case appInstalled:
 			return writeTier(rr, config.ReferenceIdentityBot, app.Login, note)
 		case appTransient:
-			rr.Write = nil
+			// A derived entry is rebuilt from its request issue every pass, so
+			// its Write is cleared like a read-only downgrade. A hand-written
+			// one keeps Write: the resolved list replaces the config in
+			// memory, and the editor saves from it, so clearing it would turn
+			// a blip into a permanent edit. The caller serves it read-only.
+			if rr.Derived() {
+				rr.Write = nil
+			}
 			rr.CredentialState = config.ReferenceCredentialUnresolved
 			rr.CredentialReason = note
 			rr.CredentialLogin, rr.CredentialIdentity, rr.CredentialNote = "", "", note

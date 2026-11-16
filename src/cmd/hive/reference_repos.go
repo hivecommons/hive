@@ -113,7 +113,12 @@ func buildReferenceRepoPolicies(ctx context.Context, refs []config.ReferenceRepo
 		}
 		rr = resolved
 		pol := proxy.ReferenceRepoPolicy{Repo: rr.Repo, Issues: rr.WritesIssues(), PRs: rr.WritesPRs()}
-		if !rr.ReadOnly() {
+		if rr.CredentialState == config.ReferenceCredentialUnresolved {
+			// No credential this pass (a hand-written entry keeps its Write
+			// opt-in in config): the proxy refuses its writes until the next
+			// pass resolves it.
+			pol = proxy.ReferenceRepoPolicy{Repo: rr.Repo}
+		} else if !rr.ReadOnly() {
 			pol.Login = cred.Login
 			if cred.Identity == config.ReferenceIdentityBot {
 				pol.Token = github.BotReferenceRepoTokenSource(rr, deps.appSeam, logger)

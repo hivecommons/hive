@@ -211,10 +211,14 @@ func TestResolveReferenceRepoCredential_TransientNeverSwitchesIdentity(t *testin
 			t.Fatalf("%s: unresolved must not trigger the request-issue notice", setting)
 		}
 	}
-	// A hand-written entry is not refused on a blip either.
-	_, cred, err := ResolveReferenceRepoCredential(ctx, config.ReferenceRepo{Repo: "hivecommons/docs", Write: []string{"prs"}}, "bot", OwnerCredential{Login: idTestOwner}, app.seam(), nil)
-	if err != nil || cred.Identity != "" {
+	// A hand-written entry is not refused on a blip either, and keeps its
+	// Write opt-in: the resolved list is what the editor saves from.
+	hw, cred, err := ResolveReferenceRepoCredential(ctx, config.ReferenceRepo{Repo: "hivecommons/docs", Write: []string{"prs"}}, "bot", OwnerCredential{Login: idTestOwner}, app.seam(), nil)
+	if err != nil || cred.Identity != "" || cred.Login != "" {
 		t.Fatalf("hand-written entry on a blip: cred=%+v err=%v", cred, err)
+	}
+	if !hw.WritesPRs() || hw.CredentialState != config.ReferenceCredentialUnresolved {
+		t.Fatalf("hand-written entry must keep Write and be marked unresolved: %+v", hw)
 	}
 }
 
