@@ -1,1 +1,0 @@
-- Report per-agent token cache filesystem failures as token delivery failures instead of incorrectly reporting GitHub as unreachable.
