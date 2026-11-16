@@ -1,0 +1,1 @@
+- A weekly workflow compares hive's static model fallbacks and curated OpenRouter suggestions against OpenRouter's public catalog, plus npm release metadata, and keeps one tracking issue listing any drift. A unit test now fails on empty or duplicate static lists and on Go/JS copies that disagree.

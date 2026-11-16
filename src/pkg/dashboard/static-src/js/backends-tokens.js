@@ -336,10 +336,18 @@
         // consistent "<value> ▾" look across both dropdown buttons.
         return `<option value="${esc(m.value)}"${sel ? ' selected' : ''}>${esc(m.label)}${sel ? ' ▾' : ''}</option>`;
       });
-      if (cur && !matched) {
-        opts.unshift(`<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())} (current) ▾</option>`);
+      // Large gateway catalogs (OpenRouter) group by provider so ~hundreds
+      // of ids stay scannable; the option values and selection are unchanged.
+      let body = opts.join('');
+      if (typeof shouldGroupModelOptions === 'function' && shouldGroupModelOptions(models.map(m => m.value))) {
+        const byValue = {};
+        models.forEach((m, i) => { if (!(m.value in byValue)) byValue[m.value] = opts[i]; });
+        body = modelOptgroupsHtml(Object.keys(byValue), v => byValue[v]);
       }
-      return opts.join('');
+      if (cur && !matched) {
+        body = `<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())} (current) ▾</option>` + body;
+      }
+      return body;
     }
     async function fetchInferenceModels(backend, force) {
       const now = Date.now();
@@ -376,6 +384,9 @@
           // none; entitledModels: the FULL set the gateway's team may use, so
           // a stored model outside it can be flagged (#9945).
           defaultModel: data.default_model || '',
+          // modelInfo: id → {name, context_length, pricing} for OpenRouter
+          // gateways (prices per token), so pickers can show $/1M.
+          modelInfo: (typeof modelInfoIndex === 'function') ? modelInfoIndex(data.model_info) : {},
           entitledModels: Array.isArray(data.entitled_models) ? data.entitled_models : null,
         };
         // A real (non-fallback) discovery may have changed the entitlement-

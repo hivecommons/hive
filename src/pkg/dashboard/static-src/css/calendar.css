@@ -1,0 +1,14 @@
+    /* Calendar: scheduled meetings hive joins (#18394) */
+    .calendar-panel { display: flex; flex-direction: column; gap: var(--sp-3); }
+    .calendar-add-grid { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr) auto; gap: var(--sp-2); align-items: end; }
+    .calendar-add-grid label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
+    .calendar-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+    .calendar-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
+    .calendar-row[data-status="awaiting_approval"] { border-color: var(--accent); }
+    .calendar-row[data-status="live"] { border-color: var(--green); }
+    .calendar-row-main { flex: 1 1 16em; min-width: 0; }
+    .calendar-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .oc-meeting-indicator { cursor: pointer; }
+    @media (max-width: 720px) {
+      .calendar-add-grid { grid-template-columns: 1fr; }
+    }

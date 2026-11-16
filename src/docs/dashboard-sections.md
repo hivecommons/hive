@@ -193,15 +193,21 @@ Find past pull requests, issues, review records and findings across your project
 Full entry: [Search](dashboard-sections/workflow-and-agents.md#search).
 ## Inbox
 
-Voice recordings and dictations waiting for you to file them as an RFC, send to dibs, or keep as knowledge.
+Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge.
 
 Full entry: [Inbox](dashboard-sections/workflow-and-agents.md#inbox).
+
+## Calendar
+
+Meetings hive will join, about a minute before each starts: add one, approve or decline requests, or skip and cancel.
+
+Right after Inbox in the left menu. Each row shows the title, organizer, start and end in your time zone, platform, next occurrence, source (email invite, added here, or Discord) and status. The owner approves or declines meetings read-write users add, and can skip one occurrence or cancel; a live meeting links to its panel and an ended one to its notes. The menu badge counts meetings hive is in plus those awaiting approval, and while hive is in a meeting the top bar shows an indicator ("Betty is in a meeting") that opens the live panel, or this section when there are several. Full entry: [Calendar](meetings.md#calendar). Below it, **Drafts from meetings** lists the issues, RFCs, Spek sessions and knowledge notes people asked Betty for in a meeting; the owner or a read-write user edits, approves or rejects each one, and nothing is created before approval ([Asking Betty to do things](meetings.md#asking-betty-to-do-things)).
 
 ## Meetings
 
 Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.
 
-Owner only. Approve research past the per-meeting cap and answer Discord join requests here; settings are under Settings, Meetings. Full entry: [Meetings](meetings.md).
+Owner only. Approve research past the per-meeting cap and answer Discord join requests here; settings are under Settings, Meetings, and the persona under Settings, Meeting attendee. Full entry: [Meetings](meetings.md).
 
 ## Contributors
 

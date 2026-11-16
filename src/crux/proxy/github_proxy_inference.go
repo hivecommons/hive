@@ -559,13 +559,11 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
-			in, out, err := translateOpenAISSEToAnthropic(resp.Body, w, route.Model)
+			usage, err := translateOpenAISSEToAnthropicUsage(resp.Body, w, route.Model)
 			if err != nil {
 				p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
 			}
-			if in > 0 || out > 0 {
-				p.recordUsage(agentName, route.Model, in, out)
-			}
+			p.recordGatewayUsage(agentName, route.Model, usage)
 			return
 		}
 
@@ -581,9 +579,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			"preview", truncateBytes(respBody, 500),
 		)
 
-		if in, out := extractOpenAIUsage(respBody); in > 0 || out > 0 {
-			p.recordUsage(agentName, route.Model, in, out)
-		}
+		p.recordGatewayUsage(agentName, route.Model, extractOpenAIUsageDetailed(respBody))
 
 		translated, err := translateOpenAIResponseToAnthropic(respBody, route.Model)
 		if err != nil {
@@ -761,13 +757,11 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		if _, err := conn.Write([]byte(hdr)); err != nil {
 			return
 		}
-		in, out, err := translateOpenAISSEToAnthropic(resp.Body, conn, route.Model)
+		usage, err := translateOpenAISSEToAnthropicUsage(resp.Body, conn, route.Model)
 		if err != nil {
 			p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
 		}
-		if in > 0 || out > 0 {
-			p.recordUsage(agentName, route.Model, in, out)
-		}
+		p.recordGatewayUsage(agentName, route.Model, usage)
 		return
 	}
 
@@ -777,9 +771,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		return
 	}
 
-	if in, out := extractOpenAIUsage(respBody); in > 0 || out > 0 {
-		p.recordUsage(agentName, route.Model, in, out)
-	}
+	p.recordGatewayUsage(agentName, route.Model, extractOpenAIUsageDetailed(respBody))
 
 	translated, err := translateOpenAIResponseToAnthropic(respBody, route.Model)
 	if err != nil {

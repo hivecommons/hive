@@ -10,6 +10,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/workflowmodel"
+	"github.com/hivecommons/hive/pkg/workflowmodel/checksfile"
 	wfstore "github.com/hivecommons/hive/pkg/workflowmodel/store"
 )
 
@@ -236,7 +237,35 @@ func (s *Server) handleWorkflowBindingPut(w http.ResponseWriter, r *http.Request
 		}
 		s.auditFromRequest(r, action, fmt.Sprintf("%s -> %s@%s", body.Repo, body.Name, body.Version), "")
 	}
-	jsonResponse(w, map[string]interface{}{"changed": changed, "bindings": s.workflowBindings()})
+	resp := map[string]interface{}{"changed": changed, "bindings": s.workflowBindings()}
+	if body.Name != "" {
+		s.emitBoundWorkflowChecks(r.Context(), body, resp)
+	}
+	jsonResponse(w, resp)
+}
+
+// emitBoundWorkflowChecks proposes the bound model's declared checks to the
+// repository as .hive/workflows/checks.yml (hivecommons/hive#18355) through
+// Dependencies.WorkflowEmitChecks, which only ever opens or updates a PR and
+// skips a file that is already up to date. It runs on every bind, changed
+// or not, so re-saving a binding retries a failed emit. A failure is
+// reported as a warning, never as a failure of the binding itself.
+func (s *Server) emitBoundWorkflowChecks(ctx context.Context, b config.WorkflowBinding, resp map[string]interface{}) {
+	if s.deps.WorkflowEmitChecks == nil || s.deps.WorkflowStore == nil {
+		return
+	}
+	m, _, err := s.deps.WorkflowStore.Get(b.Name, b.Version)
+	if err == nil {
+		ctx, cancel := context.WithTimeout(ctx, workflowProvisionTimeout)
+		defer cancel()
+		var res checksfile.Result
+		if res, err = s.deps.WorkflowEmitChecks(ctx, b.Repo, m); err == nil {
+			resp["checks"] = res
+			return
+		}
+	}
+	s.logger.Warn("workflow checks: emitting "+checksfile.Path+" failed", "repo", b.Repo, "workflow", b.Key(), "err", err)
+	resp["warnings"] = []string{fmt.Sprintf("%s: %s: %s", b.Repo, checksfile.Path, err.Error())}
 }
 
 // workflowProvisionTimeout bounds the label provisioning PUT

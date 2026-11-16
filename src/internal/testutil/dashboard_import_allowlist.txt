@@ -26,7 +26,6 @@
 # codescanning: GET/PUT /api/config/code-scanning resolve the sweep's own defaults (Policy, severity levels, default exclude list) and read its per-repository Status, so the settings view cannot drift from what the sweep runs; pkg/codescanning is a leaf with no hive imports (hivecommons/hive#18113).
 github.com/hivecommons/hive/crux
 github.com/hivecommons/hive/crux/agent
-github.com/hivecommons/hive/crux/agentparse
 github.com/hivecommons/hive/crux/claude
 github.com/hivecommons/hive/crux/egressmark
 github.com/hivecommons/hive/crux/kubejob
@@ -82,6 +81,11 @@ github.com/hivecommons/hive/pkg/ioscan
 # (hivecommons/hive#18214); no existing seam carries a secret-file write.
 github.com/hivecommons/hive/pkg/keystore
 github.com/hivecommons/hive/pkg/knowledge
+# mailallow, mailin (only its stdlib-only wire subpackage): the email-in
+# endpoints (/api/meetings/invites, calendar-emails, /api/inbox/email) read
+# hive-mx deliveries and the calendar email allowlist (#18395).
+github.com/hivecommons/hive/pkg/mailallow
+github.com/hivecommons/hive/pkg/mailin
 github.com/hivecommons/hive/pkg/maintainernotes
 github.com/hivecommons/hive/pkg/mention
 github.com/hivecommons/hive/pkg/mergelane

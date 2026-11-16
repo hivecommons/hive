@@ -205,7 +205,9 @@ Tokens are referenced by environment variable name in config, stored 0600
 under the connector state directory (Zoom user-level) or kept in memory
 only (Zoom Server-to-Server, Teams), never logged, never returned by the
 API. Download links and tokens minted for playback are returned once with
-`Cache-Control: no-store` and audited as `inbox_audio`. Operators should
+`Cache-Control: no-store` and audited as `inbox_audio`; the Inbox player
+itself streams through the hive (`…/audio/stream`, audited as
+`inbox_audio_stream`), so the link never reaches the browser. Operators should
 record only what may leave the meeting; a hive that syncs an account's
 recordings (Zoom Server-to-Server, Teams organizers) is reading other
 people's meetings and should say so to them.

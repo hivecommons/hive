@@ -10,14 +10,13 @@ The runner is OFF by default. With `runs.spektacular.enabled` unset or `false`
 Hive never starts a Spek process and every existing lease behaviour is
 unchanged.
 
-Every retained Spek run is also projected as a dashboard campaign under
-`GET /api/campaigns`. The campaign id is the stable run/spec key (the same bare
-artifact name the status verbs use), the engine is `Spektacular`, and the row
-links back to `/api/runs/{key}` when run detail is available. Picking up a
-Spek campaign does not copy spek contents into Hive; `POST
-/api/campaigns/{id}/resume` returns the retained run projection and a CLI status
-command, while Spek reloads the current state from its working files and
-spek backend.
+Retained Spek runs are listed in [Runs](runs.md) (`GET /api/runs` and
+`GET /api/runs/{key}`). The old campaign projection (`/api/campaigns`), campaign
+Jam and campaign recheck were retired together with inception campaigns in
+favour of [Inception (spek) sessions](dashboard-sections/workflow-and-agents.md#inception-spek).
+On the first start after the upgrade Hive writes a one-time, read-only export of
+any campaign archives and Jam data it finds; see
+[Inception: retired campaigns export](inception.md#retired-campaigns-export).
 
 ## Hub executor lifecycle
 
@@ -124,79 +123,6 @@ run when the target repo is missing. Implement completion still reports the PR
 URL in the target repo; sources that implement `worksource.Commenter` (GitHub,
 Linear, Jira, and compatible adapters) receive a completion comment on the
 source work item.
-
-## Jam Sessions
-
-Each campaign also has a Jam workspace for team interaction around the spec.
-The dashboard Campaigns list exposes a **Jam** action, backed by
-`/api/campaigns/{id}/jam` and the `/threads`, `/suggestions`, and `/polls`
-subroutes. Phase 1 is async: participants with read-write access can anchor
-threads and suggestions to spec sections, vote in advisory polls, and resume
-the workspace after a restart. Maintainers record poll decisions with a
-rationale; accepted suggestions and decisions create attributed spec revisions
-with authenticated human attribution and diffs. REST writes and WebSocket
-presence/edits ignore legacy caller-supplied `agent` and `model` fields;
-only server-generated replies from `/jam/agents` carry agent/model attribution.
-Poll votes are keyed by authenticated user, so voting again updates that user's
-vote rather than adding another vote. Existing historical attribution and votes
-are retained unchanged.
-
-Live Jam mode upgrades `/api/campaigns/{id}/jam/ws` to a WebSocket so signed-in
-participants can see who is present and which section each person is editing.
-Live spec edits carry the sender's last seen spec revision; stale edits are
-rejected with a conflict message instead of overwriting newer work, so
-reconnecting clients can refresh and merge intentionally. `POST
-/api/campaigns/{id}/jam` applies the same rule: once a campaign has a spec
-revision, the request must carry the matching `base_revision_id` or it is
-rejected with `409`. Empty spec content is refused on both paths, and the
-socket reads under the same hard frame limit as the contribute hub.
-
-Maintainers can opt a campaign into GitHub Projects sync from the Jam tab. The
-sync publishes the current spec, recorded decisions, and derived suggestion
-items to the linked project; inbound project status updates are recorded on the
-campaign without rewriting local Jam decisions. Sync failures are kept with
-retry guidance so the dashboard shows what to fix before trying again.
-
-Sync posts to `https://api.github.com/graphql` with the hive's `GITHUB_TOKEN`,
-creating one Projects v2 draft issue per item (`addProjectV2DraftIssue`); this
-needs the project's node id (`PVT_…`) as `project_id`.
-`HIVE_JAM_PROJECT_SYNC_URL` overrides the endpoint; an override must use
-`https` (plain `http` is accepted only for loopback hosts) and never receives
-`GITHUB_TOKEN`. Set `HIVE_JAM_PROJECT_SYNC_TOKEN` to give a custom endpoint its
-own bearer token. A GitHub Enterprise Server override
-(`https://<host>/api/graphql`) publishes the same Projects v2 draft issues.
-
-Maintainers can invite Spektacular or another configured hive agent into a Jam
-thread (`POST /api/campaigns/{id}/jam/agents`, handler
-`handleCampaignJamAgentsPost` in `pkg/dashboard/api_campaigns_jam_agents.go`).
-The invite makes one model call and records only what the model returned:
-
-- **Endpoint:** the hive reviewer endpoint (`governor.trajectory.endpoint`,
-  falling back to the `governor.litellm` endpoint and key) — the same
-  OpenAI-compatible `/v1/chat/completions` route the intent-alignment and
-  ioscan classifier lanes use. With no endpoint or model resolved the invite
-  fails with `503` and nothing is recorded.
-- **Model:** the invited agent's configured `agents.<name>.model`, falling back
-  to the reviewer model (`governor.trajectory.model`, then
-  `governor.litellm.default_model`). `spektacular` is not an `agents:` entry,
-  so it always uses the reviewer model. The reply is attributed to exactly the
-  model that was called. The `spektacular` binary is not run for Jam replies;
-  the name selects the persona in the prompt.
-- **Context:** the thread's section, title and last 20 comments, the current
-  spec content, and the maintainer's optional `prompt`, each bounded in size.
-  When `ioscan` is enabled every piece passes the input scanner: blocked text
-  is redacted before it reaches the model, and a critical injection at a
-  fail-closed ACMM level rejects the invite with `422`.
-- **Output:** the model must return a JSON object with `reply` and
-  `proposed_text`; invalid output is re-prompted up to three times, then the
-  invite fails with `502` and nothing is recorded.
-
-Callers cannot supply `reply`, `proposed_text` or `model` — the endpoint rejects
-them with `400`, so human-written text can never be recorded under
-agent/model attribution. Agent participation stays review-gated: the reply is
-posted in-thread, proposed spec text (when the model offers any) becomes an
-open suggestion, and a permitted human maintainer must still accept it before
-the spec revision changes.
 
 ## Enabling it
 
@@ -892,142 +818,14 @@ returns an approved plan to draft, so the re-run plan stage is held at the
 checkpoint again. An epic that already carries children from another planner
 is not re-imported.
 
-## Continuous convergence
+## Continuous convergence (retired)
 
-Spek campaigns can opt into a scheduler-owned recheck cadence without changing
-the one-shot default. The feature is off unless
-`runs.spektacular.recheck.enabled: true`; opted-in campaigns use
-`runs.spektacular.recheck.default_interval` (default `168h`) unless their
-retained campaign record carries `recheck.interval`, and imported delta tasks
-are capped by `runs.spektacular.recheck.max_delta_tasks` (default `50`).
-
-When a completed `implement` campaign is due, or an owner posts
-`POST /api/campaigns/{id}/recheck`, Hive rewinds the campaign's existing run
-to a new generation in place (ADR 0100, v6 addendum): the same campaign ID and
-run key get `revision` N+1, `current_stage` resets to `spec`, and the spec
-stage is admitted on the run's own lease key (`<repo>!<run key>:spec`) with a
-higher `gen` than any earlier generation, so prior receipts stay intact. No
-sibling `-rN` campaign or second lease is created. Each rewind appends one
-entry to the campaign's `history` generation log (closed revision, reason,
-actor, rewind time, last `gen`, and the triggering drift). `revision_of` is
-deprecated and never written on v6.
-
-A recheck is in flight while the campaign's revise lease is held, or while
-`drift` is set and the rewound generation has not completed; `drift` clears
-when the current generation completes. Manual requests return `409 Conflict`
-while a recheck is in flight or any stage of the run is still leased, and
-`404 Not Found` when recheck is disabled unless `?force=true` is supplied.
-
-The recheck follows the same human checkpoints as any Spek run. A final spec
-still waits at the spec boundary when that checkpoint is enabled, and a final
-plan imports as a draft plan until approval. At final-plan import Hive compares
-the revision task list with the prior final plan by normalized task-content
-hash. Unchanged tasks reuse the prior logical operation identity and are not
-imported again; only new or changed tasks become planner children. If the
-codebase and prior plan are unchanged, the delta is empty and Hive creates no
-new planner tasks or issues. If the delta exceeds `max_delta_tasks`, Hive
-imports the first capped set and records `campaign_recheck_delta_capped`.
-
-Each rewound generation carries a `drift` evidence block with
-`codebase_changed`, `prior_revision` (the closed generation's revision number,
-for example `"3"`), `delta_count`, and `recheck_reason` (`cadence` or
-`manual`).
-The codebase signal compares the prior recorded head SHA with the current Git
-HEAD when available.
-
-### Outward-looking discovery
-
-Outward discovery is opt-in under `runs.spektacular.recheck.discovery`. Hive
-only reads operator-declared sources, bounded by `timeout` (default `30s`),
-each source's `max_items` (default `20`), and `max_total_items` (default
-`100`). It never searches the web, never crawls arbitrary or competitor
-websites, never applies findings automatically, and rejects any configured
-host that is not listed in `variables.security.http_allowlist`. GitHub-backed
-sources use the existing authenticated GitHub client; feed sources use GET
-through `runs.spektacular.recheck.discovery_proxy` when one is configured, and
-otherwise through the normal proxy/egress path.
-
-Supported source kinds are:
-
-- `upstream_release`: GitHub releases for a named `owner/repo` since the prior
-  revision timestamp.
-- `repo_activity`: merged PRs and tagged releases for a named `owner/repo`
-  since the prior timestamp.
-- `standards_feed`: an Atom or RSS URL such as a spec repo's `releases.atom`
-  or a standards-body feed.
-- `landscape`: GitHub repositories linked from `docs/landscape.md`, checked
-  for new releases using the same release reader as `upstream_release`.
-
-Example:
-
-```yaml
-runs:
-  spektacular:
-    recheck:
-      discovery:
-        enabled: true
-        timeout: 30s
-        max_total_items: 100
-        sources:
-          - {kind: upstream_release, name: kubernetes, url_or_repo: kubernetes/kubernetes, max_items: 10}
-          - {kind: repo_activity, name: competitor-runtime, url_or_repo: example/runtime, allow_prerelease: true}
-          - {kind: standards_feed, name: ietf-http, url_or_repo: https://www.ietf.org/archive/id/atom.xml}
-          - {kind: landscape, name: project-landscape, max_items: 20}
-      discovery_proxy: http://relay:18443
-      egress_allowlist: [api.github.com, www.ietf.org]
-      sources:
-        - name: upstream-release-doc
-          kind: release
-          url: https://api.github.com/repos/jumppad-labs/spektacular/releases/latest
-variables:
-  security:
-    http_allowlist: [api.github.com, www.ietf.org]
-```
-
-Findings are recorded on the revision as
-`drift.external[] = {source, kind, title, url, published_at, summary}` with
-summaries capped at 280 characters, plus `external_count` and
-`sources_failed[] = {name, reason}`. A failed source is non-fatal: Hive records
-the typed reason and continues with the rest. The same evidence is included in
-the `spec` stage assignment prompt as context so the spec generator can decide
-what, if anything, belongs in the revised spec; the spec and plan human
-checkpoints remain the only approval gates.
-
-#### Exact-document sources (proxy-only)
-
-Exact document sources use `runs.spektacular.recheck.sources`.
-`discovery_proxy` must be the operator's existing relay egress proxy (an
-`http` or `https` URL without credentials, path, query or fragment), with its
-normal network policy and trust roots installed. It is required when exact
-sources are configured; discovery never falls back to direct access, including
-when `NO_PROXY` matches. `egress_allowlist` contains exact DNS hostnames, with
-no wildcards or IP literals. Config validation rejects a source outside that
-list, or a missing or malformed proxy, at load even when cadence is disabled,
-because forced manual rechecks use the same policy. The same validation runs
-again at use, so a configuration overlay cannot inject an undeclared
-destination or a direct fallback; a rejection is recorded as a
-`sources_failed[]` entry named `config` and no source is read.
-
-Each exact source declares a unique `name`, a `kind` (`release`, `changelog`,
-`repo`, `standards`, or `landscape`), and an exact HTTPS `url`. Source kind
-labels provenance; it does not enable crawling or additional API calls. A pass
-makes one GET per declared document, at most 16 sources, with a 10-second
-request timeout, the discovery `timeout` as the total deadline, and a 32 KiB
-UTF-8 response cap. Redirects are refused. No links are followed and no writes
-are issued. Each successful read is recorded in `drift.external[]` with the
-source `name` as `source` and `title`, its `kind` and `url`, a `summary` capped
-at 280 characters and the body's `sha256`; a failed read is recorded in
-`sources_failed[]` instead of claiming no drift. Both count toward the rewound
-generation's `external_count`/`sources_failed` exactly like typed findings.
-This exact-document path does not invoke `upstreamwatch`'s multi-page PR and
-release scanner.
-
-Campaign list/detail JSON includes
-`recheck: {enabled, interval, last_at, next_at, in_flight, last_delta_count,
-external_count, sources_failed}`; a rewound generation also includes the
-`drift` block above and the `history` generation log. The dashboard Campaigns panel renders the cadence, shows
-`N external signals` with an expandable list, and provides an owner-only
-Recheck action.
+Campaign recheck (scheduler-owned recheck revisions, outward discovery and the
+`POST /api/campaigns/{id}/recheck` endpoint) was retired with inception
+campaigns. `runs.spektacular.recheck` is still accepted in `hive.yaml` so an
+existing file keeps loading and validating, but it has no effect and Hive logs a
+one-line deprecation warning; remove the block. The design history is in
+[ADR-0020](adr/0100-spek-continuous-convergence.md).
 
 ## Defensive handling of the open questions
 

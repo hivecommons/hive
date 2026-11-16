@@ -881,7 +881,7 @@ it links nothing of hive.
   | Mint scoped token | `POST /v1/tokens` | agent, repo (`owner/name`) or repos (names), tier, requested TTL | token, `expires_at` |
   | GitHub REST accounting | `POST /v1/github/rest` | caller, method, path, status, injected (bool), the `X-RateLimit-*` response headers | `204` |
   | Core rate-limit snapshot | `GET /v1/github/rate-limit` | — | remaining, reset, ok |
-  | Inference usage | `POST /v1/usage` | agent, model, kind (`gateway` / `copilot` / `copilot_cache`), input, output, cache read, cache creation | `204` |
+  | Inference usage | `POST /v1/usage` | agent, model, kind (`gateway` / `gateway_cache` / `copilot` / `copilot_cache`), input, output, cache read, cache creation | `204` |
   | Canary scan | `POST /v1/scan/canary` | agent, text, source | detected, agent, source (**never the canary token**) |
   | Text scan | `POST /v1/scan/text` | direction (`input` / `output`), text | blocked, critical_injection, findings (kind, masked snippet, rule, high) |
   | Condition | `POST /v1/conditions` | action (`observe` / `clear`), class, key, message, diagnostics | `204` |

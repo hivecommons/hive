@@ -5,8 +5,7 @@
 // These parsers were lifted out of the inception (Level-1 ideation) watcher so
 // that other subsystems — notably planning intelligence (epic -> bead-DAG
 // decomposition) — can reuse the exact same battle-tested extraction logic
-// instead of re-implementing it. Inception continues to use these via thin,
-// behavior-preserving adapters.
+// instead of re-implementing it. (The inception watcher itself was retired.)
 //
 // An Item carries a Title plus optional Default and Category metadata; callers
 // map Items into their own domain types (questions, sub-tasks, ...).

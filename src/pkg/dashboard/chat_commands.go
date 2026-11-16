@@ -134,47 +134,30 @@ func chatRunLine(run Run) string {
 	return detail
 }
 
+// chatSpekCampaignsAnswer lists the active Spektacular runs. Inception
+// campaigns and /api/campaigns were retired in favour of Inception (spek)
+// sessions (hivecommons/hive#18407, #18419), so the run lease registry is the
+// only source.
 func (s *Server) chatSpekCampaignsAnswer() string {
-	campaigns, err := s.allCampaigns(nil)
-	if err != nil {
-		return "Campaign data is unavailable: " + strings.TrimSpace(err.Error()) + ". Check `/api/campaigns` and the Inception/Spektacular panels."
+	runs := s.chatStatusRuns()
+	if len(runs) == 0 {
+		return "No active Spektacular campaigns are currently reported by `/api/runs`."
 	}
-	if len(campaigns) == 0 {
-		for _, run := range s.chatStatusRuns() {
-			campaigns = append(campaigns, campaignFromRun(run))
+	sort.Slice(runs, func(i, j int) bool {
+		if runs[i].StageStartedAt != runs[j].StageStartedAt {
+			return runs[i].StageStartedAt > runs[j].StageStartedAt
 		}
-	}
-	if len(campaigns) == 0 {
-		return "No active Spektacular or inception campaigns are currently reported by `/api/campaigns`."
-	}
-	sort.Slice(campaigns, func(i, j int) bool { return campaigns[i].LastActivity > campaigns[j].LastActivity })
-	lines := []string{fmt.Sprintf("Active campaigns (%d):", len(campaigns))}
-	for i, campaign := range campaigns {
+		return runs[i].Key < runs[j].Key
+	})
+	lines := []string{fmt.Sprintf("Active campaigns (%d):", len(runs))}
+	for i, run := range runs {
 		if i >= chatHintListLimit {
-			lines = append(lines, fmt.Sprintf("- … %d more", len(campaigns)-i))
+			lines = append(lines, fmt.Sprintf("- … %d more", len(runs)-i))
 			break
 		}
-		lines = append(lines, "- "+chatCampaignLine(campaign))
+		lines = append(lines, "- "+chatRunLine(run))
 	}
 	return strings.Join(lines, "\n")
-}
-
-func chatCampaignLine(c Campaign) string {
-	id := firstRunNonEmpty(c.ID, c.RunKey, "(unknown campaign)")
-	stage := firstRunNonEmpty(c.CurrentStage, "unknown")
-	status := firstRunNonEmpty(c.Status, "unknown")
-	engine := firstRunNonEmpty(c.Engine, c.Type, "campaign")
-	line := fmt.Sprintf("%s — %s, stage %s, status %s", id, engine, stage, status)
-	if c.RunKey != "" {
-		line += ", run " + c.RunKey
-	}
-	if c.LeaseOwner != "" {
-		line += ", owner " + c.LeaseOwner
-	}
-	if len(c.Repos) > 0 {
-		line += ", repos " + strings.Join(c.Repos, ", ")
-	}
-	return line
 }
 
 func chatAgentLine(a FrontendAgent) string {
@@ -442,15 +425,7 @@ func (s *Server) chatContributorActivityAnswer() string {
 
 func (s *Server) chatInceptionRelayStateAnswer() string {
 	parts := []string{}
-	if s.deps != nil && s.deps.Inception != nil {
-		if state := s.deps.Inception.GetState(); state != nil {
-			parts = append(parts, fmt.Sprintf("inception engine active: idea=%s phase=%s", firstRunNonEmpty(state.IdeaSlug, "(unslugged)"), state.Phase))
-		} else {
-			parts = append(parts, "inception engine configured but no active state is loaded")
-		}
-	} else {
-		parts = append(parts, "inception engine is not configured")
-	}
+	parts = append(parts, "inception engine retired; Inception (spek) sessions replace it")
 	if s.contributeHub != nil {
 		fleet := s.contributeHub.FleetSnapshot()
 		parts = append(parts, "relay contributors online: "+strconv.Itoa(len(fleet.Clankers)))

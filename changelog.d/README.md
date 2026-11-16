@@ -12,7 +12,9 @@ deleting the fragments in the same release commit.
 
 - **Location:** this directory, at the repository root. Never `src/changelog.d/`:
   the compiler does not read it, and the guard rejects fragments there with
-  the `git mv` that fixes it (#11919).
+  the `git mv` that fixes it (#11919). When working from `src/`, write
+  `../changelog.d/<file>.md`. If a stray ever slips past the guard, the release
+  compile fails until it is moved here (#18264).
 
 - **Filename:** `<category>-<pr-or-slug>.md`, where `<category>` is one of
   `added`, `changed`, `deprecated`, `fixed`, `security` — it picks the `###`

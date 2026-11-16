@@ -18,6 +18,8 @@ type (
 	ConnectionConfig           = cruxconfig.ConnectionConfig
 	DefinitionSourceConfig     = cruxconfig.DefinitionSourceConfig
 	GatewayConfig              = cruxconfig.GatewayConfig
+	GatewayModelPrice          = cruxconfig.GatewayModelPrice
+	GatewayPrices              = cruxconfig.GatewayPrices
 	InferenceAuthConfig        = cruxconfig.InferenceAuthConfig
 	KickLimitsConfig           = cruxconfig.KickLimitsConfig
 	LiteLLMConfig              = cruxconfig.LiteLLMConfig

@@ -55,6 +55,13 @@ func (c *Config) UnmarshalYAML(value *yaml.Node) error {
 			c.Governor.mergeTrainStallWarnSet = true
 		}
 	}
+	// runs.spektacular.recheck is retired: accept the block, ignore it, and
+	// let WarnDeprecatedSpektacularRecheck say so once.
+	if runs := mappingValueNode(&node, "runs"); runs != nil {
+		if spek := mappingValueNode(runs, "spektacular"); spek != nil && mappingValueNode(spek, "recheck") != nil {
+			c.Runs.Spektacular.deprecatedRecheckSet = true
+		}
+	}
 	return nil
 }
 

@@ -212,3 +212,40 @@ func TestInboxSettingsTranscriptionConsentGate(t *testing.T) {
 		t.Fatal("settings must never carry a key value")
 	}
 }
+
+// TestInboxTranscriptionsLiveProgress: GET /api/inbox/transcriptions lists
+// queued and running jobs with their place in line, never caches, and is
+// empty once the queue drains.
+func TestInboxTranscriptionsLiveProgress(t *testing.T) {
+	s, svc, _, _ := newTranscribeTestServer(t, config.InboxTranscription{Enabled: true, ConsentAcknowledged: true})
+	var pending []func()
+	svc.Run = func(fn func()) { pending = append(pending, fn) }
+	for _, id := range []string{"rec-1", "rec-2"} {
+		if rec := doPostRole(s, "/api/inbox/plaud/"+id+"/transcribe", "owner", true, nil); rec.Code != http.StatusAccepted {
+			t.Fatalf("queue %s = %d: %s", id, rec.Code, rec.Body.String())
+		}
+	}
+	rec := doGet(s, "/api/inbox/transcriptions")
+	if rec.Code != http.StatusOK || rec.Header().Get("Cache-Control") != "no-store" {
+		t.Fatalf("live = %d %q", rec.Code, rec.Header().Get("Cache-Control"))
+	}
+	var got InboxTranscriptionsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || len(got.Active) != 2 || got.Active[1].ID != "rec-2" || got.Active[1].State.QueuePosition != 1 {
+		t.Fatalf("live body = %s %v", rec.Body.String(), err)
+	}
+	if strings.Contains(rec.Body.String(), "dg-test-key") || strings.Contains(rec.Body.String(), "topsecret") {
+		t.Fatalf("live body leaks: %s", rec.Body.String())
+	}
+	for _, fn := range pending {
+		fn()
+	}
+	rec = doGet(s, "/api/inbox/transcriptions")
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil || got.Active == nil || len(got.Active) != 0 {
+		t.Fatalf("drained = %s %v", rec.Body.String(), err)
+	}
+
+	empty, _ := apiServer(t)
+	if rec := doGet(empty, "/api/inbox/transcriptions"); rec.Code != http.StatusNotFound {
+		t.Fatalf("no inbox = %d", rec.Code)
+	}
+}

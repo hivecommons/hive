@@ -81,11 +81,22 @@ func (d modelDeriver) Derive(f Facts) Decision {
 	switch d.p.Mode {
 	case workflowmodel.DerivationBuiltin:
 		dec := d.inner.Derive(f)
+		if d.p.Name != "hive-default" && f.Ref.Kind == stagelabels.IssueItem && f.Open && !dec.Abstain &&
+			(dec.Stage == stagelabels.None || dec.Stage == stagelabels.Actionable || dec.Stage == stagelabels.TriageNeeded) {
+			if state := intakeState(d.p, f); state != "" {
+				dec.ModelState, dec.ModelProfile = state, d.p
+				return dec
+			}
+		}
 		if dec.Abstain || dec.Stage == stagelabels.None {
 			return dec
 		}
-		if _, ok := d.p.StateForNumber(dec.Stage.Number()); !ok {
+		state, ok := d.p.StateForNumber(dec.Stage.Number())
+		if !ok {
 			return abstain(fmt.Sprintf("%s: %s@%s has no state for stage %s", ReasonNotCovered, d.p.Name, d.p.Version, dec.Stage))
+		}
+		if d.p.Name != "hive-default" {
+			dec.ModelState, dec.ModelProfile = state, d.p
 		}
 		return dec
 	case workflowmodel.DerivationRules:
@@ -121,19 +132,19 @@ func (d modelDeriver) rules(f Facts) Decision {
 }
 
 // decisionFor turns a model state into a Decision: its stage number maps
-// to the stage label, a terminal state with no number is Stage None.
+// to the stage label; an unnumbered state has Stage None whether terminal or not.
 func (d modelDeriver) decisionFor(state, reason string, f Facts) Decision {
 	st := d.p.States[state]
 	if st == nil {
 		return abstain(fmt.Sprintf("%s: state %q is not in %s@%s", ReasonNotCovered, state, d.p.Name, d.p.Version))
 	}
 	dec := Decision{Reason: reason, Kind: f.Author.Kind, Role: f.Author.Role}
+	if d.p.Name != "hive-default" {
+		dec.ModelState, dec.ModelProfile = state, d.p
+	}
 	if st.Lifecycle.Number == 0 {
-		if d.p.Terminal[state] {
-			dec.Terminal = true
-			return dec
-		}
-		return abstain(fmt.Sprintf("%s: state %q carries no stage number and is not terminal", ReasonNotCovered, state))
+		dec.Terminal = d.p.Terminal[state]
+		return dec
 	}
 	stage, ok := stageByNumber(st.Lifecycle.Number)
 	if !ok {
@@ -147,6 +158,53 @@ func (d modelDeriver) decisionFor(state, reason string, f Facts) Decision {
 		dec.DCO = f.PR.DCO
 	}
 	return dec
+}
+
+func stateApplies(st *workflowmodel.State, kind workflowmodel.ItemKind) bool {
+	if len(st.Lifecycle.Kinds) == 0 {
+		return true
+	}
+	for _, k := range st.Lifecycle.Kinds {
+		if k == kind || k == workflowmodel.KindAny {
+			return true
+		}
+	}
+	return false
+}
+
+// intakeState follows the ingester's observed initial edges, not inferred
+// human gates: a triage decision or a later stage takes precedence.
+func intakeState(p *workflowmodel.Profile, f Facts) string {
+	events := make(map[string]workflowmodel.Predicate, len(p.Events))
+	for _, event := range p.Events {
+		events[event.ID] = event.Fact
+	}
+	if accepted, ok := events["triage-accepted"]; ok && accepted.Op == workflowmodel.OpHas && holds(f, accepted) {
+		return ""
+	}
+	if declined, ok := events["triage-declined"]; ok && holds(f, declined) {
+		return ""
+	}
+	var intake string
+	for _, edge := range p.Transitions {
+		if edge.From != p.Initial || edge.GateRef != "" || edge.GuardRef != "" {
+			continue
+		}
+		state := p.States[edge.To]
+		pred, ok := events[edge.On]
+		if !ok || state == nil || !stateApplies(state, workflowmodel.KindIssue) || !holds(f, pred) {
+			continue
+		}
+		switch p.ColumnOf[edge.To] {
+		case "triage":
+			return edge.To
+		case "intake":
+			if intake == "" {
+				intake = edge.To
+			}
+		}
+	}
+	return intake
 }
 
 func stageByNumber(n int) (stagelabels.Stage, bool) {

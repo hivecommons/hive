@@ -20,7 +20,6 @@ type Scheduler struct {
 	surgeDuration   func() (time.Duration, bool)
 	cfg             *config.Config
 	primer          *knowledge.Primer
-	inception       *knowledge.InceptionEngine
 	lastActionable  *github.ActionableResult
 	logger          *slog.Logger
 	primerCapLogged sync.Map // agent|cap_bytes -> omitted fact count last logged at INFO
@@ -193,21 +192,6 @@ func (s *Scheduler) GetPrimer() *knowledge.Primer {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.primer
-}
-
-// SetInception attaches an inception engine so kick templates can inject
-// ideation state via ${INCEPTION_*} variables.
-func (s *Scheduler) SetInception(ie *knowledge.InceptionEngine) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.inception = ie
-}
-
-// GetInception returns the attached inception engine, or nil if none is set.
-func (s *Scheduler) GetInception() *knowledge.InceptionEngine {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.inception
 }
 
 // SetLastActionable caches the latest actionable result so manual kicks

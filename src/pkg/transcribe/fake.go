@@ -15,6 +15,11 @@ const FakeName = "fake"
 type Fake struct {
 	Result Result
 	Errs   []error
+	// Ticks are reported through Audio.Progress after the audio is read,
+	// in order; OnTick (when set) runs after each one, so a test can look at
+	// the hive's live state mid-run.
+	Ticks  []Progress
+	OnTick func(Progress)
 
 	mu    sync.Mutex
 	calls int
@@ -56,6 +61,12 @@ func (f *Fake) Transcribe(ctx context.Context, a Audio) (Result, error) {
 		f.mu.Unlock()
 		if err != nil {
 			return Result{}, err
+		}
+	}
+	for _, p := range f.Ticks {
+		a.Report(p)
+		if f.OnTick != nil {
+			f.OnTick(p)
 		}
 	}
 	if i < len(f.Errs) && f.Errs[i] != nil {

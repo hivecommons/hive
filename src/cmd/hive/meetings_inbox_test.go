@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/inbox"
 	"github.com/hivecommons/hive/pkg/meetings"
 	"github.com/hivecommons/hive/pkg/meetings/live"
 )
@@ -69,6 +70,14 @@ func TestMeetingsInboxReader(t *testing.T) {
 	if got.Summary != "short" || !strings.Contains(got.Notes, "## Decisions") || !got.StartedAt.Equal(now) || !got.EndedAt.Equal(ended) {
 		t.Fatalf("meeting %+v", got)
 	}
+	if !strings.HasPrefix(got.Notes, "Notes hive took in") {
+		t.Fatalf("header without a persona name: %q", got.Notes)
+	}
+	// The notes header names the persona (hivecommons/hive#18393).
+	named := &meetingsInbox{mgr: mgr, store: store, name: "Betty"}
+	if b, err := named.ReadMeeting(context.Background(), "mtg-done"); err != nil || !strings.HasPrefix(b.Notes, "Notes Betty took in") {
+		t.Fatalf("persona header %q, %v", b.Notes, err)
+	}
 	if _, err := mi.ReadMeeting(context.Background(), "mtg-none"); err == nil {
 		t.Fatal("want not found")
 	}
@@ -97,6 +106,16 @@ func TestWireMeetingsInbox(t *testing.T) {
 	b.wireMeetingsInbox(mgr, store)
 	if b.meetingsInboxSrc == nil {
 		t.Fatal("inbox source not set")
+	}
+	if src, ok := b.meetingsInboxSrc.(*inbox.LiveMeetingSource); !ok {
+		t.Fatalf("inbox source %T", b.meetingsInboxSrc)
+	} else if mi, ok := src.Reader.(*meetingsInbox); !ok || mi.name != "Betty" {
+		t.Fatalf("inbox reader %+v", src.Reader)
+	}
+	off := false
+	cfg := config.MeetingsPersonaConfig{Enabled: &off}
+	if meetingsAttendeeName(cfg.Resolve()) != "hive" || meetingsAttendeeName(config.MeetingsPersonaConfig{}.Resolve()) != "Betty" {
+		t.Fatal("meetingsAttendeeName")
 	}
 	srcs := b.inboxSources(t.TempDir(), nil, nil)
 	if len(srcs) != 1 || srcs[0].Type() != "meeting" {
