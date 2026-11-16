@@ -163,19 +163,22 @@ func TestEmailSourceQuotaAndOpen(t *testing.T) {
 
 	e2, _ := newEmailSource(t)
 	items, _ := e2.Add(emailDelivery("o1", att("v.webm", wire.AttachAudio, "audio/webm", emailAudio), att("p.png", wire.AttachImage, "image/png", emailPNG)), true)
-	rc, mime, size, err := e2.OpenAudio(context.Background(), items[0])
-	if err != nil || mime != "audio/webm" || size != int64(len(emailAudio)) {
-		t.Fatalf("open audio %q %d %v", mime, size, err)
+	la, err := e2.OpenAudio(context.Background(), items[0])
+	if err != nil || la.MIME != "audio/webm" || la.Size != int64(len(emailAudio)) || la.Name != "v.webm" {
+		t.Fatalf("open audio %+v %v", la, err)
 	}
-	b, _ := io.ReadAll(rc)
-	_ = rc.Close()
+	b, _ := io.ReadAll(la.File)
+	_ = la.File.Close()
 	if string(b) != string(emailAudio) {
 		t.Fatal("audio bytes")
 	}
-	if _, _, _, err := e2.OpenAudio(context.Background(), items[1]); !errors.Is(err, ErrNoAudio) {
+	if _, err := e2.OpenAudio(context.Background(), items[1]); !errors.Is(err, ErrNoAudio) {
 		t.Fatalf("image as audio: %v", err)
 	}
-	if _, _, _, err := e2.OpenAudio(context.Background(), Item{ID: "zz"}); err == nil {
+	if _, err := e2.OpenAudio(context.Background(), Item{ID: "zz"}); err == nil {
+		t.Fatal("bad id opened")
+	}
+	if _, err := e2.OpenAudio(context.Background(), Item{ID: strings.Repeat("d", emailIDHexLen)}); err == nil {
 		t.Fatal("bad id opened")
 	}
 	if _, _, err := e2.Open(strings.Repeat("c", emailIDHexLen)); !errors.Is(err, ErrEmailNotFound) {
@@ -183,13 +186,13 @@ func TestEmailSourceQuotaAndOpen(t *testing.T) {
 	}
 	// A wav keeps its MIME by extension.
 	items, _ = e2.Add(emailDelivery("o2", att("r.wav", wire.AttachAudio, "audio/wave", emailAudio)), true)
-	if _, mime, _, _ := e2.OpenAudio(context.Background(), items[0]); mime != "audio/wav" {
-		t.Fatalf("wav mime %q", mime)
+	if la, _ := e2.OpenAudio(context.Background(), items[0]); la.MIME != "audio/wav" {
+		t.Fatalf("wav mime %q", la.MIME)
 	}
 	// An unknown audio extension falls back to the sniffed type.
 	items, _ = e2.Add(emailDelivery("o3", att("noext", wire.AttachAudio, "audio/ogg", emailAudio)), true)
-	if _, mime, _, _ := e2.OpenAudio(context.Background(), items[0]); mime != "audio/ogg" {
-		t.Fatalf("fallback mime %q", mime)
+	if la, _ := e2.OpenAudio(context.Background(), items[0]); la.MIME != "audio/ogg" {
+		t.Fatalf("fallback mime %q", la.MIME)
 	}
 	// A corrupt meta file is skipped by List.
 	if err := os.WriteFile(filepath.Join(e2.Dir, items[0].ID, emailMetaFile), []byte("{"), 0o600); err != nil {

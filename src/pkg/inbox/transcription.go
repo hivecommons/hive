@@ -510,35 +510,6 @@ func (s *Service) transcribeItem(ctx context.Context, it Item, cfg config.InboxT
 	return tr.Transcribe(ctx, audio)
 }
 
-// transcribeOpened transcribes audio a source holds itself (AudioOpener).
-func (s *Service) transcribeOpened(ctx context.Context, tr transcribe.Transcriber, op AudioOpener, it Item, cfg config.InboxTranscription, rec *TranscriptRecord, job *txJob) (transcribe.Result, error) {
-	probe, mime, size, err := op.OpenAudio(ctx, it)
-	if err != nil {
-		return transcribe.Result{}, err
-	}
-	_ = probe.Close()
-	maxBytes := cfg.EffectiveMaxBytes()
-	if maxBytes > 0 && size > maxBytes {
-		return transcribe.Result{}, transcribe.ErrTooLarge
-	}
-	rec.AudioSize = size
-	s.Logger.Info("inbox: transcribing", "item", it.Key(), "provider", tr.Name(), "audio_host", "local")
-	audio := transcribe.Audio{
-		MIME:     mime,
-		Duration: time.Duration(it.DurationMS) * time.Millisecond,
-		Lang:     cfg.EffectiveLanguage(),
-		Progress: func(p transcribe.Progress) { s.txProgress(job, p) },
-		Open: func(ctx context.Context) (io.ReadCloser, error) {
-			rc, _, _, err := op.OpenAudio(ctx, it)
-			if err != nil {
-				return nil, err
-			}
-			return readCloser{Reader: transcribe.LimitReader(rc, maxBytes), Closer: rc}, nil
-		},
-	}
-	return tr.Transcribe(ctx, audio)
-}
-
 type readCloser struct {
 	io.Reader
 	io.Closer

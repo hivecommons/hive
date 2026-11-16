@@ -6,7 +6,6 @@ package inbox
 import (
 	"context"
 	"errors"
-	"io"
 	"time"
 )
 
@@ -159,14 +158,6 @@ type AudioSource interface {
 
 // ErrNoAudio is returned when an item's source offers no audio.
 var ErrNoAudio = errors.New("no audio is available for this item")
-
-// AudioOpener is optionally implemented by sources that hold an item's audio
-// themselves (the email spool) instead of minting a download link: the
-// transcriber reads it directly. It returns the audio, its MIME type and its
-// size.
-type AudioOpener interface {
-	OpenAudio(ctx context.Context, it Item) (io.ReadCloser, string, int64, error)
-}
 
 // SummaryRunes bounds Item.Summary in listings.
 const SummaryRunes = 2000

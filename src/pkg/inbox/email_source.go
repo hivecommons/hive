@@ -385,19 +385,26 @@ func alignedLabel(aligned bool) string {
 	return "not authenticated"
 }
 
-// OpenAudio implements AudioOpener for audio items.
-func (e *EmailSource) OpenAudio(_ context.Context, it Item) (io.ReadCloser, string, int64, error) {
-	rc, m, err := e.Open(it.ID)
+// OpenAudio implements AudioOpener for audio items: the transcriber reads
+// the spooled file directly.
+func (e *EmailSource) OpenAudio(_ context.Context, it Item) (LocalAudio, error) {
+	if !validEmailID(it.ID) {
+		return LocalAudio{}, ErrEmailNotFound
+	}
+	m, err := e.readMeta(it.ID)
 	if err != nil {
-		return nil, "", 0, err
+		return LocalAudio{}, err
 	}
 	if m.Kind != wire.AttachAudio {
-		_ = rc.Close()
-		return nil, "", 0, ErrNoAudio
+		return LocalAudio{}, ErrNoAudio
+	}
+	f, err := os.Open(filepath.Join(e.itemDir(it.ID), emailDataFile))
+	if err != nil {
+		return LocalAudio{}, err
 	}
 	mime := audioMIMEByExt[strings.ToLower(filepath.Ext(m.Filename))]
 	if mime == "" {
 		mime = m.ContentType
 	}
-	return rc, mime, m.Size, nil
+	return LocalAudio{File: f, Name: m.Filename, MIME: mime, Size: m.Size, ModTime: m.ReceivedAt}, nil
 }
