@@ -100,6 +100,38 @@ so the bar moves with the audio actually transcribed.
 whisper has no speaker labels; non-speech markers such as `[BLANK_AUDIO]`
 are dropped, and `--suppress-nst` keeps it from writing non-speech tokens.
 
+## Gemini
+
+`provider: gemini` (or `auto` when whisper is unavailable) transcribes with
+the Gemini API under **the hive's own Gemini credentials**: the API key in
+`GEMINI_API_KEY`, `GOOGLE_API_KEY` or `GOOGLE_GENAI_API_KEY`, the same
+variables and order the dashboard's Gemini model discovery already reads.
+No new key is added. A Gemini CLI login (OAuth in `~/.gemini`) used by agents
+is not used for transcription; the hive needs the API key.
+
+- The hive calls `POST /v1beta/models/<model>:generateContent` on
+  `generativelanguage.googleapis.com` with the key in the `x-goog-api-key`
+  header (never in a URL). Recordings up to 14 MB go inline; larger ones go
+  through the Files API resumable upload and are deleted right after the run
+  instead of waiting for the 48-hour expiry. Recordings over 256 MB or 9.5
+  hours are not sent.
+- The model (`inbox.transcription.gemini_model`, default `gemini-3.5-flash`)
+  is asked for a verbatim transcript as JSON segments with `[mm:ss]` starts
+  and `Speaker N` labels (none when `diarize: false`), and told not to invent
+  speech during silence, music or noise. The reply is validated; anything
+  that is not the expected JSON is kept as one plain-text segment.
+- 429 and 5xx are retried (3 attempts, exponential backoff), honouring
+  `Retry-After` up to 2 minutes. 401/403 fail with "check the hive's Gemini
+  key", naming the variables, never the value. Error bodies are redacted.
+- Audited as provider `gemini`, model `<model>`; the audit's cost estimate is
+  0 (the Google invoice is authoritative).
+
+**Caveats.** Gemini is a chat model, not a speech recogniser. Its timestamps
+are approximate, its speaker labels are a best guess, and it may still
+produce words where there was silence. That is why the transcript is always
+labelled `Transcript (machine: gemini/<model>)`. The audio is sent to Google
+under the hive's account, so the consent notice applies.
+
 ### Sandbox
 
 Recordings are untrusted media, so neither FFmpeg nor whisper.cpp runs inside
@@ -189,6 +221,7 @@ inbox:
     model: nova-3               # Deepgram pre-recorded model
     whisper_model: ""           # base.en by default (base for other languages)
     whisper_threads: 0          # 0 = half the CPUs
+    gemini_model: ""            # gemini-3.5-flash by default
     api_key_env: DEEPGRAM_API_KEY   # env var holding the owner's key
     sources: []                 # auto mode only transcribes these source names
     diarize: true               # label speakers: Speaker 1, Speaker 2, ...
@@ -307,6 +340,8 @@ playback already needs; nothing while transcription is off):
 
 - `whisper`: none, except `huggingface.co:443` and its `*.hf.co` CDN for the
   first-use model download (none at all with a pre-seeded model).
+- `gemini`: the hive process sends the audio to
+  `generativelanguage.googleapis.com:443`.
 - `deepgram`: the hive process uploads the audio to `api.deepgram.com:443`.
 
 `settings.transcription.egress_hosts` (for the provider `auto` resolves to)

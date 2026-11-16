@@ -174,8 +174,11 @@ func (s *Service) transcriber(t config.InboxTranscription) (transcribe.Transcrib
 	build := s.NewTranscriber
 	if build == nil {
 		build = func(t config.InboxTranscription) (transcribe.Transcriber, error) {
-			if t.EffectiveProvider() == config.InboxTranscriptionProviderWhisper {
+			switch t.EffectiveProvider() {
+			case config.InboxTranscriptionProviderWhisper:
 				return s.whisperTranscriber(t)
+			case config.InboxTranscriptionProviderGemini:
+				return s.geminiTranscriber(t)
 			}
 			return DefaultTranscriber(t, s.getenv)
 		}
