@@ -135,6 +135,14 @@ type Options struct {
 	Network string
 	// PollInterval overrides how often the Job status is read (tests).
 	PollInterval time.Duration
+	// RelayImage is the image of the init container that supplies hive's
+	// sandbox relays to a LaunchSpec with Relays set (#18512). Empty resolves
+	// the running hive image, by digest, from hive's own pod; RelayImageNone
+	// skips the relays.
+	RelayImage string
+	// RelayRunAsUser pins the relay init container's uid. Nil leaves it to
+	// the cluster on OpenShift and uses DefaultRelayRunAsUser elsewhere.
+	RelayRunAsUser *int64
 }
 
 // network is Options.Network with the empty default applied.
@@ -196,6 +204,9 @@ type Launcher struct {
 	NamespacePath string
 	HTTPClient    *http.Client
 	Now           func() time.Time
+	// PodName is hive's own pod, read to resolve the relay image; empty
+	// falls back to $POD_NAME, then $HOSTNAME, then os.Hostname.
+	PodName string
 }
 
 var _ sandbox.Launcher = (*Launcher)(nil)
@@ -213,6 +224,9 @@ func (o Options) Validate() error {
 		if strings.TrimSpace(v.Claim) == "" || strings.TrimSpace(v.MountPath) == "" {
 			return fmt.Errorf("kubejob: volumes[%d] needs both claim and mount_path", i)
 		}
+	}
+	if o.RelayRunAsUser != nil && *o.RelayRunAsUser <= 0 {
+		return errors.New("kubejob: relay_run_as_user must be a positive (non-root) uid")
 	}
 	switch o.network() {
 	case NetworkDefault, NetworkNone, NetworkHost:
@@ -248,8 +262,14 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 	if err != nil {
 		return res, err
 	}
+	var relays *relayPlan
+	if spec.Relays {
+		if relays, err = l.resolveRelays(ctx, ns); err != nil {
+			return res, err
+		}
+	}
 	name := jobName(spec.Name, l.now())
-	body, err := json.Marshal(l.manifest(ns, name, subPath, spec))
+	body, err := json.Marshal(l.jobManifest(ns, name, subPath, spec, relays))
 	if err != nil {
 		return res, err
 	}
@@ -493,6 +513,12 @@ func (l *Launcher) delete(ctx context.Context, jobPath string) error {
 // manifest renders the batch/v1 Job. Kept as plain maps rather than client-go
 // types: the repo has no k8s.io dependency and this is the only writer.
 func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) map[string]any {
+	return l.jobManifest(ns, name, subPath, spec, nil)
+}
+
+// jobManifest is manifest plus, when relays is non-nil, the relay init
+// container, its emptyDir and the agent container's read-only mount of it.
+func (l *Launcher) jobManifest(ns, name, subPath string, spec sandbox.LaunchSpec, relays *relayPlan) map[string]any {
 	mount := spec.WorkspaceMount
 	if mount == "" {
 		mount = sandbox.DefaultWorkspaceMount
@@ -557,8 +583,18 @@ func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) m
 		"envFrom":      envFrom,
 		"volumeMounts": mounts,
 	}
-	if len(spec.Command) > 0 {
-		container["command"] = spec.Command
+	command := spec.Command
+	if relays != nil {
+		command = sandbox.RelayCommand(command)
+		mounts = append(mounts, map[string]any{"name": relayVolumeName, "mountPath": sandbox.RelayMountPath, "readOnly": true})
+		container["volumeMounts"] = mounts
+		volumes = append(volumes, map[string]any{
+			"name":     relayVolumeName,
+			"emptyDir": map[string]string{"sizeLimit": relayVolumeSizeLimit},
+		})
+	}
+	if len(command) > 0 {
+		container["command"] = command
 	}
 	if len(l.Options.Resources.Limits) > 0 || len(l.Options.Resources.Requests) > 0 {
 		container["resources"] = l.Options.Resources
@@ -573,6 +609,12 @@ func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) m
 		"securityContext": map[string]any{
 			"seccompProfile": map[string]string{"type": "RuntimeDefault"},
 		},
+	}
+	if relays != nil {
+		podSpec["initContainers"] = []map[string]any{relays.initContainer()}
+		if len(relays.pullSecrets) > 0 {
+			podSpec["imagePullSecrets"] = relays.pullSecrets
+		}
 	}
 	if len(l.Options.NodeSelector) > 0 {
 		podSpec["nodeSelector"] = l.Options.NodeSelector

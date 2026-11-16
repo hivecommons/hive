@@ -3,6 +3,8 @@
 # TODO #11854
 agent_sandbox.job.env_from_secrets[] # TODO #11854
 agent_sandbox.job.node_selector.<key> # TODO #11854
+agent_sandbox.job.relay_image # TODO #11854
+agent_sandbox.job.relay_run_as_user # TODO #11854
 agent_sandbox.job.resources.limits.<key> # TODO #11854
 agent_sandbox.job.resources.requests.<key> # TODO #11854
 agent_sandbox.job.tolerations[].effect # TODO #11854
@@ -115,6 +117,8 @@ agents.<key>.sandbox.env_allowlist[] # TODO #11854
 agents.<key>.sandbox.image # TODO #11854
 agents.<key>.sandbox.job.env_from_secrets[] # TODO #11854
 agents.<key>.sandbox.job.node_selector.<key> # TODO #11854
+agents.<key>.sandbox.job.relay_image # TODO #11854
+agents.<key>.sandbox.job.relay_run_as_user # TODO #11854
 agents.<key>.sandbox.job.resources.limits.<key> # TODO #11854
 agents.<key>.sandbox.job.resources.requests.<key> # TODO #11854
 agents.<key>.sandbox.job.scheduler_name # TODO #11854
