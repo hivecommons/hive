@@ -1497,6 +1497,201 @@
         }
       }
     },
+    "/api/meetings/model": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Meetings model",
+        "description": "meetings.llm.mode, backend and model as set, the label the meeting panel shows, the backends that can answer for meetings, the backends the hive's agents use, the defaults and the env overrides that are set. Owner or read-write.",
+        "responses": {
+          "200": {
+            "description": "The model settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string"
+                    },
+                    "backend": {
+                      "type": "string"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "What the meeting panel shows for the resolved model"
+                    },
+                    "modes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "supported_backends": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "agent_backends": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "default_backend": {
+                      "type": "string"
+                    },
+                    "default_model": {
+                      "type": "string"
+                    },
+                    "default_models": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "env_overrides": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "restart_required": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "503": {
+            "description": "Config is not available"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Save the meetings model",
+        "description": "Saves meetings.llm.mode, backend and model; omitted fields are kept and the change applies after a restart (restart_required). A backend with no meetings completion profile is refused. Owner only. Audited as meetings_model_settings.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "openai",
+                      "anthropic",
+                      "agent-backend",
+                      "claude-cli",
+                      "none"
+                    ]
+                  },
+                  "backend": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The saved model settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string"
+                    },
+                    "backend": {
+                      "type": "string"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "What the meeting panel shows for the resolved model"
+                    },
+                    "modes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "supported_backends": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "agent_backends": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "default_backend": {
+                      "type": "string"
+                    },
+                    "default_model": {
+                      "type": "string"
+                    },
+                    "default_models": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "env_overrides": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "restart_required": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, unknown mode or unsupported backend"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "500": {
+            "description": "Saving the config failed"
+          },
+          "503": {
+            "description": "Config is not available"
+          }
+        }
+      }
+    },
     "/api/meetings/actions/{aid}/edit": {
       "post": {
         "tags": [

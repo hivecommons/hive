@@ -379,7 +379,7 @@ func TestCompleteCLIOnceFailures(t *testing.T) {
 	if _, err := completeCLIOnce(ctx, c, "q"); err == nil || !strings.Contains(err.Error(), "no result") {
 		t.Fatalf("no result err = %v", err)
 	}
-	c.CLIBinary = fakeOneShot(t, t.TempDir(), `{"type":"result","subtype":"success","result":"x"}`, 0)
+	c.CLIBinary = fakeOneShot(t, t.TempDir(), `{"type":"result","subtype":"success","result":"x","usage":{"output_tokens":1}}`, 0)
 	c.UsageFile = filepath.Join(t.TempDir(), "missing-dir", "u.jsonl")
 	if _, err := completeCLIOnce(ctx, c, "q"); err == nil || !strings.Contains(err.Error(), "recording usage") {
 		t.Fatalf("usage err = %v", err)

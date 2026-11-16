@@ -98,7 +98,7 @@
 
     async function maLoadModel() {
       try {
-        if (typeof fetchBackendsConfig === 'function') await fetchBackendsConfig();
+        if (typeof fetchBackendsConfig === 'function') await fetchBackendsConfig(false);
         const r = await fetch('/api/meetings/model');
         const data = await r.json().catch(() => ({}));
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));

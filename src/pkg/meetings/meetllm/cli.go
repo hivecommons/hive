@@ -384,13 +384,17 @@ func (s *CLISession) turnLocked(ctx context.Context, system, prompt string) (str
 	if err != nil {
 		return "", 0, err
 	}
-	line, _ := json.Marshal(map[string]any{
+	// The turn goes out as written: no HTML escaping of its tags.
+	var line bytes.Buffer
+	enc := json.NewEncoder(&line)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(map[string]any{
 		"type":    "user",
 		"message": map[string]string{"role": "user", "content": cliTurnText(system, prompt)},
 	})
 	wrote := make(chan error, 1)
 	go func() {
-		_, werr := p.stdin.Write(append(line, '\n'))
+		_, werr := p.stdin.Write(line.Bytes())
 		wrote <- werr
 	}()
 	for {

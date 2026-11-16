@@ -108,7 +108,7 @@ func TestMeetingAttendeeModelSectionWiring(t *testing.T) {
 		"fetch('/api/meetings/model', { method: 'PUT'",
 		"typeof backendOptionList === 'function' ? backendOptionList() : []",
 		"typeof modelsForBackend === 'function' ? modelsForBackend(backend) : []",
-		"if (typeof fetchBackendsConfig === 'function') await fetchBackendsConfig();",
+		"if (typeof fetchBackendsConfig === 'function') await fetchBackendsConfig(false);",
 		`aria-labelledby="ma-model-h"`,
 		`data-action="maSaveModel"`,
 		`data-change-action="maModelInput"`,
