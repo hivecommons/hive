@@ -228,7 +228,7 @@ func TestEnsureLevelHoldNoticePostsAgentAndDoesNotDuplicate(t *testing.T) {
 	if len(s.comments) != 1 {
 		t.Fatalf("posted %d comments, want one", len(s.comments))
 	}
-	for _, want := range []string{levelHoldNoticePrefix, `"agent":"quality"`, "quality", "human removes"} {
+	for _, want := range []string{levelHoldNoticePrefix, `"agent":"quality"`, "quality", "maintainer reviews the PR and removes it", "`"+DefaultReadyForReviewLabel+"`"} {
 		if !strings.Contains(s.comments[0], want) {
 			t.Fatalf("level hold notice missing %q:\n%s", want, s.comments[0])
 		}
