@@ -223,6 +223,9 @@
     .header-link { justify-self: start; }
     .header-right { justify-self: start; }
   }
+  /* LF Projects legal footer, required on every hub page. */
+  .lf-legal-footer { border-top: 1px solid var(--line); padding: var(--sp-6) clamp(1rem, 4vw, 4.5rem); text-align: center; font-size: var(--fs-sm); color: var(--muted); }
+  .lf-legal-footer a { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -327,6 +330,10 @@
     </tbody>
   </table>
 </div>
+<footer class="lf-legal-footer">
+  <p class="lf-legal">&copy; Copyright Hive Commons Series of LF Projects, LLC<br>
+  For website terms of use, trademark policy and other project policies please see <a href="https://lfprojects.org/policies/">lfprojects.org/policies/</a>.</p>
+</footer>
 <script>
 "use strict";
 // Inert shell: no data is baked in. Everything comes from the authenticated

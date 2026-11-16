@@ -239,6 +239,21 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 - The signed-commit reconciler's intentional refusal to rewrite a foreign or merge commit no longer files repeated unclassified-error fleet reports; its warning and PR remediation remain visible ([#17924](https://github.com/hivecommons/hive/issues/17924)).
 - Dashboard logs one summary warning per five minutes for dropped SSE events instead of one warning per event, so a stalled browser tab no longer triggers repeated-error fleet reports (#17995).
 
+## 2026-11-16 (v5.287.0)
+
+### Added
+
+- Invite Betty by adding `hive@<your hive's host>` to a calendar invite: invites from an organizer whose proven calendar email belongs to someone with access to the hive (and that pass DMARC) are scheduled at once with their join link, meeting id and passcode, everything else waits for approval; each user proves their calendar emails by mailing a code shown in Settings.
+
+### Changed
+
+- Scanner CI-triage and rebase notes on a PR are now one comment per PR, edited in place, instead of a new comment on every pass (PR #18254 had 17 on one head). The comment relay drops a scanner note when the PR's head SHA and failing-check set (red checks, failed DCO, merge conflict) match the current note, edits the note when either changes, and still posts a new comment when a non-hive PR author must act and has not been told for this head. Shared-CI incident references and other marked comments keep their own path. On by default; set `HIVE_SCANNER_NOTE_UPSERT=off` to restore the old behaviour. See "Scanner note: one comment per PR" in `src/docs/notifications.md` (#18451).
+- OpenRouter's suggested models and default are current again (default `deepseek/deepseek-v4.1-flash`), retired suggestions are hidden, OpenRouter gateways discover their live model list again (the probe asked for `/api/v1/v1/models`), and large gateway catalogs get a searchable, provider-grouped model picker that shows price per 1M tokens and context length.
+
+### Fixed
+
+- Usage gauge: the Copilot row no longer reports "not signed in" on hives with a keystore provider; the gauge now opens the sealed Copilot login instead of sending the encrypted envelope to GitHub as the token (#18444).
+
 ## 2026-11-16 (v5.286.0)
 
 ### Added

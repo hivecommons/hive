@@ -65,7 +65,15 @@ func (s *Server) registerMeetingsEmailRoutes() {
 }
 
 // SetMailAllowlist installs the email allowlist store (nil removes it).
-func (s *Server) SetMailAllowlist(st *mailallow.Store) { s.mailAllow.Store(st) }
+// It also feeds Settings, Meeting attendee its Email section.
+func (s *Server) SetMailAllowlist(st *mailallow.Store) {
+	s.mailAllow.Store(st)
+	if st == nil {
+		s.SetMeetingsAttendeeEmail(nil)
+		return
+	}
+	s.SetMeetingsAttendeeEmail(mailAttendeeEmail{s: s})
+}
 
 func (s *Server) mailAllowlist() *mailallow.Store { return s.mailAllow.Load() }
 

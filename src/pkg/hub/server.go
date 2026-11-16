@@ -4739,7 +4739,7 @@ func (s *HubServer) writeHubErrorPage(w http.ResponseWriter, code int) {
   <title>Hive — %[2]s</title>
   <style>
     *{margin:0;padding:0;box-sizing:border-box}
-    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0d1117;color:#e6edf3;display:flex;align-items:center;justify-content:center;min-height:100vh}
+    body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#0d1117;color:#e6edf3;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh}
     .container{text-align:center;max-width:520px;padding:40px 24px}
     .bee{font-size:64px;margin-bottom:24px}
     h1{font-size:1.5rem;font-weight:600;margin-bottom:12px}
@@ -4751,6 +4751,8 @@ func (s *HubServer) writeHubErrorPage(w http.ResponseWriter, code int) {
     a:hover{text-decoration:underline}
     .btn{display:inline-block;padding:10px 24px;background:#f0b429;color:#0d1117;border-radius:8px;font-weight:600;text-decoration:none;margin-top:8px}
     .btn:hover{background:#d4a017;text-decoration:none}
+    .lf-legal-footer{text-align:center;padding:0 24px 24px;font-size:.8rem}
+    .lf-legal-footer p{margin:0}
   </style>
   %[11]s
 </head>
@@ -4764,6 +4766,7 @@ func (s *HubServer) writeHubErrorPage(w http.ResponseWriter, code int) {
     <a id="login-btn" href="%[6]s" class="btn"%[9]s>Login with GitHub</a>
     <a id="home-btn" href="%[5]s" class="btn"%[10]s>Go to Hive Hub</a>
   </div>
+  `+lfProjectsLegalFooterHTML+`
 </body>
 </html>
 `,
@@ -4995,6 +4998,7 @@ func (s *HubServer) handleContributeLanding(w http.ResponseWriter, r *http.Reque
     .pill{border:1px solid var(--line);border-radius:999px;padding:4px 9px;background:rgba(255,255,255,.03)}
     .empty{padding:24px;border:1px dashed var(--line);border-radius:18px;background:rgba(22,27,34,.65)}
     a{color:var(--link)}
+    .lf-legal-footer{max-width:1080px;margin:0 auto;padding:0 24px 40px;text-align:center;font-size:.8rem}
   </style>
 </head>
 <body>
@@ -5032,6 +5036,7 @@ just contribute-mlx</code></pre>
       <a href="%[1]s#apple-mlx-local-inference">Complete installation, model requirements and troubleshooting</a>
     </section>
   </main>
+  `+lfProjectsLegalFooterHTML+`
 </body>
 </html>
 `, html.EscapeString(contributorRelayDocsURL), renderContributeLandingHiveList(hives))
