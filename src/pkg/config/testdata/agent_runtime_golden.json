@@ -229,7 +229,9 @@
         "Human": "",
         "Clanker": "",
         "Hive": ""
-      }
+      },
+      "ReadyForReview": "",
+      "DecisionNeeded": ""
     },
     "Sensing": {
       "GHRatePatterns": [

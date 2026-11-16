@@ -11,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/delegatedecision"
 	"github.com/hivecommons/hive/pkg/holdguard"
+	"github.com/hivecommons/hive/pkg/writeback"
 )
 
 // hiveGateRelabelMarker marks the one comment the migration leaves on an
@@ -90,7 +91,7 @@ func (c *Client) migrateRepoHiveHolds(ctx context.Context, repoRef string, res *
 			if done >= maxHiveGateRelabelsPerRepo {
 				return
 			}
-			migrated, err := c.migrateOneHiveHold(ctx, owner, repo, item.GetNumber())
+			migrated, err := c.migrateOneHiveHold(ctx, owner, repo, item)
 			if err != nil {
 				res.Errors = append(res.Errors, fmt.Sprintf("%s#%d: %v", repoRef, item.GetNumber(), err))
 				continue
@@ -109,7 +110,8 @@ func (c *Client) migrateRepoHiveHolds(ctx context.Context, repoRef string, res *
 	}
 }
 
-func (c *Client) migrateOneHiveHold(ctx context.Context, owner, repo string, number int) (bool, error) {
+func (c *Client) migrateOneHiveHold(ctx context.Context, owner, repo string, item *gh.Issue) (bool, error) {
+	number := item.GetNumber()
 	byApp, _, err := c.latestHoldLabelEventByApp(ctx, owner, repo, number)
 	if err != nil {
 		return false, err
@@ -127,14 +129,21 @@ func (c *Client) migrateOneHiveHold(ctx context.Context, owner, repo string, num
 		return false, nil
 	}
 	repoRef := owner + "/" + repo
-	if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{label}); err != nil {
+	// The relabel goes through the one write-back gate like every other
+	// unsolicited write (a paused or write-restricted repo keeps its `hold`,
+	// which still blocks; the next boot retries).
+	wbItem := writeback.Item{Number: number, IsPR: item.IsPullRequest(), Author: safeGetLogin(item.GetUser()), Labels: extractLabels(item.Labels)}
+	if d := c.WritebackAllowed(repoRef, wbItem, writeback.KindHoldGateNotice, hiveGateRelabelComment(label)); !d.Allowed {
+		return false, nil
+	}
+	if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{label}); err != nil { // writeback:gated
 		return false, fmt.Errorf("adding %s: %w", label, err)
 	}
-	if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(LegacyHiveHoldLabel)); err != nil && !githubStatusError(err, http.StatusNotFound) {
+	if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(LegacyHiveHoldLabel)); err != nil && !githubStatusError(err, http.StatusNotFound) { // writeback:gated
 		return false, fmt.Errorf("removing hold: %w", err)
 	}
 	if !relabeledBefore {
-		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(hiveGateRelabelComment(label))}); err != nil && c.logger != nil {
+		if _, _, err := c.client.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(hiveGateRelabelComment(label))}); err != nil && c.logger != nil { // writeback:gated
 			// The label swap is the substance; the comment is the courtesy.
 			c.logger.Warn("hive gate label migration: swapped hold but could not comment", "repo", repoRef, "number", number, "label", label, "error", err)
 		}
