@@ -89,12 +89,13 @@ func TestEnforceSHAHold_TrustedReporterGetsSoftLabel(t *testing.T) {
 			want:         SHAHoldResult{Held: 1},
 		},
 		{
-			name:        "untrusted reporter still gets the hard hold",
-			association: "NONE",
-			labels:      []wireLabel{{Name: "kind/bug"}},
-			wantAdded:   []string{"hold"},
-			want:        SHAHoldResult{Held: 1},
-			// hold() posts its notice too.
+			// hivecommons/hive#18468: the hive never applies `hold`
+			// itself, so an untrusted reporter gets needs-sha too.
+			name:         "untrusted reporter gets needs-sha, never hold",
+			association:  "NONE",
+			labels:       []wireLabel{{Name: "kind/bug"}},
+			wantAdded:    []string{"needs-sha"},
+			want:         SHAHoldResult{Held: 1},
 			wantComments: 1,
 		},
 		{
@@ -162,18 +163,15 @@ func TestEnforceSHAHold_TrustedReporterGetsSoftLabel(t *testing.T) {
 	}
 }
 
-func TestSHAHoldConfig_SoftLabelDisabledByHoldOrEmpty(t *testing.T) {
+func TestSHAHoldConfig_LabelIsNeverHold(t *testing.T) {
 	for _, label := range []string{"", "hold", " HOLD "} {
 		cfg := SHAHoldConfig{TrustedAssociations: []string{"MEMBER"}, TrustedLabel: label}
-		if got := cfg.shaHoldSoftLabel("MEMBER"); got != "" {
-			t.Errorf("TrustedLabel %q: soft label = %q, want hard hold", label, got)
+		if got := cfg.shaHoldLabel(); got != defaultSHAHoldLabel {
+			t.Errorf("TrustedLabel %q: label = %q, want %q (never hold)", label, got, defaultSHAHoldLabel)
 		}
 	}
-	cfg := SHAHoldConfig{TrustedAssociations: []string{"MEMBER"}, TrustedLabel: "needs-sha"}
-	if got := cfg.shaHoldSoftLabel("member"); got != "needs-sha" {
-		t.Errorf("member soft label = %q", got)
-	}
-	if got := cfg.shaHoldSoftLabel(""); got != "" {
-		t.Errorf("blank association soft label = %q", got)
+	cfg := SHAHoldConfig{TrustedLabel: "awaiting-sha"}
+	if got := cfg.shaHoldLabel(); got != "awaiting-sha" {
+		t.Errorf("configured label = %q, want awaiting-sha", got)
 	}
 }

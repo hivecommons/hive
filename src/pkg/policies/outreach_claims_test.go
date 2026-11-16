@@ -21,7 +21,7 @@ func TestOutreachPolicyRequiresGroundedHumanReviewedClaims(t *testing.T) {
 
 	required := []string{
 		"Every cross-repo outreach PR — one that targets a repository the hive does not manage",
-		"requires the `hold` label, including at ACMM L6",
+		"requires the `ready-for-review` label (it blocks merging exactly like `hold`), including at ACMM L6",
 		"A PR into the repo the finding is about (`$HIVE_REPO` or another hive-managed repo) is an ordinary hive PR",
 		"Ground every product capability claim before writing it",
 		"cite the exact implementing file, test, release, or human-authored official documentation for each claim",

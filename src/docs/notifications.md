@@ -491,6 +491,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).closeIssueForMergedPRClaimWithIssue` | `status` |  |
 | `github.(*Client).closeSupersededPRDecision` | `status` |  |
 | `github.(*Client).fileReviewBacklog` | `status` |  |
+| `github.(*Client).foldSentinelNotice` | `status` | informational sentinel notice folded into the PR status card (quiet mode); a blocking alert is never folded |
 | `github.(*Client).joinFleetReportIssue` | `status` |  |
 | `github.(*Client).markInProgressStarted` | `status` |  |
 | `github.(*Client).postUnblockedNote` | `status` |  |
@@ -667,6 +668,35 @@ github:
   attention:
     reminder_interval: 24h   # default 24h
 ```
+
+### Sentinel notices in the PR status card
+
+The sentinel (`pkg/github/sentinel_sweep.go`) has two kinds of result, and
+only one of them asks a person to do anything
+(hivecommons/hive#18453):
+
+- **Actionable: a hold.** The author is untrusted, or
+  `sentinel.trusted_authors_block` is `true`. The hive adds the
+  `sentinel-alert` label and posts its `<!-- hive-sentinel --> <head>`
+  "Sentinel alert - maintainer review required" comment. This happens in
+  **every** mode, quiet included, because only a new comment notifies.
+  A security hold is never folded into the card.
+- **Informational.** The author is trusted and the merge is not blocked. In
+  `github.notifications.mode: quiet` (the default) this is the `sentinel`
+  section of the PR's `hive:status` card, edited in place. A new head
+  rewrites that section, so the PR gets no notice comment at all. The card
+  is created only when the PR has none yet. The section is stamped
+  `<!-- hive-sentinel-notice <head> -->`. It never carries the
+  `<!-- hive-sentinel -->` marker, because the sweep reads that marker back
+  to tell which head it alerted on and whether a maintainer cleared it. When
+  the same PR is later put on hold, the hive posts the alert comment and
+  drops the stale informational section from the card. A PR that already
+  has a sentinel comment from before this change keeps it, rewritten in
+  place for the new head.
+
+In `normal` mode the informational notice is still its own comment, as
+before. Either way the finding is recorded for audit, the dashboard
+Security tab and `/api/sentinel`.
 
 ### Hive-maintained Actions workflows that defer to the card
 

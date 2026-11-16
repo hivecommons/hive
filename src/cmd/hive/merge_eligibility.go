@@ -281,7 +281,8 @@ func sentinelTrustedAuthorFunc(cfg *config.Config, ghClient *github.Client) func
 var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 
 // acmmHoldGatedMinLevel / acmmHoldGatedMaxLevel bracket the ACMM levels whose
-// merge policy is "hold-gated" — every agent-opened PR gets a "hold" label and
+// merge policy is "hold-gated" — every agent-opened PR gets the ready-for-review
+// gate label (the literal "hold" before hivecommons/hive#18468) and
 // no agent merges (see src/pkg/config/packs/level-{3,4,5}.yaml). L1/L2 are
 // "manual" (agents open no PRs) and L6 is "auto-merge on green CI, no hold
 // label", so both fall outside this range. Used by the F6 hold-label decider.
@@ -291,7 +292,7 @@ const (
 )
 
 // shouldHoldAgentPR decides whether a freshly opened agent PR must carry the
-// "hold" label. The general ACMM hold gate applies to every role at L3-L5.
+// ready-for-review gate label. The general ACMM hold gate applies to every role at L3-L5.
 // Outreach adds one level-independent reason: a PR that targets a repository
 // OTHER than the ones the outreach agent is working on behalf of (ownsRepo
 // false) is public speech into somebody else's project and stays
@@ -776,6 +777,11 @@ func automergeBlockLabelReason(labels []string, trusted bool) string {
 		case lower == "do-not-merge" || strings.HasPrefix(lower, "do-not-merge/"):
 			return "label:" + lower
 		case lower == "hold" || strings.Contains(lower, "hold"):
+			return "label:hold"
+		case github.IsHiveGateLabel(trimmed):
+			// The hive's own gate labels (ready-for-review, decision-needed;
+			// hivecommons/hive#18468) block exactly like `hold`, so they
+			// report the same reason the lanes and stage engine key on.
 			return "label:hold"
 		}
 	}

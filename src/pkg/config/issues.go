@@ -47,8 +47,9 @@ type IssuesConfig struct {
 	// SHAHoldTrustedLabel is the soft label the SHA-hold sweep applies to a
 	// bug filed by a reporter in issue_filter.reporter_trust's trusted
 	// associations (OWNER/MEMBER/COLLABORATOR by default) when no commit SHA
-	// is present. Unset uses DefaultSHAHoldTrustedLabel; "hold" restores the
-	// legacy hard hold for every reporter.
+	// is present. Unset uses DefaultSHAHoldTrustedLabel. Since
+	// hivecommons/hive#18468 the sweep applies this label to every reporter
+	// and never applies `hold`; "hold" is treated as unset.
 	SHAHoldTrustedLabel *string `yaml:"sha_hold_trusted_label,omitempty" json:"sha_hold_trusted_label,omitempty"`
 	// LiftHiveHardSuppress enables the reconcile that lifts a `hold`/`blocked`
 	// label hive itself applied once a PR referencing the issue has merged
