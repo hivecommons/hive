@@ -387,7 +387,9 @@ func TestAdvisorBackendFor(t *testing.T) {
 	http := "http"
 	c := &Config{
 		Advisor: AdvisorConfig{Enabled: boolPtr(true)},
-		Agents:  map[string]AgentConfig{"pinned": {Advisor: &AdvisorOverride{Backend: &http}}, "plain": {}},
+		AgentRuntimeConfig: AgentRuntimeConfig{
+			Agents: map[string]AgentConfig{"pinned": {Advisor: &AdvisorOverride{Backend: &http}}, "plain": {}},
+		},
 	}
 	if got := c.AdvisorBackendFor("plain"); got != ReviewerBackendAuto {
 		t.Errorf("unset everywhere = %q, want auto", got)
@@ -414,7 +416,7 @@ func TestAdvisorBackendFor(t *testing.T) {
 	bad := "codex-cli"
 	for _, cfg := range []*Config{
 		{Advisor: AdvisorConfig{Backend: "codex-cli"}},
-		{Agents: map[string]AgentConfig{"a": {Advisor: &AdvisorOverride{Backend: &bad}}}},
+		{AgentRuntimeConfig: AgentRuntimeConfig{Agents: map[string]AgentConfig{"a": {Advisor: &AdvisorOverride{Backend: &bad}}}}},
 	} {
 		if err := cfg.validateAdvisorLane(); err == nil || !strings.Contains(err.Error(), "must be one of auto, http, claude-cli") {
 			t.Errorf("backend codex-cli: err = %v", err)
