@@ -77,8 +77,10 @@ func copilotAgentToken() string {
 	if tok := strings.TrimSpace(os.Getenv("COPILOT_GITHUB_TOKEN")); tok != "" {
 		return tok
 	}
-	if data, err := os.ReadFile(copilotUserTokenPath); err == nil {
-		if tok := strings.TrimSpace(string(data)); tok != "" {
+	// The dashboard login is sealed when a keystore provider is active, so it
+	// must be opened, not read raw. A read error means no token here.
+	if data, err := copilottoken.ReadDurableToken(copilotUserTokenPath); err == nil {
+		if tok := strings.TrimSpace(data); tok != "" {
 			return tok
 		}
 	}

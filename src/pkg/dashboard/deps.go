@@ -106,7 +106,6 @@ type Dependencies struct {
 	ReviewerAutoscaleStatus func() autoscale.Status
 	Tokens                  *tokens.Collector
 	Knowledge               *knowledge.KnowledgeAPI
-	Inception               *knowledge.InceptionEngine
 	Nous                    *NousState
 	Scheduler               SchedulerControl
 	MetricsCollector        *MetricsCollector

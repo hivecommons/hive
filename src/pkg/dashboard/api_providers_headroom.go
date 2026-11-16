@@ -22,21 +22,22 @@ func (s *Server) handleProvidersHeadroom(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	usedBy := s.usageProvidersUsedBy()
+	spend := s.gatewaySpend()
 	if !headroomReporterDisabled(s.deps.RotationMgr) {
 		resp := s.deps.RotationMgr.HeadroomResponse()
 		resp.Enabled = true
 		resp.Readings = true
-		jsonResponse(w, headroomWithUsers{resp, usedBy})
+		jsonResponse(w, headroomWithUsers{resp, usedBy, spend})
 		return
 	}
 	if !headroomReporterDisabled(s.deps.HeadroomPublisher) {
 		resp := s.deps.HeadroomPublisher.HeadroomResponse()
 		resp.Enabled = false
 		resp.Readings = len(resp.Providers) > 0
-		jsonResponse(w, headroomWithUsers{resp, usedBy})
+		jsonResponse(w, headroomWithUsers{resp, usedBy, spend})
 		return
 	}
-	jsonResponse(w, headroomWithUsers{rotation.HeadroomResponse{Providers: []rotation.Headroom{}, Enabled: false, Readings: false}, usedBy})
+	jsonResponse(w, headroomWithUsers{rotation.HeadroomResponse{Providers: []rotation.Headroom{}, Enabled: false, Readings: false}, usedBy, spend})
 }
 
 // headroomWithUsers adds used_by to the headroom response: for each provider,
@@ -45,6 +46,11 @@ func (s *Server) handleProvidersHeadroom(w http.ResponseWriter, r *http.Request)
 type headroomWithUsers struct {
 	rotation.HeadroomResponse
 	UsedBy map[string][]string `json:"used_by"`
+	// GatewaySpend is, per configured gateway with enabled agents, their
+	// estimated spend at the gateway's prices, with the models whose price is
+	// unknown listed instead of counted. Gateways have no plan to measure, so
+	// the gauge shows dollars for them, not a dial.
+	GatewaySpend []gatewaySpendRow `json:"gateway_spend,omitempty"`
 }
 
 // usageProvidersUsedBy groups the enabled agents by the provider whose plan

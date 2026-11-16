@@ -21,6 +21,10 @@ const inboxSweepTimeout = 2 * time.Minute
 // audio past inbox.recording.retention_days is deleted.
 const inboxRecordingSweepInterval = 10 * time.Minute
 
+// inboxRFCCheckInterval is how often delegated RFC shares are checked for
+// their published issue.
+const inboxRFCCheckInterval = 10 * time.Minute
+
 // bootInbox builds the Inbox service. Sources are the configured knowledge
 // connectors whose type is a voice source (inbox.sources, default
 // plaud/wisprflow); with none configured the service still exists and lists
@@ -72,6 +76,32 @@ func (b *boot) bootInbox(baseDir string) {
 	})
 	b.inboxSvc = svc
 	b.startInboxRecordingSweep(svc)
+	// A delegated RFC share completes when its issue (carrying the item's
+	// provenance reference) shows up on the target repo; the finder reads
+	// b.ghClient at call time because that client is installed after boot.
+	svc.SetRFCFinder(func(ctx context.Context, repo, marker string) (string, error) {
+		if b.ghClient == nil {
+			return "", nil
+		}
+		return b.ghClient.FindIssueByBody(ctx, repo, marker)
+	})
+	if b.ctx != nil {
+		go func() {
+			t := time.NewTicker(inboxRFCCheckInterval)
+			defer t.Stop()
+			for {
+				select {
+				case <-b.ctx.Done():
+					return
+				case <-t.C:
+					ctx, cancel := context.WithTimeout(b.ctx, inboxSweepTimeout)
+					svc.CheckRFCPublications(ctx)
+					cancel()
+				}
+			}
+		}()
+	}
+	b.wireMailAllowlist(baseDir)
 	b.logger.Info("inbox started", "sources", len(srcs), "rules", len(b.cfg.Inbox.Rules))
 	if tx := b.cfg.Inbox.Transcription; tx.Enabled {
 		// Transcription reaches the provider from the hive process itself,

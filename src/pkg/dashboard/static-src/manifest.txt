@@ -122,6 +122,7 @@ js/label-filter.js
 js/pinned-filters.js
 js/repos-render.js
 js/budget.js
+js/model-picker.js
 js/backends-tokens.js
 js/cost.js
 js/acmm-lifecycle.js

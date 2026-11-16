@@ -64,3 +64,8 @@
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
     }
+    /* Share history pills: status links, not buttons. */
+    a.inbox-share-pill { text-decoration: none; color: inherit; cursor: pointer; }
+    a.inbox-share-pill:hover, a.inbox-share-pill:focus-visible { text-decoration: underline; }
+    .inbox-share-more { text-decoration: none; color: var(--text-faint); }
+    .inbox-share-more:hover, .inbox-share-more:focus-visible { text-decoration: underline; }

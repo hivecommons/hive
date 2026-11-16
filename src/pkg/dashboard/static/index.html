@@ -3790,6 +3790,7 @@
     .overview-usage-gauge__row + .overview-usage-gauge__row { padding-top: var(--sp-3); border-top: 1px solid var(--border); }
     .overview-usage-gauge__provider { font-weight: var(--fw-semibold); }
     .overview-usage-gauge__users { font-size: var(--fs-sm); color: var(--text-muted); overflow-wrap: anywhere; }
+    .overview-usage-gauge__spend { font-size: var(--fs-base); font-weight: 600; }
     .overview-usage-gauge__dials { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: var(--sp-4); }
     .overview-usage-gauge__dial { display: flex; flex-direction: column; align-items: center; gap: var(--sp-1); text-align: center; }
     .overview-usage-gauge__label { font-weight: var(--fw-semibold); }
@@ -4168,6 +4169,7 @@
     .cost-session-active { color: var(--green); font-weight: 600; }
     .cost-subtable-title { font-size: 0.72rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; margin: var(--sp-6) var(--sp-0) var(--sp-2); }
     .cost-disclaimer { font-size: 0.65rem; color: var(--muted); margin-top: 10px; line-height: 1.4; }
+    .cost-price-unknown { color: var(--muted); font-style: italic; white-space: nowrap; }
     .cost-recording-notice { border: var(--line-width) solid var(--status-warn); border-radius: var(--r-lg); color: var(--status-warn); font-size: var(--fs-sm); font-weight: var(--fw-bold); line-height: 1.4; margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); }
     .cost-recording-notice a { color: inherit; text-decoration: underline; }
     .cost-recording-incomplete { color: var(--status-warn); font-weight: var(--fw-bold); }
@@ -5134,6 +5136,20 @@
       .config-body { --config-body-pad: 14px; padding: var(--sp-0) var(--config-body-pad) var(--config-body-pad); }
       .config-field-row, .config-field-row4 { grid-template-columns: 1fr; }
     }
+    /* Searchable, grouped gateway model picker (js/model-picker.js). Tokens only. */
+    .model-combo { position: relative; }
+    .model-combo-input { width: 100%; box-sizing: border-box; }
+    .model-combo-list { position: absolute; left: 0; right: 0; top: 100%; z-index: 30; margin: var(--sp-1) var(--sp-0) var(--sp-0); padding: var(--sp-2) var(--sp-0); list-style: none; max-height: 320px; overflow-y: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); }
+    .model-combo-list[hidden] { display: none; }
+    .model-combo-group { padding: var(--sp-3) var(--sp-4) var(--sp-1); font-size: var(--fs-xs); font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+    .model-combo-option { display: flex; justify-content: space-between; gap: var(--sp-4); padding: var(--sp-2) var(--sp-4); font-size: var(--fs-sm); color: var(--fg); cursor: pointer; }
+    .model-combo-option:hover, .model-combo-option[aria-selected="true"] { background: var(--bg); outline: 1px solid var(--cyan); outline-offset: -1px; }
+    .model-combo-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+    .model-combo-detail, .model-combo-current { color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; }
+    .model-combo-current { margin-top: var(--sp-2); white-space: normal; }
+    .model-combo-current:empty { display: none; }
+    .model-combo-custom { color: var(--cyan); }
+    .model-combo-empty { padding: var(--sp-2) var(--sp-4); font-size: var(--fs-sm); color: var(--muted); }
     /* Settings → Forge App → GitHub webhooks (hivecommons/hive#18017) */
     .wh-section-title { font-weight: 600; font-size: var(--fs-base); margin: var(--sp-5) 0 var(--sp-2); }
     .wh-intro { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-3); }
@@ -6120,6 +6136,11 @@
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
     }
+    /* Share history pills: status links, not buttons. */
+    a.inbox-share-pill { text-decoration: none; color: inherit; cursor: pointer; }
+    a.inbox-share-pill:hover, a.inbox-share-pill:focus-visible { text-decoration: underline; }
+    .inbox-share-more { text-decoration: none; color: var(--text-faint); }
+    .inbox-share-more:hover, .inbox-share-more:focus-visible { text-decoration: underline; }
     /* Meetings: hive as a live meeting participant (Quorum) */
     .meetings-panel { display: flex; flex-direction: column; gap: var(--sp-4); }
     .meetings-join { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto auto; gap: var(--sp-2); align-items: end; }
@@ -9499,7 +9520,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
 
         <details class="faq-q" id="faq-l1-l2">
           <summary>What are L1 and L2 for?</summary>
-          <p><strong>L1 is inception; L2 is calibration.</strong> At L1 the <strong>brainstorm</strong> agent can turn a raw idea or existing repo into structured facts and a scaffold through the <code>/api/inception</code> workflow; it asks clarifying questions and stops when you approve. In the dashboard, the <strong>Inception (spek)</strong> section is where you work an idea interactively in a shared CLI-agent session. At L2 the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
+          <p><strong>L1 is inception; L2 is calibration.</strong> At L1 you work an idea interactively in the dashboard's <strong>Inception (spek)</strong> section, a shared CLI-agent session; the old <code>/api/inception</code> workflow was retired and now answers 410 Gone. The <strong>brainstorm</strong> agent proposes ideas as advisory beads. At L2 the hive watches your repo and records what it finds, but it does not open ordinary issues or PRs. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/inception.md" target="_blank" rel="noopener noreferrer">Inception</a> and the <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/acmm-policy-matrix.md" target="_blank" rel="noopener noreferrer">ACMM policy matrix</a>.</p>
           <p>The job at L2 is not to fix everything in the ledger. It is to decide whether you believe the hive's judgement: point your own local agent — <code>claude</code>, <code>bob</code>, or <code>copilot</code> — at the 🐝 Hive Advisory Report and ask whether the findings hold up before you give Hive more authority.</p>
         </details>
 
@@ -38173,6 +38194,307 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       </div>`;
     }
 
+    // Searchable, grouped model picker for gateways with large catalogs
+    // (OpenRouter lists ~470 models). A combobox: type to filter, options are
+    // grouped by provider prefix (z-ai/, deepseek/, anthropic/, …), curated
+    // suggestions are pinned on top, and each option shows its price per 1M
+    // input/output tokens and context window when the catalog publishes them.
+    // The typed text IS the value, so a model the catalog does not list yet is
+    // always enterable ("Custom…"). ARIA: input[role=combobox] owning a
+    // ul[role=listbox]; ArrowUp/ArrowDown move, Enter picks, Escape closes.
+    // The helpers above modelComboboxHtml are pure (no DOM) so node tests can
+    // run them.
+
+    // Below this many options a plain <select> stays simpler to use.
+    const MODEL_COMBOBOX_MIN_OPTIONS = 20;
+    const MODEL_TOKENS_PER_MILLION = 1000000;
+    const MODEL_CTX_MILLION = 1000000;
+    const MODEL_CTX_THOUSAND = 1000;
+    // Prices under this many dollars per 1M get extra significant digits so
+    // $0.0042 does not render as $0.00.
+    const MODEL_PRICE_SMALL_USD = 0.1;
+    const MODEL_PRICE_SIG_DIGITS = 2;
+    const MODEL_PRICE_FIXED_DIGITS = 2;
+    const MODEL_GROUP_OTHER = 'other';
+    const MODEL_GROUP_SUGGESTED = 'Suggested';
+
+    // modelProviderOf returns the provider prefix of a namespaced id
+    // ("z-ai/glm-5.3" → "z-ai"); '' for a bare id. A leading "~" (OpenRouter's
+    // "-latest" aliases) is ignored so ~anthropic/... groups with anthropic.
+    function modelProviderOf(id) {
+      const s = String(id || '').replace(/^~/, '');
+      const i = s.indexOf('/');
+      return i > 0 ? s.slice(0, i) : '';
+    }
+
+    // modelInfoIndex turns a model_info array into an id → info map.
+    function modelInfoIndex(info) {
+      const idx = {};
+      (Array.isArray(info) ? info : []).forEach(m => { if (m && m.id) idx[m.id] = m; });
+      return idx;
+    }
+
+    // formatModelPricePerM renders a per-token USD price as dollars per 1M
+    // tokens; '' when unknown. Zero is a real price ("$0", free models).
+    function formatModelPricePerM(perToken) {
+      if (perToken === null || perToken === undefined || perToken === '') return '';
+      const v = Number(perToken) * MODEL_TOKENS_PER_MILLION;
+      if (!Number.isFinite(v) || v < 0) return '';
+      if (v === 0) return '$0';
+      if (v < MODEL_PRICE_SMALL_USD) return '$' + Number(v.toPrecision(MODEL_PRICE_SIG_DIGITS));
+      return '$' + v.toFixed(MODEL_PRICE_FIXED_DIGITS);
+    }
+
+    // formatModelContext renders a context window ("1M ctx", "200K ctx").
+    function formatModelContext(n) {
+      const v = Number(n);
+      if (!Number.isFinite(v) || v <= 0) return '';
+      if (v >= MODEL_CTX_MILLION) return Number((v / MODEL_CTX_MILLION).toFixed(1)) + 'M ctx';
+      return Math.round(v / MODEL_CTX_THOUSAND) + 'K ctx';
+    }
+
+    // modelPriceLabel is the right-hand detail of an option: price per 1M
+    // input / output tokens (and cached input when published) plus context.
+    // A model with no published price says so instead of looking free.
+    function modelPriceLabel(info) {
+      if (!info) return '';
+      const p = info.pricing || {};
+      const parts = [];
+      const inP = formatModelPricePerM(p.prompt);
+      const outP = formatModelPricePerM(p.completion);
+      if (inP && outP) {
+        const cached = formatModelPricePerM(p.input_cache_read);
+        parts.push(inP + ' in · ' + outP + ' out /1M' + (cached ? ' · ' + cached + ' cached' : ''));
+      } else {
+        parts.push('price unknown');
+      }
+      const ctx = formatModelContext(info.context_length);
+      if (ctx) parts.push(ctx);
+      return parts.join(' · ');
+    }
+
+    // filterModelOptions keeps ids whose id or display name contains EVERY
+    // whitespace-separated term of query (case-insensitive). An empty query
+    // keeps everything.
+    function filterModelOptions(ids, query, infoIdx) {
+      const terms = String(query || '').toLowerCase().split(/\s+/).filter(Boolean);
+      const list = Array.isArray(ids) ? ids : [];
+      if (!terms.length) return list.slice();
+      const idx = infoIdx || {};
+      return list.filter(id => {
+        const hay = (String(id) + ' ' + ((idx[id] && idx[id].name) || '')).toLowerCase();
+        return terms.every(t => hay.indexOf(t) !== -1);
+      });
+    }
+
+    // groupModelOptions buckets ids by provider prefix, groups sorted by name
+    // and ids kept in their given order; bare ids land in "other", last.
+    // Suggested ids (when given and present) form a first "Suggested" group
+    // and are not repeated below.
+    function groupModelOptions(ids, suggested) {
+      const list = Array.isArray(ids) ? ids : [];
+      const present = new Set(list);
+      const pinned = (Array.isArray(suggested) ? suggested : [])
+        .map(s => (s && typeof s === 'object') ? s.id : s)
+        .filter(id => id && present.has(id));
+      const pinnedSet = new Set(pinned);
+      const byProvider = {};
+      list.forEach(id => {
+        if (pinnedSet.has(id)) return;
+        const prov = modelProviderOf(id) || MODEL_GROUP_OTHER;
+        (byProvider[prov] = byProvider[prov] || []).push(id);
+      });
+      const names = Object.keys(byProvider).sort((a, b) => {
+        if (a === MODEL_GROUP_OTHER) return 1;
+        if (b === MODEL_GROUP_OTHER) return -1;
+        return a.localeCompare(b);
+      });
+      const groups = names.map(name => ({ provider: name, ids: byProvider[name] }));
+      if (pinned.length) groups.unshift({ provider: MODEL_GROUP_SUGGESTED, ids: pinned, suggested: true });
+      return groups;
+    }
+
+    // In-page state per combobox: its full id list, info index and
+    // suggestions, so typing re-filters without another fetch.
+    const _modelCombos = {};
+
+    function _modelComboOptionId(comboId, i) { return comboId + '-opt-' + i; }
+
+    // modelComboListHtml renders the listbox body for a query: grouped
+    // options, then a custom entry for the typed text when it is not an exact
+    // catalog id. Options carry data-value; the active one is aria-selected.
+    function modelComboListHtml(comboId, query) {
+      const st = _modelCombos[comboId] || { ids: [], info: {}, suggested: [] };
+      const labels = {};
+      (st.suggested || []).forEach(s => { if (s && s.id) labels[s.id] = s.label; });
+      const matches = filterModelOptions(st.ids, query, st.info);
+      const groups = groupModelOptions(matches, query ? [] : st.suggested);
+      let n = 0;
+      let html = '';
+      groups.forEach(g => {
+        html += `<li role="presentation" class="model-combo-group">${esc(g.provider)}</li>`;
+        g.ids.forEach(id => {
+          const detail = modelPriceLabel(st.info[id]);
+          const name = labels[id] || id;
+          html += `<li role="option" id="${esc(_modelComboOptionId(comboId, n))}" tabindex="-1" class="model-combo-option" aria-selected="false" data-value="${esc(id)}" data-action="modelComboPick" data-arg0="${esc(comboId)}" data-arg1="${esc(id)}">`
+            + `<span class="model-combo-name">${esc(name)}</span>`
+            + (detail ? `<span class="model-combo-detail">${esc(detail)}</span>` : '')
+            + '</li>';
+          n++;
+        });
+      });
+      const typed = String(query || '').trim();
+      const exact = typed && st.ids.indexOf(typed) !== -1;
+      const customText = typed && !exact ? `Use “${typed}” as a custom model id` : 'Custom… (type any model id)';
+      html += `<li role="option" id="${esc(_modelComboOptionId(comboId, n))}" tabindex="-1" class="model-combo-option model-combo-custom" aria-selected="false" data-value="${esc(typed && !exact ? typed : '')}" data-custom="1" data-action="modelComboPick" data-arg0="${esc(comboId)}" data-arg1="${esc(typed && !exact ? typed : '')}">${esc(customText)}</li>`;
+      if (!matches.length && typed) {
+        html = `<li role="presentation" class="model-combo-empty">No catalog model matches “${esc(typed)}”.</li>` + html;
+      }
+      return html;
+    }
+
+    // modelComboboxHtml renders the combobox and records its data. opts:
+    // { id, ids, info (model_info array), suggested ([{id,label}]), current,
+    //   placeholder, inputId, label }.
+    function modelComboboxHtml(opts) {
+      const o = opts || {};
+      const comboId = o.id;
+      _modelCombos[comboId] = {
+        ids: Array.isArray(o.ids) ? o.ids.slice() : [],
+        info: modelInfoIndex(o.info),
+        suggested: Array.isArray(o.suggested) ? o.suggested : [],
+      };
+      const listId = comboId + '-list';
+      const inputId = o.inputId || (comboId + '-input');
+      const cur = o.current || '';
+      const curDetail = modelPriceLabel(_modelCombos[comboId].info[cur]);
+      return `<div class="model-combo" data-model-combo="${esc(comboId)}">`
+        + `<input type="text" id="${esc(inputId)}" class="model-combo-input" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="${esc(listId)}"`
+        + (o.label ? ` aria-label="${esc(o.label)}"` : '')
+        + ` autocomplete="off" spellcheck="false" value="${esc(cur)}" placeholder="${esc(o.placeholder || 'Search models or type an id…')}"`
+        + ` data-model-combo-input="${esc(comboId)}" data-input-action="modelComboInput" data-keydown-action="modelComboKeydown" data-keys="*" data-arg0="${esc(comboId)}" data-arg-types="s,e"`
+        + ` data-action="modelComboOpen">`
+        + `<ul id="${esc(listId)}" class="model-combo-list" role="listbox" hidden></ul>`
+        + `<div class="model-combo-current" data-model-combo-detail="${esc(comboId)}">${esc(curDetail)}</div>`
+        + '</div>';
+    }
+
+    function _modelComboEls(comboId) {
+      const root = document.querySelector(`[data-model-combo="${CSS.escape(comboId)}"]`);
+      if (!root) return null;
+      return { root, input: root.querySelector('[role="combobox"]'), list: root.querySelector('[role="listbox"]'), detail: root.querySelector('[data-model-combo-detail]') };
+    }
+
+    function _modelComboSetOpen(els, open) {
+      els.list.hidden = !open;
+      els.input.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (!open) els.input.removeAttribute('aria-activedescendant');
+    }
+
+    function _modelComboRender(comboId, query) {
+      const els = _modelComboEls(comboId);
+      if (!els) return null;
+      els.list.innerHTML = modelComboListHtml(comboId, query);
+      _modelComboSetOpen(els, true);
+      return els;
+    }
+
+    // modelComboOpen opens the full (unfiltered) list on click.
+    function modelComboOpen(comboId) {
+      if (comboId) _modelComboRender(comboId, '');
+    }
+
+    function modelComboInput(comboId) {
+      const els = _modelComboEls(comboId);
+      if (!els) return;
+      _modelComboRender(comboId, els.input.value);
+      _modelComboUpdateDetail(comboId);
+    }
+
+    function _modelComboUpdateDetail(comboId) {
+      const els = _modelComboEls(comboId);
+      const st = _modelCombos[comboId];
+      if (!els || !st || !els.detail) return;
+      els.detail.textContent = modelPriceLabel(st.info[els.input.value.trim()]);
+    }
+
+    function _modelComboMove(els, delta) {
+      const opts = Array.from(els.list.querySelectorAll('[role="option"]'));
+      if (!opts.length) return;
+      let i = opts.findIndex(o => o.getAttribute('aria-selected') === 'true');
+      if (i >= 0) opts[i].setAttribute('aria-selected', 'false');
+      i = i < 0 ? (delta > 0 ? 0 : opts.length - 1) : (i + delta + opts.length) % opts.length;
+      opts[i].setAttribute('aria-selected', 'true');
+      els.input.setAttribute('aria-activedescendant', opts[i].id);
+      if (opts[i].scrollIntoView) opts[i].scrollIntoView({ block: 'nearest' });
+    }
+
+    function modelComboKeydown(comboId, e) {
+      const els = _modelComboEls(comboId);
+      if (!els || !e) return;
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (els.list.hidden) _modelComboRender(comboId, els.input.value);
+        _modelComboMove(els, e.key === 'ArrowDown' ? 1 : -1);
+      } else if (e.key === 'Enter') {
+        if (els.list.hidden) return;
+        e.preventDefault();
+        const active = els.list.querySelector('[role="option"][aria-selected="true"]');
+        modelComboPick(comboId, active ? active.dataset.value : els.input.value.trim());
+      } else if (e.key === 'Escape') {
+        if (!els.list.hidden) { e.preventDefault(); e.stopPropagation(); _modelComboSetOpen(els, false); }
+      }
+    }
+
+    // modelComboPick commits a value (a catalog id or typed custom text). An
+    // empty custom pick clears the field and keeps focus for typing.
+    function modelComboPick(comboId, value) {
+      const els = _modelComboEls(comboId);
+      if (!els) return;
+      const v = String(value || '').trim();
+      if (!v) {
+        els.input.value = '';
+        els.input.focus();
+        _modelComboRender(comboId, '');
+        return;
+      }
+      els.input.value = v;
+      _modelComboSetOpen(els, false);
+      _modelComboUpdateDetail(comboId);
+      els.input.dispatchEvent(new Event('change', { bubbles: true }));
+      els.input.focus();
+    }
+
+    // modelComboValue reads a combobox's committed text ('' when absent).
+    function modelComboValue(comboId) {
+      const els = _modelComboEls(comboId);
+      return els ? els.input.value.trim() : '';
+    }
+
+    // Close an open list when focus leaves the combobox entirely (options are
+    // tabindex=-1, so clicking one keeps focus inside and the pick lands).
+    document.addEventListener('focusout', (e) => {
+      const root = e.target && e.target.closest ? e.target.closest('[data-model-combo]') : null;
+      if (!root || (e.relatedTarget && root.contains(e.relatedTarget))) return;
+      const input = root.querySelector('[role="combobox"]');
+      const list = root.querySelector('[role="listbox"]');
+      if (input && list) _modelComboSetOpen({ input, list }, false);
+    });
+
+    // shouldGroupModelOptions: a native <select> (the per-agent model pickers,
+    // which other code drives by value) gets <optgroup>s by provider once the
+    // list is large and spans more than one provider.
+    function shouldGroupModelOptions(values) {
+      const list = Array.isArray(values) ? values : [];
+      return list.length >= MODEL_COMBOBOX_MIN_OPTIONS && new Set(list.map(modelProviderOf)).size > 1;
+    }
+
+    // modelOptgroupsHtml renders values as provider <optgroup>s, each option
+    // produced by render(value) so callers keep their own selected/label logic.
+    function modelOptgroupsHtml(values, render) {
+      return groupModelOptions(values).map(g =>
+        `<optgroup label="${esc(g.provider)}">${g.ids.map(render).join('')}</optgroup>`).join('');
+    }
     // ── Centralized backend/model config (mirrors backends.conf) ──────────
     // 'openrouter' is a first-class inference method (an OpenAI-compatible gateway
     // preset), so it appears in every backend/method picker even before a matching
@@ -38511,10 +38833,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // consistent "<value> ▾" look across both dropdown buttons.
         return `<option value="${esc(m.value)}"${sel ? ' selected' : ''}>${esc(m.label)}${sel ? ' ▾' : ''}</option>`;
       });
-      if (cur && !matched) {
-        opts.unshift(`<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())} (current) ▾</option>`);
+      // Large gateway catalogs (OpenRouter) group by provider so ~hundreds
+      // of ids stay scannable; the option values and selection are unchanged.
+      let body = opts.join('');
+      if (typeof shouldGroupModelOptions === 'function' && shouldGroupModelOptions(models.map(m => m.value))) {
+        const byValue = {};
+        models.forEach((m, i) => { if (!(m.value in byValue)) byValue[m.value] = opts[i]; });
+        body = modelOptgroupsHtml(Object.keys(byValue), v => byValue[v]);
       }
-      return opts.join('');
+      if (cur && !matched) {
+        body = `<option value="${esc(cur)}" selected>${esc(cur.split('/').pop())} (current) ▾</option>` + body;
+      }
+      return body;
     }
     async function fetchInferenceModels(backend, force) {
       const now = Date.now();
@@ -38551,6 +38881,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // none; entitledModels: the FULL set the gateway's team may use, so
           // a stored model outside it can be flagged (#9945).
           defaultModel: data.default_model || '',
+          // modelInfo: id → {name, context_length, pricing} for OpenRouter
+          // gateways (prices per token), so pickers can show $/1M.
+          modelInfo: (typeof modelInfoIndex === 'function') ? modelInfoIndex(data.model_info) : {},
           entitledModels: Array.isArray(data.entitled_models) ? data.entitled_models : null,
         };
         // A real (non-fallback) discovery may have changed the entitlement-
@@ -39802,6 +40135,11 @@ function burnAreaChart() {
       const est = cost.estimated || { total_usd: 0, by_model: [], by_agent: [], unpriced_models: [] };
       const gateways = cost.gateways || [];
       const isTierEstimated = (row) => row && (row.source === 'unpriced' || row.source === 'estimated_tier');
+      // source "unknown": a gateway model with no published or configured
+      // price. Its tokens are not in the total, so the cell says so instead
+      // of showing $0.
+      const isPriceUnknown = (row) => row && row.source === 'unknown';
+      const priceUnknownCell = (row) => `<span class="cost-price-unknown" title="This gateway publishes no price for this model and none is configured (prices: on the gateway). Not counted in the total.">price unknown${row && row.usd > 0 ? ' (+' + fmtUSD(row.usd) + ' priced)' : ''}</span>`;
       const usageWindow = estimatedUsageWindowLabel(est);
 
       // Native gateway cards (OpenRouter / LiteLLM real spend).
@@ -39874,7 +40212,7 @@ function burnAreaChart() {
       }), 'model', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
       const modelRows = models.map(m => {
         const approx = isTierEstimated(m);
-        const usdCell = approx
+        const usdCell = isPriceUnknown(m) ? priceUnknownCell(m) : approx
           ? `<span title="unknown exact price — tier estimate, not billed spend">~${fmtUSD(m.usd)}</span>`
           : fmtUSD(m.usd);
         const users = m._users || [];
@@ -39890,9 +40228,11 @@ function burnAreaChart() {
         </tr>`;
       }).join('');
 
-      const unpricedNote = (est.unpriced_models && est.unpriced_models.length)
+      const unpricedNote = ((est.unpriced_models && est.unpriced_models.length)
         ? `<div class="cost-disclaimer">Tier-estimated (no exact list price, marked ~ and included in the total): ${est.unpriced_models.map(esc).join(', ')}.</div>`
-        : '';
+        : '') + ((est.unknown_price_models && est.unknown_price_models.length)
+        ? `<div class="cost-disclaimer">Price unknown (gateway models with no published or configured price; NOT in the total, which is therefore a floor): ${est.unknown_price_models.map(esc).join(', ')}. Add <code>prices:</code> to the gateway in hive.yaml to cost them.</div>`
+        : '');
 
       // ── Per-sandbox (per-agent) estimated cost ──
       // In hive each agent runs in its own sandbox, so "usage by sandbox" is the
@@ -39900,7 +40240,7 @@ function burnAreaChart() {
       const bySandbox = sortCostRows(est.by_agent || [], 'sandbox', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
       const sandboxRows = bySandbox.map(a => {
         const approx = isTierEstimated(a);
-        const usdCell = approx
+        const usdCell = isPriceUnknown(a) ? priceUnknownCell(a) : approx
           ? `<span title="unknown exact price — tier estimate for this sandbox's model">~${fmtUSD(a.usd)}</span>`
           : fmtUSD(a.usd);
         return `<tr>
@@ -39933,7 +40273,7 @@ function burnAreaChart() {
       };
       const sessionRows = bySession.map(sn => {
         const approx = isTierEstimated(sn);
-        const usdCell = approx
+        const usdCell = isPriceUnknown(sn) ? priceUnknownCell(sn) : approx
           ? `<span title="unknown exact price — tier estimate for this model">~${fmtUSD(sn.usd)}</span>`
           : fmtUSD(sn.usd);
         // "started → ended" in local time; a still-active session (latest event
@@ -47436,6 +47776,12 @@ function burnAreaChart() {
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
     // Uploaded documents have no audio; uploaded audio/video does.
     function inboxItemHasAudio(it) { return !it || it.source !== 'upload' || it.upload_kind === 'audio' || it.upload_kind === 'video'; }
+    // The role is known once /api/role settled (answered, or retries gave up:
+    // then it is undefined and every gate treats the viewer as read-only).
+    // Before that the Inbox renders a neutral loading state, never a guessed 'read'.
+    function inboxRoleKnown() { return window._hiveRoleSettled === true || window._hiveRole !== undefined; }
+    function inboxOnRoleReady() { if (_inboxCache) renderInbox(); }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(inboxOnRoleReady);
     function inboxItemKey(it) { return it.source + '/' + it.id; }
     // Playback is a read of private audio: owners and read-write sessions.
     function inboxViewerCanPlay() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
@@ -47712,6 +48058,70 @@ function burnAreaChart() {
       await fetchInbox();
     }
 
+    // Share history pills: one per share record, in the form
+    // "→ RFC #18412 · andy · 2m ago". They are status, not controls: a plain
+    // link to the target when there is one (never for read-only viewers),
+    // otherwise a span. Only the latest record per destination shows; "+N"
+    // expands the rest.
+    const _inboxHistoryOpen = new Set();
+    const INBOX_SHARE_LABELS = { rfc: 'RFC', dibs: 'DIBS', knowledge: 'Knowledge', spek: 'spek' };
+    function inboxSharePillText(rec) {
+      const dest = rec.destination;
+      const ref = rec.ref || {};
+      let label = '→ ' + (INBOX_SHARE_LABELS[dest] || dest);
+      if (dest === 'rfc' && ref.number) label += ' #' + ref.number;
+      if (dest === 'spek' && ref.name) label += ': ' + ref.name;
+      const busy = rec.status === 'queued' || rec.status === 'transcribing' || rec.status === 'in_progress';
+      if (rec.status === 'failed') label += ' failed';
+      else if (rec.status === 'transcribing') label += ' (transcribing)';
+      else if (busy) label += ' …';
+      const when = rec.started_at && !String(rec.started_at).startsWith('0001') ? relativeTimeShort(rec.started_at) : '';
+      return label + ' · ' + (rec.actor || 'unknown') + (when ? ' · ' + when : '');
+    }
+    // inboxShareTargetHref returns the link target of a record, or '' when
+    // it has none or the viewer may not open it.
+    function inboxShareTargetHref(rec, canOpen) {
+      const ref = rec.ref || {};
+      if (!canOpen) return '';
+      if ((rec.destination === 'rfc' || rec.destination === 'dibs') && /^https?:\/\//.test(ref.url || '')) return ref.url;
+      if (rec.destination === 'spek' && ref.id) return '#section-sessions-section?session=' + encodeURIComponent(ref.id);
+      return '';
+    }
+    function inboxSharePillHtml(rec, it) {
+      const busy = rec.status === 'queued' || rec.status === 'transcribing' || rec.status === 'in_progress';
+      const status = rec.status === 'failed' ? 'error' : (rec.status === 'done' ? 'ok' : 'syncing');
+      const stamp = rec.finished_at || rec.started_at;
+      const title = (rec.status === 'failed' && rec.reason ? rec.reason + ' · ' : (rec.reason && busy ? rec.reason + ' · ' : '')) + (stamp ? formatDashboardDateTime(stamp) : '');
+      const inner = (busy ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> ' : '') + escapeHtml(inboxSharePillText(rec));
+      const attrs = ' class="kc-pill inbox-share-pill" data-status="' + status + '" data-share-dest="' + escapeHtml(rec.destination) + '" title="' + escapeHtml(title) + '"';
+      const canOpen = inboxViewerCanPlay();
+      const href = inboxShareTargetHref(rec, canOpen);
+      if (href) return '<a' + attrs + ' href="' + escapeHtml(href) + '"' + (/^https?:/.test(href) ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + inner + '</a>';
+      if (canOpen && rec.destination === 'knowledge' && (rec.ref || {}).id && it && it.fact_slug) {
+        return '<a' + attrs + ' href="#" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '">' + inner + '</a>';
+      }
+      return '<span' + attrs + '>' + inner + '</span>';
+    }
+    function inboxSharePillsHtml(it, key) {
+      const hist = (it && it.share_history) || [];
+      if (!hist.length) return '';
+      const open = _inboxHistoryOpen.has(key);
+      const latest = {};
+      hist.forEach(r => { latest[r.destination] = r; });
+      const shown = hist.filter(r => open || latest[r.destination] === r);
+      const hidden = hist.length - shown.length;
+      let html = shown.map(r => inboxSharePillHtml(r, it)).join(' ');
+      if (hidden > 0 || (open && hist.length > Object.keys(latest).length)) {
+        html += ' <a href="#" class="muted-xs inbox-share-more" data-action="inboxToggleHistory" data-prevent="1" data-arg0="' + escapeHtml(it.source) + '" data-arg1="' + escapeHtml(it.id) + '" aria-expanded="' + (open ? 'true' : 'false') + '" title="' + (open ? 'Show only the latest share per destination' : 'Show the full share history') + '">' + (open ? 'less' : '+' + hidden) + '</a>';
+      }
+      return html;
+    }
+    function inboxToggleHistory(src, id) {
+      const key = src + '/' + id;
+      if (_inboxHistoryOpen.has(key)) _inboxHistoryOpen.delete(key); else _inboxHistoryOpen.add(key);
+      renderInbox();
+    }
+
     function inboxItemHtml(it) {
       const key = inboxItemKey(it);
       const checked = _inboxSelected.has(key) ? ' checked' : '';
@@ -47729,6 +48139,7 @@ function burnAreaChart() {
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
       if (it.dismissed) pills += '<span class="kc-pill" title="Kept as a Knowledge fact only">knowledge only</span>';
+      pills += inboxSharePillsHtml(it, key);
       for (const d of Object.keys(it.share_intents || {})) {
         const si = it.share_intents[d];
         if (si && si.status === 'failed') pills += '<span class="kc-pill" data-status="error" title="' + escapeHtml(si.error || '') + '">→ ' + escapeHtml(inboxIntentLabel(d)) + ' failed</span> <span class="kc-error muted-xs" role="alert">' + escapeHtml(si.error || '') + '</span> ';
@@ -48030,7 +48441,7 @@ function burnAreaChart() {
       const badge = document.getElementById('inbox-sidebar-badge');
       const data = _inboxCache;
       if (!panel) return;
-      if (!data) { panel.innerHTML = '<div class="muted-note">Loading inbox…</div>'; return; }
+      if (!data || !inboxRoleKnown()) { panel.innerHTML = '<div class="muted-note">Loading inbox…</div>'; return; }
       const items = data.items || [];
       const unprocessed = Number(data.unprocessed) || 0;
       if (badge) setSidebarCountBadge(badge, unprocessed, unprocessed + ' unprocessed');
@@ -48053,6 +48464,7 @@ function burnAreaChart() {
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
+      if (window._hiveRoleFailed && !window._hiveRole) html += '<div class="muted-xs">Could not determine your role, so actions are read-only. It will retry automatically.</div>';
       if (inboxCanAdd()) html += inboxAddPanelHtml() + inboxUploadsHtml();
       if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
       if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
@@ -52920,19 +53332,45 @@ function burnAreaChart() {
         ? Object.keys(usedBy).filter((id) => Array.isArray(usedBy[id]) && usedBy[id].length > 0)
           .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
         : ['anthropic'];
+      // Gateways (OpenRouter, LiteLLM, vLLM, …) have no plan to measure, so
+      // they get a spend row in dollars at the gateway's prices instead of a
+      // dial. Models with no published or configured price are listed as
+      // "price unknown", never counted as $0.
+      const spend = (resp && Array.isArray(resp.gateway_spend) ? resp.gateway_spend : [])
+        .filter((g) => g && g.gateway && Array.isArray(g.agents) && g.agents.length)
+        .map((g) => {
+          const unknown = Array.isArray(g.unknown_price_models) ? g.unknown_price_models.map(String) : [];
+          const usd = Number(g.usd) || 0;
+          return {
+            gateway: String(g.gateway), kind: String(g.kind || ''), usedBy: g.agents.map(String),
+            usd: usd, tokens: Number(g.tokens) || 0, unknownModels: unknown,
+            state: unknown.length && usd === 0 ? 'unknown' : (unknown.length ? 'partial' : 'priced'),
+          };
+        });
       const rows = ids.map((id) => providerRow(id, readingFor(id), usedBy ? usedBy[id].map(String) : null, !!usedBy))
         .filter((row) => row.shown);
       if (!rows.length) {
         const legacy = !usedBy ? providerRow('anthropic', readingFor('anthropic'), null, false) : null;
         return legacy && legacy.state === 'no-reading' && legacy.cause !== 'absent'
-          ? Object.assign(legacy, { rows: [] })
-          : { state: 'no-reading', shown: false, rows: [], cause: 'absent', reason: 'Usage measurement is not running on this hive.' };
+          ? Object.assign(legacy, { rows: [], spend: spend })
+          : { state: 'no-reading', shown: false, rows: [], spend: spend, cause: 'absent', reason: 'Usage measurement is not running on this hive.' };
       }
       // The needle row is the one with the least left; rows without a
       // reading only lead when no row has one.
       let lead = rows.find((row) => row.state === 'reading') || rows[0];
       rows.forEach((row) => { if (row.state === 'reading' && row.needle.pctLeft < lead.needle.pctLeft) lead = row; });
-      return Object.assign({}, lead, { shown: true, rows: rows });
+      return Object.assign({}, lead, { shown: true, rows: rows, spend: spend });
+    }
+
+    // subscriptionGaugeSpendText is a gateway spend row's one-line summary:
+    // "$1.23 at gateway prices", "$1.23 + price unknown for qwen", or
+    // "price unknown (qwen)" when nothing could be costed.
+    function subscriptionGaugeSpendText(row) {
+      const usd = '$' + (Number(row.usd) || 0).toFixed(2);
+      const unknown = (row.unknownModels || []).join(', ');
+      if (row.state === 'unknown') return 'Price unknown (' + unknown + '): this gateway publishes no price. Set prices: on the gateway to cost it.';
+      if (row.state === 'partial') return usd + ' at gateway prices, plus price unknown for ' + unknown + ' (not counted).';
+      return usd + ' at gateway prices (estimate from token counts).';
     }
 
     // Shared loader. The headroom endpoint is owner-only and the fetch
@@ -53043,7 +53481,8 @@ function burnAreaChart() {
       const host = document.getElementById('overview-usage-gauge');
       if (!host) return;
       const m = subscriptionGaugeCurrentModel();
-      if (!subscriptionGaugeOwner() || !subscriptionGaugeOverviewEnabled() || !m || !m.shown) {
+      const spend = (m && m.spend) || [];
+      if (!subscriptionGaugeOwner() || !subscriptionGaugeOverviewEnabled() || !m || (!m.shown && !spend.length)) {
         host.hidden = true;
         host.replaceChildren();
         return;
@@ -53054,8 +53493,8 @@ function burnAreaChart() {
         if (text !== undefined) n.textContent = text;
         return n;
       };
-      const rows = m.rows && m.rows.length ? m.rows : [m];
-      const single = rows.length === 1;
+      const rows = !m.shown ? [] : (m.rows && m.rows.length ? m.rows : [m]);
+      const single = rows.length === 1 && !spend.length;
       const metaFor = (row) => {
         const meta = [];
         if (row.state === 'reading') {
@@ -53065,7 +53504,7 @@ function burnAreaChart() {
         return meta.join(' · ');
       };
       const head = el('div', 'overview-usage-gauge__head');
-      head.appendChild(el('div', 'overview-usage-gauge__title', single ? rows[0].name + ' usage left' : 'Usage left'));
+      head.appendChild(el('div', 'overview-usage-gauge__title', single ? rows[0].name + ' usage left' : (rows.length ? 'Usage left' : 'Gateway spend')));
       head.appendChild(el('div', 'overview-usage-gauge__meta', single ? metaFor(rows[0]) : ''));
       const parts = [head];
       rows.forEach((row) => {
@@ -53097,6 +53536,24 @@ function burnAreaChart() {
         }
         parts.push(box);
       });
+      spend.forEach((row) => {
+        const box = el('div', 'overview-usage-gauge__row');
+        box.dataset.gateway = row.gateway;
+        const rowHead = el('div', 'overview-usage-gauge__head');
+        rowHead.appendChild(el('div', 'overview-usage-gauge__provider', row.gateway + ' (gateway)'));
+        box.appendChild(rowHead);
+        if (row.usedBy.length) box.appendChild(el('div', 'overview-usage-gauge__users', 'Used by ' + subscriptionGaugeUsers(row.usedBy)));
+        const line = el('div', row.state === 'priced' ? 'overview-usage-gauge__spend' : 'overview-usage-gauge__note', subscriptionGaugeSpendText(row));
+        line.dataset.priceState = row.state;
+        box.appendChild(line);
+        parts.push(box);
+      });
+      if (!rows.length) {
+        parts.push(el('div', 'overview-usage-gauge__note', 'Gateway spend is estimated from token counts at each gateway\'s published or configured prices.'));
+        host.replaceChildren.apply(host, parts);
+        host.hidden = false;
+        return;
+      }
       parts.push(el('div', 'overview-usage-gauge__note', single
         ? (rows[0].accountNote || 'Reflects the ' + rows[0].name + ' account this hive is signed in with.') + ' This is the ' + rows[0].name + ' plan, not the hive token budget.'
         : 'Each row reflects the account this hive is signed in with for that provider. These are the providers\' plans, not the hive token budget.'));
@@ -53534,9 +53991,35 @@ function burnAreaChart() {
       if (wasEnabled !== _sessionsData.enabled) sessionsApplyVisibility();
       if (!_sessionsData.enabled) { dashboardClearInterval('sessions-poll'); return; }
       if (!_sessionsRole) await sessionsLoadRole();
-      _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, _sessionsSelected || sessionsStoreGet(SESSIONS_SELECTED_KEY));
+      _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, sessionsClaimFocus(_sessionsData.sessions) || _sessionsSelected || sessionsStoreGet(SESSIONS_SELECTED_KEY));
       renderSessions();
     }
+    // Deep link: #section-sessions-section?session=<id> opens the section
+    // (the generic section hash does that) and selects that session's tab.
+    // Inbox share pills for spek shares link here.
+    const SESSIONS_FOCUS_HASH = '#section-sessions-section?session=';
+    function sessionsFocusIdFromHash(hash) {
+      const h = String(hash || '');
+      const at = h.indexOf(SESSIONS_FOCUS_HASH);
+      if (at < 0) return '';
+      try { return decodeURIComponent(h.slice(at + SESSIONS_FOCUS_HASH.length).split('&')[0]); } catch (e) { return ''; }
+    }
+    let _sessionsFocusId = sessionsFocusIdFromHash(location.hash);
+    // sessionsClaimFocus returns the deep-linked session id once it exists in
+    // sessions (and forgets it), or '' while there is nothing to select.
+    function sessionsClaimFocus(sessions) {
+      if (!_sessionsFocusId || !(sessions || []).some(function(s) { return s.id === _sessionsFocusId; })) return '';
+      const id = _sessionsFocusId;
+      _sessionsFocusId = '';
+      return id;
+    }
+    window.addEventListener('hashchange', function(e) {
+      const id = sessionsFocusIdFromHash((e && e.newURL) || location.hash);
+      if (!id) return;
+      _sessionsFocusId = id;
+      const wanted = sessionsClaimFocus(_sessionsData.sessions);
+      if (wanted) sessionsSelect(wanted);
+    });
     function sessionsStartPolling() {
       dashboardSetInterval('sessions-poll', loadSessions, SESSIONS_POLL_MS);
     }
@@ -62414,6 +62897,10 @@ function burnAreaChart() {
     // the models discovered for the add/edit form's endpoint+key.
     let _gateways = [];
     let _gatewayFormModels = [];
+    // Catalog details (prices, context) and curated suggestions the discover
+    // probe returns for OpenRouter gateways; empty for other kinds.
+    let _gatewayFormModelInfo = [];
+    let _gatewayFormSuggested = [];
     const _gatewayProbeResults = {};
     // Set by maybeOpenMethodConfig when a method switch jumps the user here to
     // configure a missing gateway; consumed once by loadGateways to auto-open a
@@ -62904,16 +63391,24 @@ function burnAreaChart() {
         const r = await fetch('/api/openrouter/models');
         if (r.ok) models = await r.json();
       } catch (e) { /* fall back to manual entry */ }
+      // Curated suggestions pinned on top (the server already hid any the
+      // live catalog retired), then the full live catalog grouped by
+      // provider with prices. Unreadable catalog: suggestions only, and the
+      // typed text still works as a manual id.
       const sug = (models.suggested || []);
-      const opts = sug.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('')
-        + `<option value="__manual__">Enter a model id manually…</option>`;
+      const liveIds = Array.isArray(models.models) ? models.models : [];
+      const ids = liveIds.length ? liveIds : sug.map(m => m.id);
+      const picker = modelComboboxHtml({
+        id: 'or-model-combo', inputId: 'or-model-input', ids,
+        info: models.model_info, suggested: sug, current: models.default || (sug[0] && sug[0].id) || '',
+        label: 'Default model for the new gateway', placeholder: 'Search models or type an id…',
+      });
       host.innerHTML = `
         <div style="border:1px solid var(--cyan);border-radius:8px;padding:14px;margin-bottom:var(--sp-5);background:var(--surface)">
           <div style="font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-2)">⚡ Fund this hive with OpenRouter</div>
           <div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px">Scan the QR (or open the link) to authorize on OpenRouter. A scoped key funded from your OpenRouter credits is stored as the <code>openrouter</code> gateway — the key never leaves this hive.</div>
-          <label style="display:block;font-size:0.74rem;color:var(--muted);margin-bottom:var(--sp-2)">Default model for the new gateway</label>
-          <select id="or-model-select" data-change-action="orModelSelectChange" style="width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);margin-bottom:var(--sp-4)">${opts}</select>
-          <input id="or-model-manual" placeholder="e.g. anthropic/claude-opus-4.8" style="display:none;width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);margin-bottom:var(--sp-4);box-sizing:border-box">
+          <label for="or-model-input" class="d-block fs-sm text-muted mb-2">Default model for the new gateway</label>
+          <div class="mb-4">${picker}</div>
           <div style="display:flex;gap:var(--sp-4);margin-top:var(--sp-2)">
             <button class="hv-btn btn-primary" data-action="orStartFlow">Generate QR</button>
             <button class="hv-btn btn-primary" data-action="closeOpenRouterFund">Cancel</button>
@@ -62923,21 +63418,10 @@ function burnAreaChart() {
         </div>`;
     }
 
-    function orModelSelectChange() {
-      const sel = document.getElementById('or-model-select');
-      const man = document.getElementById('or-model-manual');
-      if (!sel || !man) return;
-      man.style.display = sel.value === '__manual__' ? 'block' : 'none';
-    }
-
+    // orChosenModel is the funding picker's committed model id ('' lets the
+    // server apply its default).
     function orChosenModel() {
-      const sel = document.getElementById('or-model-select');
-      if (!sel) return '';
-      if (sel.value === '__manual__') {
-        const man = document.getElementById('or-model-manual');
-        return (man && man.value.trim()) || '';
-      }
-      return sel.value;
+      return modelComboValue('or-model-combo');
     }
 
     async function orStartFlow() {
@@ -63190,6 +63674,8 @@ function burnAreaChart() {
     // it blank keeps it.
     function openGatewayForm(existing) {
       _gatewayFormModels = [];
+      _gatewayFormModelInfo = [];
+      _gatewayFormSuggested = [];
       const host = document.getElementById('gateways-form-host');
       if (!host) return;
       const isEdit = !!existing;
@@ -63292,7 +63778,17 @@ function burnAreaChart() {
       const models = _gatewayFormModels;
       const cur = current || '';
       if (!models.length) {
-        return `<input type="text" id="gw-default-model" value="${esc(cur)}" placeholder="e.g. anthropic/claude-opus-4.8">`;
+        return `<input type="text" id="gw-default-model" value="${esc(cur)}" placeholder="e.g. deepseek/deepseek-v4.1-flash">`;
+      }
+      // Large catalogs (OpenRouter ~470 ids) get the searchable, grouped
+      // combobox; its input is #gw-default-model, so the typed text is the
+      // value and "Custom…" is simply typing an id the catalog lacks.
+      if (models.length >= MODEL_COMBOBOX_MIN_OPTIONS || _gatewayFormModelInfo.length) {
+        return modelComboboxHtml({
+          id: 'gw-default-model-combo', inputId: 'gw-default-model', ids: models,
+          info: _gatewayFormModelInfo, suggested: _gatewayFormSuggested, current: cur,
+          label: 'Default model', placeholder: 'Search ' + models.length + ' models or type an id…',
+        });
       }
       const inList = cur && models.indexOf(cur) !== -1;
       const options = models.map(m =>
@@ -63402,6 +63898,8 @@ function burnAreaChart() {
         });
         const data = await res.json().catch(() => ({}));
         _gatewayFormModels = (res.ok && data.ok && Array.isArray(data.models)) ? data.models : [];
+        _gatewayFormModelInfo = (res.ok && data.ok && Array.isArray(data.model_info)) ? data.model_info : [];
+        _gatewayFormSuggested = (res.ok && data.ok && Array.isArray(data.suggested)) ? data.suggested : [];
         // Never show an empty dropdown with no explanation: a bad key, wrong
         // region/project or an unreachable endpoint must say so, with the
         // server's own error text, rather than looking like "no models exist".
@@ -63419,6 +63917,8 @@ function burnAreaChart() {
         }
       } catch (e) {
         _gatewayFormModels = [];
+        _gatewayFormModelInfo = [];
+        _gatewayFormSuggested = [];
         showGatewayFormProbeError('Network error while discovering models: ' + e.message);
       }
       const host = document.getElementById('gw-default-model-field');
@@ -76784,6 +77284,16 @@ function burnAreaChart() {
       return `(backend default — chosen by the ${backend || 'CLI'} CLI)`;
     }
 
+    // modelOptionPriceSuffix is " — $0.14 in · $0.42 out /1M · 1M ctx" for a
+    // gateway model whose catalog publishes prices (OpenRouter), else ''.
+    function modelOptionPriceSuffix(backend, model) {
+      if (typeof modelPriceLabel !== 'function') return '';
+      const c = _inferenceModelCache[canonicalInferenceBackendName(backend)] || _inferenceModelCache[backend];
+      const info = c && c.modelInfo ? c.modelInfo[model] : null;
+      const label = info ? modelPriceLabel(info) : '';
+      return label ? ' — ' + label : '';
+    }
+
     // modelSelectOptionsHtml builds the agent config dialog's Model options:
     // the backend-default choice first, every offered model with its FULL id,
     // and — when the current model is not offered — a "(current)" option that
@@ -76793,7 +77303,15 @@ function burnAreaChart() {
     function modelSelectOptionsHtml(backend, current, opts) {
       const models = opts || modelsForBackend(backend) || [];
       let html = `<option value="">${esc(modelDefaultOptionLabel(backend))}</option>`;
-      html += models.map(m => `<option value="${esc(m.value)}"${_modelsEqual(current, m.value) ? ' selected' : ''}>${esc(fullModelLabel(m))}</option>`).join('');
+      const renderOpt = m => `<option value="${esc(m.value)}"${_modelsEqual(current, m.value) ? ' selected' : ''}>${esc(fullModelLabel(m))}${esc(modelOptionPriceSuffix(backend, m.value))}</option>`;
+      // Large gateway catalogs (OpenRouter) are grouped by provider prefix.
+      if (typeof shouldGroupModelOptions === 'function' && shouldGroupModelOptions(models.map(m => m.value))) {
+        const byValue = {};
+        models.forEach(m => { if (!(m.value in byValue)) byValue[m.value] = m; });
+        html += modelOptgroupsHtml(Object.keys(byValue), v => renderOpt(byValue[v]));
+      } else {
+        html += models.map(renderOpt).join('');
+      }
       if (current && !models.some(m => _modelsEqual(current, m.value))) {
         const note = modelDisallowedByGateway(backend, current) ? ' (current — not allowed by gateway)' : ' (current)';
         html += `<option value="${esc(current)}" selected>${esc(current)}${note}</option>`;
@@ -78166,6 +78684,11 @@ function burnAreaChart() {
     // browser as the one that asked.
     let ghFlowID = '';
     const GH_AUTH_CHECK_INTERVAL_MS = 300000;
+    // /api/role is retried on network errors and 5xx before the viewer is
+    // treated as read-only: 3 attempts, waiting 0.5 s then 1 s between them.
+    const HIVE_ROLE_FETCH_ATTEMPTS = 3;
+    const HIVE_ROLE_RETRY_BASE_MS = 500;
+    const HIVE_ROLE_SERVER_ERROR_STATUS = 500;
     const GH_AUTH_SUCCESS_DISMISS_MS = 1500;
 
     function copyDeviceCode() {
@@ -78413,24 +78936,78 @@ function burnAreaChart() {
       showToast('Signed out of GitHub', 'info');
     }
 
+    /* One /api/role attempt. Network errors and 5xx are marked retryable; an
+       answer that is not (4xx, an HTML 404 from a static host) is final. */
+    async function hiveFetchRoleOnce() {
+      let resp;
+      try { resp = await fetch('/api/role'); } catch (e) { e.retryable = true; throw e; }
+      if (resp.status >= HIVE_ROLE_SERVER_ERROR_STATUS) {
+        const err = new Error('HTTP ' + resp.status);
+        err.retryable = true;
+        throw err;
+      }
+      return await resp.json();
+    }
+
+    /* The role is "settled" once /api/role answered or gave up. Sections that
+       gate on it (the Inbox) hold a neutral loading state until then and
+       subscribe via window._hiveRoleListeners; they are notified the first
+       time and whenever the role or the failed flag changes. This is separate
+       from _hiveAuthKnown so the tracker never waits on the retries below. */
+    function hiveRoleSettled(failed) {
+      const sig = String(window._hiveRole || '') + '|' + (failed ? 'failed' : 'ok');
+      const changed = !window._hiveRoleSettled || window._hiveRoleSig !== sig;
+      window._hiveRoleFailed = !!failed;
+      window._hiveRoleSettled = true;
+      window._hiveRoleSig = sig;
+      if (!changed) return;
+      (window._hiveRoleListeners || []).forEach(function(fn) { try { fn(); } catch (e) { console.error(e); } });
+    }
+
+    function hiveApplyRoleData(roleData) {
+      if (roleData.sentinel_label) window._hiveSentinelLabel = roleData.sentinel_label;
+      if (!roleData.user) return false;
+      if (roleData.automerge_label) window._hiveAutoMergeLabel = roleData.automerge_label;
+      /* OIDC identity keys ("ibmid:5500…") are not GitHub logins — don't
+         fabricate a github.com/<key>.png avatar for them; showGHAuthState
+         falls back to an initials avatar and the server-resolved
+         display_name. */
+      var ghAvatar = roleData.user.indexOf(':') === -1
+        ? 'https://github.com/' + roleData.user + '.png'
+        : '';
+      showGHAuthState(true, roleData.user, ghAvatar, roleData.role, roleData.display_name);
+      return true;
+    }
+
+    /* Background retries after a retryable first failure, with exponential
+       backoff. If they all fail the viewer stays read-only and the Inbox says
+       so. */
+    async function hiveRetryRole() {
+      if (window._hiveRoleRetrying) return;
+      window._hiveRoleRetrying = true;
+      try {
+        for (let attempt = 1; attempt < HIVE_ROLE_FETCH_ATTEMPTS; attempt++) {
+          await new Promise(function(resolve) { setTimeout(resolve, HIVE_ROLE_RETRY_BASE_MS * Math.pow(2, attempt - 1)); });
+          try {
+            const roleData = await hiveFetchRoleOnce();
+            hiveApplyRoleData(roleData);
+            hiveRoleSettled(false);
+            return;
+          } catch (e) { if (!e.retryable) break; }
+        }
+        hiveRoleSettled(true);
+      } finally { window._hiveRoleRetrying = false; }
+    }
+
     async function checkGHAuth() {
       try {
-        const roleResp = await fetch('/api/role');
-        const roleData = await roleResp.json();
-        if (roleData.sentinel_label) window._hiveSentinelLabel = roleData.sentinel_label;
-        if (roleData.user) {
-          if (roleData.automerge_label) window._hiveAutoMergeLabel = roleData.automerge_label;
-          /* OIDC identity keys ("ibmid:5500…") are not GitHub logins — don't
-             fabricate a github.com/<key>.png avatar for them; showGHAuthState
-             falls back to an initials avatar and the server-resolved
-             display_name. */
-          var ghAvatar = roleData.user.indexOf(':') === -1
-            ? 'https://github.com/' + roleData.user + '.png'
-            : '';
-          showGHAuthState(true, roleData.user, ghAvatar, roleData.role, roleData.display_name);
-          return;
-        }
-      } catch (e) {}
+        const roleData = await hiveFetchRoleOnce();
+        const applied = hiveApplyRoleData(roleData);
+        hiveRoleSettled(false);
+        if (applied) return;
+      } catch (e) {
+        if (e && e.retryable) hiveRetryRole(); else hiveRoleSettled(true);
+      }
       try {
         const resp = await fetch('/api/gh-user-auth/status');
         const data = await resp.json();

@@ -158,7 +158,11 @@ type Event struct {
 	// InvitedByOwner is true only for an owner's own manual add.
 	InvitedBy      string `json:"invited_by,omitempty"`
 	InvitedByOwner bool   `json:"invited_by_owner,omitempty"`
-	ApprovedBy     string `json:"approved_by,omitempty"`
+	// Trusted is set by the email invite path (#18395) for an invite whose
+	// From address passed DMARC alignment, is the organizer, and is on the
+	// hive's email allowlist. It is decided per delivery and never stored.
+	Trusted    bool   `json:"-"`
+	ApprovedBy string `json:"approved_by,omitempty"`
 
 	// Skipped are occurrence starts the owner chose to skip.
 	Skipped []time.Time `json:"skipped,omitempty"`

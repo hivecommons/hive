@@ -275,6 +275,12 @@ governor.gateways[].endpoint # TODO #11854
 governor.gateways[].key_name # TODO #11854
 governor.gateways[].kind # TODO #11854
 governor.gateways[].name # TODO #11854
+governor.gateways[].prices.cached_input # TODO #11854
+governor.gateways[].prices.input # TODO #11854
+governor.gateways[].prices.models.<key>.cached_input # TODO #11854
+governor.gateways[].prices.models.<key>.input # TODO #11854
+governor.gateways[].prices.models.<key>.output # TODO #11854
+governor.gateways[].prices.output # TODO #11854
 governor.gateways[].project_id # TODO #11854
 governor.gateways[].region # TODO #11854
 governor.health.healthcheck_interval # TODO #11854
@@ -628,3 +634,5 @@ inbox.recording.max_seconds # see inbox.recording.enabled
 inbox.recording.max_bytes # see inbox.recording.enabled
 inbox.recording.quota_bytes # see inbox.recording.enabled
 inbox.recording.idle_finalize_minutes # see inbox.recording.enabled
+meetings.email.files_enabled # TODO #18395
+meetings.email.invites_enabled # TODO #18395
