@@ -3,6 +3,7 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	pathpkg "path"
@@ -65,6 +66,12 @@ type ACMMEvaluation struct {
 	// the UI knows whether a non-GitHub choice exists at all.
 	IssueTracker   string `json:"issue_tracker"`
 	WorkSourceType string `json:"work_source_type,omitempty"`
+	// Stale is set when the hour-long cache expired but the GitHub API
+	// budget was not normal, so the full pass was deferred: the body is the
+	// last evaluation (or an empty one if there was none yet) and
+	// StaleReason says why. Neither field is ever stored in the cache.
+	Stale       bool   `json:"stale,omitempty"`
+	StaleReason string `json:"stale_reason,omitempty"`
 }
 
 // RepoEvaluation holds ACMM results for a single repository.
@@ -205,6 +212,28 @@ func (s *Server) handleACMMEvaluation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The evaluation is an optional dashboard read worth ~10-40 GitHub calls
+	// per repo, so it waits out a short API budget the way the eval loop's
+	// optional sweeps do (SkipOptional: any mode but normal), serving the
+	// last result marked stale. Nothing is cached here, so the next request
+	// after the budget recovers runs the full pass.
+	if reason, deferred := s.acmmBudgetDeferral(); deferred {
+		var result ACMMEvaluation
+		if s.acmmEvalCache != nil {
+			result = *s.acmmEvalCache
+		} else {
+			result.Error = reason
+		}
+		result.Stale = true
+		result.StaleReason = reason
+		result.OperationalLevel = opsLevel
+		result.OperationalName = opsName
+		result.OverallLevel = minInt(result.CodebaseLevel, opsLevel)
+		s.stampACMMIssueTracker(&result)
+		jsonResponse(w, result)
+		return
+	}
+
 	eval := s.evaluateAllRepos()
 	eval.OperationalLevel = opsLevel
 	eval.OperationalName = opsName
@@ -215,6 +244,25 @@ func (s *Server) handleACMMEvaluation(w http.ResponseWriter, r *http.Request) {
 
 	s.stampACMMIssueTracker(&eval)
 	jsonResponse(w, eval)
+}
+
+// acmmAPIBudgetMode reads the hive's GitHub API budget mode; a var so tests
+// can pin a mode without spending a real rate-limit window.
+var acmmAPIBudgetMode = func(s *Server) (github.APIBudgetMode, github.APIBudgetSnapshot) {
+	if s.deps == nil || s.deps.GHClient == nil {
+		return github.APIBudgetNormal, github.APIBudgetSnapshot{}
+	}
+	return s.deps.GHClient.APIBudgetMode()
+}
+
+// acmmBudgetDeferral reports whether a full evaluation pass should wait for
+// the API budget, and the reason the response carries while it does.
+func (s *Server) acmmBudgetDeferral() (string, bool) {
+	mode, snap := acmmAPIBudgetMode(s)
+	if mode == github.APIBudgetNormal {
+		return "", false
+	}
+	return fmt.Sprintf("GitHub API budget is %s (%d calls left), so the ACMM evaluation was not re-run; showing the last result until the budget recovers", mode, snap.Remaining), true
 }
 
 // stampACMMIssueTracker fills the tracker fields from live config. It runs
@@ -698,9 +746,23 @@ func (s *Server) prefetchDirectories(ctx context.Context, owner, repo string) ma
 	if ghClient == nil {
 		return cache
 	}
+	ctx = github.WithRESTCaller(ctx, "hive:acmm_prefetch")
 	for _, dir := range dirs {
+		// A dir under one already known missing (docs/security once docs
+		// was a 404) is recorded as empty without a call.
+		if acmmKnownMissing(cache, dir) {
+			cache[dir] = map[string]bool{}
+			continue
+		}
 		_, dirContents, _, err := ghClient.Repositories.GetContents(ctx, owner, repo, dir, nil)
 		if err != nil {
+			// Only a 404 proves the dir is absent, and recording it lets every
+			// literal pattern under it answer "no" without its own call. A
+			// rate limit, 5xx or timeout proves nothing, so the dir stays
+			// unrecorded and its patterns are looked up one by one.
+			if acmmPathNotFound(err) {
+				cache[dir] = map[string]bool{}
+			}
 			continue
 		}
 		entries := make(map[string]bool)
@@ -786,6 +848,10 @@ func (s *Server) patternExists(ctx context.Context, owner, repo, path string, di
 
 	if strings.ContainsAny(base, "*?[") && !isDir {
 		entries, ok := dirCache[parent]
+		if !ok && acmmKnownMissing(dirCache, parent) {
+			dirCache[parent] = map[string]bool{}
+			return false
+		}
 		if !ok {
 			ghClient := s.deps.GHClient.GoGitHub()
 			if ghClient == nil {
@@ -793,9 +859,10 @@ func (s *Server) patternExists(ctx context.Context, owner, repo, path string, di
 			}
 			_, contents, _, err := ghClient.Repositories.GetContents(github.WithRESTCaller(ctx, "hive:acmm_pattern_exists"), owner, repo, parent, nil)
 			if err != nil {
-				// Cache the miss so sibling glob patterns under the same
-				// parent do not each re-issue the failed listing.
-				if dirCache != nil {
+				// Cache a 404 so sibling glob patterns under the same parent
+				// do not each re-issue the listing. Any other error is not
+				// evidence the dir is absent, so it is not cached.
+				if dirCache != nil && acmmPathNotFound(err) {
 					dirCache[parent] = map[string]bool{}
 				}
 				return false
@@ -828,6 +895,9 @@ func (s *Server) patternExists(ctx context.Context, owner, repo, path string, di
 		}
 		return entries[base]
 	}
+	if acmmKnownMissing(dirCache, parent) {
+		return false
+	}
 
 	ghClient := s.deps.GHClient.GoGitHub()
 	if ghClient == nil {
@@ -835,6 +905,32 @@ func (s *Server) patternExists(ctx context.Context, owner, repo, path string, di
 	}
 	_, _, _, err := ghClient.Repositories.GetContents(github.WithRESTCaller(ctx, "hive:acmm_pattern_exists"), owner, repo, cleanPath, nil)
 	return err == nil
+}
+
+// acmmPathNotFound reports whether err is GitHub answering 404 for the path.
+// Rate limits (*gh.RateLimitError, *gh.AbuseRateLimitError), other statuses
+// and transport errors all return false.
+func acmmPathNotFound(err error) bool {
+	var ghErr *gh.ErrorResponse
+	return errors.As(err, &ghErr) && ghErr.Response != nil && ghErr.Response.StatusCode == http.StatusNotFound
+}
+
+// acmmKnownMissing reports whether dir lies under a path dirCache records
+// with no entries: one whose listing was a 404, or one that is a file. Git
+// stores no empty directories, so nothing can exist below either. A
+// non-empty listing that lacks the next path component proves nothing here.
+func acmmKnownMissing(dirCache map[string]map[string]bool, dir string) bool {
+	for dir != "" {
+		parent := ""
+		if idx := strings.LastIndex(dir, "/"); idx >= 0 {
+			parent = dir[:idx]
+		}
+		if entries, ok := dirCache[parent]; ok && len(entries) == 0 {
+			return true
+		}
+		dir = parent
+	}
+	return false
 }
 
 // scoreResults calculates per-level scores and the overall codebase level.

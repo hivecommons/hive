@@ -586,11 +586,14 @@ func TestPrefetchDirectories_NilGHClientReturnsEmptyCache(t *testing.T) {
 	}
 }
 
-func TestPrefetchDirectories_ErrorDirsAreSkipped(t *testing.T) {
-	// A mux that 404s on every content path -- every prefetch dir errors,
-	// so the cache must end up empty (the `continue` branch on every dir).
+func TestPrefetchDirectories_MissingRepoCostsOneCall(t *testing.T) {
+	// A mux that 404s on every content path: the root listing's 404 is
+	// recorded, and every other prefetch dir lies under it, so all nine are
+	// recorded empty for the price of that one call.
+	calls := 0
 	mux := http.NewServeMux()
 	mux.HandleFunc("/repos/myorg/repo2/contents/", func(w http.ResponseWriter, r *http.Request) {
+		calls++
 		http.Error(w, `{"message":"Not Found"}`, http.StatusNotFound)
 	})
 	ts := httptest.NewServer(mux)
@@ -602,8 +605,16 @@ func TestPrefetchDirectories_ErrorDirsAreSkipped(t *testing.T) {
 	s.RegisterAPI(deps)
 
 	cache := s.prefetchDirectories(t.Context(), "myorg", "repo2")
-	if len(cache) != 0 {
-		t.Fatalf("expected all-error prefetch to yield empty cache, got %d entries", len(cache))
+	if len(cache) != 9 {
+		t.Fatalf("expected all nine prefetch dirs recorded as missing, got %d entries", len(cache))
+	}
+	for dir, entries := range cache {
+		if len(entries) != 0 {
+			t.Fatalf("cache[%q] = %v, want empty", dir, entries)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("prefetch made %d calls for a repo whose root is a 404, want 1", calls)
 	}
 }
 

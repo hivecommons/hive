@@ -833,6 +833,16 @@ func runEvalCycle(
 			}
 			refreshed := refreshStaleRedBehindPRs(ctx, cfg, ghClient, actionable, refreshAudit, logger, time.Now())
 			reapSkip = reaperSkipAfterRerun(reapSkip, refreshed)
+			// A PR whose head predates a newly required check never runs
+			// it (projectbluefin/testsuite#1245); only a new head does.
+			// Those PRs are not red, so the reaper never sees them.
+			var missingAudit func(string, int, string)
+			if dashSrv != nil {
+				missingAudit = func(repo string, number int, detail string) {
+					dashSrv.AuditLogRecord("system", "missing-check-base-refresh", detail, "", repo, number)
+				}
+			}
+			refreshMissingCheckBehindPRs(ctx, cfg, ghClient, actionable, missingAudit, logger, time.Now())
 		}
 	}
 	reapStuckRedPRs(cfg, actionable, reapSkip, agentKicker{mgr: agentMgr},
