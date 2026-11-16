@@ -454,3 +454,49 @@ func TestMergeRequestPinOnlyRequiresExpectedHead(t *testing.T) {
 		t.Fatalf("refusal=%q err=%v labels=%v comments=%v; missing requested head must hold", refusal, err, f.labels, f.comments)
 	}
 }
+
+// HumanMergePathHeld is the relay gate's read-only twin: the same file list,
+// matcher and pin-only exception, failing closed, and never a hold label or a
+// comment.
+func TestHumanMergePathHeld(t *testing.T) {
+	trustedPin := map[string]PinOnlySpec{"o/r": {Enabled: true, Paths: []string{"Containerfile"}, Kinds: []string{"image-digest"}, TrustedAuthors: []string{"alice"}}}
+	for _, tc := range []struct {
+		name    string
+		f       *humanPathMergeFixture
+		paths   map[string][]string
+		pinOnly map[string]PinOnlySpec
+		head    string
+		want    bool
+		wantErr bool
+		hits    int
+	}{
+		{name: "unconfigured", f: &humanPathMergeFixture{files: []string{".claude/settings.json"}}, head: "abc", want: false, hits: 0},
+		{name: "configured without match", f: &humanPathMergeFixture{files: []string{"go.mod"}}, paths: map[string][]string{"o/r": {".claude/**"}}, head: "abc", want: false, hits: 1},
+		{name: "match", f: &humanPathMergeFixture{files: []string{"go.mod", ".claude/settings.json"}}, paths: map[string][]string{"r": {".claude/**"}}, head: "abc", want: true, hits: 1},
+		{name: "head moved", f: &humanPathMergeFixture{files: []string{"go.mod"}}, paths: map[string][]string{"o/r": {".claude/**"}}, head: "def", want: true, hits: 0},
+		{name: "files error", f: &humanPathMergeFixture{filesStatus: http.StatusInternalServerError}, paths: map[string][]string{"o/r": {".claude/**"}}, head: "abc", want: true, wantErr: true, hits: -1},
+		{name: "PR error", f: &humanPathMergeFixture{prStatus: http.StatusInternalServerError}, paths: map[string][]string{"o/r": {".claude/**"}}, head: "abc", want: true, wantErr: true, hits: -1},
+		{name: "pin-only exception admits", f: pinOnlyRelayFixture(), paths: map[string][]string{"o/r": {"Containerfile"}}, pinOnly: trustedPin, head: "abc", want: false, hits: 1},
+		{name: "pin-only exception disabled", f: pinOnlyRelayFixture(), paths: map[string][]string{"o/r": {"Containerfile"}}, head: "abc", want: true, hits: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := newHumanPathMergeServer(t, tc.f)
+			t.Cleanup(srv.Close)
+			c := testMergeClient(t, srv.URL)
+			c.SetHumanMergePaths(tc.paths)
+			if tc.pinOnly != nil {
+				c.SetHumanMergePinOnly(tc.pinOnly)
+			}
+			got, err := c.HumanMergePathHeld(context.Background(), "o/r", 42, tc.head)
+			if got != tc.want || (err != nil) != tc.wantErr {
+				t.Fatalf("HumanMergePathHeld = (%v, %v), want (%v, err=%v)", got, err, tc.want, tc.wantErr)
+			}
+			if tc.hits >= 0 && tc.f.filesHits != tc.hits {
+				t.Fatalf("files hits = %d, want %d", tc.f.filesHits, tc.hits)
+			}
+			if len(tc.f.labels) != 0 || len(tc.f.comments) != 0 || tc.f.merges != 0 {
+				t.Fatalf("labels=%v comments=%v merges=%d; the check must write nothing", tc.f.labels, tc.f.comments, tc.f.merges)
+			}
+		})
+	}
+}

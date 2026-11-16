@@ -589,6 +589,15 @@ type AutoMergeConfig struct {
 	// that supersedes the bot PR, and closes the bot PR. It applies only when
 	// github-actions[bot] is in TrustedBotAuthors.
 	BotTakeover BotTakeoverAutoMergeConfig `yaml:"bot_takeover,omitempty" json:"bot_takeover,omitempty"`
+	// DependencyBotAdopt lets the dependency-bot hand-off sweep ask the hive
+	// to adopt a red Renovate/Dependabot PR that needs a code change, instead
+	// of only handing it to a person. It applies to a dependency-bot PR whose
+	// author is also in TrustedBotAuthors, once the red-CI hand-off would
+	// fire, when the review swarm's own verdict on that exact head is
+	// changes_requested: the sweep adds the `adoption/supersede` label (what
+	// the dashboard's Adopt decision adds), and the existing adoption path
+	// copies the PR to `hive/adopt-<n>` for the fix loop. Default off.
+	DependencyBotAdopt DependencyBotAdoptAutoMergeConfig `yaml:"dependency_bot_adopt,omitempty" json:"dependency_bot_adopt,omitempty"`
 	// TrustedAuthors enables a separate, default-off sweep for human-authored
 	// PRs whose AUTHOR already holds merge authority. Unlike the App
 	// self-authored lane, this never bypasses to create new authority: the
@@ -902,6 +911,18 @@ type BotTakeoverAutoMergeConfig struct {
 
 func (b BotTakeoverAutoMergeConfig) IsEnabled() bool {
 	return b.Enabled == nil || *b.Enabled
+}
+
+// DependencyBotAdoptAutoMergeConfig is auto_merge.dependency_bot_adopt.*.
+type DependencyBotAdoptAutoMergeConfig struct {
+	// Enabled turns the adoption request on. Unset means OFF: the sweep
+	// only hands a red dependency-bot PR to a person, as before.
+	Enabled bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// IsEnabled reports auto_merge.dependency_bot_adopt.enabled (default false).
+func (d DependencyBotAdoptAutoMergeConfig) IsEnabled() bool {
+	return d.Enabled
 }
 
 type TrustedAuthorAutoMergeConfig struct {

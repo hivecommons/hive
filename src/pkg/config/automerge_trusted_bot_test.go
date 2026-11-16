@@ -168,6 +168,38 @@ func TestBotTakeoverAutoMergeConfigDefaultsOnAndHonorsExplicitOff(t *testing.T) 
 	}
 }
 
+func TestDependencyBotAdoptAutoMergeConfigDefaultsOffAndRoundTrips(t *testing.T) {
+	var a AutoMergeConfig
+	if a.DependencyBotAdopt.IsEnabled() {
+		t.Fatal("auto_merge.dependency_bot_adopt.enabled must default off")
+	}
+	if err := yaml.Unmarshal([]byte("dependency_bot_adopt:\n  enabled: true\n"), &a); err != nil {
+		t.Fatal(err)
+	}
+	if !a.DependencyBotAdopt.IsEnabled() {
+		t.Fatal("explicit auto_merge.dependency_bot_adopt.enabled: true must enable the adoption request")
+	}
+	out, err := yaml.Marshal(a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back AutoMergeConfig
+	if err := yaml.Unmarshal(out, &back); err != nil {
+		t.Fatal(err)
+	}
+	if !back.DependencyBotAdopt.IsEnabled() {
+		t.Fatalf("auto_merge.dependency_bot_adopt.enabled lost on a YAML round trip:\n%s", out)
+	}
+	var off AutoMergeConfig
+	out, err = yaml.Marshal(off)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "dependency_bot_adopt") {
+		t.Fatalf("the default (off) must not be written to hive.yaml:\n%s", out)
+	}
+}
+
 // registry_tiers_sufficient defaults on so an operator-granted registry tier
 // admits a contributor-lane PR without a claim marker; an explicit false
 // turns the registry path off.

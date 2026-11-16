@@ -59,6 +59,7 @@ func autoMergeFixture() map[string]any {
 		"project_repos":                []string{"org/a", "org/b", "org/c"},
 		"trusted_bot_authors":          []string{"dependabot[bot]"},
 		"bot_takeover_enabled":         false,
+		"dependency_bot_adopt_enabled": false,
 		"require_current_base_default": false,
 		"merge_train":                  map[string]any{"enabled": true, "max_rebase_attempts": 2},
 		"native_merge_queue":           map[string]any{"enabled": true, "repos": []string{"org/a"}, "bases": []string{"org/a#main"}, "skip_current_base_gate": false, "probe_ttl": "30m0s"},
@@ -152,6 +153,28 @@ func TestAutoMergeUpdateOneRepoChangeKeepsTheOthers(t *testing.T) {
 	}
 }
 
+// auto_merge.dependency_bot_adopt.enabled travels as the endpoint's flat
+// dependency_bot_adopt_enabled field, and turning it on is widening: the hive
+// then takes red trusted dependency-bot pull requests over on its own.
+func TestAutoMergeUpdateDependencyBotAdoptEnabled(t *testing.T) {
+	p := &autoMergeProvider{settings: autoMergeFixture()}
+	h := autoMergeHandler(p)
+	preview, id := autoMergePreview(t, h, map[string]any{"dependency_bot_adopt_enabled": true})
+	want := `{"dependency_bot_adopt_enabled":true}`
+	if got := compactJSON(preview.Request.Body); got != want {
+		t.Fatalf("body = %s, want %s", got, want)
+	}
+	if !strings.HasPrefix(preview.WideningDisclosure, "Widening:") {
+		t.Fatalf("turning dependency_bot_adopt_enabled on must be widening: %s", preview.WideningDisclosure)
+	}
+	if _, err := h.ConfirmWrite(context.Background(), map[string]any{"confirmation_id": id}); err != nil {
+		t.Fatalf("confirm: %v", err)
+	}
+	if len(p.requests) != 1 || compactJSON(p.requests[0].Body) != want {
+		t.Fatalf("executed %+v, want body %s", p.requests, want)
+	}
+}
+
 // Taking a pattern away from human_merge_paths lets the hive merge pull
 // requests that touch it, so the preview must say so; adding one must not.
 func TestAutoMergeUpdateFlagsHumanMergePathRemovalAsWidening(t *testing.T) {
@@ -194,6 +217,7 @@ func TestAutoMergeUpdateWideningRules(t *testing.T) {
 		"soak 0 is the default 30":   {map[string]any{"contributor_lane": map[string]any{"soak_minutes": float64(0)}}, false},
 		"exclude label added":        {map[string]any{"trusted_authors": map[string]any{"exclude_labels": map[string]any{"add": []any{"wip"}}}}, false},
 		"self-authored switched off": {map[string]any{"self_authored": false}, false},
+		"dependency-bot adopt on":    {map[string]any{"dependency_bot_adopt_enabled": true}, true},
 	} {
 		t.Run(name, func(t *testing.T) {
 			preview, _ := autoMergePreview(t, autoMergeHandler(&autoMergeProvider{settings: autoMergeFixture()}), tc.args)
