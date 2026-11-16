@@ -141,6 +141,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, "behind", pr)
 	}
 	if mergeableState == "dirty" || mergeableState == "conflicting" {
+		if reason, ok := c.resolveConflictingDependabotPR(ctx, displayRepo, owner, repo, pr, number, evaluatedHeadSHA); ok {
+			return AutoMergeSweepEvent{}, reason, nil
+		}
 		return AutoMergeSweepEvent{}, "conflicting", nil
 	}
 	baseBranch := ""
@@ -841,13 +844,20 @@ func (c *Engine) isForkPR(pr *gh.PullRequest) bool {
 // date — update-branch, merge-forward, a merge-train rebase request — asks
 // this first: Renovate stops rebasing a branch for good once another identity
 // has committed to it (projectbluefin/utah#1097), and under strict freshness
-// it rebases a behind branch itself. A nil PR is never a bot branch.
+// it rebases a behind branch itself. A Dependabot branch is the exception on
+// the update-branch steps (dependabotUpdateBranchAllowed, #18441). A nil PR
+// is never a bot branch.
 func (c *Engine) leaveBaseSyncToDependencyBot(displayRepo, owner, repo string, pr *gh.PullRequest, step string) bool {
 	if pr == nil {
 		return false
 	}
 	headRef, author := pr.GetHead().GetRef(), hgithub.SafeGetLogin(pr.GetUser())
 	if !hgithub.DependencyBotBranch(headRef, author) {
+		return false
+	}
+	if dependabotUpdateBranchAllowed(pr, step) {
+		// Dependabot never rebases a merely-behind branch and ignores the
+		// App's commands, so the App updates it (#18441).
 		return false
 	}
 	number, headSHA := pr.GetNumber(), pr.GetHead().GetSHA()
@@ -859,8 +869,8 @@ func (c *Engine) leaveBaseSyncToDependencyBot(displayRepo, owner, repo string, p
 }
 
 // updateBranchAndSkip merges the base into pr's head with GitHub's
-// update-branch. A dependency bot's branch is never updated: it holds as
-// "behind" until the bot rebases it.
+// update-branch. A dependency bot's branch other than Dependabot's is never
+// updated: it holds as "behind" until the bot rebases it.
 func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, reason string, pr *gh.PullRequest) (AutoMergeSweepEvent, string, error) {
 	if c.leaveBaseSyncToDependencyBot(displayRepo, owner, repo, pr, "update-branch") {
 		return AutoMergeSweepEvent{}, "behind", nil
