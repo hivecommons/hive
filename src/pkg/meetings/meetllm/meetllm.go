@@ -237,6 +237,9 @@ func Complete(ctx context.Context, c Config, hc *http.Client, prompt string) (st
 		return "", err
 	}
 	defer release()
+	if c.Provider == ProviderAnthropic {
+		return completeAnthropic(ctx, c, hc, prompt)
+	}
 	msgs := make([]chatMessage, 0, 2)
 	if strings.TrimSpace(c.System) != "" {
 		msgs = append(msgs, chatMessage{Role: "system", Content: c.System})

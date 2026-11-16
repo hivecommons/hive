@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -54,6 +55,12 @@ type session struct {
 	persona *betty.Engine
 	// fileTokens is the usage-ledger total already charged.
 	fileTokens int
+	// spekQueue keeps Spek's asks and chat offers in order while an ask is
+	// being restyled by the persona off the session goroutine; restyled
+	// carries the results back.
+	spekQueue []queuedSpek
+	nextSeq   int
+	restyled  chan restyledAsk
 
 	updates  chan meetings.Update
 	signals  chan ResearchSignal
@@ -71,6 +78,7 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 		signals:  make(chan ResearchSignal, sessionInbox),
 		approves: make(chan approveReq),
 		snaps:    make(chan chan State),
+		restyled: make(chan restyledAsk, sessionInbox),
 		ended:    make(chan struct{}),
 		done:     make(chan struct{}),
 	}
@@ -181,6 +189,10 @@ func (s *session) run(ctx context.Context) {
 				continue
 			}
 			s.onIntent(ctx, line)
+		case rs := <-s.restyled:
+			if !ending {
+				s.onRestyled(ctx, rs)
+			}
 		case sig := <-s.signals:
 			s.onSignal(ctx, sig)
 		case a := <-s.approves:
@@ -278,20 +290,19 @@ func (s *session) onIntent(ctx context.Context, line []byte) {
 	case intentChatPost:
 		if s.spendable() {
 			if s.persona != nil {
-				// The persona posts it unless she already covered the topic.
-				s.persona.Offer(in.Text)
+				// The persona posts it unless she already covered the topic;
+				// it waits behind any ask still being restyled.
+				s.enqueueSpek(ctx, queuedSpek{offer: in.Text})
 			} else {
 				s.post(ctx, in.Text)
 			}
 		}
 	case intentAsk:
 		if s.spendable() {
-			text := in.Text
 			if s.persona != nil {
-				text = s.persona.Restyle(ctx, in.Text)
-			}
-			if s.post(ctx, text) {
-				s.state.Asks = append(s.state.Asks, Ask{QID: in.QID, Text: text, AskedAt: s.now()})
+				s.restyleAsk(ctx, in)
+			} else {
+				s.postAsk(ctx, in.QID, in.Text)
 			}
 		}
 	case intentNotesAppend:
@@ -502,8 +513,11 @@ func (s *session) update(it *ResearchItem, status, summary string) {
 	if summary != "" {
 		msg["summary"] = summary
 	}
-	if err := s.spek.Send(msg); err != nil {
-		s.log().Warn("[meetings] sending research update to spek", "error", err)
+	// Spek never heard of the persona's deep dives.
+	if !it.Betty {
+		if err := s.spek.Send(msg); err != nil {
+			s.log().Warn("[meetings] sending research update to spek", "error", err)
+		}
 	}
 	cp := *it
 	s.emit(Event{Kind: EventResearch, Research: &cp})
@@ -542,6 +556,9 @@ func (s *session) dispatch(ctx context.Context, it *ResearchItem) {
 		// The query is meeting speech: untrusted input for a read-only,
 		// propose-only research agent.
 		"untrusted": "true",
+	}
+	if it.Betty {
+		meta["betty"] = "1"
 	}
 	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
 	kick, err := s.r.opts.Research.Dispatch(cctx, it.Query, meta)
@@ -591,7 +608,13 @@ func (s *session) onSignal(ctx context.Context, sig ResearchSignal) {
 			if summary == "" && len(it.Findings) > 0 {
 				summary = it.Findings[len(it.Findings)-1]
 			}
-			s.deliver(ctx, fmt.Sprintf("Research on %q: %s", it.Query, summary))
+			if it.Betty && s.persona != nil {
+				// Exactly one follow-up, restyled by the persona off the
+				// session goroutine; it comes back as a persona reply.
+				s.persona.FollowUp(it.Query, summary)
+			} else {
+				s.deliver(ctx, fmt.Sprintf("Research on %q: %s", it.Query, summary))
+			}
 		}
 		s.upsertFact(ctx, researchTitle(s.id, it), renderResearch(it), []string{"meeting-research"})
 		s.r.unregisterKick(sig.KickID)
@@ -631,15 +654,37 @@ func renderResearch(it *ResearchItem) string {
 
 // onPersonaReply applies one persona reply through the same policy as
 // Spek's intents: it is charged to the budget (one intent, plus any model
-// tokens in the usage ledger), then posted through the
-// chat rate limit (or spoken, with the chat fallback, for a voice reply).
+// tokens in the usage ledger), then posted through the chat rate limit (or
+// spoken, with the chat fallback, for a voice reply). A spoken
+// acknowledgement is never charged and never falls back to chat; a deep
+// dive's follow-up is delivered like a research summary; a reply carrying
+// Research starts the deep dive after it is out.
 func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 	text := strings.TrimSpace(rep.Text)
 	if text == "" {
 		return
 	}
-	// A Spek offer was charged when Spek sent it.
-	if rep.Trigger != betty.TriggerOffer {
+	switch rep.Trigger {
+	case betty.TriggerAck:
+		if s.state.BudgetExhausted {
+			return
+		}
+		if s.speak(ctx, text) {
+			s.emitPersona(rep)
+		} else {
+			s.drop("ack_no_voice")
+		}
+		return
+	case betty.TriggerFollowUp:
+		if s.deliver(ctx, text) {
+			s.state.PersonaReplies++
+		}
+		s.emitPersona(rep)
+		s.save()
+		return
+	case betty.TriggerOffer:
+		// A Spek offer was charged when Spek sent it.
+	default:
 		s.account(ctx, intent{Type: intentPersona})
 	}
 	if !s.spendable() {
@@ -655,7 +700,140 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 	if posted {
 		s.state.PersonaReplies++
 	}
+	s.emitPersona(rep)
+	if posted && strings.TrimSpace(rep.Research) != "" {
+		s.deepDive(ctx, rep.Research)
+	}
+	s.save()
+}
+
+func (s *session) emitPersona(rep betty.Reply) {
 	raw, _ := json.Marshal(rep)
 	s.emit(Event{Kind: EventPersona, Reason: rep.Trigger, Intent: raw})
+}
+
+// bettyRIDPrefix names the persona's research items.
+const bettyRIDPrefix = "betty-"
+
+// deepDive starts the persona's research on an addressed question through
+// the meeting's research path (same cap and approval as Spek's research),
+// marked betty=1.
+func (s *session) deepDive(ctx context.Context, query string) {
+	n := 1
+	for _, it := range s.state.Research {
+		if it.Betty {
+			n++
+		}
+	}
+	now := s.now()
+	limit := s.r.opts.Policy.ResearchPerMeeting
+	overCap := limit > 0 && s.dispatchedCount() >= limit
+	s.state.Research = append(s.state.Research, ResearchItem{
+		RID: bettyRIDPrefix + strconv.Itoa(n), Query: query, Reason: "asked of " + s.personaName(), Betty: true, CreatedAt: now,
+	})
+	it := &s.state.Research[len(s.state.Research)-1]
+	if overCap {
+		s.update(it, ResearchPendingApproval, "")
+		return
+	}
+	s.dispatch(ctx, it)
+}
+
+// speak says text when the meeting can hear the bot, without a chat
+// fallback; it reports whether it was spoken.
+func (s *session) speak(ctx context.Context, text string) bool {
+	m, err := s.r.opts.Meetings.Get(s.id)
+	if err != nil || !m.VoiceEnabled || !s.r.opts.Policy.VoiceOnAddress {
+		return false
+	}
+	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
+	defer cancel()
+	return s.r.opts.Meetings.Say(cctx, s.id, text) == nil
+}
+
+// queuedSpek is one of Spek's asks or chat offers waiting its turn while an
+// earlier ask is restyled.
+type queuedSpek struct {
+	seq   int
+	offer string
+	// ask fields: qid and the text, ready once restyled.
+	ask   bool
+	qid   string
+	text  string
+	ready bool
+}
+
+// restyledAsk is a restyle result.
+type restyledAsk struct {
+	seq  int
+	text string
+}
+
+// restyleAsk rewrites one of Spek's clarifying questions in the persona's
+// voice without blocking the session: the model call runs off the
+// goroutine (bounded by the persona's restyle timeout, raw text on
+// failure), and the ask keeps its place among Spek's posts.
+func (s *session) restyleAsk(ctx context.Context, in intent) {
+	s.nextSeq++
+	q := queuedSpek{seq: s.nextSeq, ask: true, qid: in.QID, text: in.Text}
+	s.spekQueue = append(s.spekQueue, q)
+	persona, seq, raw := s.persona, q.seq, in.Text
+	go func() {
+		text := persona.Restyle(ctx, raw)
+		select {
+		case s.restyled <- restyledAsk{seq: seq, text: text}:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+// enqueueSpek offers a Spek chat post to the persona now, or after the
+// asks queued before it.
+func (s *session) enqueueSpek(ctx context.Context, q queuedSpek) {
+	if len(s.spekQueue) == 0 {
+		s.persona.Offer(q.offer)
+		return
+	}
+	s.nextSeq++
+	q.seq = s.nextSeq
+	s.spekQueue = append(s.spekQueue, q)
+	s.flushSpek(ctx)
+}
+
+func (s *session) onRestyled(ctx context.Context, rs restyledAsk) {
+	for i := range s.spekQueue {
+		if s.spekQueue[i].seq == rs.seq {
+			if strings.TrimSpace(rs.text) != "" {
+				s.spekQueue[i].text = rs.text
+			}
+			s.spekQueue[i].ready = true
+		}
+	}
+	s.flushSpek(ctx)
 	s.save()
+}
+
+// flushSpek posts queued items from the head while they are ready.
+func (s *session) flushSpek(ctx context.Context) {
+	for len(s.spekQueue) > 0 {
+		q := s.spekQueue[0]
+		if q.ask && !q.ready {
+			return
+		}
+		s.spekQueue = s.spekQueue[1:]
+		if q.ask {
+			if s.spendable() {
+				s.postAsk(ctx, q.qid, q.text)
+			}
+			continue
+		}
+		s.persona.Offer(q.offer)
+	}
+}
+
+// postAsk posts a clarifying question and tracks it for answers.
+func (s *session) postAsk(ctx context.Context, qid, text string) {
+	if s.post(ctx, text) {
+		s.state.Asks = append(s.state.Asks, Ask{QID: qid, Text: text, AskedAt: s.now()})
+	}
 }

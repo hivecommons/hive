@@ -154,7 +154,7 @@ type MeetingsPersonaConfig struct {
 	// Language is a BCP-47 tag ("en-US"); replies use its language and
 	// regional conventions.
 	Language string `yaml:"language,omitempty" json:"language,omitempty"`
-	// Voice is the TTS voice id (stored for spoken replies, phase B).
+	// Voice is the TTS voice id for spoken replies.
 	Voice string `yaml:"voice,omitempty" json:"voice,omitempty"`
 	// VoiceType is female, male or bot (descriptive).
 	VoiceType string `yaml:"voice_type,omitempty" json:"voice_type,omitempty"`
@@ -169,7 +169,9 @@ type MeetingsPersonaConfig struct {
 	Humor string `yaml:"humor,omitempty" json:"humor,omitempty"`
 	// Unprompted bounds question-driven answers nobody asked the persona for.
 	Unprompted MeetingsPersonaUnprompted `yaml:"unprompted,omitempty" json:"unprompted,omitzero"`
-	// SearxngURL is the web search service (phase B; unused yet).
+	// SearxngURL is the SearXNG web search service Betty queries for
+	// answers (JSON output), for example
+	// http://searxng.meetings.svc.cluster.local:8080. Empty means no web search.
 	SearxngURL string `yaml:"searxng_url,omitempty" json:"searxng_url,omitempty"`
 }
 
