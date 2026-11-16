@@ -11,6 +11,26 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.286.0)
+
+### Added
+
+- `ghcr.io/hivecommons/hive-mx`: a multi-arch (amd64, arm64) image for the hive-mx mail receiver, a static binary on distroless running as non-root, published with the other hive images.
+- The hub routes mail from hive-mx: `GET /api/mail/hosts` lists the hosts it accepts `hive@<host>` for, and `POST /api/mail/inbound` signs each delivery with the target hive's relay key and forwards it to that hive; spokes accept such relays through an `X-Hive-Relay-Delivery` header with the webhook relay's replay protection. Off until `HIVE_HUB_MAIL_TOKEN` is set.
+- **Settings, Meeting attendee.** A new Settings tab manages the hive's meeting persona: pick one of eleven presets built only from voices the self-hosted Kokoro TTS ships (Betty Bee by default, plus American and British English, Spanish, French, Italian, Brazilian Portuguese, Hindi, Japanese and Mandarin personas with intros in their own language) or edit the name, aliases, pronouns, voice type, language, accent, voice, humor and intro with a live preview and a Play sample button, set the unprompted-answer caps and voice-on-address, and see the attendee address `hive@<dashboard host>` with the people who may invite her. Owner or read-write, through `GET`/`PUT /api/meetings/persona` and `POST /api/meetings/persona/sample`; the email controls are shown disabled until email-in lands ([#18396](https://github.com/hivecommons/hive/issues/18396)).
+- Meetings: ask Betty, spoken or in the meeting chat, to open an issue, open an RFC, start a Spek session or save a knowledge note. She drafts it from the request and the recent discussion, confirms in the chat that it waits for approval, and asks one clarifying question when the request is unclear. Drafts land in **Drafts from meetings** in the Calendar section, where the owner or a read-write user edits, approves or rejects them; nothing is created before approval (only knowledge notes may be auto-approved), and the result link goes back to the meeting chat or its notes. Configure with `meetings.persona.actions` or `/api/meetings/actions/settings` (#18406).
+- Inbox: **● Record** in the Inbox header (and "● Record into Inbox" in Inception) records a meeting or note from the microphone straight into the Inbox. A consent notice is shown before every recording (recording laws vary; the recorder is responsible), a red ● Recording indicator stays on screen for the whole recording, the timer, level meter, Pause/Resume/Stop and the upload status ("All chunks saved" or "N waiting") are in the recorder panel, chunks are queued in IndexedDB until the hive stores them so a network drop or reload resumes the upload, and a Wake Lock plus a hidden-tab warning keep phones recording. Owner and read-write only; `inbox.recording.enabled` now defaults to true. See `src/docs/inbox-recording.md`.
+- Inbox items now show a pill for every share (RFC, spek, Knowledge, DIBS) recording what was shared, by whom, when and the status, linked to the RFC, dibs item, fact or spek session; the latest per destination shows and +N expands the history.
+
+### Changed
+
+- The inception API, its watcher and the brainstorm agent's inception mode are retired in favour of Inception (spek) sessions. For one release, all 14 `/api/inception/*` routes answer `410 Gone` with a JSON pointer to `/api/sessions` and the docs; nothing is read or changed. The inception engine and its scaffold generator, the brainstorm bead watcher, the inception-approval run admission path and the boot-time brainstorm resume are removed. The dashboard snapshot builder no longer fetches `/api/inception/state`. The `brainstorm` agent is ideation-only and stays on-demand and parked at boot. The `${INCEPTION_*}` template variables always render empty, so custom templates keep rendering. Knowledge facts from past inception runs are kept: nothing deletes them, and Hive still reconnects the `/data/inception-wiki` vault on boot. `/data/inception/` stays on disk.
+
+### Fixed
+
+- **A Copilot agent no longer stays logged out after its `~/.copilot/config.json` stops following the shared login** ([#18443](https://github.com/hivecommons/hive/issues/18443)). The Copilot CLI saves its config by renaming a temp file over the per-agent symlink, which left the agent on a private copy that never saw a new dashboard login, and restarts never repaired it. Every agent launch and restart now moves such a private copy aside to `config.json.bak-<timestamp>` (keeping only the newest backup) and relinks it to the shared file; the credential check behind the token-triggered restart now evaluates the file the agent actually reads, so a diverged copy is relinked instead of restarted until the hive gives up. Launch also sweeps leftover `config.json.tmp.*` files older than `HIVE_COPILOT_CONFIG_TMP_MAX_AGE` (default `1h`). A private copy that holds the only login is left in place.
+- The dashboard Inbox now waits for the viewer's role before its first render and re-renders as soon as the role resolves, so owners no longer lose Share → Hive actions, ▶ Play and the bulk Hive menu until the next 60-second refresh; a failed role lookup is retried with backoff and falls back to read-only.
+
 ## 2026-11-16 (v5.285.0)
 
 ### Added

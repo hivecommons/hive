@@ -169,6 +169,35 @@ A spoke with an OpenRouter key proxies OpenRouter's `/api/v1/key` credit endpoin
 
 Hive probes `/v1/models` on OpenAI-compatible gateways. LiteLLM discovery includes bearer auth when a key is configured. If discovery fails, the UI falls back to static or configured model lists and marks entries as unverified; fallback data should not be treated as proof that the endpoint is healthy.
 
+## Gateway spend and prices
+
+The cost card and the Overview usage gauge price gateway models from the gateway itself, in this order:
+
+1. A `prices:` block on the gateway in `hive.yaml` (USD per 1M tokens). It wins over everything else and is the only source for `vllm`, `llm-d`, `watsonx` and `custom` gateways, which publish no prices.
+2. For `openrouter`, the `pricing` block of the public `/models` catalog that model discovery already reads (input, output and cache-read prices per token).
+3. For `litellm`, the proxy's `/model/info` (`input_cost_per_token`, `output_cost_per_token`, `cache_read_input_token_cost`), read with the gateway key.
+4. The static list-price table, for gateway ids it knows.
+
+If a gateway model has none of these, it shows as **price unknown**. Its tokens are left out of the total (which is then a lower bound) and listed by name. It is never counted as $0 or as a tier guess. When the gateway reports cached prompt tokens (`usage.prompt_tokens_details.cached_tokens`), they are billed at the cache-read price. A cached-input price you leave unset defaults to the input price.
+
+```yaml
+governor:
+  gateways:
+    - name: local-vllm
+      kind: vllm
+      endpoint: http://vllm:8000
+      prices:              # USD per 1M tokens
+        input: 0.20
+        cached_input: 0.02
+        output: 0.60
+        models:            # optional per-model overrides
+          Qwen/Qwen3-235B:
+            input: 0.90
+            output: 2.70
+```
+
+The gauge shows gateways as dollar rows, not dials, because a gateway has no plan to measure. Each row covers the enabled agents whose backend names that gateway, over the same token window as the cost card.
+
 ## Guided example: Watsonx via gateway
 
 The watsonx path uses the same gateway machinery: configure the gateway endpoint and credentials, verify `/v1/models`, then assign an agent to that backend/gateway. Use it as the guided flow for any enterprise gateway:

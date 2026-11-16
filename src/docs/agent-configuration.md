@@ -748,6 +748,13 @@ Agents can inspect peer panes with `hive-panes [lines]` when the deployment incl
 
 Every discovery probe is best-effort: a failed or absent probe falls back to a current static list, so a model dropdown is never empty. Fallback entries are marked "unverified" in the UI.
 
+An agent whose backend is a model gateway (OpenRouter, LiteLLM, vLLM, llm-d, watsonx or a custom OpenAI-compatible endpoint) does not use a CLI's static list at all. It inherits the gateway's live `/v1/models` list: the model dropdown, the Default Model picker and auto-heal all read what the gateway currently serves. The same holds for any CLI you point at a gateway, because its model is then whatever id the gateway accepts. Only the CLI-native backends (claude, copilot, codex, gemini, goose, agy, omp, bob, pi) ever fall back to a static list.
+
+Static lists drift as vendors ship models, so two checks keep them honest:
+
+- `TestStaticModelListsShape` (in `src/pkg/dashboard`) fails a PR if any static list is empty or has duplicates, or if a first-paint copy in `static/index.html` disagrees with its Go list.
+- The weekly [Static model list freshness](../../.github/workflows/static-model-freshness.yml) workflow compares the lists with public, keyless sources. The OpenRouter catalog is used directly for the curated OpenRouter suggestions, and for Claude, Gemini and OpenAI ids mapped onto `anthropic/`, `google/` and `openai/`. npm release versions of the CLIs are included as context. The workflow keeps one tracking issue (label `static-model-freshness`) up to date. Catalogs that need auth (Claude OAuth `/v1/models`, the Copilot SDK, the Codex app server, Kiro, agy, omp, goose, bob) are not compared; the CLIs are probed live at runtime instead.
+
 ### Model pinning and auto-switching
 
 Each agent shows a 📌 pin on its CLI and its model in the dashboard. The semantics are deliberately narrow — a model changes out from under you in exactly two cases:

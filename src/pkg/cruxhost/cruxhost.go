@@ -281,6 +281,15 @@ func (c *Capabilities) RecordUsage(_ context.Context, rec callback.UsageRecord) 
 	switch rec.Kind {
 	case callback.UsageKindGateway:
 		c.deps.Usage.Record(rec.Agent, rec.Model, rec.InputTokens, rec.OutputTokens)
+	case callback.UsageKindGatewayCache:
+		// Sinks that cannot split cached tokens get the whole prompt as input.
+		if cs, ok := c.deps.Usage.(interface {
+			RecordWithCache(agent, model string, inputTokens, outputTokens, cacheRead, cacheCreation int64)
+		}); ok {
+			cs.RecordWithCache(rec.Agent, rec.Model, rec.InputTokens, rec.OutputTokens, rec.CacheRead, rec.CacheCreation)
+		} else {
+			c.deps.Usage.Record(rec.Agent, rec.Model, rec.InputTokens+rec.CacheRead, rec.OutputTokens)
+		}
 	case callback.UsageKindCopilot:
 		c.deps.Usage.RecordCopilot(rec.Agent, rec.Model, rec.InputTokens, rec.OutputTokens)
 	case callback.UsageKindCopilotCache:

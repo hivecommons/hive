@@ -138,19 +138,45 @@
         ? Object.keys(usedBy).filter((id) => Array.isArray(usedBy[id]) && usedBy[id].length > 0)
           .sort((a, b) => rank(a) - rank(b) || a.localeCompare(b))
         : ['anthropic'];
+      // Gateways (OpenRouter, LiteLLM, vLLM, …) have no plan to measure, so
+      // they get a spend row in dollars at the gateway's prices instead of a
+      // dial. Models with no published or configured price are listed as
+      // "price unknown", never counted as $0.
+      const spend = (resp && Array.isArray(resp.gateway_spend) ? resp.gateway_spend : [])
+        .filter((g) => g && g.gateway && Array.isArray(g.agents) && g.agents.length)
+        .map((g) => {
+          const unknown = Array.isArray(g.unknown_price_models) ? g.unknown_price_models.map(String) : [];
+          const usd = Number(g.usd) || 0;
+          return {
+            gateway: String(g.gateway), kind: String(g.kind || ''), usedBy: g.agents.map(String),
+            usd: usd, tokens: Number(g.tokens) || 0, unknownModels: unknown,
+            state: unknown.length && usd === 0 ? 'unknown' : (unknown.length ? 'partial' : 'priced'),
+          };
+        });
       const rows = ids.map((id) => providerRow(id, readingFor(id), usedBy ? usedBy[id].map(String) : null, !!usedBy))
         .filter((row) => row.shown);
       if (!rows.length) {
         const legacy = !usedBy ? providerRow('anthropic', readingFor('anthropic'), null, false) : null;
         return legacy && legacy.state === 'no-reading' && legacy.cause !== 'absent'
-          ? Object.assign(legacy, { rows: [] })
-          : { state: 'no-reading', shown: false, rows: [], cause: 'absent', reason: 'Usage measurement is not running on this hive.' };
+          ? Object.assign(legacy, { rows: [], spend: spend })
+          : { state: 'no-reading', shown: false, rows: [], spend: spend, cause: 'absent', reason: 'Usage measurement is not running on this hive.' };
       }
       // The needle row is the one with the least left; rows without a
       // reading only lead when no row has one.
       let lead = rows.find((row) => row.state === 'reading') || rows[0];
       rows.forEach((row) => { if (row.state === 'reading' && row.needle.pctLeft < lead.needle.pctLeft) lead = row; });
-      return Object.assign({}, lead, { shown: true, rows: rows });
+      return Object.assign({}, lead, { shown: true, rows: rows, spend: spend });
+    }
+
+    // subscriptionGaugeSpendText is a gateway spend row's one-line summary:
+    // "$1.23 at gateway prices", "$1.23 + price unknown for qwen", or
+    // "price unknown (qwen)" when nothing could be costed.
+    function subscriptionGaugeSpendText(row) {
+      const usd = '$' + (Number(row.usd) || 0).toFixed(2);
+      const unknown = (row.unknownModels || []).join(', ');
+      if (row.state === 'unknown') return 'Price unknown (' + unknown + '): this gateway publishes no price. Set prices: on the gateway to cost it.';
+      if (row.state === 'partial') return usd + ' at gateway prices, plus price unknown for ' + unknown + ' (not counted).';
+      return usd + ' at gateway prices (estimate from token counts).';
     }
 
     // Shared loader. The headroom endpoint is owner-only and the fetch
@@ -261,7 +287,8 @@
       const host = document.getElementById('overview-usage-gauge');
       if (!host) return;
       const m = subscriptionGaugeCurrentModel();
-      if (!subscriptionGaugeOwner() || !subscriptionGaugeOverviewEnabled() || !m || !m.shown) {
+      const spend = (m && m.spend) || [];
+      if (!subscriptionGaugeOwner() || !subscriptionGaugeOverviewEnabled() || !m || (!m.shown && !spend.length)) {
         host.hidden = true;
         host.replaceChildren();
         return;
@@ -272,8 +299,8 @@
         if (text !== undefined) n.textContent = text;
         return n;
       };
-      const rows = m.rows && m.rows.length ? m.rows : [m];
-      const single = rows.length === 1;
+      const rows = !m.shown ? [] : (m.rows && m.rows.length ? m.rows : [m]);
+      const single = rows.length === 1 && !spend.length;
       const metaFor = (row) => {
         const meta = [];
         if (row.state === 'reading') {
@@ -283,7 +310,7 @@
         return meta.join(' · ');
       };
       const head = el('div', 'overview-usage-gauge__head');
-      head.appendChild(el('div', 'overview-usage-gauge__title', single ? rows[0].name + ' usage left' : 'Usage left'));
+      head.appendChild(el('div', 'overview-usage-gauge__title', single ? rows[0].name + ' usage left' : (rows.length ? 'Usage left' : 'Gateway spend')));
       head.appendChild(el('div', 'overview-usage-gauge__meta', single ? metaFor(rows[0]) : ''));
       const parts = [head];
       rows.forEach((row) => {
@@ -315,6 +342,24 @@
         }
         parts.push(box);
       });
+      spend.forEach((row) => {
+        const box = el('div', 'overview-usage-gauge__row');
+        box.dataset.gateway = row.gateway;
+        const rowHead = el('div', 'overview-usage-gauge__head');
+        rowHead.appendChild(el('div', 'overview-usage-gauge__provider', row.gateway + ' (gateway)'));
+        box.appendChild(rowHead);
+        if (row.usedBy.length) box.appendChild(el('div', 'overview-usage-gauge__users', 'Used by ' + subscriptionGaugeUsers(row.usedBy)));
+        const line = el('div', row.state === 'priced' ? 'overview-usage-gauge__spend' : 'overview-usage-gauge__note', subscriptionGaugeSpendText(row));
+        line.dataset.priceState = row.state;
+        box.appendChild(line);
+        parts.push(box);
+      });
+      if (!rows.length) {
+        parts.push(el('div', 'overview-usage-gauge__note', 'Gateway spend is estimated from token counts at each gateway\'s published or configured prices.'));
+        host.replaceChildren.apply(host, parts);
+        host.hidden = false;
+        return;
+      }
       parts.push(el('div', 'overview-usage-gauge__note', single
         ? (rows[0].accountNote || 'Reflects the ' + rows[0].name + ' account this hive is signed in with.') + ' This is the ' + rows[0].name + ' plan, not the hive token budget.'
         : 'Each row reflects the account this hive is signed in with for that provider. These are the providers\' plans, not the hive token budget.'));

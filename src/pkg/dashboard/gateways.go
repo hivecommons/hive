@@ -258,6 +258,8 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		gw.ProjectID = gws[idx].ProjectID
 		gw.Region = gws[idx].Region
 		gw.KeyName = gws[idx].KeyName
+		// prices: is YAML-only (the form does not edit it); keep it.
+		gw.Prices = gws[idx].Prices
 	}
 	if body.APIKeyEnv != nil {
 		gw.APIKeyEnv = strings.TrimSpace(*body.APIKeyEnv)
