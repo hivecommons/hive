@@ -6120,6 +6120,11 @@
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
     }
+    /* Share history pills: status links, not buttons. */
+    a.inbox-share-pill { text-decoration: none; color: inherit; cursor: pointer; }
+    a.inbox-share-pill:hover, a.inbox-share-pill:focus-visible { text-decoration: underline; }
+    .inbox-share-more { text-decoration: none; color: var(--text-faint); }
+    .inbox-share-more:hover, .inbox-share-more:focus-visible { text-decoration: underline; }
     /* Meetings: hive as a live meeting participant (Quorum) */
     .meetings-panel { display: flex; flex-direction: column; gap: var(--sp-4); }
     .meetings-join { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) auto auto; gap: var(--sp-2); align-items: end; }
@@ -47718,6 +47723,70 @@ function burnAreaChart() {
       await fetchInbox();
     }
 
+    // Share history pills: one per share record, in the form
+    // "→ RFC #18412 · andy · 2m ago". They are status, not controls: a plain
+    // link to the target when there is one (never for read-only viewers),
+    // otherwise a span. Only the latest record per destination shows; "+N"
+    // expands the rest.
+    const _inboxHistoryOpen = new Set();
+    const INBOX_SHARE_LABELS = { rfc: 'RFC', dibs: 'DIBS', knowledge: 'Knowledge', spek: 'spek' };
+    function inboxSharePillText(rec) {
+      const dest = rec.destination;
+      const ref = rec.ref || {};
+      let label = '→ ' + (INBOX_SHARE_LABELS[dest] || dest);
+      if (dest === 'rfc' && ref.number) label += ' #' + ref.number;
+      if (dest === 'spek' && ref.name) label += ': ' + ref.name;
+      const busy = rec.status === 'queued' || rec.status === 'transcribing' || rec.status === 'in_progress';
+      if (rec.status === 'failed') label += ' failed';
+      else if (rec.status === 'transcribing') label += ' (transcribing)';
+      else if (busy) label += ' …';
+      const when = rec.started_at && !String(rec.started_at).startsWith('0001') ? relativeTimeShort(rec.started_at) : '';
+      return label + ' · ' + (rec.actor || 'unknown') + (when ? ' · ' + when : '');
+    }
+    // inboxShareTargetHref returns the link target of a record, or '' when
+    // it has none or the viewer may not open it.
+    function inboxShareTargetHref(rec, canOpen) {
+      const ref = rec.ref || {};
+      if (!canOpen) return '';
+      if ((rec.destination === 'rfc' || rec.destination === 'dibs') && /^https?:\/\//.test(ref.url || '')) return ref.url;
+      if (rec.destination === 'spek' && ref.id) return '#section-sessions-section?session=' + encodeURIComponent(ref.id);
+      return '';
+    }
+    function inboxSharePillHtml(rec, it) {
+      const busy = rec.status === 'queued' || rec.status === 'transcribing' || rec.status === 'in_progress';
+      const status = rec.status === 'failed' ? 'error' : (rec.status === 'done' ? 'ok' : 'syncing');
+      const stamp = rec.finished_at || rec.started_at;
+      const title = (rec.status === 'failed' && rec.reason ? rec.reason + ' · ' : (rec.reason && busy ? rec.reason + ' · ' : '')) + (stamp ? formatDashboardDateTime(stamp) : '');
+      const inner = (busy ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> ' : '') + escapeHtml(inboxSharePillText(rec));
+      const attrs = ' class="kc-pill inbox-share-pill" data-status="' + status + '" data-share-dest="' + escapeHtml(rec.destination) + '" title="' + escapeHtml(title) + '"';
+      const canOpen = inboxViewerCanPlay();
+      const href = inboxShareTargetHref(rec, canOpen);
+      if (href) return '<a' + attrs + ' href="' + escapeHtml(href) + '"' + (/^https?:/.test(href) ? ' target="_blank" rel="noopener noreferrer"' : '') + '>' + inner + '</a>';
+      if (canOpen && rec.destination === 'knowledge' && (rec.ref || {}).id && it && it.fact_slug) {
+        return '<a' + attrs + ' href="#" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '">' + inner + '</a>';
+      }
+      return '<span' + attrs + '>' + inner + '</span>';
+    }
+    function inboxSharePillsHtml(it, key) {
+      const hist = (it && it.share_history) || [];
+      if (!hist.length) return '';
+      const open = _inboxHistoryOpen.has(key);
+      const latest = {};
+      hist.forEach(r => { latest[r.destination] = r; });
+      const shown = hist.filter(r => open || latest[r.destination] === r);
+      const hidden = hist.length - shown.length;
+      let html = shown.map(r => inboxSharePillHtml(r, it)).join(' ');
+      if (hidden > 0 || (open && hist.length > Object.keys(latest).length)) {
+        html += ' <a href="#" class="muted-xs inbox-share-more" data-action="inboxToggleHistory" data-prevent="1" data-arg0="' + escapeHtml(it.source) + '" data-arg1="' + escapeHtml(it.id) + '" aria-expanded="' + (open ? 'true' : 'false') + '" title="' + (open ? 'Show only the latest share per destination' : 'Show the full share history') + '">' + (open ? 'less' : '+' + hidden) + '</a>';
+      }
+      return html;
+    }
+    function inboxToggleHistory(src, id) {
+      const key = src + '/' + id;
+      if (_inboxHistoryOpen.has(key)) _inboxHistoryOpen.delete(key); else _inboxHistoryOpen.add(key);
+      renderInbox();
+    }
+
     function inboxItemHtml(it) {
       const key = inboxItemKey(it);
       const checked = _inboxSelected.has(key) ? ' checked' : '';
@@ -47735,6 +47804,7 @@ function burnAreaChart() {
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
       if (it.dismissed) pills += '<span class="kc-pill" title="Kept as a Knowledge fact only">knowledge only</span>';
+      pills += inboxSharePillsHtml(it, key);
       for (const d of Object.keys(it.share_intents || {})) {
         const si = it.share_intents[d];
         if (si && si.status === 'failed') pills += '<span class="kc-pill" data-status="error" title="' + escapeHtml(si.error || '') + '">→ ' + escapeHtml(inboxIntentLabel(d)) + ' failed</span> <span class="kc-error muted-xs" role="alert">' + escapeHtml(si.error || '') + '</span> ';
@@ -53541,9 +53611,35 @@ function burnAreaChart() {
       if (wasEnabled !== _sessionsData.enabled) sessionsApplyVisibility();
       if (!_sessionsData.enabled) { dashboardClearInterval('sessions-poll'); return; }
       if (!_sessionsRole) await sessionsLoadRole();
-      _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, _sessionsSelected || sessionsStoreGet(SESSIONS_SELECTED_KEY));
+      _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, sessionsClaimFocus(_sessionsData.sessions) || _sessionsSelected || sessionsStoreGet(SESSIONS_SELECTED_KEY));
       renderSessions();
     }
+    // Deep link: #section-sessions-section?session=<id> opens the section
+    // (the generic section hash does that) and selects that session's tab.
+    // Inbox share pills for spek shares link here.
+    const SESSIONS_FOCUS_HASH = '#section-sessions-section?session=';
+    function sessionsFocusIdFromHash(hash) {
+      const h = String(hash || '');
+      const at = h.indexOf(SESSIONS_FOCUS_HASH);
+      if (at < 0) return '';
+      try { return decodeURIComponent(h.slice(at + SESSIONS_FOCUS_HASH.length).split('&')[0]); } catch (e) { return ''; }
+    }
+    let _sessionsFocusId = sessionsFocusIdFromHash(location.hash);
+    // sessionsClaimFocus returns the deep-linked session id once it exists in
+    // sessions (and forgets it), or '' while there is nothing to select.
+    function sessionsClaimFocus(sessions) {
+      if (!_sessionsFocusId || !(sessions || []).some(function(s) { return s.id === _sessionsFocusId; })) return '';
+      const id = _sessionsFocusId;
+      _sessionsFocusId = '';
+      return id;
+    }
+    window.addEventListener('hashchange', function(e) {
+      const id = sessionsFocusIdFromHash((e && e.newURL) || location.hash);
+      if (!id) return;
+      _sessionsFocusId = id;
+      const wanted = sessionsClaimFocus(_sessionsData.sessions);
+      if (wanted) sessionsSelect(wanted);
+    });
     function sessionsStartPolling() {
       dashboardSetInterval('sessions-poll', loadSessions, SESSIONS_POLL_MS);
     }
