@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.289.1)
+
+### Changed
+
+- The AGENTS.md injection cap defaults to 32 KiB (was 8 KiB), so a 13 KB AGENTS.md now reaches agents in full; set `repos.<repo>.agents_md_max_bytes` to override it per repo (hard ceiling 256 KiB) or `HIVE_AGENTS_MD_MAX_BYTES` for the default, the truncation warning is logged once per file change, and `/api/status` repos report each repo's AGENTS.md size and any dropped sections.
+
+### Fixed
+
+- Workflow-model repositories no longer flap `stage/020-claimed` every cycle: the in-progress sweep leaves a stage label the bound model derives for the issue (TechDocs "Accepted") in place and does not treat it as a claim, and out-of-cycle stage facts derive through the same bound model as the sweeps (#18434).
+- Meetings: hive ships Quorum v0.2.1, which sends Vexa the full join link (`meeting_url`) for Zoom meetings, so sending hive to a Zoom link no longer fails with "unsupported platform 'zoom' without a meeting_url".
+
 ## 2026-11-16 (v5.289.0)
 
 ### Added
