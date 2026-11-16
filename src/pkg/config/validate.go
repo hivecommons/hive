@@ -39,6 +39,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateReferenceRepos(); err != nil {
 		return err
 	}
+	if err := ValidateRemoteWriteIdentity(c.Project.RemoteWriteIdentity); err != nil {
+		return err
+	}
 	if _, err := c.Ioscan.Policy(); err != nil {
 		return err
 	}

@@ -941,17 +941,55 @@ func referenceRepoProvenance(rr config.ReferenceRepo) string {
 // push to a repo it does not own, so a PR goes through the owner's fork: the
 // paragraph names the login and the exact three commands. Empty when no entry
 // has both the prs tier and a resolved credential login.
+//
+// An entry that writes as the hive's GitHub App bot
+// (project.remote_write_identity) is different: the App cannot own a fork,
+// and its token is minted on the repo owner's own installation, so the topic
+// branch is pushed to the reference repo itself; referenceRepoBotInstruction
+// renders that paragraph.
 func referenceRepoForkInstruction(refs []config.ReferenceRepo, host string) string {
 	login := ""
 	for _, rr := range refs {
-		if rr.WritesPRs() && rr.CredentialLogin != "" {
+		if rr.WritesPRs() && rr.CredentialLogin != "" && rr.CredentialIdentity != config.ReferenceIdentityBot {
 			login = rr.CredentialLogin
 			break
 		}
 	}
+	bot := referenceRepoBotInstruction(refs)
 	if login == "" {
-		return ""
+		return bot
 	}
 	host = strings.TrimRight(host, "/")
-	return fmt.Sprintf("   ✍️ Writes to a reference repo appear under the GitHub account %s (the hive owner), not under the hive. You CANNOT push to a reference repo itself. For a PR: fork it into that account (gh repo fork <owner>/<name> --clone=false; already-forked is fine), push your topic branch to %s/%s/<name> (git remote add fork %s/%s/<name>.git && git push fork <branch>), then open the PR against the reference repo: gh pr create --repo <owner>/<name> --head %s:<branch>. Never push to the fork's default branch; do nothing else on the fork.\n", login, host, login, host, login, login)
+	subject, itself := "a reference repo", "a reference repo itself"
+	if bot != "" {
+		subject, itself = "any other write-tier reference repo", "those repos themselves"
+	}
+	return bot + fmt.Sprintf("   ✍️ Writes to %s appear under the GitHub account %s (the hive owner), not under the hive. You CANNOT push to %s. For a PR: fork it into that account (gh repo fork <owner>/<name> --clone=false; already-forked is fine), push your topic branch to %s/%s/<name> (git remote add fork %s/%s/<name>.git && git push fork <branch>), then open the PR against the reference repo: gh pr create --repo <owner>/<name> --head %s:<branch>. Never push to the fork's default branch; do nothing else on the fork.\n", subject, login, itself, host, login, host, login, login)
+}
+
+// referenceRepoBotInstruction is the kick's paragraph for the write-tier
+// reference repos that write as the hive's GitHub App bot. Empty when there
+// are none.
+func referenceRepoBotInstruction(refs []config.ReferenceRepo) string {
+	var repos []string
+	login := ""
+	prs := false
+	for _, rr := range refs {
+		if rr.ReadOnly() || rr.CredentialIdentity != config.ReferenceIdentityBot || rr.CredentialLogin == "" {
+			continue
+		}
+		repos = append(repos, rr.Repo)
+		if login == "" {
+			login = rr.CredentialLogin
+		}
+		prs = prs || rr.WritesPRs()
+	}
+	if len(repos) == 0 {
+		return ""
+	}
+	line := fmt.Sprintf("   🤖 Writes to %s appear under the hive's GitHub App, %s (the project installed it), not under a person.", strings.Join(repos, ", "), login)
+	if prs {
+		line += " For a PR there, do NOT fork: push your topic branch to the reference repo itself (never its default branch) and open the PR with gh pr create --repo <owner>/<name> --head <branch>."
+	}
+	return line + "\n"
 }
