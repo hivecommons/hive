@@ -66,8 +66,11 @@ type UploadSource struct {
 	FactWritten func(dir string)
 	// Fetcher fetches links; nil refuses links.
 	Fetcher *LinkFetcher
-	Logger  *slog.Logger
-	Now     func() time.Time
+	// PDF runs the hive-pdftext sandbox; nil reads HIVE_PDF_* on first use.
+	PDF    *PDFRuntime
+	pdfMu  sync.Mutex
+	Logger *slog.Logger
+	Now    func() time.Time
 
 	factMu sync.Mutex
 }
@@ -217,7 +220,7 @@ func (u *UploadSource) Add(ctx context.Context, in UploadInput) (UploadMeta, err
 	if uerr != nil {
 		return UploadMeta{}, uerr
 	}
-	ex, uerr := ExtractUpload(ctx, kind, in.Data)
+	ex, uerr := u.extract(ctx, kind, in.Data)
 	if uerr != nil {
 		return UploadMeta{}, uerr
 	}
@@ -239,6 +242,33 @@ func (u *UploadSource) Add(ctx context.Context, in UploadInput) (UploadMeta, err
 		AddedAt:  u.now(),
 	}
 	return u.store(m, in.Data, ex.Markdown)
+}
+
+// extract runs the type's extractor: PDFs in the sandbox, everything else
+// in-process.
+func (u *UploadSource) extract(ctx context.Context, kind string, data []byte) (Extracted, *UploadError) {
+	if kind != UploadKindPDF {
+		return ExtractUpload(ctx, kind, data)
+	}
+	res, uerr := u.pdfRuntime().Run(ctx, data)
+	if uerr != nil {
+		return Extracted{}, uerr
+	}
+	ex, uerr := pdfMarkdown(res)
+	if uerr != nil {
+		return Extracted{}, uerr
+	}
+	ex.Markdown = capMarkdown(ex.Markdown)
+	return ex, nil
+}
+
+func (u *UploadSource) pdfRuntime() *PDFRuntime {
+	u.pdfMu.Lock()
+	defer u.pdfMu.Unlock()
+	if u.PDF == nil {
+		u.PDF = DefaultPDFRuntime(os.Getenv)
+	}
+	return u.PDF
 }
 
 // LinkInput is one dropped or pasted URL.
@@ -279,7 +309,7 @@ func (u *UploadSource) AddLink(ctx context.Context, in LinkInput) (UploadMeta, e
 	if uerr != nil {
 		return UploadMeta{}, uerr
 	}
-	ex, uerr := ExtractUpload(ctx, kind, fl.Body)
+	ex, uerr := u.extract(ctx, kind, fl.Body)
 	if uerr != nil {
 		return UploadMeta{}, uerr
 	}

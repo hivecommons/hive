@@ -38643,7 +38643,7 @@
           "Knowledge"
         ],
         "summary": "Add dropped files to the Inbox",
-        "description": "Owner or read-write. Each multipart `file` field is typed by its content (magic bytes, UTF-8 validation and a parse check), never by its name or client MIME type alone. Markdown, text, JSON, JSON Lines, YAML, CSV, TSV, HTML and Word (.docx, read with zip-bomb caps and no DTDs or external entities) become `upload` Inbox items with extracted markdown, stored under `connector-state/uploads/<id>/` (0700 directory, 0600 files) and written as a Knowledge fact with the text inside an `<untrusted-inbox-data>` envelope. Limits come from `inbox.uploads` (`max_file_bytes`, default 25 MiB; `max_files_per_drop`, default 20; `quota_bytes`, default 2 GiB). Requests marked `Sec-Fetch-Site: cross-site` are refused. Every file is audited as `inbox_upload` with its outcome.",
+        "description": "Owner or read-write. Each multipart `file` field is typed by its content (magic bytes, UTF-8 validation and a parse check), never by its name or client MIME type alone. Markdown, text, JSON, JSON Lines, YAML, CSV, TSV, HTML, Word (.docx, read with zip-bomb caps and no DTDs or external entities) and PDF (parsed out of process in the hive-pdftext sandbox; a PDF without a text layer is refused) become `upload` Inbox items with extracted markdown, stored under `connector-state/uploads/<id>/` (0700 directory, 0600 files) and written as a Knowledge fact with the text inside an `<untrusted-inbox-data>` envelope. Limits come from `inbox.uploads` (`max_file_bytes`, default 25 MiB; `max_files_per_drop`, default 20; `quota_bytes`, default 2 GiB). Requests marked `Sec-Fetch-Site: cross-site` are refused. Every file is audited as `inbox_upload` with its outcome.",
         "requestBody": {
           "required": true,
           "content": {
@@ -38705,7 +38705,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -38772,7 +38773,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -38839,7 +38841,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -38912,7 +38915,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -38979,7 +38983,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -39046,7 +39051,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -39113,7 +39119,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -39883,7 +39890,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {

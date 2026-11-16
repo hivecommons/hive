@@ -139,6 +139,9 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_INBOX_UPLOADS_MAX_FILES_PER_DROP` | No | `20` | Overrides `inbox.uploads.max_files_per_drop`: files in one drop or one upload request. |
 | `HIVE_INBOX_UPLOADS_DOCUMENT_RETENTION_DAYS` | No | `0` | Overrides `inbox.uploads.document_retention_days`: days after which a text document's original is deleted (its extracted text and item stay); unset or `0` keeps originals. |
 | `HIVE_INBOX_UPLOADS_MEDIA_RETENTION_DAYS` | No | `5` | Overrides `inbox.uploads.media_retention_days`: days after which an audio or video upload's original is deleted. |
+| `HIVE_PDF_SANDBOX` | No | `/usr/local/bin/hive-pdftext` | The sandbox that reads PDFs dropped onto the Inbox out of process ([inbox-uploads.md](inbox-uploads.md)). |
+| `HIVE_PDF_RUN_AS` | No | `hive-transcribe` | The uid the PDF sandbox runs as through su-exec; `self` runs it as the hive's own uid (development only). |
+| `HIVE_PDF_MEMORY_MB` | No | `1024` | Address-space limit (prlimit `--as`) of the PDF sandbox, in MiB. |
 | `HIVE_INBOX_TRANSCRIPTION_DAILY_MAX_ITEMS` | No | `20` | Overrides `inbox.transcription.daily_max_items`: transcription runs per UTC day. |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GOOGLE_GENAI_API_KEY` | No | none | The hive's own Gemini API key, read in this order. Gemini model discovery already uses it; Inbox transcription with `inbox.transcription.provider: gemini` (or `auto` when whisper is unavailable) sends recordings to the Gemini API with it, in the `x-goog-api-key` header. Never stored in `hive.yaml`, never shown ([inbox-transcription.md](inbox-transcription.md)). |
 | `HIVE_WHISPER_MODEL_DIR` | No | `/data/models/whisper` | Where the built-in whisper provider keeps its ggml model (`ggml-<model>.bin`, mode 0644). Air-gapped hives pre-seed the file here; it is checked against its pinned size and SHA-256 before use ([inbox-transcription.md](inbox-transcription.md)). |
@@ -441,6 +444,28 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_ANTHROPIC_MODEL` | No | Spektacular's default | Anthropic model override (`SPEK_MEETING_MODEL`). |
 | `HIVE_MEETINGS_LLM_TIMEOUT_MS` | No | `2500` | Per-call model timeout. |
 | `HIVE_MEETINGS_LLM_MAX_IN_FLIGHT` | No | `4` | Concurrent model calls across all meetings. |
+
+### Mail receiver (`hive-mx`)
+
+`hive-mx` is the cluster's receive-only mail receiver ([#18395](https://github.com/hivecommons/hive/issues/18395)): it accepts mail only for `hive@<hive host>`, keeps calendar invites, mail-in files and proof codes, and posts them to the hub. It never sends mail, offers no AUTH and relays nothing. It reads only these variables; see [meetings.md](meetings.md#inviting-betty-by-email).
+
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `HIVE_MX_HUB_URL` | Yes | none | Hub base URL hive-mx fetches the host list from (`GET /api/mail/hosts`) and posts deliveries to (`POST /api/mail/inbound`). |
+| `HIVE_MX_HUB_TOKEN_FILE` | No | `/var/run/secrets/hive-mx/token` | File holding the hub bearer token (a mounted Secret). Read on every call, so a rotated token needs no restart. |
+| `HIVE_MX_LISTEN` | No | `:2525` | SMTP listen address. The Service maps port 25 to it, so the container runs as non-root. |
+| `HIVE_MX_HEALTH_LISTEN` | No | `:8080` | `/healthz` and `/readyz` (ready once the first host list loaded). |
+| `HIVE_MX_DOMAIN` | No | `mx.hive.hivecommons.dev` | Name hive-mx greets with. |
+| `HIVE_MX_HOSTS_REFRESH_S` | No | `60` | Seconds between host list refreshes. A failed refresh keeps the last list. |
+| `HIVE_MX_MAX_MESSAGE_BYTES` | No | `2097152` | SMTP SIZE limit (2 MB). |
+| `HIVE_MX_MAX_RECIPIENTS` | No | `5` | Recipients per message. |
+| `HIVE_MX_MAX_CONNECTIONS` | No | `100` | Concurrent SMTP connections. |
+| `HIVE_MX_MAX_FILE_BYTES` | No | `2097152` | Largest decoded mail-in attachment. |
+| `HIVE_MX_MAX_FILES` | No | `10` | Mail-in attachments kept per message. |
+| `HIVE_MX_IP_MESSAGES_PER_HOUR` | No | `60` | Messages per remote IP per hour (burst of a quarter of it). |
+| `HIVE_MX_DOMAIN_MESSAGES_PER_HOUR` | No | `120` | Messages per sender (MAIL FROM) organizational domain per hour. |
+| `HIVE_MX_TLS_CERT` | No | none | PEM certificate file; with `HIVE_MX_TLS_KEY` it turns on STARTTLS. Re-read when the file changes. Without it hive-mx accepts plain SMTP only. |
+| `HIVE_MX_TLS_KEY` | No | none | PEM key for `HIVE_MX_TLS_CERT`. |
 
 ## Backend launch controls
 

@@ -100,6 +100,20 @@ While hive is in at least one meeting (joining, in the lobby or live), the top b
 
 The schedule API is `/api/meetings/schedule` ([API reference](api-reference/knowledge.md)).
 
+## Inviting Betty by email
+
+Invite Betty by adding `hive@<your hive's dashboard host>` (for example `hive@acme.hive.hivecommons.dev`) to a calendar invite. Mail for every hive on a cluster reaches one receive-only receiver, `hive-mx` (`src/cmd/hive-mx`), through a wildcard MX record. No spoke opens port 25.
+
+What `hive-mx` does with a message:
+
+- **Recipients:** it accepts `RCPT TO` only for `hive@<host>` where the host is a hive the hub knows (subdomain, vanity or dashboard host; the list is refreshed from the hub every 60 seconds). Everything else is refused at `RCPT`, so it is never an open relay. At most 5 recipients and 2 MB per message, rate limits per sender IP and per sender domain, no AUTH, and it never sends mail. STARTTLS is offered when a certificate is mounted (`HIVE_MX_TLS_CERT`, `HIVE_MX_TLS_KEY`); without one it accepts plain SMTP, which is what most senders fall back to.
+- **Sender authentication:** after DATA it checks SPF, DKIM and DMARC and records whether SPF or DKIM passed for a domain aligned with the `From` address (`adkim`/`aspf` honoured). Only an aligned sender can ever be trusted by a hive; the receiver itself decides nothing.
+- **Calendar invites:** only `text/calendar` and `application/ics` parts are read. It keeps UID, SEQUENCE, METHOD (REQUEST or CANCEL), RECURRENCE-ID, the summary (200 characters), organizer and attendees, start and end converted to UTC (Outlook's Windows time zone names such as "Eastern Standard Time" are mapped to IANA zones), RRULE and EXDATE, and the join details: the link from `X-GOOGLE-CONFERENCE`, `X-MICROSOFT-SKYPETEAMSMEETINGURL`, `LOCATION` or a link to `meet.google.com`, `teams.microsoft.com`, `teams.live.com` or `*.zoom.us` found in the description, the platform, and the meeting id and passcode where the platform uses one (Zoom `pwd`, the Teams "Meeting ID" and "Passcode" lines). Nothing else from the description is kept.
+- **Mail-in files:** a message with no invite may carry Markdown (`.md`), audio (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.webm`) and image (`.png`, `.jpg`, `.gif`, `.webp`) attachments. The type is decided by the file's content, not its name, and must agree with the extension; at most 10 files and 2 MB in all. The subject becomes the title. Nothing in the message is executed or followed.
+- **Proof mails:** a message whose subject carries a proof code (`hive-proof-` and 12 letters or digits) is reported as a proof of the sender address.
+
+The result goes to the hub as JSON with a bearer token from a mounted Secret. If the hub cannot take it, the sender's mail server is told to retry later.
+
 ## Setup
 
 ### Hosted hives
