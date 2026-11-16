@@ -105,7 +105,7 @@ func (c *Client) migrateRepoHiveHolds(ctx context.Context, repoRef string, res *
 		if resp == nil || resp.NextPage == 0 {
 			return
 		}
-		opts.Page = resp.NextPage
+		opts.ListOptions.Page = resp.NextPage
 	}
 }
 
