@@ -5294,8 +5294,8 @@ type DashboardConfig struct {
 	//
 	// Deprecated: set dashboard.experiment_lab instead.
 	StrategyLab bool `yaml:"strategy_lab,omitempty" json:"strategy_lab,omitempty"`
-	// SubscriptionGaugeHeader also shows the owner the Claude subscription
-	// usage gauge as a chip in the dashboard header; the gauge is on the
+	// SubscriptionGaugeHeader also shows the owner the plan usage gauge (a
+	// row per provider) as a chip in the dashboard header; the gauge is on the
 	// Overview by default and needs no config. It is display-only: it reads
 	// the usage readings hive already makes (provider rotation or the default
 	// publish-only manager) and never starts, stops or changes any
