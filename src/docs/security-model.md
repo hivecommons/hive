@@ -168,7 +168,12 @@ timeout and size caps; the original, the extracted text and the meta are
 stored 0600 in a 0700 directory per upload, never executed or served raw, and
 bounded by a per-hive quota. The extracted text is fenced in the same
 `<untrusted-inbox-data>` envelope in its Knowledge fact and before any agent
-prompt ([inbox-uploads.md](inbox-uploads.md)). Word documents are read in
+prompt ([inbox-uploads.md](inbox-uploads.md)). Uploaded PDFs are never parsed in the hive process: the
+`hive-pdftext` sandbox reads them as the `hive-transcribe` uid through
+su-exec with an empty environment, under prlimit (address space, CPU, file
+size, open files, no core dumps) and nice, in an empty network namespace
+where the kernel allows it, from a private 0700 work dir, with a wall-clock
+timeout that kills the process group. Word documents are read in
 Go with zip-bomb caps (entry count, declared and actual inflated size,
 compression ratio) and an XML decoder that refuses DTDs and unknown entities
 (no XXE). Links dropped onto the Inbox are

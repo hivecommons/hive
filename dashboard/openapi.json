@@ -978,6 +978,834 @@
         }
       }
     },
+    "/api/meetings/persona": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Get the meeting attendee persona",
+        "description": "Settings, Meeting attendee: the effective persona, the presets, which fields are overridden (config or env), the Kokoro voices, whether a restart is required, and the attendee email section. Owner or read-write.",
+        "responses": {
+          "200": {
+            "description": "Meeting attendee settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "effective": {
+                      "type": "object",
+                      "description": "The resolved persona. Fields resolve as if the persona were on; enabled says whether it is.",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "preset": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "display_name": {
+                          "type": "string"
+                        },
+                        "aliases": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "pronouns": {
+                          "type": "string"
+                        },
+                        "language": {
+                          "type": "string"
+                        },
+                        "voice": {
+                          "type": "string"
+                        },
+                        "voice_type": {
+                          "type": "string"
+                        },
+                        "accent": {
+                          "type": "string"
+                        },
+                        "intro_template": {
+                          "type": "string"
+                        },
+                        "leave_phrases": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "humor": {
+                          "type": "string"
+                        },
+                        "intro": {
+                          "type": "string",
+                          "description": "The rendered intro"
+                        },
+                        "unprompted": {
+                          "type": "object",
+                          "properties": {
+                            "per_10m": {
+                              "type": "integer"
+                            },
+                            "min_gap_s": {
+                              "type": "integer"
+                            },
+                            "per_meeting": {
+                              "type": "integer"
+                            },
+                            "answer_wait_s": {
+                              "type": "integer"
+                            },
+                            "min_confidence": {
+                              "type": "number"
+                            },
+                            "queue_depth": {
+                              "type": "integer"
+                            },
+                            "stale_s": {
+                              "type": "integer"
+                            }
+                          }
+                        },
+                        "voice_on_address": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "presets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "display_name": {
+                            "type": "string"
+                          },
+                          "aliases": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "pronouns": {
+                            "type": "string"
+                          },
+                          "language": {
+                            "type": "string"
+                          },
+                          "voice": {
+                            "type": "string"
+                          },
+                          "voice_type": {
+                            "type": "string"
+                          },
+                          "accent": {
+                            "type": "string"
+                          },
+                          "humor": {
+                            "type": "string"
+                          },
+                          "intro_template": {
+                            "type": "string"
+                          },
+                          "plain_intro_template": {
+                            "type": "string"
+                          },
+                          "leave_phrases": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "sample_line": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "overridden": {
+                      "type": "object",
+                      "description": "meetings.persona keys not taken from the preset or defaults, mapped to config or env",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "voices": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "language": {
+                            "type": "string"
+                          },
+                          "accent": {
+                            "type": "string"
+                          },
+                          "voice_type": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "voice_types": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "available": {
+                            "type": "boolean"
+                          },
+                          "note": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "restart_required": {
+                      "type": "boolean"
+                    },
+                    "running": {
+                      "type": "boolean"
+                    },
+                    "tts_configured": {
+                      "type": "boolean"
+                    },
+                    "email": {
+                      "type": "object",
+                      "description": "The Email section; available is false until email-in is enabled",
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "address": {
+                          "type": "string",
+                          "description": "hive@<dashboard host>"
+                        },
+                        "inviters": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "login": {
+                                "type": "string"
+                              },
+                              "display_name": {
+                                "type": "string"
+                              },
+                              "role": {
+                                "type": "string"
+                              },
+                              "emails": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "address": {
+                                      "type": "string"
+                                    },
+                                    "proof": {
+                                      "type": "string",
+                                      "description": "verified or pending"
+                                    },
+                                    "verified_at": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "approvals": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string"
+                              },
+                              "from": {
+                                "type": "string"
+                              },
+                              "subject": {
+                                "type": "string"
+                              },
+                              "received_at": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "calendar_invites": {
+                          "type": "boolean"
+                        },
+                        "mail_in_files": {
+                          "type": "boolean"
+                        },
+                        "error": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "503": {
+            "description": "Config is not available"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Save the meeting attendee persona",
+        "description": "Saves meetings.persona (and meetings.voice_on_address) to hive.yaml. An absent field is unchanged, an empty one (or 0 for a cap) clears the override, and a value equal to the preset's is stored as no override. Validated as if the persona were on. Owner or read-write. Audited as meetings_persona.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "enabled": {
+                    "type": "boolean"
+                  },
+                  "preset": {
+                    "type": "string"
+                  },
+                  "clear_overrides": {
+                    "type": "boolean",
+                    "description": "Drop every field override first"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "aliases": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "pronouns": {
+                    "type": "string"
+                  },
+                  "language": {
+                    "type": "string"
+                  },
+                  "voice": {
+                    "type": "string"
+                  },
+                  "voice_type": {
+                    "type": "string"
+                  },
+                  "accent": {
+                    "type": "string"
+                  },
+                  "intro_template": {
+                    "type": "string"
+                  },
+                  "leave_phrases": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "humor": {
+                    "type": "string"
+                  },
+                  "unprompted": {
+                    "type": "object",
+                    "properties": {
+                      "per_10m": {
+                        "type": "integer"
+                      },
+                      "min_gap_s": {
+                        "type": "integer"
+                      },
+                      "per_meeting": {
+                        "type": "integer"
+                      },
+                      "answer_wait_s": {
+                        "type": "integer"
+                      },
+                      "min_confidence": {
+                        "type": "number"
+                      },
+                      "queue_depth": {
+                        "type": "integer"
+                      },
+                      "stale_s": {
+                        "type": "integer"
+                      }
+                    }
+                  },
+                  "voice_on_address": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Meeting attendee settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "effective": {
+                      "type": "object",
+                      "description": "The resolved persona. Fields resolve as if the persona were on; enabled says whether it is.",
+                      "properties": {
+                        "enabled": {
+                          "type": "boolean"
+                        },
+                        "preset": {
+                          "type": "string"
+                        },
+                        "name": {
+                          "type": "string"
+                        },
+                        "display_name": {
+                          "type": "string"
+                        },
+                        "aliases": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "pronouns": {
+                          "type": "string"
+                        },
+                        "language": {
+                          "type": "string"
+                        },
+                        "voice": {
+                          "type": "string"
+                        },
+                        "voice_type": {
+                          "type": "string"
+                        },
+                        "accent": {
+                          "type": "string"
+                        },
+                        "intro_template": {
+                          "type": "string"
+                        },
+                        "leave_phrases": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "humor": {
+                          "type": "string"
+                        },
+                        "intro": {
+                          "type": "string",
+                          "description": "The rendered intro"
+                        },
+                        "unprompted": {
+                          "type": "object",
+                          "properties": {
+                            "per_10m": {
+                              "type": "integer"
+                            },
+                            "min_gap_s": {
+                              "type": "integer"
+                            },
+                            "per_meeting": {
+                              "type": "integer"
+                            },
+                            "answer_wait_s": {
+                              "type": "integer"
+                            },
+                            "min_confidence": {
+                              "type": "number"
+                            },
+                            "queue_depth": {
+                              "type": "integer"
+                            },
+                            "stale_s": {
+                              "type": "integer"
+                            }
+                          }
+                        },
+                        "voice_on_address": {
+                          "type": "boolean"
+                        }
+                      }
+                    },
+                    "presets": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "display_name": {
+                            "type": "string"
+                          },
+                          "aliases": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "pronouns": {
+                            "type": "string"
+                          },
+                          "language": {
+                            "type": "string"
+                          },
+                          "voice": {
+                            "type": "string"
+                          },
+                          "voice_type": {
+                            "type": "string"
+                          },
+                          "accent": {
+                            "type": "string"
+                          },
+                          "humor": {
+                            "type": "string"
+                          },
+                          "intro_template": {
+                            "type": "string"
+                          },
+                          "plain_intro_template": {
+                            "type": "string"
+                          },
+                          "leave_phrases": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "sample_line": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "overridden": {
+                      "type": "object",
+                      "description": "meetings.persona keys not taken from the preset or defaults, mapped to config or env",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "voices": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "language": {
+                            "type": "string"
+                          },
+                          "accent": {
+                            "type": "string"
+                          },
+                          "voice_type": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "voice_types": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "label": {
+                            "type": "string"
+                          },
+                          "available": {
+                            "type": "boolean"
+                          },
+                          "note": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "restart_required": {
+                      "type": "boolean"
+                    },
+                    "running": {
+                      "type": "boolean"
+                    },
+                    "tts_configured": {
+                      "type": "boolean"
+                    },
+                    "email": {
+                      "type": "object",
+                      "description": "The Email section; available is false until email-in is enabled",
+                      "properties": {
+                        "available": {
+                          "type": "boolean"
+                        },
+                        "address": {
+                          "type": "string",
+                          "description": "hive@<dashboard host>"
+                        },
+                        "inviters": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "login": {
+                                "type": "string"
+                              },
+                              "display_name": {
+                                "type": "string"
+                              },
+                              "role": {
+                                "type": "string"
+                              },
+                              "emails": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "address": {
+                                      "type": "string"
+                                    },
+                                    "proof": {
+                                      "type": "string",
+                                      "description": "verified or pending"
+                                    },
+                                    "verified_at": {
+                                      "type": "string"
+                                    }
+                                  }
+                                }
+                              }
+                            }
+                          }
+                        },
+                        "approvals": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "id": {
+                                "type": "string"
+                              },
+                              "kind": {
+                                "type": "string"
+                              },
+                              "from": {
+                                "type": "string"
+                              },
+                              "subject": {
+                                "type": "string"
+                              },
+                              "received_at": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "calendar_invites": {
+                          "type": "boolean"
+                        },
+                        "mail_in_files": {
+                          "type": "boolean"
+                        },
+                        "error": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid persona"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "500": {
+            "description": "Saving the config failed"
+          },
+          "503": {
+            "description": "Config is not available"
+          }
+        }
+      }
+    },
+    "/api/meetings/persona/sample": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Play a persona sample (audio element)",
+        "description": "The same sample as POST, with voice, language, display_name and text as query parameters, so the dashboard's audio element can play it from the dashboard origin (the CSP has no media-src). Owner or read-write.",
+        "parameters": [
+          {
+            "name": "voice",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "language",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "display_name",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "text",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The audio",
+            "content": {
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Text too long"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "502": {
+            "description": "The TTS service failed"
+          },
+          "503": {
+            "description": "TTS not configured, or config is not available"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Play a persona sample",
+        "description": "Speaks a short line through the meetings TTS service (Kokoro /v1/audio/speech) and returns the audio, at most 2 MiB. Optional unsaved voice, language and display name; text at most 200 characters, default the persona's sample line. Owner or read-write.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "voice": {
+                    "type": "string"
+                  },
+                  "language": {
+                    "type": "string"
+                  },
+                  "display_name": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The audio",
+            "content": {
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request or text too long"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "502": {
+            "description": "The TTS service failed"
+          },
+          "503": {
+            "description": "TTS not configured, or config is not available"
+          }
+        }
+      }
+    },
     "/api/integration-orchestration": {
       "get": {
         "tags": ["System"],
@@ -38643,7 +39471,7 @@
           "Knowledge"
         ],
         "summary": "Add dropped files to the Inbox",
-        "description": "Owner or read-write. Each multipart `file` field is typed by its content (magic bytes, UTF-8 validation and a parse check), never by its name or client MIME type alone. Markdown, text, JSON, JSON Lines, YAML, CSV, TSV, HTML and Word (.docx, read with zip-bomb caps and no DTDs or external entities) become `upload` Inbox items with extracted markdown, stored under `connector-state/uploads/<id>/` (0700 directory, 0600 files) and written as a Knowledge fact with the text inside an `<untrusted-inbox-data>` envelope. Limits come from `inbox.uploads` (`max_file_bytes`, default 25 MiB; `max_files_per_drop`, default 20; `quota_bytes`, default 2 GiB). Requests marked `Sec-Fetch-Site: cross-site` are refused. Every file is audited as `inbox_upload` with its outcome.",
+        "description": "Owner or read-write. Each multipart `file` field is typed by its content (magic bytes, UTF-8 validation and a parse check), never by its name or client MIME type alone. Markdown, text, JSON, JSON Lines, YAML, CSV, TSV, HTML, Word (.docx, read with zip-bomb caps and no DTDs or external entities) and PDF (parsed out of process in the hive-pdftext sandbox; a PDF without a text layer is refused) become `upload` Inbox items with extracted markdown, stored under `connector-state/uploads/<id>/` (0700 directory, 0600 files) and written as a Knowledge fact with the text inside an `<untrusted-inbox-data>` envelope. Limits come from `inbox.uploads` (`max_file_bytes`, default 25 MiB; `max_files_per_drop`, default 20; `quota_bytes`, default 2 GiB). Requests marked `Sec-Fetch-Site: cross-site` are refused. Every file is audited as `inbox_upload` with its outcome.",
         "requestBody": {
           "required": true,
           "content": {
@@ -38705,7 +39533,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -38772,7 +39601,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -38839,7 +39669,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -38912,7 +39743,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -38979,7 +39811,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -39046,7 +39879,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -39113,7 +39947,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {
@@ -39883,7 +40718,8 @@
                               "csv",
                               "tsv",
                               "html",
-                              "docx"
+                              "docx",
+                              "pdf"
                             ]
                           },
                           "code": {

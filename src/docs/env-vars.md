@@ -140,6 +140,9 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_INBOX_UPLOADS_MAX_FILES_PER_DROP` | No | `20` | Overrides `inbox.uploads.max_files_per_drop`: files in one drop or one upload request. |
 | `HIVE_INBOX_UPLOADS_DOCUMENT_RETENTION_DAYS` | No | `0` | Overrides `inbox.uploads.document_retention_days`: days after which a text document's original is deleted (its extracted text and item stay); unset or `0` keeps originals. |
 | `HIVE_INBOX_UPLOADS_MEDIA_RETENTION_DAYS` | No | `5` | Overrides `inbox.uploads.media_retention_days`: days after which an audio or video upload's original is deleted. |
+| `HIVE_PDF_SANDBOX` | No | `/usr/local/bin/hive-pdftext` | The sandbox that reads PDFs dropped onto the Inbox out of process ([inbox-uploads.md](inbox-uploads.md)). |
+| `HIVE_PDF_RUN_AS` | No | `hive-transcribe` | The uid the PDF sandbox runs as through su-exec; `self` runs it as the hive's own uid (development only). |
+| `HIVE_PDF_MEMORY_MB` | No | `1024` | Address-space limit (prlimit `--as`) of the PDF sandbox, in MiB. |
 | `HIVE_INBOX_TRANSCRIPTION_DAILY_MAX_ITEMS` | No | `20` | Overrides `inbox.transcription.daily_max_items`: transcription runs per UTC day. |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GOOGLE_GENAI_API_KEY` | No | none | The hive's own Gemini API key, read in this order. Gemini model discovery already uses it; Inbox transcription with `inbox.transcription.provider: gemini` (or `auto` when whisper is unavailable) sends recordings to the Gemini API with it, in the `x-goog-api-key` header. Never stored in `hive.yaml`, never shown ([inbox-transcription.md](inbox-transcription.md)). |
 | `HIVE_WHISPER_MODEL_DIR` | No | `/data/models/whisper` | Where the built-in whisper provider keeps its ggml model (`ggml-<model>.bin`, mode 0644). Air-gapped hives pre-seed the file here; it is checked against its pinned size and SHA-256 before use ([inbox-transcription.md](inbox-transcription.md)). |

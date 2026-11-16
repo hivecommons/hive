@@ -477,6 +477,9 @@ type Server struct {
 	// meetingsSchedule is the meeting scheduler behind the Calendar
 	// section (hivecommons/hive#18394); nil while meetings are off.
 	meetingsSchedule atomic.Pointer[meetingsScheduleHolder]
+	// meetingsAttendee is Settings, Meeting attendee: the boot persona,
+	// the TTS service and the email-in data (hivecommons/hive#18396).
+	meetingsAttendee meetingsAttendeeState
 
 	audit *AuditLog
 

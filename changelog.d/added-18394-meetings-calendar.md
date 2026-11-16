@@ -1,1 +1,0 @@
-- Meetings Calendar: schedule meetings for hive to join (it joins a minute before each starts, with daily, weekday, weekly or monthly repeats), approve or decline ones read-write users add, skip or cancel, in a new Calendar section after Inbox; the top bar shows when hive is in a meeting.
