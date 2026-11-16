@@ -18,13 +18,22 @@ import (
 // (hivecommons/hive#15020).
 const reporterTrustReleaseMarker = "<!-- hive:reporter-trust-release -->"
 
-// holdProvenance reads who set the `hold` label a PR wears and why: the
-// newest `hold` label event names the actor and the time; a hive-set hold
+// holdProvenance reads who set the hold-class label a PR wears (holdLabel:
+// the decision-needed gate label or a literal `hold`) and why: the newest
+// event for that label names the actor and the time; a hive-set hold
 // is attributed to the reporter-trust gate when the gate's notice comment
 // (hivecommons/hive#9665) is on the thread and no later unlabel event has
 // cleared it. The second result is the gate's notice when one was read.
 // nil, nil when nothing about the hold could be read.
-func (c *Engine) holdProvenance(ctx context.Context, owner, repo string, number int) (*stagelabels.HoldProvenance, *hgithub.ReporterTrustHoldNotice, error) {
+func (c *Engine) holdProvenance(ctx context.Context, owner, repo string, number int, holdLabel string) (*stagelabels.HoldProvenance, *hgithub.ReporterTrustHoldNotice, error) {
+	prov, notice, err := c.readHoldProvenance(ctx, owner, repo, number, holdLabel)
+	if prov != nil && !strings.EqualFold(holdLabel, hgithub.LegacyHiveHoldLabel) {
+		prov.Label = holdLabel
+	}
+	return prov, notice, err
+}
+
+func (c *Engine) readHoldProvenance(ctx context.Context, owner, repo string, number int, holdLabel string) (*stagelabels.HoldProvenance, *hgithub.ReporterTrustHoldNotice, error) {
 	if c == nil || c.gh == nil || c.transport == nil {
 		return nil, nil, nil
 	}
@@ -37,7 +46,7 @@ func (c *Engine) holdProvenance(ctx context.Context, owner, repo string, number 
 	if n, ok := hgithub.ReporterTrustNoticeFromComments(comments, appBot); ok {
 		notice = &n
 	}
-	latest, err := c.latestHoldLabelEvent(ctx, owner, repo, number)
+	latest, err := c.latestLabelEvent(ctx, owner, repo, number, holdLabel)
 	if err != nil {
 		return nil, notice, err
 	}
@@ -60,7 +69,7 @@ func (c *Engine) holdProvenance(ctx context.Context, owner, repo string, number 
 	}
 	// The hive set it. The reporter-trust notice explains it when it is the
 	// hive's reason on record (posted around the label, never before an
-	// intervening unlabel — latestHoldLabelEvent already ruled that out).
+	// intervening unlabel — latestLabelEvent already ruled that out).
 	if notice != nil && !notice.PostedAt.Before(since.Add(-reporterTrustNoticeSlack)) {
 		return notice.Finding.HoldProvenance(since), notice, nil
 	}
@@ -90,10 +99,17 @@ func (c *Engine) listAllIssueComments(ctx context.Context, owner, repo string, n
 	return all, nil
 }
 
-// latestHoldLabelEvent returns the newest labeled / unlabeled event for the
-// literal `hold` label, nil when there is none.
-func (c *Engine) latestHoldLabelEvent(ctx context.Context, owner, repo string, number int) (*gh.IssueEvent, error) {
-	return c.latestLabelEvent(ctx, owner, repo, number, "hold")
+// wornHoldLabel names the hold-class label whose provenance the stage pass
+// reads: the decision-needed gate label the reporter-trust gate applies
+// (hivecommons/hive#18468), else a literal `hold`, else "".
+func wornHoldLabel(labels []string) string {
+	if gate := hgithub.DecisionNeededLabelName(); hasLabelFold(labels, gate) {
+		return gate
+	}
+	if hasLabelFold(labels, hgithub.LegacyHiveHoldLabel) {
+		return hgithub.LegacyHiveHoldLabel
+	}
+	return ""
 }
 
 // latestLabelEvent returns the newest labeled / unlabeled event for the
@@ -129,7 +145,8 @@ func (c *Engine) latestLabelEvent(ctx context.Context, owner, repo string, numbe
 // put on a PR it authored itself (hivecommons/hive#15020): the hive is the
 // author, so the issue reporter's trust is not what decides whether its own
 // fix merges. prov must be a hive-set reporter-trust hold (the caller checked
-// SelfImposed && ReporterTrust) and the PR hive-authored. Removes `hold`, and
+// SelfImposed && ReporterTrust) and the PR hive-authored. Removes the
+// decision-needed gate label (never a literal `hold`), and
 // `needs-human` when the gate's notice says it added it, and leaves a short
 // comment. Holds a person set are never touched: the caller only reaches
 // this with prov.By == "hive".
@@ -137,7 +154,7 @@ func (c *Engine) releaseSelfImposedReporterTrustHold(ctx context.Context, obs st
 	if c == nil || c.gh == nil || prov == nil || !prov.SelfImposed() || !prov.ReporterTrust() {
 		return false, nil
 	}
-	remove := []string{"hold"}
+	remove := []string{hgithub.DecisionNeededLabelName()}
 	if notice != nil && notice.Finding.OwnsNeedsHuman && hasLabelFold(obs.Labels, "needs-human") {
 		remove = append(remove, "needs-human")
 	}

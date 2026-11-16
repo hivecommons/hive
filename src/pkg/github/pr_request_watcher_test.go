@@ -271,9 +271,14 @@ func TestPRRequestWatcher_HoldLabelApplied(t *testing.T) {
 			if created != 1 {
 				t.Fatalf("expected the PR to be created once, got %d", created)
 			}
+			// The level gate applies ready-for-review, never `hold`
+			// (hivecommons/hive#18468).
 			gotHold := false
 			for _, l := range added {
-				if l == "hold" {
+				if l == LegacyHiveHoldLabel {
+					t.Fatalf("watcher applied %q; the hive must never apply hold itself (labels seen: %v)", l, added)
+				}
+				if l == DefaultReadyForReviewLabel {
 					gotHold = true
 				}
 			}

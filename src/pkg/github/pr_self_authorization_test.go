@@ -428,7 +428,7 @@ func TestPRRequestWatcher_HoldsSelfAuthorizedPR(t *testing.T) {
 
 	c.ProcessPRRequestsOnce(context.Background())
 
-	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
+	if applied := srv.applied(); len(applied) != 1 || applied[0] != DefaultDecisionNeededLabel {
 		t.Fatalf("labels applied = %v, want [hold]", applied)
 	}
 	comments := srv.postedComments()
@@ -480,7 +480,7 @@ func TestPRRequestWatcher_DefaultConfigStillHoldsSelfAuthorizedPR(t *testing.T) 
 	}
 	c.ProcessPRRequestsOnce(context.Background())
 
-	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
+	if applied := srv.applied(); len(applied) != 1 || applied[0] != DefaultDecisionNeededLabel {
 		t.Fatalf("labels applied = %v, want [hold] by default", applied)
 	}
 	if comments := srv.postedComments(); len(comments) != 1 || !strings.Contains(comments[0], SelfAuthorizationNoticeMarker) {
@@ -592,7 +592,7 @@ func TestPRRequestWatcher_HoldGatedLevelSkipsTheLookup(t *testing.T) {
 	}
 	c.ProcessPRRequestsOnce(context.Background())
 
-	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
+	if applied := srv.applied(); len(applied) != 1 || applied[0] != DefaultDecisionNeededLabel {
 		t.Fatalf("labels applied = %v, want [hold] from the level alone", applied)
 	}
 	srv.mu.Lock()

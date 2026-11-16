@@ -99,6 +99,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	client.SetAuthorKindLabels(func() authorkind.Names { return b.cfg.Governor.Labels.Author.Names() })
 	client.SetLinearScopeTeams(b.cfg.Governor.WorkSource.Linear.Teams)
 	client.SetHoldLabels(b.githubHoldLabels())
+	// The gate labels the hive applies instead of `hold`
+	// (hivecommons/hive#18468): process-wide, like github.HoldLabels.
+	github.SetHiveGateLabelNames(b.cfg.Governor.Labels.ReadyForReviewLabelOrDefault(), b.cfg.Governor.Labels.DecisionNeededLabelOrDefault())
 	// Umbrella issues no automated claim may take and no claim stages
 	// (governor.claims.never_claim_labels, default `epic`).
 	client.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())

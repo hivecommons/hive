@@ -2627,7 +2627,7 @@ func TestSweepSelfAuthoredAutoMergesReleasesSelfAuthorizationHoldWhenDisabled(t 
 	var removed []int
 	var comments []string
 	api := newSelfAuthoredAutoMergeAPI(t, []selfAuthoredPR{{
-		number: 11, author: testHiveAppBotLogin, extraLabels: []string{"hold"},
+		number: 11, author: testHiveAppBotLogin, extraLabels: []string{hgithub.DefaultDecisionNeededLabel},
 		mergeableState: "clean", statusState: "success", checkStatus: "completed", checkConclusion: "success",
 	}}, &merged)
 	defer api.Close()
@@ -2643,11 +2643,11 @@ func TestSweepSelfAuthoredAutoMergesReleasesSelfAuthorizationHoldWhenDisabled(t 
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/issues/11/events":
 			json.NewEncoder(w).Encode([]map[string]any{{
 				"event":      "labeled",
-				"label":      map[string]string{"name": "hold"},
+				"label":      map[string]string{"name": hgithub.DefaultDecisionNeededLabel},
 				"actor":      map[string]string{"login": testHiveAppBotLogin},
 				"created_at": "2026-09-11T11:59:59Z",
 			}})
-		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/hold":
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/acme/widget/issues/11/labels/"+hgithub.DefaultDecisionNeededLabel:
 			removed = append(removed, 11)
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode([]map[string]any{})

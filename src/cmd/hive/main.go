@@ -2150,7 +2150,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// the direct `gh pr create` path — the request-file route grants no extra
 	// privilege. A denied request is quarantined, never opened.
 	// holdLabel (F6): at hold-gated ACMM levels (L3/L4/L5) every agent-opened
-	// PR must carry the "hold" label so the merge gate holds it for human
+	// PR must carry the ready-for-review gate label ("hold" before #18468) so the merge gate holds it for human
 	// approval. Outreach content aimed at a repository the hive does not
 	// manage is public speech into someone else's project, so it remains
 	// human-reviewed at L6 too; outreach PRs into the agent's own repos are
@@ -6144,6 +6144,20 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				b.dashSrv.AddSystemAlert(holdMigrationFailedAlertID, "warning", holdMigrationFailedAlertMessage(b.cfg.HiveID, reportPath))
 			}
 		}
+		// hivecommons/hive#18468: the hive no longer applies `hold` itself.
+		// Swap the holds its own gates applied (App label event + gate
+		// notice) for ready-for-review / decision-needed, and make sure both
+		// labels exist with their descriptions. A person's `hold` is never
+		// touched. Off the boot path: it is bounded per repo and a failure
+		// only leaves old holds in place (still blocking) until next boot.
+		go func(ghClient *github.Client) {
+			res, err := ghClient.MigrateHiveAppliedHolds(b.ctx)
+			if err != nil {
+				b.logger.Warn("hive gate label migration incomplete; unmigrated hive holds keep blocking and retry next boot", "error", err, "relabeled", res.Relabeled, "skipped", res.Skipped)
+				return
+			}
+			b.logger.Info("hive gate label migration complete", "relabeled", res.Relabeled, "skipped", res.Skipped)
+		}(b.ghClient)
 		// Provenance-only migration. Retired reviewer labels map to agent/reviewer;
 		// redundant lane-origin labels are removed. Nothing reads origin/* as a gate,
 		// so a failure here only leaves old names on open items; the marker is not

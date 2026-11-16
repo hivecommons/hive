@@ -308,7 +308,7 @@ type Client struct {
 	// StartPRRequestWatcher.
 	prAuthz PRRequestAuthorizer
 	// prHoldLabel decides, at PR-creation time, whether a freshly-opened PR must
-	// carry the "hold" label (F6). It receives the authoring agent and the PR's
+	// carry the ready-for-review gate label (F6; "hold" before #18468). It receives the authoring agent and the PR's
 	// target repo so role-specific safety rules (for example, mandatory human
 	// review of outreach content aimed at a repo the hive does not manage) can
 	// be enforced alongside the authoritative ACMM level. It is consulted
@@ -3800,6 +3800,12 @@ func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 	}
 	for _, label := range labels {
 		lower := strings.ToLower(label)
+		// The hive's own gate labels (ready-for-review, decision-needed;
+		// hivecommons/hive#18468) block exactly like `hold`, matched exactly
+		// so a look-alike such as `not-ready-for-review` is not a hold.
+		if IsHiveGateLabel(label) {
+			return true
+		}
 		// Provenance labels (hive/<id>) are never hold labels, whatever the
 		// hive ID happens to contain. The substring rule below otherwise
 		// reads hive/hosted-...-placeHOLDer-r05x as "hold" and parks every
@@ -4620,19 +4626,20 @@ const shaHoldComment = shaHoldMarker + "\n" +
 	"You can find it by running:\n```\ngit rev-parse --short HEAD\n```\n\n" +
 	"Or check the bottom of the console UI for the version string.\n\n" +
 	shaHoldLegacyNoticeSentence + " " +
-	"Simply add a comment with the SHA and the hold will be automatically removed._"
+	"Simply add a comment with the SHA and the label will be automatically removed._"
 
 type SHAHoldConfig struct {
 	PrimaryRepo     string
 	AIAuthor        string
 	InternalAuthors []string
 	// TrustedAssociations are the GitHub author associations (OWNER, MEMBER,
-	// COLLABORATOR, ...) whose missing SHA gets TrustedLabel instead of the
-	// hard `hold` (hivecommons/hive#12002): the SHA request is a
-	// reproduction aid, not a maintainer park.
+	// COLLABORATOR, ...) that got TrustedLabel instead of the hard `hold`
+	// (hivecommons/hive#12002). Since #18468 every reporter gets TrustedLabel
+	// and the sweep no longer consults this; it is kept for callers.
 	TrustedAssociations []string
-	// TrustedLabel is the soft label for trusted reporters. Empty (or "hold")
-	// keeps the legacy hard hold for every reporter.
+	// TrustedLabel is the label the sweep applies while a SHA is missing.
+	// Empty (or "hold") uses defaultSHAHoldLabel: the sweep never applies
+	// `hold` (hivecommons/hive#18468), for any reporter.
 	TrustedLabel string
 }
 
@@ -4645,23 +4652,24 @@ type SHAHoldResult struct {
 	Softened int `json:"softened"`
 }
 
-// shaHoldSoftLabel returns the soft label to apply to this reporter's issue,
-// or "" when the hard `hold` applies.
-func (cfg SHAHoldConfig) shaHoldSoftLabel(association string) string {
+// defaultSHAHoldLabel is the label the SHA sweep applies when none is
+// configured (config.DefaultSHAHoldTrustedLabel).
+const defaultSHAHoldLabel = "needs-sha"
+
+// shaHoldLabel returns the label the sweep applies to an issue missing a SHA.
+// It is never `hold`: a `hold` means a person said hands-off, and the hive
+// no longer applies one itself (hivecommons/hive#18468). Before #18468 an
+// untrusted reporter's issue got the hard `hold`; the sweep now gives every
+// reporter this label and swaps any `hold` it applied itself for it. An
+// untrusted reporter's issue still stays out of automatic work through the
+// reporter-trust gate (issue_filter.reporter_trust) until a maintainer
+// admits it.
+func (cfg SHAHoldConfig) shaHoldLabel() string {
 	label := strings.TrimSpace(cfg.TrustedLabel)
-	if label == "" || strings.EqualFold(label, "hold") {
-		return ""
+	if label == "" || strings.EqualFold(label, LegacyHiveHoldLabel) {
+		return defaultSHAHoldLabel
 	}
-	association = strings.TrimSpace(association)
-	if association == "" {
-		return ""
-	}
-	for _, trusted := range cfg.TrustedAssociations {
-		if strings.EqualFold(strings.TrimSpace(trusted), association) {
-			return label
-		}
-	}
-	return ""
+	return label
 }
 
 func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHoldResult, error) {
@@ -4701,46 +4709,15 @@ func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHol
 			hasSHA = c.checkCommentsForSHA(ctx, owner, repo, issue.GetNumber(), author)
 		}
 
-		if soft := cfg.shaHoldSoftLabel(issue.GetAuthorAssociation()); soft != "" {
-			c.enforceSoftSHAHold(ctx, owner, repo, issue.GetNumber(), author, soft, labels, held, hasSHA, result)
-			continue
-		}
-
-		switch {
-		case hasSHA && held:
-			// Only release a hold this sweep applied. A human's `hold`, a hold
-			// applied by another Hive subsystem through the same App (the
-			// dashboard hold on a hive with no id), or any non-literal hold
-			// spelling (`on-hold`, `hive-pause/<id>`) is left for its owner
-			// to lift (#8927).
-			ok, err := c.shaHoldIsOwn(ctx, owner, repo, issue.GetNumber())
-			if err != nil {
-				c.logger.Warn("SHA-UNHOLD skipped: could not verify hold provenance", "repo", repo, "issue", issue.GetNumber(), "error", err)
-				result.Skipped++
-				continue
-			}
-			if !ok {
-				c.logger.Info("SHA-UNHOLD skipped: current hold was not applied by the SHA-hold sweep", "repo", repo, "issue", issue.GetNumber(), "author", author)
-				result.Skipped++
-				continue
-			}
-			c.unhold(ctx, owner, repo, issue.GetNumber())
-			result.Unheld++
-			c.logger.Info("SHA-UNHOLD", "repo", repo, "issue", issue.GetNumber(), "author", author)
-		case !hasSHA && !held:
-			c.hold(ctx, owner, repo, issue.GetNumber())
-			result.Held++
-			c.logger.Info("SHA-HOLD", "repo", repo, "issue", issue.GetNumber(), "author", author)
-		default:
-			result.Skipped++
-		}
+		c.enforceSoftSHAHold(ctx, owner, repo, issue.GetNumber(), author, cfg.shaHoldLabel(), labels, held, hasSHA, result)
 	}
 
 	return result, nil
 }
 
-// enforceSoftSHAHold is the trusted-reporter branch of EnforceSHAHold
-// (hivecommons/hive#12002). It never applies the hard `hold`: a missing SHA
+// enforceSoftSHAHold is EnforceSHAHold's one branch (trusted reporters since
+// hivecommons/hive#12002, every reporter since #18468). It never applies the
+// hard `hold`: a missing SHA
 // gets the soft label plus the usual notice, a provided SHA lifts the soft
 // label, and a hard `hold` this sweep applied before the soft path existed is
 // swapped for the soft label. A `hold` from anyone else is left alone.
@@ -4815,19 +4792,6 @@ func (c *Client) checkCommentsForSHA(ctx context.Context, owner, repo string, nu
 		}
 	}
 	return false
-}
-
-func (c *Client) hold(ctx context.Context, owner, repo string, number int) {
-	_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{"hold"})
-	if err != nil {
-		c.logger.Warn("failed to add hold label", "repo", repo, "issue", number, "error", err)
-	}
-
-	comment := &gh.IssueComment{Body: gh.Ptr(shaHoldComment)}
-	_, _, err = c.client.Issues.CreateComment(ctx, owner, repo, number, comment)
-	if err != nil {
-		c.logger.Warn("failed to post SHA hold comment", "repo", repo, "issue", number, "error", err)
-	}
 }
 
 func (c *Client) unhold(ctx context.Context, owner, repo string, number int) {
