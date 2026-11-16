@@ -1,1 +1,0 @@
-- Inbox items now show a pill for every share (RFC, spek, Knowledge, DIBS) recording what was shared, by whom, when and the status, linked to the RFC, dibs item, fact or spek session; the latest per destination shows and +N expands the history.
