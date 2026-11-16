@@ -23,6 +23,7 @@ const (
 	UploadKindYAML     = "yaml"
 	UploadKindCSV      = "csv"
 	UploadKindTSV      = "tsv"
+	UploadKindHTML     = "html"
 	// UploadKindAudio and UploadKindVideo are media uploads (their original
 	// binary is deleted after inbox.uploads.media_retention_days).
 	UploadKindAudio = "audio"
@@ -38,6 +39,11 @@ const (
 	UploadErrQuota       = "quota_exceeded"
 	UploadErrTooMany     = "too_many_files"
 	UploadErrInternal    = "internal"
+	// UploadErrLinkRefused: the link breaks the fetch rules (scheme,
+	// credentials, a private or metadata address, too many redirects).
+	UploadErrLinkRefused = "link_refused"
+	// UploadErrFetch: the site could not be reached or answered an error.
+	UploadErrFetch = "fetch_failed"
 )
 
 // UploadError is a per-file rejection with a message the owner can act on.
@@ -68,6 +74,8 @@ var uploadTextExtensions = map[string]string{
 	".csv":      UploadKindCSV,
 	".tsv":      UploadKindTSV,
 	".tab":      UploadKindTSV,
+	".html":     UploadKindHTML,
+	".htm":      UploadKindHTML,
 }
 
 // uploadUnsupportedExtensions names formats people commonly drop that this
@@ -94,7 +102,7 @@ func UploadSupportedExtensions() []string {
 }
 
 func uploadSupportedList() string {
-	return "md, txt, json, jsonl, yaml, csv, tsv"
+	return "md, txt, json, jsonl, yaml, csv, tsv, html"
 }
 
 // uploadMagic is a binary signature that is never a text document.

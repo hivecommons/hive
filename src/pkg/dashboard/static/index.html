@@ -6097,6 +6097,7 @@
     .inbox-upload { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
     .inbox-upload-name { font-weight: 600; overflow-wrap: anywhere; }
     .inbox-upload-bar { flex: 1 1 120px; max-width: 240px; }
+    .inbox-add-url { flex: 1 1 240px; min-width: 0; }
     .inbox-upload .kc-error { flex-basis: 100%; }
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
@@ -48409,11 +48410,11 @@ function burnAreaChart() {
     function inboxUploadRowHtml(row) {
       const pct = Math.max(0, Math.min(100, Math.round((Number(row.progress) || 0) * 100)));
       const pill = row.status === 'done' ? 'ok' : (row.status === 'error' ? 'error' : 'syncing');
-      const label = (INBOX_UPLOAD_LABELS[row.status] || row.status) + (row.status === 'uploading' ? ' ' + pct + '%' : '');
+      const label = row.link && row.status === 'uploading' ? 'Fetching' : (INBOX_UPLOAD_LABELS[row.status] || row.status) + (row.status === 'uploading' ? ' ' + pct + '%' : '');
       let html = '<li class="inbox-upload" data-inbox-upload="' + escapeHtml(String(row.id)) + '" data-status="' + escapeHtml(row.status) + '">' +
-        '<span class="inbox-upload-name">' + escapeHtml(row.name) + '</span> <span class="muted-xs">' + escapeHtml(inboxFmtBytes(row.size)) + '</span> ' +
+        '<span class="inbox-upload-name">' + escapeHtml(row.name) + '</span> <span class="muted-xs">' + escapeHtml(row.link ? 'link' : inboxFmtBytes(row.size)) + '</span> ' +
         '<span class="kc-pill" data-status="' + pill + '">' + escapeHtml(label) + '</span>';
-      if (row.status === 'uploading' || row.status === 'queued') html += '<progress class="kc-progress-bar inbox-upload-bar" max="100" value="' + pct + '" aria-label="' + escapeHtml('Uploading ' + row.name) + '"></progress>';
+      if (!row.link && (row.status === 'uploading' || row.status === 'queued')) html += '<progress class="kc-progress-bar inbox-upload-bar" max="100" value="' + pct + '" aria-label="' + escapeHtml('Uploading ' + row.name) + '"></progress>';
       if (row.status === 'done' && row.key) html += ' <a href="#" class="inbox-link" data-action="inboxFocusItem" data-prevent="1" data-arg0="' + escapeHtml(row.key) + '">show item</a>';
       if (row.status === 'error' && row.error) html += ' <span class="kc-error muted-xs" role="alert">' + escapeHtml(row.error) + '</span>';
       return html + '</li>';
@@ -48433,7 +48434,10 @@ function burnAreaChart() {
       return '<div class="inbox-add" id="inbox-add" role="group" aria-label="Add files to the Inbox">' +
         '<p class="muted-xs m-0">Drop files anywhere on the Inbox, paste them with Ctrl/Cmd+V, or choose them here: ' + escapeHtml(limit) + '. Supported: ' + escapeHtml(exts.join(' ')) + '. Files stay on this hive; their text reaches an LLM only when you share the item.</p>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxChooseFiles">Choose files…</button>' +
-        '<input type="file" multiple hidden class="inbox-file-input" id="inbox-file-input" accept="' + escapeHtml(exts.join(',')) + '" data-change-action="inboxPickFiles" data-arg-types="t" aria-label="Files to add to the Inbox"></div></div>';
+        '<input type="file" multiple hidden class="inbox-file-input" id="inbox-file-input" accept="' + escapeHtml(exts.join(',')) + '" data-change-action="inboxPickFiles" data-arg-types="t" aria-label="Files to add to the Inbox"></div>' +
+        (u.links ? '<div class="kc-actions mt-2"><input type="url" class="kb-search-box inbox-add-url" id="inbox-add-url" placeholder="https://… (a page, or a linked md, json, csv… file)" autocomplete="off" aria-label="Link to add to the Inbox" data-enter-action="inboxAddUrlFromField">' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddUrlFromField">Add link</button></div>' +
+          '<p class="muted-xs m-0">The hive fetches the link itself (public http/https addresses only, at most 3 redirects) and reads it like a dropped file.</p>' : '') + '</div>';
     }
     function inboxToggleAdd() { _inboxAddOpen = !_inboxAddOpen; renderInbox(); if (_inboxAddOpen) { const b = document.querySelector('#inbox-add [data-action="inboxChooseFiles"]'); if (b && b.focus) b.focus(); } }
     function inboxChooseFiles() { const el = document.getElementById('inbox-file-input'); if (el) el.click(); }
@@ -48518,9 +48522,53 @@ function burnAreaChart() {
       if (!inboxCanAdd()) return;
       if (!(inboxInSection(e.target) || inboxInSection(document.activeElement) || _inboxPointerInside)) return;
       const files = Array.from((e.clipboardData && e.clipboardData.files) || []);
-      if (!files.length) return;
+      if (files.length) { e.preventDefault(); inboxAddFiles(files); return; }
+      // A pasted link (one http/https URL) outside a text field is added
+      // like a dropped one; pasting into a field stays a normal paste.
+      const text = String((e.clipboardData && e.clipboardData.getData && e.clipboardData.getData('text')) || '').trim();
+      const field = e.target && e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]');
+      if (field || !inboxUploadSettings().links || !INBOX_URL_RE.test(text)) return;
       e.preventDefault();
-      inboxAddFiles(files);
+      inboxAddUrl(text);
+    }
+    const INBOX_URL_RE = /^https?:\/\/[^\s]+$/i;
+    function inboxAddUrlFromField() {
+      const el = document.getElementById('inbox-add-url');
+      const raw = el ? String(el.value || '').trim() : '';
+      if (!raw) return Promise.resolve(null);
+      if (el) el.value = '';
+      return inboxAddUrl(raw);
+    }
+    // inboxAddUrl shows a row for one link and asks the hive to fetch it
+    // (POST /api/inbox/uploads/url); the hive applies the SSRF rules.
+    function inboxAddUrl(raw) {
+      if (!inboxCanAdd() || !inboxUploadSettings().links) return Promise.resolve(null);
+      let host = raw;
+      try { host = new URL(raw).host || raw; } catch (e) { host = raw; }
+      const row = { id: ++_inboxUploadSeq, name: host, size: 0, link: raw, status: 'queued', progress: 0 };
+      if (!INBOX_URL_RE.test(raw)) { row.status = 'error'; row.code = 'link_refused'; row.error = 'Only http and https links can be added.'; }
+      _inboxUploads = _inboxUploads.concat([row]);
+      renderInbox();
+      if (row.status === 'error') return Promise.resolve(row);
+      inboxAnnounce('Fetching ' + host + ' for the Inbox');
+      _inboxUploadQueue = _inboxUploadQueue.then(async () => {
+        row.status = 'uploading';
+        inboxUploadRowUpdate(row);
+        try {
+          const r = await fetch('/api/inbox/uploads/url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: raw }) });
+          const data = await r.json().catch(() => ({}));
+          const res = (Array.isArray(data.results) ? data.results : [])[0];
+          if (r.ok && res && res.ok) { row.status = 'done'; row.key = res.source + '/' + res.item_id; row.title = res.title || host; }
+          else { row.status = 'error'; row.code = (res && res.code) || ''; row.error = (res && res.error) || data.error || ('HTTP ' + r.status); }
+        } catch (e) {
+          row.status = 'error'; row.error = 'The request did not reach the hive (network error).';
+        }
+        inboxUploadRowUpdate(row);
+        inboxAnnounce(row.status === 'done' ? host + ' added to the Inbox' : host + ' not added: ' + row.error);
+        if (row.status === 'done') await fetchInbox();
+        return row;
+      });
+      return _inboxUploadQueue;
     }
     document.addEventListener('dragenter', inboxOnDragOver);
     document.addEventListener('dragover', inboxOnDragOver);
