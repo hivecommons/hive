@@ -36,7 +36,6 @@ func TestInboxShareMenuBehaviour(t *testing.T) {
 		"function inboxShareCopy(s, i) { calls.push(['copy', s, i]); } async function inboxShareNative(s, i) { calls.push(['native', s, i]); }",
 		"function inboxDismissSelected() { calls.push(['bulk-dismiss']); } const _inboxSelected = new Set(['plaud/r1']);",
 		"function inboxFind(s, i) { return ((_inboxCache || {}).items || []).find(it => it.source === s && it.id === i); }",
-		jsConstLine(t, html, "INBOX_INTENT_LABELS"),
 		"function inboxOpenSettings() { calls.push(['settings']); }",
 		jsConstBlock(t, html, "inboxShareHiveActions"),
 		jsConstBlock(t, html, "inboxShareLinkActions"),

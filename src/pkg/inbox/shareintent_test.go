@@ -33,6 +33,9 @@ func (d *rfcDest) Deliver(_ context.Context, _ Item, c Content, r Request) (Resu
 
 func (d *rfcDest) count() int { d.mu.Lock(); defer d.mu.Unlock(); return len(d.got) }
 
+// withKeyEnv makes the default provider's API key present.
+func withKeyEnv(string) string { return "test-key" }
+
 func intentFor(dest string) ShareIntent {
 	return ShareIntent{Destination: dest, Actor: "rw@example.com", Repo: "o/r"}
 }
@@ -43,6 +46,7 @@ func TestShareWhenReadyTranscribesThenRoutes(t *testing.T) {
 	srv := audioServer(t, http.StatusOK, txAudio)
 	dest := &rfcDest{}
 	e := newTxEnv(t, activeTx(), srv.URL, dest)
+	e.svc.Getenv = withKeyEnv
 	out, err := e.svc.ShareWhenReady(context.Background(), e.item(t), intentFor(DestSpekRFC), e.opts())
 	if err != nil || !out.Waiting {
 		t.Fatalf("ShareWhenReady = %+v, %v", out, err)
@@ -60,6 +64,7 @@ func TestShareWhenReadyTranscribesThenRoutes(t *testing.T) {
 func TestShareWhenReadyKnowledgeAfterTranscript(t *testing.T) {
 	srv := audioServer(t, http.StatusOK, txAudio)
 	e := newTxEnv(t, activeTx(), srv.URL)
+	e.svc.Getenv = withKeyEnv
 	if _, err := e.svc.ShareWhenReady(context.Background(), e.item(t), intentFor(DestDismiss), e.opts()); err != nil {
 		t.Fatal(err)
 	}
@@ -74,6 +79,7 @@ func TestShareIntentFailsWithReasonAndSendsNothing(t *testing.T) {
 	srv := audioServer(t, http.StatusOK, txAudio)
 	dest := &rfcDest{}
 	e := newTxEnv(t, activeTx(), srv.URL, dest)
+	e.svc.Getenv = withKeyEnv
 	boom := errors.New("provider exploded")
 	e.fake.Errs = []error{boom, boom, boom, boom, boom, boom}
 	if _, err := e.svc.ShareWhenReady(context.Background(), e.item(t), intentFor(DestSpekRFC), e.opts()); err != nil {
@@ -134,6 +140,7 @@ func TestShareIntentSurvivesRestart(t *testing.T) {
 	srv := audioServer(t, http.StatusOK, txAudio)
 	dest := &rfcDest{}
 	e := newTxEnv(t, activeTx(), srv.URL, dest)
+	e.svc.Getenv = withKeyEnv
 	var deferred []func()
 	e.svc.Run = func(fn func()) { deferred = append(deferred, fn) }
 	if _, err := e.svc.ShareWhenReady(context.Background(), e.item(t), intentFor(DestSpekRFC), e.opts()); err != nil {
@@ -157,6 +164,7 @@ func TestShareIntentSurvivesRestart(t *testing.T) {
 	// "Restart": a fresh service over the same files; the queued job is gone.
 	svc2 := NewService(config.InboxConfig{Transcription: activeTx()}, NewStore(e.svc.Store.Path), []Source{e.src}, []Destination{dest}, nil)
 	svc2.Run = func(fn func()) { fn() }
+	svc2.Getenv = withKeyEnv
 	svc2.Now = func() time.Time { return e.now }
 	svc2.EnableTranscription(NewTranscriptStore(e.dir))
 	svc2.NewTranscriber = func(config.InboxTranscription) (transcribe.Transcriber, error) { return e.fake, nil }
@@ -175,6 +183,7 @@ func TestShareIntentSurvivesRestart(t *testing.T) {
 func TestRegisterIntentRunnerHook(t *testing.T) {
 	srv := audioServer(t, http.StatusOK, txAudio)
 	e := newTxEnv(t, activeTx(), srv.URL)
+	e.svc.Getenv = withKeyEnv
 	var got ShareIntent
 	e.svc.RegisterIntentRunner("spek", func(_ context.Context, it Item, in ShareIntent) error {
 		got = in

@@ -47797,8 +47797,7 @@ function burnAreaChart() {
       if (inboxTxBlocked(it)) return inboxTxUnavailableText(it.transcribe_unavailable) + ' (a transcript is needed first)';
       return '';
     }
-    const INBOX_INTENT_LABELS = { spek_rfc: 'RFC', dismiss: 'Knowledge', spek: 'spek' };
-    function inboxIntentLabel(dest) { return INBOX_INTENT_LABELS[dest] || dest; }
+    function inboxIntentLabel(dest) { return ({ spek_rfc: 'RFC', dismiss: 'Knowledge', spek: 'spek' })[dest] || dest; }
     // The first waiting share intent of an item, for the progress label.
     function inboxIntentThen(it) {
       const m = (it && it.share_intents) || {};
