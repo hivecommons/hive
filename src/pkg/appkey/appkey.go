@@ -67,6 +67,11 @@ type Resolver struct {
 
 	fpMu    sync.Mutex
 	fpCache map[string]heldFingerprint
+
+	// boundMu guards lastHeld and inflight for HeldFingerprintsWithin.
+	boundMu  sync.Mutex
+	lastHeld map[string]string
+	inflight chan struct{}
 }
 
 // heldFingerprint memoizes a key file's fingerprint against the size and mtime
@@ -177,6 +182,41 @@ func (r *Resolver) HeldFingerprints() map[string]string {
 		held[idStr] = fp
 	}
 	return held
+}
+
+// HeldFingerprintsWithin is HeldFingerprints with a wall-clock bound, for the
+// heartbeat hot path. The scan stats and reads files on the PVC, which can
+// stall for many seconds on a slow volume and eat the whole heartbeat collect
+// budget (#18484). The scan runs in a single-flight background goroutine; if it
+// does not finish within timeout, the last completed result is returned (nil
+// before the first completion) and the scan keeps going to refresh the cache
+// for the next beat.
+func (r *Resolver) HeldFingerprintsWithin(timeout time.Duration) map[string]string {
+	r.boundMu.Lock()
+	done := r.inflight
+	if done == nil {
+		done = make(chan struct{})
+		r.inflight = done
+		go func() {
+			held := r.HeldFingerprints()
+			r.boundMu.Lock()
+			r.lastHeld = held
+			r.inflight = nil
+			r.boundMu.Unlock()
+			close(done)
+		}()
+	}
+	r.boundMu.Unlock()
+
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-done:
+	case <-timer.C:
+	}
+	r.boundMu.Lock()
+	defer r.boundMu.Unlock()
+	return r.lastHeld
 }
 
 // writePerAppIDKey persists a hub-delivered per-app-id key to its PVC file

@@ -1,0 +1,1 @@
+- The hub sign-in, access-needed and link-preview pages now also show the LF Projects legal footer.
