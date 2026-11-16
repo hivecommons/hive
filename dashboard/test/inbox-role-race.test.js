@@ -20,7 +20,7 @@ function extractFunction(name) {
     const ch = indexHtml[i];
     if (ch === '{') depth++;
     if (ch === '}') depth--;
-    if (depth === 0) return indexHtml.slice(start, i + 1);
+    if (depth === 0) return (indexHtml.slice(start - 6, start) === 'async ' ? 'async ' : '') + indexHtml.slice(start, i + 1);
   }
   throw new Error(`unterminated ${name}`);
 }
