@@ -109,6 +109,8 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"scheduler.(*Scheduler).parkUnclearIssue":                {Class: NotificationClassAttention},
 	"scheduler.(*Scheduler).postTriageClarifyComment":        {Class: NotificationClassAttention},
 	"github.(*Client).PostIssueAttention":                    {Class: NotificationClassAttention},
+	"github.(*Client).relayScannerNote":                      {Class: NotificationClassAttention},
+	"github.(*Client).upsertScannerNote":                     {Class: NotificationClassAttention},
 	"github.(*Client).remindAttention":                       {Class: NotificationClassAttention},
 
 	// required_review: a review submission or request a merge depends on.

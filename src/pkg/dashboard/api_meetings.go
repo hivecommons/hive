@@ -387,7 +387,8 @@ func (s *Server) handleMeetingsWS(w http.ResponseWriter, r *http.Request) {
 // meetings.enabled, meetings.vexa.url, the Vexa tenant key
 // (meetings.vexa.api_key_file), the Discord bot token
 // (meetings.discord.token_file) and the transcription service token
-// (meetings.transcribe_token_file); the other meetings keys are shown
+// (meetings.transcribe_token_file) and the TTS service token
+// (meetings.tts_token_file); the other meetings keys are shown
 // read-only.
 type MeetingsSettings struct {
 	Enabled            bool   `json:"enabled"`
@@ -397,6 +398,7 @@ type MeetingsSettings struct {
 	VexaKeySet         bool   `json:"vexa_key_set"`
 	DiscordTokenSet    bool   `json:"discord_token_set"`
 	TranscribeTokenSet bool   `json:"transcribe_token_set"`
+	TTSTokenSet        bool   `json:"tts_token_set"`
 	RestartRequired    bool   `json:"restart_required,omitempty"`
 	// SpekModel is the model Spektacular live mode would use (never a key).
 	SpekModel string            `json:"spek_model"`
@@ -411,6 +413,9 @@ type meetingsSettingsRequest struct {
 	// TranscribeToken is the transcription service token Quorum posts
 	// Discord audio with (QUORUM_TRANSCRIBE_TOKEN_FILE).
 	TranscribeToken *string `json:"transcribe_token,omitempty"`
+	// TTSToken is the TTS service token Quorum speaks Discord replies
+	// with (QUORUM_TTS_TOKEN_FILE).
+	TTSToken *string `json:"tts_token,omitempty"`
 }
 
 // meetingsSecretSet reports whether a secret resolves to a value, without
@@ -422,6 +427,10 @@ func meetingsSecretSet(ctx context.Context, read func(context.Context) (string, 
 
 func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) MeetingsSettings {
 	h := (&s.meetings).Load()
+	// The list keys meetings.persona.aliases[] and
+	// meetings.persona.leave_phrases[] are shown joined with ", ".
+	persona := m.Persona.Resolve()
+	actions := m.Persona.Actions.Resolve()
 	return MeetingsSettings{
 		Enabled:            m.IsEnabled(),
 		EnabledEnvOverride: config.MeetingsEnabledEnvSet(),
@@ -430,34 +439,64 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 		VexaKeySet:         meetingsSecretSet(ctx, m.VexaAPIKey),
 		DiscordTokenSet:    meetingsSecretSet(ctx, m.DiscordToken),
 		TranscribeTokenSet: meetingsSecretSet(ctx, m.TranscribeToken),
+		TTSTokenSet:        meetingsSecretSet(ctx, m.TTSToken),
 		SpekModel:          s.meetingsSpekModel(ctx),
 		Effective: map[string]string{
-			"meetings.quorum.binary":                  m.QuorumBinary(),
-			"meetings.quorum.listen":                  m.QuorumListen(),
-			"meetings.transcribe_url":                 m.TranscribeURLOrEmpty(),
-			"meetings.delivery":                       m.DeliveryOrDefault(),
-			"meetings.voice_on_address":               boolString(m.VoiceOnAddressEnabled()),
-			"meetings.bot_name":                       m.BotNameOrDefault(),
-			"meetings.invite_policy":                  m.InvitePolicyOrDefault(),
-			"meetings.research_pool_size":             strconv.Itoa(m.ResearchPoolSizeOrDefault()),
-			"meetings.research_per_meeting":           strconv.Itoa(m.ResearchPerMeetingOrDefault()),
-			"meetings.chat_posts_per_minute":          strconv.Itoa(m.ChatPostsPerMinuteOrDefault()),
-			"meetings.lobby_timeout_s":                strconv.Itoa(m.LobbyTimeoutSOrDefault()),
-			"meetings.retention_days":                 strconv.Itoa(m.RetentionDaysOrDefault()),
-			"meetings.consent_text":                   m.ConsentTextOrDefault(),
-			"meetings.data_dir":                       m.DataDirOrDefault(),
-			"meetings.budget.max_tokens_per_meeting":  strconv.Itoa(m.Budget.MaxTokensPerMeetingOrDefault()),
-			"meetings.budget.max_tokens_per_hour":     strconv.Itoa(m.Budget.MaxTokensPerHourOrDefault()),
-			"meetings.budget.max_tokens_per_day":      strconv.Itoa(m.Budget.MaxTokensPerDayOrDefault()),
-			"meetings.budget.max_intents_per_meeting": strconv.Itoa(m.Budget.MaxIntentsPerMeetingOrDefault()),
-			"meetings.llm.mode":                       m.LLM.Mode,
-			"meetings.llm.endpoint":                   m.LLM.Endpoint,
-			"meetings.llm.model":                      m.LLM.Model,
-			"meetings.llm.api_key_file":               m.LLM.APIKeyFile,
-			"meetings.llm.anthropic_key_file":         m.LLM.AnthropicKeyFile,
-			"meetings.llm.anthropic_model":            m.LLM.AnthropicModel,
-			"meetings.llm.timeout_ms":                 strconv.Itoa(m.LLM.TimeoutMS),
-			"meetings.llm.max_in_flight":              strconv.Itoa(m.LLM.MaxInFlight),
+			"meetings.quorum.binary":                     m.QuorumBinary(),
+			"meetings.quorum.listen":                     m.QuorumListen(),
+			"meetings.transcribe_url":                    m.TranscribeURLOrEmpty(),
+			"meetings.tts_url":                           m.TTSURLOrEmpty(),
+			"meetings.delivery":                          m.DeliveryOrDefault(),
+			"meetings.voice_on_address":                  boolString(m.VoiceOnAddressEnabled()),
+			"meetings.bot_name":                          m.BotNameOrDefault(),
+			"meetings.invite_policy":                     m.InvitePolicyOrDefault(),
+			"meetings.research_pool_size":                strconv.Itoa(m.ResearchPoolSizeOrDefault()),
+			"meetings.research_per_meeting":              strconv.Itoa(m.ResearchPerMeetingOrDefault()),
+			"meetings.chat_posts_per_minute":             strconv.Itoa(m.ChatPostsPerMinuteOrDefault()),
+			"meetings.lobby_timeout_s":                   strconv.Itoa(m.LobbyTimeoutSOrDefault()),
+			"meetings.retention_days":                    strconv.Itoa(m.RetentionDaysOrDefault()),
+			"meetings.consent_text":                      m.ConsentTextOrDefault(),
+			"meetings.data_dir":                          m.DataDirOrDefault(),
+			"meetings.budget.max_tokens_per_meeting":     strconv.Itoa(m.Budget.MaxTokensPerMeetingOrDefault()),
+			"meetings.budget.max_tokens_per_hour":        strconv.Itoa(m.Budget.MaxTokensPerHourOrDefault()),
+			"meetings.budget.max_tokens_per_day":         strconv.Itoa(m.Budget.MaxTokensPerDayOrDefault()),
+			"meetings.budget.max_intents_per_meeting":    strconv.Itoa(m.Budget.MaxIntentsPerMeetingOrDefault()),
+			"meetings.llm.mode":                          m.LLM.Mode,
+			"meetings.llm.endpoint":                      m.LLM.Endpoint,
+			"meetings.llm.model":                         m.LLM.Model,
+			"meetings.llm.api_key_file":                  m.LLM.APIKeyFile,
+			"meetings.llm.anthropic_key_file":            m.LLM.AnthropicKeyFile,
+			"meetings.llm.anthropic_model":               m.LLM.AnthropicModel,
+			"meetings.llm.timeout_ms":                    strconv.Itoa(m.LLM.TimeoutMS),
+			"meetings.llm.max_in_flight":                 strconv.Itoa(m.LLM.MaxInFlight),
+			"meetings.persona.enabled":                   boolString(persona.Enabled),
+			"meetings.persona.preset":                    persona.Preset,
+			"meetings.persona.name":                      persona.Name,
+			"meetings.persona.display_name":              persona.DisplayName,
+			"meetings.persona.language":                  persona.Language,
+			"meetings.persona.voice":                     persona.Voice,
+			"meetings.persona.humor":                     persona.Humor,
+			"meetings.persona.leave_phrases":             strings.Join(persona.LeavePhrases, ", "),
+			"meetings.persona.aliases":                   strings.Join(persona.Aliases, ", "),
+			"meetings.persona.pronouns":                  persona.Pronouns,
+			"meetings.persona.voice_type":                persona.VoiceType,
+			"meetings.persona.accent":                    persona.Accent,
+			"meetings.persona.intro_template":            persona.IntroTemplate,
+			"meetings.persona.searxng_url":               persona.SearxngURL,
+			"meetings.persona.unprompted.per_10m":        strconv.Itoa(persona.Unprompted.Per10m),
+			"meetings.persona.unprompted.min_gap_s":      strconv.Itoa(persona.Unprompted.MinGapS),
+			"meetings.persona.unprompted.per_meeting":    strconv.Itoa(persona.Unprompted.PerMeeting),
+			"meetings.persona.unprompted.answer_wait_s":  strconv.Itoa(persona.Unprompted.AnswerWaitS),
+			"meetings.persona.unprompted.min_confidence": strconv.FormatFloat(persona.Unprompted.MinConfidence, 'f', -1, 64),
+			"meetings.persona.unprompted.queue_depth":    strconv.Itoa(persona.Unprompted.QueueDepth),
+			"meetings.persona.unprompted.stale_s":        strconv.Itoa(persona.Unprompted.StaleS),
+			// meetings.persona.actions.types[] is shown joined with ", " and
+			// meetings.persona.actions.auto_approve.<key> as the auto-approved
+			// types (#18406; edited at /api/meetings/actions/settings).
+			"meetings.persona.actions.enabled":      boolString(actions.Enabled),
+			"meetings.persona.actions.types":        strings.Join(actions.Types, ", "),
+			"meetings.persona.actions.default_repo": actions.DefaultRepo,
+			"meetings.persona.actions.auto_approve": strings.Join(meetingsAutoApproved(actions.AutoApprove), ", "),
 		},
 	}
 }
@@ -535,6 +574,13 @@ func (s *Server) handleMeetingsSettingsPost(w http.ResponseWriter, r *http.Reque
 		}
 		changed = true
 	}
+	if req.TTSToken != nil {
+		if err := config.WriteMeetingsSecret(r.Context(), next.TTSTokenFileOrDefault(), *req.TTSToken); err != nil {
+			jsonError(w, "saving the TTS token: "+err.Error(), http.StatusInternalServerError)
+			return
+		}
+		changed = true
+	}
 	s.deps.Config.Meetings = next
 	if err := s.saveConfig(); err != nil {
 		jsonError(w, "saving config: "+err.Error(), http.StatusInternalServerError)
@@ -542,7 +588,7 @@ func (s *Server) handleMeetingsSettingsPost(w http.ResponseWriter, r *http.Reque
 	}
 	s.auditFromRequest(r, "meetings_settings", auditDetail("enabled", boolString(next.Enabled), "vexa_url", next.Vexa.URL,
 		"vexa_key_changed", boolString(req.VexaAPIKey != nil), "discord_token_changed", boolString(req.DiscordToken != nil),
-		"transcribe_token_changed", boolString(req.TranscribeToken != nil)), "")
+		"transcribe_token_changed", boolString(req.TranscribeToken != nil), "tts_token_changed", boolString(req.TTSToken != nil)), "")
 	out := s.meetingsSettings(r.Context(), next)
 	out.RestartRequired = changed
 	jsonResponse(w, out)

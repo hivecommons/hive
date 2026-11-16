@@ -10,7 +10,7 @@ import (
 
 func TestInboxTranscriptionDefaults(t *testing.T) {
 	var tr InboxTranscription
-	if tr.Enabled || tr.Active() || tr.EffectiveMode() != "manual" || tr.EffectiveProvider() != "deepgram" || tr.EffectiveModel() != "nova-3" {
+	if tr.Enabled || tr.Active() || tr.EffectiveMode() != "manual" || tr.EffectiveProvider() != "auto" || tr.EffectiveModel() != "nova-3" {
 		t.Fatalf("defaults = %+v", tr)
 	}
 	if tr.EffectiveAPIKeyEnv() != "DEEPGRAM_API_KEY" || !tr.EffectiveDiarize() || tr.EffectiveLanguage() != "auto" {
@@ -62,17 +62,25 @@ func TestInboxTranscriptionConfiguredAndEnvOverrides(t *testing.T) {
 
 func TestValidateInboxTranscriptionRejects(t *testing.T) {
 	cases := map[string]InboxTranscription{
-		"mode":     {Mode: "sometimes"},
-		"provider": {Provider: "whisper"},
-		"key env":  {APIKeyEnv: "not a name"},
-		"language": {Language: "english please"},
-		"negative": {MaxBytes: -1},
-		"sources":  {Sources: []string{" "}},
-		"consent":  {Enabled: true},
+		"mode":            {Mode: "sometimes"},
+		"provider":        {Provider: "openai"},
+		"key env":         {APIKeyEnv: "not a name"},
+		"language":        {Language: "english please"},
+		"negative":        {MaxBytes: -1},
+		"sources":         {Sources: []string{" "}},
+		"consent":         {Enabled: true},
+		"whisper model":   {WhisperModel: "large-v3"},
+		"gemini model":    {GeminiModel: "../files/x"},
+		"whisper threads": {WhisperThreads: -1},
 	}
 	for name, tr := range cases {
 		if err := ValidateInboxTranscription(tr); err == nil {
 			t.Errorf("%s: want error", name)
+		}
+	}
+	for _, p := range InboxTranscriptionProviders {
+		if err := ValidateInboxTranscription(InboxTranscription{Provider: p}); err != nil {
+			t.Errorf("provider %s: %v", p, err)
 		}
 	}
 	err := ValidateInbox(InboxConfig{Transcription: InboxTranscription{Enabled: true}})
@@ -108,5 +116,34 @@ transcription:
 	}
 	if err := ValidateInbox(c); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestInboxTranscriptionWhisperDefaults(t *testing.T) {
+	var tr InboxTranscription
+	if tr.EffectiveWhisperModel() != "base.en" || tr.EffectiveWhisperThreads(4) != 2 || tr.EffectiveWhisperThreads(1) != 1 {
+		t.Fatalf("whisper defaults: %q %d", tr.EffectiveWhisperModel(), tr.EffectiveWhisperThreads(4))
+	}
+	for lang, want := range map[string]string{"en": "base.en", "en-GB": "base.en", "de": "base", "pt-BR": "base"} {
+		if got := (InboxTranscription{Language: lang}).EffectiveWhisperModel(); got != want {
+			t.Errorf("language %s: model %q, want %q", lang, got, want)
+		}
+	}
+	tr = InboxTranscription{WhisperModel: "small", WhisperThreads: 3, Language: "de"}
+	if tr.EffectiveWhisperModel() != "small" || tr.EffectiveWhisperThreads(16) != 3 {
+		t.Fatalf("configured whisper = %q %d", tr.EffectiveWhisperModel(), tr.EffectiveWhisperThreads(16))
+	}
+	if err := ValidateInboxTranscription(tr); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInboxTranscriptionGeminiModel(t *testing.T) {
+	if got := (InboxTranscription{}).EffectiveGeminiModel(); got != "gemini-3.5-flash" {
+		t.Fatalf("default gemini model = %q", got)
+	}
+	tr := InboxTranscription{GeminiModel: "gemini-3.6-flash"}
+	if tr.EffectiveGeminiModel() != "gemini-3.6-flash" || ValidateInboxTranscription(tr) != nil {
+		t.Fatal("configured gemini model")
 	}
 }

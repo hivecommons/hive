@@ -84,7 +84,9 @@ RUN --mount=type=cache,id=hive-go-build,target=/tmp/gobuild \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-backup ./cmd/hive-backup && \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hivectl ./cmd/hivectl && \
     GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -ldflags "-X main.gitHash=${GIT_HASH} -X main.gitShort=${GIT_SHORT} -X main.gitBranch=${GIT_BRANCH} ${VERSION_LDFLAG}" -o /hive-admin-mcp ./cmd/hive-admin-mcp && \
-    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /crux ./cmd/crux
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /crux ./cmd/crux && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-whisper ./cmd/hive-whisper && \
+    GOCACHE=/tmp/gobuild GOOS=${TARGETOS} GOARCH=${TARGETARCH} CGO_ENABLED=0 go build -o /hive-pdftext ./cmd/hive-pdftext
 
 
 # --- Go security scanners for the sec-check lane (#18192) ---
@@ -148,6 +150,70 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
  && tar xz -C /tmp -f /tmp/tmux.tar.gz \
  && cd /tmp/tmux-${TMUX_VERSION} && ./configure --prefix=/usr/local && make -j$(nproc) && make install \
  && rm -rf /tmp/tmux-${TMUX_VERSION} /tmp/tmux.tar.gz
+
+# --- Built-in Inbox transcription engine (src/docs/inbox-transcription.md) ---
+# whisper.cpp (MIT) for speech-to-text and a minimal LGPL FFmpeg for decoding
+# recordings (mp3, m4a/mp4 AAC, webm/ogg Opus and Vorbis, FLAC, WAV) to the
+# 16 kHz mono WAV whisper needs. Both run only inside the hive-whisper sandbox
+# (src/cmd/hive-whisper): a separate low-privilege uid, no environment, CPU,
+# memory and wall-clock limits, a private 0700 work dir. No model ships in the
+# image; the hive downloads a pinned, checksummed ggml model on first use (or
+# the operator pre-seeds /data/models/whisper).
+#
+# FFmpeg is configured with --disable-everything and only the audio demuxers,
+# decoders, the WAV muxer and file/pipe protocols enabled: no network
+# protocols, no autodetected external libraries and no --enable-gpl or
+# --enable-nonfree, so the binary is LGPL-2.1-or-later (asserted below).
+#
+# whisper.cpp is built with every CPU variant of the ggml backend
+# (GGML_CPU_ALL_VARIANTS, loaded at run time), so one image picks AVX2/AVX-512
+# on amd64 and dotprod/fp16/SVE on arm64 without risking SIGILL on older
+# cores. No OpenMP (ggml's own thread pool), no curl, no SDL.
+#
+# Compiled for the TARGET platform like tmux above (arm64 builds on the native
+# ARM runner). Pinned to the same node:26-slim digest; refresh together.
+FROM ${BASE_REGISTRY}/node:26-slim@sha256:0d1e33586362bb9e608c4e751e7a9e7edb55c9ac11461ed5666af696cc461dd4 AS whisper-builder
+ARG WHISPER_CPP_VERSION=1.9.5
+ARG WHISPER_CPP_SHA256=ff1a9053feb509ff9d7729703355541ae9690073a6b1c40eb692c962e0dc1720
+ARG FFMPEG_VERSION=8.1.3
+ARG FFMPEG_SHA256=7138d28c96d9d3e3af4ee3d8cad72741f8ffb40da90c1112235dea3ecd3178a3
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl ca-certificates gcc g++ make cmake xz-utils pkg-config \
+ && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors -o /tmp/ffmpeg.tar.xz "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" \
+ && echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
+ && mkdir -p /tmp/ffmpeg && tar xJ -C /tmp/ffmpeg --strip-components=1 -f /tmp/ffmpeg.tar.xz \
+ && cd /tmp/ffmpeg \
+ && ./configure --prefix=/opt/hive-whisper --disable-everything --disable-autodetect --disable-network \
+      --disable-doc --disable-debug --disable-ffplay --disable-ffprobe --disable-x86asm \
+      --enable-static --disable-shared --enable-small \
+      --enable-ffmpeg --enable-avcodec --enable-avformat --enable-avfilter --enable-swresample \
+      --enable-protocol=file,pipe \
+      --enable-demuxer=mov,matroska,ogg,mp3,wav,flac,aac \
+      --enable-parser=aac,mpegaudio,opus,vorbis,flac \
+      --enable-decoder=aac,aac_latm,alac,mp3,mp3float,opus,vorbis,flac,pcm_s16le,pcm_s24le,pcm_s32le,pcm_f32le,pcm_u8,pcm_alaw,pcm_mulaw \
+      --enable-encoder=pcm_s16le --enable-muxer=wav \
+      --enable-filter=aresample,aformat,anull \
+ && make -j"$(nproc)" && make install \
+ && /opt/hive-whisper/bin/ffmpeg -hide_banner -L | grep -q "Lesser General Public" \
+ && ! /opt/hive-whisper/bin/ffmpeg -hide_banner -buildconf | grep -Eq -- "--enable-(gpl|nonfree)" \
+ && rm -rf /opt/hive-whisper/include /opt/hive-whisper/lib /opt/hive-whisper/share /tmp/ffmpeg /tmp/ffmpeg.tar.xz
+RUN curl -fsSL --retry 30 --retry-delay 10 --retry-max-time 300 --retry-connrefused --retry-all-errors -o /tmp/whisper.tar.gz "https://github.com/ggml-org/whisper.cpp/archive/refs/tags/v${WHISPER_CPP_VERSION}.tar.gz" \
+ && echo "${WHISPER_CPP_SHA256}  /tmp/whisper.tar.gz" | sha256sum -c - \
+ && mkdir -p /tmp/whisper && tar xz -C /tmp/whisper --strip-components=1 -f /tmp/whisper.tar.gz \
+ && cmake -S /tmp/whisper -B /tmp/whisper/build -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_INSTALL_PREFIX=/opt/hive-whisper -DCMAKE_INSTALL_RPATH=/opt/hive-whisper/lib \
+      -DBUILD_SHARED_LIBS=ON -DGGML_NATIVE=OFF -DGGML_BACKEND_DL=ON -DGGML_CPU_ALL_VARIANTS=ON \
+      -DGGML_BACKEND_DIR=/opt/hive-whisper/lib -DGGML_OPENMP=OFF \
+      -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=ON -DWHISPER_CURL=OFF -DWHISPER_SDL2=OFF \
+ && cmake --build /tmp/whisper/build -j"$(nproc)" --target whisper-cli \
+ && cmake --build /tmp/whisper/build -j"$(nproc)" \
+ && cmake --install /tmp/whisper/build \
+ && find /opt/hive-whisper/bin -type f ! -name whisper-cli ! -name ffmpeg -delete \
+ && rm -rf /opt/hive-whisper/include /opt/hive-whisper/lib/cmake /opt/hive-whisper/lib/pkgconfig /tmp/whisper /tmp/whisper.tar.gz \
+ && /opt/hive-whisper/bin/whisper-cli --help >/dev/null 2>&1 \
+ && ls /opt/hive-whisper/lib/ | grep -q "ggml-cpu" \
+ && du -sh /opt/hive-whisper
 
 # Pinned to the same node:26-slim digest as the tmux-builder stage above —
 # refresh both FROM lines together.
@@ -464,8 +530,8 @@ RUN ARCH="${TARGETARCH:-$(dpkg --print-architecture)}" && \
 # Bump note: see src/docs/cli-pins.md (quorum row); update QUORUM_VERSION and
 # QUORUM_SHA256 together from the release's quorum.mjs.sha256, and
 # QUORUM_DAVEY_VERSION from quorum's package-lock.json.
-ARG QUORUM_VERSION=v0.1.0
-ARG QUORUM_SHA256=917aee456e5c87a6b531f1c7c09040fa60d04a39609a1c2755cfdd20d63d7c95
+ARG QUORUM_VERSION=v0.2.0
+ARG QUORUM_SHA256=9233653115baffcd884c3181a0bf7714145ca858e84abb1d2411a4f255e75e03
 ARG QUORUM_DAVEY_VERSION=0.1.12
 RUN if [ -n "${QUORUM_VERSION}" ]; then \
       test -n "${QUORUM_SHA256}" || { echo "QUORUM_SHA256 is required with QUORUM_VERSION" >&2; exit 1; } && \
@@ -670,6 +736,14 @@ COPY --from=builder /hive-backup /usr/local/bin/hive-backup
 # the image so an operator can `crux ps` / `crux logs` against a definition
 # set inside the container without the dashboard.
 COPY --from=builder /crux /usr/local/bin/crux
+# Built-in Inbox transcription: the hive-whisper sandbox launcher and the
+# whisper.cpp + LGPL FFmpeg engine from the whisper-builder stage. They run as
+# the dedicated hive-transcribe uid (created below), never as dev.
+COPY --from=builder /hive-whisper /usr/local/bin/hive-whisper
+# Inbox PDF uploads are parsed out of process by the hive-pdftext sandbox
+# (pure Go, github.com/ledongthuc/pdf), as the same hive-transcribe uid.
+COPY --from=builder /hive-pdftext /usr/local/bin/hive-pdftext
+COPY --from=whisper-builder /opt/hive-whisper /opt/hive-whisper
 
 # Go security scanners for the sec-check lane (#18192); built in the
 # go-sec-tools stage above. Both call `go list` through the go-wrapper.sh shim
@@ -714,12 +788,27 @@ COPY --from=builder /hive-admin-mcp /usr/local/share/hive/hive-admin-mcp
 RUN for b in /usr/local/bin/hive /usr/local/bin/bd /usr/local/bin/hive-backup \
              /usr/local/bin/crux /usr/local/share/hive/hivectl \
              /usr/local/share/hive/hive-admin-mcp \
-             /usr/local/bin/govulncheck /usr/local/bin/gosec; do \
+             /usr/local/bin/govulncheck /usr/local/bin/gosec /usr/local/bin/hive-whisper \
+             $(find /opt/hive-whisper -type f); do \
       cp --remove-destination "$b" "$b.fresh" && \
       mv -f "$b.fresh" "$b" && \
       chmod 0755 "$b"; \
     done && \
-    /usr/local/bin/gosec -version >/dev/null
+    /usr/local/bin/gosec -version >/dev/null && \
+    /opt/hive-whisper/bin/whisper-cli --help >/dev/null 2>&1 && \
+    /opt/hive-whisper/bin/ffmpeg -hide_banner -version >/dev/null && \
+    /usr/local/bin/hive-whisper -version >/dev/null
+
+# hive-transcribe: the uid the hive-whisper sandbox decodes and transcribes
+# untrusted recordings as. No home, no shell, no supplementary groups, so a
+# decoder exploit cannot read /data, dev's credentials or an agent's tree; the
+# hive (dev) reaches it through su-exec and hands the audio over stdin and
+# the model as an inherited read-only file descriptor.
+ARG HIVE_TRANSCRIBE_UID=1901
+RUN useradd --system --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin \
+      --uid "${HIVE_TRANSCRIBE_UID}" --user-group hive-transcribe \
+ && [ "$(id -u hive-transcribe)" = "${HIVE_TRANSCRIBE_UID}" ] \
+ && [ -z "$(id -Gn hive-transcribe | tr ' ' '\n' | grep -vx hive-transcribe)" ]
 
 COPY src/proxy/ /opt/hive/proxy/
 

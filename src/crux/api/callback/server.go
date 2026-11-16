@@ -241,9 +241,9 @@ func (s *Server) handleUsage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	switch rec.Kind {
-	case UsageKindGateway, UsageKindCopilot, UsageKindCopilotCache:
+	case UsageKindGateway, UsageKindGatewayCache, UsageKindCopilot, UsageKindCopilotCache:
 	default:
-		s.writeError(w, r, http.StatusBadRequest, CodeBadRequest, "kind must be gateway, copilot or copilot_cache")
+		s.writeError(w, r, http.StatusBadRequest, CodeBadRequest, "kind must be gateway, gateway_cache, copilot or copilot_cache")
 		return
 	}
 	if err := s.Caps.RecordUsage(r.Context(), rec); err != nil {

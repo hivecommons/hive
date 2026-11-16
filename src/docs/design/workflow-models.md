@@ -79,6 +79,7 @@ Custom models declare `derivation: rules`: ordered rules, each a conjunction of 
 fact vocabulary in `workflowmodel.Facts` (`open`, `merged`, `draft`, `labels has stage/*`,
 `author.kind is human`, `pr.checks is green`, `pr.review is approved`, `issue.covered`, …); the
 first rule whose predicates all hold names the state, and an item no rule matches is not covered.
+An initial state is selected only when a rule matches it; it is not a fallback for unrelated items.
 Rules reach only the facts the engine already computes; no LLM is ever in the derivation path.
 `testdata/models/techdocs.json` is the hand-written reference model (cncf/techdocs engagement).
 
@@ -92,6 +93,12 @@ observations and exempt), `duplicate-event-fact`, `state-no-column` / `unknown-c
 Stage numbers in a model are Hive's label numbers (`stagelabels.Table`) for now, so a bound repo's
 labels, tracker anchors and replies keep working; a state whose number does not apply to the item
 kind is not covered. Models are whole (no inheritance) through phase 4.
+
+When a rules model selects an unnumbered state, it carries no built-in `stage/*` label, even if
+the state is nonterminal; its model-state labels still apply. The stage store treats the move to
+`None` as leaving the built-in pipeline: it forgets the previous stage and regression history
+(preserving an unblock timestamp when present), rather than recording a regression. A later
+numbered state starts a new built-in stage record.
 
 ## Known gaps (phase 1)
 
@@ -322,7 +329,7 @@ input is never modified; `Inferred(m)` counts what is left to confirm. The store
 the stage colour filled in where an entry names none, the state's label as description where an
 entry has none, and descriptions clamped to GitHub's limit. `commands` is `Profile.Replies` (the
 human-gate verbs per state) in column order. `stages` is the built-in stage label each numbered
-state maps onto today, since the engine still writes the built-in family by stage number.
+state maps onto; custom model state labels are also reconciled onto items.
 
 ### Label regeneration on bind
 
@@ -342,9 +349,8 @@ exactly the pre-P4 path: one list, the built-in family, no model labels.
 - Labels are only ever created or recoloured, never deleted: unbinding or removing an entry leaves
   the label in the repository (same policy as the built-in family). Removal needs an explicit
   operator action, not a sweep side effect.
-- The engine derives through the built-in stage table by number; a model's own `labels.entries`
-  are provisioned but not yet written onto items. Writing model labels is the engine half of
-  phase 4 and follows the diagram editor.
+- Ingested template and triage labels are also input evidence, so the engine preserves them when
+  an item moves to another model state. Operators remain responsible for removing those inputs.
 - A model without a `labels` block regenerates nothing (TechDocs as shipped); the preview still
   shows its commands and the built-in stages its numbered states land on.
 

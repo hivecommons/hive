@@ -30,8 +30,6 @@ type bootDashboardAPIFake struct {
 	forgeFn      func() dashboard.ForgeAppInventory
 	discoverTick func()
 	healTick     func()
-	inception    *dashboard.InceptionWatcher
-	inceptionRun int
 }
 
 func newBootDashboardAPIFake() *bootDashboardAPIFake {
@@ -46,10 +44,6 @@ func newBootDashboardAPIFake() *bootDashboardAPIFake {
 		setForgeAppInventory:  func(_ *dashboard.Server, fn func() dashboard.ForgeAppInventory) { f.forgeFn = fn },
 		startInstallDiscovery: func(_ context.Context, tick func()) { f.discoverTick = tick },
 		startSelfHeal:         func(_ context.Context, tick func()) { f.healTick = tick },
-		startInceptionWatcher: func(_ context.Context, w *dashboard.InceptionWatcher) {
-			f.inception = w
-			f.inceptionRun++
-		},
 	}
 	return f
 }
@@ -274,17 +268,6 @@ func TestBootDashboardAPIWith_ForgeInventoryResolvesTheActiveKey(t *testing.T) {
 	}
 	if inv.HeldKeys == nil {
 		t.Fatal("HeldKeys must be an empty slice, not nil, so the tab renders an empty list rather than null")
-	}
-}
-
-func TestBootDashboardAPIWith_InceptionWatcherNeedsTheBrainstormStore(t *testing.T) {
-	f := newBootDashboardAPIFake()
-	b := newBootDashboardAPIBoot(t, f, bootDashboardAPIConfig())
-
-	b.bootDashboardAPIWith(f.deps)
-
-	if f.inceptionRun != 0 {
-		t.Fatal("inception watcher started without a brainstorm bead store to watch")
 	}
 }
 

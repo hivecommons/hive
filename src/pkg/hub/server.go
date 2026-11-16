@@ -1810,6 +1810,8 @@ func NewHubServer(port int, logger *slog.Logger, gitHash, gitBranch string) *Hub
 	s.mux.HandleFunc("GET /api/contribute/status", s.handleContributeStatus)
 	s.mux.HandleFunc("GET /api/contribute/ws", s.handleContributeWSProxy)
 	s.mux.HandleFunc("POST /api/github/webhook", s.handleGitHubWebhook)
+	// hive-mx mail routing (#18395, mail_relay.go); 404 without HIVE_HUB_MAIL_TOKEN.
+	s.registerMailRoutes()
 	s.mux.HandleFunc("GET /gh-setup", s.handleGitHubAppSetupRouter)
 	s.mux.HandleFunc("GET /learn", s.serveStatic("static/learn.html"))
 	s.mux.HandleFunc("GET /get-started", s.serveStatic("static/get-started.html"))

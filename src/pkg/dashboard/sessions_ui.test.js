@@ -27,23 +27,24 @@ test('sessions are grouped alphabetically with the ungrouped bucket last', () =>
   assert.deepStrictEqual(h.sessionsGroupSessions(undefined), []);
 });
 
-test('selected tab falls back to the first session, then to Campaigns', () => {
+test('selected tab falls back to the first session, then to none', () => {
   const list = [S('a', ''), S('b', '')];
   assert.strictEqual(h.sessionsPickSelected(list, 'b'), 'b');
   assert.strictEqual(h.sessionsPickSelected(list, 'gone'), 'a');
-  assert.strictEqual(h.sessionsPickSelected(list, 'campaigns'), 'campaigns');
-  assert.strictEqual(h.sessionsPickSelected([], 'gone'), 'campaigns');
-  assert.strictEqual(h.sessionsPickSelected(null, ''), 'campaigns');
+  // The retired Campaigns tab id, still remembered in some browsers, falls through.
+  assert.strictEqual(h.sessionsPickSelected(list, 'campaigns'), 'a');
+  assert.strictEqual(h.sessionsPickSelected([], 'gone'), '');
+  assert.strictEqual(h.sessionsPickSelected(null, ''), '');
 });
 
 test('arrow keys walk the visible tabs and wrap; collapsed groups keep only the selected tab', () => {
   const list = [S('a', 'g1'), S('b', 'g1'), S('c', 'g2')];
   const order = h.sessionsTabOrder(list, { g1: true }, 'b');
-  assert.deepStrictEqual(order, ['b', 'c', 'campaigns']);
-  assert.strictEqual(h.sessionsNextTab(order, 'campaigns', 'ArrowRight'), 'b');
-  assert.strictEqual(h.sessionsNextTab(order, 'b', 'ArrowLeft'), 'campaigns');
+  assert.deepStrictEqual(order, ['b', 'c']);
+  assert.strictEqual(h.sessionsNextTab(order, 'c', 'ArrowRight'), 'b');
+  assert.strictEqual(h.sessionsNextTab(order, 'b', 'ArrowLeft'), 'c');
   assert.strictEqual(h.sessionsNextTab(order, 'c', 'Home'), 'b');
-  assert.strictEqual(h.sessionsNextTab(order, 'b', 'End'), 'campaigns');
+  assert.strictEqual(h.sessionsNextTab(order, 'b', 'End'), 'c');
   assert.strictEqual(h.sessionsNextTab(order, 'b', 'x'), '');
   assert.strictEqual(h.sessionsNextTab([], 'b', 'ArrowRight'), '');
 });

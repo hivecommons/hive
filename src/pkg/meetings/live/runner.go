@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/meetings"
+	"github.com/hivecommons/hive/pkg/meetings/betty"
 )
 
 // DefaultCallTimeout bounds one call the loop makes (chat post, dispatch,
@@ -33,6 +34,15 @@ type Options struct {
 	// `hive meeting-llm` (meetllm); nil when Spek reports usage itself or
 	// uses no hive-run model.
 	UsageFile func(meetingID string) string
+	// Persona builds a meeting's attendee persona (Betty); nil, or a nil
+	// engine, leaves it off.
+	Persona func(m meetings.Meeting) *betty.Engine
+	// PersonaName names the attendee in hive's notices when no persona
+	// engine runs; empty means "Hive".
+	PersonaName string
+	// IsLeave reports a leave command (the persona's leave phrases); nil
+	// means meetings.IsLeaveCommand.
+	IsLeave func(text string) bool
 }
 
 // Runner starts a live session when a meeting goes live and ends it when
@@ -52,6 +62,9 @@ type Runner struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
 	wg        sync.WaitGroup
+
+	// actions builds each meeting's draft sink (actions.go, #18406).
+	actions actionsHook
 }
 
 // NewRunner builds a runner. Start subscribes it to meeting updates.

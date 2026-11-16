@@ -185,7 +185,6 @@ type boot struct {
 	knowledgeAPI                  *knowledge.KnowledgeAPI
 	beadSynth                     *knowledge.BeadSynthesizer
 	nousState                     *dashboard.NousState
-	inceptionEngine               *knowledge.InceptionEngine
 	rotationMgr                   *rotation.Manager
 	questionAutoclose             atomic.Pointer[questionclose.Manager]
 	wd                            *watchdog.Reconciler

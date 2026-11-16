@@ -5713,3 +5713,25 @@ func hardSuppressIssueBucket(filter IssueAdmitter, labels []string) string {
 	}
 	return hardSuppressIssueLabel(labels)
 }
+
+// FindIssueByBody returns the URL of the oldest issue in repo (owner/repo)
+// whose body contains marker, or "" when none exists. The inbox uses it to
+// find the RFC a spek agent published, via the provenance reference the RFC
+// body carries.
+func (c *Client) FindIssueByBody(ctx context.Context, repo, marker string) (string, error) {
+	marker = strings.TrimSpace(marker)
+	if repo == "" || marker == "" {
+		return "", nil
+	}
+	q := fmt.Sprintf("repo:%s is:issue in:body %q", repo, marker)
+	result, _, err := c.client.Search.Issues(ctx, q, &gh.SearchOptions{
+		Sort: "created", Order: "asc", ListOptions: gh.ListOptions{PerPage: 1},
+	})
+	if err != nil {
+		return "", fmt.Errorf("searching issues in %s: %w", repo, err)
+	}
+	if len(result.Issues) == 0 {
+		return "", nil
+	}
+	return result.Issues[0].GetHTMLURL(), nil
+}

@@ -81,8 +81,11 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// routes and the Inbox dashboard section, plus pkg/keystore, the
 	// secrets-at-rest seam every dashboard-written secret file (LiteLLM, Bob,
 	// gateway and backup keys, the Copilot login, the NPS relay identity) is
-	// sealed and opened through (hivecommons/hive#18214).
-	const maxDashboardInternalImports = 71
+	// sealed and opened through (hivecommons/hive#18214), plus pkg/mailallow,
+	// the calendar email allowlist, and pkg/mailin (its stdlib-only wire
+	// subpackage, the hive-mx delivery contract) behind the email-in routes
+	// (hivecommons/hive#18395).
+	const maxDashboardInternalImports = 73
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

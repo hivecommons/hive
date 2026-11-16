@@ -1455,6 +1455,9 @@ jobs:
           - name: contributor
             file: src/Dockerfile.contributor
             smoke: "false"
+          - name: mx
+            file: src/Dockerfile.mx
+            smoke: "false"
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -1567,7 +1570,9 @@ jobs:
           provenance: false
           sbom: false
           outputs: type=oci,oci-mediatypes=true,dest=/tmp/hive-oci.tar,tar=true
-          cache-from: type=gha,scope=tmux-linux-amd64
+          cache-from: |
+            type=gha,scope=tmux-linux-amd64
+            type=gha,scope=whisper-linux-amd64
           build-args: |
             BASE_REGISTRY=${{ env.BASE_REGISTRY }}
             GIT_HASH=${{ github.sha }}

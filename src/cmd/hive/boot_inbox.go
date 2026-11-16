@@ -17,6 +17,14 @@ import (
 // inboxSweepTimeout bounds the auto-routing sweep run after a connector sync.
 const inboxSweepTimeout = 2 * time.Minute
 
+// inboxRecordingSweepInterval is how often idle recordings are finalized and
+// audio past inbox.recording.retention_days is deleted.
+const inboxRecordingSweepInterval = 10 * time.Minute
+
+// inboxRFCCheckInterval is how often delegated RFC shares are checked for
+// their published issue.
+const inboxRFCCheckInterval = 10 * time.Minute
+
 // bootInbox builds the Inbox service. Sources are the configured knowledge
 // connectors whose type is a voice source (inbox.sources, default
 // plaud/wisprflow); with none configured the service still exists and lists
@@ -45,12 +53,105 @@ func (b *boot) bootInbox(baseDir string) {
 	// Machine transcripts stay on this spoke's own data volume; runs only
 	// happen once inbox.transcription is enabled and consented to.
 	svc.EnableTranscription(inbox.NewTranscriptStore(filepath.Join(baseDir, "connector-state", "transcripts")))
+	// Files and links dropped onto the Inbox stay on this spoke's data
+	// volume (0700 dirs, 0600 files); their extracted text becomes a fact in
+	// the personal connectors vault.
+	uploads := &inbox.UploadSource{
+		Store:         inbox.NewUploadStore(filepath.Join(baseDir, "connector-state", "uploads")),
+		ConnectorsDir: filepath.Join(baseDir, "connectors"),
+		FactWritten:   b.inboxUploadFactWritten,
+		Logger:        b.logger,
+		// Links are fetched by the hive with the SSRF guard (own DNS
+		// lookup, blocked ranges, every redirect re-checked).
+		Fetcher: &inbox.LinkFetcher{UserAgent: "hive-inbox/" + version},
+	}
+	svc.EnableUploads(uploads)
+	b.startInboxUploadRetention(uploads)
+	// Dashboard recordings (● Record): audio under connector-state/recordings
+	// until inbox.recording.retention_days, facts in the personal layer.
+	svc.EnableRecordings(&inbox.RecordingSource{
+		Store:         inbox.NewRecordingStore(filepath.Join(baseDir, "connector-state", "recordings")),
+		FactDir:       filepath.Join(baseDir, "connectors", inbox.RecordingLayer),
+		RetentionDays: func() int { return svc.Config().Recording.EffectiveRetentionDays() },
+	})
 	b.inboxSvc = svc
+	b.startInboxRecordingSweep(svc)
+	// A delegated RFC share completes when its issue (carrying the item's
+	// provenance reference) shows up on the target repo; the finder reads
+	// b.ghClient at call time because that client is installed after boot.
+	svc.SetRFCFinder(func(ctx context.Context, repo, marker string) (string, error) {
+		if b.ghClient == nil {
+			return "", nil
+		}
+		return b.ghClient.FindIssueByBody(ctx, repo, marker)
+	})
+	if b.ctx != nil {
+		go func() {
+			t := time.NewTicker(inboxRFCCheckInterval)
+			defer t.Stop()
+			for {
+				select {
+				case <-b.ctx.Done():
+					return
+				case <-t.C:
+					ctx, cancel := context.WithTimeout(b.ctx, inboxSweepTimeout)
+					svc.CheckRFCPublications(ctx)
+					cancel()
+				}
+			}
+		}()
+	}
+	b.wireMailAllowlist(baseDir)
 	b.logger.Info("inbox started", "sources", len(srcs), "rules", len(b.cfg.Inbox.Rules))
 	if tx := b.cfg.Inbox.Transcription; tx.Enabled {
-		// Transcription uploads audio from the hive process itself, so a
-		// locked-down spoke must allow this egress (network-requirements.md).
-		b.logger.Info("inbox transcription enabled", "mode", tx.EffectiveMode(), "provider", tx.EffectiveProvider(), "egress", strings.Join(inbox.TranscriptionEgressHosts(tx), ","))
+		// Transcription reaches the provider from the hive process itself,
+		// so a locked-down spoke must allow this egress
+		// (network-requirements.md). auto is logged as what it resolves to.
+		st := svc.TranscriptionSettings()
+		b.logger.Info("inbox transcription enabled", "mode", st.Mode, "provider", st.Provider, "resolved_provider", st.ResolvedProvider, "egress", strings.Join(st.EgressHosts, ","))
+	}
+}
+
+// inboxUploadRetentionInterval is how often upload retention runs.
+const inboxUploadRetentionInterval = time.Hour
+
+// startInboxUploadRetention deletes upload originals past
+// inbox.uploads.*_retention_days, once at boot and then hourly.
+func (b *boot) startInboxUploadRetention(u *inbox.UploadSource) {
+	if b.ctx == nil {
+		return
+	}
+	go func() {
+		t := time.NewTicker(inboxUploadRetentionInterval)
+		defer t.Stop()
+		for {
+			if n, err := u.SweepRetention(); err != nil || n > 0 {
+				b.logger.Info("inbox upload retention", "removed", n, "error", err)
+			}
+			select {
+			case <-b.ctx.Done():
+				return
+			case <-t.C:
+			}
+		}
+	}()
+}
+
+// inboxUploadFactWritten connects the connectors vault of dir (if no
+// connector did yet) and reindexes it, so a dropped file is searchable at once.
+func (b *boot) inboxUploadFactWritten(dir string) {
+	api := b.knowledgeAPI
+	if api == nil {
+		return
+	}
+	if api.GetVaultStore(dir) == nil {
+		if err := api.ConnectVault(dir, "connectors-"+filepath.Base(dir)); err != nil && api.GetVaultStore(dir) == nil {
+			b.logger.Warn("inbox uploads: vault not connected", "dir", dir, "error", err)
+			return
+		}
+	}
+	if store := api.GetVaultStore(dir); store != nil {
+		store.Reindex()
 	}
 }
 
@@ -158,4 +259,46 @@ func (b *boot) inboxAfterSync(st connector.Status) {
 		}()
 		return
 	}
+}
+
+// startInboxRecordingSweep runs the recording sweep at boot and then every
+// inboxRecordingSweepInterval until the boot context ends. Its changes are
+// logged and audited with the inbox.RecordingSweepActor actor.
+func (b *boot) startInboxRecordingSweep(svc *inbox.Service) {
+	ctx := b.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	opts := inbox.RecordingOptions{Actor: inbox.RecordingSweepActor, Audit: func(a inbox.RecordingAudit) {
+		if b.dashSrv != nil {
+			b.dashSrv.AuditLog(a.Actor, a.Action, a.Detail(), "")
+		}
+	}, TranscribeAudit: func(a inbox.TranscribeAudit) {
+		if b.dashSrv != nil {
+			b.dashSrv.AuditLog(a.Actor, "inbox_transcribe", a.Detail(), "")
+		}
+	}}
+	sweep := func() {
+		if _, err := svc.RecordingSweep(opts); err != nil {
+			b.logger.Warn("inbox recording sweep", "error", err)
+		}
+		// Recordings finished while transcription was off are transcribed
+		// once it is enabled with consent.
+		tctx, cancel := context.WithTimeout(ctx, inboxSweepTimeout)
+		b.inboxTranscribeSweep(tctx, svc)
+		cancel()
+	}
+	go func() {
+		sweep()
+		ticker := time.NewTicker(inboxRecordingSweepInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				sweep()
+			}
+		}
+	}()
 }

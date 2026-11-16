@@ -12,11 +12,13 @@
     const SESSIONS_LOG_LINES = 500;
     const SESSIONS_ASSERTION_RENEW_MS = 600000;
     const SESSIONS_TMUX_PREFIX = 'hive-sess-';
-    const SESSIONS_CAMPAIGNS_TAB = 'campaigns';
     const SESSIONS_UNGROUPED = '';
     const SESSIONS_UNGROUPED_LABEL = 'Ungrouped';
     const SESSIONS_SELECTED_KEY = 'hive.sessions.selected';
     const SESSIONS_COLLAPSED_KEY = 'hive.sessions.collapsedGroups';
+    // The CLI vendor of the last session this browser started; the Inbox's
+    // Share → Hive → spek… dialog preselects it (inbox.js reads the same key).
+    const SESSIONS_LAST_VENDOR_KEY = 'hive.sessions.lastVendor';
     const SESSIONS_WRITE_ROLES = Object.freeze(['owner', 'read-write']);
     const SESSIONS_STATUS_RUNNING = 'running';
     const SESSIONS_STATUS_ENDED = 'ended';
@@ -98,10 +100,9 @@
       return sessionsGroupSessions(sessions).map(function(g) { return g.group; }).filter(Boolean);
     }
     function sessionsPickSelected(sessions, wanted) {
-      if (wanted === SESSIONS_CAMPAIGNS_TAB) return wanted;
       const list = sessions || [];
       if (wanted && list.some(function(s) { return s && s.id === wanted; })) return wanted;
-      return list.length && list[0] ? list[0].id : SESSIONS_CAMPAIGNS_TAB;
+      return list.length && list[0] ? list[0].id : '';
     }
     // Flat tab order as rendered (group order, then session order), used for arrow keys.
     function sessionsTabOrder(sessions, collapsed, selected) {
@@ -112,7 +113,6 @@
           out.push(s.id);
         });
       });
-      out.push(SESSIONS_CAMPAIGNS_TAB);
       return out;
     }
     function sessionsNextTab(order, current, key) {
@@ -373,9 +373,35 @@
       if (wasEnabled !== _sessionsData.enabled) sessionsApplyVisibility();
       if (!_sessionsData.enabled) { dashboardClearInterval('sessions-poll'); return; }
       if (!_sessionsRole) await sessionsLoadRole();
-      _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, _sessionsSelected || sessionsStoreGet(SESSIONS_SELECTED_KEY));
+      _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, sessionsClaimFocus(_sessionsData.sessions) || _sessionsSelected || sessionsStoreGet(SESSIONS_SELECTED_KEY));
       renderSessions();
     }
+    // Deep link: #section-sessions-section?session=<id> opens the section
+    // (the generic section hash does that) and selects that session's tab.
+    // Inbox share pills for spek shares link here.
+    const SESSIONS_FOCUS_HASH = '#section-sessions-section?session=';
+    function sessionsFocusIdFromHash(hash) {
+      const h = String(hash || '');
+      const at = h.indexOf(SESSIONS_FOCUS_HASH);
+      if (at < 0) return '';
+      try { return decodeURIComponent(h.slice(at + SESSIONS_FOCUS_HASH.length).split('&')[0]); } catch (e) { return ''; }
+    }
+    let _sessionsFocusId = sessionsFocusIdFromHash(location.hash);
+    // sessionsClaimFocus returns the deep-linked session id once it exists in
+    // sessions (and forgets it), or '' while there is nothing to select.
+    function sessionsClaimFocus(sessions) {
+      if (!_sessionsFocusId || !(sessions || []).some(function(s) { return s.id === _sessionsFocusId; })) return '';
+      const id = _sessionsFocusId;
+      _sessionsFocusId = '';
+      return id;
+    }
+    window.addEventListener('hashchange', function(e) {
+      const id = sessionsFocusIdFromHash((e && e.newURL) || location.hash);
+      if (!id) return;
+      _sessionsFocusId = id;
+      const wanted = sessionsClaimFocus(_sessionsData.sessions);
+      if (wanted) sessionsSelect(wanted);
+    });
     function sessionsStartPolling() {
       dashboardSetInterval('sessions-poll', loadSessions, SESSIONS_POLL_MS);
     }
@@ -421,8 +447,7 @@
         + '<span class="sessions-tab-vendor">' + esc(s.vendor || '') + '</span>' + badge + '</button>';
     }
     function sessionsTabsHtml() {
-      const campaignsSel = _sessionsSelected === SESSIONS_CAMPAIGNS_TAB;
-      let html = sessionsGroupSessions(_sessionsData.sessions).map(function(g) {
+      return sessionsGroupSessions(_sessionsData.sessions).map(function(g) {
         const collapsed = !!_sessionsCollapsed[g.group];
         const tabs = g.sessions.filter(function(s) { return !collapsed || s.id === _sessionsSelected; }).map(sessionsTabHtml).join('');
         return '<div class="sessions-group" role="presentation">'
@@ -430,11 +455,6 @@
           + '<span class="sessions-group-chevron">' + (collapsed ? '▶' : '▼') + '</span>' + esc(g.label) + ' <span class="sessions-group-count">' + g.sessions.length + '</span></button>'
           + '<div class="sessions-group-tabs" role="presentation">' + tabs + '</div></div>';
       }).join('');
-      html += '<div class="sessions-group" role="presentation"><div class="sessions-group-tabs" role="presentation">'
-        + '<button type="button" role="tab" class="sessions-tab' + (campaignsSel ? ' active' : '') + '" id="sessions-tab-' + SESSIONS_CAMPAIGNS_TAB + '" aria-selected="' + campaignsSel + '" aria-controls="sessions-pane-' + SESSIONS_CAMPAIGNS_TAB + '" tabindex="' + (campaignsSel ? '0' : '-1') + '"'
-        + ' data-action="sessionsSelect" data-arg0="' + SESSIONS_CAMPAIGNS_TAB + '" data-keydown-action="sessionsTabKey" data-arg-types="s,e" data-keys="*" data-arg1="">'
-        + '<span class="sessions-tab-name">Campaigns</span></button></div></div>';
-      return html;
     }
     function sessionsNewFormHtml() {
       const vendors = (_sessionsData.vendors || []).filter(function(v) { return v && v.available; });
@@ -453,6 +473,7 @@
     function sessionsToolbarHtml() {
       const can = sessionsCanCreate(_sessionsRole, _sessionsData);
       return '<div class="sessions-toolbar"><div id="sessions-tabs" class="sessions-tabs" role="tablist" aria-label="Inception (spek) sessions">' + sessionsTabsHtml() + '</div>'
+        + (typeof inboxRecordShortcutHtml === 'function' ? inboxRecordShortcutHtml() : '')
         + '<button type="button" class="hv-btn btn-primary btn-sm sessions-new-btn" data-action="sessionsToggleNew"' + (can.ok ? '' : ' disabled title="' + esc(can.reason) + '"') + '>+ New session</button></div>'
         + '<div id="sessions-new" class="sessions-new" role="group" aria-label="New session"' + (_sessionsNewOpen && can.ok ? '' : ' hidden') + '>' + (_sessionsNewOpen && can.ok ? sessionsNewFormHtml() : '') + '</div>';
     }
@@ -629,15 +650,14 @@
       if (!typing) chrome.innerHTML = sessionsToolbarHtml();
       if (focusId) { const f = document.getElementById(focusId); if (f) f.focus(); }
       const empty = document.getElementById('sessions-empty');
-      empty.hidden = sessions.length > 0 || _sessionsSelected !== SESSIONS_CAMPAIGNS_TAB;
+      empty.hidden = sessions.length > 0;
       empty.textContent = sessions.length ? '' : 'No sessions yet. Start one with “New session” to run a CLI agent here; everyone on this hive can watch or join it.';
       const liveIds = {};
       sessions.forEach(function(s) { liveIds[s.id] = true; sessionsEnsurePane(s); });
       Array.prototype.forEach.call(document.querySelectorAll('#sessions-panes .sessions-pane'), function(pane) {
         const id = pane.id.replace('sessions-pane-', '');
-        if (id !== SESSIONS_CAMPAIGNS_TAB && !liveIds[id]) { delete _sessionsFrames[id]; pane.remove(); }
+        if (!liveIds[id]) { delete _sessionsFrames[id]; pane.remove(); }
       });
-      sessionsEnsureCampaignsPane();
       sessionsShowSelected();
       sessionsSyncPreparingPoll(sessions);
     }
@@ -653,29 +673,12 @@
       const preparing = (sessions || []).filter(function(s) { return s.status === SESSIONS_STATUS_PREPARING; }).length;
       return running + ' running · ' + (preparing ? preparing + ' preparing · ' : '') + (sessions || []).length + ' total';
     }
-    function sessionsEnsureCampaignsPane() {
-      const host = document.getElementById('sessions-panes');
-      if (!host || document.getElementById('sessions-pane-' + SESSIONS_CAMPAIGNS_TAB)) return;
-      const pane = document.createElement('div');
-      pane.id = 'sessions-pane-' + SESSIONS_CAMPAIGNS_TAB;
-      pane.className = 'sessions-pane';
-      pane.setAttribute('role', 'tabpanel');
-      pane.setAttribute('aria-labelledby', 'sessions-tab-' + SESSIONS_CAMPAIGNS_TAB);
-      pane.setAttribute('data-mode', 'campaigns');
-      host.appendChild(pane);
-    }
     function sessionsShowSelected() {
       Array.prototype.forEach.call(document.querySelectorAll('#sessions-panes .sessions-pane'), function(pane) {
         pane.hidden = pane.id !== 'sessions-pane-' + _sessionsSelected;
       });
-      if (_sessionsSelected === SESSIONS_CAMPAIGNS_TAB) {
-        sessionsStopLogPoll();
-        const pane = document.getElementById('sessions-pane-' + SESSIONS_CAMPAIGNS_TAB);
-        if (pane && !pane.firstChild) { pane.innerHTML = renderCampaignsPanel(); loadCampaigns(); }
-        return;
-      }
       const s = sessionsSelectedSession();
-      if (!s) return;
+      if (!s) { sessionsStopLogPoll(); return; }
       const mode = sessionsViewMode(_sessionsRole, s);
       if (mode === 'preparing' || mode === 'failed') { sessionsStopLogPoll(); return; }
       if (mode === 'terminal' && !_sessionsFrameFailed[s.id]) { sessionsStopLogPoll(); sessionsAttachTerminal(s); } else sessionsStartLogPoll();
@@ -804,6 +807,7 @@
     // until polling sees it running (terminal attaches) or failed.
     async function sessionsSubmitCreate(body) {
       const data = await sessionsApi('', 'POST', body);
+      if (body.vendor) sessionsStoreSet(SESSIONS_LAST_VENDOR_KEY, body.vendor);
       if (data.session) {
         _sessionsData.sessions = (_sessionsData.sessions || []).filter(function(x) { return x.id !== data.session.id; });
         _sessionsData.sessions.push(data.session);
@@ -819,6 +823,23 @@
       showToast('Starting session ' + body.name + '…', 'success');
       loadSessions();
       return data.session;
+    }
+    // sessionsFocus opens the Inception (spek) section on one session's tab:
+    // the Inbox calls it after sending items into a session (new or running),
+    // with the session view the API answered, so the tab (and its preparing
+    // spinner) shows before the next poll.
+    function sessionsFocus(session) {
+      if (!session || !session.id) return;
+      const list = _sessionsData.sessions || [];
+      const prev = list.find(function(x) { return x.id === session.id; });
+      if (prev) Object.assign(prev, session);
+      else if (session.status) _sessionsData.sessions = list.concat([session]);
+      _sessionsSelected = session.id;
+      sessionsStoreSet(SESSIONS_SELECTED_KEY, session.id);
+      if (session.vendor) sessionsStoreSet(SESSIONS_LAST_VENDOR_KEY, session.vendor);
+      if (typeof ocNavigate === 'function') ocNavigate('sessions-section');
+      renderSessions();
+      loadSessions();
     }
     // Retry a failed session: its record is deleted and a new one is created
     // with the same name, group, vendor and sharing.

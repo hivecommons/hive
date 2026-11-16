@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
 
 // excerptRunes bounds the list excerpt.
@@ -93,6 +95,7 @@ func itemFromFact(fm map[string]string, body, layer, path string) Item {
 	it.Summary = truncateRunes(sections["summary"], SummaryRunes)
 	it.HasTranscript = sections["transcript"] != ""
 	it.Pending = it.Summary == "" && !it.HasTranscript
+	it.FactState = factState(fm, it.Pending)
 	for _, key := range []string{"attr_recorded_at", "synthesized"} {
 		if t, err := time.Parse(time.RFC3339, fm[key]); err == nil {
 			it.RecordedAt = t.UTC()
@@ -131,6 +134,7 @@ func (f *FactSource) Fetch(_ context.Context, it Item) (Content, error) {
 	sections := splitSections(body)
 	c.Summary, c.Transcript, c.Highlights = sections["summary"], sections["transcript"], sections["highlights"]
 	c.Pending = c.Summary == "" && c.Transcript == ""
+	c.machineFact = connector.FactContentState(fm) == connector.FactContentMachine
 	return c, nil
 }
 

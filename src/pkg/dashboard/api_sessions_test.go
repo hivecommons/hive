@@ -42,6 +42,14 @@ type fakeSessionRuntime struct {
 	resumeDirs []string
 	// detached records each DetachWritableClients call (keyboard hand-over).
 	detached []string
+	// inboxFiles records each StoreInboxFile call (Inbox seeds).
+	inboxFiles []fakeInboxFile
+}
+
+// fakeInboxFile is one StoreInboxFile call.
+type fakeInboxFile struct {
+	id, workspace, name string
+	data                []byte
 }
 
 func newFakeSessionRuntime(t *testing.T) *fakeSessionRuntime {
@@ -175,6 +183,31 @@ func (f *fakeSessionRuntime) StoreUpload(id, fileName string, src io.Reader, max
 		return "", 0, err
 	}
 	return dest, int64(len(b)), nil
+}
+
+// StoreInboxFile mimics the real runtime: <cwd>/.hive/inbox/<name>, 0640,
+// cwd = workspace or the session's own work dir.
+func (f *fakeSessionRuntime) StoreInboxFile(id, workspace, fileName string, data []byte) (string, error) {
+	f.mu.Lock()
+	f.inboxFiles = append(f.inboxFiles, fakeInboxFile{id: id, workspace: workspace, name: fileName, data: append([]byte(nil), data...)})
+	f.mu.Unlock()
+	cwd := workspace
+	if cwd == "" {
+		cwd = f.WorkDir(id)
+	}
+	dir := filepath.Join(cwd, ".hive", "inbox")
+	if err := os.MkdirAll(dir, 0o770); err != nil {
+		return "", err
+	}
+	dest := filepath.Join(dir, fileName)
+	return dest, os.WriteFile(dest, data, 0o640)
+}
+
+// storedInboxFiles copies the StoreInboxFile calls so far.
+func (f *fakeSessionRuntime) storedInboxFiles() []fakeInboxFile {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append([]fakeInboxFile(nil), f.inboxFiles...)
 }
 
 func (f *fakeSessionRuntime) ResumeInfo(id, vendor, workDir string) (crux.UserSessionResume, bool) {
@@ -504,11 +537,16 @@ func TestSessionsCreateValidation(t *testing.T) {
 	if rec := e.do(t, callerOwner, "POST", "/api/sessions", []byte("{not json")); rec.Code != http.StatusBadRequest {
 		t.Errorf("malformed body = %d", rec.Code)
 	}
+	waitSessionsFor(t, "the one valid create to start", func() bool { return len(e.rt.startedSpecs()) >= 1 })
+	// Let the valid create's background worker finish before mutating the
+	// shared config, which that worker reads.
+	for _, spec := range e.rt.startedSpecs() {
+		e.waitSettled(t, spec.ID)
+	}
 	e.s.deps.Config.Backends.Deny = []string{"claude"}
 	if rec := e.do(t, callerOwner, "POST", "/api/sessions", map[string]string{"name": "x", "vendor": "claude"}); rec.Code != http.StatusForbidden {
 		t.Errorf("denied backend = %d, want 403", rec.Code)
 	}
-	waitSessionsFor(t, "the one valid create to start", func() bool { return len(e.rt.startedSpecs()) >= 1 })
 	if n := len(e.rt.startedSpecs()); n != 1 {
 		t.Errorf("started %d sessions, want only the one valid create", n)
 	}

@@ -27,6 +27,41 @@ release (see src/docs/releases.md, "Software bill of materials (SBOM)").
 
 -----------------------------------------------------------------------------
 
+Package:  blitiri.com.ar/go/spf
+Version:  v1.6.0
+License:  MIT
+Source:   https://blitiri.com.ar/git/r/spf/b/master/t/f=LICENSE.html
+
+
+Licensed under the MIT licence, which is reproduced below (from
+https://opensource.org/licenses/MIT).
+
+-----
+
+Copyright (c) 2016
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+
+
+-----------------------------------------------------------------------------
+
 Package:  cel.dev/expr
 Version:  v0.25.3
 License:  Apache-2.0
@@ -782,6 +817,154 @@ Source:   https://github.com/clipperhouse/uax29/blob/v2.7.0/LICENSE
 MIT License
 
 Copyright (c) 2020 Matt Sherman
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-----------------------------------------------------------------------------
+
+Package:  github.com/emersion/go-ical
+Version:  v0.0.0-20261112170022-46c5b53a1723
+License:  MIT
+Source:   https://github.com/emersion/go-ical/blob/46c5b53a1723/LICENSE
+
+MIT License
+
+Copyright (c) 2020 Simon Ser
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-----------------------------------------------------------------------------
+
+Package:  github.com/emersion/go-message
+Version:  v0.18.2
+License:  MIT
+Source:   https://github.com/emersion/go-message/blob/v0.18.2/LICENSE
+
+MIT License
+
+Copyright (c) 2016 emersion
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-----------------------------------------------------------------------------
+
+Package:  github.com/emersion/go-msgauth
+Version:  v0.7.0
+License:  MIT
+Source:   https://github.com/emersion/go-msgauth/blob/v0.7.0/LICENSE
+
+MIT License
+
+Copyright (c) 2017 emersion
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-----------------------------------------------------------------------------
+
+Package:  github.com/emersion/go-sasl
+Version:  v0.0.0-20241020182733-b788ff22d5a6
+License:  MIT
+Source:   https://github.com/emersion/go-sasl/blob/b788ff22d5a6/LICENSE
+
+The MIT License (MIT)
+
+Copyright (c) 2016 emersion
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+-----------------------------------------------------------------------------
+
+Package:  github.com/emersion/go-smtp
+Version:  v0.26.0
+License:  MIT
+Source:   https://github.com/emersion/go-smtp/blob/v0.26.0/LICENSE
+
+The MIT License (MIT)
+
+Copyright (c) 2010 The Go Authors
+Copyright (c) 2014 Gleez Technologies
+Copyright (c) 2016 emersion
+Copyright (c) 2016 Proton Technologies AG
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -1712,9 +1895,9 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  github.com/klauspost/compress
-Version:  v1.20.3
+Version:  v1.20.4
 License:  Apache-2.0
-Source:   https://github.com/klauspost/compress/blob/v1.20.3/LICENSE
+Source:   https://github.com/klauspost/compress/blob/v1.20.4/LICENSE
 
 Copyright (c) 2012 The Go Authors. All rights reserved.
 Copyright (c) 2019 Klaus Post. All rights reserved.
@@ -2640,9 +2823,9 @@ Source:   https://github.com/nats-io/nats.go/blob/v1.55.0/LICENSE
 -----------------------------------------------------------------------------
 
 Package:  github.com/nats-io/nkeys
-Version:  v0.4.16
+Version:  v0.4.17
 License:  Apache-2.0
-Source:   https://github.com/nats-io/nkeys/blob/v0.4.16/LICENSE
+Source:   https://github.com/nats-io/nkeys/blob/v0.4.17/LICENSE
 
                                  Apache License
                            Version 2.0, January 2004
@@ -3415,6 +3598,35 @@ DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY
 THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
 (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
 OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+
+-----------------------------------------------------------------------------
+
+Package:  github.com/teambition/rrule-go
+Version:  v1.8.2
+License:  MIT
+Source:   https://github.com/teambition/rrule-go/blob/v1.8.2/LICENSE
+
+MIT License
+
+Copyright (c) 2017-2023 Teambition
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 
 -----------------------------------------------------------------------------
 
@@ -6407,9 +6619,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  golang.org/x/image
-Version:  v0.47.0
+Version:  v0.48.0
 License:  BSD-3-Clause
-Source:   https://cs.opensource.google/go/x/image/+/v0.47.0:LICENSE
+Source:   https://cs.opensource.google/go/x/image/+/v0.48.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
@@ -6512,9 +6724,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  golang.org/x/sync
-Version:  v0.24.0
+Version:  v0.25.0
 License:  BSD-3-Clause
-Source:   https://cs.opensource.google/go/x/sync/+/v0.24.0:LICENSE
+Source:   https://cs.opensource.google/go/x/sync/+/v0.25.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
@@ -6547,9 +6759,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  golang.org/x/sys
-Version:  v0.49.0
+Version:  v0.50.0
 License:  BSD-3-Clause
-Source:   https://cs.opensource.google/go/x/sys/+/v0.49.0:LICENSE
+Source:   https://cs.opensource.google/go/x/sys/+/v0.50.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
@@ -6582,9 +6794,9 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 -----------------------------------------------------------------------------
 
 Package:  golang.org/x/text
-Version:  v0.43.0
+Version:  v0.44.0
 License:  BSD-3-Clause
-Source:   https://cs.opensource.google/go/x/text/+/v0.43.0:LICENSE
+Source:   https://cs.opensource.google/go/x/text/+/v0.44.0:LICENSE
 
 Copyright 2009 The Go Authors.
 
