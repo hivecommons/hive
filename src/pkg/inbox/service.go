@@ -83,6 +83,9 @@ type Service struct {
 	// HIVE_WHISPER_* environment on first use. Tests inject a fake sandbox.
 	Whisper   *WhisperRuntime
 	whisperMu sync.Mutex
+	// factMu serialises machine-transcript write-backs into Knowledge facts
+	// (see factwriteback.go).
+	factMu sync.Mutex
 }
 
 // NewService builds a service for cfg with the given sources/destinations.
