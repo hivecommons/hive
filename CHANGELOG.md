@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.276.2)
+
+### Fixed
+
+- Report per-agent token cache filesystem failures as token delivery failures instead of incorrectly reporting GitHub as unreachable.
+
 ## 2026-11-15 (v5.276.1)
 
 ### Fixed
