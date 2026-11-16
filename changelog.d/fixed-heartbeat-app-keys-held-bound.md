@@ -1,1 +1,0 @@
-- Hub heartbeat collect no longer times out when the PVC scan behind `app_keys_held` stalls: the scan is bounded to 2s and falls back to the last completed result (#18484).
