@@ -51,8 +51,8 @@ const harness = ({ fetchReply, share, clipboardOK = true } = {}) => {
   const api = new Function('document', 'fetch', 'navigator', 'location', 'CSS', 'showToast', 'writeClipboardText', 'window', 'renderInbox', 'items',
     'function inboxFind(src, id) { return items.find(it => it.source === src && it.id === id); }\n' +
     fnSrc('inboxApiPath') + '\n' + fnSrc('inboxStreamURL') + '\n' + fnSrc('inboxAudioErrorReason') + '\n' + fnSrc('inboxPlay') + '\n' +
-    constSrc('INBOX_SHARE_HASH') + '\n' + fnSrc('inboxShareLink') + '\n' + fnSrc('inboxFocusKeyFromHash') + '\n' + fnSrc('inboxShare') + '\n' +
-    'return { inboxPlay, inboxStreamURL, inboxAudioErrorReason, inboxShareLink, inboxFocusKeyFromHash, inboxShare };',
+    constSrc('INBOX_SHARE_HASH') + '\n' + fnSrc('inboxShareLink') + '\n' + fnSrc('inboxFocusKeyFromHash') + '\n' + fnSrc('inboxShareCopy') + '\n' + fnSrc('inboxShareNative') + '\n' +
+    'return { inboxPlay, inboxStreamURL, inboxAudioErrorReason, inboxShareLink, inboxFocusKeyFromHash, inboxShareCopy, inboxShareNative };',
   )(document, fetch, navigator, location, { escape: s => s }, (msg, kind) => calls.toasts.push([msg, kind]),
     async text => { calls.clipboard.push(text); return clipboardOK; }, {}, () => {}, items);
   return { api, calls, mount };
@@ -93,21 +93,21 @@ test('Share produces an Inbox deep link, never the media URL', async () => {
   assert.strictEqual(api.inboxFocusKeyFromHash('#section-inbox-section'), '');
   assert.strictEqual(api.inboxFocusKeyFromHash('#section-inbox-section?item=%E0%A4%A'), '', 'malformed escape is ignored');
 
-  await api.inboxShare('plaud', 'f_01');
-  assert.deepStrictEqual(calls.clipboard, [link], 'no Web Share: copies the deep link');
+  await api.inboxShareCopy('plaud', 'f_01');
+  assert.deepStrictEqual(calls.clipboard, [link], 'Copy link copies the deep link');
   assert.deepStrictEqual(calls.toasts[0], ['Inbox link copied', 'success']);
   assert.strictEqual(calls.fetches.length, 0);
 });
 
 test('Share uses the Web Share sheet when the browser has one', async () => {
   const { api, calls } = harness({ share: true });
-  await api.inboxShare('plaud', 'f_01');
+  await api.inboxShareNative('plaud', 'f_01');
   assert.deepStrictEqual(calls.shares, [{ title: 'cost considerations', url: 'https://hive.example/?style=a#section-inbox-section?item=plaud%2Ff_01' }]);
   assert.strictEqual(calls.clipboard.length, 0);
   const cancelled = harness({ share: 'abort' });
-  await cancelled.api.inboxShare('plaud', 'f_01');
+  await cancelled.api.inboxShareNative('plaud', 'f_01');
   assert.strictEqual(cancelled.calls.clipboard.length, 0, 'a cancelled share sheet does not copy');
   const noClip = harness({ clipboardOK: false });
-  await noClip.api.inboxShare('plaud', 'f_01');
+  await noClip.api.inboxShareCopy('plaud', 'f_01');
   assert.match(noClip.calls.toasts[0][0], /^Copy this Inbox link: https:\/\/hive\.example\//);
 });

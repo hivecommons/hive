@@ -60,7 +60,7 @@ see the issue linked from the changelog entry.
     yet" so it can be transcribed first. If no agent is
     available or the kick is refused, the item shows **RFC failed** with the
     error inline and a **Retry RFC…** button; it never sits as pending.
-  - **→ dibs** (`dibs`): posts title, summary, transcript and the
+  - **DIBS** (`dibs`; chosen by auto-routing or from **🔗 Share → Hive → DIBS**): posts title, summary, transcript and the
     `plaud://recordings/<id>` provenance to `POST {inbox.dibs.url}/api/ideas`
     as a private draft idea (Bearer token from `inbox.dibs.token_env`).
   - **Knowledge only** (`dismiss`): leaves the fact where it is and drops the
@@ -107,9 +107,19 @@ Each Inbox item shows what the source has for the recording:
   presigned link itself (`{url, expires_at}`, audited as `inbox_audio`) for
   API clients. The Plaud card's *Include 24h audio link* option only decides
   whether a sync also writes a link into the fact.
-- **🔗 Share** — shares a deep link to the item in the Inbox
-  (`<dashboard URL>#section-inbox-section?item=<source>%2F<id>`), through the
-  browser's share sheet when it has one, else the clipboard. It never shares
+- **🔗 Share ▾** — the only per-item menu besides ▶ Play and Transcript
+  (arrow keys move, Esc closes and returns focus). It has two labelled groups.
+  **Hive** (owners only): **RFC…** (**Retry RFC…** after a failure), **Knowledge**
+  (**Back to inbox** on a kept item) and **DIBS**. RFC… is disabled with a
+  hint when the item has no text yet (use 🎧 Transcribe) or no RFC repository is
+  set; DIBS is disabled until `inbox.dibs.url` (Settings → Inbox → dibs URL)
+  and the token variable named by `inbox.dibs.token_env` are set. Other
+  features add their own entry to this group. **Link** (everyone who can see
+  the Inbox): **Copy link** copies a deep link to the item
+  (`<dashboard URL>#section-inbox-section?item=<source>%2F<id>`); **Share…**
+  opens the browser's share sheet and appears only where the browser has one.
+  The selection bar has the same kind of **Hive ▾** menu for bulk Knowledge.
+  Sharing never shares
   the media URL: the recipient signs in to this hive and needs owner or
   read-write access to play. Opening the link opens the Inbox, shows
   processed items when the item is one, and scrolls to it. The player's own
