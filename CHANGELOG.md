@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v6.37.0)
+
+### Added
+
+- `toolapprove` now classifies the `hive-tool/v1` names from RFC #18464: reads (`issue.read`, `repo.read_file`, …) are read-only, `issue.comment`/`issue.label` are issue writes, and `repo.patch_files`/`pr.create`/`pr.comment` are PR writes. Agent-mode capability checks therefore apply to them at every ACMM level. No existing backend emits these names, so current verdicts are unchanged.
+
 ## 2026-11-16 (v6.36.0)
 
 ### Added
