@@ -1,1 +1,0 @@
-- OpenRouter's suggested models and default are current again (default `deepseek/deepseek-v4.1-flash`), retired suggestions are hidden, OpenRouter gateways discover their live model list again (the probe asked for `/api/v1/v1/models`), and large gateway catalogs get a searchable, provider-grouped model picker that shows price per 1M tokens and context length.
