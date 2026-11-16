@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.286.0)
+
+### Added
+
+- `ghcr.io/hivecommons/hive-mx`: a multi-arch (amd64, arm64) image for the hive-mx mail receiver, a static binary on distroless running as non-root, published with the other hive images.
+- The hub routes mail from hive-mx: `GET /api/mail/hosts` lists the hosts it accepts `hive@<host>` for, and `POST /api/mail/inbound` signs each delivery with the target hive's relay key and forwards it to that hive; spokes accept such relays through an `X-Hive-Relay-Delivery` header with the webhook relay's replay protection. Off until `HIVE_HUB_MAIL_TOKEN` is set.
+- **Settings, Meeting attendee.** A new Settings tab manages the hive's meeting persona: pick one of eleven presets built only from voices the self-hosted Kokoro TTS ships (Betty Bee by default, plus American and British English, Spanish, French, Italian, Brazilian Portuguese, Hindi, Japanese and Mandarin personas with intros in their own language) or edit the name, aliases, pronouns, voice type, language, accent, voice, humor and intro with a live preview and a Play sample button, set the unprompted-answer caps and voice-on-address, and see the attendee address `hive@<dashboard host>` with the people who may invite her. Owner or read-write, through `GET`/`PUT /api/meetings/persona` and `POST /api/meetings/persona/sample`; the email controls are shown disabled until email-in lands ([#18396](https://github.com/hivecommons/hive/issues/18396)).
+- Meetings: ask Betty, spoken or in the meeting chat, to open an issue, open an RFC, start a Spek session or save a knowledge note. She drafts it from the request and the recent discussion, confirms in the chat that it waits for approval, and asks one clarifying question when the request is unclear. Drafts land in **Drafts from meetings** in the Calendar section, where the owner or a read-write user edits, approves or rejects them; nothing is created before approval (only knowledge notes may be auto-approved), and the result link goes back to the meeting chat or its notes. Configure with `meetings.persona.actions` or `/api/meetings/actions/settings` (#18406).
+- Inbox: **● Record** in the Inbox header (and "● Record into Inbox" in Inception) records a meeting or note from the microphone straight into the Inbox. A consent notice is shown before every recording (recording laws vary; the recorder is responsible), a red ● Recording indicator stays on screen for the whole recording, the timer, level meter, Pause/Resume/Stop and the upload status ("All chunks saved" or "N waiting") are in the recorder panel, chunks are queued in IndexedDB until the hive stores them so a network drop or reload resumes the upload, and a Wake Lock plus a hidden-tab warning keep phones recording. Owner and read-write only; `inbox.recording.enabled` now defaults to true. See `src/docs/inbox-recording.md`.
+
 ## 2026-11-16 (v5.285.0)
 
 ### Added
