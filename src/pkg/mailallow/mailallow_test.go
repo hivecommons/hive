@@ -206,3 +206,64 @@ func TestOpenErrors(t *testing.T) {
 		t.Fatal("failed add left an entry behind")
 	}
 }
+
+func TestAllSortsAndHidesExpiredCodes(t *testing.T) {
+	s, c, _ := newStore(t)
+	for _, x := range [][2]string{{"zoe", "b@example.com"}, {"amy", "z@example.com"}, {"amy", "a@example.com"}} {
+		if _, err := s.Add(x[0], x[1]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	all := s.All()
+	if len(all) != 3 || all[0].Login != "amy" || all[0].Email != "a@example.com" || all[1].Email != "z@example.com" || all[2].Login != "zoe" {
+		t.Fatalf("order %+v", all)
+	}
+	if all[0].Code == "" {
+		t.Fatal("a live code is shown")
+	}
+	c.t = c.t.Add(CodeTTL + time.Second)
+	for _, e := range s.All() {
+		if e.Code != "" || !e.CodeExpiresAt.IsZero() {
+			t.Fatalf("expired code shown: %+v", e)
+		}
+	}
+}
+
+// TestSaveFailures: every write path reports a failed save.
+func TestSaveFailures(t *testing.T) {
+	s, _, _ := newStore(t)
+	e, err := s.Add("hal", "hal@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := s.Add("hal", "hal2@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocker := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s.path = filepath.Join(blocker, "sub", "allowlist.json")
+	if _, err := s.Add("hal", "hal@example.com"); err == nil {
+		t.Fatal("re-issue saved under a file")
+	}
+	if _, err := s.Prove(e.Code, "mallory@example.com", true); err == nil || errors.Is(err, ErrNotProven) {
+		t.Fatalf("failed proof save: %v", err)
+	}
+	if _, err := s.Prove(other.Code, "hal2@example.com", true); err == nil || errors.Is(err, ErrUnknownCode) {
+		t.Fatalf("successful proof save: %v", err)
+	}
+	if err := s.Remove("hal", "hal@example.com"); err == nil {
+		t.Fatal("remove saved under a file")
+	}
+	// A directory where the temp file goes fails the write itself.
+	dir := t.TempDir()
+	s.path = filepath.Join(dir, "allowlist.json")
+	if err := os.Mkdir(s.path+".tmp", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Remove("hal", "hal2@example.com"); err == nil {
+		t.Fatal("write over a directory succeeded")
+	}
+}
