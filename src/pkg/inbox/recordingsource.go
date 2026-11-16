@@ -82,6 +82,7 @@ func (r *RecordingSource) item(m RecordingMeta, retentionDays int) Item {
 	if m.IncludesTabAudio {
 		it.Tags = append(it.Tags, "tab-audio")
 	}
+	it.AudioExpiresAt = recordingAudioExpiresAt(m, retentionDays)
 	path := r.factPath(m.ID)
 	if data, err := os.ReadFile(path); err == nil {
 		fm, body := splitFrontMatter(string(data))
@@ -90,6 +91,15 @@ func (r *RecordingSource) item(m RecordingMeta, retentionDays int) Item {
 		it.Summary, it.HasTranscript, it.Pending, it.Excerpt = fact.Summary, fact.HasTranscript, fact.Pending, fact.Excerpt
 	}
 	return it
+}
+
+// recordingAudioExpiresAt is when the sweep deletes a finalized
+// recording's audio: retentionDays after it ended (the sweep's own rule).
+func recordingAudioExpiresAt(m RecordingMeta, retentionDays int) time.Time {
+	if m.State != RecordingFinalized || m.AudioExpired() || m.AudioFile == "" || m.FinalizedAt.IsZero() || retentionDays <= 0 {
+		return time.Time{}
+	}
+	return m.FinalizedAt.Add(time.Duration(retentionDays) * hoursPerDay * time.Hour).UTC()
 }
 
 // Fetch implements Source from the recording's fact.

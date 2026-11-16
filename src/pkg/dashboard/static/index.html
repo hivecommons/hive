@@ -6117,7 +6117,12 @@
     .inbox-add-url { flex: 1 1 16rem; min-width: 0; }
     .inbox-upload .kc-error { flex-basis: 100%; }
     /* ● Record (inbox-recorder.js): panel, red indicator, level meters */
-    .inbox-rec-panel { margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--surface); }
+    .inbox-rec-panel { position: relative; overflow: hidden; margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--surface); }
+    /* The saved panel auto-dismisses with the toast countdown bar (toastCountdownBar). */
+    .inbox-rec-panel .toast-bar { background: color-mix(in srgb, var(--green) 40%, transparent); }
+    .inbox-rec-panel[data-outcome="failed"] .toast-bar { background: color-mix(in srgb, var(--red) 40%, transparent); }
+    .inbox-rec-panel[data-outcome="stalled"] .toast-bar { background: color-mix(in srgb, var(--status-warn) 40%, transparent); }
+    .inbox-rec-panel[data-outcome="off"] .toast-bar { background: color-mix(in srgb, var(--blue) 40%, transparent); }
     .inbox-rec-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
     .inbox-rec-dot { color: var(--red); }
     .inbox-rec-dot.is-live { animation: inbox-rec-pulse 1.2s ease-in-out infinite; }
@@ -47816,6 +47821,7 @@ function burnAreaChart() {
         }
         _inboxCache = await r.json();
         renderInbox();
+        if (typeof inboxRecSyncDone === 'function') inboxRecSyncDone(_inboxCache.items);
         clearTimeout(_inboxBusyTimer);
         if (inboxRouteBusy(_inboxCache.items)) _inboxBusyTimer = setTimeout(fetchInbox, INBOX_BUSY_POLL_MS);
         if (inboxTxAnyBusy(_inboxCache.items)) inboxTxPollSchedule();
@@ -48229,6 +48235,19 @@ function burnAreaChart() {
       } catch (e) { return e.message; }
       return 'the browser could not play this recording';
     }
+    // inboxAudioNoteText is the line under the player. Audio this hive
+    // stores itself (its own recordings, dropped audio files) is kept until
+    // retention deletes it (audio_expires_at); a third-party source's audio
+    // is only streamed through and never stored here.
+    function inboxAudioNoteText(it, fmtDate) {
+      const restart = ' Click ▶ Play recording again to restart.';
+      if (it && (it.source === 'hive-recording' || it.source === 'upload')) {
+        const exp = it.audio_expires_at && !String(it.audio_expires_at).startsWith('0001') ? it.audio_expires_at : '';
+        const when = exp && fmtDate ? fmtDate(exp) : '';
+        return (when ? 'The audio is kept on this hive until ' + when + ', then deleted; the transcript stays.' : 'The audio is kept on this hive.') + restart;
+      }
+      return 'Streaming through this hive; the recording is not stored.' + restart;
+    }
     function inboxPlay(src, id) {
       const key = src + '/' + id;
       const target = document.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
@@ -48247,7 +48266,7 @@ function burnAreaChart() {
       target.appendChild(audio);
       const note = document.createElement('div');
       note.className = 'muted-xs';
-      note.textContent = 'Streaming through this hive; the recording is not stored. Click ▶ Play recording again to restart.';
+      note.textContent = inboxAudioNoteText(inboxFind(src, id), d => formatDashboardDate(d, { year: 'numeric', month: 'short', day: 'numeric' }));
       target.appendChild(note);
     }
 
@@ -49240,6 +49259,12 @@ function burnAreaChart() {
     // A live recorder holds a Web Lock with this prefix, so another tab of
     // the same browser never finalizes a recording that is still running.
     const INBOX_REC_LOCK_PREFIX = 'hive-inbox-recording-';
+    // After a recording is saved the panel follows its Inbox item: the
+    // Inbox is re-read this often while the item shows no transcription
+    // state yet (a running job is followed by the transcription poll), for
+    // at most INBOX_REC_DONE_WAIT_MS before the panel stops waiting.
+    const INBOX_REC_DONE_POLL_MS = 5000;
+    const INBOX_REC_DONE_WAIT_MS = 120000;
 
     let _inboxRec = null;
 
@@ -49798,7 +49823,10 @@ function burnAreaChart() {
       if (m.uploader) html += '<div class="muted-xs inbox-rec-upload" data-inbox-rec-upload aria-live="polite">' + escapeHtml(inboxRecUploadText(m.uploader.state)) + '</div>';
       if (m.warning) html += '<div class="kc-error muted-xs" role="alert">' + escapeHtml(m.warning) + '</div>';
       if (m.error) html += '<div class="kc-error muted-xs" role="alert">' + escapeHtml(m.error) + '</div>';
-      if (m.state === 'done') html += '<div class="muted-xs">' + escapeHtml(m.transcribes ? 'The hive is transcribing it now; follow the progress on the item in the Inbox below.' : 'It appears in the Inbox below. Transcription is off on this hive, so it is not transcribed yet.') + '</div>';
+      if (m.state === 'done') {
+        const o = m.outcome || inboxRecDoneOutcome(null, m.transcribes, '', false);
+        html += '<div class="' + (o.state === 'failed' ? 'kc-error ' : '') + 'muted-xs" role="status" data-inbox-rec-outcome="' + escapeHtml(o.state) + '">' + escapeHtml(inboxRecDoneText(o)) + '</div>';
+      }
       html += '<div class="kc-actions mt-2">';
       if (m.state === 'recording') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecPause">⏸ Pause</button>';
       if (m.state === 'paused') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecResume">⏺ Resume</button>';
@@ -49807,6 +49835,61 @@ function burnAreaChart() {
       if (m.state === 'error' && m.activeId) html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecFinishEarlier" data-arg0="' + escapeHtml(m.activeId) + '">Finish the earlier recording</button>';
       if (m.state === 'done' || m.state === 'error') html += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxRecClose">Close</button>';
       return html + '</div>';
+    }
+    // inboxRecDoneOutcome is where a saved recording's Inbox item stands:
+    // transcribed (the item has text), failed (the job failed or was
+    // skipped, or the hive cannot transcribe it; reason says why), off
+    // (transcription is off on this hive), stalled (no job appeared within
+    // INBOX_REC_DONE_WAIT_MS: waitedOut) or waiting. Every state but waiting
+    // starts the panel's auto-dismiss countdown.
+    function inboxRecDoneOutcome(it, transcribes, unavailableText, waitedOut) {
+      const tx = (it && it.transcription) || null;
+      if (it && (it.has_transcript || it.fact_state === 'machine' || (tx && tx.status === 'done'))) return { state: 'transcribed', reason: '' };
+      if (tx && (tx.status === 'failed' || tx.status === 'skipped')) return { state: 'failed', reason: tx.reason || '' };
+      if (tx && (tx.status === 'queued' || tx.status === 'running')) return { state: 'waiting', reason: '' };
+      if (!transcribes || (it && it.transcribe_unavailable === 'disabled')) return { state: 'off', reason: '' };
+      if (it && it.transcribe_unavailable) return { state: 'failed', reason: unavailableText || '' };
+      if (waitedOut) return { state: 'stalled', reason: '' };
+      return { state: 'waiting', reason: '' };
+    }
+    // inboxRecDoneText is the panel line for an outcome.
+    function inboxRecDoneText(o) {
+      switch (o && o.state) {
+        case 'transcribed': return 'Transcribed. See the item below.';
+        case 'failed': return 'Transcription failed' + (o.reason ? ': ' + o.reason : '') + '. The recording is saved in the Inbox below; retry the transcription from the item.';
+        case 'off': return 'It appears in the Inbox below. Transcription is off on this hive, so it is not transcribed yet.';
+        case 'stalled': return 'Saved in the Inbox below. Transcription has not started yet; follow it on the item.';
+        default: return 'The hive is transcribing it now; follow the progress on the item in the Inbox below.';
+      }
+    }
+    // inboxRecSyncDone runs after every Inbox read: it finds the saved
+    // recording's item, updates the panel line, and once the outcome is
+    // final starts the same auto-dismiss countdown toasts use (bar, duration
+    // and pause on hover or focus). Close still dismisses at once.
+    function inboxRecSyncDone(items) {
+      const m = _inboxRec;
+      if (!m || m.state !== 'done' || !m.id) return;
+      if (!m.doneAt) m.doneAt = Date.now();
+      const it = (items || []).find(x => x && x.source === 'hive-recording' && x.id === m.id) || null;
+      const waitedOut = Date.now() - m.doneAt >= INBOX_REC_DONE_WAIT_MS;
+      const why = it && it.transcribe_unavailable && typeof inboxTxUnavailableText === 'function' ? inboxTxUnavailableText(it.transcribe_unavailable) : '';
+      const o = inboxRecDoneOutcome(it, m.transcribes, why, waitedOut);
+      const changed = !m.outcome || m.outcome.state !== o.state || m.outcome.reason !== o.reason;
+      m.outcome = o;
+      if (changed) inboxRecRender();
+      clearTimeout(m.donePoll);
+      m.donePoll = 0;
+      if (o.state !== 'waiting') { inboxRecArmDismiss(m); return; }
+      // A running job is followed by the Inbox's own transcription poll.
+      const busy = it && it.transcription && (it.transcription.status === 'queued' || it.transcription.status === 'running');
+      if (!busy && typeof fetchInbox === 'function') m.donePoll = setTimeout(() => { if (_inboxRec === m) fetchInbox(); }, INBOX_REC_DONE_POLL_MS);
+    }
+    function inboxRecArmDismiss(m) {
+      const panel = document.getElementById('inbox-rec-panel');
+      if (!panel || m.dismissArmed || typeof toastCountdownBar !== 'function') return;
+      m.dismissArmed = true;
+      if (m.outcome) panel.dataset.outcome = m.outcome.state;
+      toastCountdownBar(panel, TOAST_DURATION_MS, () => { if (_inboxRec === m) inboxRecClose(); });
     }
     // The timer and meters redraw on a dashboard interval (paused while the
     // page is hidden); the length limit has its own timeout so it holds in
@@ -49825,12 +49908,27 @@ function burnAreaChart() {
       const m = _inboxRec;
       const panel = document.getElementById('inbox-rec-panel');
       const html = inboxRecPanelHtml(m);
-      if (panel) { panel.hidden = !html; panel.innerHTML = html; }
+      if (panel) {
+        // A countdown belongs to the saved recording it was armed for.
+        if (panel._countdown && !(m && m.state === 'done' && m.dismissArmed) && typeof toastCountdownCancel === 'function') toastCountdownCancel(panel);
+        panel.hidden = !html;
+        if (m && m.outcome) panel.dataset.outcome = m.outcome.state; else delete panel.dataset.outcome;
+        if (panel._html !== html) {
+          panel._html = html;
+          panel.innerHTML = html;
+          // The rewrite dropped the countdown bar; put it back where it was.
+          if (panel._countdown && panel._countdown.bar) panel.appendChild(panel._countdown.bar);
+        }
+      }
       inboxRecIndicator(m);
       const live = m && (m.state === 'recording' || m.state === 'paused');
       if (live && !_inboxRecTicker) { _inboxRecTicker = true; dashboardSetInterval('inbox-recorder', inboxRecTick, INBOX_REC_TICK_MS); }
       if (!live && _inboxRecTicker) { _inboxRecTicker = false; dashboardClearInterval('inbox-recorder'); }
-      if (m && m.state === 'done' && !m.listed) { m.listed = true; inboxRecWakeLock(false); if (typeof fetchInbox === 'function') fetchInbox(); }
+      if (m && m.state === 'done' && !m.listed) {
+        m.listed = true; inboxRecWakeLock(false);
+        if (!m.transcribes) { m.outcome = inboxRecDoneOutcome(null, false, '', false); inboxRecArmDismiss(m); }
+        if (typeof fetchInbox === 'function') fetchInbox();
+      }
       if (m && m.state === 'error') inboxRecWakeLock(false);
       const btn = document.querySelector('#inbox-panel .inbox-rec-btn');
       if (btn) btn.outerHTML = inboxRecordButtonHtml((_inboxCache || {}).settings || {});
@@ -49885,7 +49983,7 @@ function burnAreaChart() {
       _inboxRec = null;
       inboxRecRender();
     }
-    function inboxRecClose() { _inboxRec = null; inboxRecRender(); }
+    function inboxRecClose() { if (_inboxRec) clearTimeout(_inboxRec.donePoll); _inboxRec = null; inboxRecRender(); }
     // inboxRecFinishEarlier finalizes the user's earlier recording that is
     // still open on the hive (another tab or device stopped sending), so a
     // new one can start.
