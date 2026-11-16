@@ -136,6 +136,8 @@ const (
 	MeetingsTokensPerHourEnv       = "HIVE_MEETINGS_MAX_TOKENS_PER_HOUR"
 	MeetingsTokensPerDayEnv        = "HIVE_MEETINGS_MAX_TOKENS_PER_DAY"
 	MeetingsIntentsPerMeetingEnv   = "HIVE_MEETINGS_MAX_INTENTS_PER_MEETING"
+	MeetingsEmailInvitesEnv        = "HIVE_MEETINGS_EMAIL_INVITES_ENABLED"
+	MeetingsEmailFilesEnv          = "HIVE_MEETINGS_EMAIL_FILES_ENABLED"
 )
 
 // MeetingsConfig is the `meetings:` block. The zero value is the feature off.
@@ -197,6 +199,37 @@ type MeetingsConfig struct {
 	DataDir string `yaml:"data_dir,omitempty" json:"data_dir,omitempty"`
 	// Persona is the attendee persona (Betty by default).
 	Persona MeetingsPersonaConfig `yaml:"persona,omitempty" json:"persona,omitzero"`
+	// Email is mail that reaches this hive through hive-mx
+	// (hive@<dashboard host>, #18395): calendar invites and mail-in files.
+	Email MeetingsEmailConfig `yaml:"email,omitempty" json:"email,omitzero"`
+}
+
+// MeetingsEmailConfig is the `meetings.email:` block. Both switches default
+// on: nothing arrives unless hive-mx and the hub route mail to this hive,
+// and mail from senders outside the allowlist always waits for approval.
+type MeetingsEmailConfig struct {
+	// InvitesEnabled accepts calendar invites sent to hive@<host>
+	// (HIVE_MEETINGS_EMAIL_INVITES_ENABLED).
+	InvitesEnabled *bool `yaml:"invites_enabled,omitempty" json:"invites_enabled,omitempty"`
+	// FilesEnabled accepts Markdown, audio and image attachments as Inbox
+	// items (HIVE_MEETINGS_EMAIL_FILES_ENABLED).
+	FilesEnabled *bool `yaml:"files_enabled,omitempty" json:"files_enabled,omitempty"`
+}
+
+// InvitesOn reports whether email invites are accepted (env first, default on).
+func (e MeetingsEmailConfig) InvitesOn() bool {
+	if v, ok := parseBoolEnv(MeetingsEmailInvitesEnv); ok {
+		return v
+	}
+	return e.InvitesEnabled == nil || *e.InvitesEnabled
+}
+
+// FilesOn reports whether mail-in files are accepted (env first, default on).
+func (e MeetingsEmailConfig) FilesOn() bool {
+	if v, ok := parseBoolEnv(MeetingsEmailFilesEnv); ok {
+		return v
+	}
+	return e.FilesEnabled == nil || *e.FilesEnabled
 }
 
 // MeetingsQuorumConfig is meetings.quorum.

@@ -684,6 +684,299 @@
         }
       }
     },
+    "/api/meetings/invites": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Receive email calendar invites (hub relay)",
+        "description": "Calendar invites hive-mx received for hive@<host>, relayed and signed by the hub. Each invite is scheduled at once when the sender is its organizer, passed DMARC alignment and is on the calendar email allowlist; otherwise it awaits approval. A change to a meeting already on the calendar, including a CANCEL, applies only when the mail is authenticated as its organizer. Relay signature: X-Hive-Relay-Timestamp, X-Hive-Relay-Signature-256 (HMAC-SHA256 with this hive's relay key over timestamp.delivery.body) and X-Hive-Relay-Delivery; no session.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "hive-mx delivery (pkg/mailin/wire.Delivery) of kind invite: id, kind, recipient, message_id, received_at, auth {from, spf, dkim, dmarc, dmarc_aligned, ...}, and invites[] / files / proof"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Per-invite results",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "uid, event_id, status"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid delivery"
+          },
+          "401": {
+            "description": "Relay signature rejected"
+          },
+          "409": {
+            "description": "Invites or meetings are off on this hive"
+          },
+          "413": {
+            "description": "Delivery too large"
+          },
+          "422": {
+            "description": "No invite in the delivery could be scheduled"
+          },
+          "503": {
+            "description": "This hive holds no relay key"
+          }
+        }
+      }
+    },
+    "/api/meetings/calendar-emails/proof": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Receive a calendar email proof mail (hub relay)",
+        "description": "A mail whose subject carried a proof code. The matching address is proven only when the mail came from it and passed DMARC alignment. Relay signature: X-Hive-Relay-Timestamp, X-Hive-Relay-Signature-256 (HMAC-SHA256 with this hive's relay key over timestamp.delivery.body) and X-Hive-Relay-Delivery; no session.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "hive-mx delivery (pkg/mailin/wire.Delivery) of kind proof: id, kind, recipient, message_id, received_at, auth {from, spf, dkim, dmarc, dmarc_aligned, ...}, and invites[] / files / proof"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Proven",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "proven": {
+                      "type": "boolean"
+                    },
+                    "email": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid delivery"
+          },
+          "401": {
+            "description": "Relay signature rejected"
+          },
+          "409": {
+            "description": "Calendar emails are not available"
+          },
+          "413": {
+            "description": "Delivery too large"
+          },
+          "422": {
+            "description": "Unknown or expired code, or the mail was not authenticated for the address"
+          },
+          "503": {
+            "description": "This hive holds no relay key"
+          }
+        }
+      }
+    },
+    "/api/meetings/calendar-emails": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "List my calendar emails",
+        "description": "The signed-in user's calendar email addresses with proof status and pending codes, the hive's address (hive@<host>) and the meetings.email switches. ?all=1 adds the whole allowlist for the owner. Any role.",
+        "parameters": [
+          {
+            "name": "all",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "1: include the allowlist (owner only)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Calendar emails",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "address": {
+                      "type": "string"
+                    },
+                    "emails": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                      }
+                    },
+                    "allowlist": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                      }
+                    },
+                    "invites_enabled": {
+                      "type": "boolean"
+                    },
+                    "files_enabled": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Sign-in required"
+          },
+          "503": {
+            "description": "Calendar emails are not available"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Add a calendar email",
+        "description": "Registers an address for the signed-in user and returns a proof code with the instruction: send an email from that address to hive@<host> with the code in the subject. At most 10 per user; re-adding an unproven address issues a new code. Audited as calendar-email-add.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "email": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "email"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Registered",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "email": {
+                      "type": "object",
+                      "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                    },
+                    "address": {
+                      "type": "string"
+                    },
+                    "instruction": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a valid email address"
+          },
+          "403": {
+            "description": "Sign-in required"
+          },
+          "409": {
+            "description": "Too many calendar emails"
+          },
+          "503": {
+            "description": "Calendar emails are not available"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Remove a calendar email",
+        "description": "Removes one of the signed-in user's addresses; the owner may name another user with login. Audited as calendar-email-remove.",
+        "parameters": [
+          {
+            "name": "email",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "login",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Owner only: the user whose address to remove"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "removed": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Sign-in required"
+          },
+          "404": {
+            "description": "No such calendar email"
+          },
+          "503": {
+            "description": "Calendar emails are not available"
+          }
+        }
+      }
+    },
     "/api/meetings/schedule": {
       "get": {
         "tags": [
