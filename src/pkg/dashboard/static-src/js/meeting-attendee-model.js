@@ -27,6 +27,20 @@
       return (((_maModel && _maModel.data) || {}).supported_backends || []).indexOf(b) >= 0;
     }
 
+    // Why a backend cannot answer for meetings (GET's refused_backends).
+    function maModelRefusal(b) {
+      const r = (((_maModel && _maModel.data) || {}).refused_backends || {})[b];
+      return r || 'it has no meetings completion profile and is not a configured model gateway';
+    }
+
+    function maModelRefusalsHtml() {
+      const refused = maModelBackends().filter(b => !maModelSupported(b));
+      if (!refused.length) return '';
+      return '<details class="muted-xs"><summary>Why some backends are unavailable for meetings</summary><ul>' +
+        refused.map(b => '<li><strong>' + escapeHtml(typeof backendLabel === 'function' ? backendLabel(b) : b) + '</strong>: ' + escapeHtml(maModelRefusal(b)) + '</li>').join('') +
+        '</ul></details>';
+    }
+
     function maModelEffectiveBackend() {
       const f = _maModel.form;
       if (f.mode === 'claude-cli') return 'claude';
@@ -70,8 +84,8 @@
         const backendOpts = '<option value=""' + (f.backend ? '' : ' selected') + '>Default (' + escapeHtml(d.default_backend || 'none') + ')</option>' +
           maModelBackends().map(b => {
             const ok = maModelSupported(b);
-            const label = (typeof backendLabel === 'function' ? backendLabel(b) : b) + (ok ? '' : ' (not yet for meetings)');
-            return '<option value="' + escapeHtml(b) + '"' + (b === f.backend ? ' selected' : '') + (ok ? '' : ' disabled') + '>' + escapeHtml(label) + '</option>';
+            const label = (typeof backendLabel === 'function' ? backendLabel(b) : b) + (ok ? '' : ' (not for meetings)');
+            return '<option value="' + escapeHtml(b) + '"' + (b === f.backend ? ' selected' : '') + (ok ? '' : ' disabled title="' + escapeHtml(maModelRefusal(b)) + '"') + '>' + escapeHtml(label) + '</option>';
           }).join('');
         picker = '<label>Backend' + yamlHint('meetings.llm.backend') + '<select class="kb-search-box mt-2" data-ma-model="backend" data-change-action="maModelInput" data-arg0="backend" data-arg-types="s,v"' +
           (f.mode === 'claude-cli' ? ' disabled' : '') + '>' + backendOpts + '</select></label>' +
@@ -81,7 +95,7 @@
       const env = (d.env_overrides || []).length ? '<p class="muted-xs">Set by the environment, which wins over a saved value: ' + escapeHtml(d.env_overrides.join(', ')) + '</p>' : '';
       return '<p class="muted-xs">What the attendee and Spektacular answer with. On an agent backend they use the same CLI and sign-in as the agents, with every tool off. In use now: <strong data-ma-model-label>' + escapeHtml(d.label || '') + '</strong>.</p>' +
         '<div class="meetings-settings-grid"><label>Mode' + yamlHint('meetings.llm.mode') + '<select class="kb-search-box mt-2" data-ma-model="mode" data-change-action="maModelInput" data-arg0="mode" data-arg-types="s,v">' + modeOpts + '</select></label>' +
-        picker + '</div>' + env +
+        picker + '</div>' + (agentMode ? maModelRefusalsHtml() : '') + env +
         (_maModel.restart ? '<p class="cmp-banner" role="status">Saved. Restart the hive to apply the new model.</p>' : '') +
         '<div class="hive-dialog-error" role="alert" data-ma-model-error></div>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="maSaveModel">Save model</button>';

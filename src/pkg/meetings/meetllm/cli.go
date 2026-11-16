@@ -10,26 +10,31 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
 	"time"
 )
 
-// Agent-backend completion profiles (hivecommons/hive#18517): the meetings
-// model can be one of the agent backends the hive's agents run on. Each
-// backend gets a narrow completion profile: one prompt in, one reply out,
-// every tool and MCP server off, no session written, an empty temporary
-// working directory, a fixed system prompt, and the token usage read from
-// the CLI's result. The CLI runs with the hive's own sign-in for that
-// backend (the shared agent home), never with a token hive reads or copies:
-// the environment is an allowlist, so GitHub and hive tokens never reach a
-// process that reads meeting text.
+// Agent-backend completion profiles (hivecommons/hive#18517, #18549): the
+// meetings model can be one of the agent backends the hive's agents run on.
+// Each backend gets a narrow completion profile: one prompt in, one reply
+// out, every tool and MCP server off, no session written to the shared
+// home, an empty temporary working directory, a fixed system prompt, and
+// the token usage read from the CLI's result. The CLI runs with the same
+// sign-in the agents get for that backend (the shared agent home, or the
+// sign-in variables the caller's Getenv supplies); the environment is an
+// allowlist, so GitHub and hive tokens never reach a process that reads
+// meeting text.
 //
-// The persona keeps one warm CLI per meeting (CLISession) in streaming JSON
-// mode, so a turn costs about a second instead of a cold start. `hive
-// meeting-llm` (Spektacular) runs one CLI per prompt (completeCLIOnce).
+// The persona keeps one warm CLI per meeting (CLISession) on backends with
+// a streaming mode (claude), so a turn costs about a second instead of a
+// cold start. Every other call runs one CLI per prompt (completeCLIOnce):
+// `hive meeting-llm` (Spektacular) always, and the persona on copilot and
+// omp.
 
 // ProviderAgentBackend selects an agent backend's completion profile;
 // Config.Backend names the backend.
@@ -38,6 +43,10 @@ const ProviderAgentBackend = "agent-backend"
 const (
 	// BackendClaude is the Claude Code CLI.
 	BackendClaude = "claude"
+	// BackendCopilot is the GitHub Copilot CLI (pinned 1.0.88).
+	BackendCopilot = "copilot"
+	// BackendOMP is the Oh My Pi CLI (pinned 18.20.0).
+	BackendOMP = "omp"
 	// cliSystemPrompt is the fixed system prompt of every completion CLI.
 	// The per-call instructions arrive inside the user turn.
 	cliSystemPrompt = "You are the text-completion engine behind a meeting assistant. You have no tools. " +
@@ -48,6 +57,13 @@ const (
 	// claudeNoHooksSettings turns off every user, project and plugin hook
 	// and extended thinking for the run; login keys still load.
 	claudeNoHooksSettings = `{"disableAllHooks":true,"alwaysThinkingEnabled":false}`
+	// copilotNoToolSentinel is copilot's tool allowlist: it names no real
+	// tool, so the model has none (an empty list is ignored by the CLI).
+	copilotNoToolSentinel = "hive-meetings-no-tools"
+	// ompProfile is the omp settings profile the call runs in. It is never
+	// configured, so it carries no MCP servers, hooks, rules or context
+	// files of the agents' default profile.
+	ompProfile = "hive-meetings"
 	// cliResultSuccess is the result subtype of a completed turn.
 	cliResultSuccess = "success"
 	// cliEventResult is the stream event that ends a turn.
@@ -58,25 +74,71 @@ const (
 	cliResultBuffer = 4
 	// cliWaitDelay bounds the wait for a killed CLI's pipes to close.
 	cliWaitDelay = 2 * time.Second
-	// cliTempPrefix names the CLI's empty working directory.
+	// cliTempPrefix names the CLI's temporary directory.
 	cliTempPrefix = "hive-meeting-cli-"
+	// cliWorkDir and cliStateDir are the call's empty working directory
+	// and its private state directory (a CLI home, the usage file) under
+	// the temporary directory.
+	cliWorkDir  = "work"
+	cliStateDir = "state"
+	cliDirMode  = 0o700
+	// cliUsageFile is the usage report a CLI writes into the state dir.
+	cliUsageFile = "usage.json"
 	// DefaultRecycleTurns is how many turns a warm CLI answers before it is
 	// replaced when Config.RecycleTurns is unset.
 	DefaultRecycleTurns = 8
 )
+
+// Sign-in variables the meetings CLIs accept. The caller's Getenv supplies
+// them the way the agent launcher gives them to agents; hive never logs
+// them or writes them to disk.
+const (
+	// EnvClaudeOAuthToken is the Claude Code static token variable.
+	EnvClaudeOAuthToken = "CLAUDE_CODE_OAUTH_TOKEN"
+	// EnvCopilotToken is the Copilot CLI's dedicated token variable.
+	EnvCopilotToken = "COPILOT_GITHUB_TOKEN"
+)
+
+// cliOutcome is one call's parsed output: the reply, the tokens it used
+// (counted also when it failed) and the turn's own failure.
+type cliOutcome struct {
+	reply  string
+	tokens int
+	err    error
+}
 
 // completionProfile is one backend's completion launch.
 type completionProfile struct {
 	// args is the shared argv (without the binary) that turns off tools,
 	// MCP, hooks, slash commands and session files.
 	args []string
-	// warm and oneShot are the streaming and single-call output flags.
+	// warm and oneShot are the streaming and single-call output flags; a
+	// profile with no warm flags has no warm mode.
 	warm    []string
 	oneShot []string
 	// env is the backend's own login variables passed through when set.
 	env []string
 	// fixed are variables always set.
 	fixed []string
+	// requiresModel refuses a call with no model: the CLI has no default
+	// model in the isolated state it runs in.
+	requiresModel bool
+	// systemInTurn puts the fixed system prompt at the head of the turn,
+	// for a CLI with no system-prompt flag.
+	systemInTurn bool
+	// stateHome points HOME and stateEnv at the call's private state dir,
+	// so the CLI writes its session files there and they are removed with
+	// it.
+	stateHome bool
+	stateEnv  []string
+	// requiredEnv must be set: the CLI's only sign-in in the isolated home.
+	requiredEnv string
+	// usageFlag, when set, asks the CLI to write its usage report to
+	// <state>/usage.json.
+	usageFlag string
+	// parse reads a one-shot call's stdout (and the state dir); it fails
+	// when the output holds no result at all.
+	parse func(stdout []byte, stateDir string) (cliOutcome, error)
 }
 
 var completionProfiles = map[string]completionProfile{
@@ -91,8 +153,51 @@ var completionProfiles = map[string]completionProfile{
 			"--system-prompt", cliSystemPrompt},
 		warm:    []string{"--input-format", "stream-json", "--output-format", "stream-json", "--verbose"},
 		oneShot: []string{"--output-format", "json"},
-		env:     []string{"CLAUDE_CONFIG_DIR"},
-		fixed:   []string{"DISABLE_AUTOUPDATER=1"},
+		// CLAUDE_CODE_OAUTH_TOKEN carries the operator's long-lived token
+		// (HIVE_CLAUDE_OAUTH_TOKEN) on a hive with no credentials file.
+		env:           []string{"CLAUDE_CONFIG_DIR", EnvClaudeOAuthToken},
+		fixed:         []string{"DISABLE_AUTOUPDATER=1"},
+		requiresModel: true,
+		parse:         parseClaudeOutput,
+	},
+	BackendCopilot: {
+		// The prompt is piped on stdin (a piped prompt is a non-interactive
+		// run), so no meeting text shows in a process listing.
+		// --available-tools naming no real tool leaves the model no tool,
+		// built-in or MCP; --disable-builtin-mcps turns off the GitHub MCP
+		// servers; --no-custom-instructions keeps AGENTS.md and friends
+		// out; --no-ask-user removes the ask tool; --no-auto-update keeps
+		// the pinned CLI. --allow-all-tools is never passed. The home is
+		// the call's own state dir, so no MCP config, plugin or hook of the
+		// agents' home loads and the session log is removed with the call;
+		// the sign-in is COPILOT_GITHUB_TOKEN, as the agents get it.
+		args: []string{"--no-color", "--available-tools", copilotNoToolSentinel, "--disable-builtin-mcps",
+			"--no-custom-instructions", "--no-ask-user", "--no-auto-update"},
+		oneShot:      []string{"--output-format", "json"},
+		env:          []string{EnvCopilotToken, "COPILOT_GH_HOST", "GH_HOST"},
+		fixed:        []string{"NO_COLOR=1"},
+		systemInTurn: true,
+		stateHome:    true,
+		stateEnv:     []string{"COPILOT_HOME"},
+		requiredEnv:  EnvCopilotToken,
+		usageFlag:    "--usage-output-file",
+		parse:        parseCopilotOutput,
+	},
+	BackendOMP: {
+		// --no-tools removes every built-in tool and --no-lsp the LSP
+		// tools; --no-extensions, --no-skills and --no-rules stop their
+		// discovery; --profile runs in an empty settings profile (no MCP
+		// servers, hooks or context files); --no-session writes no session
+		// file and --no-title makes no extra model call; --no-context-files
+		// skips AGENTS.md-style files. The prompt is read from stdin. Login
+		// comes from the fleet's auth broker (OMP_AUTH_BROKER_*). The
+		// isolated profile holds no default model, so one is required.
+		args: []string{"-p", "--mode", "json", "--no-tools", "--no-lsp", "--no-extensions", "--no-skills",
+			"--no-rules", "--no-session", "--no-title", "--no-context-files", "--profile", ompProfile,
+			"--system-prompt", cliSystemPrompt},
+		env:           []string{"OMP_AUTH_BROKER_URL", "OMP_AUTH_BROKER_TOKEN"},
+		requiresModel: true,
+		parse:         parseOMPOutput,
 	},
 }
 
@@ -113,6 +218,24 @@ func CompletionBackends() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// WarmBackends lists the backends with a warm streaming mode, sorted.
+func WarmBackends() []string {
+	var out []string
+	for b, p := range completionProfiles {
+		if len(p.warm) > 0 {
+			out = append(out, b)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// SupportsWarm reports whether backend keeps a warm CLI (NewCLISession).
+func SupportsWarm(backend string) bool {
+	p, err := profileFor(backend)
+	return err == nil && len(p.warm) > 0
 }
 
 func profileFor(backend string) (completionProfile, error) {
@@ -153,6 +276,35 @@ func (p completionProfile) environ(getenv func(string) string, home string) []st
 		env = append(env, "HOME="+home)
 	}
 	return append(env, p.fixed...)
+}
+
+// callEnviron is a one-shot call's environment: environ, with HOME and the
+// profile's state variables on the call's state dir when the profile runs
+// in its own home. It fails when the profile's required sign-in is unset.
+func (p completionProfile) callEnviron(getenv func(string) string, home, state string) ([]string, error) {
+	if getenv == nil {
+		getenv = os.Getenv
+	}
+	if p.requiredEnv != "" && strings.TrimSpace(getenv(p.requiredEnv)) == "" {
+		return nil, fmt.Errorf("meeting-llm: this backend needs the hive's sign-in in %s (the one its agents get), and none is set", p.requiredEnv)
+	}
+	if p.stateHome {
+		home = state
+	}
+	env := p.environ(getenv, home)
+	for _, k := range p.stateEnv {
+		env = append(env, k+"="+state)
+	}
+	return env, nil
+}
+
+// turnText is the turn a profile sends: cliTurnText, led by the fixed
+// system prompt on a CLI with no system-prompt flag.
+func (p completionProfile) turnText(system, prompt string) string {
+	if !p.systemInTurn {
+		return cliTurnText(system, prompt)
+	}
+	return "<engine>\n" + cliSystemPrompt + "\n</engine>\n\n" + cliTurnText(system, prompt)
 }
 
 func cliBinary(c Config) string {
@@ -302,6 +454,9 @@ func NewCLISession(c Config) (*CLISession, error) {
 	if err != nil {
 		return nil, err
 	}
+	if len(p.warm) == 0 {
+		return nil, fmt.Errorf("meeting-llm: backend %q has no warm mode; it runs one CLI per call", c.Backend)
+	}
 	n := c.RecycleTurns
 	if n <= 0 {
 		n = DefaultRecycleTurns
@@ -448,28 +603,44 @@ func completeSession(ctx context.Context, c Config, prompt string) (string, erro
 	return reply, err
 }
 
-// completeCLIOnce runs one CLI per call (the `hive meeting-llm` path); the
-// caller holds the budget check, timeout and slot.
+// completeCLIOnce runs one CLI per call (the `hive meeting-llm` path, and
+// the persona on a backend with no warm mode); the caller holds the budget
+// check, timeout and slot. The CLI runs in an empty working directory
+// beside a private state directory, both removed afterwards.
 func completeCLIOnce(ctx context.Context, c Config, prompt string) (string, error) {
 	p, err := profileFor(c.Backend)
 	if err != nil {
 		return "", err
 	}
-	if strings.TrimSpace(c.Model) == "" {
+	if p.requiresModel && strings.TrimSpace(c.Model) == "" {
 		return "", errors.New("meeting-llm: the CLI path needs a model")
 	}
-	dir, err := os.MkdirTemp("", cliTempPrefix)
+	root, err := os.MkdirTemp("", cliTempPrefix)
 	if err != nil {
 		return "", fmt.Errorf("meeting-llm: CLI workdir: %w", err)
 	}
-	defer func() { _ = os.RemoveAll(dir) }()
-	cmd := exec.CommandContext(ctx, cliBinary(c), p.argv(c.Model, false)...)
-	cmd.Dir = dir
-	cmd.Env = p.environ(c.Getenv, c.CLIHome)
+	defer func() { _ = os.RemoveAll(root) }()
+	work, state := filepath.Join(root, cliWorkDir), filepath.Join(root, cliStateDir)
+	for _, d := range []string{work, state} {
+		if err := os.Mkdir(d, cliDirMode); err != nil {
+			return "", fmt.Errorf("meeting-llm: CLI workdir: %w", err)
+		}
+	}
+	env, err := p.callEnviron(c.Getenv, c.CLIHome, state)
+	if err != nil {
+		return "", err
+	}
+	argv := p.argv(c.Model, false)
+	if p.usageFlag != "" {
+		argv = append(argv, p.usageFlag, filepath.Join(state, cliUsageFile))
+	}
+	cmd := exec.CommandContext(ctx, cliBinary(c), argv...)
+	cmd.Dir = work
+	cmd.Env = env
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { killGroup(cmd); return nil }
 	cmd.WaitDelay = cliWaitDelay
-	cmd.Stdin = strings.NewReader(cliTurnText(c.System, prompt))
+	cmd.Stdin = strings.NewReader(p.turnText(c.System, prompt))
 	var stdout bytes.Buffer
 	cmd.Stdout = &limitedWriter{w: &stdout, n: maxResponseBytes}
 	cmd.Stderr = io.Discard
@@ -477,17 +648,33 @@ func completeCLIOnce(ctx context.Context, c Config, prompt string) (string, erro
 	if ctx.Err() != nil {
 		return "", fmt.Errorf("meeting-llm: CLI call: %w", ctx.Err())
 	}
-	ev, perr := parseCLIResult(stdout.Bytes())
+	out, perr := p.parse(stdout.Bytes(), state)
 	if perr != nil {
 		if runErr != nil {
 			return "", fmt.Errorf("meeting-llm: CLI failed: %w", runErr)
 		}
 		return "", perr
 	}
-	if err := recordUsage(c.UsageFile, ev.Usage.total(), time.Now()); err != nil {
+	if err := recordUsage(c.UsageFile, out.tokens, time.Now()); err != nil {
 		return "", fmt.Errorf("meeting-llm: recording usage: %w", err)
 	}
-	return ev.reply()
+	if out.err != nil {
+		return "", out.err
+	}
+	if strings.TrimSpace(out.reply) == "" {
+		return "", errors.New("meeting-llm: CLI returned no text")
+	}
+	return out.reply, nil
+}
+
+// parseClaudeOutput reads `claude -p --output-format json`.
+func parseClaudeOutput(b []byte, _ string) (cliOutcome, error) {
+	ev, err := parseCLIResult(b)
+	if err != nil {
+		return cliOutcome{}, err
+	}
+	reply, rerr := ev.reply()
+	return cliOutcome{reply: reply, tokens: ev.Usage.total(), err: rerr}, nil
 }
 
 // parseCLIResult reads the result of `--output-format json`: one result
@@ -509,6 +696,136 @@ func parseCLIResult(b []byte) (cliEvent, error) {
 	return cliEvent{}, errors.New("meeting-llm: no result in CLI output")
 }
 
+// copilotEvent is one line of `copilot --output-format json` (JSONL): the
+// reply is the last assistant.message, a session.error fails the turn, and
+// the final result record carries the exit code.
+type copilotEvent struct {
+	Type     string `json:"type"`
+	ExitCode *int   `json:"exitCode"`
+	Data     struct {
+		Content   string `json:"content"`
+		ErrorType string `json:"errorType"`
+	} `json:"data"`
+}
+
+// copilotUsageReport is the --usage-output-file report. Per model,
+// inputTokens is the whole prompt, cached tokens included.
+type copilotUsageReport struct {
+	ModelMetrics map[string]struct {
+		Usage struct {
+			InputTokens  int `json:"inputTokens"`
+			OutputTokens int `json:"outputTokens"`
+		} `json:"usage"`
+	} `json:"modelMetrics"`
+}
+
+// parseCopilotOutput reads copilot's JSONL events and its usage report.
+func parseCopilotOutput(b []byte, stateDir string) (cliOutcome, error) {
+	var out cliOutcome
+	var failure string
+	saw := false
+	for _, line := range bytes.Split(b, []byte("\n")) {
+		var ev copilotEvent
+		if json.Unmarshal(bytes.TrimSpace(line), &ev) != nil {
+			continue
+		}
+		switch ev.Type {
+		case "assistant.message":
+			saw = true
+			if strings.TrimSpace(ev.Data.Content) != "" {
+				out.reply = ev.Data.Content
+			}
+		case "session.error":
+			saw = true
+			failure = ev.Data.ErrorType
+			if failure == "" {
+				failure = "error"
+			}
+		case cliEventResult:
+			saw = true
+			if ev.ExitCode != nil && *ev.ExitCode != 0 && failure == "" {
+				failure = "exit " + strconv.Itoa(*ev.ExitCode)
+			}
+		}
+	}
+	if !saw {
+		return cliOutcome{}, errors.New("meeting-llm: no result in CLI output")
+	}
+	if rb, err := os.ReadFile(filepath.Join(stateDir, cliUsageFile)); err == nil {
+		var rep copilotUsageReport
+		if json.Unmarshal(rb, &rep) == nil {
+			for _, m := range rep.ModelMetrics {
+				out.tokens += m.Usage.InputTokens + m.Usage.OutputTokens
+			}
+		}
+	}
+	if failure != "" {
+		out.reply, out.err = "", fmt.Errorf("meeting-llm: CLI turn failed (%s)", failure)
+	}
+	return out, nil
+}
+
+// ompUsage is an omp assistant message's usage; totalTokens is every
+// bucket (input, output, cache read and write).
+type ompUsage struct {
+	Input       int `json:"input"`
+	Output      int `json:"output"`
+	CacheRead   int `json:"cacheRead"`
+	CacheWrite  int `json:"cacheWrite"`
+	TotalTokens int `json:"totalTokens"`
+}
+
+func (u ompUsage) total() int {
+	if u.TotalTokens > 0 {
+		return u.TotalTokens
+	}
+	return u.Input + u.Output + u.CacheRead + u.CacheWrite
+}
+
+// ompEvent is one line of `omp -p --mode json`; each finished message is a
+// message_end event.
+type ompEvent struct {
+	Type    string `json:"type"`
+	Message struct {
+		Role    string `json:"role"`
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+		Usage      ompUsage `json:"usage"`
+		StopReason string   `json:"stopReason"`
+	} `json:"message"`
+}
+
+// parseOMPOutput reads omp's JSON events: the reply is the last assistant
+// message's text, and every assistant message's usage counts.
+func parseOMPOutput(b []byte, _ string) (cliOutcome, error) {
+	var out cliOutcome
+	saw := false
+	for _, line := range bytes.Split(b, []byte("\n")) {
+		var ev ompEvent
+		if json.Unmarshal(bytes.TrimSpace(line), &ev) != nil || ev.Type != "message_end" || ev.Message.Role != "assistant" {
+			continue
+		}
+		saw = true
+		out.tokens += ev.Message.Usage.total()
+		var text strings.Builder
+		for _, c := range ev.Message.Content {
+			if c.Type == "text" {
+				text.WriteString(c.Text)
+			}
+		}
+		out.reply, out.err = text.String(), nil
+		if r := ev.Message.StopReason; r == "error" || r == "aborted" {
+			out.reply, out.err = "", fmt.Errorf("meeting-llm: CLI turn failed (%s)", r)
+		}
+	}
+	if !saw {
+		return cliOutcome{}, errors.New("meeting-llm: no result in CLI output")
+	}
+	return out, nil
+}
+
 // limitedWriter keeps the first n bytes and discards the rest.
 type limitedWriter struct {
 	w io.Writer
@@ -525,4 +842,10 @@ func (l *limitedWriter) Write(p []byte) (int, error) {
 		l.n -= k
 	}
 	return len(p), nil
+}
+
+// HasCompletionProfile reports whether backend has a completion profile.
+func HasCompletionProfile(backend string) bool {
+	_, err := profileFor(backend)
+	return err == nil
 }

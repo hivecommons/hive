@@ -38,7 +38,7 @@ func TestMeetingsModelAPI(t *testing.T) {
 	}
 	code, v := meetingsModelGet(t, s, "read-write", false)
 	if code != http.StatusOK || v.Mode != config.MeetingsLLMModeAuto || v.DefaultBackend != "claude" ||
-		v.DefaultModel != config.DefaultMeetingsClaudeCLIModel || strings.Join(v.SupportedBackends, ",") != "claude,litellm" ||
+		v.DefaultModel != config.DefaultMeetingsClaudeCLIModel || strings.Join(v.SupportedBackends, ",") != "claude,copilot,litellm,llm-d,omp,vllm" ||
 		strings.Join(v.AgentBackends, ",") != "claude,copilot" || v.DefaultModels["claude"] != config.DefaultMeetingsClaudeCLIModel ||
 		len(v.Modes) != len(config.MeetingsLLMModes) {
 		t.Fatalf("GET = %d %+v", code, v)
@@ -46,9 +46,16 @@ func TestMeetingsModelAPI(t *testing.T) {
 	if rec := actionsRequest(s, http.MethodPut, "/api/meetings/model", `{"mode":"agent-backend"}`, "read-write", false); rec.Code != http.StatusForbidden {
 		t.Fatalf("read-write PUT = %d", rec.Code)
 	}
-	rec := actionsRequest(s, http.MethodPut, "/api/meetings/model", `{"mode":"agent-backend","backend":"copilot"}`, "owner", true)
-	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "no meetings completion profile") {
-		t.Fatalf("copilot PUT = %d %s", rec.Code, rec.Body.String())
+	if !strings.Contains(v.RefusedBackends["codex"], "shell tool") || v.RefusedBackends["gemini"] == "" {
+		t.Fatalf("refused backends %v", v.RefusedBackends)
+	}
+	rec := actionsRequest(s, http.MethodPut, "/api/meetings/model", `{"mode":"agent-backend","backend":"codex"}`, "owner", true)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "cannot answer for meetings") {
+		t.Fatalf("codex PUT = %d %s", rec.Code, rec.Body.String())
+	}
+	rec = actionsRequest(s, http.MethodPut, "/api/meetings/model", `{"mode":"agent-backend","backend":"corp-gw"}`, "owner", true)
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "configured model gateway") {
+		t.Fatalf("unknown gateway PUT = %d %s", rec.Code, rec.Body.String())
 	}
 	if rec := actionsRequest(s, http.MethodPut, "/api/meetings/model", `not json`, "owner", true); rec.Code != http.StatusBadRequest {
 		t.Fatalf("bad body = %d", rec.Code)
@@ -84,6 +91,27 @@ func TestMeetingsModelAPI(t *testing.T) {
 	}
 }
 
+// A hive's named model gateways can answer for meetings; a watsonx one is
+// listed with its reason.
+func TestMeetingsModelAPIGateways(t *testing.T) {
+	s, deps := apiServer(t)
+	deps.Config.Governor.Gateways = []config.GatewayConfig{
+		{Name: "corp-gw", Kind: "litellm", Endpoint: "https://gw.example/v1", DefaultModel: "gw-model"},
+		{Name: "ibm", Kind: config.GatewayKindWatsonx, Endpoint: "https://us-south.ml.cloud.ibm.com/ml/gateway"},
+	}
+	_, v := meetingsModelGet(t, s, "owner", true)
+	if !strings.Contains(strings.Join(v.SupportedBackends, ","), "corp-gw") || !strings.Contains(v.RefusedBackends["ibm"], "IAM") {
+		t.Fatalf("gateways %v %v", v.SupportedBackends, v.RefusedBackends)
+	}
+	rec := actionsRequest(s, http.MethodPut, "/api/meetings/model", `{"mode":"agent-backend","backend":"corp-gw"}`, "owner", true)
+	if rec.Code != http.StatusOK || deps.Config.Meetings.LLM.Backend != "corp-gw" {
+		t.Fatalf("gateway PUT = %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := actionsRequest(s, http.MethodPut, "/api/meetings/model", `{"mode":"agent-backend","backend":"ibm"}`, "owner", true); rec.Code != http.StatusBadRequest {
+		t.Fatalf("watsonx gateway PUT = %d", rec.Code)
+	}
+}
+
 func TestMeetingsModelAPINoConfig(t *testing.T) {
 	s := NewServer(0, slog.New(slog.DiscardHandler))
 	s.registerMeetingsModelRoutes()
@@ -114,7 +142,8 @@ func TestMeetingAttendeeModelSectionWiring(t *testing.T) {
 		`data-change-action="maModelInput"`,
 		"yamlHint('meetings.llm.backend')",
 		"'agent-backend': 'An agent backend (the CLI and sign-in the agents use)'",
-		" (not yet for meetings)",
+		" (not for meetings)",
+		"Why some backends are unavailable for meetings",
 	} {
 		if !strings.Contains(html, want) {
 			t.Errorf("Meeting attendee model wiring missing %q", want)
@@ -143,15 +172,16 @@ func TestMeetingAttendeeModelSectionBehaviour(t *testing.T) {
 		"let _maModel = null;",
 		jsConstBlock(t, html, "MA_MODEL_MODE_LABELS"),
 	}
-	for _, f := range []string{"maModelBackends", "maModelSupported", "maModelEffectiveBackend", "maModelOptions", "maModelBodyHtml",
+	for _, f := range []string{"maModelBackends", "maModelSupported", "maModelRefusal", "maModelRefusalsHtml", "maModelEffectiveBackend", "maModelOptions", "maModelBodyHtml",
 		"maModelRender", "maModelSetData", "maModelInput"} {
 		parts = append(parts, jsFunc(t, html, f))
 	}
 	parts = append(parts,
-		`const data = { mode: 'agent-backend', backend: '', model: '', label: 'claude CLI claude-sonnet-5-5', modes: ['auto', 'openai', 'anthropic', 'agent-backend', 'none'], supported_backends: ['claude', 'litellm'], agent_backends: ['claude', 'gemini'], default_backend: 'claude', default_models: { claude: 'claude-sonnet-5-5' }, env_overrides: [] };`,
+		`const data = { mode: 'agent-backend', backend: '', model: '', label: 'claude CLI claude-sonnet-5-5', modes: ['auto', 'openai', 'anthropic', 'agent-backend', 'none'], supported_backends: ['claude', 'litellm'], refused_backends: { gemini: 'no tool-off flag' }, agent_backends: ['claude', 'gemini'], default_backend: 'claude', default_models: { claude: 'claude-sonnet-5-5' }, env_overrides: [] };`,
 		`maModelSetData(data, false);`,
 		`let h = maModelBodyHtml();`,
-		`assert.ok(h.includes('value="copilot" disabled>copilot (not yet for meetings)'), 'unsupported backend disabled');`,
+		`assert.ok(h.includes('value="copilot" disabled title="it has no meetings completion profile and is not a configured model gateway">copilot (not for meetings)'), 'unsupported backend disabled with the reason');`,
+		`assert.ok(h.includes('value="gemini" disabled title="no tool-off flag"') && h.includes('<strong>gemini</strong>: no tool-off flag'), 'refusal reason shown');`,
 		`assert.ok(h.includes('value="gemini" disabled'), 'agent backends outside the catalog listed');`,
 		`assert.ok(h.includes('value="litellm">litellm<'), 'litellm selectable');`,
 		`assert.ok(h.includes('Default (claude)') && h.includes('Default (claude-sonnet-5-5)') && h.includes('Opus 5'), h);`,
