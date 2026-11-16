@@ -1,1 +1,0 @@
-- docs: strategy-lab no longer claims `baseline_pct` drives the dashboard progress bar

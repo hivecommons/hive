@@ -1,1 +1,0 @@
-- Fixed a live Spektacular config rewire finding the installed hub executor already up to date leaving it stopped (and no longer launching stages) by swapping it out and back in instead of leaving it untouched (hivecommons/hive#10069).

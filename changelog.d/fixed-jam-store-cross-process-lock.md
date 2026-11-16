@@ -1,1 +1,0 @@
-- Serialize Jam writes across processes with an advisory lock beside `campaign-jam.json`, so a second hive sharing the data directory can no longer rewrite the whole shared store from a stale snapshot and drop another process's threads, polls and decisions (#10083).

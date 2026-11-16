@@ -1,1 +1,0 @@
-- Admin MCP `issues_by_band` / `prs_by_band` over stdio (`hive-admin-mcp`) now match `band=<key>` instead of returning no rows.

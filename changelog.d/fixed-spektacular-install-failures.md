@@ -1,1 +1,0 @@
-- build: fail the image build when the Spektacular install fails instead of degrading silently (#10097)

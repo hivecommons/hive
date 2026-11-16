@@ -1,1 +1,0 @@
-- runs: `task_complete` on an implement lease only moves the run to `completed` once the reported PR verifies; an unverified completion releases the lease and its stage worktree but leaves the run open (#10090)
