@@ -1,0 +1,1 @@
+- Removed an accidentally committed 4.4 MB compiled `workflow-survey` binary from the repository.
