@@ -99,7 +99,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.attentionDelivery.Post":                          {Class: NotificationClassAttention},
 	"main.claimEscalationLookup":                             {Class: NotificationClassAttention},
 	"main.noteHeldPRUpdateStopped":                           {Class: NotificationClassAttention},
-	"main.sweepDependencyBotConflicts":                       {Class: NotificationClassAttention},
+	"main.sweepDependencyBotConflictsWith":                   {Class: NotificationClassAttention},
 	"mention.(*Responder).HandleAgentEvent":                  {Class: NotificationClassAttention},
 	"mergelane.(*round).ensureForkWaitComment":               {Class: NotificationClassAttention},
 	"main.rfcCoverageForge.CreateComment":                    {Class: NotificationClassAttention},
