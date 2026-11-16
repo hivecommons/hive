@@ -5,7 +5,6 @@ import (
 	"errors"
 	"net/http"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -262,13 +261,7 @@ func (s *Server) handleMeetingsActionsSettingsPut(w http.ResponseWriter, r *http
 		return
 	}
 	view := meetingsActionsSettingsView(s.deps.Config, os.Getenv)
-	auto := make([]string, 0, len(view.AutoApprove))
-	for k, on := range view.AutoApprove {
-		if on {
-			auto = append(auto, k)
-		}
-	}
-	sort.Strings(auto)
+	auto := meetingsAutoApproved(view.AutoApprove)
 	s.auditFromRequest(r, "meetings_actions_settings", auditDetail("enabled", boolString(view.Enabled),
 		"types", strings.Join(view.Types, ","), "default_repo", view.EffectiveDefaultRepo, "auto_approve", strings.Join(auto, ",")), "")
 	jsonResponse(w, view)
@@ -283,6 +276,17 @@ func normalizeMeetingActionTypes(in []string) []string {
 		t = strings.ToLower(strings.TrimSpace(t))
 		if t != "" && !seen[t] {
 			seen[t] = true
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// meetingsAutoApproved lists the auto-approved types in display order.
+func meetingsAutoApproved(auto map[string]bool) []string {
+	out := []string{}
+	for _, t := range config.MeetingsActionTypes {
+		if auto[t] {
 			out = append(out, t)
 		}
 	}
