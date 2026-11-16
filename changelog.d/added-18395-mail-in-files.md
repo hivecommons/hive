@@ -1,1 +1,0 @@
-- Mail Markdown, audio and image files to `hive@<your hive's host>` and they land in the Inbox as email items: from an allowlisted calendar email they are routable, shareable and transcribed like voice items; from anyone else they wait for the owner's Approve or Decline.
