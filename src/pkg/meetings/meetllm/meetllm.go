@@ -88,6 +88,10 @@ type Config struct {
 	// `hive meeting-llm` command leaves it empty (Spek's prompt arrives
 	// whole on stdin); in-process callers such as the meeting persona set it.
 	System string
+	// Provider is "" (OpenAI-compatible chat completions) or
+	// ProviderAnthropic (the Anthropic Messages API, in-process callers
+	// only; Endpoint then defaults to AnthropicEndpoint).
+	Provider string
 }
 
 func envInt(getenv func(string) string, name string, def int) int {
