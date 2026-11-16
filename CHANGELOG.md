@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v5.276.3)
+
+### Changed
+
+- Removed an accidentally committed 4.4 MB compiled `workflow-survey` binary from the repository.
+
 ## 2026-11-16 (v5.276.2)
 
 ### Fixed
