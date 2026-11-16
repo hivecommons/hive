@@ -60,6 +60,10 @@ type Item struct {
 	// Transcribable marks a pending item with audio that may be sent for
 	// machine transcription now (transcription enabled and consented).
 	Transcribable bool `json:"transcribable,omitempty"`
+	// TranscribeUnavailable is why a pending item with audio cannot be
+	// machine-transcribed right now: one of the TranscribeBlocked* codes.
+	// Empty when transcribable, busy, or not applicable. Never carries a key.
+	TranscribeUnavailable string `json:"transcribe_unavailable,omitempty"`
 }
 
 // Key returns the stable "source/id" key used by the state store.

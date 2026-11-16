@@ -40,7 +40,7 @@ const itemHarness = ({ role = 'owner', status = 202, body = { state: { status: '
   };
   const h = new Function('ctx', 'fetch', 'escapeHtml', 'formatDashboardDateTime', 'showToast', 'renderInbox', 'fetchInbox', 'INBOX_TX_STATUS_LABELS',
     'const window = ctx.window; const _inboxTranscribing = ctx._inboxTranscribing; const _inboxContent = ctx._inboxContent;\n' +
-    fnSrc('inboxViewerCanPlay') + '\n' + fnSrc('inboxApiPath') + '\n' + fnSrc('inboxTranscriptionHtml') + '\n' + fnSrc('inboxTranscribe') + '\n' +
+    fnSrc('inboxViewerCanPlay') + '\n' + fnSrc('inboxApiPath') + '\n' + fnSrc('inboxTxUnavailableText') + '\n' + fnSrc('inboxTranscriptionHtml') + '\n' + fnSrc('inboxTranscribe') + '\n' +
     'return { inboxTranscriptionHtml, inboxTranscribe };');
   const api = h(ctx, fetch, escapeHtml, s => 'at ' + s, (msg, kind) => calls.toasts.push([msg, kind]),
     () => { calls.renders++; }, async () => { calls.refreshes++; }, LABELS);
@@ -174,4 +174,56 @@ test('settings section shows month usage, egress and the auto-mode source hint',
   assert.match(inboxTranscriptionUsageHtml({ month_minutes_used: 700, monthly_budget_minutes: 600 }), /data-status="error"/);
   assert.match(inboxTranscriptionUsageHtml(undefined), /0 of 0 minutes used/);
   assert.match(inboxTranscriptionFormHtml({ month_minutes_used: 1, monthly_budget_minutes: 600 }), /data-inbox-tx-usage="1"/);
+});
+
+const TX_REASONS = [
+  ['disabled', /Transcription is off: enable it in Inbox ⚙ → Transcription/],
+  ['no_key', /Set the DEEPGRAM_API_KEY environment variable \(or the name in api_key_env\) on this hive/],
+  ['no_consent', /Consent not acknowledged/],
+  ['budget', /Monthly budget used/],
+];
+
+test('unavailable transcription shows a disabled button, the reason and a setup link for owner and read-write', () => {
+  for (const [code, re] of TX_REASONS) {
+    for (const role of ['owner', 'read-write']) {
+      const { api } = itemHarness({ role });
+      const out = api.inboxTranscriptionHtml({ source: 'plaud', id: 'r1', pending: true, transcribe_unavailable: code }, 'plaud/r1');
+      assert.match(out, /<button[^>]*inbox-transcribe[^>]*disabled/, code + ' ' + role);
+      assert.doesNotMatch(out, /data-action="inboxTranscribe"/, 'disabled control must not fire the action');
+      assert.match(out, re, code);
+      assert.match(out, /data-action="inboxOpenSettings"/, 'setup link for ' + role);
+    }
+  }
+});
+
+test('read-only viewers see only the reason text, no control or link', () => {
+  for (const [code, re] of TX_REASONS) {
+    for (const role of ['read-only', '']) {
+      const { api } = itemHarness({ role });
+      const out = api.inboxTranscriptionHtml({ source: 'plaud', id: 'r1', pending: true, transcribe_unavailable: code }, 'plaud/r1');
+      assert.match(out, re, code);
+      assert.doesNotMatch(out, /<button/, code + ' no control for ' + role);
+    }
+  }
+});
+
+test('no reason means no hint, and an unknown code renders nothing', () => {
+  const { api } = itemHarness({ role: 'owner' });
+  assert.strictEqual(api.inboxTranscriptionHtml({ source: 'plaud', id: 'r1', pending: true }, 'plaud/r1'), '');
+  assert.strictEqual(api.inboxTranscriptionHtml({ source: 'plaud', id: 'r1', pending: true, transcribe_unavailable: 'bogus' }, 'plaud/r1'), '');
+});
+
+test('pending text names Deepgram for every source and keeps the upstream hint', () => {
+  const ctx = { _inboxContent: {}, _inboxExpanded: new Set() };
+  const f = new Function('escapeHtml', 'ctx', 'const _inboxContent = ctx._inboxContent; const _inboxExpanded = ctx._inboxExpanded; const INBOX_SUMMARY_COLLAPSE_CHARS = 280;\n' + fnSrc('inboxSummaryHtml') + '\nreturn inboxSummaryHtml;')(escapeHtml, ctx);
+  const upstream = { plaud: /Plaud app/, zoom: /Zoom has no transcript/, teams: /Teams has no transcript/, discord: /Discord has no built-in transcription/, 'google-meet': /Google Meet has no transcript/, webex: /Webex has no transcript/, fireflies: /Fireflies has no transcript/, fathom: /Fathom has no transcript/, otter: /Otter has no transcript/ };
+  for (const [src, re] of Object.entries(upstream)) {
+    let out = f({ source: src, id: 'x', pending: true, transcribable: true }, src + '/x');
+    assert.match(out, re, src + ' upstream hint');
+    assert.match(out, /Hive can transcribe it with Deepgram: click 🎧 Transcribe/, src);
+    out = f({ source: src, id: 'x', pending: true, transcribe_unavailable: 'disabled' }, src + '/x');
+    assert.match(out, /Hive can transcribe it with Deepgram once that is set up/, src);
+    out = f({ source: src, id: 'x', pending: true }, src + '/x');
+    assert.doesNotMatch(out, /Deepgram/, src + ' no audio, no Deepgram claim');
+  }
 });
