@@ -12,7 +12,7 @@ const (
 	// DefaultInboxRecordingEnabled shows the ● Record control. Recording is
 	// still limited to owner and read-write sessions and needs the consent
 	// notice acknowledged before every recording.
-	DefaultInboxRecordingEnabled = false
+	DefaultInboxRecordingEnabled = true
 	// DefaultInboxRecordingRetentionDays is how long the raw audio is kept
 	// after a recording ends; the transcript and the Knowledge fact stay.
 	DefaultInboxRecordingRetentionDays = 5
