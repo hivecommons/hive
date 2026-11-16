@@ -29,7 +29,7 @@ legacy v1 host install and do not apply here.
 | Need logs without host access | [No-shell route](#no-shell-on-the-host) | Admin MCP is **v6-only**, not assumed available on v5 |
 | Notifications absent | [Notification checks](#notifications-ntfy--slack--discord-never-arrive) | Dashboard operator; outbound-network test needs container shell |
 | Agent committed but no remote branch/PR | [Publication diagnosis](#an-agent-session-completes-but-no-branch-or-pr-appears) | Container shell, with the agent's UID/HOME |
-| Login repeats or Copilot licensing fails | [Login loop](#an-agent-says-please-run-login-but-logging-in-changes-nothing), [license check](#every-copilot-agent-says-you-are-not-licensed-to-use-copilot) | Backend account owner; container admin for file-access repair |
+| Login repeats or Copilot licensing fails | [Login loop](#an-agent-says-please-run-login-but-logging-in-changes-nothing), [license check](#every-copilot-agent-says-you-are-not-licensed-to-use-copilot), [one Copilot agent ignores the login](#one-copilot-agent-stays-at-the-login-prompt-after-a-dashboard-login) | Backend account owner; container admin for file-access repair |
 | Browser terminal frozen | [Terminal recovery](#the-terminal-looks-frozen--no-new-output-and-reopening-it-doesnt-help) | Browser/dashboard first; container shell only for deeper diagnosis |
 | Agent behavior/model unexpected | [Reasoning logs](#an-agent-runs-but-not-the-way-i-expect--why-did-it-do-that), [model selection](#switching-an-agents-model) | Dashboard operator |
 | Dashboard access or API startup delays | [Auth/access](#dashboard-auth-and-access-problems), [startup response](#the-api-says-service-starting-up-please-retry), [health endpoints](#health-endpoints) | Dashboard owner or deployment admin, according to the failing layer |
@@ -571,6 +571,58 @@ Before [#4400](https://github.com/hivecommons/hive/issues/4400) hive read that l
 a login prompt: it badged the agent 🔑, and — because a valid token was on disk —
 auto-restarted it straight back into the same 403, which looked like the agent
 crash-looping. Hive no longer treats a 403 as a login signal; a 401 still is.
+
+## One Copilot agent stays at the login prompt after a dashboard login
+
+Symptom: the dashboard's Copilot device-flow login succeeds and every other
+Copilot agent keeps working, but one agent stays at the Copilot CLI login
+prompt. Before the fix for
+[#18443](https://github.com/hivecommons/hive/issues/18443) the hive restarted
+it a few times and then gave up (`giving up on token-triggered restart`).
+
+Cause: each per-agent `~/.copilot/config.json` is a symlink to the shared
+`/data/home/.copilot/config.json`, which is where the dashboard login and the
+token sync write. The Copilot CLI saves its config by writing a temp file and
+renaming it over `config.json`. That replaces the symlink with a private
+regular file, and from then on the agent never sees a new login. An agent whose
+private copy holds no login sits at the prompt. Agents whose private copy still
+holds an older token keep working until that token expires. A leftover
+`config.json.tmp.*` in the shared `.copilot` folder is the trace of such a save.
+
+Automatic repair: at every agent launch and restart, the hive checks the
+agent's `~/.copilot/config.json`. When it is a regular file instead of the link,
+the hive moves it aside to `config.json.bak-<UTC timestamp>` (keeping only the
+newest backup) and links it back to the shared file. The log line is
+`copilot config bridge: a private config.json had replaced the shared-login symlink; re-linked`.
+The credential check behind the token-triggered restart now looks at the file
+the agent actually reads: a private copy that holds no login, or that differs
+from the shared file, does not count as logged in. When the pane poller sees a
+Copilot agent stuck at the login prompt with such a copy, it relinks it first,
+so the one restart that follows starts a CLI that reads the shared login. File
+contents are never logged.
+
+The repair leaves the private copy in place when it holds a login and the
+shared file holds none (it may be the only login the hive has); the log says
+`copilot config bridge: repair not applied`. Sign in from the dashboard to fill
+the shared file and the next launch relinks the agent.
+
+Launch also removes leftover `config.json.tmp.*` files older than one hour from
+the shared and per-agent `.copilot` folders; younger ones may belong to a save
+in progress. Set `HIVE_COPILOT_CONFIG_TMP_MAX_AGE` (a Go duration such as
+`30m`) to change the threshold.
+
+Manual workaround (hives without the fix, or to force it now): inside the hive
+container, move the agent's private copy aside, then restart only that agent.
+
+```bash
+mv /data/home/agents/<agent>/.copilot/config.json \
+   /data/home/agents/<agent>/.copilot/config.json.bak-manual
+curl -X POST -H "Authorization: Bearer $HIVE_DASHBOARD_TOKEN" \
+   http://localhost:3002/api/restart/<agent>
+```
+
+The restart recreates the link to the shared login. Do not open or copy the
+config file's contents: it holds the Copilot token.
 
 ## Every Copilot agent says "You are not licensed to use Copilot"
 
