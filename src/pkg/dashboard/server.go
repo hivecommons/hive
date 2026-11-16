@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentsmd"
 	"github.com/hivecommons/hive/crux/watchdog"
 	"github.com/hivecommons/hive/pkg/acmmadvisor"
 	"github.com/hivecommons/hive/pkg/compliance"
@@ -1390,6 +1391,10 @@ type FrontendRepo struct {
 	// from /api/config.
 	Forge    string `json:"forge"`
 	ForgeURL string `json:"forgeUrl,omitempty"`
+	// AgentsMd is what the last kick did with this repo's AGENTS.md
+	// (hivecommons/hive#18495): file size, effective cap, injected size and
+	// any sections dropped by the cap. Nil until a kick has read the file.
+	AgentsMd *agentsmd.InjectionStatus `json:"agentsMd,omitempty"`
 }
 
 type FrontendBeads struct {

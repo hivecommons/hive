@@ -217,6 +217,10 @@ type Config struct {
 	// UpstreamWatch declares per-repo upstreams and filters for the fork
 	// upstream watch (hivecommons/hive#9966). Default off.
 	UpstreamWatch UpstreamWatchConfig `yaml:"upstream_watch,omitempty" json:"upstream_watch,omitempty"`
+	// Repos holds per-repository overrides keyed by the bare name from
+	// project.repos or "owner/repo" (hivecommons/hive#18495). Absent means
+	// every repo inherits the hive-wide values. See RepoSettings.
+	Repos map[string]RepoSettings `yaml:"repos,omitempty" json:"repos,omitempty"`
 	// Convergence toggles the convergence-driven admission surfaces
 	// (kubestellar/hive#3845 follow-ons). Default off → zero behaviour change.
 	Convergence              ConvergenceConfig              `yaml:"convergence,omitempty" json:"convergence,omitempty"`
@@ -1151,8 +1155,10 @@ type ProjectConfig struct {
 	// (#12129). The block is cut at heading boundaries — whole sections are
 	// kept or dropped, never clipped mid-rule — and when anything is dropped
 	// the kick carries a one-line warning naming the omitted sections and the
-	// scheduler logs it. Zero means the agentsmd default (8192); values below
-	// 2048 are raised to 2048.
+	// scheduler logs it. Zero means the agentsmd default (32768, or
+	// HIVE_AGENTS_MD_MAX_BYTES when set); values below 2048 are raised to
+	// 2048 and values above the 262144 hard ceiling are lowered to it.
+	// repos.<repo>.agents_md_max_bytes overrides this per repo (#18495).
 	AgentsMdMaxBytes int `yaml:"agents_md_max_bytes,omitempty"`
 
 	// Style is the hive-wide house style: a short list of how-to-change rules
