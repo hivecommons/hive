@@ -1,1 +1,0 @@
-- dashboard: `/api/cost` prices `by_agent` per-session at each session's own model instead of one "dominant" model so it stays additive with `total_usd`, and `/api/nous/status` caps `baseline_pct` at 100 instead of reporting unbounded percentages (#10025, #10026)
