@@ -22,7 +22,7 @@ func (s *Server) registerInboxRecordingRoutes() {
 	s.mux.HandleFunc("POST /api/inbox/recordings/{id}/finalize", s.handleInboxRecordingFinalize)
 	s.mux.HandleFunc("DELETE /api/inbox/recordings/{id}", s.handleInboxRecordingAbort)
 	s.mux.HandleFunc("GET /api/inbox/recordings/{id}/audio", s.handleInboxRecordingAudio)
-	s.mux.HandleFunc("DELETE /api/inbox/"+inbox.RecordingType+"/{id}", s.handleInboxRecordingDelete)
+	s.mux.HandleFunc("DELETE /api/inbox/hive-recording/{id}", s.handleInboxRecordingDelete)
 }
 
 // inboxRecordingStartRequest is POST /api/inbox/recordings.
