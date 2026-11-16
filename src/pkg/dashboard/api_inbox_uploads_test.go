@@ -2,10 +2,15 @@ package dashboard
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"io"
 	"mime/multipart"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -199,5 +204,76 @@ func TestInboxUploadRequestErrors(t *testing.T) {
 		if got := inboxUploadStatus(code); got != want {
 			t.Errorf("status(%s) = %d, want %d", code, got, want)
 		}
+	}
+}
+
+func TestInboxUploadURL(t *testing.T) {
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = io.WriteString(w, "<title>Linked page</title><p>linked text</p>")
+	}))
+	t.Cleanup(site.Close)
+	s, svc := newUploadTestServer(t, config.InboxUploads{})
+	svc.Uploads().Fetcher = &inbox.LinkFetcher{
+		Resolve: func(context.Context, string) ([]netip.Addr, error) {
+			return []netip.Addr{netip.MustParseAddr("93.184.216.34")}, nil
+		},
+		Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			return (&net.Dialer{}).DialContext(ctx, network, site.Listener.Addr().String())
+		},
+		Proxy: func(string) *url.URL { return nil },
+	}
+	path := "/api/inbox/uploads/url"
+	body := map[string]string{"url": "https://docs.example/page"}
+	for _, role := range []string{"", "read-only", "read"} {
+		if rec := doPostRole(s, path, role, false, body); rec.Code != http.StatusForbidden {
+			t.Fatalf("role %q = %d", role, rec.Code)
+		}
+	}
+	// The test site speaks plain http.
+	body["url"] = "http://docs.example/page"
+	rec := doPostRole(s, path, "read-write", false, body)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("link = %d %s", rec.Code, rec.Body.String())
+	}
+	res := decodeUploadResponse(t, rec).Results
+	if len(res) != 1 || !res[0].OK || res[0].Kind != inbox.UploadKindHTML || res[0].Title != "Linked page" || res[0].Filename != "docs.example" {
+		t.Fatalf("results = %+v", res)
+	}
+	for raw, want := range map[string]int{
+		"http://169.254.169.254/latest/meta-data/": http.StatusBadRequest,
+		"http://user:pw@docs.example/":             http.StatusBadRequest,
+		"ftp://docs.example/x":                     http.StatusBadRequest,
+	} {
+		rec := doPostRole(s, path, "owner", true, map[string]string{"url": raw})
+		if rec.Code != want {
+			t.Fatalf("%s = %d %s", raw, rec.Code, rec.Body.String())
+		}
+		if r := decodeUploadResponse(t, rec).Results; len(r) != 1 || r[0].Code != inbox.UploadErrLinkRefused {
+			t.Fatalf("%s results = %+v", raw, r)
+		}
+	}
+	if rec := doPostRole(s, path, "owner", true, map[string]string{}); rec.Code != http.StatusBadRequest {
+		t.Fatalf("no url = %d", rec.Code)
+	}
+	var added, refused int
+	for _, e := range s.audit.Recent(50) {
+		if e.Action != "inbox_upload" || !strings.Contains(e.Detail, "origin=link") {
+			continue
+		}
+		if strings.Contains(e.Detail, "pw") || strings.Contains(e.Detail, "meta-data") {
+			t.Fatalf("audit leaks the URL: %q", e.Detail)
+		}
+		if strings.Contains(e.Detail, "outcome=added") {
+			added++
+		} else {
+			refused++
+		}
+	}
+	if added != 1 || refused != 3 {
+		t.Fatalf("audits added=%d refused=%d", added, refused)
+	}
+	if inboxUploadStatus(inbox.UploadErrFetch) != http.StatusBadGateway {
+		t.Fatal("fetch_failed must be 502")
 	}
 }

@@ -436,6 +436,10 @@ type Server struct {
 	// THIS process; a `preparing` record without one is left over from a
 	// restart and is marked failed on the next reconcile. Guarded by sessionsMu.
 	sessionsPreparing map[string]bool
+	// sessionSeeds holds Inbox seeds parked for sessions being created; the
+	// background start delivers each once its session is running
+	// (api_sessions_seed.go). Guarded by sessionsMu.
+	sessionSeeds map[string]*sessionSeed
 	// sessionAttaches are the live terminal websockets of user sessions
 	// (presence and the keyboard lease, api_sessions_keyboard.go); keyed by
 	// attach id, guarded by sessionAttachMu.
@@ -473,6 +477,9 @@ type Server struct {
 	// meetingsSchedule is the meeting scheduler behind the Calendar
 	// section (hivecommons/hive#18394); nil while meetings are off.
 	meetingsSchedule atomic.Pointer[meetingsScheduleHolder]
+	// meetingsAttendee is Settings, Meeting attendee: the boot persona,
+	// the TTS service and the email-in data (hivecommons/hive#18396).
+	meetingsAttendee meetingsAttendeeState
 
 	audit *AuditLog
 

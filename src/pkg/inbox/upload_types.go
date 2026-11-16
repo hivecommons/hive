@@ -23,6 +23,7 @@ const (
 	UploadKindYAML     = "yaml"
 	UploadKindCSV      = "csv"
 	UploadKindTSV      = "tsv"
+	UploadKindHTML     = "html"
 	// UploadKindAudio and UploadKindVideo are media uploads (their original
 	// binary is deleted after inbox.uploads.media_retention_days).
 	UploadKindAudio = "audio"
@@ -38,6 +39,11 @@ const (
 	UploadErrQuota       = "quota_exceeded"
 	UploadErrTooMany     = "too_many_files"
 	UploadErrInternal    = "internal"
+	// UploadErrLinkRefused: the link breaks the fetch rules (scheme,
+	// credentials, a private or metadata address, too many redirects).
+	UploadErrLinkRefused = "link_refused"
+	// UploadErrFetch: the site could not be reached or answered an error.
+	UploadErrFetch = "fetch_failed"
 )
 
 // UploadError is a per-file rejection with a message the owner can act on.
@@ -68,6 +74,10 @@ var uploadTextExtensions = map[string]string{
 	".csv":      UploadKindCSV,
 	".tsv":      UploadKindTSV,
 	".tab":      UploadKindTSV,
+	".html":     UploadKindHTML,
+	".htm":      UploadKindHTML,
+	".docx":     UploadKindDOCX,
+	".pdf":      UploadKindPDF,
 }
 
 // uploadUnsupportedExtensions names formats people commonly drop that this
@@ -94,7 +104,7 @@ func UploadSupportedExtensions() []string {
 }
 
 func uploadSupportedList() string {
-	return "md, txt, json, jsonl, yaml, csv, tsv"
+	return "md, txt, json, jsonl, yaml, csv, tsv, html, docx, pdf"
 }
 
 // uploadMagic is a binary signature that is never a text document.
@@ -155,6 +165,16 @@ const perMille = 1000
 func SniffUpload(name string, data []byte) (string, *UploadError) {
 	if len(data) == 0 {
 		return "", uploadErr(UploadErrEmpty, "the file is empty")
+	}
+	// A .docx is a zip: it skips the archive refusal and must then open as a
+	// Word document (guarded against zip bombs and XXE) in extraction.
+	if strings.EqualFold(filepath.Ext(name), ".docx") && docxLooksLikeZip(data) {
+		return UploadKindDOCX, nil
+	}
+	// A PDF is read only when it says so by content and is not named as
+	// something else; it is then parsed in the hive-pdftext sandbox.
+	if pext := strings.ToLower(filepath.Ext(name)); bytes.HasPrefix(data, []byte("%PDF-")) && (pext == ".pdf" || pext == "") {
+		return UploadKindPDF, nil
 	}
 	for _, m := range uploadBinaryMagic {
 		if len(data) >= m.offset+len(m.prefix) && bytes.Equal(data[m.offset:m.offset+len(m.prefix)], m.prefix) {

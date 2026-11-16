@@ -290,6 +290,9 @@ type JoinArgs struct {
 	// Voice starts the bot able to speak; Vexa fixes this at join time, so
 	// a bot joined without it can never use say.
 	Voice bool `json:"voice,omitempty"`
+	// VoiceID is the TTS voice the bot speaks with (Discord's Kokoro voice,
+	// Vexa's per-speak voice). Empty uses Quorum's default.
+	VoiceID string `json:"voice_id,omitempty"`
 }
 
 // JoinResult is meeting.join's result.

@@ -41,6 +41,7 @@
     .inbox-upload { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
     .inbox-upload-name { font-weight: 600; overflow-wrap: anywhere; }
     .inbox-upload-bar { flex: 1 1 120px; max-width: 240px; }
+    .inbox-add-url { flex: 1 1 16rem; min-width: 0; }
     .inbox-upload .kc-error { flex-basis: 100%; }
     /* ● Record (inbox-recorder.js): panel, red indicator, level meters */
     .inbox-rec-panel { margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--surface); }

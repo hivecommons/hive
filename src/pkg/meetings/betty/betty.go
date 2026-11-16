@@ -12,6 +12,7 @@ package betty
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"strings"
 	"sync"
@@ -22,7 +23,8 @@ import (
 	"github.com/hivecommons/hive/pkg/meetings"
 )
 
-// Reply kinds. Replies are chat in phase A; voice plugs in later.
+// Reply kinds. A voice reply is spoken through the session's say path,
+// which falls back to chat when the meeting cannot hear her.
 const (
 	KindChat  = "chat"
 	KindVoice = "voice"
@@ -48,6 +50,10 @@ type Reply struct {
 	VoiceWanted   bool     `json:"voice_wanted,omitempty"`
 	NeedsResearch bool     `json:"needs_research,omitempty"`
 	Sources       []string `json:"sources,omitempty"`
+	// Research, when set, asks the session to start a deep dive on this
+	// query through the meeting's research path and to report back with
+	// FollowUp when it completes.
+	Research string `json:"research,omitempty"`
 }
 
 // Line is one final transcript segment or chat line.
@@ -147,8 +153,11 @@ type Deps struct {
 	Now        func() time.Time
 	Logger     *slog.Logger
 	// OnDrop observes a candidate the engine decided not to answer, with
-	// the reason; it runs on the engine goroutine and must not block.
+	// the reason; it must not block.
 	OnDrop func(reason string)
+	// CanResearch reports that the meeting has a research path, so an
+	// addressed question the model cannot answer well becomes a deep dive.
+	CanResearch bool
 }
 
 // input is one queued engine input.
@@ -187,6 +196,7 @@ type Engine struct {
 	posts    []time.Time
 	lastPost time.Time
 	total    int
+	acks     int
 }
 
 type timedLine struct {
@@ -291,6 +301,47 @@ func (e *Engine) Restyle(ctx context.Context, text string) string {
 		return text
 	}
 	return clip(out, restyleMaxChars)
+}
+
+// FollowUp reports a finished deep dive: one model call restyles the
+// research summary as a short chat answer in the persona's voice, posted
+// once on Replies; on failure or timeout the summary is posted as is. It
+// does not block.
+func (e *Engine) FollowUp(query, summary string) {
+	p := phrasesFor(e.s.Persona.Language)
+	raw := ClipChat(fmt.Sprintf(p.digged, clip(query, maxFollowUpQuery), strings.TrimSpace(summary)))
+	ctx := e.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	go func() {
+		text := raw
+		if e.d.LLM != nil && !e.exhausted.Load() && strings.TrimSpace(summary) != "" {
+			cctx, cancel := context.WithTimeout(ctx, e.s.AddressedTimeout)
+			out, err := e.d.LLM.Complete(cctx, SystemPrompt(e.s.Persona), followUpPrompt(query, summary))
+			cancel()
+			out = strings.Trim(strings.TrimSpace(out), "\"")
+			if err == nil && out != "" && !strings.Contains(out, "{") {
+				text = ClipChat(out)
+			}
+		}
+		select {
+		case e.out <- Reply{Kind: KindChat, Text: text, Trigger: TriggerFollowUp, Question: query}:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+// maxFollowUpQuery bounds the question quoted in a raw follow-up.
+const maxFollowUpQuery = 80
+
+// ack is the next spoken acknowledgement, rotating through the persona
+// language's list.
+func (e *Engine) ack() string {
+	list := phrasesFor(e.s.Persona.Language).acks
+	a := list[e.acks%len(list)]
+	e.acks++
+	return a
 }
 
 func (e *Engine) drop(reason string) {

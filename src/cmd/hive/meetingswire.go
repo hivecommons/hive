@@ -35,7 +35,7 @@ var newQuorumSupervisor = func(opts quorumproc.Options) (quorumSupervisor, error
 
 // meetingsQuorumOptions builds the Quorum child options from the meetings
 // config, resolving the Vexa tenant key, the optional Discord bot token and
-// the optional transcription service token from the keystore. A secret that cannot be read is logged and left unset:
+// the optional transcription and TTS service tokens from the keystore. A secret that cannot be read is logged and left unset:
 // Quorum then answers platform_unavailable for that platform instead of the
 // hive failing to boot.
 func meetingsQuorumOptions(ctx context.Context, m config.MeetingsConfig, logger *slog.Logger) quorumproc.Options {
@@ -51,6 +51,10 @@ func meetingsQuorumOptions(ctx context.Context, m config.MeetingsConfig, logger 
 	if err != nil && logger != nil {
 		logger.Warn("[meetings] transcription service token unreadable; Discord audio is not transcribed", "error", err)
 	}
+	ttsToken, err := m.TTSToken(ctx)
+	if err != nil && logger != nil {
+		logger.Warn("[meetings] TTS service token unreadable; Discord replies are not spoken", "error", err)
+	}
 	return quorumproc.Options{
 		Binary:          m.QuorumBinary(),
 		Listen:          m.QuorumListen(),
@@ -59,7 +63,11 @@ func meetingsQuorumOptions(ctx context.Context, m config.MeetingsConfig, logger 
 		DiscordToken:    discordToken,
 		TranscribeURL:   m.TranscribeURLOrEmpty(),
 		TranscribeToken: transcribeToken,
-		Logger:          logger,
+		TTSURL:          m.TTSURLOrEmpty(),
+		TTSToken:        ttsToken,
+		// Discord speaks in the persona's voice by default.
+		TTSVoice: m.Persona.Resolve().Voice,
+		Logger:   logger,
 	}
 }
 
@@ -123,6 +131,8 @@ func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.
 		BotName:      cfg.Meetings.BotNameOrDefault(),
 		ConsentText:  cfg.Meetings.ConsentTextOrDefault(),
 		LeavePhrases: cfg.Meetings.Persona.Resolve().LeavePhrases,
+		// meeting.join's voice_id: the persona's voice on every platform.
+		VoiceID:      cfg.Meetings.Persona.Resolve().Voice,
 		LobbyTimeout: time.Duration(cfg.Meetings.LobbyTimeoutSOrDefault()) * time.Second,
 		Logger:       logger,
 		// Vexa fixes speaking ability at join time, so with voice-on-address
@@ -194,7 +204,9 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 		},
 		SpekMode: llm.Label(),
 		UsageFile: func(id string) string {
-			if llm.Backend != config.MeetingsLLMModeOpenAI {
+			// `hive meeting-llm` (OpenAI-compatible) and the persona's own
+			// calls (either backend) write the meeting's usage ledger.
+			if llm.Backend != config.MeetingsLLMModeOpenAI && llm.Backend != config.MeetingsLLMModeAnthropic {
 				return ""
 			}
 			return meetingUsageFile(store, id)
@@ -210,7 +222,7 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 		},
 		Ledger:      live.NewLedger(m.Budget.MaxTokensPerHourOrDefault(), m.Budget.MaxTokensPerDayOrDefault()),
 		Logger:      logger,
-		Persona:     meetingPersonaFactory(cfg, persona, llm, store, kapi, beadStores, slotsDir, maxTokens, logger),
+		Persona:     meetingPersonaFactory(cfg, persona, llm, store, kapi, beadStores, slotsDir, maxTokens, research != nil, logger),
 		PersonaName: personaName,
 		IsLeave:     meetings.NewLeaveMatcher(persona.LeavePhrases).Match,
 	})
@@ -225,15 +237,18 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 }
 
 // meetingPersonaFactory builds the meeting attendee persona (Betty,
-// hivecommons/hive#18392) for each live meeting, or returns nil when the
-// persona is off. She retrieves from the in-memory knowledge vaults, code
-// maps (when enabled) and bead stores, and answers through the meetings
-// model (`meetllm`, charged to the meeting's usage file and budget). With no
-// OpenAI-compatible meetings model she still introduces herself but does
-// not answer questions.
+// hivecommons/hive#18392, #18393) for each live meeting, or returns nil when
+// the persona is off. She retrieves from the in-memory knowledge vaults,
+// code maps (when enabled), bead stores and, with
+// meetings.persona.searxng_url set, the web through SearXNG. She answers
+// through the meetings model: the OpenAI-compatible endpoint, or the
+// Anthropic Messages API on a hive with only an Anthropic key, both charged
+// to the meeting's usage file and budget. With no model she still
+// introduces herself but does not answer questions. canResearch lets an
+// addressed question she cannot answer well become a deep dive.
 func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPersona, llm config.ResolvedMeetingsLLM,
 	store *meetings.Store, kapi *knowledge.KnowledgeAPI, beadStores func() map[string]*beads.Store,
-	slotsDir string, maxTokens int, logger *slog.Logger) func(meetings.Meeting) *betty.Engine {
+	slotsDir string, maxTokens int, canResearch bool, logger *slog.Logger) func(meetings.Meeting) *betty.Engine {
 	if !persona.Enabled {
 		return nil
 	}
@@ -249,19 +264,27 @@ func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPe
 		retrievers = append(retrievers, betty.BeadRetriever{Stores: beadStores})
 	}
 	client := &http.Client{}
+	if persona.SearxngURL != "" {
+		retrievers = append(retrievers, betty.WebRetriever{BaseURL: persona.SearxngURL, Client: client})
+	}
 	return func(mt meetings.Meeting) *betty.Engine {
 		var model betty.LLM
-		if llm.Backend == config.MeetingsLLMModeOpenAI {
-			model = betty.MeetLLM{Client: client, Config: meetllm.Config{
-				Endpoint: llm.Endpoint, Model: llm.Model, APIKey: llm.APIKey,
-				// The engine bounds each call itself (2.5 s unprompted, 4 s
-				// addressed, 800 ms restyle); this is the outer cap.
-				Timeout:   betty.DefaultAddressedTimeout,
-				UsageFile: meetingUsageFile(store, mt.ID), MaxTokens: maxTokens,
-				SlotsDir: slotsDir, MaxInFlight: llm.MaxInFlight,
-			}}
+		mc := meetllm.Config{
+			// The engine bounds each call itself (2.5 s unprompted, 4 s
+			// addressed, 800 ms restyle); this is the outer cap.
+			Timeout:   betty.DefaultAddressedTimeout,
+			UsageFile: meetingUsageFile(store, mt.ID), MaxTokens: maxTokens,
+			SlotsDir: slotsDir, MaxInFlight: llm.MaxInFlight,
 		}
-		return betty.New(betty.SettingsFrom(persona), betty.Deps{LLM: model, Retrievers: retrievers, Logger: logger})
+		switch llm.Backend {
+		case config.MeetingsLLMModeOpenAI:
+			mc.Endpoint, mc.Model, mc.APIKey = llm.Endpoint, llm.Model, llm.APIKey
+			model = betty.MeetLLM{Client: client, Config: mc}
+		case config.MeetingsLLMModeAnthropic:
+			mc.Provider, mc.Model, mc.APIKey = meetllm.ProviderAnthropic, llm.Model, llm.AnthropicKey
+			model = betty.MeetLLM{Client: client, Config: mc}
+		}
+		return betty.New(betty.SettingsFrom(persona), betty.Deps{LLM: model, Retrievers: retrievers, Logger: logger, CanResearch: canResearch})
 	}
 }
 

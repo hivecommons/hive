@@ -1,0 +1,20 @@
+    /* Settings, Meeting attendee: persona presets, behaviour, email (#18396) */
+    .ma-section { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: var(--sp-5); }
+    .ma-section h4 { margin: var(--sp-0); }
+    .ma-section.is-pending { opacity: 0.75; }
+    .ma-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(12em, 1fr)); gap: var(--sp-2); }
+    .ma-preset { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); color: var(--text); text-align: left; cursor: pointer; }
+    .ma-preset:hover, .ma-preset:focus-visible { border-color: var(--accent); }
+    .ma-preset.is-selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .ma-preset-flag { font-size: var(--fs-base); }
+    .ma-preset-name { font-weight: 600; }
+    .ma-intro { width: 100%; resize: vertical; font-family: inherit; }
+    .ma-preview { padding: var(--sp-3); border: 1px dashed var(--border); border-radius: var(--r); }
+    .ma-preview-text { margin: var(--sp-1) var(--sp-0) var(--sp-0); white-space: pre-wrap; }
+    .ma-sample, .ma-address { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .ma-audio { max-width: 100%; }
+    .ma-inviters td { vertical-align: top; }
+    .ma-email { display: inline-flex; align-items: center; gap: var(--sp-1); margin-right: var(--sp-2); }
+    .ma-verified { border-color: var(--green); }
+    .ma-env { border-color: var(--accent); }
+    .ma-approvals { margin: var(--sp-0); }

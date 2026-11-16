@@ -6097,6 +6097,7 @@
     .inbox-upload { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); }
     .inbox-upload-name { font-weight: 600; overflow-wrap: anywhere; }
     .inbox-upload-bar { flex: 1 1 120px; max-width: 240px; }
+    .inbox-add-url { flex: 1 1 16rem; min-width: 0; }
     .inbox-upload .kc-error { flex-basis: 100%; }
     /* ● Record (inbox-recorder.js): panel, red indicator, level meters */
     .inbox-rec-panel { margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--surface); }
@@ -6158,6 +6159,26 @@
     @media (max-width: 720px) {
       .calendar-add-grid { grid-template-columns: 1fr; }
     }
+    /* Settings, Meeting attendee: persona presets, behaviour, email (#18396) */
+    .ma-section { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: var(--sp-5); }
+    .ma-section h4 { margin: var(--sp-0); }
+    .ma-section.is-pending { opacity: 0.75; }
+    .ma-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(12em, 1fr)); gap: var(--sp-2); }
+    .ma-preset { display: flex; flex-direction: column; align-items: flex-start; gap: var(--sp-1); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); color: var(--text); text-align: left; cursor: pointer; }
+    .ma-preset:hover, .ma-preset:focus-visible { border-color: var(--accent); }
+    .ma-preset.is-selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+    .ma-preset-flag { font-size: var(--fs-base); }
+    .ma-preset-name { font-weight: 600; }
+    .ma-intro { width: 100%; resize: vertical; font-family: inherit; }
+    .ma-preview { padding: var(--sp-3); border: 1px dashed var(--border); border-radius: var(--r); }
+    .ma-preview-text { margin: var(--sp-1) var(--sp-0) var(--sp-0); white-space: pre-wrap; }
+    .ma-sample, .ma-address { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .ma-audio { max-width: 100%; }
+    .ma-inviters td { vertical-align: top; }
+    .ma-email { display: inline-flex; align-items: center; gap: var(--sp-1); margin-right: var(--sp-2); }
+    .ma-verified { border-color: var(--green); }
+    .ma-env { border-color: var(--accent); }
+    .ma-approvals { margin: var(--sp-0); }
     /* Collapsible advisory sections (#1546) */
     .collapse-chevron {
       display: inline-block;
@@ -47455,6 +47476,12 @@ function burnAreaChart() {
     function inboxStatePill(dest, st) {
       const label = INBOX_DEST_LABELS[dest] || dest;
       if (!st) return '';
+      // Sent into an Inception (spek) session: "routed: session/<id> (<name>)"
+      // with a button that opens that session's tab.
+      if (dest === 'session') {
+        return '<span class="kc-pill" data-status="ok" title="Sent into an Inception (spek) session">spek session</span> <span class="muted-xs">routed: ' + escapeHtml(st.note || ('session/' + (st.session || ''))) + '</span>' +
+          (st.session ? ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSession" data-arg0="' + escapeHtml(st.session) + '">open session</button>' : '');
+      }
       const status = st.status === 'filed' || st.status === 'delegated' ? 'ok' : (st.status === 'failed' ? 'error' : 'syncing');
       const text = st.status === 'filed' ? label + ' filed' : st.status === 'delegated' ? label + ' handed to agent' : label + ' ' + st.status;
       const title = st.error ? escapeHtml(st.error) : (st.repo ? escapeHtml(st.repo) : '');
@@ -47481,7 +47508,11 @@ function burnAreaChart() {
         if (long) html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-more" data-action="inboxToggleSummary" data-arg0="' + src + '" data-arg1="' + id + '">' + (expanded ? 'less' : 'more') + '</button>';
         return html;
       }
-      if (it.pending || (cached && cached.pending)) {
+      // Any text (a machine transcript included) means the item is not
+      // pending any more, whatever the source still reports: the "not
+      // transcribed yet" line would contradict the transcript shown below.
+      const hasText = !!(it.has_transcript || (it.transcription && it.transcription.status === 'done') || (cached && (cached.transcript || cached.summary)));
+      if (!hasText && (it.pending || (cached && cached.pending))) {
         const tx = it.transcribable && !it.transcribe_unavailable ? ' Hive can transcribe this: click 🎧 Transcribe.'
           : (it.transcribe_unavailable ? ' Hive can transcribe this once transcription is set up (see 🎧 Transcribe below).' : '');
         // Meeting platforms whose pending items read "<label> has no transcript"
@@ -47828,6 +47859,10 @@ function burnAreaChart() {
     // bulk(items) to appear in the multi-select Hive menu.
     const inboxShareHiveActions = [
       { id: 'rfc', dest: 'spek_rfc', label: 'RFC…', enabled: (it, role) => !inboxCanShare(role) ? false : inboxShareGate(it, 'spek_rfc') || (!(((_inboxCache || {}).repos || []).length) ? 'No RFC repository configured: set one in Settings → Inbox' : true), run: it => inboxOpenRoute(it.source, it.id, 'spek_rfc') },
+      // spek…: send into an Inception (spek) session (the dialog and the
+      // seed API live with the session code below). An audio-only item is
+      // transcribed first and seeds the session when its transcript is ready.
+      { id: 'spek', dest: 'spek', label: 'spek…', enabled: (it, role) => !inboxCanShare(role) ? false : inboxShareGate(it, 'spek') || true, run: it => inboxOpenSessionDialog([inboxItemKey(it)]), bulkLabel: 'spek…', bulk: keys => inboxOpenSessionDialog(keys) },
       { id: 'knowledge', dest: 'dismiss', label: it => it.dismissed ? 'Back to inbox' : 'Knowledge', enabled: (it, role) => !inboxCanShare(role) ? false : (it.dismissed ? true : inboxShareGate(it, 'dismiss') || true), run: it => it.dismissed ? inboxUndismiss(it.source, it.id) : inboxDismiss(it.source, it.id), bulkLabel: 'Knowledge', bulk: () => inboxDismissSelected() },
       { id: 'dibs', dest: 'dibs', label: 'DIBS', enabled: (it, role) => !inboxCanShare(role) ? false : inboxDibsReady() ? true : 'Not configured: set the dibs URL in Settings → Inbox → dibs URL', run: it => inboxOpenRoute(it.source, it.id, 'dibs') },
       { id: 'tx-settings', label: '⚙ Transcription settings…', enabled: (it, role) => role === 'owner' && inboxTxBlocked(it) ? true : false, run: () => inboxOpenSettings() },
@@ -48107,6 +48142,125 @@ function burnAreaChart() {
       } catch (e) {
         if (errEl) errEl.textContent = e.message; else showToast('Route failed: ' + e.message, 'error');
       }
+    }
+
+    // Share → Hive → spek…: send items into an interactive Inception (spek)
+    // session, a new one (name from the first item, group "inbox", the last
+    // CLI this browser used) or a running one the viewer may type into. The
+    // hive writes one enveloped file per item under .hive/inbox/ in the
+    // session's workspace and queues a fixed Send that names those files
+    // (POST /api/sessions with seed_items, or POST /api/sessions/{id}/seed).
+    const INBOX_SESSION_GROUP = 'inbox';
+    const INBOX_SESSION_VENDOR_KEY = 'hive.sessions.lastVendor';
+    const INBOX_SESSION_NAME_MAX = 64;
+    let _inboxSessionKeys = [];
+    function inboxSessionCanSend() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
+    function inboxKeyRef(key) { const i = key.indexOf('/'); return { source: key.slice(0, i), id: key.slice(i + 1) }; }
+    function inboxSessionName(items) {
+      const first = (items[0] && (items[0].title || items[0].id)) || 'Inbox';
+      const name = Array.from(String(first).trim()).slice(0, INBOX_SESSION_NAME_MAX).join('');
+      return name || 'Inbox';
+    }
+    function inboxSessionLastVendor() { try { return localStorage.getItem(INBOX_SESSION_VENDOR_KEY) || ''; } catch (e) { return ''; } }
+    // inboxSessionPickVendor: the last-used vendor when it is still available,
+    // else the first available one.
+    function inboxSessionPickVendor(vendors, last) {
+      const avail = (vendors || []).filter(v => v && v.available);
+      const hit = avail.find(v => v.id === last);
+      return hit ? hit.id : (avail[0] ? avail[0].id : '');
+    }
+    // Running sessions the viewer can send into: the list already holds only
+    // sessions the viewer may see, and for owner/read-write seeing a running
+    // session (own or shared) is being allowed to type into it.
+    function inboxSessionTargets(sessions) {
+      return (sessions || []).filter(s => s && s.status === 'running');
+    }
+    function inboxSessionDialogHtml(items, data, last) {
+      const vendors = (data.vendors || []).filter(v => v && v.available);
+      const running = inboxSessionTargets(data.sessions);
+      const pick = inboxSessionPickVendor(vendors, last);
+      const titles = items.map(it => escapeHtml(it.title || it.id));
+      let body = '<p class="muted-note m-0"><strong>' + (items.length === 1 ? titles[0] : items.length + ' items') + '</strong></p>';
+      if (items.length > 1) body += '<ul class="muted-xs inbox-session-items">' + titles.map(t => '<li>' + t + '</li>').join('') + '</ul>';
+      body += '<p class="muted-note">The hive writes ' + (items.length === 1 ? 'the item' : 'each item') + ' (title, summary, transcript, highlights) to <code>.hive/inbox/</code> in the session\'s workspace and queues a Send asking the CLI to start a spec with the spek-new skill. The text goes in as untrusted data, never as instructions.</p>';
+      if (items.some(it => it.pending)) body += '<p class="muted-xs">An item with audio but no text yet is transcribed first (🎧 Transcribe) and goes into the session when its transcript is ready.</p>';
+      body += '<fieldset class="inbox-session-mode"><label class="muted-note"><input type="radio" name="inbox-session-mode" value="new" checked data-inbox-session-mode="new"> Start a new session</label>' +
+        '<div class="inbox-settings-grid">' +
+        '<label class="muted-note inbox-field">Name<input class="kb-search-box mt-2" id="inbox-session-name" maxlength="' + INBOX_SESSION_NAME_MAX + '" autocomplete="off" value="' + escapeHtml(inboxSessionName(items)) + '"></label>' +
+        '<label class="muted-note inbox-field">Group<input class="kb-search-box mt-2" id="inbox-session-group" autocomplete="off" value="' + INBOX_SESSION_GROUP + '"></label>' +
+        '<label class="muted-note inbox-field">CLI<select class="field-input field-input-block mt-2" id="inbox-session-vendor">' +
+        vendors.map(v => '<option value="' + escapeHtml(v.id) + '"' + (v.id === pick ? ' selected' : '') + '>' + escapeHtml(v.label || v.id) + '</option>').join('') + '</select></label></div>' +
+        (vendors.length ? '' : '<p class="kc-error muted-xs">No CLI is installed on this hive.</p>') +
+        '<label class="muted-note"><input type="radio" name="inbox-session-mode" value="existing" data-inbox-session-mode="existing"' + (running.length ? '' : ' disabled') + '> Add to a running session</label>' +
+        '<select class="field-input field-input-block mt-2" id="inbox-session-existing" aria-label="Running session"' + (running.length ? '' : ' disabled') + '>' +
+        (running.length ? running.map(s => '<option value="' + escapeHtml(s.id) + '">' + escapeHtml((s.name || s.id) + (s.group ? ' · ' + s.group : '') + ' (' + (s.vendor || '') + ')') + '</option>').join('') : '<option value="">No running session you can type into</option>') +
+        '</select></fieldset>';
+      body += '<div class="hive-dialog-error" role="alert" id="inbox-session-error"></div>' +
+        '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
+        '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxConfirmSession">Send to session</button></div>';
+      return body;
+    }
+    // inboxOpenSessionDialog(keys): keys are "source/id" (one item, or the
+    // multi-select). The session list is read fresh so it names only
+    // sessions that are running now.
+    async function inboxOpenSessionDialog(keys) {
+      if (!inboxSessionCanSend()) return;
+      keys = (keys || []).filter(Boolean);
+      const items = keys.map(k => { const r = inboxKeyRef(k); return inboxFind(r.source, r.id) || { source: r.source, id: r.id, title: r.id }; });
+      if (!items.length) return;
+      let data = {};
+      try {
+        const r = await fetch('/api/sessions', { headers: _inceptionAuthHeaders(), credentials: 'same-origin', cache: 'no-store' });
+        data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      } catch (e) { showToast('Could not list sessions: ' + e.message, 'error'); return; }
+      if (data.enabled === false) { showToast('Inception (spek) sessions are not enabled on this hive.', 'error'); return; }
+      _inboxSessionKeys = keys;
+      kbShowModal('Send to an Inception (spek) session', inboxSessionDialogHtml(items, data, inboxSessionLastVendor()), { width: '560px' });
+    }
+    function inboxOpenSessionSelected() { return inboxOpenSessionDialog(Array.from(_inboxSelected)); }
+    // inboxSessionRequest builds the POST for the dialog's choice.
+    function inboxSessionRequest(mode, keys, fields) {
+      const items = keys.map(inboxKeyRef);
+      if (mode === 'existing') return { path: '/api/sessions/' + encodeURIComponent(fields.session) + '/seed', body: { items: items } };
+      return { path: '/api/sessions', body: { name: fields.name, group: fields.group, vendor: fields.vendor, shared: false, seed_items: items } };
+    }
+    // inboxSessionErrorText: a 409 for an item without text says how to fix it.
+    function inboxSessionErrorText(status, data) {
+      const msg = (data && data.error) || ('HTTP ' + status);
+      if (status === 409 && data && data.reason === 'no_text') return msg + (data.transcribe ? ' Use 🎧 Transcribe on the item, then send it again.' : '');
+      return msg;
+    }
+    async function inboxConfirmSession() {
+      const val = id => { const el = document.getElementById(id); return el ? String(el.value || '').trim() : ''; };
+      const modeEl = document.querySelector('[data-inbox-session-mode]:checked');
+      const mode = modeEl ? modeEl.value : 'new';
+      const errEl = document.getElementById('inbox-session-error');
+      const fields = { name: val('inbox-session-name'), group: val('inbox-session-group'), vendor: val('inbox-session-vendor'), session: val('inbox-session-existing') };
+      const fail = m => { if (errEl) errEl.textContent = m; else showToast(m, 'error'); };
+      if (mode === 'new' && (!fields.name || !fields.vendor)) { fail('A new session needs a name and a CLI.'); return; }
+      if (mode === 'existing' && !fields.session) { fail('Pick a running session.'); return; }
+      const keys = _inboxSessionKeys.slice();
+      const req = inboxSessionRequest(mode, keys, fields);
+      let data = {};
+      try {
+        const r = await fetch(req.path, { method: 'POST', headers: _inceptionAuthHeaders(), credentials: 'same-origin', body: JSON.stringify(req.body) });
+        data = await r.json().catch(() => ({}));
+        if (!r.ok || data.ok === false) { fail(inboxSessionErrorText(r.status, data)); return; }
+      } catch (e) { fail(e.message); return; }
+      kbCloseModal();
+      if (mode === 'new' && fields.vendor) { try { localStorage.setItem(INBOX_SESSION_VENDOR_KEY, fields.vendor); } catch (e) { /* convenience only */ } }
+      for (const k of keys) _inboxSelected.delete(k);
+      const sess = data.session || { id: fields.session };
+      const waiting = ((data.seed || {}).waiting || []).length;
+      showToast('Sent ' + keys.length + ' item' + (keys.length === 1 ? '' : 's') + ' to ' + (sess.name || fields.name || 'the session') +
+        (waiting ? ' (' + waiting + ' transcribing first; ' + (waiting === 1 ? 'it goes' : 'they go') + ' in when the transcript is ready)' : ''), 'success');
+      if (typeof sessionsFocus === 'function') sessionsFocus(sess);
+      fetchInbox();
+    }
+    // inboxOpenSession: the "open session" button on a routed item.
+    function inboxOpenSession(id) {
+      if (typeof sessionsFocus === 'function') sessionsFocus({ id: id });
     }
 
     // Settings drawer: default RFC repo, dibs URL, and ordered auto-routing rules.
@@ -48432,11 +48586,11 @@ function burnAreaChart() {
     function inboxUploadRowHtml(row) {
       const pct = Math.max(0, Math.min(100, Math.round((Number(row.progress) || 0) * 100)));
       const pill = row.status === 'done' ? 'ok' : (row.status === 'error' ? 'error' : 'syncing');
-      const label = (INBOX_UPLOAD_LABELS[row.status] || row.status) + (row.status === 'uploading' ? ' ' + pct + '%' : '');
+      const label = row.link && row.status === 'uploading' ? 'Fetching' : (INBOX_UPLOAD_LABELS[row.status] || row.status) + (row.status === 'uploading' ? ' ' + pct + '%' : '');
       let html = '<li class="inbox-upload" data-inbox-upload="' + escapeHtml(String(row.id)) + '" data-status="' + escapeHtml(row.status) + '">' +
-        '<span class="inbox-upload-name">' + escapeHtml(row.name) + '</span> <span class="muted-xs">' + escapeHtml(inboxFmtBytes(row.size)) + '</span> ' +
+        '<span class="inbox-upload-name">' + escapeHtml(row.name) + '</span> <span class="muted-xs">' + escapeHtml(row.link ? 'link' : inboxFmtBytes(row.size)) + '</span> ' +
         '<span class="kc-pill" data-status="' + pill + '">' + escapeHtml(label) + '</span>';
-      if (row.status === 'uploading' || row.status === 'queued') html += '<progress class="kc-progress-bar inbox-upload-bar" max="100" value="' + pct + '" aria-label="' + escapeHtml('Uploading ' + row.name) + '"></progress>';
+      if (!row.link && (row.status === 'uploading' || row.status === 'queued')) html += '<progress class="kc-progress-bar inbox-upload-bar" max="100" value="' + pct + '" aria-label="' + escapeHtml('Uploading ' + row.name) + '"></progress>';
       if (row.status === 'done' && row.key) html += ' <a href="#" class="inbox-link" data-action="inboxFocusItem" data-prevent="1" data-arg0="' + escapeHtml(row.key) + '">show item</a>';
       if (row.status === 'error' && row.error) html += ' <span class="kc-error muted-xs" role="alert">' + escapeHtml(row.error) + '</span>';
       return html + '</li>';
@@ -48456,7 +48610,10 @@ function burnAreaChart() {
       return '<div class="inbox-add" id="inbox-add" role="group" aria-label="Add files to the Inbox">' +
         '<p class="muted-xs m-0">Drop files anywhere on the Inbox, paste them with Ctrl/Cmd+V, or choose them here: ' + escapeHtml(limit) + '. Supported: ' + escapeHtml(exts.join(' ')) + '. Files stay on this hive; their text reaches an LLM only when you share the item.</p>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxChooseFiles">Choose files…</button>' +
-        '<input type="file" multiple hidden class="inbox-file-input" id="inbox-file-input" accept="' + escapeHtml(exts.join(',')) + '" data-change-action="inboxPickFiles" data-arg-types="t" aria-label="Files to add to the Inbox"></div></div>';
+        '<input type="file" multiple hidden class="inbox-file-input" id="inbox-file-input" accept="' + escapeHtml(exts.join(',')) + '" data-change-action="inboxPickFiles" data-arg-types="t" aria-label="Files to add to the Inbox"></div>' +
+        (u.links ? '<div class="kc-actions mt-2"><input type="url" class="kb-search-box inbox-add-url" id="inbox-add-url" placeholder="https://… (a page, or a linked md, json, csv… file)" autocomplete="off" aria-label="Link to add to the Inbox" data-enter-action="inboxAddUrlFromField">' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddUrlFromField">Add link</button></div>' +
+          '<p class="muted-xs m-0">The hive fetches the link itself (public http/https addresses only, at most 3 redirects) and reads it like a dropped file.</p>' : '') + '</div>';
     }
     function inboxToggleAdd() { _inboxAddOpen = !_inboxAddOpen; renderInbox(); if (_inboxAddOpen) { const b = document.querySelector('#inbox-add [data-action="inboxChooseFiles"]'); if (b && b.focus) b.focus(); } }
     function inboxChooseFiles() { const el = document.getElementById('inbox-file-input'); if (el) el.click(); }
@@ -48541,9 +48698,53 @@ function burnAreaChart() {
       if (!inboxCanAdd()) return;
       if (!(inboxInSection(e.target) || inboxInSection(document.activeElement) || _inboxPointerInside)) return;
       const files = Array.from((e.clipboardData && e.clipboardData.files) || []);
-      if (!files.length) return;
+      if (files.length) { e.preventDefault(); inboxAddFiles(files); return; }
+      // A pasted link (one http/https URL) outside a text field is added
+      // like a dropped one; pasting into a field stays a normal paste.
+      const text = String((e.clipboardData && e.clipboardData.getData && e.clipboardData.getData('text')) || '').trim();
+      const field = e.target && e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]');
+      if (field || !inboxUploadSettings().links || !INBOX_URL_RE.test(text)) return;
       e.preventDefault();
-      inboxAddFiles(files);
+      inboxAddUrl(text);
+    }
+    const INBOX_URL_RE = /^https?:\/\/[^\s]+$/i;
+    function inboxAddUrlFromField() {
+      const el = document.getElementById('inbox-add-url');
+      const raw = el ? String(el.value || '').trim() : '';
+      if (!raw) return Promise.resolve(null);
+      if (el) el.value = '';
+      return inboxAddUrl(raw);
+    }
+    // inboxAddUrl shows a row for one link and asks the hive to fetch it
+    // (POST /api/inbox/uploads/url); the hive applies the SSRF rules.
+    function inboxAddUrl(raw) {
+      if (!inboxCanAdd() || !inboxUploadSettings().links) return Promise.resolve(null);
+      let host = raw;
+      try { host = new URL(raw).host || raw; } catch (e) { host = raw; }
+      const row = { id: ++_inboxUploadSeq, name: host, size: 0, link: raw, status: 'queued', progress: 0 };
+      if (!INBOX_URL_RE.test(raw)) { row.status = 'error'; row.code = 'link_refused'; row.error = 'Only http and https links can be added.'; }
+      _inboxUploads = _inboxUploads.concat([row]);
+      renderInbox();
+      if (row.status === 'error') return Promise.resolve(row);
+      inboxAnnounce('Fetching ' + host + ' for the Inbox');
+      _inboxUploadQueue = _inboxUploadQueue.then(async () => {
+        row.status = 'uploading';
+        inboxUploadRowUpdate(row);
+        try {
+          const r = await fetch('/api/inbox/uploads/url', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ url: raw }) });
+          const data = await r.json().catch(() => ({}));
+          const res = (Array.isArray(data.results) ? data.results : [])[0];
+          if (r.ok && res && res.ok) { row.status = 'done'; row.key = res.source + '/' + res.item_id; row.title = res.title || host; }
+          else { row.status = 'error'; row.code = (res && res.code) || ''; row.error = (res && res.error) || data.error || ('HTTP ' + r.status); }
+        } catch (e) {
+          row.status = 'error'; row.error = 'The request did not reach the hive (network error).';
+        }
+        inboxUploadRowUpdate(row);
+        inboxAnnounce(row.status === 'done' ? host + ' added to the Inbox' : host + ' not added: ' + row.error);
+        if (row.status === 'done') await fetchInbox();
+        return row;
+      });
+      return _inboxUploadQueue;
     }
     document.addEventListener('dragenter', inboxOnDragOver);
     document.addEventListener('dragover', inboxOnDragOver);
@@ -49481,7 +49682,7 @@ function burnAreaChart() {
     function renderGovMeetings() {
       return '<div class="config-section" data-config-section="Meetings"><h3>Meetings</h3>' +
         '<p class="text-muted fs-base">Send hive into Google Meet, Teams, Zoom or Discord meetings to take notes, ask clarifying questions and run research. ' +
-        yamlHint('meetings.enabled') + ' ' + yamlHint('meetings.vexa.url') + ' ' + yamlHint('meetings.vexa.api_key_file') + ' ' + yamlHint('meetings.discord.token_file') + ' ' + yamlHint('meetings.transcribe_url') + ' ' + yamlHint('meetings.transcribe_token_file') + ' Changes apply after a restart.</p>' +
+        yamlHint('meetings.enabled') + ' ' + yamlHint('meetings.vexa.url') + ' ' + yamlHint('meetings.vexa.api_key_file') + ' ' + yamlHint('meetings.discord.token_file') + ' ' + yamlHint('meetings.transcribe_url') + ' ' + yamlHint('meetings.transcribe_token_file') + ' ' + yamlHint('meetings.tts_url') + ' ' + yamlHint('meetings.tts_token_file') + ' Changes apply after a restart.</p>' +
         '<div id="meetings-settings-inline"><p class="muted-xs">Loading…</p></div></div>';
     }
 
@@ -49495,9 +49696,11 @@ function burnAreaChart() {
         '<label class="muted-note inbox-field">Vexa gateway URL<input class="kb-search-box mt-2" type="url" data-meetings-setting="vexa_url" placeholder="https://vexa.example.org" autocomplete="off" value="' + escapeHtml(s.vexa_url || '') + '"></label>' +
         '<label class="muted-note inbox-field">Vexa tenant key ' + (s.vexa_key_set ? '(set)' : '(not set)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="vexa_api_key" placeholder="leave blank to keep" autocomplete="new-password"></label>' +
         '<label class="muted-note inbox-field">Discord bot token ' + (s.discord_token_set ? '(set)' : '(not set, optional)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="discord_token" placeholder="leave blank to keep" autocomplete="new-password"></label>' +
-        '<label class="muted-note inbox-field">Transcription token ' + (s.transcribe_token_set ? '(set)' : '(not set, needed for Discord)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="transcribe_token" placeholder="leave blank to keep" autocomplete="new-password"></label></div>' +
+        '<label class="muted-note inbox-field">Transcription token ' + (s.transcribe_token_set ? '(set)' : '(not set, needed for Discord)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="transcribe_token" placeholder="leave blank to keep" autocomplete="new-password"></label>' +
+        '<label class="muted-note inbox-field">TTS token ' + (s.tts_token_set ? '(set)' : '(not set, needed for Discord speech)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="tts_token" placeholder="leave blank to keep" autocomplete="new-password"></label></div>' +
         '<p class="muted-xs" data-meetings-setting="discord_hint">Discord needs three things: the Discord bot token, the transcribe URL (<code>meetings.transcribe_url</code> or <code>HIVE_MEETINGS_TRANSCRIBE_URL</code>; where the shared service runs in the same cluster, the in-cluster <code>http://vexa-transcription.meetings.svc.cluster.local:8000</code>) and the transcription token. Transcribe URL now: ' +
-        (eff['meetings.transcribe_url'] ? '<code>' + escapeHtml(eff['meetings.transcribe_url']) + '</code>' : 'not set') + '.</p>' +
+        (eff['meetings.transcribe_url'] ? '<code>' + escapeHtml(eff['meetings.transcribe_url']) + '</code>' : 'not set') + '. Discord speech also needs the TTS URL (<code>meetings.tts_url</code> or <code>HIVE_MEETINGS_TTS_URL</code>; in-cluster <code>http://vexa-tts.meetings.svc.cluster.local:8880</code>) and the TTS token. TTS URL now: ' +
+        (eff['meetings.tts_url'] ? '<code>' + escapeHtml(eff['meetings.tts_url']) + '</code>' : 'not set') + '.</p>' +
         '<details class="mt-4"><summary class="muted-xs">Other meetings settings (hive.yaml or HIVE_MEETINGS_* env)</summary><table class="meetings-effective">' + rows + '</table></details>' +
         '<div class="hive-dialog-error" role="alert" data-meetings-setting="error"></div>' +
         '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="meetingsSaveSettings">Save</button></div></div>';
@@ -49524,9 +49727,11 @@ function burnAreaChart() {
       const key = ((meetingsSetting('vexa_api_key') || {}).value || '').trim();
       const tok = ((meetingsSetting('discord_token') || {}).value || '').trim();
       const tx = ((meetingsSetting('transcribe_token') || {}).value || '').trim();
+      const tts = ((meetingsSetting('tts_token') || {}).value || '').trim();
       if (key) body.vexa_api_key = key;
       if (tok) body.discord_token = tok;
       if (tx) body.transcribe_token = tx;
+      if (tts) body.tts_token = tts;
       try {
         const data = await meetingsPost('/api/meetings/settings', body);
         showToast(data.restart_required ? 'Meetings settings saved; restart the hive to apply' : 'Meetings settings saved', 'success');
@@ -49787,6 +49992,308 @@ function burnAreaChart() {
       try { await calendarPost('/api/meetings/schedule/' + encodeURIComponent(id) + '/' + encodeURIComponent(action)); }
       catch (e) { showToast('Could not ' + action + ': ' + e.message, 'error'); }
       fetchCalendar();
+    }
+    // ── Settings → Meeting attendee (#18396) ──
+    // The persona hive attends meetings as (Betty by default): a preset or a
+    // customized persona, its behaviour caps, and the attendee's email
+    // address and inviters. GET/PUT /api/meetings/persona, owner or
+    // read-write; POST /api/meetings/persona/sample plays a line through the
+    // meetings TTS service. The Email section stays disabled (layout only)
+    // until the server reports email.available (email-in, #18395).
+    let _maState = null; // { data, form }
+    // Language tags the presets and Kokoro voices speak, for labels.
+    const MA_LANGUAGE_LABELS = {
+      'en-US': 'English (US)', 'en-GB': 'English (UK)', 'es-ES': 'Spanish', 'fr-FR': 'French', 'it-IT': 'Italian',
+      'pt-BR': 'Portuguese (Brazil)', 'hi-IN': 'Hindi', 'ja-JP': 'Japanese', 'zh-CN': 'Mandarin Chinese',
+    };
+    // Regional indicator symbols start here; 'A' maps to U+1F1E6.
+    const MA_FLAG_BASE = 0x1F1E6;
+    const MA_PERSONA_FIELDS = ['name', 'display_name', 'pronouns', 'language', 'voice', 'voice_type', 'accent', 'humor', 'intro_template'];
+    const MA_LIST_FIELDS = ['aliases', 'leave_phrases'];
+    const MA_CAP_FIELDS = [
+      ['per_10m', 'Unprompted answers per 10 minutes', '1'],
+      ['min_gap_s', 'Seconds between unprompted answers', '1'],
+      ['per_meeting', 'Unprompted answers per meeting', '1'],
+      ['answer_wait_s', 'Answer wait (seconds a person has to answer first)', '1'],
+      ['min_confidence', 'Confidence needed to answer unprompted (0 to 1)', '0.05'],
+      ['queue_depth', 'Room questions waiting at once', '1'],
+      ['stale_s', 'Drop a question after (seconds)', '1'],
+    ];
+
+    function maLanguageLabel(tag) { return MA_LANGUAGE_LABELS[tag] || tag || ''; }
+
+    function maFlag(tag) {
+      const region = String(tag || '').split('-')[1] || '';
+      if (!/^[A-Za-z]{2}$/.test(region)) return '';
+      const up = region.toUpperCase();
+      return String.fromCodePoint(MA_FLAG_BASE + up.charCodeAt(0) - 65, MA_FLAG_BASE + up.charCodeAt(1) - 65);
+    }
+
+    // maRenderIntro fills the intro placeholders the way the server does
+    // (ResolvedMeetingsPersona.Intro).
+    function maRenderIntro(f) {
+      const leave = (f.leave_phrases || [])[0] || '';
+      const subs = { '{name}': f.name, '{display_name}': f.display_name, '{pronouns}': f.pronouns, '{leave}': leave,
+        '{accent}': f.accent, '{voice_type}': f.voice_type, '{language}': f.language };
+      return String(f.intro_template || '').replace(/\{(name|display_name|pronouns|leave|accent|voice_type|language)\}/g, m => subs[m] || '');
+    }
+
+    function renderGovMeetingAttendee() {
+      return '<div class="config-section" data-config-section="Meeting attendee"><h3>Meeting attendee</h3>' +
+        '<p class="text-muted fs-base">Who hive is in meetings: the persona\'s name, voice, language and manners, how often she speaks up unprompted, and how people invite her. ' +
+        yamlHint('meetings.persona') + ' Changes apply after a restart.</p>' +
+        '<div id="meeting-attendee-inline"><p class="muted-xs">Loading…</p></div></div>';
+    }
+
+    async function loadMeetingAttendeeInline() {
+      const host = document.getElementById('meeting-attendee-inline');
+      if (!host) return;
+      try {
+        const r = await fetch('/api/meetings/persona');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        maSetData(data);
+        maRender();
+      } catch (e) {
+        host.innerHTML = '<p class="kc-error muted-xs">Meeting attendee settings unavailable: ' + escapeHtml(e.message) + '</p>';
+      }
+    }
+
+    function maSetData(data) {
+      const e = data.effective || {};
+      const form = { enabled: !!e.enabled, preset: e.preset || '', voice_on_address: !!e.voice_on_address, unprompted: Object.assign({}, e.unprompted || {}) };
+      MA_PERSONA_FIELDS.forEach(k => { form[k] = e[k] || ''; });
+      MA_LIST_FIELDS.forEach(k => { form[k] = (e[k] || []).slice(); });
+      _maState = { data: data, form: form, dirty: false };
+    }
+
+    function maPreset(id) { return ((_maState && _maState.data.presets) || []).find(p => p.id === id) || null; }
+
+    function maOverrideNote(key) {
+      const src = ((_maState && _maState.data.overridden) || {})[key];
+      if (src === 'env') return ' <span class="badge ma-env" title="An HIVE_MEETINGS_PERSONA_* variable sets this; edits here have no effect while it is set">env</span>';
+      if (src === 'config') return ' <span class="badge" title="Set in hive.yaml; differs from the preset">custom</span>';
+      return '';
+    }
+
+    function maPresetCardHtml(p, selected) {
+      const vt = (p.voice_type || '').replace(/^./, c => c.toUpperCase());
+      return '<button type="button" class="ma-preset' + (selected ? ' is-selected' : '') + '" data-action="maPickPreset" data-arg0="' + escapeHtml(p.id) + '" aria-pressed="' + (selected ? 'true' : 'false') + '">' +
+        '<span class="ma-preset-flag" aria-hidden="true">' + maFlag(p.language) + '</span>' +
+        '<span class="ma-preset-name">' + escapeHtml(p.display_name) + '</span>' +
+        '<span class="muted-xs">' + escapeHtml(maLanguageLabel(p.language)) + ' · ' + escapeHtml(p.accent) + '</span>' +
+        '<span class="muted-xs">' + escapeHtml(vt) + ' voice · <code>' + escapeHtml(p.voice) + '</code></span></button>';
+    }
+
+    function maField(label, key, inner) {
+      return '<label class="muted-note inbox-field">' + escapeHtml(label) + maOverrideNote(key) + inner + '</label>';
+    }
+
+    function maTextInput(key, value, placeholder) {
+      return '<input class="kb-search-box mt-2" type="text" data-ma-field="' + key + '" data-input-action="maInput" data-arg0="' + key + '" data-arg-types="s,v" value="' + escapeHtml(value) + '" placeholder="' + escapeHtml(placeholder || '') + '" autocomplete="off">';
+    }
+
+    function maVoiceOptions(f) {
+      const voices = ((_maState.data.voices) || []).filter(v => v.language === f.language);
+      let opts = voices.map(v => '<option value="' + escapeHtml(v.id) + '"' + (v.id === f.voice ? ' selected' : '') + '>' + escapeHtml(v.id + ' (' + v.voice_type + ', ' + v.accent + ')') + '</option>').join('');
+      if (f.voice && !voices.some(v => v.id === f.voice)) opts = '<option value="' + escapeHtml(f.voice) + '" selected>' + escapeHtml(f.voice + ' (custom)') + '</option>' + opts;
+      return opts;
+    }
+
+    function maLanguageOptions(f) {
+      const langs = [];
+      ((_maState.data.voices) || []).forEach(v => { if (langs.indexOf(v.language) < 0) langs.push(v.language); });
+      if (f.language && langs.indexOf(f.language) < 0) langs.unshift(f.language);
+      return langs.map(l => '<option value="' + escapeHtml(l) + '"' + (l === f.language ? ' selected' : '') + '>' + escapeHtml(maFlag(l) + ' ' + maLanguageLabel(l)) + '</option>').join('');
+    }
+
+    function maVoiceTypeOptions(f) {
+      return ((_maState.data.voice_types) || []).map(t => {
+        const sel = t.id === f.voice_type;
+        // A type no shipped voice provides is listed but not selectable
+        // (bot-style: coming later), unless the config already uses it.
+        const disabled = !t.available && !sel;
+        return '<option value="' + escapeHtml(t.id) + '"' + (sel ? ' selected' : '') + (disabled ? ' disabled' : '') + '>' +
+          escapeHtml(t.label + (t.available ? '' : ' (coming later)')) + '</option>';
+      }).join('');
+    }
+
+    function maPersonaHtml(f) {
+      const presets = (_maState.data.presets || []).map(p => maPresetCardHtml(p, p.id === f.preset)).join('');
+      return '<section class="ma-section" aria-labelledby="ma-persona-h"><h4 id="ma-persona-h">Persona</h4>' +
+        '<label class="inbox-toggle"><input type="checkbox" data-ma-field="enabled" data-change-action="maInput" data-arg0="enabled" data-arg-types="s,c"' + (f.enabled ? ' checked' : '') + '> Attend meetings as this persona' + maOverrideNote('enabled') + '</label>' +
+        '<p class="muted-xs">Presets use voices the self-hosted Kokoro TTS provides. Pick one, then adjust any field.' + maOverrideNote('preset') + '</p>' +
+        '<div class="ma-presets" role="group" aria-label="Persona presets">' + presets + '</div>' +
+        '<div class="meetings-settings-grid">' +
+        maField('Name', 'name', maTextInput('name', f.name, 'Betty')) +
+        maField('Display name', 'display_name', maTextInput('display_name', f.display_name, 'Betty Bee from the hive')) +
+        maField('Aliases (comma separated)', 'aliases', maTextInput('aliases', f.aliases.join(', '), 'betty, betty bee, hive')) +
+        maField('Pronouns', 'pronouns', maTextInput('pronouns', f.pronouns, 'she/her')) +
+        maField('Voice type', 'voice_type', '<select class="kb-search-box mt-2" data-ma-field="voice_type" data-change-action="maInput" data-arg0="voice_type" data-arg-types="s,v">' + maVoiceTypeOptions(f) + '</select>') +
+        maField('Language', 'language', '<select class="kb-search-box mt-2" data-ma-field="language" data-change-action="maLanguageChanged" data-arg-types="v">' + maLanguageOptions(f) + '</select>') +
+        maField('Accent', 'accent', maTextInput('accent', f.accent, 'American')) +
+        maField('Voice', 'voice', '<select class="kb-search-box mt-2" data-ma-field="voice" data-change-action="maInput" data-arg0="voice" data-arg-types="s,v">' + maVoiceOptions(f) + '</select>') +
+        maField('Humor', 'humor', '<select class="kb-search-box mt-2" data-ma-field="humor" data-change-action="maInput" data-arg0="humor" data-arg-types="s,v">' +
+          ['light', 'off'].map(h => '<option value="' + h + '"' + (h === f.humor ? ' selected' : '') + '>' + (h === 'light' ? 'Light' : 'Off') + '</option>').join('') + '</select>') +
+        maField('Leave phrases (comma separated)', 'leave_phrases', maTextInput('leave_phrases', f.leave_phrases.join(', '), 'betty leave, hive leave')) +
+        '</div>' +
+        maField('Intro (placeholders: {name}, {display_name}, {pronouns}, {leave}, {accent}, {voice_type}, {language})', 'intro_template',
+          '<textarea class="kb-search-box mt-2 ma-intro" rows="4" data-ma-field="intro_template" data-input-action="maInput" data-arg0="intro_template" data-arg-types="s,v">' + escapeHtml(f.intro_template) + '</textarea>') +
+        '<div class="ma-preview"><div class="section-label m-0">Preview</div><p class="ma-preview-text" data-ma-preview>' + escapeHtml(maRenderIntro(f)) + '</p></div>' +
+        '<div class="ma-sample"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="maPlaySample"' + (_maState.data.tts_configured ? '' : ' disabled title="Set meetings.tts_url to play samples"') + '>Play sample</button>' +
+        '<audio controls class="ma-audio" data-ma-audio hidden></audio>' +
+        (_maState.data.tts_configured ? '' : '<span class="muted-xs">TTS is not configured on this hive.</span>') +
+        '<span class="muted-xs" role="status" data-ma-sample-status></span></div></section>';
+    }
+
+    function maBehaviourHtml(f) {
+      const caps = MA_CAP_FIELDS.map(c => maField(c[1], 'unprompted.' + c[0],
+        '<input class="kb-search-box mt-2" type="number" min="0" step="' + c[2] + '" data-ma-cap="' + c[0] + '" data-input-action="maCapInput" data-arg0="' + c[0] + '" data-arg-types="s,v" value="' + escapeHtml(String(f.unprompted[c[0]] != null ? f.unprompted[c[0]] : '')) + '">')).join('');
+      return '<section class="ma-section" aria-labelledby="ma-behaviour-h"><h4 id="ma-behaviour-h">Behaviour</h4>' +
+        '<p class="muted-xs">Unprompted answers are chat replies to room questions nobody asked the persona directly. Addressed requests skip these caps but not the meeting\'s rate limit and budget.</p>' +
+        '<div class="meetings-settings-grid">' + caps + '</div>' +
+        '<label class="inbox-toggle"><input type="checkbox" data-ma-field="voice_on_address" data-change-action="maInput" data-arg0="voice_on_address" data-arg-types="s,c"' + (f.voice_on_address ? ' checked' : '') + '> Speak aloud only when addressed by name (never unprompted; off sends every reply to chat)</label></section>';
+    }
+
+    function maEmailHtml() {
+      const em = (_maState.data.email) || {};
+      const on = !!em.available;
+      const dis = on ? '' : ' disabled';
+      const people = (em.inviters || []).map(p => {
+        const emails = (p.emails || []).map(x => '<span class="ma-email">' + escapeHtml(x.address) + ' <span class="badge' + (x.proof === 'verified' ? ' ma-verified' : '') + '">' + escapeHtml(x.proof || 'pending') + '</span></span>').join('') ||
+          '<span class="muted-xs">no calendar email registered</span>';
+        return '<tr><td>' + escapeHtml(p.display_name || p.login) + (p.display_name ? ' <span class="muted-xs">' + escapeHtml(p.login) + '</span>' : '') + '</td><td>' + escapeHtml(p.role) + '</td><td>' + emails + '</td></tr>';
+      }).join('');
+      const approvals = (em.approvals || []).map(a => '<li>' + escapeHtml((a.kind || '') + ' from ' + (a.from || '')) + (a.subject ? ': ' + escapeHtml(a.subject) : '') + '</li>').join('');
+      return '<section class="ma-section' + (on ? '' : ' is-pending') + '" aria-labelledby="ma-email-h"><h4 id="ma-email-h">Email</h4>' +
+        (on ? '' : '<p class="muted-xs" data-ma-email-pending>Available once email-in is enabled. Until then, add meetings from the Calendar.</p>') +
+        (em.error ? '<p class="kc-error muted-xs">' + escapeHtml(em.error) + '</p>' : '') +
+        '<div class="ma-address"><span>Attendee address</span> <code data-ma-address>' + escapeHtml(em.address || '') + '</code>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="maCopyAddress"' + (em.address ? '' : ' disabled') + '>Copy</button></div>' +
+        '<p class="muted-xs">Add this address to a calendar invite. Invites from people with access to this hive whose calendar email is verified are scheduled; anything else waits for the owner.</p>' +
+        '<table class="meetings-effective ma-inviters"><thead><tr><th>Person</th><th>Access</th><th>Calendar emails</th></tr></thead><tbody>' +
+        (people || '<tr><td colspan="3" class="muted-xs">No access list on this hive.</td></tr>') + '</tbody></table>' +
+        '<div class="section-label m-0">Waiting for approval</div>' + (approvals ? '<ul class="ma-approvals">' + approvals + '</ul>' : '<p class="muted-xs">Nothing waiting.</p>') +
+        '<label class="inbox-toggle"><input type="checkbox" data-ma-email="calendar_invites"' + (em.calendar_invites ? ' checked' : '') + dis + '> Accept calendar invites</label>' +
+        '<label class="inbox-toggle"><input type="checkbox" data-ma-email="mail_in_files"' + (em.mail_in_files ? ' checked' : '') + dis + '> Accept mailed-in files (Markdown, audio, images) into the Inbox</label></section>';
+    }
+
+    function maRender() {
+      const host = document.getElementById('meeting-attendee-inline');
+      if (!host || !_maState) return;
+      const d = _maState.data;
+      const f = _maState.form;
+      host.innerHTML =
+        (d.restart_required ? '<p class="cmp-banner" role="status">Saved. Restart the hive to apply the new persona.</p>' : '') +
+        (d.running ? '' : '<p class="muted-xs">Meetings are not running on this hive; the persona applies once meetings are on (Settings, Meetings).</p>') +
+        maPersonaHtml(f) + maBehaviourHtml(f) + maEmailHtml() +
+        '<div class="hive-dialog-error" role="alert" data-ma-error></div>' +
+        '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="maSave">Save</button></div>';
+    }
+
+    function maRefreshPreview() {
+      const el = document.querySelector('[data-ma-preview]');
+      if (el && _maState) el.textContent = maRenderIntro(_maState.form);
+    }
+
+    function maInput(key, value) {
+      if (!_maState) return;
+      const f = _maState.form;
+      if (MA_LIST_FIELDS.indexOf(key) >= 0) f[key] = String(value || '').split(',').map(s => s.trim()).filter(Boolean);
+      else if (key === 'enabled' || key === 'voice_on_address') f[key] = !!value;
+      else f[key] = value;
+      _maState.dirty = true;
+      maRefreshPreview();
+    }
+
+    function maCapInput(key, value) {
+      if (!_maState) return;
+      const n = Number(value);
+      _maState.form.unprompted[key] = value === '' || !isFinite(n) ? 0 : n;
+      _maState.dirty = true;
+    }
+
+    // maLanguageChanged keeps the voice in the new language: the current
+    // voice when it speaks it, else the first of the same voice type.
+    function maLanguageChanged(lang) {
+      if (!_maState) return;
+      const f = _maState.form;
+      f.language = lang;
+      const voices = (_maState.data.voices || []).filter(v => v.language === lang);
+      if (voices.length && !voices.some(v => v.id === f.voice)) {
+        f.voice = (voices.find(v => v.voice_type === f.voice_type) || voices[0]).id;
+        const known = voices.find(v => v.id === f.voice);
+        if (known) f.accent = known.accent;
+      }
+      _maState.dirty = true;
+      maRender();
+    }
+
+    // maPickPreset fills the form from a preset; Save stores it.
+    function maPickPreset(id) {
+      const p = maPreset(id);
+      if (!p || !_maState) return;
+      const f = _maState.form;
+      f.preset = p.id;
+      ['name', 'display_name', 'pronouns', 'language', 'voice', 'voice_type', 'accent', 'humor'].forEach(k => { f[k] = p[k] || ''; });
+      f.intro_template = f.humor === 'off' && p.plain_intro_template ? p.plain_intro_template : p.intro_template;
+      f.aliases = (p.aliases || []).slice();
+      f.leave_phrases = (p.leave_phrases || []).slice();
+      _maState.dirty = true;
+      maRender();
+    }
+
+    function maRequestBody() {
+      const f = _maState.form;
+      const body = { enabled: f.enabled, preset: f.preset, voice_on_address: f.voice_on_address, unprompted: Object.assign({}, f.unprompted) };
+      MA_PERSONA_FIELDS.forEach(k => { body[k] = f[k]; });
+      MA_LIST_FIELDS.forEach(k => { body[k] = f[k]; });
+      return body;
+    }
+
+    async function maSave() {
+      if (!_maState) return;
+      const errEl = document.querySelector('[data-ma-error]');
+      if (errEl) errEl.textContent = '';
+      try {
+        const r = await fetch('/api/meetings/persona', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(maRequestBody()) });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        maSetData(data);
+        maRender();
+        showToast(data.restart_required ? 'Meeting attendee saved; restart the hive to apply' : 'Meeting attendee saved', 'success');
+      } catch (e) {
+        if (errEl) errEl.textContent = e.message; else showToast('Save failed: ' + e.message, 'error');
+      }
+    }
+
+    // maSampleSrc is the same-origin sample URL for the form's unsaved
+    // voice, language and name. The dashboard CSP has no media-src, so the
+    // <audio> element plays the GET endpoint directly.
+    function maSampleSrc(f) {
+      const q = new URLSearchParams({ voice: f.voice || '', language: f.language || '', display_name: f.display_name || '' });
+      return '/api/meetings/persona/sample?' + q.toString();
+    }
+
+    function maPlaySample() {
+      if (!_maState) return;
+      const status = document.querySelector('[data-ma-sample-status]');
+      const audio = document.querySelector('[data-ma-audio]');
+      if (!audio) return;
+      if (status) status.textContent = 'Generating…';
+      audio.hidden = false;
+      audio.addEventListener('playing', () => { if (status) status.textContent = ''; }, { once: true });
+      audio.addEventListener('error', () => { if (status) status.textContent = 'Sample failed: check that the TTS service is reachable and the voice exists.'; }, { once: true });
+      audio.src = maSampleSrc(_maState.form);
+      const p = audio.play();
+      if (p && p.catch) p.catch(() => {});
+    }
+
+    async function maCopyAddress() {
+      const addr = (((_maState || {}).data || {}).email || {}).address || '';
+      if (!addr) return;
+      try { await navigator.clipboard.writeText(addr); showToast('Copied ' + addr, 'success'); }
+      catch (e) { showToast('Copy failed: ' + e.message, 'error'); }
     }
     // ── Vault Management ──
 
@@ -52513,6 +53020,9 @@ function burnAreaChart() {
     const SESSIONS_UNGROUPED_LABEL = 'Ungrouped';
     const SESSIONS_SELECTED_KEY = 'hive.sessions.selected';
     const SESSIONS_COLLAPSED_KEY = 'hive.sessions.collapsedGroups';
+    // The CLI vendor of the last session this browser started; the Inbox's
+    // Share → Hive → spek… dialog preselects it (inbox.js reads the same key).
+    const SESSIONS_LAST_VENDOR_KEY = 'hive.sessions.lastVendor';
     const SESSIONS_WRITE_ROLES = Object.freeze(['owner', 'read-write']);
     const SESSIONS_STATUS_RUNNING = 'running';
     const SESSIONS_STATUS_ENDED = 'ended';
@@ -53275,6 +53785,7 @@ function burnAreaChart() {
     // until polling sees it running (terminal attaches) or failed.
     async function sessionsSubmitCreate(body) {
       const data = await sessionsApi('', 'POST', body);
+      if (body.vendor) sessionsStoreSet(SESSIONS_LAST_VENDOR_KEY, body.vendor);
       if (data.session) {
         _sessionsData.sessions = (_sessionsData.sessions || []).filter(function(x) { return x.id !== data.session.id; });
         _sessionsData.sessions.push(data.session);
@@ -53290,6 +53801,23 @@ function burnAreaChart() {
       showToast('Starting session ' + body.name + '…', 'success');
       loadSessions();
       return data.session;
+    }
+    // sessionsFocus opens the Inception (spek) section on one session's tab:
+    // the Inbox calls it after sending items into a session (new or running),
+    // with the session view the API answered, so the tab (and its preparing
+    // spinner) shows before the next poll.
+    function sessionsFocus(session) {
+      if (!session || !session.id) return;
+      const list = _sessionsData.sessions || [];
+      const prev = list.find(function(x) { return x.id === session.id; });
+      if (prev) Object.assign(prev, session);
+      else if (session.status) _sessionsData.sessions = list.concat([session]);
+      _sessionsSelected = session.id;
+      sessionsStoreSet(SESSIONS_SELECTED_KEY, session.id);
+      if (session.vendor) sessionsStoreSet(SESSIONS_LAST_VENDOR_KEY, session.vendor);
+      if (typeof ocNavigate === 'function') ocNavigate('sessions-section');
+      renderSessions();
+      loadSessions();
     }
     // Retry a failed session: its record is deleted and a new one is created
     // with the same name, group, vendor and sharing.
@@ -58846,7 +59374,7 @@ function burnAreaChart() {
     // which is read-only hub-synced user/role data. It sits next to Model
     // Gateways because both are backend configuration.
     const GOVERNOR_BOB_TAB = 'Bob';
-    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Workflows', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Knowledge', 'Inbox', 'Project Observability', 'Meetings', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
+    const GOVERNOR_CONFIG_TABS = ['General', 'Appearance', 'Dashboard', 'Agents', 'Thresholds', 'Labels', 'Repos', 'Workflows', 'Budget', 'Notifications', 'Health', 'Sensing', 'Logging', 'Features', 'Knowledge', 'Inbox', 'Project Observability', 'Meetings', 'Meeting attendee', 'Advisory', 'Work Source', 'Hub', 'Forge App', 'Model Gateways', GOVERNOR_BOB_TAB, 'Variables', 'Security', 'Compliance'];
     const PIPELINE_STAGES = ['resolve-beads', 'track-prs', 'stale-check', 'repo-scan', 'coverage-gate', 'prompt-compose', 'budget-check', 'api-collect', 'final-compose'];
     const PIPELINE_STAGE_TIPS = {
       'resolve-beads': 'Fetch and inject knowledge beads (facts, patterns, gotchas) relevant to the agent\'s current task context.',
@@ -58906,6 +59434,7 @@ function burnAreaChart() {
       { tab: 'Labels', section: 'Labels', label: 'Contributor nudge', key: 'governor.labels.stage.contributor_nudge.enabled', text: 'contributor nudge returned-to-contributor red ci fix-pr relay interrupt renudge presence window governor.labels.stage.contributor_nudge.enabled governor.labels.stage.contributor_nudge.renudge_interval auto_merge.nudge_repeat_after governor.labels.stage.contributor_nudge.ci_failure_cooldown governor.labels.stage.presence_window' },
       { tab: 'Labels', section: 'Labels', label: 'Adopt red contributor PRs', key: 'governor.labels.stage.adoption.enabled', text: 'adoption adopted-by-hive stage 074 red contributor pr grace online offline supersede takeover in place after offline unregistered heartbeat governor.labels.stage.adoption.enabled governor.labels.stage.contributor_grace_online governor.labels.stage.contributor_grace_offline governor.labels.stage.adoption.after_offline governor.labels.stage.adoption.after_unregistered governor.labels.stage.adoption.in_place governor.labels.stage.adoption.strict_attribution strict attribution governor.labels.stage.adoption.auto_merge auto merge adopted head hive authority governor.labels.stage.adoption.supersede.close_first close first superseded reopen copy failed governor.labels.stage.adoption.close_superseded close superseded on adopt on merge clanker authored opt-in label governor.labels.stage.adoption.offline_grace offline grace rebase failed twice fixer resolving conflicts governor.labels.stage.adoption.rebase_attempt_timeout rebase attempt timeout' },
       { tab: 'Inbox', section: 'Inbox', label: 'Inbox routing', key: 'inbox.spek.repo', lazy: true, text: 'inbox voice recordings plaud wispr default rfc repository spek dibs url auto-routing rules inbox.spek.repo inbox.dibs.url inbox.rules transcription transcribe whisper gemini deepgram auto provider progress speech to text diarize consent budget minutes inbox.transcription.enabled inbox.transcription.mode inbox.transcription.provider inbox.transcription.model inbox.transcription.api_key_env inbox.transcription.sources[] inbox.transcription.diarize inbox.transcription.language inbox.transcription.max_duration_minutes inbox.transcription.max_bytes inbox.transcription.monthly_budget_minutes inbox.transcription.daily_max_items inbox.transcription.whisper_model inbox.transcription.whisper_threads inbox.transcription.gemini_model whisper.cpp model threads cpu inbox.transcription.consent_acknowledged' },
+      { tab: 'Meeting attendee', section: 'Meeting attendee', label: 'Meeting attendee persona', key: 'meetings.persona.preset', lazy: true, text: 'meeting attendee persona betty bee preset name display name aliases pronouns voice type language accent kokoro tts voice id humor intro sample unprompted answers caps answer wait confidence voice when addressed email invite calendar address allowlist approval mail-in files meetings.persona meetings.persona.preset meetings.persona.voice meetings.persona.language meetings.persona.unprompted meetings.voice_on_address' },
       { tab: 'Meetings', section: 'Meetings', label: 'Meetings (Quorum)', key: 'meetings.enabled', lazy: true, text: 'meetings quorum vexa discord live meeting notes research google meet teams zoom tenant key bot token meetings.enabled meetings.vexa.url meetings.vexa.api_key_file meetings.discord.token_file' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
@@ -60004,6 +60533,7 @@ function burnAreaChart() {
         if (tabId === 'Features') loadLinearAgentStatus();
         if (tabId === 'Inbox') loadInboxSettingsInline();
         if (tabId === 'Meetings') loadMeetingsSettingsInline();
+        if (tabId === 'Meeting attendee') loadMeetingAttendeeInline();
         // The same tab carries the upstream-watch editor and divergence view
         // (#9969, #11211); it loads from its own endpoint.
         if (tabId === 'Features') loadUpstreamWatch();
@@ -60218,6 +60748,7 @@ function burnAreaChart() {
         case 'Knowledge': return renderGovKnowledgeSharing();
         case 'Inbox': return renderGovInbox();
         case 'Meetings': return renderGovMeetings();
+        case 'Meeting attendee': return renderGovMeetingAttendee();
         case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
         case 'Work Source': return renderGovWorkSource(d.work_source || {});

@@ -2,8 +2,9 @@
 
 Besides the recordings that [voice and meeting connectors](inbox-voice-sources.md)
 bring in, the owner can add material to the Inbox directly: drop a file onto
-the Inbox, choose it with **＋ Add**, or paste it with Ctrl/Cmd+V while the
-Inbox has focus. Each file becomes an Inbox item like any other: it gets a
+the Inbox, choose it with **＋ Add**, paste it with Ctrl/Cmd+V while the
+Inbox has focus, or add a link (type it into ＋ Add, or paste a URL onto the
+Inbox). Each file becomes an Inbox item like any other: it gets a
 Knowledge fact, the 🔗 Share ▾ menu (RFC, Knowledge, DIBS) and the route
 history.
 
@@ -18,7 +19,8 @@ the browser's MIME type alone: it checks magic bytes first (an executable,
 archive, PDF, Office or media file renamed to `.txt` is refused), then that
 the file is UTF-8 text, then that it parses as the format its extension asks
 for. A file without an extension is read as JSON when it parses as JSON and
-as plain text otherwise.
+as plain text otherwise. A zip archive is refused unless it is named `.docx`
+and opens as a Word document.
 
 | Type | Extensions | What the item shows |
 | --- | --- | --- |
@@ -28,6 +30,9 @@ as plain text otherwise.
 | JSON Lines | `.jsonl`, `.ndjson` | the record count and the first 20 records in a fenced block; every line is validated |
 | YAML | `.yaml`, `.yml` | a one-line summary and the document in a fenced `yaml` block (parsed with `gopkg.in/yaml.v3`) |
 | CSV / TSV | `.csv`, `.tsv`, `.tab` | row and column counts and a markdown table of the first 20 rows (20 columns at most) |
+| Word | `.docx` | headings (Title and Heading 1 to 6 styles) as `#`, paragraphs, bulleted and numbered lists (by level) as `-` items, and tables as markdown tables; deleted text and field codes are left out; the title comes from the document properties, else the first heading. Read in Go with `archive/zip` and `encoding/xml` (standard library): at most 1000 zip entries, 200 MiB declared uncompressed in all, 50 MiB per part (checked while inflating, not only from the header) and a 100:1 compression ratio per entry; a part with a DOCTYPE or an entity the decoder does not know is refused (XXE), and nothing is fetched |
+| PDF | `.pdf` (or a file without an extension that starts with `%PDF-`) | one `## Page N` section per page with text, a page-count summary, and the document title from its Info dictionary. Parsed **out of process** in the `hive-pdftext` sandbox with `github.com/ledongthuc/pdf` (BSD-3-Clause, pure Go): at most 200 pages and 1 MiB of text; a PDF without a text layer is refused with "no text layer (scanned PDF); OCR not supported yet" |
+| HTML | `.html`, `.htm`, and web pages behind a link | readable markdown: the `<title>` names the item; the `<article>` or `<main>` (else `<body>`) is kept with headings, paragraphs, lists, quotes, code, tables, link targets and image alt text; scripts, styles, forms, navigation, footers, asides and hidden elements are dropped. Parsed with `golang.org/x/net/html` (BSD-3-Clause); nothing is executed and nothing the page references is loaded |
 
 Text is validated as UTF-8 (a UTF-8 BOM is dropped; UTF-16 is refused with
 "save the file as UTF-8") and newlines are normalised to `\n`. The fenced
@@ -38,7 +43,6 @@ Not supported (the item is refused with a message saying what to do):
 
 | File | Message |
 | --- | --- |
-| PDF, Word `.docx` | not supported yet |
 | Legacy Word `.doc` (and `.xls`, `.ppt`) | save it as .docx or PDF and try again |
 | RTF, OpenDocument `.odt` | save it as .docx, PDF or plain text |
 | PowerPoint `.pptx` | export the slides as PDF |
@@ -67,6 +71,63 @@ Not supported (the item is refused with a message saying what to do):
 Every file, accepted or refused, is audited as `inbox_upload` with the user,
 the item id, the detected kind, the size and the outcome or refusal code; the
 file's content and name are not written to the audit log.
+
+## PDF sandbox
+
+PDF parsers have a long history of bugs, so the hive never parses an
+uploaded PDF in its own process. It runs `/usr/local/bin/hive-pdftext` the
+same way it runs the whisper transcription sandbox:
+
+- as the separate `hive-transcribe` uid (no home, shell or supplementary
+  groups), reached through `su-exec`, with an environment of only `PATH`
+  and `LC_ALL`;
+- under `prlimit` (1 GiB address space, CPU seconds = timeout + 10, file
+  size = the PDF's size, 32 open files, no core dumps) and `nice -n 10`;
+- in an empty network namespace (`unshare --user --net`) where the kernel
+  allows unprivileged user namespaces;
+- with the PDF on stdin, copied into a private 0700 work dir (file 0600)
+  that is removed on exit, and only JSON on stdout (capped);
+- with a 60-second wall clock, after which the whole process group is
+  killed.
+
+`HIVE_PDF_SANDBOX`, `HIVE_PDF_RUN_AS` and `HIVE_PDF_MEMORY_MB` override the
+path, the uid and the memory cap. When the sandbox is not in the image, PDF
+uploads are refused with "PDF reading is not available on this hive".
+
+## Links
+
+A link is fetched by the hive itself, once, when it is added, and its body
+goes through the same type pipeline as a dropped file: an HTML page becomes
+text, a link to a `.json`, `.csv` or `.md` file becomes that kind (the file
+name in the URL or `Content-Disposition`, else the response `Content-Type`,
+picks the format, and the content must still pass the sniff and the parse).
+YouTube and other streaming pages are read as HTML pages, never as video;
+links to audio or video files are refused for now.
+
+The item is titled by the page `<title>`, else the file name, else the URL,
+and shows **link · host**. The URL is kept as the item's provenance (and the
+fact's `source_url`) only.
+
+Fetch rules (SSRF protection):
+
+- `http` and `https` only; a link with a user name or password is refused.
+- The hive resolves the host itself and connects to the address it checked;
+  if **any** answer is blocked the link is refused, so a second
+  (rebinding) answer is never used. Blocked: loopback, RFC 1918 private,
+  link-local (including the cloud metadata address `169.254.169.254`),
+  CGNAT `100.64.0.0/10`, multicast, reserved and documentation ranges,
+  `0.0.0.0/8`, IPv6 unspecified, loopback, unique-local `fc00::/7`
+  (including `fd00:ec2::254`), link-local and site-local, Teredo, and IPv4
+  addresses embedded in IPv4-mapped, NAT64 and 6to4 addresses; host names
+  `localhost`, `*.localhost`, `*.local`, `*.internal` and `metadata`.
+- Every redirect hop is checked the same way, at most 3 redirects, and a
+  redirect never carries `Authorization` or `Cookie`.
+- The body is streamed through a limit (`inbox.uploads.max_file_bytes`);
+  connect 10 s, TLS 10 s, response headers 15 s, whole fetch 60 s.
+- Requests send `User-Agent: hive-inbox/<version>`.
+- `HTTP(S)_PROXY` from the environment is not used (a proxy would resolve
+  the name again). When `network.upstream_proxy` matches the host, the hive
+  asks the proxy to `CONNECT` to the checked IP and port.
 
 ## Limits
 
@@ -111,6 +172,11 @@ and its share history stay. Text documents are kept unless
 
 ## API
 
+`POST /api/inbox/uploads/url` (owner or read-write) takes `{"url": "..."}`
+and answers like a single-file upload (201, or 400 `link_refused`, 413, 415,
+422, 502 `fetch_failed`, 507); refusals and additions are audited as
+`inbox_upload` with `origin=link` and the host, never the full URL.
+
 `POST /api/inbox/uploads` (owner or read-write) takes `multipart/form-data`
 with one or more `file` fields. One file answers `201` with
 `{results: [{filename, ok: true, source: "upload", item_id, title, kind}]}`,
@@ -123,4 +189,4 @@ files answer `200` with one result per file unless all of them failed. See
 `GET /api/inbox` reports the limits and current usage under
 `settings.uploads` (`enabled`, `max_file_bytes`, `max_files_per_drop`,
 `quota_bytes`, `used_bytes`, `media_retention_days`,
-`document_retention_days`, `extensions`).
+`document_retention_days`, `extensions`, `links`).

@@ -93,4 +93,8 @@ var (
 	// ErrUserSessionUploadLimit is returned by StoreUpload when the session
 	// already holds the maximum number of uploaded files.
 	ErrUserSessionUploadLimit = errors.New("too many uploaded files")
+	// ErrUserSessionInboxSymlink is returned by StoreInboxFile when .hive or
+	// .hive/inbox in the session's working directory is a symlink; nothing is
+	// written.
+	ErrUserSessionInboxSymlink = errors.New("refusing to write through a symlinked .hive/inbox directory")
 )

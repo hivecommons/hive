@@ -3,6 +3,7 @@ package betty
 import (
 	"sort"
 	"strings"
+	"unicode"
 )
 
 // Trigger is what a line asks of the persona.
@@ -56,17 +57,29 @@ var botPhrases = []string{"who's the bot", "who is the bot", "whos the bot", "wh
 // voicePhrases ask for a spoken answer.
 var voicePhrases = []string{"say it", "out loud", "aloud", "speak up", "tell us out loud"}
 
+// strictGreetings may open a line before a strict alias ("hey hive").
+var strictGreetings = map[string]bool{"hey": true, "ok": true, "okay": true}
+
 // Matcher finds addressed lines.
 type Matcher struct {
 	// names are the aliases as word lists, longest first.
 	names [][]string
-	who   []string
+	// strict marks aliases that are everyday words (an alias sharing no
+	// word with the persona's name, such as "hive"): they address her only
+	// as "hive, ..." or "hive: ...", after "hey" or "ok", or closing a
+	// question as "..., hive?".
+	strict map[string]bool
+	who    []string
 }
 
 // NewMatcher builds a matcher for a persona's name and aliases.
 func NewMatcher(name string, aliases []string) *Matcher {
-	m := &Matcher{}
+	m := &Matcher{strict: map[string]bool{}}
 	seen := map[string]bool{}
+	nameWords := map[string]bool{}
+	for _, w := range normalize(words(name)) {
+		nameWords[w] = true
+	}
 	for _, a := range append([]string{name}, aliases...) {
 		w := normalize(words(a))
 		key := strings.Join(w, " ")
@@ -75,6 +88,13 @@ func NewMatcher(name string, aliases []string) *Matcher {
 		}
 		seen[key] = true
 		m.names = append(m.names, w)
+		shared := false
+		for _, x := range w {
+			shared = shared || nameWords[x]
+		}
+		if !shared {
+			m.strict[key] = true
+		}
 	}
 	sort.SliceStable(m.names, func(i, j int) bool { return len(m.names[i]) > len(m.names[j]) })
 	if w := normalize(words(name)); len(w) > 0 {
@@ -111,27 +131,77 @@ func hasSuffix(w, s []string) bool {
 	return len(w) >= len(s) && hasPrefix(w[len(w)-len(s):], s)
 }
 
-// separatedAfter reports whether raw has punctuation right after the n-th
-// word (the name), as in "Betty, ...".
-func separatedAfter(raw string, n int) bool {
-	low := strings.ToLower(raw)
-	seen := 0
-	inWord := false
-	for i, r := range low {
-		isWord := r == '\'' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r > 127
+// spans are the byte ranges of raw's words, as words() splits them.
+func spans(raw string) [][2]int {
+	var out [][2]int
+	start := -1
+	for i, r := range raw {
+		isWord := unicode.IsLetter(r) || unicode.IsDigit(r) || r == '\''
 		switch {
-		case isWord && !inWord:
-			inWord = true
-		case !isWord && inWord:
-			inWord = false
-			seen++
-			if seen == n {
-				rest := strings.TrimLeft(low[i:], " ")
-				return rest != "" && strings.ContainsAny(rest[:1], ",:;!-.?")
-			}
+		case isWord && start < 0:
+			start = i
+		case !isWord && start >= 0:
+			out = append(out, [2]int{start, i})
+			start = -1
 		}
 	}
-	return false
+	if start >= 0 {
+		out = append(out, [2]int{start, len(raw)})
+	}
+	return out
+}
+
+// separatedAfter reports whether raw has one of marks right after the
+// n-th word (the name), as in "Betty, ...".
+func separatedAfter(raw string, n int, marks string) bool {
+	sp := spans(raw)
+	if n < 1 || n > len(sp) {
+		return false
+	}
+	rest := strings.TrimLeft(raw[sp[n-1][1]:], " ")
+	return rest != "" && strings.ContainsAny(rest[:1], marks)
+}
+
+// commaBefore reports whether the word at index i (counted from the
+// start) follows a comma, as in "what now, hive?".
+func commaBefore(raw string, i int) bool {
+	sp := spans(raw)
+	if i < 1 || i >= len(sp) {
+		return false
+	}
+	return strings.HasSuffix(strings.TrimRight(raw[:sp[i][0]], " "), ",")
+}
+
+// looseMarks may follow a name that opens a line; strictMarks may follow
+// a strict alias.
+const (
+	looseMarks  = ",:;!-.?"
+	strictMarks = ",:"
+)
+
+// matchStrict applies the strict alias rules and returns the rest of the
+// line when the alias addresses her.
+func (m *Matcher) matchStrict(raw string, w, name []string, question bool) (string, bool) {
+	start := 0
+	if strictGreetings[w[0]] && hasPrefix(w[1:], name) {
+		start = 1
+	}
+	if hasPrefix(w[start:], name) {
+		after := w[start+len(name):]
+		switch {
+		case start == 1:
+			return strings.Join(after, " "), true
+		case len(after) == 0:
+			// The alias alone counts only as a question: "Hive?".
+			return "", question
+		case separatedAfter(raw, len(name), strictMarks):
+			return strings.Join(after, " "), true
+		}
+	}
+	if question && len(w) > len(name) && hasSuffix(w, name) && commaBefore(raw, len(w)-len(name)) {
+		return strings.Join(w[:len(w)-len(name)], " "), true
+	}
+	return "", false
 }
 
 // Match reads one line. spoken marks a speech segment (as opposed to chat).
@@ -147,7 +217,15 @@ func (m *Matcher) Match(raw string, spoken bool) Trigger {
 			t.Intro = true
 		}
 	}
+	question := strings.HasSuffix(strings.TrimSpace(raw), "?")
 	for _, name := range m.names {
+		if m.strict[strings.Join(name, " ")] {
+			if rest, ok := m.matchStrict(raw, w, name, question); ok {
+				t.Addressed, t.Rest = true, rest
+				break
+			}
+			continue
+		}
 		start := 0
 		if greetings[w[0]] && hasPrefix(w[1:], name) {
 			start = 1
@@ -155,7 +233,7 @@ func (m *Matcher) Match(raw string, spoken bool) Trigger {
 		if hasPrefix(w[start:], name) {
 			after := w[start+len(name):]
 			ok := start == 1 || len(after) == 0 || requestStarters[after[0]] || len(name) > 1 ||
-				separatedAfter(raw, start+len(name))
+				separatedAfter(raw, start+len(name), looseMarks)
 			if ok {
 				t.Addressed, t.Rest = true, strings.Join(after, " ")
 				break

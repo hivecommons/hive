@@ -64,8 +64,13 @@ type UploadSource struct {
 	// FactWritten runs after a fact was written (the hive reindexes the
 	// vault so knowledge search sees it at once).
 	FactWritten func(dir string)
-	Logger      *slog.Logger
-	Now         func() time.Time
+	// Fetcher fetches links; nil refuses links.
+	Fetcher *LinkFetcher
+	// PDF runs the hive-pdftext sandbox; nil reads HIVE_PDF_* on first use.
+	PDF    *PDFRuntime
+	pdfMu  sync.Mutex
+	Logger *slog.Logger
+	Now    func() time.Time
 
 	factMu sync.Mutex
 }
@@ -215,7 +220,7 @@ func (u *UploadSource) Add(ctx context.Context, in UploadInput) (UploadMeta, err
 	if uerr != nil {
 		return UploadMeta{}, uerr
 	}
-	ex, uerr := ExtractUpload(ctx, kind, in.Data)
+	ex, uerr := u.extract(ctx, kind, in.Data)
 	if uerr != nil {
 		return UploadMeta{}, uerr
 	}
@@ -237,6 +242,97 @@ func (u *UploadSource) Add(ctx context.Context, in UploadInput) (UploadMeta, err
 		AddedAt:  u.now(),
 	}
 	return u.store(m, in.Data, ex.Markdown)
+}
+
+// extract runs the type's extractor: PDFs in the sandbox, everything else
+// in-process.
+func (u *UploadSource) extract(ctx context.Context, kind string, data []byte) (Extracted, *UploadError) {
+	if kind != UploadKindPDF {
+		return ExtractUpload(ctx, kind, data)
+	}
+	res, uerr := u.pdfRuntime().Run(ctx, data)
+	if uerr != nil {
+		return Extracted{}, uerr
+	}
+	ex, uerr := pdfMarkdown(res)
+	if uerr != nil {
+		return Extracted{}, uerr
+	}
+	ex.Markdown = capMarkdown(ex.Markdown)
+	return ex, nil
+}
+
+func (u *UploadSource) pdfRuntime() *PDFRuntime {
+	u.pdfMu.Lock()
+	defer u.pdfMu.Unlock()
+	if u.PDF == nil {
+		u.PDF = DefaultPDFRuntime(os.Getenv)
+	}
+	return u.PDF
+}
+
+// LinkInput is one dropped or pasted URL.
+type LinkInput struct {
+	URL     string
+	AddedBy string
+}
+
+// AddLink fetches a URL through the SSRF-guarded fetcher and runs the body
+// through the same type pipeline as a dropped file: an HTML page becomes
+// text, a linked JSON or CSV file becomes that kind. The URL is kept as the
+// item's provenance only.
+func (u *UploadSource) AddLink(ctx context.Context, in LinkInput) (UploadMeta, error) {
+	if u.Fetcher == nil {
+		return UploadMeta{}, uploadErr(UploadErrLinkRefused, "links cannot be added on this hive")
+	}
+	src, err := ValidateLinkURL(in.URL)
+	if err != nil {
+		return UploadMeta{}, uploadErr(UploadErrLinkRefused, "%s", err.Error())
+	}
+	lim := u.limits()
+	fl, err := u.Fetcher.Fetch(ctx, src.String(), lim.EffectiveMaxFileBytes())
+	if err != nil {
+		var ue *UploadError
+		switch {
+		case errors.As(err, &ue):
+			return UploadMeta{}, ue
+		case errors.Is(err, ErrLinkRefused):
+			return UploadMeta{}, uploadErr(UploadErrLinkRefused, "%s", err.Error())
+		}
+		return UploadMeta{}, uploadErr(UploadErrFetch, "%s", err.Error())
+	}
+	if strings.HasPrefix(fl.ContentType, "audio/") || strings.HasPrefix(fl.ContentType, "video/") {
+		return UploadMeta{}, uploadErr(UploadErrUnsupported, "audio and video links are not supported yet: download the file and drop it instead")
+	}
+	name := linkPipelineName(fl)
+	kind, uerr := SniffUpload(name, fl.Body)
+	if uerr != nil {
+		return UploadMeta{}, uerr
+	}
+	ex, uerr := u.extract(ctx, kind, fl.Body)
+	if uerr != nil {
+		return UploadMeta{}, uerr
+	}
+	id, err := u.Store.NewID()
+	if err != nil {
+		return UploadMeta{}, err
+	}
+	sum := sha256.Sum256(fl.Body)
+	m := UploadMeta{
+		ID:       id,
+		Kind:     kind,
+		Origin:   UploadOriginLink,
+		Filename: fl.Filename,
+		URL:      src.String(),
+		Host:     strings.ToLower(src.Hostname()),
+		Title:    firstNonEmpty(ex.Title, fl.Filename, src.String()),
+		Summary:  ex.Summary,
+		Size:     int64(len(fl.Body)),
+		SHA256:   hex.EncodeToString(sum[:]),
+		AddedBy:  firstNonEmpty(in.AddedBy, "local"),
+		AddedAt:  u.now(),
+	}
+	return u.store(m, fl.Body, ex.Markdown)
 }
 
 // store persists an upload under quota and writes its fact.
@@ -333,6 +429,8 @@ type UploadSettings struct {
 	MediaRetentionDays    int      `json:"media_retention_days"`
 	DocumentRetentionDays int      `json:"document_retention_days"`
 	Extensions            []string `json:"extensions"`
+	// Links reports that URLs can be added (the hive has a link fetcher).
+	Links bool `json:"links"`
 }
 
 // Settings returns the effective limits and current usage.
@@ -348,6 +446,7 @@ func (u *UploadSource) Settings() UploadSettings {
 		MediaRetentionDays:    lim.EffectiveMediaRetentionDays(),
 		DocumentRetentionDays: lim.EffectiveDocumentRetentionDays(),
 		Extensions:            UploadSupportedExtensions(),
+		Links:                 u.Fetcher != nil,
 	}
 }
 

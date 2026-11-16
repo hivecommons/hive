@@ -89,6 +89,7 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_HUB_LEGACY_COOKIE_DOMAIN` | No | none | Optional transition-only hub SSO cookie domain to expire alongside the active cookie domain while accepting any carried `hive_hub_user` cookie value during a host migration. Writes still target the domain derived from `HIVE_HUB_PUBLIC_URL`; unset disables the extra legacy-domain cleanup. |
 | `HIVE_HUB_SECRET` | Required for spokes registered to a protected hub; optional for a standalone hub with `/data/saas/hub-secret.key` | `/data/saas/hub-secret.key` on the hub when present; no fallback for spoke heartbeat auth | Bearer secret for spoke heartbeats and hub/spoke SaaS APIs. Self-hosted (`byo-`) hives registered through self-service never receive it: they hold only their own `HIVE_HEARTBEAT_KEY`, and the hub never tries `HIVE_HUB_SECRET` or anything derived from it for a `byo-` ID. |
 | `HIVE_HUB_SELFSERVICE_REGISTRATION` | No | off | Enables the self-service registration API (`/api/hub/selfservice/*`) that lets a signed-in user register a hive they run themselves under the reserved `byo-<login>--<name>` ID namespace, after proving `permissions.admin` on every listed repo with their own GitHub token ([#18060](https://github.com/hivecommons/hive/issues/18060)). Accepts `1/true/yes/on`. When off, every route but `GET /api/hub/selfservice/status` answers `404` and the status reports `enabled: false`. Read per request; no restart needed. |
+| `HIVE_HUB_MAIL_TOKEN` | Only on a hub that routes mail from `hive-mx` | none | Bearer token `hive-mx` presents on `GET /api/mail/hosts` and `POST /api/mail/inbound` ([#18395](https://github.com/hivecommons/hive/issues/18395)); the same value as the `hive-mx` Secret. Unset: both endpoints answer `404`. Read per request. Secret. |
 | `HIVE_HUB_SELFSERVICE_MAX_PER_USER` | No | `5` | Maximum self-service hives one user may have registered at once; the next registration answers `429` until one is removed. |
 | `HIVE_HUB_SELFSERVICE_EXPIRY` | No | `24h` | How long a self-service hive may go without an accepted heartbeat before the expiry sweep revokes its key and removes its registry entry (counted from the last accepted heartbeat, or from registration while there has been none). Reported by `GET /api/hub/selfservice/status` as `expiry`. Go duration syntax. |
 | `HIVE_HUB_SELFSERVICE_SWEEP_INTERVAL` | No | `10m` | How often the self-service expiry sweep (`src/pkg/hub/selfservice_expiry.go`) runs. Each removal writes `audit: selfservice_hive_expired` (see [audit-log.md](audit-log.md)). Read at startup; restart after changing. Go duration syntax. |
@@ -139,6 +140,9 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_INBOX_UPLOADS_MAX_FILES_PER_DROP` | No | `20` | Overrides `inbox.uploads.max_files_per_drop`: files in one drop or one upload request. |
 | `HIVE_INBOX_UPLOADS_DOCUMENT_RETENTION_DAYS` | No | `0` | Overrides `inbox.uploads.document_retention_days`: days after which a text document's original is deleted (its extracted text and item stay); unset or `0` keeps originals. |
 | `HIVE_INBOX_UPLOADS_MEDIA_RETENTION_DAYS` | No | `5` | Overrides `inbox.uploads.media_retention_days`: days after which an audio or video upload's original is deleted. |
+| `HIVE_PDF_SANDBOX` | No | `/usr/local/bin/hive-pdftext` | The sandbox that reads PDFs dropped onto the Inbox out of process ([inbox-uploads.md](inbox-uploads.md)). |
+| `HIVE_PDF_RUN_AS` | No | `hive-transcribe` | The uid the PDF sandbox runs as through su-exec; `self` runs it as the hive's own uid (development only). |
+| `HIVE_PDF_MEMORY_MB` | No | `1024` | Address-space limit (prlimit `--as`) of the PDF sandbox, in MiB. |
 | `HIVE_INBOX_TRANSCRIPTION_DAILY_MAX_ITEMS` | No | `20` | Overrides `inbox.transcription.daily_max_items`: transcription runs per UTC day. |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GOOGLE_GENAI_API_KEY` | No | none | The hive's own Gemini API key, read in this order. Gemini model discovery already uses it; Inbox transcription with `inbox.transcription.provider: gemini` (or `auto` when whisper is unavailable) sends recordings to the Gemini API with it, in the `x-goog-api-key` header. Never stored in `hive.yaml`, never shown ([inbox-transcription.md](inbox-transcription.md)). |
 | `HIVE_WHISPER_MODEL_DIR` | No | `/data/models/whisper` | Where the built-in whisper provider keeps its ggml model (`ggml-<model>.bin`, mode 0644). Air-gapped hives pre-seed the file here; it is checked against its pinned size and SHA-256 before use ([inbox-transcription.md](inbox-transcription.md)). |
@@ -257,7 +261,7 @@ new value at the same time.
 | `HIVE_DASHBOARD_UPGRADE_HELPER` | No | config `deployment.upgrade_helper` fallback, then `/usr/local/libexec/hive-dashboard-upgrade-helper` | Absolute path to the standalone upgrade helper executable the dashboard invokes. Must be a regular, executable file at an absolute path or the upgrade button stays hidden. See [dashboard-standalone-upgrades.md](dashboard-standalone-upgrades.md). |
 | `HIVE_GIT_BOT_EMAIL_DOMAIN` | No | `hive.kubestellar.io` | Domain of the bracket-free bot sign-off address `<slug>@<domain>`. With `github.app_signed_commits` on, the PR-request watcher re-addresses any `<slug>[bot]@users.noreply.github.com` `Signed-off-by` trailer it copies into the GitHub-signed commit to this form, because probot-dco rejects the bracketed local-part as a malformed email ([#6251](https://github.com/hivecommons/hive/issues/6251)); on v4 `src/deploy/entrypoint.sh` mints the agents' pane identity under the same domain ([#6276](https://github.com/hivecommons/hive/pull/6276)). A plain hostname only (`[A-Za-z0-9.-]`); anything else falls back to the default. |
 | `HIVE_TMUX_HISTORY_LIMIT` | No | `50000` | tmux scrollback depth applied when an agent session is created (positive integer; the authoritative knob for terminal scrollback and full-log capture). |
-| `HIVE_SESSIONS_ENABLED` | No | config `dashboard.sessions.enabled` (default on) | Turns the dashboard Inception (spek) sessions feature (interactive CLI terminals, `/api/sessions`) on or off; `false` hides it, overriding config. Limits: `HIVE_SESSIONS_MAX`, `HIVE_SESSIONS_MAX_PER_USER`, `HIVE_SESSIONS_IDLE_TTL_HOURS`. Workspace: `HIVE_SESSIONS_WORKSPACE_REPO` (the `org/repo` sessions open in, default `project.org/primary_repo`), `HIVE_SESSIONS_WORKSPACE_DIR` (clone root, default `/data/session-sandbox/workspace`), `HIVE_SESSIONS_GID` (the sessions-only group that shares it, default 20000); see [Sessions API](api-reference/sessions.md). |
+| `HIVE_SESSIONS_ENABLED` | No | config `dashboard.sessions.enabled` (default on) | Turns the dashboard Inception (spek) sessions feature (interactive CLI terminals, `/api/sessions`) on or off; `false` hides it, overriding config. Limits: `HIVE_SESSIONS_MAX`, `HIVE_SESSIONS_MAX_PER_USER`, `HIVE_SESSIONS_IDLE_TTL_HOURS`. Workspace: `HIVE_SESSIONS_WORKSPACE_REPO` (the `org/repo` sessions open in, default `project.org/primary_repo`), `HIVE_SESSIONS_WORKSPACE_DIR` (clone root, default `/data/session-sandbox/workspace`), `HIVE_SESSIONS_GID` (the sessions-only group that shares it, default 20000). Inbox seeds: `HIVE_SESSIONS_SEED_MAX_BYTES` (cap on one item's enveloped text in `.hive/inbox/`, default 524288); see [Sessions API](api-reference/sessions.md). |
 | `HIVE_TTYD_HISTORY_LIMIT` | No | `50000` | Defense-in-depth history-limit raise applied at browser attach time; only affects panes created after attach. |
 | `HIVE_TMUX_PANE_WIDTH` | No | `200` | Column count agent tmux sessions are created with. A detached tmux session defaults to 80 columns because no attached client supplies a size. |
 | `HIVE_KICK_LOG_DIR` | No | `/data/logs/kicks` | Root directory per-kick log archives are written under. On the persistent volume so archives survive restarts, pod rolls, and image upgrades. |
@@ -390,6 +394,9 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_TRANSCRIBE_URL` | No | none | Shared transcription service for Discord audio (passed as `QUORUM_TRANSCRIBE_URL`). Overrides `meetings.transcribe_url`. In-cluster: `http://vexa-transcription.meetings.svc.cluster.local:8000`. |
 | `HIVE_MEETINGS_TRANSCRIBE_TOKEN` | No | none | Transcription service token. Secret. Wins over the secret file. Hive passes it to Quorum as `QUORUM_TRANSCRIBE_TOKEN_FILE`; without it Discord audio is not transcribed. |
 | `HIVE_MEETINGS_TRANSCRIBE_TOKEN_FILE` | No | `/data/secrets/meetings_transcribe_token` | Keystore-sealed secret file holding the transcription service token. Overrides `meetings.transcribe_token_file`. |
+| `HIVE_MEETINGS_TTS_URL` | No | none | Text-to-speech service Quorum speaks Discord replies with (passed as `QUORUM_TTS_URL`). Overrides `meetings.tts_url`. In-cluster on hive-oke: `http://vexa-tts.meetings.svc.cluster.local:8880`. |
+| `HIVE_MEETINGS_TTS_TOKEN` | No | none | TTS service token. Secret. Wins over the secret file. Hive passes it to Quorum as `QUORUM_TTS_TOKEN_FILE`, with `QUORUM_TTS_VOICE` set to the persona's voice; without it Discord replies stay in chat. On hive-oke, copied by the operator from Secret `vexa-tts` in namespace `meetings`. |
+| `HIVE_MEETINGS_TTS_TOKEN_FILE` | No | `/data/secrets/meetings_tts_token` | Keystore-sealed secret file holding the TTS service token. Overrides `meetings.tts_token_file`. |
 | `HIVE_MEETINGS_DELIVERY` | No | `chat` | Default delivery for meeting output. Only `chat` is supported. |
 | `HIVE_MEETINGS_VOICE_ON_ADDRESS` | No | `true` | Lets hive speak when addressed by name in a meeting whose voice is enabled; otherwise it answers in chat. |
 | `HIVE_MEETINGS_BOT_NAME` | No | the persona's display name (`Betty Bee from the hive`), or `hive (notes)` with the persona off | Display name the meeting bot joins with. |
@@ -414,13 +421,13 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_PERSONA_ALIASES` | No | `betty,betty bee,hive` | Comma-separated names that address the persona at the start or end of a line. |
 | `HIVE_MEETINGS_PERSONA_PRONOUNS` | No | `she/her` | Pronouns used in the intro and self-description only. |
 | `HIVE_MEETINGS_PERSONA_LANGUAGE` | No | `en-US` | BCP-47 tag; replies use its language and regional conventions. |
-| `HIVE_MEETINGS_PERSONA_VOICE` | No | `af_heart` | TTS voice id for spoken replies (Kokoro; stored for spoken replies, not used yet). |
+| `HIVE_MEETINGS_PERSONA_VOICE` | No | `af_heart` | TTS voice id for spoken replies (a Kokoro voice id), passed to Quorum as `QUORUM_TTS_VOICE` and as `voice_id` on `meeting.join`. |
 | `HIVE_MEETINGS_PERSONA_VOICE_TYPE` | No | `female` | `female`, `male` or `bot`; descriptive only. |
 | `HIVE_MEETINGS_PERSONA_ACCENT` | No | `American` | Free text; descriptive only. |
 | `HIVE_MEETINGS_PERSONA_INTRO_TEMPLATE` | No | the preset's intro | Intro posted when someone asks the persona to introduce itself. Placeholders `{name}`, `{display_name}`, `{pronouns}`, `{leave}`, `{accent}`, `{voice_type}`, `{language}`. |
 | `HIVE_MEETINGS_PERSONA_LEAVE_PHRASES` | No | `betty leave,hive leave` | Comma-separated phrases that remove the persona from the meeting. |
 | `HIVE_MEETINGS_PERSONA_HUMOR` | No | `light` | `light` (at most one light touch, never about a person) or `off`. |
-| `HIVE_MEETINGS_PERSONA_SEARXNG_URL` | No | none | Web search service for the persona (not used yet). |
+| `HIVE_MEETINGS_PERSONA_SEARXNG_URL` | No | none | SearXNG instance the persona searches the web with (`GET /search?format=json`, 1.2 s timeout, top 3 results as untrusted data). In-cluster on hive-oke: `http://searxng.meetings.svc.cluster.local:8080`. Empty means no web search. |
 | `HIVE_MEETINGS_PERSONA_UNPROMPTED_PER_10M` | No | `2` | Unprompted (question-driven) answers per ten minutes. |
 | `HIVE_MEETINGS_PERSONA_UNPROMPTED_MIN_GAP_S` | No | `90` | Minimum seconds between two unprompted answers. |
 | `HIVE_MEETINGS_PERSONA_UNPROMPTED_PER_MEETING` | No | `12` | Unprompted answers per meeting. |
@@ -430,14 +437,36 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_PERSONA_UNPROMPTED_STALE_S` | No | `60` | Seconds after which a waiting room question is dropped. |
 | `HIVE_MEETINGS_LLM_MODE` | No | `auto` | Model Spektacular live mode reasons with: `auto` (an Anthropic key if set, else the OpenAI-compatible endpoint), `openai`, `anthropic` or `none` (rules only). |
 | `HIVE_MEETINGS_LLM_ENDPOINT` | No | `governor.litellm` endpoint | OpenAI-compatible base URL `hive meeting-llm` calls for Spek. |
-| `HIVE_MEETINGS_LLM_MODEL` | No | `governor.litellm.default_model` | Model name for that endpoint. Without an endpoint and model, Spek runs on rules only. |
+| `HIVE_MEETINGS_LLM_MODEL` | No | `governor.litellm.default_model` | Model name for that endpoint. Without an endpoint and model, Spek runs on rules only. With only an Anthropic key it is the model the persona answers with through the Anthropic Messages API (default `claude-haiku-5-5`). |
 | `HIVE_MEETINGS_LLM_API_KEY` | No | `governor.litellm` key | Key for that endpoint. Secret. Wins over the secret file. |
 | `HIVE_MEETINGS_LLM_API_KEY_FILE` | No | `/data/secrets/meetings_llm_api_key` | Keystore-sealed key file for the meetings endpoint. |
-| `HIVE_MEETINGS_ANTHROPIC_API_KEY` | No | none | Anthropic key; when set (mode `auto` or `anthropic`) Spek calls Anthropic directly. Secret; passed only into the Spek child's environment. |
+| `HIVE_MEETINGS_ANTHROPIC_API_KEY` | No | none | Anthropic key; when set (mode `auto` or `anthropic`) Spek calls Anthropic directly and the persona answers through the Anthropic Messages API. Secret; passed only into the Spek child's environment and used in-process for the persona's calls. |
 | `HIVE_MEETINGS_ANTHROPIC_API_KEY_FILE` | No | `/data/secrets/meetings_anthropic_api_key` | Keystore-sealed Anthropic key file. |
 | `HIVE_MEETINGS_ANTHROPIC_MODEL` | No | Spektacular's default | Anthropic model override (`SPEK_MEETING_MODEL`). |
 | `HIVE_MEETINGS_LLM_TIMEOUT_MS` | No | `2500` | Per-call model timeout. |
 | `HIVE_MEETINGS_LLM_MAX_IN_FLIGHT` | No | `4` | Concurrent model calls across all meetings. |
+
+### Mail receiver (`hive-mx`)
+
+`hive-mx` is the cluster's receive-only mail receiver ([#18395](https://github.com/hivecommons/hive/issues/18395)): it accepts mail only for `hive@<hive host>`, keeps calendar invites, mail-in files and proof codes, and posts them to the hub. It never sends mail, offers no AUTH and relays nothing. It reads only these variables; see [meetings.md](meetings.md#inviting-betty-by-email).
+
+| Variable | Required | Default | Purpose |
+|---|---:|---|---|
+| `HIVE_MX_HUB_URL` | Yes | none | Hub base URL hive-mx fetches the host list from (`GET /api/mail/hosts`) and posts deliveries to (`POST /api/mail/inbound`). |
+| `HIVE_MX_HUB_TOKEN_FILE` | No | `/var/run/secrets/hive-mx/token` | File holding the hub bearer token (a mounted Secret). Read on every call, so a rotated token needs no restart. |
+| `HIVE_MX_LISTEN` | No | `:2525` | SMTP listen address. The Service maps port 25 to it, so the container runs as non-root. |
+| `HIVE_MX_HEALTH_LISTEN` | No | `:8080` | `/healthz` and `/readyz` (ready once the first host list loaded). |
+| `HIVE_MX_DOMAIN` | No | `mx.hive.hivecommons.dev` | Name hive-mx greets with. |
+| `HIVE_MX_HOSTS_REFRESH_S` | No | `60` | Seconds between host list refreshes. A failed refresh keeps the last list. |
+| `HIVE_MX_MAX_MESSAGE_BYTES` | No | `2097152` | SMTP SIZE limit (2 MB). |
+| `HIVE_MX_MAX_RECIPIENTS` | No | `5` | Recipients per message. |
+| `HIVE_MX_MAX_CONNECTIONS` | No | `100` | Concurrent SMTP connections. |
+| `HIVE_MX_MAX_FILE_BYTES` | No | `2097152` | Largest decoded mail-in attachment. |
+| `HIVE_MX_MAX_FILES` | No | `10` | Mail-in attachments kept per message. |
+| `HIVE_MX_IP_MESSAGES_PER_HOUR` | No | `60` | Messages per remote IP per hour (burst of a quarter of it). |
+| `HIVE_MX_DOMAIN_MESSAGES_PER_HOUR` | No | `120` | Messages per sender (MAIL FROM) organizational domain per hour. |
+| `HIVE_MX_TLS_CERT` | No | none | PEM certificate file; with `HIVE_MX_TLS_KEY` it turns on STARTTLS. Re-read when the file changes. Without it hive-mx accepts plain SMTP only. |
+| `HIVE_MX_TLS_KEY` | No | none | PEM key for `HIVE_MX_TLS_CERT`. |
 
 ## Backend launch controls
 

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/inbox"
@@ -24,6 +25,7 @@ const (
 // registerInboxUploadRoutes adds the drag-and-drop ingest routes.
 func (s *Server) registerInboxUploadRoutes() {
 	s.mux.HandleFunc("POST /api/inbox/uploads", s.handleInboxUpload)
+	s.mux.HandleFunc("POST /api/inbox/uploads/url", s.handleInboxUploadURL)
 }
 
 // InboxUploadResult is one file of POST /api/inbox/uploads.
@@ -58,8 +60,10 @@ func inboxUploadStatus(code string) int {
 		return http.StatusUnprocessableEntity
 	case inbox.UploadErrQuota:
 		return http.StatusInsufficientStorage
-	case inbox.UploadErrEmpty, inbox.UploadErrTooMany:
+	case inbox.UploadErrEmpty, inbox.UploadErrTooMany, inbox.UploadErrLinkRefused:
 		return http.StatusBadRequest
+	case inbox.UploadErrFetch:
+		return http.StatusBadGateway
 	}
 	return http.StatusInternalServerError
 }
@@ -183,4 +187,55 @@ func (s *Server) handleInboxUpload(w http.ResponseWriter, r *http.Request) {
 func (s *Server) inboxUploadRefused(r *http.Request, name string, size int64, code, msg string) InboxUploadResult {
 	s.auditFromRequest(r, "inbox_upload", auditDetail("source", inbox.UploadType, "bytes", strconv.FormatInt(size, 10), "outcome", "refused", "code", code), "")
 	return InboxUploadResult{Filename: name, Code: code, Error: msg}
+}
+
+type inboxUploadURLRequest struct {
+	URL string `json:"url"`
+}
+
+// handleInboxUploadURL (owner or read-write) adds a link: the hive fetches it
+// with the SSRF guard (http/https only, no credentials, its own DNS lookup
+// with private, loopback, link-local, CGNAT, multicast, ULA and metadata
+// ranges refused, every redirect re-checked, at most 3, size and time
+// capped) and runs the body through the same type pipeline as a dropped
+// file. 201 with one result, or 400 link_refused, 413, 415, 422, 502
+// fetch_failed, 507. Audited as inbox_upload with origin=link and the host.
+func (s *Server) handleInboxUploadURL(w http.ResponseWriter, r *http.Request) {
+	if !requireInboxAddRole(w, r) {
+		return
+	}
+	svc, ok := s.inboxService(w)
+	if !ok {
+		return
+	}
+	if svc.Uploads() == nil {
+		jsonError(w, inbox.ErrUploadsDisabled.Error(), http.StatusNotFound)
+		return
+	}
+	var req inboxUploadURLRequest
+	if err := decodeBody(r, &req); err != nil || strings.TrimSpace(req.URL) == "" {
+		jsonError(w, "url is required", http.StatusBadRequest)
+		return
+	}
+	host := ""
+	if u, err := inbox.ValidateLinkURL(req.URL); err == nil {
+		host = u.Hostname()
+	}
+	ctx, cancel := context.WithTimeout(r.Context(), inboxUploadTimeout)
+	defer cancel()
+	it, err := svc.AddLink(ctx, inbox.LinkInput{URL: req.URL, AddedBy: requestUser(r)})
+	if err != nil {
+		code, msg := inbox.UploadErrInternal, "adding the link failed"
+		var ue *inbox.UploadError
+		if errors.As(err, &ue) {
+			code, msg = ue.Code, ue.Message
+		} else if s.logger != nil {
+			s.logger.Warn("inbox: link failed", "error", err)
+		}
+		s.auditFromRequest(r, "inbox_upload", auditDetail("source", inbox.UploadType, "origin", inbox.UploadOriginLink, "host", host, "outcome", "refused", "code", code), "")
+		jsonStatusResponse(w, inboxUploadStatus(code), InboxUploadResponse{Results: []InboxUploadResult{{Filename: host, Code: code, Error: msg}}})
+		return
+	}
+	s.auditFromRequest(r, "inbox_upload", auditDetail("source", it.Source, "item", it.ID, "origin", inbox.UploadOriginLink, "host", host, "kind", it.UploadKind, "outcome", "added"), "")
+	jsonStatusResponse(w, http.StatusCreated, InboxUploadResponse{Results: []InboxUploadResult{{Filename: host, OK: true, Source: it.Source, ItemID: it.ID, Title: it.Title, Kind: it.UploadKind}}})
 }

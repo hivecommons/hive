@@ -23,7 +23,8 @@ import (
 // call time so a hosted hive's operator can turn meetings on from the
 // deployment without editing hive.yaml. Precedence is env, then hive.yaml,
 // then the default. Secrets (the Vexa tenant key, the optional Discord bot
-// token and the transcription service token) are never stored in hive.yaml:
+// token, the transcription service token and the TTS token) are never
+// stored in hive.yaml:
 // they live in keystore-sealed secret files under /data/secrets, or arrive
 // through an environment variable.
 
@@ -87,6 +88,10 @@ const (
 	// that holds the bearer token for the shared transcription service
 	// Discord audio is posted to (QUORUM_TRANSCRIBE_TOKEN_FILE).
 	DefaultMeetingsTranscribeTokenFile = WritableSecretsDir + "/meetings_transcribe_token"
+	// DefaultMeetingsTTSTokenFile is the keystore-sealed secret file that
+	// holds the bearer token for the text-to-speech service Quorum speaks
+	// Discord replies with (QUORUM_TTS_TOKEN_FILE).
+	DefaultMeetingsTTSTokenFile = WritableSecretsDir + "/meetings_tts_token"
 
 	// MeetingsDeliveryChat posts meeting output in the meeting chat.
 	MeetingsDeliveryChat = "chat"
@@ -113,6 +118,9 @@ const (
 	MeetingsTranscribeURLEnv       = "HIVE_MEETINGS_TRANSCRIBE_URL"
 	MeetingsTranscribeTokenEnv     = "HIVE_MEETINGS_TRANSCRIBE_TOKEN"
 	MeetingsTranscribeTokenFileEnv = "HIVE_MEETINGS_TRANSCRIBE_TOKEN_FILE"
+	MeetingsTTSURLEnv              = "HIVE_MEETINGS_TTS_URL"
+	MeetingsTTSTokenEnv            = "HIVE_MEETINGS_TTS_TOKEN"
+	MeetingsTTSTokenFileEnv        = "HIVE_MEETINGS_TTS_TOKEN_FILE"
 	MeetingsDeliveryEnv            = "HIVE_MEETINGS_DELIVERY"
 	MeetingsVoiceOnAddressEnv      = "HIVE_MEETINGS_VOICE_ON_ADDRESS"
 	MeetingsBotNameEnv             = "HIVE_MEETINGS_BOT_NAME"
@@ -147,6 +155,13 @@ type MeetingsConfig struct {
 	// transcription service token (QUORUM_TRANSCRIBE_TOKEN_FILE). A path,
 	// never the token.
 	TranscribeTokenFile string `yaml:"transcribe_token_file,omitempty" json:"transcribe_token_file,omitempty"`
+	// TTSURL is the text-to-speech service Quorum speaks Discord replies
+	// with (QUORUM_TTS_URL, a Kokoro /v1/audio/speech endpoint). Empty
+	// leaves Discord without speech.
+	TTSURL string `yaml:"tts_url,omitempty" json:"tts_url,omitempty"`
+	// TTSTokenFile is the keystore-sealed secret file holding the TTS
+	// service token (QUORUM_TTS_TOKEN_FILE). A path, never the token.
+	TTSTokenFile string `yaml:"tts_token_file,omitempty" json:"tts_token_file,omitempty"`
 	// Delivery is where meeting output goes by default. Only "chat".
 	Delivery string `yaml:"delivery,omitempty" json:"delivery,omitempty"`
 	// VoiceOnAddress lets hive speak when the meeting addresses it by name
@@ -247,6 +262,10 @@ const (
 	// keystore-sealed secret files.
 	DefaultMeetingsLLMKeyFile       = WritableSecretsDir + "/meetings_llm_api_key"
 	DefaultMeetingsAnthropicKeyFile = WritableSecretsDir + "/meetings_anthropic_api_key"
+	// DefaultMeetingsPersonaAnthropicModel is the model the meeting persona
+	// answers with on the Anthropic path when meetings.llm.model is unset:
+	// a fast model, since answers must arrive within seconds.
+	DefaultMeetingsPersonaAnthropicModel = "claude-haiku-5-5"
 	// MeetingsLLMNoModelReason is what the panel shows without a model.
 	MeetingsLLMNoModelReason = "rules only, no model configured"
 )
@@ -269,8 +288,11 @@ const (
 // never log them.
 type ResolvedMeetingsLLM struct {
 	// Backend is openai (hive's meeting-llm command), anthropic or none.
-	Backend        string
-	Endpoint       string
+	Backend  string
+	Endpoint string
+	// Model is the OpenAI-compatible model; on the anthropic backend it is
+	// the model the meeting persona answers with (meetings.llm.model, else
+	// DefaultMeetingsPersonaAnthropicModel). Spek uses AnthropicModel.
 	Model          string
 	APIKey         string
 	AnthropicKey   string
@@ -318,6 +340,7 @@ func (c *Config) ResolveMeetingsLLM(ctx context.Context) ResolvedMeetingsLLM {
 		file := meetingsEnvString(MeetingsAnthropicKeyFileEnv, l.AnthropicKeyFile, DefaultMeetingsAnthropicKeyFile)
 		if key, err := meetingsSecret(ctx, MeetingsAnthropicKeyEnv, file); err == nil && key != "" {
 			r.Backend, r.AnthropicKey = MeetingsLLMModeAnthropic, key
+			r.Model = meetingsEnvString(MeetingsLLMModelEnv, l.Model, DefaultMeetingsPersonaAnthropicModel)
 			return r
 		}
 		if mode == MeetingsLLMModeAnthropic {
@@ -424,6 +447,17 @@ func (m MeetingsConfig) DiscordTokenFile() string {
 // transcription service token.
 func (m MeetingsConfig) TranscribeTokenFileOrDefault() string {
 	return meetingsEnvString(MeetingsTranscribeTokenFileEnv, m.TranscribeTokenFile, DefaultMeetingsTranscribeTokenFile)
+}
+
+// TTSTokenFileOrDefault returns the secret file path for the TTS service
+// token.
+func (m MeetingsConfig) TTSTokenFileOrDefault() string {
+	return meetingsEnvString(MeetingsTTSTokenFileEnv, m.TTSTokenFile, DefaultMeetingsTTSTokenFile)
+}
+
+// TTSURLOrEmpty returns the text-to-speech service URL.
+func (m MeetingsConfig) TTSURLOrEmpty() string {
+	return strings.TrimRight(meetingsEnvString(MeetingsTTSURLEnv, m.TTSURL, ""), "/")
 }
 
 // TranscribeURLOrEmpty returns the transcription service URL.
@@ -554,6 +588,12 @@ func (m MeetingsConfig) TranscribeToken(ctx context.Context) (string, error) {
 	return meetingsSecret(ctx, MeetingsTranscribeTokenEnv, m.TranscribeTokenFileOrDefault())
 }
 
+// TTSToken returns the optional TTS service token: HIVE_MEETINGS_TTS_TOKEN,
+// then the secret file. A secret; never log it.
+func (m MeetingsConfig) TTSToken(ctx context.Context) (string, error) {
+	return meetingsSecret(ctx, MeetingsTTSTokenEnv, m.TTSTokenFileOrDefault())
+}
+
 // WriteMeetingsSecret seals value into the secret file at path through the
 // keystore (owner-only mode). An empty value removes the file.
 func WriteMeetingsSecret(ctx context.Context, path, value string) error {
@@ -587,6 +627,11 @@ func (m MeetingsConfig) Validate() error {
 	}
 	if u := m.TranscribeURLOrEmpty(); u != "" {
 		if err := validateMeetingsURL("meetings.transcribe_url", u); err != nil {
+			return err
+		}
+	}
+	if u := m.TTSURLOrEmpty(); u != "" {
+		if err := validateMeetingsURL("meetings.tts_url", u); err != nil {
 			return err
 		}
 	}

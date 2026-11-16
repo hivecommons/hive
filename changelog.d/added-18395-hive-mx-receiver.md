@@ -1,0 +1,1 @@
+- hive-mx, a receive-only mail receiver for `hive@<hive host>`: it checks SPF, DKIM and DMARC alignment, keeps only calendar invites (with join link, platform, meeting id and passcode, Windows time zones mapped), Markdown, audio and image attachments, or a proof code, and posts them to the hub. It never sends mail.

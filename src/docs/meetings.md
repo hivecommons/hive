@@ -29,14 +29,16 @@ The feature is off until `meetings.enabled` is set.
 
 Hive attends meetings as a persona: **Betty** ("Betty Bee from the hive", she/her) by default ([#18391](https://github.com/hivecommons/hive/issues/18391)). Spek still takes the notes and asks the clarifying questions; Betty is the voice in the chat.
 
-- **Addressing her.** Start or end a line with one of her names (`meetings.persona.aliases`: "betty", "betty bee", "hive"), for example "Betty, when does the release ship?", "hey betty, any blockers on the deploy?" or "what do you think, Betty?". Common speech-to-text spellings ("Bettie", "Betty Bea") count. A sentence that merely mentions the name ("push it to the hive", "hive is slow today") does not.
+- **Addressing her.** Start or end a line with one of her names (`meetings.persona.aliases`: "betty", "betty bee", "hive"), for example "Betty, when does the release ship?", "hey betty, any blockers on the deploy?" or "what do you think, Betty?". Common speech-to-text spellings ("Bettie", "Betty Bea") count. A sentence that merely mentions the name ("push it to the hive", "hive is slow today") does not. An alias that shares no word with her name, such as "hive", is an everyday word and is stricter: it addresses her only at the start of a line followed by a comma or colon ("hive, what's the status?", "Hive: any blockers?"), after "hey" or "ok" ("hey hive what's up"), or closing a question after a comma ("what do you think, hive?").
 - **Intro.** "Betty, introduce yourself", "who are you, Betty?" or "who's the bot?" gets the intro (`meetings.persona.intro_template`), which says what she does and how to send her home.
-- **What she answers.** When addressed she answers briefly from the hive's knowledge vaults, its beads (work items) and, when `knowledge.code_maps.enabled` is on, its code maps, plus the last three minutes of the meeting. If she does not know, she says so. A request that is not a question gets one clarifying question or one or two sentences on the recent discussion.
+- **What she answers.** When addressed she answers briefly from the hive's knowledge vaults, its beads (work items), its code maps (when `knowledge.code_maps.enabled` is on) and the web (when `meetings.persona.searxng_url` is set, see [Web answers](#web-answers)), plus the last three minutes of the meeting. If she does not know, she says so. A request that is not a question gets one clarifying question or one or two sentences on the recent discussion.
+- **Voice.** She speaks only when the request was spoken (addressed in the meeting's audio) or asks for it ("say it", "out loud"). She first says a short acknowledgement at once ("Let me check on that.", rotating, in the persona's language), then the answer, at most 2 sentences and 200 characters with no links or Markdown. The answer goes through the meeting's voice rules: it is spoken only when the meeting's voice is on and `meetings.voice_on_address` is true, and falls back to chat otherwise or when speaking fails; the acknowledgement is never posted to chat and is not charged to the budget. That gate is hive's, for every platform: Quorum v0.2.0 ignores `voice: false` on Discord, so hive never calls `say` for a meeting whose voice is off. A spoken "Betty?" with no question gets one clarifying question or one or two sentences on the last three minutes.
+- **Deep dives.** When an addressed question needs research (the model sets `needs_research`, or its confidence is below `min_confidence`) and the meeting has a research path, she says "I'll dig into that and report back", starts a research item through the same pool, cap and approval as Spek's research (shown in the panel as `betty-N`, dispatched with `betty=1` in its meta), and posts exactly one follow-up in her own voice when it completes (the summary as is if restyling fails).
 - **Room questions.** Betty also answers questions people ask the room (a line ending in "?" or starting with "what", "how", "who" and the like, four words or more), but only if nobody answers within `answer_wait_s` (8 seconds), the knowledge sources had a hit, the model is at least `min_confidence` (0.75) sure, and the topic was not already answered. She never posts general commentary.
 - **Caps.** Unprompted answers are capped at `per_10m` (2 per ten minutes), at least `min_gap_s` (90 seconds) apart and `per_meeting` (12) per meeting, with one reply per question, at most `queue_depth` (3) questions waiting and none older than `stale_s` (60 seconds). Addressed requests skip these caps but still go through the chat rate limit (`meetings.chat_posts_per_minute`) and the meeting budget. Chat answers are at most 3 sentences and 300 characters.
-- **Spek.** With Betty on, Spek's spoken replies are dropped, Spek's chat posts go through Betty (posted unless she already covered the topic, so the meeting never gets two answers), and Spek's clarifying questions are reworded in Betty's voice with one quick model call (800 ms; on failure the original text is posted). Notes and research are unchanged. Lines addressed to Betty and leave phrases never count as answers to Spek's questions.
+- **Spek.** With Betty on, Spek's spoken replies are dropped, Spek's chat posts go through Betty (posted unless she already covered the topic, so the meeting never gets two answers), and Spek's clarifying questions are reworded in Betty's voice with one quick model call (800 ms; on failure or timeout the original text is posted). The rewording runs beside the meeting loop, so the transcript, notes and other replies keep flowing; Spek's later questions and chat posts wait their turn so they still appear in Spek's order. Notes and research are unchanged. Lines addressed to Betty and leave phrases never count as answers to Spek's questions.
 - **Manners.** Plain, brief language; at most one light touch of humor, never about a person and none when the conversation sounds tense. Set `meetings.persona.humor: off` to turn humor off. Meeting speech, knowledge and work items reach the model as data, never as instructions. She never claims to have done something she did not do.
-- **Model.** Betty answers with the meetings model through the same path as `hive meeting-llm` (an OpenAI-compatible endpoint, charged to the meeting's usage ledger and budget). With only an Anthropic key, or no model, she still introduces herself but says she cannot answer questions.
+- **Model.** Betty answers with the meetings model through the same path as `hive meeting-llm` (an OpenAI-compatible endpoint, charged to the meeting's usage ledger and budget). On a hive with only an Anthropic key (`HIVE_MEETINGS_ANTHROPIC_API_KEY` or `meetings.llm.anthropic_key_file`) she calls the Anthropic Messages API directly with `meetings.llm.model` (default `claude-haiku-5-5`), with the same timeouts, in-flight limit and usage ledger, so her tokens count toward the meeting's budget. With no model she still introduces herself but says she cannot answer questions.
 - **Turning her off.** `meetings.persona.enabled: false` (or `HIVE_MEETINGS_PERSONA_ENABLED=false`) restores the plain `hive (notes)` attendee.
 
 ### Persona settings
@@ -44,10 +46,44 @@ Hive attends meetings as a persona: **Betty** ("Betty Bee from the hive", she/he
 A persona is a preset (`meetings.persona.preset`, default `betty`) plus any field set explicitly; every field also has an `HIVE_MEETINGS_PERSONA_*` override ([env-vars.md](env-vars.md#meetings-quorum)).
 
 - `language` is a BCP-47 tag (default `en-US`). Betty replies in that language and its regional conventions (American spelling for `en-US`).
-- `voice` is the text-to-speech voice id (default `af_heart`, a Kokoro voice) kept for spoken replies, which are not built yet. Kokoro voice ids encode accent and gender: `af_*` is American female, `am_*` American male, `bf_*` and `bm_*` British female and male. A future persona picks a different voice id. A "bot-type" voice would be a different TTS voice or an effect, which is not built yet.
+- `voice` is the text-to-speech voice id (default `af_heart`, a Kokoro voice) her spoken replies use: hive passes it to Quorum as `QUORUM_TTS_VOICE` for Discord and as `voice_id` on every `meeting.join`. Kokoro voice ids encode accent and gender: `af_*` is American female, `am_*` American male, `bf_*` and `bm_*` British female and male. A future persona picks a different voice id. A "bot-type" voice would be a different TTS voice or an effect, which is not built yet.
 - `voice_type` (`female`, `male` or `bot`, default `female`), `accent` (free text, default `American`) and `pronouns` (default `she/her`) describe the persona in the intro and her self-description only; they do not change behaviour.
 - `intro_template` placeholders: `{name}`, `{display_name}`, `{pronouns}`, `{leave}` (the first leave phrase), `{accent}`, `{voice_type}`, `{language}`.
-- `searxng_url` is reserved for web search (phase B) and unused for now.
+- `searxng_url` is the SearXNG instance she searches the web with; see [Web answers](#web-answers).
+
+### Web answers
+
+With `meetings.persona.searxng_url` set (`HIVE_MEETINGS_PERSONA_SEARXNG_URL`), web search joins Betty's fast sources. For each question she queries `GET <url>/search?format=json&categories=general,it&q=<question>` (the `it` category brings in GitHub and Stack Overflow) with a 1.2 second timeout, in parallel with the knowledge, bead and code-map lookups, and keeps the top 3 results (title, URL and snippet, HTML stripped). Results are untrusted data: they reach the model inside the data block and are never followed as instructions. A slow or failing search simply contributes nothing.
+
+On hive-oke, SearXNG runs in the `meetings` namespace as a ClusterIP Service: set `searxng_url` to `http://searxng.meetings.svc.cluster.local:8080`. Its manifests (JSON output on, a small engine set, the limiter off for internal use, the secret key in a Secret) live in hivecommons/quorum `deploy/hive-oke/`. Any SearXNG with `json` in `search.formats` works.
+
+### Meeting attendee settings
+
+Settings, **Meeting attendee** edits all of this from the dashboard ([#18396](https://github.com/hivecommons/hive/issues/18396)). The owner and read-write users can open it; it saves `meetings.persona` (and `meetings.voice_on_address`) to `hive.yaml`. The persona is read when hive starts, so a saved change shows "restart the hive to apply" until the next restart. A field set by an `HIVE_MEETINGS_PERSONA_*` variable is marked **env**, and edits to it have no effect while the variable is set; a field that differs from the preset is marked **custom**.
+
+- **Persona.** Preset cards show each persona's flag, language, accent, voice type and voice id. Picking one fills the form; Save stores it. A value equal to the preset's is stored as no override, so the persona keeps following the preset. The voice list shows the Kokoro voices for the chosen language, and changing the language picks a voice of the same type. The intro has a live preview. **Play sample** speaks a short line in the persona's language through the meetings TTS service (the browser plays it from `GET /api/meetings/persona/sample`, using the form's unsaved voice, language and name); until that service is configured (`meetings.tts_url` and its token, phase B) the button is disabled and the API answers "TTS not configured".
+- **Behaviour.** The unprompted caps above (`per_10m`, `min_gap_s`, `per_meeting`, `answer_wait_s`, `min_confidence`, `queue_depth`, `stale_s`; 0 restores a default) and whether hive may speak aloud when addressed (`meetings.voice_on_address`).
+- **Email.** The attendee address, `hive@<dashboard host>`, with a copy button, the people with access to this hive (owner, read-write and read) with their registered calendar emails and proof status, the invites and files waiting for approval, and switches for calendar invites and mailed-in files. Until email-in is enabled ([#18395](https://github.com/hivecommons/hive/issues/18395)) the section is shown with its controls disabled.
+
+The presets use only voices the self-hosted Kokoro TTS ([Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) v0.10.0) ships. Leave phrases stay in Latin script because the leave matcher uses ASCII word boundaries, and every preset keeps "hive" as an alias and "hive leave" as a leave phrase.
+
+| Preset | Language | Accent | Voice | Voice type |
+|---|---|---|---|---|
+| `betty`: Betty Bee from the hive (default) | `en-US` | American | `af_heart` | female |
+| `barnaby`: Barnaby Bee from the hive | `en-US` | American | `am_michael` | male |
+| `beatrice`: Beatrice Bee from the hive | `en-GB` | British | `bf_emma` | female |
+| `bertie`: Bertie Bee from the hive | `en-GB` | British | `bm_george` | male |
+| `melisa`: Melisa, la abeja de la colmena | `es-ES` | Spanish (Spain) | `ef_dora` | female |
+| `melie`: Mélie, l'abeille de la ruche | `fr-FR` | French | `ff_siwis` | female |
+| `melina`: Melina, l'ape dell'alveare | `it-IT` | Italian | `if_sara` | female |
+| `bia`: Bia, a abelha da colmeia | `pt-BR` | Brazilian | `pf_dora` | female |
+| `madhu`: मधु, छत्ते की मधुमक्खी | `hi-IN` | Indian | `hf_alpha` | female |
+| `mitsu`: ミツバチのミツ | `ja-JP` | Standard Japanese | `jf_alpha` | female |
+| `mimi`: 蜂巢的小蜜蜂蜜蜜 | `zh-CN` | Standard Mandarin | `zf_xiaobei` | female |
+
+A bot-style voice is listed as coming later: Kokoro has no bot-style voice, and one would need a new service.
+
+The API is `/api/meetings/persona` ([API reference](api-reference/knowledge.md)).
 
 ## The model Spek reasons with
 
@@ -92,6 +128,20 @@ While hive is in at least one meeting (joining, in the lobby or live), the top b
 
 The schedule API is `/api/meetings/schedule` ([API reference](api-reference/knowledge.md)).
 
+## Inviting Betty by email
+
+Invite Betty by adding `hive@<your hive's dashboard host>` (for example `hive@acme.hive.hivecommons.dev`) to a calendar invite. Mail for every hive on a cluster reaches one receive-only receiver, `hive-mx` (`src/cmd/hive-mx`), through a wildcard MX record. No spoke opens port 25.
+
+What `hive-mx` does with a message:
+
+- **Recipients:** it accepts `RCPT TO` only for `hive@<host>` where the host is a hive the hub knows (subdomain, vanity or dashboard host; the list is refreshed from the hub every 60 seconds). Everything else is refused at `RCPT`, so it is never an open relay. At most 5 recipients and 2 MB per message, rate limits per sender IP and per sender domain, no AUTH, and it never sends mail. STARTTLS is offered when a certificate is mounted (`HIVE_MX_TLS_CERT`, `HIVE_MX_TLS_KEY`); without one it accepts plain SMTP, which is what most senders fall back to.
+- **Sender authentication:** after DATA it checks SPF, DKIM and DMARC and records whether SPF or DKIM passed for a domain aligned with the `From` address (`adkim`/`aspf` honoured). Only an aligned sender can ever be trusted by a hive; the receiver itself decides nothing.
+- **Calendar invites:** only `text/calendar` and `application/ics` parts are read. It keeps UID, SEQUENCE, METHOD (REQUEST or CANCEL), RECURRENCE-ID, the summary (200 characters), organizer and attendees, start and end converted to UTC (Outlook's Windows time zone names such as "Eastern Standard Time" are mapped to IANA zones), RRULE and EXDATE, and the join details: the link from `X-GOOGLE-CONFERENCE`, `X-MICROSOFT-SKYPETEAMSMEETINGURL`, `LOCATION` or a link to `meet.google.com`, `teams.microsoft.com`, `teams.live.com` or `*.zoom.us` found in the description, the platform, and the meeting id and passcode where the platform uses one (Zoom `pwd`, the Teams "Meeting ID" and "Passcode" lines). Nothing else from the description is kept.
+- **Mail-in files:** a message with no invite may carry Markdown (`.md`), audio (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.webm`) and image (`.png`, `.jpg`, `.gif`, `.webp`) attachments. The type is decided by the file's content, not its name, and must agree with the extension; at most 10 files and 2 MB in all. The subject becomes the title. Nothing in the message is executed or followed.
+- **Proof mails:** a message whose subject carries a proof code (`hive-proof-` and 12 letters or digits) is reported as a proof of the sender address.
+
+The result goes to the hub as JSON with a bearer token from a mounted Secret. If the hub cannot take it, the sender's mail server is told to retry later.
+
 ## Setup
 
 ### Hosted hives
@@ -135,6 +185,15 @@ Discord audio is transcribed by the shared transcription service, which needs tw
 
 Without the URL and token Discord meetings join but nothing is transcribed. All three (bot token, transcribe URL, transcription token) apply after a restart.
 
+Spoken replies on Discord (Quorum v0.2.0 and later) go through a text-to-speech service, Kokoro's `/v1/audio/speech`, which needs two settings of its own:
+
+- the TTS URL, `meetings.tts_url` (or `HIVE_MEETINGS_TTS_URL`). On hive-oke the `vexa-tts` Service in the `meetings` namespace answers in-cluster at `http://vexa-tts.meetings.svc.cluster.local:8880`;
+- the TTS token. Paste it in the **TTS token** field in **Settings, Meetings** (or set `HIVE_MEETINGS_TTS_TOKEN`). Like the transcription token it is write-only: hive stores it keystore-sealed at `meetings.tts_token_file` (`/data/secrets/meetings_tts_token`), the API reports only `tts_token_set`, and at boot hive writes the plaintext to an owner-only file in Quorum's private runtime directory and passes it as `QUORUM_TTS_TOKEN_FILE`. On hive-oke the operator copies the token from the Secret `vexa-tts` in the `meetings` namespace.
+
+Hive also passes `QUORUM_TTS_VOICE` (the persona's voice, `meetings.persona.voice`, default `af_heart`) and sends the same voice as `voice_id` on every `meeting.join`, so Betty sounds the same on Discord and on the Vexa platforms. Without the TTS URL and token, Discord replies stay in chat. Both apply after a restart.
+
+Quorum v0.2.0 ignores `voice: false` on Discord (a Discord bot can always speak), so hive's own policy is the gate: it never calls `say` for a meeting whose voice is off, on any platform, and answers in chat instead.
+
 Discord voice also needs the native `@snazzah/davey` module next to the Quorum bundle; the hive image installs it.
 
 Anyone in the Discord server can ask for hive with `/hive join`. The request shows in **Meetings** as a join request with **Approve** and **Decline**; hive joins only when the owner approves it. (No Discord account is mapped to the hive owner yet, so no request is approved automatically.)
@@ -153,6 +212,8 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.discord.token_file` | `/data/secrets/meetings_discord_token` | Keystore-sealed Discord bot token file. |
 | `meetings.transcribe_url` | none | Transcription service for Discord audio. |
 | `meetings.transcribe_token_file` | `/data/secrets/meetings_transcribe_token` | Keystore-sealed transcription service token file. |
+| `meetings.tts_url` | none | Text-to-speech service for Discord speech (`QUORUM_TTS_URL`). |
+| `meetings.tts_token_file` | `/data/secrets/meetings_tts_token` | Keystore-sealed TTS service token file. |
 | `meetings.delivery` | `chat` | Where meeting output goes. |
 | `meetings.voice_on_address` | `true` | Allow speaking when addressed in a voice-enabled meeting. |
 | `meetings.bot_name` | the persona's display name | Bot display name; `hive (notes)` with the persona off. |
@@ -183,7 +244,7 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.persona.aliases` | `[betty, betty bee, hive]` | Names that address her. |
 | `meetings.persona.pronouns` | `she/her` | Used in the intro and self-description. |
 | `meetings.persona.language` | `en-US` | BCP-47 reply language and locale. |
-| `meetings.persona.voice` | `af_heart` | TTS voice id (stored for spoken replies). |
+| `meetings.persona.voice` | `af_heart` | TTS voice id for spoken replies. |
 | `meetings.persona.voice_type` | `female` | `female`, `male` or `bot` (descriptive). |
 | `meetings.persona.accent` | `American` | Descriptive. |
 | `meetings.persona.intro_template` | the preset's intro | Intro text. |
@@ -196,6 +257,6 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.persona.unprompted.min_confidence` | `0.75` | Model confidence an unprompted answer needs. |
 | `meetings.persona.unprompted.queue_depth` | `3` | Room questions waiting at once. |
 | `meetings.persona.unprompted.stale_s` | `60` | Seconds before a waiting question is dropped. |
-| `meetings.persona.searxng_url` | none | Web search service (not used yet). |
+| `meetings.persona.searxng_url` | none | SearXNG instance for web answers (for example `http://searxng.meetings.svc.cluster.local:8080`). |
 
 When the budget runs out, hive posts one notice in the meeting and keeps taking notes, but stops asking questions, starting research and speaking.
