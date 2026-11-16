@@ -119,7 +119,7 @@ func TestAckSkippedPastBudget(t *testing.T) {
 	h.spek.intent(`{"type":"chat.post","text":"two"}`)
 	h.eventually("budget", func() bool { return h.state().BudgetExhausted })
 	h.line(meetings.EventSegment, "Bo", "Betty, when does the release ship?", true)
-	time.Sleep(personaWait)
+	h.dropped("budget")
 	if _, says := h.mt.got(); len(says) != 0 {
 		t.Fatalf("nothing is spoken past the budget: %q", says)
 	}
@@ -155,8 +155,9 @@ func TestDeepDiveDispatchesAndFollowsUpOnce(t *testing.T) {
 	h.r.DeliverResearch(ResearchSignal{KickID: it.KickID, Kind: SignalComplete, Text: "cert-manager renews it every night."})
 	h.eventually("follow up", h.posted("Update on the cert rotation"))
 	h.eventually("done", func() bool { return h.state().Research[0].Status == ResearchDone })
-	h.r.DeliverResearch(ResearchSignal{KickID: it.KickID, Kind: SignalComplete, Text: "again"})
-	time.Sleep(personaWait)
+	if h.r.DeliverResearch(ResearchSignal{KickID: it.KickID, Kind: SignalComplete, Text: "again"}) {
+		t.Fatal("a completed deep dive is unregistered")
+	}
 	if n := h.countPosts("Update on the cert rotation"); n != 1 {
 		t.Fatalf("exactly one follow-up, got %d", n)
 	}

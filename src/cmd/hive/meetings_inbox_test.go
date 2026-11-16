@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/inbox"
 	"github.com/hivecommons/hive/pkg/meetings"
 	"github.com/hivecommons/hive/pkg/meetings/live"
 )
@@ -106,8 +107,10 @@ func TestWireMeetingsInbox(t *testing.T) {
 	if b.meetingsInboxSrc == nil {
 		t.Fatal("inbox source not set")
 	}
-	if mi, ok := b.meetingsInboxSrc.Reader.(*meetingsInbox); !ok || mi.name != "Betty" {
-		t.Fatalf("inbox reader %+v", b.meetingsInboxSrc.Reader)
+	if src, ok := b.meetingsInboxSrc.(*inbox.LiveMeetingSource); !ok {
+		t.Fatalf("inbox source %T", b.meetingsInboxSrc)
+	} else if mi, ok := src.Reader.(*meetingsInbox); !ok || mi.name != "Betty" {
+		t.Fatalf("inbox reader %+v", src.Reader)
 	}
 	off := false
 	cfg := config.MeetingsPersonaConfig{Enabled: &off}
