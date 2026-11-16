@@ -155,6 +155,7 @@ func writeLinkPreview(w http.ResponseWriter) {
 </head><body>
 <h1>Hive</h1>
 <p>AI agents that maintain your repo. <a href="` + publicURL + `">Sign in to continue.</a></p>
+` + lfProjectsLegalFooterHTML + `
 </body></html>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// Preview cards are identical for every link and change only on deploy.
@@ -372,19 +373,24 @@ func (s *HubServer) writeLoginStopPage(w http.ResponseWriter, user, redirect, ta
 <title>Could not open ` + html.EscapeString(targetHost) + ` — Hive</title>
 <style>
 :root{color-scheme:light dark}
-body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
 font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#e6edf3}
 .card{width:min(520px,94vw);padding:40px;border:1px solid #30363d;border-radius:18px;background:#161b22}
 h1{font-size:22px;margin:0 0 14px}
 p{color:#c9d1d9;font-size:15px;line-height:1.5}
 .btn{display:inline-block;padding:10px 18px;border:1px solid #30363d;border-radius:10px;background:#21262d;color:#e6edf3;text-decoration:none;font-weight:600}
 .foot{margin-top:24px;color:#8b949e;font-size:13px;line-height:1.5}
+.lf-legal-footer{text-align:center;padding:16px 24px;font-size:12px;line-height:1.5;opacity:.75}
+.lf-legal-footer p{margin:0}
+.lf-legal-footer a{color:inherit}
 </style></head><body>
 <div class="card">
 <h1>Signed in, but ` + html.EscapeString(targetHost) + ` did not accept it</h1>
 <p>You are signed in to Hive as <strong>` + html.EscapeString(login) + `</strong>, but ` + html.EscapeString(why) + `</p>
 ` + retry + `<div class="foot">If this keeps happening, clear this browser's cookies for <code>` + html.EscapeString(sessionCookieParentDomain()) + `</code>, sign in again, and tell the hive's owner which address you were opening.</div>
-</div></body></html>`
+</div>
+` + lfProjectsLegalFooterHTML + `
+</body></html>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
@@ -428,13 +434,16 @@ func (s *HubServer) writeHiveAccessDeniedPage(w http.ResponseWriter, user, hiveI
 <title>Access needed for ` + html.EscapeString(targetHost) + ` — Hive</title>
 <style>
 :root{color-scheme:light dark}
-body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
 font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#e6edf3}
 .card{width:min(560px,94vw);padding:40px;border:1px solid #30363d;border-radius:18px;background:#161b22}
 h1{font-size:22px;margin:0 0 14px}
 p{color:#c9d1d9;font-size:15px;line-height:1.5}
 .btn{display:inline-block;padding:10px 18px;border:1px solid #30363d;border-radius:10px;background:#21262d;color:#e6edf3;text-decoration:none;font-weight:600}
 .foot{margin-top:24px;color:#8b949e;font-size:13px;line-height:1.5}
+.lf-legal-footer{text-align:center;padding:16px 24px;font-size:12px;line-height:1.5;opacity:.75}
+.lf-legal-footer p{margin:0}
+.lf-legal-footer a{color:inherit}
 </style></head><body>
 <div class="card">
 <h1>You are not authorized for this hive</h1>
@@ -442,7 +451,9 @@ p{color:#c9d1d9;font-size:15px;line-height:1.5}
 <p>Signing in again will not change this. Ask the hive owner to add your account to <code>` + html.EscapeString(hiveID) + `</code>, or use a different account that already has access.</p>
 <p><a class="btn" href="/dashboard">Back to the hub</a> <a class="btn" href="` + html.EscapeString(contributeURL) + `">Open contributor pages</a></p>
 <div class="foot">No dashboard session was issued to the hive. The hive's existing authorization checks are unchanged.</div>
-</div></body></html>`
+</div>
+` + lfProjectsLegalFooterHTML + `
+</body></html>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusForbidden)
@@ -692,7 +703,7 @@ func (s *HubServer) writeProviderPicker(w http.ResponseWriter, providers []*auth
 <title>Sign in — Hive</title>
 <style>
 :root{color-scheme:light dark}
-body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+body{margin:0;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;
 font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:#0d1117;color:#e6edf3}
 .card{width:min(440px,94vw);padding:44px 40px;border:1px solid #30363d;border-radius:18px;background:#161b22;text-align:center}
 h1{font-size:26px;margin:0 0 6px;letter-spacing:-.01em}
@@ -705,12 +716,17 @@ text-decoration:none;font-size:16px;font-weight:600;transition:background .12s,b
 .glyph{display:inline-flex;align-items:center;justify-content:center;min-width:32px;height:32px;flex:none}
 .glyph svg{display:block;height:24px;width:auto;max-width:48px}
 .foot{margin-top:28px;color:#6e7681;font-size:12px;line-height:1.5}
+.lf-legal-footer{text-align:center;padding:16px 24px;font-size:12px;line-height:1.5;opacity:.75}
+.lf-legal-footer p{margin:0}
+.lf-legal-footer a{color:inherit}
 </style></head><body>
 <div class="card">
 <h1>Sign in to Hive</h1>
 <p class="sub">Choose how you'd like to continue.</p>
 ` + buttons.String() + `<div class="foot">Your login provider controls access only. Hive's GitHub work runs through its own app.</div>
-</div></body></html>`
+</div>
+` + lfProjectsLegalFooterHTML + `
+</body></html>`
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
