@@ -78,6 +78,13 @@ type Item struct {
 	AddedBy string `json:"added_by,omitempty"`
 	// UploadKind is the detected type of an upload (markdown, json, ...).
 	UploadKind string `json:"upload_kind,omitempty"`
+	// RecordedBy is the dashboard user who made a hive recording.
+	RecordedBy string `json:"recorded_by,omitempty"`
+	// AudioExpired reports that retention deleted the raw audio of a hive
+	// recording (the transcript and fact stay); there is nothing to play.
+	AudioExpired bool `json:"audio_expired,omitempty"`
+	// AudioRetentionDays is how long a hive recording's audio is kept.
+	AudioRetentionDays int `json:"audio_retention_days,omitempty"`
 }
 
 // Key returns the stable "source/id" key used by the state store.

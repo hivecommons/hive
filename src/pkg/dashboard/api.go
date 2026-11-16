@@ -535,6 +535,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerKnowledgeConnectorRoutes()
 	s.registerKnowledgeConnectorAuthRoutes()
 	s.registerInboxRoutes()
+	s.registerInboxRecordingRoutes()
 	s.registerMeetingsRoutes()
 	s.registerMeetingsScheduleRoutes()
 	s.mux.HandleFunc("POST /api/system-alerts/dismiss", s.handleSystemAlertDismiss)

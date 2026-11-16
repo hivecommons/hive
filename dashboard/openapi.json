@@ -39118,6 +39118,680 @@
         }
       }
     },
+    "/api/inbox/recordings": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Start a dashboard recording",
+        "description": "Owner or read-write (read sessions get 403). Starts a recording made in the dashboard (● Record) for the requesting user. `consent_version` must name the consent notice the dashboard showed before this recording; it is stored with the user in the recording's metadata. One recording per user may be in progress. The browser then uploads MediaRecorder chunks in order and finalizes. Audited as `inbox_recording_start`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "mime",
+                  "consent_version"
+                ],
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "mime": {
+                    "type": "string",
+                    "description": "MediaRecorder type: audio/webm or audio/mp4, with codecs parameters"
+                  },
+                  "consent_version": {
+                    "type": "string"
+                  },
+                  "includes_tab_audio": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Started",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "max_chunk_bytes": {
+                      "type": "integer"
+                    },
+                    "max_seconds": {
+                      "type": "integer"
+                    },
+                    "retention_days": {
+                      "type": "integer"
+                    },
+                    "transcribes": {
+                      "type": "boolean",
+                      "description": "The hive transcribes the recording when it ends"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Consent missing or stale",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "A recording of this user is already in progress",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "expected_seq": {
+                      "type": "integer",
+                      "description": "Next seq the hive accepts (out-of-order chunk)"
+                    },
+                    "active_id": {
+                      "type": "string",
+                      "description": "The user's recording already in progress"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "412": {
+            "description": "inbox.recording.enabled is off",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "Not audio/webm or audio/mp4",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "inbox.recording.quota_bytes used up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/recordings/{id}/chunks": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Upload one recording chunk",
+        "description": "The recorder only. The body is the raw MediaRecorder chunk (at most `max_chunk_bytes`, 512 KiB). Chunks are accepted in order only and each is fsynced before the reply; a re-send of a stored seq with the same bytes (sha256) is acknowledged again with `duplicate: true`. The first chunk must start with a WebM (EBML) or MP4 (ftyp) signature; the hive never decodes audio.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recording id from the start response"
+          },
+          {
+            "name": "seq",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Chunk number, from 0"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored or recognised",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "seq": {
+                      "type": "integer"
+                    },
+                    "next_seq": {
+                      "type": "integer"
+                    },
+                    "bytes": {
+                      "type": "integer"
+                    },
+                    "duplicate": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad seq",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the recorder, or not owner or read-write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown recording",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Out of order (expected_seq), different bytes for a stored seq, or already ended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "expected_seq": {
+                      "type": "integer",
+                      "description": "Next seq the hive accepts (out-of-order chunk)"
+                    },
+                    "active_id": {
+                      "type": "string",
+                      "description": "The user's recording already in progress"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Chunk over 512 KiB, or past inbox.recording.max_bytes / max_seconds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "415": {
+            "description": "First chunk is not WebM or MP4",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "507": {
+            "description": "inbox.recording.quota_bytes used up",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/recordings/{id}/finalize": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Finish a recording",
+        "description": "The recorder only. Concatenates the chunks in order into audio.webm or audio.mp4, writes a pending Knowledge fact in the personal layer and lists the item in the Inbox. `duration_ms` is the recorder's own count (pauses excluded), clamped to the recording's span and max_seconds. Audited as `inbox_recording_finalize`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recording id from the start response"
+          }
+        ],
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "duration_ms": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Finalized",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    },
+                    "title": {
+                      "type": "string"
+                    },
+                    "duration_ms": {
+                      "type": "integer"
+                    },
+                    "bytes": {
+                      "type": "integer"
+                    },
+                    "chunks": {
+                      "type": "integer"
+                    },
+                    "transcribes": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No chunk was received (the recording is removed)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the recorder",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown recording",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already ended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/recordings/{id}": {
+      "delete": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Abort a recording",
+        "description": "The recorder, or an owner. Deletes an in-progress recording and its chunks. Audited as `inbox_recording_abort`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recording id from the start response"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Aborted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "aborted": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not the recorder or an owner",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown recording",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Already ended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/recordings/{id}/audio": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Play a finished recording",
+        "description": "Owner or read-write. Serves the recording from this hive's disk on the dashboard origin with Range support, `Cache-Control: no-store` and `Cross-Origin-Resource-Policy: same-origin`. Opening a playback is audited as `inbox_recording_audio`; seeks are not. The audio is deleted after inbox.recording.retention_days (default 5); the transcript and the Knowledge fact stay.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recording id from the start response"
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "A byte range (`bytes=start-end`)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The whole recording",
+            "content": {
+              "audio/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "audio/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "The requested byte range",
+            "content": {
+              "audio/webm": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              },
+              "audio/mp4": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown or unfinished recording",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "410": {
+            "description": "Audio expired after retention",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/inbox/transcriptions": {
       "get": {
         "tags": [

@@ -35,6 +35,8 @@ type Settings struct {
 	// Uploads are the drop-zone limits; Enabled is false when this hive has
 	// no upload store.
 	Uploads UploadSettings `json:"uploads"`
+	// Recording is inbox.recording with defaults applied.
+	Recording RecordingSettings `json:"recording"`
 }
 
 // Service lists items across sources, applies persisted state, runs
@@ -94,6 +96,9 @@ type Service struct {
 	// uploads holds files and links added on the dashboard (see
 	// upload_source.go); nil until EnableUploads.
 	uploads *UploadSource
+	// recordings is the dashboard recording source (see recordingsource.go);
+	// nil until EnableRecordings.
+	recordings *RecordingSource
 }
 
 // NewService builds a service for cfg with the given sources/destinations.
@@ -122,6 +127,11 @@ func (s *Service) SetSources(sources []Source) {
 	s.mu.Lock()
 	if s.uploads != nil {
 		next[UploadType] = s.uploads
+	}
+	if s.recordings != nil {
+		if _, ok := next[RecordingType]; !ok {
+			next[RecordingType] = s.recordings
+		}
 	}
 	s.sources = next
 	s.mu.Unlock()
@@ -210,6 +220,7 @@ func (s *Service) Settings() Settings {
 	if u := s.Uploads(); u != nil {
 		st.Uploads = u.Settings()
 	}
+	st.Recording = s.RecordingSettings()
 	return st
 }
 
