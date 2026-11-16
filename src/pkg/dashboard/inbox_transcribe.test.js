@@ -129,7 +129,7 @@ test('settings section shows the consent notice, key status and every yaml key',
   assert.match(out, /\$MY_DG<\/code>: <span class="kc-pill" data-status="error">key missing/);
   assert.match(out, /value="500"/, 'max_bytes shown in MB');
   assert.match(out, /value="plaud"/);
-  for (const key of ['enabled', 'mode', 'sources[]', 'api_key_env', 'provider', 'model', 'whisper_model', 'whisper_threads', 'diarize', 'language', 'max_duration_minutes', 'max_bytes', 'monthly_budget_minutes', 'daily_max_items', 'consent_acknowledged']) {
+  for (const key of ['enabled', 'mode', 'sources[]', 'api_key_env', 'provider', 'model', 'whisper_model', 'whisper_threads', 'gemini_model', 'diarize', 'language', 'max_duration_minutes', 'max_bytes', 'monthly_budget_minutes', 'daily_max_items', 'consent_acknowledged']) {
     assert.ok(out.includes('inbox.transcription.' + key), 'yaml hint for ' + key);
   }
   out = inboxTranscriptionFormHtml({ enabled: true, consent_acknowledged: true, key_present: true, mode: 'auto' });
@@ -357,4 +357,11 @@ test('settings: whisper model and threads round-trip only when the form has them
   assert.strictEqual(read.transcription.whisper_threads, 2);
   const legacy = inboxReadTranscription(formRoot({ enabled: { checked: false } }), {});
   assert.ok(!('whisper_model' in legacy.transcription) && !('whisper_threads' in legacy.transcription), 'no whisper keys without the fields');
+});
+
+test('settings: gemini model round-trips', () => {
+  const { inboxTranscriptionFormHtml, inboxReadTranscription } = settingsHarness();
+  assert.match(inboxTranscriptionFormHtml({ gemini_model: 'gemini-3.6-flash' }), /data-inbox-tx-field="gemini_model"[^>]*value="gemini-3.6-flash"/);
+  const read = inboxReadTranscription(formRoot({ enabled: { checked: false }, gemini_model: { value: ' gemini-3.6-flash ' } }), {});
+  assert.strictEqual(read.transcription.gemini_model, 'gemini-3.6-flash');
 });
