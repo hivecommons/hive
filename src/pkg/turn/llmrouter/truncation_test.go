@@ -33,9 +33,11 @@ func TestLengthTruncatedToolCallFailsOver(t *testing.T) {
 
 	// Invalid arguments without a length stop still reach the executor,
 	// which answers with an error the model can correct.
+	// (A fresh router: the malformed answer above put "a" in cooldown.)
 	a.handler = func(w http.ResponseWriter) {
 		_, _ = io.WriteString(w, `{"choices":[{"message":{"role":"assistant","tool_calls":[{"id":"c1","type":"function","function":{"name":"x","arguments":"{oops"}}]},"finish_reason":"tool_calls"}]}`)
 	}
+	r, _ = New([]Provider{prov("a", sa.URL)}, WithEnv(allKeys()))
 	got, err := r.Generate(context.Background(), msgs(), nil)
 	if err != nil || len(got.ToolCalls) != 1 || got.ToolCalls[0].Arguments != "{oops" {
 		t.Fatalf("Generate = %+v, %v", got, err)
