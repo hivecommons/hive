@@ -1801,6 +1801,11 @@ func (s *Server) registerCoreRoutes() {
 }
 
 func (s *Server) Start() error {
+	// Price gateway models from their gateways (OpenRouter catalog, LiteLLM
+	// /model/info, prices: overrides) in every cost estimate this process
+	// makes. Installed here, not in RegisterAPI, so unit tests that only wire
+	// deps keep the static price table.
+	s.installGatewayPricer()
 	staticContent, err := fs.Sub(staticFS, "static")
 	if err != nil {
 		return fmt.Errorf("loading embedded static files: %w", err)

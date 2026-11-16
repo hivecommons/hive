@@ -268,11 +268,14 @@ type RateLimitSnapshot struct {
 	OK        bool      `json:"ok"`
 }
 
-// Usage kinds, the three UsageSink record paths.
+// Usage kinds, the UsageSink record paths.
 const (
 	UsageKindGateway      = "gateway"
 	UsageKindCopilot      = "copilot"
 	UsageKindCopilotCache = "copilot_cache"
+	// UsageKindGatewayCache is a gateway response whose prompt was partly
+	// served from cache: InputTokens excludes CacheRead.
+	UsageKindGatewayCache = "gateway_cache"
 )
 
 // UsageRecord is the body of POST /v1/usage.
