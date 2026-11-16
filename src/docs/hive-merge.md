@@ -693,6 +693,55 @@ auto_merge:
     enabled: true   # default; set false to leave such PRs held
 ```
 
+### Dependency-bot PRs that need a code change
+
+Some dependency bumps cannot go green without a code change, for example a Go
+module major-version bump whose imports still name the old path. The fix loop
+never pushes to another bot's branch (the bot regenerates it), so by default
+the dependency-bot sweep hands such a PR to a person once a required check has
+stayed red on the same head for 4 hours (see the operator reference).
+
+`auto_merge.dependency_bot_adopt.enabled` (default **off**) lets the hive take
+that step itself. It applies to a Renovate, Dependabot or mergeraptor PR whose
+bot is also in `auto_merge.trusted_bot_authors`. At the moment the red-CI
+hand-off would fire (red past the 4 hours and after the hive's one transient
+re-run, if one is owed), the sweep reads the review swarm's own aggregate
+verdict for exactly that head from `review-verdicts.json`. This is the raw
+swarm verdict, not the trusted-bot lane's advisory downgrade
+(`auto_merge.trusted_bot_skip_review`). When it is `changes_requested`, the sweep
+adds the `adoption/supersede` label, which is the same label the dashboard's
+Adopt decision adds, and posts no hand-off for that head. The existing adoption
+path then copies the PR to `hive/adopt-<n>`, the fix loop repairs the copy, and
+the copy merges through the self-authored lane.
+
+The request is made once per bot head and persisted beside the hand-off ledger
+(`dependency-bot-conflicts-adopt.json`), so a restart does not repeat it; a new
+head is eligible again. The label write is gated as write-back kind
+`contributor_adopt`. The sweep keeps the usual person hand-off when:
+
+- the swarm's verdict on the head is missing, `advisory`, `approve` or
+  `requires_human`;
+- the PR carries `hold`, `do-not-merge` or a human-merge label or title prefix
+  (`auto_merge.human_merge_labels`, `auto_merge.human_merge_title_prefixes`);
+- the head touches the repo's `auto_merge.human_merge_paths` (the pin-only
+  exception still applies), or the changed files cannot be read;
+- `governor.labels.stage.adoption` is off, so nothing would consume the label;
+- the write-back gate refuses `contributor_adopt` on the PR.
+
+If the label write fails, the head is not asked again and the person gets the
+hand-off on the next pass. Each request logs one INFO line,
+`dependency-bot red CI: hive adoption requested`, with the repo, PR, head and
+reason; a skip logs `hive adoption not requested; handing to a person` with
+why.
+
+```yaml
+auto_merge:
+  trusted_bot_authors:
+    - renovate[bot]
+  dependency_bot_adopt:
+    enabled: true   # default false
+```
+
 ### Breaking-titled or `needs-owner-merge` PRs wait for a human
 
 A PR whose trimmed title starts with `⚠️` (U+26A0, with or without the VS16

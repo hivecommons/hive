@@ -802,6 +802,7 @@
   },
   "auto_merge": {
     "bot_takeover": {},
+    "dependency_bot_adopt": {},
     "trusted_authors": {},
     "contributor_lane": {},
     "contributor_tier": {},
