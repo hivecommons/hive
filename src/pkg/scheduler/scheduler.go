@@ -49,6 +49,7 @@ type Scheduler struct {
 	inflight                 InflightLookup
 	prLease                  PRLeaseLookup
 	maintainerNotes          MaintainerNotesLookup
+	topicClaims              TopicClaimLookup
 	runAdmitter              RunAdmitter
 	triageCommenter          TriageCommenter
 	clarity                  clarityGateState
