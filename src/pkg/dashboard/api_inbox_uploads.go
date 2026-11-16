@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -20,6 +21,12 @@ const (
 	inboxUploadOverheadBytes = 64 << 10
 	// inboxUploadTimeout bounds one upload request's extraction and storage.
 	inboxUploadTimeout = 2 * time.Minute
+	// inboxUploadReadWindow replaces the dashboard's 30-second read timeout
+	// for an upload body: a 25 MB document or a 200 MB recording on a slow
+	// link needs longer to arrive. inboxUploadMediaTimeout bounds a request
+	// that carries audio or video.
+	inboxUploadReadWindow   = 20 * time.Minute
+	inboxUploadMediaTimeout = 25 * time.Minute
 )
 
 // registerInboxUploadRoutes adds the drag-and-drop ingest routes.
@@ -100,13 +107,17 @@ func (s *Server) handleInboxUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	lim := svc.Config().Uploads
 	maxFile, maxFiles := lim.EffectiveMaxFileBytes(), lim.EffectiveMaxFilesPerDrop()
-	r.Body = http.MaxBytesReader(w, r.Body, maxFile*int64(maxFiles)+inboxUploadOverheadBytes)
+	// Audio and video stream to disk under the recording cap.
+	maxMedia := svc.Config().Recording.EffectiveMaxBytes()
+	r.Body = http.MaxBytesReader(w, r.Body, max(maxFile, maxMedia)*int64(maxFiles)+inboxUploadOverheadBytes)
+	// Best effort: a server without per-request deadlines keeps its own.
+	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(inboxUploadReadWindow))
 	mr, err := r.MultipartReader()
 	if err != nil {
 		jsonError(w, "expected a multipart upload with one or more \"file\" fields", http.StatusBadRequest)
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), inboxUploadTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), inboxUploadMediaTimeout)
 	defer cancel()
 	user := requestUser(r)
 	var results []InboxUploadResult
@@ -133,7 +144,16 @@ func (s *Server) handleInboxUpload(w http.ResponseWriter, r *http.Request) {
 			results = append(results, s.inboxUploadRefused(r, name, 0, inbox.UploadErrTooMany, "too many files in one drop: at most "+strconv.Itoa(maxFiles)))
 			continue
 		}
-		data, err := io.ReadAll(io.LimitReader(part, maxFile+1))
+		br := bufio.NewReaderSize(part, inbox.MediaSniffBytes)
+		head, _ := br.Peek(inbox.MediaSniffBytes)
+		if _, media, uerr := inbox.SniffMedia(name, head); uerr != nil {
+			results = append(results, s.inboxUploadRefused(r, name, 0, uerr.Code, uerr.Message))
+			continue
+		} else if media {
+			results = append(results, s.inboxUploadMedia(ctx, r, svc, part.FileName(), name, br, len(head)))
+			continue
+		}
+		data, err := io.ReadAll(io.LimitReader(br, maxFile+1))
 		if err != nil {
 			if isUploadTooLarge(err) {
 				jsonError(w, "the upload is too large", http.StatusRequestEntityTooLarge)
@@ -180,6 +200,37 @@ func (s *Server) handleInboxUpload(w http.ResponseWriter, r *http.Request) {
 		code = inboxUploadStatus(results[0].Code)
 	}
 	jsonStatusResponse(w, code, InboxUploadResponse{Results: results})
+}
+
+// inboxUploadMedia streams one audio or video part into the store and
+// queues its transcription when transcription is on.
+func (s *Server) inboxUploadMedia(ctx context.Context, r *http.Request, svc *inbox.Service, raw, name string, br *bufio.Reader, headLen int) InboxUploadResult {
+	head := make([]byte, headLen)
+	if _, err := io.ReadFull(br, head); err != nil {
+		return s.inboxUploadRefused(r, name, 0, inbox.UploadErrInternal, "reading the file failed")
+	}
+	user := requestUser(r)
+	opts := inbox.TranscribeOptions{Actor: user, Audit: func(a inbox.TranscribeAudit) {
+		if s.audit != nil {
+			s.audit.Log(a.Actor, "inbox_transcribe", auditDetail(a.Fields()...), "")
+		}
+	}}
+	it, err := svc.AddMedia(ctx, inbox.MediaInput{Filename: raw, Head: head, Body: br, AddedBy: user}, opts)
+	if err != nil {
+		if isUploadTooLarge(err) {
+			return s.inboxUploadRefused(r, name, 0, inbox.UploadErrTooLarge, "the upload is too large")
+		}
+		var ue *inbox.UploadError
+		if errors.As(err, &ue) {
+			return s.inboxUploadRefused(r, name, 0, ue.Code, ue.Message)
+		}
+		if s.logger != nil {
+			s.logger.Warn("inbox: media upload failed", "error", err)
+		}
+		return s.inboxUploadRefused(r, name, 0, inbox.UploadErrInternal, "storing the file failed")
+	}
+	s.auditFromRequest(r, "inbox_upload", auditDetail("source", it.Source, "item", it.ID, "kind", it.UploadKind, "outcome", "added"), "")
+	return InboxUploadResult{Filename: name, OK: true, Source: it.Source, ItemID: it.ID, Title: it.Title, Kind: it.UploadKind}
 }
 
 // inboxUploadRefused audits a refused file and returns its result. The
