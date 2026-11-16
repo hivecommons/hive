@@ -1818,6 +1818,27 @@ func (r Record) AdoptionAttemptedNothingOpened(head string) bool {
 	return r.Adopted(head) && r.AdoptMode == AdoptModeSupersede && r.AdoptedBy == 0
 }
 
+// SupersedingCopy reports whether the hive adopted this PR by supersession
+// (a copy on hive/adopt-<n>) rather than in place, and the copy's number (0
+// while the attempt opened nothing). The original keeps
+// stage/074-adopted-by-hive while the copy is worked, but its branch stays
+// its author's: the hive's fixes go to the copy. A live in-place adoption
+// is never a supersession, whatever an earlier one left behind.
+func (r Record) SupersedingCopy() (int, bool) {
+	if r.AdoptedInPlace() {
+		return 0, false
+	}
+	switch {
+	case r.AdoptedBy > 0:
+		return r.AdoptedBy, true
+	case r.SupersededBy > 0:
+		return r.SupersededBy, true
+	case r.AdoptedHead != "" && r.AdoptMode == AdoptModeSupersede:
+		return 0, true
+	}
+	return 0, false
+}
+
 // MarkAdoptedInPlace records an in-place adoption of head for reason.
 func (s *Store) MarkAdoptedInPlace(key, head, reason string, now time.Time) {
 	s.mu.Lock()

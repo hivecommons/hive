@@ -2679,6 +2679,10 @@ func planReviewDispatchWith(ctx context.Context, cfg *config.Config, actionable 
 		// (review.bot_author_full_review_paths); fetched only for a listed
 		// bot's PR that is about to be reviewed.
 		item.ChangedFiles, item.ChangedFilesKnown = reviewBotRouteFilesFor(ctx, cfg, ghr, botRoute, artifact, state, fullRepo, pr.Number, pr.Author, pr.HeadSHA, pr.BodyDigest)
+		// A supersede adoption keeps stage/074-adopted-by-hive on the
+		// original, but its fixes go to the hive's copy: the fix gate must
+		// not read the label as an in-place adoption of this branch.
+		item.SupersedingPR, item.SupersededByHive = reviewSupersedingCopy(fullRepo, pr.Number)
 		prs = append(prs, item)
 	}
 	// PRs a review webhook just fired for go first, so the early eval cycle
@@ -3092,7 +3096,7 @@ func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor
 		key := reviewFixExcludedWarnKey(x)
 		active[key] = struct{}{}
 		level := reviewFixExcludedWarn.level(key)
-		if x.Reason == review.FixDispatchExcludedNotHiveAuthored || x.Reason == review.FixDispatchExcludedNotHiveAuthoredDCO || x.Reason == review.FixDispatchExcludedOtherBotAuthor {
+		if x.Reason == review.FixDispatchExcludedNotHiveAuthored || x.Reason == review.FixDispatchExcludedNotHiveAuthoredDCO || x.Reason == review.FixDispatchExcludedOtherBotAuthor || x.Reason == review.FixDispatchExcludedSupersededByHive {
 			// Policy skip (the hive never pushes to PRs it did not author), not a fault.
 			if level == slog.LevelWarn {
 				level = slog.LevelInfo
@@ -3121,6 +3125,18 @@ func auditWithheldReviewFixes(plan review.DispatchPlan, auditor reviewFixAuditor
 		}
 		auditor.AuditLog("governor", "review_fix_withheld", detail, "")
 	}
+}
+
+// reviewSupersedingCopy reports whether the stage store records a supersede
+// adoption of repo#number (stagelabels.Record.SupersedingCopy) and the
+// copy's number. No record reads as no supersession: the fix gate then
+// decides exactly as before.
+func reviewSupersedingCopy(fullRepo string, number int) (int, bool) {
+	rec, ok := stagelabels.Shared().Get(stagelabels.Key(fullRepo, number))
+	if !ok {
+		return 0, false
+	}
+	return rec.SupersedingCopy()
 }
 
 func reviewFixExcludedWarnKey(x review.FixDispatchExclusion) string {
