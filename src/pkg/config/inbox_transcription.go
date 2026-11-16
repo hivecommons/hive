@@ -99,6 +99,13 @@ type InboxTranscription struct {
 	MonthlyBudgetMinutes int `yaml:"monthly_budget_minutes,omitempty" json:"monthly_budget_minutes,omitempty"`
 	// DailyMaxItems caps transcription runs per UTC day.
 	DailyMaxItems int `yaml:"daily_max_items,omitempty" json:"daily_max_items,omitempty"`
+	// WhisperModel is the ggml model the built-in whisper provider uses:
+	// tiny, tiny.en, base, base.en, small or small.en. Empty means base.en,
+	// or base when Language names another language.
+	WhisperModel string `yaml:"whisper_model,omitempty" json:"whisper_model,omitempty"`
+	// WhisperThreads is the whisper.cpp thread count; 0 means half the
+	// hive's CPUs (at least one), so agents keep the rest.
+	WhisperThreads int `yaml:"whisper_threads,omitempty" json:"whisper_threads,omitempty"`
 	// ConsentAcknowledged records that the owner read the notice: recordings
 	// contain other people's voices, and where the chosen provider sends the
 	// audio (nowhere for whisper; Google or Deepgram otherwise).
@@ -143,6 +150,29 @@ func (t InboxTranscription) EffectiveAPIKeyEnv() string {
 		return e
 	}
 	return DefaultInboxTranscriptionKeyEnv
+}
+
+// InboxWhisperModels lists the accepted whisper_model values.
+var InboxWhisperModels = []string{"tiny", "tiny.en", "base", "base.en", "small", "small.en"}
+
+// EffectiveWhisperModel returns the whisper model: whisper_model when set,
+// else base.en for English or auto-detected speech and base otherwise.
+func (t InboxTranscription) EffectiveWhisperModel() string {
+	if m := strings.TrimSpace(t.WhisperModel); m != "" {
+		return m
+	}
+	if l := strings.ToLower(t.EffectiveLanguage()); l == DefaultInboxTranscriptionLanguage || l == "en" || strings.HasPrefix(l, "en-") {
+		return "base.en"
+	}
+	return "base"
+}
+
+// EffectiveWhisperThreads returns whisper_threads, or half of cpus (at least 1).
+func (t InboxTranscription) EffectiveWhisperThreads(cpus int) int {
+	if t.WhisperThreads > 0 {
+		return t.WhisperThreads
+	}
+	return max(cpus/2, 1)
 }
 
 // EffectiveDiarize returns Diarize, defaulting to true.
@@ -223,7 +253,10 @@ func ValidateInboxTranscription(t InboxTranscription) error {
 	if l := t.EffectiveLanguage(); l != DefaultInboxTranscriptionLanguage && !inboxLanguageRe.MatchString(l) {
 		return fmt.Errorf("inbox.transcription.language %q: must be auto or a language code such as en or pt-BR", l)
 	}
-	if t.MaxDurationMinutes < 0 || t.MaxBytes < 0 || t.MonthlyBudgetMinutes < 0 || t.DailyMaxItems < 0 {
+	if m := strings.TrimSpace(t.WhisperModel); m != "" && !slices.Contains(InboxWhisperModels, m) {
+		return fmt.Errorf("inbox.transcription.whisper_model %q: must be one of %s", m, strings.Join(InboxWhisperModels, ", "))
+	}
+	if t.MaxDurationMinutes < 0 || t.MaxBytes < 0 || t.MonthlyBudgetMinutes < 0 || t.DailyMaxItems < 0 || t.WhisperThreads < 0 {
 		return fmt.Errorf("inbox.transcription limits must not be negative")
 	}
 	for i, s := range t.Sources {

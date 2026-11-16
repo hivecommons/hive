@@ -365,6 +365,26 @@ jobs:
           cache-from: type=gha,scope=tmux-${{ steps.slug.outputs.slug }}
           cache-to: type=gha,scope=tmux-${{ steps.slug.outputs.slug }},mode=max
 
+      # Same reasoning for the built-in Inbox transcription engine:
+      # whisper-builder's inputs are the pinned base image and two pinned,
+      # checksummed tarballs (whisper.cpp, FFmpeg), so its layers are safe to
+      # serve from cache and it is not in no-cache-filters. Compiling it cold
+      # costs several minutes per arch.
+      - name: Warm whisper-builder layer cache
+        continue-on-error: true
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: src/Dockerfile
+          platforms: ${{ matrix.platform }}
+          target: whisper-builder
+          build-args: |
+            BASE_REGISTRY=${{ env.BASE_REGISTRY }}
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=whisper-${{ steps.slug.outputs.slug }}
+          cache-to: type=gha,scope=whisper-${{ steps.slug.outputs.slug }},mode=max
+
       - name: Build and push by digest
         id: build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0

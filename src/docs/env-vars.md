@@ -135,6 +135,13 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_INBOX_TRANSCRIPTION_MAX_BYTES` | No | `524288000` | Overrides `inbox.transcription.max_bytes`: an audio download larger than this is cut and the item skipped as too large. |
 | `HIVE_INBOX_TRANSCRIPTION_MONTHLY_BUDGET_MINUTES` | No | `600` | Overrides `inbox.transcription.monthly_budget_minutes`: audio minutes this hive may send per UTC month. |
 | `HIVE_INBOX_TRANSCRIPTION_DAILY_MAX_ITEMS` | No | `20` | Overrides `inbox.transcription.daily_max_items`: transcription runs per UTC day. |
+| `HIVE_WHISPER_MODEL_DIR` | No | `/data/models/whisper` | Where the built-in whisper provider keeps its ggml model (`ggml-<model>.bin`, mode 0644). Air-gapped hives pre-seed the file here; it is checked against its pinned size and SHA-256 before use ([inbox-transcription.md](inbox-transcription.md)). |
+| `HIVE_WHISPER_MODEL_DOWNLOAD` | No | `true` | `false` stops the hive from downloading a missing whisper model (air-gapped hives); whisper then reports *not ready* until the file is pre-seeded. |
+| `HIVE_WHISPER_MODEL_BASE_URL` | No | the pinned `huggingface.co/ggerganov/whisper.cpp` revision | HTTPS mirror the whisper model is downloaded from (`<url>/ggml-<model>.bin`). The pinned SHA-256 still applies. |
+| `HIVE_WHISPER_SANDBOX` | No | `/usr/local/bin/hive-whisper` | Path of the hive-whisper sandbox launcher. |
+| `HIVE_WHISPER_ENGINE_DIR` | No | `/opt/hive-whisper/bin` | Directory holding the bundled `whisper-cli` and LGPL `ffmpeg`. |
+| `HIVE_WHISPER_RUN_AS` | No | `hive-transcribe` | User the sandbox runs as (through su-exec). `self` runs it as the hive's own uid: weaker isolation, for development hosts without su-exec or the sandbox user. |
+| `HIVE_WHISPER_MEMORY_MB` | No | `3072` | Address-space limit (RLIMIT_AS) for each sandboxed engine process, in MiB. |
 
 ## Crux durable lanes
 

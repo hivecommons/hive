@@ -38,14 +38,16 @@ type ProviderStatus struct {
 	AudioGoesTo string `json:"audio_goes_to"`
 	// Model is the model this provider would use.
 	Model string `json:"model"`
+	// Egress lists hosts this provider needs beyond its API (whisper's
+	// first-use model download), for egress allowlists.
+	Egress []string `json:"egress,omitempty"`
 }
 
 // providerStatus probes one provider without contacting it.
 func (s *Service) providerStatus(name string, t config.InboxTranscription) ProviderStatus {
 	switch name {
 	case config.InboxTranscriptionProviderWhisper:
-		return ProviderStatus{Name: name, Status: ProviderNotInstalled, AudioGoesTo: AudioStaysOnHive,
-			Detail: "the built-in whisper engine is not part of this hive version"}
+		return s.whisperStatus(t)
 	case config.InboxTranscriptionProviderGemini:
 		return ProviderStatus{Name: name, Status: ProviderNotInstalled, AudioGoesTo: AudioToGoogle,
 			Detail: "Gemini transcription is not part of this hive version"}
@@ -86,8 +88,8 @@ func (s *Service) resolveProvider(t config.InboxTranscription) ProviderStatus {
 }
 
 // TranscriptionEgressHosts lists the hosts this hive must reach for
-// transcription with provider: none while transcription is off or for
-// whisper with its model already on disk, else the provider's API host.
+// transcription with provider's API: none while transcription is off or for
+// whisper (whose first-use model download adds ProviderStatus.Egress).
 func TranscriptionEgressHosts(t config.InboxTranscription, provider string) []string {
 	if !t.Enabled {
 		return []string{}

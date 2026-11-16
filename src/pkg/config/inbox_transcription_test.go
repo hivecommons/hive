@@ -62,13 +62,15 @@ func TestInboxTranscriptionConfiguredAndEnvOverrides(t *testing.T) {
 
 func TestValidateInboxTranscriptionRejects(t *testing.T) {
 	cases := map[string]InboxTranscription{
-		"mode":     {Mode: "sometimes"},
-		"provider": {Provider: "openai"},
-		"key env":  {APIKeyEnv: "not a name"},
-		"language": {Language: "english please"},
-		"negative": {MaxBytes: -1},
-		"sources":  {Sources: []string{" "}},
-		"consent":  {Enabled: true},
+		"mode":            {Mode: "sometimes"},
+		"provider":        {Provider: "openai"},
+		"key env":         {APIKeyEnv: "not a name"},
+		"language":        {Language: "english please"},
+		"negative":        {MaxBytes: -1},
+		"sources":         {Sources: []string{" "}},
+		"consent":         {Enabled: true},
+		"whisper model":   {WhisperModel: "large-v3"},
+		"whisper threads": {WhisperThreads: -1},
 	}
 	for name, tr := range cases {
 		if err := ValidateInboxTranscription(tr); err == nil {
@@ -112,6 +114,25 @@ transcription:
 		t.Fatalf("parsed = %+v", tr)
 	}
 	if err := ValidateInbox(c); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestInboxTranscriptionWhisperDefaults(t *testing.T) {
+	var tr InboxTranscription
+	if tr.EffectiveWhisperModel() != "base.en" || tr.EffectiveWhisperThreads(4) != 2 || tr.EffectiveWhisperThreads(1) != 1 {
+		t.Fatalf("whisper defaults: %q %d", tr.EffectiveWhisperModel(), tr.EffectiveWhisperThreads(4))
+	}
+	for lang, want := range map[string]string{"en": "base.en", "en-GB": "base.en", "de": "base", "pt-BR": "base"} {
+		if got := (InboxTranscription{Language: lang}).EffectiveWhisperModel(); got != want {
+			t.Errorf("language %s: model %q, want %q", lang, got, want)
+		}
+	}
+	tr = InboxTranscription{WhisperModel: "small", WhisperThreads: 3, Language: "de"}
+	if tr.EffectiveWhisperModel() != "small" || tr.EffectiveWhisperThreads(16) != 3 {
+		t.Fatalf("configured whisper = %q %d", tr.EffectiveWhisperModel(), tr.EffectiveWhisperThreads(16))
+	}
+	if err := ValidateInboxTranscription(tr); err != nil {
 		t.Fatal(err)
 	}
 }
