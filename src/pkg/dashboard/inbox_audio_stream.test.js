@@ -50,6 +50,7 @@ const harness = ({ fetchReply, share, clipboardOK = true } = {}) => {
   const items = [{ source: 'plaud', id: 'f_01', title: 'cost considerations' }];
   const api = new Function('document', 'fetch', 'navigator', 'location', 'CSS', 'showToast', 'writeClipboardText', 'window', 'renderInbox', 'items',
     'function inboxFind(src, id) { return items.find(it => it.source === src && it.id === id); }\n' +
+    'function formatDashboardDate(d) { return String(d); }\n' + fnSrc('inboxAudioNoteText') + '\n' +
     fnSrc('inboxApiPath') + '\n' + fnSrc('inboxStreamURL') + '\n' + fnSrc('inboxAudioErrorReason') + '\n' + fnSrc('inboxPlay') + '\n' +
     constSrc('INBOX_SHARE_HASH') + '\n' + fnSrc('inboxShareLink') + '\n' + fnSrc('inboxFocusKeyFromHash') + '\n' + fnSrc('inboxShareCopy') + '\n' + fnSrc('inboxShareNative') + '\n' +
     'return { inboxPlay, inboxStreamURL, inboxAudioErrorReason, inboxShareLink, inboxFocusKeyFromHash, inboxShareCopy, inboxShareNative };',
