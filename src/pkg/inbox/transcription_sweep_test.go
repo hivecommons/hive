@@ -158,10 +158,10 @@ func TestAutoDue(t *testing.T) {
 }
 
 func TestTranscriptionEgressHosts(t *testing.T) {
-	if got := TranscriptionEgressHosts(config.InboxTranscription{}); len(got) != 0 || got == nil {
+	if got := TranscriptionEgressHosts(config.InboxTranscription{}, "deepgram"); len(got) != 0 || got == nil {
 		t.Fatalf("disabled egress = %#v", got)
 	}
-	if got := TranscriptionEgressHosts(activeTx()); len(got) != 1 || got[0] != transcribe.DeepgramHost {
+	if got := TranscriptionEgressHosts(activeTx(), "deepgram"); len(got) != 1 || got[0] != transcribe.DeepgramHost {
 		t.Fatalf("enabled egress = %v", got)
 	}
 	e := newTxEnv(t, activeTx(), "http://audio.invalid")

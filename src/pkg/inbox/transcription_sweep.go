@@ -85,15 +85,6 @@ func autoDue(st *TranscriptionState, now time.Time) bool {
 	return false
 }
 
-// TranscriptionEgressHosts lists the hosts this hive must reach for
-// transcription: api.deepgram.com while transcription is enabled, else none.
-func TranscriptionEgressHosts(t config.InboxTranscription) []string {
-	if !t.Enabled {
-		return []string{}
-	}
-	return []string{transcribe.DeepgramHost}
-}
-
 // Detail renders the entry as "key=value, key=value", the audit-log detail
 // shape the dashboard writes for request-driven runs.
 func (a TranscribeAudit) Detail() string {

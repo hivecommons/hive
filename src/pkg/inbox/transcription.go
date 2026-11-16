@@ -61,8 +61,13 @@ type TranscriptionSettings struct {
 	MonthMinutesUsed float64 `json:"month_minutes_used"`
 	TodayItems       int     `json:"today_items"`
 	// EgressHosts are the hosts the hive must reach while transcription is
-	// enabled (api.deepgram.com), for egress allowlists.
+	// enabled with the resolved provider, for egress allowlists.
 	EgressHosts []string `json:"egress_hosts"`
+	// ResolvedProvider / ResolvedModel are what a run would use now (auto
+	// resolved by availability); Providers is every provider's readiness.
+	ResolvedProvider string           `json:"resolved_provider"`
+	ResolvedModel    string           `json:"resolved_model"`
+	Providers        []ProviderStatus `json:"providers"`
 }
 
 // TranscribeAudit is one inbox_transcribe audit entry. It never carries the
@@ -131,7 +136,10 @@ func (s *Service) TranscriptionSettings() TranscriptionSettings {
 		DailyMaxItems: t.EffectiveDailyMaxItems(), ConsentAcknowledged: t.ConsentAcknowledged,
 	}
 	out.KeyPresent = strings.TrimSpace(s.getenv(out.APIKeyEnv)) != ""
-	out.EgressHosts = TranscriptionEgressHosts(t)
+	resolved := s.resolveProvider(t)
+	out.ResolvedProvider, out.ResolvedModel = resolved.Name, resolved.Model
+	out.Providers = s.providerStatuses(t)
+	out.EgressHosts = TranscriptionEgressHosts(t, resolved.Name)
 	if store := s.transcriptStore(); store != nil {
 		u := store.Usage(s.now())
 		out.MonthMinutesUsed, out.TodayItems = u.MonthSeconds/time.Minute.Seconds(), u.TodayItems
@@ -139,11 +147,16 @@ func (s *Service) TranscriptionSettings() TranscriptionSettings {
 	return out
 }
 
-// DefaultTranscriber builds the configured provider with the key read from
-// the named environment variable.
+// DefaultTranscriber builds the provider named in t.Provider, which the
+// Service sets to the resolved provider (auto is resolved before this is
+// called), with any key read from the named environment variable.
 func DefaultTranscriber(t config.InboxTranscription, getenv func(string) string) (transcribe.Transcriber, error) {
-	if p := t.EffectiveProvider(); p != transcribe.DeepgramName {
-		return nil, fmt.Errorf("transcription provider %q is not supported", p)
+	p := t.EffectiveProvider()
+	if p == config.InboxTranscriptionProviderAuto {
+		p = config.InboxTranscriptionProviderDeepgram
+	}
+	if p != transcribe.DeepgramName {
+		return nil, fmt.Errorf("transcription provider %q is not available on this hive version", p)
 	}
 	env := t.EffectiveAPIKeyEnv()
 	key := strings.TrimSpace(getenv(env))
@@ -177,6 +190,31 @@ func (s *Service) hasAudio(it Item) bool {
 	return ok
 }
 
+// Reason codes for Item.TranscribeUnavailable. no_key means the resolved
+// provider is not ready (a missing key or credentials, or an engine this
+// hive does not have); the ⚙ settings name which.
+const (
+	TranscribeBlockedDisabled = "disabled"
+	TranscribeBlockedNoKey    = "no_key"
+	TranscribeBlockedConsent  = "no_consent"
+	TranscribeBlockedBudget   = "budget"
+)
+
+// transcribeBlockedReason names why transcription is unavailable, or "".
+func (s *Service) transcribeBlockedReason(t config.InboxTranscription, store *TranscriptStore) string {
+	switch {
+	case !t.Enabled:
+		return TranscribeBlockedDisabled
+	case !s.resolveProvider(t).Available:
+		return TranscribeBlockedNoKey
+	case !t.ConsentAcknowledged:
+		return TranscribeBlockedConsent
+	case store != nil && time.Duration(store.Usage(s.now()).MonthSeconds*float64(time.Second)) >= t.EffectiveMonthlyBudget():
+		return TranscribeBlockedBudget
+	}
+	return ""
+}
+
 // applyTranscripts sets each item's transcription state: a done machine
 // transcript clears Pending (an upstream transcript, once the source has
 // one, already cleared it and wins), and Transcribable marks items the
@@ -186,12 +224,16 @@ func (s *Service) applyTranscripts(items []Item) {
 	if store == nil {
 		return
 	}
-	active := s.Config().Transcription.Active()
+	txCfg := s.Config().Transcription
+	active := txCfg.Active()
+	var blocked string
+	var blockedKnown bool
 	for i := range items {
 		it := &items[i]
 		rec, ok := store.Get(it.Source, it.ID)
 		if ok {
 			st := rec.State()
+			s.txLive(it.Source, it.ID, &st)
 			it.Transcription = &st
 			if rec.Status == TranscriptionDone && it.Pending {
 				it.Pending, it.HasTranscript = false, true
@@ -199,6 +241,12 @@ func (s *Service) applyTranscripts(items []Item) {
 		}
 		busy := ok && (rec.Status == TranscriptionQueued || rec.Status == TranscriptionRunning || rec.Status == TranscriptionDone)
 		it.Transcribable = active && it.Pending && !busy && s.hasAudio(*it)
+		if it.Pending && !busy && s.hasAudio(*it) {
+			if !blockedKnown {
+				blocked, blockedKnown = s.transcribeBlockedReason(txCfg, store), true
+			}
+			it.TranscribeUnavailable = blocked
+		}
 	}
 }
 
@@ -247,9 +295,10 @@ func (s *Service) Transcribe(_ context.Context, it Item, opts TranscribeOptions)
 	if !it.Pending {
 		return TranscriptionState{}, ErrNotPending
 	}
+	resolved := s.resolveProvider(cfg)
 	rec := TranscriptRecord{
 		Source: it.Source, ID: it.ID, Attempts: prev.Attempts + 1,
-		Provider: cfg.EffectiveProvider(), Model: cfg.EffectiveModel(), UpdatedAt: s.now(),
+		Provider: resolved.Name, Model: resolved.Model, UpdatedAt: s.now(),
 	}
 	if reason := s.precheck(it, cfg, store); reason != "" {
 		rec.Status, rec.Reason = TranscriptionSkipped, reason
@@ -263,6 +312,11 @@ func (s *Service) Transcribe(_ context.Context, it Item, opts TranscribeOptions)
 	if err := store.Put(rec); err != nil {
 		return TranscriptionState{}, err
 	}
+	job := s.txEnqueue(it, rec.Provider, rec.Model, expectedSpeed(store, rec.Provider, rec.Model))
+	queued := rec.State()
+	s.txLive(it.Source, it.ID, &queued)
+	// The run builds the resolved provider, never auto.
+	cfg.Provider = rec.Provider
 	s.wg.Add(1)
 	run := s.Run
 	if run == nil {
@@ -270,9 +324,9 @@ func (s *Service) Transcribe(_ context.Context, it Item, opts TranscribeOptions)
 	}
 	run(func() {
 		defer s.wg.Done()
-		s.runTranscription(it, cfg, rec, opts)
+		s.runTranscription(it, cfg, rec, opts, job)
 	})
-	return rec.State(), nil
+	return queued, nil
 }
 
 // precheck returns a skip reason, or "" when the item may be uploaded.
@@ -298,19 +352,26 @@ func (s *Service) precheck(it Item, cfg config.InboxTranscription, store *Transc
 
 // runTranscription is one background run: download the audio through the
 // item's source, stream it to the provider, store the transcript.
-func (s *Service) runTranscription(it Item, cfg config.InboxTranscription, rec TranscriptRecord, opts TranscribeOptions) {
-	s.txRun.Lock()
-	defer s.txRun.Unlock()
+func (s *Service) runTranscription(it Item, cfg config.InboxTranscription, rec TranscriptRecord, opts TranscribeOptions, job *txJob) {
+	// Runs execute one at a time, in the order they were queued.
+	<-job.ready
+	defer s.txDequeue(job)
 	store := s.transcriptStore()
+	// Estimate from the speed measured up to now, including the runs that
+	// finished while this one waited.
+	s.txSetSpeed(job, expectedSpeed(store, rec.Provider, rec.Model))
 	key := it.Key()
 	ctx, cancel := context.WithTimeout(context.Background(), transcribeJobTimeout)
 	defer cancel()
-	rec.Status, rec.UpdatedAt = TranscriptionRunning, s.now()
+	started := s.now()
+	rec.Status, rec.UpdatedAt, rec.StartedAt = TranscriptionRunning, started, started
+	s.txProgress(job, transcribe.Progress{Phase: transcribe.PhaseDownloading, ProcessedSeconds: -1})
 	s.putTranscript(store, rec)
 	if err := store.AddUsage(s.now(), 0, 1); err != nil {
 		s.Logger.Warn("inbox: transcription usage", "item", key, "error", err)
 	}
-	res, err := s.transcribeItem(ctx, it, cfg, &rec)
+	res, err := s.transcribeItem(ctx, it, cfg, &rec, job)
+	s.txProgress(job, transcribe.Progress{Phase: transcribe.PhaseFinalizing, ProcessedSeconds: -1})
 	rec.UpdatedAt = s.now()
 	seconds := res.Duration.Seconds()
 	if seconds == 0 {
@@ -323,6 +384,10 @@ func (s *Service) runTranscription(it Item, cfg config.InboxTranscription, rec T
 		rec.Status, rec.Reason, rec.Text, rec.Language, rec.AudioSeconds = TranscriptionDone, "", res.Text(), res.Language, seconds
 		if res.Model != "" {
 			rec.Model = res.Model
+		}
+		// Teach the next estimate how fast this provider is on this hive.
+		if serr := store.RecordSpeed(rec.Provider, rec.Model, rec.UpdatedAt.Sub(started).Seconds(), seconds); serr != nil {
+			s.Logger.Warn("inbox: transcription speed", "item", key, "error", serr)
 		}
 	case errors.Is(err, transcribe.ErrTooLarge):
 		rec.Status, rec.Reason = TranscriptionSkipped, fmt.Sprintf("%s: the audio is larger than %d MB (inbox.transcription.max_bytes)", SkipTooLarge, cfg.EffectiveMaxBytes()/bytesPerMB)
@@ -363,7 +428,7 @@ func (s *Service) auditTranscription(opts TranscribeOptions, rec TranscriptRecor
 // transcribeItem mints a fresh audio link through the source, then lets the
 // provider read the audio from a hive-side download. The link itself is
 // never sent to the provider, stored, or logged (only its host).
-func (s *Service) transcribeItem(ctx context.Context, it Item, cfg config.InboxTranscription, rec *TranscriptRecord) (transcribe.Result, error) {
+func (s *Service) transcribeItem(ctx context.Context, it Item, cfg config.InboxTranscription, rec *TranscriptRecord, job *txJob) (transcribe.Result, error) {
 	tr, err := s.transcriber(cfg)
 	if err != nil {
 		return transcribe.Result{}, err
@@ -379,7 +444,9 @@ func (s *Service) transcribeItem(ctx context.Context, it Item, cfg config.InboxT
 		MIME:     mimeFromURL(link.URL),
 		Duration: time.Duration(it.DurationMS) * time.Millisecond,
 		Lang:     cfg.EffectiveLanguage(),
+		Progress: func(p transcribe.Progress) { s.txProgress(job, p) },
 		Open: func(ctx context.Context) (io.ReadCloser, error) {
+			s.txProgress(job, transcribe.Progress{Phase: transcribe.PhaseDownloading, ProcessedSeconds: -1})
 			resp, err := s.downloadAudio(ctx, link.URL, host)
 			if err != nil {
 				return nil, err

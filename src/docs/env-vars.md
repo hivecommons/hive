@@ -130,7 +130,7 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_DOSSIER_CACHE_MAX_ENTRIES` | No | `512` | Caps each public dossier cache. Bounds username-spray memory while keeping normal contributor reuse hot. |
 | `HIVE_CONTRIBUTOR_KNOWLEDGE_EXPORT_MAX_FACTS` | No | `80` | Caps the number of facts returned by the contributor knowledge export API. Unset, non-numeric, or non-positive values fall back to the default. |
 | `HIVE_PUBLIC_REPOS` | No | none | Comma-separated, case-insensitive allowlist of additional Gource project names the dashboard's public war-room view may render, beyond the always-allowed default (`hive`). |
-| `DEEPGRAM_API_KEY` | No | none | The hive owner's own Deepgram API key for Inbox transcription (`inbox.transcription`, [inbox-transcription.md](inbox-transcription.md)). Read at run time; `inbox.transcription.api_key_env` names a different variable. Never stored in `hive.yaml`, never shown (the UI reports only key present / missing). |
+| `DEEPGRAM_API_KEY` | No | none | The hive owner's own Deepgram API key for Inbox transcription with `inbox.transcription.provider: deepgram`, or `auto` when whisper and Gemini are unavailable ([inbox-transcription.md](inbox-transcription.md)). Read at run time; `inbox.transcription.api_key_env` names a different variable. Never stored in `hive.yaml`, never shown (the UI reports only key present / missing). |
 | `HIVE_INBOX_TRANSCRIPTION_MAX_DURATION_MINUTES` | No | `120` | Overrides `inbox.transcription.max_duration_minutes`: longer recordings are skipped before upload. Non-numeric or non-positive values fall back to the config / default. |
 | `HIVE_INBOX_TRANSCRIPTION_MAX_BYTES` | No | `524288000` | Overrides `inbox.transcription.max_bytes`: an audio download larger than this is cut and the item skipped as too large. |
 | `HIVE_INBOX_TRANSCRIPTION_MONTHLY_BUDGET_MINUTES` | No | `600` | Overrides `inbox.transcription.monthly_budget_minutes`: audio minutes this hive may send per UTC month. |
@@ -374,7 +374,9 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_VEXA_API_KEY_FILE` | No | `/data/secrets/meetings_vexa_api_key` | Keystore-sealed secret file holding the Vexa tenant key. Overrides `meetings.vexa.api_key_file`. |
 | `HIVE_MEETINGS_DISCORD_TOKEN` | No | none | Per-hive Discord bot token. Secret. Wins over the secret file. Without a token Discord is unavailable. |
 | `HIVE_MEETINGS_DISCORD_TOKEN_FILE` | No | `/data/secrets/meetings_discord_token` | Keystore-sealed secret file holding the Discord bot token. Overrides `meetings.discord.token_file`. |
-| `HIVE_MEETINGS_TRANSCRIBE_URL` | No | none | Shared transcription service for Discord audio (passed as `QUORUM_TRANSCRIBE_URL`). |
+| `HIVE_MEETINGS_TRANSCRIBE_URL` | No | none | Shared transcription service for Discord audio (passed as `QUORUM_TRANSCRIBE_URL`). Overrides `meetings.transcribe_url`. In-cluster: `http://vexa-transcription.meetings.svc.cluster.local:8000`. |
+| `HIVE_MEETINGS_TRANSCRIBE_TOKEN` | No | none | Transcription service token. Secret. Wins over the secret file. Hive passes it to Quorum as `QUORUM_TRANSCRIBE_TOKEN_FILE`; without it Discord audio is not transcribed. |
+| `HIVE_MEETINGS_TRANSCRIBE_TOKEN_FILE` | No | `/data/secrets/meetings_transcribe_token` | Keystore-sealed secret file holding the transcription service token. Overrides `meetings.transcribe_token_file`. |
 | `HIVE_MEETINGS_DELIVERY` | No | `chat` | Default delivery for meeting output. Only `chat` is supported. |
 | `HIVE_MEETINGS_VOICE_ON_ADDRESS` | No | `true` | Lets hive speak when addressed by name in a meeting whose voice is enabled; otherwise it answers in chat. |
 | `HIVE_MEETINGS_BOT_NAME` | No | `hive (notes)` | Display name the meeting bot joins with. |
