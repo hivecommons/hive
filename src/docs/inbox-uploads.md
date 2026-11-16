@@ -2,8 +2,9 @@
 
 Besides the recordings that [voice and meeting connectors](inbox-voice-sources.md)
 bring in, the owner can add material to the Inbox directly: drop a file onto
-the Inbox, choose it with **＋ Add**, or paste it with Ctrl/Cmd+V while the
-Inbox has focus. Each file becomes an Inbox item like any other: it gets a
+the Inbox, choose it with **＋ Add**, paste it with Ctrl/Cmd+V while the
+Inbox has focus, or add a link (type it into ＋ Add, or paste a URL onto the
+Inbox). Each file becomes an Inbox item like any other: it gets a
 Knowledge fact, the 🔗 Share ▾ menu (RFC, Knowledge, DIBS) and the route
 history.
 
@@ -28,6 +29,7 @@ as plain text otherwise.
 | JSON Lines | `.jsonl`, `.ndjson` | the record count and the first 20 records in a fenced block; every line is validated |
 | YAML | `.yaml`, `.yml` | a one-line summary and the document in a fenced `yaml` block (parsed with `gopkg.in/yaml.v3`) |
 | CSV / TSV | `.csv`, `.tsv`, `.tab` | row and column counts and a markdown table of the first 20 rows (20 columns at most) |
+| HTML | `.html`, `.htm`, and web pages behind a link | readable markdown: the `<title>` names the item; the `<article>` or `<main>` (else `<body>`) is kept with headings, paragraphs, lists, quotes, code, tables, link targets and image alt text; scripts, styles, forms, navigation, footers, asides and hidden elements are dropped. Parsed with `golang.org/x/net/html` (BSD-3-Clause); nothing is executed and nothing the page references is loaded |
 
 Text is validated as UTF-8 (a UTF-8 BOM is dropped; UTF-16 is refused with
 "save the file as UTF-8") and newlines are normalised to `\n`. The fenced
@@ -67,6 +69,41 @@ Not supported (the item is refused with a message saying what to do):
 Every file, accepted or refused, is audited as `inbox_upload` with the user,
 the item id, the detected kind, the size and the outcome or refusal code; the
 file's content and name are not written to the audit log.
+
+## Links
+
+A link is fetched by the hive itself, once, when it is added, and its body
+goes through the same type pipeline as a dropped file: an HTML page becomes
+text, a link to a `.json`, `.csv` or `.md` file becomes that kind (the file
+name in the URL or `Content-Disposition`, else the response `Content-Type`,
+picks the format, and the content must still pass the sniff and the parse).
+YouTube and other streaming pages are read as HTML pages, never as video;
+links to audio or video files are refused for now.
+
+The item is titled by the page `<title>`, else the file name, else the URL,
+and shows **link · host**. The URL is kept as the item's provenance (and the
+fact's `source_url`) only.
+
+Fetch rules (SSRF protection):
+
+- `http` and `https` only; a link with a user name or password is refused.
+- The hive resolves the host itself and connects to the address it checked;
+  if **any** answer is blocked the link is refused, so a second
+  (rebinding) answer is never used. Blocked: loopback, RFC 1918 private,
+  link-local (including the cloud metadata address `169.254.169.254`),
+  CGNAT `100.64.0.0/10`, multicast, reserved and documentation ranges,
+  `0.0.0.0/8`, IPv6 unspecified, loopback, unique-local `fc00::/7`
+  (including `fd00:ec2::254`), link-local and site-local, Teredo, and IPv4
+  addresses embedded in IPv4-mapped, NAT64 and 6to4 addresses; host names
+  `localhost`, `*.localhost`, `*.local`, `*.internal` and `metadata`.
+- Every redirect hop is checked the same way, at most 3 redirects, and a
+  redirect never carries `Authorization` or `Cookie`.
+- The body is streamed through a limit (`inbox.uploads.max_file_bytes`);
+  connect 10 s, TLS 10 s, response headers 15 s, whole fetch 60 s.
+- Requests send `User-Agent: hive-inbox/<version>`.
+- `HTTP(S)_PROXY` from the environment is not used (a proxy would resolve
+  the name again). When `network.upstream_proxy` matches the host, the hive
+  asks the proxy to `CONNECT` to the checked IP and port.
 
 ## Limits
 
@@ -111,6 +148,11 @@ and its share history stay. Text documents are kept unless
 
 ## API
 
+`POST /api/inbox/uploads/url` (owner or read-write) takes `{"url": "..."}`
+and answers like a single-file upload (201, or 400 `link_refused`, 413, 415,
+422, 502 `fetch_failed`, 507); refusals and additions are audited as
+`inbox_upload` with `origin=link` and the host, never the full URL.
+
 `POST /api/inbox/uploads` (owner or read-write) takes `multipart/form-data`
 with one or more `file` fields. One file answers `201` with
 `{results: [{filename, ok: true, source: "upload", item_id, title, kind}]}`,
@@ -123,4 +165,4 @@ files answer `200` with one result per file unless all of them failed. See
 `GET /api/inbox` reports the limits and current usage under
 `settings.uploads` (`enabled`, `max_file_bytes`, `max_files_per_drop`,
 `quota_bytes`, `used_bytes`, `media_retention_days`,
-`document_retention_days`, `extensions`).
+`document_retention_days`, `extensions`, `links`).

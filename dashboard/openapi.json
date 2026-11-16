@@ -38693,7 +38693,8 @@
                               "jsonl",
                               "yaml",
                               "csv",
-                              "tsv"
+                              "tsv",
+                              "html"
                             ]
                           },
                           "code": {
@@ -38758,7 +38759,8 @@
                               "jsonl",
                               "yaml",
                               "csv",
-                              "tsv"
+                              "tsv",
+                              "html"
                             ]
                           },
                           "code": {
@@ -38823,7 +38825,8 @@
                               "jsonl",
                               "yaml",
                               "csv",
-                              "tsv"
+                              "tsv",
+                              "html"
                             ]
                           },
                           "code": {
@@ -38894,7 +38897,8 @@
                               "jsonl",
                               "yaml",
                               "csv",
-                              "tsv"
+                              "tsv",
+                              "html"
                             ]
                           },
                           "code": {
@@ -38959,7 +38963,8 @@
                               "jsonl",
                               "yaml",
                               "csv",
-                              "tsv"
+                              "tsv",
+                              "html"
                             ]
                           },
                           "code": {
@@ -39024,7 +39029,8 @@
                               "jsonl",
                               "yaml",
                               "csv",
-                              "tsv"
+                              "tsv",
+                              "html"
                             ]
                           },
                           "code": {
@@ -39089,7 +39095,8 @@
                               "jsonl",
                               "yaml",
                               "csv",
-                              "tsv"
+                              "tsv",
+                              "html"
                             ]
                           },
                           "code": {
@@ -39788,6 +39795,125 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/inbox/uploads/url": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Add a link to the Inbox",
+        "description": "Owner or read-write. The hive fetches the URL itself under an SSRF guard: http/https only, no user name or password, its own DNS lookup with the connection pinned to the checked address (any private, loopback, link-local, CGNAT, multicast, IPv6 ULA or cloud metadata answer refuses the link), every redirect re-checked (at most 3), the body capped at `inbox.uploads.max_file_bytes` and the whole fetch at 60 s; `HTTP(S)_PROXY` is not used, a matching `network.upstream_proxy` is asked to CONNECT to the checked IP. The body goes through the same type pipeline as an uploaded file (an HTML page becomes readable markdown titled by its `<title>`). Audited as `inbox_upload` with `origin=link` and the host.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "url"
+                ],
+                "properties": {
+                  "url": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "One file added",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "results": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "filename": {
+                            "type": "string"
+                          },
+                          "ok": {
+                            "type": "boolean"
+                          },
+                          "source": {
+                            "type": "string",
+                            "enum": [
+                              "upload"
+                            ]
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "markdown",
+                              "text",
+                              "json",
+                              "jsonl",
+                              "yaml",
+                              "csv",
+                              "tsv",
+                              "html"
+                            ]
+                          },
+                          "code": {
+                            "type": "string",
+                            "enum": [
+                              "empty",
+                              "too_large",
+                              "unsupported_type",
+                              "parse_failed",
+                              "quota_exceeded",
+                              "too_many_files",
+                              "internal"
+                            ]
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "No url, or the link breaks the fetch rules (`link_refused`)"
+          },
+          "403": {
+            "description": "Not owner or read-write, or a cross-site request"
+          },
+          "404": {
+            "description": "The hive has no upload store"
+          },
+          "413": {
+            "description": "The linked file is too large"
+          },
+          "415": {
+            "description": "Unsupported type"
+          },
+          "422": {
+            "description": "The linked file does not parse"
+          },
+          "502": {
+            "description": "The site could not be reached or answered an error (`fetch_failed`)"
+          },
+          "507": {
+            "description": "The per-hive upload quota is full"
           }
         }
       }

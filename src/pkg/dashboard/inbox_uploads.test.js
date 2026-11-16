@@ -29,24 +29,31 @@ const lineSrc = prefix => {
 
 const escapeHtml = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const MB = 1048576;
-const UPLOADS = { enabled: true, max_file_bytes: 25 * MB, max_files_per_drop: 3, extensions: ['.csv', '.json', '.md', '.txt'] };
+const UPLOADS = { enabled: true, links: true, max_file_bytes: 25 * MB, max_files_per_drop: 3, extensions: ['.csv', '.json', '.md', '.txt'] };
 
 const FNS = ['inboxViewerCanPlay', 'inboxUploadSettings', 'inboxCanAdd', 'inboxFmtBytes', 'inboxUploadPlan', 'inboxUploadRowHtml',
   'inboxUploadsHtml', 'inboxAddPanelHtml', 'inboxAnnounce', 'inboxUploadRowUpdate', 'inboxAddFiles', 'inboxUploadSend',
   'inboxDragHasFiles', 'inboxInSection', 'inboxSetDragOver', 'inboxOnDragOver', 'inboxOnDragLeave', 'inboxOnDrop', 'inboxOnPaste',
-  'inboxPickFiles', 'inboxClearUploads'];
+  'inboxPickFiles', 'inboxClearUploads', 'inboxAddUrl', 'inboxAddUrlFromField'];
 
 // harness builds the upload functions with a fake document, XHR and the
 // Inbox cache. replies is a list of {status, body} answered in order.
-const harness = ({ role = 'owner', uploads = UPLOADS, replies = [] } = {}) => {
-  const calls = { sends: [], renders: 0, refreshes: 0, rows: {}, classes: {} };
+const harness = ({ role = 'owner', uploads = UPLOADS, replies = [], fetchReplies = [] } = {}) => {
+  const calls = { sends: [], fetches: [], renders: 0, refreshes: 0, rows: {}, classes: {} };
+  const urlField = { value: '' };
+  const fetch = async (url, opts) => {
+    calls.fetches.push({ url, opts });
+    const r = fetchReplies.shift() || { status: 201, body: { results: [{ ok: true, source: 'upload', item_id: 'link1', title: 'Page' }] } };
+    if (r.network) throw new Error('offline');
+    return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.body };
+  };
   const status = { textContent: '' };
   const section = { classList: { toggle: (c, on) => { calls.classes[c] = on; } } };
   const inside = { closest: sel => (sel === '#inbox-section' ? section : null) };
   const outside = { closest: () => null };
   const document = {
     activeElement: outside,
-    getElementById: id => (id === 'inbox-upload-status' ? status : id === 'inbox-section' ? section : null),
+    getElementById: id => (id === 'inbox-upload-status' ? status : id === 'inbox-section' ? section : id === 'inbox-add-url' ? urlField : null),
     querySelector: sel => {
       const m = /data-inbox-upload="(\d+)"/.exec(sel);
       if (!m) return null;
@@ -69,16 +76,16 @@ const harness = ({ role = 'owner', uploads = UPLOADS, replies = [] } = {}) => {
     }
   }
   const ctx = { _inboxCache: { settings: { uploads } } };
-  const api = new Function('ctx', 'window', 'document', 'escapeHtml', 'renderInbox', 'fetchInbox', 'calls', 'FakeXHR',
+  const api = new Function('ctx', 'window', 'document', 'escapeHtml', 'renderInbox', 'fetchInbox', 'calls', 'FakeXHR', 'fetch',
     'let _inboxUploads = []; let _inboxUploadSeq = 0; let _inboxAddOpen = true; let _inboxUploadQueue = Promise.resolve(); let _inboxPointerInside = false;\n' +
     'const _inboxCache = ctx._inboxCache;\n' +
-    lineSrc('const INBOX_UPLOAD_LABELS = ') + '\n' +
+    lineSrc('const INBOX_UPLOAD_LABELS = ') + '\n' + lineSrc('const INBOX_URL_RE = ') + '\n' +
     'function inboxNewXHR() { return new FakeXHR(); }\n' +
     'function inboxUploadForm(row) { return { file: row.file, name: row.name }; }\n' +
     FNS.map(fnSrc).join('\n') + '\n' +
     'return { ' + FNS.join(', ') + ', state: () => ({ uploads: _inboxUploads }), queue: () => _inboxUploadQueue, setPointerInside: v => { _inboxPointerInside = v; } };',
-  )(ctx, { _hiveRole: role }, document, escapeHtml, () => { calls.renders++; }, async () => { calls.refreshes++; }, calls, FakeXHR);
-  return { api, calls, status, inside, outside, document };
+  )(ctx, { _hiveRole: role }, document, escapeHtml, () => { calls.renders++; }, async () => { calls.refreshes++; }, calls, FakeXHR, fetch);
+  return { api, calls, status, inside, outside, document, urlField };
 };
 
 const file = (name, size) => ({ name, size });
@@ -233,4 +240,53 @@ test('＋ Add panel: keyboard-operable picker, limits and privacy note', () => {
   assert.strictEqual(picked.value, '', 'the picker is reset so the same file can be picked again');
   assert.strictEqual(api.state().uploads.length, 1);
   assert.match(fnSrc('inboxToggleAdd'), /aria-expanded|focus\(\)/);
+});
+
+test('links: the Add field and a pasted URL are fetched by the hive, errors stay per row', async () => {
+  const { api, calls, inside, urlField, status } = harness({ fetchReplies: [
+    { status: 201, body: { results: [{ ok: true, source: 'upload', item_id: 'l1', title: 'Docs' }] } },
+    { status: 400, body: { results: [{ ok: false, code: 'link_refused', error: 'link refused: 10.0.0.5 is a private address' }] } },
+    { network: true },
+  ] });
+  urlField.value = '  https://docs.example/page  ';
+  await api.inboxAddUrlFromField();
+  assert.strictEqual(urlField.value, '', 'the field is cleared');
+  assert.strictEqual(calls.fetches[0].url, '/api/inbox/uploads/url');
+  assert.deepStrictEqual(JSON.parse(calls.fetches[0].opts.body), { url: 'https://docs.example/page' });
+  let rows = api.state().uploads;
+  assert.strictEqual(rows[0].status, 'done');
+  assert.strictEqual(rows[0].key, 'upload/l1');
+  assert.strictEqual(rows[0].name, 'docs.example');
+  assert.match(status.textContent, /docs\.example added to the Inbox/);
+  assert.strictEqual(calls.refreshes, 1);
+  // Pasting a URL while the Inbox has focus adds it; in a text field it stays a paste.
+  const paste = (target, text) => {
+    const e = { target, clipboardData: { files: [], getData: () => text }, prevented: false };
+    e.preventDefault = () => { e.prevented = true; };
+    api.inboxOnPaste(e);
+    return e;
+  };
+  const field = { closest: sel => (sel === '#inbox-section' ? {} : sel.startsWith('input') ? {} : null) };
+  assert.strictEqual(paste(field, 'https://x.example/').prevented, false, 'paste into a field is left alone');
+  assert.strictEqual(paste(inside, 'not a link').prevented, false);
+  assert.strictEqual(paste(inside, 'https://a.example/ and more').prevented, false, 'only a single URL');
+  assert.strictEqual(paste(inside, 'http://intranet.example/').prevented, true);
+  await api.queue();
+  rows = api.state().uploads;
+  assert.strictEqual(rows[1].status, 'error');
+  assert.strictEqual(rows[1].code, 'link_refused');
+  assert.match(api.inboxUploadRowHtml(rows[1]), /role="alert">link refused: 10\.0\.0\.5 is a private address/);
+  assert.doesNotMatch(api.inboxUploadRowHtml(rows[1]), /<progress/, 'links have no byte progress');
+  await api.inboxAddUrl('https://c.example/');
+  assert.match(api.state().uploads[2].error, /network error/);
+  // Non-http links never leave the browser.
+  const n = calls.fetches.length;
+  const bad = await api.inboxAddUrl('ftp://x.example/');
+  assert.strictEqual(bad.status, 'error');
+  assert.strictEqual(calls.fetches.length, n);
+  // Links off on the hive, or a read session: nothing.
+  assert.strictEqual(await harness({ uploads: Object.assign({}, UPLOADS, { links: false }) }).api.inboxAddUrl('https://d.example/'), null);
+  assert.strictEqual(await harness({ role: 'read' }).api.inboxAddUrl('https://d.example/'), null);
+  assert.match(api.inboxAddPanelHtml(), /id="inbox-add-url"[^>]*data-enter-action="inboxAddUrlFromField"/);
+  assert.match(api.inboxUploadRowHtml({ id: 9, name: 'e.example', link: 'https://e.example/', status: 'uploading' }), /Fetching/);
 });

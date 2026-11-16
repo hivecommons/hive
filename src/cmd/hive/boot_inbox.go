@@ -61,6 +61,9 @@ func (b *boot) bootInbox(baseDir string) {
 		ConnectorsDir: filepath.Join(baseDir, "connectors"),
 		FactWritten:   b.inboxUploadFactWritten,
 		Logger:        b.logger,
+		// Links are fetched by the hive with the SSRF guard (own DNS
+		// lookup, blocked ranges, every redirect re-checked).
+		Fetcher: &inbox.LinkFetcher{UserAgent: "hive-inbox/" + version},
 	}
 	svc.EnableUploads(uploads)
 	b.startInboxUploadRetention(uploads)
