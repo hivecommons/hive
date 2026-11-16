@@ -1,1 +1,0 @@
-- Invite Betty by adding `hive@<your hive's host>` to a calendar invite: invites from an organizer whose proven calendar email belongs to someone with access to the hive (and that pass DMARC) are scheduled at once with their join link, meeting id and passcode, everything else waits for approval; each user proves their calendar emails by mailing a code shown in Settings.

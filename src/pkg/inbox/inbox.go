@@ -91,6 +91,12 @@ type Item struct {
 	AudioExpired bool `json:"audio_expired,omitempty"`
 	// AudioRetentionDays is how long a hive recording's audio is kept.
 	AudioRetentionDays int `json:"audio_retention_days,omitempty"`
+	// AwaitingApproval marks an item from outside the hive's allowlist (the
+	// email source, #18395): it cannot be routed, shared or transcribed until
+	// the owner approves it.
+	AwaitingApproval bool `json:"awaiting_approval,omitempty"`
+	// Sender is the From address of an emailed item.
+	Sender string `json:"sender,omitempty"`
 }
 
 // Key returns the stable "source/id" key used by the state store.

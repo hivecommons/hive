@@ -34,6 +34,7 @@ func (s *Server) registerInboxRoutes() {
 	s.mux.HandleFunc("GET /api/inbox/transcriptions", s.handleInboxTranscriptions)
 	s.registerInboxUploadRoutes()
 	s.registerInboxSpekRunner()
+	s.registerInboxEmailRoutes()
 }
 
 // inboxSourceReadTimeout bounds one read that may spawn the source's MCP

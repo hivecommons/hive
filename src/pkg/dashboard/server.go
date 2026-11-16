@@ -2089,8 +2089,10 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 // auth-signin redirect, which is how #9785 looped. The page names the cause so
 // the hive's operator can act on it instead of seeing a browser error.
 func writeProxyProofRejected(w http.ResponseWriter, r *http.Request, reason string) {
-	slog.Warn("dashboard: rejected hub-proxied request with unverified proxy proof; hub and spoke dashboard tokens disagree or hub omitted the proof",
-		"reason", reason, "path", r.URL.Path, "user", r.Header.Get("X-Hive-User"))
+	if n, ok := proxyProofWarnGate.allow(reason+"|"+r.URL.Path, time.Now()); ok {
+		slog.Warn("dashboard: rejected hub-proxied request with unverified proxy proof; hub and spoke dashboard tokens disagree or hub omitted the proof",
+			"reason", reason, "path", r.URL.Path, "user", r.Header.Get("X-Hive-User"), "suppressed", n)
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	if strings.HasPrefix(r.URL.Path, "/api/") {
 		jsonStatusResponse(w, http.StatusForbidden, map[string]string{"error": reason})

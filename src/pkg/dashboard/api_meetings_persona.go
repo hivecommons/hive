@@ -404,6 +404,9 @@ type meetingsPersonaRequest struct {
 	Unprompted     *meetingsPersonaUnpromptedRequest `json:"unprompted,omitempty"`
 	// VoiceOnAddress sets meetings.voice_on_address.
 	VoiceOnAddress *bool `json:"voice_on_address,omitempty"`
+	// Email sets meetings.email.invites_enabled and files_enabled (owner
+	// only, #18395).
+	Email *meetingsEmailRequest `json:"email,omitempty"`
 }
 
 // applyMeetingsPersonaRequest returns p with req applied.
@@ -503,6 +506,20 @@ func (s *Server) handleMeetingsPersonaPut(w http.ResponseWriter, r *http.Request
 	if err := check.Validate(); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
+	}
+	if req.Email != nil {
+		if !isOwnerRole(r.Header.Get("X-Hive-Role")) {
+			jsonError(w, "only the owner changes which email this hive accepts", http.StatusForbidden)
+			return
+		}
+		if v := req.Email.CalendarInvites; v != nil {
+			b := *v
+			s.deps.Config.Meetings.Email.InvitesEnabled = &b
+		}
+		if v := req.Email.MailInFiles; v != nil {
+			b := *v
+			s.deps.Config.Meetings.Email.FilesEnabled = &b
+		}
 	}
 	s.deps.Config.Meetings.Persona = next
 	if req.VoiceOnAddress != nil {
