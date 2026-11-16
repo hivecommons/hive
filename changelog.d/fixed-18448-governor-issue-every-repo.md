@@ -1,0 +1,1 @@
+- In a hive with several repos, every repo now gets its own governor (advisory) issue and the digest is posted to each, including repos added later in Settings; a repo where the hive cannot create the issue shows a dashboard warning instead of failing silently.

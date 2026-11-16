@@ -550,6 +550,14 @@ func runEvalCycle(
 	if !budgetDecision.SkipOptional {
 		advisoryEnsureErr = ensurePinnedAdvisoryIssue(
 			ctx, advisoryIssues, primaryRepoAtCycleStart, advisoryEnsureDepsForCycle, logger)
+		// Every other managed repo gets its own governor issue too (#18448),
+		// including repos added in Settings after boot.
+		var repoIssueAlerts advisoryRepoIssueAlerts
+		if dashSrv != nil {
+			repoIssueAlerts = dashSrv
+		}
+		ensureSecondaryAdvisoryIssues(ctx, advisoryIssues, advisorySecondaryRepos(cfg),
+			advisoryEnsureDepsForCycle.ensure, advisoryRepoIssueGate, repoIssueAlerts, time.Now(), logger)
 	}
 
 	var actionable *github.ActionableResult
@@ -1613,6 +1621,22 @@ func runEvalCycle(
 					}
 				},
 			}, logger)
+			// The same digest goes to every other managed repo's governor
+			// issue (#18448), paced per repo by the post gate.
+			if advisoryTarget == config.AdvisoryTargetGitHub {
+				postAdvisoryDigestToSecondaryRepos(ctx, md, advisoryIssues, advisorySecondaryRepos(cfg), advisorySecondaryPostDeps{
+					post: ghClient.PostAdvisoryDigest,
+					due: func(repo string) bool {
+						return advisoryPostDue(advCfg, repo, time.Now(), logger)
+					},
+					recordSuccess: func(repo string) {
+						recordAdvisoryPostSuccess(repo, time.Now())
+					},
+					recordForbidden: func(repo string) {
+						recordAdvisoryPostForbidden(repo, time.Now(), advCfg.PostRetryBackoff())
+					},
+				}, logger)
+			}
 		}
 	} else if d := dashSrv.GetAdvisoryDigest(); d != nil {
 		statusPayload.AdvisoryDigest = d
