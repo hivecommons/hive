@@ -252,6 +252,31 @@ The project image does not need to carry `hive-review` or any other hive script 
 - **Precedence.** Hive's copy always comes first on `PATH`, and a copy in the image is ignored. The relay and the spool protocol it speaks ship together in the hive image, so an older or newer copy baked into a project image could sign or shape a request that this hive rejects. There is deliberately no "use the image's copy if newer" option.
 - **OpenShell and Substrate.** Not yet. On these runtimes the gateway or the actor API builds the sandbox pod, and getting hive's image into it needs runtime-specific work: an init container in the OpenShell template, and Landlock read access to `/opt/hive/relays`. Until that follow-up lands, the image still has to include `hive-review` on these runtimes.
 
+### What a sandboxed reviewer sees
+
+The sandbox has no GitHub credential, so `gh pr view`, `gh pr diff` and `gh pr checkout` fail inside it. Hive does that work on the host before the sandbox starts ([#18513](https://github.com/hivecommons/hive/issues/18513)).
+
+**Which kicks count as review kicks.** Hive reads the PR targets from the hive-written header of the kick message, never from text a PR author supplied:
+
+- A review swarm kick opens with `[review-perspective:…]` followed by `Review PR <owner>/<repo>#<n>`. That gives one target.
+- A reviewer-lane kick opens with `[agent:<name>]` followed by `REVIEWER — …`. Each escalated PR in its work list has a `    checkout: gh pr checkout <n> --repo <owner>/<repo>` line, and each of those lines is a target. The lane sends at most 3 PRs per kick. The sandbox takes at most 5.
+
+Hive only checks out targets in the hive's primary repo, because that is the only repo the workspace clones. Any other kick has no targets and behaves as before.
+
+**What workspace prep does for each target `N`:**
+
+1. It reads the PR through hive's own GitHub client: title, body, author, state, base and head refs and SHAs, head repo (and whether the PR comes from a fork), labels, changed files (up to 3000), the unified diff, and every conversation comment, review, and inline review-thread comment. Comments are not filtered by author. Each one carries its author association.
+2. It runs `git fetch origin +refs/pull/N/head:refs/heads/pr-N +refs/heads/<base>:refs/remotes/origin/<base>` with the same clone token it used for the clone. `refs/pull/N/head` exists on the base repo for fork PRs too, so fork PRs need no access to the fork.
+3. It checks out the first target's `pr-N`. With several targets, the other branches are already fetched, and the reviewer switches between them with `git checkout pr-M`.
+4. It writes `.hive/pr/N.json`. The file has `"untrusted": true` and a notice saying that every field except `repo`, `number`, `checkout` and the hive's notes came from the PR author or commenters. It also has a `checkout` block that hive wrote from git (`ref`, `branch`, `sha`, `base_tracking_ref`, `diff_command`). If the fetched head differs from the head GitHub reported, `checkout.head_moved` says so. The diff is capped at 512 KiB and the description at 64 KiB. A truncated or missing diff (GitHub refuses to render very large diffs) gets a `diff_note` that points at `checkout.diff_command`, which works offline because the base is fetched.
+5. It prepends a `[hive:sandbox-review-checkout]` section to the kick prompt. The section names each checked-out branch, its head SHA, its PR file and the offline diff command, and it repeats the untrusted-data warning.
+
+Hive writes the prompt and the PR files after the PR head is checked out, through an `os.Root` opened at the workspace. A `.hive` symlink in the PR's tree therefore cannot redirect a host write outside the workspace.
+
+**Failures fail the kick.** If hive cannot fetch `refs/pull/N/head` or the base, or the GitHub client returns an error or a different PR, the kick fails before the sandbox starts. The error names the PR and includes git's output. A reviewer that cannot see the PR must not post a review of the wrong tree. If the host has no PR reader at all, the head is still checked out. In that case the PR file has `"metadata_available": false`, and the reviewer works from git alone.
+
+**Review kicks never push.** The manager wires no push broker and no PR client for a kick that has targets, and the executor refuses to push one even if a caller wires them. Commits the reviewer leaves on `pr-N` are discarded, and the run record notes them as withheld. The review itself is posted through the review spool described above. A run-stage kick that carries review targets is refused.
+
 ## Running sandboxed kicks in an OpenShell sandbox
 
 `sandbox.runtime: openshell` runs an agent's sandboxed kicks in an [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) sandbox instead of a Podman container or a plain Kubernetes Job ([ADR-0026](adr/0026-sandbox-runtime-selection.md), epic [#17642](https://github.com/hivecommons/hive/issues/17642)). OpenShell adds what the other two runtimes lack: the workload runs with no capabilities under Landlock and seccomp mediation, and **egress is default-deny** — every outbound connection goes through the gateway's proxy and is checked against a per-binary policy. Phase 1 is opt-in; nothing changes for a hive that does not select it.
