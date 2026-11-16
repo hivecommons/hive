@@ -100,6 +100,10 @@ type SessionRuntime interface {
 	// StoreUpload writes src as the named file under the session's uploads
 	// directory, as the session's own uid, and returns its absolute path.
 	StoreUpload(id, fileName string, src io.Reader, maxBytes int64, maxFiles int) (string, int64, error)
+	// StoreInboxFile writes data as <cwd>/.hive/inbox/<fileName>, as the
+	// session's own uid with the sessions group and mode 0640, where cwd is
+	// workspace ("" = the session's own work dir); it returns the path.
+	StoreInboxFile(id, workspace, fileName string, data []byte) (string, error)
 	// Remove ends the session and deletes everything it owned on disk.
 	Remove(id string) error
 }
@@ -163,6 +167,7 @@ func (s *Server) registerSessionRoutes() {
 	s.mux.HandleFunc("POST /api/sessions/{id}/resume", s.handleSessionResume)
 	s.mux.HandleFunc("POST /api/sessions/{id}/keyboard", s.handleSessionKeyboard)
 	s.mux.HandleFunc("DELETE /api/sessions/{id}/input/{queue_id}", s.handleSessionInputCancel)
+	s.mux.HandleFunc("POST /api/sessions/{id}/seed", s.handleSessionSeed)
 }
 
 // sessionsRuntime returns the runtime when the feature is enabled and wired.
@@ -464,6 +469,9 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		Group  string `json:"group"`
 		Vendor string `json:"vendor"`
 		Shared bool   `json:"shared"`
+		// SeedItems (additive) sends Inbox items into the new session once it
+		// is running (api_sessions_seed.go).
+		SeedItems []sessionSeedItemRef `json:"seed_items"`
 	}
 	if !readSmallJSON(w, r, &body) {
 		return
@@ -496,6 +504,15 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		jsonError(w, vendor.Label+" is not installed on this hive", http.StatusConflict)
 		return
 	}
+	// Seed items are read and rendered BEFORE anything is created, so an item
+	// without text (409) or an unknown one (404) never leaves a session behind.
+	var seed *sessionSeed
+	if len(body.SeedItems) > 0 {
+		var ok bool
+		if seed, ok = s.prepareSessionSeed(w, r, actor.user, body.SeedItems); !ok {
+			return
+		}
+	}
 
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
@@ -526,9 +543,16 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.auditSession(actor.user, auditSessionCreated, auditDetail("session", id, "vendor", vendor.ID, "status", sessionStatusPreparing))
+	resp := map[string]any{"ok": true, "session": rec.view(&crux.UserSessionProbe{}, rt)}
+	if seed != nil {
+		// Parked under sessionsMu before the start goroutine exists, which
+		// takes it under the same lock once the session is running.
+		s.setPendingSessionSeedLocked(id, seed)
+		resp["seed"] = map[string]any{"items": len(seed.files), "files": seed.rels(), "status": "pending"}
+	}
 	spec := crux.UserSessionSpec{ID: id, Vendor: vendor.ID, UIDSlot: rec.UIDSlot, WorkspaceRepo: repo, SpektacularBinary: s.sessionsSpektacularBinary()}
 	go s.startSessionInBackground(rt, st, spec, actor.user, sessionStatusFailed)
-	jsonStatusResponse(w, http.StatusAccepted, map[string]any{"ok": true, "session": rec.view(&crux.UserSessionProbe{}, rt)})
+	jsonStatusResponse(w, http.StatusAccepted, resp)
 }
 
 // sessionRestartedWhilePreparing is the error a preparing record is given when
@@ -582,6 +606,12 @@ func (s *Server) startSessionInBackground(rt SessionRuntime, st *sessionStore, s
 	s.sessionsMu.Lock()
 	defer s.sessionsMu.Unlock()
 	s.setSessionStartInFlightLocked(spec.ID, false)
+	// An Inbox seed parked by the create is delivered only after the record
+	// says running (below), outside this lock.
+	if seed := s.takePendingSessionSeedLocked(spec.ID); seed != nil {
+		startErr := err
+		defer func() { go s.deliverPendingSessionSeed(rt, st, spec.ID, seed, startErr) }()
+	}
 	if err != nil {
 		if s.logger != nil {
 			s.logger.Warn("sessions: start failed", "id", spec.ID, "vendor", spec.Vendor, "error", err)
