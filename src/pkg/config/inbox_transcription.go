@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -19,11 +20,28 @@ const (
 	InboxTranscriptionModeAuto = "auto"
 )
 
-// Inbox transcription defaults. Each spoke transcribes with its owner's own
-// provider key; these bound what one hive spends on its own account.
+// Inbox transcription providers (inbox.transcription.provider).
 const (
-	// DefaultInboxTranscriptionProvider is the only provider built today.
-	DefaultInboxTranscriptionProvider = "deepgram"
+	// InboxTranscriptionProviderAuto picks the first available provider in
+	// the order whisper, gemini, deepgram (see inbox-transcription.md).
+	InboxTranscriptionProviderAuto = "auto"
+	// InboxTranscriptionProviderWhisper is whisper.cpp built into the hive
+	// image: no account, the audio never leaves the spoke.
+	InboxTranscriptionProviderWhisper = "whisper"
+	// InboxTranscriptionProviderGemini uses the hive's own Gemini credentials.
+	InboxTranscriptionProviderGemini = "gemini"
+	// InboxTranscriptionProviderDeepgram uses the owner's Deepgram key.
+	InboxTranscriptionProviderDeepgram = "deepgram"
+)
+
+// InboxTranscriptionProviders lists the accepted provider values.
+var InboxTranscriptionProviders = []string{InboxTranscriptionProviderAuto, InboxTranscriptionProviderWhisper, InboxTranscriptionProviderGemini, InboxTranscriptionProviderDeepgram}
+
+// Inbox transcription defaults. Each spoke transcribes on its own hive or
+// with its owner's own provider account; these bound what one hive spends.
+const (
+	// DefaultInboxTranscriptionProvider picks a provider by availability.
+	DefaultInboxTranscriptionProvider = InboxTranscriptionProviderAuto
 	// DefaultInboxTranscriptionModel is Deepgram's pre-recorded model.
 	DefaultInboxTranscriptionModel = "nova-3"
 	// DefaultInboxTranscriptionKeyEnv names the variable holding the key.
@@ -51,17 +69,18 @@ const (
 )
 
 // InboxTranscription is `inbox.transcription`: spoke-local machine
-// transcription for Inbox recordings that arrive without text. The audio is
-// sent to the provider under the hive owner's own account and key; the
-// transcript is stored only on this spoke. Off by default, and enabling it
-// requires consent_acknowledged: true.
+// transcription for Inbox recordings that arrive without text. Depending on
+// the provider the audio stays on the spoke (whisper) or is sent to the
+// provider under the hive's own account (gemini, deepgram); the transcript
+// is stored only on this spoke. Off by default, and enabling it requires
+// consent_acknowledged: true.
 type InboxTranscription struct {
 	Enabled bool `yaml:"enabled,omitempty" json:"enabled"`
 	// Mode is manual (default) or auto.
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
-	// Provider is deepgram (default).
+	// Provider is auto (default), whisper, gemini or deepgram.
 	Provider string `yaml:"provider,omitempty" json:"provider,omitempty"`
-	// Model defaults to nova-3.
+	// Model is the Deepgram model; it defaults to nova-3.
 	Model string `yaml:"model,omitempty" json:"model,omitempty"`
 	// APIKeyEnv names the environment variable holding the provider key
 	// (default DEEPGRAM_API_KEY). The key itself never lives in hive.yaml.
@@ -81,7 +100,8 @@ type InboxTranscription struct {
 	// DailyMaxItems caps transcription runs per UTC day.
 	DailyMaxItems int `yaml:"daily_max_items,omitempty" json:"daily_max_items,omitempty"`
 	// ConsentAcknowledged records that the owner read the notice: recordings
-	// contain other people's voices and the audio is sent to the provider.
+	// contain other people's voices, and where the chosen provider sends the
+	// audio (nowhere for whisper; Google or Deepgram otherwise).
 	ConsentAcknowledged bool `yaml:"consent_acknowledged,omitempty" json:"consent_acknowledged"`
 }
 
@@ -98,7 +118,9 @@ func (t InboxTranscription) EffectiveMode() string {
 	return InboxTranscriptionModeManual
 }
 
-// EffectiveProvider returns the provider, defaulting to deepgram.
+// EffectiveProvider returns the configured provider, defaulting to auto.
+// Which provider auto resolves to depends on what is available on the hive
+// (inbox.Service resolves it).
 func (t InboxTranscription) EffectiveProvider() string {
 	if p := strings.TrimSpace(t.Provider); p != "" {
 		return p
@@ -106,7 +128,7 @@ func (t InboxTranscription) EffectiveProvider() string {
 	return DefaultInboxTranscriptionProvider
 }
 
-// EffectiveModel returns the model, defaulting to nova-3.
+// EffectiveModel returns the Deepgram model, defaulting to nova-3.
 func (t InboxTranscription) EffectiveModel() string {
 	if m := strings.TrimSpace(t.Model); m != "" {
 		return m
@@ -192,8 +214,8 @@ func ValidateInboxTranscription(t InboxTranscription) error {
 	default:
 		return fmt.Errorf("inbox.transcription.mode %q: must be %s or %s", t.Mode, InboxTranscriptionModeManual, InboxTranscriptionModeAuto)
 	}
-	if p := t.EffectiveProvider(); p != DefaultInboxTranscriptionProvider {
-		return fmt.Errorf("inbox.transcription.provider %q: only %s is supported", p, DefaultInboxTranscriptionProvider)
+	if p := t.EffectiveProvider(); !slices.Contains(InboxTranscriptionProviders, p) {
+		return fmt.Errorf("inbox.transcription.provider %q: must be one of %s", p, strings.Join(InboxTranscriptionProviders, ", "))
 	}
 	if !inboxEnvNameRe.MatchString(t.EffectiveAPIKeyEnv()) {
 		return fmt.Errorf("inbox.transcription.api_key_env %q: must be an environment variable name", t.APIKeyEnv)
@@ -210,7 +232,7 @@ func ValidateInboxTranscription(t InboxTranscription) error {
 		}
 	}
 	if t.Enabled && !t.ConsentAcknowledged {
-		return fmt.Errorf("inbox.transcription.enabled requires inbox.transcription.consent_acknowledged: true (recordings contain other people's voices and the audio is sent to the provider under the hive owner's account)")
+		return fmt.Errorf("inbox.transcription.enabled requires inbox.transcription.consent_acknowledged: true (recordings contain other people's voices; with gemini or deepgram the audio is sent to that provider under the hive's own account)")
 	}
 	return nil
 }
