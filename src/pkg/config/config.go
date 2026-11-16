@@ -1114,6 +1114,14 @@ type VarSecurityConfig struct {
 	// bounds the blast radius to repos the operator explicitly trusts, so the
 	// feature cannot be used to read every repo the App happens to be installed on.
 	GitHubPromptAllowlist []string `yaml:"github_prompt_allowlist,omitempty"`
+	// OwnerGitHubPromptRepos is the owner-approved subset of the hive's own
+	// managed repos that prompt_source and definition_source may read from,
+	// each approved on its own from the dashboard (hivecommons/hive#18490).
+	// Unlike GitHubPromptAllowlist it needs no AllowGitHubPrompt, and an entry
+	// counts only while the repo is still in project.repos. Written only by the
+	// owner-only dashboard endpoint through Save; the overlay cannot set it.
+	// See owner_prompt_repos.go.
+	OwnerGitHubPromptRepos []OwnerPromptRepo `yaml:"owner_github_prompt_repos,omitempty"`
 }
 
 type ProjectConfig struct {
@@ -6568,19 +6576,21 @@ func (c *Config) ResolveRegistryForAgent(agentName string, logger *slog.Logger) 
 // given "owner/repo" slug is permitted to be fetched. This mirrors the seed-only
 // gating used for exec/http resolvers: it consults c.Variables.Security, which
 // LoadWithDashboardOverlay guarantees comes ONLY from the trusted config seed
-// (the dashboard overlay's Variables block is never merged). It returns false
-// unless the feature is explicitly enabled AND the slug is on the seed-declared
+// (the dashboard overlay's Variables block is never merged). The seed path
+// needs the feature explicitly enabled AND the slug on the seed-declared
 // allowlist, so a user-writable overlay can never widen the set of readable repos.
+//
+// It also admits a repo the hive owner approved from the dashboard
+// (OwnerPromptRepoAllowed, hivecommons/hive#18490): one of the hive's own
+// managed repos, approved individually and persisted through Save. That path
+// is bounded to project.repos, so it cannot widen the set beyond repos the
+// hive already manages. Callers (the prompt, definition and perspectives
+// resolvers, and repo-discovered agents) should keep using this function.
 func (c *Config) GitHubPromptAllowed(slug string) bool {
-	if slug == "" || !c.Variables.Security.AllowGitHubPrompt {
+	if slug == "" {
 		return false
 	}
-	for _, allowed := range c.Variables.Security.GitHubPromptAllowlist {
-		if strings.EqualFold(strings.TrimSpace(allowed), slug) {
-			return true
-		}
-	}
-	return false
+	return c.SeedGitHubPromptAllowed(slug) || c.OwnerPromptRepoAllowed(slug)
 }
 
 // GitHubDefinitionAllowed reports whether an agent's definition_source pointing

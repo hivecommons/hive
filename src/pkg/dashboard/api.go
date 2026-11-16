@@ -556,6 +556,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/github-owner-identity/start", s.handleOwnerIdentityStart)
 	s.mux.HandleFunc("POST /api/github-owner-identity/poll", s.handleOwnerIdentityPoll)
 	s.mux.HandleFunc("DELETE /api/github-owner-identity", s.handleOwnerIdentityDelete)
+	// Owner-approved prompt/definition source repos (#18490,
+	// api_config_prompt_sources.go).
+	s.mux.HandleFunc("GET /api/config/prompt-sources", s.handlePromptSourcesGet)
+	s.mux.HandleFunc("PUT /api/config/prompt-sources/owner-repos", s.handlePromptSourcesOwnerRepoPut)
 }
 
 var (

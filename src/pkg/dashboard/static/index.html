@@ -73209,6 +73209,13 @@ function burnAreaChart() {
       const writeSurface = `
         <div id="gov-write-surface-host"><div style="color:var(--muted);font-size:var(--fs-base)">Loading…</div></div>`;
 
+      /* Prompt sources (#18490): owner approval of the hive's own managed
+         repos for prompt_source / definition_source, from its own
+         owner-only endpoint. */
+      loadPromptSourcesPanel();
+      const promptSources = `
+        <div id="gov-prompt-sources-host"><div style="color:var(--muted);font-size:var(--fs-base)">Loading…</div></div>`;
+
       /* Suspicious Activity (sentinel): flags PRs that look like security
          overrides, privilege escalation or codebase damage. Untrusted authors
          get the blocking alert label; trusted authors default to notice-only. */
@@ -73262,6 +73269,7 @@ function burnAreaChart() {
         ${renderSecuritySection('Suspicious Activity', suspicious + suspiciousFindings)}
         ${renderSecuritySection('Isolation', isolation)}
         ${renderSecuritySection('Write Surface', writeSurface)}
+        ${renderSecuritySection('Prompt sources', promptSources)}
         ${renderSecuritySection('GitHub App permissions', securityCapabilitiesHtml((window._lastStatus || {}).capabilities, (window._lastStatus || {}).githubAppInstallURL))}
         ${renderSecuritySection('Backup', backupKey)}`;
     }
@@ -73387,6 +73395,96 @@ function burnAreaChart() {
           setStatus(e.message, 'var(--red)');
         }
       });
+    }
+
+    /* Prompt sources (#18490): lists the hive's managed repos and whether an
+       agent's prompt_source / definition_source may read from each. The owner
+       approves one repo at a time behind a confirm that names the trust
+       implication; the server refuses repos outside project.repos, audits
+       the change and persists it to the running config. Rendered with DOM
+       nodes and textContent only. */
+    async function loadPromptSourcesPanel() {
+      let host = null;
+      try {
+        const r = await fetch('/api/config/prompt-sources');
+        host = document.getElementById('gov-prompt-sources-host');
+        if (!host) return;
+        if (r.status === 403) {
+          host.textContent = '';
+          host.appendChild(writeSurfaceNode('div', 'color:var(--muted);font-size:0.8rem',
+            'Only the hive owner can approve repos as prompt and definition sources.'));
+          return;
+        }
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        renderPromptSourcesPanel(host, await r.json());
+      } catch (e) {
+        host = host || document.getElementById('gov-prompt-sources-host');
+        if (!host) return;
+        host.textContent = '';
+        host.appendChild(writeSurfaceNode('div', 'color:var(--red);font-size:0.8rem',
+          'Failed to load prompt sources: ' + e.message));
+      }
+    }
+
+    async function setPromptSourceRepo(host, repo, allowed, notice) {
+      if (allowed) {
+        const ok = await hiveConfirm({
+          title: 'Trust ' + repo + ' as a prompt source?',
+          message: notice + '\n\nAgents whose prompt_source or definition_source points at ' + repo + ' will load it on their next kick or reload. This is audit-logged.',
+          confirmLabel: 'Approve ' + repo,
+          danger: true
+        });
+        if (!ok) return;
+      }
+      try {
+        const res = await fetch('/api/config/prompt-sources/owner-repos', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ repo, allowed, acknowledge_trust: !!allowed })
+        });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        renderPromptSourcesPanel(host, await res.json());
+        showToast(allowed ? repo + ' approved as a prompt source' : repo + ' approval revoked', 'success');
+      } catch (e) {
+        showToast('Prompt source change failed: ' + e.message, 'error');
+      }
+    }
+
+    function renderPromptSourcesPanel(host, d) {
+      if (!host) return;
+      d = d || {};
+      host.textContent = '';
+      const card = writeSurfaceNode('div', 'border:1px solid var(--border);border-radius:8px;padding:14px;background:var(--surface);max-width:640px');
+      card.appendChild(writeSurfaceNode('div', 'font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-4)', 'Repo-sourced prompts and definitions'));
+      card.appendChild(writeSurfaceNode('div', 'font-size:0.74rem;color:var(--muted);line-height:1.5;margin-bottom:var(--sp-4)',
+        'An agent can load its kick prompt from a GitHub repo with prompt_source, or its whole definition with definition_source. ' +
+        (d.trust_notice || '') + ' ' + (d.seed_only_note || '')));
+      const repos = d.repos || [];
+      if (!repos.length) {
+        card.appendChild(writeSurfaceNode('div', 'font-size:0.8rem;color:var(--muted)', 'This hive has no managed repos.'));
+      }
+      repos.forEach(row => {
+        const line = writeSurfaceNode('div', 'display:flex;align-items:center;gap:10px;padding:var(--sp-2) var(--sp-0);border-top:1px solid var(--border);font-size:0.8rem');
+        line.appendChild(writeSurfaceNode('code', 'flex:1', row.repo));
+        let state = 'Not allowed';
+        if (row.seed_allowed) state = 'Allowed by the config volume';
+        else if (row.owner_approved && row.managed) state = 'Owner-approved' + (row.approved_by ? ' by ' + row.approved_by : '') + (row.approved_at ? ' on ' + row.approved_at.slice(0, 10) : '');
+        else if (row.owner_approved) state = 'Approval inert: no longer a managed repo';
+        line.appendChild(writeSurfaceNode('span', 'color:' + (row.allowed ? 'var(--green)' : 'var(--muted)'), state));
+        if (row.owner_approved) {
+          const btn = writeSurfaceNode('button', '', 'Revoke');
+          btn.className = 'hv-btn btn-secondary btn-sm';
+          btn.addEventListener('click', () => setPromptSourceRepo(host, row.repo, false, d.trust_notice || ''));
+          line.appendChild(btn);
+        } else if (row.managed && !row.seed_allowed) {
+          const btn = writeSurfaceNode('button', '', 'Approve…');
+          btn.className = 'hv-btn btn-primary btn-sm';
+          btn.addEventListener('click', () => setPromptSourceRepo(host, row.repo, true, d.trust_notice || ''));
+          line.appendChild(btn);
+        }
+        card.appendChild(line);
+      });
+      host.appendChild(card);
     }
 
     /* loadBackupKeyStatus fetches presence-only backup-key status and paints
