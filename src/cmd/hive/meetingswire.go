@@ -31,8 +31,8 @@ var newQuorumSupervisor = func(opts quorumproc.Options) (quorumSupervisor, error
 }
 
 // meetingsQuorumOptions builds the Quorum child options from the meetings
-// config, resolving the Vexa tenant key and the optional Discord bot token
-// from the keystore. A secret that cannot be read is logged and left unset:
+// config, resolving the Vexa tenant key, the optional Discord bot token and
+// the optional transcription service token from the keystore. A secret that cannot be read is logged and left unset:
 // Quorum then answers platform_unavailable for that platform instead of the
 // hive failing to boot.
 func meetingsQuorumOptions(ctx context.Context, m config.MeetingsConfig, logger *slog.Logger) quorumproc.Options {
@@ -44,14 +44,19 @@ func meetingsQuorumOptions(ctx context.Context, m config.MeetingsConfig, logger 
 	if err != nil && logger != nil {
 		logger.Warn("[meetings] Discord bot token unreadable; Discord is unavailable", "error", err)
 	}
+	transcribeToken, err := m.TranscribeToken(ctx)
+	if err != nil && logger != nil {
+		logger.Warn("[meetings] transcription service token unreadable; Discord audio is not transcribed", "error", err)
+	}
 	return quorumproc.Options{
-		Binary:        m.QuorumBinary(),
-		Listen:        m.QuorumListen(),
-		VexaURL:       m.VexaURL(),
-		VexaAPIKey:    vexaKey,
-		DiscordToken:  discordToken,
-		TranscribeURL: m.TranscribeURLOrEmpty(),
-		Logger:        logger,
+		Binary:          m.QuorumBinary(),
+		Listen:          m.QuorumListen(),
+		VexaURL:         m.VexaURL(),
+		VexaAPIKey:      vexaKey,
+		DiscordToken:    discordToken,
+		TranscribeURL:   m.TranscribeURLOrEmpty(),
+		TranscribeToken: transcribeToken,
+		Logger:          logger,
 	}
 }
 

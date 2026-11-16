@@ -302,7 +302,7 @@
           "Meetings"
         ],
         "summary": "Get meetings settings",
-        "description": "meetings.enabled, the Vexa gateway URL, whether the Vexa tenant key and Discord bot token are set (never their values), and the effective values of the other meetings keys. Owner only.",
+        "description": "meetings.enabled, the Vexa gateway URL, whether the Vexa tenant key, Discord bot token and transcription service token are set (never their values), and the effective values of the other meetings keys. Owner only.",
         "responses": {
           "200": {
             "description": "Settings",
@@ -327,6 +327,9 @@
                       "type": "boolean"
                     },
                     "discord_token_set": {
+                      "type": "boolean"
+                    },
+                    "transcribe_token_set": {
                       "type": "boolean"
                     },
                     "restart_required": {
@@ -356,7 +359,7 @@
           "Meetings"
         ],
         "summary": "Update meetings settings",
-        "description": "Sets meetings.enabled and meetings.vexa.url in hive.yaml and writes the Vexa tenant key and Discord bot token to keystore-sealed secret files (an empty string clears one). Takes effect after a restart. Owner only.",
+        "description": "Sets meetings.enabled and meetings.vexa.url in hive.yaml and writes the Vexa tenant key, Discord bot token and transcription service token to keystore-sealed secret files (an empty string clears one). Takes effect after a restart. Owner only.",
         "requestBody": {
           "required": true,
           "content": {
@@ -375,6 +378,10 @@
                   },
                   "discord_token": {
                     "type": "string"
+                  },
+                  "transcribe_token": {
+                    "type": "string",
+                    "description": "Transcription service token Quorum posts Discord audio with (write-only)"
                   }
                 }
               }
@@ -399,6 +406,9 @@
                       "type": "boolean"
                     },
                     "discord_token_set": {
+                      "type": "boolean"
+                    },
+                    "transcribe_token_set": {
                       "type": "boolean"
                     },
                     "restart_required": {
@@ -38827,6 +38837,131 @@
           },
           "502": {
             "description": "Source unreachable",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/{source}/{id}/audio/stream": {
+      "get": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Stream one inbox item's audio from the dashboard origin",
+        "description": "Owner or read-write. Plays an item's audio for the Inbox player without the browser loading cloud storage (the dashboard CSP has no `media-src` for it). The hive mints the item's link as `GET /api/inbox/{source}/{id}/audio` does, fetches it server-side and copies the bytes with the media `Content-Type` (storage's, else derived from the link's extension). A single `Range: bytes=...` is passed through (206 with `Content-Range`; 200 with the whole file when storage ignores it; 416 passed through). The link is held in memory only for one playback's Range requests (at most 10 minutes, never past its expiry), re-minted once when storage refuses it, and never logged, returned or stored; audio is never written to disk. One response is capped at 2 GiB. Replies carry `Cache-Control: no-store`. Audited as `inbox_audio_stream` once per minted link.",
+        "parameters": [
+          {
+            "name": "source",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Source type (`plaud`, `wisprflow`, `zoom`, `teams`, `discord`, ...)"
+          },
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Upstream item id (Plaud: file id; Zoom: meeting instance UUID; Teams: callRecording id; Discord: `m:<channel>:<message>` or `e:<event>`; Google Meet: conference record id; Webex: meeting instance id; Slack huddles: `<channel>:<message ts>`; Fireflies: transcript id; Fathom: recording id; Limitless: lifelog id; Granola: note id (`not_…`; Otter: conversation id))"
+          },
+          {
+            "name": "Range",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "A single byte range (`bytes=start-end`); other forms are dropped"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The whole recording",
+            "content": {
+              "audio/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "206": {
+            "description": "The requested byte range, with `Content-Range`",
+            "content": {
+              "audio/*": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown item, or no audio for this item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Recording over the 2 GiB stream cap",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "416": {
+            "description": "Range not satisfiable (passed through from storage)"
+          },
+          "502": {
+            "description": "Source or storage unreachable, or storage refused the link (expired or revoked)",
             "content": {
               "application/json": {
                 "schema": {
