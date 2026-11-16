@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-16 (v6.38.0)
+
+### Added
+
+- `toolapprove` now classifies the `hive-tool/v1` names from RFC #18464: reads (`issue.read`, `repo.read_file`, …) are read-only, `issue.comment`/`issue.label` are issue writes, and `repo.patch_files`/`pr.create`/`pr.comment` are PR writes. Agent-mode capability checks therefore apply to them at every ACMM level. No existing backend emits these names, so current verdicts are unchanged.
+- `pkg/turn/llmrouter`: an opt-in, unwired `turn.LLMClient` that drives an ordered list of OpenAI-compatible providers with Retry-After-aware 429/5xx failover and coordinator-side daily caps, and `turn.Runner` now parks a session as `paused` (without consuming a turn) when the client reports `turn.ErrInferenceCapacity` instead of failing it (RFC #18464).
+- `pkg/hivetool`: the read side of the `hive-tool/v1` tool host from RFC #18464, an opt-in, unwired `turn.ToolExecutor`. It provides `issue.read`, `repo.list_files`, `repo.read_file`, `repo.search_code` (backed by `pkg/codeindex`), `checks.read`, and `task.complete`/`task.abort`. Outputs are bounded and paths stay inside the repository. Identical repeated calls are refused. An optional evidence gate refuses a `task.complete` whose summary cites no `path:line` the session actually read. A fenced ```` ```hive-tool ```` parser is included for chat-only backends.
+
 ## 2026-11-16 (v6.37.1)
 
 ### Fixed

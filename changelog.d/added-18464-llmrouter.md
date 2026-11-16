@@ -1,1 +1,0 @@
-- `pkg/turn/llmrouter`: an opt-in, unwired `turn.LLMClient` that drives an ordered list of OpenAI-compatible providers with Retry-After-aware 429/5xx failover and coordinator-side daily caps, and `turn.Runner` now parks a session as `paused` (without consuming a turn) when the client reports `turn.ErrInferenceCapacity` instead of failing it (RFC #18464).
