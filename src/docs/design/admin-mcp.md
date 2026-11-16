@@ -687,6 +687,22 @@ Phase 5 registers the fleet-level write operations under that contract:
   own validation is not repeated; its 400 reaches the caller as a hive refusal. The endpoint
   answers only `{"status":"updated"}`, so the op implements `ConfirmResult`, and
   `write_confirm` reads the named fields back and reports them as `after`.
+- `advisor.settings`, `advisor.agent` and `advisor.roles` wrap the three endpoints behind the
+  Advisor Lane panel (Settings → Features): `PUT /api/config/advisor` (the fleet block; every
+  field is a pointer, so the op sends only the named fields), `PUT
+  /api/config/advisor/agent/{name}` (one agent's override, which the endpoint replaces whole;
+  the preview names each field the new override clears) and `PUT /api/config/advisor/roles`
+  (the `model_roles` map, which the endpoint replaces whole; the op takes `set` and `remove`,
+  reads the current map and sends it back with only those roles changed). Each preview reads
+  `settings_read` section `advisor`, which is owner only like the endpoints, and each
+  `ConfirmGuard` fingerprints what the preview read, so a change made on the dashboard in
+  between refuses the confirm. Turning the advisor on for an agent, raising or removing its
+  daily budget, or raising its blocker limit is named as widening; changing a role the advisor
+  resolves is named as a possible cost change. A test in `pkg/dashboard` compares the ops'
+  field list with the fleet body and `config.AdvisorOverride` by reflection. These ops change
+  only settings: nothing reaches what the advisor says to an agent, which stays read-only
+  (`advisor_records`). Each endpoint answers with the refreshed section, which `write_confirm`
+  returns.
 
 The Activity monitor's row actions are registered as the `repository.rescan` and
 `repository.item_*` operations, each sending the request the dashboard's button sends
