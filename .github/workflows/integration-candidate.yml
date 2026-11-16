@@ -767,7 +767,9 @@ jobs:
         provenance: false
         sbom: false
         outputs: type=oci,oci-mediatypes=true,dest=/tmp/hive-oci.tar,tar=true
-        cache-from: type=gha,scope=tmux-linux-amd64
+        cache-from: |
+          type=gha,scope=tmux-linux-amd64
+          type=gha,scope=whisper-linux-amd64
         build-args: |
           BASE_REGISTRY=${{ env.BASE_REGISTRY }}
           GIT_HASH=${{ github.sha }}
