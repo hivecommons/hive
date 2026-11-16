@@ -44,6 +44,7 @@ type Scheduler struct {
 	// logged, so it is logged once per day.
 	classifierQuotaWarnedDay string
 	inflight                 InflightLookup
+	prLease                  PRLeaseLookup
 	maintainerNotes          MaintainerNotesLookup
 	runAdmitter              RunAdmitter
 	triageCommenter          TriageCommenter

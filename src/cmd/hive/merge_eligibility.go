@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/rebasemerge"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -1121,6 +1122,13 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// needs GitHub's own verdict to pick REPAIR vs DE-ESCALATE.
 		Mergeable string `json:"mergeable,omitempty"`
 		CIStatus  string `json:"ci_status,omitempty"`
+		// AppAuthored, HeadPushedAt and Issues are the busy-branch evidence
+		// (hivecommons/hive#18488): a repair queue must not send an agent to
+		// push onto a branch that is not the hive App's own while another
+		// worker is on it. See pkg/scheduler/busy_branch.go.
+		AppAuthored  bool       `json:"app_authored,omitempty"`
+		HeadPushedAt *time.Time `json:"head_pushed_at,omitempty"`
+		Issues       []int      `json:"issues,omitempty"`
 	}
 
 	prAgents := auditPRAgents(org, time.Now().Add(-auditPRAttributionWindow), "")
@@ -1258,6 +1266,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			Held:            held,
 			BaseRedChecks:   pr.BaseRedChecks,
 			BaseRed:         pr.AllFailuresBaseRed(),
+			AppAuthored:     scheduler.PRAppAuthored(pr),
+			HeadPushedAt:    scheduler.PRHeadPushedAt(pr),
+			Issues:          scheduler.PRIssueNumbers(pr),
 		}
 		if adopted {
 			row.ReachableAction = github.ReachableActionPush

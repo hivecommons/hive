@@ -517,28 +517,41 @@ func formatMergeEligibleDataFor(data []byte, keep func(repo string) bool, limit 
 }
 
 func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
+	return s.buildCIFailingListForAgent("", keep)
+}
+
+// buildCIFailingListForAgent is buildCIFailingListFor for one kicked agent:
+// its own claims do not make a branch busy (busy_branch.go,
+// hivecommons/hive#18488). An empty agent counts every claim.
+func (s *Scheduler) buildCIFailingListForAgent(agent string, keep func(repo string) bool) string {
 	data, err := os.ReadFile(ciFailingPath)
 	if err != nil {
 		return "(none)\n"
 	}
 	type ciFailingRow struct {
-		Number           int      `json:"number"`
-		Repo             string   `json:"repo"`
-		Title            string   `json:"title"`
-		Author           string   `json:"author"`
-		HeadSHA          string   `json:"head_sha"`
-		HeadRef          string   `json:"head_ref"`
-		HeadRepo         string   `json:"head_repo"`
-		FromFork         bool     `json:"from_fork"`
-		ReachableAction  string   `json:"reachable_action"`
-		Adopted          bool     `json:"adopted"`
-		SentinelAlert    bool     `json:"sentinel_alert"`
-		Held             bool     `json:"held"`
-		FailingChecks    []string `json:"failing_checks"`
-		Excerpt          string   `json:"excerpt"`
-		DeferredIncident int      `json:"deferred_incident"`
-		BaseRedChecks    []string `json:"base_red_checks"`
-		BaseRed          bool     `json:"base_red"`
+		Number           int        `json:"number"`
+		Repo             string     `json:"repo"`
+		Title            string     `json:"title"`
+		Author           string     `json:"author"`
+		HeadSHA          string     `json:"head_sha"`
+		HeadRef          string     `json:"head_ref"`
+		HeadRepo         string     `json:"head_repo"`
+		FromFork         bool       `json:"from_fork"`
+		ReachableAction  string     `json:"reachable_action"`
+		Adopted          bool       `json:"adopted"`
+		SentinelAlert    bool       `json:"sentinel_alert"`
+		Held             bool       `json:"held"`
+		FailingChecks    []string   `json:"failing_checks"`
+		Excerpt          string     `json:"excerpt"`
+		DeferredIncident int        `json:"deferred_incident"`
+		BaseRedChecks    []string   `json:"base_red_checks"`
+		BaseRed          bool       `json:"base_red"`
+		AppAuthored      bool       `json:"app_authored"`
+		HeadPushedAt     *time.Time `json:"head_pushed_at"`
+		Issues           []int      `json:"issues"`
+		Agent            string     `json:"agent"`
+		TrustedAuthor    bool       `json:"trusted_author"`
+		ReroutedFrom     string     `json:"rerouted_from"`
 	}
 	var payload struct {
 		Items []ciFailingRow `json:"ci_failing"`
@@ -605,11 +618,17 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 	// instruction, and the CI-Repair step 4 "push a fixup commit to the PR
 	// branch" is never aimed at a branch that only exists in someone's fork.
 	var pushable, forks []ciFailingRow
+	var busy []busyRedPR
+	busyCheck := s.busyBranchChecker(agent)
 	for _, pr := range payload.Items {
 		if pr.FromFork && (!pr.Adopted || pr.ReachableAction != "push") {
 			forks = append(forks, pr)
 		} else if pr.ReachableAction == "comment-only" {
 			forks = append(forks, pr)
+		} else if why := busyCheck(busyBranchRow{Repo: pr.Repo, Number: pr.Number, Issues: pr.Issues, AppAuthored: pr.AppAuthored, Adopted: pr.Adopted, HeadPushedAt: pr.HeadPushedAt, Own: ownRepairRow(pr.Agent, agent, pr.TrustedAuthor, pr.ReroutedFrom)}); why != "" {
+			// hivecommons/hive#18488: pushable, but someone else is on
+			// the branch right now.
+			busy = append(busy, busyRedPR{Number: pr.Number, Repo: pr.Repo, Title: pr.Title, FailingChecks: pr.FailingChecks, Why: why})
 		} else {
 			pushable = append(pushable, pr)
 		}
@@ -644,6 +663,21 @@ func (s *Scheduler) buildCIFailingListFor(keep func(repo string) bool) string {
 		}
 		if pr.SentinelAlert {
 			b.WriteString("    " + adoptedSentinelNote + "\n")
+		}
+	}
+	if len(busy) > 0 {
+		b.WriteString(fmt.Sprintf("BUSY BRANCHES (%d — another worker is on these branches; suggest the fix, do not push):\n", len(busy)))
+		b.WriteString("  " + busyBranchInstruction + "\n")
+		for i, pr := range busy {
+			if i >= limit {
+				b.WriteString(prListOverflowLine(len(busy)-i, limit))
+				break
+			}
+			checks := ""
+			if len(pr.FailingChecks) > 0 {
+				checks = " — failing: " + strings.Join(pr.FailingChecks, ", ")
+			}
+			b.WriteString(fmt.Sprintf("  #%d %s [busy: %s — suggest, do not push] — %s%s\n", pr.Number, pr.Repo, pr.Why, pr.Title, checks))
 		}
 	}
 	if len(deferred) > 0 {
