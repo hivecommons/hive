@@ -1490,6 +1490,7 @@ func (b *boot) wireBootClosures() {
 
 		maxAge := time.Duration(retentionDays) * 24 * time.Hour
 		homeMaxAge := time.Duration(sessionprune.DefaultHomeRetentionDays) * 24 * time.Hour
+		tmpMaxAge := time.Duration(sessionprune.DefaultTmpRetentionHours) * time.Hour
 		stop := make(chan struct{})
 
 		go func() {
@@ -1498,6 +1499,7 @@ func (b *boot) wireBootClosures() {
 			runSessionPrune(b.logger, dir, maxAge)
 			runAgentSessionTreePrune(b.logger, agentSessionTreesRoot, maxAge)
 			runAgentHomePrune(b.logger, agentHomesRoot, homeMaxAge)
+			runClaudeTmpPrune(b.logger, claudeTmpRoot, tmpMaxAge)
 
 			ticker := time.NewTicker(sessionPruneInterval)
 			defer ticker.Stop()
@@ -1509,6 +1511,7 @@ func (b *boot) wireBootClosures() {
 					runSessionPrune(b.logger, dir, maxAge)
 					runAgentSessionTreePrune(b.logger, agentSessionTreesRoot, maxAge)
 					runAgentHomePrune(b.logger, agentHomesRoot, homeMaxAge)
+					runClaudeTmpPrune(b.logger, claudeTmpRoot, tmpMaxAge)
 				}
 			}
 		}()
