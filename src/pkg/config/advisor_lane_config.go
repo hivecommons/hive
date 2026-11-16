@@ -183,6 +183,10 @@ type AdvisorRuntime struct {
 	TimeoutS             int
 	DailyBudgetTokens    int
 	MaxConsecutiveBlocks int
+	// ReasoningEffort is the reasoning_effort of the model role the advisor
+	// model names ("@<role>"); empty for a literal model or a role without
+	// one, and the request then carries none.
+	ReasoningEffort string
 }
 
 // ResolveAdvisorRuntime resolves the advisor evaluator's endpoint, key,
@@ -197,10 +201,7 @@ func (c *Config) ResolveAdvisorRuntime(agentName string) (AdvisorRuntime, bool) 
 		return AdvisorRuntime{}, false
 	}
 	endpoint, apiKey, reviewerModel := c.Governor.ResolveReviewer()
-	model := strings.TrimSpace(eff.Model)
-	if role, ok := c.ResolveModelRole(model); ok && strings.TrimSpace(role.Model) != "" {
-		model = strings.TrimSpace(role.Model)
-	}
+	model, effort := c.resolveAdvisorModel(eff.Model)
 	if model == "" {
 		model = reviewerModel
 	}
@@ -220,7 +221,24 @@ func (c *Config) ResolveAdvisorRuntime(agentName string) (AdvisorRuntime, bool) 
 		TimeoutS:             timeoutS,
 		DailyBudgetTokens:    eff.DailyBudgetTokens,
 		MaxConsecutiveBlocks: maxBlocks,
+		ReasoningEffort:      effort,
 	}, true
+}
+
+// resolveAdvisorModel resolves the advisor's model setting to the model it
+// calls and the reasoning effort to send: an "@<role>" reference gives the
+// role's model and reasoning_effort, a literal model gives itself and no
+// effort. An empty model stays empty, for the caller's reviewer fallback.
+func (c *Config) resolveAdvisorModel(setting string) (model, effort string) {
+	model = strings.TrimSpace(setting)
+	if !strings.HasPrefix(model, ModelRoleRefPrefix) {
+		return model, ""
+	}
+	role, ok := c.ResolveModelRole(model)
+	if !ok || strings.TrimSpace(role.Model) == "" {
+		return model, ""
+	}
+	return strings.TrimSpace(role.Model), strings.TrimSpace(role.ReasoningEffort)
 }
 
 // OMPThinkingLevels is omp's global `--thinking` vocabulary that hive passes.

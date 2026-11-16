@@ -184,6 +184,9 @@ func TestResolveAdvisorRuntime(t *testing.T) {
 	if rt.Model != "role-model" {
 		t.Errorf("model = %q, want role-model via @advisor", rt.Model)
 	}
+	if rt.ReasoningEffort != "" {
+		t.Errorf("reasoning effort = %q, want none from a role without one", rt.ReasoningEffort)
+	}
 	if rt.TimeoutS != DefaultAdvisorTimeoutS || rt.MaxConsecutiveBlocks != DefaultAdvisorMaxConsecutiveBlocks {
 		t.Errorf("unset bounds must default: %+v", rt)
 	}
@@ -199,6 +202,35 @@ func TestResolveAdvisorRuntime(t *testing.T) {
 	c.Advisor.Enabled = boolPtr(false)
 	if _, ok := c.ResolveAdvisorRuntime("any"); ok {
 		t.Fatal("disabled advisor must not resolve")
+	}
+}
+
+// The advisor sends the reasoning effort of the role its model names; a
+// literal model, or the reviewer fallback, sends none. The settings view
+// reports the same value.
+func TestResolveAdvisorRuntimeReasoningEffort(t *testing.T) {
+	c := &Config{
+		ModelRoles: map[string]ModelRole{"advisor": {Backend: "claude", Model: "claude-haiku-5-5", ReasoningEffort: "high"}},
+		Advisor:    AdvisorConfig{Enabled: boolPtr(true), Model: "@advisor"},
+	}
+	c.Governor.LiteLLM.Endpoint = "https://litellm.example.com"
+	c.Governor.LiteLLM.DefaultModel = "fallback-model"
+
+	rt, ok := c.ResolveAdvisorRuntime("any")
+	if !ok || rt.Model != "claude-haiku-5-5" || rt.ReasoningEffort != "high" {
+		t.Fatalf("role runtime = %+v ok=%v, want the role's model and effort", rt, ok)
+	}
+	if eff := c.AdvisorEffectiveFor("any"); eff.ResolvedModel != "claude-haiku-5-5" || eff.ResolvedReasoningEffort != "high" {
+		t.Fatalf("settings view = %+v, want the role's model and effort", eff)
+	}
+
+	c.Advisor.Model = "claude-haiku-5-5"
+	if rt, _ := c.ResolveAdvisorRuntime("any"); rt.ReasoningEffort != "" {
+		t.Errorf("a literal model sent effort %q", rt.ReasoningEffort)
+	}
+	c.Advisor.Model = ""
+	if rt, _ := c.ResolveAdvisorRuntime("any"); rt.Model != "fallback-model" || rt.ReasoningEffort != "" {
+		t.Errorf("reviewer fallback = %+v, want fallback-model with no effort", rt)
 	}
 }
 

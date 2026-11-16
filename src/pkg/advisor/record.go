@@ -44,6 +44,9 @@ type Record struct {
 	// session id in phase 1).
 	Turn  string `json:"turn,omitempty"`
 	Model string `json:"model,omitempty"`
+	// ReasoningEffort is the reasoning effort the review asked for (the
+	// advisor model role's reasoning_effort); empty when none was sent.
+	ReasoningEffort string `json:"reasoning_effort,omitempty"`
 	// Severity is aside/concern/blocker; empty on a skipped review.
 	Severity string `json:"severity,omitempty"`
 	Text     string `json:"text,omitempty"`

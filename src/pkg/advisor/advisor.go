@@ -109,6 +109,10 @@ type Config struct {
 	// TimeoutS bounds one review call; when it elapses the agent proceeds and
 	// the review is recorded as skipped.
 	TimeoutS int
+	// ReasoningEffort is sent as the request's reasoning_effort when set (the
+	// advisor model's role names one); empty sends none, so the endpoint's
+	// default applies.
+	ReasoningEffort string
 }
 
 // Evaluator makes one stateless model call per finished turn and reads back a
@@ -118,6 +122,7 @@ type Evaluator struct {
 	apiKey       string
 	model        string
 	instructions string
+	effort       string
 	timeout      time.Duration
 	http         *http.Client
 }
@@ -142,6 +147,7 @@ func NewEvaluator(c Config) (*Evaluator, error) {
 		apiKey:       c.APIKey,
 		model:        strings.TrimSpace(c.Model),
 		instructions: strings.TrimSpace(c.Instructions),
+		effort:       strings.TrimSpace(c.ReasoningEffort),
 		timeout:      timeout,
 		http:         &http.Client{Timeout: timeout},
 	}, nil
@@ -196,11 +202,22 @@ type chatMessage struct {
 }
 
 type chatRequest struct {
-	Model       string        `json:"model"`
-	Messages    []chatMessage `json:"messages"`
-	Temperature float64       `json:"temperature"`
-	MaxTokens   int           `json:"max_tokens"`
+	Model           string        `json:"model"`
+	Messages        []chatMessage `json:"messages"`
+	Temperature     float64       `json:"temperature"`
+	MaxTokens       int           `json:"max_tokens"`
+	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
 }
+
+const (
+	// reviewMaxTokens caps the verdict, a short JSON object.
+	reviewMaxTokens = 400
+	// reviewMaxTokensWithEffort caps a review that asks for reasoning: a
+	// reasoning model spends its thinking from the same allowance, so the
+	// verdict's 400 would be used up before it is written. The review's
+	// timeout and the agent's daily advisor budget still bound the spend.
+	reviewMaxTokensWithEffort = 16000
+)
 
 type chatResponse struct {
 	Choices []struct {
@@ -224,11 +241,16 @@ func (e *Evaluator) Review(ctx context.Context, agentName, transcript string) (V
 	}
 
 	messages := buildPrompt(agentName, e.instructions, tail)
+	maxTokens := reviewMaxTokens
+	if e.effort != "" {
+		maxTokens = reviewMaxTokensWithEffort
+	}
 	body, err := json.Marshal(chatRequest{
-		Model:       e.model,
-		Messages:    messages,
-		Temperature: 0,
-		MaxTokens:   400,
+		Model:           e.model,
+		Messages:        messages,
+		Temperature:     0,
+		MaxTokens:       maxTokens,
+		ReasoningEffort: e.effort,
 	})
 	if err != nil {
 		return Verdict{}, Usage{}, fmt.Errorf("marshal review request: %w", err)
