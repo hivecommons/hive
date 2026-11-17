@@ -54,6 +54,9 @@ const (
 	PlatformTeams      = "teams"
 	PlatformZoom       = "zoom"
 	PlatformDiscord    = "discord"
+	// PlatformCompanion is the desktop companion: a person's own meeting
+	// client audio, captured on their computer and relayed by hive.
+	PlatformCompanion = "companion"
 )
 
 // Meeting is one meeting hive was sent to.
@@ -85,14 +88,17 @@ type Meeting struct {
 	// ConsentVia is how the notice was delivered: "chat" (Quorum confirmed
 	// the line in the meeting chat) or "voice" (spoken because chat could
 	// not deliver it).
-	ConsentVia  string     `json:"consent_via,omitempty"`
-	LobbySince  *time.Time `json:"lobby_since,omitempty"`
-	LiveAt      *time.Time `json:"live_at,omitempty"`
-	EndedAt     *time.Time `json:"ended_at,omitempty"`
-	HandedOffAt *time.Time `json:"handed_off_at,omitempty"`
-	PurgedAt    *time.Time `json:"purged_at,omitempty"`
-	CreatedAt   time.Time  `json:"created_at"`
-	UpdatedAt   time.Time  `json:"updated_at"`
+	ConsentVia string `json:"consent_via,omitempty"`
+	// Companion is set on a desktop companion meeting: who attested that
+	// the participants were told, when, and which notice they saw.
+	Companion   *CompanionInfo `json:"companion,omitempty"`
+	LobbySince  *time.Time     `json:"lobby_since,omitempty"`
+	LiveAt      *time.Time     `json:"live_at,omitempty"`
+	EndedAt     *time.Time     `json:"ended_at,omitempty"`
+	HandedOffAt *time.Time     `json:"handed_off_at,omitempty"`
+	PurgedAt    *time.Time     `json:"purged_at,omitempty"`
+	CreatedAt   time.Time      `json:"created_at"`
+	UpdatedAt   time.Time      `json:"updated_at"`
 }
 
 // Person is a meeting participant as Quorum reports it.

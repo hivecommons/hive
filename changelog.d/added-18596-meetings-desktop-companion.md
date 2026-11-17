@@ -1,0 +1,1 @@
+- Meetings: desktop companion meetings (`/api/companion/*`): the companion app streams a person's own meeting client audio and microphone, after a versioned consent confirmation, as a live meeting Betty takes part in; her replies go to the companion window (#18596).
