@@ -607,6 +607,10 @@ type SweepOptions struct {
 	// AgentsMD, when set, returns the URL of the repository's AGENTS.md (or
 	// "" when it has none); the template points agents at it.
 	AgentsMD func(ctx context.Context, repo string) string
+	// RepoAutoMerge, when set, reports whether the hive auto-merges the
+	// repository's contributor PRs; the welcome comment promises an
+	// automatic merge only where it does. Unset keeps that promise.
+	RepoAutoMerge func(repo string) bool
 	// Audit, when set, receives one event per label applied or released.
 	Audit func(Event)
 }
@@ -758,8 +762,12 @@ func (s *Sweeper) Sweep(ctx context.Context, forge Forge, candidates []Candidate
 			if opts.AgentsMD != nil {
 				agentsMD = opts.AgentsMD(ctx, repo)
 			}
+			autoMerge := true
+			if opts.RepoAutoMerge != nil {
+				autoMerge = opts.RepoAutoMerge(repo)
+			}
 			body, err := RenderComment(tmpl, Vars{
-				Candidate: sc.c, Links: opts.Links, Reasons: sc.d.Reasons, AgentsMDURL: agentsMD,
+				Candidate: sc.c, Links: opts.Links, Reasons: sc.d.Reasons, AgentsMDURL: agentsMD, AutoMerge: autoMerge,
 			})
 			if err != nil {
 				logger.Warn("gfi: rendering comment failed", "issue", sc.c.Key(), "error", err)
