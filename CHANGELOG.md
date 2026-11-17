@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.298.0)
+
+### Added
+
+- **Workflow models: simulating a merged PR reports its observed `pipeline.status`** (part of [#18356](https://github.com/hivecommons/hive/issues/18356)). When the workflow simulate fetches a merged PR by repo and number, it now asks the GitHub Actions post-merge observer about the PR's merge commit on the default branch and fills `pr.pipeline` (`green`, `red`, `running` or `unknown` with the reason), so a model's Main CI, Release and Deploy transitions can be checked against real runs. If the read fails, `pr.pipeline` stays `unknown`, a note says why, and the simulate still answers.
+- **Workflow models: GitHub Actions post-merge run observer feeds `pipeline.status`** ([#18645](https://github.com/hivecommons/hive/issues/18645), part of [#18356](https://github.com/hivecommons/hive/issues/18356)). Default-branch push runs (Main CI, deciding by the exact merge SHA when the range can't), release runs and deploy runs (per environment) of the workflows an ingested model binds are now attributed to merged PRs through the range-attribution core (`workflowmodel.AttributeRuns`), so the `pipeline.status` fact can report `green`, `red` or `running`. Nothing calls the observer yet, so the fact stays `unknown` in production until the follow-up wiring lands. Pull-request and merge-queue runs never count, a deploy run that does not report which environment it targeted credits none of them, and a run whose revision or range can't be determined leaves the status `unknown` with the reason recorded.
+
 ## 2026-11-17 (v5.297.0)
 
 ### Added
