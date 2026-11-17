@@ -1,1 +1,0 @@
-- Dashboard: an agent that is running but has never been kicked (for example the opt-in red team lane with every cadence at 0) now shows as idle instead of "running" forever, and the reviewer autoscaler no longer counts a never-tasked reviewer replica as busy. Both now use one shared check, `crux.Process.TurnInFlight` (#18458).
