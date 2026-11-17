@@ -20,6 +20,7 @@ import (
 func TestWorkflowDispatchEndpoint(t *testing.T) {
 	s := workflowTestServer(t, true)
 	rt := cruxtest.NewRecorder()
+	rt.Add("writer", "writer", crux.StateIdle)
 	s.deps.AgentMgr = rt
 	recorded := 0
 	var gotBy string
