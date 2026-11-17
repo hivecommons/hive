@@ -181,7 +181,43 @@
       if (e.status === 'awaiting_approval') out += btn('approve', 'Approve', 'btn-primary') + btn('decline', 'Decline', 'btn-secondary');
       if (e.status === 'scheduled' || e.status === 'awaiting_approval' || (e.status === 'live' && e.rrule)) out += btn('skip', e.rrule ? 'Skip next' : 'Skip', 'btn-secondary');
       if (e.status === 'scheduled' || e.status === 'awaiting_approval' || e.status === 'live') out += btn('cancel', 'Cancel', 'btn-danger');
+      if (calendarCanDelete(e, window._hiveRole)) {
+        out += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="calendarDelete" data-arg0="' + id + '"' +
+          ' title="Delete this past entry and the meeting it created; facts and drafts already made from it stay">🗑 Delete</button>';
+      }
       return out;
+    }
+
+    // Finished Calendar statuses: past entries get 🗑 Delete; scheduled,
+    // awaiting-approval and live ones keep Skip and Cancel.
+    const CALENDAR_FINISHED_STATUSES = { ended: 1, cancelled: 1, declined: 1, failed: 1, blocked: 1, skipped: 1 };
+    function calendarCanDelete(e, role) {
+      return !!e && role === 'owner' && !!CALENDAR_FINISHED_STATUSES[e.status];
+    }
+
+    function calendarDeleteText(e) {
+      const n = ((e && e.history) || []).filter(h => h && h.meeting_id).length || (e && e.meeting_id ? 1 : 0);
+      return 'This deletes this Calendar entry' + (n ? ' and the meeting' + (n === 1 ? '' : 's') + ' it created: record, transcript, notes and live state on this hive, and the data in Vexa' : '') + '. ' +
+        'Knowledge facts and drafts already made from it are not touched. It cannot be undone.';
+    }
+
+    async function calendarDelete(id) {
+      const e = ((_calendarData && _calendarData.recent) || []).concat((_calendarData && _calendarData.upcoming) || []).find(x => x && x.id === id);
+      if (!e) return;
+      const ok = await hiveConfirm({ title: 'Delete this Calendar entry?', message: calendarDeleteText(e), confirmLabel: 'Delete', danger: true });
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/meetings/schedule/' + encodeURIComponent(id), { method: 'DELETE' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        const upstream = (data.meetings || []).filter(m => m && m.upstream_error).length;
+        showToast(upstream ? 'Entry deleted; Vexa did not confirm the meeting data was erased' : 'Calendar entry deleted', upstream ? 'warning' : 'success');
+        if (typeof fetchMeetings === 'function') fetchMeetings();
+        calendarRefreshMeetings();
+      } catch (err) {
+        showToast('Could not delete the entry: ' + err.message, 'error');
+      }
+      fetchCalendar();
     }
 
     function calendarMeetingLink(e) {

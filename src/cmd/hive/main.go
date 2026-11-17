@@ -96,6 +96,7 @@ import (
 	"github.com/hivecommons/hive/pkg/telegram"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/tracing"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
 	"github.com/hivecommons/hive/pkg/worksource"
 	"github.com/hivecommons/hive/pkg/worksource/wavefront" // registers the additive Wavefront source (#8362)
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -1128,8 +1129,12 @@ func (b *boot) wireBootClosures() {
 			WorkflowItemSnapshot: func(ctx context.Context, repo string, number int) (github.WorkflowItemSnapshot, error) {
 				return b.ghClient.WorkflowItemSnapshot(ctx, repo, number)
 			},
+			WorkflowPostMerge: func(ctx context.Context, repo string, m *workflowmodel.Model, defaultBranch string, prs []workflowmodel.MergedPR) (map[int]*stageengine.PostMergeFacts, error) {
+				return b.ghClient.ObservePostMerge(ctx, repo, m, defaultBranch, prs)
+			},
 			WorkflowRepoFile:        workflowRepoFile(func() *github.Client { return b.ghClient }),
 			WorkflowProvisionLabels: workflowProvisionLabels(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
+			WorkflowDispatchPrepare: workflowDispatchPrepare(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
 			WorkflowEmitChecks:      workflowEmitChecks(b.cfg, func() *github.Client { return b.ghClient }),
 			WorkflowClusterRunner:   workflowClusterRunner(),
 			WorkflowSpecLLM:         newWorkflowSpecRunner(func() *config.Config { return b.cfg }),
@@ -3821,6 +3826,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				rt = b.agentMgr
 			}
 			researchPool := wireMeetingsResearch(b.cfg, rt, b.logger)
+			if fn := meetingsResearchStatus(b.cfg, researchPool); fn != nil {
+				b.dashSrv.SetMeetingsResearchStatus(fn)
+			}
 			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger, b.dashSrv.HiveStatusBrief); lr != nil {
 				b.meetingsLive = lr
 				b.cleanup.push(lr.Close)
@@ -3829,12 +3837,15 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 			// Drafts people ask Betty for, approved in the dashboard (#18406).
 			b.wireMeetingsActions(store)
 			// Owner API, live panel and /api/events frames (#18292).
-			b.dashSrv.SetMeetingsService(&meetingsDashboard{mgr: mgr, live: b.meetingsLive})
-			// Scheduled meetings and the Calendar section (#18394).
+			md := &meetingsDashboard{mgr: mgr, live: b.meetingsLive}
+			// Scheduled meetings and the Calendar section (#18394). Wired
+			// first so a deleted meeting's Calendar entry goes with it.
 			if svc, stop := wireMeetingsSchedule(b.cfg, mgr, b.logger); svc != nil {
 				b.cleanup.push(stop)
 				b.dashSrv.SetMeetingsScheduleService(svc)
+				md.sched = svc.sched
 			}
+			b.dashSrv.SetMeetingsService(md)
 			// Ended meetings become inbox items; transcripts are purged
 			// after meetings.retention_days (#18293).
 			b.wireMeetingsInbox(mgr, store)
@@ -4243,7 +4254,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		if err := b.cfg.ExpandAgentReplicas(); err != nil {
 			b.logger.Warn("failed to expand agent replicas after config reload", "error", err)
 		}
-		addedAgents := b.agentMgr.ReconcileAgents(b.cfg.EnabledAgents())
+		addedAgents := b.agentMgr.ReconcileAgents(withResearchAgents(b.cfg.EnabledAgents()))
 		for _, added := range addedAgents {
 			if ac, ok := b.cfg.Agents[added]; ok && !ac.OnDemand {
 				deps.startAgent(b.ctx, b.agentMgr, added, b.logger)

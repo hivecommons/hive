@@ -14,15 +14,17 @@ import (
 //
 // Every reference-repo pass (boot, config reload, the derive poller, an
 // owner-identity change) ends by polling the write-tier reference repos for
-// the issues and PRs the hive opened there as the owner and routing new
-// feedback to the agents that opened them. The poller is bounded by design:
-// it lists creator=<owner> only and reads comments on tracked items only.
+// the issues and PRs the hive opened there (as the owner, or as the App bot
+// on a repo that writes as the bot, #18516) and routing new feedback to the
+// agents that opened them. The poller is bounded by design: it lists
+// creator=<that login> only and reads comments on tracked items only.
 // Nothing here scans a remote backlog, kicks from a remote queue or runs a
 // stage on a remote item.
 
-// newRemoteItemsPoller builds the poller over the owner token source.
+// newRemoteItemsPoller builds the poller over the reference-repo credentials:
+// each repo's proxy policy token when a proxy is wired, else the owner token.
 func (b *boot) newRemoteItemsPoller(rt *referenceRepoRuntime) *remoteitems.Poller {
-	if rt == nil || rt.deps.ownerToken == nil {
+	if rt == nil || (rt.deps.ownerToken == nil && b.githubProxy == nil) {
 		return nil
 	}
 	apiURL := ""
@@ -31,9 +33,24 @@ func (b *boot) newRemoteItemsPoller(rt *referenceRepoRuntime) *remoteitems.Polle
 			apiURL = auth.APIURL()
 		}
 	}
+	fetch := &github.RemoteItemsFetcher{Token: rt.deps.ownerToken, APIURL: apiURL}
+	if b.githubProxy != nil {
+		// Each watched repo is read under its own reference-repo credential,
+		// the one the proxy injects on its writes: the scoped bot token on a
+		// repo that writes as the App bot, the owner's token (or the
+		// write_token_file) elsewhere (hivecommons/hive#18516).
+		proxy := b.githubProxy
+		fetch.TokenFor = func(repo string) (string, bool) {
+			pol, ok := proxy.ReferenceRepoPolicyFor(repo)
+			if !ok || pol.Token == nil {
+				return "", false
+			}
+			return pol.Token()
+		}
+	}
 	return &remoteitems.Poller{
 		Store:        remoteitems.NewStore(""),
-		Fetch:        &github.RemoteItemsFetcher{Token: rt.deps.ownerToken, APIURL: apiURL},
+		Fetch:        fetch,
 		Marker:       github.HiveMarkerAgent,
 		ResolveAgent: func(name string) string { return resolveMarkerAgent(b.cfg, name) },
 		Logger:       b.logger,
@@ -65,43 +82,37 @@ func resolveMarkerAgent(cfg *config.Config, name string) string {
 	return ""
 }
 
-// remoteItemRepos returns the reference repos the poller watches: write tier
-// with a resolved credential login, which is the owner's login. Entries that
-// write as the App bot (project.remote_write_identity) are left out: the
-// poller reads under the owner token and lists creator=<owner>, so it would
-// never find the bot's items there.
-func remoteItemRepos(refs []config.ReferenceRepo) (repos []string, login string) {
+// remoteItemTargets returns the reference repos the poller watches: write
+// tier with a resolved credential login, each under the login its writes
+// appear as. That is the App bot's on a repo that writes as the bot
+// (project.remote_write_identity, hivecommons/hive#18516), the owner's or the
+// write_token_file user's elsewhere.
+func remoteItemTargets(refs []config.ReferenceRepo) []remoteitems.Target {
+	var out []remoteitems.Target
 	for _, rr := range refs {
 		if rr.ReadOnly() || rr.CredentialState != config.ReferenceCredentialWriteTier || rr.CredentialLogin == "" {
 			continue
 		}
-		if rr.CredentialIdentity == config.ReferenceIdentityBot {
-			continue
-		}
-		repos = append(repos, rr.Repo)
-		if login == "" {
-			login = rr.CredentialLogin
-		}
+		out = append(out, remoteitems.Target{Repo: rr.Repo, Login: rr.CredentialLogin})
 	}
-	return repos, login
+	return out
 }
 
-// pollRemoteItems runs one follow-up pass over refs. Entries whose
-// credential is a write_token_file are listed under that file's login too
-// only when it matches the owner's; a mixed set follows the first login.
+// pollRemoteItems runs one follow-up pass over refs, each repo listed under
+// the login its writes appear as and read under its own credential.
 func (b *boot) pollRemoteItems(ctx context.Context, rt *referenceRepoRuntime, refs []config.ReferenceRepo) {
 	if rt == nil || rt.remoteItems == nil || ctx == nil || ctx.Err() != nil {
 		return
 	}
-	repos, login := remoteItemRepos(refs)
-	if len(repos) == 0 || login == "" {
+	targets := remoteItemTargets(refs)
+	if len(targets) == 0 {
 		return
 	}
 	var resumer remoteitems.Resumer
 	if b.agentMgr != nil {
 		resumer = b.agentMgr
 	}
-	out := rt.remoteItems.Run(ctx, repos, login, resumer, time.Now())
+	out := rt.remoteItems.RunTargets(ctx, targets, resumer, time.Now())
 	if out.Added+out.Pruned+out.Routed+out.Queued+out.Unrouted+out.ListErrs+out.FetchErrs > 0 {
 		b.logger.Info("remote items: follow-up pass", "repos", out.Repos, "tracked", out.Tracked, "added", out.Added, "pruned", out.Pruned,
 			"routed", out.Routed, "queued", out.Queued, "unrouted", out.Unrouted, "list_errors", out.ListErrs, "fetch_errors", out.FetchErrs)

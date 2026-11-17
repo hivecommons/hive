@@ -141,6 +141,13 @@ func (m *Manager) ApproveRequest(ctx context.Context, id string, voice bool) (Me
 		DisplayName: m.opts.BotName, Platform: mt.Platform, GuildID: mt.GuildID, ChannelID: mt.ChannelID, Voice: capable,
 	})
 	if err != nil {
+		// The request stays open so the owner can approve again once the
+		// cause is fixed (a missing Discord permission, say); the reason is
+		// kept on it so the panel and the log both name the failure.
+		m.log.Warn("[meetings] approving a platform join request failed", "meeting", id, "platform", mt.Platform, "error", err)
+		if saved, uerr := m.update(id, nil, func(x *Meeting) { x.StateReason = err.Error() }); uerr == nil {
+			mt = saved
+		}
 		return mt, err
 	}
 	mt, err = m.update(id, nil, func(x *Meeting) {
@@ -148,7 +155,7 @@ func (m *Manager) ApproveRequest(ctx context.Context, id string, voice bool) (Me
 			x.NativeID = res.MeetingID
 		}
 		x.VoiceEnabled, x.VoiceCapable = voice, capable
-		x.State = StateJoining
+		x.State, x.StateReason = StateJoining, ""
 		if knownStates[res.State] && res.State != StateRequested {
 			x.State = res.State
 		}

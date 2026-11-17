@@ -36,11 +36,12 @@ function extractConst(name) {
 
 const GH_AUTH = ['hiveRoleSettled'];
 const MEETINGS = ['meetingsIsOwner', 'meetingsRoleKnown', 'meetingsOnRoleReady', 'fetchMeetings', 'renderMeetings', 'meetingsJoinFormHtml',
-  'meetingsRowHtml', 'meetingsFormatTime', 'meetingsFriendlyReason', 'meetingsReasonHtml', 'meetingsLabel'];
+  'meetingsRowHtml', 'meetingsFormatTime', 'meetingsFriendlyReason', 'meetingsReasonHtml', 'meetingsLabel',
+  'meetingsFinished', 'meetingsCanDelete', 'meetingsDeleteButtonHtml'];
 const CALENDAR = ['calendarRoleKnown', 'calendarOnRoleReady', 'calendarCanView', 'calendarIsOwner', 'fetchCalendar', 'calendarRefreshMeetings',
   'fetchMeetingDrafts', 'renderCalendar', 'renderMeetingDrafts', 'meetingDraftsSplit', 'calendarFormHtml', 'calendarViewerTimeZone',
   'calendarRowHtml', 'calendarFormatTime', 'calendarPlatformLabel', 'calendarMeetingLink', 'calendarActionButtons', 'renderCalendarIndicator',
-  'calendarIndicatorState', 'calendarBadgeCount', 'calendarMeetingList'];
+  'calendarIndicatorState', 'calendarBadgeCount', 'calendarMeetingList', 'calendarCanDelete'];
 
 function makeSandbox(opts) {
   const els = {};
@@ -73,7 +74,7 @@ function makeSandbox(opts) {
   vm.createContext(sb);
   const consts = ['MEETINGS_ERROR_INLINE_CHARS', 'MEETINGS_PLATFORM_LABELS', 'MEETINGS_PILL_STATUS', 'MEETINGS_LIVE_STATES',
     'CALENDAR_ACTIVE_STATES', 'CALENDAR_DEFAULT_NAME', 'CALENDAR_PLATFORM_LABELS', 'CALENDAR_PLATFORM_ICONS', 'CALENDAR_SOURCE_LABELS',
-    'CALENDAR_STATUS_LABELS', 'CALENDAR_PILL_STATUS'].map(extractConst);
+    'CALENDAR_STATUS_LABELS', 'CALENDAR_PILL_STATUS', 'MEETINGS_FINAL_STATES', 'CALENDAR_FINISHED_STATUSES'].map(extractConst);
   // const declarations stay script-scoped in a vm context; re-declare the
   // mutable module state with var so the extracted functions share it.
   vm.runInContext(consts.join('\n') + '\n' + GH_AUTH.concat(MEETINGS, CALENDAR).map(extractFunction).join('\n'), sb);

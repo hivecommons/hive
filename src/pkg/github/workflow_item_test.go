@@ -52,6 +52,7 @@ func TestWorkflowItemSnapshot(t *testing.T) {
 	})
 	mux.HandleFunc("/repos/acme/widget/pulls/3", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"number": 3, "state": "closed", "merged_at": "2026-10-20T20:00:00Z", "mergeable_state": "unknown",
+			"merge_commit_sha": "m3", "base": map[string]any{"repo": map[string]any{"default_branch": "main"}},
 			"head": map[string]any{"sha": "def"}, "user": map[string]any{"login": "nate"}})
 	})
 	mux.HandleFunc("/repos/acme/widget/issues/4", func(w http.ResponseWriter, r *http.Request) {
@@ -104,6 +105,9 @@ func TestWorkflowItemSnapshot(t *testing.T) {
 	}
 	if snap.Kind != "pr" || snap.Open || !snap.Merged || snap.ConflictKnown || snap.ChecksKnown || snap.BaseRef != "" || checkReads != 1 {
 		t.Fatalf("merged: %+v reads=%d", snap, checkReads)
+	}
+	if snap.MergeCommitSHA != "m3" || snap.DefaultBranch != "main" {
+		t.Fatalf("merged PR must carry its merge commit and default branch for the post-merge observer: %+v", snap)
 	}
 
 	snap, err = c.WorkflowItemSnapshot(ctx, "acme/widget", 5)

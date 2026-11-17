@@ -65,10 +65,12 @@ type sessionRecord struct {
 	// Shared opens the session to every read-write user (and the scrollback to
 	// every role). The default, false, is creator + owners only.
 	Shared bool `json:"shared"`
-	// WorkspaceRepo ("org/repo") and Workspace (its path) name the hive's
-	// shared checkout the session opened in. Empty for a session that opened
-	// in its own empty work dir (no workspace repo configured, or a record
-	// from before workspaces); a resume reopens the same place.
+	// WorkspaceRepo ("org/repo") and Workspace (its path) name the session's
+	// own worktree of the hive's shared clone it opened in (records from before
+	// per-session worktrees name the shared clone itself until resumed). Empty
+	// for a session that opened in its own empty work dir (no workspace repo
+	// configured, or a record from before workspaces); a resume reopens the
+	// same repo.
 	WorkspaceRepo string `json:"workspace_repo,omitempty"`
 	Workspace     string `json:"workspace,omitempty"`
 	// Message says what a `preparing` session is waiting on ("preparing
@@ -89,6 +91,28 @@ type sessionStore struct {
 	mu       sync.Mutex
 	path     string
 	sessions map[string]*sessionRecord
+	// loadErr is why the store could not be loaded at open (it then starts
+	// empty); nil for a clean load. Set once, before the store is shared.
+	loadErr error
+}
+
+// sessionsStoreCorruptSuffix (plus a unix time) names the copy an unreadable
+// store is moved aside to.
+const sessionsStoreCorruptSuffix = ".corrupt-"
+
+// untrustedForSweep says why the store cannot be trusted to name every live
+// session ("" when it can): it failed to load in this process, or an earlier
+// process moved an unreadable store aside, which is still there for an
+// operator to recover. A sweep that removes what the store does not know
+// would otherwise remove the worktrees of sessions that still exist.
+func (st *sessionStore) untrustedForSweep() string {
+	if st.loadErr != nil {
+		return st.loadErr.Error()
+	}
+	if aside, _ := filepath.Glob(st.path + sessionsStoreCorruptSuffix + "*"); len(aside) > 0 {
+		return "an unreadable sessions store was moved aside to " + aside[0] + "; remove it once its sessions are recovered"
+	}
+	return ""
 }
 
 func sessionsDir() string {

@@ -36,7 +36,21 @@ type StageTrackerWorkflow struct {
 	// RFC phase 4). The gate pill offers them after the built-in verbs;
 	// each posts `/hive <verb>`. Absent when the model declares none.
 	Replies map[string][]string `json:"replies,omitempty"`
-	Error   string              `json:"error,omitempty"`
+	// Dispatch maps a stage number (string key, as Replies) to the agent
+	// profile the model hands an item in that state to (cncf/techdocs#395).
+	// The tracker offers an owner "Send to <profile>" on such rows (POST
+	// /api/workflows/dispatch). Absent when the model dispatches nothing.
+	Dispatch map[string]StageTrackerWorkflowDispatch `json:"dispatch,omitempty"`
+	Error    string                                  `json:"error,omitempty"`
+}
+
+// StageTrackerWorkflowDispatch is one state the model hands to a profile.
+type StageTrackerWorkflowDispatch struct {
+	Profile string   `json:"profile"`
+	State   string   `json:"state"`
+	Kinds   []string `json:"kinds,omitempty"`
+	// Reply is the reply that starts it automatically ("" = on entry).
+	Reply string `json:"reply,omitempty"`
 }
 
 // StageTrackerWorkflowColumn is a column with the stage numbers it anchors,
@@ -79,6 +93,22 @@ func stageTrackerWorkflowBlock(p *workflowmodel.Profile) StageTrackerWorkflow {
 				out.Replies = map[string][]string{}
 			}
 			out.Replies[strconv.Itoa(n)] = append([]string{}, verbs...)
+		}
+	}
+	if p.Name != hivedefault.Name {
+		for sid, t := range p.Dispatch {
+			st := p.States[sid]
+			if st == nil || st.Lifecycle.Number <= 0 {
+				continue
+			}
+			kinds := make([]string, 0, len(t.Kinds))
+			for _, k := range t.Kinds {
+				kinds = append(kinds, string(k))
+			}
+			if out.Dispatch == nil {
+				out.Dispatch = map[string]StageTrackerWorkflowDispatch{}
+			}
+			out.Dispatch[strconv.Itoa(st.Lifecycle.Number)] = StageTrackerWorkflowDispatch{Profile: t.Profile, State: sid, Kinds: kinds, Reply: t.Reply}
 		}
 	}
 	return out

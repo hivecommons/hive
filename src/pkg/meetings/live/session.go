@@ -36,6 +36,14 @@ const (
 	spekPausedStatus = "Notes and clarifying questions are paused: Spektacular live mode is not running right now (restarting, or it needs a spektacular with the meeting command, hivecommons/spektacular#126). The transcript, the persona and research still work."
 )
 
+// spekUnsupported reports whether spek says the installed spektacular has no
+// live meeting command (spektacular.Stream.Unsupported). A Spek without that
+// method is never unsupported.
+func spekUnsupported(spek Spek) bool {
+	u, ok := spek.(interface{ Unsupported() bool })
+	return ok && u.Unsupported()
+}
+
 // setSpekStatus updates the panel's Spektacular status when it changes.
 func (s *session) setSpekStatus(status string) {
 	if s.state.SpekStatus == status {
@@ -69,6 +77,15 @@ type session struct {
 	spek  Spek
 	state State
 	rate  rateLimiter
+	// spekGone is set once Spek is down for good for this meeting (its
+	// lines closed, or the installed spektacular has no meeting command):
+	// nothing more is forwarded to it, so a meeting without live mode does
+	// not log a warning per transcript line (hivecommons/hive#18630).
+	spekGone bool
+	// burst is the extra chat room for answers to addressed requests;
+	// voice is the estimate of queued speech (voicequeue.go).
+	burst rateLimiter
+	voice voiceQueue
 	// persona is the meeting's attendee persona, nil when it is off. With
 	// it on, it owns the bot's voice in the meeting: Spek's say intents are
 	// dropped, its chat posts are offered to the persona, and its
@@ -76,6 +93,8 @@ type session struct {
 	persona *betty.Engine
 	// fileTokens is the usage-ledger total already charged.
 	fileTokens int
+	// lastSay is how long the meeting's last say call took (timing.go).
+	lastSay time.Duration
 	// spekQueue keeps Spek's asks and chat offers in order while an ask is
 	// being restyled by the persona off the session goroutine; restyled
 	// carries the results back.
@@ -95,6 +114,7 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 	s := &session{
 		r: r, id: m.ID, spek: spek,
 		rate:     rateLimiter{n: r.opts.Policy.ChatPostsPerMinute, window: rateWindow},
+		burst:    answerBurst(r.opts.Policy),
 		updates:  make(chan meetings.Update, sessionInbox),
 		signals:  make(chan ResearchSignal, sessionInbox),
 		approves: make(chan approveReq),
@@ -159,18 +179,33 @@ func (s *session) save() {
 func (s *session) run(ctx context.Context) {
 	defer close(s.done)
 	lines := s.spek.Lines()
-	ending, spekGone := false, false
+	ending := false
+	if spekUnsupported(s.spek) {
+		// The installed spektacular has no `meeting` command: live mode is
+		// off from the start; the stream already logged it once per binary.
+		s.spekGone, lines = true, nil
+		s.setSpekStatus(spekStoppedStatus)
+	}
 	var replies <-chan betty.Reply
+	var researchTick <-chan time.Time
 	if s.persona != nil {
 		s.persona.Start(ctx)
 		defer s.persona.Close()
 		replies = s.persona.Replies()
+		t := time.NewTicker(s.r.opts.ResearchCheckEvery)
+		defer t.Stop()
+		researchTick = t.C
 	}
 	for {
 		select {
+		case <-researchTick:
+			if !ending {
+				s.checkDeepDives(ctx)
+			}
 		case rep := <-replies:
 			if !ending {
 				s.onPersonaReply(ctx, rep)
+				s.drainPersona(ctx, replies)
 			}
 		case <-ctx.Done():
 			s.spek.Close(nil)
@@ -183,7 +218,7 @@ func (s *session) run(ctx context.Context) {
 			if u.Meeting.State.Terminal() {
 				ending = true
 				close(s.ended)
-				if spekGone {
+				if s.spekGone {
 					s.save()
 					return
 				}
@@ -203,8 +238,12 @@ func (s *session) run(ctx context.Context) {
 				// while the meeting goes on: keep the session for the panel,
 				// research signals and approvals; only Spek's questions and
 				// notes stop.
-				spekGone, lines = true, nil
-				s.log().Warn("[meetings] spektacular live mode stopped; continuing without it")
+				s.spekGone, lines = true, nil
+				if spekUnsupported(s.spek) {
+					s.log().Info("[meetings] spektacular live mode unavailable; continuing without it")
+				} else {
+					s.log().Warn("[meetings] spektacular live mode stopped; continuing without it")
+				}
 				s.setSpekStatus(spekStoppedStatus)
 				continue
 			}
@@ -255,13 +294,14 @@ func (s *session) onUpdate(u meetings.Update) {
 	default:
 		return
 	}
-	if len(ev.Raw) > 0 {
+	if len(ev.Raw) > 0 && !s.spekGone {
 		if err := s.spek.SendLine(ev.Raw); err != nil {
-			s.log().Warn("[meetings] forwarding to spek", "error", err)
 			// The child is down (between restarts, or a spektacular
 			// without the meeting command): say so on the panel now rather
-			// than only once it gives up.
+			// than only once it gives up. Warn on that transition only, not
+			// on every line while it stays down.
 			if s.state.SpekStatus == "" {
+				s.log().Warn("[meetings] forwarding to spek", "error", err)
 				s.setSpekStatus(spekPausedStatus)
 			}
 		}
@@ -297,6 +337,9 @@ func (s *session) matchAnswer(ev *meetings.Event) {
 		}
 		a.Answer, a.AnsweredBy, a.AnsweredAt = ev.Text, ev.Who(), &now
 		answered, changed = true, true
+		if s.spekGone {
+			continue
+		}
 		if err := s.spek.Send(map[string]string{"type": "answer", "qid": a.QID, "text": ev.Text, "by": ev.Who()}); err != nil {
 			s.log().Warn("[meetings] sending answer to spek", "error", err)
 		}
@@ -439,7 +482,7 @@ func (s *session) say(ctx context.Context, text string) {
 	m, err := s.r.opts.Meetings.Get(s.id)
 	if err == nil && m.VoiceEnabled && s.r.opts.Policy.VoiceOnAddress {
 		cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
-		err = s.r.opts.Meetings.Say(cctx, s.id, text)
+		err = s.timedSay(func() error { return s.r.opts.Meetings.Say(cctx, s.id, text) })
 		cancel()
 		if err == nil {
 			return
@@ -586,6 +629,7 @@ func (s *session) research(ctx context.Context, in intent) {
 func (s *session) dispatch(ctx context.Context, it *ResearchItem) {
 	if s.r.opts.Research == nil {
 		s.update(it, ResearchFailed, "research is not available on this hive")
+		s.deepDiveFailed(ctx, it, "research is not available on this hive")
 		return
 	}
 	meta := map[string]string{
@@ -602,10 +646,14 @@ func (s *session) dispatch(ctx context.Context, it *ResearchItem) {
 	cancel()
 	if err != nil {
 		s.log().Warn("[meetings] research dispatch failed", "rid", it.RID, "error", err)
-		s.update(it, ResearchFailed, "could not start research")
+		reason := researchFailReason(err)
+		s.update(it, ResearchFailed, "could not start research: "+reason)
+		s.deepDiveFailed(ctx, it, reason)
 		return
 	}
 	it.KickID = kick
+	at := s.now()
+	it.DispatchedAt = &at
 	s.r.registerKick(kick, s.id)
 	s.update(it, ResearchQueued, "")
 }
@@ -648,7 +696,7 @@ func (s *session) onSignal(ctx context.Context, sig ResearchSignal) {
 			if it.Betty && s.persona != nil {
 				// Exactly one follow-up, restyled by the persona off the
 				// session goroutine; it comes back as a persona reply.
-				s.persona.FollowUp(it.Query, summary)
+				s.persona.FollowUpIn(it.Query, summary, it.Voice)
 			} else {
 				s.deliver(ctx, fmt.Sprintf("Research on %q: %s", it.Query, summary))
 			}
@@ -657,6 +705,11 @@ func (s *session) onSignal(ctx context.Context, sig ResearchSignal) {
 		s.r.unregisterKick(sig.KickID)
 	case SignalError:
 		s.update(it, ResearchFailed, text)
+		reason := text
+		if reason == "" {
+			reason = "the research agent stopped without an answer"
+		}
+		s.deepDiveFailed(ctx, it, reason)
 		s.r.unregisterKick(sig.KickID)
 	default:
 		return
@@ -701,19 +754,26 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 	if text == "" {
 		return
 	}
+	if rep.Trigger == betty.TriggerQueue {
+		s.onQueueNote(ctx, rep, text)
+		return
+	}
 	switch rep.Trigger {
 	case betty.TriggerAck:
 		if s.state.BudgetExhausted {
 			return
 		}
-		if s.speak(ctx, text) {
+		if s.speakAck(ctx, text) {
+			s.recordAckSay()
 			s.emitPersona(rep)
 		} else {
 			s.drop("ack_no_voice")
 		}
 		return
 	case betty.TriggerFollowUp:
-		if s.deliver(ctx, text) {
+		// In the channel the question was asked in: spoken when it was
+		// spoken and the meeting can hear her, else chat.
+		if (rep.Kind == betty.KindVoice && s.speak(ctx, text)) || s.deliver(ctx, text) {
 			s.state.PersonaReplies++
 		}
 		s.emitPersona(rep)
@@ -729,9 +789,14 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 		return
 	}
 	posted := true
-	if rep.Kind == betty.KindVoice {
-		s.say(ctx, text)
-	} else {
+	switch {
+	case rep.Kind == betty.KindVoice:
+		// Spoken with the other answers ready now, shortest first
+		// (flushVoice), falling back to chat.
+		s.queueVoice(text)
+	case rep.Trigger == betty.TriggerAddressed:
+		posted = s.postAnswer(ctx, text)
+	default:
 		posted = s.post(ctx, text)
 	}
 	if posted {
@@ -739,12 +804,24 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 	}
 	s.emitPersona(rep)
 	if posted && strings.TrimSpace(rep.Research) != "" {
-		s.deepDive(ctx, rep.Research)
+		s.deepDive(ctx, rep.Research, rep.Kind == betty.KindVoice)
 	}
 	s.save()
 }
 
+// onQueueNote posts the persona's "I have N questions" note: chat only,
+// through the rate limit, never charged (no model call made it).
+func (s *session) onQueueNote(ctx context.Context, rep betty.Reply, text string) {
+	if s.state.BudgetExhausted {
+		return
+	}
+	if s.post(ctx, text) {
+		s.emitPersona(rep)
+	}
+}
+
 func (s *session) emitPersona(rep betty.Reply) {
+	s.recordTiming(rep)
 	raw, _ := json.Marshal(rep)
 	s.emit(Event{Kind: EventPersona, Reason: rep.Trigger, Intent: raw})
 }
@@ -755,7 +832,7 @@ const bettyRIDPrefix = "betty-"
 // deepDive starts the persona's research on an addressed question through
 // the meeting's research path (same cap and approval as Spek's research),
 // marked betty=1.
-func (s *session) deepDive(ctx context.Context, query string) {
+func (s *session) deepDive(ctx context.Context, query string, voice bool) {
 	n := 1
 	for _, it := range s.state.Research {
 		if it.Betty {
@@ -766,7 +843,7 @@ func (s *session) deepDive(ctx context.Context, query string) {
 	limit := s.r.opts.Policy.ResearchPerMeeting
 	overCap := limit > 0 && s.dispatchedCount() >= limit
 	s.state.Research = append(s.state.Research, ResearchItem{
-		RID: bettyRIDPrefix + strconv.Itoa(n), Query: query, Reason: "asked of " + s.personaName(), Betty: true, CreatedAt: now,
+		RID: bettyRIDPrefix + strconv.Itoa(n), Query: query, Reason: "asked of " + s.personaName(), Betty: true, Voice: voice, CreatedAt: now,
 	})
 	it := &s.state.Research[len(s.state.Research)-1]
 	if overCap {
@@ -774,6 +851,73 @@ func (s *session) deepDive(ctx context.Context, query string) {
 		return
 	}
 	s.dispatch(ctx, it)
+}
+
+// researchFailReason is the sayable cause of a dispatch failure: the
+// error's own Reason when it has one (research.ErrNoAgents), else a plain
+// summary. The raw error stays in the log.
+func researchFailReason(err error) string {
+	var r interface{ Reason() string }
+	switch {
+	case errors.As(err, &r) && strings.TrimSpace(r.Reason()) != "":
+		return r.Reason()
+	case errors.Is(err, context.DeadlineExceeded):
+		return "the research agents did not answer in time"
+	default:
+		return "the research could not be started"
+	}
+}
+
+// deepDiveFailed closes the loop on a persona deep dive that could not
+// start or finish: she says so, once, in the channel she was asked in.
+// Spek's research items are reported on the panel only.
+func (s *session) deepDiveFailed(ctx context.Context, it *ResearchItem, reason string) {
+	if !it.Betty || it.Posted || s.persona == nil {
+		return
+	}
+	it.Posted = true
+	s.tell(ctx, it.Voice, s.persona.ResearchFailedText(reason))
+}
+
+// tell delivers one of hive's own follow-through lines for a deep dive
+// (not rate limited, like a research summary): spoken when voice is set
+// and the meeting can hear her, else in chat.
+func (s *session) tell(ctx context.Context, voice bool, text string) {
+	if voice && s.speak(ctx, text) {
+		return
+	}
+	s.deliver(ctx, text)
+}
+
+// checkDeepDives runs on the session's research tick: a persona deep dive
+// still queued or running past ResearchProgressAfter gets one progress
+// note; past ResearchTimeout it is given up, and she says so.
+func (s *session) checkDeepDives(ctx context.Context) {
+	now, changed := s.now(), false
+	for i := range s.state.Research {
+		it := &s.state.Research[i]
+		if !it.Betty || it.Posted || it.DispatchedAt == nil || (it.Status != ResearchQueued && it.Status != ResearchRunning) {
+			continue
+		}
+		age := now.Sub(*it.DispatchedAt)
+		switch {
+		case age >= s.r.opts.ResearchTimeout:
+			s.log().Warn("[meetings] persona deep dive timed out", "rid", it.RID, "after", age.Round(time.Second))
+			s.update(it, ResearchFailed, "timed out")
+			if it.KickID != "" {
+				s.r.unregisterKick(it.KickID)
+			}
+			s.deepDiveFailed(ctx, it, "it took too long")
+			changed = true
+		case age >= s.r.opts.ResearchProgressAfter && !it.ProgressSent:
+			it.ProgressSent = true
+			s.tell(ctx, it.Voice, s.persona.ResearchProgressText())
+			changed = true
+		}
+	}
+	if changed {
+		s.save()
+	}
 }
 
 // speak says text when the meeting can hear the bot, without a chat
@@ -785,7 +929,7 @@ func (s *session) speak(ctx context.Context, text string) bool {
 	}
 	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
 	defer cancel()
-	return s.r.opts.Meetings.Say(cctx, s.id, text) == nil
+	return s.timedSay(func() error { return s.r.opts.Meetings.Say(cctx, s.id, text) }) == nil
 }
 
 // queuedSpek is one of Spek's asks or chat offers waiting its turn while an

@@ -33,6 +33,8 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"worksource.(*forgeWorkSource).AddComment":     {Class: NotificationClassAttention, Passthrough: true},
 	"worksource.(*githubIssuesSource).AddComment":  {Class: NotificationClassAttention, Passthrough: true},
 	"github.(*Client).PostIssueNote":               {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*Client).PostInformationalIssueNote":  {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*Client).foldReviewFollowUps":         {Class: NotificationClassStatus},
 	"automerge.(*engineStatusForge).CreateComment": {Class: NotificationClassStatus, Passthrough: true},
 
 	// status: bookkeeping readable on demand.

@@ -21110,6 +21110,32 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return Array.isArray(list) ? list.map(v => String(v || '').trim()).filter(Boolean) : [];
     }
 
+    // Pure: the agent profile the bound model hands the item's current
+    // state to (`workflows.repos[repo].dispatch` keyed by stage number,
+    // cncf/techdocs#395), or null: an unbound repository, a PR row drawn
+    // under its issue, a state the model keeps for people, or a state that
+    // does not apply to the row's kind.
+    function stageTrackerWorkflowDispatchOf(item, workflows) {
+      if (!item || item.via_pr) return null;
+      const wf = stageTrackerWorkflowOf({ workflows }, item.repo);
+      if (!wf || !wf.dispatch) return null;
+      const t = wf.dispatch[String(Number(item.stage) || 0)];
+      if (!t || !t.profile) return null;
+      const kind = item.kind === 'pr' ? 'pr' : 'issue';
+      if (Array.isArray(t.kinds) && t.kinds.length && t.kinds.indexOf(kind) < 0) return null;
+      return { profile: String(t.profile), state: String(t.state || ''), reply: String(t.reply || '') };
+    }
+
+    // Pure: the ⋯ menu entry for that hand-off — owner only, since it
+    // kicks an agent with a prompt.
+    function stageTrackerWorkflowDispatchAction(item, workflows, ctx) {
+      const t = stageTrackerWorkflowDispatchOf(item, workflows);
+      if (!t) return null;
+      const owner = !!(ctx && ctx.owner);
+      const hint = t.reply ? 'also runs on ' + t.reply : 'hand off now';
+      return { id: 'wf-dispatch', label: 'Send to ' + t.profile, hint, profile: t.profile, enabled: owner, why: owner ? '' : 'Needs the owner role' };
+    }
+
     // Pure: a model verb as the pill prints it — "approve analysis" →
     // "Approve analysis".
     function stageTrackerWorkflowReplyLabel(verb) {
@@ -25209,6 +25235,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
       'decide:close-read': 'Close now', 'decide:close-deferred': 'Close now',
       'decide:close-issue': 'Close issue',
+      'wf-dispatch': 'Send to agent',
       'decide:adopt': 'Adopt (hive takes over)',
       'decide:queue-merge': 'Approve and let hive merge', 'decide:merge-now': 'Merge now as maintainer',
       'decide:adopt-now': 'Adopt now — hive takes it over', 'decide:reroute': 'Reroute to another clanker',
@@ -25380,13 +25407,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // repaint showGHAuthState schedules settles the pills within the tick.
     function stageTrackerActionCtx(repo) {
       const governor = (window._lastStatus && window._lastStatus.governor) || null;
-      if (stageTrackerAuthPending()) return { user: true, canHold: null, canHuman: true, authPending: true, login: '', governor };
+      if (stageTrackerAuthPending()) return { user: true, canHold: null, canHuman: true, owner: true, authPending: true, login: '', governor };
       const role = window._hiveRole || 'read';
       const owner = dashboardRoleAtLeast(role, 'owner');
       const user = !!window._hiveUser || owner;
       if (typeof ensureRepoHoldPermission === 'function') ensureRepoHoldPermission(repo);
       const canHold = owner || (typeof repoHoldPermissionKnown === 'function' && repoHoldPermissionKnown(repo)) ? true : (user ? null : false);
-      return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger'), login: String(window._hiveUser || ''), governor };
+      return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger'), owner, login: String(window._hiveUser || ''), governor };
     }
     // Pure: the item a row's "Decide…" acts on. A PR parked at 085 (the
     // "Needs human decision" pill on the Merge queue column) decides itself;
@@ -25678,6 +25705,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target }
         : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target });
       out.push({ id: 'retry', label: 'Re-evaluate now', hint: 'rescan', enabled: true, why: '' });
+      // A model-bound row whose state the model hands to an agent profile
+      // (cncf/techdocs#395): the owner can send it now.
+      const wfDispatch = typeof stageTrackerWorkflowDispatchAction === 'function' && typeof _stageTracker !== 'undefined' && _stageTracker ? stageTrackerWorkflowDispatchAction(item, _stageTracker.workflows, ctx) : null;
+      if (wfDispatch) out.push(wfDispatch);
       if (!has('needs-human')) out.push({ id: 'needs-human', label: 'Mark needs-human…', enabled: !!ctx.canHuman, why: ctx.canHuman ? '' : STAGE_TRACKER_WHY_ROLE });
       if (item.kind === 'issue' && String(item.state || '').toLowerCase() !== 'closed') out.push(Object.assign({ id: 'decide:close-issue', label: 'Close issue…', danger: true, hint: 'only this issue · completed' }, stageTrackerActionAllowed('decide:close-issue', ctx)));
       out.push({ id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link', sep: true });
@@ -26526,6 +26557,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'hold': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: true, type } };
         case 'release': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type } };
         case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };
+        case 'wf-dispatch': return { url: '/api/workflows/dispatch', body: { repo: item.repo, number: n } };
         case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };
         case 'accept-triage': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/accept-triage', body: {} };
         case 'blocker:handoff': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/blocker/handoff', body: {} };
@@ -26742,7 +26774,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // the tracker's to show, so "Approving…" must not linger beside
           // the ✓ waiting for it (#15103).
           if (result.action === 'refused') stageTrackerNoteActionFailure(it, id, result.outcome || 'refused');
-          if (result.action === STAGE_TRACKER_ACTION_NOOP || result.action === STAGE_TRACKER_ACTION_NO_EFFECT || result.action === 'refused' || result.action === 'approved') stageTrackerClearPending(pend);
+          if (result.action === STAGE_TRACKER_ACTION_NOOP || result.action === STAGE_TRACKER_ACTION_NO_EFFECT || result.action === 'refused' || result.action === 'approved' || result.action === 'dispatched') stageTrackerClearPending(pend);
           else {
             if (typeof stageTrackerDecidePending === 'function') stageTrackerDecidePending(pend, result, stageTrackerItemByKey(_stageTracker, stageTrackerTargetKey(result.target)));
             // Closed / merged: the terminal caption stays on the chevron
@@ -27527,7 +27559,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerMergeBannerMs() { return stageTrackerToastMs('info') * STAGE_TRACKER_MERGE_BANNER_FACTOR; }
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
-      'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
+      'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'wf-dispatch': 'Sending to the agent…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:handoff': 'Handing to workflows lane…', 'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
       'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…', 'decide:close-deferred': 'Closing…', 'decide:close-issue': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…',
@@ -27535,7 +27567,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'gate:decide': 'Sending your decision…', 'gate:request-changes': 'Requesting changes…', 'gate:confirm-sentinel': 'Confirming safe…',
     };
     const STAGE_TRACKER_ACTION_WORDS = {
-      adopted: 'adopted', approved: 'approved', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
+      adopted: 'adopted', approved: 'approved', dispatched: 'sent to its agent', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
       merged: 'merged', 'queued-for-merge': 'queued for merge — hive merges it on its next pass once CI is green', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
       held: 'held', released: 'hold released', 'sentinel-confirmed': 'sentinel confirmed safe', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: 'no effect yet',
@@ -52903,6 +52935,10 @@ function burnAreaChart() {
     // Meeting state to the kc-pill status palette (green, blue, red, muted).
     const MEETINGS_PILL_STATUS = { live: 'ok', requested: 'syncing', joining: 'syncing', lobby: 'syncing', failed: 'error', blocked: 'error' };
 
+    // Final meeting states: the row offers 🗑 Delete and "Clear finished"
+    // takes it. Joining, lobby and live meetings are left first.
+    const MEETINGS_FINAL_STATES = { ended: 1, failed: 1, blocked: 1, handed_off: 1, purged: 1 };
+
     function meetingsIsOwner() { return window._hiveRole === 'owner'; }
     // The role is known once /api/role settled (answered, or its retries gave
     // up). Until then the panel shows a neutral loading state, never the
@@ -52971,6 +53007,11 @@ function burnAreaChart() {
     function meetingsFriendlyReason(m) {
       const raw = String(m.state_reason || '');
       if (!raw) return '';
+      // Discord has no guest lobby: a blocked Discord join is the bot's own
+      // server permissions on that voice channel (#18598).
+      if (m.platform === 'discord' && (m.state === 'blocked' || /blocked|no permission/.test(raw))) {
+        return 'The Discord bot cannot join that voice channel. In the server, give the bot\'s role View Channel, Connect and Speak on the channel, then try again.';
+      }
       if (m.state === 'blocked') return 'The meeting refused a guest bot.';
       if (/consent_undelivered/.test(raw)) return 'Left: the consent notice could not be delivered' + (m.consent_error ? ' (' + m.consent_error + ')' : '') + '.';
       if (/lobby_timeout/.test(raw)) return 'Nobody admitted hive from the lobby in time.';
@@ -52998,10 +53039,11 @@ function burnAreaChart() {
       if (request) {
         return '<div class="meetings-row" data-state="requested"><div class="meetings-row-main"><div class="meetings-row-head">' +
           '<span class="meetings-row-title">' + escapeHtml((m.requested_by.name || m.requested_by.id || 'someone') + ' asked hive into ' + meetingsLabel(m)) + '</span>' +
-          '<span class="kc-pill" data-status="syncing">join request</span></div></div>' +
+          '<span class="kc-pill" data-status="syncing">join request</span></div>' + meetingsReasonHtml(m) + '</div>' +
           '<div class="meetings-row-actions">' +
           '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsApproveRequest" data-arg0="' + escapeHtml(m.id) + '">Approve</button>' +
-          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button></div></div>';
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button>' +
+          meetingsDeleteButtonHtml(m) + '</div></div>';
       }
       const state = m.state || '';
       const when = meetingsFormatTime(m.live_at || m.created_at);
@@ -53019,7 +53061,88 @@ function burnAreaChart() {
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +
         (active ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsToggleVoice" data-arg0="' + escapeHtml(m.id) + '" data-arg1="' + (m.voice_enabled ? 'false' : 'true') + '">' + (m.voice_enabled ? 'Voice on' : 'Voice off') + '</button>' +
           '<button type="button" class="hv-btn btn-danger btn-sm" data-action="meetingsLeave" data-arg0="' + escapeHtml(m.id) + '">Leave</button>' : '') +
-        '</div></div>';
+        meetingsDeleteButtonHtml(m) + '</div></div>';
+    }
+
+    // meetingsCanDelete: a meeting in a final state, or a platform join
+    // request still waiting (deleting it declines it). Owner only.
+    function meetingsCanDelete(m, role) {
+      if (!m || role !== 'owner') return false;
+      if (MEETINGS_FINAL_STATES[m.state]) return true;
+      return m.state === 'requested' && !!m.requested_by;
+    }
+
+    function meetingsDeleteButtonHtml(m) {
+      if (!meetingsCanDelete(m, window._hiveRole)) return '';
+      return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDelete" data-arg0="' + escapeHtml(m.id) + '"' +
+        ' title="Delete this meeting, its transcript and its Vexa data; facts and drafts already made from it stay">🗑 Delete</button>';
+    }
+
+    // meetingsDeleteText is the in-page confirm text for one meeting.
+    function meetingsDeleteText(m) {
+      if (m && m.state === 'requested') {
+        return 'This declines the join request and removes it. It cannot be undone.';
+      }
+      return 'This deletes the meeting record, its transcript, notes and live state on this hive, its data in Vexa, and its Calendar entry if it has no other occurrences. ' +
+        'Knowledge facts and drafts already made from it are not touched. It cannot be undone.';
+    }
+
+    // meetingsFinished lists the meetings "Clear finished" deletes: final
+    // states that finished before now.
+    function meetingsFinished(list, now) {
+      const cut = now instanceof Date ? now.getTime() : Date.now();
+      return (list || []).filter(m => {
+        if (!m || !MEETINGS_FINAL_STATES[m.state]) return false;
+        const t = new Date(m.ended_at || m.updated_at || m.created_at || 0).getTime();
+        return !isNaN(t) && t < cut;
+      });
+    }
+
+    function meetingsClearFinishedText(n) {
+      return 'This deletes ' + n + ' finished meeting' + (n === 1 ? '' : 's') + ' (ended, failed, blocked or declined): their records, transcripts, notes and live state on this hive, their data in Vexa, and Calendar entries that existed only for them. ' +
+        'Live meetings and pending join requests stay. Knowledge facts and drafts already made from them are not touched. It cannot be undone.';
+    }
+
+    function meetingsAfterDelete(ids) {
+      if (_meetingsOpen && ids.indexOf(_meetingsOpen.id) >= 0) meetingsClosePanel();
+      if (typeof calendarRefreshMeetings === 'function') calendarRefreshMeetings();
+      if (typeof fetchCalendar === 'function') fetchCalendar();
+    }
+
+    async function meetingsDelete(id) {
+      const m = (_meetingsList || []).find(x => x && x.id === id);
+      if (!m) return;
+      const ok = await hiveConfirm({ title: m.state === 'requested' ? 'Delete this join request?' : 'Delete this meeting?', message: meetingsDeleteText(m), confirmLabel: 'Delete', danger: true });
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/meetings/' + encodeURIComponent(id), { method: 'DELETE' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        if (data.upstream_error) showToast('Meeting deleted here; Vexa did not confirm its copy was erased: ' + data.upstream_error, 'warning');
+        else showToast('Meeting deleted', 'success');
+        meetingsAfterDelete([id]);
+      } catch (e) {
+        showToast('Could not delete the meeting: ' + e.message, 'error');
+      }
+      await fetchMeetings();
+    }
+
+    async function meetingsClearFinished() {
+      const now = new Date();
+      const finished = meetingsFinished(_meetingsList, now);
+      if (!finished.length) return;
+      const ok = await hiveConfirm({ title: 'Clear finished meetings?', message: meetingsClearFinishedText(finished.length), confirmLabel: 'Delete ' + finished.length, danger: true });
+      if (!ok) return;
+      try {
+        const data = await meetingsPost('/api/meetings/clear-finished', { before: now.toISOString() });
+        const deleted = data.deleted || [];
+        const upstream = deleted.filter(d => d && d.upstream_error).length;
+        showToast('Deleted ' + deleted.length + ' meeting' + (deleted.length === 1 ? '' : 's') + (upstream ? '; Vexa did not confirm ' + upstream + ' erase' + (upstream === 1 ? '' : 's') : ''), upstream ? 'warning' : 'success');
+        meetingsAfterDelete(deleted.map(d => d.id));
+      } catch (e) {
+        showToast('Could not clear finished meetings: ' + e.message, 'error');
+      }
+      await fetchMeetings();
     }
 
     function renderMeetings() {
@@ -53032,6 +53155,11 @@ function burnAreaChart() {
         html += meetingsJoinFormHtml();
       }
       const list = _meetingsList || [];
+      const finished = meetingsFinished(list);
+      if (finished.length && meetingsIsOwner()) {
+        html += '<div class="meetings-row-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsClearFinished"' +
+          ' title="Delete every finished meeting after one confirm">🗑 Clear finished (' + finished.length + ')</button></div>';
+      }
       html += '<div class="meetings-list">' + (list.length ? list.map(meetingsRowHtml).join('') : (_meetingsError ? '' : '<p class="empty-dashed">No meetings yet.</p>')) + '</div>';
       html += '<div id="meetings-live-panel"></div>';
       host.innerHTML = html;
@@ -53437,7 +53565,43 @@ function burnAreaChart() {
       if (e.status === 'awaiting_approval') out += btn('approve', 'Approve', 'btn-primary') + btn('decline', 'Decline', 'btn-secondary');
       if (e.status === 'scheduled' || e.status === 'awaiting_approval' || (e.status === 'live' && e.rrule)) out += btn('skip', e.rrule ? 'Skip next' : 'Skip', 'btn-secondary');
       if (e.status === 'scheduled' || e.status === 'awaiting_approval' || e.status === 'live') out += btn('cancel', 'Cancel', 'btn-danger');
+      if (calendarCanDelete(e, window._hiveRole)) {
+        out += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="calendarDelete" data-arg0="' + id + '"' +
+          ' title="Delete this past entry and the meeting it created; facts and drafts already made from it stay">🗑 Delete</button>';
+      }
       return out;
+    }
+
+    // Finished Calendar statuses: past entries get 🗑 Delete; scheduled,
+    // awaiting-approval and live ones keep Skip and Cancel.
+    const CALENDAR_FINISHED_STATUSES = { ended: 1, cancelled: 1, declined: 1, failed: 1, blocked: 1, skipped: 1 };
+    function calendarCanDelete(e, role) {
+      return !!e && role === 'owner' && !!CALENDAR_FINISHED_STATUSES[e.status];
+    }
+
+    function calendarDeleteText(e) {
+      const n = ((e && e.history) || []).filter(h => h && h.meeting_id).length || (e && e.meeting_id ? 1 : 0);
+      return 'This deletes this Calendar entry' + (n ? ' and the meeting' + (n === 1 ? '' : 's') + ' it created: record, transcript, notes and live state on this hive, and the data in Vexa' : '') + '. ' +
+        'Knowledge facts and drafts already made from it are not touched. It cannot be undone.';
+    }
+
+    async function calendarDelete(id) {
+      const e = ((_calendarData && _calendarData.recent) || []).concat((_calendarData && _calendarData.upcoming) || []).find(x => x && x.id === id);
+      if (!e) return;
+      const ok = await hiveConfirm({ title: 'Delete this Calendar entry?', message: calendarDeleteText(e), confirmLabel: 'Delete', danger: true });
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/meetings/schedule/' + encodeURIComponent(id), { method: 'DELETE' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        const upstream = (data.meetings || []).filter(m => m && m.upstream_error).length;
+        showToast(upstream ? 'Entry deleted; Vexa did not confirm the meeting data was erased' : 'Calendar entry deleted', upstream ? 'warning' : 'success');
+        if (typeof fetchMeetings === 'function') fetchMeetings();
+        calendarRefreshMeetings();
+      } catch (err) {
+        showToast('Could not delete the entry: ' + err.message, 'error');
+      }
+      fetchCalendar();
     }
 
     function calendarMeetingLink(e) {
@@ -53801,6 +53965,24 @@ function burnAreaChart() {
         '<label class="inbox-toggle"><input type="checkbox" data-ma-field="voice_on_address" data-change-action="maInput" data-arg0="voice_on_address" data-arg-types="s,c"' + (f.voice_on_address ? ' checked' : '') + '> Speak aloud only when addressed by name (never unprompted; off sends every reply to chat)</label></section>';
     }
 
+    // ── Research agents (hivecommons/hive#18590): where Betty's deep dives
+    // go, how many agents can take one now, and a plain warning when none can.
+    function maResearchHtml() {
+      const r = (_maState && _maState.data && _maState.data.research) || {};
+      const agents = (r.agents || []).join(', ');
+      const runs = r.base_agent ? 'Runs on the <code>' + escapeHtml(r.base_agent) + '</code> agent\'s backend' +
+        (r.backend ? ' (' + escapeHtml(r.backend) + (r.model ? ', ' + escapeHtml(r.model) : '') + ')' : '') + '.' : '';
+      const status = r.wired
+        ? '<p class="muted-xs">Agents: ' + escapeHtml(agents || 'none') + ' (' + (r.available || 0) + ' available now). ' + runs + '</p>'
+        : '';
+      return '<section class="ma-section" aria-labelledby="ma-research-h"><h4 id="ma-research-h">Research</h4>' +
+        '<p class="muted-xs">When the persona needs to look something up she says so, sends it to the read-only research agents and reports back in the channel she was asked in. Pool size ' +
+        escapeHtml(String(r.pool_size || '')) + ' ' + yamlHint('meetings.research_pool_size') + '</p>' +
+        status +
+        (r.warning ? '<p class="kc-error muted-xs" role="status" data-ma-research-warning>' + escapeHtml(r.warning) + '</p>' : '') +
+        '</section>';
+    }
+
     // ── Action requests (hivecommons/hive#18406): what people may ask the
     // persona to draft in a meeting. Saved on its own through
     // PUT /api/meetings/actions/settings and applied without a restart.
@@ -53887,7 +54069,7 @@ function burnAreaChart() {
       host.innerHTML =
         (d.restart_required ? '<p class="cmp-banner" role="status">Saved. Restart the hive to apply the new persona.</p>' : '') +
         (d.running ? '' : '<p class="muted-xs">Meetings are not running on this hive; the persona applies once meetings are on (Settings, Meetings).</p>') +
-        maPersonaHtml(f) + maBehaviourHtml(f) + (typeof maModelHtml === 'function' ? maModelHtml() : '') + (typeof maActionsHtml === 'function' ? maActionsHtml() : '') + maEmailHtml() +
+        maPersonaHtml(f) + maBehaviourHtml(f) + maResearchHtml() + (typeof maModelHtml === 'function' ? maModelHtml() : '') + (typeof maActionsHtml === 'function' ? maActionsHtml() : '') + maEmailHtml() +
         '<div class="hive-dialog-error" role="alert" data-ma-error></div>' +
         '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="maSave">Save</button></div>';
     }

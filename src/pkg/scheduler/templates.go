@@ -323,7 +323,7 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 	issueList, issueFailClosed := s.formatIssueListWithPolicyForAgent(agentIssuesForList, elideStuffed)
 	prList, prFailClosed := s.formatPRListWithPolicyForAgent(actionable, baseName, elideStuffed)
 	if issueFailClosed || prFailClosed {
-		s.warnBlockedKick(agentName)
+		s.warnBlockedKick(agentName, false)
 		return "", true
 	}
 

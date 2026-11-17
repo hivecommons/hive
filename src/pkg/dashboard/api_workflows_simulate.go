@@ -110,6 +110,11 @@ type SimulatePRFacts struct {
 	DCOGate          bool          `json:"dcoGate,omitempty"`
 	HumanApprover    string        `json:"humanApprover,omitempty"`
 	Lane             *SimulateLane `json:"lane,omitempty"`
+	// Pipeline is a merged PR's observed pipeline.status (green | red |
+	// running | unknown); empty means not observed. PipelineReason says
+	// why it is not green.
+	Pipeline       string `json:"pipeline,omitempty"`
+	PipelineReason string `json:"pipelineReason,omitempty"`
 }
 
 // SimulateLane is one automerge lane opinion (stageengine.LaneFact).
@@ -192,6 +197,14 @@ func (s *Server) handleWorkflowSimulate(w http.ResponseWriter, r *http.Request) 
 			return
 		}
 		facts, filled, unknown = simulateFactsFromSnapshot(snap)
+		if snap.Kind == "pr" && snap.Merged {
+			var note string
+			filled, unknown, note = s.simulatePostMerge(ctx, req.Repo, req.Number, m, snap, facts, filled, unknown)
+			if note != "" {
+				notes = append(notes, note)
+			}
+			sort.Strings(unknown)
+		}
 	} else if req.Kind == "" {
 		jsonError(w, "kind must be issue or pr", http.StatusBadRequest)
 		return
@@ -232,6 +245,29 @@ func (s *Server) handleWorkflowSimulate(w http.ResponseWriter, r *http.Request) 
 		Unknown:  unknown,
 		Notes:    notes,
 	})
+}
+
+// simulatePostMerge fills a merged PR's pr.pipeline from the observed
+// post-merge runs of the model's bound pipelines, so pipeline.status is
+// what the runs say rather than always unknown (hivecommons/hive#18356). A
+// failed read leaves it unknown and says why; it never fails the simulate.
+func (s *Server) simulatePostMerge(ctx context.Context, repo string, number int, m *workflowmodel.Model, snap ghpkg.WorkflowItemSnapshot, f *SimulateFacts, filled, unknown []string) ([]string, []string, string) {
+	if s.deps == nil || s.deps.WorkflowPostMerge == nil || f.PR == nil {
+		return filled, append(unknown, "pr.pipeline"), ""
+	}
+	if snap.MergeCommitSHA == "" || snap.DefaultBranch == "" {
+		return filled, append(unknown, "pr.pipeline"), "pr.pipeline unknown: the merged PR's merge commit or default branch was not reported"
+	}
+	got, err := s.deps.WorkflowPostMerge(ctx, repo, m, snap.DefaultBranch, []workflowmodel.MergedPR{{Number: number, MergeCommit: snap.MergeCommitSHA}})
+	if err != nil {
+		return filled, append(unknown, "pr.pipeline"), fmt.Sprintf("pr.pipeline unknown: observing post-merge runs failed: %v", err)
+	}
+	pm := got[number]
+	if pm == nil {
+		return filled, append(unknown, "pr.pipeline"), ""
+	}
+	f.PR.Pipeline, f.PR.PipelineReason = pm.Status, pm.Reason
+	return append(filled, "pr.pipeline"), unknown, ""
 }
 
 // simulateDecision maps the engine's Decision onto the profile: the state
@@ -447,6 +483,9 @@ func (f SimulateFacts) toEngine(ref stageengine.Ref) stageengine.Facts {
 			pr.Review.VerdictKnown, pr.Review.Verdict = true, "changes_requested"
 		case stagelabels.VerdictRequiresHuman:
 			pr.Review.VerdictKnown, pr.Review.Verdict = true, "requires_human"
+		}
+		if f.PR.Pipeline != "" {
+			pr.PostMerge = &stageengine.PostMergeFacts{Status: strings.ToLower(strings.TrimSpace(f.PR.Pipeline)), Reason: f.PR.PipelineReason}
 		}
 		if f.PR.Lane != nil && f.PR.Lane.Lane != "" {
 			pr.Lanes = []stageengine.LaneFact{{Lane: f.PR.Lane.Lane, Reason: f.PR.Lane.Reason, Role: out.Author.Role, Merged: f.Merged}}

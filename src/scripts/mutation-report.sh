@@ -69,7 +69,7 @@ verdict_phase() {
   v=$(cat "$verdict_file")
   case "$v" in
     error)
-      echo "::error::mutation: gremlins failed or wrote no report for a changed package, so no verdict could be derived (see the run log and the <!-- hive-mutation --> comment)"
+      echo "::error::mutation: gremlins failed or wrote no report for a changed package, so no verdict could be derived (see the run log and the job summary)"
       return 1 ;;
     misrouted)
       echo "::error::mutation: a mutant on a line this PR added was SKIPPED; gremlins did not match the diff for that file (see the <!-- hive-mutation --> comment)"
@@ -101,7 +101,7 @@ post_comment() {
     return 0
   fi
   # The report always lands in the step summary; the PR comment is reserved
-  # for findings (any verdict but `pass`). A clean run never creates a
+  # for findings (`lived`, `uncovered`, `misrouted`; not `pass` or `error`). A clean run never creates a
   # comment, and one that follows an earlier finding edits that comment down
   # to a one-line resolved note instead of posting again (#17863).
   if [ -n "${GITHUB_STEP_SUMMARY:-}" ]; then
@@ -118,6 +118,14 @@ post_comment() {
   local id
   id=$(gh api --paginate "repos/${repo}/issues/${pr_number}/comments" \
     --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"${marker}\"))) | .id" 2>/dev/null | head -n 1 || true)
+  if [ "$verdict" = error ] && [ -z "$id" ]; then
+    # An `error` verdict means gremlins produced no report, so there is no
+    # finding for the author to act on: it lives in the step summary and the
+    # failing verdict step only, never a fresh notifying comment (#18607).
+    # An earlier finding comment is still edited below so it is not stale.
+    echo "mutation: verdict error and no earlier comment; not posting (report is in the step summary)."
+    return 0
+  fi
   if [ -n "$resolved" ]; then
     if [ -z "$id" ]; then
       echo "mutation: verdict pass and no earlier comment; not posting (report is in the step summary)."
