@@ -541,3 +541,140 @@ func TestEdgesAndArtefactPeopleFollowTheViewer(t *testing.T) {
 		t.Fatalf("ArtefactPeople without an index = %v, %v", p, err)
 	}
 }
+
+func edgeCounts(t *testing.T, s *Service, id string) map[string]int {
+	t.Helper()
+	c, err := s.Index().Counts(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// TestMergeUnmergeSplitMoveEdgesExactly: an edge follows the identity that
+// produced it, through a merge, an undo and a split.
+func TestMergeUnmergeSplitMoveEdgesExactly(t *testing.T) {
+	s := newService(t)
+	a, _ := s.Add(ownerV, "Ada", []Identity{{Kind: KindGitHub, Value: "ada"}})
+	b, _ := s.Add(ownerV, "A. Lovelace", []Identity{{Kind: KindEmail, Value: "ada@example.com"}, {Kind: KindGitHub, Value: "ada-alt"}})
+	if _, err := s.Index().Put([]Edge{
+		edge(a.ID, PredAuthored, PRRef("o/r", 1), "github:ada", 1),
+		edge(b.ID, PredSent, InboxRef("email", "m1"), "email:ada@example.com", 2),
+		edge(b.ID, PredReported, IssueRef("o/r", 2), "github:ada-alt", 3),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	merged, err := s.Merge(rwV, a.ID, b.ID)
+	if err != nil || len(merged.Identities) != 3 || len(merged.MergedFrom) != 1 {
+		t.Fatalf("Merge = %+v, %v", merged, err)
+	}
+	if c := edgeCounts(t, s, a.ID); c[PredAuthored] != 1 || c[PredSent] != 1 || c[PredReported] != 1 {
+		t.Fatalf("after merge the target's edges = %v", c)
+	}
+	if c := edgeCounts(t, s, b.ID); len(c) != 0 {
+		t.Fatalf("the merged-in person still has edges: %v", c)
+	}
+
+	// Undo: the merged identities' edges go back, the target keeps its own.
+	back, err := s.Unmerge(rwV, a.ID, b.ID)
+	if err != nil || len(back.Identities) != 1 || len(back.MergedFrom) != 0 {
+		t.Fatalf("Unmerge = %+v, %v", back, err)
+	}
+	if c := edgeCounts(t, s, a.ID); len(c) != 1 || c[PredAuthored] != 1 {
+		t.Fatalf("after unmerge the target's edges = %v", c)
+	}
+	if c := edgeCounts(t, s, b.ID); c[PredSent] != 1 || c[PredReported] != 1 {
+		t.Fatalf("after unmerge the restored person's edges = %v", c)
+	}
+
+	// Split one identity off: exactly its edges move.
+	fresh, err := s.Split(ownerV, b.ID, []string{"email:ada@example.com"}, "Mail only")
+	if err != nil || fresh.Name != "Mail only" || !fresh.HasIdentity("email:ada@example.com") {
+		t.Fatalf("Split = %+v, %v", fresh, err)
+	}
+	if c := edgeCounts(t, s, fresh.ID); len(c) != 1 || c[PredSent] != 1 {
+		t.Fatalf("the new person's edges = %v", c)
+	}
+	if c := edgeCounts(t, s, b.ID); len(c) != 1 || c[PredReported] != 1 {
+		t.Fatalf("the original's edges = %v", c)
+	}
+
+	// Refusals.
+	if _, err := s.Merge(rwV, a.ID, a.ID); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("self merge = %v", err)
+	}
+	if _, err := s.Merge(rwV, a.ID, "p_missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("merge a missing person = %v", err)
+	}
+	if _, err := s.Unmerge(rwV, a.ID, b.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unmerge twice = %v", err)
+	}
+	if _, err := s.Split(ownerV, b.ID, []string{"github:ada-alt"}, "x"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("splitting off the last identity = %v", err)
+	}
+}
+
+func TestMergeSplitExportRoles(t *testing.T) {
+	s := newService(t)
+	a, _ := s.Add(ownerV, "Ada", []Identity{{Kind: KindGitHub, Value: "ada"}})
+	b, _ := s.Add(ownerV, "Bo", []Identity{{Kind: KindGitHub, Value: "bo"}, {Kind: KindEmail, Value: "bo@example.com"}})
+	me, _ := s.Get(readV, MeID)
+	// A read-only viewer can do none of it, on anyone, themselves included.
+	for _, id := range []string{a.ID, b.ID, MeID, me.ID} {
+		if _, err := s.Merge(readV, id, a.ID); !errors.Is(err, ErrForbidden) {
+			t.Errorf("read-only Merge(%s) = %v", id, err)
+		}
+		if _, err := s.Unmerge(readV, id, a.ID); !errors.Is(err, ErrForbidden) {
+			t.Errorf("read-only Unmerge(%s) = %v", id, err)
+		}
+		if _, err := s.Split(readV, id, []string{"github:bo"}, "x"); !errors.Is(err, ErrForbidden) {
+			t.Errorf("read-only Split(%s) = %v", id, err)
+		}
+		if _, err := s.Export(readV, id); !errors.Is(err, ErrForbidden) {
+			t.Errorf("read-only Export(%s) = %v", id, err)
+		}
+	}
+	if _, err := s.Export(rwV, a.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("read-write Export = %v, want ErrForbidden (the owner exports)", err)
+	}
+	// Two dashboard users are never merged.
+	alice, _ := s.Get(ownerV, MeID)
+	if _, err := s.Merge(ownerV, alice.ID, me.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("merging two dashboard users = %v", err)
+	}
+	if _, err := s.Split(rwV, b.ID, []string{"email:bo@example.com"}, "Bo mail"); err != nil {
+		t.Fatalf("read-write Split = %v", err)
+	}
+}
+
+func TestExport(t *testing.T) {
+	s := newService(t)
+	a, _ := s.Add(ownerV, "Ada", []Identity{{Kind: KindGitHub, Value: "ada"}})
+	for _, e := range []Edit{{Op: OpNotes, Notes: "met at the summit"}, {Op: OpSatisfactionSet, Level: "at_risk"}} {
+		if _, err := s.Edit(ownerV, a.ID, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var edges []Edge
+	for i := 0; i < MaxEdgePage+10; i++ {
+		edges = append(edges, edge(a.ID, PredAuthored, PRRef("o/r", i+1), "github:ada", i))
+	}
+	if _, err := s.Index().Put(edges); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.Export(ownerV, a.ID)
+	if err != nil || out.Person.ID != a.ID || out.Person.Notes != "met at the summit" || out.Person.Satisfaction.Level != LevelAtRisk {
+		t.Fatalf("Export = %+v, %v", out.Person, err)
+	}
+	if len(out.Edges) != MaxEdgePage+10 || out.Truncated || out.Edges[0].Artefact == "" {
+		t.Fatalf("export edges = %d truncated=%v", len(out.Edges), out.Truncated)
+	}
+	if _, err := s.Export(ownerV, "p_missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("export of a missing person = %v", err)
+	}
+	bare := NewService(s.Store(), nil, nil)
+	if out, err := bare.Export(ownerV, a.ID); err != nil || out.Edges == nil || len(out.Edges) != 0 {
+		t.Fatalf("export without an index = %+v, %v", out, err)
+	}
+}

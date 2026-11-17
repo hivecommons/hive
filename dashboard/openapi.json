@@ -2129,6 +2129,271 @@
         }
       }
     },
+    "/api/customers/{id}/merge": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Merge a customer into this one",
+        "description": "Folds the customer in from into this one: identities, tags, goals and the activity edges move across, and the merge is recorded so it can be undone. Two dashboard users cannot be merged (409). Owner or read-write. Audited as customer_merge.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "from"
+                ],
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "Customer id"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or nothing to do"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          },
+          "409": {
+            "description": "Two dashboard users, or a conflicting identity"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/unmerge": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Undo a merge",
+        "description": "Restores the customer from as it stood before it was merged into this one, and gives back exactly the identities, tags, goals and activity the merge brought. The pair is remembered as different people. Owner or read-write. Audited as customer_unmerge.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "from"
+                ],
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "Customer id"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or nothing to do"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/split": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Split identities off into a new customer",
+        "description": "Moves the named identities (kind:value) off this customer onto a new one, and the activity those identities produced moves with them. A hive user identity cannot be split off and a split must leave an identity behind. Returns the new customer. Owner or read-write. Audited as customer_split.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "identities"
+                ],
+                "properties": {
+                  "identities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Identity keys, kind:value"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Name for the new customer; defaults to the first identity"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or nothing to do"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/export": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Export everything held about a customer",
+        "description": "Owner only. Returns the profile (including notes, the satisfaction assessment and the merge history), open hints and the references behind the person's activity (at most 10,000), as a JSON download. It holds references, never the content of what they point at. Audited as customer_export.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The export",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "person": {
+                      "type": "object",
+                      "description": "The full profile"
+                    },
+                    "edges": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "person, predicate, artefact, via, source, at"
+                      }
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "hints": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
     "/api/customers/suggestions/{sid}/accept": {
       "post": {
         "tags": [
