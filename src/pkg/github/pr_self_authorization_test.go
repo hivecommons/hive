@@ -403,7 +403,7 @@ func TestEvaluateSelfAuthorization_RecognisesTheAIAuthorAccount(t *testing.T) {
 }
 
 // TestPRRequestWatcher_HoldsSelfAuthorizedPR is the end-to-end shape: the PR is
-// still opened (the work is not thrown away), it carries "hold", and it carries
+// still opened (the work is not thrown away), it carries "decision-needed", and it carries
 // a comment saying what would clear it.
 func TestPRRequestWatcher_HoldsSelfAuthorizedPR(t *testing.T) {
 	const botLogin = "kubestellar-hive[bot]"
@@ -428,8 +428,8 @@ func TestPRRequestWatcher_HoldsSelfAuthorizedPR(t *testing.T) {
 
 	c.ProcessPRRequestsOnce(context.Background())
 
-	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
-		t.Fatalf("labels applied = %v, want [hold]", applied)
+	if applied := srv.applied(); len(applied) != 1 || applied[0] != DefaultDecisionNeededLabel {
+		t.Fatalf("labels applied = %v, want [decision-needed]", applied)
 	}
 	comments := srv.postedComments()
 	if len(comments) != 1 {
@@ -480,8 +480,8 @@ func TestPRRequestWatcher_DefaultConfigStillHoldsSelfAuthorizedPR(t *testing.T) 
 	}
 	c.ProcessPRRequestsOnce(context.Background())
 
-	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
-		t.Fatalf("labels applied = %v, want [hold] by default", applied)
+	if applied := srv.applied(); len(applied) != 1 || applied[0] != DefaultDecisionNeededLabel {
+		t.Fatalf("labels applied = %v, want [decision-needed] by default", applied)
 	}
 	if comments := srv.postedComments(); len(comments) != 1 || !strings.Contains(comments[0], SelfAuthorizationNoticeMarker) {
 		t.Fatalf("comments = %v, want one marked #5117 notice", comments)
@@ -592,8 +592,8 @@ func TestPRRequestWatcher_HoldGatedLevelSkipsTheLookup(t *testing.T) {
 	}
 	c.ProcessPRRequestsOnce(context.Background())
 
-	if applied := srv.applied(); len(applied) != 1 || applied[0] != "hold" {
-		t.Fatalf("labels applied = %v, want [hold] from the level alone", applied)
+	if applied := srv.applied(); len(applied) != 1 || applied[0] != DefaultReadyForReviewLabel {
+		t.Fatalf("labels applied = %v, want [ready-for-review] from the level alone", applied)
 	}
 	srv.mu.Lock()
 	listCalls := srv.listCalls

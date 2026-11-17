@@ -279,6 +279,7 @@ func (m *Manager) setupInteractiveHome(agent *AgentProcess, backend string) {
 	m.seedClaudeSessionForAgent(agent, home)
 	m.tightenInteractiveHome(agent.Name, home, agent.UID)
 	m.sweepOrphanedClaudeTmp(agent.Name)
+	m.sweepStaleCopilotConfigTmp(agent.Name, home)
 	m.warnOnStrayGitIdentity(agent.Name, home)
 }
 
@@ -430,6 +431,13 @@ func (m *Manager) setupPerAgentCLIHome(agentName, home string, uid int, spec per
 			// private file; publish it to the shared login and relink BEFORE
 			// bridgeHomeEntry, which refuses to clobber a regular file.
 			m.rebridgeClaudeCredential(agentName, link, target, claudeBridgeTriggerLaunch)
+		}
+		if spec.dir == copilotHomeDirName && name == copilotConfigFileName {
+			// The Copilot CLI's atomic save replaced the link with a private
+			// file that no longer follows the shared login (#18443); move it
+			// aside and relink BEFORE bridgeHomeEntry, which refuses to clobber
+			// a regular file.
+			m.rebridgeCopilotConfig(agentName, link, target, copilotBridgeTriggerLaunch)
 		}
 		if _, err := os.Stat(target); err != nil && isPerAgentCLIBridgeDir(spec.dir, name) {
 			// Absent target: a dangling FILE link goes live on first login; a

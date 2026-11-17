@@ -80,7 +80,9 @@ The plain-words comment the delegate posts has four lines — **Hive decided** (
 | `contributor-lane:sentinel-blocked`, `sentinel`, `sentinel-alert`, `sentinel-blocked` | security-sensitive files changed; a maintainer must approve | Security-sensitive files changed. The hive never merges until a maintainer reviews and removes the sentinel label. |
 | `dco`, `dco-missing` | a commit is missing its sign-off | A commit on the branch is missing its Developer Certificate of Origin sign-off; the author must sign it off. |
 | `effect-unknown` | the hive did not say why | The hive could not tell from the lane reason why the decision has not taken effect. |
-| `hold` | on hold; the hive does nothing until it is released | The item is on hold. The hive does nothing with it until a person releases the hold. |
+| `hold` | on hold; the hive does nothing until it is released | The item is on hold. The hive does nothing with it until a person releases the hold. Only a person applies `hold`; the hive never applies or removes one ([#18468](https://github.com/hivecommons/hive/issues/18468)). |
+| `ready-for-review` | the hive's work is done; waiting on a maintainer's review | The hive applied it (ACMM level gate). It blocks merging like `hold`; a maintainer reviews the PR and removes the label to let it merge. |
+| `decision-needed` | the hive is blocked on a human decision | The hive applied it (reporter trust, #5117 self-authorization, holdguard re-hold, owner-only decision) and its comment says what to decide. It blocks merging like `hold`; a maintainer decides and removes it. |
 | `label:needs-human`, `needs-human`, `requires_human` | waiting for human input; inspect whether it is a label or a review verdict | For an issue's `needs-human` label, an eligible maintainer command clears it on the ordinary un-park path regardless of provenance; keep `hold` if work must remain stopped. A PR's `requires_human` swarm verdict is answered by exact-head approval as described in the review reference; it is not itself a label to remove. Other gates and label-driven repository policy remain authoritative. |
 | `no-effect` | the decision hasn't taken effect | The hive recorded this decision, but what it was supposed to cause has not happened within the expected time. |
 | `no-new-commit` | no new commit has been pushed | The hive gave direction, but no new commit has been pushed yet. |
@@ -133,7 +135,7 @@ Some sweeps list items themselves. They still use the same hold predicate (`Clie
 
 - Auto-merge sweeps use `Transport.IsHeldLabels`. The queued (`lgtm`) sweep skips a held PR before fetching it; the self-authored sweep skips held PRs and `needs-human` before merge (`src/pkg/github/automerge/automerge_sweep.go:23-38`, `src/pkg/github/automerge/automerge_sweep.go:954-959`, `src/pkg/github/automerge/automerge_sweep_loop.go:13-48`, `src/pkg/github/automerge/automerge_sweep_loop.go:73-92`).
 - The task-list sweep skips held issues before its exempt / issue `needs-human` gate. It does not comment on, relabel or close them (`src/pkg/github/task_list_sweep.go:848-854`).
-- The SHA-hold sweep lists primary-repo `kind/bug` issues itself. Without a SHA it adds literal `hold` and a marker notice; trusted reporter associations instead get soft `issues.sha_hold_trusted_label` (default `needs-sha`, #12002). It removes only its own current hold: the newest label event must be a `labeled` by the App bot with an App-authored SHA-hold notice at or after it (`EnforceSHAHold` / `shaHoldIsOwn` in `src/pkg/github/client.go`).
+- The SHA-hold sweep lists primary-repo `kind/bug` issues itself. Without a SHA it adds `issues.sha_hold_trusted_label` (default `needs-sha`) and a marker notice for every reporter; it never applies `hold` (#18468; before that, untrusted reporters got literal `hold`, #12002). It removes only its own current hold: the newest label event must be a `labeled` by the App bot with an App-authored SHA-hold notice at or after it (`EnforceSHAHold` / `shaHoldIsOwn` in `src/pkg/github/client.go`).
 - PR-request watching applies server-side holds after creation; the wrapper discards an agent's `--label hold` (`src/pkg/github/pr_request_watcher.go:452-524`, `bin/hive-open-pr.sh:142-150`).
 
 Policy templates also say to respect `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>`, any label containing `hold`, and exempt `do-not-merge`. That instruction is a prompt-level backstop; enumeration and sweep checks are the hard enforcement.
@@ -200,7 +202,7 @@ The dashboard renders every open issue and PR's stage as one unified tracker str
 1. Strategist files an issue with `[strategist]`/`agent/strategist`. It is actionable but lower-ranked as hive-filed.
 2. A maintainer adds `approved-direction`, assigns a human, or comments. Label or assignee also improves ranking; a comment only satisfies #5117.
 3. An agent opens a PR citing the issue. If the acknowledgement existed before PR creation, no #5117 hold is applied. At L3-L5, the separate level hold can still apply.
-4. If acknowledgement is added after a PR already has `hold`, remove the PR hold too.
+4. If acknowledgement is added after a PR already has `decision-needed` (or a pre-#18468 `hold`), remove that label too.
 
 ### Holding an issue
 
@@ -212,9 +214,9 @@ The dashboard renders every open issue and PR's stage as one unified tracker str
 
 ### Holding a PR
 
-1. The PR receives `hold` from a human, the level gate, #5117, holdguard, or SHA-related policy, or receives `needs-human` from a human/escalation workflow.
+1. The PR receives `hold` from a human, `ready-for-review` from the level gate, or `decision-needed` from #5117, reporter trust or holdguard, or receives `needs-human` from a human/escalation workflow.
 2. It is not merge-eligible or auto-merged; self-authored and queued auto-merge sweeps treat `needs-human` like a live hold label. If CI is red and it is not a held outreach PR or escalated, its owning agent may still be asked to fix CI without removing the hold.
-3. If the branch moves while held and then the hold is lifted, holdguard re-adds `hold`; removing it again is the fresh approval. If a human lifted the gate after the current head arrived (for example a Renovate rebase earlier during the hold), proven by GitHub's server-stamped force-push event or by the hive having seen that head while the PR was still held (never the commit date or SHA-keyed check-suite/status times), that lift already covers the current head and holdguard does not re-hold (#13603).
+3. If the branch moves while held and then the hold is lifted, holdguard re-adds `decision-needed` (`hold` before #18468); removing it again is the fresh approval. If a human lifted the gate after the current head arrived (for example a Renovate rebase earlier during the hold), proven by GitHub's server-stamped force-push event or by the hive having seen that head while the PR was still held (never the commit date or SHA-keyed check-suite/status times), that lift already covers the current head and holdguard does not re-hold (#13603).
 
 ### Escalation
 
@@ -238,5 +240,5 @@ The repository-card legend is a UI vocabulary, not a second scheduler. Unclaimed
 
 Issue #8924 recorded the sharp edges of this page's first version; #8927 aligned the code: auto-merge sweeps, the task-list sweep, and the SHA-hold sweep now gate on the enumeration hold predicate (so `hive-pause/<hive-id>` holds everywhere), SHA-hold lifts only its own `hold`, policy templates name the enforced hold set, and `agent/<role>` is always the lane name. Two behaviours remain deliberate rather than fixed:
 
-- Level-hold and #5117 disabled-policy auto-release are different. The self-authored auto-merge sweep may still release its own #5117 self-authorization holds, but ACMM level-applied holds are never auto-released by a sweep or level change. They are released by a human removing `hold`, or by a deliberate one-off `PUT /api/packs/level` with `release_level_holds: true`, which touches only Hive App level-hold notices whose latest `hold` event was by the App.
+- Level-hold and #5117 disabled-policy auto-release are different. The self-authored auto-merge sweep may still release its own #5117 self-authorization holds, but ACMM level-applied holds are never auto-released by a sweep or level change. They are released by a human removing `ready-for-review`, or by a deliberate one-off `PUT /api/packs/level` with `release_level_holds: true`, which touches only Hive App level-hold notices whose latest `ready-for-review` event was by the App.
 - `hive-open-pr` discards every `--label` value, including `hold`, because the PR-request watcher applies holds server-side (`bin/hive-open-pr.sh:142-150`, `src/docs/hive-open-pr.md`).

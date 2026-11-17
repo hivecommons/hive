@@ -22,6 +22,7 @@ func (s *Server) registerInboxRecordingRoutes() {
 	s.mux.HandleFunc("POST /api/inbox/recordings/{id}/finalize", s.handleInboxRecordingFinalize)
 	s.mux.HandleFunc("DELETE /api/inbox/recordings/{id}", s.handleInboxRecordingAbort)
 	s.mux.HandleFunc("GET /api/inbox/recordings/{id}/audio", s.handleInboxRecordingAudio)
+	s.mux.HandleFunc("DELETE /api/inbox/hive-recording/{id}", s.handleInboxRecordingDelete)
 }
 
 // inboxRecordingStartRequest is POST /api/inbox/recordings.
@@ -76,6 +77,10 @@ func (s *Server) inboxRecordingOptions(r *http.Request) inbox.RecordingOptions {
 		if s.audit != nil {
 			s.audit.Log(a.Actor, a.Action, auditDetail(a.Fields...), "")
 		}
+	}, TranscribeAudit: func(a inbox.TranscribeAudit) {
+		if s.audit != nil {
+			s.audit.Log(a.Actor, "inbox_transcribe", auditDetail(a.Fields()...), "")
+		}
 	}}
 }
 
@@ -96,7 +101,8 @@ func writeInboxRecordingError(w http.ResponseWriter, err error) {
 		code = http.StatusNotFound
 	case errors.Is(err, inbox.ErrRecordingNotYours):
 		code = http.StatusForbidden
-	case errors.Is(err, inbox.ErrRecordingClosed), errors.Is(err, inbox.ErrRecordingMismatch):
+	case errors.Is(err, inbox.ErrRecordingClosed), errors.Is(err, inbox.ErrRecordingMismatch),
+		errors.Is(err, inbox.ErrRecordingNotFinished), errors.Is(err, inbox.ErrRecordingTranscribing):
 		code = http.StatusConflict
 	case errors.Is(err, inbox.ErrRecordingConsent), errors.Is(err, inbox.ErrRecordingBadRequest), errors.Is(err, inbox.ErrRecordingEmpty):
 		code = http.StatusBadRequest
@@ -238,6 +244,34 @@ func (s *Server) handleInboxRecordingAbort(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	jsonResponse(w, map[string]any{"id": m.ID, "aborted": true})
+}
+
+// handleInboxRecordingDelete deletes a finished hive recording: the stored
+// audio and chunks, the Inbox item and its Knowledge fact (the machine
+// transcript). Owners may delete any recording, read-write members only
+// their own, read members none (403). What was already shared from it is
+// not touched. 409 while it is in progress or being transcribed.
+func (s *Server) handleInboxRecordingDelete(w http.ResponseWriter, r *http.Request) {
+	if !requireInboxPlaybackRole(w, r) {
+		return
+	}
+	svc, ok := s.inboxService(w)
+	if !ok {
+		return
+	}
+	asOwner := isOwnerRole(r.Header.Get("X-Hive-Role"))
+	res, err := svc.DeleteRecording(strings.TrimSpace(r.PathValue("id")), requestUser(r), asOwner, s.inboxRecordingOptions(r))
+	if err != nil && res.ID == "" {
+		writeInboxRecordingError(w, err)
+		return
+	}
+	if err != nil {
+		// The audio and metadata are gone; a leftover (fact, transcript
+		// record or item state) is logged, not reported as a failure.
+		s.logger.Warn("inbox: recording delete left something behind", "recording", res.ID, "error", err)
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	jsonResponse(w, map[string]any{"id": res.ID, "deleted": true, "fact_removed": res.FactRemoved, "shares_kept": res.SharesKept})
 }
 
 // handleInboxRecordingAudio (owner or read-write) serves a finished

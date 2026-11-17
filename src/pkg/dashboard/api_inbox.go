@@ -34,6 +34,7 @@ func (s *Server) registerInboxRoutes() {
 	s.mux.HandleFunc("GET /api/inbox/transcriptions", s.handleInboxTranscriptions)
 	s.registerInboxUploadRoutes()
 	s.registerInboxSpekRunner()
+	s.registerInboxEmailRoutes()
 }
 
 // inboxSourceReadTimeout bounds one read that may spawn the source's MCP
@@ -486,7 +487,7 @@ func (s *Server) handleInboxRoute(w http.ResponseWriter, r *http.Request) {
 	waiting := false
 	if req.Destination == inbox.DestDibs {
 		// DIBS sends straight away, audio-only items included.
-		st, err = svc.Route(ctx, it, inbox.Request{Destination: req.Destination, Repo: req.Repo})
+		st, err = svc.Route(ctx, it, inbox.Request{Destination: req.Destination, Repo: req.Repo, Actor: actor})
 	} else {
 		var out inbox.ShareOutcome
 		out, err = svc.ShareWhenReady(ctx, it, inbox.ShareIntent{Destination: req.Destination, Actor: actor, Repo: req.Repo, Params: req.Params}, s.inboxTranscribeOptions(actor))
@@ -576,7 +577,7 @@ func (s *Server) handleInboxDismiss(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if err := svc.Dismiss(it.Source, it.ItemID, !req.Undo); err != nil {
+		if err := svc.DismissBy(actor, it.Source, it.ItemID, !req.Undo); err != nil {
 			jsonError(w, "dismiss failed: "+err.Error(), http.StatusInternalServerError)
 			return
 		}

@@ -39,6 +39,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateReferenceRepos(); err != nil {
 		return err
 	}
+	if err := ValidateRemoteWriteIdentity(c.Project.RemoteWriteIdentity); err != nil {
+		return err
+	}
 	if _, err := c.Ioscan.Policy(); err != nil {
 		return err
 	}
@@ -84,6 +87,11 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Governor.LiteLLM.Validate(); err != nil {
 		return err
 	}
+	// hive#18533: warn loudly (not fail) on an api_key_file that will never be
+	// read. See GovernorConfig.APIKeyFileWarnings for why boot does not fail.
+	for _, w := range c.Governor.APIKeyFileWarnings() {
+		log.Printf("WARNING: %s", w)
+	}
 	if err := c.GitHub.Attention.Validate(); err != nil {
 		return err
 	}
@@ -103,6 +111,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		return err
 	}
 	if err := c.Meetings.Validate(); err != nil {
+		return err
+	}
+	if err := c.validateMeetingsGatewayBackend(); err != nil {
 		return err
 	}
 	if err := c.Review.ValidateFixerFallback(); err != nil {

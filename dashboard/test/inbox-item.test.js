@@ -32,6 +32,8 @@ function makeContext(role) {
     INBOX_DEST_LABELS: { spek_rfc: 'RFC', dibs: 'dibs' },
     INBOX_INTENT_LABELS: { spek_rfc: 'RFC', dismiss: 'Knowledge', spek: 'spek' },
     INBOX_SUMMARY_COLLAPSE_CHARS: 280,
+    INBOX_SHARE_LABELS: { rfc: 'RFC', dibs: 'DIBS', knowledge: 'Knowledge', spek: 'spek' },
+    _inboxHistoryOpen: new Set(),
     _inboxSelected: new Set(),
     _inboxExpanded: new Set(),
     _inboxTranscriptOpen: new Set(),
@@ -49,7 +51,7 @@ function makeContext(role) {
     Array,
   };
   vm.createContext(ctx);
-  for (const fn of ['inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemHasAudio', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxItemHtml']) {
+  for (const fn of ['inboxSharePillText', 'inboxShareTargetHref', 'inboxSharePillHtml', 'inboxSharePillsHtml', 'inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemHasAudio', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxCanDeleteRecording', 'inboxItemHtml']) {
     vm.runInContext(extractFunction(fn), ctx);
   }
   return ctx;
@@ -172,4 +174,23 @@ test('an uploaded document shows where it came from and who added it, its text, 
   assert.match(html, /&lt;b&gt;bold&lt;\/b&gt;/);
   // Uploaded audio keeps the player.
   assert.match(vm.runInContext('inboxItemHtml(' + JSON.stringify(Object.assign({}, doc, { upload_kind: 'audio' })) + ')', ctx), /data-action="inboxPlay"/);
+});
+
+test('share history pills sit with the other pills and read users get no link', () => {
+  const withHistory = Object.assign({}, readyItem, { share_history: [{ id: 'sh-1', destination: 'rfc', actor: 'andy', status: 'done', started_at: '2026-11-16T10:00:00Z', ref: { number: 18412, url: 'https://github.com/o/r/issues/18412' } }] });
+  let html = vm.runInContext('inboxItemHtml(' + JSON.stringify(withHistory) + ')', makeContext('owner'));
+  assert.match(html, /<a class="kc-pill inbox-share-pill"[^>]*href="https:\/\/github\.com\/o\/r\/issues\/18412"[^>]*>→ RFC #18412 · andy · 2h ago</);
+  html = vm.runInContext('inboxItemHtml(' + JSON.stringify(withHistory) + ')', makeContext('read-only'));
+  assert.match(html, /<span class="kc-pill inbox-share-pill"[^>]*>→ RFC #18412/);
+  assert.doesNotMatch(html, /href="https:\/\/github/);
+});
+
+test('an uploaded audio file is pending with its own note and keeps the player', () => {
+  const ctx = makeContext('read-write');
+  const audio = { source: 'upload', id: '20261116t093000-0a1b2c3e', title: 'standup', origin: 'upload · standup.m4a', added_by: 'ana', upload_kind: 'audio', pending: true, transcribable: true, fact_slug: 'upload-x', fact_state: 'pending' };
+  const html = vm.runInContext('inboxItemHtml(' + JSON.stringify(audio) + ')', ctx);
+  assert.match(html, /this audio was added to the Inbox without text/);
+  assert.doesNotMatch(html, /Plaud/);
+  assert.match(html, /data-action="inboxPlay"/);
+  assert.match(html, /▸ Transcript<\/button>/);
 });

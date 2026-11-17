@@ -18,6 +18,8 @@ type (
 	ConnectionConfig           = cruxconfig.ConnectionConfig
 	DefinitionSourceConfig     = cruxconfig.DefinitionSourceConfig
 	GatewayConfig              = cruxconfig.GatewayConfig
+	GatewayModelPrice          = cruxconfig.GatewayModelPrice
+	GatewayPrices              = cruxconfig.GatewayPrices
 	InferenceAuthConfig        = cruxconfig.InferenceAuthConfig
 	KickLimitsConfig           = cruxconfig.KickLimitsConfig
 	LiteLLMConfig              = cruxconfig.LiteLLMConfig
@@ -179,6 +181,9 @@ var (
 	QualifyRepo               = cruxconfig.QualifyRepo
 	ReviewHeadKey             = cruxconfig.ReviewHeadKey
 	SecretFilePathAllowed     = cruxconfig.SecretFilePathAllowed
+	SecretFilePathRejection   = cruxconfig.SecretFilePathRejection
+	SecretFileRoots           = cruxconfig.SecretFileRoots
+	DescribeKeySource         = cruxconfig.DescribeKeySource
 	SetSecretFileRootsForTest = cruxconfig.SetSecretFileRootsForTest
 	SupportedBackends         = cruxconfig.SupportedBackends
 	ValidEffort               = cruxconfig.ValidEffort

@@ -1,0 +1,94 @@
+name: Static model list freshness
+
+# Weekly drift check for hive's STATIC model lists: the fallbacks every probed
+# CLI serves when live discovery fails (claude, copilot, codex, gemini) and the
+# curated OpenRouter suggestions/default in crux/openrouter.
+#
+# .github/scripts/check-static-model-freshness.py compares them against
+# public, keyless sources only:
+#   - OpenRouter GET https://openrouter.ai/api/v1/models: the curated
+#     OpenRouter ids directly, and the Claude/Gemini/OpenAI fallbacks mapped
+#     onto anthropic/, google/ and openai/ ("newer model of the same line
+#     upstream", "no upstream counterpart");
+#   - the npm registry's latest version of each CLI package, as context.
+# Sources that need auth (Claude OAuth /v1/models, the Copilot SDK catalog,
+# Codex app-server, Kiro, agy, omp, goose, bob) are NOT checked here; the
+# report says so. Their lists are shape-checked by the Go unit test
+# TestStaticModelListsShape (non-empty, no duplicates, Go/JS in sync).
+#
+# The report goes into ONE tracking issue (label static-model-freshness),
+# created on first drift and edited in place afterwards; when nothing drifts
+# an open issue is updated to say so, and no issue is opened. No repository
+# secrets are used: only the workflow's own GITHUB_TOKEN, for the issue.
+
+on:
+  schedule:
+    - cron: '17 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Print the report only; do not open or edit the tracking issue'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: static-model-freshness
+  cancel-in-progress: false
+
+env:
+  TRACKING_LABEL: static-model-freshness
+  TRACKING_TITLE: 'Static model lists: weekly freshness report'
+
+jobs:
+  check:
+    name: compare static model lists with public sources
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v5
+          persist-credentials: false
+
+      - name: Build the drift report
+        id: report
+        run: |
+          set -euo pipefail
+          python3 -I .github/scripts/check-static-model-freshness.py > "$RUNNER_TEMP/raw.md"
+          if head -n 1 "$RUNNER_TEMP/raw.md" | grep -qx 'NO_DRIFT'; then
+            echo "drift=false" >> "$GITHUB_OUTPUT"
+            tail -n +2 "$RUNNER_TEMP/raw.md" > "$RUNNER_TEMP/report.md"
+          else
+            echo "drift=true" >> "$GITHUB_OUTPUT"
+            cp "$RUNNER_TEMP/raw.md" "$RUNNER_TEMP/report.md"
+          fi
+          {
+            echo
+            echo "_Updated by [${GITHUB_WORKFLOW}](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) on $(date -u +%Y-%m-%d)._"
+          } >> "$RUNNER_TEMP/report.md"
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Open or update the tracking issue
+        if: ${{ !inputs.dry_run }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DRIFT: ${{ steps.report.outputs.drift }}
+        run: |
+          set -euo pipefail
+          gh label create "$TRACKING_LABEL" --repo "$GITHUB_REPOSITORY" --color c5def5 \
+            --description "Weekly static model list drift report" 2>/dev/null || true
+          number="$(gh issue list --repo "$GITHUB_REPOSITORY" --label "$TRACKING_LABEL" --state open \
+            --json number --jq '.[0].number // empty')"
+          if [ -n "$number" ]; then
+            gh issue edit "$number" --repo "$GITHUB_REPOSITORY" --body-file "$RUNNER_TEMP/report.md"
+            echo "Updated #$number (drift=$DRIFT)"
+          elif [ "$DRIFT" = "true" ]; then
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TRACKING_TITLE" \
+              --label "$TRACKING_LABEL" --body-file "$RUNNER_TEMP/report.md"
+          else
+            echo "No drift and no open tracking issue; nothing to do."
+          fi

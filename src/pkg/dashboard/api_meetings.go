@@ -464,6 +464,7 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 			"meetings.llm.mode":                          m.LLM.Mode,
 			"meetings.llm.endpoint":                      m.LLM.Endpoint,
 			"meetings.llm.model":                         m.LLM.Model,
+			"meetings.llm.backend":                       m.LLM.Backend,
 			"meetings.llm.api_key_file":                  m.LLM.APIKeyFile,
 			"meetings.llm.anthropic_key_file":            m.LLM.AnthropicKeyFile,
 			"meetings.llm.anthropic_model":               m.LLM.AnthropicModel,

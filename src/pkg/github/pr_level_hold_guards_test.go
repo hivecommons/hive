@@ -108,11 +108,11 @@ func TestIsTrustedLevelHoldNoticeAuthorGuards(t *testing.T) {
 }
 
 func TestLatestHoldLabelEventBlankLoginFailsClosed(t *testing.T) {
-	ok, err := (&Client{appBotLogin: " "}).latestHoldLabelEventWasByApp(context.Background(), "o", "r", 7)
+	ok, _, err := (&Client{appBotLogin: " "}).latestHoldLabelEventByApp(context.Background(), "o", "r", 7)
 	if err != nil || ok {
 		t.Fatalf("blank app bot login: got (%v, %v), want (false, nil)", ok, err)
 	}
-	ok, err = (*Client)(nil).latestHoldLabelEventWasByApp(context.Background(), "o", "r", 7)
+	ok, _, err = (*Client)(nil).latestHoldLabelEventByApp(context.Background(), "o", "r", 7)
 	if err != nil || ok {
 		t.Fatalf("nil client: got (%v, %v), want (false, nil)", ok, err)
 	}

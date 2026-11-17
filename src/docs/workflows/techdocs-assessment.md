@@ -62,6 +62,13 @@ Issues (intake and per-phase tracking issues):
 | `accepted` | 20 claimed | `triage/accepted` | reviewer (technical writer) |
 | `requested` | 10 actionable | `needs-triage` | reviewer |
 
+The `accepted` state reuses the built-in stage number 20, so an accepted issue wears
+`stage/020-claimed`, but **no agent holds a claim on it**: the state means "waiting on the
+reviewer to start the drafter". The in-progress sweep leaves that label alone on a
+model-bound repository and does not withhold the issue for it
+([hivecommons/hive#18434](https://github.com/hivecommons/hive/issues/18434); before the fix
+the label was removed and re-added every enumeration cycle).
+
 Pull requests (deliverables carry the `Docs analysis` label; anything else abstains):
 
 | State | Stage | Rule |
@@ -175,10 +182,19 @@ What the operator of the TechDocs hive (authorized repo `cncf/techdocs`) does an
    `hivecommons/hivecommons.github.io` and `hivecommons/hive`, each at the `issues+prs` tier with
    `derived_from: cncf/techdocs#395`. The kick's `📚 REFERENCE REPOS` block lists them with
    `(from cncf/techdocs#395)`. Settings → Reference repos shows them read-only with the source
-   link and `credential_state: write-tier`, because hivecommons has the App installed on every
-   repo. Had it not, the entries would read `read-only` with a reason, #395 would carry one
-   `hive:reference-repos-read-only` comment, and the hive would keep running.
-4. **What the hive may do there.** Clone and read the three repos, read their issues and PRs,
+   link. The `credential_state` depends on where **this hive's** GitHub App is installed:
+   - **App installed on the reference repos** (the Hive Commons hive itself, whose App is on
+     every hivecommons repo): `credential_state: write-tier`, and the hive may do what step 4
+     lists.
+   - **App installed only on `cncf/techdocs`** (a contributor's or the TechDocs team's own
+     hive): the entries read `read-only` with a reason, #395 carries one
+     `hive:reference-repos-read-only` comment, and the hive keeps running. The App cannot be
+     installed in an organization the hive does not own, so nothing in the hive turns this into
+     write access on its own. The drafter can still clone and read the repos (public repos need
+     no credential) and the deliverable still lands in `cncf/techdocs`, which is all Phase A
+     needs. Step 4's issue, PR and branch actions are not available there until the
+     reference repos' owner grants write access.
+4. **What the hive may do there (write tier only).** Clone and read the three repos, read their issues and PRs,
    open an issue, open a PR or push a topic branch, and comment on an issue or PR it opened
    itself. The assessment deliverable still lives in `cncf/techdocs`.
 5. **What it may not do.** Merge, push to a default branch, label or assign other people's
@@ -191,6 +207,43 @@ What the operator of the TechDocs hive (authorized repo `cncf/techdocs`) does an
    up. A hand-written entry for one of the repos, if the operator adds one, takes precedence and
    stays.
 
+## Starting the drafter (Accepted → Draft)
+
+Nothing dispatches the drafter automatically yet. `techdocs-drafter` and
+`techdocs-verifier` are profiles the model declares so the compiler can check that every
+agent action is followed by a human gate; they are not hive agents, and the scheduler does
+not read the bound model. An accepted issue therefore sits in **Accepted** until someone
+starts a draft. The model leaves Accepted only when a pull request covers the issue
+(`issue.covered`), which moves it to `draft-open`.
+
+A hive owner starts the draft by hand:
+
+1. Check the request is accepted: `triage/accepted` is on the issue, applied by a maintainer
+   with write access to `cncf/techdocs`, and the hive's workflow column shows **Accepted**.
+2. On the hive dashboard, signed in with the **owner** role (kicks with a prompt are
+   owner-only), open the agent card of an agent that may work on `cncf/techdocs` (the
+   scanner or a feature agent) and type the drafting instruction into its **Send a message
+   to …** box, then **Send**. Name the issue, the phase and the deliverable, for example:
+
+   ```text
+   Draft the Phase A (assessment) deliverable for cncf/techdocs#395 following the CNCF
+   TechDocs assessment spec (§6 Phase A, §14 Assessment drafter, §15 provenance block).
+   Read the request issue for the project, scope and contacts. Work on a topic branch in
+   cncf/techdocs, open a DRAFT pull request labeled `Docs analysis` and `phase/assessment`,
+   name the issue in the PR request (`hive-open-pr --issues 395`) and reference it in
+   the body with `Refs #395` (not a closing keyword: the intake closes at the final
+   phase). Do not mark it ready and do not apply `verified`.
+   ```
+
+3. Once the draft PR is open and the PR request named the issue (a `Refs` line alone in the
+   body does not cover it; a declared issue does), the next pass moves the issue to
+   `draft-open` (stage 40) and the PR to `drafting`. From there every step is a human gate:
+   the reviewer runs or skips the verifier (`/verify`, the `verified` label), marks the PR
+   ready (`/ready`), stakeholders `/confirm`, and an independent approver merges.
+
+If the draft is discarded (`/discard`, PR closed unmerged), the issue returns to Accepted and
+the same kick starts a fresh draft.
+
 ## Not representable today
 
 These parts of the spec are documented in the model's annotations but not enforced by
@@ -202,6 +255,7 @@ the engine:
 - Phase as a state dimension and the A→C skip — carried by labels; the
   `open-next-phase-tracking-issue`, `notify-contacts` and `mention-stakeholders`
   bookkeeping actions are declarative only.
-- `/verify` dispatching the verifier agent and membership of the frozen stakeholder set
-  — the gates exist, the side effects do not yet.
+- Dispatching the drafter on Accepted and the verifier on `/verify` — the profiles and
+  gates exist, the dispatch does not yet (see [Starting the drafter](#starting-the-drafter-accepted--draft)).
+- Membership of the frozen stakeholder set — the gate exists, the check does not yet.
 - Data-collection scripts and the strict provenance check — a manual check.

@@ -15,6 +15,7 @@
     .inbox-more { padding: 0; font-size: var(--fs-xs); }
     .inbox-pending { margin-top: var(--sp-2); font-style: italic; }
     .inbox-media:not(:empty) { margin-top: var(--sp-2); }
+    .inbox-email-image { display: block; max-width: min(100%, 320px); max-height: 240px; margin-top: var(--sp-2); border-radius: var(--radius-sm, 4px); }
     .inbox-audio { width: 100%; max-width: 520px; display: block; }
     .inbox-transcript { margin-top: var(--sp-2); }
     .inbox-transcript-text { white-space: pre-wrap; font-family: inherit; font-size: var(--fs-sm); max-height: 24em; overflow: auto; margin: var(--sp-1) 0 0; padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
@@ -44,7 +45,12 @@
     .inbox-add-url { flex: 1 1 16rem; min-width: 0; }
     .inbox-upload .kc-error { flex-basis: 100%; }
     /* ● Record (inbox-recorder.js): panel, red indicator, level meters */
-    .inbox-rec-panel { margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--surface); }
+    .inbox-rec-panel { position: relative; overflow: hidden; margin-bottom: var(--sp-4); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--red); border-radius: var(--r); background: var(--surface); }
+    /* The saved panel auto-dismisses with the toast countdown bar (toastCountdownBar). */
+    .inbox-rec-panel .toast-bar { background: color-mix(in srgb, var(--green) 40%, transparent); }
+    .inbox-rec-panel[data-outcome="failed"] .toast-bar { background: color-mix(in srgb, var(--red) 40%, transparent); }
+    .inbox-rec-panel[data-outcome="stalled"] .toast-bar { background: color-mix(in srgb, var(--status-warn) 40%, transparent); }
+    .inbox-rec-panel[data-outcome="off"] .toast-bar { background: color-mix(in srgb, var(--blue) 40%, transparent); }
     .inbox-rec-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
     .inbox-rec-dot { color: var(--red); }
     .inbox-rec-dot.is-live { animation: inbox-rec-pulse 1.2s ease-in-out infinite; }
@@ -64,3 +70,8 @@
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
     }
+    /* Share history pills: status links, not buttons. */
+    a.inbox-share-pill { text-decoration: none; color: inherit; cursor: pointer; }
+    a.inbox-share-pill:hover, a.inbox-share-pill:focus-visible { text-decoration: underline; }
+    .inbox-share-more { text-decoration: none; color: var(--text-faint); }
+    .inbox-share-more:hover, .inbox-share-more:focus-visible { text-decoration: underline; }

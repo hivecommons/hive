@@ -201,6 +201,38 @@ else
   echo "  FAIL: signed request not written to HIVE_REVIEW_REQUEST_DIR"; FAIL=$((FAIL + 3))
 fi
 
+# --- inline comments (hivecommons/hive#18531) ---
+echo ""
+echo "--- --comments-file carries line-anchored findings ---"
+CDIR="$TMPDIR_ROOT/comments"; mkdir -p "$CDIR"
+printf '%s' '[{"path":"a.go","line":3,"body":"x"},{"path":"b.go","line":9,"start_line":7,"side":"left","body":"y"}]' > "$CDIR/ok.json"
+run_script inliner 31 --repo org/repo --comment --body "summary" --comments-file "$CDIR/ok.json" >/dev/null || true
+INLINE_REQ="$(find_req inliner || true)"
+if [ -n "$INLINE_REQ" ]; then
+  check "two comments relayed" "2" "$(python3 -c 'import json,sys; print(len(json.load(open(sys.argv[1]))["comments"]))' "$INLINE_REQ")"
+  check "side defaults to RIGHT" "RIGHT" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["comments"][0]["side"])' "$INLINE_REQ")"
+  check "side is upper-cased and range kept" "LEFT 7" "$(python3 -c 'import json,sys; c=json.load(open(sys.argv[1]))["comments"][1]; print(c["side"], c["start_line"])' "$INLINE_REQ")"
+else
+  echo "  FAIL: inline request not written"; FAIL=$((FAIL + 3))
+fi
+printf '%s' '{"path":"a.go"}' > "$CDIR/notarray.json"
+printf '%s' '[{"path":"/abs","line":1,"body":"x"}]' > "$CDIR/abs.json"
+printf '%s' '[{"path":"a","line":0,"body":"x"}]' > "$CDIR/line.json"
+printf '%s' '[{"path":"a","line":2,"body":" "}]' > "$CDIR/body.json"
+printf '%s' '[{"path":"a","line":2,"side":"up","body":"x"}]' > "$CDIR/side.json"
+printf '%s' '[{"path":"a","line":2,"start_line":2,"body":"x"}]' > "$CDIR/range.json"
+printf '%s' 'not json' > "$CDIR/bad.json"
+for f in notarray abs line body side range bad; do
+  check_exit "comments file '$f' is refused" 2 \
+    env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo org/repo 31 --comment --body s --comments-file "$CDIR/$f.json"
+done
+check_exit "missing comments file exits 2" 2 \
+  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo org/repo 31 --comment --body s --comments-file "$CDIR/nope.json"
+check_exit "comments with --record-verdict exits 2" 2 \
+  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo org/repo 31 --record-verdict --verdict-file "$CDIR/ok.json" --comments-file "$CDIR/ok.json"
+check_exit "comments with --thread exits 2" 2 \
+  env HIVE_AGENT=x bash "$MODIFIED_SCRIPT" --repo org/repo 31 --comment --body s --thread PRRT_x --comments-file "$CDIR/ok.json"
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

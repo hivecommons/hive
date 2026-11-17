@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -43,6 +44,8 @@ var ErrUploadNotFound = errors.New("unknown upload")
 type UploadMeta struct {
 	ID   string `json:"id"`
 	Kind string `json:"kind"`
+	// MIME is the playback Content-Type of an audio or video upload.
+	MIME string `json:"mime,omitempty"`
 	// Origin is "upload" for a dropped file, "link" for a fetched URL.
 	Origin   string `json:"origin"`
 	Filename string `json:"filename,omitempty"`
@@ -141,6 +144,81 @@ func (s *UploadStore) Put(meta UploadMeta, original []byte, extracted string, qu
 	}
 	ok = true
 	return nil
+}
+
+// PutStream stores an upload whose original is streamed from r (audio and
+// video), at most limit bytes and within quota. The extracted text starts
+// empty (the machine transcript is kept by the transcript store). It
+// returns the stored size.
+func (s *UploadStore) PutStream(meta UploadMeta, r io.Reader, limit, quota int64) (int64, error) {
+	dir, err := s.dir(meta.ID)
+	if err != nil {
+		return 0, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if quota > 0 {
+		used, err := s.usage()
+		if err != nil {
+			return 0, err
+		}
+		if used >= quota {
+			return 0, uploadErr(UploadErrQuota, "the Inbox upload quota is full (%s of %s used): remove old uploads or raise inbox.uploads.quota_bytes", humanBytes(used), humanBytes(quota))
+		}
+		if room := quota - used; limit <= 0 || room < limit {
+			limit = room
+		}
+	}
+	if err := os.MkdirAll(s.Dir, uploadDirMode); err != nil {
+		return 0, err
+	}
+	if err := os.Chmod(s.Dir, uploadDirMode); err != nil {
+		return 0, err
+	}
+	if err := os.Mkdir(dir, uploadDirMode); err != nil {
+		return 0, err
+	}
+	ok := false
+	defer func() {
+		if !ok {
+			_ = os.RemoveAll(dir)
+		}
+	}()
+	f, err := os.OpenFile(filepath.Join(dir, uploadOriginalFile), os.O_WRONLY|os.O_CREATE|os.O_EXCL, uploadFileMode)
+	if err != nil {
+		return 0, err
+	}
+	n, err := io.Copy(f, io.LimitReader(r, limit+1))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	if err != nil {
+		return 0, err
+	}
+	if n > limit {
+		return 0, uploadErr(UploadErrTooLarge, "the file is too large or the upload quota is nearly full (the limit for this file is %s)", humanBytes(limit))
+	}
+	if n == 0 {
+		return 0, uploadErr(UploadErrEmpty, "the file is empty")
+	}
+	if err := writeNew(filepath.Join(dir, uploadTextFile), nil); err != nil {
+		return 0, err
+	}
+	meta.Size = n
+	if err := s.writeMeta(dir, meta); err != nil {
+		return 0, err
+	}
+	ok = true
+	return n, nil
+}
+
+// OpenOriginal opens an upload's original file (until retention removes it).
+func (s *UploadStore) OpenOriginal(id string) (*os.File, error) {
+	dir, err := s.dir(id)
+	if err != nil {
+		return nil, err
+	}
+	return os.Open(filepath.Join(dir, uploadOriginalFile))
 }
 
 // writeNew creates path exclusively with uploadFileMode.

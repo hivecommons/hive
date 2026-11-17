@@ -3,8 +3,9 @@
     // customized persona, its behaviour caps, and the attendee's email
     // address and inviters. GET/PUT /api/meetings/persona, owner or
     // read-write; POST /api/meetings/persona/sample plays a line through the
-    // meetings TTS service. The Email section stays disabled (layout only)
-    // until the server reports email.available (email-in, #18395).
+    // meetings TTS service. The Email section is live once the server reports
+    // email.available (email-in, #18395): the address, everyone's calendar
+    // emails, the user's own (add, prove, remove) and the owner's switches.
     let _maState = null; // { data, form }
     // Language tags the presets and Kokoro voices speak, for labels.
     const MA_LANGUAGE_LABELS = {
@@ -59,6 +60,7 @@
         if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
         maSetData(data);
         maRender();
+        if ((data.email || {}).available) maLoadMyEmails();
       } catch (e) {
         host.innerHTML = '<p class="kc-error muted-xs">Meeting attendee settings unavailable: ' + escapeHtml(e.message) + '</p>';
       }
@@ -69,7 +71,9 @@
       const form = { enabled: !!e.enabled, preset: e.preset || '', voice_on_address: !!e.voice_on_address, unprompted: Object.assign({}, e.unprompted || {}) };
       MA_PERSONA_FIELDS.forEach(k => { form[k] = e[k] || ''; });
       MA_LIST_FIELDS.forEach(k => { form[k] = (e[k] || []).slice(); });
-      _maState = { data: data, form: form, dirty: false };
+      const em = data.email || {};
+      form.email = { calendar_invites: !!em.calendar_invites, mail_in_files: !!em.mail_in_files, changed: false };
+      _maState = { data: data, form: form, dirty: false, mine: (_maState && _maState.mine) || null };
     }
 
     function maPreset(id) { return ((_maState && _maState.data.presets) || []).find(p => p.id === id) || null; }
@@ -215,6 +219,8 @@
       const em = (_maState.data.email) || {};
       const on = !!em.available;
       const dis = on ? '' : ' disabled';
+      const fe = _maState.form.email || {};
+      const toggleDis = on && viewerIsOwner() ? '' : ' disabled';
       const people = (em.inviters || []).map(p => {
         const emails = (p.emails || []).map(x => '<span class="ma-email">' + escapeHtml(x.address) + ' <span class="badge' + (x.proof === 'verified' ? ' ma-verified' : '') + '">' + escapeHtml(x.proof || 'pending') + '</span></span>').join('') ||
           '<span class="muted-xs">no calendar email registered</span>';
@@ -230,8 +236,10 @@
         '<table class="meetings-effective ma-inviters"><thead><tr><th>Person</th><th>Access</th><th>Calendar emails</th></tr></thead><tbody>' +
         (people || '<tr><td colspan="3" class="muted-xs">No access list on this hive.</td></tr>') + '</tbody></table>' +
         '<div class="section-label m-0">Waiting for approval</div>' + (approvals ? '<ul class="ma-approvals">' + approvals + '</ul>' : '<p class="muted-xs">Nothing waiting.</p>') +
-        '<label class="inbox-toggle"><input type="checkbox" data-ma-email="calendar_invites"' + (em.calendar_invites ? ' checked' : '') + dis + '> Accept calendar invites</label>' +
-        '<label class="inbox-toggle"><input type="checkbox" data-ma-email="mail_in_files"' + (em.mail_in_files ? ' checked' : '') + dis + '> Accept mailed-in files (Markdown, audio, images) into the Inbox</label></section>';
+        maMyEmailsHtml(on) +
+        '<label class="inbox-toggle"><input type="checkbox" data-ma-email="calendar_invites" data-change-action="maEmailToggle" data-arg0="calendar_invites" data-arg-types="s,c"' + (fe.calendar_invites ? ' checked' : '') + toggleDis + '> Accept calendar invites ' + yamlHint('meetings.email.invites_enabled') + '</label>' +
+        '<label class="inbox-toggle"><input type="checkbox" data-ma-email="mail_in_files" data-change-action="maEmailToggle" data-arg0="mail_in_files" data-arg-types="s,c"' + (fe.mail_in_files ? ' checked' : '') + toggleDis + '> Accept mailed-in files (Markdown, audio, images) into the Inbox ' + yamlHint('meetings.email.files_enabled') + '</label>' +
+        (on && !viewerIsOwner() ? '<p class="muted-xs">Only the owner changes these.</p>' : '') + '</section>';
     }
 
     function maRender() {
@@ -242,7 +250,7 @@
       host.innerHTML =
         (d.restart_required ? '<p class="cmp-banner" role="status">Saved. Restart the hive to apply the new persona.</p>' : '') +
         (d.running ? '' : '<p class="muted-xs">Meetings are not running on this hive; the persona applies once meetings are on (Settings, Meetings).</p>') +
-        maPersonaHtml(f) + maBehaviourHtml(f) + (typeof maActionsHtml === 'function' ? maActionsHtml() : '') + maEmailHtml() +
+        maPersonaHtml(f) + maBehaviourHtml(f) + (typeof maModelHtml === 'function' ? maModelHtml() : '') + (typeof maActionsHtml === 'function' ? maActionsHtml() : '') + maEmailHtml() +
         '<div class="hive-dialog-error" role="alert" data-ma-error></div>' +
         '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="maSave">Save</button></div>';
     }
@@ -304,6 +312,7 @@
       const body = { enabled: f.enabled, preset: f.preset, voice_on_address: f.voice_on_address, unprompted: Object.assign({}, f.unprompted) };
       MA_PERSONA_FIELDS.forEach(k => { body[k] = f[k]; });
       MA_LIST_FIELDS.forEach(k => { body[k] = f[k]; });
+      if (f.email && f.email.changed) body.email = { calendar_invites: f.email.calendar_invites, mail_in_files: f.email.mail_in_files };
       return body;
     }
 
@@ -343,6 +352,77 @@
       audio.src = maSampleSrc(_maState.form);
       const p = audio.play();
       if (p && p.catch) p.catch(() => {});
+    }
+
+    function maEmailToggle(key, checked) {
+      if (!_maState || !_maState.form.email) return;
+      _maState.form.email[key] = !!checked;
+      _maState.form.email.changed = true;
+      _maState.dirty = true;
+    }
+
+    // ── My calendar emails (#18395): the addresses the signed-in user's
+    // calendar sends invites from, proven by mailing a code to hive@<host>.
+    // GET/POST/DELETE /api/meetings/calendar-emails.
+    function maMyEmailsHtml(on) {
+      if (!on) return '';
+      const mine = _maState.mine;
+      let rows = '';
+      if (mine && mine.error) rows = '<p class="kc-error muted-xs">' + escapeHtml(mine.error) + '</p>';
+      else if (!mine) rows = '<p class="muted-xs">Loading…</p>';
+      else if (!(mine.emails || []).length) rows = '<p class="muted-xs">You have not added a calendar email yet.</p>';
+      else rows = '<ul class="ma-my-emails">' + mine.emails.map(e => {
+        const state = e.proven ? '<span class="badge ma-verified">verified</span>' : '<span class="badge">pending</span>';
+        const how = !e.proven && e.code
+          ? '<div class="muted-xs">Send an email from ' + escapeHtml(e.email) + ' to <code>' + escapeHtml(mine.address || '') + '</code> with <code>' + escapeHtml(e.code) + '</code> in the subject.</div>'
+          : (!e.proven ? '<div class="muted-xs">The code expired: add the address again for a new one.</div>' : '');
+        const err = e.last_error ? '<div class="kc-error muted-xs">' + escapeHtml(e.last_error) + '</div>' : '';
+        const inactive = e.active === false ? ' <span class="muted-xs">(no access to this hive: not on the allowlist)</span>' : '';
+        return '<li><span class="ma-email">' + escapeHtml(e.email) + ' ' + state + '</span>' + inactive +
+          ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="maRemoveMyEmail" data-arg0="' + escapeHtml(e.email) + '"' + (on ? '' : ' disabled') + '>Remove</button>' + how + err + '</li>';
+      }).join('') + '</ul>';
+      return '<div class="section-label m-0">My calendar emails</div>' + rows +
+        '<div class="ma-add-email"><input class="kb-search-box" type="email" data-ma-new-email placeholder="you@example.com" autocomplete="email" aria-label="Calendar email to add"' + (on ? '' : ' disabled') + '>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="maAddMyEmail"' + (on ? '' : ' disabled') + '>Add</button></div>';
+    }
+
+    async function maLoadMyEmails() {
+      if (!_maState) return;
+      try {
+        const r = await fetch('/api/meetings/calendar-emails');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        _maState.mine = data;
+      } catch (e) {
+        _maState.mine = { error: 'Calendar emails unavailable: ' + e.message };
+      }
+      maRender();
+    }
+
+    async function maAddMyEmail() {
+      const input = document.querySelector('[data-ma-new-email]');
+      const email = input ? input.value.trim() : '';
+      if (!email) return;
+      try {
+        const r = await fetch('/api/meetings/calendar-emails', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email }) });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        if (data.instruction) showToast(data.instruction, 'info');
+      } catch (e) {
+        showToast('Could not add the calendar email: ' + e.message, 'error');
+      }
+      await maLoadMyEmails();
+    }
+
+    async function maRemoveMyEmail(email) {
+      try {
+        const r = await fetch('/api/meetings/calendar-emails?email=' + encodeURIComponent(email), { method: 'DELETE' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      } catch (e) {
+        showToast('Could not remove the calendar email: ' + e.message, 'error');
+      }
+      await maLoadMyEmails();
     }
 
     async function maCopyAddress() {

@@ -132,8 +132,10 @@ one deliberate exception:
 (`bin/hive-open-pr.sh:149`). No warning is printed, on purpose: `--label hold`
 is in every hold-gated policy template, so it arrives on essentially every
 agent PR, and "ignoring unrecognized flag `--label`" would read to an agent
-mid-run as "your PR will not be held" — the opposite of the truth. The `hold`
-label does land, but not because of the flag: the PR-request watcher applies it
+mid-run as "your PR will not be held" — the opposite of the truth. The PR is
+held, but not because of the flag, and not with `hold`: the PR-request watcher
+applies the `ready-for-review` gate label (`decision-needed` for the #5117 and
+reporter-trust gates; the hive never applies `hold` itself, #18468)
 server-side from authoritative ACMM config after the PR is created
 (`src/pkg/github/pr_request_watcher.go:452-524`), and treats a failure to apply it
 as a failed request, not a cosmetic miss. Every **other** label in the flag's

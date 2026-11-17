@@ -61,6 +61,9 @@ type Item struct {
 	// ShareIntents are shares waiting for a machine transcript (or failed
 	// because it did not finish), keyed by destination. See ShareIntent.
 	ShareIntents map[string]*ShareIntent `json:"share_intents,omitempty"`
+	// ShareHistory is the append-only list of shares of this item, oldest
+	// first: what, who, when, status and the target.
+	ShareHistory []*ShareRecord `json:"share_history,omitempty"`
 	// Dismissed marks "knowledge only": the item stays a fact, no further route.
 	Dismissed bool `json:"dismissed,omitempty"`
 	// Processed is true once any route filed or the item was dismissed.
@@ -88,6 +91,16 @@ type Item struct {
 	AudioExpired bool `json:"audio_expired,omitempty"`
 	// AudioRetentionDays is how long a hive recording's audio is kept.
 	AudioRetentionDays int `json:"audio_retention_days,omitempty"`
+	// AudioExpiresAt is when retention deletes audio this hive stores
+	// itself (a hive recording, a dropped audio file); zero when the audio
+	// lives elsewhere, is already gone, or is kept without a limit.
+	AudioExpiresAt time.Time `json:"audio_expires_at,omitzero"`
+	// AwaitingApproval marks an item from outside the hive's allowlist (the
+	// email source, #18395): it cannot be routed, shared or transcribed until
+	// the owner approves it.
+	AwaitingApproval bool `json:"awaiting_approval,omitempty"`
+	// Sender is the From address of an emailed item.
+	Sender string `json:"sender,omitempty"`
 }
 
 // Key returns the stable "source/id" key used by the state store.
@@ -192,6 +205,11 @@ type Request struct {
 	Destination string
 	// Repo is the owner/repo for spek_rfc; empty uses the configured default.
 	Repo string
+	// Actor is who asked (a dashboard user, or AutoRouteActor).
+	Actor string
+	// ShareID is the share-history record this route continues; empty makes
+	// Route append a new record.
+	ShareID string
 }
 
 // Result is what a destination filed.

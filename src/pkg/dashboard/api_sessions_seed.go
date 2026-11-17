@@ -58,6 +58,9 @@ type sessionSeedFile struct {
 	name string
 	rel  string
 	data []byte
+	// shareID is the share-history record of a transcribe-first share
+	// (ShareIntent.RecordID); empty for items that had text already.
+	shareID string
 }
 
 // sessionSeed is a prepared seed: who sent it, the files to write and the
@@ -259,9 +262,41 @@ func (s *Server) deliverSessionSeedFiles(rt SessionRuntime, st *sessionStore, id
 			if err := svc.MarkSession(f.item, rec.ID, rec.Name); err != nil && s.logger != nil {
 				s.logger.Warn("sessions: marking inbox item routed failed", "item", f.item.Key(), "session", rec.ID, "error", err)
 			}
+			s.recordSpekShare(svc, f, seed.user, rec.ID, rec.Name)
 		}
 	}
 	return sessionSeedResult{Files: seed.rels(), Instruction: text, QueueID: item.ID, Position: pos}, nil
+}
+
+// recordSpekShare records the share of one seeded item in its history: a
+// finished record carrying the session id and name as its target. A
+// transcribe-first share continues the record made when it was queued.
+func (s *Server) recordSpekShare(svc *inbox.Service, f sessionSeedFile, actor, sessionID, sessionName string) {
+	ref := &inbox.ShareRef{ID: sessionID, Name: sessionName}
+	var err error
+	if f.shareID != "" {
+		err = svc.FinishShare(f.item.Key(), f.shareID, inbox.ShareDone, "", ref)
+	} else {
+		now := time.Now().UTC()
+		_, err = svc.RecordShare(f.item.Key(), inbox.ShareRecord{Destination: inbox.ShareDestSpek, Actor: actor, Status: inbox.ShareDone, FinishedAt: &now, Ref: ref})
+	}
+	if err != nil && s.logger != nil {
+		s.logger.Warn("sessions: recording the inbox share failed", "item", f.item.Key(), "session", sessionID, "error", err)
+	}
+}
+
+// failSpekShares marks the transcribe-first records of a parked seed failed
+// when the session never started.
+func (s *Server) failSpekShares(seed *sessionSeed, reason string) {
+	svc := s.deps.Inbox
+	if svc == nil {
+		return
+	}
+	for _, f := range seed.files {
+		if f.shareID != "" {
+			_ = svc.FinishShare(f.item.Key(), f.shareID, inbox.ShareFailed, reason, nil)
+		}
+	}
 }
 
 // handleSessionSeed is POST /api/sessions/{id}/seed: send Inbox items into a
@@ -401,7 +436,9 @@ func (s *Server) runSpekIntent(ctx context.Context, it inbox.Item, in inbox.Shar
 	if err := inbox.CheckSessionText(it, c); err != nil {
 		return err
 	}
-	seed := &sessionSeed{user: in.Actor, files: []sessionSeedFile{s.renderSessionSeedFile(it, c, in.Actor, time.Now().UTC())}}
+	file := s.renderSessionSeedFile(it, c, in.Actor, time.Now().UTC())
+	file.shareID = in.RecordID
+	seed := &sessionSeed{user: in.Actor, files: []sessionSeedFile{file}}
 	s.sessionsMu.Lock()
 	if rec, found := st.get(id); found && rec.Status == sessionStatusPreparing && s.sessionsPreparing[id] {
 		if prev := s.sessionSeeds[id]; prev != nil {
@@ -443,9 +480,13 @@ func (s *Server) deliverPendingSessionSeed(rt SessionRuntime, st *sessionStore, 
 	}
 	if startErr != nil {
 		s.auditSession(seed.user, auditInboxToSession, auditDetail("session", id, "items", seed.keys(), "files", "0", "error", "the session did not start", "outcome", sessionSeedOutcomeFailed))
+		s.failSpekShares(seed, "the session did not start")
 		return
 	}
-	if _, err := s.deliverSessionSeed(rt, st, id, seed); err != nil && s.logger != nil {
-		s.logger.Warn("sessions: seeding a new session from the Inbox failed", "id", id, "error", err)
+	if _, err := s.deliverSessionSeed(rt, st, id, seed); err != nil {
+		s.failSpekShares(seed, err.Error())
+		if s.logger != nil {
+			s.logger.Warn("sessions: seeding a new session from the Inbox failed", "id", id, "error", err)
+		}
 	}
 }

@@ -169,7 +169,7 @@ type acmmLevelInfo struct {
 // acmmLevels maps a level number to its name and a one-line summary of what
 // moving there entails. Kept in sync with src/pkg/config/packs/level-*.yaml.
 var acmmLevels = map[int]acmmLevelInfo{
-	1: {"Inception", "an interactive brainstorm agent turns ideas into structured facts and scaffolding, with every action human-approved"},
+	1: {"Inception", "Inception (spek) sessions turn ideas into specs and a starting project, with every action human-approved"},
 	2: {"Advisory", "five agents publish advisory findings — still no GitHub writes"},
 	3: {"Quality-Gated", "the quality agent starts opening issues and hold-gated PRs about testing gaps, and ci-maintainer joins to watch build health — nothing merges without you"},
 	4: {"Security-Aware", "delivery agents file GitHub issues in their lanes and sec-check joins for vulnerabilities"},

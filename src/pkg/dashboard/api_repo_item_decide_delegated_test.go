@@ -132,7 +132,7 @@ func TestDelegatedDecisionOwnerOnlyLabelsAndKeepsPark(t *testing.T) {
 		t.Fatalf("code=%d job=%+v", w.Code, job)
 	}
 	joined := strings.Join(mock.added, ",")
-	if !strings.Contains(joined, delegatedecision.LabelNeedsOwner) || !strings.Contains(joined, delegatedecision.LabelHold) || strings.Contains(joined, github.HumanAckLabel) {
+	if !strings.Contains(joined, delegatedecision.LabelNeedsOwner) || !strings.Contains(joined, delegatedecision.LabelDecisionNeeded) || strings.Contains(joined, delegatedecision.LabelHold) || strings.Contains(joined, github.HumanAckLabel) {
 		t.Fatalf("added = %v", mock.added)
 	}
 	if len(mock.comments) != 1 || strings.Contains(mock.comments[0], "/hive decision") || !strings.Contains(mock.comments[0], "owner action required") || !strings.Contains(mock.comments[0], "stays") {

@@ -1159,7 +1159,6 @@ func (b *boot) wireBootClosures() {
 			GHTokenScopes:           b.ghAuth.TokenScopes,
 			Tokens:                  b.tokenCollector,
 			Knowledge:               b.knowledgeAPI,
-			Inception:               b.inceptionEngine,
 			Nous:                    b.nousState,
 			Scheduler:               b.sched,
 			KnowledgePrimer:         knowledgePrimerControl{b: b},
@@ -2151,7 +2150,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// the direct `gh pr create` path — the request-file route grants no extra
 	// privilege. A denied request is quarantined, never opened.
 	// holdLabel (F6): at hold-gated ACMM levels (L3/L4/L5) every agent-opened
-	// PR must carry the "hold" label so the merge gate holds it for human
+	// PR must carry the ready-for-review gate label ("hold" before #18468) so the merge gate holds it for human
 	// approval. Outreach content aimed at a repository the hive does not
 	// manage is public speech into someone else's project, so it remains
 	// human-reviewed at L6 too; outreach PRs into the agent's own repos are
@@ -3346,39 +3345,17 @@ func (b *boot) bootKnowledgeWith(deps bootKnowledgeDeps) {
 	b.nousState = deps.loadNousState(b.logger)
 	b.nousState.SnapshotDir = nousSnapshotDir
 
-	b.inceptionEngine = deps.newInceptionEngine(b.knowledgeAPI, b.logger)
-	b.sched.SetInception(b.inceptionEngine)
+	// The inception engine was retired in favour of Inception (spek)
+	// sessions. Facts past inception runs wrote to the inception-wiki vault
+	// stay served: reconnect that vault as the engine used to.
+	if deps.reconnectInceptionWiki != nil {
+		deps.reconnectInceptionWiki(b.knowledgeAPI, b.logger)
+	}
 
-	// Brainstorm is on-demand only. Only restart with bootstrap during
-	// capture phase — structure/scaffold phases don't need a fresh kick
-	// and restarting would revert the phase back to capture.
-	// Skip stale inceptions (> 10 min old) — these are leftovers from
-	// previous runs that would interfere with new inceptions.
-	const staleInceptionThreshold = 10 * time.Minute
-	if state := b.inceptionEngine.GetState(); state != nil &&
-		state.Phase != knowledge.PhaseComplete &&
-		state.Phase != knowledge.PhaseScaffold {
-		if time.Since(state.StartedAt) < staleInceptionThreshold {
-			msg := b.sched.BuildAgentMessage("brainstorm", nil, nil)
-			if err := deps.restartBrainstorm(b.ctx, b.agentMgr, msg); err != nil {
-				b.logger.Warn("failed to resume brainstorm for active inception", "error", err)
-			} else {
-				b.logger.Info("brainstorm resumed for active inception", "phase", state.Phase)
-			}
-		} else {
-			b.logger.Info("skipping stale inception resume — resetting",
-				"phase", state.Phase,
-				"age", time.Since(state.StartedAt).Round(time.Second),
-			)
-			_ = b.inceptionEngine.Reset()
-			if err := b.agentMgr.Pause("brainstorm", "startup", "stale inception cleared — on-demand only"); err != nil {
-				b.logger.Debug("brainstorm pause on startup", "error", err)
-			}
-		}
-	} else {
-		if err := b.agentMgr.Pause("brainstorm", "startup", "on-demand agent — triggered by inception only"); err != nil {
-			b.logger.Debug("brainstorm pause on startup", "error", err)
-		}
+	// Brainstorm is on-demand only: park it at boot, as before. Nothing
+	// starts it automatically any more.
+	if err := b.agentMgr.Pause("brainstorm", "startup", "on-demand agent — kicked only on request"); err != nil {
+		b.logger.Debug("brainstorm pause on startup", "error", err)
 	}
 
 	// Provider rotation (RFC #3958): opt-in automatic failover when a
@@ -3535,9 +3512,16 @@ func (b *boot) bootSupervision() {
 		contributorClaimOverrideLookup(contributorClaimGuard.Load, claimsInflightLookup(b.issueClaims, b.cfg.Project.Org)),
 		verifyOnceLookup(b.ctx, b.cfg.Project.Org, b.issueClaims, func() *github.Client { return b.ghClient }, b.logger),
 		claimEscalationLookup(b.ctx, b.cfg, b.issueClaims, func() *github.Client { return b.ghClient }, b.logger)))
+	// #18488: a live claim on a non-App PR (or its linked issue) keeps the
+	// repair queues from sending an agent to push onto that branch.
+	b.sched.SetPRLeaseLookup(claimsPRLeaseLookup(b.issueClaims, b.cfg.Project.Org))
 	// Dashboard maintainer notes on a listed item ride its kick as private
 	// context (pkg/scheduler/kick_maintainer_notes.go).
 	b.sched.SetMaintainerNotesLookup(maintainernotes.Default().List)
+	// #18493: agents' durable topic claims (bd topic) ride their kicks and tag
+	// the PR rows of the FIX-BEFORE-NEW and held-PR blocks. Read b.beadStores
+	// at call time, not at wire time.
+	b.sched.SetTopicClaimLookup(func() []scheduler.TopicClaim { return topicClaimLookup(b.beadStores)() })
 	// #9584: close answered question issues unless the author objects (default off).
 	b.questionAutoclose.Store(wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger))
 	// The pr-request watcher's PR-opened hook (Linear session narration, the
@@ -3812,9 +3796,6 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		}
 	}
 
-	if brainstormBeads, ok := b.beadStores["brainstorm"]; ok {
-		deps.startInceptionWatcher(b.ctx, dashboard.NewInceptionWatcher(brainstormBeads, b.inceptionEngine, b.sched, b.agentMgr, b.gov, b.logger))
-	}
 }
 
 // bootPolicies applies the ACMM pack planACMMBoot chose and starts the
@@ -4361,6 +4342,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						APIKey:       apiKey,
 						CABundle:     gw.CABundle,
 						ExtraHeaders: extraHeaders,
+						KeyResolver:  gatewayInferenceKeyResolver(b.cfg, gw, backend),
 					})
 					return
 				}
@@ -4418,6 +4400,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						DefaultModel: defaultModel,
 						APIKey:       apiKey,
 						CABundle:     caBundle,
+						KeyResolver:  litellmInferenceKeyResolver(b.cfg, backend),
 					})
 					return
 				}
@@ -4973,7 +4956,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				// Report the fingerprint of every ADDITIONAL per-app-id key already
 				// on the PVC, so the hub delivers the fleet's other App keys once
 				// and then stops re-sending them.
-				GitHubAppKeysHeld: spoke.TimedSection("app_keys_held", appKeys.HeldFingerprints),
+				GitHubAppKeysHeld: spoke.TimedSection("app_keys_held", func() map[string]string { return appKeys.HeldFingerprintsWithin(2 * time.Second) }),
 				// Component reach counters (#3993, phase 2a of #3973): per
 				// (component, running commit) span counts aggregated in-process,
 				// exporter or not (D2) — the heartbeat is the only channel that
@@ -6167,6 +6150,20 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				b.dashSrv.AddSystemAlert(holdMigrationFailedAlertID, "warning", holdMigrationFailedAlertMessage(b.cfg.HiveID, reportPath))
 			}
 		}
+		// hivecommons/hive#18468: the hive no longer applies `hold` itself.
+		// Swap the holds its own gates applied (App label event + gate
+		// notice) for ready-for-review / decision-needed, and make sure both
+		// labels exist with their descriptions. A person's `hold` is never
+		// touched. Off the boot path: it is bounded per repo and a failure
+		// only leaves old holds in place (still blocking) until next boot.
+		go func(ghClient *github.Client) {
+			res, err := ghClient.MigrateHiveAppliedHolds(b.ctx)
+			if err != nil {
+				b.logger.Warn("hive gate label migration incomplete; unmigrated hive holds keep blocking and retry next boot", "error", err, "relabeled", res.Relabeled, "skipped", res.Skipped)
+				return
+			}
+			b.logger.Info("hive gate label migration complete", "relabeled", res.Relabeled, "skipped", res.Skipped)
+		}(b.ghClient)
 		// Provenance-only migration. Retired reviewer labels map to agent/reviewer;
 		// redundant lane-origin labels are removed. Nothing reads origin/* as a gate,
 		// so a failure here only leaves old names on open items; the marker is not
@@ -6273,25 +6270,6 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 		restarted := deps.restartCrashed(b.ctx, b.agentMgr)
 		for _, name := range restarted {
 			b.dashSrv.AuditLog("system", "restart", "trigger=crash-recovery", name)
-		}
-		// If brainstorm crashed during inception, re-kick via SendKick.
-		// SendKick waits for the CLI to be ready and sends the message
-		// If brainstorm crashed during inception, re-kick with bootstrap.
-		// The table parser in the watcher will catch questions from the
-		// agent's output even if bd create doesn't execute.
-		for _, name := range restarted {
-			if name == "brainstorm" && b.inceptionEngine != nil {
-				if state := b.inceptionEngine.GetState(); state != nil && state.Phase == knowledge.PhaseCapture {
-					msg := b.sched.BuildAgentMessage("brainstorm", nil, b.sched.GetLastActionable())
-					if err := b.agentMgr.RestartWithBootstrap(b.ctx, "brainstorm", msg); err != nil {
-						b.logger.Warn("inception re-kick after crash failed", "error", err)
-					} else {
-						b.logger.Info("brainstorm re-kicked after crash", "phase", state.Phase)
-						b.dashSrv.AuditLog("system", "kick", "trigger=inception-crash-recovery", "brainstorm")
-					}
-					b.gov.RecordKick("brainstorm")
-				}
-			}
 		}
 		// Watchdog sweep (RFC #4665): synchronous but bounded — every
 		// probe carries a deadline and restarts run detached under a hard

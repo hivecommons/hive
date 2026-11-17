@@ -6,6 +6,15 @@ open advisory beads of every agent into a single **advisory digest** and posts i
 as a pinned comment on the advisory issue of the primary repo, rewriting the same
 comment each cycle so a repo owner has exactly one place to look.
 
+A hive that manages several repos keeps one advisory (governor) issue in
+**each** repo in `project.repos`, and posts the same digest to each of them.
+The other repos are ensured on every eval cycle until they have an issue, so a
+repo added in Settings gets one without a restart. An existing issue is reused,
+never duplicated, across restarts. When the hive cannot create the issue in a
+repo (the GitHub App lacks write access there, Issues are disabled, or the repo
+moved or was archived), the dashboard shows a warning naming that repo and the
+hive retries hourly; the other repos are not affected.
+
 Everything on this page lives under `governor.advisory` in `hive.yaml`, and every
 setting is also editable from **Governor Config → Advisory** in the dashboard
 (owner role required).

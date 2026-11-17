@@ -112,10 +112,10 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [CEL-based agent triggers](cel-triggers.md) — the `triggers:` config key: declarative CEL rules that kick an agent on a normalized source-control event, additive to built-in label/governor triggering, the `event.*` field reference, and the fail-closed compile/runtime contract.
 
 ### Long-running work and external execution
-- [Long-running runs](runs.md) — how a run starts, including default-off triage admission and inception completion admitting an explicit GitHub issue into the first `spec` lease.
+- [Long-running runs](runs.md) — how a run starts through default-off triage admission into the first `spec` lease.
 - [Spektacular (Spek) stage runner](spektacular.md) — **Operator; opt-in:** configure and monitor Hive's `spec` → `plan` → `implement` stages. Artifact design: [run artifacts](design/run-artifacts.md).
 - [ClankeR and Flue-style external execution](integrations/clanker-flue.md) — how the contributor relay and `pkg/extwork` let an external engine receive bounded work, report status, and return digest-verified receipts without repository credentials.
-- [Spektacular and Project Inception](integrations/spektacular.md) — **Developer integration:** CLI status, final-plan import, and inception admission; not the operator stage-runner setup above.
+- [Spektacular and Project Inception](integrations/spektacular.md) — **Developer integration:** CLI status and final-plan import; not the operator stage-runner setup above.
 - [vibe-kanban mirror and dispatch](vibe-kanban.md) — default-off side-car that mirrors one repository's admitted hive queue onto a local vibe-kanban board, records board pick-ups as shadow executions, and documents the opt-in `pkg/extwork/vibekanban` report-only workspace dispatch adapter.
 - [Audit campaign](audit-campaign.md) — **Owner-triggered; publication off by default:** run report-only inspections with credential guards, stage receipts, and explicit publication gates.
 - [Public snapshots](snapshots.md) — read-only `/snapshot`, custom CSS, and frame-ancestor sharing.
@@ -196,7 +196,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [ACMM policy matrix](acmm-policy-matrix.md) — capability levels and policy modes.
 - [ACMM level-up advisor](acmm-advisor.md) — the advisory-only `pkg/acmmadvisor` computation behind `GET /api/acmm-recommendation`: the signals it measures, per-level thresholds, and why it never changes the applied level.
 - [ACMM waivers](acmm-waivers.md) — record criteria satisfied outside the repo; a waiver can restore green status, never advance a level.
-- [Inception](inception.md) — operator guide to the L1 brainstorm/inception workflow: phases, API, and template variables.
+- [Inception](inception.md) — Inception (spek) sessions, what the retired inception API, watcher and brainstorm inception mode left behind, and the one-time retired-campaigns export.
 - [Planning intelligence](planning-intelligence.md) — how a large GitHub issue becomes an epic the architect lane decomposes into child beads, the human plan-review gate that withholds those children until approved, and stall-replan.
 - [Review swarm](review-swarm.md) — the five review perspectives, the verdict collector and its report contract, and the opt-in merge-gate integration and bounded auto-fix cycle for review findings.
 - [Swarm mode](swarm.md) — focusing the hive on one repository for a bounded window: Discord announcements, theming (`swarm:` config, `HIVE_SWARM_EVENT_NAME` / `HIVE_SWARM_CALL_TO_ARMS`), the `/api/leaderboard/swarm` endpoint and scoring.

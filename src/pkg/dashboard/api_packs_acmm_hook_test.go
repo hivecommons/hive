@@ -337,17 +337,17 @@ func newLevelHoldGuardDashboardServer(t *testing.T, withHold bool) (*Server, *le
 				return
 			}
 			_, _ = w.Write([]byte(`[
-				{"number":11,"title":"level hold","html_url":"https://github.com/testorg/testrepo/pull/11","labels":[{"name":"hold"}]},
+				{"number":11,"title":"level hold","html_url":"https://github.com/testorg/testrepo/pull/11","labels":[{"name":"ready-for-review"}]},
 				{"number":12,"title":"plain human hold","html_url":"https://github.com/testorg/testrepo/pull/12","labels":[{"name":"hold"}]},
 				{"number":13,"title":"paused","html_url":"https://github.com/testorg/testrepo/pull/13","labels":[{"name":"hive-pause/test"}]}
 			]`))
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/testorg/testrepo/issues/11/comments":
 			_, _ = w.Write([]byte(`[{"id":101,"body":"<!-- hive:level-hold {\"agent\":\"quality\"} -->\nheld","user":{"login":"hive[bot]"}}]`))
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/testorg/testrepo/issues/11/events":
-			_, _ = w.Write([]byte(`[{"event":"labeled","created_at":"2026-10-01T14:00:00Z","actor":{"login":"hive[bot]"},"label":{"name":"hold"}}]`))
+			_, _ = w.Write([]byte(`[{"event":"labeled","created_at":"2026-10-01T14:00:00Z","actor":{"login":"hive[bot]"},"label":{"name":"ready-for-review"}}]`))
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/testorg/testrepo/issues/12/comments":
 			_, _ = w.Write([]byte(`[{"id":102,"body":"human hold","user":{"login":"alice"}}]`))
-		case r.Method == http.MethodDelete && r.URL.Path == "/repos/testorg/testrepo/issues/11/labels/hold":
+		case r.Method == http.MethodDelete && r.URL.Path == "/repos/testorg/testrepo/issues/11/labels/ready-for-review":
 			calls.removes++
 			calls.removedNumber = 11
 			w.WriteHeader(http.StatusOK)

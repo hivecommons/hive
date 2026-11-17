@@ -54,7 +54,9 @@ var LLMVerdicts = []Verdict{
 }
 
 // LLMLabels is the label set the model may add.
-var LLMLabels = []string{LabelNeedsOwner, LabelHold, LabelTriageAccepted, LabelFlakyTest, LabelNeedsDecision}
+// It never includes `hold`: a hold is a person's to set (hivecommons/hive#18468);
+// the model asks for a human with decision-needed instead.
+var LLMLabels = []string{LabelNeedsOwner, LabelDecisionNeeded, LabelTriageAccepted, LabelFlakyTest, LabelNeedsDecision}
 
 // LLMRemovableLabels is the label set the model may remove (a hold it asks
 // to remove is still refused by ApplyRails). The park label is not in it:
@@ -413,7 +415,7 @@ const (
 // goes through ApplyRails. A runner or validation error falls back to the
 // rules' reversible default and is returned for the caller to note.
 func RunWithLLM(ctx context.Context, in Input, c LLMContext, runner TurnRunner) (Decision, LLMOutcome, error) {
-	rails := Rails{Held: hasLabel(in.Labels, LabelHold), PersonAuthored: in.PersonAuthored()}
+	rails := Rails{Held: HeldByLabels(in.Labels), PersonAuthored: in.PersonAuthored()}
 	rules := Decide(in)
 	if runner == nil || rails.Held || !IsReversibleDefault(rules) {
 		return ApplyRails(rules, rails), LLMNotConsulted, nil

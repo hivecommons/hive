@@ -50,6 +50,22 @@ type Approver interface {
 	NeedsApproval(ev Event) bool
 }
 
+// AllowlistApprover is the phase C2 policy (#18395): an owner's own manual
+// add and an email invite marked Trusted (authenticated, allowlisted
+// organizer) are scheduled at once; everything else waits for the owner.
+type AllowlistApprover struct{}
+
+// NeedsApproval implements Approver.
+func (AllowlistApprover) NeedsApproval(ev Event) bool {
+	switch ev.Source {
+	case SourceManual:
+		return !ev.InvitedByOwner
+	case SourceEmail:
+		return !ev.Trusted
+	}
+	return true
+}
+
 // OwnerApprover is the phase C1 policy: an owner's own manual add is
 // approved; everything else (manual adds by other users, invites) waits for
 // the owner. Phase C2 replaces it with the invite allowlist.
