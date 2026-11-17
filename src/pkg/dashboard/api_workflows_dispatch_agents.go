@@ -30,6 +30,13 @@ type WorkflowDispatchProfileStatus struct {
 	config.WorkflowDispatchResolution
 	// States are the model states handed to the profile.
 	States []string `json:"states,omitempty"`
+	// Candidates are the agents the profile could be pinned to, each with
+	// whether it may do what the profile needs here and why not
+	// (hivecommons/hive#18749): the picker marks the ones that do not.
+	Candidates []config.WorkflowDispatchAgentChoice `json:"candidates"`
+	// NotStarted are the hand-offs of this profile an agent declined or
+	// did not act on, whose item still waits.
+	NotStarted []WorkflowDispatchHandoff `json:"not_started,omitempty"`
 }
 
 // workflowDispatchNeed is what a dispatch target asks of its agent.
@@ -39,7 +46,7 @@ func workflowDispatchNeed(repo string, t workflowmodel.DispatchTarget) config.Wo
 
 // workflowDispatchProblemFix is the remedy every "nothing fills the profile"
 // message ends with.
-const workflowDispatchProblemFix = "Pick an agent for it on the repository's workflow row in Settings → Repos"
+const workflowDispatchProblemFix = "Pick an agent that may do the profile's work on the repository's workflow row in Settings → Repos, or raise an agent's mode"
 
 // WorkflowDispatchNoAgentError is the error of a hand-off whose profile
 // nothing fills: ErrWorkflowDispatchNoAgent with the resolver's reason and
@@ -71,7 +78,8 @@ func workflowDispatchProfiles(cfg *config.Config, lookup workflowProfileLookup) 
 		for sid, t := range p.Dispatch {
 			st := byProfile[t.Profile]
 			if st == nil {
-				st = &WorkflowDispatchProfileStatus{Repo: b.Repo, WorkflowDispatchResolution: cfg.ResolveWorkflowDispatch(t.Profile, workflowDispatchNeed(b.Repo, t), true)}
+				need := workflowDispatchNeed(b.Repo, t)
+				st = &WorkflowDispatchProfileStatus{Repo: b.Repo, WorkflowDispatchResolution: cfg.ResolveWorkflowDispatch(t.Profile, need, true), Candidates: cfg.WorkflowDispatchCandidates(need)}
 				st.Disabled = cfg.Workflow.Dispatch.Profile(t.Profile).Disabled
 				byProfile[t.Profile] = st
 				order = append(order, t.Profile)
@@ -152,7 +160,7 @@ func (s *Server) handleWorkflowDispatchProfilePut(w http.ResponseWriter, r *http
 		"changed":  changed,
 		"profile":  body.Profile,
 		"agent":    body.Agent,
-		"dispatch": workflowDispatchProfiles(cfg, s.workflowProfileLookup()),
+		"dispatch": s.workflowDispatchStatuses(),
 		"agents":   workflowDispatchAgentChoices(cfg),
 	})
 }
