@@ -11,6 +11,37 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v6.40.0)
+
+### Added
+
+- `auto_merge.dependency_bot_adopt.enabled` (default off; Settings → Features → Auto-merge, admin MCP `auto_merge.update` field `dependency_bot_adopt_enabled`) lets the hive take over a red dependency-bot PR that needs a code change instead of only handing it to a person. When a Renovate/Dependabot/mergeraptor PR whose bot is in `auto_merge.trusted_bot_authors` reaches the 4-hour red-CI hand-off and the review swarm's own verdict on that exact head is `changes_requested`, the dependency-bot sweep adds `adoption/supersede` (what the dashboard's Adopt decision adds) once per bot head, gated as write-back kind `contributor_adopt`, and posts no hand-off for that head; the existing adoption path copies the PR to `hive/adopt-<n>` and the fix loop repairs the copy. Held, human-merge-labelled and `human_merge_paths` PRs, heads without a `changes_requested` verdict, and hives with stage adoption off keep the person hand-off, as does a head whose label write failed. Before this, a person's Adopt click was the only step between such a PR and a merged fix.
+
+## 2026-11-16 (v6.39.0)
+
+### Added
+
+- Settings, Meeting attendee now shows Betty's email address with everyone's calendar emails and proof status, lets each user add, prove and remove their own calendar emails, lists mailed-in files waiting for approval, and lets the owner turn calendar invites and mail-in files on or off.
+- Mail Markdown, audio and image files to `hive@<your hive's host>` and they land in the Inbox as email items: from an allowlisted calendar email they are routable, shareable and transcribed like voice items; from anyone else they wait for the owner's Approve or Decline.
+- Gateway spend is priced from the gateway: OpenRouter's catalog prices, LiteLLM `/model/info`, or a new per-gateway `prices:` block (input, cached input, output per 1M tokens). Cached prompt tokens are billed at the cache-read rate. Gateway models with no price show as "price unknown" instead of $0 or a tier guess, and the usage gauge gets a spend row per gateway.
+- Every hub page (public pages, fleet views, hosted dashboard, contribute landing and error page) now shows the LF Projects legal footer linking to lfprojects.org/policies/.
+- Inbox recordings are transcribed automatically when you stop, with the hive's transcription provider (auto: the built-in whisper first), with the usual progress bar and time-left estimate. The transcriber reads the recording from the hive's own disk (new `AudioOpener`; no HTTP call to itself). Nothing runs until `inbox.transcription` is enabled with consent; from then on every dashboard recording counts as opted in whatever the mode, and recordings made while it was off are picked up by the transcription sweep.
+- Inbox ● Record can record a meeting tab's audio together with the microphone in Chrome and Edge on a computer: you pick the tab and tick "Share tab audio", the video track is dropped, the two are mixed in the browser (Web Audio) and both get a level meter. The consent notice then says remote participants are recorded too and must have been told. Where the browser cannot share tab audio (Safari, Firefox, phones) the option is hidden with the reason, and a share without an audio track warns and records the microphone only. The dashboard document's Permissions-Policy gains `display-capture=(self)`; `/terminal/` and `/api/` keep it closed.
+- Drop audio and video onto the Inbox (mp3, m4a, aac, wav, ogg, opus, webm, mp4, mov, checked by container signature): the file streams straight to the hive's disk under the recording size cap (`inbox.recording.max_bytes`, 200 MiB), plays back from disk through the same-origin stream, and is transcribed as soon as it is added when transcription is enabled (otherwise 🎧 Transcribe shows why it is unavailable); the machine transcript lands in the item's Knowledge fact. Originals are deleted after the recordings retention (5 days, `inbox.uploads.media_retention_days` overrides) while the transcript and item stay; video keeps only its audio track. Uploads now get a 20-minute read window instead of the dashboard's 30-second read timeout.
+- A weekly workflow compares hive's static model fallbacks and curated OpenRouter suggestions against OpenRouter's public catalog, plus npm release metadata, and keeps one tracking issue listing any drift. A unit test now fails on empty or duplicate static lists and on Go/JS copies that disagree.
+
+### Fixed
+
+- Dashboard: the "rejected hub-proxied request with unverified proxy proof" warning is now logged at most once a minute per reason and path (with a suppressed count) instead of once per request; the request is still rejected with 403 (#18377).
+- Self-upgrade no longer aborts with `cannot unmarshal string "dashboard" into Go value of type json.Number` when the hive container's probes use a named port; named ports are kept in the backfilled startupProbe, and a probe decode problem now skips the backfill with a warning instead of blocking the image upgrade (#18479).
+- Hub heartbeat collect no longer times out when the PVC scan behind `app_keys_held` stalls: the scan is bounded to 2s and falls back to the last completed result (#18484).
+
+## 2026-11-16 (v6.38.1)
+
+### Fixed
+
+- Review fixes are no longer pushed to the branch of a PR the hive adopted by supersession. The original keeps `stage/074-adopted-by-hive` while the hive works its copy on `hive/adopt-<n>`, and the fix gate used to read that label as an in-place adoption. On projectbluefin/chairlift#787, a Renovate PR superseded by #796, this sent a review-fix kick to Renovate's own branch. The fix gate now reads the stage store's adoption record: a superseded original is never pushed to, whoever opened it, and the refusal is audited as `review_fix_withheld` with exclusion reason `superseded-by-hive-copy`. In-place adoption still gets its fixes as before. When the copy merges, an original whose only commits after the copy are the hive's own is now closed instead of being left open as "moved on" (`hive:adopted-merged-diverged`); a commit by anyone else still leaves it open with the note.
+
 ## 2026-11-16 (v6.38.0)
 
 ### Added

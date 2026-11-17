@@ -1166,15 +1166,27 @@ type ContributeWSHub struct {
 	// no-PR idle completion (contribute_idle_completions.go): why the last
 	// relay dropped the issue. Explanation only — it never withholds an
 	// issue. Guarded by completedMu and persisted beside the no-PR streaks.
-	idleCompletions        map[string]idleCompletionRecord
-	idleCompletionsFile    string
-	standbyReconcileCancel context.CancelFunc
-	standbyReconcileDone   chan struct{}
-	standbyOutcomes        []standbyOutcomeRecord
-	activityFilePath       string
-	completedTasksFile     string
-	failedTasksFile        string
-	noPRStreaksFile        string
+	idleCompletions     map[string]idleCompletionRecord
+	idleCompletionsFile string
+	// authorReplyReleases records, per work item, the last question comment
+	// whose answer by the issue's author ended a no-PR completion cooldown
+	// early (contribute_author_reply.go), so one question earns at most one
+	// release, across restarts too. authorReplyChecked is the in-memory
+	// read memo that keeps the sweep to one comments read per issue per new
+	// activity. Both guarded by completedMu; only the first is persisted,
+	// beside the no-PR streaks. authorReplyComments is the comments-read
+	// seam; nil means deps.GHClient.IssueCommentsSince.
+	authorReplyReleases     map[string]authorReplyReleaseRecord
+	authorReplyReleasesFile string
+	authorReplyChecked      map[string]authorReplyCheck
+	authorReplyComments     func(ctx context.Context, repo string, number int, since time.Time) ([]ghpkg.IssueCommentEntry, error)
+	standbyReconcileCancel  context.CancelFunc
+	standbyReconcileDone    chan struct{}
+	standbyOutcomes         []standbyOutcomeRecord
+	activityFilePath        string
+	completedTasksFile      string
+	failedTasksFile         string
+	noPRStreaksFile         string
 	// taskLeasesFile is where the server-issued lease registry is persisted so it
 	// survives a hub restart (#5681). Overridable per hub for tests, like the
 	// sibling ledgers.
@@ -1376,6 +1388,8 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 		noPRStreaks:               make(map[string]noPRStreakRecord),
 		noWorkVerdicts:            make(map[string]noWorkVerdictRecord),
 		idleCompletions:           make(map[string]idleCompletionRecord),
+		authorReplyReleases:       make(map[string]authorReplyReleaseRecord),
+		authorReplyChecked:        make(map[string]authorReplyCheck),
 		standbyOutcomes:           []standbyOutcomeRecord{},
 		activityFilePath:          contributorStatePath(contributorsDir, activityFilePath, "activity.json"),
 		completedTasksFile:        contributorStatePath(contributorsDir, completedTasksFile, "completed-tasks.json"),
@@ -1408,6 +1422,7 @@ func NewContributeWSHub(logger *slog.Logger, server *Server) *ContributeWSHub {
 	hub.loadNoPRStreaks()
 	hub.loadNoWorkVerdicts()
 	hub.loadIdleCompletions()
+	hub.loadAuthorReplyReleases()
 	hub.loadStandbyOutcomes()
 	hub.loadActivity()
 	// #5681: restore the leases the PREVIOUS process issued before any relay can
@@ -4770,6 +4785,10 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 				h.markTaskCompletedVerdictKeySignal(completedTask.identityKey(), verifiedPR,
 					verdict, s.contributor.profile.GitHubUsername, verdictReason,
 					msg.CompletionSignal)
+				// A no-PR idle keeps when its task started, so the
+				// author-reply release can tell a question this task
+				// asked from an older one (contribute_author_reply.go).
+				h.stampIdleCompletionTaskStart(completedTask.identityKey(), runStart)
 				// #7871: a no_work_needed reason usually names WHAT settled
 				// the issue. Verify the citation against GitHub and, if it
 				// holds, record it in the claim ledger so the issue is
@@ -5436,6 +5455,7 @@ func (h *ContributeWSHub) blockedClaimsLoop(interval time.Duration) {
 
 func (h *ContributeWSHub) cleanupLoop() {
 	go h.blockedClaimsLoop(5 * time.Minute)
+	go h.authorReplyReleaseLoop(authorReplyReleaseInterval)
 	if h.doneCh != nil {
 		defer close(h.doneCh)
 	}

@@ -134,8 +134,8 @@ func TestConfigGitHubParityBatch6RoundTrip(t *testing.T) {
 	}
 }
 
-// The scorer-tuning good_first_issue.* keys and auto_merge.bot_takeover
-// round-trip through their section PUTs.
+// The scorer-tuning good_first_issue.* keys, auto_merge.bot_takeover and
+// auto_merge.dependency_bot_adopt round-trip through their section PUTs.
 func TestParityBatch6FeaturesRoundTrip(t *testing.T) {
 	s := covApiServer(t)
 	before := s.deps.Config.GoodFirstIssue
@@ -200,6 +200,36 @@ func TestParityBatch6FeaturesRoundTrip(t *testing.T) {
 	if am["bot_takeover_enabled"] != false {
 		t.Fatalf("auto-merge response bot_takeover_enabled = %v", am["bot_takeover_enabled"])
 	}
+	if am["dependency_bot_adopt_enabled"] != false {
+		t.Fatalf("auto-merge response dependency_bot_adopt_enabled = %v, want false by default", am["dependency_bot_adopt_enabled"])
+	}
+
+	// auto_merge.dependency_bot_adopt.enabled defaults off and round-trips.
+	if s.deps.Config.AutoMerge.DependencyBotAdopt.IsEnabled() {
+		t.Fatal("dependency-bot adoption should default off")
+	}
+	rec = doPut(s, "/api/config/auto-merge", map[string]any{"dependency_bot_adopt_enabled": true})
+	if rec.Code != http.StatusOK {
+		t.Fatalf("auto-merge PUT: %d — %s", rec.Code, rec.Body.String())
+	}
+	if !s.deps.Config.AutoMerge.DependencyBotAdopt.IsEnabled() {
+		t.Fatal("dependency_bot_adopt_enabled=true not applied")
+	}
+	am = nil
+	if err := json.Unmarshal(rec.Body.Bytes(), &am); err != nil {
+		t.Fatal(err)
+	}
+	if am["dependency_bot_adopt_enabled"] != true {
+		t.Fatalf("auto-merge response dependency_bot_adopt_enabled = %v", am["dependency_bot_adopt_enabled"])
+	}
+	// The flat toggles are independent: setting one leaves the other.
+	if s.deps.Config.AutoMerge.BotTakeover.IsEnabled() {
+		t.Fatal("dependency_bot_adopt_enabled PUT changed bot_takeover")
+	}
+	rec = doPut(s, "/api/config/auto-merge", map[string]any{"dependency_bot_adopt_enabled": false})
+	if rec.Code != http.StatusOK || s.deps.Config.AutoMerge.DependencyBotAdopt.IsEnabled() {
+		t.Fatalf("dependency_bot_adopt_enabled=false not applied: %d — %s", rec.Code, rec.Body.String())
+	}
 }
 
 // Every key this batch exposes renders with its YAML-key hint next to a
@@ -216,6 +246,7 @@ func TestParityBatch6SettingsRenderEveryKey(t *testing.T) {
 		{"good_first_issue.docs_url", `data-arg1="goodFirstIssueDocsUrl" data-arg-types="s,s,w"`},
 		{"good_first_issue.comment_template", `data-arg1="goodFirstIssueCommentTemplate" data-arg-types="s,s,v"`},
 		{"auto_merge.bot_takeover.enabled", `data-section="auto-merge" data-key="bot_takeover_enabled"`},
+		{"auto_merge.dependency_bot_adopt.enabled", `data-section="auto-merge" data-key="dependency_bot_adopt_enabled"`},
 	} {
 		if !strings.Contains(features, "yamlHint('"+c.yaml+"')") {
 			t.Errorf("%s has no YAML-key hint", c.yaml)

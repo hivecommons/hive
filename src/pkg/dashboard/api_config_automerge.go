@@ -176,6 +176,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		// BotTakeoverEnabled is auto_merge.bot_takeover.enabled; flat so the
 		// dialog's plain toggle can stage it.
 		BotTakeoverEnabled *bool `json:"bot_takeover_enabled"`
+		// DependencyBotAdoptEnabled is auto_merge.dependency_bot_adopt.enabled;
+		// flat for the same reason.
+		DependencyBotAdoptEnabled *bool `json:"dependency_bot_adopt_enabled"`
 		// RequireCurrentBaseDefault is auto_merge.require_current_base_default,
 		// the Features toggle "Merge only on current base" (#15335). Per-repo
 		// overrides travel on PUT /api/config/governor/repos.
@@ -436,6 +439,9 @@ func (s *Server) handleAutoMergePut(w http.ResponseWriter, r *http.Request) {
 		v := *body.BotTakeoverEnabled
 		cfg.AutoMerge.BotTakeover.Enabled = &v
 	}
+	if body.DependencyBotAdoptEnabled != nil {
+		cfg.AutoMerge.DependencyBotAdopt.Enabled = *body.DependencyBotAdoptEnabled
+	}
 	if body.RequireCurrentBaseDefault != nil {
 		v := *body.RequireCurrentBaseDefault
 		cfg.AutoMerge.RequireCurrentBaseDefault = &v
@@ -620,6 +626,7 @@ func autoMergeSectionResponse(cfg *config.Config) map[string]interface{} {
 		"trusted_bot_authors_set":      am.TrustedBotAuthors != nil,
 		"trusted_bot_skip_review":      am.TrustedBotSkipsReview(),
 		"bot_takeover_enabled":         am.BotTakeover.IsEnabled(),
+		"dependency_bot_adopt_enabled": am.DependencyBotAdopt.IsEnabled(),
 		"require_current_base_default": am.CurrentBaseDefaultEnabled(),
 		"skip_current_base":            emptyIfNilStrings(am.SkipCurrentBase),
 		"merge_train": map[string]interface{}{

@@ -1,1 +1,0 @@
-- Self-upgrade no longer aborts with `cannot unmarshal string "dashboard" into Go value of type json.Number` when the hive container's probes use a named port; named ports are kept in the backfilled startupProbe, and a probe decode problem now skips the backfill with a warning instead of blocking the image upgrade (#18479).
