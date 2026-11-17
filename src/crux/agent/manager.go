@@ -611,15 +611,13 @@ type Manager struct {
 	// claudeOperatorModeLogOnce guards the one-time "re-bridge and watchdog
 	// suspended" log for operator-token mode (claude_operator_token_mode.go).
 	claudeOperatorModeLogOnce sync.Once
-	// claudeSharedRefresh is the state of the hive's own refresh of the
-	// shared Claude login (claude_shared_refresh.go). Zero value is ready.
-	claudeSharedRefresh   claudeSharedRefreshState
-	uidMap                *UIDMap
-	sharedPool            SharedSessionPool
-	uidMapPath            string
-	appAuth               AppTokenMinter
-	appNotInstalledWarned sync.Map        // agent name -> struct{}: not-installed mint failure already logged
-	agentMint             AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
+	claudeSharedRefresh       claudeSharedRefreshState // hive's own refresh of the shared Claude login (claude_shared_refresh.go)
+	uidMap                    *UIDMap
+	sharedPool                SharedSessionPool
+	uidMapPath                string
+	appAuth                   AppTokenMinter
+	appNotInstalledWarned     sync.Map        // agent name -> struct{}: not-installed mint failure already logged
+	agentMint                 AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
 
 	// sharedPoolRenewInterval overrides the lease watcher tick (zero means
 	// defaultSharedPoolRenewInterval). Set before any watcher starts; it is
