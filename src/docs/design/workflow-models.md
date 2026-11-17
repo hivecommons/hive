@@ -758,6 +758,11 @@ requires for that state:
 | produces a pull request or a push | the item leaves the state (the pull request covers the issue); an item still in the state has none yet |
 | reviews | the item's `updated_at` moves past the hand-off (its comment) |
 
+A pending record whose item is no longer in that state on a pass that enumerated the
+repositories is settled as `started` (`scheduler.WorkflowHandoffLeftState`): the deliverable
+landed or a person moved the item on. If the item later returns to the state (a discarded
+draft) it is not handed off again on its own; that retry stays a person's choice.
+
 The hand-off is recorded `not_started`, with the reason, when:
 
 - the recorded agent may not do what the profile needs (a record written before the resolver

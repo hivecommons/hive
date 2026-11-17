@@ -278,7 +278,7 @@ func planWorkflowDispatchKicks(ctx context.Context, cfg *config.Config, ghClient
 	now := time.Now()
 	items := workflowDispatchItems(ctx, cfg, ghClient, actionable, logger)
 	reply := workflowDispatchReplyFor(ctx, ghClient)
-	seen := reviewWorkflowHandoffs(cfg, dlog, items, reply, turn, ledger, now, logger)
+	seen := reviewWorkflowHandoffs(cfg, dlog, items, reply, turn, ledger, actionable != nil, now, logger)
 	if actionable != nil {
 		rt.noteSeen(seen)
 	}

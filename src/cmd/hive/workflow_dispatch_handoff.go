@@ -116,24 +116,37 @@ func workflowHandoffSeenKey(ref, profile, state string) string {
 // item is still in the state it was handed off in, and notes which items
 // are in a dispatched state this pass (for the dashboard's not-started
 // list). A hand-off found not started frees the issue claim its agent took.
-func reviewWorkflowHandoffs(cfg *config.Config, dlog *scheduler.WorkflowDispatchLog, items []github.WorkflowDispatch, reply func(d github.WorkflowDispatch) (github.DispatchReply, bool, error), turn func(agent string) (workflowAgentTurn, bool), ledger *claims.Ledger, now time.Time, logger *slog.Logger) map[string]bool {
+// complete says items is the whole set of dispatched items (the cycle
+// enumerated the repositories): only then does an undecided hand-off whose
+// item is absent count as an item that left the state.
+func reviewWorkflowHandoffs(cfg *config.Config, dlog *scheduler.WorkflowDispatchLog, items []github.WorkflowDispatch, reply func(d github.WorkflowDispatch) (github.DispatchReply, bool, error), turn func(agent string) (workflowAgentTurn, bool), ledger *claims.Ledger, complete bool, now time.Time, logger *slog.Logger) map[string]bool {
 	seen := map[string]bool{}
-	undecided := map[string]bool{}
-	for _, e := range dlog.Entries() {
-		if !e.Settled() {
-			undecided[e.Ref] = true
-		}
+	for _, d := range items {
+		seen[workflowHandoffSeenKey(d.Ref(), d.Target.Profile, d.State)] = true
 	}
+	undecided := map[string]bool{}
+	var left []scheduler.WorkflowDispatchEntry
+	for _, e := range dlog.Entries() {
+		if e.Settled() {
+			continue
+		}
+		if complete && !seen[workflowHandoffSeenKey(e.Ref, e.Profile, e.State)] {
+			left = append(left, scheduler.WorkflowHandoffLeftState(e, now))
+			continue
+		}
+		undecided[e.Ref] = true
+	}
+	if err := dlog.RecordAll(left); err != nil && logger != nil {
+		logger.Warn("workflow dispatch: recording finished hand-offs failed", "error", err)
+	}
+	reviewed := map[string]bool{}
 	for _, d := range items {
 		ref := d.Ref()
 		sk := workflowHandoffSeenKey(ref, d.Target.Profile, d.State)
-		if seen[sk] {
+		if reviewed[sk] || !undecided[ref] {
 			continue
 		}
-		seen[sk] = true
-		if !undecided[ref] {
-			continue
-		}
+		reviewed[sk] = true
 		var trigger *github.DispatchReply
 		if d.Target.Reply != "" {
 			if reply == nil {

@@ -558,12 +558,28 @@ func (l *WorkflowDispatchLog) Get(key string) (WorkflowDispatchEntry, bool) {
 
 // Record stores e and persists the log atomically.
 func (l *WorkflowDispatchLog) Record(e WorkflowDispatchEntry) error {
-	if l == nil || e.Key == "" {
+	return l.RecordAll([]WorkflowDispatchEntry{e})
+}
+
+// RecordAll stores every entry that has a key and persists the log once,
+// atomically.
+func (l *WorkflowDispatchLog) RecordAll(entries []WorkflowDispatchEntry) error {
+	if l == nil {
 		return nil
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	l.entries[e.Key] = e
+	stored := 0
+	for _, e := range entries {
+		if e.Key == "" {
+			continue
+		}
+		l.entries[e.Key] = e
+		stored++
+	}
+	if stored == 0 {
+		return nil
+	}
 	list := make([]WorkflowDispatchEntry, 0, len(l.entries))
 	for _, v := range l.entries {
 		list = append(list, v)

@@ -24,6 +24,9 @@ import (
 //   - a reviewing profile: its comment moves the item's updated_at past the
 //     hand-off.
 //
+// An item that left the state settles its hand-off as started
+// (WorkflowHandoffLeftState).
+//
 // The hand-off is not started when the agent may not do what the profile
 // needs (a record from before the resolver checked that), when the agent
 // declined, when its turn ended and the deliverable has not shown up within
@@ -144,6 +147,18 @@ func ReviewWorkflowHandoff(e WorkflowDispatchEntry, ev WorkflowHandoffEvidence) 
 		return notStarted(fmt.Sprintf("%s did not finish %s within %s of the hand-off", e.Agent, deliverable, WorkflowHandoffCeiling), true)
 	}
 	return e, false
+}
+
+// WorkflowHandoffLeftState is the record of an undecided hand-off whose item
+// is no longer in the state it was handed off in: the deliverable landed (a
+// pull request covers the issue) or a person moved the item on. Either way
+// the hand-off is over, and if the item ever returns to the state (a
+// discarded draft) it is not handed off again on its own: that retry is a
+// person's choice.
+func WorkflowHandoffLeftState(e WorkflowDispatchEntry, now time.Time) WorkflowDispatchEntry {
+	e.Status, e.Reason = WorkflowHandoffStarted, ""
+	e.CheckedAt = &now
+	return e
 }
 
 // NextWorkflowDispatchEntry is the record a new hand-off of the same key

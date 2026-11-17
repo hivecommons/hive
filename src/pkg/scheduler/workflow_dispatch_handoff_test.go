@@ -276,8 +276,27 @@ func TestPlanWorkflowDispatchRetriesNotStartedOnce(t *testing.T) {
 		t.Fatalf("the recovered hand-off's record = %+v", next)
 	}
 	var nilLog *WorkflowDispatchLog
-	if _, ok := nilLog.Get(key); ok || len(nilLog.NotStarted()) != 0 {
+	if _, ok := nilLog.Get(key); ok || len(nilLog.NotStarted()) != 0 || nilLog.RecordAll([]WorkflowDispatchEntry{{Key: key}}) != nil {
 		t.Fatal("nil log misbehaved")
+	}
+
+	// An item that left the state settles its hand-off as started; several
+	// records are stored in one write, and one without a key is ignored.
+	l4, _ := OpenWorkflowDispatchLog(filepath.Join(t.TempDir(), "workflow-dispatch.json"))
+	left := WorkflowHandoffLeftState(pendingHandoff("quality", at), at.Add(time.Hour))
+	if left.Status != WorkflowHandoffStarted || left.CheckedAt == nil || !left.Settled() || left.Retryable() {
+		t.Fatalf("left the state = %+v", left)
+	}
+	other := left
+	other.Key, other.Ref = "cncf/techdocs#396|techdocs-drafter|accepted", "cncf/techdocs#396"
+	if err := l4.RecordAll([]WorkflowDispatchEntry{left, other, {Ref: "no key"}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := l4.RecordAll(nil); err != nil {
+		t.Fatal(err)
+	}
+	if got := l4.Entries(); len(got) != 2 || !l4.Done(left.Key) || !l4.Done(other.Key) {
+		t.Fatalf("batch record = %+v", got)
 	}
 }
 

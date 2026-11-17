@@ -97,13 +97,13 @@ func TestWorkflowDispatchDeclinedHandoffRetriesOnce(t *testing.T) {
 		t.Fatalf("claim = %+v %v", c, ok)
 	}
 	deliver(t, rt, dlog, kicks[0], at)
-	if again := buildWorkflowDispatchKicks(cfg, rt, dlog, items, nil, ledger, nil, at.Add(time.Minute), nil); len(again) != 0 {
+	if again := buildWorkflowDispatchKicks(cfg, rt, dlog, items, nil, ledger, nil, true, at.Add(time.Minute), nil); len(again) != 0 {
 		t.Fatalf("a pending hand-off was repeated: %+v", again)
 	}
 
 	// The agent stands down. The review marks the hand-off not started and
 	// frees the claim; the item is listed while it waits.
-	seen := reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(at, "STAND DOWN: my session may not push here"), ledger, at.Add(time.Minute), nil)
+	seen := reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(at, "STAND DOWN: my session may not push here"), ledger, true, at.Add(time.Minute), nil)
 	rt.noteSeen(seen)
 	e, _ := dlog.Get(key)
 	if e.Status != scheduler.WorkflowHandoffNotStarted || !strings.Contains(e.Reason, "ci-maintainer declined the hand-off: my session may not push here") || !e.Retryable() {
@@ -136,7 +136,7 @@ func TestWorkflowDispatchDeclinedHandoffRetriesOnce(t *testing.T) {
 
 	// The retry is not started either: no third hand-off, and the list
 	// says the item waits for the owner.
-	rt.noteSeen(reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(retryAt, "STAND DOWN: no"), ledger, retryAt.Add(time.Minute), nil))
+	rt.noteSeen(reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(retryAt, "STAND DOWN: no"), ledger, true, retryAt.Add(time.Minute), nil))
 	if e, _ = dlog.Get(key); e.Status != scheduler.WorkflowHandoffNotStarted || e.Retryable() || !dlog.Done(key) {
 		t.Fatalf("after the retry = %+v", e)
 	}
@@ -147,7 +147,7 @@ func TestWorkflowDispatchDeclinedHandoffRetriesOnce(t *testing.T) {
 		t.Fatalf("not-started list after the retry = %+v", listed)
 	}
 	// Once the item leaves the state the hand-off is no longer listed.
-	rt.noteSeen(reviewWorkflowHandoffs(cfg, dlog, nil, nil, nil, ledger, retryAt.Add(2*time.Hour), nil))
+	rt.noteSeen(reviewWorkflowHandoffs(cfg, dlog, nil, nil, nil, ledger, true, retryAt.Add(2*time.Hour), nil))
 	if listed = rt.notStarted(cfg, nil); len(listed) != 0 {
 		t.Fatalf("an item that left the state is still listed: %+v", listed)
 	}
@@ -184,7 +184,7 @@ func TestWorkflowDispatchRecoversStaleHandoff(t *testing.T) {
 	}
 
 	now := at.Add(6 * time.Hour)
-	rt.noteSeen(reviewWorkflowHandoffs(cfg, dlog, items, nil, nil, ledger, now, nil))
+	rt.noteSeen(reviewWorkflowHandoffs(cfg, dlog, items, nil, nil, ledger, true, now, nil))
 	e, _ := dlog.Get(key)
 	if e.Status != scheduler.WorkflowHandoffNotStarted || e.Reason != "scanner may not open pull requests in cncf/techdocs (mode ADVISORY)" || e.Attempts != 0 || !e.Retryable() {
 		t.Fatalf("recovered record = %+v", e)
@@ -309,16 +309,54 @@ func TestReviewWorkflowHandoffsReplyStarted(t *testing.T) {
 	}
 
 	// No reply lookup, or the reply is gone: nothing is decided.
-	reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(at, "STAND DOWN: no"), nil, at.Add(time.Minute), nil)
-	reviewWorkflowHandoffs(cfg, dlog, items, gone, declinedTurn(at, "STAND DOWN: no"), nil, at.Add(time.Minute), nil)
+	reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(at, "STAND DOWN: no"), nil, true, at.Add(time.Minute), nil)
+	reviewWorkflowHandoffs(cfg, dlog, items, gone, declinedTurn(at, "STAND DOWN: no"), nil, true, at.Add(time.Minute), nil)
 	if e, _ := dlog.Get(key); e.Status != scheduler.WorkflowHandoffPending {
 		t.Fatalf("decided without the reply: %+v", e)
 	}
-	seen := reviewWorkflowHandoffs(cfg, dlog, items, found, declinedTurn(at, "STAND DOWN: comments are not allowed"), nil, at.Add(time.Minute), nil)
+	seen := reviewWorkflowHandoffs(cfg, dlog, items, found, declinedTurn(at, "STAND DOWN: comments are not allowed"), nil, true, at.Add(time.Minute), nil)
 	if e, _ := dlog.Get(key); e.Status != scheduler.WorkflowHandoffNotStarted || !strings.Contains(e.Reason, "comments are not allowed") {
 		t.Fatalf("declined verifier = %+v", e)
 	}
 	if len(seen) != 1 || !seen[workflowHandoffSeenKey(v.Ref(), "techdocs-verifier", "drafting")] {
 		t.Fatalf("seen = %v", seen)
+	}
+}
+
+// An item that left the handed-off state settles its hand-off: the
+// deliverable landed, or a person moved the item on. If the item later
+// returns to the state (a discarded draft), it is not handed off again on
+// its own. A pass that did not enumerate the repositories decides nothing.
+func TestWorkflowDispatchItemThatLeftTheStateIsSettled(t *testing.T) {
+	cfg := handoffFleet()
+	dlog, _ := scheduler.OpenWorkflowDispatchLog("")
+	rt := handoffRuntime(dlog)
+	d := handoffDrafterItem()
+	key := scheduler.WorkflowDispatchKey(d, nil)
+	at := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	if err := dlog.Record(scheduler.NextWorkflowDispatchEntry(scheduler.WorkflowDispatchEntry{Key: key, Ref: d.Ref(), Profile: "techdocs-drafter", State: "accepted", Agent: "ci-maintainer", At: at}, nil)); err != nil {
+		t.Fatal(err)
+	}
+	reviewWorkflowHandoffs(cfg, dlog, nil, nil, nil, nil, false, at.Add(time.Hour), nil)
+	if e, _ := dlog.Get(key); e.Status != scheduler.WorkflowHandoffPending {
+		t.Fatalf("an incomplete pass decided the hand-off: %+v", e)
+	}
+	reviewWorkflowHandoffs(cfg, dlog, nil, nil, nil, nil, true, at.Add(time.Hour), nil)
+	e, _ := dlog.Get(key)
+	if e.Status != scheduler.WorkflowHandoffStarted || e.CheckedAt == nil || e.Reason != "" {
+		t.Fatalf("an item that left the state = %+v", e)
+	}
+	// The issue is back in the state hours later: the settled record
+	// stands, whatever the agent's last turn looked like.
+	items := []github.WorkflowDispatch{d}
+	reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(at.Add(2*time.Hour), "STAND DOWN: no"), nil, true, at.Add(3*time.Hour), nil)
+	if e, _ = dlog.Get(key); e.Status != scheduler.WorkflowHandoffStarted {
+		t.Fatalf("a settled hand-off was reviewed again: %+v", e)
+	}
+	if kicks := buildWorkflowDispatchKicks(cfg, rt, dlog, items, nil, handoffLedger(t), nil, at.Add(3*time.Hour), nil); len(kicks) != 0 {
+		t.Fatalf("an item that returned to the state was handed off again on its own: %+v", kicks)
+	}
+	if listed := rt.notStarted(cfg, nil); len(listed) != 0 {
+		t.Fatalf("a started hand-off is listed as not started: %+v", listed)
 	}
 }
