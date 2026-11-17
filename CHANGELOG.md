@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.312.0)
+
+### Added
+
+- **Evidence: change failures per model (#18720).** `GET /api/evidence/summary` adds `outcomes_by_author_model`, the same outcome and change-failure counts as `outcomes_by_author_kind` keyed by the PR author's canonical model (the ids the PRs-by-model card uses; `human` for a person's PR, `unknown` for an agent PR with no recorded model). The Evidence card's **Outcome by author kind** panel shows it as a table: model, `n`, merged, reverted and re-opened within 14 days, and the change-failure rate, so a model whose merged work keeps getting undone stands out from one in the same family whose work sticks. It reuses the existing revert and re-open detection; existing fields are unchanged.
+
+### Fixed
+
+- Dashboard Restart on a sandboxed (`runtime: job`) agent no longer launches an interactive tmux session on the hive pod; it refuses and the next kick starts a Job (#18826).
+
 ## 2026-11-17 (v5.311.0)
 
 ### Added
