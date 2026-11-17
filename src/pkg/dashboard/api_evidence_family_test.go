@@ -150,7 +150,7 @@ func TestBuildEvidenceSummaryAuthorModelBuckets(t *testing.T) {
 	win := evidenceWindow{Hours: 24, From: now.Add(-24 * time.Hour), To: now}
 	got := buildEvidenceSummaryWindow([]*evidence.Bundle{opusReverted, opusClean, opusOpen, sonnetReopened, gpt, human, noModel}, win, "", "")
 
-	type want struct{ n, merged, reverted, reopened, failures int }
+	type want struct{ n, merged, reverted, reopened int }
 	cases := map[string]want{
 		"claude-opus-5.5":   {n: 3, merged: 2, reverted: 1},
 		"claude-sonnet-5.5": {n: 1, merged: 1, reopened: 1},
@@ -214,9 +214,17 @@ func TestBuildEvidenceSummaryAuthorModelBuckets(t *testing.T) {
 		t.Errorf("model sums n = %d, want %d", byModel.N, got.N)
 	}
 
-	// Existing maps are unchanged by the new grouping.
-	if o := got.OutcomesByAuthorFamily["claude"]; o.N != 4 || o.Merged != 3 || o.ChangeFailures != 2 {
+	// Existing maps are unchanged by the new grouping. The family map keeps
+	// its own (pre-existing) bucketing: modelfamily.Family does not strip a
+	// provider prefix, so "anthropic/claude-opus-5-5" and
+	// "openai-codex/gpt-6.1-terra:high" land under "other" there while the
+	// model map folds them to their canonical ids. That is the existing
+	// family behaviour, not changed here.
+	if o := got.OutcomesByAuthorFamily["claude"]; o.N != 3 || o.Merged != 2 || o.Unknown != 1 || o.ChangeFailures != 2 {
 		t.Errorf("claude family = %+v", o)
+	}
+	if o := got.OutcomesByAuthorFamily["other"]; o.N != 2 || o.Merged != 2 || o.ChangeFailures != 0 {
+		t.Errorf("other family = %+v", o)
 	}
 	if o := got.Outcomes["agent"]; o.N != 6 || o.Merged != 5 || o.ChangeFailures != 2 {
 		t.Errorf("agent kind = %+v", o)
