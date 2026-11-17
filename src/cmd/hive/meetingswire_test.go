@@ -199,7 +199,7 @@ func TestWireMeetingsManager(t *testing.T) {
 }
 
 func TestWireMeetingsLive(t *testing.T) {
-	if wireMeetingsLive(nil, nil, nil, nil, nil, nil, nil) != nil {
+	if wireMeetingsLive(nil, nil, nil, nil, nil, nil, nil, nil) != nil {
 		t.Fatal("nil inputs must not build a live loop")
 	}
 	dir := t.TempDir()
@@ -213,7 +213,7 @@ func TestWireMeetingsLive(t *testing.T) {
 	}
 	defer mgr.Close()
 	cfg := &config.Config{Meetings: config.MeetingsConfig{Enabled: true}}
-	r := wireMeetingsLive(cfg, mgr, store, &knowledge.KnowledgeAPI{}, nil, nil, slog.New(slog.DiscardHandler))
+	r := wireMeetingsLive(cfg, mgr, store, &knowledge.KnowledgeAPI{}, nil, nil, slog.New(slog.DiscardHandler), nil)
 	if r == nil {
 		t.Fatal("want a live runner")
 	}

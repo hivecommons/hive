@@ -58,3 +58,47 @@ func TestRateLimiterPrune(t *testing.T) {
 		t.Fatalf("table not reset when full of busy keys: %d", len(l.m))
 	}
 }
+
+func TestByteBudget(t *testing.T) {
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	b := NewByteBudget(100, 24*time.Hour, func() time.Time { return now })
+	if !b.Reserve("a", 60) || b.Reserve("a", 50) || !b.Reserve("b", 100) {
+		t.Fatal("per-key budget")
+	}
+	b.Refund("a", 60)
+	b.Refund("a", 1000) // never below zero
+	b.Refund("unknown", 1)
+	if !b.Reserve("a", 100) || b.Reserve("a", 1) {
+		t.Fatal("refund")
+	}
+	now = now.Add(24 * time.Hour)
+	if !b.Reserve("a", 100) {
+		t.Fatal("the window did not roll over")
+	}
+	var off *ByteBudget
+	if !off.Reserve("a", 1<<40) || !NewByteBudget(0, time.Hour, nil).Reserve("a", 1<<40) {
+		t.Fatal("a disabled budget refused")
+	}
+	off.Refund("a", 1)
+	NewByteBudget(0, time.Hour, nil).Refund("a", 1)
+}
+
+func TestByteBudgetPrune(t *testing.T) {
+	now := time.Date(2026, 11, 16, 12, 0, 0, 0, time.UTC)
+	b := NewByteBudget(10, time.Hour, func() time.Time { return now })
+	for i := 0; i < limiterMaxKeys; i++ {
+		b.Reserve(fmt.Sprint(i), 1)
+	}
+	now = now.Add(2 * time.Hour)
+	b.Reserve("fresh", 1)
+	if len(b.m) != 1 {
+		t.Fatalf("expired keys kept: %d", len(b.m))
+	}
+	for i := 0; i < limiterMaxKeys-1; i++ {
+		b.Reserve(fmt.Sprint("k", i), 1)
+	}
+	b.Reserve("overflow", 1)
+	if len(b.m) != 1 {
+		t.Fatalf("full table not reset: %d", len(b.m))
+	}
+}

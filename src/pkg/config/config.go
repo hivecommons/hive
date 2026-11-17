@@ -310,6 +310,9 @@ type WorkflowConfig struct {
 	// Marketplace configures the spoke's view of the hub workflow catalogue
 	// (hivecommons/hive#17620 phase 7).
 	Marketplace MarketplaceConfig `yaml:"marketplace,omitempty" json:"marketplace,omitempty"`
+	// Dispatch maps a bound model's agent profiles to hive agents
+	// (workflow_dispatch.go).
+	Dispatch WorkflowDispatchConfig `yaml:"dispatch,omitempty" json:"dispatch,omitzero"`
 }
 
 // LabelGCEnabled is the effective workflow.label_gc (default true).
@@ -2400,6 +2403,17 @@ type AdvisoryConfig struct {
 	// post — the digest is never redirected to GitHub without being asked.
 	// Authentication reuses governor.work_source.linear.api_key.
 	LinearIssue string `yaml:"linear_issue,omitempty" json:"linear_issue,omitempty"`
+	// PerRepo opts a multi-repo hive into one Hive Advisory Report in EVERY
+	// monitored repo (#18448), not just project.primary_repo. Off by default:
+	// the one report in the primary repo covers all repos (#18568). When on,
+	// each other repo in project.repos gets exactly one report, found by its
+	// title plus the hive/advisory label or the hive marker before anything is
+	// created, so a restart never files a second one; a report a human closed
+	// stays closed. Turning it off stops updating those reports but leaves
+	// them in place. *bool so absent is distinct from an explicit false:
+	// absent falls back to AdvisoryPerRepoEnvVar, then off. Resolve it
+	// through PerRepoEnabled.
+	PerRepo *bool `yaml:"per_repo,omitempty" json:"per_repo,omitempty"`
 	// QueueHealth tunes the owner-advice queue-health rules (#9103): the
 	// thresholds at which the weekly advice tells the owner to reduce the
 	// blocked PR queue, clear the human gate, and so on. Every field is a
@@ -2454,6 +2468,27 @@ func (a AdvisoryConfig) ResolvedTarget() string {
 // PRAutoCloseEnabled resolves AdvisoryConfig.PRAutoClose with its default (on).
 func (a AdvisoryConfig) PRAutoCloseEnabled() bool {
 	return a.PRAutoClose == nil || *a.PRAutoClose
+}
+
+// AdvisoryPerRepoEnvVar overrides the default of governor.advisory.per_repo
+// when the key is absent from hive.yaml: a strconv.ParseBool value ("true",
+// "1", "false", ...). An explicit per_repo in hive.yaml or a dashboard edit
+// always wins.
+const AdvisoryPerRepoEnvVar = "HIVE_ADVISORY_PER_REPO"
+
+// PerRepoEnabled resolves AdvisoryConfig.PerRepo: an explicit value wins,
+// otherwise AdvisoryPerRepoEnvVar, otherwise off (one report, in the primary
+// repo). An unparseable env value is ignored and resolves to off.
+func (a AdvisoryConfig) PerRepoEnabled() bool {
+	if a.PerRepo != nil {
+		return *a.PerRepo
+	}
+	if v := strings.TrimSpace(os.Getenv(AdvisoryPerRepoEnvVar)); v != "" {
+		if on, err := strconv.ParseBool(v); err == nil {
+			return on
+		}
+	}
+	return false
 }
 
 // AutoCloseSupersededEnabled resolves GovernorConfig.AutoCloseSuperseded

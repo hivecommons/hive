@@ -2395,7 +2395,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 			// gate a direct `git push` is governed by, so the relay grants
 			// no privilege — it only changes which process performs the push.
 			pushBranch: b.agentMgr.AuthorizePushBranch,
-			logger:     b.logger,
+			// Sandbox spool topic requests (#18572) land in the agent's
+			// own bead store, read at call time.
+			topic:  sandboxTopicHandler(func() map[string]*beads.Store { return b.beadStores }),
+			logger: b.logger,
 		})
 		// The ACMM verdict is re-read on every (re)start; the dashboard's
 		// OnACMMLevelChanged hook restarts this generation when a runtime
@@ -3585,7 +3588,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				rt = b.agentMgr
 			}
 			researchPool := wireMeetingsResearch(b.cfg, rt, b.logger)
-			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger); lr != nil {
+			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger, b.dashSrv.HiveStatusBrief); lr != nil {
 				b.meetingsLive = lr
 				b.cleanup.push(lr.Close)
 				b.cleanup.push(routeResearch(researchPool, lr))

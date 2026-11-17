@@ -123,6 +123,42 @@ func LatestTranscript(root, agent string) (path string, ok bool) {
 	return cands[0].path, true
 }
 
+// Work branches. A sandboxed kick that opens a new PR pushes it from
+// hive/<slug>/<UTC yyyymmddhhmmss>. The governor's last-resort PR-owner
+// fallback reads the agent back out of that name (hivecommons/hive#18575):
+// splitting at the first "/" credits every sandbox PR to an agent named
+// "hive".
+const (
+	workBranchPrefix = "hive/"
+	// WorkBranchTimeLayout is the time format of a work branch's last segment.
+	WorkBranchTimeLayout = "20060102150405"
+)
+
+// WorkBranch is the branch a sandboxed kick for agent started at stamp
+// pushes a new PR from.
+func WorkBranch(agent, stamp string) string {
+	return workBranchPrefix + AgentSlug(agent) + "/" + stamp
+}
+
+// WorkBranchAgentSlug returns the agent slug from a branch WorkBranch named,
+// or ok=false for any other branch.
+func WorkBranchAgentSlug(branch string) (string, bool) {
+	rest, ok := strings.CutPrefix(strings.TrimSpace(branch), workBranchPrefix)
+	if !ok {
+		return "", false
+	}
+	slug, stamp, ok := strings.Cut(rest, "/")
+	if !ok || slug == "" || AgentSlug(slug) != slug || len(stamp) != len(WorkBranchTimeLayout) {
+		return "", false
+	}
+	for _, r := range stamp {
+		if r < '0' || r > '9' {
+			return "", false
+		}
+	}
+	return slug, true
+}
+
 // TranscriptExitCode reads the trailing "exit code: N" line a transcript
 // ends with. ok is false for transcripts written before the line existed or
 // otherwise lacking it.

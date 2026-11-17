@@ -22,9 +22,24 @@ on:
     types: [opened, synchronize, reopened, labeled, unlabeled]
 
 
+# Required context: never CANCEL a run on the head SHA (#18578). GitHub scores
+# every check-run of a required name on a commit, so one cancelled sibling
+# leaves the PR BLOCKED beside a green survivor and Tide jams on it (#11250).
+# The verdict does depend on labels (merge-method/merge), so label events keep
+# re-running the job in full, but:
+#   - the group carries the head SHA, so runs on different commits never meet;
+#   - labeled/unlabeled/reopened runs also carry github.run_id, so each runs
+#     in its own group: a burst of label flips can neither cancel the run in
+#     flight nor have its queued runs cancelled by the next one to queue
+#     (GitHub does that to pending runs even with cancel-in-progress false).
+#     Every run reads the label set from its own event payload, and the
+#     newest run carries the newest set.
+#   - runs on a superseded commit finish (5 min cap) rather than being
+#     cancelled; their verdict lands on that old SHA, which never merges.
+# .github/scripts/test-required-check-concurrency.py enforces this.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}${{ contains(fromJSON('["labeled","unlabeled","reopened"]'), github.event.action) && format('-{0}-{1}', github.event.action, github.run_id) || '' }}
+  cancel-in-progress: false
 
 permissions:
   contents: read

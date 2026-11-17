@@ -1,11 +1,15 @@
 package mailin
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
+	"mime"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -165,5 +169,81 @@ func TestHostSetRefresh(t *testing.T) {
 	s2.Refresh(ctx2, &flakyFetcher{hosts: []string{"b.example"}}, 0, slog.New(slog.DiscardHandler))
 	if !s2.Has("b.example") {
 		t.Fatal("initial load")
+	}
+}
+
+func TestHubClientDeliverLarge(t *testing.T) {
+	type hit struct {
+		header http.Header
+		d      wire.Delivery
+		files  [][]byte
+		err    error
+	}
+	hits := make(chan hit, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := hit{header: r.Header.Clone()}
+		mt, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		switch mt {
+		case wire.ContentTypeMultipart:
+			h.d, h.err = wire.ReadMultipart(r.Body, params["boundary"], func(_ int, _ wire.Attachment, body io.Reader) (string, error) {
+				b, err := io.ReadAll(body)
+				h.files = append(h.files, b)
+				return "", err
+			})
+		default:
+			h.err = json.NewDecoder(r.Body).Decode(&h.d)
+		}
+		hits <- h
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	h := &HubClient{BaseURL: srv.URL, TokenFile: tokenFile(t, "s3cret")}
+
+	dir := t.TempDir()
+	write := func(name string, data []byte) wire.Attachment {
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, data, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		sum := sha256.Sum256(data)
+		return wire.Attachment{Name: name, Kind: wire.AttachVideo, Size: len(data), SHA256: hex.EncodeToString(sum[:]), Path: p}
+	}
+	big := bytes.Repeat([]byte("v"), wire.InlineFilesBytes+1)
+	md := []byte("# note")
+	mdSum := sha256.Sum256(md)
+	d := wire.Delivery{ID: "0123456789abcdef0123456789abcdef", Kind: wire.KindFiles, Recipient: "hive@acme", Files: &wire.Files{
+		Title: "clip", Note: "hello", Attachments: []wire.Attachment{
+			write("clip.mp4", big),
+			{Name: "n.md", Kind: wire.AttachMarkdown, Size: len(md), SHA256: hex.EncodeToString(mdSum[:]), Data: md},
+		}}}
+	if err := h.Deliver(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	got := <-hits
+	if got.err != nil || got.d.ID != d.ID || got.d.Files.Note != "hello" || len(got.files) != 2 || !bytes.Equal(got.files[0], big) || !bytes.Equal(got.files[1], md) {
+		t.Fatalf("multipart %v %+v", got.err, got.d)
+	}
+	if got.header.Get(wire.HeaderDelivery) != d.ID || got.header.Get(wire.HeaderKind) != "files" || got.header.Get(wire.HeaderRecipient) != "hive@acme" {
+		t.Fatalf("routing headers %v", got.header)
+	}
+
+	// A small spooled file is inlined as JSON, which every spoke reads.
+	d.Files.Attachments = []wire.Attachment{write("small.mp4", []byte("tiny"))}
+	if err := h.Deliver(context.Background(), d); err != nil {
+		t.Fatal(err)
+	}
+	got = <-hits
+	if got.err != nil || !strings.HasPrefix(got.header.Get("Content-Type"), "application/json") || string(got.d.Files.Attachments[0].Data) != "tiny" {
+		t.Fatalf("inline %v %+v", got.err, got.d)
+	}
+
+	// A spooled file that vanished fails the delivery, temporarily.
+	d.Files.Attachments = []wire.Attachment{{Name: "gone.mp4", Size: 4, Path: filepath.Join(dir, "gone")}}
+	if err := h.Deliver(context.Background(), d); err == nil || errors.Is(err, ErrRejected) {
+		t.Fatalf("missing small file: %v", err)
+	}
+	d.Files.Attachments = []wire.Attachment{{Name: "gone.mp4", Size: wire.InlineFilesBytes + 1, Path: filepath.Join(dir, "gone")}}
+	if err := h.Deliver(context.Background(), d); err == nil || errors.Is(err, ErrRejected) {
+		t.Fatalf("missing large file: %v", err)
 	}
 }

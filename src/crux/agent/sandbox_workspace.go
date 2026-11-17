@@ -33,6 +33,9 @@ func (e *SandboxExecutor) prepareWorkspace(ctx context.Context, spec *SandboxKic
 		if spec.reviewOnly() {
 			return "", "", errors.New("sandbox workspace prep: a run-stage kick cannot carry review PR targets")
 		}
+		if spec.TargetPR > 0 {
+			return "", "", errors.New("sandbox workspace prep: a run-stage kick cannot push to an existing PR")
+		}
 		return e.prepareRunStageWorkspace(ctx, spec)
 	}
 	workspace := sandbox.WorkspaceDir(spec.WorkspaceDir, spec.Agent, e.now().UnixNano())
@@ -62,6 +65,16 @@ func (e *SandboxExecutor) prepareWorkspace(ctx context.Context, spec *SandboxKic
 		// (hivecommons/hive#18513). The returned base is that head, so the
 		// commits counted after the run are the reviewer's own.
 		head, err := e.prepareReviewCheckout(ctx, spec, workspace, authArgs)
+		if err != nil {
+			return "", "", err
+		}
+		return workspace, head, nil
+	}
+	if spec.TargetPR > 0 {
+		// A fix kick on an existing PR works on that PR's head branch
+		// (hivecommons/hive#18574); the returned base is its head, so the
+		// commits counted after the run are the kick's own.
+		head, err := e.prepareTargetPRCheckout(ctx, spec, workspace, authArgs)
 		if err != nil {
 			return "", "", err
 		}

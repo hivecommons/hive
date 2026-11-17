@@ -11,9 +11,9 @@ import (
 // Sandbox relays (#18512).
 //
 // A sandboxed kick runs in the project's own image, which knows nothing about
-// hive. The relays an agent needs to hand work back to hive (today only
-// hive-review, which writes a signed request into the kick's review spool,
-// #14986) are therefore supplied by hive itself on every launch rather than
+// hive. The relays an agent needs to hand work back to hive (hive-review,
+// hive-open-issue and hive-topic, each of which writes a signed request into
+// the kick's request spool, #14986, #18572, #18573) are therefore supplied by hive itself on every launch rather than
 // baked into the project image: the launcher puts hive's own copy in a
 // read-only directory at RelayMountPath and prepends that directory to PATH.
 // Hive's copy always wins over one the image carries, because the relay and
@@ -42,7 +42,7 @@ const (
 )
 
 // RelayNames are the sandbox-safe relays hive supplies to every sandbox.
-var RelayNames = []string{"hive-review"}
+var RelayNames = []string{"hive-review", "hive-open-issue", "hive-topic"}
 
 // RelayRequirements are the interpreters the relays need inside the image.
 var RelayRequirements = []string{"bash", "python3"}

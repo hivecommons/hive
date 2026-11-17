@@ -120,3 +120,77 @@ func TestSyncTopicClaimsFollowsRenameAndReleases(t *testing.T) {
 	syncTopicClaims(stores, nil, quietTopicLogger())
 	syncTopicClaims(nil, actionable, quietTopicLogger())
 }
+
+// A pending claim from a sandboxed kick (hivecommons/hive#18572) binds to the
+// PR opened from its branch, preferring an open PR, and stays pending until
+// one appears.
+func TestSyncTopicClaimsBindsPendingClaims(t *testing.T) {
+	stores := topicTestStores(t, "deps")
+	s := stores["deps"]
+	_, _ = s.ClaimTopicForBranch("deps", "bump", "acme/widget", "hive/deps-1")
+	_, _ = s.ClaimTopicForBranch("deps", "waiting", "acme/widget", "hive/deps-2")
+
+	actionable := &github.ActionableResult{PRs: github.PRResult{
+		Items:      []github.PullRequest{{Repo: "widget", Number: 21, HeadRef: "hive/deps-1", State: "open"}},
+		Attributed: []github.PullRequest{{Repo: "acme/widget", Number: 20, HeadRef: "hive/deps-1", State: "closed"}},
+	}}
+	syncTopicClaims(stores, actionable, quietTopicLogger())
+
+	open := map[string]beads.TopicClaim{}
+	for _, c := range s.OpenTopics() {
+		open[c.Key] = c
+	}
+	if open["bump"].PR != 21 {
+		t.Errorf("pending claim bound to %d, want the open PR 21", open["bump"].PR)
+	}
+	if open["waiting"].PR != 0 {
+		t.Errorf("claim with no PR on its branch was bound: %+v", open["waiting"])
+	}
+	bindPendingTopicClaim(s, "deps", nil, beads.TopicClaim{Key: "x"}, nil) // no branch: no-op
+}
+
+func TestSandboxTopicHandler(t *testing.T) {
+	stores := topicTestStores(t, "deps")
+	h := sandboxTopicHandler(func() map[string]*beads.Store { return stores })
+
+	if r := h(github.SandboxTopicCall{Agent: "ghost", Op: github.SandboxTopicOpList}); r.OK || r.Error == "" {
+		t.Errorf("unknown agent = %+v, want an error", r)
+	}
+	if r := sandboxTopicHandler(nil)(github.SandboxTopicCall{Agent: "deps", Op: github.SandboxTopicOpList}); r.OK {
+		t.Errorf("no stores = %+v, want an error", r)
+	}
+
+	r := h(github.SandboxTopicCall{Agent: "deps", Op: github.SandboxTopicOpClaim, Key: "bump", Repo: "acme/widget", Branch: "hive/deps-1", Pending: true})
+	if !r.OK || !r.Pending || r.Claim == nil || r.Claim.Actor != "deps" {
+		t.Fatalf("pending claim = %+v", r)
+	}
+	r = h(github.SandboxTopicCall{Agent: "deps", Op: github.SandboxTopicOpClaim, Key: "rel", Repo: "acme/widget", PR: 4})
+	if !r.OK || r.Pending || r.Claim.PR != 4 {
+		t.Fatalf("claim = %+v", r)
+	}
+	r = h(github.SandboxTopicCall{Agent: "deps", Op: github.SandboxTopicOpClaim, Key: "rel", Repo: "acme/widget", PR: 5})
+	if r.OK || !r.Refused || r.Claim == nil || r.Claim.PR != 4 {
+		t.Fatalf("second claim = %+v, want refused naming #4", r)
+	}
+	if r := h(github.SandboxTopicCall{Agent: "deps", Op: github.SandboxTopicOpClaim, Key: "x"}); r.OK || r.Refused {
+		t.Errorf("invalid claim = %+v, want a plain error", r)
+	}
+	if r := h(github.SandboxTopicCall{Agent: "deps", Op: github.SandboxTopicOpGet, Key: "bump"}); !r.OK || !r.Pending {
+		t.Errorf("get = %+v", r)
+	}
+	if r := h(github.SandboxTopicCall{Agent: "deps", Op: github.SandboxTopicOpGet, Key: "none"}); r.OK || !r.Refused {
+		t.Errorf("get missing = %+v, want refused", r)
+	}
+	if r := h(github.SandboxTopicCall{Agent: "deps", Op: github.SandboxTopicOpList}); !r.OK || len(r.Claims) != 2 {
+		t.Errorf("list = %+v", r)
+	}
+	if r := h(github.SandboxTopicCall{Agent: "deps", Op: github.SandboxTopicOpRelease, Key: "bump"}); !r.OK || !r.Released {
+		t.Errorf("release = %+v", r)
+	}
+	if r := h(github.SandboxTopicCall{Agent: "deps", Op: github.SandboxTopicOpRelease, Key: ""}); r.OK {
+		t.Errorf("release with no key = %+v", r)
+	}
+	if r := h(github.SandboxTopicCall{Agent: "deps", Op: "steal"}); r.OK {
+		t.Errorf("unknown op = %+v", r)
+	}
+}

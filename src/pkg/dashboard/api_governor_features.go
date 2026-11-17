@@ -692,6 +692,7 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 		PostRetryBackoffS *int                              `json:"post_retry_backoff_s"`
 		Target            *string                           `json:"target"`
 		LinearIssue       *string                           `json:"linear_issue"`
+		PerRepo           *bool                             `json:"per_repo"`
 		QueueHealth       *config.AdvisoryQueueHealthConfig `json:"queue_health"`
 	}
 	if err := decodeBody(r, &body); err != nil {
@@ -806,11 +807,20 @@ func (s *Server) handleGovernorAdvisoryPut(w http.ResponseWriter, r *http.Reques
 	if body.QueueHealth != nil {
 		cfg.Governor.Advisory.QueueHealth = *body.QueueHealth
 	}
+	// per_repo (#18448) decides whether every monitored repo gets its own
+	// advisory report, so its before/after goes into the audit detail.
+	auditKV := []string{"section", "advisory"}
+	if body.PerRepo != nil {
+		before := cfg.Governor.Advisory.PerRepoEnabled()
+		v := *body.PerRepo
+		cfg.Governor.Advisory.PerRepo = &v
+		auditKV = append(auditKV, "per_repo", fmt.Sprintf("%t->%t", before, v))
+	}
 
 	if err := s.saveConfig(); err != nil {
 		s.logger.Error("failed to persist config after advisory update", "error", err)
 	}
-	s.auditFromRequest(r, "config_governor_advisory", auditDetail("section", "advisory"), "")
+	s.auditFromRequest(r, "config_governor_advisory", auditDetail(auditKV...), "")
 	s.refreshAndPersist()
 	jsonResponse(w, advisorySectionResponse(cfg))
 }
@@ -838,6 +848,7 @@ func advisorySectionResponse(cfg *config.Config) map[string]interface{} {
 		},
 		"target":       a.ResolvedTarget(),
 		"linear_issue": a.LinearIssue,
+		"per_repo":     a.PerRepoEnabled(),
 	}
 }
 

@@ -84,7 +84,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).bindProwLgtm":                       {Class: NotificationClassAttention},
 	"github.(*Client).commentOnHumanFiledTwin":            {Class: NotificationClassAttention},
 	"github.(*Client).createIssue":                        {Class: NotificationClassAttention},
-	"github.(*Client).handleOneIssueRequest":              {Class: NotificationClassAttention},
+	"github.(*Client).handleOneIssueRequestFrom":          {Class: NotificationClassAttention},
 	"github.(*Client).parkClankerRequestedPR":             {Class: NotificationClassAttention},
 	"github.(*Client).redirectToExistingPR":               {Class: NotificationClassAttention},
 	"github.(*Client).relayScannerNote":                   {Class: NotificationClassAttention},

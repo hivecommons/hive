@@ -43,6 +43,17 @@ func TestConfigFromEnv(t *testing.T) {
 	if err != nil || c.Listen != ":25" || c.MaxRecipients != 3 || c.Limits.MaxFileBytes != 1000 || c.Limits.MaxFiles != 4 || c.HostsRefresh != 5*time.Second {
 		t.Fatalf("overrides %+v %v", c, err)
 	}
+	if c.HiveDailyBytes != DefaultHiveDailyBytes || c.MaxConcurrentData != DefaultMaxConcurrentData || c.DeliverTimeout != DefaultDeliverTimeout || c.SpoolDir != "" {
+		t.Fatalf("new defaults %+v", c)
+	}
+	c, err = ConfigFromEnv(envOf(map[string]string{
+		EnvHubURL: "http://hub.svc", EnvMaxFilesBytes: "2000", EnvMaxMarkdown: "300", EnvMaxBodyBytes: "400", EnvSpoolDir: "/var/spool/hive-mx",
+		EnvMaxConcurrent: "3", EnvHiveDailyBytes: "5000", EnvDeliverTimeoutS: "7", EnvMaxMessageBytes: "1234",
+	}))
+	if err != nil || c.Limits.MaxFilesBytes != 2000 || c.Limits.MaxMarkdownBytes != 300 || c.Limits.MaxBodyBytes != 400 || c.SpoolDir != "/var/spool/hive-mx" ||
+		c.MaxConcurrentData != 3 || c.HiveDailyBytes != 5000 || c.DeliverTimeout != 7*time.Second || c.MaxMessageBytes != 1234 {
+		t.Fatalf("size overrides %+v %v", c, err)
+	}
 	for name, env := range map[string]map[string]string{
 		"no hub":       {},
 		"bad scheme":   {EnvHubURL: "ftp://hub"},

@@ -48,6 +48,11 @@ bd topic release deps-bump
   terminal PR, and on each eval cycle's snapshot. The same eval-cycle pass
   updates `topic_branch` when the PR's head branch was renamed.
   `bd topic release` records `released`. `bd reset` closes open claims too.
+- A sandboxed kick has no `bd`: it runs `hive-topic` with the same arguments,
+  which hive applies to the agent's store through the sandbox request spool.
+  `hive-topic claim <key>` without `--pr` claims the PR hive opens from the
+  kick; the claim is pending until that PR exists. See
+  [sandbox-isolation.md](sandbox-isolation.md#issue-and-topic-requests-through-the-spool).
 - The kick shows an agent its open claims in a `📌 Topic claims` block, also
   available to kick templates as `${TOPIC_CLAIMS}` (which renders the usage
   lines even when the agent holds no claim). The FIX-BEFORE-NEW and hold-gated

@@ -7,9 +7,12 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/emersion/go-smtp"
@@ -130,7 +133,7 @@ func TestSMTPInviteDelivered(t *testing.T) {
 	if ok, _ := c.Extension("STARTTLS"); ok {
 		t.Fatal("STARTTLS offered without a certificate")
 	}
-	if ok, v := c.Extension("SIZE"); !ok || v != fmt.Sprint(DefaultMaxMessageBytes) {
+	if ok, v := c.Extension("SIZE"); !ok || v != fmt.Sprint(DefaultMaxMessageBytes) || v != "36700160" {
 		t.Fatalf("SIZE %v %q", ok, v)
 	}
 	err := send(t, c, "bounce@example.com", []string{"hive@ACME.hive.hivecommons.dev", "hive@acme.hive.hivecommons.dev", "hive@beta.hive.hivecommons.dev"}, inviteMail(t, "zoom.ics"))
@@ -260,7 +263,8 @@ func TestSMTPDataOutcomes(t *testing.T) {
 	}{
 		{"files", buildMail("ada@example.com", "notes", part{contentType: "text/markdown", disposition: "attachment; filename=n.md", body: mdData}), nil, 0, wire.KindFiles},
 		{"proof", buildMail("ada@example.com", "hive-proof-abcdefghijkl", part{contentType: "text/plain", body: []byte("x"), raw: true}), nil, 0, wire.KindProof},
-		{"nothing", buildMail("ada@example.com", "hi", part{contentType: "text/plain", body: []byte("x"), raw: true}), nil, 550, ""},
+		{"text only", buildMail("ada@example.com", "hi", part{contentType: "text/plain", body: []byte("x"), raw: true}), nil, 0, wire.KindFiles},
+		{"nothing", buildMail("ada@example.com", "hi", part{contentType: "application/zip", disposition: "attachment; filename=a.zip", body: []byte("PK\x03\x04")}), nil, 550, ""},
 		{"malformed", []byte("this is not a header\r\n\r\nx\r\n"), nil, 550, ""},
 		{"hub down", inviteMail(t, "google.ics"), func(wire.Delivery) error { return errors.New("connection refused") }, 451, ""},
 		{"hub refuses", inviteMail(t, "google.ics"), func(wire.Delivery) error { return fmt.Errorf("%w: 404", ErrRejected) }, 550, ""},
@@ -343,4 +347,109 @@ func TestNewServerDefaults(t *testing.T) {
 	// The error log adapter must not panic.
 	s.ErrorLog.Printf("x %d", 1)
 	s.ErrorLog.Println("y")
+}
+
+func (h *fakeHub) setErr(f func(wire.Delivery) error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.err = f
+}
+
+func TestSMTPLargeVideoSpooled(t *testing.T) {
+	spool := t.TempDir()
+	video := append(append([]byte(nil), mp4Data...), make([]byte, 3<<20)...)
+	var seen []string
+	hub := &fakeHub{err: func(d wire.Delivery) error {
+		a := d.Files.Attachments[0]
+		data, err := os.ReadFile(a.Path)
+		if err != nil || len(data) != len(video) {
+			t.Errorf("spooled attachment: %v %d", err, len(data))
+		}
+		entries, _ := os.ReadDir(spool)
+		for _, e := range entries {
+			seen = append(seen, e.Name())
+		}
+		return nil
+	}}
+	addr := startServer(t, Options{Hub: hub, SpoolDir: spool})
+	c := dial(t, addr)
+	msg := buildMail("ada@example.com", "clip",
+		part{contentType: "text/plain", body: []byte("from the beach"), raw: true},
+		part{contentType: "video/mp4", disposition: "attachment; filename=beach.mp4", body: video})
+	if err := send(t, c, "bounce@example.com", []string{"hive@" + testHost}, msg); err != nil {
+		t.Fatal(err)
+	}
+	d := hub.deliveries()[0]
+	if d.Files.Note != "from the beach" || d.Files.Attachments[0].Kind != wire.AttachVideo || d.Files.Attachments[0].Size != len(video) {
+		t.Fatalf("delivery %+v", d.Files)
+	}
+	// The message and its attachment were on disk during delivery and are
+	// gone after it.
+	hub.mu.Lock()
+	n := len(seen)
+	hub.mu.Unlock()
+	if n != 2 {
+		t.Fatalf("spool during delivery %v", seen)
+	}
+	if entries, _ := os.ReadDir(spool); len(entries) != 0 {
+		t.Fatalf("spool not cleaned: %d entries", len(entries))
+	}
+}
+
+func TestSMTPHiveBudget(t *testing.T) {
+	msg := inviteMail(t, "google.ics")
+	// Two messages fit a hive's budget, a third does not.
+	const fit = 5
+	budget := NewByteBudget(int64(len(msg))*fit/2, 24*time.Hour, nil)
+	hub := &fakeHub{}
+	addr := startServer(t, Options{Hub: hub, HiveBudget: budget})
+	c := dial(t, addr)
+	for i := 0; i < 2; i++ {
+		if err := send(t, c, "bounce@example.com", []string{"hive@" + testHost}, msg); err != nil {
+			t.Fatalf("message %d: %v", i, err)
+		}
+	}
+	if err := send(t, c, "bounce@example.com", []string{"hive@" + testHost}, msg); smtpCode(err) != 452 {
+		t.Fatalf("over budget: %v", err)
+	}
+	// Another hive has its own budget; the full one still answers 452.
+	if err := send(t, c, "bounce@example.com", []string{"hive@" + testHost, "hive@beta.hive.hivecommons.dev"}, msg); smtpCode(err) != 452 {
+		t.Fatalf("mixed: %v", err)
+	}
+	if n := len(hub.deliveries()); n != 3 {
+		t.Fatalf("%d deliveries, want 3", n)
+	}
+	// A failed delivery gives its bytes back: neither of these is charged.
+	hub.setErr(func(wire.Delivery) error { return errors.New("down") })
+	if err := send(t, c, "bounce@example.com", []string{"hive@beta.hive.hivecommons.dev"}, msg); smtpCode(err) != 451 {
+		t.Fatalf("hub down: %v", err)
+	}
+	hub.setErr(func(wire.Delivery) error { return fmt.Errorf("%w: 404", ErrRejected) })
+	if err := send(t, c, "bounce@example.com", []string{"hive@beta.hive.hivecommons.dev"}, msg); smtpCode(err) != 550 {
+		t.Fatalf("refused: %v", err)
+	}
+	if !budget.Reserve("beta.hive.hivecommons.dev", int64(len(msg))) {
+		t.Fatal("failed deliveries were charged to the budget")
+	}
+}
+
+func TestSMTPBusyAndSpoolErrors(t *testing.T) {
+	b := &backend{o: Options{Logger: slog.New(slog.DiscardHandler)}, data: make(chan struct{}, 1)}
+	s := &session{o: b.o, data: b.data}
+	b.data <- struct{}{}
+	if err := s.Data(strings.NewReader("x")); !errors.Is(err, errBusy) {
+		t.Fatalf("busy: %v", err)
+	}
+	<-b.data
+	s.o.SpoolDir = filepath.Join(t.TempDir(), "missing")
+	if err := s.Data(strings.NewReader("x")); !errors.Is(err, errSpool) {
+		t.Fatalf("no spool: %v", err)
+	}
+	s.o.SpoolDir = t.TempDir()
+	if err := s.Data(iotest.ErrReader(errors.New("conn reset"))); err == nil || errors.Is(err, errSpool) {
+		t.Fatalf("read error: %v", err)
+	}
+	if entries, _ := os.ReadDir(s.o.SpoolDir); len(entries) != 0 {
+		t.Fatal("a failed read left its spool file")
+	}
 }

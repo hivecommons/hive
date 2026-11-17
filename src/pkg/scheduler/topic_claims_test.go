@@ -133,3 +133,17 @@ func TestTopicClaimHelpers(t *testing.T) {
 		t.Errorf("seam repeated a placed block: %q", got)
 	}
 }
+
+// A pending claim from a sandboxed kick (hivecommons/hive#18572) has no PR
+// yet; the kick says so instead of printing #0, and teaches hive-topic.
+func TestTopicClaimsSectionShowsPendingClaim(t *testing.T) {
+	got := topicClaimsSection([]TopicClaim{{Agent: "deps", Key: "bump", Repo: "acme/widget", Branch: "hive/deps-1"}})
+	for _, want := range []string{"bump → acme/widget, PR not opened yet (pending on branch hive/deps-1)", "hive-topic"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("section missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "#0") {
+		t.Errorf("pending claim printed as #0:\n%s", got)
+	}
+}

@@ -653,6 +653,12 @@ governor:
   #     cron: "30 8 * * mon-fri"          # five-field cron expression
   #     tz: UTC
 
+  # Advisory digest (see docs/advisory.md). A multi-repo hive keeps one
+  # Hive Advisory Report in project.primary_repo that covers every repo.
+  # advisory:
+  #   per_repo: false                    # true: each monitored repo also gets its own
+  #                                      # report (HIVE_ADVISORY_PER_REPO sets the default)
+
   # Trajectory review lane — periodic second-model review of running agents.
   # Enabled by default; it no-ops until endpoint+model resolve here or via litellm.
   trajectory:
@@ -1337,3 +1343,11 @@ data:
 # workflow:
 #   enabled: false           # false (default): bindings are columns only
 #   label_gc: true           # delete labels a previous binding provisioned once nothing wears them
+#   dispatch:                # hand model states to agents (docs/design/workflow-models.md#agent-dispatch)
+#     enabled: true          # default; also needs enabled: true above
+#     profiles:
+#       techdocs-drafter:
+#         agent: writer      # default: an agent named after the profile, else role writer, docs, feature
+#         prompt_template: ""  # default: the built-in dispatch prompt
+#       techdocs-verifier:
+#         disabled: false    # true: never dispatch automatically (Send to … still works)

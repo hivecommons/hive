@@ -69,7 +69,7 @@ func TestRelayJobSpecOnVanillaCluster(t *testing.T) {
 		`"name":"hive-relays"`,
 		`"image":"` + testHiveDigest + `"`, // the running digest, not the :stable tag
 		`"imagePullPolicy":"IfNotPresent"`,
-		`"command":["cp","/usr/local/bin/hive-review","/opt/hive/relays/"]`,
+		`"command":["cp","/usr/local/bin/hive-review","/usr/local/bin/hive-open-issue","/usr/local/bin/hive-topic","/opt/hive/relays/"]`,
 		`"runAsNonRoot":true`,
 		`"readOnlyRootFilesystem":true`,
 		`"allowPrivilegeEscalation":false`,

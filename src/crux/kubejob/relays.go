@@ -117,7 +117,7 @@ func (l *Launcher) resolveRelays(ctx context.Context, ns string) (*relayPlan, er
 	}
 	pod, err := l.selfPod(ctx, ns)
 	if err != nil {
-		return nil, fmt.Errorf("kubejob: reading hive's own pod to supply the sandbox relays (hive-review): %w; set job.relay_image and job.relay_run_as_user, or job.relay_image: %s to skip the relays", err, RelayImageNone)
+		return nil, fmt.Errorf("kubejob: reading hive's own pod to supply the sandbox relays (%s): %w; set job.relay_image and job.relay_run_as_user, or job.relay_image: %s to skip the relays", strings.Join(sandbox.RelayNames, ", "), err, RelayImageNone)
 	}
 	if plan.image == "" {
 		if plan.image = pod.hiveImage(); plan.image == "" {
