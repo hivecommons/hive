@@ -145,7 +145,10 @@ type Suppressed struct {
 
 // RepoStatus is one repo's block in the status payload.
 type RepoStatus struct {
-	FirstSeen    time.Time `json:"first_seen,omitempty"`
+	FirstSeen time.Time `json:"first_seen,omitempty"`
+	// Writable is false only while a 403/404 has had no 2xx after it; a
+	// repo that never refused a write was writable all along and carries
+	// no WritableAt.
 	Writable     bool      `json:"writable"`
 	WritableAt   time.Time `json:"writable_at,omitempty"`
 	Mode         RepoMode  `json:"mode,omitempty"`
@@ -188,7 +191,8 @@ type repoRecord struct {
 	FirstSeen  time.Time `json:"first_seen"`
 	WritableAt time.Time `json:"writable_at,omitempty"`
 	// LastForbidden is the last 403/404 a write to this repo got, so the
-	// first 2xx after it marks the moment the App gained write.
+	// first 2xx after it marks the moment the App gained write. A repo that
+	// never got one was writable all along and keeps WritableAt zero.
 	LastForbidden time.Time `json:"last_forbidden,omitempty"`
 	// PreExisting is the set of item numbers the backfill guard refused.
 	PreExisting map[int]bool `json:"pre_existing,omitempty"`
@@ -269,7 +273,30 @@ func New(cfg Config, deps Deps, path string) *Gate {
 		g.deps.Logger = slog.Default()
 	}
 	g.load()
+	g.repairBackfillCutoffs()
 	return g
+}
+
+// repairBackfillCutoffs clears a writable_at that NoteWriteOutcome stamped
+// on a 2xx with no 403/404 before it, before it required one: that repo was
+// writable all along, so first_seen alone is the cut-off. The items the
+// wrong cut-off refused are dropped too; the guard records again any that
+// really predate first_seen the next time it refuses one.
+func (g *Gate) repairBackfillCutoffs() {
+	repaired := false
+	for k, rec := range g.repos {
+		if rec == nil || rec.WritableAt.IsZero() || !rec.LastForbidden.IsZero() {
+			continue
+		}
+		g.deps.Logger.Info(fmt.Sprintf("writeback: cleared writable_at %s on %s (no 403/404 before it); backfill cut-off is first_seen %s",
+			rec.WritableAt.Format(time.RFC3339), k, rec.FirstSeen.Format(time.RFC3339)))
+		rec.WritableAt = time.Time{}
+		rec.PreExisting = nil
+		repaired = true
+	}
+	if repaired {
+		g.saveLocked()
+	}
 }
 
 // SetConfig swaps the policy (dashboard edits take effect on the next
@@ -384,7 +411,10 @@ func (g *Gate) ObserveRepo(repo string) {
 // NoteWriteOutcome records the result of a real GitHub write to repo so the
 // gate can detect the App gaining write: a 403/404 marks the repo as not
 // writable; the first 2xx after one marks WritableAt now, which the
-// backfill guard uses as the cut-off for items created before it.
+// backfill guard uses as the cut-off for items created before it. A 2xx
+// with no 403/404 before it is not a gain: only a few writers report here,
+// so the first one to succeed can come days after the hive started
+// labelling the repo, and stamping it froze every older item.
 func (g *Gate) NoteWriteOutcome(repo string, statusCode int) {
 	if g == nil || strings.TrimSpace(repo) == "" {
 		return
@@ -398,7 +428,7 @@ func (g *Gate) NoteWriteOutcome(repo string, statusCode int) {
 		rec.LastForbidden = now
 		g.saveLocked()
 	case statusCode >= 200 && statusCode < 300:
-		if rec.WritableAt.IsZero() {
+		if rec.WritableAt.IsZero() && !rec.LastForbidden.IsZero() {
 			rec.WritableAt = now
 			g.saveLocked()
 		}
@@ -763,7 +793,7 @@ func (g *Gate) Snapshot() Status {
 		if g.deps.LevelFor != nil {
 			level = g.deps.LevelFor(k)
 		}
-		rs := RepoStatus{FirstSeen: rec.FirstSeen, Writable: !rec.WritableAt.IsZero(), WritableAt: rec.WritableAt, Mode: cfg.RepoModeFor(k), Level: level, Suppressed24: per[k], PreExisting: len(rec.PreExisting)}
+		rs := RepoStatus{FirstSeen: rec.FirstSeen, Writable: !rec.WritableAt.IsZero() || rec.LastForbidden.IsZero(), WritableAt: rec.WritableAt, Mode: cfg.RepoModeFor(k), Level: level, Suppressed24: per[k], PreExisting: len(rec.PreExisting)}
 		st.Repos[k] = rs
 		if rs.PreExisting > 0 && !cfg.BackfillEnabled() {
 			st.Banners = append(st.Banners, Banner{Repo: k, WritableAt: rec.WritableAt, Untouched: rs.PreExisting,
