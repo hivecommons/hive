@@ -143,6 +143,12 @@ func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.
 		// allowed every bot starts able to speak; the meeting's voice toggle
 		// still decides whether hive does.
 		VoiceOnAddress: cfg.Meetings.VoiceOnAddressEnabled(),
+		// The persona's fixed spoken lines (short intro, acknowledgements,
+		// goodbye) are pre-rendered when a meeting that can speak goes live,
+		// so her first words do not wait for speech synthesis.
+		FixedSpokenLines: func(meetings.Meeting) []string {
+			return betty.FixedSpokenLines(cfg.Meetings.Persona.Resolve())
+		},
 	})
 	if err != nil {
 		if logger != nil {
@@ -277,7 +283,9 @@ func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPe
 		retrievers = append(retrievers, betty.HiveStatusRetriever{Brief: hiveStatus.HiveStatusBrief, Item: hiveStatus.HiveItemBrief})
 	}
 	if kapi != nil {
-		stores := betty.FileStores(kapi.FileStores)
+		// Vaults and ready git sources: the hive's own docs are a git
+		// source, which FileStores alone does not list.
+		stores := betty.KnowledgeStores(kapi)
 		retrievers = append(retrievers, betty.KnowledgeRetriever{Stores: stores})
 		if cfg.Knowledge.CodeMaps.IsEnabled() {
 			retrievers = append(retrievers, betty.CodeMapRetriever{Stores: stores})
@@ -287,9 +295,17 @@ func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPe
 		retrievers = append(retrievers, betty.BeadRetriever{Stores: beadStores})
 	}
 	client := &http.Client{}
-	if persona.SearxngURL != "" {
-		retrievers = append(retrievers, betty.WebRetriever{BaseURL: persona.SearxngURL, Client: client})
-	}
+	// Web answers (opt-in through searxng_url): SearXNG and the keyless
+	// direct sources, behind a guard that keeps questions about this hive,
+	// its org and its repos off the public web. The client carries no
+	// credentials.
+	private := append([]string{cfg.Project.Org, cfg.Project.Name, cfg.Project.PrimaryRepo}, cfg.Project.Repos...)
+	retrievers = append(retrievers, betty.PublicWebRetrievers(betty.PublicWeb{
+		SearxngURL: persona.SearxngURL, Client: client, Logger: logger,
+		Guard: betty.NewWebGuard(persona.Name, persona.Aliases, private),
+	})...)
+	// Product questions are answered from the docs brief (betty/product.go).
+	retrievers = betty.WithProductBrief(retrievers)
 	// A model gateway with a private CA (its ca_bundle) gets its own client;
 	// one that cannot be built leaves the persona model-less, never
 	// unverified.

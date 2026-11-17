@@ -459,3 +459,52 @@ func TestWarmStartsStoppedAgents(t *testing.T) {
 		t.Fatalf("a running agent must not be started again: %v", f.started)
 	}
 }
+
+// Two questions asked close together while the agents are still booting
+// go to different agents: a kick waiting for its agent to settle counts as
+// that agent's load (both used to land on research-1, the runtime not
+// knowing the first yet), and Busy says when every agent has work.
+func TestColdDispatchesSpreadAndBusy(t *testing.T) {
+	f := newFake("research-1", "research-2")
+	p, now := syncPool(t, f, 2)
+	started := *now
+	f.states["research-1"].StartedAt = &started
+	f.states["research-2"].StartedAt = &started
+	var waiting []func()
+	p.async = func(fn func()) { waiting = append(waiting, fn) }
+	if p.Busy() {
+		t.Fatal("idle agents are not busy")
+	}
+	if _, err := p.Dispatch(context.Background(), "q1", nil); err != nil {
+		t.Fatal(err)
+	}
+	if p.Busy() {
+		t.Fatal("research-2 is still free")
+	}
+	if _, err := p.Dispatch(context.Background(), "q2", nil); err != nil {
+		t.Fatal(err)
+	}
+	if !p.Busy() {
+		t.Fatal("both agents have a question waiting")
+	}
+	for _, fn := range waiting {
+		fn()
+	}
+	if len(f.queued) != 2 || !strings.HasPrefix(f.queued[0], "research-1:") || !strings.HasPrefix(f.queued[1], "research-2:") {
+		t.Fatalf("queued %v, want one question per agent", f.queued)
+	}
+	// Queued now: the load is the runtime's, counted once, not also as
+	// settling.
+	if !p.Busy() || p.load("research-1") != 1 || p.load("research-2") != 1 {
+		t.Fatalf("load %d %d, want 1 each", p.load("research-1"), p.load("research-2"))
+	}
+	f.depth["research-2"] = 0
+	if p.Busy() {
+		t.Fatal("research-2 finished its question")
+	}
+	// A pool with no available agent is not busy: Dispatch fails there.
+	f.states["research-1"].Paused, f.states["research-2"].Paused = true, true
+	if p.Busy() {
+		t.Fatal("no available agent is not busy")
+	}
+}

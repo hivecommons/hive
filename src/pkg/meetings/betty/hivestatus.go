@@ -19,6 +19,11 @@ const HiveStatusSource = "hive live status"
 // ordinary snippet because it carries every count at once.
 const maxHiveStatusRunes = 2000
 
+// maxHiveItemRunes bounds the snippet for one issue or PR looked up by
+// number (a summary of its description, state, review, CI and what blocks
+// it), so the spoken answer stays under about 12 seconds.
+const maxHiveItemRunes = 900
+
 // HiveStatusRetriever returns the hive's live state for a question about
 // the hive's own work: open issues and PRs, actionable, held and blocked
 // counts, agents, merges and what is in progress.
@@ -41,7 +46,7 @@ func (h HiveStatusRetriever) Retrieve(ctx context.Context, query string, _ []str
 	var out []Snippet
 	if n := itemNumber(NormalizeDomain(query)); n > 0 && h.Item != nil {
 		if text, ok := h.Item(ctx, n); ok {
-			out = append(out, Snippet{Source: HiveStatusSource, Title: "Open item " + strconv.Itoa(n), Text: clip(text, maxHiveStatusRunes)})
+			out = append(out, Snippet{Source: HiveStatusSource, Title: "Open item " + strconv.Itoa(n), Text: clip(text, maxHiveItemRunes)})
 		} else {
 			out = append(out, Snippet{Source: HiveStatusSource, Title: "Open item " + strconv.Itoa(n),
 				Text: "No open issue or PR numbered " + strconv.Itoa(n) + " in the hive's repos right now (it may be closed or merged, or in a repo the hive does not track)."})

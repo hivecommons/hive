@@ -98,7 +98,7 @@ func TestConsentSpokenWhenChatFails(t *testing.T) {
 		t.Fatalf("posts %q leaves %q", posts, leaves)
 	}
 	// Once the notice is delivered, replies go through.
-	if err := m.Say(context.Background(), mt.ID, "hello"); err != nil {
+	if _, err := m.Say(context.Background(), mt.ID, "hello"); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -6307,6 +6307,12 @@
     .meetings-line { margin: 0 0 var(--sp-1); white-space: pre-wrap; }
     .meetings-line.is-partial { opacity: 0.6; font-style: italic; }
     .meetings-who { font-weight: 600; margin-right: var(--sp-1); }
+    .meetings-line.is-reply { padding: var(--sp-1) var(--sp-2); border-left: 2px solid var(--accent); border-radius: var(--r); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    .meetings-line.is-reply.is-undelivered { border-left-color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
+    .meetings-reply-meta { margin-right: var(--sp-1); font-size: var(--fs-xs); color: var(--muted); }
+    .meetings-reach.is-unreachable { margin: 0 0 var(--sp-2); padding: var(--sp-2); border: 1px solid var(--red); border-radius: var(--r); font-size: var(--fs-sm); color: var(--red); }
+    .inbox-assistant-line { display: block; padding-left: var(--sp-2); border-left: 2px solid var(--accent); color: var(--accent); }
+    .inbox-assistant-line.is-undelivered { border-left-color: var(--red); color: var(--red); }
     .meetings-side { display: flex; flex-direction: column; gap: var(--sp-3); }
     .meetings-side ul { margin: 0; padding-left: var(--sp-4); font-size: var(--fs-sm); }
     .meetings-research { display: flex; flex-direction: column; gap: var(--sp-2); font-size: var(--fs-sm); }
@@ -48488,7 +48494,7 @@ function burnAreaChart() {
       if (it.source === 'upload' && !inboxItemHasAudio(it) && !c.transcript) return '<div class="inbox-transcript"><div class="muted-xs"><strong>Extracted text</strong></div><pre class="inbox-transcript-text">' + escapeHtml(c.markdown || '') + '</pre></div>';
       let html = '<div class="inbox-transcript">';
       if (c.transcript && c.transcript_label) html += '<div class="muted-xs"><strong>' + escapeHtml(c.transcript_label) + '</strong></div>';
-      if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
+      if (c.transcript) html += '<pre class="inbox-transcript-text">' + (it.source === 'meeting' ? meetingsTranscriptTextHtml(c.transcript) : escapeHtml(c.transcript)) + '</pre>';
       else html += '<div class="muted-xs">No transcript yet' + (c.pending ? (it.source === 'plaud' ? ': Plaud has not transcribed this recording.' : ': the meeting platform has not produced a transcript for this recording.') + (it.transcribable || it.transcribe_unavailable ? ' Hive can transcribe this: see 🎧 Transcribe on this item.' : '') : '.') + '</div>';
       if (c.highlights) html += '<div class="muted-xs inbox-highlights"><strong>Highlights</strong> (flagged on the device)<pre class="inbox-transcript-text">' + escapeHtml(c.highlights) + '</pre></div>';
       return html + '</div>';
@@ -51307,6 +51313,7 @@ function burnAreaChart() {
         return 'The Discord bot cannot join that voice channel. In the server, give the bot\'s role View Channel, Connect and Speak on the channel, then try again.';
       }
       if (m.state === 'blocked') return 'The meeting refused a guest bot.';
+      if (/^unreachable$/.test(raw)) return 'Left: none of its replies could be delivered to the meeting, in chat or by voice.';
       if (/consent_undelivered/.test(raw)) return 'Left: the consent notice could not be delivered' + (m.consent_error ? ' (' + m.consent_error + ')' : '') + '.';
       if (/lobby_timeout/.test(raw)) return 'Nobody admitted hive from the lobby in time.';
       if (/platform_unavailable/.test(raw)) return 'This meeting platform is not available on this hive right now.';
@@ -51562,7 +51569,7 @@ function burnAreaChart() {
         case 'line': {
           const ev = f.data || {};
           if (ev.type === 'segment' && !ev.final) { o.partial = ev; break; }
-          o.partial = null;
+          if (ev.type !== 'reply') o.partial = null;
           o.lines.push(ev);
           if (o.lines.length > MEETINGS_MAX_LINES) o.lines.shift();
           break;
@@ -51581,6 +51588,7 @@ function burnAreaChart() {
           break;
         }
         case 'notes': meetingsRefreshLive(o.id); break;
+        case 'reach': meetingsRefreshLive(o.id); break;
         case 'spek': meetingsRefreshLive(o.id); break;
         default: break;
       }
@@ -51597,6 +51605,7 @@ function burnAreaChart() {
     }
 
     function meetingsLineHtml(ev, partial) {
+      if (ev.type === 'reply') return meetingsReplyLineHtml(ev);
       const who = (ev.speaker && ev.speaker.name) || (ev.author && ev.author.name) || '';
       return '<p class="meetings-line' + (partial ? ' is-partial' : '') + '"><span class="meetings-who">' + escapeHtml(who) + (ev.type === 'chat' ? ' (chat)' : '') + '</span>' + escapeHtml(ev.text || '') + '</p>';
     }
@@ -51614,13 +51623,15 @@ function burnAreaChart() {
       const research = (live.research || []).map(it =>
         '<div class="meetings-research-item"><div><span class="badge">' + escapeHtml(it.status) + '</span> ' + escapeHtml(it.query) + '</div>' +
         (it.summary ? '<div class="muted-xs">' + escapeHtml(it.summary) + '</div>' : '') +
+        (it.status === 'failed' && it.error ? '<div class="meetings-row-error">' + escapeHtml(it.error) + '</div>' : '') +
+        (it.waiting && it.status === 'queued' ? '<div class="muted-xs">waiting behind another question</div>' : '') +
         (it.status === 'pending_approval' ? '<button type="button" class="hv-btn btn-primary btn-sm mt-2" data-action="meetingsApprove" data-arg0="' + escapeHtml(o.id) + '" data-arg1="' + escapeHtml(it.rid) + '">Approve research</button>' : '') +
         '</div>').join('') || '<p class="muted-xs">No research yet.</p>';
       const lines = o.lines.map(ev => meetingsLineHtml(ev, false)).join('') + (o.partial ? meetingsLineHtml(o.partial, true) : '');
       const intents = o.intents.map(i => '<div>' + escapeHtml(typeof i === 'string' ? i : JSON.stringify(i)) + '</div>').join('');
       const spek = live.spek_status ? '<p class="kc-error muted-xs">' + escapeHtml(live.spek_status) + '</p>' :
         (live.spek_mode ? '<p class="muted-xs">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
-      host.innerHTML = spek + '<div class="meetings-live">' +
+      host.innerHTML = spek + meetingsReachHtml(live) + '<div class="meetings-live">' +
         '<div><div class="section-label m-0">Transcript' + (o.ws ? '' : ' (disconnected)') + '</div><div class="meetings-transcript">' + (lines || '<p class="muted-xs">Waiting for the first words…</p>') + '</div></div>' +
         '<div class="meetings-side"><div><div class="section-label m-0">Notes</div>' + notesHtml + '</div>' +
         '<div><div class="section-label m-0">Research</div><div class="meetings-research">' + research + '</div></div>' +
@@ -51691,6 +51702,67 @@ function burnAreaChart() {
       } catch (e) {
         if (errEl) errEl.textContent = e.message; else showToast('Save failed: ' + e.message, 'error');
       }
+    }
+    // The attendee's own lines (hivecommons/hive Betty round 2): every line
+    // she says or posts is in the meeting's transcript as a `reply` event
+    // ({type:'reply', author, text, at, reply:{kind, trigger, source,
+    // delivered, undelivered, fallback, timing}}). The meeting view and the
+    // Inbox show them among the participants' lines, set apart, with how
+    // each went out (spoken or chat), what it was made from, and the ones
+    // that never reached the meeting.
+    const MEETINGS_REPLY_SPOKEN_MARK = '🔊';
+    const MEETINGS_REPLY_CHAT_MARK = '💬';
+    const MEETINGS_REPLY_UNDELIVERED_MARK = '⚠';
+    // A rendered transcript labels her lines "Name (assistant, spoken; source: x): text".
+    const MEETINGS_ASSISTANT_LINE = /^([^\n:]*?) \(assistant, (spoken|chat|not delivered)([^)]*)\): /;
+
+    function meetingsReplyMark(how) {
+      if (how === 'spoken') return MEETINGS_REPLY_SPOKEN_MARK;
+      if (how === 'not delivered') return MEETINGS_REPLY_UNDELIVERED_MARK;
+      return MEETINGS_REPLY_CHAT_MARK;
+    }
+
+    function meetingsReplyHow(r) {
+      if (!r.delivered) return 'not delivered';
+      return r.kind === 'voice' ? 'spoken' : 'chat';
+    }
+
+    // One of her lines in the live meeting view.
+    function meetingsReplyLineHtml(ev) {
+      const r = ev.reply || {};
+      const who = (ev.author && ev.author.name) || 'hive';
+      const how = meetingsReplyHow(r);
+      const meta = [how + (r.fallback ? ' (fallback)' : ''), r.source ? 'source: ' + r.source : '', r.trigger || ''].filter(Boolean).join(' · ');
+      const why = !r.delivered && r.undelivered ? ' <span class="meetings-reply-meta">' + escapeHtml(r.undelivered) + '</span>' : '';
+      return '<p class="meetings-line is-reply' + (r.delivered ? '' : ' is-undelivered') + '" data-reply-kind="' + escapeHtml(how) + '">' +
+        '<span class="meetings-who">' + meetingsReplyMark(how) + ' ' + escapeHtml(who) + '</span>' +
+        '<span class="meetings-reply-meta">' + escapeHtml(meta) + '</span>' + escapeHtml(ev.text || '') + why + '</p>';
+    }
+
+    // The "can't reach participants" notice: replies are failing in chat
+    // and by voice. The Leave button on the meeting's row removes the bot;
+    // it leaves by itself if this lasts.
+    function meetingsReachHtml(live) {
+      const n = (live && live.undelivered) || 0;
+      if (!n) return '';
+      const since = live.unreachable_since ? ' since ' + meetingsFormatTime(live.unreachable_since) : '';
+      const why = live.undelivered_reason ? ' Last reason: ' + live.undelivered_reason + '.' : '';
+      if (!live.unreachable) {
+        return '<p class="muted-xs meetings-reach">' + n + ' repl' + (n === 1 ? 'y' : 'ies') + ' could not be delivered' + escapeHtml(since) + '; kept below as not delivered.' + escapeHtml(why) + '</p>';
+      }
+      return '<p class="meetings-reach is-unreachable">Can\'t reach participants: ' + n + ' replies in a row were delivered neither in chat nor by voice' + escapeHtml(since) + '.' + escapeHtml(why) +
+        ' They are kept below as not delivered. Use Leave on this meeting to remove the bot; it leaves by itself if this continues.</p>';
+    }
+
+    // A meeting's rendered transcript (the Inbox item's Transcript view):
+    // her lines are set apart from the participants', marked spoken or chat.
+    function meetingsTranscriptTextHtml(text) {
+      return String(text || '').split('\n').map(line => {
+        const m = line.match(MEETINGS_ASSISTANT_LINE);
+        if (!m) return escapeHtml(line);
+        return '<span class="inbox-assistant-line' + (m[2] === 'not delivered' ? ' is-undelivered' : '') + '" data-reply-kind="' + escapeHtml(m[2]) + '">' +
+          meetingsReplyMark(m[2]) + ' ' + escapeHtml(line) + '</span>';
+      }).join('\n');
     }
     // ── Calendar: scheduled meetings hive joins (hivecommons/hive#18394) ──
     // GET /api/meetings/schedule lists upcoming and recent scheduled

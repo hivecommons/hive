@@ -143,6 +143,7 @@ js/inbox-mail-log.js
 js/inbox-note.js
 js/inbox-input-methods.js
 js/meetings.js
+js/meetings-replies.js
 js/calendar.js
 js/meeting-attendee.js
 js/meeting-attendee-model.js

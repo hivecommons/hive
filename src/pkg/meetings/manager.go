@@ -192,6 +192,11 @@ type Options struct {
 	// `/hive join`) is approved without the owner. Nil approves none: every
 	// request waits in the dashboard.
 	AutoApprove func(requester Person) bool
+	// FixedSpokenLines returns the lines the persona says in every meeting
+	// (its spoken introduction, acknowledgements, the goodbye), which hive
+	// asks Quorum to pre-render when a meeting that can speak goes live
+	// (say.go). Nil pre-renders nothing.
+	FixedSpokenLines func(mt Meeting) []string
 	// Now is the clock (tests).
 	Now func() time.Time
 }
@@ -231,6 +236,8 @@ type Manager struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	wg           sync.WaitGroup
+	// tails keeps ended companion meetings' last lines (companion_tail.go).
+	tails companionTails
 }
 
 // ErrInvalidRequest wraps a rejected JoinRequest.
@@ -437,6 +444,7 @@ func (m *Manager) Leave(ctx context.Context, id, reason string) (Meeting, error)
 		return mt, nil
 	}
 	if mt.NativeID != "" {
+		m.keepCompanionTail(ctx, mt)
 		if _, err := m.opts.Quorum.Leave(ctx, mt.NativeID); err != nil && !IsCode(err, CodeNotFound) {
 			return mt, err
 		}
@@ -472,21 +480,6 @@ func (m *Manager) PostChat(ctx context.Context, id, text string) error {
 		return ErrConsentPending
 	}
 	return m.opts.Quorum.ChatPost(ctx, mt.NativeID, text)
-}
-
-// Say speaks text in a live meeting. The caller applies the voice policy.
-func (m *Manager) Say(ctx context.Context, id, text string) error {
-	mt, err := m.opts.Store.Get(id)
-	if err != nil {
-		return err
-	}
-	if mt.State != StateLive {
-		return ErrNotLive
-	}
-	if mt.ConsentPostedAt == nil {
-		return ErrConsentPending
-	}
-	return m.opts.Quorum.Say(ctx, mt.NativeID, SpeechText(text))
 }
 
 // Resume re-attaches to every meeting that was not terminal when hive
@@ -622,6 +615,7 @@ func (m *Manager) handleState(ctx context.Context, id string, ev Event) bool {
 		return true
 	}
 	now := m.opts.Now()
+	wentLive := false
 	mt, err := m.update(id, &ev, func(mt *Meeting) {
 		if mt.State.Terminal() {
 			return
@@ -636,6 +630,7 @@ func (m *Manager) handleState(ctx context.Context, id string, ev Event) bool {
 		}
 		if ev.State == StateLive && mt.LiveAt == nil {
 			mt.LiveAt = timePtr(now)
+			wentLive = true
 		}
 	})
 	if err != nil {
@@ -646,6 +641,9 @@ func (m *Manager) handleState(ctx context.Context, id string, ev Event) bool {
 		m.armLobby(id, mt.LobbySince.Add(m.opts.LobbyTimeout).Sub(now))
 	} else {
 		m.clearLobby(id)
+	}
+	if wentLive {
+		m.prewarmSpeech(mt)
 	}
 	if mt.State == StateLive && m.ensureConsent(ctx, mt) {
 		return true
@@ -776,6 +774,12 @@ func (m *Manager) markConsent(ctx context.Context, mt Meeting, via string) {
 		x.ConsentPostedAt, x.ConsentVia, x.ConsentError = timePtr(at), via, ""
 		x.ConsentSeq = max(x.ConsentSeq, fence)
 	})
+	// The notice is the first of hive's own lines in the meeting record.
+	kind := ReplyKindChat
+	if via == ConsentViaVoice {
+		kind = ReplyKindVoice
+	}
+	m.RecordReply(mt.ID, m.opts.ConsentText, kind, ReplyTriggerConsent, at, 0, nil)
 }
 
 // fromHive reports whether a line is hive's own (its chat posts echo back).
@@ -825,11 +829,11 @@ func (m *Manager) handleLine(ctx context.Context, id string, ev Event) bool {
 		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
 		defer cancel()
 		if mt.ConsentPostedAt != nil {
-			// Say so before going, so the room knows the command was heard.
-			if err := m.opts.Quorum.ChatPost(cctx, mt.NativeID, LeavingText); err != nil {
-				m.log.Info("[meetings] leaving confirmation not posted", "meeting", id, "error", err)
-			}
+			// Say so before going, so the room knows the command was heard,
+			// and only go once the line is known to be out (say.go).
+			m.goodbye(cctx, mt, ev, m.opts.Now())
 		}
+		m.keepCompanionTail(cctx, mt)
 		if _, err := m.opts.Quorum.Leave(cctx, mt.NativeID); err != nil && !IsCode(err, CodeNotFound) {
 			m.log.Warn("[meetings] leave failed", "meeting", id, "error", err)
 		}

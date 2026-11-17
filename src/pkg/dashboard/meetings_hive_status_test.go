@@ -36,8 +36,8 @@ func TestHiveStatusBrief(t *testing.T) {
 		"Actionable now: 10 (7 issues, 3 PRs).",
 		"Test coverage: 81% (target 90%).",
 		"Open issues by stage: tracked 12; held 4; needs human 3.",
-		"Agents: 17, 1 working, 1 paused, 1 blocked.",
-		"Working on: coder (fixing #13990).",
+		"Agents: 17, 2 working, 1 paused, 1 blocked, 14 idle.",
+		"Working right now: coder (fixing #13990); reviewer-2.",
 		"Blocked: reviewer-2.",
 		"Recently finished: scanner: opened PR hivecommons/hive#14001",
 		"Open PRs: ",
@@ -54,7 +54,7 @@ func TestHiveStatusBrief(t *testing.T) {
 	st.StaleSince = "2026-11-16T10:00:00Z"
 	st.OpenItems.IssuesSyncing = true
 	got, _ = s.HiveStatusBrief(context.Background())
-	if !strings.Contains(got, "at least this many") || !strings.Contains(got, "last-good figures from 2026-11-16T10:00:00Z") {
+	if !strings.Contains(got, "at least 40 issues (the issue count is still syncing: a partial count, not a total)") || !strings.Contains(got, "last-good figures from 2026-11-16T10:00:00Z") {
 		t.Fatalf("stale and syncing are said: %s", got)
 	}
 

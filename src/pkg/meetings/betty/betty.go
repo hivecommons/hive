@@ -44,6 +44,10 @@ type Reply struct {
 	Kind    string `json:"kind"`
 	Text    string `json:"text"`
 	Trigger string `json:"trigger"`
+	// Spoken, when set on a voice reply, is the short form to say out
+	// loud; Text is then posted in chat once (the intro: a short spoken
+	// greeting with the full introduction in chat), never both in full.
+	Spoken string `json:"spoken,omitempty"`
 	// Question is the line the reply answers, when there is one.
 	Question string `json:"question,omitempty"`
 	// VoiceWanted records that the request was spoken or asked for a
@@ -55,10 +59,11 @@ type Reply struct {
 	// query through the meeting's research path and to report back with
 	// FollowUp when it completes.
 	Research string `json:"research,omitempty"`
-	// Timing is the answer's stage timings (timing.go), on answers to a
-	// request.
+	// Timing is the reply's stage timings (timing.go). Every reply has
+	// one: a model answer carries its stages, any other line when the
+	// request was heard (or the line produced) and its source.
 	Timing *Timing `json:"timing,omitempty"`
-	// Asker and Topic name who asked and what about, on answers to a
+	// Asker and Topic are who asked and what about, on answers to a
 	// request; Attributed is set when Text already opens with them. The
 	// session uses them to attribute an answer it delivers late or in a
 	// batch (a spoken answer moved to chat with others), so the room can
@@ -68,9 +73,9 @@ type Reply struct {
 	Attributed bool   `json:"attributed,omitempty"`
 }
 
-// Attribute opens text with who asked and what about, in the persona's
-// language: "Andy (re: open PRs): ..." in chat, "Andy, about open PRs:
-// ..." spoken.
+// Attribute opens text with the topic it answers, in the persona's
+// language ("On open PRs: ..."), and names who asked only when two people
+// asked about the same topic (attribution.go).
 func (e *Engine) Attribute(voice bool, who, topic, text string) string {
 	return attribute(e.s.Persona.Language, voice, who, topic, text)
 }
@@ -147,9 +152,16 @@ func SettingsFrom(p config.ResolvedMeetingsPersona) Settings {
 	}
 }
 
-// DefaultAckDelay is the ack watchdog: about 0.7 s after a spoken request
-// ends with no answer ready, she says one short ack.
-const DefaultAckDelay = 700 * time.Millisecond
+// DefaultAckDelay is the ack watchdog: a spoken request is acknowledged
+// only when its answer is still not ready this long after the line ended.
+// It was 0.7 s; a live Meet test showed what that costs: an answer ready
+// 2.6 s after the request waited behind "let me check on that" until 6 s,
+// because on the bot platforms a spoken line takes its own length plus
+// about 2.7 s of overhead and lines play one after another. An ack only
+// helps when the answer takes longer than about 3 s, so a normal 1 to
+// 2.6 s answer now gets none. (The engine also widens the delay for
+// questions expected to be fast: fastAckDelayFactor in queue.go.)
+const DefaultAckDelay = 3 * time.Second
 
 func (s Settings) withDefaults() Settings {
 	d := SettingsFrom(s.Persona)
@@ -405,7 +417,8 @@ func (e *Engine) FollowUpIn(query, summary string, voice bool) {
 			}
 		}
 		select {
-		case e.out <- Reply{Kind: kind, Text: text, Trigger: TriggerFollowUp, Question: query, VoiceWanted: voice}:
+		case e.out <- Reply{Kind: kind, Text: text, Trigger: TriggerFollowUp, Question: query, VoiceWanted: voice,
+			Timing: &Timing{HeardAt: e.d.Now(), Source: SourceResearch}}:
 		case <-ctx.Done():
 		}
 	}()
@@ -452,6 +465,11 @@ func (e *Engine) drop(reason string) {
 func (e *Engine) emit(r Reply) bool {
 	if r.Kind == "" {
 		r.Kind = KindChat
+	}
+	if r.Timing == nil {
+		// A stock line (intro, hello, acknowledgement, queue note, an
+		// action reply): heard and ready now, from no model or lookup.
+		r.Timing = fixedTiming(e.d.Now())
 	}
 	select {
 	case e.out <- r:
