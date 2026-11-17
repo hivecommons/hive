@@ -504,3 +504,139 @@ func TestRebridgeCopilotConfig_SuccessLogsInfoNotWarn(t *testing.T) {
 		t.Fatalf("successful relink must not log at WARN:\n%s", out)
 	}
 }
+
+// copilotBridgeTestWithSettings is a CLI save that keeps the agent's (older)
+// login and adds a non-credential setting the CLI wrote itself.
+const copilotBridgeTestWithSettings = `{"copilotTokens":{"https://github.com:fake-user":"gho_older_` + copilotBridgeTestSentinel + `"},"banner":"never","firstLaunchAt":"2026-11-17T00:00:00Z"}`
+
+// setCopilotBridgeMtime pins a file's mtime so "newer" never hinges on the
+// filesystem's timestamp granularity.
+func setCopilotBridgeMtime(t *testing.T, path string, at time.Time) {
+	t.Helper()
+	if err := os.Chtimes(path, at, at); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRelinkCopilotConfigOnPoll_RelinksAfterCLISaveAndCopiesFieldsBack(t *testing.T) {
+	m, buf, ap, link, target := copilotBridgeFixture(t)
+	base := time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)
+	setCopilotBridgeMtime(t, target, base)
+	simulateCopilotSave(t, link, copilotBridgeTestWithSettings)
+	setCopilotBridgeMtime(t, link, base.Add(5*time.Second))
+
+	// One poll tick.
+	if !m.relinkCopilotConfigOnPoll(ap) {
+		t.Fatalf("poll did not relink a config the CLI's save replaced:\n%s", buf.String())
+	}
+
+	assertCopilotLinked(t, link, target)
+	cfg, err := readCopilotConfig(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg["banner"] != "never" || cfg["firstLaunchAt"] != "2026-11-17T00:00:00Z" {
+		t.Fatalf("CLI-written fields not copied back to the shared config: %v", cfg)
+	}
+	tokens, _ := cfg["copilotTokens"].(map[string]interface{})
+	if got, _ := tokens["https://github.com:fake-user"].(string); got != "gho_"+copilotBridgeTestSentinel {
+		t.Fatal("the shared login must stay authoritative over the CLI's stale copy")
+	}
+	if !strings.Contains(buf.String(), "trigger=poll") {
+		t.Fatalf("poll repair not logged:\n%s", buf.String())
+	}
+	assertNoSentinelLogged(t, buf)
+
+	// A linked config is left alone on the next poll.
+	if m.relinkCopilotConfigOnPoll(ap) {
+		t.Fatal("a linked config must not be repaired again")
+	}
+}
+
+func TestRelinkCopilotConfigOnPoll_SharedReloginReachesRunningAgent(t *testing.T) {
+	m, buf, ap, link, target := copilotBridgeFixture(t)
+	simulateCopilotSave(t, link, copilotBridgeTestLoggedIn)
+	m.relinkCopilotConfigOnPoll(ap)
+	assertCopilotLinked(t, link, target)
+
+	// Dashboard re-login: the shared file is replaced with a new token.
+	const relogin = `{"copilotTokens":{"https://github.com:fake-user":"gho_new_` + copilotBridgeTestSentinel + `"}}`
+	tmp := target + ".dashboard"
+	writeCopilotBridgeFile(t, tmp, relogin)
+	if err := os.Rename(tmp, target); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(link)
+	if err != nil || string(got) != relogin {
+		t.Fatalf("running agent's config does not see the new login: err=%v", err)
+	}
+	assertNoSentinelLogged(t, buf)
+}
+
+func TestRelinkCopilotConfigOnPoll_StaleSaveAfterReloginKeepsSharedLogin(t *testing.T) {
+	m, buf, ap, link, target := copilotBridgeFixture(t)
+	base := time.Date(2026, 11, 16, 10, 0, 0, 0, time.UTC)
+	setCopilotBridgeMtime(t, target, base)
+	// The CLI saves its stale in-memory login after the dashboard re-login.
+	simulateCopilotSave(t, link, copilotBridgeTestOlder)
+	setCopilotBridgeMtime(t, link, base.Add(time.Minute))
+
+	m.relinkCopilotConfigOnPoll(ap)
+
+	assertCopilotLinked(t, link, target)
+	if shared, err := os.ReadFile(target); err != nil || string(shared) != copilotBridgeTestLoggedIn {
+		t.Fatalf("a stale CLI save must not change the shared login: err=%v", err)
+	}
+	assertNoSentinelLogged(t, buf)
+}
+
+func TestRelinkCopilotConfigOnPoll_PrivateLoginKeptWhenSharedEmpty(t *testing.T) {
+	m, buf, ap, link, target := copilotBridgeFixture(t)
+	simulateCopilotSave(t, link, copilotBridgeTestLoggedIn)
+	writeCopilotBridgeFile(t, target, copilotBridgeTestNoLogin)
+
+	m.relinkCopilotConfigOnPoll(ap)
+	m.relinkCopilotConfigOnPoll(ap)
+
+	info, err := os.Lstat(link)
+	if err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("private copy holding the only login must stay in place: info=%v err=%v", info, err)
+	}
+	if shared, err := os.ReadFile(target); err != nil || string(shared) != copilotBridgeTestNoLogin {
+		t.Fatalf("shared config must not be written: err=%v", err)
+	}
+	if got := strings.Count(buf.String(), "repair not applied"); got != 1 {
+		t.Fatalf("refusal must be logged once, got %d:\n%s", got, buf.String())
+	}
+	assertNoSentinelLogged(t, buf)
+}
+
+func TestRelinkCopilotConfigOnPoll_IgnoresOtherBackends(t *testing.T) {
+	withSharedAgentHome(t)
+	m := NewManager(map[string]config.AgentConfig{}, discardLogger(), ProjectContext{})
+	ap := &AgentProcess{Name: copilotBridgeTestAgentName, UID: copilotBridgeTestUID, Config: config.AgentConfig{Backend: "claude"}}
+	if m.relinkCopilotConfigOnPoll(ap) {
+		t.Fatal("a non-copilot agent must never be repaired")
+	}
+}
+
+func TestMergeCopilotConfigFields_SkipsCredentialKeys(t *testing.T) {
+	shared := map[string]interface{}{"copilotTokens": map[string]interface{}{"k": "a"}, "banner": "always"}
+	private := map[string]interface{}{
+		"copilotTokens":    map[string]interface{}{"k": "b"},
+		"loggedInUsers":    []interface{}{"x"},
+		"lastLoggedInUser": "x",
+		"banner":           "always",
+	}
+	if mergeCopilotConfigFields(shared, private) {
+		t.Fatal("only credential keys and equal fields differ; nothing to merge")
+	}
+	private["model"] = "gpt-5"
+	if !mergeCopilotConfigFields(shared, private) || shared["model"] != "gpt-5" {
+		t.Fatalf("new field not merged: %v", shared)
+	}
+	if _, ok := shared["loggedInUsers"]; ok {
+		t.Fatal("credential key merged")
+	}
+}

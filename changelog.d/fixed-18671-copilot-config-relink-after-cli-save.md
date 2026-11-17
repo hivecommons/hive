@@ -1,0 +1,1 @@
+- Copilot agents now stay on the fleet-shared login after the Copilot CLI's own config save: the pane poller relinks a replaced `~/.copilot/config.json` within one poll (copying the CLI's newer non-login settings back to the shared file first), so a dashboard re-login reaches running agents without a restart (#18671).

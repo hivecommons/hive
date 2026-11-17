@@ -27,6 +27,10 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// The Copilot CLI's own save replaces the config.json link with
+			// a private copy; relink it before anything else (#18671).
+			m.relinkCopilotConfigOnPoll(agent)
+
 			// Scrollback capture for dashboard display + ring buffer diff
 			output := m.captureTmuxPaneForAgent(agent)
 			if output == "" {

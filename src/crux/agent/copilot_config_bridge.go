@@ -6,10 +6,12 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agent/copilottoken"
 	"github.com/hivecommons/hive/crux/sharedfile"
 )
 
@@ -37,12 +39,30 @@ import (
 // none, the private copy may be the only login the fleet has, so it is left in
 // place (logged once). A later dashboard login or token sync fills the shared
 // file and the next launch relinks.
+//
+// The launch-time relink alone does not hold: the CLI does its own atomic save
+// a few seconds after it starts, replacing the fresh symlink again, so a later
+// dashboard re-login never reached a running agent (hivecommons/hive#18671).
+// The pane poller therefore also checks the link on every poll and relinks a
+// replaced one (relinkCopilotConfigOnPoll), first copying the CLI's newer
+// non-credential fields back into the shared file so they are not lost. The
+// shared file stays authoritative for the login itself.
 
 // Repair triggers, recorded in the log.
 const (
 	copilotBridgeTriggerLaunch      = "launch"
 	copilotBridgeTriggerLoginPrompt = "login-prompt"
+	copilotBridgeTriggerPoll        = "poll"
 )
+
+// copilotConfigCredentialKeys are the config.json fields that make up the
+// login. The shared file owns them; a CLI save never copies them back, so a
+// running CLI's stale in-memory login cannot undo a dashboard re-login.
+var copilotConfigCredentialKeys = map[string]bool{
+	"copilotTokens":    true,
+	"loggedInUsers":    true,
+	"lastLoggedInUser": true,
+}
 
 // copilotConfigBackupInfix names a private config moved aside by the repair.
 const copilotConfigBackupInfix = ".bak-"
@@ -144,7 +164,12 @@ func copilotConfigDiverged(link, target string) bool {
 func repairCopilotConfigBridge(link, target string) (string, error) {
 	copilotBridgeMu.Lock()
 	defer copilotBridgeMu.Unlock()
+	return repairCopilotConfigBridgeLocked(link, target)
+}
 
+// repairCopilotConfigBridgeLocked is repairCopilotConfigBridge with
+// copilotBridgeMu already held.
+func repairCopilotConfigBridgeLocked(link, target string) (string, error) {
 	info, err := os.Lstat(link)
 	if err != nil || !info.Mode().IsRegular() {
 		return "", nil
@@ -212,10 +237,71 @@ func pruneCopilotConfigBackups(link, keep string) {
 	}
 }
 
+// syncBackAndRepairCopilotConfigBridge is the poll-time repair: when the CLI's
+// save replaced the link with a private file newer than the shared one, the
+// private file's non-credential fields that differ are merged into the shared
+// file first, then the link is restored. The #18445 guard applies before
+// anything is written. When the shared file cannot be read there is nothing
+// to link to, and the private file is left alone.
+func syncBackAndRepairCopilotConfigBridge(link, target string) (string, error) {
+	copilotBridgeMu.Lock()
+	defer copilotBridgeMu.Unlock()
+
+	info, err := os.Lstat(link)
+	if err != nil || !info.Mode().IsRegular() {
+		return "", nil
+	}
+	if same, serr := claudeBridgeLinkIsTarget(link, target); serr != nil || same {
+		return "", nil
+	}
+	if copilotCredentialFileHasTokens(link) && !copilotCredentialFileHasTokens(target) {
+		return "", errCopilotBridgeSharedEmpty
+	}
+	sharedInfo, err := os.Stat(target)
+	if err != nil || !sharedInfo.Mode().IsRegular() {
+		return "", nil
+	}
+	shared, err := copilottoken.ReadConfig(target)
+	if err != nil {
+		return "", nil
+	}
+	if info.ModTime().After(sharedInfo.ModTime()) {
+		if private, perr := copilottoken.ReadConfig(link); perr == nil && mergeCopilotConfigFields(shared, private) {
+			if werr := copilottoken.WriteConfig(target, shared, sharedConfigDesiredMode); werr != nil {
+				return "", fmt.Errorf("copy copilot config fields back to the shared config: %w", werr)
+			}
+		}
+	}
+	return repairCopilotConfigBridgeLocked(link, target)
+}
+
+// mergeCopilotConfigFields copies into shared every non-credential top-level
+// field of private whose value differs, and reports whether shared changed.
+func mergeCopilotConfigFields(shared, private map[string]interface{}) bool {
+	changed := false
+	for k, v := range private {
+		if copilotConfigCredentialKeys[k] {
+			continue
+		}
+		if cur, ok := shared[k]; ok && reflect.DeepEqual(cur, v) {
+			continue
+		}
+		shared[k] = v
+		changed = true
+	}
+	return changed
+}
+
 // rebridgeCopilotConfig runs the repair for one agent and logs the outcome. It
 // reports whether the link was restored.
 func (m *Manager) rebridgeCopilotConfig(agentName, link, target, trigger string) bool {
 	backup, err := repairCopilotConfigBridge(link, target)
+	return m.logCopilotBridgeOutcome(agentName, link, target, trigger, backup, err)
+}
+
+// logCopilotBridgeOutcome logs one repair's outcome (never token material) and
+// reports whether the link was restored.
+func (m *Manager) logCopilotBridgeOutcome(agentName, link, target, trigger, backup string, err error) bool {
 	if err != nil {
 		if prev, loaded := copilotBridgeWarned.Swap(link, err.Error()); loaded && prev == err.Error() {
 			return false
@@ -255,6 +341,29 @@ func (m *Manager) repairCopilotConfigOnLoginPrompt(agent *AgentProcess) bool {
 		return false
 	}
 	return m.rebridgeCopilotConfig(name, link, target, copilotBridgeTriggerLoginPrompt)
+}
+
+// relinkCopilotConfigOnPoll is the poller's per-tick hook: a Copilot agent
+// whose config.json the CLI's own save turned back into a private file is
+// relinked within one poll, so a later dashboard re-login written to the
+// shared file reaches the running agent without a restart (#18671). A linked
+// or absent config costs one Lstat.
+func (m *Manager) relinkCopilotConfigOnPoll(agent *AgentProcess) bool {
+	m.mu.RLock()
+	name, uid, backend := agent.Name, agent.UID, effectiveBackend(agent)
+	m.mu.RUnlock()
+	if backend != "copilot" {
+		return false
+	}
+	link, target, ok := copilotConfigBridgePaths(name, uid, backend)
+	if !ok {
+		return false
+	}
+	if info, err := os.Lstat(link); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	backup, err := syncBackAndRepairCopilotConfigBridge(link, target)
+	return m.logCopilotBridgeOutcome(name, link, target, copilotBridgeTriggerPoll, backup, err)
 }
 
 // copilotConfigTmpMaxAge returns the sweep threshold: the env override when it
