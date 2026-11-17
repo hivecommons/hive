@@ -76,15 +76,14 @@ func (r *UserSessionRuntime) Remove(id string) error {
 	// (The CLI creates files and directories with private modes; the hive
 	// must be able to look at the login path to judge it.)
 	r.makeHomeReadable(id)
-	if err := r.syncClaudeLogin(id, sessionLoginTriggerRemove, sessionLoginModeRemove); err != nil {
-		switch {
-		case errors.Is(err, sharedfile.ErrTooLarge):
-			// Over the size of any credentials file: not a login, so there
-			// is nothing to keep. syncClaudeLogin logged it.
-		case errors.Is(err, crux.ErrUserSessionHoldsLogin):
+	if err := keepSessionForLogin(r.syncClaudeLogin(id, sessionLoginTriggerRemove, sessionLoginModeRemove)); err != nil {
+		return err
+	}
+	// The same for a Codex or OpenCode login the session's CLI refreshed
+	// (usersession_login_rotating.go).
+	for _, l := range rotatingSessionLogins {
+		if err := keepSessionForLogin(r.syncRotatingLogin(id, sessionLoginTriggerRemove, l)); err != nil {
 			return err
-		default:
-			return fmt.Errorf("this session's sign-in could not be checked, so its files are kept: %w", err)
 		}
 	}
 	r.workspaceMu.Lock()
@@ -110,6 +109,23 @@ func (r *UserSessionRuntime) Remove(id string) error {
 		}
 	}
 	return nil
+}
+
+// keepSessionForLogin turns the outcome of a login check made before a
+// removal into the error that stops it, nil when the removal may go on.
+func keepSessionForLogin(err error) error {
+	switch {
+	case err == nil:
+		return nil
+	case errors.Is(err, sharedfile.ErrTooLarge):
+		// Over the size of any credentials file: not a login, so there is
+		// nothing to keep. The check logged it.
+		return nil
+	case errors.Is(err, crux.ErrUserSessionHoldsLogin):
+		return err
+	default:
+		return fmt.Errorf("this session's sign-in could not be checked, so its files are kept: %w", err)
+	}
 }
 
 // Removed reports whether nothing of session id is left on disk: no sandbox,

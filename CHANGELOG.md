@@ -11,6 +11,37 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.311.0)
+
+### Added
+
+- Spend by model and contributor run stats by model now carry `canonical_model`, the same folded model id the Governor's PRs-by-model card uses, so `claude-opus-5-5`, `anthropic/claude-opus-5-5` and `claude-opus-5.5` can be lined up across all three views. `/api/cost` `estimated.by_model[]` and every `/api/contribute/run-stats` and `/api/contribute/run-stats/models` row gain the field; spend stays one row per raw model, since prices are per raw model. Both run-stats endpoints accept an optional `group=canonical` that merges spellings into one row (runs summed, rates recomputed from the summed counts) with `raw_models[]` keeping each spelling's run count; without it the rows are unchanged. The Cost card's by-model list and the contributor wall's model evidence show the canonical id, with the reported spelling in a tooltip (#18718).
+
+## 2026-11-17 (v5.310.0)
+
+### Added
+
+- Governor PRs by model now shows, in each model's tooltip, a per-repository breakdown and a weekly trend (30d and all-time views), so a model's rework can be traced to one hard repository and its improvement over time is visible without diffing windows. `GET /api/governor/pr-models` adds `repos[]` and `weeks[]` to each bucket; existing fields are unchanged (#18716).
+- Governor **PRs by model** can list one model's pull requests: a **▸ PRs** button on each model row opens that model's PRs in the window (outcome, review rounds, fix attempts, first pass, author agent and backend, each linking to GitHub), loaded on demand from the new optional `model=` parameter on `GET /api/governor/pr-models`. The parameter accepts any raw spelling of the model, returns up to 200 PRs most reworked first with `prs_truncated` past that, and leaves the response unchanged when omitted (#18722).
+
+### Fixed
+
+- **The required `PR Type` and `PR Issue` checks always conclude, and the PR Verifier goes red when it cannot record them** (#18764). The pinned verifier image created each check `in_progress` and then updated it with the verdict; when GitHub answered that update with 404 (#18667), the required checks stayed `in_progress` for ever, Tide reported "Jobs PR Issue, PR Type have not succeeded", and the `verify PR contents` job still went green because the image step was `continue-on-error`. The workflow now computes both verdicts in-repo (`.github/scripts/pr-verifier.cjs`, reusing the existing port of the upstream v0.4.3 title rules, with the same check names, output titles and summaries) and records each check with one create call that is already completed — nothing is ever left in progress. A title the rules reject is still a failed `PR Type`/`PR Issue` check with a green wrapper job; a result that cannot be recorded now fails `verify PR contents` with the reason, after posting a completed `failure` check that says so. No image is pulled any more, so the job runs on the ordinary runner pool instead of a native ARM64 runner. To recover a PR whose checks are already stuck, add or remove any label on it, or for a same-repo PR dispatch `pr-verifier.yml` on its branch with its `pr_number`, so a fresh completed pair lands on its head (re-running an old run re-runs the old workflow).
+- A slow GHCR token endpoint (request timeout) no longer files a fleet self-report issue; the "GHCR token request failed" WARN stays in local logs and resolvers keep serving their previous answer. Other GHCR failures (DNS, auth, bad responses) remain reportable (#18824).
+
+## 2026-11-17 (v5.309.0)
+
+### Added
+
+- Governor PRs by model now shows rework per backend and a per-effort split in each row's tooltip: every raw `sources[]` entry gains open/closed-unmerged counts, first-pass merged and rate, and average review rounds and fix attempts, each bucket gains an `efforts[]` breakdown read from the attribution trailer's `effort=` value, and the PR snapshot records it as `hive_effort` (#18715).
+
+### Fixed
+
+- Fleet-report "also seen" sightings no longer add a new comment to the issue on every join. Each poster (the hub relay, or a spoke filing directly) now keeps one `<!-- hive:selfreport-seen-log -->` comment per issue, with one section per hive, newest first, and edits it in place. Edits do not notify watchers, and the issue body's Affected hives block still counts every sighting. Part of the spam reduction work in #18450 (#18608).
+- **The claude model dropdown now offers Fable 5.2, Fable 5.1, Haiku 5.5 and the `fable` alias, and their spend is priced exactly** ([#18753](https://github.com/hivecommons/hive/issues/18753)). The pinned Claude Code 2.1.326 accepts all four, but the dashboard's allowlist, its static fallback and the browser's first-paint list stopped at Fable 5 and Haiku 4.5, so a live Anthropic catalog that listed the newer models was cut back to the old ones. The price table gains Fable 5.2 ($8 in / $40 out, $0.20 cache read, $10 cache write) and Haiku 5.5 ($0.10 / $0.50, $0.01, $0.125) from Anthropic's pricing page, so their spend is no longer a tier guess. Haiku 5.5 is priced at its base rate for prompts up to 100,000 tokens; longer prompts bill higher and are undercounted.
+- The Customers section is laid out like the Inbox and Calendar: each person is a card with an initial or source icon, the name as the title, a muted line, tags as chips and grouped actions that wrap under the content on narrow screens, with no sideways scrolling and long keys cut with a tooltip. "me" is a badge, "0 goals" is no longer printed on every row, and the evidence behind a suggestion sits under "Why is this suggested?" as readable links (at most five). Suggested people are grouped by source with "Show N more", and accepting, dismissing or answering a "Same person?" question keeps the group open, its expansion and the scroll position, and moves the focus to the next suggestion. A suggestion can now be added to an existing customer ("Add to existing..." on a suggestion, "Add a suggested person here" on a profile); it reuses the merge, so Undo merge takes it back (#18816).
+- Customers discovery no longer suggests people who are already customers or who are not people. A hive user whose access-list name is a bare GitHub login (what a device-flow sign-in produces) is now linked to that GitHub login, so they are not suggested again, and a suggestion that points at an identity a customer owns expires. Calendar group and room addresses, mailing-list addresses, no-reply and service mailboxes and the hive's own `hive@<host>` address are never suggested, and those already stored expire on the next sweep (#18816).
+
 ## 2026-11-17 (v5.308.0)
 
 ### Added

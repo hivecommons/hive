@@ -22826,6 +22826,18 @@
               "default": 7
             },
             "description": "Trailing window in days; 0 aggregates everything in the live log."
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "canonical"
+              ]
+            },
+            "description": "canonical merges model rows by canonical_model (modelfamily.Canonical): runs summed, rates recomputed from summed counts, model set to the canonical id, raw_models[] listing each raw spelling with its runs. Omitted: one row per raw model, each with canonical_model (#18718)."
           }
         ],
         "responses": {
@@ -31814,6 +31826,41 @@
                         }
                       }
                     },
+                    "outcomes_by_author_model": {
+                      "type": "object",
+                      "description": "outcomes_by_author_kind keyed by the author's canonical model (the ids /api/governor/pr-models uses); human for a person's PR, unknown for an agent PR with no recorded model (#18720).",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "n": {
+                            "type": "integer"
+                          },
+                          "merged": {
+                            "type": "integer"
+                          },
+                          "closed": {
+                            "type": "integer"
+                          },
+                          "open": {
+                            "type": "integer"
+                          },
+                          "reverted_14d": {
+                            "type": "integer",
+                            "nullable": true
+                          },
+                          "issue_reopened_14d": {
+                            "type": "integer"
+                          },
+                          "change_failures": {
+                            "type": "integer"
+                          },
+                          "change_failure_rate": {
+                            "type": "number",
+                            "nullable": true
+                          }
+                        }
+                      }
+                    },
                     "reviewer_calibration": {
                       "type": "array",
                       "items": {
@@ -38083,7 +38130,21 @@
           "Contribute"
         ],
         "summary": "Contributor run stats by model",
-        "description": "Returns per-model run counts, verified-PR share, and failure rate for contributor-wall evidence, plus why runs ended (#18721): `abandoned` (count), `scenarios` (scenario -> count, the same keys as /api/contribute/run-stats backends[].scenarios, summing to runs) and `failure_kinds` ({environment, task, unspecified}, summing to the failed runs behind failure_rate).",
+        "description": "Returns per-model run counts, verified-PR share, failure rate and canonical_model for contributor-wall evidence, plus why runs ended (#18721): `abandoned` (count), `scenarios` (scenario -> count, the same keys as /api/contribute/run-stats backends[].scenarios, summing to runs) and `failure_kinds` ({environment, task, unspecified}, summing to the failed runs behind failure_rate). group=canonical merges rows by canonical model id.",
+        "parameters": [
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "canonical"
+              ]
+            },
+            "description": "canonical merges model rows by canonical_model (modelfamily.Canonical): runs, abandoned, scenarios and failure_kinds summed, rates recomputed from summed counts, model set to the canonical id, raw_models[] listing each raw spelling with its runs. Omitted: one row per raw model, each with canonical_model (#18718)."
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK"

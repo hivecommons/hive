@@ -1212,8 +1212,8 @@
       stageTrackerAfter(glyph, 'animationend', STAGE_TRACKER_CELEBRATE_FLY_MS, () => { glyph.remove(); _stageTrackerFlights--; stageTrackerCelebrateTick(key, preview); });
       return { flew: !reduced, lands: to.lands, faded: reduced };
     }
-    // Pure: the banner's text pieces — "#15067 merged", the title, and
-    // "(lane, 17:42)".
+    // Pure: the banner's text pieces — "#15067 merged", when ("11/17 4:12 PM
+    // EST" in the display timezone and clock format), the title, and "(lane)".
     // Pure: the banner's PR number as a string — the number field, else the
     // nested pr record, else the GitHub URL, else the PR key. '' when none
     // (so the head never reads a bare "#"). esc() drops non-strings, which
@@ -1242,15 +1242,19 @@
     // @clubanderson", "#16645 merged by 🐝 hive" — a merge by hand is
     // celebrated exactly like the hive's own (hivecommons/hive#16658).
     function stageTrackerMergeBannerText(b, nowMs) {
+      // The date and time ride the head line: at the end of the title line a
+      // long title's ellipsis hid them on every banner.
       const d = new Date(b.at || nowMs);
-      const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const when = typeof formatDashboardDateTime === 'function'
+        ? formatDashboardDateTime(d)
+        : `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
       const who = stageTrackerMergedByText(b.merged_by);
       const merger = stageTrackerMergerText(b.merged_by);
-      const paren = [b.lane || '', who, hm].filter(Boolean).join(', ');
+      const paren = [b.lane || '', who].filter(Boolean).join(', ');
       const num = stageTrackerMergeBannerNumber(b);
       const title = String(b.title || b.repo || '').trim();
       const meta = paren ? '(' + paren + ')' : '';
-      return { number: num, merger, head: `${num ? '#' + num + ' ' : ''}merged${merger ? ' by ' + merger : ''}${b.preview ? ' (test)' : ''}`, title, meta, text: `${title}${meta ? ' ' + meta : ''}`.trim() };
+      return { number: num, merger, when, head: `${num ? '#' + num + ' ' : ''}merged${merger ? ' by ' + merger : ''}${b.preview ? ' (test)' : ''}`, title, meta, text: `${title}${meta ? ' ' + meta : ''} · merged ${when}`.trim() };
     }
     // Stateful: a persistent banner, bottom right, for one merge — stays
     // until dismissed or stageTrackerMergeBannerMs() (twice the info toast
@@ -1266,6 +1270,9 @@
       const repo = stageTrackerMergeBannerRepo(b);
       const recent = repo ? ((_stageTrackerMerged.server && _stageTrackerMerged.server.recent) || []).find(e => stageTrackerMergeBannerRepo(e).toLowerCase() === repo.toLowerCase() && stageTrackerMergeBannerNumber(e) === stageTrackerMergeBannerNumber(b)) : null;
       const info = Object.assign({ title: _stageTrackerPRTitle[b.key] || '', merged_by: '', lane: '', url: '' }, recent || {}, b, { repo });
+      // The ledger's merged_at is when it merged; b.at is only when this tab
+      // noticed, the same instant for every merge one poll turns up.
+      if (recent && recent.at > 0 && !b.preview) info.at = recent.at;
       if (!info.merged_by && !b.preview) info.merged_by = stageTrackerMergedByOf(b.key, typeof _stageTracker !== 'undefined' ? _stageTracker : null);
       const num = stageTrackerMergeBannerNumber(info);
       const repoChip = stageTrackerRepoChipHtml(repo, { repoChips: { primary: stageTrackerPrimaryRepo(), active: _stageTrackerFilter.repo } });
@@ -1279,7 +1286,7 @@
       // The banner itself is the dismiss target (a tap on a phone, a click
       // anywhere on a desktop); its links carry data-stop so they still act.
       el.setAttribute('data-action', 'hamBannerDismiss'); el.setAttribute('data-arg-types', 't');
-      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${repoChip ? repoChip + ' ' : ''}${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${t.merger ? ` by <span class="merge-banner-by">${esc(t.merger)}</span>` : ''}${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}"><span class="merge-banner-title">${esc(t.title)}</span>${t.meta ? ` <span class="merge-banner-meta">${esc(t.meta)}</span>` : ''}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener" data-action="hamBannerOpenLink" data-stop="1">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
+      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${repoChip ? repoChip + ' ' : ''}${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${t.merger ? ` by <span class="merge-banner-by">${esc(t.merger)}</span>` : ''}${info.preview ? ' <span class="text-muted">(test)</span>' : ''}${t.when ? ` <time class="merge-banner-when" datetime="${esc(new Date(info.at || Date.now()).toISOString())}">· ${esc(t.when)}</time>` : ''}</div><div class="merge-banner-text" title="${esc(t.text)}"><span class="merge-banner-title">${esc(t.title)}</span>${t.meta ? ` <span class="merge-banner-meta">${esc(t.meta)}</span>` : ''}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener" data-action="hamBannerOpenLink" data-stop="1">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
       while (stageTrackerMergeBannerList(box).length > STAGE_TRACKER_MERGE_BANNER_MAX) { const oldest = stageTrackerMergeBannerList(box)[0]; toastCountdownCancel(oldest); oldest.remove(); }
       stageTrackerMergeBannerLayout(box);

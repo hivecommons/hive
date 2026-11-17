@@ -2199,6 +2199,7 @@
     .merge-banner-head { font-weight: var(--fw-semibold); }
     .merge-banner-head .merge-banner-num { color: var(--amber); font-variant-numeric: tabular-nums; }
     .merge-banner-head .merge-banner-by { font-weight: 500; }
+    .merge-banner-head .merge-banner-when { color: var(--muted); font-weight: normal; white-space: nowrap; font-variant-numeric: tabular-nums; }
     .merge-banner-text { margin-top: var(--sp-1); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .merge-banner-links { margin-top: var(--sp-2); display: flex; gap: var(--sp-4); font-size: var(--fs-xs); }
     .merge-banner-links button, .merge-banner-links a { border: 0; padding: 0; background: transparent; color: var(--accent); cursor: pointer; font: inherit; text-decoration: none; }
@@ -2865,6 +2866,14 @@
     .gov-pr-model-reworked-title { color:var(--amber); font-size:var(--fs-xs); font-weight:800; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:var(--sp-3); }
     .gov-pr-model-reworked ol { margin:var(--sp-0); padding-left:18px; color:var(--muted); font-size:0.74rem; }
     .gov-pr-model-reworked li { margin:var(--sp-2) var(--sp-0); }
+    .gov-pr-model-prs-toggle { margin:2px 0 0; padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); background:var(--bg); color:var(--muted); font-size:var(--fs-2xs); cursor:pointer; }
+    .gov-pr-model-prs-toggle[aria-expanded="true"] { color:var(--text); border-color:var(--amber); }
+    .gov-pr-model-prlist { margin:0 0 var(--sp-3); padding:var(--sp-2) var(--sp-3); border-left:2px solid var(--border); font-size:0.74rem; color:var(--muted); }
+    .gov-pr-model-prlist ol { margin:var(--sp-0); padding-left:18px; max-height:320px; overflow-y:auto; }
+    .gov-pr-model-prlist li { margin:var(--sp-1) var(--sp-0); overflow-wrap:anywhere; }
+    .gov-pr-model-prlist-outcome.merged { color:var(--green); }
+    .gov-pr-model-prlist-outcome.open { color:var(--blue); }
+    .gov-pr-model-prlist-outcome.closed { color:var(--yellow); }
     .gov-pr-model-legend { display:flex; gap:10px; flex-wrap:wrap; color:var(--muted); font-size:var(--fs-xs); margin-top:var(--sp-4); }
     .gov-pr-model-legend span::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:var(--sp-2); vertical-align:middle; }
     .gov-pr-model-legend .merged::before { background:var(--green); }
@@ -29522,8 +29531,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       stageTrackerAfter(glyph, 'animationend', STAGE_TRACKER_CELEBRATE_FLY_MS, () => { glyph.remove(); _stageTrackerFlights--; stageTrackerCelebrateTick(key, preview); });
       return { flew: !reduced, lands: to.lands, faded: reduced };
     }
-    // Pure: the banner's text pieces — "#15067 merged", the title, and
-    // "(lane, 17:42)".
+    // Pure: the banner's text pieces — "#15067 merged", when ("11/17 4:12 PM
+    // EST" in the display timezone and clock format), the title, and "(lane)".
     // Pure: the banner's PR number as a string — the number field, else the
     // nested pr record, else the GitHub URL, else the PR key. '' when none
     // (so the head never reads a bare "#"). esc() drops non-strings, which
@@ -29552,15 +29561,19 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // @clubanderson", "#16645 merged by 🐝 hive" — a merge by hand is
     // celebrated exactly like the hive's own (hivecommons/hive#16658).
     function stageTrackerMergeBannerText(b, nowMs) {
+      // The date and time ride the head line: at the end of the title line a
+      // long title's ellipsis hid them on every banner.
       const d = new Date(b.at || nowMs);
-      const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const when = typeof formatDashboardDateTime === 'function'
+        ? formatDashboardDateTime(d)
+        : `${d.getMonth() + 1}/${d.getDate()} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
       const who = stageTrackerMergedByText(b.merged_by);
       const merger = stageTrackerMergerText(b.merged_by);
-      const paren = [b.lane || '', who, hm].filter(Boolean).join(', ');
+      const paren = [b.lane || '', who].filter(Boolean).join(', ');
       const num = stageTrackerMergeBannerNumber(b);
       const title = String(b.title || b.repo || '').trim();
       const meta = paren ? '(' + paren + ')' : '';
-      return { number: num, merger, head: `${num ? '#' + num + ' ' : ''}merged${merger ? ' by ' + merger : ''}${b.preview ? ' (test)' : ''}`, title, meta, text: `${title}${meta ? ' ' + meta : ''}`.trim() };
+      return { number: num, merger, when, head: `${num ? '#' + num + ' ' : ''}merged${merger ? ' by ' + merger : ''}${b.preview ? ' (test)' : ''}`, title, meta, text: `${title}${meta ? ' ' + meta : ''} · merged ${when}`.trim() };
     }
     // Stateful: a persistent banner, bottom right, for one merge — stays
     // until dismissed or stageTrackerMergeBannerMs() (twice the info toast
@@ -29576,6 +29589,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const repo = stageTrackerMergeBannerRepo(b);
       const recent = repo ? ((_stageTrackerMerged.server && _stageTrackerMerged.server.recent) || []).find(e => stageTrackerMergeBannerRepo(e).toLowerCase() === repo.toLowerCase() && stageTrackerMergeBannerNumber(e) === stageTrackerMergeBannerNumber(b)) : null;
       const info = Object.assign({ title: _stageTrackerPRTitle[b.key] || '', merged_by: '', lane: '', url: '' }, recent || {}, b, { repo });
+      // The ledger's merged_at is when it merged; b.at is only when this tab
+      // noticed, the same instant for every merge one poll turns up.
+      if (recent && recent.at > 0 && !b.preview) info.at = recent.at;
       if (!info.merged_by && !b.preview) info.merged_by = stageTrackerMergedByOf(b.key, typeof _stageTracker !== 'undefined' ? _stageTracker : null);
       const num = stageTrackerMergeBannerNumber(info);
       const repoChip = stageTrackerRepoChipHtml(repo, { repoChips: { primary: stageTrackerPrimaryRepo(), active: _stageTrackerFilter.repo } });
@@ -29589,7 +29605,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // The banner itself is the dismiss target (a tap on a phone, a click
       // anywhere on a desktop); its links carry data-stop so they still act.
       el.setAttribute('data-action', 'hamBannerDismiss'); el.setAttribute('data-arg-types', 't');
-      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${repoChip ? repoChip + ' ' : ''}${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${t.merger ? ` by <span class="merge-banner-by">${esc(t.merger)}</span>` : ''}${info.preview ? ' <span class="text-muted">(test)</span>' : ''}</div><div class="merge-banner-text" title="${esc(t.text)}"><span class="merge-banner-title">${esc(t.title)}</span>${t.meta ? ` <span class="merge-banner-meta">${esc(t.meta)}</span>` : ''}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener" data-action="hamBannerOpenLink" data-stop="1">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
+      el.innerHTML = `<span class="merge-banner-ico" aria-hidden="true">✓</span><div class="merge-banner-body"><div class="merge-banner-head">${repoChip ? repoChip + ' ' : ''}${num ? `<span class="merge-banner-num">#${esc(num)}</span> ` : ''}merged${t.merger ? ` by <span class="merge-banner-by">${esc(t.merger)}</span>` : ''}${info.preview ? ' <span class="text-muted">(test)</span>' : ''}${t.when ? ` <time class="merge-banner-when" datetime="${esc(new Date(info.at || Date.now()).toISOString())}">· ${esc(t.when)}</time>` : ''}</div><div class="merge-banner-text" title="${esc(t.text)}"><span class="merge-banner-title">${esc(t.title)}</span>${t.meta ? ` <span class="merge-banner-meta">${esc(t.meta)}</span>` : ''}</div><div class="merge-banner-links">${b.rowKey ? `<button type="button" data-action="hamBannerShowRow" data-arg0="${esc(b.rowKey)}" data-stop="1">Show row</button>` : ''}${info.url ? `<a href="${esc(info.url)}" target="_blank" rel="noopener" data-action="hamBannerOpenLink" data-stop="1">Open on GitHub</a>` : ''}<button type="button" data-action="hamMergedOpen" data-stop="1">All merges</button></div></div><button type="button" class="merge-banner-close" data-action="hamBannerDismiss" data-arg-types="t" data-stop="1" aria-label="Dismiss">×</button>`;
       box.appendChild(el);
       while (stageTrackerMergeBannerList(box).length > STAGE_TRACKER_MERGE_BANNER_MAX) { const oldest = stageTrackerMergeBannerList(box)[0]; toastCountdownCancel(oldest); oldest.remove(); }
       stageTrackerMergeBannerLayout(box);
@@ -33711,6 +33727,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     let govPRModelsData = null;
     let reviewerAccuracyLoading = false;
     let reviewerAccuracyData = null;
+    // Per-model PR list (#18722): the open row's model and a cache keyed by
+    // window + model, filled on demand from /api/governor/pr-models?model=….
+    let govPRModelPRsOpen = '';
+    const govPRModelPRsCache = {};
+    const govPRModelPRsLoading = {};
 
     function normalizeGovernorPRModelsWindowName(windowName) {
       return ['7d', '30d', 'all'].includes(windowName) ? windowName : '7d';
@@ -33733,8 +33754,85 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     }
     window.setGovernorPRModelsSort = setGovernorPRModelsSort;
 
+    function governorPRModelPRsKey(windowName, model) {
+      return `${normalizeGovernorPRModelsWindowName(windowName)}\u0000${model}`;
+    }
+
+    async function loadGovernorPRModelPRs(model, windowName = govPRModelsWindow) {
+      const requestedWindow = normalizeGovernorPRModelsWindowName(windowName);
+      const key = governorPRModelPRsKey(requestedWindow, model);
+      if (govPRModelPRsLoading[key] || govPRModelPRsCache[key]) return;
+      govPRModelPRsLoading[key] = true;
+      try {
+        const res = await fetch(`/api/governor/pr-models?window=${encodeURIComponent(requestedWindow)}&model=${encodeURIComponent(model)}`);
+        const data = res.ok ? await res.json() : null;
+        govPRModelPRsCache[key] = data && Array.isArray(data.prs)
+          ? { prs: data.prs, truncated: !!data.prs_truncated }
+          : { prs: [], truncated: false, error: true };
+      } catch (_) {
+        govPRModelPRsCache[key] = { prs: [], truncated: false, error: true };
+      } finally {
+        delete govPRModelPRsLoading[key];
+        renderGovernorFromLastStatus();
+      }
+    }
+
+    function toggleGovernorPRModelPRs(model) {
+      govPRModelPRsOpen = govPRModelPRsOpen === model ? '' : String(model || '');
+      const pending = govPRModelPRsOpen ? loadGovernorPRModelPRs(govPRModelPRsOpen, govPRModelsWindow) : Promise.resolve();
+      renderGovernorFromLastStatus();
+      return pending;
+    }
+    window.toggleGovernorPRModelPRs = toggleGovernorPRModelPRs;
+
+    function governorPRModelPRsToggleHtml(model) {
+      const open = govPRModelPRsOpen === model;
+      return `<button type="button" class="gov-pr-model-prs-toggle" aria-expanded="${open}" data-action="toggleGovernorPRModelPRs" data-arg0="${escapeHtml(model)}" data-stop="1" title="List this model's pull requests in the window">${open ? '▾' : '▸'} PRs</button>`;
+    }
+
+    function governorPRModelPRListHtml(model) {
+      if (govPRModelPRsOpen !== model) return '';
+      const entry = govPRModelPRsCache[governorPRModelPRsKey(govPRModelsWindow, model)];
+      if (!entry) {
+        // First open, or the window pill changed while a row was open: fetch on demand.
+        loadGovernorPRModelPRs(model, govPRModelsWindow);
+        return '<div class="gov-pr-model-prlist"><div class="gov-pr-model-sub">Loading PRs…</div></div>';
+      }
+      if (entry.error) return '<div class="gov-pr-model-prlist"><div class="gov-pr-model-sub">Could not load this model\'s PRs.</div></div>';
+      if (!entry.prs.length) return '<div class="gov-pr-model-prlist"><div class="gov-pr-model-sub">No PRs for this model in the window.</div></div>';
+      const outcomeLabel = { merged: 'merged', closed_unmerged: 'closed-unmerged', open: 'open' };
+      const items = entry.prs.map(pr => {
+        const label = `${pr.repo || ''}#${pr.number || ''}`;
+        const href = pr.url ? ` href="${escapeHtml(pr.url)}" target="_blank" rel="noopener"` : '';
+        const outcome = outcomeLabel[pr.outcome] || 'open';
+        const title = pr.title ? ` ${escapeHtml(pr.title)}` : '';
+        const who = [pr.agent, pr.backend].filter(Boolean).map(escapeHtml).join(' / ');
+        const firstPass = pr.first_pass ? ' · first pass' : '';
+        return `<li><a${href}>${escapeHtml(label)}</a>${title} <span class="gov-pr-model-prlist-outcome ${outcome === 'closed-unmerged' ? 'closed' : outcome}">${outcome}</span> · ${pr.review_rounds || 0} rounds · ${pr.fix_attempts || 0} fixes${firstPass}${who ? ` · ${who}` : ''}</li>`;
+      }).join('');
+      const more = entry.truncated ? `<div class="gov-pr-model-sub">Showing the first ${entry.prs.length} PRs, most reworked first.</div>` : '';
+      return `<div class="gov-pr-model-prlist"><ol>${items}</ol>${more}</div>`;
+    }
+
     function governorPRModelUnattributed(b) {
       return !!(b?.effectiveness?.unattributed) || !b?.model || String(b.model).toLowerCase() === 'unknown';
+    }
+
+    // Tooltip text for a bucket's per-repository and weekly slices (#18716).
+    // Returns '' when the bucket has neither (older servers, or no PRs).
+    function governorPRModelSliceDetail(b) {
+      const pct = v => `${((Number(v) || 0) * 100).toFixed(0)}%`;
+      const rework = s => (s.merged || 0) > 0 ? `, first-pass ${pct(s.first_pass_merge_rate)}, avg fix ${(Number(s.avg_fix_attempts) || 0).toFixed(1)}` : '';
+      const repos = Array.isArray(b?.repos) ? b.repos : [];
+      const weeks = Array.isArray(b?.weeks) ? b.weeks : [];
+      const parts = [];
+      if (repos.length) {
+        parts.push('By repository:\n' + repos.map(r => `${r.repo || 'unknown'}: ${r.prs || 0} PRs (${r.merged || 0} merged${rework(r)})`).join('\n'));
+      }
+      if (weeks.length) {
+        parts.push('Weekly trend (week of, by PR created date):\n' + weeks.map(w => `${w.week_start}: ${w.prs || 0} PRs (${w.merged || 0} merged${rework(w)})`).join('\n'));
+      }
+      return parts.join('\n\n');
     }
 
     // Column definitions for the PRs-by-model table; rendered once as a sticky
@@ -33867,12 +33965,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
               const sliceRework = s => `${s.prs || 0} PRs (${s.merged || 0} merged, ${s.open || 0} open, ${s.closed_unmerged || 0} closed-unmerged) · first pass ${s.first_pass_merged || 0}/${s.sample_prs || 0} · avg rounds ${(s.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(s.avg_fix_attempts || 0).toFixed(1)}`;
               const sources = (b.sources || []).map(src => `${src.model || 'unknown'} / ${src.backend || 'unknown'}: ${sliceRework(src)}`).join('\n');
               const effortBreakdown = (b.efforts || []).map(e => `effort ${e.effort || 'unknown'}: ${sliceRework(e)}`).join('\n');
+              const sliceDetail = governorPRModelSliceDetail(b);
               const agentBreakdown = (b.agents || []).map(a => `${a.agent || 'unknown'} / ${a.backend || b.backend || 'unknown'}: ${a.prs} PRs (${a.merged || 0} merged, ${a.open || 0} open, ${a.closed_unmerged || 0} closed-unmerged)`).join('\n');
               const scoreFormula = measured ? ' × (1 − fail) × (1 − no ship)' : ' (first-pass bound only: no runs recorded, so the run factors were skipped)';
               const scoreLine = eff.rank ? `\nRank #${eff.rank} · score ${(Number(eff.score) || 0).toFixed(3)} = Wilson lower bound(${eff.first_pass_merged ?? '?'}/${eff.merged_prs ?? b.merged ?? 0} first pass)${scoreFormula}` : (unattributed ? '\nUnattributed: no model recorded, listed but not ranked' : `\nUnranked: fewer than ${data.min_merged_prs || 5} merged PRs`);
-              const tip = `${b.model || 'unknown'} via ${backends.join(', ')}${scoreLine}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${values.first_pass}${ci(eff.first_pass_merge_rate_ci || rw.first_pass_merge_rate_ci)} · PR run rate ${values.pr_runs}${measured ? ci(eff.verified_pr_run_rate_ci) : ''} · failure ${values.fail}${measured ? ci(eff.failure_rate_ci) : ''} · nothing-to-ship ${values.no_ship}${measured ? ci(eff.nothing_to_ship_rate_ci) : ''}${measured ? '' : '\n— = no runs recorded, not a measured 0%'}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${sources ? '\n\nRaw model ids folded into this row:\n' + sources : ''}${agentBreakdown ? '\n\n' + agentBreakdown : ''}${effortBreakdown ? '\n\nBy effort:\n' + effortBreakdown : ''}`;
+              const tip = `${b.model || 'unknown'} via ${backends.join(', ')}${scoreLine}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${values.first_pass}${ci(eff.first_pass_merge_rate_ci || rw.first_pass_merge_rate_ci)} · PR run rate ${values.pr_runs}${measured ? ci(eff.verified_pr_run_rate_ci) : ''} · failure ${values.fail}${measured ? ci(eff.failure_rate_ci) : ''} · nothing-to-ship ${values.no_ship}${measured ? ci(eff.nothing_to_ship_rate_ci) : ''}${measured ? '' : '\n— = no runs recorded, not a measured 0%'}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${sources ? '\n\nRaw model ids folded into this row:\n' + sources : ''}${agentBreakdown ? '\n\n' + agentBreakdown : ''}${effortBreakdown ? '\n\nBy effort:\n' + effortBreakdown : ''}${sliceDetail ? '\n\n' + sliceDetail : ''}`;
               return `<div class="gov-pr-model-row${unattributed ? ' unattributed' : ''}" title="${escapeHtml(tip)}">
-                <div><div class="gov-pr-model-name">${rank}${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${backendChips}</div></div>
+                <div><div class="gov-pr-model-name">${rank}${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${backendChips}${governorPRModelPRsToggleHtml(b.model || 'unknown')}</div></div>
                 <div class="gov-pr-model-bar" aria-label="${escapeHtml(tip)}">
                   <div class="gov-pr-model-seg merged" style="width:${mergedPct}%"></div>
                   <div class="gov-pr-model-seg open" style="width:${openPct}%"></div>
@@ -33880,7 +33979,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
                 </div>
                 ${metrics}
                 <div class="gov-pr-model-share">${prs} · ${share.toFixed(1)}%</div>
-              </div>`;
+              </div>${governorPRModelPRListHtml(b.model || 'unknown')}`;
             }).join('');
       const reworkTable = data && total > 0 ? `<table class="gov-pr-model-table" aria-label="PR rework by model">
         <thead><tr><th>Model</th><th>First-pass</th><th>Review rounds</th><th>Fix attempts</th><th>Follow-up commits</th><th>Median merge</th><th>Sample</th></tr></thead>
@@ -40950,6 +41049,17 @@ function burnAreaChart() {
         return counts;
       })();
 
+      // A by_model row shows the canonical model id (the one the Governor's
+      // PRs-by-model card and run stats group by, #18718) with the raw name the
+      // token collector recorded in its tooltip. Rows are still one per raw
+      // name: spend is priced per raw model and is not regrouped.
+      const costModelCanonical = m => {
+        const c = String(m.canonical_model || '');
+        return c && c !== 'unknown' && c !== m.name ? c : '';
+      };
+      const costModelLabel = m => costModelCanonical(m) || m.name || 'unknown';
+      const costModelTitle = m => costModelCanonical(m) ? ` title="Reported as ${esc(m.name)}"` : '';
+
       // Per-model estimated cost table. Every model shows a $ estimate now —
       // exact list price where known, a coarse tier estimate (~) otherwise.
       const models = sortCostRows((est.by_model || []).map(m => {
@@ -40966,7 +41076,7 @@ function burnAreaChart() {
           ? `<span class="cagents-badge" title="Agents using this model now: ${esc(users.join(', '))}">${users.length}</span>`
           : `<span class="cagents-zero" title="No running agent on this model right now">—</span>`;
         return `<tr>
-          <td class="cmodel">${esc(m.name || 'unknown')}</td>
+          <td class="cmodel"${costModelTitle(m)}>${esc(costModelLabel(m))}</td>
           <td class="cnum" style="text-align:center">${agentsCell}</td>
           <td class="cnum">${fmtTokens(m.input)}${miniSparkSvg(modelSeries(m.name, 'i'), 'var(--blue)', `${m.name || 'model'} input tokens`)}</td>
           <td class="cnum">${fmtTokens(m.output)}${miniSparkSvg(modelSeries(m.name, 'o'), 'var(--purple)', `${m.name || 'model'} output tokens`)}</td>
@@ -43153,6 +43263,27 @@ function burnAreaChart() {
       }).join('');
     }
 
+    // Change failures per canonical author model (#18720), read from
+    // outcomes_by_author_model. Most PRs first; the person and no-model
+    // buckets trail. n is every PR with an evidence record for that model,
+    // so a small sample is visible next to its rate. Absent on an older
+    // server: nothing is rendered.
+    function evOutcomesByModelHtml(byModel) {
+      byModel = byModel && typeof byModel === 'object' ? byModel : {};
+      const tail = ['human', 'unknown'];
+      const keys = Object.keys(byModel).filter((k) => Number(byModel[k] && byModel[k].n) > 0);
+      if (!keys.length) return '';
+      keys.sort((a, b) => (tail.indexOf(a) - tail.indexOf(b)) || ((Number(byModel[b].n) || 0) - (Number(byModel[a].n) || 0)) || a.localeCompare(b));
+      const rows = keys.map((k) => {
+        const o = byModel[k] || {};
+        const merged = Number(o.merged) || 0, rv = Number(o.reverted_14d) || 0, ro = Number(o.issue_reopened_14d) || 0;
+        const rate = o.change_failure_rate == null ? null : Number(o.change_failure_rate);
+        const label = k === 'human' ? 'human (no model)' : k === 'unknown' ? 'unknown (model not recorded)' : k;
+        return `<tr><td>${escapeHtml(label)}</td><td>${Number(o.n) || 0}</td><td>${merged}</td><td>${rv}</td><td>${ro}</td><td>${evPct(rate)}</td></tr>`;
+      }).join('');
+      return `<div class="ev-note">Change failures by author model: reverted or issue re-opened within 14 d of merge, ÷ merged. n counts only PRs with an evidence record, so it can differ from PRs by model; a rate on a small n is weak evidence.</div><div class="ev-table-wrap"><table class="ev-table ev-model-outcomes"><thead><tr><th>Author model</th><th>n</th><th>Merged</th><th>Reverted</th><th>Re-opened</th><th>Change failure</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+    }
+
     function evOutcomesSvg(outcomes) {
       outcomes = outcomes || {};
       const kinds = EV_AUTHOR_KINDS.concat(Object.keys(outcomes).filter((k) => !EV_AUTHOR_KINDS.includes(k)).sort());
@@ -43762,7 +43893,7 @@ function burnAreaChart() {
       const windowHint = Number(dto.n) > 0 ? '' : evWindowHint(dto);
       card.innerHTML = `<div class="prt-head"><div class="lc-window">🔬 Evidence · ${escapeHtml(scope)}<span class="ev-n" title="PRs (latest evidence bundle per PR) in this window">n=${Number(dto.n) || 0} PRs</span></div>${evWindowControls()}</div>`
         + (windowHint ? `<div class="ev-note ev-window-hint">No PRs opened in this window${escapeHtml(windowHint)}.</div>` : '')
-        + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes) + evControlArmHtml(dto.control_arm),
+        + evPanel('outcome-by-author', 'Outcome by author kind', outcomeN, evOutcomesSvg(outcomes) + evOutcomesByModelHtml(dto.outcomes_by_author_model) + evControlArmHtml(dto.control_arm),
           `PRs are placed in the window by their open time, never by when a record was written. Undone counts two change-failure signals, each within 14 d of merge: reverted means a reverted_by link from a later merged PR whose title or body named this PR or its commit (Reverts #N, Revert "…", This reverts commit <sha>) — a revert that names nothing is missed; re-opened means an issue this PR closed was re-opened by a person after the merge, as seen by the issues webhook or the issue listing — an issue closed by hand rather than by a closing keyword is not tracked. A live bundle records a merge only when this hive merged, and never a close-without-merge; PRs reviewed here and then merged by someone else, closed by hand or left open are resolved from the governor's review-outcome ledger instead${outcomeLedger ? ` (${outcomeLedger} PR(s) in this window)` : ''}: ${outcomeElsewhere} merged elsewhere · ${outcomeClosed} closed without merge · ${outcomeOpen} open. A PR the ledger never saw${outcomeUnknown ? ` (${outcomeUnknown} PR(s) in this window)` : ''} is shown as unknown and excluded from every rate, not counted as open or as not merged. Merged is not the same as correct.`)
         + evIssueReopenRatesHtml(dto)
         + evPanel('calibration', 'Reviewer calibration', calibN, evCalibrationControls() + evCalibrationSvg(calib),
@@ -55900,6 +56031,9 @@ function burnAreaChart() {
     const DASHBOARD_TIMEZONE_STORAGE_KEY = 'hive-dashboard-display-timezone';
     const DASHBOARD_TIMEZONE_BROWSER = 'browser';
     const DASHBOARD_TIMEZONE_SERVER = 'server';
+    // Clock format for every dashboard time: '' follows the browser locale
+    // (12-hour in en-US), '12' or '24' forces it.
+    const DASHBOARD_CLOCK_STORAGE_KEY = 'hive-dashboard-clock-format';
     let _navbarClockTimeZone = '';
     let _dashboardServerTimeZone = '';
     let _lastStatusPayloadAtMs = 0;
@@ -55936,6 +56070,12 @@ function burnAreaChart() {
       try { return localStorage.getItem(DASHBOARD_TIMEZONE_STORAGE_KEY) || DASHBOARD_TIMEZONE_BROWSER; } catch (e) { return DASHBOARD_TIMEZONE_BROWSER; }
     }
 
+    function dashboardClockPreference() {
+      let v = '';
+      try { v = localStorage.getItem(DASHBOARD_CLOCK_STORAGE_KEY) || ''; } catch (e) {}
+      return v === '12' || v === '24' ? v : '';
+    }
+
     function selectedDashboardTimeZone() {
       const pref = dashboardTimeZonePreference();
       if (pref === DASHBOARD_TIMEZONE_SERVER) return validDashboardTimeZone(_dashboardServerTimeZone) || browserDashboardTimeZone() || 'UTC';
@@ -55965,7 +56105,11 @@ function burnAreaChart() {
       const opts = Object.assign({}, options || {});
       const tz = selectedDashboardTimeZone();
       if (tz) opts.timeZone = tz;
-      const key = JSON.stringify(Object.keys(opts).sort().map(k => [k, opts[k]]));
+      // A chosen clock format overrides the caller's; h23 rather than
+      // hour12:false so midnight reads 00:00, never 24:00.
+      const clock = opts.hour ? dashboardClockPreference() : '';
+      if (clock) { delete opts.hour12; delete opts.hourCycle; if (clock === '24') opts.hourCycle = 'h23'; else opts.hour12 = true; }
+      const key =JSON.stringify(Object.keys(opts).sort().map(k => [k, opts[k]]));
       if (_dashboardDateFormatters.has(key)) return _dashboardDateFormatters.get(key);
       const formatter = new Intl.DateTimeFormat([], opts);
       // Bound memory even when callers supply arbitrary option combinations.
@@ -65747,8 +65891,10 @@ function burnAreaChart() {
       ];
       const zoneOptions = zones.filter(z => z !== 'UTC').map(z => `<option value="${esc(z)}"${pref === z ? ' selected' : ''}>${esc(z)}</option>`).join('');
       const options = fixed.map(([value, label]) => `<option value="${esc(value)}"${pref === value ? ' selected' : ''}>${esc(label)}</option>`).join('') + zoneOptions;
+      const clock = dashboardClockPreference();
+      const clockOptions = [['', 'Browser locale (default)'], ['12', '12-hour (4:05 PM)'], ['24', '24-hour (16:05)']].map(([value, label]) => `<option value="${value}"${clock === value ? ' selected' : ''}>${esc(label)}</option>`).join('');
       const preview = formatDashboardDateTime(new Date());
-      const datalist = zones.map(z => `<option value="${esc(z)}"></option>`).join('');
+      const datalist =zones.map(z => `<option value="${esc(z)}"></option>`).join('');
       return '<div class="config-section" id="dashboard-timezone-settings">' +
         '<h3>Display timezone</h3>' +
         '<p class="text-muted fs-base">Choose the timezone used for dashboard timestamps. Relative ages such as “1m ago” are unchanged.</p>' +
@@ -65756,7 +65902,9 @@ function burnAreaChart() {
         '<select id="dashboard-timezone-select" data-change-action="setDashboardTimeZonePreference" data-arg-types="v">' + options + '</select></div>' +
         '<div class="config-field"><label for="dashboard-timezone-custom">Search IANA timezone</label>' +
         '<input id="dashboard-timezone-custom" list="dashboard-timezone-list" value="' + esc(selectedCustom ? pref : '') + '" placeholder="America/Los_Angeles" data-change-action="setDashboardTimeZonePreference" data-arg-types="v">' +
-        '<datalist id="dashboard-timezone-list">' + datalist + '</datalist></div></div>' +
+        '<datalist id="dashboard-timezone-list">' + datalist + '</datalist></div>' +
+        '<div class="config-field"><label for="dashboard-clock-select">Time format</label>' +
+        '<select id="dashboard-clock-select" data-change-action="setDashboardClockPreference" data-arg-types="v">' + clockOptions + '</select></div></div>' +
         '<div class="text-muted fs-base">Preview: <strong id="dashboard-timezone-preview">' + esc(preview) + '</strong></div>' +
         '</div>';
     }
@@ -65774,6 +65922,16 @@ function burnAreaChart() {
       const root = document.getElementById('theme-config-root');
       if (root) root.outerHTML = renderGovAppearance();
       showToast('Display timezone saved: ' + dashboardTimeZoneLabel(selectedDashboardTimeZone()), 'success');
+    }
+
+    function setDashboardClockPreference(value) {
+      const pref = value === '12' || value === '24' ? value : '';
+      try { if (pref) localStorage.setItem(DASHBOARD_CLOCK_STORAGE_KEY, pref); else localStorage.removeItem(DASHBOARD_CLOCK_STORAGE_KEY); } catch (e) {}
+      tickNavbarClock();
+      if (window._lastStatus) render(window._lastStatus);
+      const root = document.getElementById('theme-config-root');
+      if (root) root.outerHTML = renderGovAppearance();
+      showToast('Time format saved: ' + (pref ? pref + '-hour' : 'browser locale'), 'success');
     }
 
     function renderGovAppearance() {

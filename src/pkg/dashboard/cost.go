@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard/collect"
 	ghpkg "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/modelfamily"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
 
@@ -125,6 +126,10 @@ type costModelEntry struct {
 	Output      int64   `json:"output"`
 	CacheRead   int64   `json:"cache_read"`
 	CacheCreate int64   `json:"cache_create"`
+	// CanonicalModel is modelfamily.Canonical(Name) on by_model rows, the id
+	// PRs-by-model and run stats group by (#18718). Empty on by_agent rows.
+	// Spend is still one row per raw model: prices are per raw model.
+	CanonicalModel string `json:"canonical_model,omitempty"`
 }
 
 type costEstimated struct {
@@ -537,13 +542,14 @@ func flattenEstimated(est tokens.EstimatedCost) costEstimated {
 	}
 	for name, mc := range est.ByModel {
 		out.ByModel = append(out.ByModel, costModelEntry{
-			Name:        name,
-			USD:         mc.USD,
-			Source:      sourceForCost(mc),
-			Input:       mc.Input,
-			Output:      mc.Output,
-			CacheRead:   mc.CacheRead,
-			CacheCreate: mc.CacheCreate,
+			Name:           name,
+			USD:            mc.USD,
+			Source:         sourceForCost(mc),
+			Input:          mc.Input,
+			Output:         mc.Output,
+			CacheRead:      mc.CacheRead,
+			CacheCreate:    mc.CacheCreate,
+			CanonicalModel: modelfamily.Canonical(name),
 		})
 	}
 	for name, ac := range est.ByAgent {

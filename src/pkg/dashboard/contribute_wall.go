@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/modelfamily"
 )
 
 const (
@@ -84,6 +85,16 @@ type WallModelStats struct {
 	Abandoned    int                   `json:"abandoned"`
 	Scenarios    map[string]int        `json:"scenarios"`
 	FailureKinds WallModelFailureKinds `json:"failure_kinds"`
+	// CanonicalModel is modelfamily.Canonical(Model), the id the Governor's
+	// PRs-by-model card groups by, so run stats line up with it (#18718).
+	CanonicalModel string `json:"canonical_model"`
+	// RawModels lists the raw spellings folded into this row, each with its
+	// own run count. Set only when the caller asks for group=canonical.
+	RawModels []WallRawModelRuns `json:"raw_models,omitempty"`
+
+	// verifiedRuns and failedRuns are the counts behind the two rates, kept
+	// so group=canonical can recompute the rates exactly.
+	verifiedRuns, failedRuns int
 }
 
 // WallModelFailureKinds counts a model's failed runs by the failure kind the
@@ -679,6 +690,8 @@ func readTaskRunModelStats(path string, window time.Duration) (map[string]WallMo
 			a.VerifiedPRShare = float64(a.verified) / float64(a.Runs)
 			a.FailureRate = float64(a.failed) / float64(a.Runs)
 		}
+		a.CanonicalModel = modelfamily.Canonical(a.Model)
+		a.verifiedRuns, a.failedRuns = a.verified, a.failed
 		out[k] = a.WallModelStats
 	}
 	return out, nil
@@ -705,5 +718,9 @@ func (s *Server) handleContributeRunStatsByModel(w http.ResponseWriter, r *http.
 		http.Error(w, "task-run log unreadable", http.StatusInternalServerError)
 		return
 	}
-	jsonResponse(w, map[string]any{"window_days": days, "models": wallStatsList(stats)})
+	models := wallStatsList(stats)
+	if runStatsGroupCanonical(r) {
+		models = groupWallModelStatsByCanonical(models)
+	}
+	jsonResponse(w, map[string]any{"window_days": days, "models": models})
 }
