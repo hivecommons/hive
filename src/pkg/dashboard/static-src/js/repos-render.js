@@ -396,9 +396,14 @@
       const state = String(rr.credential_state || '');
       const reason = String(rr.credential_reason || '');
       const login = String(rr.credential_login || '');
+      const identity = String(rr.credential_identity || '');
+      const note = String(rr.credential_note || '');
       const chips = {
-        'write-tier': ['ok', login ? '🔑 as ' + login : '🔑 owner account', 'Issues and PRs here appear under the hive owner\'s GitHub account' + (login ? ' (' + login + ')' : '') + ', never under the hive\'s App.'],
-        'read-only': ['ro', 'read-only', reason || 'The hive owner has not connected a GitHub account, so the entry was downgraded to read-only.'],
+        'write-tier': identity === 'bot'
+          ? ['ok', '🤖 as ' + (login || 'hive bot'), 'Issues and PRs here appear under the hive\'s GitHub App' + (login ? ' (' + login + ')' : '') + (note ? ': ' + note : '') + '.']
+          : ['ok', login ? '🔑 as ' + login : '🔑 owner account', 'Issues and PRs here appear under ' + (identity === 'token_file' ? 'the write_token_file account' : 'the hive owner\'s GitHub account') + (login ? ' (' + login + ')' : '') + (note ? '; ' + note : '') + '.'],
+        'read-only': ['ro', 'read-only', reason || 'No credential covers this repo, so the entry was downgraded to read-only.'],
+        'unresolved': ['warn', 'unresolved', reason || 'The App installation could not be checked; served read-only until the next pass resolves it.'],
       };
       const chip = chips[state];
       const chipHTML = chip
