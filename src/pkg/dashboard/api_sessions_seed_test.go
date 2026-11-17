@@ -112,6 +112,17 @@ func waitSeedAudit(t *testing.T, e *sessionTestEnv) {
 	})
 }
 
+func waitPendingSeedOnCleanup(t *testing.T, e *sessionTestEnv) func() {
+	t.Helper()
+	pending := false
+	t.Cleanup(func() {
+		if pending {
+			waitSeedAudit(t, e)
+		}
+	})
+	return func() { pending = true }
+}
+
 func seedBody(ids ...string) map[string]any {
 	items := make([]map[string]string, 0, len(ids))
 	for _, id := range ids {
@@ -326,18 +337,15 @@ func TestSessionCreateWithSeedWaitsForRunning(t *testing.T) {
 	release, entered := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	e.rt.startFn = func(crux.UserSessionSpec) error { close(entered); <-release; return nil }
-	pending := false
+	markPending := waitPendingSeedOnCleanup(t, e)
 	t.Cleanup(func() {
 		once.Do(func() { close(release) })
-		if pending {
-			waitSeedAudit(t, e)
-		}
 	})
 	rec := e.do(t, callerRW, "POST", "/api/sessions", map[string]any{"name": "nate v2", "group": "inbox", "vendor": "claude", "seed_items": []map[string]string{{"source": "plaud", "id": "rec-2"}}})
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("create with seed = %d: %s", rec.Code, rec.Body.String())
 	}
-	pending = true
+	markPending()
 	m := decodeSessionJSON(t, rec)
 	sess := m["session"].(map[string]any)
 	id := sess["id"].(string)
@@ -443,14 +451,11 @@ func TestSpekIntentRunnerParksWhilePreparing(t *testing.T) {
 	var once sync.Once
 	e.rt.startFn = func(crux.UserSessionSpec) error { close(entered); <-release; return nil }
 	var id string
-	pending := false
+	markPending := waitPendingSeedOnCleanup(t, e)
 	t.Cleanup(func() {
 		once.Do(func() { close(release) })
 		if id != "" {
 			waitSessionsFor(t, "the session start to finish", func() bool { return !e.s.sessionStartInFlight(id) })
-		}
-		if pending {
-			waitSeedAudit(t, e)
 		}
 	})
 	rec := e.do(t, callerOwner, "POST", "/api/sessions", map[string]any{"name": "prep", "vendor": "claude"})
@@ -463,7 +468,7 @@ func TestSpekIntentRunnerParksWhilePreparing(t *testing.T) {
 	if err := e.s.runSpekIntent(context.Background(), inbox.Item{Source: "plaud", ID: "rec-3"}, inbox.ShareIntent{Actor: callerOwner.user, Params: map[string]string{sessionSeedParamSession: id}}); err != nil {
 		t.Fatal(err)
 	}
-	pending = true
+	markPending()
 	if _, err := os.Stat(filepath.Join(e.rt.WorkDir(id), ".hive", "inbox", "plaud-rec-3.md")); err == nil {
 		t.Fatal("wrote into a preparing session")
 	}
