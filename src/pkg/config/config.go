@@ -312,7 +312,7 @@ type WorkflowConfig struct {
 	Marketplace MarketplaceConfig `yaml:"marketplace,omitempty" json:"marketplace,omitempty"`
 	// Dispatch maps a bound model's agent profiles to hive agents
 	// (workflow_dispatch.go).
-	Dispatch WorkflowDispatchConfig `yaml:"dispatch,omitempty" json:"dispatch,omitempty"`
+	Dispatch WorkflowDispatchConfig `yaml:"dispatch,omitempty" json:"dispatch,omitzero"`
 }
 
 // LabelGCEnabled is the effective workflow.label_gc (default true).
