@@ -88,7 +88,7 @@ func requestIsOwner(r *http.Request) bool {
 	return isOwnerRole(r.Header.Get("X-Hive-Role")) && r.Header.Get(ownerRoleVerifiedHeader) == "true"
 }
 
-func companionError(w http.ResponseWriter, err error) {
+func (s *Server) companionError(w http.ResponseWriter, r *http.Request, err error) {
 	var gap *CompanionGapError
 	switch {
 	case errors.As(err, &gap):
@@ -99,7 +99,7 @@ func companionError(w http.ResponseWriter, err error) {
 	case errors.Is(err, ErrMeetingUnavailable):
 		jsonError(w, err.Error(), http.StatusServiceUnavailable)
 	default:
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 	}
 }
 
@@ -127,7 +127,7 @@ func (s *Server) handleCompanionStart(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	m, err := cs.StartCompanion(ctx, req, requestUser(r))
 	if err != nil {
-		companionError(w, err)
+		s.companionError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_companion_start", auditDetail("app", req.App, "consent_version", req.ConsentVersion), "")
@@ -164,7 +164,7 @@ func (s *Server) handleCompanionAudio(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	res, err := cs.CompanionAudio(ctx, strings.TrimSpace(r.PathValue("id")), requestUser(r), requestIsOwner(r), channel, seq, data)
 	if err != nil {
-		companionError(w, err)
+		s.companionError(w, r, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -191,7 +191,7 @@ func (s *Server) handleCompanionReplies(w http.ResponseWriter, r *http.Request) 
 	defer cancel()
 	res, err := cs.CompanionReplies(ctx, strings.TrimSpace(r.PathValue("id")), requestUser(r), requestIsOwner(r), after)
 	if err != nil {
-		companionError(w, err)
+		s.companionError(w, r, err)
 		return
 	}
 	w.Header().Set("Cache-Control", "no-store")
@@ -208,7 +208,7 @@ func (s *Server) handleCompanionEnd(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	m, err := cs.EndCompanion(ctx, id, requestUser(r), requestIsOwner(r))
 	if err != nil {
-		companionError(w, err)
+		s.companionError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_companion_end", auditDetail("meeting", id), "")
