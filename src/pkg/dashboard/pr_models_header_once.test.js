@@ -26,6 +26,12 @@ const src = [
   pick(/function governorPRModelSliceDetail\(b\) \{[\s\S]*?\n    \}\n/, 'governorPRModelSliceDetail'),
   pick(/const GOV_PR_MODEL_COLUMNS = \[[\s\S]*?\n    \];\n/, 'GOV_PR_MODEL_COLUMNS'),
   pick(/function governorPRModelRows\(data\) \{[\s\S]*?\n    \}\n/, 'governorPRModelRows'),
+  // Per-model PR list (#18722): rows render a PRs toggle and, when open, the list.
+  'let govPRModelPRsOpen = ""; const govPRModelPRsCache = {}; const loadGovernorPRModelPRs = () => {};',
+  pick(/function normalizeGovernorPRModelsWindowName\(windowName\) \{[\s\S]*?\n    \}\n/, 'normalizeGovernorPRModelsWindowName'),
+  pick(/function governorPRModelPRsKey\(windowName, model\) \{[\s\S]*?\n    \}\n/, 'governorPRModelPRsKey'),
+  pick(/function governorPRModelPRsToggleHtml\(model\) \{[\s\S]*?\n    \}\n/, 'governorPRModelPRsToggleHtml'),
+  pick(/function governorPRModelPRListHtml\(model\) \{[\s\S]*?\n    \}\n/, 'governorPRModelPRListHtml'),
   pick(/function renderGovernorPRModelsTile\(\) \{[\s\S]*?\n    \}\n\n    function renderGovernor\(/, 'renderGovernorPRModelsTile').replace(/\n\n    function renderGovernor\($/, ''),
 ].join('\n');
 const lifted = new Function(src + '; return { render: data => { govPRModelsData = data; return renderGovernorPRModelsTile(); }, rows: governorPRModelRows, columns: GOV_PR_MODEL_COLUMNS };')();
