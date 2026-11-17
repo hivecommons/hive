@@ -1,16 +1,20 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/customers"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/meetings/betty"
+	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
 func wireTestCustomers(t *testing.T) *customersDashboard {
@@ -169,5 +173,103 @@ func TestCustomersAdapterRoleMatrix(t *testing.T) {
 	}
 	if _, err := c.Accept(owner, "s_missing"); !errors.Is(err, dashboard.ErrCustomerNotFound) {
 		t.Fatalf("Accept missing = %v", err)
+	}
+}
+
+// TestCustomersAdapterGraph runs GraphQL through the adapter the dashboard
+// calls: the viewer the handler built is the viewer the engine enforces.
+func TestCustomersAdapterGraph(t *testing.T) {
+	c := wireTestCustomers(t)
+	owner := dashboard.CustomersViewer{User: "olivia", Full: true, Owner: true}
+	read := dashboard.CustomersViewer{User: "reed"}
+	ada, err := c.Add(owner, dashboard.CustomerAddRequest{Name: "Ada", Identities: []dashboard.CustomerIdentityInput{{Kind: "github", Value: "ada"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := dashboard.CustomerGraphRequest{
+		Query:     `query Who($id: ID!) { me { name me } person(id: $id) { name } people { nodes { name } } }`,
+		Variables: map[string]any{"id": ada.ID}, OperationName: "Who",
+	}
+	asOwner, err := c.Graph(context.Background(), owner, query)
+	if err != nil || asOwner.Errors != 0 || !strings.Contains(string(asOwner.Body), `"person":{"name":"Ada"}`) {
+		t.Fatalf("owner graph = %s, %+v, %v", asOwner.Body, asOwner, err)
+	}
+	asRead, err := c.Graph(context.Background(), read, query)
+	if err != nil || asRead.Errors != 0 {
+		t.Fatalf("read graph = %s, %v", asRead.Body, err)
+	}
+	body := string(asRead.Body)
+	if !strings.Contains(body, `"me":{"name":"reed","me":true}`) || !strings.Contains(body, `"person":null`) || strings.Contains(body, "Ada") || strings.Contains(body, "olivia") {
+		t.Fatalf("read graph leaks or lacks the viewer: %s", body)
+	}
+	if asRead.Nodes == 0 || asOwner.Nodes <= asRead.Nodes {
+		t.Fatalf("node counts: owner %d, read %d", asOwner.Nodes, asRead.Nodes)
+	}
+	// A mutation is refused by the schema.
+	bad, err := c.Graph(context.Background(), owner, dashboard.CustomerGraphRequest{Query: `mutation { forget(id: "` + ada.ID + `") }`})
+	if err != nil || bad.Errors == 0 {
+		t.Fatalf("mutation = %s, %v", bad.Body, err)
+	}
+	if _, err := c.Get(owner, ada.ID); err != nil {
+		t.Fatalf("a refused mutation changed the store: %v", err)
+	}
+	// No engine: 503 to the caller, not a panic.
+	c.graph = nil
+	if _, err := c.Graph(context.Background(), owner, query); !errors.Is(err, dashboard.ErrCustomerUnavailable) {
+		t.Fatalf("Graph without an engine = %v", err)
+	}
+}
+
+// TestCustomersAgentContextWiring: with customers wired, the kick lookup and
+// the persona's directory return the bounded slice; unwired they return
+// nothing.
+func TestCustomersAgentContextWiring(t *testing.T) {
+	c := wireTestCustomers(t)
+	owner := dashboard.CustomersViewer{User: "olivia", Full: true, Owner: true}
+	ada, err := c.Add(owner, dashboard.CustomerAddRequest{Name: "Ada Lovelace", Identities: []dashboard.CustomerIdentityInput{{Kind: "github", Value: "adal"}, {Kind: "email", Value: "ada@example.com"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range []dashboard.CustomerEditRequest{
+		{Op: "goal_add", Text: "Ship the engine"},
+		{Op: "notes", Notes: "private note"},
+		{Op: "satisfaction_set", Level: "at_risk"},
+	} {
+		if _, err := c.Edit(owner, ada.ID, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var lookup scheduler.CustomerContextLookup
+	installCustomersAgentContext(c, func(fn scheduler.CustomerContextLookup) { lookup = fn })
+	t.Cleanup(func() { installCustomersAgentContext(nil, func(scheduler.CustomerContextLookup) {}) })
+	block := lookup([]string{"adal"})
+	if !strings.HasPrefix(block, customers.KickContextHeader) || !strings.Contains(block, "@adal: Ship the engine") || len(block) > customers.KickContextCap {
+		t.Fatalf("kick block = %q", block)
+	}
+	for _, leak := range []string{"ada@example.com", "private note", "at_risk", ada.ID} {
+		if strings.Contains(block, leak) {
+			t.Fatalf("the kick block leaks %q", leak)
+		}
+	}
+	dir := meetingsPeopleDirectory()
+	if dir == nil {
+		t.Fatal("no people directory for the persona")
+	}
+	got := dir.Find([]string{"lovelace"}, 3)
+	if len(got) != 1 || got[0].Name != "Ada Lovelace" || len(got[0].Goals) != 1 {
+		t.Fatalf("persona directory = %+v", got)
+	}
+	// The persona retriever sees it through the package-level holder.
+	hits := betty.PeopleRetriever{Directory: meetingsPeopleDirectory}.Retrieve(context.Background(), "who is lovelace", []string{"lovelace"}, 3)
+	if len(hits) != 1 || strings.Contains(hits[0].Text, "private note") || strings.Contains(hits[0].Text, "at_risk") {
+		t.Fatalf("persona snippets = %+v", hits)
+	}
+
+	// Off: nothing is wired and the kick lookup is removed.
+	var removed = true
+	installCustomersAgentContext(nil, func(fn scheduler.CustomerContextLookup) { removed = fn == nil })
+	if !removed || meetingsPeopleDirectory() != nil {
+		t.Fatal("unwiring left the lookup or the directory in place")
 	}
 }

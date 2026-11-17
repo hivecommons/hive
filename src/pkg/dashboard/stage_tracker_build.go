@@ -599,6 +599,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	stageTrackerMarkClosedBy(resp.Items, s.mergedLedger().ClosedBy)
 	stageTrackerResolveActors(resp.Items)
 	stageTrackerResolveHumanAttention(resp.Items)
+	stageTrackerResolveHumanGates(resp.Items, now)
 	sort.SliceStable(resp.Items, stageTrackerLess(resp.Items))
 	return resp
 }

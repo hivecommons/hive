@@ -26,6 +26,13 @@ const (
 	minStemLen = 4
 	// minContentWordLen is the shortest word that counts as content.
 	minContentWordLen = 3
+	// MeetingsVault is the vault meeting notes (and what the persona said
+	// in them) are filed in (live.DefaultVault). Persona retrieval never
+	// reads it: one meeting's notes and replies must not be quoted to the
+	// next meeting's participants.
+	MeetingsVault = "meetings"
+	// meetingNotesTag marks a meeting-notes fact wherever it was filed.
+	meetingNotesTag = "meeting-notes"
 )
 
 // KnowledgeSource is the slice of *knowledge.KnowledgeAPI the persona's
@@ -38,13 +45,13 @@ type KnowledgeSource interface {
 
 // KnowledgeStores lists every in-memory store of a hive for retrieval: its
 // vaults and its ready git sources (the hive's own docs are one). Remote
-// wiki layers are slow and stay out.
+// wiki layers are slow and stay out. The meetings vault is never listed.
 func KnowledgeStores(k KnowledgeSource) func() []FactStore {
 	return func() []FactStore {
 		var out []FactStore
 		seen := map[*knowledge.FileStore]bool{}
 		add := func(s *knowledge.FileStore) {
-			if s != nil && !seen[s] {
+			if s != nil && !seen[s] && s.Name() != MeetingsVault {
 				seen[s] = true
 				out = append(out, s)
 			}
@@ -136,7 +143,7 @@ func knowledgeHits(s FactStore, query string, limit int) []Snippet {
 	}
 	var hits []hit
 	for _, f := range s.Search(knowledgeQuery(query), limit*knowledgeOverfetch) {
-		if hasTag(f.Tags, codeMapTag) {
+		if hasTag(f.Tags, codeMapTag) || hasTag(f.Tags, meetingNotesTag) {
 			continue
 		}
 		body := f.Body

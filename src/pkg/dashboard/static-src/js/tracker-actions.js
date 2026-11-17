@@ -2635,7 +2635,7 @@
     // returning silently (hivecommons/hive#15436).
     function stageTrackerNothingToActOn(id, rows) {
       const refs = (rows || []).map(stageTrackerRefOf).filter(Boolean).join(', ');
-      if (typeof showToast === 'function') showToast(stageTrackerActionLabel(id) + ': nothing to act on' + (refs ? ' — ' + refs + ' is not waiting on that decision' : ''), 'warning');
+      if (typeof showToast === 'function') showToast(stageTrackerActionLabel(id) + ': nothing to act on' + (typeof stageTrackerGateStaleNote === 'function' ? stageTrackerGateStaleNote(rows) : (refs ? ' — ' + refs + ' is not waiting on that decision' : '')), 'warning'); if (typeof stageTrackerGateRefresh === 'function') stageTrackerGateRefresh();
     }
     // A copy must identify the selected item, not its parent issue or a
     // decision target. Keep the canonical URL (including its forge host).
@@ -2750,7 +2750,7 @@
         // parent and its sub-rows run each PR once, with every PR named in
         // the shared confirmation. A parent with one parked PR keeps
         // deciding just that PR ("Decide PR #N › Let hive decide").
-        items = [].concat(...items.map(it => id === 'decide:delegate' ? stageTrackerDelegateTargets(it) : [stageTrackerDecisionTarget(it)]))
+        items = [].concat(...items.map(it => stageTrackerGateTargets(it, id)))
           .filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       }

@@ -192,6 +192,8 @@ Named terminal sessions where a command-line AI agent runs inside Hive; everyone
 
 **When it appears.** Whenever sessions are enabled on the hive, which is the default (`GET /api/sessions` reports `enabled: true`); with `dashboard.sessions.enabled: false` or `HIVE_SESSIONS_ENABLED=false` the section is hidden. Old `#inception-section` links open this section.
 
+**Closing and deleting.** **Close session** ends a running session's CLI and keeps the session, ended, so it can be resumed. **Delete session** on an ended or failed session removes its record and files; work in its workspace stays on its branch of the shared checkout. Deleting can take a minute or more for a session with large caches, so it runs in the background: the tab shows **Deleting…** with a spinner and no controls, and closes by itself when the hive is done. If the delete fails, the tab comes back as it was with the reason and a **Retry delete** button. See [Deleting a session](../api-reference/sessions.md#deleting-a-session).
+
 **Settings that change it.** Settings → Dashboard → **Inception (spek) sessions** (`dashboard.sessions.enabled`, default on) and the three limits beside it (`max_sessions`, `max_per_user`, `idle_ttl_hours`; 0 keeps the default). **Answer the CLI startup screens** (`dashboard.sessions.autostart`, default on) turns the startup auto-answer off or on. `HIVE_SESSIONS_ENABLED`, `HIVE_SESSIONS_AUTOSTART` and the matching `HIVE_SESSIONS_*` variables override the saved values. The terminal is drawn in the dashboard's terminal colours, so it matches the current theme. See [Inception](../inception.md) for the inception API it sits beside.
 
 ## Knowledge

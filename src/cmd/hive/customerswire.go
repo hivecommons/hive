@@ -1,13 +1,18 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/customers"
+	"github.com/hivecommons/hive/pkg/customers/gql"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/meetings/betty"
+	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
 const (
@@ -24,6 +29,8 @@ const (
 // pkg/customers; this adapter is the only place the two meet.
 type customersDashboard struct {
 	svc *customers.Service
+	// graph is the read-only GraphQL engine; nil if it failed to start.
+	graph *gql.Engine
 }
 
 // wireCustomers opens the people store and the edge index when
@@ -61,7 +68,15 @@ func wireCustomersAt(dataDir, graphDir string, resolvers customers.Resolvers, lo
 			_ = index.Close()
 		}
 	}
-	return &customersDashboard{svc: customers.NewService(store, index, resolvers)}, stop
+	svc := customers.NewService(store, index, resolvers)
+	graph, err := gql.New(svc, gql.Limits{})
+	if err != nil {
+		graph = nil
+		if logger != nil {
+			logger.Error("[customers] graph endpoint unavailable", "error", err)
+		}
+	}
+	return &customersDashboard{svc: svc, graph: graph}, stop
 }
 
 // customersError maps a store error onto the dashboard's sentinels, which
@@ -138,4 +153,60 @@ func (c *customersDashboard) Accept(v dashboard.CustomersViewer, suggestionID st
 
 func (c *customersDashboard) Dismiss(v dashboard.CustomersViewer, suggestionID string) error {
 	return customersError(c.svc.Dismiss(customersViewer(v), suggestionID))
+}
+
+// Graph is POST /api/graph: one read-only GraphQL query as the viewer.
+func (c *customersDashboard) Graph(ctx context.Context, v dashboard.CustomersViewer, req dashboard.CustomerGraphRequest) (dashboard.CustomerGraphResult, error) {
+	if c.graph == nil {
+		return dashboard.CustomerGraphResult{}, dashboard.ErrCustomerUnavailable
+	}
+	res := c.graph.Exec(ctx, customersViewer(v), req.Query, req.OperationName, req.Variables)
+	return dashboard.CustomerGraphResult{Body: res.Body, Nodes: res.Nodes, Errors: res.Errors}, nil
+}
+
+func (c *customersDashboard) AnswerHint(v dashboard.CustomersViewer, hintID string, same bool) (dashboard.CustomerResult, error) {
+	return customerResult(c.svc.AnswerHint(customersViewer(v), hintID, same))
+}
+
+// meetingsPeople holds the people directory the meeting persona reads. The
+// persona is built before customers are wired, so it asks at call time.
+var meetingsPeople atomic.Pointer[customersPeopleDirectory]
+
+func meetingsPeopleDirectory() betty.PeopleDirectory {
+	if d := meetingsPeople.Load(); d != nil {
+		return d
+	}
+	return nil
+}
+
+// customersPeopleDirectory answers the persona's "who is this?" from the
+// customers service. The persona speaks in a room, so the directory hands
+// over only what customers.PeopleBriefs allows: a name, tags and confirmed
+// goals.
+type customersPeopleDirectory struct{ svc *customers.Service }
+
+// Find implements betty.PeopleDirectory.
+func (d *customersPeopleDirectory) Find(terms []string, limit int) []betty.PersonBrief {
+	var out []betty.PersonBrief
+	for _, b := range d.svc.PeopleBriefs(terms, limit) {
+		out = append(out, betty.PersonBrief{Name: b.Name, Tags: b.Tags, Goals: b.Goals})
+	}
+	return out
+}
+
+// installCustomersAgentContext hands the customers service to the two
+// places agents and the persona read it: the kick prompt and the persona's
+// retrievers. Neither can query the store; they receive a bounded slice.
+func installCustomersAgentContext(c *customersDashboard, setKickLookup func(scheduler.CustomerContextLookup)) {
+	if c == nil {
+		meetingsPeople.Store(nil)
+		if setKickLookup != nil {
+			setKickLookup(nil)
+		}
+		return
+	}
+	meetingsPeople.Store(&customersPeopleDirectory{svc: c.svc})
+	if setKickLookup != nil {
+		setKickLookup(c.svc.KickContext)
+	}
 }

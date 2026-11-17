@@ -69,7 +69,7 @@ type PersonView struct {
 	Counts map[string]int `json:"counts,omitempty"`
 	// Hints are the open "Same person?" questions. Full view only: a hint
 	// names another profile.
-	Hints []Hint `json:"hints,omitempty"`
+	Hints []HintView `json:"hints,omitempty"`
 	// Hinted reports that the last identity edit was not linked because
 	// the identity belongs to someone else, and was raised as a question
 	// instead.
@@ -160,7 +160,9 @@ func (s *Service) view(v Viewer, p Person, isMe, detail bool) PersonView {
 		return out
 	}
 	if detail {
-		out.Hints = s.store.Hints(p.ID)
+		for _, h := range s.store.Hints(p.ID) {
+			out.Hints = append(out.Hints, s.hintView(h))
+		}
 		if s.index != nil {
 			if counts, err := s.index.Counts(p.ID); err == nil && len(counts) > 0 {
 				out.Counts = counts
@@ -322,4 +324,128 @@ func (s *Service) Dismiss(v Viewer, suggestionID string) error {
 		return ErrForbidden
 	}
 	return s.store.Dismiss(suggestionID)
+}
+
+// ArtefactPerson is one person on an artefact, as the viewer sees them.
+type ArtefactPerson struct {
+	Predicate string
+	Person    PersonView
+}
+
+// Edges returns a page of a person's edges, newest first, leaving out the
+// ones whose artefact the viewer may not see where it lives. Without the
+// full view only the viewer's own edges can be read. A page can come back
+// shorter than limit when edges were left out; next is still the cursor for
+// the following page.
+func (s *Service) Edges(v Viewer, id, predicate, after string, limit int) ([]Edge, string, error) {
+	p, _, err := s.resolve(v, id)
+	if err != nil {
+		return nil, "", err
+	}
+	if s.index == nil {
+		return nil, "", nil
+	}
+	edges, next, err := s.index.ByPerson(p.ID, predicate, after, limit)
+	if err != nil {
+		return nil, "", err
+	}
+	visible := edges[:0:0]
+	for _, e := range edges {
+		if s.resolvers.Visible(e.Artefact, v) {
+			visible = append(visible, e)
+		}
+	}
+	return visible, next, nil
+}
+
+// ArtefactVisible reports whether the viewer may be told about an artefact
+// reference at all: the reference is well formed, the viewer is a named
+// user, and the artefact's own source lets them see it. It says nothing
+// about whether the artefact exists.
+func (s *Service) ArtefactVisible(v Viewer, ref string) bool {
+	if !validRef(ref) || strings.TrimSpace(v.User) == "" {
+		return false
+	}
+	return s.resolvers.Visible(ref, v)
+}
+
+// ArtefactPeople walks back from an artefact to the people on it that the
+// viewer may see. Without the full view that is at most the viewer.
+func (s *Service) ArtefactPeople(v Viewer, ref string, limit int) ([]ArtefactPerson, error) {
+	if !s.ArtefactVisible(v, ref) {
+		return nil, ErrNotFound
+	}
+	if s.index == nil {
+		return nil, nil
+	}
+	edges, err := s.index.ByArtefact(ref)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > MaxEdgePage {
+		limit = MaxEdgePage
+	}
+	var out []ArtefactPerson
+	for _, e := range edges {
+		if len(out) == limit {
+			break
+		}
+		p, isMe, err := s.resolve(v, e.Person)
+		if err != nil {
+			continue // not visible to this viewer, or gone
+		}
+		out = append(out, ArtefactPerson{Predicate: e.Predicate, Person: s.view(v, p, isMe, false)})
+	}
+	return out, nil
+}
+
+// HintView is a hint with what it asks about spelled out, so a person can
+// answer it without opening another profile. For a suggested person that is
+// the suggestion's identity; for a customer, their name.
+type HintView struct {
+	Hint
+	OtherKind  string `json:"other_kind,omitempty"`
+	OtherValue string `json:"other_value,omitempty"`
+}
+
+func (s *Service) hintView(h Hint) HintView {
+	v := HintView{Hint: h}
+	if sg, ok := s.store.SuggestionByID(h.Other); ok {
+		v.OtherKind, v.OtherValue = string(sg.Kind), sg.Value
+	} else if p, err := s.store.Get(h.Other); err == nil {
+		v.OtherKind, v.OtherValue = "customer", p.Name
+	}
+	return v
+}
+
+// AnswerHint answers a "Same person?" question. Yes makes the suggested
+// identity the customer's own; no closes the question and remembers it, so
+// it is not asked again. Full view only. A hint between two customers is
+// answered by merging them, which is a separate action.
+func (s *Service) AnswerHint(v Viewer, hintID string, same bool) (PersonView, error) {
+	if !v.Full {
+		return PersonView{}, ErrForbidden
+	}
+	h, ok := s.store.HintByID(hintID)
+	if !ok {
+		return PersonView{}, ErrNotFound
+	}
+	if !same {
+		if _, err := s.store.ResolveHint(hintID, false, v.User); err != nil {
+			return PersonView{}, err
+		}
+		p, err := s.store.Get(h.Person)
+		if err != nil {
+			return PersonView{}, err
+		}
+		return s.view(v, p, false, true), nil
+	}
+	if _, isSuggestion := s.store.SuggestionByID(h.Other); !isSuggestion {
+		return PersonView{}, fmt.Errorf("%w: merge the two customers instead", ErrInvalid)
+	}
+	p, err := s.store.AbsorbSuggestion(h.Person, h.Other, v.User)
+	if err != nil {
+		return PersonView{}, err
+	}
+	return s.view(v, p, false, true), nil
 }

@@ -574,6 +574,49 @@ a login prompt: it badged the agent 🔑, and — because a valid token was on d
 auto-restarted it straight back into the same 403, which looked like the agent
 crash-looping. Hive no longer treats a 403 as a login signal; a 401 still is.
 
+## Claude agents sit at `Please run /login` although the credential file looks valid (login revoked)
+
+Symptom: every Claude agent shows `Please run /login`, the shared
+`.credentials.json` still holds an access token and a refresh token with future
+expiries, and the hive log shows the pane poller restarting agents into the same
+prompt a few times before `giving up on token-triggered restart`. Before the fix
+for [#18732](https://github.com/hivecommons/hive/issues/18732) the login detector
+also logged `login pattern matched but the backend credential is valid — leaving
+it to the token-restart heal` on every cycle and did nothing else, so the fleet
+stayed down until someone looked.
+
+Cause: the Claude OAuth grant was revoked (or otherwise killed) at the provider.
+Revocation does not touch the file, so every on-disk check ("is there an access
+token, is it unexpired, is there a refresh grant") keeps answering yes while the
+provider refuses every token in it. A restart re-reads the same dead file.
+
+What the hive does now: "valid" means the provider accepts the token. When a
+Claude agent sits at a login prompt and its credential file passes the on-disk
+check, the hive sends the live access token to the provider's read-only usage
+endpoint (the same call the headroom probe makes, one call per two minutes per
+credential file, shared by every agent on that file) before choosing a heal.
+
+- HTTP 200: the existing bounded token-triggered restart runs as before.
+- HTTP 401: the agent is marked `revoked`. Log line:
+  `Claude login revoked: the provider rejected the stored credential — no restart
+  will be attempted; sign in again from the dashboard`, once per agent. The
+  dashboard shows a red "Claude login revoked: sign in again" banner naming the
+  agents, the hub's health verdict and remediation say the same, the login
+  detector pages the operator once (`login revoked detected`), the agent card's
+  error says so, and the agent is left running at its prompt. No restart fires
+  and the 3-per-24h restart budget is not spent.
+- Anything else (an aged-out access token the CLI would refresh on start, 403,
+  429, 5xx, network error) is inconclusive and leaves the previous behaviour.
+
+Fix: sign in to Claude again from the dashboard. The sign-in lifts the `revoked`
+mark, clears the banner, and restarts every agent still at the login prompt once
+within the next 15 minutes, even when its 24h restart window is already
+exhausted. The operator's login is a new signal, not another retry. Nothing else
+is needed; if an agent is still at the prompt a minute after the sign-in, read
+its terminal (`tmux attach -t hive-<agent>`).
+
+Token contents are never logged; the detail recorded is the HTTP status only.
+
 ## One Copilot agent stays at the login prompt after a dashboard login
 
 Symptom: the dashboard's Copilot device-flow login succeeds and every other
@@ -657,6 +700,58 @@ expiry`, and the audit log records `claude_credential_refreshed` with
 `outcome=success`. If a CLI still refreshes first, the per-agent credential
 bridge promotes its copy exactly as before (`kept=agent`). File contents are
 never logged. `HIVE_CLAUDE_SHARED_REFRESH=off` turns the central refresh off.
+
+Kill switch: with `HIVE_CLAUDE_SHARED_REFRESH=off` the hive never calls the
+token endpoint for the shared login. Each CLI then refreshes for itself, and
+the only protection is the after-the-fact repair by the agents' credential
+bridge and the session adopt-back, which cannot stop N CLIs from racing one
+refresh token. Use it only if the hive's own refresh misbehaves; a pending
+grant left by an earlier run is still adopted at boot with it off.
+
+The new refresh token must not be lost. The provider kills the old refresh
+token the moment it answers, so the hive saves the new grant to
+`.credentials.pending` (mode 0600, fsynced, beside the shared file) before it
+writes the shared file, holds it in memory, and retries the write with backoff
+(5 s doubling to 5 min, with no overall limit) without calling the token
+endpoint again. After a restart a pending grant newer than the shared file is
+adopted at boot; an older one is deleted. If the write keeps failing the hive
+logs `claude shared login: the hive redeemed the shared Claude grant but could
+NOT save the new one`, records `claude_credential_refreshed` with
+`reason=new grant could not be saved`, and raises the dashboard banner
+"The hive refreshed the shared Claude login but cannot write the new one",
+which names the time the login the agents read expires. Fix the disk space or
+ownership of `/data/home/.claude`, or sign in from the dashboard, before then.
+This closes the window while the process lives; across a crash it narrows it to
+the milliseconds between the provider's answer and the pending file's fsync,
+or to the case where both files fail and the process dies before either
+recovers. A refused grant is also not final while a newer one exists: before
+marking the login rejected the hive publishes any newer credential from an
+agent or session home and compares the shared file again.
+
+Everything that writes the shared login (this refresher, the agents' bridge
+promote-on-race, the session adopt-back) goes through one function under one
+lock, which writes only a usable credential that expires strictly later than
+the current one. Only the typed token block is ever written; any other content
+in the file is dropped, as the dashboard sign-in does, on purpose.
+
+Live check (a real CLI is needed; the unit tests cannot cover it). The hive
+assumes a running Claude CLI re-reads the rewritten file through its
+credential symlink instead of refreshing with a refresh token it cached; if
+it does not, its later refresh presents a dead token and trips the provider's
+reuse detection. The hive does not restart agents on a refresh. To confirm, on
+a hive with at least two Claude agents:
+
+1. Note each agent's pane and set `HIVE_CLAUDE_SHARED_REFRESH_LEAD` to a value
+   just under the current remaining lifetime so the next minute's pass refreshes
+   (or wait for the natural pass).
+2. Watch for `claude shared login: refreshed the shared Claude credential`
+   and the `claude_credential_refreshed` audit entry with `outcome=success`.
+3. Leave the agents running past the OLD access token's expiry and send each a
+   task. They must keep working with no `OAuth token revoked`, no login prompt,
+   and no `claude credential bridge ... re-bridged` entry with `kept=agent`
+   (that entry means a CLI refreshed on its own).
+4. If any agent shows the prompt, or a `kept=agent` entry appears, a running
+   CLI is not picking the file up: set `HIVE_CLAUDE_SHARED_REFRESH=off` and report it.
 
 If the shared grant is already dead, the hive's own refresh is rejected too:
 the log says

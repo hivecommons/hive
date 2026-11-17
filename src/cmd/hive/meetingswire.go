@@ -294,6 +294,9 @@ func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPe
 	if beadStores != nil {
 		retrievers = append(retrievers, betty.BeadRetriever{Stores: beadStores})
 	}
+	// Customers the question names (#18742): read at call time, so it is
+	// empty while customers are off or not yet wired.
+	retrievers = append(retrievers, betty.PeopleRetriever{Directory: meetingsPeopleDirectory})
 	client := &http.Client{}
 	// Web answers (opt-in through searxng_url): SearXNG and the keyless
 	// direct sources, behind a guard that keeps questions about this hive,

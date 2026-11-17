@@ -72,6 +72,9 @@ type DirectRetriever struct {
 // Name implements Retriever.
 func (DirectRetriever) Name() string { return directName }
 
+// Public implements PublicRetriever.
+func (DirectRetriever) Public() bool { return true }
+
 // Retrieve implements Retriever: at most one source answers a question.
 func (d DirectRetriever) Retrieve(ctx context.Context, query string, _ []string, limit int) []Snippet {
 	if limit <= 0 {

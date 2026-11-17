@@ -281,6 +281,27 @@ a new accessor.
 The sweep is an optional sweep, so it is shed with the other optional sweeps
 when the GitHub budget is low, although it spends none of that budget itself.
 
+Step D, in the same sweep: the dashboard audit log gives one `acted` edge per
+person per day, and one `logged_in` edge on a day they signed in. Only the user,
+the day and the kind of action are read; the detail text of an audit line is
+never copied. An audit edge exists while its day is inside the audit log's
+retention (90 days) and is shown to the full view only.
+
+"Same person?" hints are raised between a customer and a suggested person when
+a suggested address starts like one of the customer's logins (a GitHub login or
+the dashboard user name), or a suggested login starts like one of the customer's
+addresses. The comparison is on exact, lower-cased keys with any `+tag` removed.
+Locals shorter than four characters and role addresses such as `info` or
+`noreply` are skipped. A display name is never compared. A hint links nothing:
+answering yes makes the suggested identity the customer's own (recorded as
+manual, by whom), answering no pins the pair so it is not asked again. A hint
+between two customers is answered by merging them, which is the merge and split
+UI of a later PR.
+
+Step E, the budgeted GitHub search for mentions and comments on accept, is not
+built. The GitHub client has no comment or mention search, so it needs a new
+client method and a place in the API budget. It is left for its own PR.
+
 Automatic tags come from role, association and history: `maintainer` from an
 owner or merger role or a GitHub author association of owner, member or
 collaborator; `contributor` from an authored pull request; `end-user` from a
@@ -340,11 +361,28 @@ forget, the role checks and retention pruning are merged and tested.
 - Suggested people are never returned as a person.
 - Each query is audited (viewer, operation name, node count), not its text.
 
-Library: `github.com/graph-gophers/graphql-go`, schema-first, chosen for its
-small dependency list and built-in depth limit. The fallback, if it cannot
-pass the vulnerability, NOTICE or licence checks, is
-`github.com/graphql-go/graphql` with a hand-written depth and size check. The
-PR that adds the endpoint records which was used and the evidence.
+Library: `github.com/graph-gophers/graphql-go` v1.11.1 (BSD-2-Clause),
+schema-first, imported only by `src/pkg/customers/gql`. The decision and the
+evidence:
+
+- `go mod graph` shows it requires `opentracing-go`, `go.opentelemetry.io/otel`
+  and `otel/trace`, plus their indirect modules. Hive already requires the
+  OpenTelemetry modules at the same version (v1.47.0), and `opentracing-go` is
+  imported only by the library's optional `trace/opentracing` package, which
+  Hive does not import. Adding the library added one line to `go.mod` and its
+  own two lines to `go.sum`; no other module entered the build.
+- It has the limits this endpoint needs built in: `MaxDepth`,
+  `MaxQueryLength`, `MaxSelections` and an introspection switch.
+- The fallback, `github.com/graphql-go/graphql` with a hand-written depth and
+  size check, was not needed.
+
+Introspection is off: the standard introspection query is deeper than the
+depth limit anyway, and the schema is published in
+[the API reference](../api-reference/customers.md#the-customer-graph). The
+node limit is enforced by the resolvers, which charge every person, edge and
+artefact they materialise to a per-query budget. Access is not decided in the
+GraphQL layer at all: every resolver calls the customers service with the
+viewer of the request, the same service the REST routes use.
 
 ## 12. Agents and privacy guard rails
 
@@ -356,7 +394,33 @@ query it.
   and no person ids. Scanned and fenced as untrusted. The pattern is the
   maintainer-notes block (`src/pkg/scheduler/kick_maintainer_notes.go`).
 - A people retriever for the meeting persona
-  (`src/pkg/meetings/betty/retrieve.go`).
+  (`src/pkg/meetings/betty/retrieve_people.go`).
+
+What crosses into a prompt is built in one place, `customers.RenderKickContext`
+and `customers.PeopleBriefs`, and the scheduler and the meetings package see
+only the finished text or a small struct, never the customers package:
+
+- Only customers; a suggested person is never included. A login is matched on
+  the exact GitHub identity.
+- Only a login, the active tags, up to three goals a person confirmed, and a
+  count. Never an email, an id, notes or the satisfaction assessment. A goal the
+  hive inferred and nobody confirmed stays out.
+- A goal is text a person typed, so `SafeGoal` scans it with `ioscan`, removes
+  control characters, and drops the whole goal if it holds anything that looks
+  like an address or one of this store's ids, or if `ioscan` finds anything.
+  What remains sits inside one `<untrusted-customer-data nonce="...">` fence
+  with a fresh nonce, and any fence marker in the text is rewritten.
+- The kick block is at most 1,024 bytes, people lines first, and a line that
+  does not fit is left out rather than cut. The scheduler appends it only when
+  it starts with the block header, and asks about at most 20 logins.
+- The persona's snippet is a name, tags and confirmed goals, nothing else. The
+  persona speaks in a room that can hold people who are not users, so notes and
+  the satisfaction assessment have no field to travel in. Betty fences snippets
+  as data in its own prompt as well.
+
+Retrieval by name here is not identity resolution: a word in a question is
+matched against the words of a customer's name or their login to find a profile
+to describe, and nothing is linked or created.
 
 **Personal data of people who never signed up.** A hive sees issue authors,
 meeting attendees and mail senders who never created an account on it. The

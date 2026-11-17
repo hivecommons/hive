@@ -121,21 +121,21 @@ func TestPreConsentLinesNeitherStoredNorForwarded(t *testing.T) {
 
 	// The notice gets through on the next line; that line still came
 	// before it and is dropped too.
+	// One line, sent once: it is what gets the notice through. Sending
+	// lines on a timer until consent shows raced the watcher (a second line
+	// handled after consent was posted is a legitimate post-consent line).
 	g.open.Store(true)
-	seq := int64(4)
-	for i := 0; ; i++ {
-		ch <- Event{Type: EventChat, Seq: seq, Author: &Person{Name: "Bo"}, Text: "secret late"}
-		seq++
-		time.Sleep(5 * time.Millisecond)
-		if got, _ := m.Get(mt.ID); got.ConsentPostedAt != nil {
-			break
-		}
-		if i > 200 {
-			t.Fatal("consent never delivered")
-		}
-	}
+	const lateSeq, afterSeq = int64(4), int64(5)
+	ch <- Event{Type: EventChat, Seq: lateSeq, Author: &Person{Name: "Bo"}, Text: "secret late"}
+	eventually(t, "consent delivered", func() bool { got, _ := m.Get(mt.ID); return got.ConsentPostedAt != nil })
+	eventually(t, "late line dropped", dropped(m, mt.ID, 4))
+	seq := afterSeq
 	ch <- Event{Type: EventSegment, Seq: seq, Speaker: &Person{Name: "Ana"}, Text: "after consent", Final: true}
 	eventually(t, "post-consent line stored", func() bool { tr, _ := heardLines(m, mt.ID); return len(tr) == 1 })
+	// The listener is told after the store write and a read, and the cursor
+	// is saved after the write: wait for both before asserting on them.
+	eventually(t, "post-consent line reached listeners", func() bool { return rec.saw("after consent") })
+	eventually(t, "cursor moved", func() bool { got, _ := m.Get(mt.ID); return got.LastSeq == seq })
 
 	tr, _ := heardLines(m, mt.ID)
 	if tr[0].Text != "after consent" {
@@ -296,6 +296,13 @@ func TestBeforeConsent(t *testing.T) {
 		{"segment began before speech end", mt, Event{Type: EventSegment, Seq: 6, Final: true, Start: raw("29.5")}, soon, true},
 		{"segment began before, window over", mt, Event{Type: EventSegment, Seq: 6, Final: true, Start: raw("1")}, posted.Add(ConsentSpeechWindow), false},
 		{"segment without start", mt, Event{Type: EventSegment, Seq: 6, Final: true}, soon, false},
+		// No line was heard while consent was pending (ConsentSpeechEnd 0):
+		// an utterance 4s long that arrives 1s after the notice began before it.
+		{"long utterance finalized just after the notice", Meeting{ConsentPostedAt: &posted, ConsentSeq: 5}, Event{Type: EventSegment, Seq: 6, Final: true, Start: raw("10"), End: raw("14")}, soon, true},
+		{"short utterance well after the notice", Meeting{ConsentPostedAt: &posted, ConsentSeq: 5}, Event{Type: EventSegment, Seq: 6, Final: true, Start: raw("10"), End: raw("11")}, posted.Add(ConsentSTTLag + 2*time.Second), false},
+		{"unreadable cursor: any segment soon after", Meeting{ConsentPostedAt: &posted, ConsentFenceDegraded: true}, Event{Type: EventSegment, Seq: 6, Final: true}, soon, true},
+		{"unreadable cursor: after the window", Meeting{ConsentPostedAt: &posted, ConsentFenceDegraded: true}, Event{Type: EventSegment, Seq: 6, Final: true}, posted.Add(ConsentDegradedWindow), false},
+		{"unreadable cursor: chat is judged by its stamp", Meeting{ConsentPostedAt: &posted, ConsentFenceDegraded: true}, Event{Type: EventChat, Seq: 6}, soon, false},
 	}
 	for _, c := range cases {
 		if got := beforeConsent(c.mt, c.ev, c.now); got != c.want {
@@ -314,5 +321,62 @@ func TestPreConsentSpeechEndFence(t *testing.T) {
 	eventually(t, "drop", dropped(m, mt.ID, 1))
 	if got, _ := m.Get(mt.ID); got.ConsentSpeechEnd != 12.5 || got.ConsentSeq != 1 {
 		t.Fatalf("fences %+v", got)
+	}
+}
+
+// failingCursorQuorum cannot read Quorum's transcript cursor.
+type failingCursorQuorum struct {
+	*gatedQuorum
+	reads atomic.Int32
+}
+
+func (f *failingCursorQuorum) TranscriptRead(context.Context, string, int64) (TranscriptResult, error) {
+	f.reads.Add(1)
+	return TranscriptResult{}, errSlowDown
+}
+
+func TestConsentCursorReadFailureFailsClosed(t *testing.T) {
+	g := &gatedQuorum{fakeQuorum: newFakeQuorum()}
+	g.open.Store(true)
+	q := &failingCursorQuorum{gatedQuorum: g}
+	m := newPendingManager(t, newStore(t), q)
+	mt, err := m.Join(context.Background(), JoinRequest{URL: "https://meet.google.com/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := g.stream("q1")
+	ch <- Event{Type: EventState, State: StateLive}
+	eventually(t, "consent", func() bool { got, _ := m.Get(mt.ID); return got.ConsentPostedAt != nil })
+	got, _ := m.Get(mt.ID)
+	if !got.ConsentFenceDegraded || q.reads.Load() != ConsentCursorAttempts {
+		t.Fatalf("degraded %v after %d reads, want a fail-closed fence after %d", got.ConsentFenceDegraded, q.reads.Load(), ConsentCursorAttempts)
+	}
+	// A line Quorum had buffered before the notice, arriving right after it,
+	// is not stored.
+	ch <- Event{Type: EventSegment, Seq: 1, Speaker: &Person{Name: "Ana"}, Text: "buffered secret", Final: true}
+	eventually(t, "dropped", dropped(m, mt.ID, 1))
+	if tr, _ := heardLines(m, mt.ID); len(tr) != 0 {
+		t.Fatalf("a segment inside the degraded fence was stored: %+v", tr)
+	}
+}
+
+func TestSegmentInProgressAtConsentNotStored(t *testing.T) {
+	g := &gatedQuorum{fakeQuorum: newFakeQuorum(), cursor: 0}
+	g.open.Store(true)
+	m := newPendingManager(t, newStore(t), cursorQuorum{g})
+	mt, err := m.Join(context.Background(), JoinRequest{URL: "https://meet.google.com/x"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ch := g.stream("q1")
+	ch <- Event{Type: EventState, State: StateLive}
+	eventually(t, "consent", func() bool { got, _ := m.Get(mt.ID); return got.ConsentPostedAt != nil })
+	// Nobody finished a sentence before the notice, so no speech-end fence
+	// exists; a 20s utterance finalized right after it began before it.
+	ch <- Event{Type: EventSegment, Seq: 1, Speaker: &Person{Name: "Ana"}, Text: "secret in progress", Final: true,
+		Start: json.RawMessage("0"), End: json.RawMessage("20")}
+	eventually(t, "dropped", dropped(m, mt.ID, 1))
+	if tr, _ := heardLines(m, mt.ID); len(tr) != 0 {
+		t.Fatalf("speech that began before the notice was stored: %+v", tr)
 	}
 }
