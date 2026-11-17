@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -249,6 +250,7 @@ func TestInboxEmailDocumentsAndRecentMail(t *testing.T) {
 			t.Errorf("the recent-mail log holds %q: %s", private, raw)
 		}
 	}
+	mailHelpChecks(t, s, raw)
 	if rec := serve(s, userReq(http.MethodGet, "/api/inbox/email/recent", "carol", "read", "")); rec.Code != http.StatusForbidden {
 		t.Fatalf("a reader listed recent mail: %d", rec.Code)
 	}
@@ -268,5 +270,90 @@ func TestInboxEmailDocumentsAndRecentMail(t *testing.T) {
 	rec = serve(s, userReq(http.MethodGet, "/api/inbox/email/recent", "alice", "owner", ""))
 	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"events":[]`) {
 		t.Fatalf("recent without a source: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// mailHelpChecks (hivecommons/hive#18744): each refused or held mail of the
+// recent-mail list says how to try again, links the docs entry of its
+// reason and a prefilled problem report that names no sender, and a held
+// mail lists the items that still await approval until they are approved.
+func mailHelpChecks(t *testing.T, s *Server, raw string) {
+	t.Helper()
+	type view struct {
+		Outcome        string   `json:"outcome"`
+		Reason         string   `json:"reason"`
+		ApprovalReason string   `json:"approval_reason"`
+		Items          []string `json:"items"`
+		PendingItems   []string `json:"pending_items"`
+		HowToFix       string   `json:"how_to_fix"`
+		HelpURL        string   `json:"help_url"`
+		ReportURL      string   `json:"report_url"`
+	}
+	list := func(raw string) []view {
+		var listing struct {
+			Events []view `json:"events"`
+		}
+		if err := json.Unmarshal([]byte(raw), &listing); err != nil {
+			t.Fatalf("recent: %v %s", err, raw)
+		}
+		return listing.Events
+	}
+	var held []view
+	for _, ev := range list(raw) {
+		if ev.Outcome == inbox.MailAccepted {
+			if ev.HowToFix != "" || ev.HelpURL != "" || ev.ReportURL != "" || len(ev.Items) != 0 {
+				t.Errorf("a received mail carries help: %+v", ev)
+			}
+			continue
+		}
+		reason := ev.Reason
+		if ev.Outcome == inbox.MailAwaitingApproval {
+			reason = ev.ApprovalReason
+			held = append(held, ev)
+		}
+		if ev.HowToFix != wire.Fix(reason) || ev.HowToFix == "" || ev.HelpURL != wire.HelpURL(reason) {
+			t.Errorf("%s: fix %q help %q", reason, ev.HowToFix, ev.HelpURL)
+		}
+		u, err := url.Parse(ev.ReportURL)
+		if err != nil || u.Scheme != "https" || u.Host != "github.com" || u.Path != "/hivecommons/hive/issues/new" {
+			t.Fatalf("%s: report url %q %v", reason, ev.ReportURL, err)
+		}
+		q := u.Query()
+		body := q.Get("body")
+		for _, want := range []string{"Reason code: `" + reason + "`", "Date: ", "Hive version: "} {
+			if !strings.Contains(body, want) {
+				t.Errorf("%s: the report lacks %q: %s", reason, want, body)
+			}
+		}
+		if !strings.Contains(q.Get("title"), reason) || q.Get("labels") != "kind/bug,user-feedback" {
+			t.Errorf("%s: title %q labels %q", reason, q.Get("title"), q.Get("labels"))
+		}
+		// No sender, not even the domain the list itself shows.
+		for _, private := range []string{"example.com", "example.org", "example.net", "@", "isp.example", "2001:db8"} {
+			if strings.Contains(body, private) || strings.Contains(q.Get("title"), private) {
+				t.Errorf("%s: the report holds %q: %s", reason, private, body)
+			}
+		}
+	}
+	if len(held) != 2 {
+		t.Fatalf("held events %+v", held)
+	}
+	for _, ev := range held {
+		if len(ev.Items) != 1 || len(ev.PendingItems) != 1 || ev.PendingItems[0] != ev.Items[0] {
+			t.Fatalf("held event items %+v", ev)
+		}
+	}
+	// Approving one and declining the other empties both pending lists.
+	if rec := serve(s, userReq(http.MethodPost, "/api/inbox/email/"+held[0].Items[0]+"/approve", "alice", "owner", "{}")); rec.Code != http.StatusOK {
+		t.Fatalf("approve: %d %s", rec.Code, rec.Body)
+	}
+	if rec := serve(s, userReq(http.MethodPost, "/api/inbox/email/"+held[1].Items[0]+"/decline", "alice", "owner", "{}")); rec.Code != http.StatusOK {
+		t.Fatalf("decline: %d %s", rec.Code, rec.Body)
+	}
+	rec := serve(s, userReq(http.MethodGet, "/api/inbox/email/recent", "alice", "owner", ""))
+	for _, ev := range list(rec.Body.String()) {
+		if len(ev.PendingItems) != 0 {
+			t.Errorf("still pending after approve and decline: %+v", ev)
+		}
 	}
 }

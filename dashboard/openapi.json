@@ -41307,7 +41307,7 @@
           "Inbox"
         ],
         "summary": "List recent mail: received and refused",
-        "description": "The last 50 messages mailed to hive@<host>, newest first: received, awaiting approval or refused, with the reason category of a refusal and each attachment that was left out (extension and reason). No subject, file name, body or full sender address: only the sender's domain. Received mail and this hive's own refusals are recorded by the hive; the mail receiver's refusals arrive on POST /api/inbox/email/report. Owner or read-write.",
+        "description": "The last 50 messages mailed to hive@<host>, newest first: received, awaiting approval or refused, with the reason category of a refusal and each attachment that was left out (extension and reason). No subject, file name, body or full sender address: only the sender's domain. Received mail and this hive's own refusals are recorded by the hive; the mail receiver's refusals arrive on POST /api/inbox/email/report. A refused or held event also says how to try again (how_to_fix), links the documentation of its reason (help_url) and a prefilled new-issue page (report_url: reason code, SMTP code, day and hive version, never the sender, a subject or a file name); an event that awaits approval lists the Inbox items it brought and those still awaiting approval, for the approve and decline routes. Owner or read-write.",
         "responses": {
           "200": {
             "description": "The recent-mail log",
@@ -41351,6 +41351,32 @@
                           },
                           "files": {
                             "type": "integer"
+                          },
+                          "items": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Inbox item ids of a mail that awaits approval"
+                          },
+                          "pending_items": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "The items that still await approval"
+                          },
+                          "how_to_fix": {
+                            "type": "string",
+                            "description": "How to try again, for a refused or held mail"
+                          },
+                          "help_url": {
+                            "type": "string",
+                            "description": "Documentation of the reason"
+                          },
+                          "report_url": {
+                            "type": "string",
+                            "description": "New-issue page prefilled with the reason code, the SMTP code, the day and the hive version"
                           },
                           "skipped": {
                             "type": "array",

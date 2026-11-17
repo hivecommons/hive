@@ -19,6 +19,7 @@
     .inbox-mail-log { margin-top: var(--sp-4); }
     .inbox-mail-log > summary { cursor: pointer; }
     .inbox-mail-log-list { margin: var(--sp-2) 0; padding-left: var(--sp-4); display: grid; gap: var(--sp-1); }
+    .inbox-mail-log-help { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-3); margin: var(--sp-1) 0 var(--sp-2); }
     .inbox-audio { width: 100%; max-width: 520px; display: block; }
     .inbox-transcript { margin-top: var(--sp-2); }
     .inbox-transcript-text { white-space: pre-wrap; font-family: inherit; font-size: var(--fs-sm); max-height: 24em; overflow: auto; margin: var(--sp-1) 0 0; padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
