@@ -618,6 +618,10 @@ type Manager struct {
 	appNotInstalledWarned     sync.Map        // agent name -> struct{}: not-installed mint failure already logged
 	agentMint                 AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
 
+	// sessionLogins remembers which user-session login copies the credential
+	// poll has already judged (usersession_login.go).
+	sessionLogins sessionLoginCache
+
 	// sharedPoolRenewInterval overrides the lease watcher tick (zero means
 	// defaultSharedPoolRenewInterval). Set before any watcher starts; it is
 	// per-manager so tests can tick fast without racing other tests' watchers.

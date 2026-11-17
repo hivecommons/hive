@@ -235,6 +235,13 @@ func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
 	// unusable and back) rather than every tick — a standing condition would
 	// otherwise flood the Audit Log at the tick rate.
 	lastUnusable := make(map[string]bool)
+	// Recovery at boot: a hive whose only valid Claude login sits in a user
+	// session's HOME (a session refreshed a copy of the login and rotated the
+	// grant under the fleet) gets it back into the shared file before the
+	// first probe, without a sign-in (usersession_login.go). The same check
+	// then runs on every bridge poll. It is not gated on an agent using
+	// Claude: sessions use the shared login either way.
+	m.syncUserSessionClaudeLogins(sessionLoginTriggerBoot)
 	for {
 		select {
 		case <-ctx.Done():
@@ -243,12 +250,14 @@ func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
 			if m.backendInUse("claude") {
 				m.RepairClaudeCredentialBridges(claudeBridgeTriggerWatchdog)
 			}
+			m.syncUserSessionClaudeLogins(sessionLoginTriggerWatchdog)
 		case <-ticker.C:
 			// Re-bridge before probing, so a just-published refresh is what
 			// the shared-credential probe sees.
 			if m.backendInUse("claude") {
 				m.RepairClaudeCredentialBridges(claudeBridgeTriggerWatchdog)
 			}
+			m.syncUserSessionClaudeLogins(sessionLoginTriggerWatchdog)
 			for _, w := range credentialWatches() {
 				m.evalCredentialWatch(w, lastUnusable)
 			}

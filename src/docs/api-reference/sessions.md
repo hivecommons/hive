@@ -105,6 +105,14 @@ After `needs_signin`, `blocked` or `manual` the hive keeps reading the screen, s
 
 **Turning it off.** Settings → Dashboard → **Answer the CLI startup screens** (`dashboard.sessions.autostart`, default on), or `HIVE_SESSIONS_AUTOSTART=false`, which overrides the saved value. Off means no seeded HOME, no answers and no `startup` block.
 
+## Vendor logins in a session
+
+A session's HOME gets copies of the hive's shared vendor logins (the allowlist is in the [Security model](../security-model.md)), so a session opens signed in as the fleet.
+
+The Claude login is copied **without its refresh token**. A session uses the fleet's current access token and cannot refresh it, so it can never rotate the login out from under the agents ([#18724](https://github.com/hivecommons/hive/issues/18724)). The hive replaces the copy whenever the shared login changes (an agent's refresh is published, or someone signs in from the dashboard), within one credential-bridge poll (5 seconds by default). If the fleet's access token has expired and nothing has refreshed it yet (no Claude agent has run since), a Claude session reports an expired login until an agent's next start or a dashboard sign-in renews the shared one; signing in again from the dashboard is the direct fix.
+
+If a session's HOME holds a complete Claude login that is usable and strictly newer than the shared one (a copy from an older release that the CLI refreshed, or a sign-in done inside the session), the hive adopts it into the shared login, keeps the replaced file as `.credentials.json.stale-<UTC time>`, and records `user_session_login_adopted` with `session`, `trigger` (`boot`, `watchdog`, `sign-in`, `session-start` or `session-remove`) and `stale_shared_file`, never token material. The check also runs before a session is deleted; a login that cannot be adopted makes the delete fail (`500`, the session is kept) rather than lose it. A hive whose agents were locked out this way recovers at its next boot or poll without a new sign-in, provided the session that holds the login has not been deleted.
+
 ## Seeding from the Inbox
 
 The Inbox's **🔗 Share ▾ → Hive → spek…** sends one item, or the multi-select, into a session: a new one (`POST /api/sessions` with `seed_items`) or a running one the caller may type into (`POST /api/sessions/{id}/seed`). Roles are the Inbox share rule (`requireInboxShareRole`: a verified owner or read-write) plus the Send rule for the session: the `read` role gets 403, a private session of someone else 404. At most 20 items per call. The hive reads each item's current content (title, summary, transcript or the hive's own machine transcript, highlights) and writes **one markdown file per item** at `<cwd>/.hive/inbox/<source>-<id>.md`, where `<cwd>` is the session's workspace (its own work dir when it has none):
