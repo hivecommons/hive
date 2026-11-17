@@ -30,12 +30,15 @@ type fakeStartup struct {
 func (f *fakeSessionRuntime) StartupStep(id, vendor string, answer bool) crux.UserSessionStartupStep {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if p, ok := f.alive[id]; !ok || !p.Exists || p.Dead {
-		return crux.UserSessionStartupStep{Kind: crux.UserSessionStartupGone}
-	}
+	// Unscripted (every test that is not about startup): the CLI is at its
+	// prompt from the first read, and nothing else of the fake is consulted,
+	// so tests that poke the fake's state directly are not read from here.
 	st := f.startup
 	if st == nil || len(st.screens) == 0 {
 		return crux.UserSessionStartupStep{Kind: crux.UserSessionStartupReady}
+	}
+	if p, ok := f.alive[id]; !ok || !p.Exists || p.Dead {
+		return crux.UserSessionStartupStep{Kind: crux.UserSessionStartupGone}
 	}
 	st.reads++
 	if answer {
