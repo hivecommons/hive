@@ -183,6 +183,29 @@ address (any private, loopback, link-local, CGNAT, multicast, ULA or metadata
 answer refuses the link), every redirect re-checked (at most 3), the body
 size- and time-capped, and the environment proxy never used.
 
+### Customers: people the hive has seen
+
+The Customers section keeps one profile per person. It lives in two files on the
+hive's own volume and nothing in it leaves the hive. It is not sent to the hub,
+written to GitHub or put in a heartbeat. The design is in
+[customers](design/customers.md).
+
+Some of these people never signed up. They are issue authors, meeting guests and
+mail senders. The hive keeps only a key, a few counts and up to five references
+for them, and only until someone accepts them. A suggestion ends when the thing
+it came from is deleted. Forgetting a person deletes them and leaves a salted
+hash, so they are not rebuilt.
+
+Links between identities are made only on exact keys. A display name never links
+anyone. One link rests on an assumption you should know about. When the access
+list holds a name such as `github:alice`, the hive treats `alice` as that
+person's GitHub login. The hub put that entry there after it signed the person
+in with GitHub, so the hive trusts it. If your access list is edited by hand, an
+entry like that gives the named person's profile the matching GitHub activity.
+
+A read-only user sees only their own profile. An identity they add is shown as
+unconfirmed. It links nothing until the owner or a read-write user confirms it.
+
 ## 5. Network and credentials
 
 **Inference keys.** An agent using a self-hosted inference gateway is

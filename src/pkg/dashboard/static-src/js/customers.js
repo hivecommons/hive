@@ -305,6 +305,18 @@
         (t.next ? '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersTimelineMore">Show more</button></div>' : '');
     }
 
+    // A "Same person?" hint names a suggested identity that may belong to this
+    // customer. Yes makes it theirs; No closes the question for good. A hint
+    // between two customers is answered by merging them, so it has no Yes here.
+    function customersHintRowHtml(h) {
+      const id = escapeHtml(h.id);
+      const what = h.other_kind === 'customer' ? 'the customer ' + (h.other_value || '') : (CUSTOMERS_KIND_LABELS[h.other_kind] || h.other_kind || '') + ' ' + (h.other_value || '');
+      const yes = h.other_kind === 'customer' ? '' : '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersHintAnswer" data-arg0="' + id + '" data-arg1="yes" title="Make this identity theirs: it then links its activity">Yes</button>';
+      return '<div class="customers-row" data-hint="' + id + '"><div class="customers-row-main"><div>Same person? ' + escapeHtml(what.trim()) + '</div>' +
+        '<div class="muted-xs">' + escapeHtml(h.reason || '') + '. Nothing is linked until you answer.</div></div>' + yes +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersHintAnswer" data-arg0="' + id + '" data-arg1="no" title="Not the same person: do not ask again">No</button></div>';
+    }
+
     function customersActivityHtml(p) {
       if (!customersIsFull()) return '';
       const counts = p.counts || {};
@@ -313,7 +325,7 @@
       return '<div class="customers-block"><div class="section-label m-0">Activity</div>' +
         (keys.length ? '<div class="customers-chips">' + keys.map(k => '<span class="badge">' + escapeHtml(k.replace(/_/g, ' ')) + ' ' + counts[k] + '</span>').join('') + '</div>' : '') +
         '<div id="customers-timeline" class="customers-block">' + customersTimelineHtml() + '</div>' +
-        (hints.length ? '<p class="muted-xs">' + hints.length + ' open "Same person?" question' + (hints.length === 1 ? '' : 's') + ' about this profile.</p>' : '') + '</div>';
+        (hints.length ? '<div class="customers-list">' + hints.map(customersHintRowHtml).join('') + '</div>' : '') + '</div>';
     }
 
     function customersForgetHtml(p) {
@@ -514,6 +526,18 @@
     function customersSatisfactionReject() { customersEdit({ op: 'satisfaction_reject' }); }
 
     function customersNotesSave() { customersEdit({ op: 'notes', notes: (customersField('notes') || {}).value || '' }, 'Notes saved'); }
+
+    // customersHintAnswer answers a "Same person?" question about the open
+    // profile. Only the owner and read-write users see hints.
+    async function customersHintAnswer(hid, answer) {
+      try {
+        _customersOpen = await customersRequest('POST', '/api/customers/hints/' + encodeURIComponent(hid) + '/answer', { same: answer === 'yes' });
+        customersShow();
+        showToast(answer === 'yes' ? 'Identity added to this profile' : 'Noted: not the same person', 'success');
+        customersTimelineLoad(true);
+        fetchCustomers();
+      } catch (e) { customersProfileError(e.message); }
+    }
 
     async function customersForget() {
       if (!_customersOpen) return;

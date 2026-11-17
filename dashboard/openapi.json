@@ -2063,6 +2063,72 @@
         }
       }
     },
+    "/api/customers/hints/{hid}/answer": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Answer a \"Same person?\" question",
+        "description": "Hive raises a question when a suggested person's address starts like a customer's login, or the reverse. Nothing is linked until it is answered. same true makes the suggested identity the customer's own and deletes the suggestion; same false closes the question and remembers it so it is not asked again. A question between two customers is answered by merging them, so same true on one is refused with 400. Owner or read-write. Audited as customer_hint_answer.",
+        "parameters": [
+          {
+            "name": "hid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Hint id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "same"
+                ],
+                "properties": {
+                  "same": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body, or a customer-to-customer question answered yes"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such question, customer or suggestion"
+          },
+          "409": {
+            "description": "The identity already belongs to another customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
     "/api/customers/suggestions/{sid}/accept": {
       "post": {
         "tags": [

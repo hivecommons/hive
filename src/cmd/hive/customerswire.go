@@ -160,3 +160,7 @@ func (c *customersDashboard) Graph(ctx context.Context, v dashboard.CustomersVie
 	res := c.graph.Exec(ctx, customersViewer(v), req.Query, req.OperationName, req.Variables)
 	return dashboard.CustomerGraphResult{Body: res.Body, Nodes: res.Nodes, Errors: res.Errors}, nil
 }
+
+func (c *customersDashboard) AnswerHint(v dashboard.CustomersViewer, hintID string, same bool) (dashboard.CustomerResult, error) {
+	return customerResult(c.svc.AnswerHint(customersViewer(v), hintID, same))
+}

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -14,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/customers"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/inbox"
 	"github.com/hivecommons/hive/pkg/mailallow"
@@ -309,5 +311,62 @@ func TestCustomersResolversWithStoresOff(t *testing.T) {
 		if got := r.Visible(tc.ref, tc.v); got != tc.want {
 			t.Errorf("%s: Visible(%q) = %v", tc.label, tc.ref, got)
 		}
+	}
+}
+
+func TestCustomersAuditSightings(t *testing.T) {
+	src := customersTestSources()
+	src.audit = []dashboard.AuditEntry{
+		{Timestamp: "2026-11-03T09:00:00Z", User: "olivia", Action: "config_save", Detail: "secret=hunter2"},
+		{Timestamp: "2026-11-03T17:00:00Z", User: "Olivia", Action: "agent_restart"},
+		{Timestamp: "2026-11-03T08:00:00Z", User: "olivia", Action: "dashboard_login"},
+		{Timestamp: "2026-11-04T01:00:00Z", User: "olivia", Action: "pause"},
+		{Timestamp: "2026-11-03T09:00:00Z", User: "reed", Action: "customer_edit"},
+		{Timestamp: "not a time", User: "reed", Action: "pause"},
+		{Timestamp: "2026-11-03T09:00:00Z", User: "  ", Action: "pause"},
+	}
+	got := map[sightKey]customers.Sighting{}
+	for _, s := range customersAuditSightings(src) {
+		got[sightKey{s.Kind, s.Value, s.Predicate, s.Artefact}] = s
+	}
+	want := []sightKey{
+		{customers.KindHiveUser, "olivia", customers.PredActed, "audit:2026-11-03"},
+		{customers.KindHiveUser, "olivia", customers.PredLoggedIn, "audit:2026-11-03"},
+		{customers.KindHiveUser, "olivia", customers.PredActed, "audit:2026-11-04"},
+		{customers.KindHiveUser, "reed", customers.PredActed, "audit:2026-11-03"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("%d audit sightings, want %d (one per person, kind and day): %v", len(got), len(want), got)
+	}
+	for _, k := range want {
+		if s, ok := got[k]; !ok || s.Source != customersSourceAudit {
+			t.Errorf("missing audit sighting %+v", k)
+		}
+	}
+	for k := range got {
+		if strings.Contains(k.ref+k.value, "hunter2") {
+			t.Fatal("audit detail text was copied")
+		}
+	}
+	if len(customersAuditSightings(customersSources{})) != 0 {
+		t.Fatal("no audit log, no sightings")
+	}
+}
+
+func TestCustomersAuditResolver(t *testing.T) {
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	r := customersAuditResolver{now: func() time.Time { return now }}
+	for ref, want := range map[string]bool{
+		"audit:2026-11-17": true, "audit:2026-08-20": true, "audit:2026-08-10": false, "audit:garbage": false, "audit:": false,
+	} {
+		if got := r.Exists(ref); got != want {
+			t.Errorf("Exists(%q) = %v, want %v", ref, got, want)
+		}
+	}
+	if !r.Visible("audit:2026-11-17", customers.Viewer{User: "a", Full: true}) || r.Visible("audit:2026-11-17", customers.Viewer{User: "a"}) {
+		t.Fatal("audit edges are for the full view only")
+	}
+	if (&boot{}).customersResolvers()[customers.RefAudit] == nil {
+		t.Fatal("the audit resolver is not registered")
 	}
 }
