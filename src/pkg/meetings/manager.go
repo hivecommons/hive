@@ -446,7 +446,7 @@ func (m *Manager) Say(ctx context.Context, id, text string) error {
 	if mt.ConsentPostedAt == nil {
 		return ErrConsentPending
 	}
-	return m.opts.Quorum.Say(ctx, mt.NativeID, text)
+	return m.opts.Quorum.Say(ctx, mt.NativeID, SpeechText(text))
 }
 
 // Resume re-attaches to every meeting that was not terminal when hive
@@ -658,7 +658,7 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 	// no composer and the owner had turned voice replies off left at once).
 	if mt.VoiceCapable {
 		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
-		sayErr := m.opts.Quorum.Say(cctx, mt.NativeID, m.opts.ConsentText)
+		sayErr := m.opts.Quorum.Say(cctx, mt.NativeID, SpeechText(m.opts.ConsentText))
 		cancel()
 		if sayErr == nil {
 			m.log.Info("[meetings] consent notice spoken; chat could not deliver it", "meeting", mt.ID, "chat_error", chatErr)

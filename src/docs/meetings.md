@@ -30,7 +30,7 @@ The feature is off until `meetings.enabled` is set.
 
 ## Betty, the meeting attendee
 
-Hive attends meetings as a persona: **Betty** ("Betty Bee from the hive", she/her) by default ([#18391](https://github.com/hivecommons/hive/issues/18391)). Spek still takes the notes and asks the clarifying questions; Betty is the voice in the chat.
+Hive attends meetings as a persona: **Betty** ("Betty Bee from the hive") by default ([#18391](https://github.com/hivecommons/hive/issues/18391)). Spek still takes the notes and asks the clarifying questions; Betty is the voice in the chat.
 
 - **Addressing her.** Start or end a line with one of her names (`meetings.persona.aliases`: "betty", "betty bee", "hive"), for example "Betty, when does the release ship?", "hey betty, any blockers on the deploy?" or "what do you think, Betty?". Common speech-to-text spellings ("Bettie", "Betty Bea") count. A sentence that merely mentions the name ("push it to the hive", "hive is slow today") does not. An alias that shares no word with her name, such as "hive", is an everyday word and is stricter: it addresses her only at the start of a line followed by a comma or colon ("hive, what's the status?", "Hive: any blockers?"), after "hey" or "ok" ("hey hive what's up"), or closing a question after a comma ("what do you think, hive?").
 - **Intro.** "Betty, introduce yourself", "who are you, Betty?" or "who's the bot?" gets the intro (`meetings.persona.intro_template`), which says what she does and how to send her home.
@@ -55,8 +55,8 @@ A persona is a preset (`meetings.persona.preset`, default `betty`) plus any fiel
 
 - `language` is a BCP-47 tag (default `en-US`). Betty replies in that language and its regional conventions (American spelling for `en-US`).
 - `voice` is the text-to-speech voice id (default `af_heart`, a Kokoro voice) her spoken replies use: hive passes it to Quorum as `QUORUM_TTS_VOICE` for Discord and as `voice_id` on every `meeting.join`. Kokoro voice ids encode accent and gender: `af_*` is American female, `am_*` American male, `bf_*` and `bm_*` British female and male. A future persona picks a different voice id. A "bot-type" voice would be a different TTS voice or an effect, which is not built yet.
-- `voice_type` (`female`, `male` or `bot`, default `female`), `accent` (free text, default `American`) and `pronouns` (default `she/her`) describe the persona in the intro and her self-description only; they do not change behaviour.
-- `intro_template` placeholders: `{name}`, `{display_name}`, `{pronouns}`, `{leave}` (the first leave phrase), `{accent}`, `{voice_type}`, `{language}`.
+- `voice_type` (`female`, `male` or `bot`, default `female`) and `accent` (free text, default `American`) describe the persona's voice when asked; they do not change behaviour. `pronouns` is kept for compatibility but never stated: the persona does not announce pronouns in the intro, her self-description or any answer, and a pronoun parenthetical in a custom intro is dropped.
+- `intro_template` placeholders: `{name}`, `{display_name}`, `{pronouns}` (always renders empty), `{leave}` (the first leave phrase), `{accent}`, `{voice_type}`, `{language}`.
 - `searxng_url` is the SearXNG instance she searches the web with; see [Web answers](#web-answers).
 
 ### Web answers
@@ -365,7 +365,7 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.persona.name` | `Betty` | Name she answers to. |
 | `meetings.persona.display_name` | `Betty Bee from the hive` | Meeting display name, at most 64 characters. |
 | `meetings.persona.aliases` | `[betty, betty bee, hive]` | Names that address her. |
-| `meetings.persona.pronouns` | `she/her` | Used in the intro and self-description. |
+| `meetings.persona.pronouns` | `she/her` | Kept for compatibility; never stated in any reply. |
 | `meetings.persona.language` | `en-US` | BCP-47 reply language and locale. |
 | `meetings.persona.voice` | `af_heart` | TTS voice id for spoken replies. |
 | `meetings.persona.voice_type` | `female` | `female`, `male` or `bot` (descriptive). |

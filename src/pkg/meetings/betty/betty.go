@@ -222,6 +222,9 @@ type Engine struct {
 	// earlyAck is when each speaker was acknowledged from a partial
 	// transcript; their final line then gets no second ack.
 	earlyAck map[string]time.Time
+	// lastSpoken is each speaker's last spoken request to her (repeat.go):
+	// the same request said again while the first is answered is dropped.
+	lastSpoken map[string]spokenRequest
 	// queueNoteAt is when the last "I have N questions" note went out;
 	// lastAnswerAt is when she last answered anything (attribution.go).
 	queueNoteAt  time.Time
@@ -253,8 +256,8 @@ func New(s Settings, d Deps) *Engine {
 		retrieved: make(chan retrieval, inboxDepth),
 		answers:   make(chan answered, inboxDepth),
 		pending:   map[int]*pending{},
-		earlyAck:  map[string]time.Time{},
-		done:      make(chan struct{}),
+		earlyAck:  map[string]time.Time{}, lastSpoken: map[string]spokenRequest{},
+		done: make(chan struct{}),
 	}
 }
 

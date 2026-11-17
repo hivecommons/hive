@@ -26,9 +26,9 @@ const (
 func SystemPrompt(p config.ResolvedMeetingsPersona) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are %s (%s), the hive's meeting attendee.", p.Name, p.DisplayName)
-	if p.Pronouns != "" {
-		fmt.Fprintf(&b, " Your pronouns are %s.", p.Pronouns)
-	}
+	// She never states pronouns (operator ruling): not in the intro, the
+	// self-description or any answer.
+	b.WriteString(" Never state, announce or mention your pronouns in any reply, including when you introduce or describe yourself.")
 	if p.VoiceType != "" || p.Accent != "" {
 		fmt.Fprintf(&b, " If asked, you describe your voice as %s with %s accent.", orDash(p.VoiceType), article(orDash(p.Accent)))
 	}

@@ -827,7 +827,7 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 	}
 	s.emitPersona(rep)
 	if posted && strings.TrimSpace(rep.Research) != "" {
-		s.deepDive(ctx, rep.Research, rep.Kind == betty.KindVoice)
+		s.deepDive(ctx, rep.Research, rep.Kind == betty.KindVoice || rep.VoiceWanted)
 	}
 	s.save()
 }

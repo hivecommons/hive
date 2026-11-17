@@ -430,12 +430,12 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_PERSONA_NAME` | No | `Betty` | Name the persona answers to and uses for itself. |
 | `HIVE_MEETINGS_PERSONA_DISPLAY_NAME` | No | `Betty Bee from the hive` | Meeting display name; the default bot name. At most 64 characters. |
 | `HIVE_MEETINGS_PERSONA_ALIASES` | No | `betty,betty bee,hive` | Comma-separated names that address the persona at the start or end of a line. |
-| `HIVE_MEETINGS_PERSONA_PRONOUNS` | No | `she/her` | Pronouns used in the intro and self-description only. |
+| `HIVE_MEETINGS_PERSONA_PRONOUNS` | No | `she/her` | Kept for compatibility; the persona never states pronouns. |
 | `HIVE_MEETINGS_PERSONA_LANGUAGE` | No | `en-US` | BCP-47 tag; replies use its language and regional conventions. |
 | `HIVE_MEETINGS_PERSONA_VOICE` | No | `af_heart` | TTS voice id for spoken replies (a Kokoro voice id), passed to Quorum as `QUORUM_TTS_VOICE` and as `voice_id` on `meeting.join`. |
 | `HIVE_MEETINGS_PERSONA_VOICE_TYPE` | No | `female` | `female`, `male` or `bot`; descriptive only. |
 | `HIVE_MEETINGS_PERSONA_ACCENT` | No | `American` | Free text; descriptive only. |
-| `HIVE_MEETINGS_PERSONA_INTRO_TEMPLATE` | No | the preset's intro | Intro posted when someone asks the persona to introduce itself. Placeholders `{name}`, `{display_name}`, `{pronouns}`, `{leave}`, `{accent}`, `{voice_type}`, `{language}`. |
+| `HIVE_MEETINGS_PERSONA_INTRO_TEMPLATE` | No | the preset's intro | Intro posted when someone asks the persona to introduce itself. Placeholders `{name}`, `{display_name}`, `{pronouns}` (always empty), `{leave}`, `{accent}`, `{voice_type}`, `{language}`. |
 | `HIVE_MEETINGS_PERSONA_LEAVE_PHRASES` | No | `betty leave,hive leave` | Comma-separated phrases that remove the persona from the meeting. |
 | `HIVE_MEETINGS_PERSONA_HUMOR` | No | `light` | `light` (at most one light touch, never about a person) or `off`. |
 | `HIVE_MEETINGS_PERSONA_SEARXNG_URL` | No | none | SearXNG instance the persona searches the web with (`GET /search?format=json`, 1.2 s timeout, top 3 results as untrusted data). In-cluster on hive-oke: `http://searxng.meetings.svc.cluster.local:8080`. Empty means no web search. |

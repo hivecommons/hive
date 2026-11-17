@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 )
@@ -78,7 +79,10 @@ func hiveStatusBrief(status *StatusPayload, snap chatSnapshot) string {
 			done = append(done, a.Name+": "+chatTruncate(a.LastCompleted, hiveStatusTextCap))
 		}
 	}
-	fmt.Fprintf(&b, " Agents: %d, %d paused, %d blocked.", t.Agents, t.AgentsPaused, len(blocked))
+	fmt.Fprintf(&b, " Agents: %d, %d working, %d paused, %d blocked.", t.Agents, len(working), t.AgentsPaused, len(blocked))
+	if t.WorkerBeads > 0 || t.SupervisorBeads > 0 {
+		fmt.Fprintf(&b, " Work queue: %d worker beads, %d supervisor beads.", t.WorkerBeads, t.SupervisorBeads)
+	}
 	hiveStatusList(&b, " Working on", working)
 	hiveStatusList(&b, " Blocked", blocked)
 	hiveStatusList(&b, " Recently finished", done)
@@ -119,6 +123,38 @@ func hiveStatusHeadline(b *strings.Builder, status *StatusPayload) {
 	if sla := status.SLA; sla != nil && sla.StaleCount > 0 {
 		fmt.Fprintf(b, " Stale claims past their SLA: %d.", sla.StaleCount)
 	}
+	hiveStatusBreakdown(b, " Open issues by stage", status.OverviewTotals.Issues)
+	hiveStatusBreakdown(b, " Open PRs by stage", status.OverviewTotals.PRs)
+}
+
+// hiveStatusBreakdown appends the Overview tile's split of one total
+// (tracked, held, outside and the named reasons), largest first, when the
+// dashboard has one.
+func hiveStatusBreakdown(b *strings.Builder, label string, t FrontendOverviewTotal) {
+	type part struct {
+		name string
+		n    int
+	}
+	parts := []part{{"tracked", t.Tracked}, {"held", t.Held}}
+	for k, v := range t.Breakdown {
+		parts = append(parts, part{strings.ReplaceAll(k, "_", " "), v})
+	}
+	var out []string
+	sort.SliceStable(parts, func(i, j int) bool {
+		if parts[i].n != parts[j].n {
+			return parts[i].n > parts[j].n
+		}
+		return parts[i].name < parts[j].name
+	})
+	for _, p := range parts {
+		if p.n > 0 {
+			out = append(out, fmt.Sprintf("%s %d", p.name, p.n))
+		}
+	}
+	if len(out) == 0 {
+		return
+	}
+	hiveStatusList(b, label, out)
 }
 
 // hiveStatusList appends "<label>: a; b; c (and N more)." when list has items.

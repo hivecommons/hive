@@ -135,6 +135,12 @@ func (e *Engine) onLine(l Line) {
 	if trig.Misheard {
 		e.log.Info("[meetings] addressed through a misheard name", "who", l.Who)
 	}
+	if l.Spoken && (trig.Addressed || trig.Intro) && e.repeatedRequest(l.Who, requestKey(trig), now) {
+		// Said again because the first answer was slow (Meet test: a
+		// second intro and a research ack talked over the first intro).
+		e.drop("repeated_request")
+		return
+	}
 	if !trig.Addressed {
 		// Their final line did not address her after all: the next one
 		// that does gets its own ack.
@@ -228,6 +234,12 @@ func (e *Engine) onPartial(l Line) {
 	}
 	trig := e.match.MatchWith(l.Text, true, e.participants())
 	if !trig.Addressed || trig.Intro || !trig.VoiceWanted || len(strings.Fields(trig.Rest)) < earlyAckMinWords {
+		return
+	}
+	if mayBecomeIntro(trig.Rest) || e.repeatPending(l.Who, trig.Rest, e.d.Now()) {
+		// "Betty, please introduce" is an intro still being said: an
+		// intro never gets a research ack ("Let me check on that."). A
+		// request repeated while the first is answered gets none either.
 		return
 	}
 	if _, ok := e.actionAddress(l.Text); ok {
@@ -519,6 +531,12 @@ func (e *Engine) onAddressedAnswer(p *pending, a answered) {
 		}
 		rep.NeedsResearch = true
 		rep.Research = clip(researchQuery(p), maxResearchQuery)
+		if rep.Text == dig && !p.stages.ackAt.IsZero() {
+			// She already said "one moment" out loud: a spoken "I'll dig
+			// into that" right after is a second ack back to back (Meet
+			// test). It goes to chat; the follow-up is still spoken.
+			rep.Kind = KindChat
+		}
 	}
 	if a.err == nil && rep.Research == "" && text != "" {
 		rep.Text = e.vouch(p, a.ans, rep.Text, live)

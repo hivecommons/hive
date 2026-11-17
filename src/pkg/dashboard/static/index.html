@@ -51096,12 +51096,15 @@ function burnAreaChart() {
     }
 
     // maRenderIntro fills the intro placeholders the way the server does
-    // (ResolvedMeetingsPersona.Intro).
+    // (ResolvedMeetingsPersona.Intro): the persona never states pronouns,
+    // so {pronouns} renders empty and a pronoun parenthetical is dropped.
     function maRenderIntro(f) {
       const leave = (f.leave_phrases || [])[0] || '';
-      const subs = { '{name}': f.name, '{display_name}': f.display_name, '{pronouns}': f.pronouns, '{leave}': leave,
+      const subs = { '{name}': f.name, '{display_name}': f.display_name, '{pronouns}': '', '{leave}': leave,
         '{accent}': f.accent, '{voice_type}': f.voice_type, '{language}': f.language };
-      return String(f.intro_template || '').replace(/\{(name|display_name|pronouns|leave|accent|voice_type|language)\}/g, m => subs[m] || '');
+      return String(f.intro_template || '').replace(/\{(name|display_name|pronouns|leave|accent|voice_type|language)\}/g, m => subs[m] || '')
+        .replace(/\s*[(（]\s*(?:(?:she|he|they|xe|ze|it|any|ella|elle|lei|ela|il|er|sie)\s*(?:\/\s*[A-Za-z\u00C0-\u024F]+\s*){0,2})?[)）]/gi, '')
+        .replace(/\s+([.,;:!?。，、])/g, '$1');
     }
 
     function renderGovMeetingAttendee() {
