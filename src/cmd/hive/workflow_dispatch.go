@@ -42,6 +42,11 @@ const workflowDispatchLogFile = "workflow-dispatch.json"
 // so the in-flight mark lapses on its own and the next cycle plans again.
 const workflowDispatchPendingTTL = 30 * time.Minute
 
+// workflowDraftListTTL bounds how often one bound repository's open drafts
+// are listed. Webhook-driven cycles can run minutes apart or less; a draft
+// that appeared since is picked up within this window.
+const workflowDraftListTTL = 5 * time.Minute
+
 // workflowDispatchClaimTTL is the agent claim taken before the drafter is
 // kicked: long enough for a draft to reach its PR (the covering PR then
 // holds the issue), short enough that an abandoned hand-off frees it.
@@ -55,6 +60,14 @@ type workflowDispatchRuntime struct {
 	// replies caches LatestDispatchReply per item ref, keyed on the item's
 	// updated_at: a new comment moves it, so an unchanged item costs no call.
 	replies map[string]workflowReplyCacheEntry
+	// drafts caches ListWorkflowDraftPRs per repository for
+	// workflowDraftListTTL.
+	drafts map[string]workflowDraftCacheEntry
+}
+
+type workflowDraftCacheEntry struct {
+	at  time.Time
+	prs []github.PullRequest
 }
 
 type workflowReplyCacheEntry struct {
@@ -63,7 +76,29 @@ type workflowReplyCacheEntry struct {
 	found     bool
 }
 
-var workflowDispatchRT = &workflowDispatchRuntime{pending: map[string]time.Time{}, replies: map[string]workflowReplyCacheEntry{}}
+var workflowDispatchRT = &workflowDispatchRuntime{pending: map[string]time.Time{}, replies: map[string]workflowReplyCacheEntry{}, drafts: map[string]workflowDraftCacheEntry{}}
+
+// draftsFor returns repo's open drafts, listing them at most once per
+// workflowDraftListTTL.
+func (rt *workflowDispatchRuntime) draftsFor(ctx context.Context, ghClient *github.Client, repo string, now time.Time) ([]github.PullRequest, error) {
+	rt.mu.Lock()
+	if rt.drafts == nil {
+		rt.drafts = map[string]workflowDraftCacheEntry{}
+	}
+	cached, ok := rt.drafts[repo]
+	rt.mu.Unlock()
+	if ok && now.Sub(cached.at) < workflowDraftListTTL {
+		return cached.prs, nil
+	}
+	prs, err := ghClient.ListWorkflowDraftPRs(ctx, repo)
+	if err != nil {
+		return nil, err
+	}
+	rt.mu.Lock()
+	rt.drafts[repo] = workflowDraftCacheEntry{at: now, prs: prs}
+	rt.mu.Unlock()
+	return prs, nil
+}
 
 // dispatchLog opens the durable log once per process.
 func (rt *workflowDispatchRuntime) dispatchLog(cfg *config.Config, logger *slog.Logger) *scheduler.WorkflowDispatchLog {
@@ -151,7 +186,7 @@ func workflowDispatchItems(ctx context.Context, cfg *config.Config, ghClient *gi
 		if !dispatchesPRState(p) {
 			continue
 		}
-		drafts, err := ghClient.ListWorkflowDraftPRs(ctx, qualifyClaimRepo(cfg.Project.Org, b.Repo))
+		drafts, err := workflowDispatchRT.draftsFor(ctx, ghClient, qualifyClaimRepo(cfg.Project.Org, b.Repo), time.Now())
 		if err != nil {
 			if logger != nil {
 				logger.Warn("workflow dispatch: listing drafts failed", "repo", b.Repo, "error", err)
