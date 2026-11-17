@@ -6,17 +6,17 @@ Sessions are interactive, named CLI-agent terminals. Each runs as its own unpriv
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/sessions` | Dashboard auth/session | Sessions, vendors and limits | `pkg/dashboard/api_sessions.go:181` |
-| `POST` | `/api/sessions` | Owner or read-write | Create a session `{name, group, vendor, shared?, seed_items?}`; answers 202 at once with the session `preparing`, the start runs in the background (`seed_items`: see [Seeding from the Inbox](#seeding-from-the-inbox)) | `pkg/dashboard/api_sessions.go:182` |
-| `PATCH` | `/api/sessions/{id}` | Session creator or owner | Rename, regroup or (un)share `{name?, group?, shared?}` | `pkg/dashboard/api_sessions.go:183` |
-| `DELETE` | `/api/sessions/{id}` | Session creator or owner | Close a running session (metadata kept, marked `ended`); on an ended session, remove its metadata and delete its sandbox files | `pkg/dashboard/api_sessions.go:184` |
-| `GET` | `/api/sessions/{id}/log` | Dashboard auth/session | Redacted scrollback `?lines=N` (capped at 5000) | `pkg/dashboard/api_sessions.go:185` |
-| `POST` | `/api/sessions/{id}/input` | Owner or read-write | Queue `{text, submit}` for the pane; answers 202 with `{queued: {id, position}, queue}` and the text is typed once the CLI prompt is idle (size-capped, audited at delivery without the text) | `pkg/dashboard/api_sessions.go:186` |
-| `DELETE` | `/api/sessions/{id}/input/{queue_id}` | Owner or read-write | Cancel your own queued send (the creator or an owner may cancel anyone's); 409 while it is being delivered | `pkg/dashboard/api_sessions.go:190` |
-| `POST` | `/api/sessions/{id}/upload` | Owner or read-write | Multipart `file`; returns the absolute path inside the session directory | `pkg/dashboard/api_sessions.go:187` |
-| `POST` | `/api/sessions/{id}/resume` | Owner or read-write | Reopen an ended session's last conversation where the vendor supports it (409 otherwise); answers 202 with the session `preparing` | `pkg/dashboard/api_sessions.go:188` |
-| `POST` | `/api/sessions/{id}/keyboard` | Owner or read-write | `{"action":"take"\|"release"}` the keyboard lease: the one writable terminal | `pkg/dashboard/api_sessions.go:189` |
-| `POST` | `/api/sessions/{id}/seed` | Owner or read-write | Send Inbox items `{items: [{source, id}]}` into a running session: one enveloped file each under `.hive/inbox/`, then a queued Send naming them (see [Seeding from the Inbox](#seeding-from-the-inbox)) | `pkg/dashboard/api_sessions.go:191` |
+| `GET` | `/api/sessions` | Dashboard auth/session | Sessions, vendors and limits | `pkg/dashboard/api_sessions.go:182` |
+| `POST` | `/api/sessions` | Owner or read-write | Create a session `{name, group, vendor, shared?, seed_items?}`; answers 202 at once with the session `preparing`, the start runs in the background (`seed_items`: see [Seeding from the Inbox](#seeding-from-the-inbox)) | `pkg/dashboard/api_sessions.go:183` |
+| `PATCH` | `/api/sessions/{id}` | Session creator or owner | Rename, regroup or (un)share `{name?, group?, shared?}` | `pkg/dashboard/api_sessions.go:184` |
+| `DELETE` | `/api/sessions/{id}` | Session creator or owner | Close a running session (metadata kept, marked `ended`); on an ended session, remove its metadata and delete its sandbox files | `pkg/dashboard/api_sessions.go:185` |
+| `GET` | `/api/sessions/{id}/log` | Dashboard auth/session | Redacted scrollback `?lines=N` (capped at 5000) | `pkg/dashboard/api_sessions.go:186` |
+| `POST` | `/api/sessions/{id}/input` | Owner or read-write | Queue `{text, submit}` for the pane; answers 202 with `{queued: {id, position}, queue}` and the text is typed once the CLI prompt is idle (size-capped, audited at delivery without the text) | `pkg/dashboard/api_sessions.go:187` |
+| `DELETE` | `/api/sessions/{id}/input/{queue_id}` | Owner or read-write | Cancel your own queued send (the creator or an owner may cancel anyone's); 409 while it is being delivered | `pkg/dashboard/api_sessions.go:191` |
+| `POST` | `/api/sessions/{id}/upload` | Owner or read-write | Multipart `file`; returns the absolute path inside the session directory | `pkg/dashboard/api_sessions.go:188` |
+| `POST` | `/api/sessions/{id}/resume` | Owner or read-write | Reopen an ended session's last conversation where the vendor supports it (409 otherwise); answers 202 with the session `preparing` | `pkg/dashboard/api_sessions.go:189` |
+| `POST` | `/api/sessions/{id}/keyboard` | Owner or read-write | `{"action":"take"\|"release"}` the keyboard lease: the one writable terminal | `pkg/dashboard/api_sessions.go:190` |
+| `POST` | `/api/sessions/{id}/seed` | Owner or read-write | Send Inbox items `{items: [{source, id}]}` into a running session: one enveloped file each under `.hive/inbox/`, then a queued Send naming them (see [Seeding from the Inbox](#seeding-from-the-inbox)) | `pkg/dashboard/api_sessions.go:192` |
 
 ## Session object
 
