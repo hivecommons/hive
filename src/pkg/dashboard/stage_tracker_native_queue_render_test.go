@@ -61,8 +61,10 @@ assert.ok(html.includes('on this page') && html.includes('on another page'), htm
 assert.ok(html.includes('href="https://github.com/acme/chairlift/pull/801"') && html.includes('href="https://github.com/acme/chairlift/actions/runs/1/job/2"'), html);
 assert.ok(html.includes('Test group <code title="' + group + '">' + group.slice(0, 12) + '</code> · checks running'), html);
 assert.ok(html.includes('merged') && html.includes('signed-pull-request-merged-webhook'), html);
-// Built from the dashboard's own parts.
-for (const cls of ['ham-train-head', 'ham-train-chip', 'ham-merged-list', 'ham-merged-meta', 'config-info', 'ham-badge']) assert.ok(html.includes(cls), cls);
+// Built from the dashboard's own parts. A fresh, problem-free queue carries
+// no badge at all; the badge cases are asserted below.
+for (const cls of ['ham-train-head', 'ham-train-chip', 'ham-merged-list', 'ham-merged-meta', 'config-info']) assert.ok(html.includes(cls), cls);
+assert.ok(!html.includes('ham-badge'), 'fresh queue with no problem shows no badge');
 assert.ok(!html.includes('nq-'), 'one-off nq-* look is gone');
 
 // Past the stale window with a normal rotation delay: calm age, no alarm, no empty claim.
