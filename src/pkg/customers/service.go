@@ -320,6 +320,36 @@ func (s *Service) Accept(v Viewer, suggestionID string) (PersonView, error) {
 	return s.view(v, p, false, true), nil
 }
 
+// AcceptInto attaches a suggested person to an existing customer (id may be
+// "me") instead of making them a new one. It reuses the merge: the
+// suggestion is accepted as a customer and folded into the target, so the
+// identity becomes a manual one of the target's, the activity it produced
+// moves onto the target on the next sweep, nobody is created twice, and
+// Unmerge, with the id the result names in its merge history, undoes it.
+// Full view only: a read-only user cannot see suggestions, and adds their
+// own identities as unconfirmed claims instead.
+func (s *Service) AcceptInto(v Viewer, suggestionID, intoID string) (PersonView, error) {
+	if !v.Full {
+		return PersonView{}, ErrForbidden
+	}
+	dst, dstMe, err := s.resolve(v, intoID)
+	if err != nil {
+		return PersonView{}, err
+	}
+	if len(dst.Identities) >= MaxIdentities {
+		return PersonView{}, fmt.Errorf("%w: too many identities", ErrInvalid)
+	}
+	p, err := s.store.Accept(suggestionID, v.User)
+	if err != nil {
+		return PersonView{}, err
+	}
+	merged, err := s.store.Merge(dst.ID, p.ID, v.User)
+	if err != nil {
+		return PersonView{}, err
+	}
+	return s.view(v, merged, dstMe, true), nil
+}
+
 // Dismiss turns a suggestion down. Full view only.
 func (s *Service) Dismiss(v Viewer, suggestionID string) error {
 	if !v.Full {

@@ -92,18 +92,25 @@ func TestCustomersViewGates(t *testing.T) {
 		"customersActivityHtml", "customersForgetHtml", "customersProfileHtml", "customersFormatTime",
 		"customersTimelineGroups", "customersTimelineRowHtml", "customersTimelineHtml", "customersHintRowHtml",
 		"customersMergeHtml", "customersGraphBodyHtml", "customersGraphHtml",
+		"customersInitial", "customersEvidenceLabel", "customersWhyHtml", "customersPickerHtml", "customersSuggestionGroups",
+		"customersSuggestionGroupHtml", "customersAttachHtml", "customersSuggestionOrder", "customersNeighbour",
+		"customersFocusSuggestion", "customersAfterSuggestion", "customersAccept", "customersDismiss", "customersShowMore",
+		"customersPickerOpen", "customersProfilePickerOpen", "customersPickerClose", "customersAttach", "customersHintAnswer",
 		"graphcanvasRound", "graphcanvasLabel", "graphcanvasLayout", "graphcanvasSvg",
 	} {
 		fns = append(fns, jsFunc(t, html, name))
 	}
 	consts := ""
 	for _, name := range []string{"CUSTOMERS_KIND_LABELS", "CUSTOMERS_ADDABLE_KINDS", "CUSTOMERS_LEVEL_LABELS", "CUSTOMERS_LEVEL_PILL", "CUSTOMERS_ORIGIN_LABELS", "CUSTOMERS_REF_KIND_LABELS",
+		"CUSTOMERS_REF_GH", "CUSTOMERS_REF_WORDS", "CUSTOMERS_GROUP_SHOWN", "CUSTOMERS_SUGGESTED_GROUPS", "CUSTOMERS_OTHER_GROUP", "CUSTOMERS_KIND_ICONS",
 		"GRAPHCANVAS_W", "GRAPHCANVAS_H", "GRAPHCANVAS_RING_ARTEFACT", "GRAPHCANVAS_RING_PEOPLE", "GRAPHCANVAS_MAX_ARTEFACTS", "GRAPHCANVAS_LABEL_MAX"} {
 		consts += jsConstBlock(t, html, name) + "\n"
 	}
 	script := consts + `
 const CUSTOMERS_EVIDENCE_SHOWN = 5;
 let _customersData = null;
+let _customersOpen = null;
+let _customersUi = { open: {}, expanded: {}, picker: '', profilePicker: false };
 let _customersTimeline = { id: '', nodes: [], next: '', error: '', loading: false };
 let _customersGraph = { id: '', on: false, nodes: null, error: '', loading: false };
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
@@ -132,7 +139,7 @@ must(prof.includes('data-action="customersSatisfactionSet"') && prof.includes('d
 must(prof.includes('data-action="customersIdentityConfirm"'), 'owner cannot confirm a claimed identity');
 must(prof.includes('data-action="customersHintAnswer" data-arg0="h_1" data-arg1="yes"') && prof.includes('data-arg0="h_1" data-arg1="no"') && prof.includes('ada@&lt;x&gt;.org'), 'a suggested-identity hint lacks Yes, No or an escaped identity');
 must(!prof.includes('data-arg0="h_2" data-arg1="yes"') && prof.includes('data-arg0="h_2" data-arg1="no"'), 'a customer-to-customer hint offers Yes');
-must(prof.includes('data-action="customersGoalConfirm" data-arg0="g_2"') && prof.includes('gh:issue:o/r#1'), 'a suggested goal lacks Confirm or its evidence');
+must(prof.includes('data-action="customersGoalConfirm" data-arg0="g_2"') && prof.includes('Issue #1') && !prof.includes('gh:issue:o/r#1'), 'a suggested goal lacks Confirm or its readable evidence');
 must(!prof.includes('data-action="customersGoalConfirm" data-arg0="g_1"'), 'a confirmed goal offers Confirm');
 must(prof.includes('data-arg0="vip" data-arg1="auto"') && !prof.includes('data-arg0="maintainer" data-arg1="auto"'), 'Reset to automatic must show on manual tags only');
 must(!prof.includes('data-arg0="hive_user:ada"'), 'the hive user identity offers Remove');
@@ -207,6 +214,7 @@ must(customersGraphBodyHtml(person).includes('Nothing to draw yet.'), 'an empty 
 _customersGraph = { id: 'p_abc', on: true, nodes: null, error: 'Could not load the graph: boom', loading: false };
 must(customersGraphBodyHtml(person).includes('Could not load the graph: boom'), 'a graph error is not shown');
 _customersGraph = { id: '', on: false, nodes: null, error: '', loading: false };
+` + customersLayoutNoiseScript + `
 must(customersLevelPill('unknown') === '' && customersLevelPill('satisfied').includes('data-status="ok"'), 'level pill');
 `
 	cmd := exec.Command(node, "-e", script)
@@ -291,3 +299,127 @@ func TestFeaturesTab_CustomersToggleMarkup(t *testing.T) {
 		}
 	}
 }
+
+// customersLayoutNoiseScript is the part of TestCustomersViewGates that pins
+// the Customers layout and noise rules (hivecommons/hive#18742): no raw
+// references on a suggested row, readable evidence links, at most five, a
+// group per source with "Show N more", long keys truncated rather than
+// wrapped, no "0 goals", the "me" marker as a badge, and the Suggested group
+// staying open (with its expansion and the focus moving on) after an accept,
+// a dismiss, an attach or a "Same person?" answer.
+const customersLayoutNoiseScript = `
+// Raw references never print; links are readable and bounded.
+const longKey = 'b43dc28a888d316aa1fe4a47bf3038cd1bca7bbb2b5cdbf5e7ecb9cc10672a95@group.calendar.google.com';
+const sug = { id: 's_1', kind: 'email', value: longKey, counts: { added: 1, organised: 1 }, last_seen: '2026-11-17T10:00:00Z',
+  evidence: ['gh:issue:hivecommons/hive#18726', 'gh:pr:hivecommons/hive#18738', 'event:93d1acd2360e10c0', 'inbox:email:m1', 'meeting:m2', 'gh:pr:hivecommons/hive#1'] };
+let row = customersSuggestionRowHtml(sug);
+must(!row.includes('gh:issue') && !row.includes('gh:pr') && !row.includes('event:93d1') && !row.includes('customers-evidence'), 'a raw reference is printed on a suggested row: ' + row);
+must(row.includes('Why is this suggested?') && row.includes('<details class="customers-why"'), 'the evidence is not behind a disclosure');
+must(row.includes('href="https://github.com/hivecommons/hive/issues/18726"') && row.includes('href="https://github.com/hivecommons/hive/pull/18738"') && row.includes('>Issue #18726</a>') && row.includes('>PR #18738</a>'), 'issue and PR links: ' + row);
+must(row.includes('calendar invite') && row.includes('<span>mail</span>'), 'an event or mail is not named in words');
+must((row.match(/<a href=/g) || []).length + (row.match(/<span>(calendar invite|mail|meeting|inbox file)<\/span>/g) || []).length <= CUSTOMERS_EVIDENCE_SHOWN, 'more than five references shown');
+must(!row.includes('#1</a>'), 'the sixth reference was shown');
+must(row.includes('rel="noopener noreferrer"') && row.includes('target="_blank"'), 'links must not leak the opener');
+must(row.includes('class="customers-name" title="' + longKey + '"'), 'a long key lacks its full-value tooltip');
+must(row.includes('data-action="customersAccept"') && row.includes('data-action="customersPickerOpen"') && row.includes('Add to existing') && row.includes('data-action="customersDismiss"'), 'a suggested row lacks Accept, Add to existing or Dismiss');
+must(customersEvidenceLabel('gh:pr:bad repo#1').includes('activity') && !customersEvidenceLabel('gh:pr:o/r#1"><script>').includes('<script>'), 'a malformed reference must not become a link');
+must(!customersEvidenceLabel('gh:pr:o/r#1').includes('javascript:'), 'link');
+
+// No "0 goals" on a row, "me" is a badge, the name is its own element.
+_customersData = Object.assign({}, base, { full: true, owner: true });
+const noGoals = customersRowHtml({ id: 'p_z', name: 'Zed', origin: 'hive_user', tags: [{ name: 'maintainer', state: 'on', source: 'auto' }], goals: [], updated_at: '2026-11-17T10:00:00Z' }, false);
+must(!/0 goals/.test(noGoals) && !noGoals.includes('goals'), '"0 goals" is printed: ' + noGoals);
+must(customersRowHtml({ id: 'p_z', name: 'Zed', goals: [{ id: 'g', text: 't', state: 'confirmed' }] }, false).includes('1 goal'), 'a confirmed goal is not counted');
+const meRow = customersRowHtml({ id: 'p_me', name: 'clubanderson', origin: 'hive_user' }, true);
+must(meRow.includes('<span class="badge customers-me">me</span>') && !meRow.includes('clubanderson me'), 'me is not a badge: ' + meRow);
+must(meRow.includes('class="customers-avatar"') && meRow.includes('>C</span>') && meRow.includes('customers-row-actions') && meRow.includes('My profile'), 'a row lacks its avatar or its action group');
+must(customersGoalsHtml({ goals: [] }).includes('No goal yet.'), 'the profile does not say "No goal yet"');
+
+// Groups by source, first five, "Show N more".
+const manySugg = [];
+for (let i = 0; i < 7; i++) manySugg.push({ id: 'g_' + i, kind: 'github', value: 'user' + i, counts: { mentioned_in: 1 }, evidence: [] });
+manySugg.push({ id: 'e_0', kind: 'email', value: 'a@example.com', evidence: [] }, { id: 'e_1', kind: 'email', value: 'b@example.com', evidence: [] }, { id: 'x_0', kind: 'slack', value: 'U1', evidence: [] });
+_customersData = Object.assign({}, base, { full: true, owner: true, suggestions: manySugg });
+_customersUi = { open: {}, expanded: {}, picker: '', profilePicker: false };
+let grouped = customersListHtml(_customersData);
+must(grouped.indexOf('GitHub people') > 0 && grouped.indexOf('GitHub people') < grouped.indexOf('Email addresses') && grouped.indexOf('Email addresses') < grouped.indexOf('Other people'), 'groups are missing or out of order');
+must((grouped.match(/data-customer-suggestion="g_/g) || []).length === 5 && grouped.includes('Show 2 more') && !grouped.includes('Show fewer'), 'a group must show five and offer Show 2 more');
+must(!grouped.includes('<details class="customers-block customers-suggested" data-ui-key="suggested" open'), 'the Suggested group must start closed');
+_customersUi.expanded.github = true;
+grouped = customersListHtml(_customersData);
+must((grouped.match(/data-customer-suggestion="g_/g) || []).length === 7 && grouped.includes('Show fewer'), 'an expanded group shows everything');
+_customersUi.open.suggested = true;
+must(customersListHtml(_customersData).includes('data-ui-key="suggested" open'), 'an open Suggested group is rendered closed');
+must(customersSuggestionOrder().join() === 'g_0,g_1,g_2,g_3,g_4,g_5,g_6,e_0,e_1,x_0', 'display order: ' + customersSuggestionOrder().join());
+must(customersNeighbour('g_6') === 'e_0' && customersNeighbour('x_0') === 'e_1' && customersNeighbour('nope') === '', 'neighbour');
+
+// Picker: Me is first and the filter keys are lower-cased names.
+_customersUi.picker = 'g_0';
+const pickedHtml = customersListHtml(_customersData);
+must(pickedHtml.includes('data-customers-picker="g_0"') && pickedHtml.includes('data-action="customersAttach" data-arg0="g_0" data-arg1="me"') && pickedHtml.includes('data-arg1="p_abc" data-name="&lt;b&gt;ada&lt;/b&gt;"'), 'picker: ' + pickedHtml.slice(pickedHtml.indexOf('customers-picker')));
+must(pickedHtml.indexOf('data-arg1="me"') < pickedHtml.indexOf('data-arg1="p_abc"'), 'Me is not first in the picker');
+_customersUi.picker = '';
+
+// Profile side: a full viewer can pull a suggestion in; nobody else.
+_customersUi.profilePicker = false;
+must(customersAttachHtml(person).includes('data-action="customersProfilePickerOpen"') && customersAttachHtml(person).includes('Add a suggested person here'), 'the profile lacks Add a suggested person here');
+_customersUi.profilePicker = true;
+must(customersAttachHtml(person).includes('data-action="customersAttach" data-arg0="g_0" data-arg1="p_abc"') && customersAttachHtml(Object.assign({}, person, { me: true })).includes('data-arg1="me"'), 'profile picker');
+_customersUi.profilePicker = false;
+_customersData = { enabled: true, full: false, owner: false, me: mine, people: [], suggestions: manySugg, default_tags: base.default_tags, levels: base.levels };
+must(customersAttachHtml(mine) === '', 'a read-only profile offers to attach suggestions');
+_customersData = Object.assign({}, base, { full: true, owner: true, suggestions: [] });
+must(customersAttachHtml(person).includes('Nobody is suggested right now.') && !customersAttachHtml(person).includes('customersProfilePickerOpen'), 'an empty list still offers the picker');
+
+// Accept, Dismiss, Attach and a hint answer keep the Suggested group open
+// and its expansion, and move the focus to the next suggestion.
+const calls = [];
+let focused = '';
+let rendered = '';
+let current = [];
+const document = { getElementById: (id) => id === 'customers-panel' ? { querySelector: (q) => ({ focus: () => { focused = q; } }) } : null };
+function showToast() {}
+function hiveConfirm() { return Promise.resolve(true); }
+function customersProfileError(m) { throw new Error(m); }
+function customersTimelineLoad() {}
+function customersRequest(method, path, body) { calls.push(method + ' ' + path + (body ? ' ' + JSON.stringify(body) : '')); return Promise.resolve({ name: 'N', hints: [] }); }
+function renderCustomers() { customersShow(); }
+function customersShow() { rendered = _customersOpen ? 'profile' : customersListHtml(_customersData); }
+function fetchCustomers() { _customersData = Object.assign({}, _customersData, { suggestions: current.slice() }); customersShow(); return Promise.resolve(); }
+const all = manySugg.slice();
+(async () => {
+  _customersOpen = null;
+  _customersUi = { open: { suggested: true }, expanded: { github: true }, picker: '', profilePicker: false };
+  _customersData = Object.assign({}, base, { full: true, owner: true, suggestions: all.slice() });
+  current = all.filter(s => s.id !== 'g_2');
+  await customersAccept('g_2');
+  must(calls[0] === 'POST /api/customers/suggestions/g_2/accept', 'accept call: ' + calls[0]);
+  must(rendered.includes('data-ui-key="suggested" open'), 'the Suggested group closed after an accept');
+  must(!rendered.includes('data-customer-suggestion="g_2"') && rendered.includes('data-customer-suggestion="g_3"'), 'the accepted row is still listed, or its neighbour is not');
+  must((rendered.match(/data-customer-suggestion="g_/g) || []).length === 6 && rendered.includes('Show fewer'), 'the expansion was lost after an accept');
+  must(focused === '[data-customer-suggestion="g_3"] [data-action="customersAccept"]', 'the focus did not move to the next suggestion: ' + focused);
+
+  current = current.filter(s => s.id !== 'g_6');
+  await customersDismiss('g_6');
+  must(calls[1] === 'POST /api/customers/suggestions/g_6/dismiss' && rendered.includes('data-ui-key="suggested" open'), 'the group closed after a dismiss');
+  must(focused === '[data-customer-suggestion="e_0"] [data-action="customersAccept"]', 'dismiss focus: ' + focused);
+
+  _customersUi.picker = 'e_0';
+  current = current.filter(s => s.id !== 'e_0');
+  await customersAttach('e_0', 'me');
+  must(calls[2] === 'POST /api/customers/suggestions/e_0/accept {"into":"me"}', 'attach call: ' + calls[2]);
+  must(rendered.includes('data-ui-key="suggested" open') && _customersUi.picker === '' && !rendered.includes('data-customer-suggestion="e_0"'), 'attach: the group closed, the picker stayed, or the row stayed');
+  must(!rendered.includes('customers-picker'), 'the picker stayed open after an attach');
+
+  // The same suggestion list answered from a profile: the group's state is
+  // untouched and the focus goes to the next question.
+  _customersOpen = { id: 'p_abc', name: 'Ada', hints: [{ id: 'h_1' }, { id: 'h_2' }] };
+  _customersUi.open.suggested = true;
+  await customersHintAnswer('h_1', 'yes');
+  must(_customersUi.open.suggested === true && _customersUi.expanded.github === true, 'answering a hint reset the Suggested state');
+  must(focused === '[data-hint="h_2"] button', 'hint focus: ' + focused);
+  _customersOpen = null;
+  customersShowMore('github');
+  must(_customersUi.expanded.github === false, 'Show fewer did not fold the group');
+})().catch(e => { console.error(e.stack || e.message); process.exit(1); });
+`

@@ -108,6 +108,10 @@ func TestCustomersSweepInputMapsLocalState(t *testing.T) {
 		"github:Olivia|github|olivia":    customersSourceAccessList,
 		"github:Olivia|github|olivia-gh": customersSourceOwner,
 		"rita|email|rita@example.com":    customersSourceProof,
+		// A bare access-list name is the GitHub login of a device-flow user.
+		"rita|github|rita": customersSourceAccessList,
+		"max|github|max":   customersSourceAccessList,
+		"reed|github|reed": customersSourceAccessList,
 	}
 	if len(links) != len(wantLinks) {
 		t.Fatalf("links = %v, want %v (an unproven email must not link)", links, wantLinks)
@@ -368,5 +372,36 @@ func TestCustomersAuditResolver(t *testing.T) {
 	}
 	if (&boot{}).customersResolvers()[customers.RefAudit] == nil {
 		t.Fatal("the audit resolver is not registered")
+	}
+}
+
+// TestCustomersBareAccessListNameIsGitHubLogin pins the root cause of
+// hive users showing up as suggested GitHub people: the access list holds a
+// device-flow user as the bare login, not "github:<login>", and only the
+// prefixed form used to be linked.
+func TestCustomersBareAccessListNameIsGitHubLogin(t *testing.T) {
+	for name, want := range map[string]string{
+		"danathar": "danathar", "GitHub:Alice": "alice", "github:bob-1": "bob-1", " carol ": "carol",
+		"ibmid:abc": "", "dave@example.com": "", "has.dot": "", "under_score": "", "-lead": "", "a--b": "", "": "", "github:": "",
+		"x23456789012345678901234567890123456789x": "",
+	} {
+		if got := customersGitHubLogin(name); got != want {
+			t.Errorf("customersGitHubLogin(%q) = %q, want %q", name, got, want)
+		}
+	}
+}
+
+func TestCustomersOwnAddresses(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Hub.DashboardURL = "https://Hosted-X.hive.example.dev/"
+	got := customersOwnAddresses(cfg)
+	if len(got) != 1 || got[0] != "hive@hosted-x.hive.example.dev" {
+		t.Fatalf("own addresses = %v", got)
+	}
+	if customersOwnAddresses(&config.Config{}) != nil || customersOwnAddresses(nil) != nil {
+		t.Fatal("an unknown host must give no own address")
+	}
+	if in := customersSweepInput(customersSources{cfg: cfg}); len(in.OwnAddresses) != 1 {
+		t.Fatalf("the sweep input lacks the own address: %v", in.OwnAddresses)
 	}
 }
