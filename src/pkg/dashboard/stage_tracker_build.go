@@ -57,6 +57,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 	}
 	resp.NeedsHumanLabels = needsHumanPresetLabels(cfg, status.HiveID)
 	resp.Workflows = stageTrackerWorkflows(cfg, s.workflowProfileLookup(), qualifyRepo)
+	attachWorkflowHandoffsToTracker(resp.Workflows, s.workflowDispatchHandoffs())
 	expectedPerspectives := stageTrackerExpectedPerspectives(cfg)
 	verifier, verifierErr := s.reviewEvidenceVerifier()
 	var evidenceVerifier *github.ReviewEvidenceVerifier

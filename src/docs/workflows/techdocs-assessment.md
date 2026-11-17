@@ -231,8 +231,10 @@ On each pass the hive:
    label, named in the PR request (`hive-open-pr --issues N`) and referenced with `Refs #N`,
    not marked ready and without the `verified` / `confirmed` gate labels;
 5. records the hand-off in `workflow-dispatch.json` under the workflow store root when the
-   kick lands, so neither a later pass nor a restart repeats it. A kick that could not be
-   delivered (busy, paused, failed) is retried on a later pass.
+   kick lands, as pending, so neither a later pass nor a restart repeats it. A kick that
+   could not be delivered (busy, paused, failed) is retried on a later pass;
+6. checks on later passes that the hand-off actually started: see
+   [When the agent does not start](#when-the-agent-does-not-start).
 
 The verifier runs once per `/verify` comment: each new `/verify` from the reviewer is a new
 pass, posting its report as a PR comment. A `/hive verify` command is the model-reply path
@@ -240,23 +242,41 @@ instead: it applies `verified` directly, which is how a reviewer records a delib
 
 ### Which agent fills a profile
 
-The first of these that names an enabled agent is the one kicked (a replica is never
-chosen: its base agent is):
+The model's grant describes the profile's work (its tools and outputs). It does not give a
+hive agent any permission: an agent acts with the mode its own configuration gives it
+(`mode:` on the agent, else the default for its name at the hive's ACMM level), and the hive's
+write gates enforce that mode. So the hive only ever hands a profile to an agent that already
+may do the work:
 
-1. the pin, `workflow.dispatch.profiles.<profile>.agent`. A pin that names no enabled agent
-   stops the hand-off; it never falls through to another agent;
+- `techdocs-drafter` opens a draft pull request and pushes. Its agent needs a mode that may
+  open pull requests (`ISSUES_AND_PRS` or `ISSUES_PRS_MERGE`), in a repository whose ACMM
+  level lets that agent open them;
+- `techdocs-verifier` posts one comment. Its agent needs comment rights (`ISSUES_ONLY` or
+  above, or `converse: true`).
+
+The first of these that names an enabled agent with those rights is the one kicked (a replica
+is never chosen: its base agent is):
+
+1. the pin, `workflow.dispatch.profiles.<profile>.agent`. A pin that names no enabled agent,
+   or an agent without the rights the profile needs, stops the hand-off and is shown as a
+   problem; it never falls through to another agent;
 2. an agent named after the profile (`techdocs-drafter`);
-3. the first enabled `writer`, `docs` or `feature` agent, in that role order, by name;
+3. the first `writer`, `docs` or `feature` agent, in that role order, by name;
 4. the hive's standard agent for the work, so a default fleet needs no setup: for a profile
    that opens a pull request (`techdocs-drafter`) the issue worker, the `scanner` role that
    every issue without a lane of its own goes to; for a profile that reviews
-   (`techdocs-verifier`) the `reviewer`. It must be allowed to work on the bound repository
-   (its `repos:` scope, when it has one, includes `cncf/techdocs`).
+   (`techdocs-verifier`) the `reviewer`; and when that agent lacks the rights, the first
+   agent by name that has them. It must be allowed to work on the bound repository (its
+   `repos:` scope, when it has one, includes `cncf/techdocs`).
 
-No other agent is picked on its own: a supervisor, guide or brainstorm agent opens no pull
-requests. On a hive with the standard roster (scanner, reviewer, ci-maintainer, quality,
-guide, brainstorm, supervisor) the drafter is therefore the scanner and the verifier the
-reviewer.
+On a hive whose standard roster (scanner, reviewer, ci-maintainer, quality, guide,
+brainstorm, supervisor) all may open pull requests, the drafter is therefore the scanner and
+the verifier the reviewer. On a hive where the scanner runs `ADVISORY` and only `quality`
+runs `ISSUES_AND_PRS`, the drafter is `quality`. When no agent has the rights, the profile is
+unfilled and the reason says so:
+`no agent on this hive may open pull requests in cncf/techdocs; agents are advisory-only`.
+Raise an agent's mode (Settings → Agents, or `mode: ISSUES_AND_PRS` on the agent) to fill
+it; the hive never raises a mode for a hand-off on its own.
 
 When nothing fills a profile the hand-off cannot happen, and the item stays withheld from the
 generic lanes, so the hive says so in three places:
@@ -264,8 +284,10 @@ generic lanes, so the hive says so in three places:
 - **Settings → Repos**: the repository's workflow row lists each profile of the bound model
   with the agent it is handed to. A profile nothing fills shows a warning naming it, and
   the picker next to it saves the pin (owner only, `PUT /api/workflows/dispatch/profiles`,
-  audited `workflow_dispatch_agent`). **Automatic** clears the pin. The next pass uses the
-  pick; no restart is needed.
+  audited `workflow_dispatch_agent`). The picker lists every agent; one whose mode does not
+  let it do the profile's work is shown with its mode, cannot be picked, and gives the
+  reason on hover. **Automatic** clears the pin. The next pass uses the pick; no restart is
+  needed.
 - **Activity Monitor**: the item's row wears a `no agent for <profile>` badge whose hover
   gives the reason.
 - **Send to *profile***: the manual send answers with the same reason and where to fix it.
@@ -290,6 +312,42 @@ workflow:
 hand-off, and `workflow.dispatch.enabled: false` stops them all (owned items stay withheld
 from the generic lanes either way). `prompt_template` replaces the built-in prompt; see the
 design doc for its `${VAR}` placeholders.
+
+### When the agent does not start
+
+A kick that landed only means the agent was told. An agent can decline (one whose session
+may not push will, and is right to) or end its turn without producing anything. The hive
+does not count that as a hand-off made.
+
+After the kick, each pass checks the item while it is still in the handed-off state. The
+hand-off is marked **not started**, with the reason, when:
+
+- the agent declined: it refused the kick, or ended its turn on a `STAND DOWN` line, on a
+  question, or on a report that it produced nothing (the prompt tells an agent whose session
+  cannot do the work to end on a `STAND DOWN` line with the reason);
+- the agent's turn ended and, 15 minutes later, there is still no draft pull request
+  covering the issue (for the verifier: no new comment on the draft);
+- nothing is known about the turn (the hive restarted) and 2 hours have passed.
+
+The hive then releases the claim that agent held and hands the item, once, to a different
+agent that has the rights. If no other agent has them, or the second agent does not start
+either, the item waits for an owner: use **Send to techdocs-drafter**. There is no further
+automatic retry, so an agent that keeps declining cannot loop.
+
+A hand-off that was not started is visible while the item waits:
+
+- **Settings → Repos**: the profile's line says which item, why, and what happens next;
+- **Activity Monitor**: the row wears a `not started: <profile>` badge whose hover gives the
+  reason;
+- the hive log: `workflow dispatch: hand-off not started`, with the agent, the reason and
+  the next step.
+
+**After an upgrade.** A hive that ran an earlier version may hold a record saying an Accepted
+request was already handed off, to an agent that could never open the pull request (an
+advisory scanner). On the first pass after the upgrade that record is re-evaluated: it is
+marked not started, the agent's claim is released, and the request is handed to an agent
+that has the rights. Nobody needs to find the item or clear anything by hand. If no agent
+has the rights, the row and the workflow line say so until one does.
 
 ### Send to drafter (owner)
 

@@ -71,7 +71,9 @@
     // (hivecommons/hive#18690). GET /api/workflows and the pin's own
     // response carry `dispatch` (one entry per bound repository and
     // profile: the resolved agent, how it was resolved, the pin, or the
-    // problem when nothing fills it) and `agents` (who can be pinned).
+    // problem when nothing fills it, `candidates` saying which agents may
+    // do the profile's work, `not_started` listing the hand-offs an agent
+    // declined) and `agents` (who can be pinned).
     function workflowDispatchApply(data) {
       _workflowState.dispatch = Array.isArray(data && data.dispatch) ? data.dispatch : [];
       _workflowState.agents = Array.isArray(data && data.agents) ? data.agents : [];
@@ -87,31 +89,43 @@
 
     // Pure: what one profile's row says — the option list of its picker
     // (the default first, then every agent that can be pinned, plus a pin
-    // that no longer names an enabled agent so it stays visible) and, when
-    // nothing fills the profile, the warning.
+    // that no longer names an enabled agent so it stays visible), the
+    // warning when nothing fills the profile, and the hand-offs an agent
+    // declined or did not act on. An agent whose mode does not let it do
+    // what the profile needs (`candidates`, hivecommons/hive#18749) is
+    // listed but cannot be picked, with the reason on hover.
     function workflowDispatchProfileView(d, agents) {
       const pinned = String(d.pinned || '');
       const agent = String(d.agent || '');
       const auto = pinned ? 'Automatic' : (agent ? 'Automatic (' + agent + ')' : 'Automatic (none available)');
       const options = [{ value: '', label: auto, selected: !pinned }];
       const names = (agents || []).map(String);
+      const cand = {};
+      for (const c of (Array.isArray(d.candidates) ? d.candidates : [])) if (c && c.agent) cand[String(c.agent)] = c;
       if (pinned && names.indexOf(pinned) < 0) options.push({ value: pinned, label: pinned + ' (not an enabled agent)', selected: true });
-      for (const n of names) options.push({ value: n, label: n, selected: n === pinned });
-      const warning = d.problem ? 'Not handed off: ' + d.problem + '. Items in this profile\'s states wait until an agent is picked.' : '';
+      for (const n of names) {
+        const c = cand[n];
+        const unfit = !!c && c.qualifies === false;
+        const mode = c && c.mode ? String(c.mode) : '';
+        options.push({ value: n, label: unfit ? n + ' (' + (mode || 'not allowed') + ', cannot do this)' : n, selected: n === pinned, disabled: unfit && n !== pinned, title: unfit ? n + ' ' + String(c.reason || 'may not do what this profile needs') : '' });
+      }
+      const warning = d.problem ? 'Not handed off: ' + d.problem + '. Items in this profile\'s states wait until an agent that may do the work is picked.' : '';
       const how = pinned ? 'pinned' : (WORKFLOW_DISPATCH_SOURCE_WORD[String(d.source || '')] || '');
       const note = warning ? '' : (agent ? 'handed to ' + agent + (how ? ' (' + how + ')' : '') : '') + (d.disabled ? ' · automatic hand-off off, manual send only' : '');
-      return { profile: String(d.profile), options, warning, note };
+      const stalled = (Array.isArray(d.not_started) ? d.not_started : []).map(h => 'Hand-off of ' + String(h.ref || '') + ' not started: ' + String(h.reason || 'the agent did not act') + '. ' + (h.retrying ? 'The hive hands it to another agent that may do the work, if there is one.' : 'It waits for an owner: use Send to ' + String(d.profile) + ' on the item\'s row in the Activity Monitor.'));
+      return { profile: String(d.profile), options, warning, note, stalled };
     }
 
     function renderRepoWorkflowProfileRows(repo, profiles, agents, locked) {
       return (profiles || []).map(d => {
         const v = workflowDispatchProfileView(d, agents);
-        const opts = v.options.map(o => `<option value="${esc(o.value)}" ${o.selected ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
-        const tip = 'Which hive agent the ' + v.profile + ' profile of this workflow is handed to (workflow.dispatch.profiles.' + v.profile + '.agent). Automatic picks an agent named after the profile, then a writer, docs or feature agent, then the hive\'s standard agent for the work.';
+        const opts = v.options.map(o => `<option value="${esc(o.value)}" ${o.selected ? 'selected' : ''} ${o.disabled ? 'disabled' : ''}${o.title ? ` title="${esc(o.title)}"` : ''}>${esc(o.label)}</option>`).join('');
+        const tip = 'Which hive agent the ' + v.profile + ' profile of this workflow is handed to (workflow.dispatch.profiles.' + v.profile + '.agent). Automatic picks an agent named after the profile, then a writer, docs or feature agent, then the hive\'s standard agent for the work, and only ever an agent whose mode lets it do what the profile needs.';
         const msg = v.warning
           ? `<span class="rt-inherit wf-dispatch-gap" role="alert">${esc(v.warning)}</span>`
           : (v.note ? `<span class="rt-inherit">${esc(v.note)}</span>` : '');
-        return `<div class="config-list-item ld-sub wf-dispatch-profile" data-wf-profile="${esc(v.profile)}"><label class="rt-check" title="${esc(tip)}">${esc(v.profile)} agent <select ${locked ? 'disabled' : ''} data-change-action="setWorkflowProfileAgent" data-arg0="${esc(v.profile)}" data-arg-types="s,v">${opts}</select></label>${msg}</div>`;
+        const stalled = v.stalled.map(line => `<span class="rt-inherit wf-dispatch-gap" data-wf-stalled="1" role="alert">${esc(line)}</span>`).join('');
+        return `<div class="config-list-item ld-sub wf-dispatch-profile" data-wf-profile="${esc(v.profile)}"><label class="rt-check" title="${esc(tip)}">${esc(v.profile)} agent <select ${locked ? 'disabled' : ''} data-change-action="setWorkflowProfileAgent" data-arg0="${esc(v.profile)}" data-arg-types="s,v">${opts}</select></label>${msg}${stalled}</div>`;
       }).join('');
     }
 
