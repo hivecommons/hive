@@ -5,7 +5,8 @@ import (
 	"testing"
 )
 
-// The Inbox item row carries only Play, Transcript and a 🔗 Share ▾ menu; the
+// The Inbox item row carries only Play, Transcript and a Share menu (icon
+// buttons named by aria-label, #18700); the
 // menu has a Hive group (RFC…, spek…, Knowledge, DIBS, plus registered entries) and a
 // Link group (Copy link, Share…). Helpers run under node with the globals
 // injected.
