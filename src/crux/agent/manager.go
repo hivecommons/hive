@@ -586,6 +586,7 @@ type Manager struct {
 	project                       ProjectContext
 	copilotAuthToken              string
 	copilotAuthTokenAuthoritative bool
+	claudeLogin                   claudeLoginState // #18732; see claude_login_revoked.go
 	// copilotAuthTokenSource names where copilotAuthToken came from — one of
 	// the CopilotTokenSource* constants, "" when no token is held. Never a
 	// secret: it is the ONE thing a "not licensed" verdict cannot be triaged

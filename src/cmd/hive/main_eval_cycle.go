@@ -1351,6 +1351,10 @@ func runEvalCycle(
 
 	// Scan agent panes for login-required patterns and pause + notify if detected
 	loginscan.Scan(ctx, cfg, agentMgr, notifier, dashSrv, logger, loginSightings)
+	// Agents whose Claude credential the provider rejected on a live check
+	// (#18732) are waiting for an operator sign-in, not a restart: keep the
+	// dashboard banner level with the runtime's BackendAuth marks.
+	dashSrv.ReconcileClaudeLoginRevokedAlert(agentMgr.AllStatuses())
 
 	// Epoch captured before reading agent/governor state so a mutation that
 	// lands mid-build (restart-count/budget reset) drops this snapshot instead
