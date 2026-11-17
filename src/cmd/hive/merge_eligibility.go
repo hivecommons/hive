@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/sandbox"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/escalation"
@@ -932,6 +933,11 @@ func prFixAgent(pr github.PullRequest, audited string) string {
 		}
 	}
 	if head := strings.TrimSpace(pr.HeadRef); head != "" {
+		// A sandboxed kick's work branch is hive/<agent>/<stamp>: its
+		// first segment names no agent (hivecommons/hive#18575).
+		if agent, ok := sandbox.WorkBranchAgentSlug(head); ok {
+			return agent
+		}
 		if agent, _, ok := strings.Cut(head, "/"); ok && agent != "" {
 			return agent
 		}

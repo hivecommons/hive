@@ -303,25 +303,42 @@ type Broker struct {
 	Logger         *slog.Logger
 	Now            func() time.Time
 	Mutation       effects.Boundary
+	// LeaseSHA, when set, makes the push an update of an EXISTING branch: a
+	// hive-opened PR's head that a sandboxed kick checked out
+	// (hivecommons/hive#18574). The outgoing commits must descend from it,
+	// and the push carries --force-with-lease=refs/heads/<Branch>:<LeaseSHA>,
+	// so it lands only while the remote branch still points at the commit
+	// the kick started from. Together the two make the push a fast-forward
+	// of exactly that commit: it can never drop a commit someone else
+	// pushed. Set BaseRef to the same commit so the scans judge only the
+	// kick's own commits.
+	LeaseSHA string
 }
 
+// leaseSHARE is a full object name; anything else is refused before it can
+// reach git's argv.
+var leaseSHARE = regexp.MustCompile(`^[0-9a-f]{40}([0-9a-f]{24})?$`)
+
 type Result struct {
-	Workspace       string    `json:"workspace"`
-	Repo            string    `json:"repo"`
-	Branch          string    `json:"branch"`
-	Remote          string    `json:"remote"`
-	Commit          string    `json:"commit,omitempty"`
-	ChangedFiles    []string  `json:"changed_files,omitempty"`
-	ProtectedReject []string  `json:"protected_reject,omitempty"`
-	SecretRejected  bool      `json:"secret_rejected"`
-	Pushed          bool      `json:"pushed"`
-	Error           string    `json:"error,omitempty"`
-	StartedAt       time.Time `json:"started_at"`
-	FinishedAt      time.Time `json:"finished_at"`
+	Workspace       string   `json:"workspace"`
+	Repo            string   `json:"repo"`
+	Branch          string   `json:"branch"`
+	Remote          string   `json:"remote"`
+	Commit          string   `json:"commit,omitempty"`
+	ChangedFiles    []string `json:"changed_files,omitempty"`
+	ProtectedReject []string `json:"protected_reject,omitempty"`
+	SecretRejected  bool     `json:"secret_rejected"`
+	Pushed          bool     `json:"pushed"`
+	// Lease is the commit the remote branch had to still point at
+	// (Broker.LeaseSHA); empty for a new branch.
+	Lease      string    `json:"lease,omitempty"`
+	Error      string    `json:"error,omitempty"`
+	StartedAt  time.Time `json:"started_at"`
+	FinishedAt time.Time `json:"finished_at"`
 }
 
 func (b *Broker) Run(ctx context.Context) (res Result, err error) {
-	res = Result{Workspace: b.Workspace, Repo: b.Repo, Branch: b.Branch, Remote: b.remote(), StartedAt: b.now()}
+	res = Result{Workspace: b.Workspace, Repo: b.Repo, Branch: b.Branch, Remote: b.remote(), Lease: strings.TrimSpace(b.LeaseSHA), StartedAt: b.now()}
 	defer func() { res.FinishedAt = b.now() }()
 	if err := b.validate(); err != nil {
 		res.Error = err.Error()
@@ -347,6 +364,11 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 		}
 	} else if baseExists {
 		if err := b.ensureFastForward(ctx, baseRef); err != nil {
+			return b.fail(res, err)
+		}
+	}
+	if res.Lease != "" {
+		if err := b.ensureDescendsFromLease(ctx, res.Lease); err != nil {
 			return b.fail(res, err)
 		}
 	}
@@ -410,8 +432,14 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 	args := []string{
 		"-c", "core.hooksPath=/dev/null",
 		"-c", "credential.helper=" + pushCredentialHelper,
-		"push", "--no-verify", b.remote(), "HEAD:refs/heads/" + b.Branch,
+		"push", "--no-verify",
 	}
+	inputs := map[string]string{"commit": res.Commit, "remote": b.remote()}
+	if res.Lease != "" {
+		args = append(args, "--force-with-lease=refs/heads/"+b.Branch+":"+res.Lease)
+		inputs["lease"] = res.Lease
+	}
+	args = append(args, b.remote(), "HEAD:refs/heads/"+b.Branch)
 	// Append AFTER PushEnv: it strips inherited credential variables, and this
 	// one is deliberately supplied rather than inherited. gitEnv also carries
 	// the workspace config overrides, so the repository's own credential
@@ -422,12 +450,15 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 		Repo:   b.Repo,
 		Kind:   effects.KindBranchPush,
 		Target: b.Branch,
-		Inputs: map[string]string{"commit": res.Commit, "remote": b.remote()},
+		Inputs: inputs,
 	}, func(ctx context.Context) (effects.Result, error) {
 		_, runErr := b.runner().Run(ctx, b.Workspace, env, "git", args...)
 		return effects.Result{Provenance: res.Commit}, runErr
 	})
 	if err != nil {
+		if res.Lease != "" {
+			return b.fail(res, fmt.Errorf("git push to existing branch %q refused or failed; with the lease, a branch that moved off %s since the kick checked it out is never overwritten: %w", b.Branch, shortSHA(res.Lease), err))
+		}
 		return b.fail(res, fmt.Errorf("git push failed: %w", err))
 	}
 	res.Pushed = true
@@ -437,6 +468,9 @@ func (b *Broker) Run(ctx context.Context) (res Result, err error) {
 func (b *Broker) validate() error {
 	if strings.TrimSpace(b.Workspace) == "" || strings.TrimSpace(b.Branch) == "" || strings.TrimSpace(b.Repo) == "" {
 		return errors.New("pushbroker: workspace, branch, and repo are required")
+	}
+	if lease := strings.TrimSpace(b.LeaseSHA); lease != "" && !leaseSHARE.MatchString(lease) {
+		return fmt.Errorf("pushbroker: lease %q is not a full commit SHA", lease)
 	}
 	if b.Minter == nil {
 		return errors.New("pushbroker: token minter is required")
@@ -547,6 +581,16 @@ func (b *Broker) commitHasEmptyTreeDelta(ctx context.Context, commit string) (bo
 func (b *Broker) ensureFastForward(ctx context.Context, base string) error {
 	if _, err := b.git(ctx, "merge-base", "--is-ancestor", base, "HEAD"); err != nil {
 		return fmt.Errorf("pushbroker: refusing non-fast-forward push to existing branch %q; comment on the PR instead of rewriting history: %w", b.Branch, err)
+	}
+	return nil
+}
+
+// ensureDescendsFromLease refuses a push to an existing branch whose
+// outgoing commits do not build on the commit the kick checked out: such a
+// push would rewrite the PR's history.
+func (b *Broker) ensureDescendsFromLease(ctx context.Context, lease string) error {
+	if _, err := b.git(ctx, "merge-base", "--is-ancestor", lease, "HEAD"); err != nil {
+		return fmt.Errorf("pushbroker: refusing to push to existing branch %q: HEAD does not descend from %s, the head the kick checked out; add commits on top instead of rewriting the PR: %w", b.Branch, shortSHA(lease), err)
 	}
 	return nil
 }
