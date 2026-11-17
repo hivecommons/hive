@@ -64,10 +64,14 @@ func (s *Server) delegatedAuthorTooling(labels []string, owner bool) delegatedec
 }
 
 // delegatedReworkPickedUp reads the rework-pickup signal of
-// hivecommons/hive#15280 for the PR's author: their relay holds or queued
-// the fix task, someone acted on the PR since the request, or a new head
-// is up. It rests on the stage record and the hub's fix queue; no GitHub
-// call. "requested" (nobody has acted) is not a pickup.
+// hivecommons/hive#15280 for the PR's author: their relay holds the fix
+// task, or a new head is up. It rests on the stage record and the hub's fix
+// queue; no GitHub call. "requested" (nobody has acted) is not a pickup,
+// and neither is "acknowledged": that state only says the PR's updated_at
+// moved after the request, which anyone's review, comment or label moves.
+// Read as the author's pickup, a maintainer's review on a PR whose author
+// had been offline for a day sent it back to that author, and nothing
+// followed for five days (projectbluefin/bluefin-bling#128).
 func (s *Server) delegatedReworkPickedUp(repoFull string, pr *gh.PullRequest, author string, now time.Time) bool {
 	rec, ok := s.stageStoreOrShared().Get(stagelabels.Key(repoFull, pr.GetNumber()))
 	if !ok {
@@ -83,7 +87,7 @@ func (s *Server) delegatedReworkPickedUp(repoFull string, pr *gh.PullRequest, au
 		return false
 	}
 	switch rw.State {
-	case reworkStateAcknowledged, reworkStateInProgress, reworkStatePushed:
+	case reworkStateInProgress, reworkStatePushed:
 		return true
 	}
 	return false

@@ -133,6 +133,11 @@ func TestStageTrackerDecidedProjection(t *testing.T) {
 		if !strings.Contains(pr.Decided.Title, "not in effect after 30m") {
 			t.Fatalf("title %q", pr.Decided.Title)
 		}
+		// Nothing re-runs a timed-out decision: the row is a person's wait
+		// again, by its real stage.
+		if kind, who := stageTrackerWaitKind(pr); kind != waitKindReadyForHumanMerge || who != waitWhoOperator {
+			t.Fatalf("timed-out wait kind/who = %s/%s, want %s/%s", kind, who, waitKindReadyForHumanMerge, waitWhoOperator)
+		}
 	})
 
 	t.Run("approve reads approving; other verdicts never do", func(t *testing.T) {

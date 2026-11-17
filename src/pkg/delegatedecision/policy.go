@@ -302,9 +302,9 @@ type Input struct {
 	// AuthorTooling: what the author drives (hive / clanker / person);
 	// picks the words a decision uses for them (AuthorWord).
 	AuthorTooling AuthorTooling
-	// ReworkPickedUp: the author's relay has acknowledged, claimed or
-	// pushed the requested rework (hivecommons/hive#15280's signal), so
-	// they are responsive even without recent activity.
+	// ReworkPickedUp: the author's relay has claimed or pushed the
+	// requested rework (hivecommons/hive#15280's signal), so they are
+	// responsive even without recent activity.
 	ReworkPickedUp bool
 	// RepoPaused: the repo is under an operator pause; a decision that
 	// would write (close) is recommend-only instead.
