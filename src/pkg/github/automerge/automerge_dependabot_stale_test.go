@@ -168,6 +168,14 @@ func TestResolveConflictingDependabotPR(t *testing.T) {
 		dependabotCommit("c1", "dependabot[bot]", "dependabot[bot]"),
 		dependabotCommit("c2", githubActionsBotLogin, githubActionsBotLogin),
 	}
+	// The lane's own update-branch merge is a non-Dependabot commit too:
+	// Dependabot stops rebasing a branch once anyone else has committed to it,
+	// so a PR the App merged the base into and that later conflicts is stuck
+	// and is closed like any other edited PR (owner decision on #18446).
+	editedByAppMerge := []map[string]any{
+		dependabotCommit("c1", "dependabot[bot]", "dependabot[bot]"),
+		dependabotCommit("c2", "hivecommons-hive[bot]", "hivecommons-hive[bot]"),
+	}
 	cases := []struct {
 		name       string
 		author     string
@@ -178,6 +186,7 @@ func TestResolveConflictingDependabotPR(t *testing.T) {
 	}{
 		{name: "conflicting, only dependabot commits", author: "dependabot[bot]", commits: onlyDependabot, wantOK: true, wantReason: "conflicting"},
 		{name: "conflicting, edited by others", author: "dependabot[bot]", commits: editedByActions, wantOK: true, wantReason: dependabotStaleClosedReason, wantClose: 1},
+		{name: "conflicting after the App's own update-branch merge", author: "dependabot[bot]", commits: editedByAppMerge, wantOK: true, wantReason: dependabotStaleClosedReason, wantClose: 1},
 		{name: "not a dependabot PR", author: "renovate[bot]", commits: editedByActions},
 	}
 	for _, tc := range cases {
