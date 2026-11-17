@@ -653,6 +653,12 @@ governor:
   #     cron: "30 8 * * mon-fri"          # five-field cron expression
   #     tz: UTC
 
+  # Advisory digest (see docs/advisory.md). A multi-repo hive keeps one
+  # Hive Advisory Report in project.primary_repo that covers every repo.
+  # advisory:
+  #   per_repo: false                    # true: each monitored repo also gets its own
+  #                                      # report (HIVE_ADVISORY_PER_REPO sets the default)
+
   # Trajectory review lane — periodic second-model review of running agents.
   # Enabled by default; it no-ops until endpoint+model resolve here or via litellm.
   trajectory:

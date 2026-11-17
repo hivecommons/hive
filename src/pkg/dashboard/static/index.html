@@ -60651,7 +60651,7 @@ function burnAreaChart() {
       { tab: 'Meetings', section: 'Meetings', label: 'Meetings (Quorum)', key: 'meetings.enabled', lazy: true, text: 'meetings quorum vexa discord live meeting notes research google meet teams zoom tenant key bot token meetings.enabled meetings.vexa.url meetings.vexa.api_key_file meetings.discord.token_file' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
-      { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff update interval rewrite floor changed digest governor.advisory.update_interval_s governor.advisory.digest_min_interval' },
+      { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff update interval rewrite floor changed digest governor.advisory.update_interval_s governor.advisory.digest_min_interval advisory report in every repo per repo governor.advisory.per_repo' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Event triggers', key: 'triggers', text: 'event triggers CEL scanner issue first seen issue.opened pr.opened github webhook rules repository agent priority' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
@@ -76150,6 +76150,11 @@ function burnAreaChart() {
               <input type="text" value="${esc(a.linear_issue || '')}" placeholder="ONB-123" data-change-action="markDirty" data-arg0="advisory" data-arg1="linear_issue" data-arg-types="s,s,w">
             </div>
           </div>
+          <div class="config-toggle" style="margin-top:10px">
+            <div class="config-toggle-switch ${a.per_repo ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="advisory" data-key="per_repo"></div>
+            <span class="config-toggle-label">Advisory report in every repo ${yamlHint('governor.advisory.per_repo')}</span>
+          </div>
+          <div class="config-help">Off: one Hive Advisory Report in your primary repo covers all repos. On: each monitored repo also gets its own report.</div>
           <div class="config-field">
             <label>Update interval (s) ${yamlHint('governor.advisory.update_interval_s')} ${settingHelpMark('advisory', '', 'Update interval (s)', `How often the digest comment on the pinned advisory issue is checked and refreshed. 0 = default (60s, every governor cycle). Longer values (30&ndash;3600s) reduce GitHub API writes and notification churn on watched repos; changes apply live from the next cycle. Unchanged digests are already skipped, and the periodic forced refresh that heals hand-edited comments stretches with this interval.`)}</label>
             <input type="number" min="0" max="3600" step="1" value="${updateIntervalS}" data-change-action="gh76">
