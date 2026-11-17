@@ -163,7 +163,7 @@ func (s *Server) handleMeetingsInvites(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.webhookLogger().Info("email invite received", "delivery", d.ID, "invites", len(d.Invites), "trusted", trusted)

@@ -119,7 +119,7 @@ func (s *Server) handleMeetingsScheduleList(w http.ResponseWriter, r *http.Reque
 	}
 	out, err := svc.List()
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	jsonResponse(w, out)
@@ -172,7 +172,7 @@ func (s *Server) handleMeetingsScheduleAdd(w http.ResponseWriter, r *http.Reques
 	add.AddedBy, add.ByOwner = strings.TrimSpace(r.Header.Get("X-Hive-User")), byOwner
 	ev, err := svc.Add(r.Context(), add)
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_schedule_add", auditDetail("by_owner", boolString(byOwner), "recurring", boolString(add.RRule != "")), "")
@@ -193,7 +193,7 @@ func (s *Server) meetingsScheduleAction(action string) http.HandlerFunc {
 		eid := r.PathValue("eid")
 		ev, err := svc.Act(r.Context(), eid, action, strings.TrimSpace(r.Header.Get("X-Hive-User")))
 		if err != nil {
-			meetingsError(w, err)
+			s.meetingsError(w, r, err)
 			return
 		}
 		s.auditFromRequest(r, "meeting_schedule_"+action, auditDetail("event", eid), "")
