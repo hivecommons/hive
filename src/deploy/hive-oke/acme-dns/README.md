@@ -52,9 +52,9 @@ with `HISTCONTROL=ignorespace`). To rotate, use `kubectl ... create secret ...
    no module or bind errors:
    `kubectl -n acme-dns logs deploy/acme-dns` (expect no "module" error for
    `mod-rrl`, and the server listening on `0.0.0.0@53`). Also check the
-   non-root bind: `kubectl -n acme-dns exec deploy/acme-dns -- id`; if the
-   process is not root, binding port 53 with only `NET_BIND_SERVICE` may fail
-   and needs the `net.ipv4.ip_unprivileged_port_start=0` pod sysctl.
+   non-root bind: `kubectl -n acme-dns exec deploy/acme-dns -- id`. The pod sets
+   the `net.ipv4.ip_unprivileged_port_start=0` sysctl so a non-root knotd can
+   bind port 53; if the pod is rejected over the sysctl, the cluster forbids it.
 2. Ask LFX to add the records above. Check:
    `dig @129.80.107.104 SOA acme.hive.hivecommons.dev` and
    `dig NS acme.hive.hivecommons.dev`.
