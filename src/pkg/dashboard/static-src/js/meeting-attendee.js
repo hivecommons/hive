@@ -392,7 +392,7 @@
     function maProofFailureHtml(e) {
       const f = e.last_failure;
       if (!f) return e.last_error ? '<div class="kc-error muted-xs">' + escapeHtml(e.last_error) + '</div>' : '';
-      const when = f.at ? ' <span class="muted-xs">(' + escapeHtml(new Date(f.at).toLocaleString()) + ')</span>' : '';
+      const when = f.at ? ' <span class="muted-xs">(' + escapeHtml(formatDashboardDateTime(f.at)) + ')</span>' : '';
       return '<div class="kc-error muted-xs" data-ma-proof-failure="' + escapeHtml(f.reason || '') + '">' + escapeHtml(f.message || e.last_error || '') + when + '</div>' +
         '<div class="muted-xs" data-ma-proof-auth>' + escapeHtml(maProofAuthSummary(f)) + '</div>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="maLoadMyEmails">Check again</button>';
@@ -413,7 +413,7 @@
       const list = (mine && mine.recent_proof_attempts) || [];
       if (!list.length) return '';
       return '<div class="section-label m-0">Recent proof attempts</div><ul class="ma-proof-attempts">' +
-        list.map(a => '<li>' + escapeHtml(a.from || 'unknown sender') + ' <span class="muted-xs">' + escapeHtml(a.at ? new Date(a.at).toLocaleString() : '') + '</span>: ' + escapeHtml(a.reason || '') + '</li>').join('') + '</ul>';
+        list.map(a => '<li>' + escapeHtml(a.from || 'unknown sender') + ' <span class="muted-xs">' + escapeHtml(a.at ? formatDashboardDateTime(a.at) : '') + '</span>: ' + escapeHtml(a.reason || '') + '</li>').join('') + '</ul>';
     }
 
     async function maLoadMyEmails() {
