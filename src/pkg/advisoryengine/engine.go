@@ -67,6 +67,10 @@ type Result struct {
 	Mode     string `json:"mode"`
 	Private  bool   `json:"private"`
 	Provider string `json:"provider,omitempty"`
+	Model    string `json:"model,omitempty"`
+	// Requests counts served gateway requests: the session's cost in the
+	// unit the router meters (it reports no token usage).
+	Requests int `json:"requests"`
 	// Outcome is task.complete, task.abort, or empty when none was declared.
 	Outcome   string `json:"outcome,omitempty"`
 	Summary   string `json:"summary,omitempty"`
@@ -75,6 +79,8 @@ type Result struct {
 	Citations int    `json:"citations"`
 	Turns     int    `json:"turns"`
 	Status    string `json:"status,omitempty"`
+	// Summary is empty for a private or unknown-visibility repository: the
+	// record carries metadata only, never advice text about private code.
 	// Withheld explains why Summary was dropped (canary echo or ioscan
 	// output block).
 	Withheld string        `json:"withheld,omitempty"`
@@ -178,6 +184,7 @@ func (e *Engine) Wait() { e.wg.Wait() }
 func (e *Engine) record(r Result) {
 	e.deps.Logger.Info("advisory engine shadow result",
 		"repo", r.Repo, "number", r.Number, "lane", r.Lane, "provider", r.Provider,
+		"model", r.Model, "requests", r.Requests,
 		"outcome", r.Outcome, "verified", r.Verified, "citations", r.Citations,
 		"turns", r.Turns, "status", r.Status, "skipped", r.Skipped, "withheld", r.Withheld,
 		"error", r.Error, "elapsed", r.Elapsed.Round(time.Second).String())
@@ -248,6 +255,12 @@ func (e *Engine) run(ctx context.Context, cfg *config.Config, it Item) (res Resu
 		llmrouter.WithAttemptHook(func(a llmrouter.Attempt) {
 			if a.Outcome == llmrouter.OutcomeServed {
 				res.Provider = a.Provider
+				res.Requests++
+				for _, p := range providers {
+					if p.Name == a.Provider {
+						res.Model = p.Model
+					}
+				}
 			}
 		}),
 	}
@@ -328,7 +341,7 @@ func (e *Engine) run(ctx context.Context, cfg *config.Config, it Item) (res Resu
 			}
 		}
 		res.Withheld = withheldReason(o.Summary+"\n"+o.Reason, canary)
-		if res.Withheld != "" {
+		if res.Withheld != "" || res.Private {
 			res.Summary = ""
 		}
 	}

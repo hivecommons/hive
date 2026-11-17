@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/advisoryengine"
 	"github.com/hivecommons/hive/pkg/config"
@@ -71,14 +72,16 @@ func advisoryItems(a *github.ActionableResult) []advisoryengine.Item {
 }
 
 func advisoryAuditDetail(r advisoryengine.Result) string {
-	d := fmt.Sprintf("mode=%s repo=%s number=%d lane=%s private=%t provider=%s outcome=%s verified=%d/%d turns=%d status=%s",
-		r.Mode, r.Repo, r.Number, r.Lane, r.Private, r.Provider, r.Outcome, r.Verified, r.Citations, r.Turns, r.Status)
+	d := fmt.Sprintf("mode=%s repo=%s number=%d lane=%s private=%t provider=%s model=%s requests=%d outcome=%s verified=%d/%d turns=%d status=%s elapsed=%s",
+		r.Mode, r.Repo, r.Number, r.Lane, r.Private, r.Provider, r.Model, r.Requests, r.Outcome, r.Verified, r.Citations, r.Turns, r.Status, r.Elapsed.Round(time.Second))
 	for _, kv := range [][2]string{{"skipped", r.Skipped}, {"withheld", r.Withheld}, {"error", r.Error}} {
 		if kv[1] != "" {
 			d += fmt.Sprintf(" %s=%q", kv[0], kv[1])
 		}
 	}
-	if s := strings.Join(strings.Fields(r.Summary), " "); s != "" {
+	// The engine already empties Summary for private repositories; the
+	// check here keeps the audit log metadata-only even if that changes.
+	if s := strings.Join(strings.Fields(r.Summary), " "); s != "" && !r.Private {
 		if len(s) > 600 {
 			s = s[:600] + "…"
 		}

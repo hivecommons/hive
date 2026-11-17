@@ -1,7 +1,10 @@
 package advisoryengine
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"log/slog"
 	"net/http"
 	"strings"
 	"testing"
@@ -106,5 +109,34 @@ func TestWithheldAndClip(t *testing.T) {
 	req, _ := http.NewRequest(http.MethodPost, "http://127.0.0.1:1/x", nil)
 	if _, err := ReadOnlyHTTPClient(nil).Do(req); err == nil {
 		t.Fatal("POST allowed")
+	}
+}
+
+// TestPrivateRecordIsMetadataOnly: for a private or unknown-visibility
+// repository neither the recorded result nor the log line carries the
+// advice text; the metadata is all there. A public repository keeps it.
+func TestPrivateRecordIsMetadataOnly(t *testing.T) {
+	unknown := func(context.Context, string) (bool, error) { return false, errors.New("boom") }
+	for name, vis := range map[string]func(context.Context, string) (bool, error){"private": private, "unknown": unknown, "public": public} {
+		g := &gateway{script: triageScript()}
+		var logs bytes.Buffer
+		rec := &recorder{}
+		e := New(Deps{Reader: &reader{}, RepoPrivate: vis, Record: rec.record, Logger: slog.New(slog.NewTextHandler(&logs, nil))})
+		e.Observe(context.Background(), cfgWith(true, gw("gw", g.serve(t).URL, false)), items)
+		e.Wait()
+		r := rec.got[0]
+		if r.Outcome != hivetool.ToolTaskComplete || r.Verified != 1 || r.Turns != 2 || r.Provider != "gw" || r.Model != "m" || r.Requests != 2 || r.Elapsed <= 0 {
+			t.Fatalf("%s: metadata missing: %+v", name, r)
+		}
+		if strings.Contains(logs.String(), "Rebase is a no-op") {
+			t.Fatalf("%s: advice text in the log line: %s", name, logs.String())
+		}
+		if name == "public" {
+			if !strings.Contains(r.Summary, "src/a.go:3") {
+				t.Fatalf("public summary dropped: %+v", r)
+			}
+		} else if r.Summary != "" || !r.Private {
+			t.Fatalf("%s: advice text recorded: %+v", name, r)
+		}
 	}
 }
