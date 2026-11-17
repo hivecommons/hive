@@ -6,21 +6,21 @@ Sessions are interactive, named CLI-agent terminals. Each runs as its own unpriv
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/sessions` | Dashboard auth/session | Sessions, vendors and limits | `pkg/dashboard/api_sessions.go:172` |
-| `POST` | `/api/sessions` | Owner or read-write | Create a session `{name, group, vendor, shared?, seed_items?}`; answers 202 at once with the session `preparing`, the start runs in the background (`seed_items`: see [Seeding from the Inbox](#seeding-from-the-inbox)) | `pkg/dashboard/api_sessions.go:173` |
-| `PATCH` | `/api/sessions/{id}` | Session creator or owner | Rename, regroup or (un)share `{name?, group?, shared?}` | `pkg/dashboard/api_sessions.go:174` |
-| `DELETE` | `/api/sessions/{id}` | Session creator or owner | Close a running session (metadata kept, marked `ended`); on an ended session, remove its metadata and delete its sandbox files | `pkg/dashboard/api_sessions.go:175` |
-| `GET` | `/api/sessions/{id}/log` | Dashboard auth/session | Redacted scrollback `?lines=N` (capped at 5000) | `pkg/dashboard/api_sessions.go:176` |
-| `POST` | `/api/sessions/{id}/input` | Owner or read-write | Queue `{text, submit}` for the pane; answers 202 with `{queued: {id, position}, queue}` and the text is typed once the CLI prompt is idle (size-capped, audited at delivery without the text) | `pkg/dashboard/api_sessions.go:177` |
-| `DELETE` | `/api/sessions/{id}/input/{queue_id}` | Owner or read-write | Cancel your own queued send (the creator or an owner may cancel anyone's); 409 while it is being delivered | `pkg/dashboard/api_sessions.go:181` |
-| `POST` | `/api/sessions/{id}/upload` | Owner or read-write | Multipart `file`; returns the absolute path inside the session directory | `pkg/dashboard/api_sessions.go:178` |
-| `POST` | `/api/sessions/{id}/resume` | Owner or read-write | Reopen an ended session's last conversation where the vendor supports it (409 otherwise); answers 202 with the session `preparing` | `pkg/dashboard/api_sessions.go:179` |
-| `POST` | `/api/sessions/{id}/keyboard` | Owner or read-write | `{"action":"take"\|"release"}` the keyboard lease: the one writable terminal | `pkg/dashboard/api_sessions.go:180` |
-| `POST` | `/api/sessions/{id}/seed` | Owner or read-write | Send Inbox items `{items: [{source, id}]}` into a running session: one enveloped file each under `.hive/inbox/`, then a queued Send naming them (see [Seeding from the Inbox](#seeding-from-the-inbox)) | `pkg/dashboard/api_sessions.go:182` |
+| `GET` | `/api/sessions` | Dashboard auth/session | Sessions, vendors and limits | `pkg/dashboard/api_sessions.go:181` |
+| `POST` | `/api/sessions` | Owner or read-write | Create a session `{name, group, vendor, shared?, seed_items?}`; answers 202 at once with the session `preparing`, the start runs in the background (`seed_items`: see [Seeding from the Inbox](#seeding-from-the-inbox)) | `pkg/dashboard/api_sessions.go:182` |
+| `PATCH` | `/api/sessions/{id}` | Session creator or owner | Rename, regroup or (un)share `{name?, group?, shared?}` | `pkg/dashboard/api_sessions.go:183` |
+| `DELETE` | `/api/sessions/{id}` | Session creator or owner | Close a running session (metadata kept, marked `ended`); on an ended session, remove its metadata and delete its sandbox files | `pkg/dashboard/api_sessions.go:184` |
+| `GET` | `/api/sessions/{id}/log` | Dashboard auth/session | Redacted scrollback `?lines=N` (capped at 5000) | `pkg/dashboard/api_sessions.go:185` |
+| `POST` | `/api/sessions/{id}/input` | Owner or read-write | Queue `{text, submit}` for the pane; answers 202 with `{queued: {id, position}, queue}` and the text is typed once the CLI prompt is idle (size-capped, audited at delivery without the text) | `pkg/dashboard/api_sessions.go:186` |
+| `DELETE` | `/api/sessions/{id}/input/{queue_id}` | Owner or read-write | Cancel your own queued send (the creator or an owner may cancel anyone's); 409 while it is being delivered | `pkg/dashboard/api_sessions.go:190` |
+| `POST` | `/api/sessions/{id}/upload` | Owner or read-write | Multipart `file`; returns the absolute path inside the session directory | `pkg/dashboard/api_sessions.go:187` |
+| `POST` | `/api/sessions/{id}/resume` | Owner or read-write | Reopen an ended session's last conversation where the vendor supports it (409 otherwise); answers 202 with the session `preparing` | `pkg/dashboard/api_sessions.go:188` |
+| `POST` | `/api/sessions/{id}/keyboard` | Owner or read-write | `{"action":"take"\|"release"}` the keyboard lease: the one writable terminal | `pkg/dashboard/api_sessions.go:189` |
+| `POST` | `/api/sessions/{id}/seed` | Owner or read-write | Send Inbox items `{items: [{source, id}]}` into a running session: one enveloped file each under `.hive/inbox/`, then a queued Send naming them (see [Seeding from the Inbox](#seeding-from-the-inbox)) | `pkg/dashboard/api_sessions.go:191` |
 
 ## Session object
 
-`{id, name, group, vendor, creator, created_at, last_activity, status, attached, tmux_name, resumable, shared, workspace_repo, workspace, message, error, keyboard_holder, keyboard_since, keyboard_mine, viewers, queue}` where `status` is `preparing`, `running`, `failed` or `ended`, `attached` is the number of live attached tmux clients (each list probe detaches clients whose process is gone or no longer descends from the terminal attacher, so a stale client never counts) and `tmux_name` is `hive-sess-<id>`. `resumable`, `shared`, `workspace_repo`, `workspace`, `message`, `error` and the keyboard, presence and queue fields are additive. `keyboard_holder` is the user whose terminal is writable (`""` when released), `keyboard_since` when they took it and `keyboard_mine` whether that is the caller. `viewers` is `[{user, attached_since, keyboard}]`, one entry per person with a live terminal on the session (several tabs collapse into one). `queue` is `{length, head, position, items: [{id, user, bytes, submit, queued_at, delivering, mine}]}`: the pending sends, never their text, with `position` the caller's own first item (0 when none). `GET /api/sessions` lists only sessions the caller created, owners (all) and `shared` sessions; the log, input, upload, resume, keyboard and terminal routes answer 404 for a session the caller cannot see and 403 when it is visible but not usable.
+`{id, name, group, vendor, creator, created_at, last_activity, status, attached, tmux_name, resumable, shared, workspace_repo, workspace, message, error, keyboard_holder, keyboard_since, keyboard_mine, viewers, queue, startup}` where `status` is `preparing`, `running`, `failed` or `ended`, `attached` is the number of live attached tmux clients (each list probe detaches clients whose process is gone or no longer descends from the terminal attacher, so a stale client never counts) and `tmux_name` is `hive-sess-<id>`. `resumable`, `shared`, `workspace_repo`, `workspace`, `message`, `error` and the keyboard, presence and queue fields are additive. `keyboard_holder` is the user whose terminal is writable (`""` when released), `keyboard_since` when they took it and `keyboard_mine` whether that is the caller. `viewers` is `[{user, attached_since, keyboard}]`, one entry per person with a live terminal on the session (several tabs collapse into one). `queue` is `{length, head, position, items: [{id, user, bytes, submit, queued_at, delivering, mine}]}`: the pending sends, never their text, with `position` the caller's own first item (0 when none). `startup` (additive, running sessions only, absent when the hive has none) is `{state, screen, message, answered, since}`, see [Startup auto-answer](#startup-auto-answer). `GET /api/sessions` lists only sessions the caller created, owners (all) and `shared` sessions; the log, input, upload, resume, keyboard and terminal routes answer 404 for a session the caller cannot see and 403 when it is visible but not usable.
 
 ## Roles
 
@@ -59,7 +59,51 @@ Every session's CLI starts inside the hive's **session workspace**. The hive kee
 | `codex` | `›` or `>` | `esc to interrupt`, `to interrupt`, `working` |
 | any other | `›`, `>` or `❯` | `to interrupt` |
 
-A permission prompt, a half-typed line or a run in progress therefore holds the queue. The heuristic fails open: an item that has waited `HIVE_SESSIONS_SEND_WAIT_SEC` (default 45) is delivered anyway, so a send is never stuck. The queue holds at most 32 items (429 beyond); it is dropped when the session ends. `DELETE /api/sessions/{id}/input/{queue_id}` cancels your own item (the creator or an owner may cancel anyone's), 409 once it is being delivered. Each delivery is audited as `session_input` with the user who queued it, the byte count, `submit` and `queued_sec`, never the text; `session_upload` is audited at upload time as before.
+A permission prompt, a half-typed line or a run in progress therefore holds the queue. While the session's `startup.state` is `preparing`, `needs_signin`, `blocked` or `manual` the queue waits for it first and the deadline below has not started: the CLI is known to be on a startup, login or permission screen, where a delivery would be typed into that screen. Apart from that the heuristic fails open: an item that has waited `HIVE_SESSIONS_SEND_WAIT_SEC` (default 45) is delivered anyway, so a send is never stuck. The queue holds at most 32 items (429 beyond); it is dropped when the session ends. `DELETE /api/sessions/{id}/input/{queue_id}` cancels your own item (the creator or an owner may cancel anyone's), 409 once it is being delivered. Each delivery is audited as `session_input` with the user who queued it, the byte count, `submit` and `queued_sec`, never the text; `session_upload` is audited at upload time as before.
+
+## Startup auto-answer
+
+A vendor CLI opens on its own first-run questions. When a session starts (a create, a resume, Start again) the hive takes the CLI through them to its input prompt, so what is queued for the session (an Inbox seed for spek, a first Send) runs with no person at the keyboard. It uses the detector hive agents use (`panesignal.BlockingPrompts`), restricted to startup screens, in two layers:
+
+1. **Seeded HOME.** A Claude Code session whose HOME has no `.claude.json` gets one saying onboarding is complete and the session's own working directory is trusted, written as the session's uid. It carries no account and no credential, and an existing file is never rewritten. The first-run screens then do not appear at all.
+2. **Auto-answer.** For whatever still appears, the hive reads the visible screen and answers a screen only when it is positively one of the known startup screens:
+
+| Vendor | Startup screens answered | Answer |
+|---|---|---|
+| `claude` | first-run security notice ("Press Enter to continue"), theme picker, workspace trust ("Is this a project you created or one you trust?") | Enter; Enter (keeps the default); "Yes, I trust this folder" |
+| `copilot` | "Confirm folder trust" | "1. Yes" (this session only) |
+| `codex` | directory or folder trust, the update menu | "1" (trust and continue); "3. Skip until next version", never "Update now" |
+| `agy` | "Do you trust the contents of this project?" | Enter (the affirmative option is preselected) |
+| `omp` | welcome screen ("press Enter to skip") | Enter |
+| any vendor | a plain notice: "Press Enter to continue" on the last lines of a screen with no selection cursor and no question | Enter |
+
+Vendors without an entry (`goose`, `bob`, `pi`, `aider`, `opencode`, `kilo`, `openhands`) have no known startup screen beyond the plain notice; the hive only waits for their input prompt.
+
+**What is never answered.**
+
+- A tool or command permission prompt (Claude Code's permission dialog, Codex's "Would you like to run the following command?", the Claude auto-mode notice that resumes a held tool call, Copilot's question form). Sessions run with the CLI's permission prompts on and no bypass flag; these belong to the person. The check runs first and across every vendor's patterns.
+- A login or OAuth screen (a login menu, a device code, an authorize URL). The state becomes `needs_signin` and the terminal is left alone.
+- Anything unrecognised. A screen is answered only on a positive match, read from the visible pane, never from scrollback.
+- Anything at all once a person has typed into the session through an attached writable terminal.
+
+**Bounds.** Answering stops at the input prompt, after `HIVE_SESSIONS_AUTOSTART_WINDOW_SEC` (default 90), after 8 answers, or after 2 answers to the same screen. Each answer re-reads the screen immediately before the keys are sent.
+
+**States** (`startup.state`; the pane header shows `startup.message`):
+
+| State | Meaning | Queue |
+|---|---|---|
+| `preparing` | "Getting the CLI ready…": the hive is answering startup screens | waits |
+| `started` | the CLI reached its input prompt | delivers |
+| `needs_signin` | a login screen is up; sign in from the terminal | waits |
+| `blocked` | `screen` names a prompt the hive does not answer, or a startup screen that did not close | waits |
+| `manual` | a person typed, so the startup screens are left to them | waits |
+| `unknown` | the hive could not tell whether the CLI is ready within the window | delivers (the ordinary idle check and its fail-open deadline) |
+
+After `needs_signin`, `blocked` or `manual` the hive keeps reading the screen, sending nothing, and moves to `started` once the input prompt appears, which releases the queue. `answered` lists the screens answered for this start. The state lives in memory: after a hive restart a running session has no `startup` block and the queue behaves as it did before this feature.
+
+**Audit.** `session_autostart` records `session`, `vendor`, `outcome` (the state), `answered`, `secs` and, when stopped, `screen`; a session that reaches its prompt later is audited again with `after=<previous state>`.
+
+**Turning it off.** Settings → Dashboard → **Answer the CLI startup screens** (`dashboard.sessions.autostart`, default on), or `HIVE_SESSIONS_AUTOSTART=false`, which overrides the saved value. Off means no seeded HOME, no answers and no `startup` block.
 
 ## Seeding from the Inbox
 

@@ -39,6 +39,9 @@ type dashboardSessionsPayload struct {
 	MaxSessions  *int  `json:"max_sessions"`
 	MaxPerUser   *int  `json:"max_per_user"`
 	IdleTTLHours *int  `json:"idle_ttl_hours"`
+	// Autostart is dashboard.sessions.autostart (the SAVED value; an unset key
+	// reads as its default, on). HIVE_SESSIONS_AUTOSTART overrides it.
+	Autostart *bool `json:"autostart"`
 	// EnvOverride is response-only: true when HIVE_SESSIONS_ENABLED holds a
 	// recognised boolean, so the saved toggle is not what decides.
 	EnvOverride bool `json:"env_override,omitempty"`
@@ -47,7 +50,9 @@ type dashboardSessionsPayload struct {
 func dashboardSessionsResponse(cfg *config.Config) dashboardSessionsPayload {
 	s := cfg.Dashboard.Sessions
 	enabled, maxSessions, maxPerUser, idle := s.EnabledOrDefault(), s.MaxSessions, s.MaxPerUser, s.IdleTTLHours
+	autostart := s.AutostartOrDefault()
 	return dashboardSessionsPayload{
+		Autostart:    &autostart,
 		Enabled:      &enabled,
 		MaxSessions:  &maxSessions,
 		MaxPerUser:   &maxPerUser,
@@ -77,6 +82,10 @@ func applyDashboardSessionsSettings(next *config.DashboardConfig, body *dashboar
 	if body.Enabled != nil {
 		enabled := *body.Enabled
 		next.Sessions.Enabled = &enabled
+	}
+	if body.Autostart != nil {
+		autostart := *body.Autostart
+		next.Sessions.Autostart = &autostart
 	}
 	if body.MaxSessions != nil {
 		next.Sessions.MaxSessions = *body.MaxSessions

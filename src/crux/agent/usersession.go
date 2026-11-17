@@ -263,6 +263,9 @@ func (r *UserSessionRuntime) Start(spec crux.UserSessionSpec) error {
 		}
 		cwd, workspace = ws, ws
 	}
+	// First line against first-run screens: a seeded HOME never shows them
+	// (usersession_startup.go).
+	r.seedOnboarding(spec, uid, cwd)
 	session := UserSessionTmuxName(spec.ID)
 	create := newSessionCommands(session, cwd)
 	// Keep the pane (and its scrollback) after the CLI exits so a late viewer

@@ -109,6 +109,11 @@ type SessionRuntime interface {
 	// ResumeInfo captures the vendor's newest conversation for the session;
 	// workDir is where the CLI ran ("" = the session's own work dir).
 	ResumeInfo(id, vendor, workDir string) (crux.UserSessionResume, bool)
+	// StartupStep reads the session's visible screen once for the startup
+	// auto-answer and, when answer is true and it is a known startup screen
+	// nobody has typed into, answers it. It never answers a permission prompt
+	// or a login screen (api_sessions_autostart.go).
+	StartupStep(id, vendor string, answer bool) crux.UserSessionStartupStep
 	// StoreUpload writes src as the named file under the session's uploads
 	// directory, as the session's own uid, and returns its absolute path.
 	StoreUpload(id, fileName string, src io.Reader, maxBytes int64, maxFiles int) (string, int64, error)
@@ -166,6 +171,10 @@ type sessionView struct {
 	// theirs is the writable one; Queue (additive) is the pending Send queue.
 	Viewers []sessionViewer  `json:"viewers"`
 	Queue   sessionQueueView `json:"queue"`
+	// Startup (additive) is the startup auto-answer's state for a running
+	// session: getting the CLI ready, started, or the screen it stopped at
+	// (api_sessions_autostart.go). Absent when the hive has none for it.
+	Startup *sessionStartupView `json:"startup,omitempty"`
 }
 
 func (s *Server) registerSessionRoutes() {
@@ -308,6 +317,7 @@ func (s *Server) sessionViewFor(rec sessionRecord, p *crux.UserSessionProbe, rt 
 	if rec.Status == sessionStatusRunning {
 		v.Viewers = s.sessionViewers(rec.ID)
 		v.Queue = s.sessionQueueSnapshot(rec.ID, actor.user)
+		v.Startup = s.sessionStartupViewOf(rec.ID)
 	}
 	return v
 }
@@ -640,6 +650,9 @@ func (s *Server) setSessionStartInFlightLocked(id string, inFlight bool) {
 // here is tied to the request that asked: the runtime's privileged steps run
 // under their own deadlines.
 func (s *Server) startSessionInBackground(rt SessionRuntime, st *sessionStore, spec crux.UserSessionSpec, user, failStatus string) {
+	// First line of the startup auto-answer: a seeded HOME skips the CLI's
+	// first-run screens altogether.
+	spec.SeedOnboarding = s.deps.Config.SessionsAutostart()
 	err := rt.Start(spec)
 	now := time.Now().UTC().Format(time.RFC3339)
 	s.sessionsMu.Lock()
@@ -669,6 +682,9 @@ func (s *Server) startSessionInBackground(rt SessionRuntime, st *sessionStore, s
 		s.logger.Warn("sessions: persisting running state failed", "id", spec.ID, "error", err)
 	}
 	s.auditSession(user, auditSessionStarted, auditDetail("session", spec.ID, "vendor", spec.Vendor, "outcome", sessionStatusRunning))
+	// Take the CLI through its startup screens to the input prompt; the Send
+	// queue (and with it a parked Inbox seed) waits for that.
+	s.beginSessionAutostart(rt, st, spec.ID, spec.Vendor, user)
 }
 
 // markSessionFailed records why a start did not happen: status is `failed`

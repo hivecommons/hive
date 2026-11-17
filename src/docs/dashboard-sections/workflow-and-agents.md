@@ -186,11 +186,13 @@ Named terminal sessions where a command-line AI agent runs inside Hive; everyone
 
 **From the Inbox.** **🔗 Share ▾ → Hive → spek…** on an Inbox item (or **Hive ▾ → spek…** on a selection) sends recordings into a new or running session: the hive writes each one to `.hive/inbox/` in the workspace, inside an untrusted-data envelope, queues a Send asking the CLI to start a spec from those files with the spek-new skill, and opens the session's tab. See [Inbox and voice sources](../inbox-voice-sources.md#from-recording-to-an-inception-spek-session).
 
+**Starting up.** When a session starts, the pane header shows **Getting the CLI ready…** while the hive answers the vendor CLI's startup screens (first-run notice, trust for the session's folder, onboarding), then **Started**; whatever was queued for the session, such as Inbox items sent to spek, is delivered at that point with nobody at the keyboard. The hive never answers a tool or command permission prompt and never signs in: the header says **Needs sign-in**, or names the screen it stopped at, and leaves the terminal to you. See [Startup auto-answer](../api-reference/sessions.md#startup-auto-answer).
+
 **Example.** You start a session named "fix flaky test" in the group "ci" with the Claude CLI, paste the failing log into the input bar and press Send and run. A teammate opens the same tab and watches.
 
 **When it appears.** Whenever sessions are enabled on the hive, which is the default (`GET /api/sessions` reports `enabled: true`); with `dashboard.sessions.enabled: false` or `HIVE_SESSIONS_ENABLED=false` the section is hidden. Old `#inception-section` links open this section.
 
-**Settings that change it.** Settings → Dashboard → **Inception (spek) sessions** (`dashboard.sessions.enabled`, default on) and the three limits beside it (`max_sessions`, `max_per_user`, `idle_ttl_hours`; 0 keeps the default). `HIVE_SESSIONS_ENABLED` and the matching `HIVE_SESSIONS_*` variables override the saved values. The terminal is drawn in the dashboard's terminal colours, so it matches the current theme. See [Inception](../inception.md) for the inception API it sits beside.
+**Settings that change it.** Settings → Dashboard → **Inception (spek) sessions** (`dashboard.sessions.enabled`, default on) and the three limits beside it (`max_sessions`, `max_per_user`, `idle_ttl_hours`; 0 keeps the default). **Answer the CLI startup screens** (`dashboard.sessions.autostart`, default on) turns the startup auto-answer off or on. `HIVE_SESSIONS_ENABLED`, `HIVE_SESSIONS_AUTOSTART` and the matching `HIVE_SESSIONS_*` variables override the saved values. The terminal is drawn in the dashboard's terminal colours, so it matches the current theme. See [Inception](../inception.md) for the inception API it sits beside.
 
 ## Knowledge
 

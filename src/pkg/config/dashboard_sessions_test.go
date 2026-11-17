@@ -117,3 +117,37 @@ func TestSessionsWorkspaceRepoPrecedence(t *testing.T) {
 }
 
 func boolPtrSessions(v bool) *bool { return &v }
+
+// The startup auto-answer is on unless hive.yaml or HIVE_SESSIONS_AUTOSTART
+// turns it off; the env wins when it holds a recognised boolean.
+func TestSessionsAutostartDefaultOnAndEnvOverrides(t *testing.T) {
+	t.Setenv(EnvSessionsAutostart, "")
+	c := &Config{}
+	if !c.SessionsAutostart() {
+		t.Error("autostart must be on when dashboard.sessions.autostart is unset")
+	}
+	var nilCfg *Config
+	if !nilCfg.SessionsAutostart() {
+		t.Error("nil config must keep the default (on)")
+	}
+	c.Dashboard.Sessions.Autostart = boolPtrSessions(false)
+	if c.SessionsAutostart() || c.Dashboard.Sessions.AutostartOrDefault() {
+		t.Error("explicit autostart: false ignored")
+	}
+	t.Setenv(EnvSessionsAutostart, "on")
+	if !c.SessionsAutostart() {
+		t.Error("env on did not override config false")
+	}
+	if c.Dashboard.Sessions.AutostartOrDefault() {
+		t.Error("AutostartOrDefault must report the saved value, not the env")
+	}
+	c.Dashboard.Sessions.Autostart = boolPtrSessions(true)
+	t.Setenv(EnvSessionsAutostart, "0")
+	if c.SessionsAutostart() {
+		t.Error("env off did not override config true")
+	}
+	t.Setenv(EnvSessionsAutostart, "garbage")
+	if !c.SessionsAutostart() {
+		t.Error("unrecognised env value must fall back to config")
+	}
+}
