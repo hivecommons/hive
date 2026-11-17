@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v6.42.0)
+
+### Added
+
+- Add a default-off advisory engine (`advisory_engine:`) that, in shadow, runs a read-only model session over the configured Model Gateways on the items the lanes are kicked on and records its advice in the audit log without acting on it; a new per-gateway `trains_on_inputs` flag keeps training providers away from private repositories unless `allow_training_providers_for_private` opts in (hivecommons/hive#18464 phase 1).
+
 ## 2026-11-17 (v6.41.0)
 
 ### Added
