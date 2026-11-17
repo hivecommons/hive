@@ -56,7 +56,7 @@ func TestCustomersSectionWiring(t *testing.T) {
 		`'/api/customers/' + encodeURIComponent(id) + '/split'`,
 		`'/export'`,
 		`hiveExportViewer({ title: 'Customer export: '`,
-		`person { id name me } } } } } }'`,
+		`person { id name me } } } } } } }'`,
 		`'/api/customers/hints/' + encodeURIComponent(hid) + '/answer'`,
 		`customersRequest('POST', '/api/graph', { query: CUSTOMERS_TIMELINE_QUERY, operationName: 'Timeline', variables: variables })`,
 		`person(id: $id) { edges(first: $first, after: $after) { nodes { predicate at source artefact { ref kind } } next } }`,
