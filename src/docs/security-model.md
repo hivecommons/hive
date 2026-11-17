@@ -558,6 +558,24 @@ importance:
   keyboard. Renaming, closing, resuming, deleting and the `shared` flag stay
   with the creator and owners. Ids of sessions a caller may not see are never
   disclosed.
+- **Startup screens only.** When a session starts the hive takes the CLI to
+  its input prompt by answering its startup screens (first-run notice, trust
+  for the session's own working directory, onboarding, an update menu), with
+  the detector agents use restricted to those screens; a Claude Code HOME is
+  also seeded so they do not appear. This does not weaken the posture above:
+  a tool or command permission prompt is classified as refused and is never
+  answered (the refusal is checked before anything else and across every
+  vendor's patterns, and a test fails when a prompt added for agents is not
+  classified), a login or OAuth screen is never answered (the tab says
+  "needs sign-in"), the seed carries no account or credential and never
+  replaces an existing file, and nothing is sent once a person has typed
+  into the session, after the input prompt is reached, or after a bounded
+  window. Trusting the working directory is the one decision made for the
+  person: it is the session's own worktree of the hive's project repository,
+  the directory they asked to work in. Each outcome is audited as
+  `session_autostart`. `dashboard.sessions.autostart: false` or
+  `HIVE_SESSIONS_AUTOSTART=false` turns it off. See
+  [Startup auto-answer](api-reference/sessions.md#startup-auto-answer).
 - **Resume ids** never start with `-` and a resume command may carry only the
   vendor binary, a fixed set of resume words and a flag-free id, so a planted
   transcript name cannot add `--dangerously-skip-permissions`.
@@ -577,7 +595,8 @@ importance:
   `display-capture=()`.
 
 Audit: `session_created`, `session_started` (the outcome of the background
-start), `session_closed`, `session_renamed`, `session_input` and
+start), `session_autostart` (how the startup auto-answer ended and which
+screens it answered), `session_closed`, `session_renamed`, `session_input` and
 `session_upload` record the user and session id (never input text).
 `session_input` is written when a queued Send is actually typed into the pane,
 as the user who queued it, so attribution follows the sender, not the moment

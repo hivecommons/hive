@@ -50,6 +50,9 @@ type fakeSessionRuntime struct {
 	swept       [][]string
 	// secured counts SecureWorkspaces calls (the boot lock of shared clones).
 	secured int
+	// startup scripts StartupStep (api_sessions_autostart_test.go); nil means
+	// the CLI is at its input prompt from the first read.
+	startup *fakeStartup
 }
 
 // fakeInboxFile is one StoreInboxFile call.

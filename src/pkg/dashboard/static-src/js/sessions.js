@@ -189,6 +189,41 @@
       if (s.status === SESSIONS_STATUS_ENDED && s.error) return 'The last resume failed: ' + String(s.error) + '.';
       return '';
     }
+    // Startup auto-answer (`startup` on a running session): the hive takes the
+    // CLI through its startup screens to the input prompt, and says which
+    // screen it stopped at when a person is needed (sign-in, a permission
+    // prompt, someone already typing).
+    const SESSIONS_STARTUP_PREPARING = 'preparing';
+    const SESSIONS_STARTUP_STARTED = 'started';
+    // "Started" is news only for a moment; after this long the badge goes.
+    const SESSIONS_STARTUP_STARTED_SHOW_MS = 60000;
+    const SESSIONS_STARTUP_NOTE = 'Hive answers only the CLI’s startup screens (first-run notice, trust for this session’s folder, onboarding). It never answers a permission prompt and never signs in.';
+    const SESSIONS_STARTUP_SHORT = Object.freeze({ needs_signin: 'Needs sign-in', blocked: 'Waiting for you', manual: 'Left to you', unknown: 'Check the terminal' });
+    function sessionsHasStartupPreparing(sessions) {
+      return (sessions || []).some(function(s) { return s && s.status === SESSIONS_STATUS_RUNNING && s.startup && s.startup.state === SESSIONS_STARTUP_PREPARING; });
+    }
+    // The badge in a running session's pane header: {kind, text, title}, or
+    // null when there is nothing to say. kind is busy, ok or attention.
+    function sessionsStartupBadge(session, nowMs) {
+      const st = session && session.status === SESSIONS_STATUS_RUNNING ? session.startup : null;
+      if (!st || !st.state) return null;
+      const message = String(st.message || '').trim();
+      if (st.state === SESSIONS_STARTUP_PREPARING) return { kind: 'busy', text: message || 'Getting the CLI ready…', title: SESSIONS_STARTUP_NOTE };
+      if (st.state === SESSIONS_STARTUP_STARTED) {
+        const since = Date.parse(st.since || '');
+        if (!since || nowMs - since > SESSIONS_STARTUP_STARTED_SHOW_MS) return null;
+        const answered = Array.isArray(st.answered) ? st.answered : [];
+        return { kind: 'ok', text: 'Started', title: answered.length ? 'Hive answered: ' + answered.join(', ') + '. ' + SESSIONS_STARTUP_NOTE : SESSIONS_STARTUP_NOTE };
+      }
+      const short = SESSIONS_STARTUP_SHORT[st.state] || SESSIONS_STARTUP_SHORT.unknown;
+      return { kind: 'attention', text: short + (st.screen ? ': ' + st.screen : ''), title: message || SESSIONS_STARTUP_NOTE };
+    }
+    function sessionsStartupHtml(s) {
+      const b = sessionsStartupBadge(s, Date.now());
+      if (!b) return '';
+      return '<span class="sessions-startup" data-kind="' + esc(b.kind) + '" role="status" title="' + esc(b.title) + '">'
+        + (b.kind === 'busy' ? '<span class="sessions-spinner" aria-hidden="true"></span>' : '') + esc(b.text) + '</span>';
+    }
     function sessionsByteLength(text) {
       const s = String(text == null ? '' : text);
       if (typeof TextEncoder === 'function') return new TextEncoder().encode(s).length;
@@ -509,7 +544,7 @@
         : '';
       return '<div class="sessions-pane-head"><span class="sessions-pane-title">' + esc(s.name || s.id) + '</span>'
         + '<span class="sessions-pane-meta" title="' + esc(sessionsWorkspaceLabel(sessionsSessionWorkspace(s))) + '">' + esc(s.vendor || '') + ' · started by ' + esc(s.creator || 'unknown') + (s.group ? ' · ' + esc(s.group) : '') + (s.workspace_repo ? ' · ' + esc(s.workspace_repo) : '') + '</span>'
-        + presence
+        + presence + sessionsStartupHtml(s)
         + '<span class="sessions-attached sessions-pane-attached" title="' + esc(SESSIONS_TYPING_NOTE) + '">' + attached + ' attached</span>' + sessionsKeyboardHtml(s) + menu + '</div>';
     }
     // The pending Send queue under the input bar; Cancel on your own items.
@@ -662,9 +697,10 @@
       sessionsSyncPreparingPoll(sessions);
     }
     // Poll faster while any session is preparing, so the tab turns into a
-    // terminal (or shows its failure) within seconds of the start finishing.
+    // terminal (or shows its failure) within seconds of the start finishing,
+    // and while the hive is getting a running session's CLI ready.
     function sessionsSyncPreparingPoll(sessions) {
-      const want = sessionsHasPreparing(sessions);
+      const want = sessionsHasPreparing(sessions) || sessionsHasStartupPreparing(sessions);
       if (want && !_sessionsPrepPollOn) { _sessionsPrepPollOn = true; dashboardSetInterval('sessions-preparing-poll', loadSessions, SESSIONS_PREPARING_POLL_MS); }
       if (!want && _sessionsPrepPollOn) { _sessionsPrepPollOn = false; dashboardClearInterval('sessions-preparing-poll'); }
     }

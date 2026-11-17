@@ -7974,6 +7974,11 @@
     .sessions-presence { color: var(--muted); font-size: var(--fs-xs); cursor: help; }
     .sessions-presence.mine { color: var(--accent); font-weight: var(--fw-semibold); }
     .sessions-watching { border: 1px dashed var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); font-size: var(--fs-xs); cursor: help; }
+    /* Startup auto-answer status (pane header): a spinner while the hive gets
+       the CLI to its prompt, green once started, amber when a person is needed. */
+    .sessions-startup { display: inline-flex; align-items: center; gap: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); font-size: var(--fs-xs); cursor: help; }
+    .sessions-startup[data-kind="ok"] { color: var(--green); }
+    .sessions-startup[data-kind="attention"] { color: var(--yellow); border-color: var(--yellow); }
     /* Queued Send list under the input bar. */
     .sessions-queue { display: grid; gap: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3) var(--sp-4); background: var(--card-bg); font-size: var(--fs-xs); color: var(--muted); }
     .sessions-queue[hidden] { display: none; }
@@ -54612,6 +54617,41 @@ function burnAreaChart() {
       if (s.status === SESSIONS_STATUS_ENDED && s.error) return 'The last resume failed: ' + String(s.error) + '.';
       return '';
     }
+    // Startup auto-answer (`startup` on a running session): the hive takes the
+    // CLI through its startup screens to the input prompt, and says which
+    // screen it stopped at when a person is needed (sign-in, a permission
+    // prompt, someone already typing).
+    const SESSIONS_STARTUP_PREPARING = 'preparing';
+    const SESSIONS_STARTUP_STARTED = 'started';
+    // "Started" is news only for a moment; after this long the badge goes.
+    const SESSIONS_STARTUP_STARTED_SHOW_MS = 60000;
+    const SESSIONS_STARTUP_NOTE = 'Hive answers only the CLI’s startup screens (first-run notice, trust for this session’s folder, onboarding). It never answers a permission prompt and never signs in.';
+    const SESSIONS_STARTUP_SHORT = Object.freeze({ needs_signin: 'Needs sign-in', blocked: 'Waiting for you', manual: 'Left to you', unknown: 'Check the terminal' });
+    function sessionsHasStartupPreparing(sessions) {
+      return (sessions || []).some(function(s) { return s && s.status === SESSIONS_STATUS_RUNNING && s.startup && s.startup.state === SESSIONS_STARTUP_PREPARING; });
+    }
+    // The badge in a running session's pane header: {kind, text, title}, or
+    // null when there is nothing to say. kind is busy, ok or attention.
+    function sessionsStartupBadge(session, nowMs) {
+      const st = session && session.status === SESSIONS_STATUS_RUNNING ? session.startup : null;
+      if (!st || !st.state) return null;
+      const message = String(st.message || '').trim();
+      if (st.state === SESSIONS_STARTUP_PREPARING) return { kind: 'busy', text: message || 'Getting the CLI ready…', title: SESSIONS_STARTUP_NOTE };
+      if (st.state === SESSIONS_STARTUP_STARTED) {
+        const since = Date.parse(st.since || '');
+        if (!since || nowMs - since > SESSIONS_STARTUP_STARTED_SHOW_MS) return null;
+        const answered = Array.isArray(st.answered) ? st.answered : [];
+        return { kind: 'ok', text: 'Started', title: answered.length ? 'Hive answered: ' + answered.join(', ') + '. ' + SESSIONS_STARTUP_NOTE : SESSIONS_STARTUP_NOTE };
+      }
+      const short = SESSIONS_STARTUP_SHORT[st.state] || SESSIONS_STARTUP_SHORT.unknown;
+      return { kind: 'attention', text: short + (st.screen ? ': ' + st.screen : ''), title: message || SESSIONS_STARTUP_NOTE };
+    }
+    function sessionsStartupHtml(s) {
+      const b = sessionsStartupBadge(s, Date.now());
+      if (!b) return '';
+      return '<span class="sessions-startup" data-kind="' + esc(b.kind) + '" role="status" title="' + esc(b.title) + '">'
+        + (b.kind === 'busy' ? '<span class="sessions-spinner" aria-hidden="true"></span>' : '') + esc(b.text) + '</span>';
+    }
     function sessionsByteLength(text) {
       const s = String(text == null ? '' : text);
       if (typeof TextEncoder === 'function') return new TextEncoder().encode(s).length;
@@ -54932,7 +54972,7 @@ function burnAreaChart() {
         : '';
       return '<div class="sessions-pane-head"><span class="sessions-pane-title">' + esc(s.name || s.id) + '</span>'
         + '<span class="sessions-pane-meta" title="' + esc(sessionsWorkspaceLabel(sessionsSessionWorkspace(s))) + '">' + esc(s.vendor || '') + ' · started by ' + esc(s.creator || 'unknown') + (s.group ? ' · ' + esc(s.group) : '') + (s.workspace_repo ? ' · ' + esc(s.workspace_repo) : '') + '</span>'
-        + presence
+        + presence + sessionsStartupHtml(s)
         + '<span class="sessions-attached sessions-pane-attached" title="' + esc(SESSIONS_TYPING_NOTE) + '">' + attached + ' attached</span>' + sessionsKeyboardHtml(s) + menu + '</div>';
     }
     // The pending Send queue under the input bar; Cancel on your own items.
@@ -55085,9 +55125,10 @@ function burnAreaChart() {
       sessionsSyncPreparingPoll(sessions);
     }
     // Poll faster while any session is preparing, so the tab turns into a
-    // terminal (or shows its failure) within seconds of the start finishing.
+    // terminal (or shows its failure) within seconds of the start finishing,
+    // and while the hive is getting a running session's CLI ready.
     function sessionsSyncPreparingPoll(sessions) {
-      const want = sessionsHasPreparing(sessions);
+      const want = sessionsHasPreparing(sessions) || sessionsHasStartupPreparing(sessions);
       if (want && !_sessionsPrepPollOn) { _sessionsPrepPollOn = true; dashboardSetInterval('sessions-preparing-poll', loadSessions, SESSIONS_PREPARING_POLL_MS); }
       if (!want && _sessionsPrepPollOn) { _sessionsPrepPollOn = false; dashboardClearInterval('sessions-preparing-poll'); }
     }
@@ -60889,6 +60930,7 @@ function burnAreaChart() {
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Experiment Lab', key: 'dashboard.experiment_lab', text: 'experiment_lab Experiment Lab dashboard feature experimental planner' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Inception (spek) sessions', key: 'dashboard.sessions.enabled', text: 'sessions enabled shared cli terminal tmux ttyd inception spek replace HIVE_SESSIONS_ENABLED dashboard.sessions.enabled' },
+      { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Answer the CLI startup screens', key: 'dashboard.sessions.autostart', text: 'sessions autostart auto-answer startup screens first-run trust onboarding press enter inception spek HIVE_SESSIONS_AUTOSTART dashboard.sessions.autostart' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Session limits', key: 'dashboard.sessions.max_sessions', text: 'sessions limits max running per user idle close hours ttl HIVE_SESSIONS_MAX HIVE_SESSIONS_MAX_PER_USER HIVE_SESSIONS_IDLE_TTL_HOURS dashboard.sessions.max_sessions dashboard.sessions.max_per_user dashboard.sessions.idle_ttl_hours' },
       { tab: 'Dashboard', section: 'Dashboard runtime', label: 'Subscription usage gauge in header', key: 'dashboard.subscription_gauge_header', text: 'subscription_gauge_header subscription usage gauge fuel header chip claude usage claude plan copilot premium requests monthly provider weekly 5-hour limit left remaining quota headroom' },
       { tab: 'Project Observability', section: 'Target platforms', label: 'Project observability targets', key: 'governor.project_observability.open_source[]', text: 'project observability telemetry operations open source kube native commercial references endpoint env credential secret' },
@@ -62905,7 +62947,7 @@ function burnAreaChart() {
     function markDashboardSessions(key, value) {
       const d = _configState.data.dashboard = _configState.data.dashboard || {};
       const sessions = d.sessions = Object.assign({}, d.sessions || {});
-      sessions[key] = key === 'enabled' ? !!value : Math.max(0, parseInt(value || '0', 10) || 0);
+      sessions[key] = (key === 'enabled' || key === 'autostart') ? !!value : Math.max(0, parseInt(value || '0', 10) || 0);
       markDirty('dashboard', 'sessions', sessions);
     }
 
@@ -62931,7 +62973,8 @@ function burnAreaChart() {
           limit('max_sessions', 'Max running sessions', 'Live sessions per hive. 0 uses the default (12); HIVE_SESSIONS_MAX overrides.') +
           limit('max_per_user', 'Max per user', 'Live sessions one person may create. 0 uses the default (4); HIVE_SESSIONS_MAX_PER_USER overrides.') +
           limit('idle_ttl_hours', 'Idle close (hours)', 'A session with no input and nobody attached ends after this long. 0 uses the default (72); HIVE_SESSIONS_IDLE_TTL_HOURS overrides.') +
-        '</div>';
+        '</div>' +
+        '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.autostart !== false ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="autostart"></div><span class="config-toggle-label">Answer the CLI startup screens ' + yamlHint('dashboard.sessions.autostart') + ' ' + settingHelpMark('settings', 'dashboard', 'Session startup', 'When a session starts, Hive takes the vendor CLI through its startup screens (first-run notice, trust for the session folder, onboarding) to its input prompt, so the first request runs without a person. It never answers a tool or command permission prompt and never signs in. On by default; the HIVE_SESSIONS_AUTOSTART environment variable, when set, overrides this switch.') + '</span></div>';
     }
 
     function renderGovDashboard(dash) {
