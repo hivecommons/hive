@@ -117,6 +117,9 @@ type contributorLaneFixture struct {
 	// headStatuses is what GET commits/sha7/statuses (every commit status,
 	// with its creator) serves; nil serves an empty list.
 	headStatuses []map[string]any
+	// earlierStatuses is what GET commits/<sha>/statuses serves for heads
+	// other than sha7; a head without an entry serves an empty list.
+	earlierStatuses map[string][]map[string]any
 	// baseRef, when set, gives the PR base a branch name and serves the
 	// branch, protection and compare routes the current-base gate
 	// (automerge_current_base.go) and release hold need; empty leaves the
@@ -375,6 +378,12 @@ func newContributorLaneAPI(t *testing.T, fx *contributorLaneFixture) *httptest.S
 			})
 		case r.Method == http.MethodGet && r.URL.Path == "/repos/acme/widget/commits/sha7/statuses":
 			statuses := fx.headStatuses
+			if statuses == nil {
+				statuses = []map[string]any{}
+			}
+			json.NewEncoder(w).Encode(statuses)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/acme/widget/commits/") && strings.HasSuffix(r.URL.Path, "/statuses"):
+			statuses := fx.earlierStatuses[strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/repos/acme/widget/commits/"), "/statuses")]
 			if statuses == nil {
 				statuses = []map[string]any{}
 			}
