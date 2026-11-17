@@ -143,7 +143,9 @@ func (s *Store) openTopicBead(key string) *Bead {
 // ClaimTopic records that actor owns topic c.Key through pull request
 // c.Repo#c.PR. Claiming an open topic again for the same PR is idempotent and
 // refreshes its branch (a branch rename); claiming it for a different PR
-// returns ErrTopicClaimed together with the existing claim.
+// returns ErrTopicClaimed together with the existing claim. A pending claim
+// (ClaimTopicForBranch) in the same repo holds no PR yet, so a claim with a
+// PR number binds it.
 func (s *Store) ClaimTopic(actor string, c TopicClaim) (TopicClaim, error) {
 	key, err := NormalizeTopicKey(c.Key)
 	if err != nil {
@@ -165,6 +167,13 @@ func (s *Store) ClaimTopic(actor string, c TopicClaim) (TopicClaim, error) {
 	now := flexTime{time.Now().UTC()}
 	if b := s.openTopicBead(key); b != nil {
 		existing := topicFromBead(b)
+		if existing.PR == 0 && SameTopicRepo(existing.Repo, repo) {
+			bindTopicBead(b, c.PR, branch, now)
+			if err := s.persist(b); err != nil {
+				return existing, err
+			}
+			return topicFromBead(b), nil
+		}
 		if existing.PR != c.PR || !SameTopicRepo(existing.Repo, repo) {
 			return existing, fmt.Errorf("%w: %s is held by %s#%d", ErrTopicClaimed, key, existing.Repo, existing.PR)
 		}
@@ -181,17 +190,116 @@ func (s *Store) ClaimTopic(actor string, c TopicClaim) (TopicClaim, error) {
 		return topicFromBead(b), nil
 	}
 
+	b := s.newTopicBead(actor, key, repo, c.PR, branch, now)
+	s.beads[b.ID] = b
+	s.evictOldClosed()
+	if err := s.persist(b); err != nil {
+		return TopicClaim{}, err
+	}
+	return topicFromBead(b), nil
+}
+
+// ClaimTopicForBranch records a PENDING claim (hivecommons/hive#18572): actor
+// owns topic key through the pull request hive will open from branch in
+// repo, whose number is not known yet. A sandboxed kick makes this claim;
+// the governor binds it to the PR once one with that head branch appears
+// (BindTopicBranch). Claiming again with the same branch is idempotent, and
+// a pending claim on another branch (an earlier kick that opened no PR) is
+// moved to this one. An open claim already bound to a PR is kept when its
+// branch is this branch, since the kick is pushing onto that PR, and refused
+// with ErrTopicClaimed otherwise.
+func (s *Store) ClaimTopicForBranch(actor, key, repo, branch string) (TopicClaim, error) {
+	k, err := NormalizeTopicKey(key)
+	if err != nil {
+		return TopicClaim{}, err
+	}
+	repo, branch = strings.TrimSpace(repo), strings.TrimSpace(branch)
+	if repo == "" {
+		return TopicClaim{}, errors.New("topic claim needs a repo")
+	}
+	if branch == "" {
+		return TopicClaim{}, errors.New("a pending topic claim needs the branch its pull request is opened from")
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	defer s.lockAndRefresh()()
+
+	now := flexTime{time.Now().UTC()}
+	if b := s.openTopicBead(k); b != nil {
+		existing := topicFromBead(b)
+		if !SameTopicRepo(existing.Repo, repo) {
+			return existing, fmt.Errorf("%w: %s is held in %s", ErrTopicClaimed, k, existing.Repo)
+		}
+		if existing.PR > 0 {
+			if existing.Branch == branch {
+				return existing, nil
+			}
+			return existing, fmt.Errorf("%w: %s is held by %s#%d", ErrTopicClaimed, k, existing.Repo, existing.PR)
+		}
+		if existing.Branch == branch {
+			return existing, nil
+		}
+		bindTopicBead(b, 0, branch, now)
+		if err := s.persist(b); err != nil {
+			return existing, err
+		}
+		return topicFromBead(b), nil
+	}
+	b := s.newTopicBead(actor, k, repo, 0, branch, now)
+	s.beads[b.ID] = b
+	s.evictOldClosed()
+	if err := s.persist(b); err != nil {
+		return TopicClaim{}, err
+	}
+	return topicFromBead(b), nil
+}
+
+// BindTopicBranch binds every open pending claim on repo's branch to pull
+// request pr, the PR hive opened from that branch. It returns how many
+// claims it bound.
+func (s *Store) BindTopicBranch(repo, branch string, pr int) (int, error) {
+	branch = strings.TrimSpace(branch)
+	if pr <= 0 || branch == "" {
+		return 0, nil
+	}
+	n := 0
+	_, err := s.mutateOpenTopics(func(b *Bead) bool {
+		got, _ := strconv.Atoi(b.Meta(MetaTopicPR))
+		return got == 0 && b.Meta(MetaTopicBranch) == branch && SameTopicRepo(b.Meta(MetaTopicRepo), repo)
+	}, func(b *Bead, now flexTime) {
+		bindTopicBead(b, pr, branch, now)
+		n++
+	})
+	return n, err
+}
+
+// bindTopicBead sets a claim's PR (0 keeps it pending) and, when given, its
+// branch. Caller holds s.mu.
+func bindTopicBead(b *Bead, pr int, branch string, now flexTime) {
+	if b.Metadata == nil {
+		b.Metadata = make(map[string]interface{})
+	}
+	b.Metadata[MetaTopicPR] = strconv.Itoa(pr)
+	if branch != "" {
+		b.Metadata[MetaTopicBranch] = branch
+	}
+	b.UpdatedAt = now
+}
+
+// newTopicBead builds an open topic-claim bead. Caller holds s.mu.
+func (s *Store) newTopicBead(actor, key, repo string, pr int, branch string, now flexTime) *Bead {
 	metadata := map[string]interface{}{
 		MetaTopicKey:    key,
 		MetaTopicRepo:   repo,
-		MetaTopicPR:     strconv.Itoa(c.PR),
+		MetaTopicPR:     strconv.Itoa(pr),
 		MetaTopicBranch: branch,
 		MetaTopicState:  TopicStateOpen,
 	}
 	if s.hiveID != "" {
 		metadata[hiveIDMetadataKey] = s.hiveID
 	}
-	b := &Bead{
+	return &Bead{
 		ID:          uuid.New().String()[:12],
 		Title:       "topic: " + key,
 		Type:        TypeChore,
@@ -203,12 +311,6 @@ func (s *Store) ClaimTopic(actor string, c TopicClaim) (TopicClaim, error) {
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
-	s.beads[b.ID] = b
-	s.evictOldClosed()
-	if err := s.persist(b); err != nil {
-		return TopicClaim{}, err
-	}
-	return topicFromBead(b), nil
 }
 
 // Topic returns the open claim for key.

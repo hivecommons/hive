@@ -218,7 +218,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	}
 	// A spool the relay cannot see is a lost review, not a failed kick: the
 	// rest of the run is still worth doing, so log and go on without one.
-	spool, spoolErr := e.openReviewSpool(spec.ReviewSpoolDir, spec.Agent, workspace)
+	spool, spoolErr := e.openReviewSpool(spec.ReviewSpoolDir, spec.Agent, workspace, spoolTargetOf(spec))
 	if spoolErr != nil && e.Logger != nil {
 		e.Logger.Warn("sandbox review spool unavailable; the sandbox cannot post reviews this kick", "agent", spec.Agent, "error", spoolErr)
 	}
