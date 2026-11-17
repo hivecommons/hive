@@ -13,6 +13,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/inbox"
 	"github.com/hivecommons/hive/pkg/mailallow"
 	"github.com/hivecommons/hive/pkg/mailin/wire"
 )
@@ -25,8 +26,10 @@ import (
 //   - POST /api/meetings/invites           calendar invites -> the scheduler
 //   - POST /api/meetings/calendar-emails/proof  proof mails -> the allowlist
 //   - POST /api/inbox/email                mail-in files (api_inbox_email.go)
+//   - POST /api/inbox/email/chunk          one piece of a large files delivery
+//   - POST /api/inbox/email/report         a mail the receiver refused (#18699)
 //
-// Those three are relay-signed (verifyRelayedRequest) and listed in
+// All of them are relay-signed (verifyRelayedRequest) and listed in
 // isPublicPath: no dashboard session, fail closed without a relay key.
 //
 // GET/POST/DELETE /api/meetings/calendar-emails is each signed-in user's
@@ -41,6 +44,7 @@ const (
 	meetingsCalendarProofPath  = "/api/meetings/calendar-emails/proof"
 	inboxEmailPath             = "/api/inbox/email"
 	inboxEmailChunkPath        = "/api/inbox/email/chunk"
+	inboxEmailReportPath       = "/api/inbox/email/report"
 	// mailRelayMaxBody bounds one delivery relayed in a single request; a
 	// larger one arrives in pieces on inboxEmailChunkPath.
 	mailRelayMaxBody = 8 << 20
@@ -168,6 +172,7 @@ func (s *Server) handleMeetingsInvites(w http.ResponseWriter, r *http.Request) {
 		s.meetingsError(w, r, err)
 		return
 	}
+	s.recordMail(inbox.MailEvent{Outcome: inbox.MailAccepted, Kind: string(wire.KindInvite), SenderDomain: mailSenderDomain(d.Auth), Auth: inbox.MailAuthOf(d.Auth)})
 	s.webhookLogger().Info("email invite received", "delivery", d.ID, "invites", len(d.Invites), "trusted", trusted)
 	jsonResponse(w, out)
 }

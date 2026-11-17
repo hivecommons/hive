@@ -9,6 +9,7 @@ import (
 	"io"
 	"mime"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/emersion/go-message"
@@ -96,6 +97,11 @@ type Parsed struct {
 	Invites   []wire.Invite
 	Files     *wire.Files
 	ProofCode string
+	// Attachments is the number of named attachments the message carried,
+	// accepted or not; Skipped lists the ones left out, also when the
+	// message is refused (ErrNothingToDeliver).
+	Attachments int
+	Skipped     []wire.SkippedFile
 }
 
 // Cleanup removes the attachments ParseReader spooled to disk.
@@ -186,7 +192,8 @@ func ParseReader(r io.Reader, lim Limits, spoolDir string) (Parsed, error) {
 		}
 		return w.part(e)
 	})
-	p.Files = &wire.Files{Title: p.Subject, Attachments: w.files}
+	p.Files = &wire.Files{Title: p.Subject, Attachments: w.files, Skipped: w.skipped}
+	p.Attachments, p.Skipped = w.named, w.skipped
 	if walkErr != nil {
 		return p, walkErr
 	}
@@ -223,6 +230,33 @@ type walker struct {
 	files      []wire.Attachment
 	filesBytes int
 	body       bodyText
+	// named counts the named attachments seen; skipped lists the refused.
+	named   int
+	skipped []wire.SkippedFile
+}
+
+// skip records an attachment left out of the delivery: its extension, never
+// its name.
+func (w *walker) skip(name, reason string) {
+	if len(w.skipped) < wire.MaxSkipped {
+		w.skipped = append(w.skipped, wire.SkippedFile{Ext: extLabel(name), Reason: reason})
+	}
+}
+
+// extLabel is a file name's extension as it is logged and reported: lower
+// case, letters and digits only, bounded, "" when there is none.
+func extLabel(name string) string {
+	ext := strings.TrimPrefix(strings.ToLower(path.Ext(safeName(name))), ".")
+	var b strings.Builder
+	for _, r := range ext {
+		if b.Len() >= wire.MaxExtRunes {
+			break
+		}
+		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 func (w *walker) part(e *message.Entity) error {
@@ -246,17 +280,21 @@ func (w *walker) part(e *message.Entity) error {
 		w.bodyPart(e, mt)
 		return nil
 	}
+	w.named++
 	if len(w.files) >= w.lim.MaxFiles {
+		w.skip(name, wire.SkipCount)
 		return nil
 	}
-	a, ok, err := w.attachment(name, e.Body)
+	a, why, err := w.attachment(name, e.Body)
 	if err != nil {
 		return err
 	}
-	if ok {
-		w.files = append(w.files, a)
-		w.filesBytes += a.Size
+	if why != "" {
+		w.skip(name, why)
+		return nil
 	}
+	w.files = append(w.files, a)
+	w.filesBytes += a.Size
 	return nil
 }
 
@@ -278,16 +316,17 @@ func (w *walker) bodyPart(e *message.Entity, mt string) {
 // htmlBodyFactor is how much more raw HTML than note text is read.
 const htmlBodyFactor = 4
 
-// attachment reads one named part. A refused part is skipped (ok false);
-// err is only an I/O failure of the spool.
-func (w *walker) attachment(name string, body io.Reader) (wire.Attachment, bool, error) {
+// attachment reads one named part. A refused part is skipped: why is the
+// wire.Skip* reason, "" for an accepted one. err is only an I/O failure of
+// the spool.
+func (w *walker) attachment(name string, body io.Reader) (a wire.Attachment, why string, err error) {
 	ft, name, allowed := classify(name)
 	if !allowed {
-		return wire.Attachment{}, false, nil
+		return a, wire.SkipType, nil
 	}
 	room := min(w.lim.MaxFileBytes, w.lim.MaxFilesBytes-w.filesBytes)
 	if room <= 0 {
-		return wire.Attachment{}, false, nil
+		return a, wire.SkipSize, nil
 	}
 	if ft.kind == wire.AttachMarkdown || w.spoolDir == "" {
 		limit := room
@@ -295,34 +334,57 @@ func (w *walker) attachment(name string, body io.Reader) (wire.Attachment, bool,
 			limit = min(room, w.lim.MaxMarkdownBytes)
 		}
 		data, rerr := readCapped(body, limit)
-		if rerr != nil {
-			return wire.Attachment{}, false, nil
+		switch {
+		case errors.Is(rerr, errPartTooLarge):
+			return a, wire.SkipSize, nil
+		case rerr != nil:
+			return a, wire.SkipContent, nil
 		}
 		a, ok := acceptFile(name, data)
-		if ok {
-			sum := sha256.Sum256(data)
-			a.SHA256 = hex.EncodeToString(sum[:])
+		if !ok {
+			return wire.Attachment{}, wire.SkipContent, nil
 		}
-		return a, ok, nil
+		sum := sha256.Sum256(data)
+		a.SHA256 = hex.EncodeToString(sum[:])
+		return a, "", nil
 	}
 	head := make([]byte, sniffLen)
 	n, rerr := io.ReadFull(body, head)
 	if rerr != nil && !errors.Is(rerr, io.ErrUnexpectedEOF) {
-		return wire.Attachment{}, false, nil
+		return a, wire.SkipContent, nil
 	}
 	head = head[:n]
 	ct, ok := ft.match(sniffHead(head))
 	if !ok {
-		return wire.Attachment{}, false, nil
+		return a, wire.SkipContent, nil
 	}
 	path, size, sum, err := spoolPart(w.spoolDir, head, body, room)
 	switch {
 	case errors.Is(err, errPartTooLarge):
-		return wire.Attachment{}, false, nil
+		return a, wire.SkipSize, nil
+	case errors.Is(err, errPartUnreadable):
+		return a, wire.SkipContent, nil
 	case err != nil:
-		return wire.Attachment{}, false, err
+		return a, "", err
 	}
-	return wire.Attachment{Name: name, Kind: ft.kind, ContentType: ct, Size: size, SHA256: sum, Path: path}, true, nil
+	if !verifySpooled(ct, path, int64(size)) {
+		_ = os.Remove(path)
+		return a, wire.SkipContent, nil
+	}
+	return wire.Attachment{Name: name, Kind: ft.kind, ContentType: ct, Size: size, SHA256: sum, Path: path}, "", nil
+}
+
+// verifySpooled runs verifyContainer on a spooled attachment.
+func verifySpooled(ct, path string, size int64) bool {
+	if _, container := ooxmlMainPart[ct]; !container {
+		return true
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	return verifyContainer(ct, f, size)
 }
 
 // spoolPart writes head and the rest of body to a new file in dir, failing
@@ -352,8 +414,8 @@ func spoolPart(dir string, head []byte, body io.Reader, limit int) (path string,
 	}
 	copied, err := io.Copy(out, io.LimitReader(body, rest+1))
 	if err != nil {
-		// A truncated or undecodable part: skip it like an oversize one.
-		return "", 0, "", errPartTooLarge
+		// A truncated or undecodable part is skipped, not a spool failure.
+		return "", 0, "", errPartUnreadable
 	}
 	if copied > rest {
 		return "", 0, "", errPartTooLarge
@@ -391,6 +453,10 @@ func dedupeInvites(in []wire.Invite) []wire.Invite {
 
 // errPartTooLarge is returned by readCapped for a part over its cap.
 var errPartTooLarge = errors.New("mailin: part too large")
+
+// errPartUnreadable is returned by spoolPart for a part that cannot be
+// decoded to its end.
+var errPartUnreadable = errors.New("mailin: part unreadable")
 
 // readCut reads at most limit bytes of r, dropping the rest.
 func readCut(r io.Reader, limit int) []byte {
