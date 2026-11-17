@@ -54,7 +54,7 @@
         const r = await fetch('/api/meetings');
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { _meetingsList = []; _meetingsError = data.error || ('HTTP ' + r.status); }
-        else { _meetingsList = data.meetings || []; _meetingsError = ''; }
+        else { _meetingsList = data.meetings || []; _meetingsError = ''; _meetingsEmailIn = data.email_in || null; }
       } catch (e) {
         // Keep the last list; say the hive is unreachable instead of leaving "Loading meetings…".
         if (_meetingsList === null) _meetingsList = [];
@@ -253,7 +253,7 @@
       if (_meetingsError) {
         html += '<p class="kc-error muted-xs">' + escapeHtml(_meetingsError) + '</p>';
       } else {
-        html += meetingsJoinFormHtml();
+        html += (typeof emailInRowHtml === 'function' ? emailInRowHtml('meetings', _meetingsEmailIn) : '') + meetingsJoinFormHtml();
       }
       const list = _meetingsList || [];
       const finished = meetingsFinished(list);

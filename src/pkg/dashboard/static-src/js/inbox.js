@@ -439,11 +439,7 @@
       } else {
         actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
       }
-      if (inboxCanDeleteRecording(it, window._hiveRole, window._hiveUser)) {
-        const busy = it.transcription && (it.transcription.status === 'queued' || it.transcription.status === 'running');
-        actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-delete" data-action="inboxDeleteRecording" data-arg0="' + id + '"' +
-          (busy ? ' disabled aria-disabled="true" title="Being transcribed: delete it once the transcription finishes"' : ' title="Delete the audio, this Inbox item and its transcript; anything already shared from it stays"') + '>🗑 Delete</button>';
-      }
+      if (typeof inboxDeleteButtonHtml === 'function') actions += inboxDeleteButtonHtml(it);
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
         (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
@@ -710,7 +706,8 @@
     }
     // inboxBulkMenu opens the Hive menu of the multi-select bar.
     function inboxBulkMenu(btn) {
-      inboxPopMenu(btn, inboxShareMenuHtml(inboxBulkMenuGroups(), '', ''), d => inboxBulkMenuRun(d.inboxShareAct));
+      const manage = typeof inboxDeleteBulkGroups === 'function' ? inboxDeleteBulkGroups() : [];
+      inboxPopMenu(btn, inboxShareMenuHtml(inboxBulkMenuGroups().concat(manage), '', ''), d => d.inboxShareGroup === 'manage' ? inboxDeleteSelected() : inboxBulkMenuRun(d.inboxShareAct));
     }
     let _inboxFocusKey = inboxFocusKeyFromHash(location.hash);
     window.addEventListener('hashchange', (e) => {
@@ -769,6 +766,7 @@
         (inboxCanAdd() ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxToggleAdd" aria-expanded="' + (_inboxAddOpen ? 'true' : 'false') + '" aria-controls="inbox-add" title="Add files to the Inbox (or drop them anywhere on it, or paste with Ctrl/Cmd+V)">＋ Add</button>' : '') +
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
+      if (typeof emailInRowHtml === 'function') html += emailInRowHtml('inbox', data.email_in);
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
       if (window._hiveRoleFailed && !window._hiveRole) html += '<div class="muted-xs">Could not determine your role, so actions are read-only. It will retry automatically.</div>';
       if (inboxCanAdd()) html += inboxAddPanelHtml() + inboxUploadsHtml();
@@ -809,39 +807,6 @@
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
       return data;
-    }
-    // inboxCanDeleteRecording: a hive recording may be deleted by an owner,
-    // or by the read-write member who recorded it; read members never.
-    function inboxCanDeleteRecording(it, role, user) {
-      if (!it || it.source !== 'hive-recording') return false;
-      if (role === 'owner') return true;
-      return role === 'read-write' && !!user && !!it.recorded_by && String(it.recorded_by).toLowerCase() === String(user).toLowerCase();
-    }
-    // inboxDeleteRecordingText is the confirm text; with share history it
-    // says that the shared copies stay.
-    function inboxDeleteRecordingText(it) {
-      const shared = ((it && it.share_history) || []).length;
-      let text = 'This deletes the audio stored on this hive, this Inbox item and its transcript in Knowledge. It cannot be undone.';
-      if (shared) text += ' What was already shared from it (' + shared + ' share' + (shared === 1 ? '' : 's') + ': RFCs, issues, DIBS ideas, spek seeds) stays where it is.';
-      return text;
-    }
-    async function inboxDeleteRecording(id) {
-      const it = inboxFind('hive-recording', id);
-      if (!it) return;
-      const ok = await hiveConfirm({ title: 'Delete this recording?', message: inboxDeleteRecordingText(it), confirmLabel: 'Delete', danger: true });
-      if (!ok) return;
-      try {
-        const r = await fetch('/api/inbox/hive-recording/' + encodeURIComponent(id), { method: 'DELETE' });
-        const data = await r.json().catch(() => ({}));
-        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
-        const key = 'hive-recording/' + id;
-        delete _inboxContent[key];
-        _inboxSelected.delete(key);
-        showToast('Recording deleted', 'success');
-      } catch (e) {
-        showToast('Could not delete the recording: ' + e.message, 'error');
-      }
-      await fetchInbox();
     }
     // Approval queue for mailed-in files from outside the allowlist (#18395).
     async function inboxEmailAct(id, action) {
@@ -1037,10 +1002,10 @@
       const srcOpts = ['<option value=""' + (!rule.source ? ' selected' : '') + '>any source</option>'].concat(sources.map(s => '<option value="' + escapeHtml(s) + '"' + (rule.source === s ? ' selected' : '') + '>' + escapeHtml(s) + '</option>')).join('');
       const destOpts = [['spek_rfc', '→ RFC'], ['dibs', '→ dibs'], ['dismiss', 'Knowledge only']].map(([v, l]) => '<option value="' + v + '"' + (rule.destination === v ? ' selected' : '') + '>' + l + '</option>').join('');
       return '<div class="inbox-rule" data-rule-index="' + i + '">' +
-        '<select class="field-input" data-rule-field="source" aria-label="Source">' + srcOpts + '</select>' +
+        '<select class="kb-search-box" data-rule-field="source" aria-label="Source">' + srcOpts + '</select>' +
         '<input class="kb-search-box" data-rule-field="title_prefix" placeholder="title prefix (RFC:)" value="' + escapeHtml(rule.title_prefix || '') + '" aria-label="Title prefix">' +
         '<input class="kb-search-box" data-rule-field="tag" placeholder="or tag" value="' + escapeHtml(rule.tag || '') + '" aria-label="Tag">' +
-        '<select class="field-input" data-rule-field="destination" aria-label="Destination">' + destOpts + '</select>' +
+        '<select class="kb-search-box" data-rule-field="destination" aria-label="Destination">' + destOpts + '</select>' +
         '<input class="kb-search-box" data-rule-field="repo" placeholder="owner/repo (RFC only)" value="' + escapeHtml(rule.repo || '') + '" aria-label="Repository">' +
         '<button type="button" class="hv-btn btn-icon btn-sm" data-action="inboxRemoveRule" data-arg0="' + i + '" aria-label="Remove rule">✕</button></div>';
     }
@@ -1072,22 +1037,33 @@
       root = root || inboxSettingsRoot();
       const host = root ? root.querySelector('.inbox-settings-rules') : null;
       if (!host) return;
-      host.innerHTML = _inboxDraftRules.length ? _inboxDraftRules.map(inboxRuleRowHtml).join('') : '<p class="muted-xs">No rules — every item waits here for manual triage.</p>';
+      host.innerHTML = _inboxDraftRules.length ? _inboxDraftRules.map(inboxRuleRowHtml).join('') : '<p class="muted-xs">No rules: every item waits here for manual triage.</p>';
     }
+    // The form has two sections on one vertical rhythm: Routing (default RFC
+    // repository, dibs URL, rules) and Transcription. Config keys sit in a
+    // "Config keys" footnote at the end of each section, away from the
+    // labels. In the modal the Save bar stays visible while the body scrolls.
     function inboxSettingsFormHtml(settings, inline) {
       const buttons = inline
         ? '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>'
         : '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel</button>' +
           '<button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save</button></div>';
-      return '<div class="inbox-settings-form" data-inbox-form="' + (inline ? 'inline' : 'modal') + '"><p class="muted-note m-0">New items are checked against these rules in order after every connector sync; the first match routes the item automatically. Items that arrived before a rule existed are never re-routed.</p>' +
+      const keys = list => '<details class="inbox-set-keys"><summary class="muted-xs">Config keys</summary><p class="muted-xs">' + list.map(yamlHint).join(' ') + '</p></details>';
+      return '<div class="inbox-settings-form" data-inbox-form="' + (inline ? 'inline' : 'modal') + '">' +
+        '<section class="inbox-set-section" data-inbox-set="routing" aria-label="Routing">' +
+        '<h4 class="section-label inbox-set-title">Routing</h4>' +
+        '<p class="muted-xs">New items are checked against the rules below, in order, after every connector sync; the first match routes the item automatically. Items that arrived before a rule existed are never re-routed.</p>' +
         '<div class="inbox-settings-grid">' +
-        '<label class="muted-note inbox-field">Default RFC repository<input class="kb-search-box mt-2" type="text" data-inbox-field="spek-repo" placeholder="owner/repo" autocomplete="off" value="' + escapeHtml(settings.spek_repo || '') + '"></label>' +
-        '<label class="muted-note inbox-field">dibs URL<input class="kb-search-box mt-2" type="text" data-inbox-field="dibs-url" placeholder="https://dibs.example.org" autocomplete="off" value="' + escapeHtml(settings.dibs_url || '') + '"></label></div>' +
-        '<p class="muted-xs">The dibs token is read from the environment variable named by <code>inbox.dibs.token_env</code>' + (settings.dibs_token_set ? ' (set)' : ' (not set)') + '.</p>' +
-        '<div class="row-between mt-4 mb-2"><div class="section-label m-0">Rules</div><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddRule">Add rule</button></div>' +
+        '<label class="inbox-field"><span class="inbox-field-label">Default RFC repository</span><input class="kb-search-box" type="text" data-inbox-field="spek-repo" placeholder="owner/repo" autocomplete="off" value="' + escapeHtml(settings.spek_repo || '') + '"></label>' +
+        '<label class="inbox-field"><span class="inbox-field-label">dibs URL</span><input class="kb-search-box" type="text" data-inbox-field="dibs-url" placeholder="https://dibs.example.org" autocomplete="off" value="' + escapeHtml(settings.dibs_url || '') + '"></label></div>' +
+        '<p class="muted-xs inbox-set-status" data-inbox-dibs-token><span>dibs token</span> <span class="kc-pill" data-status="' + (settings.dibs_token_set ? 'ok' : 'error') + '">' + (settings.dibs_token_set ? 'set' : 'not set') + '</span> ' +
+        '<span>' + (settings.dibs_token_set ? 'Read from this hive\'s environment.' : 'Set it in this hive\'s environment; it is never stored in hive.yaml.') + '</span></p>' +
+        '<div class="row-between inbox-set-subhead"><span class="inbox-field-label">Rules</span><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddRule">Add rule</button></div>' +
         '<div class="inbox-settings-rules"></div>' +
+        keys(['inbox.spek.repo', 'inbox.dibs.url', 'inbox.dibs.token_env', 'inbox.rules']) +
+        '</section>' +
         inboxTranscriptionFormHtml(settings.transcription) +
-        '<div class="hive-dialog-error" role="alert" data-inbox-field="error"></div>' + buttons + '</div>';
+        '<div class="inbox-set-footer"><div class="hive-dialog-error" role="alert" data-inbox-field="error"></div>' + buttons + '</div></div>';
     }
 
     // Provider choices for ⚙ → Transcription: one line on speed, speakers
@@ -1111,7 +1087,9 @@
       }[p] || 'Depending on the provider the audio stays on this hive (whisper) or is sent to Google (Gemini) or Deepgram under the hive\'s own account.';
       return (provider === 'auto' && resolved ? 'Auto currently picks ' + resolved + '. ' : '') + dest;
     }
-    // Provider selector with each provider's readiness (never a key value).
+    // Provider selector, then one row per provider: name, one-line
+    // description, a status pill in its own column, and what is missing (or
+    // any other detail) on its own muted line. Never a key value.
     function inboxTxProviderHtml(tx) {
       const info = inboxTxProviderInfo();
       const current = info[tx.provider] ? tx.provider : 'auto';
@@ -1126,53 +1104,92 @@
       let rows = '';
       for (const name of ['auto', 'whisper', 'gemini', 'deepgram']) {
         const st = status[name];
-        const pill = name === 'auto' ? '' : (st ? '<span class="kc-pill" data-status="' + (st.available ? 'ok' : 'error') + '">' + (st.available ? 'ready' : 'not ready') + '</span> ' + escapeHtml(st.detail || '') : '');
-        rows += '<li data-inbox-tx-provider="' + name + '"><strong>' + name + '</strong>: ' + escapeHtml(info[name]) + (pill ? ' ' + pill : '') + '</li>';
+        const pill = name === 'auto'
+          ? (tx.resolved_provider ? '<span class="kc-pill" data-status="ok">now: ' + escapeHtml(tx.resolved_provider) + '</span>' : '')
+          : (st ? '<span class="kc-pill" data-status="' + (st.available ? 'ok' : 'error') + '">' + (st.available ? 'ready' : 'not ready') + '</span>' : '');
+        const detail = name !== 'auto' && st && st.detail ? '<span class="muted-xs inbox-tx-provider-detail">' + escapeHtml(st.detail) + '</span>' : '';
+        rows += '<div class="inbox-tx-provider" role="listitem" data-inbox-tx-provider="' + name + '">' +
+          '<span class="inbox-tx-provider-name">' + name + '</span>' +
+          '<span class="inbox-tx-provider-desc">' + escapeHtml(info[name]) + '</span>' +
+          '<span class="inbox-tx-provider-status">' + pill + '</span>' + detail + '</div>';
       }
-      return '<label class="muted-note inbox-field">Provider<select class="field-input field-input-block mt-2" data-inbox-tx-field="provider">' + opts + '</select></label>' +
-        '<ul class="muted-xs inbox-tx-providers">' + rows + '</ul>';
+      return '<label class="inbox-field"><span class="inbox-field-label">Provider</span><select class="kb-search-box" data-inbox-tx-field="provider" data-change-action="inboxTxFieldsChanged" data-arg-types="t">' + opts + '</select></label>' +
+        '<div class="inbox-tx-providers" role="list" aria-label="Transcription providers">' + rows + '</div>';
     }
 
     // Transcription section: spoke-local transcription with whisper (on the
     // hive), the hive's Gemini credentials, or the owner's Deepgram key. Key
     // values are never shown, only whether they are present on this hive.
+    // A provider's own fields show only while that provider is selected, or
+    // while auto could pick it (it is ready, or its readiness is unknown);
+    // hidden fields keep their values, so saving sends the same payload.
     function inboxTranscriptionFormHtml(tx) {
       tx = tx || {};
-      const field = (name, label, value, placeholder, type) => '<label class="muted-note inbox-field">' + label +
-        '<input class="kb-search-box mt-2" type="' + (type || 'text') + '" data-inbox-tx-field="' + name + '" autocomplete="off" placeholder="' + escapeHtml(placeholder || '') + '" value="' + escapeHtml(value == null ? '' : String(value)) + '"></label>';
+      const provider = inboxTxProviderInfo()[tx.provider] ? tx.provider : 'auto';
+      const unready = (Array.isArray(tx.providers) ? tx.providers : []).filter(p => p && p.available === false).map(p => p.name);
+      const shows = names => names.split(' ').some(n => provider === n || (provider === 'auto' && unready.indexOf(n) < 0));
+      const only = names => ' data-inbox-tx-for="' + names + '"' + (shows(names) ? '' : ' hidden');
+      const field = (name, label, value, placeholder, type, attrs) => '<label class="inbox-field"' + (attrs || '') + '><span class="inbox-field-label">' + label + '</span>' +
+        '<input class="kb-search-box" type="' + (type || 'text') + '" data-inbox-tx-field="' + name + '" autocomplete="off" placeholder="' + escapeHtml(placeholder || '') + '" value="' + escapeHtml(value == null ? '' : String(value)) + '"></label>';
       const mode = tx.mode === 'auto' ? 'auto' : 'manual';
       const env = tx.api_key_env || 'DEEPGRAM_API_KEY';
       const sizeMB = tx.max_bytes ? Math.round(Number(tx.max_bytes) / INBOX_TX_BYTES_PER_MB) : '';
-      return '<div class="inbox-tx-settings" data-inbox-tx-section="1">' +
-        '<div class="section-label mt-4 mb-2">Transcription</div>' +
-        '<p class="muted-xs">Recordings that arrive without text can be transcribed by this hive. Each hive transcribes on its own: with whisper on its own CPU, or with its own Gemini or Deepgram account. Nothing is shared with other hives or paid for centrally, and the transcript is stored only on this hive. ' + yamlHint('inbox.transcription.enabled') + '</p>' +
+      const whisperLabels = { 'tiny.en': ' (78 MB, fastest)', tiny: ' (78 MB, any language)', 'base.en': ' (148 MB)', base: ' (148 MB, any language)', 'small.en': ' (488 MB, about 3x slower)', small: ' (488 MB, any language, about 3x slower)' };
+      const keys = ['enabled', 'consent_acknowledged', 'provider', 'mode', 'sources[]', 'language', 'whisper_model', 'whisper_threads', 'gemini_model', 'api_key_env', 'model', 'diarize',
+        'monthly_budget_minutes', 'daily_max_items', 'max_duration_minutes', 'max_bytes'];
+      return '<section class="inbox-set-section inbox-tx-settings" data-inbox-tx-section="1" data-inbox-set="transcription" aria-label="Transcription"' +
+        ' data-inbox-tx-unready="' + escapeHtml(unready.join(',')) + '" data-inbox-tx-resolved="' + escapeHtml(tx.resolved_provider || '') + '">' +
+        '<h4 class="section-label inbox-set-title">Transcription</h4>' +
+        '<p class="muted-xs">Recordings that arrive without text can be transcribed by this hive. Each hive transcribes on its own: with whisper on its own CPU, or with its own Gemini or Deepgram account. Nothing is shared with other hives or paid for centrally, and the transcript is stored only on this hive.</p>' +
         inboxTxProviderHtml(tx) +
-        '<div class="inbox-tx-notice" role="note"><strong>Before you enable this:</strong> recordings contain other people\'s voices. ' + escapeHtml(inboxTxConsentText(tx.provider || 'auto', tx.resolved_provider)) + ' Make sure the people you record are comfortable with that.</div>' +
-        '<label class="muted-note inbox-toggle mt-2"><input type="checkbox" data-inbox-tx-field="consent_acknowledged"' + (tx.consent_acknowledged ? ' checked' : '') + '> I understand where the audio goes with the provider above ' + yamlHint('inbox.transcription.consent_acknowledged') + '</label>' +
-        '<label class="muted-note inbox-toggle mt-2"><input type="checkbox" data-inbox-tx-field="enabled"' + (tx.enabled ? ' checked' : '') + '> Enable transcription</label>' +
+        '<div class="inbox-set-consent" role="group" aria-label="Consent and enable">' +
+        '<div class="inbox-tx-notice" role="note"><strong>Before you enable this:</strong> recordings contain other people\'s voices. <span data-inbox-tx-consent>' + escapeHtml(inboxTxConsentText(tx.provider || 'auto', tx.resolved_provider)) + '</span> Make sure the people you record are comfortable with that.</div>' +
+        '<label class="inbox-toggle"><input type="checkbox" data-inbox-tx-field="consent_acknowledged"' + (tx.consent_acknowledged ? ' checked' : '') + '><span>I understand where the audio goes with the provider above</span></label>' +
+        '<label class="inbox-toggle"><input type="checkbox" data-inbox-tx-field="enabled"' + (tx.enabled ? ' checked' : '') + '><span>Enable transcription</span></label></div>' +
+        '<div class="inbox-set-subhead"><span class="inbox-field-label">Options</span></div>' +
+        '<p class="muted-xs">Audio this hive holds itself (dashboard recordings, dropped audio and video files) is transcribed when it arrives. Mode decides what happens to recordings from synced sources.</p>' +
         '<div class="inbox-settings-grid">' +
-        '<label class="muted-note inbox-field">Mode<select class="field-input field-input-block mt-2" data-inbox-tx-field="mode">' +
-        '<option value="manual"' + (mode === 'manual' ? ' selected' : '') + '>manual: only when someone clicks Transcribe</option>' +
-        '<option value="auto"' + (mode === 'auto' ? ' selected' : '') + '>auto: also new recordings from the sources below</option></select></label>' +
-        field('sources', 'Auto-mode sources', (tx.sources || []).join(', '), 'plaud') +
-        field('api_key_env', 'Deepgram key environment variable', env, 'DEEPGRAM_API_KEY') +
-        field('model', 'Deepgram model', tx.model || 'nova-3', 'nova-3') +
+        '<label class="inbox-field"><span class="inbox-field-label">Mode</span><select class="kb-search-box" data-inbox-tx-field="mode" data-change-action="inboxTxFieldsChanged" data-arg-types="t">' +
+        '<option value="manual"' + (mode === 'manual' ? ' selected' : '') + '>manual: synced recordings wait for a click on Transcribe</option>' +
+        '<option value="auto"' + (mode === 'auto' ? ' selected' : '') + '>auto: also new recordings from the sources listed</option></select></label>' +
+        field('sources', 'Auto-mode sources', (tx.sources || []).join(', '), 'plaud', 'text', ' data-inbox-tx-mode="auto"' + (mode === 'auto' ? '' : ' hidden')) +
         field('language', 'Language', tx.language || 'auto', 'auto or en, de, pt-BR') +
-        '<label class="muted-note inbox-field">Whisper model<select class="field-input field-input-block mt-2" data-inbox-tx-field="whisper_model">' +
-        ['', 'tiny.en', 'tiny', 'base.en', 'base', 'small.en', 'small'].map(m => '<option value="' + m + '"' + ((tx.whisper_model || '') === m ? ' selected' : '') + '>' + (m ? m + ({ 'tiny.en': ' (78 MB, fastest)', tiny: ' (78 MB, any language)', 'base.en': ' (148 MB)', base: ' (148 MB, any language)', 'small.en': ' (488 MB, about 3x slower)', small: ' (488 MB, any language, about 3x slower)' })[m] : 'default: base.en (base for other languages)') + '</option>').join('') + '</select></label>' +
-        field('whisper_threads', 'Whisper threads', tx.whisper_threads || '', 'half the CPUs', 'number') +
-        field('gemini_model', 'Gemini model', tx.gemini_model || '', 'gemini-3.5-flash') +
+        '<label class="inbox-field"' + only('whisper') + '><span class="inbox-field-label">Whisper model</span><select class="kb-search-box" data-inbox-tx-field="whisper_model">' +
+        ['', 'tiny.en', 'tiny', 'base.en', 'base', 'small.en', 'small'].map(m => '<option value="' + m + '"' + ((tx.whisper_model || '') === m ? ' selected' : '') + '>' + (m ? m + whisperLabels[m] : 'default: base.en (base for other languages)') + '</option>').join('') + '</select></label>' +
+        field('whisper_threads', 'Whisper threads', tx.whisper_threads || '', 'half the CPUs', 'number', only('whisper')) +
+        field('gemini_model', 'Gemini model', tx.gemini_model || '', 'gemini-3.5-flash', 'text', only('gemini')) +
+        field('api_key_env', 'Deepgram key environment variable', env, 'DEEPGRAM_API_KEY', 'text', only('deepgram')) +
+        field('model', 'Deepgram model', tx.model || 'nova-3', 'nova-3', 'text', only('deepgram')) +
+        '</div>' +
+        '<label class="inbox-toggle"' + only('gemini deepgram') + '><input type="checkbox" data-inbox-tx-field="diarize"' + (tx.diarize !== false ? ' checked' : '') + '><span>Label speakers (Speaker 1, Speaker 2, …; Deepgram and Gemini, whisper has no speaker labels)</span></label>' +
+        '<p class="muted-xs inbox-set-status"' + only('deepgram') + '>Deepgram key <code>$' + escapeHtml(env) + '</code>: ' + (tx.key_present ? '<span class="kc-pill" data-status="ok">key present</span>' : '<span class="kc-pill" data-status="error">key missing</span> <span>set it in this hive\'s environment (it is never stored in hive.yaml)</span>') + '</p>' +
+        '<div class="inbox-set-subhead"><span class="inbox-field-label">Limits</span></div>' +
+        '<div class="inbox-settings-grid">' +
         field('monthly_budget_minutes', 'Monthly budget (minutes)', tx.monthly_budget_minutes || '', '600', 'number') +
         field('daily_max_items', 'Daily limit (recordings)', tx.daily_max_items || '', '20', 'number') +
         field('max_duration_minutes', 'Longest recording (minutes)', tx.max_duration_minutes || '', '120', 'number') +
         field('max_mb', 'Largest upload (MB)', sizeMB, '500', 'number') +
         '</div>' +
-        '<label class="muted-note inbox-toggle mt-2"><input type="checkbox" data-inbox-tx-field="diarize"' + (tx.diarize !== false ? ' checked' : '') + '> Label speakers (Speaker 1, Speaker 2, …; Deepgram and Gemini, whisper has no speaker labels)</label>' +
         inboxTranscriptionUsageHtml(tx) +
-        '<p class="muted-xs">Deepgram key <code>$' + escapeHtml(env) + '</code>: ' + (tx.key_present ? '<span class="kc-pill" data-status="ok">key present</span>' : '<span class="kc-pill" data-status="error">key missing</span> set it in this hive\'s environment (it is never stored in hive.yaml)') + '. ' +
-        yamlHint('inbox.transcription.mode') + ' ' + yamlHint('inbox.transcription.sources[]') + ' ' + yamlHint('inbox.transcription.api_key_env') + ' ' + yamlHint('inbox.transcription.provider') + ' ' + yamlHint('inbox.transcription.model') + ' ' + yamlHint('inbox.transcription.diarize') + ' ' + yamlHint('inbox.transcription.language') + ' ' +
-        yamlHint('inbox.transcription.whisper_model') + ' ' + yamlHint('inbox.transcription.whisper_threads') + ' ' + yamlHint('inbox.transcription.gemini_model') + ' ' +
-        yamlHint('inbox.transcription.max_duration_minutes') + ' ' + yamlHint('inbox.transcription.max_bytes') + ' ' + yamlHint('inbox.transcription.monthly_budget_minutes') + ' ' + yamlHint('inbox.transcription.daily_max_items') + '</p></div>';
+        '<details class="inbox-set-keys"><summary class="muted-xs">Config keys</summary><p class="muted-xs">' + keys.map(k => yamlHint('inbox.transcription.' + k)).join(' ') + '</p></details>' +
+        '</section>';
+    }
+    // inboxTxFieldsChanged follows the Provider and Mode selectors: it shows
+    // only the fields of the provider in use (or of the ones auto could
+    // pick) and the auto-mode sources, and rewrites the consent notice for
+    // the selected provider. Values are left alone.
+    function inboxTxFieldsChanged(el) {
+      const root = el && el.closest ? el.closest('[data-inbox-tx-section]') : null;
+      if (!root) return;
+      const val = name => { const e = root.querySelector('[data-inbox-tx-field="' + name + '"]'); return e ? String(e.value || '') : ''; };
+      const provider = val('provider') || 'auto';
+      const unready = String(root.dataset.inboxTxUnready || '').split(',').filter(Boolean);
+      root.querySelectorAll('[data-inbox-tx-for]').forEach(n => {
+        n.hidden = !String(n.dataset.inboxTxFor || '').split(' ').some(p => provider === p || (provider === 'auto' && unready.indexOf(p) < 0));
+      });
+      root.querySelectorAll('[data-inbox-tx-mode]').forEach(n => { n.hidden = val('mode') !== n.dataset.inboxTxMode; });
+      const notice = root.querySelector('[data-inbox-tx-consent]');
+      if (notice) notice.textContent = inboxTxConsentText(provider, root.dataset.inboxTxResolved || '');
     }
     // This month's minutes (money with Gemini or Deepgram, CPU time with
     // whisper), today's runs, the egress the hive needs, and a hint when auto

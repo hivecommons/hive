@@ -259,7 +259,7 @@
       const upcoming = data.upcoming || [];
       const recent = data.recent || [];
       const pending = upcoming.filter(e => e.status === 'awaiting_approval').length;
-      host.innerHTML = calendarFormHtml() +
+      host.innerHTML = (typeof emailInRowHtml === 'function' ? emailInRowHtml('calendar', data.email_in) : '') + calendarFormHtml() +
         '<div class="calendar-subsection"><div class="section-label m-0">Upcoming</div><div class="calendar-list">' + (upcoming.length ? upcoming.map(calendarRowHtml).join('') : '<p class="empty-dashed">Nothing scheduled.</p>') + '</div></div>' +
         (recent.length ? '<div class="calendar-subsection"><div class="section-label m-0">Recent</div><div class="calendar-list">' + recent.map(calendarRowHtml).join('') + '</div></div>' : '');
       setSectionSummary('calendar-section', upcoming.length + ' upcoming' + (pending ? ' · ' + pending + ' awaiting approval' : ''));
