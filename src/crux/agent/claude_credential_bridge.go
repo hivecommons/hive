@@ -475,27 +475,13 @@ func (m *Manager) relinkUnreadableAfterSignIn(agentName, link, target string) (*
 // metadata by descriptor, and a refusal (sharedfile.ErrUnsafeLocation) when
 // the shared directory or file is not what it should be.
 func promoteClaudeCredential(data []byte, target string, now time.Time) (string, error) {
-	canonical, _, err := canonicalClaudeCredential(data, now)
+	_, tok, err := canonicalClaudeCredential(data, now)
 	if err != nil {
 		return "", err
 	}
-	// Refuse before the backup copy, not only at the write: the copy lands in
-	// the same directory, and the directory is part of what is being checked.
-	info, err := sharedfile.CheckLocation(target)
-	if err != nil {
-		return "", err
-	}
-	staleShared := ""
-	if info != nil {
-		staleShared, err = preserveClaudeCredential(target, now)
-		if err != nil {
-			return "", fmt.Errorf("preserve shared credential: %w", err)
-		}
-	}
-	if err := sharedfile.Replace(target, canonical, claudeSharedCredentialMode, sharedfile.Options{PreserveOwner: true}); err != nil {
-		return staleShared, err
-	}
-	return staleShared, nil
+	// The one writer of the shared login: re-checks, under the caller's
+	// claudeBridgeMu, that tok is strictly newer (claude_shared_grant.go).
+	return replaceSharedClaudeLoginIfNewer(tok, target, now, true)
 }
 
 // preserveClaudeCredential copies path to a unique stale name beside it,
