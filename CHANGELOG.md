@@ -11,6 +11,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.292.0)
+
+### Added
+
+- **Agents declared in a managed repo's `.hive/agents/`** are discovered and held for owner approval, so a project adds an agent with a PR instead of a hive config edit. Every allowlisted managed repo (the same repo-sourced prompt allowlist as `definition_source`: the seed list or an owner-approved repo) is scanned at startup, every 15 minutes (`HIVE_REPO_AGENTS_INTERVAL`) and on a default-branch push touching `.hive/agents/`; each `<name>.yaml` shows up as pending under **Agents → Import → Declared in your repos** and nothing runs until an owner approves it. Approval registers the agent with `definition_source` (marked `discovered`) and, with a sibling `<name>.md`, `prompt_source`; backend, model, mode and tools stay owner-controlled on every later re-apply. Removing the file pauses the agent rather than deleting it. ([#18491](https://github.com/hivecommons/hive/issues/18491))
+
+### Fixed
+
+- **The hive no longer fights a repository's own triage tooling over `needs-triage`.** Once an issue was claimed or covered by a pull request (020, 030, 040) the issue stage sweep took `needs-triage` off on every pass, so in a repository whose own tooling owns that label — Prow's `require-matching-label` action re-adds it to every issue without a `triage/*` label — the two removed and re-added it without end: 312 removals on 16 `projectbluefin/utah` issues in one night, each also starting a GitHub Actions run there. The hive now removes the label at most once per issue; if anything puts it back (another tool or a person), it leaves it on that issue from then on, logs one INFO line naming the repo, issue and label, and remembers the yield in the stage store, so a restart does not restart the loop. Issues whose label never comes back — hive-filed self-reports included — lose a stale `needs-triage` once claimed exactly as before ([#18387](https://github.com/hivecommons/hive/issues/18387)).
+- Dashboard: an agent that is running but has never been kicked (for example the opt-in red team lane with every cadence at 0) now shows as idle instead of "running" forever, and the reviewer autoscaler no longer counts a never-tasked reviewer replica as busy. Both now use one shared check, `crux.Process.TurnInFlight` (#18458).
+- A multi-repo hive keeps exactly one `🐝 Hive Advisory Report`, in `project.primary_repo`. A candidate build had started opening an advisory report in every repo of `project.repos`, and posting the digest to each, so every monitored repo got its own report. The per-repo ensure and digest post are removed. The single report is still found by title and the `hive/advisory` label before anything is created, so a restart reuses it rather than filing a new one. Reports already opened in non-primary repos are not reopened by this build and can be closed ([#18568](https://github.com/hivecommons/hive/issues/18568)).
+- `needs-sha` now keeps the hive off an issue until the reporter adds a commit SHA, whatever the reporter-trust setting: an issue wearing it (the configured `issues.sha_hold_trusted_label`, default `needs-sha`) leaves every agent work lane, so nothing implements, decomposes or claims it. The SHA-hold sweep removes the label once a SHA appears, which releases the issue. This restores the safety the old `hold` gave after #18542 stopped the hive applying `hold`. The label is created with the description "Waiting on the reporter for the commit SHA; hive won't work this until it's added."
+
 ## 2026-11-17 (v5.291.0)
 
 ### Added
