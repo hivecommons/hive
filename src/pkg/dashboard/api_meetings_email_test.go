@@ -371,7 +371,7 @@ func TestCalendarEmailProofFailureReasons(t *testing.T) {
 		{wire.Auth{From: "bob@example.com", FromDomain: "example.com", SPF: "fail", SPFDomain: "example.com", DKIM: []wire.DKIMResult{{Domain: "example.com", Result: "fail"}}, DMARC: "fail"},
 			mailallow.ReasonCodeNotAligned, "neither SPF nor DKIM passed for example.com. Turn on DKIM"},
 		{wire.Auth{From: "eve@other.example", FromDomain: "other.example", SPF: "pass", Aligned: true},
-			mailallow.ReasonCodeFromMismatch, "different address than the one registered. Send it from bob@example.com"},
+			mailallow.ReasonCodeFromMismatch, "different address than the one registered: the mail's From was eve@other.example. Send it from bob@example.com"},
 	}
 	for _, c := range cases {
 		proof(e.Code, c.auth)
@@ -386,7 +386,7 @@ func TestCalendarEmailProofFailureReasons(t *testing.T) {
 	}
 	// The JSON field names the UI reads.
 	_, body := list("bob", "read")
-	for _, k := range []string{`"last_failure":{`, `"reason":"from_mismatch"`, `"spf":"pass"`, `"aligned":true`, `"message":"`} {
+	for _, k := range []string{`"last_failure":{`, `"reason":"from_mismatch"`, `"from":"eve@other.example"`, `"spf":"pass"`, `"aligned":true`, `"message":"`} {
 		if !strings.Contains(body, k) {
 			t.Errorf("list misses %s: %s", k, body)
 		}
@@ -421,6 +421,9 @@ func TestProofFailureMessage(t *testing.T) {
 	got := proofFailureMessage(mailallow.ProofFailure{Reason: mailallow.ReasonCodeNotAligned}, "ann@clubs.example")
 	if !strings.Contains(got, "passed for clubs.example.") {
 		t.Fatalf("not aligned without From domain: %q", got)
+	}
+	if got := proofFailureMessage(mailallow.ProofFailure{Reason: mailallow.ReasonCodeFromMismatch}, "a@b.example"); !strings.Contains(got, "From was "+proofFromNone+".") {
+		t.Fatalf("from mismatch without From: %q", got)
 	}
 	if got := proofFailureMessage(mailallow.ProofFailure{Reason: "other"}, "a@b.example"); !strings.Contains(got, "did not count") {
 		t.Fatalf("unknown reason: %q", got)

@@ -301,9 +301,19 @@ func TestProveFailureSummary(t *testing.T) {
 		if got.LastError != tc.text || f == nil || f.Reason != tc.reason || !f.At.Equal(c.t) {
 			t.Fatalf("%s: %+v %+v", tc.name, got, f)
 		}
+		if wantFrom := map[string]string{ReasonCodeFromMismatch: "mallory@evil.example"}[tc.reason]; f.From != wantFrom {
+			t.Fatalf("%s: from %q, want %q", tc.name, f.From, wantFrom)
+		}
 		if f.SPF != tc.auth.SPF || f.SPFDomain != tc.auth.SPFDomain || f.SPFAligned != tc.auth.SPFAligned || f.Aligned != tc.auth.Aligned || f.DMARC != tc.auth.DMARC {
 			t.Fatalf("%s: auth summary %+v", tc.name, f)
 		}
+	}
+	// A from-mismatch with no single parsable From header records "".
+	if _, err := s.ProveAuth(e.Code, wire.Auth{SPF: "pass"}); !errors.Is(err, ErrNotProven) {
+		t.Fatal(err)
+	}
+	if f := s.List("ann")[0].LastFailure; f.Reason != ReasonCodeFromMismatch || f.From != "" {
+		t.Fatalf("no From: %+v", f)
 	}
 	// The DKIM list is bounded, and a From without FromDomain still names
 	// its domain.

@@ -834,14 +834,14 @@
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                       }
                     },
                     "allowlist": {
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                       }
                     },
                     "invites_enabled": {
@@ -905,7 +905,7 @@
                   "properties": {
                     "email": {
                       "type": "object",
-                      "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
+                      "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                     },
                     "address": {
                       "type": "string"

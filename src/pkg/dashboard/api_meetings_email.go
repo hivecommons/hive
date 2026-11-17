@@ -257,6 +257,10 @@ type calendarEmailFailureView struct {
 	Message string `json:"message"`
 }
 
+// proofFromNone stands in for the From address of a from-mismatch proof
+// whose From header the receiver could not read as one address.
+const proofFromNone = "(none: the From header was missing, repeated or unparsable)"
+
 // proofFailureMessage says in plain words why a proof of email failed and
 // what to do about it.
 func proofFailureMessage(f mailallow.ProofFailure, email string) string {
@@ -269,7 +273,11 @@ func proofFailureMessage(f mailallow.ProofFailure, email string) string {
 		return "Your mail server did not authenticate this address: neither SPF nor DKIM passed for " + domain +
 			". Turn on DKIM for the domain, add the sending server to SPF, or prove an address from a provider that signs mail."
 	case mailallow.ReasonCodeFromMismatch:
-		return "The proof came from a different address than the one registered. Send it from " + email + " itself."
+		seen := f.From
+		if seen == "" {
+			seen = proofFromNone
+		}
+		return "The proof came from a different address than the one registered: the mail's From was " + seen + ". Send it from " + email + " itself."
 	case mailallow.ReasonCodeExpired:
 		return "The code expired. Remove and add the address again."
 	default:

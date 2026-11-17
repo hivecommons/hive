@@ -95,8 +95,12 @@ type Entry struct {
 // ProofFailure is the authentication summary of one failed proof mail: the
 // pass/fail per mechanism and the domains, never message content.
 type ProofFailure struct {
-	Reason      string            `json:"reason"`
-	At          time.Time         `json:"at"`
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
+	// From is the From header address the receiver parsed, kept only on a
+	// from_mismatch so the owner sees which address the proof came from;
+	// "" there means the header was missing, repeated or unparsable.
+	From        string            `json:"from,omitempty"`
 	FromDomain  string            `json:"from_domain,omitempty"`
 	SPF         string            `json:"spf,omitempty"`
 	SPFDomain   string            `json:"spf_domain,omitempty"`
@@ -357,6 +361,9 @@ func (s *Store) ProveAuth(code string, auth wire.Auth) (Entry, error) {
 			return *e, nil
 		}
 		e.LastFailure = newProofFailure(reason, now, auth)
+		if reason == ReasonCodeFromMismatch {
+			e.LastFailure.From = from
+		}
 		if err := s.saveLocked(); err != nil {
 			return Entry{}, err
 		}

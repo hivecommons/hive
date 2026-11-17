@@ -199,10 +199,10 @@ When a proof mail does not count, the address stays pending and its row says why
 | Reason | What the row says |
 | --- | --- |
 | `not_aligned` | Your mail server did not authenticate this address: neither SPF nor DKIM passed for the domain. Turn on DKIM for the domain, add the sending server to SPF, or prove an address from a provider that signs mail. |
-| `from_mismatch` | The proof came from a different address than the one registered. |
+| `from_mismatch` | The proof came from a different address than the one registered, and names the From address hive-mx parsed, or "(none: the From header was missing, repeated or unparsable)" when there was no single readable From. |
 | `expired` | The code expired. Remove and add the address again. |
 
-The row also shows when the attempt arrived and what hive-mx saw: the SPF result and domain, each DKIM signature's result and domain, and whether either was aligned with the From domain (DMARC alignment: the domain that passed SPF or DKIM must match the From address's domain). Only these results and domains are kept, never the message. **Check again** reloads the list after you fix it and resend. In the API, an unproven address carries `last_failure` with `reason`, `at`, `from_domain`, `spf`, `spf_domain`, `spf_aligned`, `dkim`, `dkim_aligned`, `dmarc`, `aligned` and `message`.
+The row also shows when the attempt arrived and what hive-mx saw: the SPF result and domain, each DKIM signature's result and domain, and whether either was aligned with the From domain (DMARC alignment: the domain that passed SPF or DKIM must match the From address's domain). Only these results and domains are kept, never the message. **Check again** reloads the list after you fix it and resend. In the API, an unproven address carries `last_failure` with `reason`, `at`, `from` (on `from_mismatch` only: the From address seen, shown in full because the address is the user's own entry), `from_domain`, `spf`, `spf_domain`, `spf_aligned`, `dkim`, `dkim_aligned`, `dmarc`, `aligned` and `message`.
 
 A proof mail whose code matches no address (a typo, or a code already used) has no row to land on. The owner sees it under **Recent proof attempts** in the same section (API: `recent_proof_attempts`, owner only) with the sender masked (`a***@example.com`), the time and "code not recognized". Hive keeps the latest 20 in memory; a restart clears them.
 
