@@ -3585,6 +3585,66 @@
         }
       }
     },
+    "/api/meetings/persona/preview": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Play a persona preset's introduction",
+        "description": "Speaks the preset's introduction (the text the persona says when asked to introduce itself, in the preset's language, with no pronoun note) in the preset's own voice through the meetings TTS service, and returns the audio, at most 2 MiB. The dashboard plays it when a preset card is clicked. Clips are cached in memory per TTS service, preset, voice and text, so a repeat does not call the TTS again; the X-Hive-Preview-Cache header says hit or miss. At most 30 requests per user per minute, an introduction of at most 600 characters, and a 20 second TTS timeout. Every failure is a JSON error. Owner or read-write.",
+        "parameters": [
+          {
+            "name": "preset",
+            "in": "query",
+            "required": true,
+            "description": "A persona preset id, for example betty.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The audio",
+            "headers": {
+              "X-Hive-Preview-Cache": {
+                "description": "hit when the clip came from the cache, else miss",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "hit",
+                    "miss"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or unknown preset, or the introduction is too long"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "429": {
+            "description": "Rate limited; Retry-After says when to try again"
+          },
+          "502": {
+            "description": "The TTS service failed or is not reachable"
+          },
+          "503": {
+            "description": "Meetings are turned off, TTS not configured, or config is not available"
+          }
+        }
+      }
+    },
     "/api/integration-orchestration": {
       "get": {
         "tags": ["System"],

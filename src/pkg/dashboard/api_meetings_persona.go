@@ -114,6 +114,9 @@ type meetingsAttendeeState struct {
 	// client calls the TTS service; nil uses a client with
 	// meetingsSampleTimeout.
 	client *http.Client
+	// preview caches and rate-limits the preset voice previews
+	// (api_meetings_persona_preview.go).
+	preview meetingsPreviewState
 }
 
 // meetingsAttendeeBoot is the attendee configuration a hive resolves at
@@ -169,6 +172,7 @@ func (s *Server) registerMeetingsPersonaRoutes() {
 	// The browser's <audio> element plays the GET form: the dashboard CSP
 	// has no media-src, so audio must come from the dashboard origin.
 	s.mux.HandleFunc("GET /api/meetings/persona/sample", s.handleMeetingsPersonaSample)
+	s.mux.HandleFunc("GET /api/meetings/persona/preview", s.handleMeetingsPersonaPreview)
 }
 
 // MeetingsPersonaUnpromptedView is the effective unprompted caps.
@@ -632,6 +636,7 @@ func meetingsSpeak(ctx context.Context, client *http.Client, cfg MeetingsTTSConf
 	req.Header.Set("Content-Type", "application/json")
 	if cfg.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+cfg.Token)
+		req.Header.Set(meetingsTTSAPIKeyHeader, cfg.Token)
 	}
 	resp, err := client.Do(req)
 	if err != nil {

@@ -3581,6 +3581,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	// at once (hivecommons/hive#16521).
 	github.SetCIEvidenceHook(b.dashSrv.RefreshCIEvidence)
 	wireSpektacularRunner(b.cfg, b.dashSrv, b.logger)
+	// The meetings TTS service, for the persona sample and the preset
+	// voice previews in Settings, Meeting attendee (#18710).
+	wireMeetingsTTS(b.cfg, b.dashSrv)
 	// Meetings (hivecommons/hive#18289): the Quorum child, only when
 	// meetings.enabled is set. Stopped on shutdown.
 	if sup := wireMeetings(b.ctx, b.cfg, b.logger); sup != nil {
