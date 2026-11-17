@@ -1,18 +1,41 @@
     /* Inbox (voice recordings / dictations triage) */
-    .inbox-toolbar { flex-wrap: wrap; gap: var(--sp-3); margin-bottom: var(--sp-4); }
-    .inbox-sources { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    /* Header: one quiet sources line (configured chips, "+N more", Connect
+       sources), then one toolbar row: primary actions left, view controls
+       right. Every control is an hv-btn of the compact size. */
+    .inbox-sources { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+    .inbox-sources-rest { margin-top: calc(-1 * var(--sp-1)); }
+    .inbox-sources-rest[hidden] { display: none; }
+    .inbox-sources-rest .kc-pill { opacity: var(--opacity-disabled, 0.6); }
+    .inbox-sources-more { color: var(--text-muted); }
+    .inbox-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+    .inbox-toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .inbox-toolbar .hv-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
     .inbox-toggle { display: inline-flex; align-items: center; gap: var(--sp-2); }
     .inbox-list { max-height: none; }
     .inbox-item { cursor: default; }
     .inbox-item-focus { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r); }
     .inbox-check { display: flex; align-items: flex-start; padding-top: var(--sp-1); }
     .inbox-icon { flex-shrink: 0; font-size: var(--fs-lg); line-height: 1; padding-top: var(--sp-1); }
+    /* Item: title, one meta line (source, time, length, id, Knowledge
+       state, fact link), a clamped preview, then one row of icon buttons. */
+    .inbox-title { margin-bottom: 0; }
+    .inbox-meta { overflow-wrap: anywhere; }
+    .inbox-meta-id { font-family: var(--font-mono); font-size: var(--fs-2xs, var(--fs-xs)); color: var(--text-faint); }
+    .inbox-meta-state { font-weight: var(--fw-semibold); color: var(--text-muted); }
+    .inbox-meta-state[data-status="ok"] { color: var(--green); }
+    .inbox-meta-state[data-status="not loaded"] { color: var(--orange); }
     .inbox-pills { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
     .inbox-link { font-size: var(--fs-xs); }
-    .inbox-summary { white-space: pre-wrap; font-size: var(--fs-sm); margin-top: var(--sp-2); }
-    .inbox-summary.is-collapsed { max-height: 6.5em; overflow: hidden; position: relative; }
-    .inbox-summary.is-collapsed::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2.5em; background: linear-gradient(to bottom, transparent, var(--surface)); }
-    .inbox-more { padding: 0; font-size: var(--fs-xs); }
+    .inbox-summary { white-space: pre-wrap; font-size: var(--fs-sm); margin-top: var(--sp-2); max-width: 80ch; overflow-wrap: anywhere; }
+    .inbox-summary.is-collapsed { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+    .inbox-more { padding-inline: var(--sp-1); font-size: var(--fs-xs); }
+    .inbox-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
+    .inbox-actions .inbox-action-text { gap: var(--sp-1); padding-inline: var(--sp-2); }
+    .inbox-ic { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .inbox-action.btn-icon .inbox-ic { width: 1.1em; height: 1.1em; }
+    .inbox-actions-sep { width: var(--line-width, 1px); align-self: stretch; margin-inline: var(--sp-2); background: var(--line-subtle); }
+    .inbox-action-danger { color: var(--text-muted); }
+    .inbox-action-danger:hover, .inbox-action-danger:focus-visible { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 40%, transparent); }
     .inbox-pending { margin-top: var(--sp-2); font-style: italic; }
     .inbox-media:not(:empty) { margin-top: var(--sp-2); }
     .inbox-email-image { display: block; max-width: min(100%, 320px); max-height: 240px; margin-top: var(--sp-2); border-radius: var(--radius-sm, 4px); }

@@ -99,7 +99,7 @@ see the issue linked from the changelog entry.
 spec on its own. To work the spec out **yourself**, interactively, send the
 item into an [Inception (spek)](inception.md) session instead: record, get a
 transcript (Plaud's, or the hive's own with 🎧 Transcribe, see
-[Inbox transcription](inbox-transcription.md)), then **🔗 Share ▾ → Hive →
+[Inbox transcription](inbox-transcription.md)), then **🔗 Share → Hive →
 spek…** (owners and read-write users). The dialog offers:
 
 - **Start a new session**: the name is the item's title, the group `inbox`,
@@ -147,7 +147,8 @@ Each Inbox item shows what the source has for the recording:
   transcript block the recording has: `transaction_polish` (AI-cleaned),
   then `transaction` (raw), then `outline`, following `next_cursor` pages.
 - **Duration and recording time** — from the listing.
-- **▶ Play recording** (owner or read-write) — plays the recording in an
+- **▶ Play recording** (the play icon button, named for screen readers and
+  on hover; owner or read-write) — plays the recording in an
   inline HTML5 player that streams from the hive's own origin
   (`GET /api/inbox/{source}/{id}/audio/stream`). The hive mints a fresh
   presigned link (Plaud: `get_file`, valid 24h), fetches the audio itself and
@@ -168,7 +169,8 @@ Each Inbox item shows what the source has for the recording:
   presigned link itself (`{url, expires_at}`, audited as `inbox_audio`) for
   API clients. The Plaud card's *Include 24h audio link* option only decides
   whether a sync also writes a link into the fact.
-- **🔗 Share ▾** — the only per-item menu besides ▶ Play and Transcript
+- **🔗 Share** (the link icon button) — the only per-item menu besides ▶ Play
+  and the Transcript / Text toggle
   (arrow keys move, Esc closes and returns focus). It has two labelled groups.
   **Hive** (owners and read-write users; read users see only Link):
   **RFC…** (**Retry RFC…** after a failure), **spek…** (into an
