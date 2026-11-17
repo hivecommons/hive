@@ -163,8 +163,9 @@ type Deps struct {
 
 // input is one queued engine input.
 type input struct {
-	line  *Line
-	offer string
+	line    *Line
+	partial *Line
+	offer   string
 }
 
 // Engine is one meeting's persona. Observe, Offer, Restyle and Skip are
@@ -200,6 +201,9 @@ type Engine struct {
 	lastPost time.Time
 	total    int
 	acks     int
+	// earlyAck is when each speaker was acknowledged from a partial
+	// transcript; their final line then gets no second ack.
+	earlyAck map[string]time.Time
 }
 
 type timedLine struct {
@@ -227,6 +231,7 @@ func New(s Settings, d Deps) *Engine {
 		retrieved: make(chan retrieval, inboxDepth),
 		answers:   make(chan answered, inboxDepth),
 		pending:   map[int]*pending{},
+		earlyAck:  map[string]time.Time{},
 		done:      make(chan struct{}),
 	}
 }
@@ -269,6 +274,25 @@ func (e *Engine) Observe(l Line) {
 	case e.in <- input{line: &l}:
 	default:
 		e.log.Warn("[meetings] persona input queue full; line skipped")
+	}
+}
+
+// ObservePartial offers one partial (not yet final) spoken line. When it
+// already addresses the persona with a request and a spoken answer is
+// wanted, the acknowledgement is spoken at once instead of after the
+// final transcript; the answer still waits for the final line. Lines that
+// do not address her are dropped here, so partials never crowd the queue.
+func (e *Engine) ObservePartial(l Line) {
+	if !l.Spoken || strings.TrimSpace(l.Text) == "" {
+		return
+	}
+	if t := e.match.Match(l.Text, true); !t.Addressed || t.Intro {
+		return
+	}
+	select {
+	case e.in <- input{partial: &l}:
+	default:
+		// A partial is only an early hint; the final line follows.
 	}
 }
 
@@ -382,9 +406,12 @@ func (e *Engine) run() {
 		case <-e.ctx.Done():
 			return
 		case in := <-e.in:
-			if in.line != nil {
+			switch {
+			case in.line != nil:
 				e.onLine(*in.line)
-			} else {
+			case in.partial != nil:
+				e.onPartial(*in.partial)
+			default:
 				e.onOffer(in.offer)
 			}
 		case id := <-e.timers:
