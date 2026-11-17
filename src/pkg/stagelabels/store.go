@@ -251,6 +251,19 @@ type Record struct {
 	// An out-of-cycle fact (a claim, its release, a start mark) consults it
 	// so a PR that still covers the issue is not forgotten between sweeps.
 	CoveringPR string `json:"covering_pr,omitempty"`
+	// TriageClearedAt is when the hive's stage write last took the
+	// reporter-trust awaiting label (`needs-triage`) off this issue once
+	// its stage settled triage (hivecommons/hive#14586). Zero when the hive
+	// never removed it.
+	TriageClearedAt time.Time `json:"triage_cleared_at,omitempty"`
+	// TriageClearYielded is set once the awaiting label was seen back on
+	// the issue after the hive removed it: another writer (a repository's
+	// own triage tooling, a person) owns it there, so the hive never
+	// removes it from this issue again (hivecommons/hive#18387). Sticky for
+	// the life of the record: the other writer re-adds within seconds, so
+	// a reset on a read that finds the label briefly absent would restart
+	// the remove / re-add loop.
+	TriageClearYielded bool `json:"triage_clear_yielded,omitempty"`
 	// AdoptedHeadAt is when AdoptedHead last moved under a live in-place
 	// adoption: the adoption itself, then each hive push. Zero only on
 	// records written before it existed (hivecommons/hive#13040); the
@@ -1404,6 +1417,38 @@ func (s *Store) MarkStallCommented(key string) {
 	r.StallCommented = true
 	s.items[key] = r
 	s.dirty = true
+}
+
+// NoteTriageCleared records that the hive's stage write took the
+// reporter-trust awaiting label off key at now. A missing record is left
+// missing: the reconciler observes the stage before it writes.
+func (s *Store) NoteTriageCleared(key string, now time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.TriageClearedAt.Equal(now) {
+		return
+	}
+	r.TriageClearedAt = now
+	s.items[key] = r
+	s.dirty = true
+}
+
+// MarkTriageClearYielded records that the awaiting label came back on key
+// after the hive removed it, so the hive leaves it there from now on. It
+// reports whether this call set the mark, so the caller logs the yield
+// once.
+func (s *Store) MarkTriageClearYielded(key string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.TriageClearYielded {
+		return false
+	}
+	r.TriageClearYielded = true
+	s.items[key] = r
+	s.dirty = true
+	return true
 }
 
 // MarkNudged records that nudge number n for head was posted at now. A new

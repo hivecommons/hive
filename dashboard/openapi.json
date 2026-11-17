@@ -7870,6 +7870,364 @@
         }
       }
     },
+    "/api/agents/discovered": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "List agents discovered in managed repos",
+        "description": "Agent definitions found under .hive/agents/*.yaml in managed repos that pass the repo-sourced prompt allowlist, with their approval status. Nothing runs until an owner approves an entry.",
+        "responses": {
+          "200": {
+            "description": "Discovered definitions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "False when discovery is not running (no GitHub client)."
+                    },
+                    "pending": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "owner/repo:path of the definition file."
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "prompt_path": {
+                            "type": "string",
+                            "description": "Sibling <name>.md that becomes prompt_source on approval, when present."
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Agent key the definition maps to."
+                          },
+                          "display_name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "emoji": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "invalid",
+                              "approved",
+                              "rejected",
+                              "orphaned"
+                            ]
+                          },
+                          "agent": {
+                            "type": "string",
+                            "description": "Registered agent, once approved."
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "first_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "decided_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "decided_by": {
+                            "type": "string"
+                          },
+                          "orphaned_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/discovered/approve": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Approve a discovered agent",
+        "description": "Owner-only. Re-reads the definition through the allowlist gate and registers the agent with definition_source (marked discovered) and, when a sibling <name>.md exists, prompt_source. Backend, model and mode come from this request, never the file; tools stay unset for the owner to grant.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Agent key; defaults to the definition's normalized metadata.name."
+                  },
+                  "backend": {
+                    "type": "string",
+                    "description": "Defaults to copilot."
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "ADVISORY",
+                      "ISSUES_ONLY",
+                      "ISSUES_AND_PRS",
+                      "ISSUES_PRS_MERGE",
+                      "NO_GITHUB"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "approved"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, mode or agent name"
+          },
+          "403": {
+            "description": "Owner role required, or the repo is no longer allowlisted"
+          },
+          "404": {
+            "description": "Unknown entry"
+          },
+          "409": {
+            "description": "Entry is not pending, or the agent name is taken"
+          },
+          "502": {
+            "description": "The definition could not be read or parsed"
+          },
+          "503": {
+            "description": "Discovery is not running"
+          }
+        }
+      }
+    },
+    "/api/agents/discovered/reject": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Reject a discovered agent",
+        "description": "Owner-only. A rejected definition stays rejected until its file is removed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "rejected"
+                    },
+                    "id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "404": {
+            "description": "Unknown entry"
+          },
+          "409": {
+            "description": "Entry is not pending"
+          },
+          "503": {
+            "description": "Discovery is not running"
+          }
+        }
+      }
+    },
+    "/api/agents/discovered/refresh": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Rescan managed repos for agent definitions",
+        "description": "Owner-only. Rescans every managed repo now instead of waiting for the timer and returns the refreshed list.",
+        "responses": {
+          "200": {
+            "description": "Discovered definitions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "False when discovery is not running (no GitHub client)."
+                    },
+                    "pending": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "owner/repo:path of the definition file."
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "prompt_path": {
+                            "type": "string",
+                            "description": "Sibling <name>.md that becomes prompt_source on approval, when present."
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Agent key the definition maps to."
+                          },
+                          "display_name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "emoji": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "invalid",
+                              "approved",
+                              "rejected",
+                              "orphaned"
+                            ]
+                          },
+                          "agent": {
+                            "type": "string",
+                            "description": "Registered agent, once approved."
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "first_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "decided_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "decided_by": {
+                            "type": "string"
+                          },
+                          "orphaned_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "503": {
+            "description": "Discovery is not running"
+          }
+        }
+      }
+    },
     "/api/agents/{name}": {
       "delete": {
         "tags": [

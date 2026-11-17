@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -91,8 +92,26 @@ func (c *Client) defaultStageFactSink() stageengine.FactSink {
 		if err != nil {
 			return f, err
 		}
-		return c.enrichCoveringPR(ctx, store, f)
+		if f, err = c.enrichCoveringPR(ctx, store, f); err != nil {
+			return f, err
+		}
+		return enrichTriageClearYield(store, f, c.logger), nil
 	}})
+}
+
+// enrichTriageClearYield tells the deriver whether the hive yielded the
+// reporter-trust awaiting label on this issue (settleTriageClear, the same
+// decision the issue sweep takes): an out-of-cycle fact — a claim, a start
+// mark, a covering PR's webhook — must not take off a label that came back
+// after the hive's one removal (hivecommons/hive#18387). It runs on the
+// fresh labels enrichStageFacts read, so a sink submission that is first
+// to see the label back books the yield itself.
+func enrichTriageClearYield(store *stagelabels.Store, f stageengine.Facts, logger *slog.Logger) stageengine.Facts {
+	if store == nil || f.Issue == nil || f.Ref.Kind != stagelabels.IssueItem {
+		return f
+	}
+	_, f.Issue.TriageClearYielded = settleTriageClear(store, f.Ref.Key(), f.Ref.FullRepo(), f.Ref.Number, f.Labels, logger)
+	return f
 }
 
 // stageRef builds the engine's Ref for an item of this client.

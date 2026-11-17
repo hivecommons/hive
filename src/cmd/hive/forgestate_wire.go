@@ -45,6 +45,9 @@ func (b *boot) forgeStateOpenPRs() *github.ForgeStateView {
 // with the cache off every delivery is a no-op.
 func (b *boot) webhookDeliveryFunc() func(event, deliveryID string, payload []byte, res github.WebhookEventResult) {
 	return func(event, deliveryID string, payload []byte, res github.WebhookEventResult) {
+		// A push touching .hive/agents/ rescans that repo's declared
+		// agents (#18491), whether or not the forge view is up.
+		b.noteRepoAgentPush(event, payload)
 		view := b.forgeView
 		trigger := b.sweepTrigger
 		if view == nil || trigger == nil {

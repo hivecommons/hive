@@ -11,6 +11,17 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.291.0)
+
+### Added
+
+- Meetings agent-backend mode now answers through `copilot` and `omp` (one tool-less CLI per call with the agents' sign-in, usage charged to the meeting), through `vllm`, `llm-d` and every named model gateway on the OpenAI-compatible path, and on hives that sign Claude in only with `HIVE_CLAUDE_OAUTH_TOKEN`; `codex`, `gemini`, watsonx and the other CLIs are refused at validation and in the Settings picker with the specific reason.
+
+### Changed
+
+- Sentinel: in `github.notifications.mode: quiet` (the default) the informational notice on a trusted author's PR (no label, merge not blocked) is now a `sentinel` section of the PR's `hive:status` card, edited in place, instead of a new comment per PR. A sentinel hold (`sentinel-alert` label, maintainer review required), including one from `sentinel.trusted_authors_block`, still posts its own comment, and `normal` mode is unchanged (#18453).
+- The hive no longer applies `hold` itself: a PR its ACMM level gate holds for review now gets `ready-for-review`, and items blocked on a human decision (reporter trust, self-authorization, the hold guard's re-hold, owner-only decisions) get `decision-needed`; both block merging exactly like `hold`, carry a label description saying who acts next, and are renameable via `governor.labels.ready_for_review` / `governor.labels.decision_needed`. A `hold` a person adds still means hands-off. On boot the hive swaps the `hold` labels it can prove it applied (App label event plus its gate notice) for the new labels and leaves every other `hold` alone; the SHA-hold sweep now gives every reporter `needs-sha` instead of `hold`.
+
 ## 2026-11-17 (v5.290.0)
 
 ### Added

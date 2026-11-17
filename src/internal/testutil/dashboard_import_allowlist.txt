@@ -75,6 +75,8 @@ github.com/hivecommons/hive/pkg/policies
 github.com/hivecommons/hive/pkg/promptsrc
 github.com/hivecommons/hive/pkg/rebasemerge
 github.com/hivecommons/hive/pkg/releasenotes
+# repoagents: /api/agents/discovered* handlers list and approve the .hive/agents/ discoverer's entries; the discoverer itself routes through Dependencies.RepoAgents (hivecommons/hive#18491).
+github.com/hivecommons/hive/pkg/repoagents
 github.com/hivecommons/hive/pkg/resolve
 github.com/hivecommons/hive/pkg/retro
 github.com/hivecommons/hive/pkg/review
