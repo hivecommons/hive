@@ -1,0 +1,446 @@
+package customers
+
+import (
+	"errors"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+var (
+	ownerV = Viewer{User: "olivia", Full: true, Owner: true}
+	rwV    = Viewer{User: "rita", Full: true}
+	readV  = Viewer{User: "reed"}
+)
+
+func newService(t *testing.T) *Service {
+	t.Helper()
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "customers"), newClock().now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := OpenIndex(filepath.Join(dir, "graph"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = index.Close() })
+	return NewService(store, index, nil)
+}
+
+func TestEveryRoleSeesTheirOwnMe(t *testing.T) {
+	s := newService(t)
+	ids := map[string]bool{}
+	for _, v := range []Viewer{ownerV, rwV, readV} {
+		me, err := s.Get(v, MeID)
+		if err != nil {
+			t.Fatalf("%s: Get me: %v", v.User, err)
+		}
+		if !me.Me || me.Identity(KindHiveUser) != v.User || me.Origin != OriginHiveUser {
+			t.Fatalf("%s: me = %+v", v.User, me)
+		}
+		ids[me.ID] = true
+		// The real id works as well as the alias.
+		again, err := s.Get(v, me.ID)
+		if err != nil || !again.Me {
+			t.Fatalf("%s: Get by own id = %+v, %v", v.User, again, err)
+		}
+	}
+	if len(ids) != 3 {
+		t.Fatalf("three users share profiles: %v", ids)
+	}
+	if _, err := s.Get(Viewer{}, MeID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("a viewer with no name = %v, want ErrForbidden", err)
+	}
+	if _, err := s.List(Viewer{User: "  "}); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("List with no name = %v, want ErrForbidden", err)
+	}
+}
+
+// TestReadOnlyReachesOnlyItself is the access contract: without the full
+// view a viewer cannot see or change anyone else through any method, and an
+// id they may not see answers exactly as one that does not exist.
+func TestReadOnlyReachesOnlyItself(t *testing.T) {
+	s := newService(t)
+	other, err := s.Add(ownerV, "Ada", []Identity{{Kind: KindEmail, Value: "ada@example.com"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ownerMe, _ := s.Get(ownerV, MeID)
+	if _, err := s.Store().Observe([]Observation{{Kind: KindGitHub, Value: "stranger", Predicate: PredAuthored, Artefact: IssueRef("o/r", 1)}}); err != nil {
+		t.Fatal(err)
+	}
+	sid := s.Store().Suggestions()[0].ID
+
+	list, err := s.List(readV)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if list.Full || list.Owner || len(list.People) != 0 || len(list.Suggestions) != 0 || !list.Me.Me {
+		t.Fatalf("read-only list leaks: %+v", list)
+	}
+
+	_, missing := s.Get(readV, "p_doesnotexist")
+	for _, id := range []string{other.ID, ownerMe.ID} {
+		if _, err := s.Get(readV, id); !errors.Is(err, ErrNotFound) || err.Error() != missing.Error() {
+			t.Fatalf("Get(%s) as read-only = %v, want the same answer as a missing id (%v)", id, err, missing)
+		}
+		if s.CanSee(readV, id) {
+			t.Fatalf("CanSee(%s) as read-only", id)
+		}
+		for _, op := range []string{OpName, OpNotes, OpIdentityAdd, OpIdentityRemove, OpTag, OpGoalAdd, OpGoalEdit, OpGoalConfirm, OpGoalReject, OpSatisfactionSet, OpSatisfactionConfirm, OpSatisfactionReject} {
+			_, err := s.Edit(readV, id, Edit{Op: op, Name: "x", Notes: "x", Kind: "github", Value: "x", Key: "email:ada@example.com", Tag: "x", State: TagOn, Text: "x", Level: "neutral"})
+			if !errors.Is(err, ErrNotFound) {
+				t.Fatalf("Edit(%s, %s) as read-only = %v, want ErrNotFound", id, op, err)
+			}
+		}
+		if _, err := s.Forget(readV, id); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("Forget(%s) as read-only = %v", id, err)
+		}
+	}
+	if _, err := s.Add(readV, "Sneaky", nil); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("Add as read-only = %v", err)
+	}
+	if _, err := s.Accept(readV, sid); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("Accept as read-only = %v", err)
+	}
+	if err := s.Dismiss(readV, sid); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("Dismiss as read-only = %v", err)
+	}
+	if _, err := s.Forget(readV, MeID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("a read-only user forgetting themselves = %v", err)
+	}
+	// Nothing changed for the people the read-only user tried to reach.
+	after, _ := s.Get(ownerV, other.ID)
+	if after.Name != "Ada" || len(after.Identities) != 1 || len(after.Tags) != 0 || len(after.Goals) != 0 {
+		t.Fatalf("a refused edit changed the target: %+v", after)
+	}
+	if len(s.Store().Suggestions()) != 1 {
+		t.Fatal("a refused accept or dismiss changed the suggestions")
+	}
+}
+
+func TestReadOnlyEditsItsOwnNameIdentitiesTagsAndGoals(t *testing.T) {
+	s := newService(t)
+	steps := []Edit{
+		{Op: OpName, Name: "Reed R."},
+		{Op: OpTag, Tag: TagEndUser, State: TagOn},
+		{Op: OpGoalAdd, Text: "Get exports working"},
+		{Op: OpIdentityAdd, Kind: "name", Value: "Reed Richards"},
+	}
+	var me PersonView
+	var err error
+	for _, e := range steps {
+		if me, err = s.Edit(readV, MeID, e); err != nil {
+			t.Fatalf("self edit %s: %v", e.Op, err)
+		}
+	}
+	if me.Name != "Reed R." || !me.HasTag(TagEndUser) || len(me.Goals) != 1 || me.Goals[0].By != "reed" {
+		t.Fatalf("me after self edits = %+v", me)
+	}
+	gid := me.Goals[0].ID
+	if me, err = s.Edit(readV, MeID, Edit{Op: OpGoalEdit, GoalID: gid, Text: "Get CSV exports working"}); err != nil || me.Goals[0].Text != "Get CSV exports working" {
+		t.Fatalf("goal edit = %+v, %v", me.Goals, err)
+	}
+	if _, err := s.Store().SuggestGoals(me.ID, []GoalSuggestion{{Text: "Wants an API", Evidence: []string{IssueRef("o/r", 3)}}}); err != nil {
+		t.Fatal(err)
+	}
+	me, _ = s.Get(readV, MeID)
+	var suggested string
+	for _, g := range me.Goals {
+		if g.State == StateSuggested {
+			suggested = g.ID
+		}
+	}
+	if suggested == "" {
+		t.Fatal("a read-only user must see goal suggestions about themselves")
+	}
+	if me, err = s.Edit(readV, MeID, Edit{Op: OpGoalConfirm, GoalID: suggested}); err != nil || len(me.ConfirmedGoals()) != 2 {
+		t.Fatalf("goal confirm = %+v, %v", me.Goals, err)
+	}
+	if me, err = s.Edit(readV, MeID, Edit{Op: OpGoalReject, GoalID: gid}); err != nil || len(me.Goals) != 1 {
+		t.Fatalf("goal reject = %+v, %v", me.Goals, err)
+	}
+	if me, err = s.Edit(readV, MeID, Edit{Op: OpTag, Tag: TagEndUser, State: TagAuto}); err != nil || me.HasTag(TagEndUser) {
+		t.Fatalf("tag reset = %+v, %v", me.Tags, err)
+	}
+
+	// Not theirs to change: notes and the satisfaction assessment.
+	for _, e := range []Edit{
+		{Op: OpNotes, Notes: "I am great"},
+		{Op: OpSatisfactionSet, Level: "satisfied"},
+		{Op: OpSatisfactionConfirm},
+		{Op: OpSatisfactionReject},
+	} {
+		if _, err := s.Edit(readV, MeID, e); !errors.Is(err, ErrForbidden) {
+			t.Fatalf("self %s as read-only = %v, want ErrForbidden", e.Op, err)
+		}
+	}
+	for _, e := range []Edit{{Op: "merge"}, {Op: OpTag, Tag: "x", State: "maybe"}} {
+		if _, err := s.Edit(ownerV, MeID, e); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("bad edit %+v = %v", e, err)
+		}
+	}
+}
+
+func TestReadOnlyViewHidesMaintainerMaterial(t *testing.T) {
+	s := newService(t)
+	me, _ := s.Get(readV, MeID)
+	if _, err := s.Edit(ownerV, me.ID, Edit{Op: OpNotes, Notes: "churn risk, call them"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Edit(ownerV, me.ID, Edit{Op: OpSatisfactionSet, Level: string(LevelAtRisk)}); err != nil {
+		t.Fatal(err)
+	}
+	other, _ := s.Add(ownerV, "Reed alt", []Identity{{Kind: KindGitHub, Value: "reed-gh"}})
+	if err := s.Store().AddHint(me.ID, other.ID, "same name"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Store().Merge(me.ID, other.ID, "olivia"); err != nil {
+		t.Fatal(err)
+	}
+	third, _ := s.Add(ownerV, "Third", nil)
+	if err := s.Store().AddHint(me.ID, third.ID, "same name"); err != nil {
+		t.Fatal(err)
+	}
+
+	mine, err := s.Get(readV, MeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mine.Notes != "" || mine.Satisfaction.Level != "" || len(mine.MergedFrom) != 0 || len(mine.Hints) != 0 || mine.Counts != nil {
+		t.Fatalf("read-only view carries maintainer material: %+v", mine)
+	}
+	full, err := s.Get(ownerV, me.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if full.Notes == "" || full.Satisfaction.Level != LevelAtRisk || len(full.MergedFrom) != 1 || len(full.Hints) != 1 {
+		t.Fatalf("full view is missing material: %+v", full)
+	}
+	if full.Me {
+		t.Fatal("another person's profile is not the owner's me")
+	}
+}
+
+// TestReadOnlyIdentityIsAClaimNotAKey: what a read-only user says about
+// themselves is shown on their profile and does nothing else, and the
+// answer is the same whether or not someone else holds the identity.
+func TestReadOnlyIdentityIsAClaimNotAKey(t *testing.T) {
+	s := newService(t)
+	ada, _ := s.Add(ownerV, "Ada", []Identity{{Kind: KindEmail, Value: "ada@example.com"}})
+
+	taken, err := s.Edit(readV, MeID, Edit{Op: OpIdentityAdd, Kind: "email", Value: "ADA@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	free, err := s.Edit(readV, MeID, Edit{Op: OpIdentityAdd, Kind: "email", Value: "free@example.com"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if taken.Hinted || free.Hinted {
+		t.Fatal("the answer must not say whether someone else holds the identity")
+	}
+	claims := 0
+	for _, i := range free.Identities {
+		if i.Kind == KindEmail {
+			claims++
+			if !i.Claimed {
+				t.Fatalf("a read-only user's identity must be an unconfirmed claim: %+v", i)
+			}
+		}
+	}
+	if claims != 2 {
+		t.Fatalf("both claims must show on the profile alike, got %d", claims)
+	}
+	if owner, _ := s.Store().Lookup(KindEmail, "ada@example.com"); owner.ID != ada.ID {
+		t.Fatal("a claim took an identity from its owner")
+	}
+	if _, ok := s.Store().Lookup(KindEmail, "free@example.com"); ok {
+		t.Fatal("a claim must not resolve to anyone")
+	}
+	// A claim attracts no activity: the address is still unowned.
+	owners, _ := s.Store().Observe([]Observation{{Kind: KindEmail, Value: "free@example.com", Predicate: PredSent, Artefact: InboxRef("email", "m1")}})
+	if len(owners) != 0 {
+		t.Fatalf("a claim attracted edges: %v", owners)
+	}
+	if len(s.Store().Hints("")) != 0 {
+		t.Fatal("a claim must not raise a hint by itself")
+	}
+
+	// Someone with the full view confirms the free one: now it is a key.
+	me := free
+	confirmed, err := s.Edit(rwV, me.ID, Edit{Op: OpIdentityAdd, Kind: "email", Value: "free@example.com"})
+	if err != nil || confirmed.Hinted || !confirmed.HasIdentity("email:free@example.com") {
+		t.Fatalf("confirm = %+v, %v", confirmed, err)
+	}
+	if owner, ok := s.Store().Lookup(KindEmail, "free@example.com"); !ok || owner.ID != me.ID {
+		t.Fatal("a confirmed claim must resolve")
+	}
+	// Confirming the taken one links nothing and asks the question.
+	conflict, err := s.Edit(rwV, me.ID, Edit{Op: OpIdentityAdd, Kind: "email", Value: "ada@example.com"})
+	if err != nil || !conflict.Hinted || conflict.HasIdentity("email:ada@example.com") {
+		t.Fatalf("confirming a taken claim = %+v, %v", conflict, err)
+	}
+	// The claimant can withdraw a claim; that pins nothing.
+	if _, err := s.Edit(readV, MeID, Edit{Op: OpIdentityRemove, Key: "email:ada@example.com"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(s.Store().Pins()) != 0 {
+		t.Fatalf("withdrawing a claim pinned something: %v", s.Store().Pins())
+	}
+	// A hive user identity can never be claimed.
+	if _, err := s.Edit(readV, MeID, Edit{Op: OpIdentityAdd, Kind: "hive_user", Value: "olivia"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("claiming a hive user = %v", err)
+	}
+	// Forgetting the claimant does not tombstone what they only claimed.
+	if _, err := s.Edit(readV, MeID, Edit{Op: OpIdentityAdd, Kind: "github", Value: "someone-else"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Forget(ownerV, me.ID); err != nil {
+		t.Fatal(err)
+	}
+	if s.Store().Forgotten(KindGitHub, "someone-else") {
+		t.Fatal("forgetting a claimant tombstoned an identity they only claimed")
+	}
+	if !s.Store().Forgotten(KindEmail, "free@example.com") {
+		t.Fatal("a confirmed identity must be tombstoned on forget")
+	}
+}
+
+func TestAutoLinkUpgradesAClaim(t *testing.T) {
+	s := newService(t)
+	me, err := s.Edit(readV, MeID, Edit{Op: OpIdentityAdd, Kind: "github", Value: "reed"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	linked, err := s.Store().AutoLink(me.ID, Identity{Kind: KindGitHub, Value: "reed", Source: "device_flow"})
+	if err != nil || !linked {
+		t.Fatalf("a proven link must upgrade a claim: %v, %v", linked, err)
+	}
+	got, _ := s.Store().Get(me.ID)
+	n := 0
+	for _, i := range got.Identities {
+		if i.Kind == KindGitHub {
+			n++
+			if i.Claimed || i.Source != "device_flow" {
+				t.Fatalf("upgraded identity = %+v", i)
+			}
+		}
+	}
+	if n != 1 {
+		t.Fatalf("the claim was duplicated: %d github identities", n)
+	}
+}
+
+func TestFullViewersManageOwnerForgets(t *testing.T) {
+	s := newService(t)
+	ada, err := s.Add(rwV, "Ada", []Identity{{Kind: KindGitHub, Value: "ada"}, {Kind: KindEmail, Value: "ada@example.com"}})
+	if err != nil {
+		t.Fatalf("read-write Add: %v", err)
+	}
+	if _, err := s.Index().Put([]Edge{
+		edge(ada.ID, PredAuthored, IssueRef("o/r", 1), "github:ada", 1),
+		edge(ada.ID, PredSent, InboxRef("email", "m1"), "email:ada@example.com", 2),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := s.Get(rwV, ada.ID)
+	if err != nil || got.Counts[PredAuthored] != 1 || got.Counts[PredSent] != 1 {
+		t.Fatalf("Get with counts = %+v, %v", got.Counts, err)
+	}
+	// Removing an identity drops exactly the edges it produced.
+	got, err = s.Edit(rwV, ada.ID, Edit{Op: OpIdentityRemove, Key: "email:ada@example.com"})
+	if err != nil || got.Counts[PredSent] != 0 || got.Counts[PredAuthored] != 1 {
+		t.Fatalf("after identity remove = %+v, %v", got.Counts, err)
+	}
+	if _, err := s.Edit(rwV, ada.ID, Edit{Op: OpSatisfactionSet, Level: "at_risk"}); err != nil {
+		t.Fatalf("read-write satisfaction: %v", err)
+	}
+	if _, err := s.Edit(rwV, ada.ID, Edit{Op: OpNotes, Notes: "met at the summit"}); err != nil {
+		t.Fatalf("read-write notes: %v", err)
+	}
+
+	list, err := s.List(rwV)
+	if err != nil || !list.Full || list.Owner || len(list.People) != 1 || list.People[0].ID != ada.ID {
+		t.Fatalf("read-write list = %+v, %v", list, err)
+	}
+	if ol, _ := s.List(ownerV); !ol.Owner || len(ol.People) != 2 {
+		t.Fatalf("owner list = %+v", ol)
+	}
+
+	// Forget is the owner's alone.
+	if _, err := s.Forget(rwV, ada.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("read-write Forget = %v, want ErrForbidden", err)
+	}
+	if _, err := s.Forget(Viewer{User: "x", Owner: true}, ada.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("Forget without the full view = %v", err)
+	}
+	n, err := s.Forget(ownerV, ada.ID)
+	if err != nil || n != 1 {
+		t.Fatalf("owner Forget = %d, %v; want 1 edge removed", n, err)
+	}
+	if _, err := s.Get(ownerV, ada.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Get after forget = %v", err)
+	}
+	if s.Index().Len() != 0 {
+		t.Fatalf("edges survive a forget: %d", s.Index().Len())
+	}
+	if !s.Store().Forgotten(KindGitHub, "ada") {
+		t.Fatal("forget left no tombstone")
+	}
+	if _, err := s.Forget(ownerV, "p_missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("Forget missing = %v", err)
+	}
+}
+
+func TestAcceptAndDismissNeedTheFullView(t *testing.T) {
+	s := newService(t)
+	if _, err := s.Store().Observe([]Observation{
+		{Kind: KindGitHub, Value: "carol", Predicate: PredAuthored, Artefact: IssueRef("o/r", 1)},
+		{Kind: KindGitHub, Value: "dan", Predicate: PredAuthored, Artefact: IssueRef("o/r", 2)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]string{}
+	for _, sg := range s.Store().Suggestions() {
+		ids[sg.Value] = sg.ID
+		if strings.Contains(sg.ID, sg.Value) {
+			t.Fatalf("suggestion id %q is derived from the identity", sg.ID)
+		}
+	}
+	carol, err := s.Accept(rwV, ids["carol"])
+	if err != nil || carol.Origin != OriginAccepted || carol.Identities[0].By != "rita" {
+		t.Fatalf("Accept = %+v, %v", carol, err)
+	}
+	if err := s.Dismiss(rwV, ids["dan"]); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Accept(rwV, ids["dan"]); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("accepting a dismissed suggestion = %v", err)
+	}
+	if len(s.Store().Suggestions()) != 0 {
+		t.Fatalf("suggestions left: %v", s.Store().Suggestions())
+	}
+}
+
+func TestServiceWithoutIndex(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "customers"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := NewService(store, nil, Resolvers{})
+	if s.Index() != nil || s.Resolvers() == nil {
+		t.Fatal("accessors")
+	}
+	ada, err := s.Add(ownerV, "Ada", []Identity{{Kind: KindGitHub, Value: "ada"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.Edit(ownerV, ada.ID, Edit{Op: OpIdentityRemove, Key: "github:ada"}); err != nil || got.Counts != nil {
+		t.Fatalf("identity remove without an index = %+v, %v", got, err)
+	}
+	if n, err := s.Forget(ownerV, ada.ID); err != nil || n != 0 {
+		t.Fatalf("Forget without an index = %d, %v", n, err)
+	}
+}
