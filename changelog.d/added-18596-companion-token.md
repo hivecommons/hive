@@ -1,0 +1,1 @@
+- Meetings: per-user desktop companion tokens (`/companion/token`), admitted only on the companion meeting routes at the user's live role; hosted hubs pass `/api/companion/info` and `/api/companion/meetings/*` through to the hive (#18596).

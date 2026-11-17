@@ -166,18 +166,26 @@ func TestUserSessionWorkspaceConcurrentStartsCloneOnce(t *testing.T) {
 	if n := len(privCallsWithScript(p, userSessionWorkspaceOwnScript)); n != 1 {
 		t.Errorf("hand-over ran %d times, want once", n)
 	}
-	ws := r.WorkspaceDir(testWorkspaceRepo)
-	respawns := 0
+	// Each opened in its own worktree of that one clone (#18588), added once
+	// per session.
+	clone := r.WorkspaceDir(testWorkspaceRepo)
+	cwds := map[string]bool{}
 	for _, c := range f.calls {
 		if c.args[0] == "respawn-pane" {
-			respawns++
-			if c.args[indexOf(c.args, "-c")+1] != ws {
-				t.Errorf("session %s did not open in the shared workspace: %v", c.socket, c.args)
+			id := strings.TrimPrefix(c.socket, UserSessionTmuxPrefix)
+			cwd := c.args[indexOf(c.args, "-c")+1]
+			if cwd != r.SessionWorkspaceDir(id, testWorkspaceRepo) {
+				t.Errorf("session %s opened in %s, want its own worktree", id, cwd)
 			}
+			cwds[cwd] = true
 		}
 	}
-	if respawns != 2 {
-		t.Errorf("%d sessions launched, want both", respawns)
+	if len(cwds) != 2 {
+		t.Errorf("sessions opened in %v, want two distinct worktrees", cwds)
+	}
+	adds := privCallsWithScript(p, userSessionWorktreeAddScript)
+	if len(adds) != 2 || adds[0].argv[4] != clone || adds[1].argv[4] != clone || adds[0].argv[5] == adds[1].argv[5] {
+		t.Errorf("worktree adds = %+v, want one per session against the one clone %s", adds, clone)
 	}
 }
 
