@@ -10,7 +10,7 @@
     // keeps the historical all-expanded default forever) or is new ('v1').
     const DASHBOARD_DEFAULT_COLLAPSED_SECTIONS = Object.freeze([
       'pr-throughput-section', 'token-panel', 'cost-panel', 'advisory-section', 'knowledge-section', 'inbox-section',
-      'calendar-section', 'meetings-section',
+      'calendar-section', 'meetings-section', 'customers-section',
       'contributors-section', 'sessions-section', 'acmm-eval-section', 'debug-section', 'audit-section',
       'logs-section', 'nous-section', 'faq-section'
     ]);
@@ -126,6 +126,7 @@
       'inbox-section': { title: '📥 Inbox', summary: '0 to triage' },
       'calendar-section': { title: '📅 Calendar', summary: 'nothing scheduled' },
       'meetings-section': { title: '🎙 Meetings', summary: 'no live meetings' },
+      'customers-section': { title: '🪪 Customers', summary: 'your profile' },
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
@@ -167,6 +168,7 @@
       'meetings-section': { heading: 'Meetings', help: 'Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.' },
       'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge.' },
       'calendar-section': { heading: 'Calendar', help: 'Meetings hive will join, about a minute before each starts: add one, approve or decline requests, or skip and cancel.' },
+      'customers-section': { heading: 'Customers', help: 'The people you build for: who each one is, what they are trying to get done, and how it is going for them.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
