@@ -62,6 +62,11 @@ type Dependencies struct {
 	// stage and model labels now, for PUT /api/workflows/enabled turning
 	// derivation on. Nil leaves provisioning to the next sweep pass.
 	WorkflowProvisionLabels func(ctx context.Context, repo string) error
+	// WorkflowDispatchPrepare prepares the owner's "Send to <profile>" for
+	// POST /api/workflows/dispatch (cncf/techdocs#395): reads the item,
+	// resolves its model state, the agent and the agent claim, and renders
+	// the prompt. Nil answers 503.
+	WorkflowDispatchPrepare workflowDispatchPrepareFunc
 	// WorkflowEmitChecks proposes a newly bound model's declared checks to
 	// the repository as .hive/workflows/checks.yml through the checks PR
 	// (hivecommons/hive#18355), for PUT /api/workflows/bindings. Nil leaves

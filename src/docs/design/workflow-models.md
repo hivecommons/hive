@@ -728,6 +728,14 @@ Every eval cycle, with `workflow.enabled` on:
   `workflow-dispatch` audit row is recorded; a failed or deferred kick frees the key for the
   next pass, and an in-flight mark lapses after 30 minutes.
 
+**Send to a profile.** The tracker payload's `workflows.repos[repo].dispatch` maps a stage
+number to `{profile, state, kinds, reply}`; a row in such a state offers the owner **Send to *profile*** in its ⋯ menu (`stageTrackerWorkflowDispatchAction`), which posts
+`POST /api/workflows/dispatch {repo, number}`. cmd/hive's `WorkflowDispatchPrepare` reads the
+item fresh (`github.WorkflowDispatchForRef`), resolves the agent with
+`Config.WorkflowDispatchAgentForManual` (a profile `disabled` for automatic dispatch still
+resolves), claims an issue first and renders the prompt; the handler kicks the agent and, once
+the kick lands, records the hand-off under the automatic key, so the pass does not repeat it.
+
 The built-in prompt names the item, model, state and trigger, the state's guidance
 (`dispatch.instructions`, waiting reasons, column hint), the tools and outputs the grant
 allows, and the deliverable: for a PR-producing profile a (draft) pull request labeled with

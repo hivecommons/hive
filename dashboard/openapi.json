@@ -38776,6 +38776,95 @@
           }
         }
       },
+      "/api/workflows/dispatch": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Send a model-owned item to its agent profile",
+          "description": "Owner only. The stage tracker's \"Send to <profile>\" on a row of a repository bound to a workflow model whose current state the model hands to an agent profile (cncf/techdocs#395: Accepted -> techdocs-drafter, Drafting -> techdocs-verifier). Reads the item fresh, resolves its model state and the hive agent that fills the profile (workflow.dispatch.profiles.<profile>.agent; a profile disabled for automatic dispatch still resolves), takes the agent claim on an issue first, and kicks the agent with the dispatch prompt. Once the kick lands the hand-off is recorded in the dispatch log, so the automatic pass does not repeat it. Audited as workflow_dispatch.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "repo",
+                    "number"
+                  ],
+                  "properties": {
+                    "repo": {
+                      "type": "string",
+                      "description": "owner/repo"
+                    },
+                    "number": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Kick delivered",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "sent"
+                        ]
+                      },
+                      "ref": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "type": "string"
+                      },
+                      "profile": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "result": {
+                        "type": "object",
+                        "description": "Tracker toast: action dispatched, outcome, next"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Body is not {repo, number}"
+            },
+            "403": {
+              "description": "Not an owner"
+            },
+            "404": {
+              "description": "The bound model does not hand the item's current state to a profile (or workflow.enabled is off)"
+            },
+            "409": {
+              "description": "No enabled agent fills the profile, someone else holds the issue's claim, or the agent is busy"
+            },
+            "502": {
+              "description": "The item could not be read or the kick failed"
+            },
+            "503": {
+              "description": "Dispatch is not wired on this hive"
+            }
+          }
+        }
+      },
       "/api/workflows/enabled": {
         "put": {
           "tags": [
