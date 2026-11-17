@@ -187,7 +187,7 @@ func TestMeetingsActionsAdapterAndWiring(t *testing.T) {
 		Dashboard: config.DashboardConfig{PublicURL: "https://hive.example/"},
 	}
 	logger := slog.New(slog.DiscardHandler)
-	runner := wireMeetingsLive(cfg, mgr, store, &knowledge.KnowledgeAPI{}, nil, nil, logger)
+	runner := wireMeetingsLive(cfg, mgr, store, &knowledge.KnowledgeAPI{}, nil, nil, logger, nil)
 	if runner == nil {
 		t.Fatal("want a live runner")
 	}

@@ -74,7 +74,7 @@ func TestMeetingPersonaFactoryAgentBackend(t *testing.T) {
 	cfg := &config.Config{}
 	persona := cfg.Meetings.Persona.Resolve()
 	logger := slog.New(slog.DiscardHandler)
-	e := meetingPersonaFactory(cfg, persona, cliLLM(bin, dir), store, nil, nil, t.TempDir(), 100, false, logger)(meetings.Meeting{ID: "m1"})
+	e := meetingPersonaFactory(cfg, persona, cliLLM(bin, dir), store, nil, nil, t.TempDir(), 100, false, logger, nil)(meetings.Meeting{ID: "m1"})
 	if e == nil {
 		t.Fatal("want an engine")
 	}
@@ -91,7 +91,7 @@ func TestMeetingPersonaFactoryAgentBackend(t *testing.T) {
 	e.Close()
 	bad := cliLLM(bin, dir)
 	bad.AgentBackend = "codex"
-	if e := meetingPersonaFactory(cfg, persona, bad, store, nil, nil, "", 0, false, logger)(meetings.Meeting{ID: "m2"}); e == nil {
+	if e := meetingPersonaFactory(cfg, persona, bad, store, nil, nil, "", 0, false, logger, nil)(meetings.Meeting{ID: "m2"}); e == nil {
 		t.Fatal("want an engine without a model")
 	} else {
 		e.Close()
