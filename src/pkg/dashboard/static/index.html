@@ -61788,7 +61788,9 @@ function burnAreaChart() {
       var quickStarts = AGENT_QUICK_START_TEMPLATES.map(function(t) {
         return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="applyAgentQuickStart" data-arg0="' + esc(t.id) + '" title="' + esc(t.description) + '">' + esc(t.emoji) + ' ' + esc(t.displayName) + '</button>';
       }).join('');
+      setTimeout(loadDiscoveredAgents, 0);
       return '<div style="max-width:600px;margin:0 auto">' +
+        '<div id="discovered-agents" class="mb-6"></div>' +
         '<div style="background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:var(--sp-5);margin-bottom:var(--sp-6)">' +
           '<div style="font-weight:700;color:var(--text);margin-bottom:var(--sp-2)">Start with a template, then tune it</div>' +
           '<p class="fs-base text-muted" style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">Pick a common agent role to prefill the create form, or import/paste a full definition below.</p>' +
@@ -61820,6 +61822,75 @@ function burnAreaChart() {
     }
 
     var _pendingImportData = null;
+
+    // Agents a managed repo declares under .hive/agents/ (#18491). Nothing
+    // runs until an owner approves; backend, model, mode and tools stay
+    // owner-controlled, so Approve registers the agent with the defaults and
+    // the owner tunes them in the agent's settings afterwards.
+    var DISCOVERED_AGENT_STATUS_LABELS = {pending: 'Waiting for approval', invalid: 'Invalid definition', approved: 'Approved', rejected: 'Rejected', orphaned: 'File removed, agent paused'};
+
+    async function loadDiscoveredAgents() {
+      var box = document.getElementById('discovered-agents');
+      if (!box) return;
+      try {
+        var resp = await fetch('/api/agents/discovered', {headers:_inceptionAuthHeaders()});
+        var d = await resp.json();
+        if (!resp.ok) { box.innerHTML = ''; return; }
+        renderDiscoveredAgents(box, d);
+      } catch(e) { box.innerHTML = ''; }
+    }
+
+    function renderDiscoveredAgents(box, d) {
+      if (!d || !d.enabled) { box.innerHTML = ''; return; }
+      var entries = (d.entries || []).filter(function(e) { return e.status !== 'approved'; });
+      var rows = entries.map(function(e) {
+        var title = (e.emoji ? esc(e.emoji) + ' ' : '') + esc(e.display_name || e.name || e.path);
+        var meta = esc(e.repo) + ' · ' + esc(e.path) + ' · ' + esc(DISCOVERED_AGENT_STATUS_LABELS[e.status] || e.status);
+        var detail = e.error ? '<div class="fs-base text-muted">' + esc(e.error) + '</div>' : (e.description ? '<div class="fs-base text-muted">' + esc(e.description) + '</div>' : '');
+        var actions = '';
+        if (e.status === 'pending') {
+          actions = '<button type="button" class="hv-btn btn-primary btn-sm" data-action="approveDiscoveredAgent" data-arg0="' + esc(e.id) + '">Approve</button> ' +
+            '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="rejectDiscoveredAgent" data-arg0="' + esc(e.id) + '">Reject</button>';
+        } else if (e.status === 'invalid') {
+          actions = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="rejectDiscoveredAgent" data-arg0="' + esc(e.id) + '">Reject</button>';
+        }
+        return '<div class="config-field mb-5"><label>' + title + '</label><div class="fs-base text-muted">' + meta + '</div>' + detail + (actions ? '<div>' + actions + '</div>' : '') + '</div>';
+      }).join('');
+      box.innerHTML = '<div class="config-field mb-5"><label>Declared in your repos</label>' +
+        '<p class="fs-base text-muted">Agent definitions found under <code>.hive/agents/</code> in allowlisted managed repos. Approving registers the agent with a copilot backend; set its model, mode and tools in the agent settings. <button type="button" class="hv-btn btn-secondary btn-sm" data-action="refreshDiscoveredAgents">Rescan</button></p>' +
+        (rows || '<p class="fs-base text-muted">None waiting.</p>') + '</div>';
+    }
+
+    async function discoveredAgentAction(path, id, okMessage) {
+      try {
+        var resp = await fetch(path, {method:'POST', headers:_inceptionAuthHeaders(), body:JSON.stringify({id:id})});
+        var d = await resp.json();
+        if (!resp.ok) { showToast(d.error || 'Request failed', 'error'); return false; }
+        showToast(okMessage(d), 'success');
+        return true;
+      } catch(e) { showToast('Error: ' + e.message, 'error'); return false; }
+    }
+
+    async function approveDiscoveredAgent(id) {
+      var ok = await discoveredAgentAction('/api/agents/discovered/approve', id, function(d) { return 'Agent "' + (d.name || '?') + '" approved'; });
+      if (!ok) return;
+      closeConfigDialog();
+      fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+    }
+
+    async function rejectDiscoveredAgent(id) {
+      if (await discoveredAgentAction('/api/agents/discovered/reject', id, function() { return 'Definition rejected'; })) loadDiscoveredAgents();
+    }
+
+    async function refreshDiscoveredAgents() {
+      var box = document.getElementById('discovered-agents');
+      try {
+        var resp = await fetch('/api/agents/discovered/refresh', {method:'POST', headers:_inceptionAuthHeaders()});
+        var d = await resp.json();
+        if (!resp.ok) { showToast(d.error || 'Rescan failed', 'error'); return; }
+        if (box) renderDiscoveredAgents(box, d);
+      } catch(e) { showToast('Error: ' + e.message, 'error'); }
+    }
 
     function applyAgentQuickStart(templateID) {
       var t = AGENT_QUICK_START_TEMPLATES.find(function(x) { return x.id === templateID; });

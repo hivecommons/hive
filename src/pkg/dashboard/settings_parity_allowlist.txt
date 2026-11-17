@@ -63,6 +63,7 @@ agents.<key>.continuous_budget_pct # TODO #11854
 agents.<key>.continuous_cooldown # TODO #11854
 agents.<key>.continuous_turn_ceiling # TODO #11854
 agents.<key>.converse # TODO #11854
+agents.<key>.definition_source.discovered # TODO #11854
 agents.<key>.definition_source.owner # TODO #11854
 agents.<key>.definition_source.path # TODO #11854
 agents.<key>.definition_source.ref # TODO #11854
@@ -530,6 +531,7 @@ review.perspective_models.<key>.backend # TODO #13243
 review.perspective_models.<key>.model # TODO #13243
 review.perspective_prompts.<key> # TODO #11854
 review.perspectives[] # TODO #11854
+review.perspectives_source.discovered # TODO #17975 (shared DefinitionSourceConfig field; meaningful only on agents.<key>.definition_source)
 review.perspectives_source.owner # TODO #17975
 review.perspectives_source.path # TODO #17975
 review.perspectives_source.ref # TODO #17975
