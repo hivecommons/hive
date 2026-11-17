@@ -1301,9 +1301,10 @@ type ContributeWSHub struct {
 	verdictBlockersRecorded sync.Map
 	// wrongBaseBranchChecker validates a wrong_base target against the target
 	// repository; nil means use GHClient.BranchExists. wrongBaseParker is the
-	// mutation seam for the invalid/unverifiable fallback.
+	// mutation seam for the invalid/unverifiable fallback (repo, number, the
+	// note's marker, the note).
 	wrongBaseBranchChecker func(context.Context, string, string) (bool, error)
-	wrongBaseParker        func(context.Context, string, int, string, string, string) error
+	wrongBaseParker        func(context.Context, string, int, string, string) error
 
 	// recentlyFinished records, by task id, when a completed/failed run row was
 	// written (#7838). Consulted by the deferred disconnect booking so a task
@@ -4689,14 +4690,31 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			verdict := normalizeCompletionVerdict(msg.Verdict, msg.VerdictBlocked, msg.VerdictNeedsDecision, verifiedPR)
 			verdictReason := strings.TrimSpace(msg.VerdictReason)
 			wrongBaseTarget := ""
+			// A parked wrong_base keeps the agent's own words: the hub's
+			// finding alone ("no vN branch") tells the maintainer nothing to
+			// act on (projectbluefin/utah#1272). Its one note is the park's
+			// question, so the generic question and the gate-park re-booking
+			// below skip it.
+			wrongBaseParked := false
 			if verdict == completionVerdictWrongBase {
+				agentReason := sanitizeReportedReason(msg.VerdictReason)
 				resolved, target, reason, park := h.resolveWrongBaseVerdict(
 					completedTask, verdict, msg.VerdictTargetBranch)
 				verdict, wrongBaseTarget, verdictReason = resolved, target, reason
-				if park && completedTask != nil {
-					taskCopy := *completedTask
-					go h.parkWrongBaseIssue(&taskCopy, s.contributor.profile.GitHubUsername,
-						wrongBaseTarget, verdictReason)
+				if park {
+					wrongBaseParked = true
+					verdictReason = wrongBaseParkReason(reason, agentReason)
+					h.logger.Info("[contribute-ws] wrong-base verdict parked",
+						"username", s.contributor.profile.GitHubUsername,
+						"task", msg.TaskID,
+						"target_branch", target,
+						"detail", reason,
+						"agent_reason", agentReason)
+					if completedTask != nil {
+						taskCopy := *completedTask
+						go h.parkWrongBaseIssue(&taskCopy, msg.TaskID, s.contributor.profile.GitHubUsername,
+							wrongBaseTarget, reason, agentReason)
+					}
 				}
 			}
 			// A blocked verdict whose reason is the contributor's OWN tooling
@@ -4734,7 +4752,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// so the issue is re-offered once, and lift the decision label the
 			// relay applied (hivecommons/hive#13059). The second such park on
 			// the same issue is left standing for a maintainer.
-			if completedTask != nil {
+			if completedTask != nil && !wrongBaseParked {
 				if downgraded, ok := h.reclassifyGateParkVerdict(completedTask.identityKey(), verdict, verdictReason); ok {
 					h.logger.Warn("[contribute-ws] needs-decision verdict reclassified: reason is the repository's own confirmation gate, not a maintainer decision",
 						"username", s.contributor.profile.GitHubUsername,
@@ -4770,7 +4788,7 @@ func (s *wsSession) handleTaskComplete(msg WSMessage) {
 			// A needs-decision verdict that stands parks the issue at 045 with
 			// the relay's label alone; the hub posts the question when the
 			// agent left none (contribute_needs_decision_park.go).
-			if verdict == completionVerdictNeedsDecision && completedTask != nil {
+			if verdict == completionVerdictNeedsDecision && completedTask != nil && !wrongBaseParked {
 				taskCopy := *completedTask
 				go h.postNeedsDecisionPark(&taskCopy, msg.TaskID, s.contributor.profile.GitHubUsername, verdictReason, taskAssignedAt)
 			}

@@ -558,6 +558,28 @@ func buildTaskPromptBodyWithHintsAndIssueRead(repoFull, issueRef, title, sourceH
 	if g := strings.TrimSpace(guide); g != "" {
 		guideHint = "\n\n" + g + "\n\n"
 	}
+
+	// hivecommons/hive#13146: absence on the assigned base is not evidence
+	// that the issue is already done, so a task with a declared release line
+	// gets a distinct outcome carrying the branch that holds the work. The hub
+	// re-dispatches only to a `vN` branch (normalizeWrongBaseTarget), so the
+	// outcome is offered only when this task has one. Without a declared base
+	// the agent already follows the repository's own target rules (baseHint);
+	// a repository on main/testing/stable could only ever get the verdict
+	// parked with nothing to act on (projectbluefin/utah#1272,
+	// projectbluefin/ghostscript-printer-app#127), so an agent unsure where
+	// the work belongs asks in the decision form below instead.
+	wrongBaseHint := "If you cannot tell which branch this work belongs on, do not call the " +
+		"issue already done and do not guess a branch: ask with the decision form below, " +
+		"naming the branch you would use and why. "
+	if strings.TrimSpace(baseBranch) != "" {
+		wrongBaseHint = "If the declared base branch does not exist after fetch, or the issue's " +
+			"referenced code exists only on another release branch, do not call the " +
+			"issue already done. Verify the correct branch exists, then print " +
+			"'HIVE_VERDICT: wrong_base — <correct-branch>' and stop. Hive validates " +
+			"that branch and re-offers the issue against it; if validation fails, Hive " +
+			"parks the issue at stage/045 with the named branch. "
+	}
 	// #13059: companion checkouts, right after the primary checkout step
 	// they sit beside. A target repo's tooling may resolve a registered
 	// sibling location to $HIVE_WORKSPACE_DIR/<org>/<sibling> and its
@@ -632,15 +654,9 @@ func buildTaskPromptBodyWithHintsAndIssueRead(repoFull, issueRef, title, sourceH
 			"is auto-labelled do-not-merge/work-in-progress and cannot merge. If a PR "+
 			"is already open as a draft, mark it ready for review. "+
 			"Use the GH_TOKEN env var for all gh commands (do NOT use 'unset GITHUB_TOKEN'). "+
-			// hivecommons/hive#13146: absence on the assigned base is not
-			// evidence that the issue is already done. Give the relay a distinct
-			// outcome carrying the branch that actually contains the work.
-			"If the declared base branch does not exist after fetch, or the issue's "+
-			"referenced code exists only on another release branch, do not call the "+
-			"issue already done. Verify the correct branch exists, then print "+
-			"'HIVE_VERDICT: wrong_base — <correct-branch>' and stop. Hive validates "+
-			"that branch and re-offers the issue against it; if validation fails, Hive "+
-			"parks the issue at stage/045 with the named branch. "+
+			// hivecommons/hive#13146: the wrong_base outcome, offered only
+			// where it can succeed (wrongBaseHint above).
+			"%s"+
 			// #3987: the no_work_needed sentinel. The relay scrapes this exact
 			// marker from the agent's output and reports it as the completion
 			// verdict, so an issue whose remainder is maintainer-gated stops
@@ -768,7 +784,7 @@ func buildTaskPromptBodyWithHintsAndIssueRead(repoFull, issueRef, title, sourceH
 			"appear after your verdict, you may be asked once to address the "+
 			"ones that apply and print the HIVE_VERDICT line again — do so; that "+
 			"second line is expected, and it is final.",
-		repoFull, issueRef, title, sourceHint, checkoutHint, readIssue, baseHint, guideHint, pushHint,
+		repoFull, issueRef, title, sourceHint, checkoutHint, readIssue, baseHint, guideHint, pushHint, wrongBaseHint,
 	)
 }
 
