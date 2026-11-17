@@ -817,10 +817,11 @@ func TestClaudeAuthStatusToolReadsStatusEndpoint(t *testing.T) {
 	}
 }
 
-// pr_models_read and contributor_model_stats_read are listed read-only, take
-// no write role, and describe their window argument and its bounds.
+// pr_models_read, contributor_model_stats_read and effective_models_read are
+// listed read-only, take no write role, and describe their window argument,
+// its bounds, limit and offset.
 func TestModelEffectivenessToolsAreListedReadOnly(t *testing.T) {
-	want := map[string]string{ToolPRModelsRead: "window", ToolContributorModelStatsRead: "days"}
+	want := map[string]string{ToolPRModelsRead: "window", ToolContributorModelStatsRead: "days", ToolEffectiveModelsRead: "filter"}
 	for _, tool := range Tools() {
 		name, _ := tool["name"].(string)
 		arg, ok := want[name]
@@ -846,6 +847,9 @@ func TestModelEffectivenessToolsAreListedReadOnly(t *testing.T) {
 		if _, ok := props["limit"]; !ok {
 			t.Errorf("%s schema has no limit: %#v", name, props)
 		}
+		if _, ok := props["offset"]; !ok {
+			t.Errorf("%s schema has no offset: %#v", name, props)
+		}
 	}
 	for name := range want {
 		t.Errorf("%s is not listed", name)
@@ -857,6 +861,18 @@ func TestModelEffectivenessToolsAreListedReadOnly(t *testing.T) {
 	days, _ := inputSchema(ToolContributorModelStatsRead)["properties"].(map[string]any)["days"].(map[string]any)
 	if days["minimum"] != 0 || days["maximum"] != 365 {
 		t.Errorf("days bounds = %v-%v, want 0-365", days["minimum"], days["maximum"])
+	}
+	effProps, _ := inputSchema(ToolEffectiveModelsRead)["properties"].(map[string]any)
+	filter, _ := effProps["filter"].(map[string]any)
+	if enum, _ := filter["enum"].([]string); strings.Join(enum, ",") != "all,hive,contributor" {
+		t.Errorf("filter enum = %#v, want all, hive, contributor", filter["enum"])
+	}
+	effWindow, _ := effProps["window"].(map[string]any)
+	if enum, _ := effWindow["enum"].([]string); strings.Join(enum, ",") != "7d,30d,all" {
+		t.Errorf("effective_models_read window enum = %#v, want 7d, 30d, all", effWindow["enum"])
+	}
+	if _, ok := effProps["min_merged_prs"]; ok {
+		t.Error("effective_models_read offers min_merged_prs, which the Operations panel has no control for")
 	}
 }
 
@@ -879,6 +895,11 @@ func TestModelEffectivenessReadPaths(t *testing.T) {
 		{ToolContributorModelStatsRead, map[string]any{"days": float64(365)}, "/api/contribute/run-stats/models?days=365"},
 		{ToolContributorModelStatsRead, map[string]any{"days": 30}, "/api/contribute/run-stats/models?days=30"},
 		{ToolContributorModelStatsRead, map[string]any{"days": "14"}, "/api/contribute/run-stats/models?days=14"},
+		{ToolContributorModelStatsRead, map[string]any{"days": float64(0), "offset": float64(50)}, "/api/contribute/run-stats/models?days=0"},
+		{ToolEffectiveModelsRead, nil, "/api/contribute/effective-models?window=7d&filter=all"},
+		{ToolEffectiveModelsRead, map[string]any{"window": "30d", "filter": "hive"}, "/api/contribute/effective-models?window=30d&filter=hive"},
+		{ToolEffectiveModelsRead, map[string]any{"window": "all", "filter": " Contributor "}, "/api/contribute/effective-models?window=all&filter=contributor"},
+		{ToolEffectiveModelsRead, map[string]any{"filter": ""}, "/api/contribute/effective-models?window=7d&filter=all"},
 	} {
 		got, err := ModelEffectivenessReadPath(tc.tool, tc.args)
 		if err != nil || got != tc.want {
@@ -888,6 +909,7 @@ func TestModelEffectivenessReadPaths(t *testing.T) {
 	for tool, want := range map[string]string{
 		ToolPRModelsRead:              "/api/governor/pr-models?window=7d",
 		ToolContributorModelStatsRead: "/api/contribute/run-stats/models?days=7",
+		ToolEffectiveModelsRead:       "/api/contribute/effective-models?window=7d&filter=all",
 	} {
 		if got, ok := ReadPath(tool, 5); !ok || got != want {
 			t.Errorf("ReadPath(%s) = %q, %v; want %q", tool, got, ok, want)
@@ -911,6 +933,12 @@ func TestModelEffectivenessRefusesBadWindows(t *testing.T) {
 		{ToolContributorModelStatsRead, map[string]any{"days": 1.5}, "days must be a whole number"},
 		{ToolContributorModelStatsRead, map[string]any{"days": "week"}, "days must be a whole number"},
 		{ToolContributorModelStatsRead, map[string]any{"days": true}, "days must be a whole number"},
+		{ToolContributorModelStatsRead, map[string]any{"offset": float64(-1)}, "offset must be a non-negative integer"},
+		{ToolPRModelsRead, map[string]any{"offset": "two"}, "offset must be a non-negative integer"},
+		{ToolEffectiveModelsRead, map[string]any{"window": "90d"}, "window must be one of 7d, 30d, all"},
+		{ToolEffectiveModelsRead, map[string]any{"filter": "agents"}, "filter must be one of all, hive, contributor"},
+		{ToolEffectiveModelsRead, map[string]any{"filter": "hive&x=1"}, "filter must be one of"},
+		{ToolEffectiveModelsRead, map[string]any{"filter": true}, "filter must be one of"},
 	} {
 		path, err := ModelEffectivenessReadPath(tc.tool, tc.args)
 		if err == nil || !strings.Contains(err.Error(), tc.want) {
@@ -956,6 +984,78 @@ func TestModelEffectivenessResultCapsModelRows(t *testing.T) {
 	}
 	if _, err := ModelEffectivenessResult(ToolPRModelsRead, []any{}, nil); err == nil {
 		t.Fatal("a non-object answer was accepted")
+	}
+}
+
+// offset pages the per-model rows past the limit cap: each page says where
+// it starts, how many rows there are and where the next page starts, and a
+// page past the end is empty and says so. effective_models_read pages
+// insufficient and returns ranked whole.
+func TestModelEffectivenessResultPagesWithOffset(t *testing.T) {
+	rows := []any{}
+	for _, m := range []string{"a", "b", "c", "d", "e"} {
+		rows = append(rows, map[string]any{"model": m})
+	}
+	stats := map[string]any{"window_days": float64(0), "models": rows}
+	page := func(args map[string]any) map[string]any {
+		t.Helper()
+		got, err := ModelEffectivenessResult(ToolContributorModelStatsRead, stats, args)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return got.(map[string]any)
+	}
+	models := func(out map[string]any) string {
+		var names []string
+		for _, r := range out["models"].([]any) {
+			names = append(names, r.(map[string]any)["model"].(string))
+		}
+		return strings.Join(names, ",")
+	}
+
+	first := page(map[string]any{"limit": float64(2)})
+	if models(first) != "a,b" || first["next_offset"] != 2 || first["models_total"] != 5 || first["offset"] != 0 {
+		t.Fatalf("first page = %#v", first)
+	}
+	middle := page(map[string]any{"limit": float64(2), "offset": float64(2)})
+	meta, _ := middle["_admin_mcp"].(map[string]any)
+	if models(middle) != "c,d" || middle["next_offset"] != 4 || meta["truncated"] != true || !strings.Contains(fmt.Sprint(meta["note"]), "rows 3-4 of 5") {
+		t.Fatalf("middle page = %#v", middle)
+	}
+	last := page(map[string]any{"limit": float64(2), "offset": float64(4)})
+	if models(last) != "e" {
+		t.Fatalf("last page = %#v", last)
+	}
+	if _, ok := last["next_offset"]; ok {
+		t.Fatalf("last page has a next_offset: %#v", last)
+	}
+	past := page(map[string]any{"offset": float64(9)})
+	pastMeta, _ := past["_admin_mcp"].(map[string]any)
+	if len(past["models"].([]any)) != 0 || !strings.Contains(fmt.Sprint(pastMeta["note"]), "past the last") {
+		t.Fatalf("page past the end = %#v", past)
+	}
+	if len(stats["models"].([]any)) != 5 {
+		t.Fatal("paging modified the endpoint's answer")
+	}
+
+	ranked := []any{map[string]any{"model": "r1"}, map[string]any{"model": "r2"}, map[string]any{"model": "r3"}}
+	eff := map[string]any{"window": "30d", "filter": "hive", "ranked": ranked, "insufficient": rows, "coverage": map[string]any{"closed_prs_partial": true}}
+	got, err := ModelEffectivenessResult(ToolEffectiveModelsRead, eff, map[string]any{"limit": float64(1), "offset": float64(1)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := got.(map[string]any)
+	if len(out["ranked"].([]any)) != 3 {
+		t.Fatalf("ranked was paged: %#v", out["ranked"])
+	}
+	if ins := out["insufficient"].([]any); len(ins) != 1 || ins[0].(map[string]any)["model"] != "b" || out["insufficient_total"] != 5 || out["next_offset"] != 2 {
+		t.Fatalf("insufficient page = %#v", out)
+	}
+	if out["coverage"] == nil {
+		t.Fatal("coverage was dropped")
+	}
+	if _, err := ModelEffectivenessResult(ToolContributorModelStatsRead, stats, map[string]any{"offset": float64(-3)}); err == nil {
+		t.Fatal("a negative offset was accepted")
 	}
 }
 
