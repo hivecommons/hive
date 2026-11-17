@@ -52334,7 +52334,7 @@ function burnAreaChart() {
       const repos = (_meetingDraftRepos || []).slice();
       if (d.repo && repos.indexOf(d.repo) < 0) repos.unshift(d.repo);
       const repoOpts = repos.map(r => '<option value="' + escapeHtml(r) + '"' + (r === d.repo ? ' selected' : '') + '>' + escapeHtml(r) + '</option>').join('');
-      return '<details class="calendar-add"><summary class="calendar-add-summary">Edit</summary><div class="calendar-add-grid mt-2">' +
+      return '<details class="calendar-add"><summary class="muted-xs">Edit</summary><div class="calendar-add-grid mt-2">' +
         '<label>Type<select class="kb-search-box" data-draft-id="' + id + '" data-draft-field="type">' + types + '</select></label>' +
         '<label>Title<input class="kb-search-box" type="text" maxlength="200" data-draft-id="' + id + '" data-draft-field="title" value="' + escapeHtml(d.title || '') + '"></label>' +
         (repoOpts ? '<label>Repo<select class="kb-search-box" data-draft-id="' + id + '" data-draft-field="repo">' + repoOpts + '</select></label>' : '') +
