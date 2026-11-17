@@ -11,6 +11,19 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.309.0)
+
+### Added
+
+- Governor PRs by model now shows rework per backend and a per-effort split in each row's tooltip: every raw `sources[]` entry gains open/closed-unmerged counts, first-pass merged and rate, and average review rounds and fix attempts, each bucket gains an `efforts[]` breakdown read from the attribution trailer's `effort=` value, and the PR snapshot records it as `hive_effort` (#18715).
+
+### Fixed
+
+- Fleet-report "also seen" sightings no longer add a new comment to the issue on every join. Each poster (the hub relay, or a spoke filing directly) now keeps one `<!-- hive:selfreport-seen-log -->` comment per issue, with one section per hive, newest first, and edits it in place. Edits do not notify watchers, and the issue body's Affected hives block still counts every sighting. Part of the spam reduction work in #18450 (#18608).
+- **The claude model dropdown now offers Fable 5.2, Fable 5.1, Haiku 5.5 and the `fable` alias, and their spend is priced exactly** ([#18753](https://github.com/hivecommons/hive/issues/18753)). The pinned Claude Code 2.1.326 accepts all four, but the dashboard's allowlist, its static fallback and the browser's first-paint list stopped at Fable 5 and Haiku 4.5, so a live Anthropic catalog that listed the newer models was cut back to the old ones. The price table gains Fable 5.2 ($8 in / $40 out, $0.20 cache read, $10 cache write) and Haiku 5.5 ($0.10 / $0.50, $0.01, $0.125) from Anthropic's pricing page, so their spend is no longer a tier guess. Haiku 5.5 is priced at its base rate for prompts up to 100,000 tokens; longer prompts bill higher and are undercounted.
+- The Customers section is laid out like the Inbox and Calendar: each person is a card with an initial or source icon, the name as the title, a muted line, tags as chips and grouped actions that wrap under the content on narrow screens, with no sideways scrolling and long keys cut with a tooltip. "me" is a badge, "0 goals" is no longer printed on every row, and the evidence behind a suggestion sits under "Why is this suggested?" as readable links (at most five). Suggested people are grouped by source with "Show N more", and accepting, dismissing or answering a "Same person?" question keeps the group open, its expansion and the scroll position, and moves the focus to the next suggestion. A suggestion can now be added to an existing customer ("Add to existing..." on a suggestion, "Add a suggested person here" on a profile); it reuses the merge, so Undo merge takes it back (#18816).
+- Customers discovery no longer suggests people who are already customers or who are not people. A hive user whose access-list name is a bare GitHub login (what a device-flow sign-in produces) is now linked to that GitHub login, so they are not suggested again, and a suggestion that points at an identity a customer owns expires. Calendar group and room addresses, mailing-list addresses, no-reply and service mailboxes and the hive's own `hive@<host>` address are never suggested, and those already stored expire on the next sweep (#18816).
+
 ## 2026-11-17 (v5.308.0)
 
 ### Added
