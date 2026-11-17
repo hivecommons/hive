@@ -111,6 +111,7 @@ js/tracker-filter-render.js
 js/tracker-filter-fetch.js
 js/tracker-actions.js
 js/tracker-human-gate.js
+js/tracker-gate-truth.js
 js/tracker-merged.js
 js/tracker-queue.js
 js/tracker-sound.js
