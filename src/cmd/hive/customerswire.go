@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/customers"
+	"github.com/hivecommons/hive/pkg/customers/gql"
 	"github.com/hivecommons/hive/pkg/dashboard"
 )
 
@@ -24,6 +26,8 @@ const (
 // pkg/customers; this adapter is the only place the two meet.
 type customersDashboard struct {
 	svc *customers.Service
+	// graph is the read-only GraphQL engine; nil if it failed to start.
+	graph *gql.Engine
 }
 
 // wireCustomers opens the people store and the edge index when
@@ -61,7 +65,15 @@ func wireCustomersAt(dataDir, graphDir string, resolvers customers.Resolvers, lo
 			_ = index.Close()
 		}
 	}
-	return &customersDashboard{svc: customers.NewService(store, index, resolvers)}, stop
+	svc := customers.NewService(store, index, resolvers)
+	graph, err := gql.New(svc, gql.Limits{})
+	if err != nil {
+		graph = nil
+		if logger != nil {
+			logger.Error("[customers] graph endpoint unavailable", "error", err)
+		}
+	}
+	return &customersDashboard{svc: svc, graph: graph}, stop
 }
 
 // customersError maps a store error onto the dashboard's sentinels, which
@@ -138,4 +150,13 @@ func (c *customersDashboard) Accept(v dashboard.CustomersViewer, suggestionID st
 
 func (c *customersDashboard) Dismiss(v dashboard.CustomersViewer, suggestionID string) error {
 	return customersError(c.svc.Dismiss(customersViewer(v), suggestionID))
+}
+
+// Graph is POST /api/graph: one read-only GraphQL query as the viewer.
+func (c *customersDashboard) Graph(ctx context.Context, v dashboard.CustomersViewer, req dashboard.CustomerGraphRequest) (dashboard.CustomerGraphResult, error) {
+	if c.graph == nil {
+		return dashboard.CustomerGraphResult{}, dashboard.ErrCustomerUnavailable
+	}
+	res := c.graph.Exec(ctx, customersViewer(v), req.Query, req.OperationName, req.Variables)
+	return dashboard.CustomerGraphResult{Body: res.Body, Nodes: res.Nodes, Errors: res.Errors}, nil
 }

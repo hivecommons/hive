@@ -2147,6 +2147,75 @@
         }
       }
     },
+    "/api/graph": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Query the customer graph (GraphQL, read-only)",
+        "description": "Runs one GraphQL query against the customer graph: people, the artefacts they touched and the edges between them. The schema has no mutations and no subscriptions, so this POST changes nothing, and any signed-in, named user may call it, the read role included. Access is decided on the viewer: the verified owner and read-write users can reach every customer; a read-only user reaches only their own profile by any path (person by id answers null, people lists only them, and an artefact's people lists only them). Suggested people are never returned. An edge to an artefact the viewer may not open where it lives is left out. Limits: depth 8, 8 KB of query text, pages of at most 100, 5,000 nodes and 5 seconds per query; introspection is off (the schema is in src/docs/api-reference/customers.md). A query that fails still answers 200 with a GraphQL errors array. Audited as customer_graph_query with the operation name, node count and error count, never the query text.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "query"
+                ],
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "GraphQL query text, at most 8 KB"
+                  },
+                  "operationName": {
+                    "type": "string"
+                  },
+                  "variables": {
+                    "type": "object",
+                    "description": "Query variables"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "GraphQL response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "description": "The selected fields"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "GraphQL error: message, locations, path"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or no query"
+          },
+          "403": {
+            "description": "Not signed in as a named user, or the owner role was not verified"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive, or the graph engine is not running"
+          }
+        }
+      }
+    },
     "/api/meetings/schedule": {
       "get": {
         "tags": [

@@ -52963,6 +52963,12 @@ function burnAreaChart() {
     let _customersError = '';
     // The open profile; null shows the list.
     let _customersOpen = null;
+    // The open profile's timeline, read from the customer graph
+    // (POST /api/graph) a page at a time.
+    const CUSTOMERS_TIMELINE_PAGE = 25;
+    const CUSTOMERS_TIMELINE_QUERY = 'query Timeline($id: ID!, $first: Int, $after: String) { person(id: $id) { edges(first: $first, after: $after) { nodes { predicate at source artefact { ref kind } } next } } }';
+    const CUSTOMERS_REF_KIND_LABELS = { gh: 'GitHub', meeting: 'Meetings', event: 'Calendar', inbox: 'Inbox', fact: 'Knowledge', bead: 'Work items', audit: 'Dashboard' };
+    let _customersTimeline = { id: '', nodes: [], next: '', error: '', loading: false };
 
     function customersIsEnabled() { return window._customersEnabled === true; }
     function customersIsFull() { return !!(_customersData && _customersData.full); }
@@ -53211,13 +53217,46 @@ function burnAreaChart() {
         '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersNotesSave">Save notes</button></div></div>';
     }
 
+    // customersTimelineGroups orders timeline entries by the kind of thing
+    // they point at, keeping each group newest first.
+    function customersTimelineGroups(nodes) {
+      const groups = {};
+      const order = [];
+      (nodes || []).forEach(n => {
+        const kind = (n && n.artefact && n.artefact.kind) || 'other';
+        if (!groups[kind]) { groups[kind] = []; order.push(kind); }
+        groups[kind].push(n);
+      });
+      return order.map(kind => ({ kind: kind, label: CUSTOMERS_REF_KIND_LABELS[kind] || kind, nodes: groups[kind] }));
+    }
+
+    function customersTimelineRowHtml(n) {
+      const ref = (n.artefact && n.artefact.ref) || '';
+      return '<div class="customers-row"><span class="badge">' + escapeHtml(String(n.predicate || '').replace(/_/g, ' ')) + '</span>' +
+        '<div class="customers-row-main"><div class="customers-evidence">' + escapeHtml(ref) + '</div></div>' +
+        '<span class="muted-xs">' + escapeHtml(customersFormatTime(n.at)) + '</span></div>';
+    }
+
+    // The timeline holds references only: an issue, a meeting or a mail item
+    // is named by its id, never quoted.
+    function customersTimelineHtml() {
+      const t = _customersTimeline;
+      if (t.error) return '<p class="kc-error muted-xs">' + escapeHtml(t.error) + '</p>';
+      if (t.loading && !t.nodes.length) return '<p class="muted-xs">Loading activity…</p>';
+      if (!t.nodes.length) return '<p class="empty-dashed">No activity recorded yet.</p>';
+      return customersTimelineGroups(t.nodes).map(g => '<div class="muted-xs">' + escapeHtml(g.label) + ' (' + g.nodes.length + ')</div>' +
+        '<div class="customers-list">' + g.nodes.map(customersTimelineRowHtml).join('') + '</div>').join('') +
+        (t.next ? '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersTimelineMore">Show more</button></div>' : '');
+    }
+
     function customersActivityHtml(p) {
       if (!customersIsFull()) return '';
       const counts = p.counts || {};
       const keys = Object.keys(counts).sort();
       const hints = p.hints || [];
       return '<div class="customers-block"><div class="section-label m-0">Activity</div>' +
-        (keys.length ? '<div class="customers-chips">' + keys.map(k => '<span class="badge">' + escapeHtml(k.replace(/_/g, ' ')) + ' ' + counts[k] + '</span>').join('') + '</div>' : '<p class="empty-dashed">No activity recorded yet.</p>') +
+        (keys.length ? '<div class="customers-chips">' + keys.map(k => '<span class="badge">' + escapeHtml(k.replace(/_/g, ' ')) + ' ' + counts[k] + '</span>').join('') + '</div>' : '') +
+        '<div id="customers-timeline" class="customers-block">' + customersTimelineHtml() + '</div>' +
         (hints.length ? '<p class="muted-xs">' + hints.length + ' open "Same person?" question' + (hints.length === 1 ? '' : 's') + ' about this profile.</p>' : '') + '</div>';
     }
 
@@ -53270,11 +53309,45 @@ function burnAreaChart() {
       else if (msg) showToast(msg, 'error');
     }
 
+    // customersTimelineLoad reads one page of the open profile's edges from
+    // the customer graph. reset starts over; otherwise it appends.
+    async function customersTimelineLoad(reset) {
+      const p = _customersOpen;
+      if (!p || !customersIsFull()) return;
+      if (reset || _customersTimeline.id !== p.id) _customersTimeline = { id: p.id, nodes: [], next: '', error: '', loading: false };
+      const t = _customersTimeline;
+      if (t.loading) return;
+      t.loading = true;
+      customersTimelinePaint();
+      try {
+        const variables = { id: p.id, first: CUSTOMERS_TIMELINE_PAGE };
+        if (t.next) variables.after = t.next;
+        const data = await customersRequest('POST', '/api/graph', { query: CUSTOMERS_TIMELINE_QUERY, operationName: 'Timeline', variables: variables });
+        if (data.errors && data.errors.length) throw new Error(data.errors[0].message || 'query failed');
+        const edges = (data.data && data.data.person && data.data.person.edges) || {};
+        t.nodes = t.nodes.concat(edges.nodes || []);
+        t.next = edges.next || '';
+        t.error = '';
+      } catch (e) { t.error = 'Could not load activity: ' + e.message; }
+      t.loading = false;
+      if (_customersTimeline === t) customersTimelinePaint();
+    }
+
+    // customersTimelinePaint updates only the timeline, so a field being
+    // typed in elsewhere on the profile keeps its text and its focus.
+    function customersTimelinePaint() {
+      const el = document.getElementById('customers-timeline');
+      if (el) el.innerHTML = customersTimelineHtml();
+    }
+
+    function customersTimelineMore() { customersTimelineLoad(false); }
+
     // ── Actions ──
     async function customersOpen(id) {
       try {
         _customersOpen = await customersRequest('GET', '/api/customers/' + encodeURIComponent(id));
         customersShow();
+        customersTimelineLoad(true);
       } catch (e) { showToast('Could not open the profile: ' + e.message, 'error'); }
     }
 
