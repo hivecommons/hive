@@ -392,7 +392,30 @@ func (c *Client) ChatPostConfirmed(ctx context.Context, nativeID, text string) (
 
 // Say calls say.
 func (c *Client) Say(ctx context.Context, nativeID, text string) error {
-	return c.Call(ctx, "say", textArgs{nativeID, text}, nil)
+	_, err := c.SayTimed(ctx, nativeID, text)
+	return err
+}
+
+// SayTimed calls say and returns what Quorum reported about the line: its
+// length and, from quorum 0.5.0, the wait before the first audio. An older
+// Quorum answers the zero value for what it does not report.
+func (c *Client) SayTimed(ctx context.Context, nativeID, text string) (SayResult, error) {
+	var r SayResult
+	err := c.Call(ctx, "say", textArgs{nativeID, text}, &r)
+	return r, err
+}
+
+// prewarmArgs is say.prewarm's input.
+type prewarmArgs struct {
+	MeetingID string   `json:"meeting_id"`
+	Texts     []string `json:"texts"`
+}
+
+// SayPrewarm calls say.prewarm (quorum 0.5.0+): Quorum synthesizes the
+// lines in the background so a later say of the same text starts at once.
+// An older Quorum answers invalid_argument for the unknown tool.
+func (c *Client) SayPrewarm(ctx context.Context, nativeID string, texts []string) error {
+	return c.Call(ctx, "say.prewarm", prewarmArgs{nativeID, texts}, nil)
 }
 
 // Delete calls meeting.delete, erasing the transcript upstream.

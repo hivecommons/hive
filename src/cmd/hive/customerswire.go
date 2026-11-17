@@ -29,14 +29,14 @@ type customersDashboard struct {
 // wireCustomers opens the people store and the edge index when
 // customers.enabled is on. It returns nil when the feature is off or the
 // store cannot be opened; the routes then answer 503 and the section hides.
-func wireCustomers(cfg *config.Config, logger *slog.Logger) (*customersDashboard, func()) {
+func wireCustomers(cfg *config.Config, resolvers customers.Resolvers, logger *slog.Logger) (*customersDashboard, func()) {
 	if !cfg.CustomersEnabled() {
 		return nil, nil
 	}
-	return wireCustomersAt(customersDataDir, customersGraphDir, logger)
+	return wireCustomersAt(customersDataDir, customersGraphDir, resolvers, logger)
 }
 
-func wireCustomersAt(dataDir, graphDir string, logger *slog.Logger) (*customersDashboard, func()) {
+func wireCustomersAt(dataDir, graphDir string, resolvers customers.Resolvers, logger *slog.Logger) (*customersDashboard, func()) {
 	store, err := customers.Open(dataDir, nil)
 	if err != nil {
 		if logger != nil {
@@ -44,8 +44,8 @@ func wireCustomersAt(dataDir, graphDir string, logger *slog.Logger) (*customersD
 		}
 		return nil, nil
 	}
-	// The index only serves counts and forget in this build. Without it the
-	// store still works, so a failure here is logged and not fatal.
+	// The index holds the edges. Without it the store still works, so a
+	// failure here is logged and not fatal.
 	index, err := customers.OpenIndex(graphDir)
 	if err != nil {
 		index = nil
@@ -61,7 +61,7 @@ func wireCustomersAt(dataDir, graphDir string, logger *slog.Logger) (*customersD
 			_ = index.Close()
 		}
 	}
-	return &customersDashboard{svc: customers.NewService(store, index, nil)}, stop
+	return &customersDashboard{svc: customers.NewService(store, index, resolvers)}, stop
 }
 
 // customersError maps a store error onto the dashboard's sentinels, which

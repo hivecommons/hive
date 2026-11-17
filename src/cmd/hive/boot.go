@@ -31,8 +31,10 @@ import (
 	"github.com/hivecommons/hive/pkg/inbox"
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/knowledge/connector"
+	"github.com/hivecommons/hive/pkg/mailallow"
 	"github.com/hivecommons/hive/pkg/meetings"
 	"github.com/hivecommons/hive/pkg/meetings/live"
+	"github.com/hivecommons/hive/pkg/meetings/schedule"
 	"github.com/hivecommons/hive/pkg/notify"
 	"github.com/hivecommons/hive/pkg/perspsrc"
 	"github.com/hivecommons/hive/pkg/planning"
@@ -338,6 +340,15 @@ type boot struct {
 	// meetingsMgr runs meeting lifecycles over the Quorum child
 	// (hivecommons/hive#18290); nil when meetings are off.
 	meetingsMgr *meetings.Manager
+	// meetingsSched is the meeting scheduler behind the Calendar; nil when
+	// meetings are off. The customers sweep reads its events (#18742).
+	meetingsSched *schedule.Scheduler
+	// mailAllow is the calendar email allowlist; nil when it could not be
+	// opened. The customers sweep reads proven emails from it (#18742).
+	mailAllow *mailallow.Store
+	// customers is the people store behind the Customers section
+	// (hivecommons/hive#18742); nil when customers are off.
+	customers *customersDashboard
 	// meetingsLive is the Spektacular live loop (hivecommons/hive#18291).
 	meetingsLive *live.Runner
 	// meetingsInboxSrc lists ended meetings in the inbox (#18293).

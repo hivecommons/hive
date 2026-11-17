@@ -135,9 +135,9 @@ func TestPreConsentLinesNeitherStoredNorForwarded(t *testing.T) {
 		}
 	}
 	ch <- Event{Type: EventSegment, Seq: seq, Speaker: &Person{Name: "Ana"}, Text: "after consent", Final: true}
-	eventually(t, "post-consent line stored", func() bool { tr, _ := m.Transcript(mt.ID); return len(tr) == 1 })
+	eventually(t, "post-consent line stored", func() bool { tr, _ := heardLines(m, mt.ID); return len(tr) == 1 })
 
-	tr, _ := m.Transcript(mt.ID)
+	tr, _ := heardLines(m, mt.ID)
 	if tr[0].Text != "after consent" {
 		t.Fatalf("transcript %+v", tr)
 	}
@@ -176,7 +176,7 @@ func TestPreConsentLeaveHonoured(t *testing.T) {
 	if _, leaves := g.snapshot(); len(leaves) != 1 || leaves[0] != "q1" {
 		t.Fatalf("leaves %q", leaves)
 	}
-	if tr, _ := m.Transcript(mt.ID); len(tr) != 0 {
+	if tr, _ := heardLines(m, mt.ID); len(tr) != 0 {
 		t.Fatalf("the leave line was stored: %+v", tr)
 	}
 	if rec.saw("Betty, please leave") {
@@ -242,8 +242,8 @@ func TestPreConsentNoReplayOnReconnectOrRestart(t *testing.T) {
 	eventually(t, "consent after resume", func() bool { got, _ := m2.Get(mt.ID); return got.ConsentPostedAt != nil })
 	ch2 <- Event{Type: EventSegment, Seq: 4, Speaker: &Person{Name: "Ana"}, Text: "old", Final: true}
 	ch2 <- Event{Type: EventSegment, Seq: 7, Speaker: &Person{Name: "Ana"}, Text: "kept", Final: true}
-	eventually(t, "kept", func() bool { tr, _ := m2.Transcript(mt.ID); return len(tr) == 1 })
-	if tr, _ := m2.Transcript(mt.ID); tr[0].Text != "kept" {
+	eventually(t, "kept", func() bool { tr, _ := heardLines(m2, mt.ID); return len(tr) == 1 })
+	if tr, _ := heardLines(m2, mt.ID); tr[0].Text != "kept" {
 		t.Fatalf("transcript %+v", tr)
 	}
 }
@@ -265,8 +265,8 @@ func TestConsentCursorFence(t *testing.T) {
 	// Quorum had seq 8 before the notice landed; it arrives after it.
 	ch <- Event{Type: EventSegment, Seq: 8, Speaker: &Person{Name: "Ana"}, Text: "before", Final: true}
 	ch <- Event{Type: EventSegment, Seq: 10, Speaker: &Person{Name: "Ana"}, Text: "after", Final: true}
-	eventually(t, "after stored", func() bool { tr, _ := m.Transcript(mt.ID); return len(tr) == 1 })
-	if tr, _ := m.Transcript(mt.ID); tr[0].Text != "after" {
+	eventually(t, "after stored", func() bool { tr, _ := heardLines(m, mt.ID); return len(tr) == 1 })
+	if tr, _ := heardLines(m, mt.ID); tr[0].Text != "after" {
 		t.Fatalf("transcript %+v", tr)
 	}
 	if got, _ := m.Get(mt.ID); got.PreConsentDropped != 1 {

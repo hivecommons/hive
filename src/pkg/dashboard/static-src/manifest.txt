@@ -35,6 +35,7 @@ css/inbox-access.css
 css/meetings.css
 css/calendar.css
 css/meeting-attendee.css
+css/customers.css
 css/email-in.css
 css/sections-collapse.css
 css/design-system.css
@@ -68,6 +69,7 @@ html/nous-inception-knowledge-contributors.html
 html/inbox.html
 html/calendar.html
 html/meetings.html
+html/customers.html
 html/debug-logs.html
 html/agents.html
 html/tracker.html
@@ -141,9 +143,11 @@ js/inbox-mail-log.js
 js/inbox-note.js
 js/inbox-input-methods.js
 js/meetings.js
+js/meetings-replies.js
 js/calendar.js
 js/meeting-attendee.js
 js/meeting-attendee-model.js
+js/customers.js
 js/vault-audit.js
 js/review-queue.js
 js/contributors.js
