@@ -124,7 +124,35 @@ class NativeQueueWorkflows(unittest.TestCase):
         self.assertEqual(job["name"], "verify PR contents")
         verify_step = next(step for step in job["steps"]
                            if step.get("name") == "Verifier action")
-        self.assertIn("docker run --rm", verify_step["run"])
+        # #18764: one completed create per check from the in-repo verifier,
+        # no image and no create-then-update.
+        self.assertTrue(verify_step["uses"].startswith("actions/github-script@"))
+        self.assertIn(".github/scripts/pr-verifier.cjs", verify_step["with"]["script"])
+        self.assertNotIn("continue-on-error", verify_step)
+
+    def test_pr_verifier_writes_completed_checks_and_fails_when_it_cannot(self):
+        # #18764: the image created PR Type / PR Issue in_progress and then
+        # PATCHed them; a 404 on the PATCH left the required runs in_progress
+        # for ever while the continue-on-error wrapper stayed green.
+        verifier = workflow("pr-verifier.yml")
+        job = verifier["jobs"]["verify"]
+        self.assertNotIn("packages", verifier["permissions"])
+        self.assertEqual(verifier["permissions"]["checks"], "write")
+        for step in job["steps"]:
+            self.assertNotIn("continue-on-error", step, step.get("name"))
+            self.assertNotIn("docker", str(step.get("run", "")) + str(step.get("uses", "")))
+        self.assertNotIn("env", job)
+        checkout = next(s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout@"))
+        # pull_request_target: github.sha is the default-branch tip, never PR code.
+        self.assertEqual(checkout["with"]["ref"], "${{ github.sha }}")
+        self.assertFalse(checkout["with"]["persist-credentials"])
+        script = (ROOT / ".github/scripts/pr-verifier.cjs").read_text()
+        code = re.sub(r"(?m)^\s*//.*$", "", script)
+        self.assertIn("CHECK_NAMES = ['PR Type', 'PR Issue']", code)
+        self.assertIn("status: 'completed'", code)
+        for forbidden in ("checks.update", "listForRef", "PATCH", "in_progress"):
+            self.assertNotIn(forbidden, code)
+        self.assertIn("core.setFailed(", code)
 
     def test_autofix_push_deterministically_redispatches_the_verifier(self):
         # #16567: the autofix push landed after the last prow label and no
@@ -146,7 +174,7 @@ class NativeQueueWorkflows(unittest.TestCase):
         verify_step = next(s for s in steps if s.get("id") == "verifier")
         self.assertIn("steps.dispatch_event.outputs.stale != 'true'", verify_step["if"])
         self.assertIn("steps.dispatch_event.outputs.event_path", verify_step["env"]["VERIFIER_EVENT_PATH"])
-        self.assertIn('-v "$VERIFIER_EVENT_PATH:/github/event.json:ro"', verify_step["run"])
+        self.assertIn("process.env.VERIFIER_EVENT_PATH", verify_step["with"]["script"])
 
         guard = workflow("changelog-fragment-guard.yml")
         self.assertEqual(guard["permissions"]["actions"], "write")
