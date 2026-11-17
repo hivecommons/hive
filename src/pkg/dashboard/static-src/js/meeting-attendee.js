@@ -3,7 +3,8 @@
     // customized persona, its behaviour caps, and the attendee's email
     // address and inviters. GET/PUT /api/meetings/persona, owner or
     // read-write; POST /api/meetings/persona/sample plays a line through the
-    // meetings TTS service. The Email section is live once the server reports
+    // meetings TTS service, and GET /api/meetings/persona/preview plays a
+    // preset's introduction when its card is clicked (#18710). The Email section is live once the server reports
     // email.available (email-in, #18395): the address, everyone's calendar
     // emails, the user's own (add, prove, remove) and the owner's switches.
     let _maState = null; // { data, form }
@@ -85,13 +86,125 @@
       return '';
     }
 
+    // A preset card is two buttons side by side: the card itself (select
+    // the preset and play its introduction) and a speaker (play or stop
+    // only). Both are real buttons, so Enter and Space work.
     function maPresetCardHtml(p, selected) {
       const vt = (p.voice_type || '').replace(/^./, c => c.toUpperCase());
-      return '<button type="button" class="ma-preset' + (selected ? ' is-selected' : '') + '" data-action="maPickPreset" data-arg0="' + escapeHtml(p.id) + '" aria-pressed="' + (selected ? 'true' : 'false') + '">' +
+      const state = maIntroState(p.id);
+      const label = escapeHtml(maIntroLabel(p, !!state));
+      return '<div class="ma-preset' + (selected ? ' is-selected' : '') + (state ? ' is-' + state : '') + '" data-ma-preset="' + escapeHtml(p.id) + '">' +
+        '<button type="button" class="ma-preset-pick" data-action="maPickPreset" data-arg0="' + escapeHtml(p.id) + '" aria-pressed="' + (selected ? 'true' : 'false') + '" title="Select this preset and play its introduction">' +
         '<span class="ma-preset-flag" aria-hidden="true">' + maFlag(p.language) + '</span>' +
         '<span class="ma-preset-name">' + escapeHtml(p.display_name) + '</span>' +
         '<span class="muted-xs">' + escapeHtml(maLanguageLabel(p.language)) + ' · ' + escapeHtml(p.accent) + '</span>' +
-        '<span class="muted-xs">' + escapeHtml(vt) + ' voice · <code>' + escapeHtml(p.voice) + '</code></span></button>';
+        '<span class="muted-xs">' + escapeHtml(vt) + ' voice · <code>' + escapeHtml(p.voice) + '</code></span></button>' +
+        '<button type="button" class="ma-preset-play" data-action="maTogglePresetIntro" data-arg0="' + escapeHtml(p.id) + '" data-ma-preset-play aria-label="' + label + '" title="' + label + '">' +
+        '<span aria-hidden="true">' + (state ? MA_INTRO_STOP_ICON : MA_INTRO_PLAY_ICON) + '</span></button></div>';
+    }
+
+    // ── Preset voice preview (hivecommons/hive#18710) ──
+    // Clicking a preset card plays that persona's introduction in its own
+    // voice: GET /api/meetings/persona/preview speaks the preset's intro
+    // through the meetings TTS service, so the clip is the real voice. The
+    // clip only ever starts from a click (never on page load). When it
+    // cannot be played the tab says why; it never falls back to the
+    // browser's own speech synthesis, which would be a different voice.
+    const MA_INTRO_PLAY_ICON = '🔊';
+    const MA_INTRO_STOP_ICON = '⏹';
+    const MA_INTRO_UNAVAILABLE = 'Voice preview is unavailable: ';
+    // The card whose introduction is loading or playing, and the last error.
+    let _maIntro = { id: '', state: '', error: '' };
+    // The Audio element of the current clip; null when nothing plays.
+    let _maIntroAudio = null;
+
+    function maIntroSrc(id) { return '/api/meetings/persona/preview?preset=' + encodeURIComponent(id); }
+
+    // maIntroState is 'loading', 'playing' or '' for a preset's card.
+    function maIntroState(id) { return _maIntro.id === id ? _maIntro.state : ''; }
+
+    function maIntroLabel(p, on) { return (on ? 'Stop introduction for ' : 'Play introduction for ') + (p.display_name || p.name || p.id); }
+
+    function maIntroSet(id, state, error) {
+      _maIntro = { id: id, state: state, error: error || '' };
+      maIntroSync();
+    }
+
+    // maIntroSync shows the playing state on the cards in place, so the
+    // card that was clicked keeps the keyboard focus.
+    function maIntroSync() {
+      document.querySelectorAll('[data-ma-preset]').forEach(card => {
+        const p = maPreset(card.getAttribute('data-ma-preset'));
+        if (!p) return;
+        const state = maIntroState(p.id);
+        card.classList.toggle('is-playing', state === 'playing');
+        card.classList.toggle('is-loading', state === 'loading');
+        const btn = card.querySelector('[data-ma-preset-play]');
+        if (!btn) return;
+        btn.setAttribute('aria-label', maIntroLabel(p, !!state));
+        btn.setAttribute('title', maIntroLabel(p, !!state));
+        if (btn.firstElementChild) btn.firstElementChild.textContent = state ? MA_INTRO_STOP_ICON : MA_INTRO_PLAY_ICON;
+      });
+      const status = document.querySelector('[data-ma-intro-status]');
+      if (status) status.textContent = _maIntro.error;
+    }
+
+    function maStopIntro() {
+      const audio = _maIntroAudio;
+      _maIntroAudio = null;
+      if (audio) { try { audio.pause(); } catch (e) { /* already stopped */ } }
+      maIntroSet('', '', '');
+    }
+
+    // maPlayIntro stops any clip and plays a preset's introduction. It must
+    // run inside the click that asked for it: browsers only allow playback
+    // started by the user.
+    function maPlayIntro(id) {
+      if (!maPreset(id)) return;
+      maStopIntro();
+      const audio = new Audio(maIntroSrc(id));
+      _maIntroAudio = audio;
+      const current = () => _maIntroAudio === audio;
+      audio.addEventListener('playing', () => { if (current()) maIntroSet(id, 'playing', ''); });
+      audio.addEventListener('ended', () => { if (current()) maStopIntro(); });
+      audio.addEventListener('error', () => { if (current()) maIntroFailed(id); });
+      maIntroSet(id, 'loading', '');
+      const started = audio.play();
+      if (started && started.catch) started.catch(e => {
+        // A clip that cannot load also fires 'error', handled above.
+        if (!current() || !e || e.name !== 'NotAllowedError') return;
+        _maIntroAudio = null;
+        maIntroSet('', '', MA_INTRO_UNAVAILABLE + 'the browser blocked playback. Click the card again.');
+      });
+    }
+
+    // maIntroFailed asks the server why the clip did not play (the audio
+    // element does not expose the error body) and shows the reason.
+    async function maIntroFailed(id) {
+      _maIntroAudio = null;
+      let reason = '';
+      try {
+        const r = await fetch(maIntroSrc(id));
+        if (r.ok) {
+          if (r.body && r.body.cancel) r.body.cancel();
+          reason = 'the browser could not play the clip';
+        } else {
+          const data = await r.json().catch(() => ({}));
+          reason = data.error || ('HTTP ' + r.status);
+        }
+      } catch (e) {
+        reason = e.message || 'the hive did not answer';
+      }
+      // Another card was clicked, or this one stopped, while asking.
+      if (_maIntroAudio || _maIntro.id !== id) return;
+      maIntroSet('', '', MA_INTRO_UNAVAILABLE + reason);
+    }
+
+    // maTogglePresetIntro is the speaker button: play, or stop the card
+    // that is playing.
+    function maTogglePresetIntro(id) {
+      if (maIntroState(id)) { maStopIntro(); return; }
+      maPlayIntro(id);
     }
 
     function maField(label, key, inner) {
@@ -131,8 +244,9 @@
       const presets = (_maState.data.presets || []).map(p => maPresetCardHtml(p, p.id === f.preset)).join('');
       return '<section class="ma-section" aria-labelledby="ma-persona-h"><h4 id="ma-persona-h">Persona</h4>' +
         '<label class="inbox-toggle"><input type="checkbox" data-ma-field="enabled" data-change-action="maInput" data-arg0="enabled" data-arg-types="s,c"' + (f.enabled ? ' checked' : '') + '> Attend meetings as this persona' + maOverrideNote('enabled') + '</label>' +
-        '<p class="muted-xs">Presets use voices the self-hosted Kokoro TTS provides. Pick one, then adjust any field.' + maOverrideNote('preset') + '</p>' +
+        '<p class="muted-xs">Presets use voices the self-hosted Kokoro TTS provides. Pick one to hear its introduction, then adjust any field.' + maOverrideNote('preset') + '</p>' +
         '<div class="ma-presets" role="group" aria-label="Persona presets">' + presets + '</div>' +
+        '<p class="kc-error muted-xs ma-intro-status" role="alert" data-ma-intro-status>' + escapeHtml(_maIntro.error) + '</p>' +
         '<div class="meetings-settings-grid">' +
         maField('Name', 'name', maTextInput('name', f.name, 'Betty')) +
         maField('Display name', 'display_name', maTextInput('display_name', f.display_name, 'Betty Bee from the hive')) +
@@ -311,10 +425,12 @@
       maRender();
     }
 
-    // maPickPreset fills the form from a preset; Save stores it.
+    // maPickPreset fills the form from a preset (Save stores it) and plays
+    // the preset's introduction; picking the card that is playing stops it.
     function maPickPreset(id) {
       const p = maPreset(id);
       if (!p || !_maState) return;
+      const wasOn = !!maIntroState(id);
       const f = _maState.form;
       f.preset = p.id;
       ['name', 'display_name', 'pronouns', 'language', 'voice', 'voice_type', 'accent', 'humor'].forEach(k => { f[k] = p[k] || ''; });
@@ -323,6 +439,13 @@
       f.leave_phrases = (p.leave_phrases || []).slice();
       _maState.dirty = true;
       maRender();
+      // The render replaced the card: give the keyboard focus back to it.
+      document.querySelectorAll('[data-ma-preset]').forEach(card => {
+        if (card.getAttribute('data-ma-preset') !== id) return;
+        const pick = card.querySelector('.ma-preset-pick');
+        if (pick && pick.focus) pick.focus();
+      });
+      if (wasOn) maStopIntro(); else maPlayIntro(id);
     }
 
     function maRequestBody() {
