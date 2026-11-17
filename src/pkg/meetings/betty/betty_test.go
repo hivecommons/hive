@@ -316,7 +316,7 @@ func TestEngineAddressedAnswer(t *testing.T) {
 	r.e.Observe(Line{Who: "Ana", Text: "we moved the release to Friday"})
 	r.e.Observe(Line{Who: "Bo", Text: "Betty, when does the release ship?"})
 	rep := r.reply()
-	if rep.Trigger != TriggerAddressed || rep.Text != "It ships Friday." || len(rep.Sources) != 1 {
+	if rep.Trigger != TriggerAddressed || rep.Text != `It ships Friday. (Source: knowledge "Release")` || len(rep.Sources) != 1 {
 		t.Fatalf("addressed %+v", rep)
 	}
 	c := llm.last()
@@ -350,7 +350,7 @@ func TestEngineRoomQuestionAnsweredAfterWait(t *testing.T) {
 	start := time.Now()
 	r.e.Observe(Line{Who: "Ana", Text: "When does the release ship?"})
 	rep := r.reply()
-	if rep.Trigger != TriggerQuestion || rep.Text != "It ships Friday." || time.Since(start) < testWait {
+	if rep.Trigger != TriggerQuestion || rep.Text != `It ships Friday. (Source: knowledge "Release")` || time.Since(start) < testWait {
 		t.Fatalf("question %+v after %v", rep, time.Since(start))
 	}
 	if !strings.Contains(llm.last().prompt, "nobody has answered") {

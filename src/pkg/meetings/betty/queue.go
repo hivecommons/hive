@@ -428,7 +428,7 @@ func (e *Engine) onAnswer(p *pending, a answered) {
 		e.finish(p, reason)
 		return
 	}
-	said := e.attributed(p, false, a.ans.Topic, text, now)
+	said := e.attributed(p, false, a.ans.Topic, citeSources(e.s.Persona.Language, text, a.ans.Sources, p.snips), now)
 	if e.emit(Reply{Text: said, Trigger: TriggerQuestion, Question: p.line.Text, NeedsResearch: a.ans.NeedsResearch, Sources: a.ans.Sources,
 		Timing: e.timing(p, false, now)}) {
 		e.posts = append(e.posts, now)
@@ -492,12 +492,30 @@ func (e *Engine) onAddressedAnswer(p *pending, a answered) {
 		rep.NeedsResearch = true
 		rep.Research = clip(researchQuery(p), maxResearchQuery)
 	}
+	if a.err == nil && rep.Research == "" && text != "" {
+		rep.Text = e.vouch(p, a.ans, rep.Text, live)
+	}
 	rep.Text = e.attributed(p, p.trig.VoiceWanted, a.ans.Topic, rep.Text, e.d.Now())
 	rep.Timing = e.timing(p, a.err != nil || a.ans.Answer == "", e.d.Now())
 	e.emit(rep)
 	e.rememberTopic(p.topic)
 	e.rememberTopic(TopicKey(text))
 	e.finish(p, "")
+}
+
+// vouch is an addressed model answer as said (#18590 accuracy): a
+// low-confidence answer that is not from the hive's live state is marked
+// unsure rather than stated as fact, and a chat answer names the sources
+// it used.
+func (e *Engine) vouch(p *pending, ans Answer, text string, live bool) string {
+	lang := e.s.Persona.Language
+	if !live && ans.Confidence < e.s.MinConfidence {
+		text = hedge(lang, text)
+	}
+	if !p.trig.VoiceWanted {
+		text = citeSources(lang, text, ans.Sources, p.snips)
+	}
+	return text
 }
 
 // maxResearchQuery bounds a deep dive's query.
