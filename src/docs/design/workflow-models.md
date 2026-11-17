@@ -728,12 +728,28 @@ Every eval cycle, with `workflow.enabled` on:
   `workflow-dispatch` audit row is recorded; a failed or deferred kick frees the key for the
   next pass, and an in-flight mark lapses after 30 minutes.
 
+**Which agent fills a profile.** `Config.ResolveWorkflowDispatch(profile, need, manual)` is the
+one resolver (hivecommons/hive#18690). In order: the pin
+`workflow.dispatch.profiles.<profile>.agent` (a pin that names no enabled agent is a problem,
+never a fallback); an agent named after the profile; the first enabled `writer`, `docs` or
+`feature` agent; then the last resort, which needs the item (`need`): for a target that
+produces a pull request or a push the issue worker (`WorkflowDispatchIssueWorkerRole`, the
+`scanner` role, kept equal to `classify.DefaultLane` by a test), for a reviewing target the
+`reviewer` role, in both cases only an agent whose `repos:` scope serves the item's repository
+(`AgentServesRepo`). No other role is picked on its own. The result carries `Agent` and
+`Source`, or `Problem`: one sentence saying why nothing fills the profile. The pass logs it
+with the profile; `GET /api/workflows` lists it per bound repository and profile (`dispatch`,
+with the pickable `agents`) for the workflow row on Settings → Repos, whose picker saves the
+pin through `PUT /api/workflows/dispatch/profiles {profile, agent}`
+(`Config.SetWorkflowDispatchAgent`); and the tracker's dispatch block carries `agent` /
+`problem` so the row wears a `no agent for <profile>` badge (`stageTrackerWorkflowGapHtml`).
+
 **Send to a profile.** The tracker payload's `workflows.repos[repo].dispatch` maps a stage
-number to `{profile, state, kinds, reply}`; a row in such a state offers the owner **Send to *profile*** in its ⋯ menu (`stageTrackerWorkflowDispatchAction`), which posts
+number to `{profile, state, kinds, reply, agent, problem}`; a row in such a state offers the owner **Send to *profile*** in its ⋯ menu (`stageTrackerWorkflowDispatchAction`), which posts
 `POST /api/workflows/dispatch {repo, number}`. cmd/hive's `WorkflowDispatchPrepare` reads the
-item fresh (`github.WorkflowDispatchForRef`), resolves the agent with
-`Config.WorkflowDispatchAgentForManual` (a profile `disabled` for automatic dispatch still
-resolves), claims an issue first and renders the prompt; the handler kicks the agent and, once
+item fresh (`github.WorkflowDispatchForRef`), resolves the agent with the manual form of
+`Config.ResolveWorkflowDispatch` (a profile `disabled` for automatic dispatch still
+resolves; when nothing fills it the error gives the reason and names the picker), claims an issue first and renders the prompt; the handler kicks the agent and, once
 the kick lands, records the hand-off under the automatic key, so the pass does not repeat it.
 
 The built-in prompt names the item, model, state and trigger, the state's guidance

@@ -50,3 +50,12 @@ func TestTriageRules(t *testing.T) {
 		})
 	}
 }
+
+// Workflow dispatch falls back to the agent that works unlaned issues
+// (hivecommons/hive#18690). config cannot import this package, so it names
+// the role itself; the two must stay the same.
+func TestDefaultLaneIsWorkflowDispatchIssueWorker(t *testing.T) {
+	if DefaultLane != config.WorkflowDispatchIssueWorkerRole {
+		t.Fatalf("classify.DefaultLane = %q, config.WorkflowDispatchIssueWorkerRole = %q", DefaultLane, config.WorkflowDispatchIssueWorkerRole)
+	}
+}

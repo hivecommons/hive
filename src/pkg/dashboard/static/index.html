@@ -1639,6 +1639,8 @@
     .ham-seg.ham-wf-seg.done .ham-stage-ico { opacity: 0.6; }
     .ham-emoji-ico { display: inline-block; width: 12px; height: 12px; font-size: var(--fs-xs); line-height: 12px; text-align: center; font-style: normal; }
     .ham-seg.ham-wf-uncovered { background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); outline: 1px dashed var(--amber); }
+    /* A model-owned row whose profile no hive agent fills (hivecommons/hive issue 18690). */
+    .ham-badge-wf-gap { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-group-dist { flex: 0 0 auto; margin-left: auto; margin-right: calc(4em + var(--sp-3)); display: inline-flex; align-items: flex-end; gap: var(--sp-1); height: 0.9em; }
     .ham-gd { display: inline-block; width: 0.45em; height: 15%; border-radius: var(--sp-1); background: color-mix(in srgb, var(--text-faint) 35%, transparent); }
     .ham-gd-1 { height: 35%; background: color-mix(in srgb, var(--amber) 55%, transparent); }
@@ -5193,6 +5195,7 @@
     .wf-enabled-toggle .config-toggle-label { font-weight: 700; }
     .wf-enabled-explain { margin: 0 0 var(--sp-4); max-width: 60em; }
     .wf-derivation-off { color: var(--status-warn); }
+    .wf-dispatch-gap { color: var(--status-warn); white-space: normal; }
     .wf-prov, .wf-compiled { display: inline-block; border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; border: var(--line-width) solid var(--border); color: var(--muted); }
     .wf-prov-built-in { color: var(--status-info); border-color: color-mix(in srgb, var(--status-info) 40%, transparent); background: color-mix(in srgb, var(--status-info) 10%, transparent); }
     .wf-prov-curated { color: var(--status-ok); border-color: color-mix(in srgb, var(--status-ok) 40%, transparent); background: color-mix(in srgb, var(--status-ok) 10%, transparent); }
@@ -20520,7 +20523,21 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (!t || !t.profile) return null;
       const kind = item.kind === 'pr' ? 'pr' : 'issue';
       if (Array.isArray(t.kinds) && t.kinds.length && t.kinds.indexOf(kind) < 0) return null;
-      return { profile: String(t.profile), state: String(t.state || ''), reply: String(t.reply || '') };
+      return { profile: String(t.profile), state: String(t.state || ''), reply: String(t.reply || ''), agent: String(t.agent || ''), problem: String(t.problem || '') };
+    }
+
+    // Pure: the row's short reason when no hive agent fills the profile
+    // its state is handed to (hivecommons/hive#18690): the hand-off cannot
+    // happen and no other lane is offered the item, so the row says so
+    // instead of looking claimed and idle. '' when an agent fills it.
+    function stageTrackerWorkflowGapOf(item, workflows) {
+      const t = stageTrackerWorkflowDispatchOf(item, workflows);
+      if (!t || !t.problem) return null;
+      return { profile: t.profile, word: 'no agent for ' + t.profile, tip: 'Not handed off: ' + t.problem + '. Pick an agent for it on the repository\'s workflow row in Settings → Repos.' };
+    }
+    function stageTrackerWorkflowGapHtml(item, workflows) {
+      const g = stageTrackerWorkflowGapOf(item, workflows);
+      return g ? `<span class="ham-badge ham-badge-wf-gap" title="${esc(g.tip)}">${esc(g.word)}</span>` : '';
     }
 
     // Pure: the ⋯ menu entry for that hand-off — owner only, since it
@@ -20529,7 +20546,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const t = stageTrackerWorkflowDispatchOf(item, workflows);
       if (!t) return null;
       const owner = !!(ctx && ctx.owner);
-      const hint = t.reply ? 'also runs on ' + t.reply : 'hand off now';
+      const hint = t.problem ? 'no agent fills it' : (t.reply ? 'also runs on ' + t.reply : 'hand off now');
       return { id: 'wf-dispatch', label: 'Send to ' + t.profile, hint, profile: t.profile, enabled: owner, why: owner ? '' : 'Needs the owner role' };
     }
 
@@ -21735,7 +21752,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null, ctx.trainIndex && trainKey ? ctx.trainIndex[trainKey] : undefined) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(item, stages, ctx) : ''}${sharedCls}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${sharedUnder ? ` data-ham-shared-under="${sharedUnder}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + stageTrackerChipsHtml(shown, { gate: !!gate }) + (gate || (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : '')) + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(item, hamNotesCtx(item)) : ''), prTargetKey)}
+          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + (typeof stageTrackerWorkflowGapHtml === 'function' ? stageTrackerWorkflowGapHtml(item, ctx.workflows) : '') + stageTrackerChipsHtml(shown, { gate: !!gate }) + (gate || (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : '')) + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(item, hamNotesCtx(item)) : ''), prTargetKey)}
         </div>
         <div class="ham-strip-row">
           ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
@@ -69715,7 +69732,7 @@ function burnAreaChart() {
     // store (the model must exist and compile) and the tracker picks the new
     // columns up on its next poll.
     const WORKFLOW_DEFAULT_KEY = 'hive-default@1';
-    const _workflowState = { loaded: false, loading: false, enabled: false, workflows: [], bindings: [] };
+    const _workflowState = { loaded: false, loading: false, enabled: false, workflows: [], bindings: [], dispatch: [], agents: [] };
 
     function workflowKey(name, version) { return (name || '') + '@' + (version || ''); }
 
@@ -69730,6 +69747,7 @@ function burnAreaChart() {
         _workflowState.workflows = Array.isArray(data.workflows) ? data.workflows : [];
         _workflowState.bindings = Array.isArray(data.bindings) ? data.bindings : [];
         _workflowState.enabled = !!data.enabled;
+        workflowDispatchApply(data);
         _workflowState.loaded = true;
       } catch (err) {
         _workflowState.loaded = true;
@@ -69770,7 +69788,80 @@ function burnAreaChart() {
       const flag = _workflowState.enabled || !bound
         ? ''
         : '<span class="rt-inherit wf-derivation-off" title="workflow.enabled is off: the binding is recorded and the monitor shows the model\'s columns, but stage derivation still runs the built-in engine. Turn on &quot;Derive stages from bound models&quot; on Settings → Workflows.">columns only — turn on derivation in Workflows</span>';
-      return `<div class="config-list-item ld-sub" data-wf-repo="${esc(repo)}"><label class="rt-check" title="Which workflow model this repository follows (hivecommons/hive#17620). hive-default is the built-in lifecycle; a custom model changes the monitor's columns and, when workflow.enabled is on, how stages are derived.">Workflow <select ${locked ? 'disabled' : ''} data-change-action="setRepoWorkflow" data-arg0="${esc(repo)}" data-arg-types="s,v">${options}</select></label>${flag}${bound ? `<span class="rt-inherit" title="Bound to ${esc(current)}">bound</span>` : '<span class="rt-inherit">default</span>'}</div>`;
+      return `<div class="config-list-item ld-sub" data-wf-repo="${esc(repo)}"><label class="rt-check" title="Which workflow model this repository follows (hivecommons/hive#17620). hive-default is the built-in lifecycle; a custom model changes the monitor's columns and, when workflow.enabled is on, how stages are derived.">Workflow <select ${locked ? 'disabled' : ''} data-change-action="setRepoWorkflow" data-arg0="${esc(repo)}" data-arg-types="s,v">${options}</select></label>${flag}${bound ? `<span class="rt-inherit" title="Bound to ${esc(current)}">bound</span>` : '<span class="rt-inherit">default</span>'}</div>${bound ? renderRepoWorkflowProfileRows(repo, workflowDispatchProfilesFor(bound, _workflowState.dispatch), _workflowState.agents, locked) : ''}`;
+    }
+
+    // Which hive agent fills each profile the bound model hands items to
+    // (hivecommons/hive#18690). GET /api/workflows and the pin's own
+    // response carry `dispatch` (one entry per bound repository and
+    // profile: the resolved agent, how it was resolved, the pin, or the
+    // problem when nothing fills it) and `agents` (who can be pinned).
+    function workflowDispatchApply(data) {
+      _workflowState.dispatch = Array.isArray(data && data.dispatch) ? data.dispatch : [];
+      _workflowState.agents = Array.isArray(data && data.agents) ? data.agents : [];
+    }
+
+    // Pure: the dispatch entries of one binding.
+    function workflowDispatchProfilesFor(bound, dispatch) {
+      const want = String((bound && bound.repo) || '').toLowerCase();
+      return (dispatch || []).filter(d => d && d.profile && String(d.repo || '').toLowerCase() === want);
+    }
+
+    const WORKFLOW_DISPATCH_SOURCE_WORD = { named: 'the agent named after the profile', role: 'the first writer, docs or feature agent', fallback: 'the hive\'s standard agent for this kind of work' };
+
+    // Pure: what one profile's row says — the option list of its picker
+    // (the default first, then every agent that can be pinned, plus a pin
+    // that no longer names an enabled agent so it stays visible) and, when
+    // nothing fills the profile, the warning.
+    function workflowDispatchProfileView(d, agents) {
+      const pinned = String(d.pinned || '');
+      const agent = String(d.agent || '');
+      const auto = pinned ? 'Automatic' : (agent ? 'Automatic (' + agent + ')' : 'Automatic (none available)');
+      const options = [{ value: '', label: auto, selected: !pinned }];
+      const names = (agents || []).map(String);
+      if (pinned && names.indexOf(pinned) < 0) options.push({ value: pinned, label: pinned + ' (not an enabled agent)', selected: true });
+      for (const n of names) options.push({ value: n, label: n, selected: n === pinned });
+      const warning = d.problem ? 'Not handed off: ' + d.problem + '. Items in this profile\'s states wait until an agent is picked.' : '';
+      const how = pinned ? 'pinned' : (WORKFLOW_DISPATCH_SOURCE_WORD[String(d.source || '')] || '');
+      const note = warning ? '' : (agent ? 'handed to ' + agent + (how ? ' (' + how + ')' : '') : '') + (d.disabled ? ' · automatic hand-off off, manual send only' : '');
+      return { profile: String(d.profile), options, warning, note };
+    }
+
+    function renderRepoWorkflowProfileRows(repo, profiles, agents, locked) {
+      return (profiles || []).map(d => {
+        const v = workflowDispatchProfileView(d, agents);
+        const opts = v.options.map(o => `<option value="${esc(o.value)}" ${o.selected ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
+        const tip = 'Which hive agent the ' + v.profile + ' profile of this workflow is handed to (workflow.dispatch.profiles.' + v.profile + '.agent). Automatic picks an agent named after the profile, then a writer, docs or feature agent, then the hive\'s standard agent for the work.';
+        const msg = v.warning
+          ? `<span class="rt-inherit wf-dispatch-gap" role="alert">${esc(v.warning)}</span>`
+          : (v.note ? `<span class="rt-inherit">${esc(v.note)}</span>` : '');
+        return `<div class="config-list-item ld-sub wf-dispatch-profile" data-wf-profile="${esc(v.profile)}"><label class="rt-check" title="${esc(tip)}">${esc(v.profile)} agent <select ${locked ? 'disabled' : ''} data-change-action="setWorkflowProfileAgent" data-arg0="${esc(v.profile)}" data-arg-types="s,v">${opts}</select></label>${msg}</div>`;
+      }).join('');
+    }
+
+    // Pins (or, with '', unpins) the agent a profile is handed to through
+    // PUT /api/workflows/dispatch/profiles (owner-only, audited). Like the
+    // binding it persists immediately; the next scheduler pass uses it.
+    async function setWorkflowProfileAgent(profile, value) {
+      if (!dashboardRoleAtLeast(window._hiveRole || 'read', 'owner')) {
+        showToast('Owner role is required to pick a workflow agent.', 'error');
+        renderConfigTab('Repos');
+        return;
+      }
+      const agent = String(value || '');
+      try {
+        const res = await fetch('/api/workflows/dispatch/profiles', {
+          method: 'PUT',
+          headers: _inceptionAuthHeaders(),
+          body: JSON.stringify({ profile: profile, agent: agent }),
+        });
+        if (!res.ok) throw new Error(await saveErrorMessage(res));
+        workflowDispatchApply(await res.json());
+        showToast(agent ? `${profile} is now handed to ${agent}` : `${profile} is back on the automatic pick`);
+      } catch (err) {
+        showToast('Failed to pick the workflow agent: ' + err.message, 'error');
+      }
+      renderConfigTab('Repos');
     }
 
     async function setRepoWorkflow(repo, value) {
@@ -69795,6 +69886,7 @@ function burnAreaChart() {
         if (!res.ok) throw new Error(await saveErrorMessage(res));
         const data = await res.json();
         _workflowState.bindings = Array.isArray(data.bindings) ? data.bindings : [];
+        if (Array.isArray(data.dispatch)) workflowDispatchApply(data);
         showToast(body.name ? `${repo} now follows ${key}` : `${repo} back on hive-default`);
       } catch (err) {
         showToast('Failed to bind workflow: ' + err.message, 'error');
