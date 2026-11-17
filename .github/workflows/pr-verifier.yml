@@ -40,7 +40,8 @@ on:
 #   - events that re-check the same head (labeled, unlabeled, edited,
 #     reopened, ready_for_review) also carry github.run_id: each runs in its
 #     own group and can neither cancel nor be cancelled. The wrapper is green
-#     whatever the label set (every verdict step is continue-on-error), and
+#     whatever the label set (every verdict step is continue-on-error; only a
+#     verifier that could not WRITE its checks fails it, #18764), and
 #     the label types stay for #17036, not for the verdict.
 #   - runs on a superseded commit finish (10 min cap) rather than being
 #     cancelled; their verdict lands on that old SHA, which never merges.
@@ -141,7 +142,10 @@ jobs:
           # pull_request_target run it stands in for (see dispatch_event).
           VERIFIER_EVENT_NAME: ${{ github.event_name == 'workflow_dispatch' && 'pull_request_target' || github.event_name }}
           VERIFIER_EVENT_PATH: ${{ steps.dispatch_event.outputs.event_path || github.event_path }}
+        # The output is kept so the settle step below can name the reason
+        # when the verifier could not write a check run (#18764).
         run: |
+          set -o pipefail
           docker run --rm \
             -e INPUT_GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
             -e GITHUB_TOKEN="${{ secrets.GITHUB_TOKEN }}" \
@@ -154,8 +158,76 @@ jobs:
             -e GITHUB_WORKSPACE="/github/workspace" \
             -v "$VERIFIER_EVENT_PATH:/github/event.json:ro" \
             -v "$GITHUB_WORKSPACE:/github/workspace:ro" \
-            "$PR_VERIFIER_IMAGE"
+            "$PR_VERIFIER_IMAGE" 2>&1 | tee "${RUNNER_TEMP}/pr-verifier.log"
       - name: Report verifier failure
         if: steps.verifier.outcome == 'failure'
         run: |
           echo "::warning::PR Verifier returned a failure. This wrapper is advisory: inspect the individual PR checks and verifier log; a green wrapper does not prove those checks passed."
+      # `PR Type` and `PR Issue` are required, and the verifier creates them
+      # in_progress and then PATCHes the result. When that PATCH fails (404 on
+      # #18667, both attempts of run 44069761061) the check runs stayed
+      # in_progress for ever, the PR could never merge, and this job went
+      # green (#18764). A required check must end in a definite state, so:
+      #   - every PR Type / PR Issue check run in THIS run's check suite that
+      #     is not completed is concluded `failure` with the reason; if that
+      #     PATCH fails too, a completed `failure` run of the same name is
+      #     created on the same head (the newest run of a name is the one
+      #     GitHub and Tide score), and
+      #   - this job FAILS whenever the verifier could not write a result.
+      # Only this run's suite is touched: a sibling run on the same head owns
+      # its own check runs. A verdict the verifier did write (pass or fail)
+      # is never changed here. .github/scripts/test-pr-verifier-settle.py
+      # exercises this step with a stubbed gh.
+      - name: Settle PR Type and PR Issue check runs
+        if: steps.verifier.outcome == 'success' || steps.verifier.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERIFIER_LOG: ${{ runner.temp }}/pr-verifier.log
+        run: |
+          set -uo pipefail
+          names_filter='.name == "PR Type" or .name == "PR Issue"'
+          write_errors=""
+          if [ -f "$VERIFIER_LOG" ]; then
+            write_errors="$(grep -E 'unable to (create|get|reset|update|duplicate) check run' "$VERIFIER_LOG" || true)"
+          fi
+          if ! suite="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" --jq '.check_suite_id')" \
+            || ! [[ "$suite" =~ ^[0-9]+$ ]]; then
+            echo "::error::Could not read this run's check suite, so PR Type / PR Issue may be left in progress. Re-run this job (#18764)."
+            exit 1
+          fi
+          if ! stuck="$(gh api --paginate "repos/${GITHUB_REPOSITORY}/check-suites/${suite}/check-runs?filter=all&per_page=100" \
+            --jq ".check_runs[] | select(${names_filter}) | select(.status != \"completed\") | [.id, .name, .head_sha] | @tsv")"; then
+            echo "::error::Could not list this run's PR Type / PR Issue check runs, so they may be left in progress. Re-run this job (#18764)."
+            exit 1
+          fi
+          reason="PR Verifier could not record its result for this check, so it is marked failed instead of being left in progress."
+          if [ -n "$write_errors" ]; then
+            reason="${reason} Verifier said: $(printf '%s' "$write_errors" | sed -E 's/^.*(unable to)/\1/' | tr '\n' ' ')"
+          fi
+          reason="${reason} Re-run the PR Verifier workflow, or edit the PR title, to get a real result (#18764)."
+          failed=0
+          while IFS=$'\t' read -r id name head_sha; do
+            [ -n "$id" ] || continue
+            failed=1
+            completed_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            if gh api -X PATCH "repos/${GITHUB_REPOSITORY}/check-runs/${id}" \
+              -f status=completed -f conclusion=failure -f completed_at="$completed_at" \
+              -f "output[title]=PR Verifier could not write its result" -f "output[summary]=$reason" >/dev/null; then
+              echo "::error::${name} (check run ${id}) was left in progress by the verifier; concluded it as failure. ${reason}"
+            elif gh api -X POST "repos/${GITHUB_REPOSITORY}/check-runs" \
+              -f name="$name" -f head_sha="$head_sha" -f status=completed -f conclusion=failure \
+              -f completed_at="$completed_at" \
+              -f "output[title]=PR Verifier could not write its result" -f "output[summary]=$reason" >/dev/null; then
+              echo "::error::${name} (check run ${id}) was left in progress and could not be updated; created a failed ${name} check run on ${head_sha} in its place. ${reason}"
+            else
+              echo "::error::${name} (check run ${id}) is stuck in progress and could neither be updated nor replaced. ${reason}"
+            fi
+          done <<<"$stuck"
+          if [ -n "$write_errors" ] && [ "$failed" -eq 0 ]; then
+            failed=1
+            echo "::error::PR Verifier could not write a check run result: $(printf '%s' "$write_errors" | tr '\n' ' ')(#18764)"
+          fi
+          if [ "$failed" -ne 0 ]; then
+            exit 1
+          fi
+          echo "PR Type / PR Issue check runs from this run all reached a conclusion."

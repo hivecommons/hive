@@ -19,6 +19,7 @@ on:
       - '.github/workflows/pr-verifier.yml'
       # Any workflow edit can change a required check's concurrency (#18578).
       - '.github/scripts/test-required-check-concurrency.py'
+      - '.github/scripts/test-pr-verifier-settle.py'
       - '.github/workflows/*.yml'
   push:
     branches: [v5, v6]
@@ -39,6 +40,7 @@ on:
       - '.github/workflows/pr-verifier.yml'
       # Any workflow edit can change a required check's concurrency (#18578).
       - '.github/scripts/test-required-check-concurrency.py'
+      - '.github/scripts/test-pr-verifier-settle.py'
       - '.github/workflows/*.yml'
 
 concurrency:
@@ -71,3 +73,5 @@ jobs:
         run: python3 .github/scripts/test-native-queue-workflows.py
       - name: Required checks are never cancelled by same-head re-checks (#18578)
         run: python3 .github/scripts/test-required-check-concurrency.py
+      - name: PR Verifier never leaves PR Type / PR Issue in progress (#18764)
+        run: python3 .github/scripts/test-pr-verifier-settle.py
