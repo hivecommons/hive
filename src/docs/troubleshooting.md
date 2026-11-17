@@ -29,7 +29,7 @@ legacy v1 host install and do not apply here.
 | Need logs without host access | [No-shell route](#no-shell-on-the-host) | Admin MCP is **v6-only**, not assumed available on v5 |
 | Notifications absent | [Notification checks](#notifications-ntfy--slack--discord-never-arrive) | Dashboard operator; outbound-network test needs container shell |
 | Agent committed but no remote branch/PR | [Publication diagnosis](#an-agent-session-completes-but-no-branch-or-pr-appears) | Container shell, with the agent's UID/HOME |
-| Login repeats or Copilot licensing fails | [Login loop](#an-agent-says-please-run-login-but-logging-in-changes-nothing), [license check](#every-copilot-agent-says-you-are-not-licensed-to-use-copilot) | Backend account owner; container admin for file-access repair |
+| Login repeats or Copilot licensing fails | [Login loop](#an-agent-says-please-run-login-but-logging-in-changes-nothing), [license check](#every-copilot-agent-says-you-are-not-licensed-to-use-copilot), [one Copilot agent ignores the login](#one-copilot-agent-stays-at-the-login-prompt-after-a-dashboard-login) | Backend account owner; container admin for file-access repair |
 | Browser terminal frozen | [Terminal recovery](#the-terminal-looks-frozen--no-new-output-and-reopening-it-doesnt-help) | Browser/dashboard first; container shell only for deeper diagnosis |
 | Agent behavior/model unexpected | [Reasoning logs](#an-agent-runs-but-not-the-way-i-expect--why-did-it-do-that), [model selection](#switching-an-agents-model) | Dashboard operator |
 | Dashboard access or API startup delays | [Auth/access](#dashboard-auth-and-access-problems), [startup response](#the-api-says-service-starting-up-please-retry), [health endpoints](#health-endpoints) | Dashboard owner or deployment admin, according to the failing layer |
@@ -594,6 +594,58 @@ To fix it, set a valid model for the agent (the model picker on its dashboard ca
 
 Before this, nothing classified the refusal. Each relaunch cleared the agent's last error, the card showed a healthy, logged-in agent, and the agent kept cycling between kicks and restarts (502 restarts in 24 hours on one hive).
 
+## One Copilot agent stays at the login prompt after a dashboard login
+
+Symptom: the dashboard's Copilot device-flow login succeeds and every other
+Copilot agent keeps working, but one agent stays at the Copilot CLI login
+prompt. Before the fix for
+[#18443](https://github.com/hivecommons/hive/issues/18443) the hive restarted
+it a few times and then gave up (`giving up on token-triggered restart`).
+
+Cause: each per-agent `~/.copilot/config.json` is a symlink to the shared
+`/data/home/.copilot/config.json`, which is where the dashboard login and the
+token sync write. The Copilot CLI saves its config by writing a temp file and
+renaming it over `config.json`. That replaces the symlink with a private
+regular file, and from then on the agent never sees a new login. An agent whose
+private copy holds no login sits at the prompt. Agents whose private copy still
+holds an older token keep working until that token expires. A leftover
+`config.json.tmp.*` in the shared `.copilot` folder is the trace of such a save.
+
+Automatic repair: at every agent launch and restart, the hive checks the
+agent's `~/.copilot/config.json`. When it is a regular file instead of the link,
+the hive moves it aside to `config.json.bak-<UTC timestamp>` (keeping only the
+newest backup) and links it back to the shared file. The log line is
+`copilot config bridge: a private config.json had replaced the shared-login symlink; re-linked`.
+The credential check behind the token-triggered restart now looks at the file
+the agent actually reads: a private copy that holds no login, or that differs
+from the shared file, does not count as logged in. When the pane poller sees a
+Copilot agent stuck at the login prompt with such a copy, it relinks it first,
+so the one restart that follows starts a CLI that reads the shared login. File
+contents are never logged.
+
+The repair leaves the private copy in place when it holds a login and the
+shared file holds none (it may be the only login the hive has); the log says
+`copilot config bridge: repair not applied`. Sign in from the dashboard to fill
+the shared file and the next launch relinks the agent.
+
+Launch also removes leftover `config.json.tmp.*` files older than one hour from
+the shared and per-agent `.copilot` folders; younger ones may belong to a save
+in progress. Set `HIVE_COPILOT_CONFIG_TMP_MAX_AGE` (a Go duration such as
+`30m`) to change the threshold.
+
+Manual workaround (hives without the fix, or to force it now): inside the hive
+container, move the agent's private copy aside, then restart only that agent.
+
+```bash
+mv /data/home/agents/<agent>/.copilot/config.json \
+   /data/home/agents/<agent>/.copilot/config.json.bak-manual
+curl -X POST -H "Authorization: Bearer $HIVE_DASHBOARD_TOKEN" \
+   http://localhost:3002/api/restart/<agent>
+```
+
+The restart recreates the link to the shared login. Do not open or copy the
+config file's contents: it holds the Copilot token.
+
 ## Every Copilot agent says "You are not licensed to use Copilot"
 
 ```
@@ -908,6 +960,38 @@ The two dominant causes, in order:
 A failed self-upgrade also exits the process with code **17**
 (`selfUpgradeFailureExitCode`) rather than 0, so the failure is visible in the
 container's termination state instead of looking like a clean shutdown.
+
+### Upgrade stuck: cannot unmarshal string "dashboard" into json.Number
+
+Every self-upgrade attempt fails, and the retry log or the `⚠ auto-update
+failed` tooltip shows:
+
+```text
+patching deployment <namespace>/hive: decoding startup probe before upgrade: json: cannot unmarshal string "dashboard" into Go value of type json.Number
+```
+
+Builds that include [#18010](https://github.com/hivecommons/hive/pull/18010)
+read the hive container's readiness and liveness probes before upgrading, so
+they can add a missing startupProbe. Those builds expected a numeric
+`httpGet.port`. A Deployment whose probes use the named container port
+`dashboard` failed to decode, and the whole upgrade aborted. Builds with the fix
+for [#18479](https://github.com/hivecommons/hive/issues/18479) accept named
+ports, and they never let a probe decode problem block the image upgrade.
+
+The bug is in the running binary, so an affected hive cannot upgrade itself to
+the fixed build. Change the probe ports to the numeric dashboard port once
+(replace `<namespace>` with the hive's namespace; `oc` takes the same
+arguments as `kubectl`):
+
+```bash
+kubectl -n <namespace> patch deployment hive --type=strategic -p \
+  '{"spec":{"template":{"spec":{"containers":[{"name":"hive","readinessProbe":{"httpGet":{"port":3002}},"livenessProbe":{"httpGet":{"port":3002}}}]}}}}'
+```
+
+The patch rolls the pod once. When it is Ready again, let the upgrade retry: the
+next instructed upgrade (from the hub, or **Self Upgrade** on the dashboard)
+decodes the numeric ports and lands. If the retry budget was already spent, the
+next new target gets a fresh budget, as described above.
 
 ## Podman (Quadlet) deployments: failure modes Docker does not have
 

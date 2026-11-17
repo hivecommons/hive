@@ -525,3 +525,47 @@ func TestTranscriptionHelpers(t *testing.T) {
 		t.Fatalf("passthrough err = %v", err)
 	}
 }
+
+func TestTranscribeUnavailableReason(t *testing.T) {
+	srv := audioServer(t, http.StatusOK, txAudio)
+	withKey := func(string) string { return "dg-secret-value" }
+	cases := []struct {
+		name   string
+		tx     config.InboxTranscription
+		getenv func(string) string
+		want   string
+	}{
+		{"disabled", config.InboxTranscription{}, withKey, TranscribeBlockedDisabled},
+		{"no key", activeTx(), func(string) string { return "" }, TranscribeBlockedNoKey},
+		{"no consent", config.InboxTranscription{Enabled: true}, withKey, TranscribeBlockedConsent},
+		{"available", activeTx(), withKey, ""},
+	}
+	for _, c := range cases {
+		e := newTxEnv(t, c.tx, srv.URL)
+		e.svc.Getenv = c.getenv
+		it := e.item(t)
+		if it.TranscribeUnavailable != c.want {
+			t.Errorf("%s: reason = %q, want %q", c.name, it.TranscribeUnavailable, c.want)
+		}
+		if strings.Contains(it.TranscribeUnavailable, "dg-secret") {
+			t.Errorf("%s: reason leaks the key", c.name)
+		}
+	}
+
+	budget := newTxEnv(t, config.InboxTranscription{Enabled: true, ConsentAcknowledged: true, MonthlyBudgetMinutes: 1}, srv.URL)
+	budget.svc.Getenv = withKey
+	if err := budget.store.AddUsage(budget.now, 120, 1); err != nil {
+		t.Fatal(err)
+	}
+	if got := budget.item(t).TranscribeUnavailable; got != TranscribeBlockedBudget {
+		t.Errorf("budget: reason = %q", got)
+	}
+
+	busy := newTxEnv(t, config.InboxTranscription{}, srv.URL)
+	if err := busy.store.Put(TranscriptRecord{Source: "plaud", ID: "rec-1", Status: TranscriptionRunning}); err != nil {
+		t.Fatal(err)
+	}
+	if got := busy.item(t).TranscribeUnavailable; got != "" {
+		t.Errorf("busy item must carry no reason, got %q", got)
+	}
+}

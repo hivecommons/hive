@@ -3,6 +3,8 @@
 # TODO #11854
 agent_sandbox.job.env_from_secrets[] # TODO #11854
 agent_sandbox.job.node_selector.<key> # TODO #11854
+agent_sandbox.job.relay_image # TODO #11854
+agent_sandbox.job.relay_run_as_user # TODO #11854
 agent_sandbox.job.resources.limits.<key> # TODO #11854
 agent_sandbox.job.resources.requests.<key> # TODO #11854
 agent_sandbox.job.tolerations[].effect # TODO #11854
@@ -61,6 +63,7 @@ agents.<key>.continuous_budget_pct # TODO #11854
 agents.<key>.continuous_cooldown # TODO #11854
 agents.<key>.continuous_turn_ceiling # TODO #11854
 agents.<key>.converse # TODO #11854
+agents.<key>.definition_source.discovered # TODO #11854
 agents.<key>.definition_source.owner # TODO #11854
 agents.<key>.definition_source.path # TODO #11854
 agents.<key>.definition_source.ref # TODO #11854
@@ -114,6 +117,8 @@ agents.<key>.sandbox.env_allowlist[] # TODO #11854
 agents.<key>.sandbox.image # TODO #11854
 agents.<key>.sandbox.job.env_from_secrets[] # TODO #11854
 agents.<key>.sandbox.job.node_selector.<key> # TODO #11854
+agents.<key>.sandbox.job.relay_image # TODO #11854
+agents.<key>.sandbox.job.relay_run_as_user # TODO #11854
 agents.<key>.sandbox.job.resources.limits.<key> # TODO #11854
 agents.<key>.sandbox.job.resources.requests.<key> # TODO #11854
 agents.<key>.sandbox.job.scheduler_name # TODO #11854
@@ -258,6 +263,17 @@ governor.ci.auto_approve_workflows # gated workflow auto-approval flag (#16603);
 governor.ci_failure_kick_cooldown_s # webhook CI-failure kick cooldown (#15291); yaml-only
 governor.ci_failure_webhook_kick # webhook CI-failure kick flag (#15291); yaml-only
 governor.dependency_bot_rebase_after_s # stranded dependency-bot PR window (bot_rebase_request); yaml-only
+governor.release_feeds.agents.<key>.cooldown_s # release-feed watcher (#18494); yaml-only
+governor.release_feeds.agents.<key>.sources[].auth_var # release-feed watcher (#18494); yaml-only
+governor.release_feeds.agents.<key>.sources[].kind # release-feed watcher (#18494); yaml-only
+governor.release_feeds.agents.<key>.sources[].name # release-feed watcher (#18494); yaml-only
+governor.release_feeds.agents.<key>.sources[].package # release-feed watcher (#18494); yaml-only
+governor.release_feeds.agents.<key>.sources[].repo # release-feed watcher (#18494); yaml-only
+governor.release_feeds.agents.<key>.sources[].url # release-feed watcher (#18494); yaml-only
+governor.release_feeds.agents.<key>.sources[].version_field # release-feed watcher (#18494); yaml-only
+governor.release_feeds.cooldown_s # release-feed watcher (#18494); yaml-only
+governor.release_feeds.enabled # release-feed watcher (#18494); yaml-only
+governor.release_feeds.interval_s # release-feed watcher (#18494); yaml-only
 governor.claims.contributor_flap_threshold # contributor flap cool-off (#13579); yaml-only
 governor.claims.contributor_flap_window_s # contributor flap cool-off (#13579); yaml-only
 governor.claims.contributor_flap_cooloff_s # contributor flap cool-off (#13579); yaml-only
@@ -272,13 +288,21 @@ governor.gateways[].endpoint # TODO #11854
 governor.gateways[].key_name # TODO #11854
 governor.gateways[].kind # TODO #11854
 governor.gateways[].name # TODO #11854
+governor.gateways[].prices.cached_input # TODO #11854
+governor.gateways[].prices.input # TODO #11854
+governor.gateways[].prices.models.<key>.cached_input # TODO #11854
+governor.gateways[].prices.models.<key>.input # TODO #11854
+governor.gateways[].prices.models.<key>.output # TODO #11854
+governor.gateways[].prices.output # TODO #11854
 governor.gateways[].project_id # TODO #11854
 governor.gateways[].region # TODO #11854
 governor.health.healthcheck_interval # TODO #11854
 governor.labels.author.clanker # label-name override; yaml-only (#12581)
 governor.labels.author.hive # label-name override; yaml-only (#12581)
 governor.labels.author.human # label-name override; yaml-only (#12581)
+governor.labels.decision_needed # label-name override; yaml-only (#18468)
 governor.labels.exempt[] # TODO #11854
+governor.labels.ready_for_review # label-name override; yaml-only (#18468)
 governor.labels.stage.dco.required.<key> # TODO #12542
 governor.litellm.api_key_env # TODO #11854
 governor.litellm.api_key_file # TODO #11854
@@ -507,6 +531,7 @@ repeat_failure.enabled # yaml-only until the check reaches the dashboard (#14550
 repeat_failure.exclude[] # yaml-only until the check reaches the dashboard (#14550)
 repeat_failure.threshold # yaml-only until the check reaches the dashboard (#14550)
 repeat_failure.window_s # yaml-only until the check reaches the dashboard (#14550)
+repos.<key>.agents_md_max_bytes # TODO #18495 (per-repo AGENTS.md cap; Settings control pending)
 retro.lesson_confidence_cap # TODO #11854
 retro.lesson_confidence_step # TODO #11854
 review.backlog.labels[] # TODO #11854
@@ -521,6 +546,7 @@ review.perspective_models.<key>.backend # TODO #13243
 review.perspective_models.<key>.model # TODO #13243
 review.perspective_prompts.<key> # TODO #11854
 review.perspectives[] # TODO #11854
+review.perspectives_source.discovered # TODO #17975 (shared DefinitionSourceConfig field; meaningful only on agents.<key>.definition_source)
 review.perspectives_source.owner # TODO #17975
 review.perspectives_source.path # TODO #17975
 review.perspectives_source.ref # TODO #17975
@@ -552,15 +578,6 @@ runs.external.claude_managed_agents.network_policy # prototype hosted backend; y
 runs.external.claude_managed_agents.state_dir # prototype hosted backend; yaml-only (#14214)
 runs.external.claude_managed_agents.toolset_version # prototype hosted backend; yaml-only (#14214)
 runs.external.claude_managed_agents.workflow_version # prototype hosted backend; yaml-only (#14214)
-runs.spektacular.recheck.discovery.sources[].allow_prerelease # TODO #11854
-runs.spektacular.recheck.discovery.sources[].kind # TODO #11854
-runs.spektacular.recheck.discovery.sources[].max_items # TODO #11854
-runs.spektacular.recheck.discovery.sources[].name # TODO #11854
-runs.spektacular.recheck.discovery.sources[].url_or_repo # TODO #11854
-runs.spektacular.recheck.egress_allowlist[] # TODO #11854
-runs.spektacular.recheck.sources[].kind # TODO #11854
-runs.spektacular.recheck.sources[].name # TODO #11854
-runs.spektacular.recheck.sources[].url # TODO #11854
 runs.triage.fix_labels[] # TODO #11854
 runs.triage.spec_labels[] # TODO #11854
 forgestate.drift_threshold # yaml-only until readers migrate (#13373)
@@ -751,9 +768,29 @@ project.workflow_bindings[].name # set through the per-repo workflow select on S
 project.workflow_bindings[].repo # see project.workflow_bindings[].name
 project.workflow_bindings[].version # see project.workflow_bindings[].name
 workflow.label_gc # operator safety knob for model-label garbage collection on rebind; yaml-only, no Settings control planned (RFC #17620)
+workflow.dispatch.enabled # workflow-model agent dispatch kill switch; yaml-only (cncf/techdocs#395)
+workflow.dispatch.profiles.<key>.agent # which hive agent fills a model profile; yaml-only (cncf/techdocs#395)
+workflow.dispatch.profiles.<key>.prompt_template # see workflow.dispatch.profiles.<key>.agent
+workflow.dispatch.profiles.<key>.disabled # see workflow.dispatch.profiles.<key>.agent
 inbox.sources[] # which voice connector types feed the Inbox; defaults to every configured plaud/wisprflow connector, yaml-only (Inbox RFC)
 inbox.rules[].source # auto-routing rules are edited as whole rows in Inbox → Auto-routing via POST /api/inbox/settings, not leaf-path controls (Inbox RFC)
 inbox.rules[].title_prefix # see inbox.rules[].source
 inbox.rules[].tag # see inbox.rules[].source
 inbox.rules[].destination # see inbox.rules[].source
 inbox.rules[].repo # see inbox.rules[].source
+inbox.recording.enabled # ● Record (dashboard recordings) limits are yaml-only; the recorder reads them from GET /api/inbox settings.recording (see docs/inbox-recording.md)
+inbox.recording.retention_days # see inbox.recording.enabled
+inbox.recording.max_seconds # see inbox.recording.enabled
+inbox.recording.max_bytes # see inbox.recording.enabled
+inbox.recording.quota_bytes # see inbox.recording.enabled
+inbox.recording.idle_finalize_minutes # see inbox.recording.enabled
+# Advisory engine phase 1 (#18464): YAML-only and default off; Settings control pending.
+advisory_engine.allow_training_providers_for_private # TODO #18464
+advisory_engine.enabled # TODO #18464
+advisory_engine.gateways[].daily_cap # TODO #18464
+advisory_engine.gateways[].model # TODO #18464
+advisory_engine.gateways[].name # TODO #18464
+advisory_engine.items_per_cycle # TODO #18464
+advisory_engine.max_turns # TODO #18464
+advisory_engine.mode # TODO #18464
+governor.gateways[].trains_on_inputs # TODO #18464

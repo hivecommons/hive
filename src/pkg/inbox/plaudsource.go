@@ -213,7 +213,7 @@ func mergeDirect(direct, facts []Item) []Item {
 	for _, it := range direct {
 		if f, ok := byID[it.ID]; ok {
 			it.FactSlug, it.FactPath, it.Layer, it.Excerpt = f.FactSlug, f.FactPath, f.Layer, f.Excerpt
-			it.Summary, it.HasTranscript, it.Pending = f.Summary, f.HasTranscript, f.Pending
+			it.Summary, it.HasTranscript, it.Pending, it.FactState = f.Summary, f.HasTranscript, f.Pending, f.FactState
 			if it.Title == "" {
 				it.Title = f.Title
 			}

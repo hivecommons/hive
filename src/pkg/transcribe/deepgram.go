@@ -152,6 +152,9 @@ func (d *Deepgram) Transcribe(ctx context.Context, a Audio) (Result, error) {
 		return Result{}, fmt.Errorf("deepgram: open audio: %w", err)
 	}
 	defer rc.Close()
+	// The download streams straight into the upload, so from here on the
+	// provider is working: one request, no measurable progress.
+	a.ReportPhase(PhaseTranscribing)
 	body := &bodyReader{r: rc}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, body)
 	if err != nil {

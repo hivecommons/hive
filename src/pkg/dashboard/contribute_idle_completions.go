@@ -95,6 +95,12 @@ type idleCompletionRecord struct {
 	Reason     string    `json:"reason"`
 	// Signal is the normalized completion signal the reason came with.
 	Signal string `json:"signal,omitempty"`
+	// TaskStartedAt is when the task that ended this way was assigned (the
+	// run log's start: the lease's original assignment for a task adopted on
+	// resume), zero when the hub did not know it. The author-reply release
+	// (contribute_author_reply.go) reads it to tell a question asked during
+	// this task from one an earlier task asked.
+	TaskStartedAt time.Time `json:"task_started_at,omitzero"`
 }
 
 func (r idleCompletionRecord) expired(now time.Time) bool {
@@ -216,6 +222,27 @@ func (h *ContributeWSHub) bookIdleCompletionLocked(key, prURL, verdict, reporter
 		return true
 	}
 	return false
+}
+
+// stampIdleCompletionTaskStart records when the task behind key's idle
+// completion started. The task_complete handler calls it right after booking
+// the completion; it touches only a record that has no start yet and that the
+// start does not postdate, so it cannot rewrite an older completion's record.
+func (h *ContributeWSHub) stampIdleCompletionTaskStart(key string, start time.Time) {
+	if h == nil || key == "" || start.IsZero() {
+		return
+	}
+	h.completedMu.Lock()
+	rec, ok := h.idleCompletions[key]
+	stamped := ok && rec.TaskStartedAt.IsZero() && !start.After(rec.RecordedAt)
+	if stamped {
+		rec.TaskStartedAt = start
+		h.idleCompletions[key] = rec
+	}
+	h.completedMu.Unlock()
+	if stamped {
+		h.saveIdleCompletions()
+	}
 }
 
 // dropIdleCompletionLocked forgets the idle reason on record for key and

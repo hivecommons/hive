@@ -864,6 +864,14 @@ type Desired struct {
 	// Each is removed when present and never added; matching is
 	// case-insensitive. Empty leaves every third-party label alone.
 	Clear []string
+	// ModelLabels are the bound model's desired state labels. ModelManaged
+	// names its other state labels that may be removed; input labels are
+	// deliberately excluded because people or other systems own them.
+	ModelLabels  []string
+	ModelManaged []string
+	// ModelPreserve names input label patterns (a trailing * matches any
+	// suffix), even when another stage decision would clear the label.
+	ModelPreserve []string
 }
 
 // Plan returns the labels to add and remove so current carries exactly the
@@ -897,6 +905,28 @@ func Plan(current []string, want Desired) (add, remove []string) {
 	if want.MergeCommit == MergeCommitWanted {
 		wantLabel(MergeCommitLabel)
 	}
+	for _, l := range want.ModelLabels {
+		wantLabel(l)
+	}
+	managed := map[string]bool{}
+	for _, l := range want.ModelManaged {
+		if l = strings.ToLower(strings.TrimSpace(l)); l != "" {
+			managed[l] = true
+		}
+	}
+	preserve := func(label string) bool {
+		for _, pattern := range want.ModelPreserve {
+			pattern = strings.ToLower(strings.TrimSpace(pattern))
+			if strings.HasSuffix(pattern, "*") {
+				if strings.HasPrefix(label, strings.TrimSuffix(pattern, "*")) {
+					return true
+				}
+			} else if pattern != "" && label == pattern {
+				return true
+			}
+		}
+		return false
+	}
 	clearSet := map[string]bool{}
 	for _, l := range want.Clear {
 		if l = strings.ToLower(strings.TrimSpace(l)); l != "" {
@@ -916,6 +946,13 @@ func Plan(current []string, want Desired) (add, remove []string) {
 		lower := strings.ToLower(l)
 		have[lower] = true
 		if _, ok := wanted[lower]; ok {
+			continue
+		}
+		if preserve(lower) {
+			continue
+		}
+		if managed[lower] {
+			remove = append(remove, l)
 			continue
 		}
 		if clearSet[lower] {

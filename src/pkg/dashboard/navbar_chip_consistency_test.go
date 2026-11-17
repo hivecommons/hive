@@ -29,6 +29,7 @@ func TestNavbarChipElementsUseSharedClass(t *testing.T) {
 		"feedback-bug-btn",
 		"oc-settings-btn",
 		"dashboard-custom-style-note",
+		"oc-meeting-indicator",
 		"oc-health",
 		"welcome-topbar-btn",
 		"oc-gh-avatar",

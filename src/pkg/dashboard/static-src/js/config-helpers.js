@@ -27,6 +27,7 @@
       markDirty(section, key, isOn);
       if (section === 'dashboard' && key === 'experiment_lab') noteExperimentLabToggle(isOn);
       if (section === 'review' && (key === 'fan_out' || key === 'combined_perspectives')) refreshReviewerAgentSummary();
+      if (section === 'general' && key === 'sandboxEnabled' && typeof onSandboxToggle === 'function') onSandboxToggle(isOn);
     }
 
     function markCSVDirty(section, key, value) {

@@ -824,6 +824,14 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 			return event, true, nil
 		}
 		if !posted {
+			// Informational: nobody has to act, so in quiet mode the notice
+			// is a status-card section edited in place (#18453).
+			if c.sentinelFoldsNotice(prior != nil) {
+				if err := c.foldSentinelNotice(ctx, displayRepo, number, head, decision, findings); err != nil {
+					return SentinelSweepEvent{}, false, err
+				}
+				return event, true, nil
+			}
 			if err := writeSentinelComment(body, "notice"); err != nil {
 				return SentinelSweepEvent{}, false, err
 			}
@@ -838,9 +846,12 @@ func (c *Client) trySentinelPR(ctx context.Context, displayRepo, owner, repo str
 	if err != nil {
 		return SentinelSweepEvent{}, false, fmt.Errorf("adding %s label: %w", label, err)
 	}
+	// Actionable: the alert always gets its own comment, in every
+	// notification mode, because only a new comment notifies (#18453).
 	if err := writeSentinelComment(markerBody, "alert"); err != nil {
 		return SentinelSweepEvent{}, false, err
 	}
+	c.clearSentinelNoticeSection(ctx, displayRepo, number)
 	return event, true, nil
 }
 

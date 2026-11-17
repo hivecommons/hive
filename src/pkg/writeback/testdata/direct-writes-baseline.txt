@@ -22,7 +22,7 @@ raw pkg/github/automerge/automerge_sweep_trusted.go 4
 raw pkg/github/automerge/automerge_unauthorized.go 3
 raw pkg/github/automerge/reporter_trust_release.go 2
 raw pkg/github/automerge/self_authorization_release.go 2
-raw pkg/github/client.go 12
+raw pkg/github/client.go 10
 raw pkg/github/close_on_merge.go 3
 raw pkg/github/duplicate_sweep.go 2
 raw pkg/github/fleet_report.go 2

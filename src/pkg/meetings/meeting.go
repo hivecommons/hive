@@ -82,13 +82,17 @@ type Meeting struct {
 	// (for example platform_unavailable while chat is down).
 	ConsentError    string     `json:"consent_error,omitempty"`
 	ConsentPostedAt *time.Time `json:"consent_posted_at,omitempty"`
-	LobbySince      *time.Time `json:"lobby_since,omitempty"`
-	LiveAt          *time.Time `json:"live_at,omitempty"`
-	EndedAt         *time.Time `json:"ended_at,omitempty"`
-	HandedOffAt     *time.Time `json:"handed_off_at,omitempty"`
-	PurgedAt        *time.Time `json:"purged_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	// ConsentVia is how the notice was delivered: "chat" (Quorum confirmed
+	// the line in the meeting chat) or "voice" (spoken because chat could
+	// not deliver it).
+	ConsentVia  string     `json:"consent_via,omitempty"`
+	LobbySince  *time.Time `json:"lobby_since,omitempty"`
+	LiveAt      *time.Time `json:"live_at,omitempty"`
+	EndedAt     *time.Time `json:"ended_at,omitempty"`
+	HandedOffAt *time.Time `json:"handed_off_at,omitempty"`
+	PurgedAt    *time.Time `json:"purged_at,omitempty"`
+	CreatedAt   time.Time  `json:"created_at"`
+	UpdatedAt   time.Time  `json:"updated_at"`
 }
 
 // Person is a meeting participant as Quorum reports it.

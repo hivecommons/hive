@@ -56,6 +56,20 @@ type TranscriptionState struct {
 	Provider  string    `json:"provider,omitempty"`
 	Model     string    `json:"model,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
+
+	// Live progress while queued or running (zero otherwise). Progress is
+	// 0..1; Estimated marks progress and ETA taken from the provider's
+	// typical (or this hive's measured) speed rather than measured output.
+	Phase            string     `json:"phase,omitempty"`
+	Progress         float64    `json:"progress,omitempty"`
+	Estimated        bool       `json:"estimated,omitempty"`
+	StartedAt        *time.Time `json:"started_at,omitempty"`
+	AudioSeconds     float64    `json:"audio_seconds,omitempty"`
+	ProcessedSeconds float64    `json:"processed_seconds,omitempty"`
+	// ETASeconds is the estimated time left; 0 when unknown or done.
+	ETASeconds float64 `json:"eta_seconds,omitempty"`
+	// QueuePosition is how many jobs run before this one (0 when running).
+	QueuePosition int `json:"queue_position,omitempty"`
 }
 
 // TranscriptRecord is one item's machine transcript and run state, stored at
@@ -78,11 +92,18 @@ type TranscriptRecord struct {
 	AudioSeconds float64   `json:"audio_seconds,omitempty"`
 	Text         string    `json:"text,omitempty"`
 	UpdatedAt    time.Time `json:"updated_at"`
+	// StartedAt is when the current or last run started.
+	StartedAt time.Time `json:"started_at,omitzero"`
 }
 
 // State returns the item-facing view of the record.
 func (r TranscriptRecord) State() TranscriptionState {
-	return TranscriptionState{Status: r.Status, Reason: r.Reason, Attempts: r.Attempts, Provider: r.Provider, Model: r.Model, UpdatedAt: r.UpdatedAt}
+	st := TranscriptionState{Status: r.Status, Reason: r.Reason, Attempts: r.Attempts, Provider: r.Provider, Model: r.Model, UpdatedAt: r.UpdatedAt}
+	if !r.StartedAt.IsZero() && r.Status == TranscriptionRunning {
+		started := r.StartedAt
+		st.StartedAt = &started
+	}
+	return st
 }
 
 // Label is the heading machine text is shown under.
@@ -104,6 +125,59 @@ type TranscriptUsage struct {
 type usageLedger struct {
 	Months map[string]float64 `json:"months"`
 	Days   map[string]int     `json:"days"`
+	// Speeds is this hive's measured speed per "provider/model": an
+	// exponential moving average of the real-time factor of finished runs.
+	Speeds map[string]SpeedSample `json:"speeds,omitempty"`
+}
+
+// SpeedSample is the measured real-time factor of one provider/model on
+// this hive (wall-clock seconds per audio second) and how many runs fed it.
+type SpeedSample struct {
+	RTF  float64 `json:"rtf"`
+	Runs int     `json:"runs"`
+}
+
+const (
+	// speedEMAAlpha weighs the newest run in the measured speed.
+	speedEMAAlpha = 0.3
+	// minSpeedRTF / maxSpeedRTF clamp one run's sample so a clock jump or a
+	// near-empty recording cannot poison the average.
+	minSpeedRTF = 0.001
+	maxSpeedRTF = 20
+)
+
+// Speed returns the measured speed for provider/model, if any run finished.
+func (s *TranscriptStore) Speed(provider, model string) (SpeedSample, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.ledger().Speeds[provider+"/"+model]
+	return v, ok && v.RTF > 0
+}
+
+// RecordSpeed folds one finished run (wall seconds for audio seconds) into
+// the measured speed of provider/model.
+func (s *TranscriptStore) RecordSpeed(provider, model string, wall, audio float64) error {
+	if wall <= 0 || audio <= 0 {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	l := s.ledger()
+	if l.Speeds == nil {
+		l.Speeds = map[string]SpeedSample{}
+	}
+	k := provider + "/" + model
+	l.Speeds[k] = foldSpeed(l.Speeds[k], wall/audio)
+	return s.writeLedger(l)
+}
+
+// foldSpeed applies one clamped sample to the moving average.
+func foldSpeed(prev SpeedSample, rtf float64) SpeedSample {
+	rtf = min(max(rtf, minSpeedRTF), maxSpeedRTF)
+	if prev.Runs == 0 || prev.RTF <= 0 {
+		return SpeedSample{RTF: rtf, Runs: 1}
+	}
+	return SpeedSample{RTF: speedEMAAlpha*rtf + (1-speedEMAAlpha)*prev.RTF, Runs: prev.Runs + 1}
 }
 
 // TranscriptStore keeps machine transcripts and the usage ledger under Dir
@@ -157,6 +231,16 @@ func (s *TranscriptStore) Put(rec TranscriptRecord) error {
 	return writeFileAtomic(s.path(rec.Source, rec.ID), data)
 }
 
+// Delete removes one record; a missing record is not an error.
+func (s *TranscriptStore) Delete(source, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(s.path(source, id)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // Usage returns what was spent this month and today (UTC).
 func (s *TranscriptStore) Usage(now time.Time) TranscriptUsage {
 	s.mu.Lock()
@@ -177,6 +261,11 @@ func (s *TranscriptStore) AddUsage(now time.Time, seconds float64, items int) er
 	l.Days[now.Format(usageDayLayout)] += items
 	pruneOldest(l.Days, usageKeepDays)
 	pruneOldest(l.Months, usageKeepMonths)
+	return s.writeLedger(l)
+}
+
+// writeLedger persists l; the caller holds s.mu.
+func (s *TranscriptStore) writeLedger(l usageLedger) error {
 	data, err := json.MarshalIndent(l, "", "  ")
 	if err != nil {
 		return err

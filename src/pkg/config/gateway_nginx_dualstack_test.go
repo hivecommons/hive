@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/internal/testutil"
@@ -216,12 +217,12 @@ func TestGatewayAuthRateLimiting(t *testing.T) {
 }
 
 // Permissions-Policy values the gateway emits. The dashboard document allows
-// the microphone for its own origin only (Sessions voice notes use the
-// browser's Web Speech API); the ttyd terminal iframe and /api/ responses keep
-// the fully closed policy.
+// the microphone (Sessions voice notes, Inbox ● Record) and display capture
+// (● Record's meeting tab audio) for its own origin only; the ttyd terminal
+// iframe and /api/ responses keep the fully closed policy.
 const (
-	gatewayDocumentPermissionsPolicy = `geolocation=(), camera=(), microphone=(self)`
-	gatewayClosedPermissionsPolicy   = `geolocation=(), camera=(), microphone=()`
+	gatewayDocumentPermissionsPolicy = `geolocation=(), camera=(), microphone=(self), display-capture=(self)`
+	gatewayClosedPermissionsPolicy   = `geolocation=(), camera=(), microphone=(), display-capture=()`
 )
 
 // TestGatewayPermissionsPolicyMicrophoneScope pins the microphone scope of
@@ -244,6 +245,13 @@ func TestGatewayPermissionsPolicyMicrophoneScope(t *testing.T) {
 
 	if regexp.MustCompile(`microphone=\*|microphone=\(\s*\*`).MatchString(conf) {
 		t.Error("nginx.conf must never allow the microphone for every origin")
+	}
+	if regexp.MustCompile(`display-capture=\*|display-capture=\(\s*\*`).MatchString(conf) {
+		t.Error("nginx.conf must never allow display capture for every origin")
+	}
+	// display-capture=(self) appears only in the dashboard document default.
+	if n := strings.Count(conf, "display-capture=(self)"); n != 1 {
+		t.Errorf("display-capture=(self) must appear exactly once (the dashboard document), found %d", n)
 	}
 
 	apiBlock := regexp.MustCompile(`(?ms)^\s*location\s+/api/\s*\{.*?add_header\s+Permissions-Policy\s+"([^"]+)"\s+always;`).FindStringSubmatch(conf)

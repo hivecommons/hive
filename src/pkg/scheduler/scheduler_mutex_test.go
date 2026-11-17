@@ -23,17 +23,6 @@ func TestGetSetPrimer(t *testing.T) {
 	}
 }
 
-func TestGetSetInception(t *testing.T) {
-	s := New(&config.Config{}, slog.Default())
-	if s.GetInception() != nil {
-		t.Error("initial inception should be nil")
-	}
-	s.SetInception(nil)
-	if s.GetInception() != nil {
-		t.Error("inception should still be nil")
-	}
-}
-
 func TestGetSetLastActionable(t *testing.T) {
 	s := New(&config.Config{}, slog.Default())
 	if s.GetLastActionable() != nil {

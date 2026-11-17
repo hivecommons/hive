@@ -3,6 +3,7 @@ package turn
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -167,12 +168,33 @@ func (r *Runner) Step(ctx context.Context, env SessionEnvelope, in TurnInput) (S
 
 	outEnv.TurnCount++
 	llmResp, err := r.LLM.Generate(ctx, outEnv.Messages, r.AvailableTools)
+	if err != nil && errors.Is(err, ErrInferenceCapacity) {
+		// No model ran, so this was not a turn: undo the count and park the
+		// session for a later pass rather than failing it.
+		outEnv.TurnCount--
+		prev := outEnv.Status
+		outEnv.Status = StatusPaused
+		if r.Hooks != nil && prev != StatusPaused {
+			r.Hooks.OnStatusChange(ctx, outEnv, prev, StatusPaused)
+		}
+		output.Status = StatusPaused
+		output.Rationale = fmt.Sprintf("inference capacity exhausted: %v", err)
+		return outEnv, output, err
+	}
 	if err != nil {
 		outEnv.Status = StatusFailed
 		output.Status = StatusFailed
 		output.Done = true
 		output.Rationale = fmt.Sprintf("LLM inference error: %v", err)
 		return outEnv, output, err
+	}
+
+	// A session parked for capacity resumes on the first served inference.
+	if outEnv.Status == StatusPaused {
+		outEnv.Status = StatusActive
+		if r.Hooks != nil {
+			r.Hooks.OnStatusChange(ctx, outEnv, StatusPaused, StatusActive)
+		}
 	}
 
 	// Append Assistant response message
@@ -183,6 +205,25 @@ func (r *Runner) Step(ctx context.Context, env SessionEnvelope, in TurnInput) (S
 	// 6. Process Tool Calls through Tool Approval and Execution
 	if len(llmResp.ToolCalls) > 0 {
 		for _, call := range llmResp.ToolCalls {
+			if !r.offered(call.Name) {
+				// A model may name a tool it saw earlier or invented. The
+				// offered set is the capability boundary for this turn (a
+				// finish phase offers only terminal tools), so an unoffered
+				// call is denied before approval, never executed.
+				verdict := toolapprove.Verdict{
+					Decision:  toolapprove.DecisionDeny,
+					Rationale: fmt.Sprintf("tool %q was not offered this turn; available: %s", call.Name, r.offeredNames()),
+					Tool:      call.Name,
+					ACMMLevel: outEnv.ACMMLevel,
+					Agent:     outEnv.Agent.Name,
+				}
+				output.Verdicts = append(output.Verdicts, verdict)
+				outEnv.AddToolApprovalOperation(call, verdict)
+				msg := outEnv.AddToolResultMessage(call.ID, call.Name, "", "Tool denied: "+verdict.Rationale)
+				output.NewMessages = append(output.NewMessages, msg)
+				output.ToolResults = append(output.ToolResults, ToolResult{ToolCallID: call.ID, Name: call.Name, Error: "Tool denied: " + verdict.Rationale})
+				continue
+			}
 			req := toolapprove.ToolRequest{
 				Tool:         call.Name,
 				RawArguments: call.Arguments,
@@ -265,6 +306,29 @@ func (r *Runner) Step(ctx context.Context, env SessionEnvelope, in TurnInput) (S
 	}
 
 	return outEnv, output, nil
+}
+
+// offered reports whether name is in AvailableTools. An empty list means
+// the caller did not restrict tools (the CLI-backed paths), so every name is
+// offered and approval alone decides.
+func (r *Runner) offered(name string) bool {
+	if len(r.AvailableTools) == 0 {
+		return true
+	}
+	for _, t := range r.AvailableTools {
+		if t.Tool == name {
+			return true
+		}
+	}
+	return false
+}
+
+func (r *Runner) offeredNames() string {
+	names := make([]string, 0, len(r.AvailableTools))
+	for _, t := range r.AvailableTools {
+		names = append(names, t.Tool)
+	}
+	return strings.Join(names, ", ")
 }
 
 func parseArguments(raw string) map[string]any {

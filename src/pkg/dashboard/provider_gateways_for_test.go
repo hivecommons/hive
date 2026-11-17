@@ -59,6 +59,10 @@ func (testOpenRouterGateway) SuggestedModels() []OpenRouterSuggestedModel {
 	return out
 }
 
+func (testOpenRouterGateway) PublicModels() []OpenRouterModel {
+	return convertOpenRouterCatalog(openrouter.CachedPublicModels())
+}
+
 func (testOpenRouterGateway) QRPNG(text string) ([]byte, error) { return openrouter.QRPNG(text) }
 
 func (testOpenRouterGateway) ExchangeCode(code, verifier string) (string, error) {
@@ -273,4 +277,25 @@ func (svc *testLinearService) AgentEventObserver() func(agentName, event, detail
 		return nil
 	}
 	return svc.responder.HandleAgentEvent
+}
+
+// convertOpenRouterCatalog mirrors cmd/hive's adapter for the test gateway.
+func convertOpenRouterCatalog(models []openrouter.Model) []OpenRouterModel {
+	if len(models) == 0 {
+		return nil
+	}
+	out := make([]OpenRouterModel, 0, len(models))
+	for _, m := range models {
+		out = append(out, OpenRouterModel{
+			ID:            m.ID,
+			Name:          m.Name,
+			ContextLength: m.ContextLength,
+			Pricing: OpenRouterPricing{
+				Prompt:         m.Pricing.Prompt,
+				Completion:     m.Pricing.Completion,
+				InputCacheRead: m.Pricing.InputCacheRead,
+			},
+		})
+	}
+	return out
 }

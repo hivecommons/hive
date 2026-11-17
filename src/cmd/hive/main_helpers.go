@@ -285,7 +285,7 @@ func enforceHoldGuard(
 			}
 			store.MarkCommented(repo, pr.Number)
 		}
-		if err := writer.AddLabels(ctx, pr.Repo, pr.Number, []string{holdguard.ReHoldLabel}); err != nil { // writeback:gated
+		if err := writer.AddLabels(ctx, pr.Repo, pr.Number, []string{github.DecisionNeededLabelName()}); err != nil { // writeback:gated
 			// Commented but not re-held: the snapshot stays on the OLD head,
 			// so next tick re-detects the drift (comment deduped) and retries
 			// the label. Never re-arm before the label sticks.

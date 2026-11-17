@@ -429,6 +429,7 @@ func TestEveryRuntimeClassTriggerAndNonTriggerThresholds(t *testing.T) {
 		{class: ClassPanicRecovered, message: "panic in kickBrainstorm: runtime error: invalid memory address"},
 		{class: ClassModelDiscoveryDegraded, message: "model discovery failed: 502 bad gateway"},
 		{class: ClassInferenceAuthFailed, message: "litellm returned HTTP 401 unauthorized"},
+		{class: ClassInferenceBackendAuthFailure, message: "inference backend auth failure"},
 		{class: ClassAdvisoryPostFailed, message: "advisory digest post failed: HTTP 422"},
 		{class: ClassUpgradeStalled, message: "standalone upgrade helper did not finish within 10m0s"},
 		{class: ClassDataDiskPressure, message: "data disk pressure: disk-full: /data is 97% used (threshold 95%)"},

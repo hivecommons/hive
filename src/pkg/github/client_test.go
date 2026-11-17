@@ -1374,14 +1374,8 @@ func TestEnforceSHAHold_HoldWhenNoSHA(t *testing.T) {
 	if !commentPosted {
 		t.Error("SHA hold comment was not posted")
 	}
-	// The SHA hold leaves no marker the status snapshot can read, so the
-	// hold's source lands in Hive's local record (#11564).
-	holdSourcesMu.Lock()
-	ledger := readHoldSourceLedgerLocked(HoldSourcesPath)
-	holdSourcesMu.Unlock()
-	if _, ok := ledger.Applied[holdSourceKey(HoldKindIssue, org+"/"+repo, 100)][HoldSourceSHAHold]; !ok {
-		t.Errorf("hold-source record = %v, want issue testorg/console#100 -> %s", ledger.Applied, HoldSourceSHAHold)
-	}
+	// The SHA sweep applies needs-sha, never `hold` (hivecommons/hive#18468),
+	// so it no longer writes a #11564 hold-source record.
 }
 
 func TestEnforceSHAHold_SkipsInternalAuthors(t *testing.T) {

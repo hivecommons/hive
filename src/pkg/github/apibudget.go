@@ -153,6 +153,7 @@ var (
 		"shared_ci_rerun",
 		"escalation",
 		"stale_red_base_refresh",
+		"missing_check_base_refresh",
 	}
 	APIBudgetEnrichmentSteps = []string{
 		"advisory_ensure",

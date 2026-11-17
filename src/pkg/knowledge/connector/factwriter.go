@@ -20,6 +20,58 @@ const (
 	StatusDeprecated = "deprecated"
 )
 
+// Fact content states, the value of a connector's `attr_<x>_content` key
+// (attr_plaud_content, attr_meeting_content): whether the fact carries text
+// and where that text came from.
+const (
+	// FactContentReady: the source produced its own summary or transcript.
+	FactContentReady = "ready"
+	// FactContentPending: the source has no text yet; the fact holds only
+	// metadata (title, date, duration, highlights) and a pending note, and
+	// the connector re-reads it on every sync.
+	FactContentPending = "pending"
+	// FactContentMachine: the source still has no text, and the hive wrote
+	// its own machine transcript into the fact. The connector keeps
+	// re-reading the recording, and its own text replaces the machine one
+	// when it arrives; a sync that still finds no text leaves the fact alone.
+	FactContentMachine = "machine"
+)
+
+// factContentSuffix ends every content-state attr key.
+const factContentSuffix = "_content"
+
+// FactContentKey returns the front-matter key holding the fact's content
+// state ("attr_plaud_content", "attr_meeting_content"), or "" when the fact
+// has none. The lexically first key wins if a fact somehow carries several.
+func FactContentKey(fm map[string]string) string {
+	best := ""
+	for k := range fm {
+		if strings.HasPrefix(k, "attr_") && strings.HasSuffix(k, factContentSuffix) && (best == "" || k < best) {
+			best = k
+		}
+	}
+	return best
+}
+
+// FactContentState returns the fact's content state (FactContentReady,
+// FactContentPending, FactContentMachine), or "" when it records none.
+func FactContentState(fm map[string]string) string {
+	if k := FactContentKey(fm); k != "" {
+		return fm[k]
+	}
+	return ""
+}
+
+// pageContentPending reports whether a page says its source has no text yet.
+func pageContentPending(attrs map[string]string) bool {
+	for k, v := range attrs {
+		if strings.HasSuffix(k, factContentSuffix) && v == FactContentPending {
+			return true
+		}
+	}
+	return false
+}
+
 // DefaultMaxPageBytes caps the markdown body of a single synced page.
 const DefaultMaxPageBytes = 1 << 20
 
@@ -98,8 +150,16 @@ func (w *FactWriter) Write(cfg ConnectorConfig, p Page) (string, bool, error) {
 	if p.Archived {
 		status = StatusDeprecated
 	}
-	content := w.render(cfg, p, slug, status)
 	path := w.path(slug)
+	// A page that still has no text never overwrites a machine transcript
+	// the hive wrote into the fact: the machine text stays until the source
+	// produces its own.
+	if !p.Archived && pageContentPending(p.Attrs) {
+		if old, err := os.ReadFile(path); err == nil && FactContentState(frontMatter(string(old))) == FactContentMachine {
+			return slug, false, nil
+		}
+	}
+	content := w.render(cfg, p, slug, status)
 	if old, err := os.ReadFile(path); err == nil && stripVolatile(string(old)) == stripVolatile(content) {
 		return slug, false, nil
 	}

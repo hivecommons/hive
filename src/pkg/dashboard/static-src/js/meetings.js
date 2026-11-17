@@ -14,7 +14,20 @@
     // Ended meetings are inbox items too (source "meeting").
     if (typeof INBOX_SOURCE_ICONS === 'object' && !INBOX_SOURCE_ICONS.meeting) INBOX_SOURCE_ICONS.meeting = '🎙';
 
+    // Raw errors longer than this collapse behind a "details" toggle.
+    const MEETINGS_ERROR_INLINE_CHARS = 140;
+    const MEETINGS_PLATFORM_LABELS = { google_meet: 'Google Meet', teams: 'Teams', zoom: 'Zoom', discord: 'Discord' };
+    // Meeting state to the kc-pill status palette (green, blue, red, muted).
+    const MEETINGS_PILL_STATUS = { live: 'ok', requested: 'syncing', joining: 'syncing', lobby: 'syncing', failed: 'error', blocked: 'error' };
+
     function meetingsIsOwner() { return window._hiveRole === 'owner'; }
+    // The role is known once /api/role settled (answered, or its retries gave
+    // up). Until then the panel shows a neutral loading state, never the
+    // owner-only notice, and re-renders when gh-auth.js notifies role
+    // listeners (same contract as the Inbox, #18442).
+    function meetingsRoleKnown() { return window._hiveRoleSettled === true || window._hiveRole !== undefined; }
+    function meetingsOnRoleReady() { fetchMeetings(); }
+    (window._hiveRoleListeners = window._hiveRoleListeners || []).push(meetingsOnRoleReady);
     function meetingsLabel(m) {
       if (m.title) return m.title;
       if (m.platform === 'discord') return 'Discord ' + (m.channel_id || '');
@@ -24,8 +37,13 @@
     async function fetchMeetings() {
       const host = document.getElementById('meetings-panel');
       if (!host) return;
+      if (!meetingsRoleKnown()) {
+        host.innerHTML = '<p class="muted-xs">Loading meetings…</p>';
+        return;
+      }
       if (!meetingsIsOwner()) {
-        host.innerHTML = '<p class="muted-xs">Meetings are visible to the hive owner only.</p>';
+        host.innerHTML = '<p class="empty-dashed">Meetings are visible to the hive owner only.</p>' +
+          (window._hiveRoleFailed && !window._hiveRole ? '<p class="muted-xs">Could not determine your role. It will retry automatically.</p>' : '');
         return;
       }
       try {
@@ -33,7 +51,11 @@
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { _meetingsList = []; _meetingsError = data.error || ('HTTP ' + r.status); }
         else { _meetingsList = data.meetings || []; _meetingsError = ''; }
-      } catch (e) { return; }
+      } catch (e) {
+        // Keep the last list; say the hive is unreachable instead of leaving "Loading meetings…".
+        if (_meetingsList === null) _meetingsList = [];
+        _meetingsError = 'Meetings are unreachable right now; retrying.';
+      }
       renderMeetings();
     }
     dashboardScheduleWork('meetings', fetchMeetings).catch(console.error);
@@ -41,14 +63,49 @@
 
     function meetingsJoinFormHtml() {
       return '<div class="meetings-join">' +
-        '<label>Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-meetings-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
-        '<label>Title (optional)<input class="kb-search-box" type="text" data-meetings-field="title" placeholder="Weekly sync" autocomplete="off"></label>' +
-        '<label class="inbox-toggle"><input type="checkbox" data-meetings-field="voice"> Voice</label>' +
+        '<div class="meetings-join-fields">' +
+        '<label class="meetings-field">Meeting link (Google Meet, Teams, Zoom)<input class="kb-search-box" type="url" data-meetings-field="url" placeholder="https://meet.google.com/abc-defg-hij" autocomplete="off"></label>' +
+        '<label class="meetings-field">Title (optional)<input class="kb-search-box" type="text" data-meetings-field="title" placeholder="Weekly sync" autocomplete="off"></label></div>' +
+        '<details class="meetings-join-more"><summary class="muted-xs">Discord voice channel instead</summary><div class="meetings-join-fields mt-2">' +
+        '<label class="meetings-field">Guild ID<input class="kb-search-box" type="text" data-meetings-field="guild" autocomplete="off"></label>' +
+        '<label class="meetings-field">Voice channel ID<input class="kb-search-box" type="text" data-meetings-field="channel" autocomplete="off"></label></div></details>' +
+        '<div class="meetings-join-actions">' +
+        '<label class="meetings-voice-toggle"><input type="checkbox" data-meetings-field="voice"><span>Voice</span></label>' +
         '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsJoin">Send hive to a meeting</button></div>' +
-        '<details class="mt-2"><summary class="muted-xs">Discord voice channel instead</summary><div class="meetings-join-discord mt-2">' +
-        '<label>Guild ID<input class="kb-search-box" type="text" data-meetings-field="guild" autocomplete="off"></label>' +
-        '<label>Voice channel ID<input class="kb-search-box" type="text" data-meetings-field="channel" autocomplete="off"></label></div></details>' +
-        '<div class="hive-dialog-error" role="alert" data-meetings-field="error"></div>';
+        '<div class="hive-dialog-error" role="alert" data-meetings-field="error"></div></div>';
+    }
+
+    function meetingsFormatTime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      try { return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }).format(d); }
+      catch (e) { return d.toISOString(); }
+    }
+
+    // meetingsFriendlyReason is a plain-language line for a meeting's
+    // state_reason; the raw reason stays available under "details".
+    function meetingsFriendlyReason(m) {
+      const raw = String(m.state_reason || '');
+      if (!raw) return '';
+      if (m.state === 'blocked') return 'The meeting refused a guest bot.';
+      if (/consent_undelivered/.test(raw)) return 'Left: the consent notice could not be delivered' + (m.consent_error ? ' (' + m.consent_error + ')' : '') + '.';
+      if (/lobby_timeout/.test(raw)) return 'Nobody admitted hive from the lobby in time.';
+      if (/platform_unavailable/.test(raw)) return 'This meeting platform is not available on this hive right now.';
+      if (/invalid_argument/.test(raw)) return 'The meeting service did not accept this meeting link.';
+      if (/upstream_error|Vexa|answered 5\d\d/.test(raw)) return 'The meeting service could not start the bot.';
+      if (m.state === 'failed') return 'Hive could not join this meeting.';
+      return raw.length > MEETINGS_ERROR_INLINE_CHARS ? '' : raw;
+    }
+
+    function meetingsReasonHtml(m) {
+      const raw = String(m.state_reason || '');
+      if (!raw) return '';
+      const friendly = meetingsFriendlyReason(m);
+      const cls = (m.state === 'failed' || m.state === 'blocked') ? 'meetings-row-error' : 'muted-xs';
+      if (friendly === raw) return '<div class="' + cls + '">' + escapeHtml(raw) + '</div>';
+      return '<div class="' + cls + '">' + escapeHtml(friendly || 'Details') + '</div>' +
+        '<details class="meetings-row-details"><summary class="muted-xs">details</summary><div class="meetings-row-raw">' + escapeHtml(raw) + '</div></details>';
     }
 
     function meetingsRowHtml(m) {
@@ -56,21 +113,30 @@
       const open = _meetingsOpen && _meetingsOpen.id === m.id;
       const request = m.state === 'requested' && m.requested_by;
       if (request) {
-        return '<div class="meetings-row"><span class="badge">join request</span>' +
+        return '<div class="meetings-row" data-state="requested"><div class="meetings-row-main"><div class="meetings-row-head">' +
           '<span class="meetings-row-title">' + escapeHtml((m.requested_by.name || m.requested_by.id || 'someone') + ' asked hive into ' + meetingsLabel(m)) + '</span>' +
+          '<span class="kc-pill" data-status="syncing">join request</span></div></div>' +
+          '<div class="meetings-row-actions">' +
           '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsApproveRequest" data-arg0="' + escapeHtml(m.id) + '">Approve</button>' +
-          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button></div>';
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button></div></div>';
       }
-      return '<div class="meetings-row' + (open ? ' is-open' : '') + '">' +
-        '<span class="badge">' + escapeHtml(m.state || '') + '</span>' +
+      const state = m.state || '';
+      const when = meetingsFormatTime(m.live_at || m.created_at);
+      const meta = [MEETINGS_PLATFORM_LABELS[m.platform] || m.platform || '', when].filter(Boolean).join(' · ');
+      return '<div class="meetings-row' + (open ? ' is-open' : '') + '" data-state="' + escapeHtml(state) + '">' +
+        '<div class="meetings-row-main"><div class="meetings-row-head">' +
         '<span class="meetings-row-title" title="' + escapeHtml(m.url || '') + '">' + escapeHtml(meetingsLabel(m)) + '</span>' +
-        (m.state_reason ? '<span class="muted-xs">' + escapeHtml(m.state_reason) + '</span>' : '') +
-        (m.consent_error && !m.consent_posted_at ? '<span class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</span>' : '') +
-        (m.voice_enabled && !m.voice_capable ? '<span class="muted-xs">joined without voice; replies go to chat</span>' : '') +
+        '<span class="kc-pill" data-status="' + escapeHtml(MEETINGS_PILL_STATUS[state] || '') + '">' + escapeHtml(state) + '</span></div>' +
+        (meta ? '<div class="muted-xs">' + escapeHtml(meta) + '</div>' : '') +
+        meetingsReasonHtml(m) +
+        (active && m.consent_error && !m.consent_posted_at ? '<div class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</div>' : '') +
+        (m.consent_via === 'voice' ? '<div class="muted-xs">consent notice spoken: the meeting chat could not deliver it</div>' : '') +
+        (m.voice_enabled && !m.voice_capable ? '<div class="muted-xs">joined without voice; replies go to chat</div>' : '') +
+        '</div><div class="meetings-row-actions">' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +
         (active ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsToggleVoice" data-arg0="' + escapeHtml(m.id) + '" data-arg1="' + (m.voice_enabled ? 'false' : 'true') + '">' + (m.voice_enabled ? 'Voice on' : 'Voice off') + '</button>' +
           '<button type="button" class="hv-btn btn-danger btn-sm" data-action="meetingsLeave" data-arg0="' + escapeHtml(m.id) + '">Leave</button>' : '') +
-        '</div>';
+        '</div></div>';
     }
 
     function renderMeetings() {
@@ -83,7 +149,7 @@
         html += meetingsJoinFormHtml();
       }
       const list = _meetingsList || [];
-      html += '<div class="meetings-list">' + (list.length ? list.map(meetingsRowHtml).join('') : (_meetingsError ? '' : '<p class="muted-xs">No meetings yet.</p>')) + '</div>';
+      html += '<div class="meetings-list">' + (list.length ? list.map(meetingsRowHtml).join('') : (_meetingsError ? '' : '<p class="empty-dashed">No meetings yet.</p>')) + '</div>';
       html += '<div id="meetings-live-panel"></div>';
       host.innerHTML = html;
       const liveCount = list.filter(m => MEETINGS_LIVE_STATES[m.state]).length;
@@ -246,7 +312,7 @@
     function renderGovMeetings() {
       return '<div class="config-section" data-config-section="Meetings"><h3>Meetings</h3>' +
         '<p class="text-muted fs-base">Send hive into Google Meet, Teams, Zoom or Discord meetings to take notes, ask clarifying questions and run research. ' +
-        yamlHint('meetings.enabled') + ' ' + yamlHint('meetings.vexa.url') + ' ' + yamlHint('meetings.vexa.api_key_file') + ' ' + yamlHint('meetings.discord.token_file') + ' ' + yamlHint('meetings.transcribe_url') + ' ' + yamlHint('meetings.transcribe_token_file') + ' Changes apply after a restart.</p>' +
+        yamlHint('meetings.enabled') + ' ' + yamlHint('meetings.vexa.url') + ' ' + yamlHint('meetings.vexa.api_key_file') + ' ' + yamlHint('meetings.discord.token_file') + ' ' + yamlHint('meetings.transcribe_url') + ' ' + yamlHint('meetings.transcribe_token_file') + ' ' + yamlHint('meetings.tts_url') + ' ' + yamlHint('meetings.tts_token_file') + ' Changes apply after a restart.</p>' +
         '<div id="meetings-settings-inline"><p class="muted-xs">Loading…</p></div></div>';
     }
 
@@ -260,9 +326,11 @@
         '<label class="muted-note inbox-field">Vexa gateway URL<input class="kb-search-box mt-2" type="url" data-meetings-setting="vexa_url" placeholder="https://vexa.example.org" autocomplete="off" value="' + escapeHtml(s.vexa_url || '') + '"></label>' +
         '<label class="muted-note inbox-field">Vexa tenant key ' + (s.vexa_key_set ? '(set)' : '(not set)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="vexa_api_key" placeholder="leave blank to keep" autocomplete="new-password"></label>' +
         '<label class="muted-note inbox-field">Discord bot token ' + (s.discord_token_set ? '(set)' : '(not set, optional)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="discord_token" placeholder="leave blank to keep" autocomplete="new-password"></label>' +
-        '<label class="muted-note inbox-field">Transcription token ' + (s.transcribe_token_set ? '(set)' : '(not set, needed for Discord)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="transcribe_token" placeholder="leave blank to keep" autocomplete="new-password"></label></div>' +
+        '<label class="muted-note inbox-field">Transcription token ' + (s.transcribe_token_set ? '(set)' : '(not set, needed for Discord)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="transcribe_token" placeholder="leave blank to keep" autocomplete="new-password"></label>' +
+        '<label class="muted-note inbox-field">TTS token ' + (s.tts_token_set ? '(set)' : '(not set, needed for Discord speech)') + '<input class="kb-search-box mt-2" type="password" data-meetings-setting="tts_token" placeholder="leave blank to keep" autocomplete="new-password"></label></div>' +
         '<p class="muted-xs" data-meetings-setting="discord_hint">Discord needs three things: the Discord bot token, the transcribe URL (<code>meetings.transcribe_url</code> or <code>HIVE_MEETINGS_TRANSCRIBE_URL</code>; where the shared service runs in the same cluster, the in-cluster <code>http://vexa-transcription.meetings.svc.cluster.local:8000</code>) and the transcription token. Transcribe URL now: ' +
-        (eff['meetings.transcribe_url'] ? '<code>' + escapeHtml(eff['meetings.transcribe_url']) + '</code>' : 'not set') + '.</p>' +
+        (eff['meetings.transcribe_url'] ? '<code>' + escapeHtml(eff['meetings.transcribe_url']) + '</code>' : 'not set') + '. Discord speech also needs the TTS URL (<code>meetings.tts_url</code> or <code>HIVE_MEETINGS_TTS_URL</code>; in-cluster <code>http://vexa-tts.meetings.svc.cluster.local:8880</code>) and the TTS token. TTS URL now: ' +
+        (eff['meetings.tts_url'] ? '<code>' + escapeHtml(eff['meetings.tts_url']) + '</code>' : 'not set') + '.</p>' +
         '<details class="mt-4"><summary class="muted-xs">Other meetings settings (hive.yaml or HIVE_MEETINGS_* env)</summary><table class="meetings-effective">' + rows + '</table></details>' +
         '<div class="hive-dialog-error" role="alert" data-meetings-setting="error"></div>' +
         '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="meetingsSaveSettings">Save</button></div></div>';
@@ -289,9 +357,11 @@
       const key = ((meetingsSetting('vexa_api_key') || {}).value || '').trim();
       const tok = ((meetingsSetting('discord_token') || {}).value || '').trim();
       const tx = ((meetingsSetting('transcribe_token') || {}).value || '').trim();
+      const tts = ((meetingsSetting('tts_token') || {}).value || '').trim();
       if (key) body.vexa_api_key = key;
       if (tok) body.discord_token = tok;
       if (tx) body.transcribe_token = tx;
+      if (tts) body.tts_token = tts;
       try {
         const data = await meetingsPost('/api/meetings/settings', body);
         showToast(data.restart_required ? 'Meetings settings saved; restart the hive to apply' : 'Meetings settings saved', 'success');

@@ -19,7 +19,7 @@ name: PR Verifier
 #     and the run's check lands on the branch tip, i.e. the pushed head. Only
 #     same-repo branches are ever dispatched (the autofix never pushes to
 #     forks); such a run uses the GitHub-hosted ARM runner like fork PRs do.
-# The concurrency group below bounds the cost.
+# The concurrency group below bounds the cost without cancelling anything.
 on:
   pull_request_target:
     types: [opened, edited, synchronize, reopened, ready_for_review, labeled, unlabeled]
@@ -30,9 +30,24 @@ on:
         required: true
         type: string
 
+# Required context: never CANCEL a run on the head SHA (#18578). GitHub scores
+# every check-run of a required name on a commit, so one cancelled sibling
+# leaves the PR BLOCKED beside a green survivor and Tide jams on it (#11250).
+# A per-PR group with cancel-in-progress let every label flip (lgtm, approved,
+# size, stage) cancel the run in flight, and a queued run in a shared group is
+# cancelled by the next one to queue even with cancel-in-progress false. So:
+#   - the group carries the head SHA, so runs on different commits never meet;
+#   - events that re-check the same head (labeled, unlabeled, edited,
+#     reopened, ready_for_review) also carry github.run_id: each runs in its
+#     own group and can neither cancel nor be cancelled. The wrapper is green
+#     whatever the label set (every verdict step is continue-on-error), and
+#     the label types stay for #17036, not for the verdict.
+#   - runs on a superseded commit finish (10 min cap) rather than being
+#     cancelled; their verdict lands on that old SHA, which never merges.
+# .github/scripts/test-required-check-concurrency.py enforces this.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr_number || github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' || github.event_name == 'pull_request_target' }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || inputs.pr_number || github.ref }}-${{ github.event.pull_request.head.sha || github.sha }}${{ contains(fromJSON('["labeled","unlabeled","edited","reopened","ready_for_review"]'), github.event.action) && format('-{0}-{1}', github.event.action, github.run_id) || '' }}
+  cancel-in-progress: false
 
 permissions:
   checks: write

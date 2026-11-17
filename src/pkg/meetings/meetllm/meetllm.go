@@ -16,6 +16,16 @@
 //	HIVE_MEETING_LLM_MAX_TOKENS   per-meeting token budget (0 = none)
 //	HIVE_MEETING_LLM_SLOTS_DIR    directory of in-flight slot lock files
 //	HIVE_MEETING_LLM_MAX_IN_FLIGHT concurrent calls across meetings
+//	HIVE_MEETING_LLM_BACKEND      agent backend (claude) instead of an endpoint
+//	HIVE_MEETING_LLM_CLI_BINARY   that backend's CLI (default: its name)
+//	HIVE_MEETING_LLM_CLI_HOME     HOME holding the CLI's sign-in
+//	HIVE_MEETING_LLM_CA_BUNDLE    PEM file of private CAs for the endpoint
+//
+// With HIVE_MEETING_LLM_BACKEND set the call runs that backend's CLI once
+// in its no-tools completion profile (cli.go, hivecommons/hive#18517,
+// #18549) and no endpoint is needed. The CLI's sign-in variables
+// (CLAUDE_CODE_OAUTH_TOKEN, COPILOT_GITHUB_TOKEN, OMP_AUTH_BROKER_*) pass
+// through from this environment when set.
 //
 // Usage ledger: one line per call, {"at":"<RFC 3339>","tokens":N}, appended
 // to the meeting's usage file. The live loop sums it for the panel and the
@@ -28,6 +38,8 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -54,6 +66,10 @@ const (
 	EnvMaxTokens   = "HIVE_MEETING_LLM_MAX_TOKENS"
 	EnvSlotsDir    = "HIVE_MEETING_LLM_SLOTS_DIR"
 	EnvMaxInFlight = "HIVE_MEETING_LLM_MAX_IN_FLIGHT"
+	EnvBackend     = "HIVE_MEETING_LLM_BACKEND"
+	EnvCLIBinary   = "HIVE_MEETING_LLM_CLI_BINARY"
+	EnvCLIHome     = "HIVE_MEETING_LLM_CLI_HOME"
+	EnvCABundle    = "HIVE_MEETING_LLM_CA_BUNDLE"
 )
 
 const (
@@ -84,6 +100,32 @@ type Config struct {
 	MaxTokens   int
 	SlotsDir    string
 	MaxInFlight int
+	// System is an optional system prompt sent before the user prompt. The
+	// `hive meeting-llm` command leaves it empty (Spek's prompt arrives
+	// whole on stdin); in-process callers such as the meeting persona set it.
+	System string
+	// Provider is "" (OpenAI-compatible chat completions),
+	// ProviderAnthropic (the Anthropic Messages API, in-process callers
+	// only; Endpoint then defaults to AnthropicEndpoint) or
+	// ProviderAgentBackend (Backend's CLI completion profile).
+	Provider string
+	// Backend is the agent backend on ProviderAgentBackend.
+	Backend string
+	// CLIBinary is the backend's CLI; empty runs the backend's name.
+	CLIBinary string
+	// CLIHome is the HOME the CLI runs with; empty inherits HOME.
+	CLIHome string
+	// RecycleTurns is how many turns a warm session answers before it is
+	// replaced; zero means DefaultRecycleTurns.
+	RecycleTurns int
+	// Session is the meeting's warm CLI. Nil on ProviderAgentBackend runs
+	// one CLI per call.
+	Session *CLISession
+	// Getenv reads the environment the CLI inherits from; nil is os.Getenv.
+	Getenv func(string) string
+	// CABundle is an optional PEM file of private CAs the endpoint is
+	// verified against, added to the system roots (`hive meeting-llm`).
+	CABundle string
 }
 
 func envInt(getenv func(string) string, name string, def int) int {
@@ -104,6 +146,22 @@ func FromEnv(getenv func(string) string) (Config, error) {
 		MaxTokens:   envInt(getenv, EnvMaxTokens, 0),
 		SlotsDir:    strings.TrimSpace(getenv(EnvSlotsDir)),
 		MaxInFlight: envInt(getenv, EnvMaxInFlight, 1),
+		Backend:     strings.ToLower(strings.TrimSpace(getenv(EnvBackend))),
+		CLIBinary:   strings.TrimSpace(getenv(EnvCLIBinary)),
+		CLIHome:     strings.TrimSpace(getenv(EnvCLIHome)),
+		Getenv:      getenv,
+		CABundle:    strings.TrimSpace(getenv(EnvCABundle)),
+	}
+	if c.Backend != "" {
+		c.Provider = ProviderAgentBackend
+		p, err := profileFor(c.Backend)
+		if err != nil {
+			return c, err
+		}
+		if p.requiresModel && c.Model == "" {
+			return c, fmt.Errorf("meeting-llm: %s is required with %s", EnvModel, EnvBackend)
+		}
+		return c, nil
 	}
 	if c.Endpoint == "" || c.Model == "" {
 		return c, fmt.Errorf("meeting-llm: %s and %s are required", EnvEndpoint, EnvModel)
@@ -228,12 +286,26 @@ func Complete(ctx context.Context, c Config, hc *http.Client, prompt string) (st
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
+	if c.Provider == ProviderAgentBackend && c.Session != nil {
+		return completeSession(ctx, c, prompt)
+	}
 	release, err := acquire(ctx, c.SlotsDir, c.MaxInFlight)
 	if err != nil {
 		return "", err
 	}
 	defer release()
-	body, _ := json.Marshal(chatRequest{Model: c.Model, Messages: []chatMessage{{Role: "user", Content: prompt}}, MaxTokens: maxReplyTokens})
+	switch c.Provider {
+	case ProviderAnthropic:
+		return completeAnthropic(ctx, c, hc, prompt)
+	case ProviderAgentBackend:
+		return completeCLIOnce(ctx, c, prompt)
+	}
+	msgs := make([]chatMessage, 0, 2)
+	if strings.TrimSpace(c.System) != "" {
+		msgs = append(msgs, chatMessage{Role: "system", Content: c.System})
+	}
+	msgs = append(msgs, chatMessage{Role: "user", Content: prompt})
+	body, _ := json.Marshal(chatRequest{Model: c.Model, Messages: msgs, MaxTokens: maxReplyTokens})
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, chatURL(c.Endpoint), bytes.NewReader(body))
 	if err != nil {
 		return "", err
@@ -280,11 +352,42 @@ func Run(_ []string, stdin io.Reader, stdout, stderr io.Writer, getenv func(stri
 		fmt.Fprintln(stderr, "meeting-llm: reading prompt:", err)
 		return 1
 	}
-	reply, err := Complete(context.Background(), c, &http.Client{}, string(prompt))
+	hc, err := HTTPClient(c.CABundle)
+	if err != nil {
+		fmt.Fprintln(stderr, err)
+		return 2
+	}
+	reply, err := Complete(context.Background(), c, hc, string(prompt))
 	if err != nil {
 		fmt.Fprintln(stderr, err)
 		return 1
 	}
 	fmt.Fprint(stdout, reply)
 	return 0
+}
+
+// HTTPClient is the client for an OpenAI-compatible endpoint: the default
+// one, or, with caBundle set, one that also trusts the PEM file's CAs (a
+// model gateway's ca_bundle). Verification is never turned off.
+func HTTPClient(caBundle string) (*http.Client, error) {
+	if strings.TrimSpace(caBundle) == "" {
+		return &http.Client{}, nil
+	}
+	pem, err := os.ReadFile(caBundle)
+	if err != nil {
+		return nil, fmt.Errorf("meeting-llm: reading CA bundle: %w", err)
+	}
+	pool, err := x509.SystemCertPool()
+	if err != nil || pool == nil {
+		pool = x509.NewCertPool()
+	}
+	if !pool.AppendCertsFromPEM(pem) {
+		return nil, errors.New("meeting-llm: CA bundle holds no PEM certificate")
+	}
+	tr := &http.Transport{Proxy: http.ProxyFromEnvironment}
+	if def, ok := http.DefaultTransport.(*http.Transport); ok {
+		tr = def.Clone()
+	}
+	tr.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
+	return &http.Client{Transport: tr}, nil
 }

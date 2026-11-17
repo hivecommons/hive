@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/hivecommons/hive/pkg/knowledge/connector"
 )
 
 // excerptRunes bounds the list excerpt.
@@ -93,6 +95,7 @@ func itemFromFact(fm map[string]string, body, layer, path string) Item {
 	it.Summary = truncateRunes(sections["summary"], SummaryRunes)
 	it.HasTranscript = sections["transcript"] != ""
 	it.Pending = it.Summary == "" && !it.HasTranscript
+	it.FactState = factState(fm, it.Pending)
 	for _, key := range []string{"attr_recorded_at", "synthesized"} {
 		if t, err := time.Parse(time.RFC3339, fm[key]); err == nil {
 			it.RecordedAt = t.UTC()
@@ -131,6 +134,7 @@ func (f *FactSource) Fetch(_ context.Context, it Item) (Content, error) {
 	sections := splitSections(body)
 	c.Summary, c.Transcript, c.Highlights = sections["summary"], sections["transcript"], sections["highlights"]
 	c.Pending = c.Summary == "" && c.Transcript == ""
+	c.machineFact = connector.FactContentState(fm) == connector.FactContentMachine
 	return c, nil
 }
 
@@ -209,14 +213,24 @@ func truncateRunes(s string, n int) string {
 	return strings.TrimSpace(string(r[:n])) + "…"
 }
 
+// excerptHidden reports the lines a fact carries for agents and provenance,
+// not for reading: the untrusted-data envelope around a machine transcript
+// (its open and close markers and the preamble) and the transcript's
+// provenance line. The stored fact keeps them; the excerpt shows only text.
+func excerptHidden(line string) bool {
+	return strings.HasPrefix(line, "<"+UntrustedTag) || strings.HasPrefix(line, "</"+UntrustedTag) ||
+		line == untrustedPreamble || isMachineProvenance(line)
+}
+
 // excerpt returns the first prose lines of body, bounded to excerptRunes.
 // Headings, bold labels and the connector's "- **Recorded:**"/"- **Duration:**"
 // metadata bullets are skipped (the Inbox shows those fields itself).
+// The machine-transcript envelope and provenance line are skipped too.
 func excerpt(body string) string {
 	var b strings.Builder
 	for _, line := range strings.Split(body, "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "**") || strings.HasPrefix(line, "- **") {
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "**") || strings.HasPrefix(line, "- **") || excerptHidden(line) {
 			continue
 		}
 		if b.Len() > 0 {

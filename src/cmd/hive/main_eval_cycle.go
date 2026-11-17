@@ -608,6 +608,20 @@ func runEvalCycle(
 	if !budgetDecision.SkipOptional {
 		advisoryEnsureErr = ensurePinnedAdvisoryIssue(
 			ctx, advisoryIssues, primaryRepoAtCycleStart, advisoryEnsureDepsForCycle, logger)
+		// One advisory report per hive, in the primary repo (#18568), unless
+		// the owner opted into a report in every repo (#18448,
+		// governor.advisory.per_repo). Off, the list is empty and only stale
+		// per-repo alerts are cleared; nothing is created outside the primary.
+		var repoIssueAlerts advisoryRepoIssueAlerts
+		if dashSrv != nil {
+			repoIssueAlerts = dashSrv
+		}
+		var ensureSecondary func(ctx context.Context, repo string) (int, error)
+		if ghClient != nil {
+			ensureSecondary = ghClient.EnsureSecondaryAdvisoryIssue
+		}
+		ensureSecondaryAdvisoryIssues(ctx, advisoryIssues, advisoryPerRepoSecondaryRepos(cfg),
+			ensureSecondary, advisoryRepoIssueGate, repoIssueAlerts, time.Now(), logger)
 	}
 
 	var actionable *github.ActionableResult
@@ -833,6 +847,16 @@ func runEvalCycle(
 			}
 			refreshed := refreshStaleRedBehindPRs(ctx, cfg, ghClient, actionable, refreshAudit, logger, time.Now())
 			reapSkip = reaperSkipAfterRerun(reapSkip, refreshed)
+			// A PR whose head predates a newly required check never runs
+			// it (projectbluefin/testsuite#1245); only a new head does.
+			// Those PRs are not red, so the reaper never sees them.
+			var missingAudit func(string, int, string)
+			if dashSrv != nil {
+				missingAudit = func(repo string, number int, detail string) {
+					dashSrv.AuditLogRecord("system", "missing-check-base-refresh", detail, "", repo, number)
+				}
+			}
+			refreshMissingCheckBehindPRs(ctx, cfg, ghClient, actionable, missingAudit, logger, time.Now())
 		}
 	}
 	reapStuckRedPRs(cfg, actionable, reapSkip, agentKicker{mgr: agentMgr},
@@ -1088,6 +1112,12 @@ func runEvalCycle(
 	kickActionable = dashSrv.IntegrationKickAdmission(kickActionable)
 
 	sched.SetLastActionable(kickActionable)
+	// Shadow advisory engine (hivecommons/hive#18464 phase 1): default off,
+	// and when on it only records a read-only session's advice on the same
+	// items, in the background; nothing here waits on or acts on it.
+	if cfg.AdvisoryEngineMode() != config.AdvisoryEngineModeOff && dashSrv != nil {
+		observeAdvisoryEngine(ctx, cfg, ghClient, dashSrv, kickActionable, logger)
+	}
 	// The filter compacts agentsDue in place, so snapshot it first to report
 	// the targets it withholds alongside the other skips below.
 	dueBeforeDeferral := append([]string(nil), agentsDue...)
@@ -1325,6 +1355,9 @@ func runEvalCycle(
 	// stores can become stale between eval cycles. Reload failures are deduped
 	// (WARN once per distinct error, then DEBUG) — see beads_reload.go (#5505).
 	reloadBeadStores(beadStores, logger)
+	// #18493: release topic claims whose PR merged or closed, and follow a
+	// claimed PR's renamed head branch.
+	syncTopicClaims(beadStores, actionable, logger)
 
 	// Phase 4 Part B: `plan`/`epic` label trigger. An actionable issue carrying a
 	// plan label auto-mints an epic and requests decomposition — the same flow as
@@ -1591,6 +1624,23 @@ func runEvalCycle(
 					}
 				},
 			}, logger)
+			// Opt-in (#18448): the same digest goes to each other repo's own
+			// report, paced per repo by the post gate. Off, the list is empty.
+			if advisoryTarget == config.AdvisoryTargetGitHub {
+				postAdvisoryDigestToSecondaryRepos(ctx, md, advisoryIssues, advisoryPerRepoSecondaryRepos(cfg), advisoryRepoIssueGate, advisorySecondaryPostDeps{
+					post:   ghClient.PostAdvisoryDigest,
+					isOpen: ghClient.AdvisoryIssueOpen,
+					due: func(repo string) bool {
+						return advisoryPostDue(advCfg, repo, time.Now(), logger)
+					},
+					recordSuccess: func(repo string) {
+						recordAdvisoryPostSuccess(repo, time.Now())
+					},
+					recordForbidden: func(repo string) {
+						recordAdvisoryPostForbidden(repo, time.Now(), advCfg.PostRetryBackoff())
+					},
+				}, time.Now(), logger)
+			}
 		}
 	} else if d := dashSrv.GetAdvisoryDigest(); d != nil {
 		statusPayload.AdvisoryDigest = d

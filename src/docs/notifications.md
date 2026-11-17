@@ -594,6 +594,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).closeIssueForMergedPRClaimWithIssue` | `status` |  |
 | `github.(*Client).closeSupersededPRDecision` | `status` |  |
 | `github.(*Client).fileReviewBacklog` | `status` |  |
+| `github.(*Client).foldSentinelNotice` | `status` | informational sentinel notice folded into the PR status card (quiet mode); a blocking alert is never folded |
 | `github.(*Client).joinFleetReportIssue` | `status` |  |
 | `github.(*Client).markInProgressStarted` | `status` |  |
 | `github.(*Client).postUnblockedNote` | `status` |  |
@@ -625,19 +626,21 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).bindProwLgtm` | `attention` |  |
 | `github.(*Client).commentOnHumanFiledTwin` | `attention` |  |
 | `github.(*Client).createIssue` | `attention` |  |
-| `github.(*Client).handleOneIssueRequest` | `attention` |  |
+| `github.(*Client).handleOneIssueRequestFrom` | `attention` |  |
 | `github.(*Client).noteDuplicateGuardOnIssues` | `attention` | tells the blocked agent's issue that its branch was not opened as a PR because another hive agent's open PR edits an overlapping set of files; write-back gate consulted first |
 | `github.(*Client).parkClankerRequestedPR` | `attention` |  |
 | `github.(*Client).parkUnansweredNoPRIssue` | `attention` | the park note on a stalled 010 issue the hive answered without a PR |
 | `github.(*Client).redirectToExistingPR` | `attention` |  |
+| `github.(*Client).relayScannerNote` | `attention` | scanner PR note: an unchanged or edited note records a suppressed comment (#18451) |
 | `github.(*Client).remindAttention` | `attention` | attention-pilot reminder: at most one per unresolved episode per `reminder_interval`; write-back gate consulted first |
 | `github.(*Client).resolveDuplicateFixGroup` | `attention` |  |
+| `github.(*Client).upsertScannerNote` | `attention` | one scanner note per PR; a new comment only for the first note or when the author must act on a new head (#18451) |
 | `github.attentionDelivery.Post` | `attention` | condition-episode page; live write-back policy rechecked before the write |
 | `main.(*repoForgeRouter).CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.claimEscalationLookup` | `attention` |  |
 | `main.liveTriageCommenter.CreateIssueComment` | `attention` | passthrough wrapper; attributed to its caller |
 | `main.noteHeldPRUpdateStopped` | `attention` |  |
-| `main.sweepDependencyBotConflicts` | `attention` | asks a person to rebase or retry a dependency-bot PR, or to comment `@dependabot recreate` on a stranded Dependabot PR (the hive never posts that command: Dependabot refuses commands from apps) |
+| `main.sweepDependencyBotConflictsWith` | `attention` | asks a person to rebase or retry a dependency-bot PR, or to comment `@dependabot recreate` on a stranded Dependabot PR (the hive never posts that command: Dependabot refuses commands from apps) |
 | `mention.(*Responder).HandleAgentEvent` | `attention` | solicited completion reply to an explicit mention |
 | `mergelane.(*round).ensureForkWaitComment` | `attention` | asks the fork author to refresh the branch |
 | `worksource.(*forgeWorkSource).AddComment` | `attention` | passthrough wrapper; attributed to its caller |
@@ -689,7 +692,10 @@ github:
 ```
 
 Quiet mode (`github.notifications.mode: quiet`) folds the hive's PR
-bookkeeping into one edited `hive:status` comment but leaves issue notes as
+bookkeeping into one edited `hive:status` comment (including the auto-merge
+note, under the `auto-merge` section: in `normal` mode it stays its own
+comment, and a merge blocked on a person still gets its 085 / 090 entry
+comment, hivecommons/hive#18452) but leaves issue notes as
 comments of their own, so one issue lifecycle (partial merge, remainder,
 close) could still email its watchers several times. With the pilot on, the
 issue gets the same card, written through the same single status writer
@@ -783,6 +789,35 @@ github:
     reminder_interval: 24h   # default 24h
 ```
 
+### Sentinel notices in the PR status card
+
+The sentinel (`pkg/github/sentinel_sweep.go`) has two kinds of result, and
+only one of them asks a person to do anything
+(hivecommons/hive#18453):
+
+- **Actionable: a hold.** The author is untrusted, or
+  `sentinel.trusted_authors_block` is `true`. The hive adds the
+  `sentinel-alert` label and posts its `<!-- hive-sentinel --> <head>`
+  "Sentinel alert - maintainer review required" comment. This happens in
+  **every** mode, quiet included, because only a new comment notifies.
+  A security hold is never folded into the card.
+- **Informational.** The author is trusted and the merge is not blocked. In
+  `github.notifications.mode: quiet` (the default) this is the `sentinel`
+  section of the PR's `hive:status` card, edited in place. A new head
+  rewrites that section, so the PR gets no notice comment at all. The card
+  is created only when the PR has none yet. The section is stamped
+  `<!-- hive-sentinel-notice <head> -->`. It never carries the
+  `<!-- hive-sentinel -->` marker, because the sweep reads that marker back
+  to tell which head it alerted on and whether a maintainer cleared it. When
+  the same PR is later put on hold, the hive posts the alert comment and
+  drops the stale informational section from the card. A PR that already
+  has a sentinel comment from before this change keeps it, rewritten in
+  place for the new head.
+
+In `normal` mode the informational notice is still its own comment, as
+before. Either way the finding is recorded for audit, the dashboard
+Security tab and `/api/sentinel`.
+
 ### Hive-maintained Actions workflows that defer to the card
 
 Some comments come from GitHub Actions workflows in this repository rather
@@ -819,6 +854,38 @@ nothing. The refs sweep then skips that issue with an `::error::` annotation
 and exits non-zero instead of posting a possible duplicate.
 `.github/scripts/test-hive-status-card.sh` and
 `src/scripts/test-comment-merged-refs.sh` pin this behaviour.
+
+### Scanner note: one comment per PR
+
+The scanner's CI-triage and rebase notes on a PR used to be a new comment on
+every pass: PR #18254 got 17 near-identical triage comments on the same head
+in nine hours ([#18450](https://github.com/hivecommons/hive/issues/18450)).
+The comment relay (`hive-open-issue comment`, which every `gh pr comment`
+from an agent goes through) now keeps one scanner note per PR, marked
+`<!-- hive:scanner-note head=<sha> checks=<fingerprint> told=<sha> -->`
+([#18451](https://github.com/hivecommons/hive/issues/18451)):
+
+| Situation | Write |
+| --- | --- |
+| First scanner note on the PR | **Posts** a new comment carrying the marker. |
+| Same head SHA and same failing-check set as the current note | **Nothing.** The request completes with `already_existed`, and the relay logs `scanner note: unchanged head and failing checks, not re-posting`. |
+| New head, or a different failing set, on a hive-authored PR | **Edits** the note in place. Edits do not notify. |
+| The PR author must act (a non-hive author, something red) and has not been told for this head | **Posts** a new comment. It becomes the current note, and the old note loses its marker. Later changes on that head are edits. |
+
+The failing set is the head's red gating checks (as in the `recommend/*`
+digest), plus `DCO` when the DCO context failed and `merge-conflict` when the
+PR's mergeable state is dirty, so a rebase note is keyed the same way. When
+the head's checks cannot be read, the note is never dropped; it is edited.
+A note on an issue rather than a PR, from another lane, or carrying a
+dedicated marker (a shared-CI incident reference `<!-- hive-shared-ci-<n> -->`,
+a verification marker, any other `<!-- hive:… -->` marker) keeps its
+usual path. In quiet mode or under the attention pilot, the relay's one-line
+state notes (awaiting CI, parking) still fold into the status card first.
+
+The rule lives in the relay, not only in the scanner policy, because a
+prompt-only rule drifts. Set `HIVE_SCANNER_NOTE_UPSERT=off` (or `0`,
+`false`, `no`) on the hive to turn it off. It is on by default.
+`src/pkg/github/scanner_note_test.go` pins this behaviour.
 
 ### Per-PR workflow comments post only on a finding
 

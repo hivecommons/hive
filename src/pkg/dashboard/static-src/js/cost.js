@@ -337,6 +337,11 @@
       const est = cost.estimated || { total_usd: 0, by_model: [], by_agent: [], unpriced_models: [] };
       const gateways = cost.gateways || [];
       const isTierEstimated = (row) => row && (row.source === 'unpriced' || row.source === 'estimated_tier');
+      // source "unknown": a gateway model with no published or configured
+      // price. Its tokens are not in the total, so the cell says so instead
+      // of showing $0.
+      const isPriceUnknown = (row) => row && row.source === 'unknown';
+      const priceUnknownCell = (row) => `<span class="cost-price-unknown" title="This gateway publishes no price for this model and none is configured (prices: on the gateway). Not counted in the total.">price unknown${row && row.usd > 0 ? ' (+' + fmtUSD(row.usd) + ' priced)' : ''}</span>`;
       const usageWindow = estimatedUsageWindowLabel(est);
 
       // Native gateway cards (OpenRouter / LiteLLM real spend).
@@ -409,7 +414,7 @@
       }), 'model', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
       const modelRows = models.map(m => {
         const approx = isTierEstimated(m);
-        const usdCell = approx
+        const usdCell = isPriceUnknown(m) ? priceUnknownCell(m) : approx
           ? `<span title="unknown exact price — tier estimate, not billed spend">~${fmtUSD(m.usd)}</span>`
           : fmtUSD(m.usd);
         const users = m._users || [];
@@ -425,9 +430,11 @@
         </tr>`;
       }).join('');
 
-      const unpricedNote = (est.unpriced_models && est.unpriced_models.length)
+      const unpricedNote = ((est.unpriced_models && est.unpriced_models.length)
         ? `<div class="cost-disclaimer">Tier-estimated (no exact list price, marked ~ and included in the total): ${est.unpriced_models.map(esc).join(', ')}.</div>`
-        : '';
+        : '') + ((est.unknown_price_models && est.unknown_price_models.length)
+        ? `<div class="cost-disclaimer">Price unknown (gateway models with no published or configured price; NOT in the total, which is therefore a floor): ${est.unknown_price_models.map(esc).join(', ')}. Add <code>prices:</code> to the gateway in hive.yaml to cost them.</div>`
+        : '');
 
       // ── Per-sandbox (per-agent) estimated cost ──
       // In hive each agent runs in its own sandbox, so "usage by sandbox" is the
@@ -435,7 +442,7 @@
       const bySandbox = sortCostRows(est.by_agent || [], 'sandbox', (a, b) => String(a.name || '').localeCompare(String(b.name || ''), undefined, { sensitivity: 'base', numeric: true }));
       const sandboxRows = bySandbox.map(a => {
         const approx = isTierEstimated(a);
-        const usdCell = approx
+        const usdCell = isPriceUnknown(a) ? priceUnknownCell(a) : approx
           ? `<span title="unknown exact price — tier estimate for this sandbox's model">~${fmtUSD(a.usd)}</span>`
           : fmtUSD(a.usd);
         return `<tr>
@@ -468,7 +475,7 @@
       };
       const sessionRows = bySession.map(sn => {
         const approx = isTierEstimated(sn);
-        const usdCell = approx
+        const usdCell = isPriceUnknown(sn) ? priceUnknownCell(sn) : approx
           ? `<span title="unknown exact price — tier estimate for this model">~${fmtUSD(sn.usd)}</span>`
           : fmtUSD(sn.usd);
         // "started → ended" in local time; a still-active session (latest event

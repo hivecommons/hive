@@ -429,6 +429,15 @@ func (c *Client) issueClearRetry(path string) {
 }
 
 func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn func() time.Time) {
+	c.handleOneIssueRequestFrom(ctx, path, reviewRequestSource{}, nowFn)
+}
+
+// handleOneIssueRequestFrom is handleOneIssueRequest for a request from src.
+// The zero source is the pod-local drop box. A sandbox spool's request
+// (hivecommons/hive#18573) is attributed to the manifest's agent, skips the
+// file-owner check its ingest already stood in for, and is authorized by the
+// source's authorizer; every other gate is the same code.
+func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src reviewRequestSource, nowFn func() time.Time) {
 	if !c.issueBackoffAllows(path, nowFn) {
 		return
 	}
@@ -456,6 +465,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 		c.logger.Warn("issue-request watcher: bad request file quarantined",
 			slog.String("path", path), slog.String("error", err.Error()))
 		return
+	}
+	// A sandbox spool's requests belong to the agent its manifest names,
+	// whatever the file says.
+	if src.agent != "" {
+		req.Agent = src.agent
 	}
 	kind := strings.TrimSpace(strings.ToLower(req.Kind))
 	if kind == "" {
@@ -531,11 +545,19 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 	// watcher. A nil authorizer fails closed. Denials quarantine (.denied) —
 	// retrying can never change policy.
 	fileUID := statUID(data, path)
-	if c.issueAuthz == nil {
+	authz := c.issueAuthz
+	if src.agent != "" {
+		// A staged spool file is owned by hive, so its UID proves nothing;
+		// the MAC check at ingest did the proving. 0 is the authorizer's "no
+		// owning UID" value.
+		fileUID = 0
+		authz = src.issueAuthz
+	}
+	if authz == nil {
 		c.denyIssueRequest(path, req, "no authorizer configured (fail closed)", nowFn)
 		return
 	}
-	if err := c.issueAuthz(req.Agent, fileUID, kind); err != nil {
+	if err := authz(req.Agent, fileUID, kind); err != nil {
 		c.denyIssueRequest(path, req, err.Error(), nowFn)
 		return
 	}
@@ -829,6 +851,11 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				if err == nil && !created {
 					c.noteCommentSuppressed()
 				}
+			} else if handled, scanErr := c.relayScannerNote(ctx, req, commentBody, &resp); handled || scanErr != nil {
+				// A scanner CI-triage or rebase note on a PR is the one
+				// scanner note per PR, silent when nothing changed
+				// (hivecommons/hive#18451).
+				err = scanErr
 			} else if note, ok := OriginFooterNote(commentBody); ok && req.BlockedOnPR == 0 {
 				// Free text whose only marker is the identity footer is an
 				// agent note: one upserted comment per item, or a status
@@ -1094,7 +1121,7 @@ func (c *Client) handleOneIssueRequest(ctx context.Context, path string, nowFn f
 				}
 			}
 			if req.Claim {
-				resp.Claimed, resp.ClaimError = c.claimCreatedIssue(ctx, req, fileUID, res, meta, nowFn)
+				resp.Claimed, resp.ClaimError = c.claimCreatedIssue(ctx, req, authz, fileUID, res, meta, nowFn)
 			}
 		}
 	}
@@ -1207,7 +1234,7 @@ func (c *Client) claimIssueForAgent(ctx context.Context, repo string, number int
 // issue its filer is working is not open for outside help. The create has
 // already happened, so a failure never fails or retries the request; it is
 // returned as the result's claim_error.
-func (c *Client) claimCreatedIssue(ctx context.Context, req IssueRequest, fileUID int, res CreateIssueResult, meta InvocationMeta, nowFn func() time.Time) (bool, string) {
+func (c *Client) claimCreatedIssue(ctx context.Context, req IssueRequest, authz IssueRequestAuthorizer, fileUID int, res CreateIssueResult, meta InvocationMeta, nowFn func() time.Time) (bool, string) {
 	fail := func(why string) (bool, string) {
 		c.logger.Warn("issue-request watcher: issue created but not claimed",
 			slog.String("repo", req.Repo), slog.Int("number", res.Number),
@@ -1223,10 +1250,10 @@ func (c *Client) claimCreatedIssue(ctx context.Context, req IssueRequest, fileUI
 	if strings.TrimSpace(req.Agent) == "" {
 		return fail("the request names no agent")
 	}
-	if c.issueAuthz == nil {
+	if authz == nil {
 		return fail("no authorizer configured (fail closed)")
 	}
-	if err := c.issueAuthz(req.Agent, fileUID, "claim"); err != nil {
+	if err := authz(req.Agent, fileUID, "claim"); err != nil {
 		return fail(err.Error())
 	}
 	if reason, refused := c.refuseWrite(req.Agent, WriteOpClaim, req.Repo, res.Number); refused {

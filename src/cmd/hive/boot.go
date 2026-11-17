@@ -43,6 +43,8 @@ import (
 	"github.com/hivecommons/hive/pkg/priorart"
 	"github.com/hivecommons/hive/pkg/promptsrc"
 	"github.com/hivecommons/hive/pkg/questionclose"
+	"github.com/hivecommons/hive/pkg/releasefeed"
+	"github.com/hivecommons/hive/pkg/repoagents"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
@@ -185,7 +187,6 @@ type boot struct {
 	knowledgeAPI                  *knowledge.KnowledgeAPI
 	beadSynth                     *knowledge.BeadSynthesizer
 	nousState                     *dashboard.NousState
-	inceptionEngine               *knowledge.InceptionEngine
 	rotationMgr                   *rotation.Manager
 	questionAutoclose             atomic.Pointer[questionclose.Manager]
 	wd                            *watchdog.Reconciler
@@ -220,6 +221,7 @@ type boot struct {
 	promptFetcher              promptsrc.Fetcher
 	defFetcher                 defsrc.Fetcher
 	definitionResolver         *defsrc.Resolver
+	repoAgents                 *repoagents.Discoverer // #18491; nil without a GitHub client
 	perspectivesResolver       *perspsrc.Resolver
 	pendingTokenSeed           []dashboard.TokenSparklineEntry
 	pendingFactSeed            []dashboard.FactHistoryEntry
@@ -308,6 +310,9 @@ type boot struct {
 	// owned by its independent ticker goroutine.
 	matrixIngestSt      *matrixIngestState
 	matrixIngestStarted bool
+	// releaseFeed is the release-feed watcher (#18494), started once by
+	// startReleaseFeedWatcher.
+	releaseFeed *releasefeed.Watcher
 	// gfi is good-first-issue curation state (good_first_issue.*).
 	gfi *gfiState
 	// firstTimer is first-time contributor welcome state

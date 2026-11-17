@@ -1217,6 +1217,31 @@ func TestInferenceCallerUnidentifiedFeedThresholdAndClear(t *testing.T) {
 	}
 }
 
+func TestInferenceBackendAuthFailureFeed(t *testing.T) {
+	now := time.Date(2026, 11, 16, 22, 4, 0, 0, time.UTC)
+	tr := fleetreport.NewRuntimeTracker(func() time.Time { return now })
+	var out bytes.Buffer
+	logger := slog.New(NewWithObserver(slog.NewJSONHandler(&out, nil), tr.Observe))
+	for i := range 5 {
+		logger.Warn("inference backend auth failure", "agent", "scanner", "backend", "litellm", "status", 401)
+		if ev := tr.Evidence(); i < 4 && len(ev) != 0 {
+			t.Fatalf("premature report: %+v", ev)
+		}
+		now = now.Add(time.Minute)
+	}
+	ev := tr.Evidence()
+	if len(ev) != 1 || ev[0].Class != fleetreport.ClassInferenceBackendAuthFailure || ev[0].Count != 5 || ev[0].Severity != "high" || ev[0].Component != "backend-auth" {
+		t.Fatalf("auth failure evidence = %+v", ev)
+	}
+	now = now.Add(21 * time.Minute)
+	if ev := tr.Evidence(); len(ev) != 0 {
+		t.Fatalf("idle auth failure still reported: %+v", ev)
+	}
+	if cleared := tr.TakeCleared(); len(cleared) != 1 || cleared[0].Class != fleetreport.ClassInferenceBackendAuthFailure {
+		t.Fatalf("cleared = %+v", cleared)
+	}
+}
+
 // #15986: a watchdog stall caused by a provider inference block (429
 // budget_exceeded) is upstream backpressure, not an unclassified defect.
 func TestInferenceBlockedStallLogsWithoutFleetReport(t *testing.T) {

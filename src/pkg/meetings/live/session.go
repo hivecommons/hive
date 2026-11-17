@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/meetings"
+	"github.com/hivecommons/hive/pkg/meetings/betty"
 	"github.com/hivecommons/hive/pkg/meetings/meetllm"
 )
 
@@ -23,8 +25,35 @@ var (
 	ErrSessionEnded    = errors.New("meetings: live session has ended")
 )
 
+// Spektacular live mode statuses shown on the Meetings panel
+// (hivecommons/hive#18590 finding 8; live mode itself is
+// hivecommons/spektacular#126). They lead with what the room loses.
+const (
+	// spekStoppedStatus: the child exited for good for this meeting.
+	spekStoppedStatus = "Notes and clarifying questions are off for this meeting: Spektacular live mode is not running (it needs a spektacular with the meeting command, hivecommons/spektacular#126). The transcript, the persona and research still work."
+	// spekPausedStatus: hive could not reach the child (it is restarting,
+	// or never came up); cleared when Spek writes again.
+	spekPausedStatus = "Notes and clarifying questions are paused: Spektacular live mode is not running right now (restarting, or it needs a spektacular with the meeting command, hivecommons/spektacular#126). The transcript, the persona and research still work."
+)
+
+// setSpekStatus updates the panel's Spektacular status when it changes.
+func (s *session) setSpekStatus(status string) {
+	if s.state.SpekStatus == status {
+		return
+	}
+	s.state.SpekStatus = status
+	s.emit(Event{Kind: EventSpek, Reason: status})
+	s.save()
+}
+
+// defaultPersonaName names the attendee in hive's notices without a
+// persona.
+const defaultPersonaName = "Hive"
+
 // budgetNotice is posted once when a meeting's budget runs out.
-const budgetNotice = "Hive reached its budget for this meeting. It keeps taking notes but will not ask questions or start research."
+func budgetNotice(name string) string {
+	return name + " reached the budget for this meeting and keeps taking notes, but will not ask or answer questions or start research."
+}
 
 type approveReq struct {
 	rid   string
@@ -40,8 +69,19 @@ type session struct {
 	spek  Spek
 	state State
 	rate  rateLimiter
+	// persona is the meeting's attendee persona, nil when it is off. With
+	// it on, it owns the bot's voice in the meeting: Spek's say intents are
+	// dropped, its chat posts are offered to the persona, and its
+	// clarifying questions are restyled in the persona's voice.
+	persona *betty.Engine
 	// fileTokens is the usage-ledger total already charged.
 	fileTokens int
+	// spekQueue keeps Spek's asks and chat offers in order while an ask is
+	// being restyled by the persona off the session goroutine; restyled
+	// carries the results back.
+	spekQueue []queuedSpek
+	nextSeq   int
+	restyled  chan restyledAsk
 
 	updates  chan meetings.Update
 	signals  chan ResearchSignal
@@ -59,6 +99,7 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 		signals:  make(chan ResearchSignal, sessionInbox),
 		approves: make(chan approveReq),
 		snaps:    make(chan chan State),
+		restyled: make(chan restyledAsk, sessionInbox),
 		ended:    make(chan struct{}),
 		done:     make(chan struct{}),
 	}
@@ -69,6 +110,16 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 		s.state.Notes = map[string][]string{}
 	}
 	s.state.SpekMode, s.state.SpekStatus = r.opts.SpekMode, ""
+	if r.opts.Persona != nil {
+		s.persona = r.opts.Persona(m)
+		r.attachActions(s.persona, m)
+	}
+	if s.persona != nil {
+		s.state.Persona = s.persona.Name()
+		if s.state.BudgetExhausted {
+			s.persona.SetExhausted()
+		}
+	}
 	if r.opts.UsageFile != nil {
 		s.fileTokens, _ = meetllm.UsageTotal(r.opts.UsageFile(m.ID))
 	}
@@ -76,6 +127,25 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 }
 
 func (s *session) log() *slog.Logger { return s.r.log.With("meeting", s.id) }
+
+// personaName names the attendee in hive's own notices.
+func (s *session) personaName() string {
+	if s.persona != nil {
+		return s.persona.Name()
+	}
+	if n := strings.TrimSpace(s.r.opts.PersonaName); n != "" {
+		return n
+	}
+	return defaultPersonaName
+}
+
+// isLeave reports a leave command.
+func (s *session) isLeave(text string) bool {
+	if s.r.opts.IsLeave != nil {
+		return s.r.opts.IsLeave(text)
+	}
+	return meetings.IsLeaveCommand(text)
+}
 
 func (s *session) now() time.Time { return s.r.opts.Now() }
 
@@ -90,8 +160,18 @@ func (s *session) run(ctx context.Context) {
 	defer close(s.done)
 	lines := s.spek.Lines()
 	ending, spekGone := false, false
+	var replies <-chan betty.Reply
+	if s.persona != nil {
+		s.persona.Start(ctx)
+		defer s.persona.Close()
+		replies = s.persona.Replies()
+	}
 	for {
 		select {
+		case rep := <-replies:
+			if !ending {
+				s.onPersonaReply(ctx, rep)
+			}
 		case <-ctx.Done():
 			s.spek.Close(nil)
 			s.save()
@@ -124,13 +204,15 @@ func (s *session) run(ctx context.Context) {
 				// research signals and approvals; only Spek's questions and
 				// notes stop.
 				spekGone, lines = true, nil
-				s.state.SpekStatus = "Spektacular live mode is not running for this meeting (needs a spektacular with the meeting command, hivecommons/spektacular#126); the transcript and research still work, questions and notes do not"
 				s.log().Warn("[meetings] spektacular live mode stopped; continuing without it")
-				s.emit(Event{Kind: EventSpek, Reason: s.state.SpekStatus})
-				s.save()
+				s.setSpekStatus(spekStoppedStatus)
 				continue
 			}
 			s.onIntent(ctx, line)
+		case rs := <-s.restyled:
+			if !ending {
+				s.onRestyled(ctx, rs)
+			}
 		case sig := <-s.signals:
 			s.onSignal(ctx, sig)
 		case a := <-s.approves:
@@ -153,9 +235,9 @@ func (s *session) emit(ev Event) {
 	s.r.emit(ev)
 }
 
-// onUpdate forwards people's final segments and chat lines to Spek and
-// matches replies to open asks. Hive's own lines never reach here: the
-// manager drops them before notifying.
+// onUpdate forwards people's final segments and chat lines to Spek and the
+// persona (without blocking) and matches replies to open asks. Hive's own
+// lines never reach here: the manager drops them before notifying.
 func (s *session) onUpdate(u meetings.Update) {
 	ev := u.Event
 	if ev == nil {
@@ -163,23 +245,41 @@ func (s *session) onUpdate(u meetings.Update) {
 	}
 	switch {
 	case ev.Type == meetings.EventSegment && ev.Final, ev.Type == meetings.EventChat:
+	case ev.Type == meetings.EventSegment:
+		// A partial transcript only lets the persona acknowledge a
+		// request early; Spek and open asks wait for the final line.
+		if s.persona != nil {
+			s.persona.ObservePartial(betty.Line{Who: ev.Who(), Text: ev.Text, Spoken: true})
+		}
+		return
 	default:
 		return
 	}
 	if len(ev.Raw) > 0 {
 		if err := s.spek.SendLine(ev.Raw); err != nil {
 			s.log().Warn("[meetings] forwarding to spek", "error", err)
+			// The child is down (between restarts, or a spektacular
+			// without the meeting command): say so on the panel now rather
+			// than only once it gives up.
+			if s.state.SpekStatus == "" {
+				s.setSpekStatus(spekPausedStatus)
+			}
 		}
+	}
+	if s.persona != nil {
+		s.persona.Observe(betty.Line{Who: ev.Who(), Text: ev.Text, Spoken: ev.Type == meetings.EventSegment})
 	}
 	s.matchAnswer(ev)
 }
 
 // matchAnswer is the answer heuristic: the first line from a person after
 // an ask, within the answer window, answers the oldest open ask. Asks past
-// the window expire unanswered. It is deliberately simple; Spek receives
-// the whole transcript and can re-ask if the match was wrong.
+// the window expire unanswered. Lines addressed to the persona and leave
+// commands never count as answers. It is deliberately simple; Spek
+// receives the whole transcript and can re-ask if the match was wrong.
 func (s *session) matchAnswer(ev *meetings.Event) {
 	now := s.now()
+	skip := strings.TrimSpace(ev.Text) == "" || s.isLeave(ev.Text) || (s.persona != nil && s.persona.Skip(ev.Text))
 	window := s.r.opts.Policy.AnswerWindow
 	changed := false
 	answered := false
@@ -192,7 +292,7 @@ func (s *session) matchAnswer(ev *meetings.Event) {
 			a.Expired, changed = true, true
 			continue
 		}
-		if answered || strings.TrimSpace(ev.Text) == "" {
+		if answered || skip {
 			continue
 		}
 		a.Answer, a.AnsweredBy, a.AnsweredAt = ev.Text, ev.Who(), &now
@@ -212,6 +312,10 @@ func (s *session) onIntent(ctx context.Context, line []byte) {
 		s.log().Warn("[meetings] spek wrote a non-JSON line; skipped", "error", err)
 		return
 	}
+	// Spek is talking again after a restart: notes and questions are back.
+	if s.state.SpekStatus == spekPausedStatus {
+		s.setSpekStatus("")
+	}
 	if in.Type == intentHeartbeat {
 		now := s.now()
 		s.state.LastHeartbeat = &now
@@ -222,11 +326,21 @@ func (s *session) onIntent(ctx context.Context, line []byte) {
 	switch in.Type {
 	case intentChatPost:
 		if s.spendable() {
-			s.post(ctx, in.Text)
+			if s.persona != nil {
+				// The persona posts it unless she already covered the topic;
+				// it waits behind any ask still being restyled.
+				s.enqueueSpek(ctx, queuedSpek{offer: in.Text})
+			} else {
+				s.post(ctx, in.Text)
+			}
 		}
 	case intentAsk:
-		if s.spendable() && s.post(ctx, in.Text) {
-			s.state.Asks = append(s.state.Asks, Ask{QID: in.QID, Text: in.Text, AskedAt: s.now()})
+		if s.spendable() {
+			if s.persona != nil {
+				s.restyleAsk(ctx, in)
+			} else {
+				s.postAsk(ctx, in.QID, in.Text)
+			}
 		}
 	case intentNotesAppend:
 		s.appendNote(ctx, in.Section, in.Text)
@@ -235,7 +349,11 @@ func (s *session) onIntent(ctx context.Context, line []byte) {
 			s.research(ctx, in)
 		}
 	case intentSay:
-		if s.spendable() {
+		switch {
+		case s.persona != nil:
+			// The persona owns the bot's voice; Spek's say is dropped.
+			s.drop("persona_owns_voice")
+		case s.spendable():
 			s.say(ctx, in.Text)
 		}
 	default:
@@ -268,7 +386,10 @@ func (s *session) account(ctx context.Context, in intent) {
 	if over && !s.state.BudgetExhausted {
 		s.state.BudgetExhausted = true
 		s.log().Warn("[meetings] meeting budget exhausted", "tokens", s.state.Tokens, "intents", s.state.Intents)
-		s.deliver(ctx, budgetNotice)
+		if s.persona != nil {
+			s.persona.SetExhausted()
+		}
+		s.deliver(ctx, budgetNotice(s.personaName()))
 	}
 }
 
@@ -345,7 +466,7 @@ func (s *session) appendNote(ctx context.Context, section, text string) {
 	s.state.Notes[section] = append(s.state.Notes[section], text)
 	s.emit(Event{Kind: EventNotes})
 	m, _ := s.r.opts.Meetings.Get(s.id)
-	s.upsertFact(ctx, NotesTitle(m), RenderNotes(m, s.state.Notes), []string{"meeting-notes"})
+	s.upsertFact(ctx, NotesTitle(m), RenderNotesBy(s.personaName(), m, s.state.Notes), []string{"meeting-notes"})
 }
 
 func (s *session) upsertFact(ctx context.Context, title, body string, tags []string) {
@@ -375,8 +496,13 @@ func meetingLabel(m meetings.Meeting) string {
 
 // RenderNotes renders the notes sections as Markdown.
 func RenderNotes(m meetings.Meeting, notes map[string][]string) string {
+	return RenderNotesBy("hive", m, notes)
+}
+
+// RenderNotesBy renders the notes with the attendee's name in the header.
+func RenderNotesBy(name string, m meetings.Meeting, notes map[string][]string) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "Notes hive took in %s.\n", meetingLabel(m))
+	fmt.Fprintf(&b, "Notes %s took in %s.\n", name, meetingLabel(m))
 	for _, sec := range noteSections {
 		items := notes[sec]
 		if len(items) == 0 {
@@ -424,8 +550,11 @@ func (s *session) update(it *ResearchItem, status, summary string) {
 	if summary != "" {
 		msg["summary"] = summary
 	}
-	if err := s.spek.Send(msg); err != nil {
-		s.log().Warn("[meetings] sending research update to spek", "error", err)
+	// Spek never heard of the persona's deep dives.
+	if !it.Betty {
+		if err := s.spek.Send(msg); err != nil {
+			s.log().Warn("[meetings] sending research update to spek", "error", err)
+		}
 	}
 	cp := *it
 	s.emit(Event{Kind: EventResearch, Research: &cp})
@@ -464,6 +593,9 @@ func (s *session) dispatch(ctx context.Context, it *ResearchItem) {
 		// The query is meeting speech: untrusted input for a read-only,
 		// propose-only research agent.
 		"untrusted": "true",
+	}
+	if it.Betty {
+		meta["betty"] = "1"
 	}
 	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
 	kick, err := s.r.opts.Research.Dispatch(cctx, it.Query, meta)
@@ -513,7 +645,13 @@ func (s *session) onSignal(ctx context.Context, sig ResearchSignal) {
 			if summary == "" && len(it.Findings) > 0 {
 				summary = it.Findings[len(it.Findings)-1]
 			}
-			s.deliver(ctx, fmt.Sprintf("Research on %q: %s", it.Query, summary))
+			if it.Betty && s.persona != nil {
+				// Exactly one follow-up, restyled by the persona off the
+				// session goroutine; it comes back as a persona reply.
+				s.persona.FollowUp(it.Query, summary)
+			} else {
+				s.deliver(ctx, fmt.Sprintf("Research on %q: %s", it.Query, summary))
+			}
 		}
 		s.upsertFact(ctx, researchTitle(s.id, it), renderResearch(it), []string{"meeting-research"})
 		s.r.unregisterKick(sig.KickID)
@@ -549,4 +687,190 @@ func renderResearch(it *ResearchItem) string {
 		}
 	}
 	return b.String()
+}
+
+// onPersonaReply applies one persona reply through the same policy as
+// Spek's intents: it is charged to the budget (one intent, plus any model
+// tokens in the usage ledger), then posted through the chat rate limit (or
+// spoken, with the chat fallback, for a voice reply). A spoken
+// acknowledgement is never charged and never falls back to chat; a deep
+// dive's follow-up is delivered like a research summary; a reply carrying
+// Research starts the deep dive after it is out.
+func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
+	text := strings.TrimSpace(rep.Text)
+	if text == "" {
+		return
+	}
+	switch rep.Trigger {
+	case betty.TriggerAck:
+		if s.state.BudgetExhausted {
+			return
+		}
+		if s.speak(ctx, text) {
+			s.emitPersona(rep)
+		} else {
+			s.drop("ack_no_voice")
+		}
+		return
+	case betty.TriggerFollowUp:
+		if s.deliver(ctx, text) {
+			s.state.PersonaReplies++
+		}
+		s.emitPersona(rep)
+		s.save()
+		return
+	case betty.TriggerOffer:
+		// A Spek offer was charged when Spek sent it.
+	default:
+		s.account(ctx, intent{Type: intentPersona})
+	}
+	if !s.spendable() {
+		s.save()
+		return
+	}
+	posted := true
+	if rep.Kind == betty.KindVoice {
+		s.say(ctx, text)
+	} else {
+		posted = s.post(ctx, text)
+	}
+	if posted {
+		s.state.PersonaReplies++
+	}
+	s.emitPersona(rep)
+	if posted && strings.TrimSpace(rep.Research) != "" {
+		s.deepDive(ctx, rep.Research)
+	}
+	s.save()
+}
+
+func (s *session) emitPersona(rep betty.Reply) {
+	raw, _ := json.Marshal(rep)
+	s.emit(Event{Kind: EventPersona, Reason: rep.Trigger, Intent: raw})
+}
+
+// bettyRIDPrefix names the persona's research items.
+const bettyRIDPrefix = "betty-"
+
+// deepDive starts the persona's research on an addressed question through
+// the meeting's research path (same cap and approval as Spek's research),
+// marked betty=1.
+func (s *session) deepDive(ctx context.Context, query string) {
+	n := 1
+	for _, it := range s.state.Research {
+		if it.Betty {
+			n++
+		}
+	}
+	now := s.now()
+	limit := s.r.opts.Policy.ResearchPerMeeting
+	overCap := limit > 0 && s.dispatchedCount() >= limit
+	s.state.Research = append(s.state.Research, ResearchItem{
+		RID: bettyRIDPrefix + strconv.Itoa(n), Query: query, Reason: "asked of " + s.personaName(), Betty: true, CreatedAt: now,
+	})
+	it := &s.state.Research[len(s.state.Research)-1]
+	if overCap {
+		s.update(it, ResearchPendingApproval, "")
+		return
+	}
+	s.dispatch(ctx, it)
+}
+
+// speak says text when the meeting can hear the bot, without a chat
+// fallback; it reports whether it was spoken.
+func (s *session) speak(ctx context.Context, text string) bool {
+	m, err := s.r.opts.Meetings.Get(s.id)
+	if err != nil || !m.VoiceEnabled || !s.r.opts.Policy.VoiceOnAddress {
+		return false
+	}
+	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
+	defer cancel()
+	return s.r.opts.Meetings.Say(cctx, s.id, text) == nil
+}
+
+// queuedSpek is one of Spek's asks or chat offers waiting its turn while an
+// earlier ask is restyled.
+type queuedSpek struct {
+	seq   int
+	offer string
+	// ask fields: qid and the text, ready once restyled.
+	ask   bool
+	qid   string
+	text  string
+	ready bool
+}
+
+// restyledAsk is a restyle result.
+type restyledAsk struct {
+	seq  int
+	text string
+}
+
+// restyleAsk rewrites one of Spek's clarifying questions in the persona's
+// voice without blocking the session: the model call runs off the
+// goroutine (bounded by the persona's restyle timeout, raw text on
+// failure), and the ask keeps its place among Spek's posts.
+func (s *session) restyleAsk(ctx context.Context, in intent) {
+	s.nextSeq++
+	q := queuedSpek{seq: s.nextSeq, ask: true, qid: in.QID, text: in.Text}
+	s.spekQueue = append(s.spekQueue, q)
+	persona, seq, raw := s.persona, q.seq, in.Text
+	go func() {
+		text := persona.Restyle(ctx, raw)
+		select {
+		case s.restyled <- restyledAsk{seq: seq, text: text}:
+		case <-ctx.Done():
+		}
+	}()
+}
+
+// enqueueSpek offers a Spek chat post to the persona now, or after the
+// asks queued before it.
+func (s *session) enqueueSpek(ctx context.Context, q queuedSpek) {
+	if len(s.spekQueue) == 0 {
+		s.persona.Offer(q.offer)
+		return
+	}
+	s.nextSeq++
+	q.seq = s.nextSeq
+	s.spekQueue = append(s.spekQueue, q)
+	s.flushSpek(ctx)
+}
+
+func (s *session) onRestyled(ctx context.Context, rs restyledAsk) {
+	for i := range s.spekQueue {
+		if s.spekQueue[i].seq == rs.seq {
+			if strings.TrimSpace(rs.text) != "" {
+				s.spekQueue[i].text = rs.text
+			}
+			s.spekQueue[i].ready = true
+		}
+	}
+	s.flushSpek(ctx)
+	s.save()
+}
+
+// flushSpek posts queued items from the head while they are ready.
+func (s *session) flushSpek(ctx context.Context) {
+	for len(s.spekQueue) > 0 {
+		q := s.spekQueue[0]
+		if q.ask && !q.ready {
+			return
+		}
+		s.spekQueue = s.spekQueue[1:]
+		if q.ask {
+			if s.spendable() {
+				s.postAsk(ctx, q.qid, q.text)
+			}
+			continue
+		}
+		s.persona.Offer(q.offer)
+	}
+}
+
+// postAsk posts a clarifying question and tracks it for answers.
+func (s *session) postAsk(ctx context.Context, qid, text string) {
+	if s.post(ctx, text) {
+		s.state.Asks = append(s.state.Asks, Ask{QID: qid, Text: text, AskedAt: s.now()})
+	}
 }

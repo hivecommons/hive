@@ -12,6 +12,15 @@ import (
 	"time"
 )
 
+// ConfirmingChat is a Quorum that can confirm a chat line reached the
+// meeting (chat.post confirm:true, quorum 0.2.2+). The real Client
+// implements it; the manager then marks the consent notice posted only on a
+// confirmed delivery. A Quorum without it (in-process fakes) is trusted on a
+// nil ChatPost error.
+type ConfirmingChat interface {
+	ChatPostConfirmed(ctx context.Context, nativeID, text string) (bool, error)
+}
+
 // Quorum is the slice of the Quorum client the manager uses; tests fake it.
 type Quorum interface {
 	Join(ctx context.Context, a JoinArgs) (JoinResult, error)
@@ -32,11 +41,21 @@ const (
 	// DefaultConsentRetry spaces consent-notice retries while chat is
 	// unavailable, so a platform without chat is not called on every line.
 	DefaultConsentRetry = time.Minute
+	// DefaultConsentAttempts bounds how often a transient consent failure
+	// (not_live, rate_limited, a dropped call) is retried before hive gives
+	// up and leaves: it must not stay in a meeting that was never told.
+	DefaultConsentAttempts = 3
+	// ReasonConsentUndelivered is the state reason when hive left because
+	// the consent notice could be delivered neither in chat nor by voice.
+	ReasonConsentUndelivered = "consent_undelivered"
+	// ConsentViaChat and ConsentViaVoice record how the notice was delivered.
+	ConsentViaChat  = "chat"
+	ConsentViaVoice = "voice"
 	// ReasonDeclined is the state reason for a platform join request the
 	// owner declined.
 	ReasonDeclined = "declined"
-	// ReasonHiveLeave is the state reason when someone typed or said
-	// "hive leave".
+	// ReasonHiveLeave is the state reason when someone typed or said a
+	// leave phrase ("betty leave", "hive leave").
 	ReasonHiveLeave = "hive_leave"
 	// ReasonOwnerLeave is the state reason when the owner removed hive.
 	ReasonOwnerLeave = "owner_leave"
@@ -45,21 +64,58 @@ const (
 	ReasonQuorumLost = "quorum_lost_meeting"
 )
 
-// leavePattern matches "hive leave" and close variants ("hive, leave",
-// "Hive: please leave"). Heuristic: the words must be adjacent apart from
-// punctuation and an optional "please", which keeps "we should leave hive
-// out of this" from matching.
-var leavePattern = regexp.MustCompile(`(?i)\bhive[\s,.:;!-]*(?:please[\s,]+)?leave\b`)
+// DefaultLeavePhrases is the leave phrase without a persona.
+var DefaultLeavePhrases = []string{"hive leave"}
 
-// IsLeaveCommand reports whether text asks hive to leave.
-func IsLeaveCommand(text string) bool { return leavePattern.MatchString(text) }
+// leaveSep is what may stand between the words of a leave phrase:
+// punctuation and an optional "please" ("hive, leave", "Betty: please
+// leave"). The words must otherwise be adjacent, which keeps "we should
+// leave hive out of this" from matching.
+const leaveSep = `[\s,.:;!-]*(?:please[\s,]+)?`
+
+// LeaveMatcher matches the configured leave phrases ("betty leave", "hive
+// leave") and close variants anywhere in a line.
+type LeaveMatcher struct{ re *regexp.Regexp }
+
+// NewLeaveMatcher builds a matcher; no usable phrase means
+// DefaultLeavePhrases.
+func NewLeaveMatcher(phrases []string) *LeaveMatcher {
+	var alts []string
+	for _, p := range phrases {
+		words := strings.Fields(strings.ToLower(p))
+		if len(words) == 0 {
+			continue
+		}
+		q := make([]string, len(words))
+		for i, w := range words {
+			q[i] = regexp.QuoteMeta(w)
+		}
+		alts = append(alts, strings.Join(q, leaveSep))
+	}
+	if len(alts) == 0 {
+		return NewLeaveMatcher(DefaultLeavePhrases)
+	}
+	return &LeaveMatcher{re: regexp.MustCompile(`(?i)\b(?:` + strings.Join(alts, "|") + `)\b`)}
+}
+
+// Match reports whether text asks the bot to leave.
+func (l *LeaveMatcher) Match(text string) bool { return l.re.MatchString(text) }
+
+var defaultLeave = NewLeaveMatcher(DefaultLeavePhrases)
+
+// IsLeaveCommand reports whether text asks hive to leave with the default
+// phrase ("hive leave").
+func IsLeaveCommand(text string) bool { return defaultLeave.Match(text) }
 
 // Options configures a Manager.
 type Options struct {
-	Store        *Store
-	Quorum       Quorum
-	BotName      string
-	ConsentText  string
+	Store       *Store
+	Quorum      Quorum
+	BotName     string
+	ConsentText string
+	// LeavePhrases remove the bot when typed or said (the persona's
+	// leave_phrases); empty means DefaultLeavePhrases.
+	LeavePhrases []string
 	LobbyTimeout time.Duration
 	Logger       *slog.Logger
 	ReconnectMin time.Duration
@@ -67,10 +123,16 @@ type Options struct {
 	CallTimeout  time.Duration
 	// ConsentRetry spaces consent retries; zero means DefaultConsentRetry.
 	ConsentRetry time.Duration
+	// ConsentAttempts bounds consent tries after transient failures; zero
+	// means DefaultConsentAttempts.
+	ConsentAttempts int
 	// VoiceOnAddress starts every bot able to speak (meetings.voice_on_address),
 	// so voice can be turned on later in the meeting; whether hive actually
 	// speaks is still the meeting's voice toggle.
 	VoiceOnAddress bool
+	// VoiceID is meeting.join's voice_id (the persona's TTS voice); empty
+	// leaves Quorum's default.
+	VoiceID string
 	// AutoApprove decides whether a platform join request (Discord
 	// `/hive join`) is approved without the owner. Nil approves none: every
 	// request waits in the dashboard.
@@ -99,18 +161,21 @@ type Update struct {
 
 // Manager runs meeting lifecycles. Safe for concurrent use.
 type Manager struct {
-	opts Options
-	log  *slog.Logger
+	opts  Options
+	log   *slog.Logger
+	leave *LeaveMatcher
 
 	mu        sync.Mutex
 	consentAt map[string]time.Time
-	watchers  map[string]context.CancelFunc
-	lobby     map[string]*time.Timer
-	listeners map[int]func(Update)
-	nextL     int
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	// consentTries counts consent attempts per meeting.
+	consentTries map[string]int
+	watchers     map[string]context.CancelFunc
+	lobby        map[string]*time.Timer
+	listeners    map[int]func(Update)
+	nextL        int
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
 }
 
 // ErrInvalidRequest wraps a rejected JoinRequest.
@@ -144,18 +209,22 @@ func NewManager(opts Options) (*Manager, error) {
 	if opts.ConsentRetry <= 0 {
 		opts.ConsentRetry = DefaultConsentRetry
 	}
+	if opts.ConsentAttempts <= 0 {
+		opts.ConsentAttempts = DefaultConsentAttempts
+	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
-		opts: opts, log: log,
-		watchers:  map[string]context.CancelFunc{},
-		consentAt: map[string]time.Time{},
-		lobby:     map[string]*time.Timer{},
-		listeners: map[int]func(Update){},
-		ctx:       ctx, cancel: cancel,
+		opts: opts, log: log, leave: NewLeaveMatcher(opts.LeavePhrases),
+		watchers:     map[string]context.CancelFunc{},
+		consentAt:    map[string]time.Time{},
+		consentTries: map[string]int{},
+		lobby:        map[string]*time.Timer{},
+		listeners:    map[int]func(Update){},
+		ctx:          ctx, cancel: cancel,
 	}, nil
 }
 
@@ -235,7 +304,7 @@ func (m *Manager) Join(ctx context.Context, req JoinRequest) (Meeting, error) {
 	}
 	res, err := m.opts.Quorum.Join(ctx, JoinArgs{
 		URL: req.URL, DisplayName: m.opts.BotName, Platform: req.Platform, GuildID: req.GuildID, ChannelID: req.ChannelID,
-		Voice: voice,
+		Voice: voice, VoiceID: strings.TrimSpace(m.opts.VoiceID),
 	})
 	if err != nil {
 		mt.State, mt.StateReason = StateFailed, err.Error()
@@ -503,45 +572,123 @@ func (m *Manager) handleState(ctx context.Context, id string, ev Event) bool {
 	} else {
 		m.clearLobby(id)
 	}
-	if mt.State == StateLive {
-		m.ensureConsent(ctx, mt)
+	if mt.State == StateLive && m.ensureConsent(ctx, mt) {
+		return true
 	}
 	return mt.State.Terminal()
 }
 
-// ensureConsent posts the consent notice once, the first thing hive says
-// in the meeting. A failed post is retried on the next event.
-func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) {
+// ensureConsent delivers the consent notice once, the first thing hive
+// says in the meeting, and reports whether hive left the meeting because it
+// could not. The notice counts as posted only when Quorum confirms the chat
+// line reached the meeting. If chat cannot deliver it and the meeting has
+// voice, hive speaks it instead; if neither works, hive leaves
+// (ReasonConsentUndelivered) rather than stay in a meeting that was never
+// told. Transient failures (the bot not admitted yet, a rate limit, a
+// dropped call) are retried on later events, at most ConsentAttempts times.
+func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 	if mt.ConsentPostedAt != nil || mt.State != StateLive {
-		return
+		return false
 	}
 	now := m.opts.Now()
 	m.mu.Lock()
 	last, tried := m.consentAt[mt.ID]
 	if tried && now.Sub(last) < m.opts.ConsentRetry {
 		m.mu.Unlock()
-		return
+		return false
 	}
 	m.consentAt[mt.ID] = now
+	m.consentTries[mt.ID]++
+	attempt := m.consentTries[mt.ID]
 	m.mu.Unlock()
+
+	chatErr := m.postConsentChat(ctx, mt)
+	if chatErr == nil {
+		m.markConsent(mt.ID, ConsentViaChat)
+		return false
+	}
+	if consentTransient(chatErr) && attempt < m.opts.ConsentAttempts {
+		m.log.Warn("[meetings] consent notice not posted; will retry", "meeting", mt.ID, "attempt", attempt, "error", chatErr)
+		if mt.ConsentError != chatErr.Error() {
+			_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentError = chatErr.Error() })
+		}
+		return false
+	}
+	why := "chat unavailable (" + chatErr.Error() + ")"
+	if mt.VoiceCapable && mt.VoiceEnabled {
+		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
+		sayErr := m.opts.Quorum.Say(cctx, mt.NativeID, m.opts.ConsentText)
+		cancel()
+		if sayErr == nil {
+			m.log.Info("[meetings] consent notice spoken; chat could not deliver it", "meeting", mt.ID, "chat_error", chatErr)
+			m.markConsent(mt.ID, ConsentViaVoice)
+			return false
+		}
+		why += ", voice failed (" + sayErr.Error() + ")"
+	} else {
+		why += ", voice off"
+	}
+	m.log.Warn("[meetings] consent notice could not be delivered; leaving the meeting", "meeting", mt.ID, "reason", why)
+	_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentError = why })
+	lctx, cancel := context.WithTimeout(m.ctx, m.opts.CallTimeout)
+	defer cancel()
+	if _, err := m.Leave(lctx, mt.ID, ReasonConsentUndelivered); err != nil {
+		// The bot may still be in the meeting: record the end anyway so
+		// nothing else is said, and keep the error visible.
+		m.log.Warn("[meetings] leave after undelivered consent failed", "meeting", mt.ID, "error", err)
+		m.stopWatch(mt.ID)
+		_, _ = m.finish(mt.ID, StateEnded, ReasonConsentUndelivered, nil)
+	}
+	return true
+}
+
+// postConsentChat posts the consent notice in chat. It returns nil only
+// when the line is known to be in the meeting.
+func (m *Manager) postConsentChat(ctx context.Context, mt Meeting) error {
 	cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
 	defer cancel()
-	if err := m.opts.Quorum.ChatPost(cctx, mt.NativeID, m.opts.ConsentText); err != nil {
-		// Soft failure (for example platform_unavailable while the
-		// platform's chat is down): nothing else reaches the meeting until
-		// the notice is posted, and the panel keeps showing everything.
-		m.log.Warn("[meetings] consent notice not posted; will retry", "meeting", mt.ID, "error", err)
-		if mt.ConsentError != err.Error() {
-			_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentError = err.Error() })
-		}
-		return
+	cq, ok := m.opts.Quorum.(ConfirmingChat)
+	if !ok {
+		return m.opts.Quorum.ChatPost(cctx, mt.NativeID, m.opts.ConsentText)
 	}
-	_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentPostedAt, x.ConsentError = timePtr(m.opts.Now()), "" })
+	confirmed, err := cq.ChatPostConfirmed(cctx, mt.NativeID, m.opts.ConsentText)
+	if err != nil {
+		return err
+	}
+	if !confirmed {
+		return errConsentUnconfirmed
+	}
+	return nil
+}
+
+// errConsentUnconfirmed is a chat post Quorum accepted but could not
+// confirm reached the meeting (or a Quorum too old to say).
+var errConsentUnconfirmed = errors.New("chat delivery not confirmed")
+
+// consentTransient reports whether a failed consent post is worth retrying
+// rather than a definite "chat cannot deliver this": the bot not admitted
+// yet, a rate limit, or a call that never got an answer.
+func consentTransient(err error) bool {
+	if errors.Is(err, errConsentUnconfirmed) || IsCode(err, CodePlatformUnavailable) ||
+		IsCode(err, CodeInvalidArgument) || IsCode(err, CodeNotFound) {
+		return false
+	}
+	return true
+}
+
+// markConsent records the notice as delivered.
+func (m *Manager) markConsent(id, via string) {
+	_, _ = m.update(id, nil, func(x *Meeting) {
+		x.ConsentPostedAt, x.ConsentVia, x.ConsentError = timePtr(m.opts.Now()), via, ""
+	})
 }
 
 // fromHive reports whether a line is hive's own (its chat posts echo back).
+// Platforms may decorate the bot's display name ("Betty Bee from the hive
+// (Guest)"), so a trailing parenthetical is ignored.
 func (m *Manager) fromHive(ev Event) bool {
-	if ev.Author != nil && m.opts.BotName != "" && strings.EqualFold(ev.Author.Name, m.opts.BotName) {
+	if m.opts.BotName != "" && (ev.Author != nil && IsBotName(ev.Author.Name, m.opts.BotName) ||
+		ev.Speaker != nil && IsBotName(ev.Speaker.Name, m.opts.BotName)) {
 		return true
 	}
 	return ev.Type == EventChat && strings.TrimSpace(ev.Text) == strings.TrimSpace(m.opts.ConsentText)
@@ -555,7 +702,9 @@ func (m *Manager) handleLine(ctx context.Context, id string, ev Event) bool {
 	if err != nil {
 		return false
 	}
-	m.ensureConsent(ctx, mt)
+	if m.ensureConsent(ctx, mt) {
+		return true
+	}
 	if ev.Type == EventSegment && !ev.Final {
 		m.emit(Update{Meeting: mt, Event: &ev})
 		return false
@@ -567,7 +716,7 @@ func (m *Manager) handleLine(ctx context.Context, id string, ev Event) bool {
 		cur.LastSeq = ev.Seq
 		_ = m.opts.Store.Save(cur)
 	}
-	if IsLeaveCommand(ev.Text) {
+	if m.leave.Match(ev.Text) {
 		m.log.Info("[meetings] leave requested in the meeting", "meeting", id, "by", ev.Who())
 		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
 		defer cancel()
@@ -622,4 +771,23 @@ func (m *Manager) lobbyExpired(id string) {
 	}
 	m.stopWatch(id)
 	_, _ = m.finish(id, StateFailed, CodeLobbyTimeout, nil)
+}
+
+// IsBotName reports whether a participant name is the bot's display name,
+// ignoring case, surrounding space and one trailing parenthetical the
+// platform adds ("(Guest)", "(bot)").
+func IsBotName(name, botName string) bool {
+	name, botName = strings.TrimSpace(name), strings.TrimSpace(botName)
+	if botName == "" {
+		return false
+	}
+	if strings.EqualFold(name, botName) {
+		return true
+	}
+	if strings.HasSuffix(name, ")") {
+		if i := strings.LastIndex(name, "("); i > 0 {
+			return strings.EqualFold(strings.TrimSpace(name[:i]), botName)
+		}
+	}
+	return false
 }

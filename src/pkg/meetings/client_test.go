@@ -328,3 +328,32 @@ func TestReadSSE(t *testing.T) {
 		t.Fatal("empty event has no author")
 	}
 }
+
+func TestClientChatPostConfirmed(t *testing.T) {
+	f, srv := newFakeQuorumServer(t)
+	c := NewClient(srv.URL, "tok", nil)
+	ctx := context.Background()
+	f.results["chat.post"] = `{"ok":true,"posted_at":"2026-11-17T01:52:00Z","delivery":"confirmed"}`
+	if ok, err := c.ChatPostConfirmed(ctx, "q1", "notice"); err != nil || !ok {
+		t.Fatalf("confirmed = %v, %v", ok, err)
+	}
+	f.mu.Lock()
+	sent := f.args[len(f.args)-1]
+	f.mu.Unlock()
+	if sent["confirm"] != true || sent["text"] != "notice" || sent["meeting_id"] != "q1" {
+		t.Fatalf("args %+v", sent)
+	}
+	f.results["chat.post"] = `{"ok":true,"posted_at":"2026-11-17T01:52:00Z","delivery":"unconfirmed"}`
+	if ok, err := c.ChatPostConfirmed(ctx, "q1", "notice"); err != nil || ok {
+		t.Fatalf("unconfirmed = %v, %v", ok, err)
+	}
+	// A Quorum older than 0.2.2 answers no delivery: not known to be posted.
+	f.results["chat.post"] = `{"ok":true,"posted_at":"2026-11-17T01:52:00Z"}`
+	if ok, err := c.ChatPostConfirmed(ctx, "q1", "notice"); err != nil || ok {
+		t.Fatalf("legacy = %v, %v", ok, err)
+	}
+	f.results["chat.post"] = `{"ok":false,"error":{"code":"platform_unavailable","message":"the chat line was not posted: no_composer"}}`
+	if _, err := c.ChatPostConfirmed(ctx, "q1", "notice"); !IsCode(err, CodePlatformUnavailable) {
+		t.Fatalf("failed send = %v", err)
+	}
+}

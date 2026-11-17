@@ -294,7 +294,11 @@ func HumanApprovedReason(reason string) (base, approver string) {
 // `needs-decision` is retired (hivecommons/hive#12683; nothing writes it)
 // and stays here only so a PR still carrying it keeps its decision routing
 // until the label is gone.
-var HoldLabels = []string{"hold", "do-not-merge", "needs-decision"}
+// `ready-for-review` and `decision-needed` are the hive's own gate labels
+// (hivecommons/hive#18468; github.DefaultReadyForReviewLabel and
+// github.DefaultDecisionNeededLabel): the hive applies them instead of
+// `hold`, and they gate the hand-off the same way.
+var HoldLabels = []string{"hold", "do-not-merge", "needs-decision", "ready-for-review", "decision-needed"}
 
 // Holds filters labels down to the decision-class modifiers, lower-cased.
 func Holds(labels []string) []string {
@@ -494,7 +498,7 @@ func GateReasons(e Evidence) []string {
 		gates = append(gates, "a sentinel alert is open on this PR")
 	}
 	for _, h := range e.Holds {
-		if h == "hold" && e.Hold.Clause() != "" {
+		if e.Hold.Clause() != "" && strings.EqualFold(h, e.Hold.LabelOrHold()) {
 			gates = append(gates, e.Hold.Clause())
 			continue
 		}
@@ -1114,8 +1118,14 @@ func DecisionActions(r Route) string {
 		steps = append(steps, oneApproveSentinelStep(r))
 	}
 	for _, h := range r.Holds {
-		if h == "hold" && r.Hold.SelfImposed() {
-			steps = append(steps, selfImposedHoldStep(r.Hold))
+		if (h == "hold" || isHiveGateLabelName(h)) && r.Hold.SelfImposed() {
+			step := selfImposedHoldStep(r.Hold)
+			if h != "hold" {
+				// The hive applies its gate labels, never `hold`
+				// (hivecommons/hive#18468): name the label it applied.
+				step = strings.ReplaceAll(step, "`hold`", "`"+h+"`")
+			}
+			steps = append(steps, step)
 			continue
 		}
 		steps = append(steps, "resolve the reason for `"+h+"` and have a maintainer remove that label (`/hive approve` does not remove it)")
@@ -1140,6 +1150,14 @@ func DecisionActions(r Route) string {
 // person's merge whatever the label says (projectbluefin/utah#1097,
 // projectbluefin/finpilot#627 were told the lane would merge them); a hold
 // the hive can attribute only to its label event names no gate it cannot see.
+// isHiveGateLabelName reports whether label is one of the hive's default gate
+// labels (github.DefaultReadyForReviewLabel / DefaultDecisionNeededLabel),
+// which replaced the hive's own `hold` (hivecommons/hive#18468).
+func isHiveGateLabelName(label string) bool {
+	label = strings.TrimSpace(label)
+	return strings.EqualFold(label, "ready-for-review") || strings.EqualFold(label, "decision-needed")
+}
+
 func selfImposedHoldStep(h *HoldProvenance) string {
 	reason := strings.TrimSpace(h.Reason)
 	switch {

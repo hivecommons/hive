@@ -423,6 +423,53 @@ in repositories with auto-merge off:
   `api_budget.unstick_steps`): it keeps running in `conserve` and is shed only
   in `critical` and on cached-snapshot cycles.
 
+## Missing-check base refresh (`missing_check_base_refresh`)
+
+When a repository makes a new check required, a PR that was already open
+never gets that check: its head predates the workflow, so nothing reports it,
+and the merge gate skips the PR as `required-check-missing:<check>` every
+cycle. A missing check is not a failure, so the stale-red base refresh never
+touches such a PR, and a re-run or a close and reopen reuses the PR's old
+merge ref. Only a new head picks the workflow up from the current base. On
+projectbluefin/testsuite#1245 `dashboard-build` became required while the PR
+was open; it waited about 29 hours until a person pressed "Update branch",
+and the check started within seconds on the new head. The eval cycle's
+missing-check base refresh (`src/cmd/hive/missing_check_base_refresh.go`,
+`src/pkg/github/missing_check_base_refresh.go`) runs right after the
+stale-red base refresh and works the same way:
+
+- A candidate has a required check with no check run and no commit status at
+  all on its head, in any state. Its other checks are settled and green, and
+  it is not conflicting. A check that is queued or running on the head is
+  slow, not missing, and is left alone.
+- There must be evidence that the check runs today: a run in any state on
+  the base tip, or on another open PR's head against the same base. The hive
+  does not read workflow files. A check nothing reports anywhere is left
+  alone.
+- It merges the base in with `update-branch`, pinned to the evaluated head,
+  only when the head is behind the base tip. It posts nothing.
+- It skips drafts, held and exempt PRs, PRs parked on a decision
+  (`stage/085-needs-decision`), PRs waiting on workflow approval, fork PRs
+  with "allow edits by maintainers" off, dependency-bot branches (the bot
+  rebases them), and PRs at `stage/072-returned-to-contributor` or
+  `stage/074-adopted-by-hive`. Repositories in
+  `auto_merge.require_current_base` are left to the automerge preparation
+  front.
+- It uses the same write-back kind (`base_refresh`), interval and caps as the
+  stale-red base refresh, with its own count: at most every 5 minutes, at
+  most 2 updates per repository and 6 in all per pass.
+- A PR is updated at most once per head and base tip, and at most once per
+  missing check: if the new head still does not run the check (a path
+  filter, or a PR whose pushes do not trigger workflows, see
+  [#11877](https://github.com/hivecommons/hive/issues/11877)), the hive does
+  not update it again for that check when the base moves. These records are
+  in memory, so a restart allows one more update. Each update is logged as
+  `missing-check base refresh` and audited as `missing-check-base-refresh`.
+- It is an unstick step (`missing_check_base_refresh` in
+  `api_budget.unstick_steps`), shed with the stale-red base refresh. A
+  candidate costs one read of its base tip (shared by every PR on that base
+  in the pass), one compare and one update.
+
 ## Open-PR dispatch guard and duplicate-fix sweep (`scanner`)
 
 An issue whose fix is already open must not be dispatched again
@@ -583,7 +630,9 @@ that level, the power the write-back exists to govern?
 | Shared-CI rerun (`shared_ci_rerun.go`) | CI failure watcher | `rerun-failed-jobs`, `hive-shared-ci-rerun-<n>` comment | PRs with failed shared workflows | `ci_rerun` → L6 + label |
 | Transient-CI rerun (`transient_ci_rerun.go`) | eval cycle, before the stuck-PR reaper | `rerun-failed-jobs`, once per head, no comment | hive-authored and `auto_merge.trusted_bot_authors` red PRs whose every failing run carries `hive-ci-transient` | `ci_rerun` (own items: allowed unless the repo is paused, off or issues-only; trusted-bot PRs: L6 + label, or `writeback.kinds.ci_rerun.unlabeled_min_level`; a refused re-run hands the bot PR to a person with the reason) |
 | Stale-red base refresh (`cmd/hive/stale_red_base_refresh.go`, `pkg/github/stale_red_base_refresh.go`) | eval cycle, before the stuck-PR reaper, at most every 5 min | **branch push** (`update-branch` merge of the base), once per head and base tip, no comment | red PRs behind their base whose every failing check is green on the base tip; not drafts, held, non-editable forks, dependency-bot branches, 072 or 074 | `base_refresh` → hive-authored PRs, else L6 + label |
+| Missing-check base refresh (`cmd/hive/missing_check_base_refresh.go`, `pkg/github/missing_check_base_refresh.go`) | eval cycle, after the stale-red base refresh, at most every 5 min | **branch push** (`update-branch` merge of the base), once per head and base tip and once per missing check, no comment | PRs behind their base, otherwise green, whose head has no run at all for a required check that runs on the base tip or another open PR; not drafts, held, parked, non-editable forks, dependency-bot branches, 072 or 074 | `base_refresh` → hive-authored PRs, else L6 + label |
 | Dependency-bot rebase request (`cmd/hive/dependency_bot_rebase_request.go`, `pkg/github/dependency_bot_rebase.go`) | governor eval, in the dependency-bot hand-off sweep | ticks Renovate's rebase/retry checkbox (only that line of the PR description changes); once per head, no other comment. Never asks Dependabot, which refuses commands from apps: a stranded Dependabot PR is handed to a person at once | dependency-bot PRs behind or conflicting with their base past `governor.dependency_bot_rebase_after_s` (4h) whose bot stopped rebasing them; never a branch carrying someone else's non-merge commit | `bot_rebase_request` → L6 + label; refused: the PR is handed to a person instead (see [README](README.md)) |
+| Dependency-bot adoption request (`cmd/hive/dependency_bot_adopt.go`) | governor eval, in the dependency-bot hand-off sweep, where the red-CI hand-off would fire; only with `auto_merge.dependency_bot_adopt.enabled` (default off) | `adoption/supersede` label (the dashboard Adopt decision's label); once per head, no comment | red dependency-bot PRs by a `trusted_bot_authors` bot whose head the review swarm marked `changes_requested`; never held, human-merge-labelled or `human_merge_paths` PRs, or with stage adoption off | `contributor_adopt` → L6 + label; refused: the PR gets the usual person hand-off |
 | Level hold, self-authorization & reporter-trust releases (`pr_level_hold.go`, `automerge/self_authorization_release.go`, `reporter_trust_release.go`) | PR watcher | `hold` label add/remove | agent PRs | own items (hive-authored) — not gated |
 | Migrations & retirements (`hive_hold_migration.go`, `hive_id_label_retire.go`, `claimed_by_human_migration.go`, `origin_labels.go`) | boot, one-shot | label renames | items carrying hive labels | opted in by carrying hive labels |
 
@@ -684,7 +733,13 @@ not what it records:
   stage-regressed notes, the trusted-human 071 note and the duplicate-PR
   redirect are sections of a single comment marked `<!-- hive:status -->`.
   The comment is created the first time a note is due and PATCHed for every
-  later note; only the creation sends email.
+  later note; only the creation sends email. The auto-merge note ("merged by
+  Hive trusted-author auto-merge …" or "merged by Hive on behalf of …") is
+  the card's `auto-merge` section too, with its @-mentions neutralised, so
+  a merge no longer emails the author and every watcher; in `normal` it is
+  still its own comment. A merge that waits on a person (the 085
+  needs-decision and 090 ready-for-human-merge entry comments) still posts
+  a comment of its own.
 - **No "no findings" reviews.** A reviewer whose whole body is the clean
   acknowledgement — or whose body says it has no findings while its verdict
   report approves with an empty findings list, as the plain `reviewer`
@@ -723,6 +778,11 @@ post on issues and merged PRs as comments of their own:
 - a contributor's **claim marker** (`<!-- hive:claim … -->`) posted by the
   contribute hub — claim readers scan every hive comment body for the
   marker, so the section is as authoritative as the comment was;
+- the sentinel's **informational notice** for a trusted author's PR (no
+  label, merge not blocked), as a `sentinel` section stamped
+  `<!-- hive-sentinel-notice <head> -->`. A sentinel **hold**
+  (`sentinel-alert` label, maintainer review required) is never folded: it
+  always posts its own `<!-- hive-sentinel -->` comment (hivecommons/hive#18453);
 - an agent's relayed **status notes**: `hive/awaiting-ci: …`, `Parking on
   stage/045-needs-decision: …` and `Already fixed …`. Any other relayed
   comment — a finding, a triage verdict with evidence, a question — is still
@@ -832,7 +892,10 @@ auto-merge lane (dashboard queue, self-authored App sweep, trusted bot authors,
 or trusted authors). Trusted authors (the Hive App, configured trusted bots and
 owner/trusted-author allow-list entries) default to an informational notice and
 audit/dashboard finding only; no alert label is added unless the operator opts
-into blocking them. A maintainer who removes the label keeps the PR clear until
+into blocking them. In `github.notifications.mode: quiet` (the default) that
+informational notice is a `sentinel` section of the PR's `hive:status` card,
+edited in place, rather than a comment; an alert that needs a maintainer always
+gets its own comment ([#18453](https://github.com/hivecommons/hive/issues/18453)). A maintainer who removes the label keeps the PR clear until
 the author pushes again: the sweep reads the clearance back from the alert
 comment it left for that head (alert comment present, label absent), so it
 survives a hub restart or a second replica and nothing else needs to be posted.
@@ -859,7 +922,7 @@ push re-arms it.
 |---|---|---|
 | `sentinel.enabled` | **on** when unset | `false` disables the sweep entirely. |
 | `sentinel.label` | `sentinel-alert` | Label added to untrusted flagged PRs (created red if missing). Neutral on purpose: it means "look closely", not "malicious". This configured label is also added to Hive's hold/exclude set and blocks Hive approval plus every auto-merge lane until a human removes it. |
-| `sentinel.trusted_authors_block` | `false` | When `false`, trusted author findings are notice-only: comment, audit/dashboard record, no label, no approval/merge block. Set `true` to add the blocking label for trusted authors too. A PR the hive opens to supersede an adopted contributor PR (body line `Supersedes #N (…; original commits by @login preserved).`) is judged by the adopted PR's author, not by the App: its code is that author's, so an untrusted author's flagged head gets the label on the App's PR too. A maintainer who removed the label from the adopted PR at the same head is not asked again; any later head is judged afresh. |
+| `sentinel.trusted_authors_block` | `false` | When `false`, trusted author findings are notice-only: audit/dashboard record, no label, no approval/merge block. The notice is the `sentinel` section of the PR's `hive:status` card in `github.notifications.mode: quiet` (the default) and its own comment in `normal` mode. Set `true` to add the blocking label and post the alert comment for trusted authors too. A PR the hive opens to supersede an adopted contributor PR (body line `Supersedes #N (…; original commits by @login preserved).`) is judged by the adopted PR's author, not by the App: its code is that author's, so an untrusted author's flagged head gets the label on the App's PR too. A maintainer who removed the label from the adopted PR at the same head is not asked again; any later head is judged afresh. |
 | `sentinel.sensitive_paths` | shipped defaults (`sentinel.DefaultSensitivePaths`) | Glob list (same syntax as `intent.guardrail_path_patterns`; `**` crosses directories) that **replaces** the defaults when set. Defaults cover OWNERS/CODEOWNERS/MAINTAINERS, SECURITY.md, GOVERNANCE.md, `.github/workflows/**`, actions, dependabot, codeql, rulesets, CI config, Makefile/Justfile, pre-commit hooks, `policies/**`, `hive.yaml*`, `gh-wrapper*`, proxy rules, Dockerfiles, `install.sh`, dependency manifests and lockfiles, release workflows, `.env*`/key material, `deploy/**`, Terraform, Helm/k8s manifests. |
 | `project.repo_policies[].sentinel_sensitive_paths` | unset = `sentinel.sensitive_paths` | One repository's own sensitive-path list. It replaces the hive-wide list for that repository's pull requests only, stricter or looser, and a change to `sentinel.sensitive_paths` does not reach it. `[]` matches nothing. Set in hive.yaml, in Settings → Security (**Sensitive files per repository**) or with the admin MCP `sentinel.settings` `repo_sensitive_paths`; clearing it returns the repository to the hive-wide list. Like any Sentinel setting, it applies to heads Sentinel evaluates after the change. |
 | `sentinel.disabled_behaviors` | empty | Rule names from the table above to switch off. Unknown names are rejected. |

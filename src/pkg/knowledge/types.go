@@ -389,7 +389,6 @@ type InceptionState struct {
 	Questions         []Question           `json:"questions"`
 	Answers           map[string]string    `json:"answers"`
 	FactSlugs         []string             `json:"fact_slugs"`
-	ProposedFacts     []IdeationFact       `json:"proposed_facts,omitempty"`
 	Transcripts       []TranscriptDocument `json:"transcripts,omitempty"`
 	StartedAt         time.Time            `json:"started_at"`
 	PhaseChangedAt    *time.Time           `json:"phase_changed_at,omitempty"`

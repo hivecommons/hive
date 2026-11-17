@@ -80,8 +80,10 @@ func TestFreshenKickMessages_WithholdsStaleAndClosed(t *testing.T) {
 // self-report feed does not file it as an unclassified repeated error
 // (#15465). A re-read that finds the item closed is likewise the guard
 // working as designed and repeats every cycle until the cache catches up,
-// so it logs below WARN with reason=closed (#17518). Any other refusal still
-// logs at WARN.
+// so it logs below WARN with reason=closed (#17518). A stale repo is refused
+// on every kick while its cache stays last-good, and the stale repo already
+// logs its own WARN where it is produced, so that refusal logs below WARN too
+// (#18470). Only an unexplained read error still logs at WARN.
 func TestFreshenKickMessages_DeferredReadLogsBelowWarn(t *testing.T) {
 	cases := []struct {
 		name       string
@@ -91,7 +93,7 @@ func TestFreshenKickMessages_DeferredReadLogsBelowWarn(t *testing.T) {
 	}{
 		{"budget critical", github.ErrAPIBudgetCritical, false, "github read deferred"},
 		{"caution window", github.ErrRateLimitCaution, false, "github read deferred"},
-		{"stale snapshot", github.ErrSnapshotStaleForDecision, true, "stale snapshot"},
+		{"stale snapshot", github.ErrSnapshotStaleForDecision, false, "stale snapshot"},
 		{"item closed", github.ErrItemNotOpen, false, "closed"},
 		{"read error", errors.New("private endpoint failed"), true, "re-read"},
 	}

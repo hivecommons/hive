@@ -274,3 +274,27 @@ func TestEntriesSorted(t *testing.T) {
 		}
 	}
 }
+
+// TestTechDocsDispatch pins the agent hand-off the hive derives from the
+// curated model without any new field (cncf/techdocs#395): the drafter is
+// dispatched once when a request is Accepted and must open a draft PR
+// labeled Docs analysis; the verifier runs on the reviewer's /verify in
+// Drafting.
+func TestTechDocsDispatch(t *testing.T) {
+	p := techdocs(t)
+	d, ok := p.DispatchFor("accepted")
+	if !ok || d.Profile != "techdocs-drafter" || d.Reply != "" || !d.AppliesTo(workflowmodel.KindIssue) {
+		t.Fatalf("accepted dispatch = %+v %v", d, ok)
+	}
+	want := &workflowmodel.Deliverable{State: "drafting", Draft: true, Labels: []string{"Docs analysis"}}
+	if !reflect.DeepEqual(d.Deliverable, want) {
+		t.Fatalf("drafter deliverable %+v want %+v", d.Deliverable, want)
+	}
+	v, ok := p.DispatchFor("drafting")
+	if !ok || v.Profile != "techdocs-verifier" || v.Reply != "/verify" || !v.AppliesTo(workflowmodel.KindPR) || v.Deliverable != nil {
+		t.Fatalf("drafting dispatch = %+v %v", v, ok)
+	}
+	if len(p.Dispatch) != 2 {
+		t.Fatalf("dispatch targets %+v", p.Dispatch)
+	}
+}

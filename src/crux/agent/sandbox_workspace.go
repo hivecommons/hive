@@ -30,6 +30,12 @@ func (e *SandboxExecutor) prepareWorkspace(ctx context.Context, spec *SandboxKic
 		return "", "", err
 	}
 	if strings.TrimSpace(spec.Stage) != "" {
+		if spec.reviewOnly() {
+			return "", "", errors.New("sandbox workspace prep: a run-stage kick cannot carry review PR targets")
+		}
+		if spec.TargetPR > 0 {
+			return "", "", errors.New("sandbox workspace prep: a run-stage kick cannot push to an existing PR")
+		}
 		return e.prepareRunStageWorkspace(ctx, spec)
 	}
 	workspace := sandbox.WorkspaceDir(spec.WorkspaceDir, spec.Agent, e.now().UnixNano())
@@ -53,6 +59,26 @@ func (e *SandboxExecutor) prepareWorkspace(ctx context.Context, spec *SandboxKic
 	fetchArgs := append(append([]string{}, authArgs...), "fetch", "origin", spec.BaseRef)
 	if out, err := e.runner().Run(ctx, workspace, pushbroker.PushEnv(os.Environ()), "git", fetchArgs...); err != nil {
 		return "", "", fmt.Errorf("git fetch %s: %w: %s", spec.BaseRef, err, strings.TrimSpace(string(out)))
+	}
+	if spec.reviewOnly() {
+		// A review kick checks out the PR head instead of a work branch
+		// (hivecommons/hive#18513). The returned base is that head, so the
+		// commits counted after the run are the reviewer's own.
+		head, err := e.prepareReviewCheckout(ctx, spec, workspace, authArgs)
+		if err != nil {
+			return "", "", err
+		}
+		return workspace, head, nil
+	}
+	if spec.TargetPR > 0 {
+		// A fix kick on an existing PR works on that PR's head branch
+		// (hivecommons/hive#18574); the returned base is its head, so the
+		// commits counted after the run are the kick's own.
+		head, err := e.prepareTargetPRCheckout(ctx, spec, workspace, authArgs)
+		if err != nil {
+			return "", "", err
+		}
+		return workspace, head, nil
 	}
 	if out, err := e.runner().Run(ctx, workspace, pushbroker.PushEnv(os.Environ()), "git", "checkout", "-B", spec.Branch, "FETCH_HEAD"); err != nil {
 		return "", "", fmt.Errorf("git checkout: %w: %s", err, strings.TrimSpace(string(out)))

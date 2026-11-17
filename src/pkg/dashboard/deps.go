@@ -32,12 +32,15 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge"
 	"github.com/hivecommons/hive/pkg/mention"
 	"github.com/hivecommons/hive/pkg/nous"
+	"github.com/hivecommons/hive/pkg/repoagents"
 	"github.com/hivecommons/hive/pkg/review/autoscale"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/stageengine"
 	"github.com/hivecommons/hive/pkg/tokens"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
+	"github.com/hivecommons/hive/pkg/workflowmodel/checksfile"
 	"github.com/hivecommons/hive/pkg/workflowmodel/ingest/cluster"
 )
 
@@ -80,6 +83,11 @@ type Dependencies struct {
 	// stage and model labels now, for PUT /api/workflows/enabled turning
 	// derivation on. Nil leaves provisioning to the next sweep pass.
 	WorkflowProvisionLabels func(ctx context.Context, repo string) error
+	// WorkflowEmitChecks proposes a newly bound model's declared checks to
+	// the repository as .hive/workflows/checks.yml through the checks PR
+	// (hivecommons/hive#18355), for PUT /api/workflows/bindings. Nil leaves
+	// the file unemitted.
+	WorkflowEmitChecks func(ctx context.Context, repo string, m *workflowmodel.Model) (checksfile.Result, error)
 	// WorkflowClusterRunner runs kubectl for POST /api/workflows/ingest/cluster
 	// (RFC #17620 phase 6). Nil means no kube access is configured on this
 	// spoke and the route answers 422.
@@ -123,7 +131,6 @@ type Dependencies struct {
 	ReviewerAutoscaleStatus func() autoscale.Status
 	Tokens                  *tokens.Collector
 	Knowledge               *knowledge.KnowledgeAPI
-	Inception               *knowledge.InceptionEngine
 	Nous                    *NousState
 	Scheduler               SchedulerControl
 	MetricsCollector        *MetricsCollector
@@ -257,6 +264,22 @@ type Dependencies struct {
 	// disconnects their account, so the reference-repo policies re-resolve
 	// without a restart. Nil skips.
 	OwnerIdentityChanged func()
+	// RepoAgents holds the agent definitions discovered under managed repos'
+	// .hive/agents/ that wait for an owner's approval (hivecommons/hive#18491).
+	// Nil (most tests, a hive without a GitHub client) reports the feature
+	// off on GET /api/agents/discovered and answers 503 on its mutations.
+	RepoAgents *repoagents.Discoverer
+	// CheckRemoteWriteIdentity is called by
+	// PUT /api/config/reference-repos/write-identity with the requested
+	// project.remote_write_identity BEFORE it is stored: it resolves the
+	// hand-written reference repos under that setting the way boot does, so a
+	// value that would stop the next boot with exit 22 is refused with that
+	// message (hivecommons/hive#18516). Nil (no proxy, most tests) skips.
+	CheckRemoteWriteIdentity func(ctx context.Context, setting string) error
+	// RemoteWriteIdentityChanged is called after that PUT has persisted the
+	// setting: it re-resolves the reference repos so the proxy, the kick and
+	// /api/status use the new identity at once. Nil skips.
+	RemoteWriteIdentityChanged func()
 	// RescanReposFunc re-enumerates every watched repository's open issues
 	// and pull requests against the forge, enriches PR CI status, applies the
 	// duplicate-PR claim guard and republishes the dashboard status snapshot

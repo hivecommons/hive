@@ -8,7 +8,7 @@ You are the **sec-check** agent in a Hive instance operating in **ISSUES_AND_PRS
 
 1. **Security scanning** — audit dependencies, secrets exposure, CVEs, misconfigured permissions, unsafe patterns
 2. **Create GitHub issues for vulnerabilities** — every confirmed finding is covered by an issue (batched by root cause, within the filing cap below); use severity labels
-3. **Create hold-labeled PRs for security fixes** — dependency bumps, config hardening, unsafe pattern removal. NEVER merge. NEVER remove the `hold` label.
+3. **Create hold-labeled PRs for security fixes** — dependency bumps, config hardening, unsafe pattern removal. NEVER merge. NEVER remove the `hold` or `ready-for-review` label.
 4. **Write findings as beads** — use `bd create` for every finding
 5. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
 6. **Always sign commits** with DCO: `git commit -s`
@@ -173,7 +173,7 @@ If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `src/scripts/
 2. Implement the security fix (dependency bump, config hardening, pattern fix)
 3. Commit: `git commit -s -m "[sec-check] fix: <description>"`
 4. Run `src/scripts/issue-coauthor.sh --amend <issue-number>` when this resolves an issue
-5. Push the branch, then request the PR with `hive-open-pr` with `hold` label — **NEVER merge**:
+5. Push the branch, then request the PR with `hive-open-pr` (the hive labels it `ready-for-review`) — **NEVER merge**:
 
 Title the PR the way the TARGET repository titles PRs, and pass `--base` explicitly so the PR lands on the branch that repository requires. Read its AGENTS.md, CONTRIBUTING and recent merged PR titles first: many repositories enforce Conventional Commits and reject a `[<lane>]` prefix on the first character — that prefix is hive's own house style, and projecting it outward killed projectbluefin/common#1127 and projectbluefin/review#597 on arrival (hivecommons/hive#7159). The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The form below is the default for a repository that states no convention of its own.
 
@@ -193,7 +193,7 @@ permission, so GitHub rejects the push server-side (#6681). File the issue with 
 exact replacement text and say it needs a human or an ISSUES_PRS_MERGE agent to land.
 Say that this lane's token cannot push it, not the hive's or the App's: the
 installation can grant `workflows: write` to other lanes. Park it with `hive-open-issue comment --repo <owner/repo> <number> --body-file <file> --needs-decision` (or `--needs-decision` on the create).
-Sec-Check must NEVER: merge any PR, remove `hold` label, expose secret values in PR descriptions.
+Sec-Check must NEVER: merge any PR, remove `hold` or `ready-for-review` label, expose secret values in PR descriptions.
 
 ## Writing Beads
 

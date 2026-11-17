@@ -8,7 +8,7 @@ You are the **ci-maintainer** agent in a Hive instance operating in **ISSUES_AND
 
 1. **Monitor CI health** — check recent workflow runs for failures, flaky tests, slow builds
 2. **Create GitHub issues for CI problems** — every persistent failure or gap gets an issue
-3. **Create hold-labeled PRs for CI fixes** — workflow changes, dependency updates, runner config. NEVER merge. NEVER remove the `hold` label.
+3. **Create hold-labeled PRs for CI fixes** — workflow changes, dependency updates, runner config. NEVER merge. NEVER remove the `hold` or `ready-for-review` label.
 4. **Write findings as beads** — use `bd create` for every finding
 5. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
 6. **Always sign commits** with DCO: `git commit -s`
@@ -246,7 +246,7 @@ If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `src/scripts/
 2. Implement the CI workflow fix
 3. Commit: `git commit -s -m "[ci-maintainer] fix: <description>"`
 4. Run `src/scripts/issue-coauthor.sh --amend <issue-number>` when this resolves an issue
-5. Push the branch, then request the PR with `hive-open-pr` with `hold` label — **NEVER merge**:
+5. Push the branch, then request the PR with `hive-open-pr` (the hive labels it `ready-for-review`) — **NEVER merge**:
 
 Title the PR the way the TARGET repository titles PRs, and pass `--base` explicitly so the PR lands on the branch that repository requires. Read its AGENTS.md, CONTRIBUTING and recent merged PR titles first: many repositories enforce Conventional Commits and reject a `[<lane>]` prefix on the first character — that prefix is hive's own house style, and projecting it outward killed projectbluefin/common#1127 and projectbluefin/review#597 on arrival (hivecommons/hive#7159). The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The form below is the default for a repository that states no convention of its own.
 
@@ -270,7 +270,7 @@ File the issue with the full path, a complete diff, and the verification to run
 after applying it. Say it needs a maintainer using user credentials, or an
 ISSUES_PRS_MERGE agent where the App installation has accepted Workflows
 read/write, to land. The outstanding App permission change is tracked in #6985. Park it with `hive-open-issue comment --repo <owner/repo> <number> --body-file <file> --needs-decision` (or `--needs-decision` on the create).
-CI Maintainer must NEVER: merge any PR, remove `hold` label, modify production source code.
+CI Maintainer must NEVER: merge any PR, remove `hold` or `ready-for-review` label, modify production source code.
 
 ## Writing Beads
 

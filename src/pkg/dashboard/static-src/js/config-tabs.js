@@ -58,6 +58,7 @@
         if (tabId === 'Features') loadAdvisorSettings();
         if (tabId === 'Inbox') loadInboxSettingsInline();
         if (tabId === 'Meetings') loadMeetingsSettingsInline();
+        if (tabId === 'Meeting attendee') loadMeetingAttendeeInline();
         // The same tab carries the upstream-watch editor and divergence view
         // (#9969, #11211); it loads from its own endpoint.
         if (tabId === 'Features') loadUpstreamWatch();
@@ -101,7 +102,9 @@
       var quickStarts = AGENT_QUICK_START_TEMPLATES.map(function(t) {
         return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="applyAgentQuickStart" data-arg0="' + esc(t.id) + '" title="' + esc(t.description) + '">' + esc(t.emoji) + ' ' + esc(t.displayName) + '</button>';
       }).join('');
+      setTimeout(loadDiscoveredAgents, 0);
       return '<div style="max-width:600px;margin:0 auto">' +
+        '<div id="discovered-agents" class="mb-6"></div>' +
         '<div style="background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:var(--sp-5);margin-bottom:var(--sp-6)">' +
           '<div style="font-weight:700;color:var(--text);margin-bottom:var(--sp-2)">Start with a template, then tune it</div>' +
           '<p class="fs-base text-muted" style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">Pick a common agent role to prefill the create form, or import/paste a full definition below.</p>' +
@@ -133,6 +136,75 @@
     }
 
     var _pendingImportData = null;
+
+    // Agents a managed repo declares under .hive/agents/ (#18491). Nothing
+    // runs until an owner approves; backend, model, mode and tools stay
+    // owner-controlled, so Approve registers the agent with the defaults and
+    // the owner tunes them in the agent's settings afterwards.
+    var DISCOVERED_AGENT_STATUS_LABELS = {pending: 'Waiting for approval', invalid: 'Invalid definition', approved: 'Approved', rejected: 'Rejected', orphaned: 'File removed, agent paused'};
+
+    async function loadDiscoveredAgents() {
+      var box = document.getElementById('discovered-agents');
+      if (!box) return;
+      try {
+        var resp = await fetch('/api/agents/discovered', {headers:_inceptionAuthHeaders()});
+        var d = await resp.json();
+        if (!resp.ok) { box.innerHTML = ''; return; }
+        renderDiscoveredAgents(box, d);
+      } catch(e) { box.innerHTML = ''; }
+    }
+
+    function renderDiscoveredAgents(box, d) {
+      if (!d || !d.enabled) { box.innerHTML = ''; return; }
+      var entries = (d.entries || []).filter(function(e) { return e.status !== 'approved'; });
+      var rows = entries.map(function(e) {
+        var title = (e.emoji ? esc(e.emoji) + ' ' : '') + esc(e.display_name || e.name || e.path);
+        var meta = esc(e.repo) + ' · ' + esc(e.path) + ' · ' + esc(DISCOVERED_AGENT_STATUS_LABELS[e.status] || e.status);
+        var detail = e.error ? '<div class="fs-base text-muted">' + esc(e.error) + '</div>' : (e.description ? '<div class="fs-base text-muted">' + esc(e.description) + '</div>' : '');
+        var actions = '';
+        if (e.status === 'pending') {
+          actions = '<button type="button" class="hv-btn btn-primary btn-sm" data-action="approveDiscoveredAgent" data-arg0="' + esc(e.id) + '">Approve</button> ' +
+            '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="rejectDiscoveredAgent" data-arg0="' + esc(e.id) + '">Reject</button>';
+        } else if (e.status === 'invalid') {
+          actions = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="rejectDiscoveredAgent" data-arg0="' + esc(e.id) + '">Reject</button>';
+        }
+        return '<div class="config-field mb-5"><label>' + title + '</label><div class="fs-base text-muted">' + meta + '</div>' + detail + (actions ? '<div>' + actions + '</div>' : '') + '</div>';
+      }).join('');
+      box.innerHTML = '<div class="config-field mb-5"><label>Declared in your repos</label>' +
+        '<p class="fs-base text-muted">Agent definitions found under <code>.hive/agents/</code> in allowlisted managed repos. Approving registers the agent with a copilot backend; set its model, mode and tools in the agent settings. <button type="button" class="hv-btn btn-secondary btn-sm" data-action="refreshDiscoveredAgents">Rescan</button></p>' +
+        (rows || '<p class="fs-base text-muted">None waiting.</p>') + '</div>';
+    }
+
+    async function discoveredAgentAction(path, id, okMessage) {
+      try {
+        var resp = await fetch(path, {method:'POST', headers:_inceptionAuthHeaders(), body:JSON.stringify({id:id})});
+        var d = await resp.json();
+        if (!resp.ok) { showToast(d.error || 'Request failed', 'error'); return false; }
+        showToast(okMessage(d), 'success');
+        return true;
+      } catch(e) { showToast('Error: ' + e.message, 'error'); return false; }
+    }
+
+    async function approveDiscoveredAgent(id) {
+      var ok = await discoveredAgentAction('/api/agents/discovered/approve', id, function(d) { return 'Agent "' + (d.name || '?') + '" approved'; });
+      if (!ok) return;
+      closeConfigDialog();
+      fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+    }
+
+    async function rejectDiscoveredAgent(id) {
+      if (await discoveredAgentAction('/api/agents/discovered/reject', id, function() { return 'Definition rejected'; })) loadDiscoveredAgents();
+    }
+
+    async function refreshDiscoveredAgents() {
+      var box = document.getElementById('discovered-agents');
+      try {
+        var resp = await fetch('/api/agents/discovered/refresh', {method:'POST', headers:_inceptionAuthHeaders()});
+        var d = await resp.json();
+        if (!resp.ok) { showToast(d.error || 'Rescan failed', 'error'); return; }
+        if (box) renderDiscoveredAgents(box, d);
+      } catch(e) { showToast('Error: ' + e.message, 'error'); }
+    }
 
     function applyAgentQuickStart(templateID) {
       var t = AGENT_QUICK_START_TEMPLATES.find(function(x) { return x.id === templateID; });
@@ -276,6 +348,7 @@
         case 'Knowledge': return renderGovKnowledgeSharing();
         case 'Inbox': return renderGovInbox();
         case 'Meetings': return renderGovMeetings();
+        case 'Meeting attendee': return renderGovMeetingAttendee();
         case 'Project Observability': return renderGovProjectObservability(d.project_observability || {});
         case 'Advisory': return renderGovAdvisory(d.advisory || {});
         case 'Smart classifier': return renderGovSmartClassifier(d.classifier || {});
@@ -1840,6 +1913,10 @@
     // the models discovered for the add/edit form's endpoint+key.
     let _gateways = [];
     let _gatewayFormModels = [];
+    // Catalog details (prices, context) and curated suggestions the discover
+    // probe returns for OpenRouter gateways; empty for other kinds.
+    let _gatewayFormModelInfo = [];
+    let _gatewayFormSuggested = [];
     const _gatewayProbeResults = {};
     // Set by maybeOpenMethodConfig when a method switch jumps the user here to
     // configure a missing gateway; consumed once by loadGateways to auto-open a
@@ -2539,16 +2616,24 @@
         const r = await fetch('/api/openrouter/models');
         if (r.ok) models = await r.json();
       } catch (e) { /* fall back to manual entry */ }
+      // Curated suggestions pinned on top (the server already hid any the
+      // live catalog retired), then the full live catalog grouped by
+      // provider with prices. Unreadable catalog: suggestions only, and the
+      // typed text still works as a manual id.
       const sug = (models.suggested || []);
-      const opts = sug.map(m => `<option value="${esc(m.id)}">${esc(m.label)}</option>`).join('')
-        + `<option value="__manual__">Enter a model id manually…</option>`;
+      const liveIds = Array.isArray(models.models) ? models.models : [];
+      const ids = liveIds.length ? liveIds : sug.map(m => m.id);
+      const picker = modelComboboxHtml({
+        id: 'or-model-combo', inputId: 'or-model-input', ids,
+        info: models.model_info, suggested: sug, current: models.default || (sug[0] && sug[0].id) || '',
+        label: 'Default model for the new gateway', placeholder: 'Search models or type an id…',
+      });
       host.innerHTML = `
         <div style="border:1px solid var(--cyan);border-radius:8px;padding:14px;margin-bottom:var(--sp-5);background:var(--surface)">
           <div style="font-weight:600;font-size:0.9rem;margin-bottom:var(--sp-2)">⚡ Fund this hive with OpenRouter</div>
           <div style="font-size:0.76rem;color:var(--muted);margin-bottom:10px">Scan the QR (or open the link) to authorize on OpenRouter. A scoped key funded from your OpenRouter credits is stored as the <code>openrouter</code> gateway — the key never leaves this hive.</div>
-          <label style="display:block;font-size:0.74rem;color:var(--muted);margin-bottom:var(--sp-2)">Default model for the new gateway</label>
-          <select id="or-model-select" data-change-action="orModelSelectChange" style="width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);margin-bottom:var(--sp-4)">${opts}</select>
-          <input id="or-model-manual" placeholder="e.g. anthropic/claude-opus-4.8" style="display:none;width:100%;padding:7px;background:var(--bg);color:var(--fg);border:1px solid var(--border);border-radius:var(--r);margin-bottom:var(--sp-4);box-sizing:border-box">
+          <label for="or-model-input" class="d-block fs-sm text-muted mb-2">Default model for the new gateway</label>
+          <div class="mb-4">${picker}</div>
           <div style="display:flex;gap:var(--sp-4);margin-top:var(--sp-2)">
             <button class="hv-btn btn-primary" data-action="orStartFlow">Generate QR</button>
             <button class="hv-btn btn-primary" data-action="closeOpenRouterFund">Cancel</button>
@@ -2558,21 +2643,10 @@
         </div>`;
     }
 
-    function orModelSelectChange() {
-      const sel = document.getElementById('or-model-select');
-      const man = document.getElementById('or-model-manual');
-      if (!sel || !man) return;
-      man.style.display = sel.value === '__manual__' ? 'block' : 'none';
-    }
-
+    // orChosenModel is the funding picker's committed model id ('' lets the
+    // server apply its default).
     function orChosenModel() {
-      const sel = document.getElementById('or-model-select');
-      if (!sel) return '';
-      if (sel.value === '__manual__') {
-        const man = document.getElementById('or-model-manual');
-        return (man && man.value.trim()) || '';
-      }
-      return sel.value;
+      return modelComboValue('or-model-combo');
     }
 
     async function orStartFlow() {
@@ -2825,6 +2899,8 @@
     // it blank keeps it.
     function openGatewayForm(existing) {
       _gatewayFormModels = [];
+      _gatewayFormModelInfo = [];
+      _gatewayFormSuggested = [];
       const host = document.getElementById('gateways-form-host');
       if (!host) return;
       const isEdit = !!existing;
@@ -2927,7 +3003,17 @@
       const models = _gatewayFormModels;
       const cur = current || '';
       if (!models.length) {
-        return `<input type="text" id="gw-default-model" value="${esc(cur)}" placeholder="e.g. anthropic/claude-opus-4.8">`;
+        return `<input type="text" id="gw-default-model" value="${esc(cur)}" placeholder="e.g. deepseek/deepseek-v4.1-flash">`;
+      }
+      // Large catalogs (OpenRouter ~470 ids) get the searchable, grouped
+      // combobox; its input is #gw-default-model, so the typed text is the
+      // value and "Custom…" is simply typing an id the catalog lacks.
+      if (models.length >= MODEL_COMBOBOX_MIN_OPTIONS || _gatewayFormModelInfo.length) {
+        return modelComboboxHtml({
+          id: 'gw-default-model-combo', inputId: 'gw-default-model', ids: models,
+          info: _gatewayFormModelInfo, suggested: _gatewayFormSuggested, current: cur,
+          label: 'Default model', placeholder: 'Search ' + models.length + ' models or type an id…',
+        });
       }
       const inList = cur && models.indexOf(cur) !== -1;
       const options = models.map(m =>
@@ -3037,6 +3123,8 @@
         });
         const data = await res.json().catch(() => ({}));
         _gatewayFormModels = (res.ok && data.ok && Array.isArray(data.models)) ? data.models : [];
+        _gatewayFormModelInfo = (res.ok && data.ok && Array.isArray(data.model_info)) ? data.model_info : [];
+        _gatewayFormSuggested = (res.ok && data.ok && Array.isArray(data.suggested)) ? data.suggested : [];
         // Never show an empty dropdown with no explanation: a bad key, wrong
         // region/project or an unreachable endpoint must say so, with the
         // server's own error text, rather than looking like "no models exist".
@@ -3054,6 +3142,8 @@
         }
       } catch (e) {
         _gatewayFormModels = [];
+        _gatewayFormModelInfo = [];
+        _gatewayFormSuggested = [];
         showGatewayFormProbeError('Network error while discovering models: ' + e.message);
       }
       const host = document.getElementById('gw-default-model-field');
@@ -3153,9 +3243,13 @@
       const keyEnvWarning = litellm.apiKeyEnvLooksLikeKey
         ? `<div style="font-size:0.72rem;margin-top:3px;color:var(--red)">The saved value here (${esc(litellm.apiKeyEnv || '')}) looks like a key VALUE, not an environment variable name — move it to the API Key field above and Save; storing a key clears this field automatically.</div>`
         : '';
+      // hive#18533: a configured path outside the allowed secret dirs is never
+      // read; say so and name the key source actually in use.
       const keyFileWarning = litellm.apiKeyFileLooksLikeKey
         ? `<div style="font-size:0.72rem;margin-top:3px;color:var(--red)">The saved value here (${esc(litellm.apiKeyFile || '')}) looks like a key VALUE, not a file path — move it to the API Key field above and Save.</div>`
-        : '';
+        : (litellm.apiKeyFileAllowed === false
+          ? `<div style="font-size:0.72rem;margin-top:3px;color:var(--red)">This path is outside the allowed secret dirs (${esc((litellm.allowedKeyFileDirs || []).join(', '))}) and is ignored: ${esc(litellm.keySourceDescription || '')}. Mount the Secret under an allowed dir and point this field at the file there.</div>`
+          : '');
       const keyEnvValue = litellm.apiKeyEnvLooksLikeKey ? '' : (litellm.apiKeyEnv || '');
       const keyFileValue = litellm.apiKeyFileLooksLikeKey ? '' : (litellm.apiKeyFile || '');
       return `

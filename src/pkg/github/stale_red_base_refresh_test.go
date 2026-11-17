@@ -81,8 +81,11 @@ func TestStaleRedBaseStateFor(t *testing.T) {
 	if !st.Red["build"] {
 		t.Fatal("build is red on the base tip")
 	}
-	if st.Completed["tide"] || st.Red["tide"] {
+	if st.Completed["tide"] || st.Red["tide"] || st.Reported["tide"] {
 		t.Fatal("meta checks (tide) must be ignored")
+	}
+	if !st.Reported["lint"] || !st.Reported["pytest"] || !st.Reported["build"] {
+		t.Fatalf("Reported = %v, want every non-meta check with a run in any state", st.Reported)
 	}
 }
 

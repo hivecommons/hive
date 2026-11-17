@@ -20,69 +20,6 @@ func (c *Config) Validate() error {
 	return c.ValidateWithOptions(ValidateOptions{RequireAgents: true})
 }
 
-func (c *Config) validateSpektacularRecheckDiscovery() error {
-	d := c.Runs.Spektacular.Recheck.Discovery
-	if !d.Enabled && len(d.Sources) == 0 {
-		return nil
-	}
-	allowedKinds := map[string]bool{
-		"upstream_release": true,
-		"repo_activity":    true,
-		"standards_feed":   true,
-		"landscape":        true,
-	}
-	for i, src := range d.Sources {
-		kind := strings.TrimSpace(src.Kind)
-		if !allowedKinds[kind] {
-			return fmt.Errorf("runs.spektacular.recheck.discovery.sources[%d]: invalid kind %q (must be upstream_release, repo_activity, standards_feed, or landscape)", i, src.Kind)
-		}
-		if strings.TrimSpace(src.Name) == "" {
-			return fmt.Errorf("runs.spektacular.recheck.discovery.sources[%d]: name is required", i)
-		}
-		if kind != "landscape" && strings.TrimSpace(src.URLOrRepo) == "" {
-			return fmt.Errorf("runs.spektacular.recheck.discovery.sources[%d]: url_or_repo is required", i)
-		}
-		for _, host := range discoverySourceHosts(kind, src.URLOrRepo) {
-			if !hostAllowedByHTTPList(host, c.Variables.Security.HTTPAllowlist) {
-				return fmt.Errorf("runs.spektacular.recheck.discovery.sources[%d]: host %q is not covered by variables.security.http_allowlist", i, host)
-			}
-		}
-	}
-	return nil
-}
-
-func discoverySourceHosts(kind, value string) []string {
-	value = strings.TrimSpace(value)
-	switch kind {
-	case "upstream_release", "repo_activity":
-		return []string{"api.github.com"}
-	case "standards_feed":
-		u, err := url.Parse(value)
-		if err != nil || u.Hostname() == "" {
-			return []string{value}
-		}
-		return []string{strings.ToLower(u.Hostname())}
-	case "landscape":
-		return []string{"api.github.com"}
-	default:
-		return nil
-	}
-}
-
-func hostAllowedByHTTPList(host string, allowlist []string) bool {
-	host = strings.ToLower(strings.TrimSpace(host))
-	if host == "" {
-		return false
-	}
-	for _, allowed := range allowlist {
-		allowed = strings.ToLower(strings.TrimSpace(allowed))
-		if allowed == host || allowed == "*" {
-			return true
-		}
-	}
-	return false
-}
-
 func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.IntegrationOrchestration.Validate(); err != nil {
 		return err
@@ -127,6 +64,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 		return err
 	}
 	if err := c.validateReferenceRepos(); err != nil {
+		return err
+	}
+	if err := ValidateRemoteWriteIdentity(c.Project.RemoteWriteIdentity); err != nil {
 		return err
 	}
 	if _, err := c.Ioscan.Policy(); err != nil {
@@ -189,6 +129,11 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Classifier.Validate(); err != nil {
 		return err
 	}
+	// hive#18533: warn loudly (not fail) on an api_key_file that will never be
+	// read. See GovernorConfig.APIKeyFileWarnings for why boot does not fail.
+	for _, w := range c.Governor.APIKeyFileWarnings() {
+		log.Printf("WARNING: %s", w)
+	}
 	if err := c.GitHub.Attention.Validate(); err != nil {
 		return err
 	}
@@ -225,6 +170,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.Meetings.Validate(); err != nil {
 		return err
 	}
+	if err := c.validateMeetingsGatewayBackend(); err != nil {
+		return err
+	}
 	if err := c.Review.ValidateFixerFallback(); err != nil {
 		return err
 	}
@@ -258,16 +206,10 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	if err := c.validateGitHubActivityNotifications(); err != nil {
 		return err
 	}
-	if err := c.Runs.Spektacular.Recheck.ValidateDiscovery(); err != nil {
-		return err
-	}
 	if err := c.validateUpstreamWatch(); err != nil {
 		return err
 	}
 	if err := c.validateCodeScanning(); err != nil {
-		return err
-	}
-	if err := c.ValidateRecheckDiscovery(); err != nil {
 		return err
 	}
 	if err := c.validateRepoForges(); err != nil {
@@ -395,6 +337,9 @@ func (c *Config) ValidateWithOptions(opts ValidateOptions) error {
 	}
 	if c.Governor.DependencyBotRebaseAfterS < 0 {
 		return fmt.Errorf("governor.dependency_bot_rebase_after_s must be at least 0")
+	}
+	if err := validateReleaseFeeds(c.Governor.ReleaseFeeds); err != nil {
+		return err
 	}
 	if c.Governor.MergeTrainStallWarnS < 0 {
 		return fmt.Errorf("governor.merge_train_stall_warn_s must be at least 0")

@@ -420,7 +420,7 @@ func TestStaticDashboardDefaultLayoutOrder(t *testing.T) {
 	}
 	html := rec.Body.String()
 
-	defaultOrder := "'overview-section','governor','runs-section','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','search-section','inbox-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section'"
+	defaultOrder := "'overview-section','governor','runs-section','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','search-section','inbox-section','calendar-section','meetings-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section'"
 	if !strings.Contains(html, defaultOrder) {
 		t.Fatalf("dashboard default layout/reset order no longer matches sidebar nav; missing %q", defaultOrder)
 	}
@@ -627,27 +627,6 @@ func TestStaticPlanReviewWiring(t *testing.T) {
 	// if the definition disappears again the flow silently does nothing.
 	if !strings.Contains(html, "openPlanReview(data.epic_id)") {
 		t.Fatal("the ⧉ Plan flow no longer calls openPlanReview(data.epic_id)")
-	}
-}
-
-func TestStaticRunDetailTranscriptRenderingWiring(t *testing.T) {
-	body, err := os.ReadFile("../static/index.html")
-	if err != nil {
-		t.Fatal(err)
-	}
-	html := string(body)
-	for _, want := range []string{
-		"function renderRunStageInterview(st)",
-		"function renderRunStageDocuments(st)",
-		"doc.markdown || doc.content || ''",
-		"st.agent_stdout_stderr",
-		"Agent transcript",
-		"Interview / Q&amp;A",
-		"Raw receipt JSON",
-	} {
-		if !strings.Contains(html, want) {
-			t.Fatalf("run detail transcript rendering missing %q", want)
-		}
 	}
 }
 

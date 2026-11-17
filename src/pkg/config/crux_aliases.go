@@ -18,6 +18,8 @@ type (
 	ConnectionConfig           = cruxconfig.ConnectionConfig
 	DefinitionSourceConfig     = cruxconfig.DefinitionSourceConfig
 	GatewayConfig              = cruxconfig.GatewayConfig
+	GatewayModelPrice          = cruxconfig.GatewayModelPrice
+	GatewayPrices              = cruxconfig.GatewayPrices
 	InferenceAuthConfig        = cruxconfig.InferenceAuthConfig
 	KickLimitsConfig           = cruxconfig.KickLimitsConfig
 	LiteLLMConfig              = cruxconfig.LiteLLMConfig
@@ -35,6 +37,7 @@ type (
 	ReviewModelsConfig         = cruxconfig.ReviewModelsConfig
 	RotationConfig             = cruxconfig.RotationConfig
 	SandboxJobConfig           = cruxconfig.SandboxJobConfig
+	SandboxPublishConfig       = cruxconfig.SandboxPublishConfig
 	SandboxJobResources        = cruxconfig.SandboxJobResources
 	SandboxJobToleration       = cruxconfig.SandboxJobToleration
 	SandboxJobVolume           = cruxconfig.SandboxJobVolume
@@ -170,6 +173,7 @@ var (
 
 var (
 	APIKeySHA256              = cruxconfig.APIKeySHA256
+	CopiedSandboxBlock        = cruxconfig.CopiedSandboxBlock
 	AllowSecretFileRoot       = cruxconfig.AllowSecretFileRoot
 	DropDanglingModelFlag     = cruxconfig.DropDanglingModelFlag
 	IsCLIBackend              = cruxconfig.IsCLIBackend
@@ -183,7 +187,9 @@ var (
 	QualifyRepo               = cruxconfig.QualifyRepo
 	ReviewHeadKey             = cruxconfig.ReviewHeadKey
 	SecretFilePathAllowed     = cruxconfig.SecretFilePathAllowed
+	SecretFilePathRejection   = cruxconfig.SecretFilePathRejection
 	SecretFileRoots           = cruxconfig.SecretFileRoots
+	DescribeKeySource         = cruxconfig.DescribeKeySource
 	SetSecretFileRootsForTest = cruxconfig.SetSecretFileRootsForTest
 	SupportedBackends         = cruxconfig.SupportedBackends
 	ValidEffort               = cruxconfig.ValidEffort

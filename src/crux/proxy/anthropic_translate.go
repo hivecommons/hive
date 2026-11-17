@@ -254,14 +254,22 @@ func translateAnthropicToolChoice(raw json.RawMessage) json.RawMessage {
 // usage block is present. Used to attribute inference-agent token consumption
 // into the token store.
 func extractOpenAIUsage(body []byte) (inputTokens, outputTokens int64) {
+	u := extractOpenAIUsageDetailed(body)
+	return u.Input, u.Output
+}
+
+// extractOpenAIUsageDetailed is extractOpenAIUsage plus the cached part of
+// the prompt (usage.prompt_tokens_details.cached_tokens).
+func extractOpenAIUsageDetailed(body []byte) gatewayUsage {
 	var resp openaiResponse
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return 0, 0
+	if err := json.Unmarshal(body, &resp); err != nil || resp.Usage == nil {
+		return gatewayUsage{}
 	}
-	if resp.Usage == nil {
-		return 0, 0
+	return gatewayUsage{
+		Input:  int64(resp.Usage.PromptTokens),
+		Output: int64(resp.Usage.CompletionTokens),
+		Cached: int64(resp.Usage.cachedTokens()),
 	}
-	return int64(resp.Usage.PromptTokens), int64(resp.Usage.CompletionTokens)
 }
 
 // translateOpenAIResponseToAnthropic converts a non-streaming OpenAI Chat
@@ -332,6 +340,13 @@ func translateOpenAIResponseToAnthropic(body []byte, model string) ([]byte, erro
 // stream_options.include_usage). Returns (0, 0) when the gateway did not emit
 // usage.
 func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) (inputTokens, outputTokens int64, err error) {
+	u, err := translateOpenAISSEToAnthropicUsage(r, w, model)
+	return u.Input, u.Output, err
+}
+
+// translateOpenAISSEToAnthropicUsage is translateOpenAISSEToAnthropic that
+// also reports the cached part of the prompt from the final usage chunk.
+func translateOpenAISSEToAnthropicUsage(r io.Reader, w io.Writer, model string) (gatewayUsage, error) {
 	msgID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
 
 	writeSSE(w, "message_start", anthropicSSEMessageStart{
@@ -352,6 +367,7 @@ func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) (inpu
 
 	var totalInputTokens int
 	var totalOutputTokens int
+	var totalCachedTokens int
 	var contentBlockIndex int
 	textBlockStarted := false
 	toolCallState := make(map[int]*sseToolCallAccumulator)
@@ -375,6 +391,9 @@ func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) (inpu
 			totalOutputTokens = chunk.Usage.CompletionTokens
 			if chunk.Usage.PromptTokens > 0 {
 				totalInputTokens = chunk.Usage.PromptTokens
+			}
+			if c := chunk.Usage.cachedTokens(); c > 0 {
+				totalCachedTokens = c
 			}
 		}
 
@@ -473,7 +492,7 @@ func translateOpenAISSEToAnthropic(r io.Reader, w io.Writer, model string) (inpu
 	}
 
 	writeSSE(w, "message_stop", map[string]string{"type": "message_stop"})
-	return int64(totalInputTokens), int64(totalOutputTokens), scanner.Err()
+	return gatewayUsage{Input: int64(totalInputTokens), Output: int64(totalOutputTokens), Cached: int64(totalCachedTokens)}, scanner.Err()
 }
 
 type sseToolCallAccumulator struct {
@@ -697,6 +716,27 @@ type openaiUsage struct {
 	PromptTokens     int `json:"prompt_tokens"`
 	CompletionTokens int `json:"completion_tokens"`
 	TotalTokens      int `json:"total_tokens"`
+	// PromptTokensDetails.CachedTokens is the part of PromptTokens served
+	// from the provider's prompt cache (OpenAI, OpenRouter, LiteLLM, vLLM
+	// with prefix caching). It bills at the cache-read rate.
+	PromptTokensDetails *struct {
+		CachedTokens int `json:"cached_tokens"`
+	} `json:"prompt_tokens_details,omitempty"`
+}
+
+// cachedTokens is the cached part of the prompt, 0 when not reported.
+func (u *openaiUsage) cachedTokens() int {
+	if u == nil || u.PromptTokensDetails == nil {
+		return 0
+	}
+	return u.PromptTokensDetails.CachedTokens
+}
+
+// gatewayUsage is one upstream response's token usage on the gateway path.
+// Input is the FULL prompt as the gateway reports it (prompt_tokens); Cached
+// is the part of it read from the prompt cache.
+type gatewayUsage struct {
+	Input, Output, Cached int64
 }
 
 type openaiSSEChunk struct {

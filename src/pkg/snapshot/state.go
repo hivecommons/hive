@@ -169,6 +169,8 @@ type GovKickEntry struct {
 	// "stand-down", "no-op", "ended" — or empty when never classified.
 	Outcome       string `json:"outcome,omitempty"`
 	OutcomeReason string `json:"outcome_reason,omitempty"`
+	// Reason is why an event-driven kick went out (governor.KickRecord.Reason).
+	Reason string `json:"reason,omitempty"`
 }
 
 type AgentKickEntry struct {

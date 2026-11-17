@@ -215,8 +215,10 @@ func (p *GitHubProxy) recordInferenceError(route *InferenceRoute, agentName stri
 	if isInferenceAuthStatus(status) && p.inferenceAuth != nil {
 		msg := inferenceAuthErrorMessage(route.Backend, status, truncateBytes(body, 200))
 		p.inferenceAuth.recordFailure(msg, time.Now())
+		keySource, keyChanged := inferenceKeyLogFields(route)
 		p.logger.Warn("inference backend auth failure",
-			"agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "status", status)
+			"agent", agentName, "backend", route.Backend, "endpoint", route.Endpoint, "status", status,
+			"key_source", keySource, "key_changed_since_start", keyChanged)
 	}
 
 	// PROVIDER SPEND REBUFF (#4294). Checked before the 403/entitlement branch
@@ -433,7 +435,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			http.Error(w, `{"type":"error","error":{"type":"api_error","message":"no inference route for agent"}}`, http.StatusBadGateway)
 			return
 		}
-		route = p.routeWithEntitledModel(route, agentName)
+		route = p.routeWithEntitledModel(routeWithCurrentKey(route), agentName)
 
 		body, err := io.ReadAll(r.Body)
 		if r.Body != nil {
@@ -499,6 +501,9 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			return
 		}
 		resp, err := client.Do(upstreamReq)
+		if err == nil {
+			resp, route = p.retryInferenceOnAuthFailure(r.Context(), client, route, agentName, upstreamURL, openaiBody, resp)
+		}
 		if err != nil {
 			if errors.Is(err, context.Canceled) && errors.Is(r.Context().Err(), context.Canceled) {
 				p.logger.Debug("inference request canceled", "agent", agentName)
@@ -559,13 +564,11 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			if f, ok := w.(http.Flusher); ok {
 				f.Flush()
 			}
-			in, out, err := translateOpenAISSEToAnthropic(resp.Body, w, route.Model)
+			usage, err := translateOpenAISSEToAnthropicUsage(resp.Body, w, route.Model)
 			if err != nil {
 				p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
 			}
-			if in > 0 || out > 0 {
-				p.recordUsage(agentName, route.Model, in, out)
-			}
+			p.recordGatewayUsage(agentName, route.Model, usage)
 			return
 		}
 
@@ -581,9 +584,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			"preview", truncateBytes(respBody, 500),
 		)
 
-		if in, out := extractOpenAIUsage(respBody); in > 0 || out > 0 {
-			p.recordUsage(agentName, route.Model, in, out)
-		}
+		p.recordGatewayUsage(agentName, route.Model, extractOpenAIUsageDetailed(respBody))
 
 		translated, err := translateOpenAIResponseToAnthropic(respBody, route.Model)
 		if err != nil {
@@ -665,7 +666,7 @@ func (p *GitHubProxy) handleAnthropicReroute(conn net.Conn, r *http.Request, hos
 // handleInferenceRequest translates a single Anthropic API request and
 // forwards it to the inference backend.
 func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, agentName string, route *InferenceRoute) {
-	route = p.routeWithEntitledModel(route, agentName)
+	route = p.routeWithEntitledModel(routeWithCurrentKey(route), agentName)
 	_ = conn.SetReadDeadline(time.Now().Add(httpReadTimeout))
 	body, err := io.ReadAll(req.Body)
 	_ = conn.SetReadDeadline(time.Time{})
@@ -714,6 +715,9 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		return
 	}
 	resp, err := client.Do(upstreamReq)
+	if err == nil {
+		resp, route = p.retryInferenceOnAuthFailure(req.Context(), client, route, agentName, upstreamURL, openaiBody, resp)
+	}
 	if err != nil {
 		p.logger.Error("inference upstream failed", "agent", agentName, "url", upstreamURL, "error", err)
 		if p.gatewayHealth != nil {
@@ -761,13 +765,11 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		if _, err := conn.Write([]byte(hdr)); err != nil {
 			return
 		}
-		in, out, err := translateOpenAISSEToAnthropic(resp.Body, conn, route.Model)
+		usage, err := translateOpenAISSEToAnthropicUsage(resp.Body, conn, route.Model)
 		if err != nil {
 			p.logger.Error("inference SSE translation failed", "agent", agentName, "error", err)
 		}
-		if in > 0 || out > 0 {
-			p.recordUsage(agentName, route.Model, in, out)
-		}
+		p.recordGatewayUsage(agentName, route.Model, usage)
 		return
 	}
 
@@ -777,9 +779,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		return
 	}
 
-	if in, out := extractOpenAIUsage(respBody); in > 0 || out > 0 {
-		p.recordUsage(agentName, route.Model, in, out)
-	}
+	p.recordGatewayUsage(agentName, route.Model, extractOpenAIUsageDetailed(respBody))
 
 	translated, err := translateOpenAIResponseToAnthropic(respBody, route.Model)
 	if err != nil {

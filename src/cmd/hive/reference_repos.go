@@ -40,6 +40,29 @@ type referenceRepoDeps struct {
 	// the store) before a pass resolves against it; nil skips.
 	refreshOwner func(ctx context.Context)
 	whoAmI       func(ctx context.Context, token string) (string, error)
+	// writeIdentity reads project.remote_write_identity as of now; nil reads
+	// as the default (bot).
+	writeIdentity func() string
+	// app is the hive's GitHub App seam for the bot identity, read per call
+	// because the AppAuth is replaced on key rotation; nil, or a zero value,
+	// means no App path (bot falls back to the owner, bot_only is read-only).
+	app func() github.ReferenceRepoApp
+}
+
+// appSeam is deps.app with a nil guard.
+func (d referenceRepoDeps) appSeam() github.ReferenceRepoApp {
+	if d.app == nil {
+		return github.ReferenceRepoApp{}
+	}
+	return d.app()
+}
+
+// writeIdentitySetting is deps.writeIdentity with a nil guard.
+func (d referenceRepoDeps) writeIdentitySetting() string {
+	if d.writeIdentity == nil {
+		return ""
+	}
+	return d.writeIdentity()
 }
 
 // ownerCredential is deps.owner with a nil guard.
@@ -63,35 +86,45 @@ type referenceRepoResolution struct {
 // buildReferenceRepoPolicies turns the config list into proxy policies. A
 // read-only entry needs nothing; a hand-written write-mode entry is verified
 // now so the failure is a boot-time config error naming the repo. A derived
-// entry (hivecommons/hive#18158) is resolved instead: write tier when the
-// owner identity is usable, read-only otherwise, never an error.
+// entry (hivecommons/hive#18158) is resolved instead, never an error. Which
+// identity a write-tier entry writes as follows project.remote_write_identity
+// (github.ResolveReferenceRepoCredential): the App bot where the App covers
+// the repo, the owner's connected account, or read-only. Only entries in refs
+// ever get a token source, so an App installation shared by other hives is
+// never a grant by itself.
 func buildReferenceRepoPolicies(ctx context.Context, refs []config.ReferenceRepo, deps referenceRepoDeps, logger *slog.Logger) (referenceRepoResolution, error) {
 	if deps.refreshOwner != nil {
 		deps.refreshOwner(ctx)
 	}
 	owner := deps.ownerCredential()
+	setting := deps.writeIdentitySetting()
+	app := deps.appSeam()
 	res := referenceRepoResolution{
 		policies: make([]proxy.ReferenceRepoPolicy, 0, len(refs)),
 		repos:    make([]config.ReferenceRepo, 0, len(refs)),
 	}
 	for _, rr := range refs {
-		login := ""
-		if rr.Derived() {
-			rr, login = github.ResolveDerivedReferenceRepo(rr, owner)
-		} else if !rr.ReadOnly() {
-			l, err := github.VerifyReferenceRepoWriteCredential(ctx, rr, owner, deps.whoAmI)
-			if err != nil {
-				return referenceRepoResolution{}, err
-			}
-			login = l
-			rr.CredentialState = config.ReferenceCredentialWriteTier
-			rr.CredentialReason = ""
-			rr.CredentialLogin = login
+		resolved, cred, err := github.ResolveReferenceRepoCredential(ctx, rr, setting, owner, app, deps.whoAmI)
+		if err != nil {
+			return referenceRepoResolution{}, err
 		}
+		if cred.LookupErr != nil {
+			logger.Warn("reference repo: App installation lookup failed, serving read-only this pass", "repo", rr.Repo, "error", cred.LookupErr.Error())
+		}
+		rr = resolved
 		pol := proxy.ReferenceRepoPolicy{Repo: rr.Repo, Issues: rr.WritesIssues(), PRs: rr.WritesPRs()}
-		if !rr.ReadOnly() {
-			pol.Login = login
-			pol.Token = github.ReferenceRepoTokenSource(rr, deps.ownerToken, logger)
+		if rr.CredentialState == config.ReferenceCredentialUnresolved {
+			// No credential this pass (a hand-written entry keeps its Write
+			// opt-in in config): the proxy refuses its writes until the next
+			// pass resolves it.
+			pol = proxy.ReferenceRepoPolicy{Repo: rr.Repo}
+		} else if !rr.ReadOnly() {
+			pol.Login = cred.Login
+			if cred.Identity == config.ReferenceIdentityBot {
+				pol.Token = github.BotReferenceRepoTokenSource(rr, deps.appSeam, logger)
+			} else {
+				pol.Token = github.ReferenceRepoTokenSource(rr, deps.ownerToken, logger)
+			}
 		}
 		res.policies = append(res.policies, pol)
 		res.repos = append(res.repos, rr)
@@ -176,6 +209,18 @@ func (b *boot) newReferenceRepoRuntime() *referenceRepoRuntime {
 	}
 	rt.deps.whoAmI = func(ctx context.Context, token string) (string, error) {
 		return github.TokenUserLogin(ctx, token, apiURL)
+	}
+	rt.deps.writeIdentity = func() string {
+		if b.cfg == nil {
+			return ""
+		}
+		return b.cfg.Project.RemoteWriteIdentity
+	}
+	rt.deps.app = func() github.ReferenceRepoApp {
+		if b.ghClient == nil {
+			return github.ReferenceRepoApp{}
+		}
+		return b.ghClient.AppAuth().ReferenceRepoApp()
 	}
 	if store := b.ownerIdentityStore(); store != nil {
 		rt.deps.owner = store.Credential
@@ -266,4 +311,38 @@ func (b *boot) ownerIdentityStore() *github.OwnerIdentityStore {
 		b.ownerIdentity = github.NewOwnerIdentityStore("")
 	}
 	return b.ownerIdentity
+}
+
+// checkRemoteWriteIdentity is the dashboard's dry run for a
+// project.remote_write_identity change (hivecommons/hive#18516): the
+// hand-written reference repos are resolved under setting with the live
+// seams, and the error a hand-written write entry would stop the next boot
+// with is returned so the change is refused instead. Nothing is installed.
+func (b *boot) checkRemoteWriteIdentity(ctx context.Context, setting string) error {
+	if b.githubProxy == nil || b.cfg == nil {
+		return nil
+	}
+	if err := config.ValidateRemoteWriteIdentity(setting); err != nil {
+		return err
+	}
+	rt := b.referenceRepos
+	if rt == nil {
+		rt = b.newReferenceRepoRuntime()
+	}
+	deps := rt.deps
+	deps.writeIdentity = func() string { return setting }
+	_, err := buildReferenceRepoPolicies(ctx, config.HandWrittenReferenceRepos(b.cfg.Project.ReferenceRepos), deps, b.logger)
+	return err
+}
+
+// remoteWriteIdentityChanged is the dashboard's hook after the setting was
+// saved: one full pass (derive, resolve, install) so the next write already
+// carries the new identity and the Settings page reloads the resolved state.
+// It runs on the boot context, not the request's, because the pass starts
+// background work (the read-only notice, the own-item follow-up).
+func (b *boot) remoteWriteIdentityChanged() {
+	if b.referenceRepos == nil || b.ctx == nil {
+		return
+	}
+	b.rederiveReferenceRepos(b.ctx)
 }

@@ -17,7 +17,46 @@
 | `bd remember "fact"` | Quick-add an advisory bead authored by `system`. |
 | `bd init` | No-op compatibility command; opening the store creates it. |
 | `bd dolt push` | No-op compatibility command; bead data is already persisted on disk. |
+| `bd topic claim <key> --repo <owner/name> --pr <n> [--branch <b>] [--actor <a>]` | Claim a topic for one pull request. See [Topic claims](#topic-claims). |
+| `bd topic get <key> [--json]` / `bd topic list [--json]` / `bd topic release <key>` | Read, list or release topic claims. |
 | `bd decompose <epic-id> [--plan <file>] [--actor <lane>] [--auto-approve] [--print-prompt]` | Decompose an epic bead into a DAG of child task beads. See below. |
+
+## Topic claims
+
+A long-lived agent that owns one ongoing topic (a dependency-bump PR, a release
+PR) records which pull request carries it, so it finds that PR by number on
+every later kick instead of by branch name (hivecommons/hive#18493).
+
+```bash
+bd topic claim deps-bump --repo acme/widget --pr 412 --branch deps/bump-go
+bd topic get deps-bump          # deps-bump → acme/widget#412 (branch deps/bump-go)
+bd topic list --json
+bd topic release deps-bump
+```
+
+- The claim is one `in_progress` chore bead in the agent's own store, with
+  `external_ref` `topic:<key>` and metadata `topic_key`, `topic_repo`,
+  `topic_pr`, `topic_branch` and `topic_state`. Keys are lowercased and may
+  not contain whitespace.
+- At most one claim per key is open. Claiming an open key again for the same
+  PR is idempotent and updates the branch; claiming it for a different PR is
+  refused with exit code `2` and names the PR that holds it. `bd topic get`
+  also exits `2` when no claim is open.
+- `--actor` defaults to `$HIVE_AGENT`.
+- Hive releases a claim when its PR merges or closes (`topic_state` becomes
+  `merged` or `closed`): on the hive's own merge or close, on an observed
+  terminal PR, and on each eval cycle's snapshot. The same eval-cycle pass
+  updates `topic_branch` when the PR's head branch was renamed.
+  `bd topic release` records `released`. `bd reset` closes open claims too.
+- A sandboxed kick has no `bd`: it runs `hive-topic` with the same arguments,
+  which hive applies to the agent's store through the sandbox request spool.
+  `hive-topic claim <key>` without `--pr` claims the PR hive opens from the
+  kick; the claim is pending until that PR exists. See
+  [sandbox-isolation.md](sandbox-isolation.md#issue-and-topic-requests-through-the-spool).
+- The kick shows an agent its open claims in a `📌 Topic claims` block, also
+  available to kick templates as `${TOPIC_CLAIMS}` (which renders the usage
+  lines even when the agent holds no claim). The FIX-BEFORE-NEW and hold-gated
+  PR blocks tag a claimed PR with `[topic: <key>]`.
 
 ## Decomposing an epic
 

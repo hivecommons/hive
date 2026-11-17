@@ -109,25 +109,6 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/runs/{key}", s.handleRunGet)
 	s.mux.HandleFunc("POST /api/runs/spec", s.handleRunSpecStart)
 	s.mux.HandleFunc("POST /api/runs/{key}/reset", s.handleRunReset)
-	s.mux.HandleFunc("GET /api/campaigns", s.handleCampaignsList)
-	s.mux.HandleFunc("GET /api/campaigns/{id}", s.handleCampaignGet)
-	s.mux.HandleFunc("POST /api/campaigns/{id}/resume", s.handleCampaignResume)
-	s.mux.HandleFunc("POST /api/campaigns/{id}/release", s.handleCampaignRelease)
-	s.mux.HandleFunc("POST /api/campaigns/{id}/revise", s.handleCampaignRevise)
-	s.mux.HandleFunc("DELETE /api/campaigns/{id}", s.handleCampaignDelete)
-	s.mux.HandleFunc("POST /api/campaigns/{id}/recheck", s.handleCampaignRecheck)
-	s.mux.HandleFunc("GET /api/campaigns/{id}/jam", s.handleCampaignJamGet)
-	s.mux.HandleFunc("POST /api/campaigns/{id}/jam", s.handleCampaignJamPost)
-	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/threads", s.handleCampaignJamThreadsGet)
-	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/threads", s.handleCampaignJamThreadsPost)
-	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/agents", s.handleCampaignJamAgentsPost)
-	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/suggestions", s.handleCampaignJamSuggestionsGet)
-	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/suggestions", s.handleCampaignJamSuggestionsPost)
-	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/polls", s.handleCampaignJamPollsGet)
-	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/polls", s.handleCampaignJamPollsPost)
-	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/project-sync", s.handleCampaignJamProjectSyncGet)
-	s.mux.HandleFunc("POST /api/campaigns/{id}/jam/project-sync", s.handleCampaignJamProjectSyncPost)
-	s.mux.HandleFunc("GET /api/campaigns/{id}/jam/ws", s.handleCampaignJamWebSocket)
 	s.mux.HandleFunc("GET /api/widget", s.handleWidget)
 	s.mux.HandleFunc("GET /api/widget/summary", s.handleWidgetSummary)
 	s.mux.HandleFunc("GET /api/widget/token", s.handleWidgetTokenStatus)
@@ -469,20 +450,22 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/hive-id", s.handleHiveIDGet)
 	s.mux.HandleFunc("PUT /api/hive-id", s.handleHiveIDSet)
 
-	s.mux.HandleFunc("POST /api/inception/start", s.handleInceptionStart)
-	s.mux.HandleFunc("POST /api/inception/scan", s.handleInceptionScan)
-	s.mux.HandleFunc("GET /api/inception/state", s.handleInceptionState)
-	s.mux.HandleFunc("POST /api/inception/questions", s.handleInceptionSetQuestions)
-	s.mux.HandleFunc("POST /api/inception/answer", s.handleInceptionAnswer)
-	s.mux.HandleFunc("POST /api/inception/facts", s.handleInceptionRecordFacts)
-	s.mux.HandleFunc("GET /api/inception/scaffold", s.handleInceptionScaffold)
-	s.mux.HandleFunc("POST /api/inception/approve", s.handleInceptionApprove)
-	s.mux.HandleFunc("POST /api/inception/reset", s.handleInceptionReset)
-	s.mux.HandleFunc("GET /api/inception/ideation-facts", s.handleInceptionIdeationFacts)
-	s.mux.HandleFunc("GET /api/inception/download", s.handleInceptionDownload)
-	s.mux.HandleFunc("GET /api/inception/has-files", s.handleInceptionHasFiles)
-	s.mux.HandleFunc("PUT /api/inception/wiki-name", s.handleInceptionRenameWiki)
-	s.mux.HandleFunc("POST /api/inception/import", s.handleInceptionImport)
+	// The inception API was retired in favour of Inception (spek) sessions;
+	// every former route answers 410 Gone for one release (inception_gone.go).
+	s.mux.HandleFunc("POST /api/inception/start", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/scan", s.handleInceptionGone)
+	s.mux.HandleFunc("GET /api/inception/state", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/questions", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/answer", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/facts", s.handleInceptionGone)
+	s.mux.HandleFunc("GET /api/inception/scaffold", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/approve", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/reset", s.handleInceptionGone)
+	s.mux.HandleFunc("GET /api/inception/ideation-facts", s.handleInceptionGone)
+	s.mux.HandleFunc("GET /api/inception/download", s.handleInceptionGone)
+	s.mux.HandleFunc("GET /api/inception/has-files", s.handleInceptionGone)
+	s.mux.HandleFunc("PUT /api/inception/wiki-name", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/import", s.handleInceptionGone)
 
 	// Plan-review gate (Phase 2 planning intelligence). Mirrors /api/inception/*.
 	// Phase 4 adds the issue entry point: mint an epic from a GitHub issue and
@@ -589,7 +572,12 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerKnowledgeConnectorRoutes()
 	s.registerKnowledgeConnectorAuthRoutes()
 	s.registerInboxRoutes()
+	s.registerInboxRecordingRoutes()
 	s.registerMeetingsRoutes()
+	s.registerMeetingsScheduleRoutes()
+	s.registerMeetingsPersonaRoutes()
+	s.registerMeetingsModelRoutes()
+	s.registerMeetingsEmailRoutes()
 	s.mux.HandleFunc("POST /api/system-alerts/dismiss", s.handleSystemAlertDismiss)
 	// Per-agent Variables tab (#11458, api_variables.go).
 	s.registerAgentVariableRoutes()
@@ -604,12 +592,21 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// project.reference_repos editor on the Repos tab (#18136, api_config_reference_repos.go).
 	s.mux.HandleFunc("GET /api/config/reference-repos", s.handleReferenceReposGet)
 	s.mux.HandleFunc("PUT /api/config/reference-repos", s.handleReferenceReposPut)
+	// project.remote_write_identity on the same Settings section (#18516, api_config_remote_write_identity.go).
+	s.mux.HandleFunc("PUT /api/config/reference-repos/write-identity", s.handleRemoteWriteIdentityPut)
 	// The hive owner's GitHub identity for remote repos (#18197,
 	// api_github_owner_identity.go): consent, status and disconnect.
 	s.mux.HandleFunc("GET /api/github-owner-identity", s.handleOwnerIdentityGet)
 	s.mux.HandleFunc("POST /api/github-owner-identity/start", s.handleOwnerIdentityStart)
 	s.mux.HandleFunc("POST /api/github-owner-identity/poll", s.handleOwnerIdentityPoll)
 	s.mux.HandleFunc("DELETE /api/github-owner-identity", s.handleOwnerIdentityDelete)
+	// Owner-approved prompt/definition source repos (#18490,
+	// api_config_prompt_sources.go).
+	s.mux.HandleFunc("GET /api/config/prompt-sources", s.handlePromptSourcesGet)
+	s.mux.HandleFunc("PUT /api/config/prompt-sources/owner-repos", s.handlePromptSourcesOwnerRepoPut)
+	// Agents discovered in managed repos' .hive/agents/ (#18491,
+	// api_repo_agents.go): list, approve, reject, rescan.
+	s.registerRepoAgentRoutes()
 }
 
 var (

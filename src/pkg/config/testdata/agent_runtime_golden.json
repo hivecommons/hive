@@ -229,7 +229,9 @@
         "Human": "",
         "Clanker": "",
         "Hive": ""
-      }
+      },
+      "ReadyForReview": "",
+      "DecisionNeeded": ""
     },
     "Sensing": {
       "GHRatePatterns": [
@@ -707,7 +709,8 @@
       "ExecTimeoutS": 0,
       "HTTPTimeoutS": 0,
       "AllowGitHubPrompt": false,
-      "GitHubPromptAllowlist": null
+      "GitHubPromptAllowlist": null,
+      "OwnerGitHubPromptRepos": null
     },
     "Defs": null
   },
@@ -763,10 +766,7 @@
       "prior_art": {}
     },
     "spektacular": {
-      "hub_executor": {},
-      "recheck": {
-        "discovery": {}
-      }
+      "hub_executor": {}
     },
     "external": {
       "flue": {
@@ -802,6 +802,7 @@
   },
   "auto_merge": {
     "bot_takeover": {},
+    "dependency_bot_adopt": {},
     "trusted_authors": {},
     "contributor_lane": {},
     "contributor_tier": {},

@@ -30,7 +30,10 @@ function makeContext(role) {
     window: { _hiveRole: role },
     INBOX_SOURCE_ICONS: { plaud: '🎙️' },
     INBOX_DEST_LABELS: { spek_rfc: 'RFC', dibs: 'dibs' },
+    INBOX_INTENT_LABELS: { spek_rfc: 'RFC', dismiss: 'Knowledge', spek: 'spek' },
     INBOX_SUMMARY_COLLAPSE_CHARS: 280,
+    INBOX_SHARE_LABELS: { rfc: 'RFC', dibs: 'DIBS', knowledge: 'Knowledge', spek: 'spek' },
+    _inboxHistoryOpen: new Set(),
     _inboxSelected: new Set(),
     _inboxExpanded: new Set(),
     _inboxTranscriptOpen: new Set(),
@@ -48,7 +51,7 @@ function makeContext(role) {
     Array,
   };
   vm.createContext(ctx);
-  for (const fn of ['inboxSourceIcon', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTranscriptionHtml', 'inboxItemHtml']) {
+  for (const fn of ['inboxSharePillText', 'inboxShareTargetHref', 'inboxSharePillHtml', 'inboxSharePillsHtml', 'inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemHasAudio', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxCanDeleteRecording', 'inboxItemHtml']) {
     vm.runInContext(extractFunction(fn), ctx);
   }
   return ctx;
@@ -67,8 +70,24 @@ test('pending item explains that Plaud has no text yet and never shows the MCP e
   assert.match(html, /▶ Play recording/);
   assert.match(html, /data-action="inboxToggleTranscript"/);
   assert.match(html, /data-inbox-media="plaud\/f_1"/);
-  for (const action of ['inboxOpenRoute', 'inboxDismiss', 'inboxOpenFact']) assert.match(html, new RegExp('data-action="' + action + '"'), action + ' action kept');
+  for (const action of ['inboxShare', 'inboxOpenFact']) assert.match(html, new RegExp('data-action="' + action + '"'), action + ' action kept');
+  for (const action of ['inboxOpenRoute', 'inboxDismiss']) assert.doesNotMatch(html, new RegExp('data-action="' + action + '"'), action + ' moved into the Share menu');
   assert.doesNotMatch(html, /<audio/, 'no audio element (and no URL) before the owner clicks play');
+});
+
+test('the Knowledge fact is a status pill and a metadata link, never a row button', () => {
+  const ctx = makeContext('owner');
+  const html = vm.runInContext('inboxItemHtml(' + JSON.stringify(Object.assign({}, pendingItem, { fact_state: 'pending' })) + ')', ctx);
+  assert.doesNotMatch(html, /📚 Fact/);
+  assert.doesNotMatch(html, /<button[^>]*data-action="inboxOpenFact"/, 'no Fact button');
+  assert.match(html, /<div class="muted-xs">[^]*<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="plaud-plaud-f_1" data-arg1="personal"[^>]*>open in Knowledge<\/a><\/div>/);
+  assert.match(html, /<span class="kc-pill" role="status" data-status="not loaded" data-fact-state="pending"[^>]*>Pending text<\/span>/);
+  const machine = vm.runInContext('inboxItemHtml(' + JSON.stringify(Object.assign({}, pendingItem, { pending: false, fact_state: 'machine' })) + ')', ctx);
+  assert.match(machine, /data-fact-state="machine"[^>]*>In knowledge \(machine text\)<\/span>/);
+  const ready = vm.runInContext('inboxItemHtml(' + JSON.stringify(Object.assign({}, readyItem, { fact_slug: 'plaud-plaud-f_2', fact_state: 'ready' })) + ')', ctx);
+  assert.match(ready, /data-fact-state="ready"[^>]*>In knowledge<\/span>/);
+  const live = vm.runInContext('inboxItemHtml(' + JSON.stringify(readyItem) + ')', ctx);
+  assert.doesNotMatch(live, /inbox-fact-link|data-fact-state/, 'no fact yet: no pill, no link');
 });
 
 test('summary renders inline and collapses past the threshold with a more toggle', () => {
@@ -116,11 +135,62 @@ test('File RFC route state: a failed hand-off shows its error inline, delegated 
   let html = vm.runInContext('inboxItemHtml(' + JSON.stringify(failed) + ')', ctx);
   assert.match(html, /data-status="error"[^>]*>RFC failed</);
   assert.match(html, /class="kc-error muted-xs" role="alert">spek_rfc: handing the RFC to agent &lt;builder&gt; failed: busy</);
-  assert.match(html, />Retry RFC…</);
+  assert.doesNotMatch(html, />Retry RFC…</, 'Retry RFC… lives in the Share menu');
 
   const delegated = Object.assign({}, readyItem, { routes: { spek_rfc: { status: 'delegated', repo: 'o/r', note: 'handed to agent builder to draft with spek and publish to o/r' } } });
   html = vm.runInContext('inboxItemHtml(' + JSON.stringify(delegated) + ')', ctx);
   assert.match(html, /data-status="ok"[^>]*>RFC handed to agent</);
   assert.match(html, /muted-xs">handed to agent builder to draft with spek and publish to o\/r</);
   assert.doesNotMatch(html, /role="alert"/);
+});
+
+test('transcribe-then-share: the progress bar names the share, a failed intent shows its reason', () => {
+  const ctx = makeContext('read-write');
+  const running = Object.assign({}, pendingItem, {
+    transcription: { status: 'running', phase: 'transcribing', progress: 0.4, started_at: '2026-11-16T10:00:00Z', eta_seconds: 240 },
+    share_intents: { spek_rfc: { status: 'waiting', actor: 'rw@example.com' } },
+  });
+  let html = vm.runInContext('inboxItemHtml(' + JSON.stringify(running) + ')', ctx);
+  assert.match(html, /Transcribing, then → RFC · 40%/);
+  const failed = Object.assign({}, pendingItem, { share_intents: { dismiss: { status: 'failed', error: 'transcription failed: provider down' } } });
+  html = vm.runInContext('inboxItemHtml(' + JSON.stringify(failed) + ')', ctx);
+  assert.match(html, /data-status="error"[^>]*>→ Knowledge failed</);
+  assert.match(html, /role="alert">transcription failed: provider down</);
+  assert.match(html, /inbox-check/, 'read-write can select items for the bulk Hive menu');
+});
+
+test('an uploaded document shows where it came from and who added it, its text, and no Play', () => {
+  const ctx = makeContext('owner');
+  const doc = { source: 'upload', id: '20261116t093000-0a1b2c3d', title: 'Launch plan', origin: 'upload · notes.md', added_by: 'ana@example.com', upload_kind: 'markdown', recorded_at: '2026-11-16T09:30:00Z', summary: 'Ship the drop zone first.', fact_slug: 'upload-20261116t093000-0a1b2c3d', fact_state: 'ready', layer: 'personal' };
+  let html = vm.runInContext('inboxItemHtml(' + JSON.stringify(doc) + ')', ctx);
+  assert.match(html, /upload · notes\.md · added 2h ago · by ana@example\.com/);
+  assert.doesNotMatch(html, /data-action="inboxPlay"/, 'documents have no audio');
+  assert.match(html, /▸ Text<\/button>/);
+  assert.match(html, /In knowledge/);
+  ctx._inboxTranscriptOpen.add('upload/' + doc.id);
+  ctx._inboxContent['upload/' + doc.id] = { markdown: '# Launch plan\n\n<b>bold</b>' };
+  html = vm.runInContext('inboxTranscriptHtml(' + JSON.stringify(doc) + ', ' + JSON.stringify('upload/' + doc.id) + ')', ctx);
+  assert.match(html, /Extracted text/);
+  assert.match(html, /&lt;b&gt;bold&lt;\/b&gt;/);
+  // Uploaded audio keeps the player.
+  assert.match(vm.runInContext('inboxItemHtml(' + JSON.stringify(Object.assign({}, doc, { upload_kind: 'audio' })) + ')', ctx), /data-action="inboxPlay"/);
+});
+
+test('share history pills sit with the other pills and read users get no link', () => {
+  const withHistory = Object.assign({}, readyItem, { share_history: [{ id: 'sh-1', destination: 'rfc', actor: 'andy', status: 'done', started_at: '2026-11-16T10:00:00Z', ref: { number: 18412, url: 'https://github.com/o/r/issues/18412' } }] });
+  let html = vm.runInContext('inboxItemHtml(' + JSON.stringify(withHistory) + ')', makeContext('owner'));
+  assert.match(html, /<a class="kc-pill inbox-share-pill"[^>]*href="https:\/\/github\.com\/o\/r\/issues\/18412"[^>]*>→ RFC #18412 · andy · 2h ago</);
+  html = vm.runInContext('inboxItemHtml(' + JSON.stringify(withHistory) + ')', makeContext('read-only'));
+  assert.match(html, /<span class="kc-pill inbox-share-pill"[^>]*>→ RFC #18412/);
+  assert.doesNotMatch(html, /href="https:\/\/github/);
+});
+
+test('an uploaded audio file is pending with its own note and keeps the player', () => {
+  const ctx = makeContext('read-write');
+  const audio = { source: 'upload', id: '20261116t093000-0a1b2c3e', title: 'standup', origin: 'upload · standup.m4a', added_by: 'ana', upload_kind: 'audio', pending: true, transcribable: true, fact_slug: 'upload-x', fact_state: 'pending' };
+  const html = vm.runInContext('inboxItemHtml(' + JSON.stringify(audio) + ')', ctx);
+  assert.match(html, /this audio was added to the Inbox without text/);
+  assert.doesNotMatch(html, /Plaud/);
+  assert.match(html, /data-action="inboxPlay"/);
+  assert.match(html, /▸ Transcript<\/button>/);
 });

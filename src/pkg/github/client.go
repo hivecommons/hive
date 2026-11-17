@@ -144,6 +144,9 @@ type Client struct {
 	workflowsGrant    workflowsGrantCache
 	// citedLines caches the stale-finding check (issue_cited_lines.go).
 	citedLines citedCache
+	// needsSHALabelName is the configured SHA-hold label, recorded by each
+	// EnforceSHAHold sweep (guarded by issueFilterMu). Empty means the default.
+	needsSHALabelName string
 	// reporterConfirmationEnabled restores the legacy close gate for all
 	// human-filed bug-family issues when configured. Nil/false means only
 	// per-issue opt-in markers activate the gate.
@@ -341,7 +344,7 @@ type Client struct {
 	// StartPRRequestWatcher.
 	prAuthz PRRequestAuthorizer
 	// prHoldLabel decides, at PR-creation time, whether a freshly-opened PR must
-	// carry the "hold" label (F6). It receives the authoring agent and the PR's
+	// carry the ready-for-review gate label (F6; "hold" before #18468). It receives the authoring agent and the PR's
 	// target repo so role-specific safety rules (for example, mandatory human
 	// review of outreach content aimed at a repo the hive does not manage) can
 	// be enforced alongside the authoritative ACMM level. It is consulted
@@ -434,6 +437,12 @@ type Client struct {
 	// the per-agent push-capability policy + forge-resistance. nil fails closed.
 	// Set by StartReviewRequestWatcher.
 	reviewAuthz ReviewRequestAuthorizer
+	// sandboxSpoolIssueAuthz and sandboxSpoolTopic serve the issue and topic
+	// kinds of the sandbox request spool (hivecommons/hive#18572, #18573).
+	// Set by SetSandboxSpoolRelays; nil refuses the kind.
+	sandboxSpoolMu         sync.Mutex
+	sandboxSpoolIssueAuthz IssueRequestAuthorizer
+	sandboxSpoolTopic      SandboxTopicHandler
 	// reviewBots is classification.review_bots (hivecommons/hive#7360): the
 	// external review-bot logins whose threads the hive may reply in and
 	// resolve. Zero value = feature off: the monitor reports nothing and the
@@ -630,6 +639,9 @@ type Client struct {
 	stageEngineMu sync.Mutex
 	stageWriter   *stageWriter
 	stageEngines  map[*stagelabels.Store]stageengine.Reconciler
+	// stageWorkflow is the per-repository workflow model lookup the stage
+	// engine derives through (stage_model_owned.go, hivecommons/hive#18434).
+	stageWorkflow atomic.Pointer[stageWorkflowLookup]
 	// baseRefresh is the decision carry's memo (pr_decision_base_refresh.go).
 	baseRefreshOnce sync.Once
 	baseRefresh     *BaseRefreshChecker
@@ -2129,6 +2141,13 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			breakdown.Filtered++
 			breakdown.ReporterConfirmation++
 			details = append(details, c.workIssue(repo, issue, labels, "filtered", issueNeedsReporterConfirmationLabel))
+			continue
+		}
+		// needs-sha: waiting on the reporter for a commit SHA. Out of every
+		// agent lane whatever the reporter-trust setting (hivecommons/hive#18542).
+		if label := c.needsSHALabelOn(labels); label != "" {
+			breakdown.Filtered++
+			details = append(details, c.workIssue(repo, issue, labels, "filtered", label))
 			continue
 		}
 		if suppress := hardSuppressIssueBucket(issueFilter, labels); suppress != "" {
@@ -4001,6 +4020,12 @@ func HasHoldLabelWith(labels, extraHoldLabels []string) bool {
 	}
 	for _, label := range labels {
 		lower := strings.ToLower(label)
+		// The hive's own gate labels (ready-for-review, decision-needed;
+		// hivecommons/hive#18468) block exactly like `hold`, matched exactly
+		// so a look-alike such as `not-ready-for-review` is not a hold.
+		if IsHiveGateLabel(label) {
+			return true
+		}
 		// Provenance labels (hive/<id>) are never hold labels, whatever the
 		// hive ID happens to contain. The substring rule below otherwise
 		// reads hive/hosted-...-placeHOLDer-r05x as "hold" and parks every
@@ -4660,6 +4685,39 @@ func (c *Client) GetFileContentRef(ctx context.Context, owner, repo, path, ref s
 	return content, nil
 }
 
+// ListDirectoryFiles returns the names of the regular files directly inside
+// the directory at path in owner/repo at an optional git ref (an empty ref uses
+// the default branch). Subdirectories, symlinks and submodules are skipped. A
+// 404 means the directory does not exist and is reported as (nil, nil), so a
+// caller can tell "no such directory" apart from a failed read. It backs the
+// repo agent discovery scan of .hive/agents/ (hivecommons/hive#18491).
+func (c *Client) ListDirectoryFiles(ctx context.Context, owner, repo, path, ref string) ([]string, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
+	var opts *gh.RepositoryContentGetOptions
+	if ref != "" {
+		opts = &gh.RepositoryContentGetOptions{Ref: ref}
+	}
+	fileContent, dirContent, resp, err := c.client.Repositories.GetContents(ctx, owner, repo, path, opts)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("listing %s/%s/%s: %w", owner, repo, path, err)
+	}
+	if fileContent != nil {
+		return nil, fmt.Errorf("%s/%s/%s is a file, not a directory", owner, repo, path)
+	}
+	names := make([]string, 0, len(dirContent))
+	for _, entry := range dirContent {
+		if entry.GetType() == "file" && entry.GetName() != "" {
+			names = append(names, entry.GetName())
+		}
+	}
+	return names, nil
+}
+
 // PathExistsAtRef reports whether path exists in owner/repo at the given git ref
 // (branch, tag, or commit SHA). It is used by the advisory digest to verify that
 // a finding's file reference still exists at the pinned analysis commit (#3704),
@@ -4824,19 +4882,20 @@ const shaHoldComment = shaHoldMarker + "\n" +
 	"Or check the version string at the bottom of the console UI or dashboard, " +
 	"or call the `version_read` admin-MCP tool (its `currentCommit` is the build SHA).\n\n" +
 	shaHoldLegacyNoticeSentence + " " +
-	"Simply add a comment with the SHA and the hold will be automatically removed._"
+	"Simply add a comment with the SHA and the label will be automatically removed._"
 
 type SHAHoldConfig struct {
 	PrimaryRepo     string
 	AIAuthor        string
 	InternalAuthors []string
 	// TrustedAssociations are the GitHub author associations (OWNER, MEMBER,
-	// COLLABORATOR, ...) whose missing SHA gets TrustedLabel instead of the
-	// hard `hold` (hivecommons/hive#12002): the SHA request is a
-	// reproduction aid, not a maintainer park.
+	// COLLABORATOR, ...) that got TrustedLabel instead of the hard `hold`
+	// (hivecommons/hive#12002). Since #18468 every reporter gets TrustedLabel
+	// and the sweep no longer consults this; it is kept for callers.
 	TrustedAssociations []string
-	// TrustedLabel is the soft label for trusted reporters. Empty (or "hold")
-	// keeps the legacy hard hold for every reporter.
+	// TrustedLabel is the label the sweep applies while a SHA is missing.
+	// Empty (or "hold") uses defaultSHAHoldLabel: the sweep never applies
+	// `hold` (hivecommons/hive#18468), for any reporter.
 	TrustedLabel string
 }
 
@@ -4849,23 +4908,61 @@ type SHAHoldResult struct {
 	Softened int `json:"softened"`
 }
 
-// shaHoldSoftLabel returns the soft label to apply to this reporter's issue,
-// or "" when the hard `hold` applies.
-func (cfg SHAHoldConfig) shaHoldSoftLabel(association string) string {
-	label := strings.TrimSpace(cfg.TrustedLabel)
-	if label == "" || strings.EqualFold(label, "hold") {
-		return ""
-	}
-	association = strings.TrimSpace(association)
-	if association == "" {
-		return ""
-	}
-	for _, trusted := range cfg.TrustedAssociations {
-		if strings.EqualFold(strings.TrimSpace(trusted), association) {
-			return label
+// defaultSHAHoldLabel is the label the SHA sweep applies when none is
+// configured (config.DefaultSHAHoldTrustedLabel).
+const defaultSHAHoldLabel = "needs-sha"
+
+// NeedsSHALabelDescription is the repo label description for the SHA-hold label.
+const NeedsSHALabelDescription = "Waiting on the reporter for the commit SHA; hive won't work this until it's added."
+
+// needsSHALabelOn returns the SHA-hold label the labels carry (the configured
+// name, or the default name), or "" when none. An issue wearing it is parked
+// on the reporter and kept out of agent work lanes.
+func (c *Client) needsSHALabelOn(labels []string) string {
+	c.issueFilterMu.RLock()
+	configured := c.needsSHALabelName
+	c.issueFilterMu.RUnlock()
+	for _, name := range []string{configured, defaultSHAHoldLabel} {
+		if name = strings.TrimSpace(name); name == "" {
+			continue
+		}
+		for _, l := range labels {
+			if strings.EqualFold(strings.TrimSpace(l), name) {
+				return name
+			}
 		}
 	}
 	return ""
+}
+
+func (c *Client) setNeedsSHALabel(name string) {
+	c.issueFilterMu.Lock()
+	c.needsSHALabelName = strings.TrimSpace(name)
+	c.issueFilterMu.Unlock()
+}
+
+// ensureNeedsSHALabel creates the SHA-hold label with its description when
+// the repo lacks it. Best effort: the label add that follows still works.
+func (c *Client) ensureNeedsSHALabel(ctx context.Context, owner, repo, name string) {
+	if err := c.EnsureIssueLabel(ctx, owner+"/"+repo, name, "fbca04", NeedsSHALabelDescription); err != nil {
+		c.logger.Warn("could not ensure SHA-hold label", "repo", repo, "label", name, "error", err)
+	}
+}
+
+// shaHoldLabel returns the label the sweep applies to an issue missing a SHA.
+// It is never `hold`: a `hold` means a person said hands-off, and the hive
+// no longer applies one itself (hivecommons/hive#18468). Before #18468 an
+// untrusted reporter's issue got the hard `hold`; the sweep now gives every
+// reporter this label and swaps any `hold` it applied itself for it. An
+// untrusted reporter's issue still stays out of automatic work through the
+// reporter-trust gate (issue_filter.reporter_trust) until a maintainer
+// admits it.
+func (cfg SHAHoldConfig) shaHoldLabel() string {
+	label := strings.TrimSpace(cfg.TrustedLabel)
+	if label == "" || strings.EqualFold(label, LegacyHiveHoldLabel) {
+		return defaultSHAHoldLabel
+	}
+	return label
 }
 
 func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHoldResult, error) {
@@ -4874,6 +4971,7 @@ func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHol
 	}
 	result := &SHAHoldResult{}
 	owner, repo := c.splitRepo(cfg.PrimaryRepo)
+	c.setNeedsSHALabel(cfg.shaHoldLabel())
 
 	opts := &gh.IssueListByRepoOptions{
 		State:       "open",
@@ -4905,46 +5003,15 @@ func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHol
 			hasSHA = c.checkCommentsForSHA(ctx, owner, repo, issue.GetNumber(), author)
 		}
 
-		if soft := cfg.shaHoldSoftLabel(issue.GetAuthorAssociation()); soft != "" {
-			c.enforceSoftSHAHold(ctx, owner, repo, issue.GetNumber(), author, soft, labels, held, hasSHA, result)
-			continue
-		}
-
-		switch {
-		case hasSHA && held:
-			// Only release a hold this sweep applied. A human's `hold`, a hold
-			// applied by another Hive subsystem through the same App (the
-			// dashboard hold on a hive with no id), or any non-literal hold
-			// spelling (`on-hold`, `hive-pause/<id>`) is left for its owner
-			// to lift (#8927).
-			ok, err := c.shaHoldIsOwn(ctx, owner, repo, issue.GetNumber())
-			if err != nil {
-				c.logger.Warn("SHA-UNHOLD skipped: could not verify hold provenance", "repo", repo, "issue", issue.GetNumber(), "error", err)
-				result.Skipped++
-				continue
-			}
-			if !ok {
-				c.logger.Info("SHA-UNHOLD skipped: current hold was not applied by the SHA-hold sweep", "repo", repo, "issue", issue.GetNumber(), "author", author)
-				result.Skipped++
-				continue
-			}
-			c.unhold(ctx, owner, repo, issue.GetNumber())
-			result.Unheld++
-			c.logger.Info("SHA-UNHOLD", "repo", repo, "issue", issue.GetNumber(), "author", author)
-		case !hasSHA && !held:
-			c.hold(ctx, owner, repo, issue.GetNumber())
-			result.Held++
-			c.logger.Info("SHA-HOLD", "repo", repo, "issue", issue.GetNumber(), "author", author)
-		default:
-			result.Skipped++
-		}
+		c.enforceSoftSHAHold(ctx, owner, repo, issue.GetNumber(), author, cfg.shaHoldLabel(), labels, held, hasSHA, result)
 	}
 
 	return result, nil
 }
 
-// enforceSoftSHAHold is the trusted-reporter branch of EnforceSHAHold
-// (hivecommons/hive#12002). It never applies the hard `hold`: a missing SHA
+// enforceSoftSHAHold is EnforceSHAHold's one branch (trusted reporters since
+// hivecommons/hive#12002, every reporter since #18468). It never applies the
+// hard `hold`: a missing SHA
 // gets the soft label plus the usual notice, a provided SHA lifts the soft
 // label, and a hard `hold` this sweep applied before the soft path existed is
 // swapped for the soft label. A `hold` from anyone else is left alone.
@@ -4962,6 +5029,7 @@ func (c *Client) enforceSoftSHAHold(ctx context.Context, owner, repo string, num
 			return
 		}
 		if !hasSHA && !softHeld {
+			c.ensureNeedsSHALabel(ctx, owner, repo, soft)
 			if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{soft}); err != nil {
 				c.logger.Warn("failed to add soft SHA label", "repo", repo, "issue", number, "label", soft, "error", err)
 				result.Skipped++
@@ -4988,6 +5056,7 @@ func (c *Client) enforceSoftSHAHold(ctx context.Context, owner, repo string, num
 		result.Unheld++
 		c.logger.Info("SHA-UNHOLD", "repo", repo, "issue", number, "author", author, "label", soft)
 	case !hasSHA && !softHeld:
+		c.ensureNeedsSHALabel(ctx, owner, repo, soft)
 		if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{soft}); err != nil {
 			c.logger.Warn("failed to add soft SHA label", "repo", repo, "issue", number, "label", soft, "error", err)
 			result.Skipped++
@@ -5019,22 +5088,6 @@ func (c *Client) checkCommentsForSHA(ctx context.Context, owner, repo string, nu
 		}
 	}
 	return false
-}
-
-func (c *Client) hold(ctx context.Context, owner, repo string, number int) {
-	_, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{"hold"})
-	if err != nil {
-		c.logger.Warn("failed to add hold label", "repo", repo, "issue", number, "error", err)
-	} else {
-		// Hive's local record of hold sources (#11564); a local write only.
-		_ = RecordHoldSource(HoldKindIssue, owner+"/"+repo, number, HoldSourceSHAHold)
-	}
-
-	comment := &gh.IssueComment{Body: gh.Ptr(shaHoldComment)}
-	_, _, err = c.client.Issues.CreateComment(ctx, owner, repo, number, comment)
-	if err != nil {
-		c.logger.Warn("failed to post SHA hold comment", "repo", repo, "issue", number, "error", err)
-	}
 }
 
 func (c *Client) unhold(ctx context.Context, owner, repo string, number int) {
@@ -5712,4 +5765,26 @@ func hardSuppressIssueBucket(filter IssueAdmitter, labels []string) string {
 		return classifier.HardSuppressIssueBucket(labels)
 	}
 	return hardSuppressIssueLabel(labels)
+}
+
+// FindIssueByBody returns the URL of the oldest issue in repo (owner/repo)
+// whose body contains marker, or "" when none exists. The inbox uses it to
+// find the RFC a spek agent published, via the provenance reference the RFC
+// body carries.
+func (c *Client) FindIssueByBody(ctx context.Context, repo, marker string) (string, error) {
+	marker = strings.TrimSpace(marker)
+	if repo == "" || marker == "" {
+		return "", nil
+	}
+	q := fmt.Sprintf("repo:%s is:issue in:body %q", repo, marker)
+	result, _, err := c.client.Search.Issues(ctx, q, &gh.SearchOptions{
+		Sort: "created", Order: "asc", ListOptions: gh.ListOptions{PerPage: 1},
+	})
+	if err != nil {
+		return "", fmt.Errorf("searching issues in %s: %w", repo, err)
+	}
+	if len(result.Issues) == 0 {
+		return "", nil
+	}
+	return result.Issues[0].GetHTMLURL(), nil
 }

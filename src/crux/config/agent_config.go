@@ -582,6 +582,38 @@ type GatewayConfig struct {
 	// round-trip; an absent name is a normal, backwards-compatible state the
 	// dashboard renders as "(unnamed)" rather than an error.
 	KeyName string `yaml:"key_name,omitempty" json:"key_name,omitempty"`
+	// Prices optionally sets what this gateway charges, in USD per 1M tokens,
+	// so spend reports can cost its models. It is the only price source for
+	// vllm, llm-d, watsonx and custom gateways (which publish none) and wins
+	// over the OpenRouter catalog and LiteLLM /model/info when set. Without a
+	// price the dashboard reports the gateway's spend as "price unknown"
+	// rather than $0. omitempty keeps existing hive.yaml files byte-identical.
+	Prices *GatewayPrices `yaml:"prices,omitempty" json:"prices,omitempty"`
+	// TrainsOnInputs marks a gateway (typically a free tier) whose terms let
+	// the provider train on request content. Callers that send private
+	// repository content skip such a gateway unless the operator opts in
+	// (advisory_engine.allow_training_providers_for_private,
+	// hivecommons/hive#18464). YAML-only; omitempty keeps existing files
+	// byte-identical.
+	TrainsOnInputs bool `yaml:"trains_on_inputs,omitempty" json:"trains_on_inputs,omitempty"`
+}
+
+// GatewayPrices is a gateway's configured price, USD per 1M tokens. The
+// top-level rates apply to every model the gateway serves; Models overrides
+// them for specific model ids. CachedInput defaults to Input when unset (cached
+// prompt tokens are never assumed free).
+type GatewayPrices struct {
+	Input       *float64                     `yaml:"input,omitempty" json:"input,omitempty"`
+	CachedInput *float64                     `yaml:"cached_input,omitempty" json:"cached_input,omitempty"`
+	Output      *float64                     `yaml:"output,omitempty" json:"output,omitempty"`
+	Models      map[string]GatewayModelPrice `yaml:"models,omitempty" json:"models,omitempty"`
+}
+
+// GatewayModelPrice is one model's configured price, USD per 1M tokens.
+type GatewayModelPrice struct {
+	Input       *float64 `yaml:"input,omitempty" json:"input,omitempty"`
+	CachedInput *float64 `yaml:"cached_input,omitempty" json:"cached_input,omitempty"`
+	Output      *float64 `yaml:"output,omitempty" json:"output,omitempty"`
 }
 
 // TrajectoryConfig governs the trajectory-review lane: a periodic,

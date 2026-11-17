@@ -113,12 +113,16 @@ func (s *HubServer) handleHubOpenRouterQR(w http.ResponseWriter, r *http.Request
 // handleHubOpenRouterModels returns the curated suggested list + OpenRouter's live
 // model catalog so the funding modal's picker can offer options and manual entry.
 func (s *HubServer) handleHubOpenRouterModels(w http.ResponseWriter, r *http.Request) {
-	live := fetchOpenRouterModels()
+	catalog := openrouter.CachedPublicModels()
+	live := openrouter.ModelIDs(catalog)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
-		"suggested": openrouter.SuggestedModels,
-		"models":    live,
-		"default":   openrouter.DefaultModel,
+		// Curated ids the live catalog has retired are hidden, never offered
+		// as a dead default (an unreadable catalog keeps the full list).
+		"suggested":  openrouter.AvailableSuggested(live),
+		"models":     live,
+		"model_info": catalog,
+		"default":    openrouter.AvailableDefault(live),
 	})
 }
 

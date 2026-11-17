@@ -74,6 +74,10 @@ type depBotConflictStore struct {
 	// each PR's commit list said about its current head.
 	rebase      map[string]*depBotRebaseState
 	branchFacts map[string]depBotBranchFacts
+
+	// adopt holds the persisted red-CI adoption requests, one per bot head
+	// (dependency_bot_adopt.go).
+	adopt map[string]*depBotAdoptRecord
 }
 
 func loadDepBotConflictStore(path string) *depBotConflictStore {
@@ -86,6 +90,8 @@ func loadDepBotConflictStore(path string) *depBotConflictStore {
 
 		rebase:      loadDepBotRebaseStates(depBotRebasePath(path)),
 		branchFacts: map[string]depBotBranchFacts{},
+
+		adopt: loadDepBotAdoptRecords(depBotAdoptPath(path)),
 	}
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -246,6 +252,9 @@ func dependencyBotConflictComment(base string) string {
 //     depBotRedCIGrace (the PR stays out of the fix loop); on a trusted-bot
 //     head triaged as transient, only once the hive's one re-run of it
 //     failed again or re-ran nothing (dependency_bot_transient_rerun.go);
+//     with auto_merge.dependency_bot_adopt on, a trusted-bot head the review
+//     swarm asked to change is instead given to the hive's adoption path,
+//     once per head (dependency_bot_adopt.go);
 //   - a terminal required-check hold the automerge sweep reported (held for
 //     approval, never started, never ran);
 //   - a stranded branch: behind or conflicting past
@@ -266,14 +275,32 @@ func runDependencyBotConflictSweep(ctx context.Context, cfg *config.Config, writ
 	if cfg != nil {
 		org = cfg.Project.Org
 	}
-	sweepDependencyBotConflicts(ctx, getDepBotConflictStore(), org, cfg.DependencyBotRebaseAfter(), writer, reader, actionable, time.Now, logger)
+	adopt := depBotAdoptPolicyFromConfig(cfg, reader, logger)
+	sweepDependencyBotConflictsWith(ctx, getDepBotConflictStore(), org, cfg.DependencyBotRebaseAfter(), adopt, writer, reader, actionable, time.Now, logger)
 }
 
+// sweepDependencyBotConflicts is the sweep with auto_merge.dependency_bot_adopt
+// off.
 func sweepDependencyBotConflicts(
 	ctx context.Context,
 	store *depBotConflictStore,
 	org string,
 	rebaseAfter time.Duration,
+	writer forge.IssueWriter,
+	reader depBotPRReader,
+	actionable *github.ActionableResult,
+	now func() time.Time,
+	logger *slog.Logger,
+) {
+	sweepDependencyBotConflictsWith(ctx, store, org, rebaseAfter, depBotAdoptPolicy{}, writer, reader, actionable, now, logger)
+}
+
+func sweepDependencyBotConflictsWith(
+	ctx context.Context,
+	store *depBotConflictStore,
+	org string,
+	rebaseAfter time.Duration,
+	adopt depBotAdoptPolicy,
 	writer forge.IssueWriter,
 	reader depBotPRReader,
 	actionable *github.ActionableResult,
@@ -308,6 +335,7 @@ func sweepDependencyBotConflicts(
 	}
 	stranded := depBotRebaseCheck{store: store, reader: reader, window: rebaseAfter, now: now(), logger: logger}
 	store.pruneRebase(seen)
+	store.pruneAdopt(seen)
 
 	waiting := map[string]bool{}
 	defer store.pruneObservations(waiting)
@@ -405,6 +433,11 @@ func sweepDependencyBotConflicts(
 				owed = now().Sub(store.rerunOwedSince(key, pr.HeadSHA, now()))
 			}
 			if red < depBotRedCIGrace || holdHandoff || rerun.holdsHandoff(red, owed) {
+				continue
+			}
+			if requestDependencyBotAdoption(ctx, adopt, store, writer, reader, repo, key, pr, now(), logger) {
+				// The hive's adoption path owns this head now (or the
+				// label write just failed: the hand-off follows next pass).
 				continue
 			}
 			comment = dependencyBotRedCIComment(pr, rerun)
