@@ -90,6 +90,8 @@ var heartbeatResponseFieldFence = map[string]heartbeatFieldClass{
 	"ProjectConfig":       heartbeatFieldFenced, // claimed project config
 	// Resolved from spoke-reported or hub-provisioned identity.
 	"ClusterID": heartbeatFieldFenced,
+	// Hub-held cluster network policy: patches the hive's own Deployment.
+	"HostAliases": heartbeatFieldFenced,
 }
 
 // fenceSelfServiceHeartbeatResponse zeroes every fenced field of resp when
