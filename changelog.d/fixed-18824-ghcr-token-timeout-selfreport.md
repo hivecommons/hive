@@ -1,1 +1,0 @@
-- A slow GHCR token endpoint (request timeout) no longer files a fleet self-report issue; the "GHCR token request failed" WARN stays in local logs and resolvers keep serving their previous answer. Other GHCR failures (DNS, auth, bad responses) remain reportable (#18824).
