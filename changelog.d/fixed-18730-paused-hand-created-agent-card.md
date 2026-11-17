@@ -1,0 +1,1 @@
+- A hand-created agent that is paused keeps its card in the dashboard instead of disappearing from every view while its name stays taken ("agent already exists"), so it can be resumed, edited or deleted again (#18730).
