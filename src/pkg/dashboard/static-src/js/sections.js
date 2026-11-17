@@ -14,6 +14,14 @@
       'contributors-section', 'sessions-section', 'acmm-eval-section', 'debug-section', 'audit-section',
       'logs-section', 'nous-section', 'faq-section'
     ]);
+    // Level-driven defaults: a section listed here starts collapsed once the
+    // hive runs at or above the ACMM level, until the operator picks a state
+    // themselves. At L6 the hive runs itself, so the Agents card is minimized.
+    // The last seen level is cached so a reload does not flash the card open
+    // before the first status arrives.
+    const ACMM_AUTONOMOUS_LEVEL = 6;
+    const DASHBOARD_LEVEL_COLLAPSED_SECTIONS = Object.freeze({ 'agents-section': ACMM_AUTONOMOUS_LEVEL });
+    const DASHBOARD_ACMM_LEVEL_CACHE_KEY = 'hive-acmm-level-last';
     const DASHBOARD_COLLAPSE_DEFAULTS_KEY = 'hive.dashboard.collapseDefaults';
     const DASHBOARD_COLLAPSE_DEFAULTS_VERSION = 'v1';
     const DASHBOARD_COLLAPSE_DEFAULTS_LEGACY = 'legacy';
@@ -780,7 +788,7 @@
         return '';
       } else if (sectionId === 'agents-section') {
         const agents = data.agents || window._lastAgents || [];
-        inner = typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now(), data.governor) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text);
+        inner = agentsAttentionBadgeHtml(agents) + (typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now(), data.governor) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text));
       } else if (sectionId === 'lifecycle-section') {
         inner = miniBar([{ label: 'in flight', value: nums[0] || 0, color: 'var(--blue)' }, { label: 'merged', value: nums[1] || 0, color: 'var(--green)' }, { label: 'blocked', value: nums[2] || 0, color: 'var(--red)' }], text);
       } else {
@@ -819,7 +827,20 @@
       const activeAgents = agents.filter(a => a && !agentIsDisabled(a));
       const off = activeAgents.filter(a => a && (a.paused || a.stopped || a.offByCadence || a.unscheduledInMode || a.state === 'stopped' || a.state === 'failed')).length;
       const on = Math.max(0, activeAgents.length - off);
-      return `${agents.length} agents · ${on} on · ${off} off${disabled > 0 ? ` · ${disabled} disabled` : ''}`;
+      const attention = agentsNeedingAttention(agents);
+      return `${agents.length} agents · ${on} on · ${off} off${disabled > 0 ? ` · ${disabled} disabled` : ''}${attention > 0 ? ` · ${attention} need attention` : ''}`;
+    }
+    /** Agents the owner must act on: signed out, expired, stopped or failed (not disabled by choice). */
+    function agentsNeedingAttention(agents) {
+      return (Array.isArray(agents) ? agents : []).filter(a => {
+        if (!a || agentIsDisabled(a)) return false;
+        const isDown = a.state !== 'running';
+        return agentCollapsedAuthInfo(a, isDown).needsLogin || a.state === 'stopped' || a.state === 'failed' || a.state === 'blocked';
+      }).length;
+    }
+    function agentsAttentionBadgeHtml(agents) {
+      const n = agentsNeedingAttention(agents);
+      return n > 0 ? `<span class="badge-status status-badge agents-attention-badge" data-status="attention" title="${n} agent${n === 1 ? '' : 's'} need your attention">${n} need attention</span>` : '';
     }
     let _lastHiveAdvice = null;
     function agentCollapsedParseNextKick(value, nowMs) {
@@ -1413,6 +1434,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       sectionId = dashboardAliasSectionId(sectionId);
       return dashboardCollapseDefaultsActive() && DASHBOARD_DEFAULT_COLLAPSED_SECTIONS.indexOf(sectionId) >= 0;
     }
+    /** Current ACMM level (same status field the header badge shows); falls back to the cached level before the first status. */
+    function dashboardAcmmLevel() {
+      const st = typeof window !== 'undefined' ? window._lastStatus : null;
+      if (st && st.acmmLevel != null) { const n = Number(st.acmmLevel); return Number.isFinite(n) ? n : 0; }
+      try { const c = Number(localStorage.getItem(DASHBOARD_ACMM_LEVEL_CACHE_KEY)); return Number.isFinite(c) ? c : 0; } catch (e) { return 0; }
+    }
+    /** Remember the level from the latest status so the next load starts in the right state. */
+    function dashboardRememberAcmmLevel(level) {
+      try {
+        const n = String(Number(level) || 0);
+        if (localStorage.getItem(DASHBOARD_ACMM_LEVEL_CACHE_KEY) !== n) localStorage.setItem(DASHBOARD_ACMM_LEVEL_CACHE_KEY, n);
+      } catch (e) { /* storage unavailable */ }
+    }
+    /** True when the hive's level makes this section start collapsed (no operator choice involved). */
+    function dashboardLevelDefaultCollapsed(sectionId) {
+      const min = DASHBOARD_LEVEL_COLLAPSED_SECTIONS[dashboardAliasSectionId(sectionId)];
+      return min != null && dashboardAcmmLevel() >= min;
+    }
     /** Check whether a dashboard section is collapsed: explicit localStorage choice first, then the default. */
     function isSectionCollapsed(sectionId) {
       sectionId = dashboardAliasSectionId(sectionId);
@@ -1421,13 +1460,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const raw = localStorage.getItem(SECTION_LS_PREFIX + sectionId);
       if (raw === '1') return true;
       if (raw === '0') return false;
-      return dashboardDefaultCollapsed(sectionId);
+      return dashboardDefaultCollapsed(sectionId) || dashboardLevelDefaultCollapsed(sectionId);
     }
     /** Write the per-section key: '1' collapsed, '0' explicitly expanded where the default is collapsed, removed otherwise. */
     function writeSectionCollapsedKey(sectionId, collapsed) {
       if (collapsed) {
         localStorage.setItem(SECTION_LS_PREFIX + sectionId, '1');
-      } else if (dashboardDefaultCollapsed(sectionId)) {
+      } else if (dashboardDefaultCollapsed(sectionId) || DASHBOARD_LEVEL_COLLAPSED_SECTIONS[sectionId] != null) {
+        // A level-driven section always keeps an explicit '0', otherwise an
+        // expand made below the level would collapse again when the level rises.
         localStorage.setItem(SECTION_LS_PREFIX + sectionId, '0');
       } else {
         localStorage.removeItem(SECTION_LS_PREFIX + sectionId);

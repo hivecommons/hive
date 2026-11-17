@@ -268,7 +268,7 @@
       document.querySelectorAll('[data-feature="experiment_lab"]').forEach(el => {
         if (experimentOn) {
           el.hidden = false;
-          if (el.id !== 'nous-section' && el.id !== 'nous-sidebar-config') el.style.display = '';
+          if (el.id !== 'nous-section') el.style.display = '';
         } else {
           el.hidden = true;
           el.style.display = 'none';
