@@ -11,6 +11,24 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.311.0)
+
+### Added
+
+- Spend by model and contributor run stats by model now carry `canonical_model`, the same folded model id the Governor's PRs-by-model card uses, so `claude-opus-5-5`, `anthropic/claude-opus-5-5` and `claude-opus-5.5` can be lined up across all three views. `/api/cost` `estimated.by_model[]` and every `/api/contribute/run-stats` and `/api/contribute/run-stats/models` row gain the field; spend stays one row per raw model, since prices are per raw model. Both run-stats endpoints accept an optional `group=canonical` that merges spellings into one row (runs summed, rates recomputed from the summed counts) with `raw_models[]` keeping each spelling's run count; without it the rows are unchanged. The Cost card's by-model list and the contributor wall's model evidence show the canonical id, with the reported spelling in a tooltip (#18718).
+
+## 2026-11-17 (v5.310.0)
+
+### Added
+
+- Governor PRs by model now shows, in each model's tooltip, a per-repository breakdown and a weekly trend (30d and all-time views), so a model's rework can be traced to one hard repository and its improvement over time is visible without diffing windows. `GET /api/governor/pr-models` adds `repos[]` and `weeks[]` to each bucket; existing fields are unchanged (#18716).
+- Governor **PRs by model** can list one model's pull requests: a **▸ PRs** button on each model row opens that model's PRs in the window (outcome, review rounds, fix attempts, first pass, author agent and backend, each linking to GitHub), loaded on demand from the new optional `model=` parameter on `GET /api/governor/pr-models`. The parameter accepts any raw spelling of the model, returns up to 200 PRs most reworked first with `prs_truncated` past that, and leaves the response unchanged when omitted (#18722).
+
+### Fixed
+
+- **The required `PR Type` and `PR Issue` checks always conclude, and the PR Verifier goes red when it cannot record them** (#18764). The pinned verifier image created each check `in_progress` and then updated it with the verdict; when GitHub answered that update with 404 (#18667), the required checks stayed `in_progress` for ever, Tide reported "Jobs PR Issue, PR Type have not succeeded", and the `verify PR contents` job still went green because the image step was `continue-on-error`. The workflow now computes both verdicts in-repo (`.github/scripts/pr-verifier.cjs`, reusing the existing port of the upstream v0.4.3 title rules, with the same check names, output titles and summaries) and records each check with one create call that is already completed — nothing is ever left in progress. A title the rules reject is still a failed `PR Type`/`PR Issue` check with a green wrapper job; a result that cannot be recorded now fails `verify PR contents` with the reason, after posting a completed `failure` check that says so. No image is pulled any more, so the job runs on the ordinary runner pool instead of a native ARM64 runner. To recover a PR whose checks are already stuck, add or remove any label on it, or for a same-repo PR dispatch `pr-verifier.yml` on its branch with its `pr_number`, so a fresh completed pair lands on its head (re-running an old run re-runs the old workflow).
+- A slow GHCR token endpoint (request timeout) no longer files a fleet self-report issue; the "GHCR token request failed" WARN stays in local logs and resolvers keep serving their previous answer. Other GHCR failures (DNS, auth, bad responses) remain reportable (#18824).
+
 ## 2026-11-17 (v5.309.0)
 
 ### Added
