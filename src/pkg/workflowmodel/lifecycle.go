@@ -188,10 +188,9 @@ var Facts = map[string]FactType{
 	"pr.head_fresh":        FactBool,
 	"pr.base":              FactScalar,
 	// pipeline.status is the latest post-merge run of the pipelines bound
-	// to the item's state: green | red | running | unknown. The engine does
-	// not observe post-merge runs yet and always reports unknown, so a
-	// transition on it never fires; it exists so ingested post-merge chains
-	// compile honestly instead of inventing a fact.
+	// to the item's state: green | red | running | unknown. Post-merge run
+	// observers (githubactions.ObservePostMerge, #18645) resolve it under
+	// the range attribution rules; without an observation it is unknown.
 	"pipeline.status": FactScalar,
 }
 

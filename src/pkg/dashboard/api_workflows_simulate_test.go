@@ -10,6 +10,8 @@ import (
 
 	ghpkg "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stageengine"
+	"github.com/hivecommons/hive/pkg/stagelabels"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
 )
 
 func simulateCall(t *testing.T, s *Server, path string, body any) (int, SimulateResponse, string) {
@@ -221,5 +223,64 @@ func TestWorkflowSimulateFetchesItem(t *testing.T) {
 	}
 	if code, _, _ := simulateCall(t, s, "/api/workflows/hive-default/1/simulate", map[string]any{"repo": "myorg/repo1", "number": 9}); code != http.StatusBadGateway {
 		t.Fatalf("forge error: %d", code)
+	}
+}
+
+// A merged PR's pr.pipeline is filled from the observed post-merge runs of
+// the model's bound pipelines (hivecommons/hive#18356): the observer is
+// asked for the PR's merge commit on the default branch, and the observed
+// status reaches the engine's pipeline.status fact. Without an observer,
+// or when it fails, pr.pipeline stays unknown and the simulate still
+// answers.
+func TestWorkflowSimulateMergedPRObservesPipeline(t *testing.T) {
+	s := workflowTestServer(t, true)
+	s.deps.WorkflowItemSnapshot = func(_ context.Context, repo string, number int) (ghpkg.WorkflowItemSnapshot, error) {
+		return ghpkg.WorkflowItemSnapshot{Kind: "pr", Merged: true, Author: "nate", HeadSHA: "abc", MergeCommitSHA: "m7", DefaultBranch: "main"}, nil
+	}
+	var asked []workflowmodel.MergedPR
+	var askedRepo, askedBranch string
+	var askedModel *workflowmodel.Model
+	s.deps.WorkflowPostMerge = func(_ context.Context, repo string, m *workflowmodel.Model, branch string, prs []workflowmodel.MergedPR) (map[int]*stageengine.PostMergeFacts, error) {
+		askedRepo, askedBranch, askedModel, asked = repo, branch, m, prs
+		if prs[0].Number == 9 {
+			return nil, errors.New("rate limited")
+		}
+		return map[int]*stageengine.PostMergeFacts{prs[0].Number: {Status: "green"}}, nil
+	}
+	has := func(list []string, want string) bool {
+		for _, s := range list {
+			if s == want {
+				return true
+			}
+		}
+		return false
+	}
+	code, out, raw := simulateCall(t, s, "/api/workflows/hive-default/1/simulate", map[string]any{"repo": "myorg/repo1", "number": 7})
+	if code != http.StatusOK {
+		t.Fatalf("%d %s", code, raw)
+	}
+	if askedRepo != "myorg/repo1" || askedBranch != "main" || askedModel == nil || len(asked) != 1 || asked[0] != (workflowmodel.MergedPR{Number: 7, MergeCommit: "m7"}) {
+		t.Fatalf("observer asked repo=%q branch=%q model=%v prs=%+v", askedRepo, askedBranch, askedModel != nil, asked)
+	}
+	if out.Facts.PR == nil || out.Facts.PR.Pipeline != "green" || !has(out.Filled, "pr.pipeline") || has(out.Unknown, "pr.pipeline") {
+		t.Fatalf("pipeline not filled: pr=%+v filled=%v unknown=%v", out.Facts.PR, out.Filled, out.Unknown)
+	}
+	ef := out.Facts.toEngine(stageengine.Ref{Kind: stagelabels.PRItem})
+	if ef.PR == nil || ef.PR.PostMerge == nil || ef.PR.PostMerge.Status != "green" {
+		t.Fatalf("pipeline.status not fed to the engine: %+v", ef.PR)
+	}
+
+	code, out, raw = simulateCall(t, s, "/api/workflows/hive-default/1/simulate", map[string]any{"repo": "myorg/repo1", "number": 9})
+	if code != http.StatusOK {
+		t.Fatalf("observer failure must not fail the simulate: %d %s", code, raw)
+	}
+	if out.Facts.PR.Pipeline != "" || !has(out.Unknown, "pr.pipeline") || len(out.Notes) == 0 || !strings.Contains(strings.Join(out.Notes, " "), "rate limited") {
+		t.Fatalf("failed observation: pr=%+v unknown=%v notes=%v", out.Facts.PR, out.Unknown, out.Notes)
+	}
+
+	s.deps.WorkflowPostMerge = nil
+	code, out, raw = simulateCall(t, s, "/api/workflows/hive-default/1/simulate", map[string]any{"repo": "myorg/repo1", "number": 7})
+	if code != http.StatusOK || out.Facts.PR.Pipeline != "" || !has(out.Unknown, "pr.pipeline") {
+		t.Fatalf("no observer: %d pr=%+v unknown=%v %s", code, out.Facts.PR, out.Unknown, raw)
 	}
 }

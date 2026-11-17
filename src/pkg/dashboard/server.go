@@ -2624,6 +2624,13 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			widgetTokenIdentity(r)
 		}
 
+		// Desktop companion token (#18596): admits ONLY the companion meeting
+		// routes, as the minting user at their live role (read-write or
+		// owner). It never reaches the token page or any other route.
+		if !trusted && s.companionTokenAuthenticates(r) {
+			trusted = true
+		}
+
 		if !trusted && r.URL.Path == "/api/knowledge/export" {
 			profile, reason := authenticateContributorToken(registrationTokenFromAuthorization(r), s.contributorTokenPolicy())
 			if profile == nil && reason == contributorTokenExpired {
@@ -3976,6 +3983,7 @@ func (s *Server) handleHealthDeep(w http.ResponseWriter, r *http.Request) {
 				if proc.KickRefused {
 					ac["status"] = "warn"
 					ac["detail"] = "refused kick: " + proc.KickRefusalReason
+					ac["docs_url"] = kickRefusalDocsURL(classifyKickRefusalFlag(proc.KickRefusalReason))
 				}
 				if detail := agentDeliveryFailure(proc, s.deps.Config); detail != "" {
 					ac["status"] = "fail"
@@ -5287,6 +5295,8 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 		Name   string `json:"name"`
 		Status string `json:"status"`
 		Detail string `json:"detail,omitempty"`
+		// DocsURL links a check to the docs page that explains it (kick_refusal).
+		DocsURL string `json:"docs_url,omitempty"`
 		// Onboarding/GuideStep mark setup problems the Getting Started guide
 		// has a step for (see OnboardingIssue); the SPA renders a guide tip.
 		Onboarding bool   `json:"onboarding,omitempty"`
@@ -5524,7 +5534,7 @@ func (s *Server) healthSummaryFor(status *StatusPayload, ready bool) map[string]
 			}
 		}
 		if len(refused) > 0 {
-			checks = append(checks, check{Name: "kick_refusal", Status: "warn", Detail: fmt.Sprintf("%s refused kick", strings.Join(refused, ", "))})
+			checks = append(checks, check{Name: kickRefusalCheck, Status: "warn", Detail: fmt.Sprintf("%s refused kick", strings.Join(refused, ", ")), DocsURL: kickRefusalDocsURL(kickRefusalCheck)})
 			warns++
 		}
 	}

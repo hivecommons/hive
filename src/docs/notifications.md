@@ -590,10 +590,12 @@ without a class. Review submissions and review requests are always counted as
 | `automerge.(*engineStatusForge).CreateComment` | `status` | passthrough wrapper shared by normal-mode stage notes and the quiet-mode status-comment forge under `prstatus.Write`; attributed to its caller |
 | `github.(*clientStatusForge).CreateComment` | `status` | passthrough wrapper (status-comment forge under `prstatus.Write`); attributed to its caller |
 | `github.(*Client).PostIssueNote` | `status` | passthrough wrapper (issue status card, `attention_pilot`); attributed to its caller |
+| `github.(*Client).PostInformationalIssueNote` | `status` | passthrough wrapper (issue status card in quiet mode or under `attention_pilot`, for notes nobody acts on); attributed to its caller |
 | `github.(*Client).closeDecomposedParent` | `status` |  |
 | `github.(*Client).closeIssueForMergedPRClaimWithIssue` | `status` |  |
 | `github.(*Client).closeSupersededPRDecision` | `status` |  |
 | `github.(*Client).fileReviewBacklog` | `status` |  |
+| `github.(*Client).foldReviewFollowUps` | `status` | review Follow-ups checklist folded into the PR status card (quiet mode) |
 | `github.(*Client).foldSentinelNotice` | `status` | informational sentinel notice folded into the PR status card (quiet mode); a blocking alert is never folded |
 | `github.(*Client).joinFleetReportIssue` | `status` |  |
 | `github.(*Client).markInProgressStarted` | `status` |  |
@@ -695,7 +697,11 @@ Quiet mode (`github.notifications.mode: quiet`) folds the hive's PR
 bookkeeping into one edited `hive:status` comment (including the auto-merge
 note, under the `auto-merge` section: in `normal` mode it stays its own
 comment, and a merge blocked on a person still gets its 085 / 090 entry
-comment, hivecommons/hive#18452) but leaves issue notes as
+comment, hivecommons/hive#18452; the review Follow-ups checklist, under
+`review-followups`, and a trust-only 090 entry, under `stage-ready`, while a
+held or manual-merge 090 and every 085 stay comments, hivecommons/hive#18606)
+but leaves issue notes (except the informational `issue-pr-link` stage note)
+as
 comments of their own, so one issue lifecycle (partial merge, remainder,
 close) could still email its watchers several times. With the pilot on, the
 issue gets the same card, written through the same single status writer
@@ -838,7 +844,7 @@ third party's comment that happens to contain the marker:
 | Workflow / script | Comment it posts | Behaviour |
 | --- | --- | --- |
 | Refs sweep (`.github/workflows/refs-sweep.yml`, `src/scripts/comment-merged-refs.sh`) | "PR #N has merged and referenced this issue with a non-closing `Refs`" (`<!-- hive-post-merge-refs-sweep: issue=N -->`) | **Skips** when the card carries `issue-partial:<pr>` for that PR; otherwise unchanged (still once per issue). |
-| Issue Closed Hint (`.github/workflows/issue-closed-reopen-hint.yml`) | "@reporter this issue was closed by … comment `/reopen`" | **Pending** (tracked in #16363; the workflow edit must be landed by a maintainer). Once applied: **skips** when the card carries `issue-close`, which already says "Reply /reopen"; otherwise **edits** its earlier comment (`<!-- issue-closed-reopen-hint -->`) instead of adding one per closure. Until then it posts a new comment on every closure as before. |
+| Issue Closed Hint (`.github/workflows/issue-closed-reopen-hint.yml`) | "@reporter this issue was closed by … comment `/reopen`" | **Pending** (tracked in #16363; the workflow edit must be landed by a maintainer). Once applied: **skips** when the card carries `issue-close`, which already says "Reply /reopen"; otherwise **edits** its earlier comment (`<!-- issue-closed-reopen-hint -->`) instead of adding one per closure. Until then it posts a new comment on every closure as before. **Skips** when the reporter is a bot or a maintainer (`author_association` OWNER / MEMBER / COLLABORATOR), who can reopen the issue themselves (#18607). |
 
 Editing a comment notifies nobody, so a workflow comment that is edited in
 place stops re-mentioning the reporter on every close/reopen cycle. Both
@@ -898,7 +904,7 @@ clean case, still goes to the job's step summary:
 | Workflow / script | Comment | Behaviour |
 | --- | --- | --- |
 | Open PR Overlap (`.github/workflows/pr-overlap.yml`, `.github/scripts/pr-overlap.sh`) | `<!-- hive-pr-overlap -->` table of conflicting / same-file open PRs | **Posts** only when at least one sibling PR conflicts or shares a file; **edits** the one marker comment in place on later pushes; when a later run finds nothing and a comment exists, **edits it** to a one-line "✅ Resolved" note; a PR that never had an overlap gets no comment. The `conflicts-with-open-pr` label is unchanged. |
-| Mutation (advisory) (`.github/workflows/mutation-advisory.yml`, `src/scripts/mutation-report.sh post`) | `<!-- hive-mutation -->` surviving / uncovered mutant report | **Posts** only for a non-`pass` verdict (`lived`, `uncovered`, `misrouted`, `error`); **edits** the one marker comment on later pushes; a later `pass` **edits** the existing comment to a one-line "✅ Resolved" note; a PR whose every run passes gets no comment. |
+| Mutation (advisory) (`.github/workflows/mutation-advisory.yml`, `src/scripts/mutation-report.sh post`) | `<!-- hive-mutation -->` surviving / uncovered mutant report | **Posts** only for a finding verdict (`lived`, `uncovered`, `misrouted`); an `error` verdict (gremlins wrote no report, so nothing for the author to act on) goes to the job summary and the failing verdict step only and never creates a comment (#18607); **edits** the one marker comment on later pushes (an `error` run edits an earlier finding comment so it is not stale); a later `pass` **edits** the existing comment to a one-line "✅ Resolved" note; a PR whose every run passes or errors gets no comment. |
 | Feedback Wanted (`.github/workflows/feedback.yml` → `hivecommons/infra` `reusable-feedback.yml`, gated by `src/scripts/feedback-gate.sh`) | "Thank you for your contribution! Your PR has been merged." | **Posts** only for a person's first merged PR in the repo. Skipped for `[bot]` / App authors, hive-managed head branches (`scanner/*`, `hive/*`), PR bodies carrying a `<!-- hive:` marker (hive-agent PRs on any branch, e.g. `fix-*`), and any author with another merged PR. Knobs are the workflow's `env:` (`FEEDBACK_SKIP_BOTS`, `FEEDBACK_SKIP_BRANCHES`, `FEEDBACK_SKIP_HIVE_ORIGIN`, `FEEDBACK_SKIP_LOGINS`, `FEEDBACK_FIRST_TIME_ONLY`); a failed merged-PR lookup skips the comment rather than guessing. |
 
 `.github/scripts/test-pr-overlap.sh`, `src/scripts/test-mutation-report.sh`

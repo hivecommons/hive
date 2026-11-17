@@ -1008,6 +1008,23 @@
     const KICK_POLL_INTERVAL_MS = 2000;
     const KICK_POLL_TIMEOUT_MS = 150000;
 
+    // kickFailureToast reports a failed kick. When the server named a docs page
+    // for the refusal (docs_url), the error toast carries a "What does this
+    // mean?" button that opens it; only https links are opened.
+    const KICK_REFUSAL_DOCS_LABEL = 'What does this mean?';
+    function kickFailureToast(toast, error, docsUrl) {
+      const msg = 'Kick failed: ' + error;
+      if (typeof docsUrl !== 'string' || !/^https:\/\//.test(docsUrl)) {
+        dismissToast(toast, msg, 'error');
+        return toast;
+      }
+      dismissToast(toast, null, null, true);
+      return showToast(msg, 'error', {
+        actionLabel: KICK_REFUSAL_DOCS_LABEL,
+        onAction: () => window.open(docsUrl, '_blank', 'noopener,noreferrer'),
+      });
+    }
+
     async function pollKickOutcome(agent) {
       const deadline = Date.now() + KICK_POLL_TIMEOUT_MS;
       while (Date.now() < deadline) {
@@ -1018,7 +1035,7 @@
           if (!contentType.includes('application/json')) continue;
           const data = await res.json();
           if (data.status === 'delivered') return { settled: true, ok: true };
-          if (data.status === 'failed') return { settled: true, ok: false, error: data.error || 'unknown' };
+          if (data.status === 'failed') return { settled: true, ok: false, error: data.error || 'unknown', docsUrl: data.docs_url };
         } catch (e) {
           // A transient poll failure says nothing about the kick. Keep polling.
         }
@@ -1035,7 +1052,7 @@
         return;
       }
       if (outcome.ok) { dismissToast(toast, `Kicked ${agent}`, 'success'); return; }
-      dismissToast(toast, 'Kick failed: ' + outcome.error, 'error');
+      kickFailureToast(toast, outcome.error, outcome.docsUrl);
     }
 
     async function kick(agent) {
@@ -1050,7 +1067,7 @@
       const toast = showToast(`Kicking ${agent}...`, 'info', true);
       try {
         const data = await postJSON(`/api/kick/${agent}`, opts);
-        if (!data.ok) { dismissToast(toast, 'Kick failed: ' + (data.error || 'unknown'), 'error'); return; }
+        if (!data.ok) { kickFailureToast(toast, data.error || 'unknown', data.docs_url); return; }
         if (input) input.value = '';
         if (data.status === 'in-flight') {
           dismissToast(toast, `A kick is already being delivered to ${agent}`, 'info');

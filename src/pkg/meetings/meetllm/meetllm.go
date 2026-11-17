@@ -119,8 +119,16 @@ type Config struct {
 	// replaced; zero means DefaultRecycleTurns.
 	RecycleTurns int
 	// Session is the meeting's warm CLI. Nil on ProviderAgentBackend runs
-	// one CLI per call.
+	// one CLI per call. Pool, when set, takes its place.
 	Session *CLISession
+	// Pool is the meeting's set of warm CLIs, so several turns run at once
+	// (hivecommons/hive#18590).
+	Pool *CLIPool
+	// Gate bounds the meeting's concurrent calls and reserves budget for
+	// the ones in flight; nil admits every call (the one-shot command).
+	Gate *Gate
+	// spent receives the tokens a call charged, for the gate.
+	spent *int
 	// Getenv reads the environment the CLI inherits from; nil is os.Getenv.
 	Getenv func(string) string
 	// CABundle is an optional PEM file of private CAs the endpoint is
@@ -191,6 +199,15 @@ func UsageTotal(path string) (int, error) {
 		}
 	}
 	return total, sc.Err()
+}
+
+// charge records a call's tokens in the ledger and reports them to the
+// meeting's gate.
+func (c Config) charge(tokens int, now time.Time) error {
+	if c.spent != nil && tokens > 0 {
+		*c.spent += tokens
+	}
+	return recordUsage(c.UsageFile, tokens, now)
 }
 
 func recordUsage(path string, tokens int, now time.Time) error {
@@ -273,19 +290,52 @@ func chatURL(endpoint string) string {
 }
 
 // Complete makes one call and records its usage. It refuses once the
-// meeting's budget is spent.
+// meeting's budget is spent. With a Gate, the call first waits for one of
+// the meeting's places and reserves budget against the calls still in
+// flight, so concurrent answers cannot overspend it.
 func Complete(ctx context.Context, c Config, hc *http.Client, prompt string) (string, error) {
-	if c.MaxTokens > 0 && c.UsageFile != "" {
-		used, err := UsageTotal(c.UsageFile)
-		if err != nil {
-			return "", err
-		}
-		if used >= c.MaxTokens {
-			return "", ErrBudget
-		}
+	used, err := c.used()
+	if err != nil {
+		return "", err
+	}
+	if c.MaxTokens > 0 && used >= c.MaxTokens {
+		return "", ErrBudget
 	}
 	ctx, cancel := context.WithTimeout(ctx, c.Timeout)
 	defer cancel()
+	if c.Gate != nil {
+		if err := c.Gate.enter(ctx); err != nil {
+			return "", err
+		}
+		defer c.Gate.leave()
+		// Calls that finished while this one waited are in the ledger now.
+		if used, err = c.used(); err != nil {
+			return "", err
+		}
+		held, err := c.Gate.reserve(used, c.MaxTokens)
+		if err != nil {
+			return "", err
+		}
+		var spent int
+		c.spent = &spent
+		defer func() { c.Gate.settle(held, spent) }()
+	}
+	return complete(ctx, c, hc, prompt)
+}
+
+// used is the meeting's ledger total when it has a budget.
+func (c Config) used() (int, error) {
+	if c.MaxTokens <= 0 || c.UsageFile == "" {
+		return 0, nil
+	}
+	return UsageTotal(c.UsageFile)
+}
+
+// complete is one call once admitted.
+func complete(ctx context.Context, c Config, hc *http.Client, prompt string) (string, error) {
+	if c.Provider == ProviderAgentBackend && c.Pool != nil {
+		return completePool(ctx, c, prompt)
+	}
 	if c.Provider == ProviderAgentBackend && c.Session != nil {
 		return completeSession(ctx, c, prompt)
 	}
@@ -330,7 +380,7 @@ func Complete(ctx context.Context, c Config, hc *http.Client, prompt string) (st
 	if tokens == 0 {
 		tokens = cr.Usage.PromptTokens + cr.Usage.CompletionTokens
 	}
-	if err := recordUsage(c.UsageFile, tokens, time.Now()); err != nil {
+	if err := c.charge(tokens, time.Now()); err != nil {
 		return "", fmt.Errorf("meeting-llm: recording usage: %w", err)
 	}
 	if len(cr.Choices) == 0 {

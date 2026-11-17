@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/outputschema"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/review"
 )
 
@@ -18,6 +19,12 @@ import (
 // edited in place on every pass, like the claim ledger, so a PR carries one
 // such comment however many reviews it gets.
 const reviewFollowUpsCommentMarker = "<!-- hive:review-followups-comment v1 -->"
+
+// reviewFollowUpsCardMarker stamps the status-card form of the list
+// (hivecommons/hive#18606). It deliberately is not
+// reviewFollowUpsCommentMarker: EditIssueMarkerComment would otherwise find
+// the whole card as "the Follow-ups comment" and overwrite it.
+const reviewFollowUpsCardMarker = "<!-- hive:review-followups-card -->"
 
 // reviewFollowUpsSummaryMaxLen bounds the one-line summary quoted per held
 // finding in the Follow-ups comment.
@@ -245,6 +252,18 @@ func (c *Client) reviewBacklogGroupBody(req ReviewRequest, p review.Perspective,
 // and new ones appended. Best effort: a failure is logged, the pass is not
 // failed, and the findings return on the next review of the PR.
 func (c *Client) upsertReviewFollowUpsComment(ctx context.Context, req ReviewRequest, held []reviewBacklogHeldFinding, minSeverity string) {
+	if c.notificationsQuiet() {
+		folded, err := c.foldReviewFollowUps(ctx, req, held, minSeverity)
+		if err != nil {
+			c.logger.Warn("review backlog: follow-ups status-card section not updated",
+				slog.String("repo", req.Repo), slog.Int("number", req.Number),
+				slog.Int("held", len(held)), slog.String("error", err.Error()))
+			return
+		}
+		if folded {
+			return
+		}
+	}
 	res, err := c.EditIssueMarkerComment(ctx, req.Repo, req.Number, reviewFollowUpsCommentMarker, func(previous string) string {
 		return renderReviewFollowUpsComment(previous, held, minSeverity)
 	})
@@ -263,16 +282,56 @@ func (c *Client) upsertReviewFollowUpsComment(ctx context.Context, req ReviewReq
 	}
 }
 
-// renderReviewFollowUpsComment merges held into previous (the comment's
-// prior body, "" when none) and returns the full comment. Checklist lines
-// are keyed on their text after the checkbox so a ticked entry stays ticked
-// and a re-reported finding is not listed twice.
-func renderReviewFollowUpsComment(previous string, held []reviewBacklogHeldFinding, minSeverity string) string {
-	type entry struct {
-		checked bool
-		text    string
+// foldReviewFollowUps is the quiet-mode delivery of the Follow-ups list
+// (hivecommons/hive#18606): the checklist becomes the collapsible
+// prstatus.KeyReviewFollowUps section of the PR's hive:status card, edited
+// in place, instead of a comment of its own that emailed the author and
+// every watcher on each reviewed PR. Nobody has to act on a held finding,
+// so nothing is lost by not notifying. A PR that already carries the
+// legacy Follow-ups comment keeps it (folded is false): that comment is
+// edited in place, which notifies nobody either, and the PR never shows two
+// copies of the list. folded is true when the card carries the list.
+func (c *Client) foldReviewFollowUps(ctx context.Context, req ReviewRequest, held []reviewBacklogHeldFinding, minSeverity string) (bool, error) {
+	owner, repoName := c.splitRepo(req.Repo)
+	comments, err := c.listIssueComments(ctx, owner, repoName, req.Number)
+	if err != nil {
+		return false, err
 	}
-	var entries []entry
+	for _, cm := range comments {
+		if cm != nil && !prstatus.IsStatusComment(cm.GetBody()) && strings.Contains(cm.GetBody(), reviewFollowUpsCommentMarker) && c.markerAuthorTrusted(cm.GetUser()) {
+			return false, nil
+		}
+	}
+	created, err := c.UpsertPRStatusSectionFunc(ctx, req.Repo, req.Number, prstatus.KeyReviewFollowUps, func(previous string) string {
+		return renderReviewFollowUpsSection(previous, held, minSeverity)
+	})
+	if err != nil {
+		return false, err
+	}
+	if !created {
+		c.noteCommentSuppressed()
+	}
+	c.recordWriteAudit(AuditActionReviewBacklogSummaryPosted, hiveWriteMeta(),
+		WriteTarget{Repo: req.Repo, Number: req.Number},
+		"held", strconv.Itoa(len(held)),
+		"min_severity", minSeverity,
+		"review_agent", req.Agent,
+		"delivery", "status-card")
+	return true, nil
+}
+
+// reviewFollowUpEntry is one checklist line of the Follow-ups list.
+type reviewFollowUpEntry struct {
+	checked bool
+	text    string
+}
+
+// mergeReviewFollowUps reads the checklist lines of previous (a Follow-ups
+// comment or status-card section) and appends held, keyed on the text after
+// the checkbox so a ticked entry stays ticked and a re-reported finding is
+// not listed twice. Entries are sorted by text.
+func mergeReviewFollowUps(previous string, held []reviewBacklogHeldFinding) []reviewFollowUpEntry {
+	var entries []reviewFollowUpEntry
 	seen := map[string]bool{}
 	for _, line := range strings.Split(previous, "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -290,7 +349,7 @@ func renderReviewFollowUpsComment(previous string, held []reviewBacklogHeldFindi
 			continue
 		}
 		seen[text] = true
-		entries = append(entries, entry{checked: checked, text: text})
+		entries = append(entries, reviewFollowUpEntry{checked: checked, text: text})
 	}
 	for _, h := range held {
 		text := reviewFollowUpLine(h)
@@ -298,23 +357,59 @@ func renderReviewFollowUpsComment(previous string, held []reviewBacklogHeldFindi
 			continue
 		}
 		seen[text] = true
-		entries = append(entries, entry{text: text})
-	}
-	if len(entries) == 0 {
-		return ""
+		entries = append(entries, reviewFollowUpEntry{text: text})
 	}
 	sort.SliceStable(entries, func(i, j int) bool { return entries[i].text < entries[j].text })
-	var b strings.Builder
-	b.WriteString(reviewFollowUpsCommentMarker)
-	fmt.Fprintf(&b, "\n### Review follow-ups (below `review.backlog.min_severity: %s`)\n", minSeverity)
-	b.WriteString("Non-blocking findings below the backlog filing line are listed here instead of as issues, one comment per PR, updated in place. Tick them off as they are fixed; set `review.backlog.min_severity: P3` to file every finding.\n\n")
+	return entries
+}
+
+func writeReviewFollowUpEntries(b *strings.Builder, entries []reviewFollowUpEntry) {
 	for _, e := range entries {
 		box := "[ ]"
 		if e.checked {
 			box = "[x]"
 		}
-		fmt.Fprintf(&b, "- %s %s\n", box, e.text)
+		fmt.Fprintf(b, "- %s %s\n", box, e.text)
 	}
+}
+
+// renderReviewFollowUpsSection is the status-card form of the Follow-ups
+// list: one summary line with the open count, the checklist collapsed
+// under it, stamped with reviewFollowUpsCardMarker.
+func renderReviewFollowUpsSection(previous string, held []reviewBacklogHeldFinding, minSeverity string) string {
+	entries := mergeReviewFollowUps(previous, held)
+	if len(entries) == 0 {
+		return ""
+	}
+	open := 0
+	for _, e := range entries {
+		if !e.checked {
+			open++
+		}
+	}
+	var b strings.Builder
+	b.WriteString(reviewFollowUpsCardMarker)
+	fmt.Fprintf(&b, "\n<details><summary>Review follow-ups: %d open of %d (below <code>review.backlog.min_severity: %s</code>)</summary>\n\n", open, len(entries), minSeverity)
+	b.WriteString("Non-blocking findings below the backlog filing line, listed here instead of as issues. Tick them off as they are fixed; set `review.backlog.min_severity: P3` to file every finding.\n\n")
+	writeReviewFollowUpEntries(&b, entries)
+	b.WriteString("\n</details>")
+	return b.String()
+}
+
+// renderReviewFollowUpsComment merges held into previous (the comment's
+// prior body, "" when none) and returns the full comment. Checklist lines
+// are keyed on their text after the checkbox so a ticked entry stays ticked
+// and a re-reported finding is not listed twice.
+func renderReviewFollowUpsComment(previous string, held []reviewBacklogHeldFinding, minSeverity string) string {
+	entries := mergeReviewFollowUps(previous, held)
+	if len(entries) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString(reviewFollowUpsCommentMarker)
+	fmt.Fprintf(&b, "\n### Review follow-ups (below `review.backlog.min_severity: %s`)\n", minSeverity)
+	b.WriteString("Non-blocking findings below the backlog filing line are listed here instead of as issues, one comment per PR, updated in place. Tick them off as they are fixed; set `review.backlog.min_severity: P3` to file every finding.\n\n")
+	writeReviewFollowUpEntries(&b, entries)
 	return b.String()
 }
 

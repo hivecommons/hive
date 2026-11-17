@@ -75,6 +75,12 @@ type Dependencies struct {
 	// so the operator can simulate a real item. Nil disables the fetch; the
 	// handler then answers 422 and the form still accepts hand-set facts.
 	WorkflowItemSnapshot func(ctx context.Context, repo string, number int) (ghpkg.WorkflowItemSnapshot, error)
+	// WorkflowPostMerge observes the post-merge runs (Main CI, Release,
+	// Deploy) of the model's bound pipelines for merged PRs of repo, so a
+	// simulated merged PR's pipeline.status is the observed one, not
+	// always unknown (hivecommons/hive#18356). Nil leaves pr.pipeline
+	// unknown.
+	WorkflowPostMerge func(ctx context.Context, repo string, m *workflowmodel.Model, defaultBranch string, prs []workflowmodel.MergedPR) (map[int]*stageengine.PostMergeFacts, error)
 	// WorkflowRepoFile fetches one default-branch file (a written process
 	// spec) for POST /api/workflows/ingest/spec {repo, path}. Nil disables
 	// repo-path spec ingest.
@@ -83,6 +89,11 @@ type Dependencies struct {
 	// stage and model labels now, for PUT /api/workflows/enabled turning
 	// derivation on. Nil leaves provisioning to the next sweep pass.
 	WorkflowProvisionLabels func(ctx context.Context, repo string) error
+	// WorkflowDispatchPrepare prepares the owner's "Send to <profile>" for
+	// POST /api/workflows/dispatch (cncf/techdocs#395): reads the item,
+	// resolves its model state, the agent and the agent claim, and renders
+	// the prompt. Nil answers 503.
+	WorkflowDispatchPrepare workflowDispatchPrepareFunc
 	// WorkflowEmitChecks proposes a newly bound model's declared checks to
 	// the repository as .hive/workflows/checks.yml through the checks PR
 	// (hivecommons/hive#18355), for PUT /api/workflows/bindings. Nil leaves

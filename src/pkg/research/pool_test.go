@@ -21,6 +21,9 @@ type fakeRuntime struct {
 	queued   []string // agent:kickID
 	prompts  []string
 	observer func(crux.KickEvent)
+	// registerOnAdd makes AddAgent register a stopped agent, as the real
+	// runtime does.
+	registerOnAdd bool
 }
 
 func newFake(names ...string) *fakeRuntime {
@@ -55,7 +58,12 @@ func (f *fakeRuntime) AddKickObserver(fn func(crux.KickEvent)) func() {
 	f.observer = fn
 	return func() { f.observer = nil }
 }
-func (f *fakeRuntime) AddAgent(name string, cfg config.AgentConfig) { f.added[name] = cfg }
+func (f *fakeRuntime) AddAgent(name string, cfg config.AgentConfig) {
+	f.added[name] = cfg
+	if _, ok := f.states[name]; f.registerOnAdd && !ok {
+		f.states[name] = &crux.Process{Name: name, State: crux.StateStopped}
+	}
+}
 func (f *fakeRuntime) GetStatusFast(name string) (*crux.Process, error) {
 	st, ok := f.states[name]
 	if !ok {
@@ -209,6 +217,45 @@ func TestDispatchErrors(t *testing.T) {
 	empty, _ := NewPool(newFake(), 1)
 	if _, err := empty.Dispatch(ctx, "q", nil); !errors.Is(err, ErrNoAgents) {
 		t.Errorf("no agents err = %v", err)
+	}
+}
+
+// TestDispatchReRegistersDroppedAgents pins hivecommons/hive#18590 finding
+// 6: research-1..N live only in the runtime, so a config reconcile that
+// rebuilds the agent table from hive.yaml drops them, and every later
+// dispatch failed with "no research agent available". Dispatch now
+// registers them again and retries once.
+func TestDispatchReRegistersDroppedAgents(t *testing.T) {
+	f := newFake()
+	f.registerOnAdd = true
+	p, _ := NewPool(f, 2)
+	p.Ensure(config.AgentConfig{Backend: "claude"})
+	if st := p.Status(); st.Available != 2 || len(st.Agents) != 2 {
+		t.Fatalf("status after Ensure = %+v", st)
+	}
+	// A reconcile drops the runtime-only agents.
+	f.states = map[string]*crux.Process{}
+	if st := p.Status(); st.Available != 0 {
+		t.Fatalf("status after reconcile = %+v", st)
+	}
+	id, err := p.Dispatch(context.Background(), "q", nil)
+	if err != nil {
+		t.Fatalf("dispatch after the agents were dropped: %v", err)
+	}
+	if f.queued[0] != "research-1:"+id || len(f.started) != 1 {
+		t.Fatalf("queued = %v started = %v", f.queued, f.started)
+	}
+	if p.Status().Available != 2 {
+		t.Fatal("the agents are registered again")
+	}
+
+	// Without Ensure there is nothing to re-register: the error stays, and
+	// it carries a reason fit to say in a meeting.
+	bare, _ := NewPool(newFake(), 1)
+	_, err = bare.Dispatch(context.Background(), "q", nil)
+	var r interface{ Reason() string }
+	if !errors.Is(err, ErrNoAgents) || !errors.As(err, &r) || r.Reason() != "no research agent is available on this hive" {
+		t.Fatalf("err = %v", err)
 	}
 }
 

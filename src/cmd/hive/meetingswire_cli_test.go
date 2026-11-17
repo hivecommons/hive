@@ -97,8 +97,8 @@ func TestMeetingPersonaFactoryAgentBackend(t *testing.T) {
 		e.Close()
 	}
 	missing := cliLLM(filepath.Join(dir, "absent"), dir)
-	if m, ok := meetingCLIModel(missing, meetllm.Config{MaxInFlight: 1}, "m3", logger); !ok || m.Config.Session == nil {
-		t.Fatal("a missing binary still yields a session that retries the start")
+	if m, ok := meetingCLIModel(missing, meetllm.Config{MaxInFlight: 1}, "m3", logger); !ok || m.Config.Pool == nil {
+		t.Fatal("a missing binary still yields a pool that retries the start")
 	} else {
 		_ = m.Close()
 	}

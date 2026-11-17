@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/remoteitems"
 )
 
 // hivecommons/hive#18199: which repos the remote-item pass watches and how a
@@ -15,12 +16,17 @@ func TestRemoteItemRepos(t *testing.T) {
 		{Repo: "hivecommons/hive", Write: []string{"issues", "prs"}, CredentialState: config.ReferenceCredentialWriteTier, CredentialLogin: "nate-double-u"},
 		{Repo: "hivecommons/site", Write: []string{"issues"}, DerivedFrom: "cncf/techdocs#395", CredentialState: config.ReferenceCredentialWriteTier, CredentialLogin: "nate-double-u"},
 	}
-	repos, login := remoteItemRepos(refs)
-	if len(repos) != 2 || repos[0] != "hivecommons/hive" || repos[1] != "hivecommons/site" || login != "nate-double-u" {
-		t.Fatalf("repos=%v login=%q", repos, login)
+	targets := remoteItemTargets(refs)
+	if len(targets) != 2 || targets[0] != (remoteitems.Target{Repo: "hivecommons/hive", Login: "nate-double-u"}) || targets[1] != (remoteitems.Target{Repo: "hivecommons/site", Login: "nate-double-u"}) {
+		t.Fatalf("targets=%+v", targets)
 	}
-	if repos, login := remoteItemRepos(refs[:2]); len(repos) != 0 || login != "" {
-		t.Fatalf("read-only and downgraded entries must not be watched: %v %q", repos, login)
+	if targets := remoteItemTargets(refs[:2]); len(targets) != 0 {
+		t.Fatalf("read-only and downgraded entries must not be watched: %+v", targets)
+	}
+	// hivecommons/hive#18516: a bot-identity repo is watched under the bot.
+	bot := config.ReferenceRepo{Repo: "hivecommons/docs", Write: []string{"issues", "prs"}, DerivedFrom: "cncf/techdocs#395", CredentialState: config.ReferenceCredentialWriteTier, CredentialLogin: "hivecommons-hive[bot]", CredentialIdentity: config.ReferenceIdentityBot}
+	if targets := remoteItemTargets([]config.ReferenceRepo{bot}); len(targets) != 1 || targets[0].Login != "hivecommons-hive[bot]" {
+		t.Fatalf("bot repo must be watched under the bot login: %+v", targets)
 	}
 }
 

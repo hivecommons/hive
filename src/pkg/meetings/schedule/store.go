@@ -167,6 +167,30 @@ func (s *Store) Update(id string, fn func(*Event) error) (Event, error) {
 	return Event{}, fmt.Errorf("%w: %s", ErrNotFound, id)
 }
 
+// Remove deletes one event by its id when check accepts it (nil accepts
+// any). It returns the removed event.
+func (s *Store) Remove(id string, check func(Event) error) (Event, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for k, e := range s.events {
+		if e.ID != id {
+			continue
+		}
+		if check != nil {
+			if err := check(e); err != nil {
+				return e, err
+			}
+		}
+		delete(s.events, k)
+		if err := s.saveLocked(); err != nil {
+			s.events[k] = e
+			return e, err
+		}
+		return e, nil
+	}
+	return Event{}, fmt.Errorf("%w: %s", ErrNotFound, id)
+}
+
 // Upsert stores a normalized event under the SEQUENCE rule: a new event is
 // added; an existing one is replaced only by a higher SEQUENCE (equal or
 // lower returns the stored event and ErrStaleSequence). merge builds the

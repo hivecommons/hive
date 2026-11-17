@@ -53,12 +53,20 @@ func TestUserSessionStoreInboxFileRunsAsSessionUIDInWorkDir(t *testing.T) {
 func TestUserSessionStoreInboxFileWorkspaceAndValidation(t *testing.T) {
 	r, _, p := startedRuntime(t)
 	p.handler = inboxScriptHandler
-	ws := userSessionWorkspaceDir("hivecommons", "hive")
-	path, err := r.StoreInboxFile(testSessionID, ws, testInboxFileName, []byte("x"))
-	if err != nil || path != filepath.Join(ws, ".hive", "inbox", testInboxFileName) {
-		t.Fatalf("workspace seed = %q, %v", path, err)
+	// The session's own worktree is where its pane runs; the shared clone is
+	// still accepted for a record from before per-session worktrees.
+	for _, ws := range []string{userSessionWorktreeDir(testSessionID, "hivecommons", "hive"), userSessionWorkspaceDir("hivecommons", "hive")} {
+		path, err := r.StoreInboxFile(testSessionID, ws, testInboxFileName, []byte("x"))
+		if err != nil || path != filepath.Join(ws, ".hive", "inbox", testInboxFileName) {
+			t.Fatalf("workspace seed = %q, %v", path, err)
+		}
 	}
-	for _, bad := range []string{"/etc", filepath.Join(userSessionWorkspaceRoot(), "only-org"), filepath.Join(ws, "sub"), filepath.Join(userSessionWorkspaceRoot(), "..", "x", "y")} {
+	ws := userSessionWorkspaceDir("hivecommons", "hive")
+	for _, bad := range []string{
+		"/etc", filepath.Join(userSessionWorkspaceRoot(), "only-org"), filepath.Join(ws, "sub"), filepath.Join(userSessionWorkspaceRoot(), "..", "x", "y"),
+		userSessionWorktreeDir("fedcba987654", "hivecommons", "hive"), // another session's worktree
+		filepath.Join(userSessionWorktreesDir(testSessionID), "hivecommons"),
+	} {
 		if _, err := r.StoreInboxFile(testSessionID, bad, testInboxFileName, []byte("x")); err == nil {
 			t.Errorf("workspace %q accepted", bad)
 		}

@@ -258,6 +258,9 @@ type PRFacts struct {
 	// does (the PR is then parked for a maintainer with reason fork-guard).
 	ForkGuardChecks []string
 	Lanes           []LaneFact // automerge lane opinions, precedence order (self > trusted > contributor)
+	// PostMerge is the observed post-merge pipeline status of a merged PR
+	// (pipeline.status); nil when no observer reported on it.
+	PostMerge *PostMergeFacts
 	// Pass is what the sweep's own pass learned after the lanes spoke and
 	// before the stage was written: the inputs of ApplyStageLabels' pure
 	// post-steps (author-kind split, normalized-fixing guard, human route,

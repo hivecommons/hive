@@ -1524,6 +1524,9 @@ func StartHeartbeat(ctx context.Context, hubURL string, collect StatusCollector,
 		if resp.RestartSpoke && onRestartSpoke != nil {
 			onRestartSpoke()
 		}
+		// Converge the cluster's host aliases onto our own Deployment; the hub
+		// cannot on a push-reported cluster (#18637). Throttled, off-goroutine.
+		applyHubHostAliases(logger, resp.HostAliases)
 		// Descriptive only (#7262): the hub's upgrade posture for this spoke,
 		// rendered by the dashboard. nil means the hub does not manage us.
 		if resp.UpgradeAnnounce != nil && onUpgradeAnnounce != nil {
@@ -2991,6 +2994,11 @@ type HeartbeatResponse struct {
 	// ActivityEventsAck is the highest activity event sequence number the
 	// hub acknowledged, decoded from hub.HeartbeatResponse.ActivityEventsAck.
 	ActivityEventsAck uint64 `json:"activity_events_ack,omitempty"`
+	// HostAliases are the pod hostAliases clusters.json declares for this
+	// hive's cluster (#18637). The spoke converges its own Deployment onto
+	// them (self_host_aliases.go), because on a push-reported cluster the hub
+	// cannot patch it. Empty means the cluster declares none: leave it alone.
+	HostAliases []HostAlias `json:"host_aliases,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.

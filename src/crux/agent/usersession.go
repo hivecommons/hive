@@ -129,8 +129,12 @@ type UserSessionRuntime struct {
 	// orphaned judges whether an attached tmux client has lost its terminal
 	// attacher (usersession_clients.go); nil disables the reaper.
 	orphaned clientOrphanFunc
-	// workspaceMu serialises workspace clone and spek init across sessions.
+	// workspaceMu serialises workspace clone, the lock of its git config,
+	// worktree add/remove and spek init across sessions.
 	workspaceMu sync.Mutex
+	// securedClones records the shared clones whose git config this process
+	// has locked (userSessionWorkspaceSecureScript); guarded by workspaceMu.
+	securedClones map[string]bool
 	// bufSeq makes every paste buffer name unique, so concurrent inputs to one
 	// session cannot paste each other's text.
 	bufSeq atomic.Uint64
@@ -248,8 +252,9 @@ func (r *UserSessionRuntime) Start(spec crux.UserSessionSpec) error {
 	if err := r.prepareSandbox(spec.ID, uid); err != nil {
 		return err
 	}
-	// The pane opens in the hive's shared workspace checkout when the spec
-	// names one, otherwise in the session's own empty work dir.
+	// The pane opens in the session's own worktree of the hive's shared
+	// workspace clone when the spec names one, otherwise in the session's own
+	// empty work dir.
 	cwd, workspace := userSessionWorkDir(spec.ID), ""
 	if spec.WorkspaceRepo != "" {
 		ws, err := r.ensureWorkspace(spec, uid)

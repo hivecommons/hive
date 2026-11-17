@@ -532,6 +532,26 @@ func (s *CLISession) lock(ctx context.Context) error {
 
 func (s *CLISession) unlock() { <-s.sem }
 
+// tryLock takes the turn lock if it is free.
+func (s *CLISession) tryLock() bool {
+	select {
+	case s.sem <- struct{}{}:
+		return true
+	default:
+		return false
+	}
+}
+
+// idle reports that no turn holds the session.
+func (s *CLISession) idle() bool { return len(s.sem) == 0 }
+
+// running reports that the session has a live process.
+func (s *CLISession) running() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.proc != nil
+}
+
 func (s *CLISession) turnLocked(ctx context.Context, system, prompt string) (string, int, error) {
 	s.mu.Lock()
 	p, err := s.ensureLocked()
@@ -597,7 +617,7 @@ func completeSession(ctx context.Context, c Config, prompt string) (string, erro
 	}
 	defer release()
 	reply, tokens, err := c.Session.turnLocked(ctx, c.System, prompt)
-	if uerr := recordUsage(c.UsageFile, tokens, time.Now()); uerr != nil && err == nil {
+	if uerr := c.charge(tokens, time.Now()); uerr != nil && err == nil {
 		err = fmt.Errorf("meeting-llm: recording usage: %w", uerr)
 	}
 	return reply, err
@@ -655,7 +675,7 @@ func completeCLIOnce(ctx context.Context, c Config, prompt string) (string, erro
 		}
 		return "", perr
 	}
-	if err := recordUsage(c.UsageFile, out.tokens, time.Now()); err != nil {
+	if err := c.charge(out.tokens, time.Now()); err != nil {
 		return "", fmt.Errorf("meeting-llm: recording usage: %w", err)
 	}
 	if out.err != nil {
