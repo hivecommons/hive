@@ -219,6 +219,17 @@ entry like that gives the named person's profile the matching GitHub activity.
 A read-only user sees only their own profile. An identity they add is shown as
 unconfirmed. It links nothing until the owner or a read-write user confirms it.
 
+Goal and satisfaction suggestions are off by default, because they send text to
+a model. When the owner turns them on, the hive sends a customer's own issues,
+pull requests and approved mail to the model set up for meetings. That text can
+be about people who never signed up, so it is cleaned first. A line that holds an
+address, an id or a recognised attack is dropped, and the rest sits in a fenced
+block marked as data. The reply is checked too: at most three short goals, a
+level from a short list and no number, each citing the evidence it was given. A
+suggestion is never applied. A person confirms, edits or rejects it, and a value
+a person set is never overwritten. The model has a daily token budget, and
+nothing it suggests leaves the hive.
+
 ## 5. Network and credentials
 
 **Inference keys.** An agent using a self-hosted inference gateway is
@@ -573,8 +584,14 @@ importance:
   therefore gets the Claude login **without its refresh token**, and only the
   login's own token block, nothing else stored in that file. It can use the
   fleet's current access token and cannot rotate or carry away the long-lived
-  grant. Refreshing stays where it was: with the agents' credential bridge and
-  the dashboard sign-in, the only writers of the shared file. The hive keeps
+  grant. Who refreshes it: the hive itself, once, ahead of expiry
+  ([#18731](https://github.com/hivecommons/hive/issues/18731); it redeems the
+  shared refresh token and holds the new grant on disk and in memory until the
+  shared file has it, `HIVE_CLAUDE_SHARED_REFRESH=off` disables it), the
+  agents' credential bridge when a CLI refreshed first anyway, and the
+  dashboard sign-in. A session never refreshes. All writers of the shared file
+  go through one function under one lock that accepts only a usable credential
+  expiring strictly later than the current one. The hive keeps
   the copies current (it replaces them, atomically and as the session's uid,
   when the shared login changes), so a session depends on the fleet's login
   being refreshed by an agent or a sign-in; a session cannot do that itself.

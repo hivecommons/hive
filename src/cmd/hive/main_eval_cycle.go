@@ -1355,6 +1355,7 @@ func runEvalCycle(
 	// (#18732) are waiting for an operator sign-in, not a restart: keep the
 	// dashboard banner level with the runtime's BackendAuth marks.
 	dashSrv.ReconcileClaudeLoginRevokedAlert(agentMgr.AllStatuses())
+	reconcileClaudeSharedLoginUnsavedAlert(dashSrv, agentMgr)
 
 	// Epoch captured before reading agent/governor state so a mutation that
 	// lands mid-build (restart-count/budget reset) drops this snapshot instead

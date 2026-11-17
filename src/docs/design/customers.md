@@ -211,30 +211,48 @@ Rules that hold for both:
 
 ### Inference
 
-Candidates come from what the person has already put in front of the hive:
+Status: built, opt-in. `customers.inference.enabled` defaults to **off**
+(env `HIVE_CUSTOMERS_INFERENCE_ENABLED`), because it sends text about people to a
+model, some of whom never signed up. It also needs the Customers section on.
+
+Candidates come from what a customer has already put in front of the hive, read
+from state the hive holds and with no GitHub call:
 
 | Signal | Goal evidence | Satisfaction evidence |
 |---|---|---|
-| Issues they opened | What they asked for | Age of open asks, reopen count |
-| PR outcomes | What they were trying to land | Merged, closed unmerged, time to merge, review round trips |
-| Meeting asks | Action items and asks attributed to them | Follow-through on those items |
-| Approved mail | The request in the message | Reply latency, repeat requests |
+| Issues they opened (the last enumeration) | What they asked for | Whether it is open or closed |
+| Pull requests they authored | What they were trying to land | Merged or not |
+| Approved mail from their address | The request in the message | The tone of the reply |
 
-The inference runs in the hive process through the model route the hive
-already uses for in-process inference (the meeting persona's answer path). It
-does not start an agent and it gives the model no tools.
+Meeting asks are not read yet: a meeting stores display names, never an
+identity, and a name never links a person to anything.
 
-- **Inputs are fenced as untrusted.** Evidence text is scanned and wrapped in a
-  nonce-tagged untrusted envelope, as Inbox text is.
-- **Output is bounded and typed.** The model returns a small fixed structure
-  (at most three goals of bounded length, one satisfaction level from the
-  ordinal, the evidence ids it used). Anything that does not parse, names
-  evidence it was not given or exceeds the bounds is dropped.
-- **Inference is budgeted.** A few people per tick, customers only (never
-  suggested people), a minimum interval per person, and shed when the hive's
-  budget is low. It can be turned off without turning off the section.
-- Each suggestion is audited with the person id and the evidence count, not
-  the text.
+The pass is the `customers_inference` optional sweep, every 30 minutes. It
+reads at most three due customers, only customers (never a suggested person), and
+leaves a person alone for 24 hours after a read and while their evidence has not
+changed. It runs on the model route meetings already uses in process
+(`meetllm`, through `betty.MeetLLM`): an OpenAI-compatible endpoint or the
+Anthropic API. An agent backend is not used. Calls are charged to a daily usage
+ledger of their own with a budget of 40,000 tokens, kept for seven days, and a
+spent budget ends the pass.
+
+- **Inputs are untrusted.** Each item is cleaned, cut to 300 bytes, and dropped
+  whole if it holds an address, one of this store's ids or anything `ioscan`
+  finds. What remains sits in one `untrusted-customer-evidence` fence with a
+  random nonce, and the system prompt says it is data and never an instruction.
+  The prompt carries no name, address, id, note or standing satisfaction level.
+- **Output is bounded and typed.** At most three goals, each a short, safe
+  sentence that cites only evidence it was given; one satisfaction level from the
+  ordinal with such evidence. A goal citing nothing it was given is dropped, a
+  number is never a level, and an unusable reply changes nothing and is tried
+  again later.
+- **Suggestions only.** Goals go through `SuggestGoals` and the level through
+  `SuggestSatisfaction`, which never touch a confirmed or manual value and never
+  offer a rejected suggestion again. A person confirms, edits or rejects each on
+  the profile.
+- **Audited without text.** `customer_inference` records the person id, how many
+  goals and whether a satisfaction suggestion was filed.
+- Nothing inferred leaves the hive.
 
 ## 9. Ingestion
 
@@ -383,6 +401,24 @@ node limit is enforced by the resolvers, which charge every person, edge and
 artefact they materialise to a per-query budget. Access is not decided in the
 GraphQL layer at all: every resolver calls the customers service with the
 viewer of the request, the same service the REST routes use.
+
+**Merge, split and the graph view.** Merge folds one customer into another and
+moves every edge across; the merge is recorded on the target with the source as
+it stood and the identities, tags and goals it brought, so unmerge can give back
+exactly those. Unmerge moves back only the edges whose `via` identity belonged
+to the restored person, so activity the target produced on its own stays put.
+Split works the same way in the other direction: the edges that the named
+identities produced move with them. Two dashboard users are never merged, and a
+`hive_user` identity is never split off. Both are full-view actions and audited
+(`customer_merge`, `customer_unmerge`, `customer_split`). Export is owner only
+and audited (`customer_export`); it holds the profile, merge history, hints and
+at most 10,000 edge references.
+
+The graph view is a static SVG drawn from the same GraphQL endpoint (one query:
+a person's edges and, under each, the people on that artefact). It does not
+reuse the knowledge graph canvas, which is animated and styled inline; the
+customers view is a small radial drawing that stays readable on a phone and
+follows the page's design tokens.
 
 ## 12. Agents and privacy guard rails
 

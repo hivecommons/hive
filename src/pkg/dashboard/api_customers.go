@@ -47,6 +47,8 @@ const (
 	customersSelfEditPath = "/api/customers/me/edit"
 	// customersMeID is the id alias for the viewer's own profile.
 	customersMeID = "me"
+	// customersAuditIDMax bounds an id copied into an audit line.
+	customersAuditIDMax = 40
 )
 
 // CustomersViewer is who is asking. Full is the owner and read-write view;
@@ -114,6 +116,27 @@ type CustomersService interface {
 	// suggested identity the customer's own, false closes the question for
 	// good.
 	AnswerHint(v CustomersViewer, hintID string, same bool) (CustomerResult, error)
+	// Merge folds the customer "from" into id; Unmerge undoes it.
+	Merge(v CustomersViewer, id, from string) (CustomerResult, error)
+	Unmerge(v CustomersViewer, id, from string) (CustomerResult, error)
+	// Split moves the named identity keys (kind:value) off id onto a new
+	// customer, which it returns.
+	Split(v CustomersViewer, id string, keys []string, name string) (CustomerResult, error)
+	// Export returns everything held about one customer (owner only),
+	// JSON-encoded as returned.
+	Export(v CustomersViewer, id string) (any, error)
+}
+
+// CustomerMergeRequest is the body of POST /api/customers/{id}/merge and
+// /unmerge: From is the customer folded in (or restored).
+type CustomerMergeRequest struct {
+	From string `json:"from"`
+}
+
+// CustomerSplitRequest is the body of POST /api/customers/{id}/split.
+type CustomerSplitRequest struct {
+	Identities []string `json:"identities"`
+	Name       string   `json:"name,omitempty"`
 }
 
 // CustomerHintAnswer is the body of POST /api/customers/hints/{hid}/answer.
@@ -146,6 +169,10 @@ func (s *Server) registerCustomersRoutes() {
 	s.mux.HandleFunc("POST /api/customers/suggestions/{sid}/accept", s.handleCustomersAccept)
 	s.mux.HandleFunc("POST /api/customers/suggestions/{sid}/dismiss", s.handleCustomersDismiss)
 	s.mux.HandleFunc("POST /api/customers/hints/{hid}/answer", s.handleCustomersHintAnswer)
+	s.mux.HandleFunc("POST /api/customers/{id}/merge", s.handleCustomersMerge)
+	s.mux.HandleFunc("POST /api/customers/{id}/unmerge", s.handleCustomersUnmerge)
+	s.mux.HandleFunc("POST /api/customers/{id}/split", s.handleCustomersSplit)
+	s.mux.HandleFunc("GET /api/customers/{id}/export", s.handleCustomersExport)
 	s.registerCustomersGraphRoutes()
 }
 
@@ -413,4 +440,107 @@ func (s *Server) handleCustomersHintAnswer(w http.ResponseWriter, r *http.Reques
 	}
 	s.auditFromRequest(r, "customer_hint_answer", auditDetail("person", res.ID, "same", boolString(body.Same)), "")
 	jsonResponse(w, res.View)
+}
+
+func (s *Server) handleCustomersMerge(w http.ResponseWriter, r *http.Request) {
+	s.customersMergeOrUnmerge(w, r, "customer_merge", func(svc CustomersService, v CustomersViewer, id, from string) (CustomerResult, error) {
+		return svc.Merge(v, id, from)
+	})
+}
+
+func (s *Server) handleCustomersUnmerge(w http.ResponseWriter, r *http.Request) {
+	s.customersMergeOrUnmerge(w, r, "customer_unmerge", func(svc CustomersService, v CustomersViewer, id, from string) (CustomerResult, error) {
+		return svc.Unmerge(v, id, from)
+	})
+}
+
+func (s *Server) customersMergeOrUnmerge(w http.ResponseWriter, r *http.Request, action string, do func(CustomersService, CustomersViewer, string, string) (CustomerResult, error)) {
+	v, ok := customersFullViewer(w, r)
+	if !ok {
+		return
+	}
+	svc, ok := s.customersService(w)
+	if !ok {
+		return
+	}
+	var body CustomerMergeRequest
+	if !decodeCustomersBody(w, r, &body) {
+		return
+	}
+	if strings.TrimSpace(body.From) == "" {
+		jsonError(w, "from is required", http.StatusBadRequest)
+		return
+	}
+	res, err := do(svc, v, r.PathValue("id"), body.From)
+	if err != nil {
+		s.customersError(w, r, err)
+		return
+	}
+	s.auditFromRequest(r, action, auditDetail("person", res.ID, "from", auditPersonID(body.From)), "")
+	jsonResponse(w, res.View)
+}
+
+// auditPersonID keeps only what an id may hold, so a hand-made request
+// cannot put free text in the audit log.
+func auditPersonID(id string) string {
+	out := make([]byte, 0, len(id))
+	for i := 0; i < len(id) && len(out) < customersAuditIDMax; i++ {
+		c := id[i]
+		if c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '_' {
+			out = append(out, c)
+		}
+	}
+	return string(out)
+}
+
+func (s *Server) handleCustomersSplit(w http.ResponseWriter, r *http.Request) {
+	v, ok := customersFullViewer(w, r)
+	if !ok {
+		return
+	}
+	svc, ok := s.customersService(w)
+	if !ok {
+		return
+	}
+	var body CustomerSplitRequest
+	if !decodeCustomersBody(w, r, &body) {
+		return
+	}
+	if len(body.Identities) == 0 {
+		jsonError(w, "name at least one identity to split off", http.StatusBadRequest)
+		return
+	}
+	res, err := svc.Split(v, r.PathValue("id"), body.Identities, body.Name)
+	if err != nil {
+		s.customersError(w, r, err)
+		return
+	}
+	s.auditFromRequest(r, "customer_split", auditDetail("from", auditPersonID(r.PathValue("id")), "person", res.ID, "identities", strconv.Itoa(len(body.Identities))), "")
+	jsonResponse(w, res.View)
+}
+
+// handleCustomersExport gives the owner everything held about one person as
+// a JSON download. It is audited, since it moves personal data off the page.
+func (s *Server) handleCustomersExport(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	v, ok := customersViewer(w, r)
+	if !ok {
+		return
+	}
+	svc, ok := s.customersService(w)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	out, err := svc.Export(v, id)
+	if err != nil {
+		s.customersError(w, r, err)
+		return
+	}
+	s.auditFromRequest(r, "customer_export", auditDetail("person", auditPersonID(id)), "")
+	w.Header().Set("Content-Disposition", `attachment; filename="customer-export.json"`)
+	w.Header().Set("Cache-Control", "no-store")
+	jsonResponse(w, out)
 }
