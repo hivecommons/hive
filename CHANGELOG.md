@@ -344,6 +344,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 - The signed-commit reconciler's intentional refusal to rewrite a foreign or merge commit no longer files repeated unclassified-error fleet reports; its warning and PR remediation remain visible ([#17924](https://github.com/hivecommons/hive/issues/17924)).
 - Dashboard logs one summary warning per five minutes for dropped SSE events instead of one warning per event, so a stalled browser tab no longer triggers repeated-error fleet reports (#17995).
+## 2026-11-17 (v5.298.2)
+
+### Fixed
+
+- **A dashboard Copilot re-login now reaches running Copilot agents without a restart** ([#18671](https://github.com/hivecommons/hive/issues/18671)). The Copilot CLI's own save, seconds after launch, replaced the freshly relinked `~/.copilot/config.json` symlink with a private copy again, so a later login written to the shared file only reached each agent after its next restart. The pane poller now checks the link on every tick and relinks it within one poll interval of a CLI save, first merging the fields the CLI wrote into the shared file so nothing it saved is lost; the shared login always wins over the token in the private copy, and a private copy holding the only login is still left in place.
+
 ## 2026-11-17 (v5.298.1)
 
 ### Fixed
