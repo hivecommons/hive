@@ -127,6 +127,7 @@ var auditSensitiveActions = map[string]bool{
 	"relay_task_revoked":                    true,
 	"relay_token_minted":                    true,
 	"run_stage_reset":                       true,
+	"session_autostart":                     true,
 	"session_closed":                        true,
 	"session_created":                       true,
 	"session_input":                         true,
