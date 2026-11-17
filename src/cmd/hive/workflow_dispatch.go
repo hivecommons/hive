@@ -240,6 +240,14 @@ func workflowDispatchReplyFor(ctx context.Context, ghClient *github.Client) func
 	}
 }
 
+// resolveWorkflowDispatchAgent resolves the hive agent that fills the
+// item's profile (config.ResolveWorkflowDispatch), telling the resolver the
+// item's repository and whether the profile opens a pull request or reviews
+// one, which the last-resort pick depends on (hivecommons/hive#18690).
+func resolveWorkflowDispatchAgent(cfg *config.Config, d github.WorkflowDispatch, manual bool) config.WorkflowDispatchResolution {
+	return cfg.ResolveWorkflowDispatch(d.Target.Profile, config.WorkflowDispatchNeed{Repo: d.Repo, Reviews: !d.Target.ProducesChange()}, manual)
+}
+
 // planWorkflowDispatchKicks plans the cycle's hand-offs and claims each
 // issue for its agent before returning the kick.
 func planWorkflowDispatchKicks(ctx context.Context, cfg *config.Config, ghClient *github.Client, actionable *github.ActionableResult, ledger *claims.Ledger, eligible func(agent string) bool, logger *slog.Logger) []workflowDispatchKick {
@@ -254,14 +262,18 @@ func planWorkflowDispatchKicks(ctx context.Context, cfg *config.Config, ghClient
 		return nil
 	}
 	cands, skips := scheduler.PlanWorkflowDispatch(items, scheduler.WorkflowDispatchPlanDeps{
-		Agent:    cfg.WorkflowDispatchAgent,
+		Agent: func(d github.WorkflowDispatch) (string, bool) {
+			r := resolveWorkflowDispatchAgent(cfg, d, false)
+			return r.Agent, r.OK()
+		},
 		Eligible: eligible,
 		Reply:    workflowDispatchReplyFor(ctx, ghClient),
 		Done:     func(key string) bool { return dlog.Done(key) || rt.inFlight(key, now) },
 	})
 	for _, s := range skips {
 		if logger != nil && s.Reason != scheduler.WorkflowSkipDone && s.Reason != scheduler.WorkflowSkipNoReply {
-			logger.Info("workflow dispatch: item not handed off", "item", s.Ref, "reason", s.Reason)
+			logger.Info("workflow dispatch: item not handed off", "item", s.Ref, "profile", s.Profile, "reason", s.Reason,
+				"fix", "pin an agent on the repository's workflow row in Settings → Repos (workflow.dispatch.profiles."+s.Profile+".agent)")
 		}
 	}
 	var out []workflowDispatchKick
@@ -364,10 +376,11 @@ func workflowDispatchPrepare(cfg *config.Config, client func() *github.Client, l
 		if !ok {
 			return dashboard.WorkflowDispatchPlan{}, dashboard.ErrWorkflowDispatchNotOwned
 		}
-		agent, ok := cfg.WorkflowDispatchAgentForManual(d.Target.Profile)
-		if !ok {
-			return dashboard.WorkflowDispatchPlan{}, fmt.Errorf("%w: %s", dashboard.ErrWorkflowDispatchNoAgent, d.Target.Profile)
+		res := resolveWorkflowDispatchAgent(cfg, d, true)
+		if !res.OK() {
+			return dashboard.WorkflowDispatchPlan{}, dashboard.WorkflowDispatchNoAgentError(res)
 		}
+		agent := res.Agent
 		c := scheduler.WorkflowDispatchCandidate{Dispatch: d, Agent: agent, Key: scheduler.WorkflowDispatchKey(d, nil), ManualBy: by}
 		if !claimForWorkflowDispatch(cfg, ledger, c, logger) {
 			return dashboard.WorkflowDispatchPlan{}, dashboard.ErrWorkflowDispatchHeld

@@ -222,9 +222,8 @@ On each pass the hive:
 
 1. withholds every item in those states from the generic lanes, so the scanner or a feature
    agent never picks up an accepted request before the drafter does;
-2. resolves the hive agent that fills the profile (`workflow.dispatch.profiles.<profile>.agent`;
-   unset: an agent named after the profile, else the first enabled `writer`, `docs` or
-   `feature` agent by name);
+2. resolves the hive agent that fills the profile, in the order listed under
+   [Which agent fills a profile](#which-agent-fills-a-profile);
 3. for the issue, takes the agent claim on the hive's claim ledger first; a claim someone
    else holds (a person working the phase by hand) stops the hand-off;
 4. kicks that agent once with the issue, the state's guidance and the deliverable the model
@@ -239,9 +238,44 @@ The verifier runs once per `/verify` comment: each new `/verify` from the review
 pass, posting its report as a PR comment. A `/hive verify` command is the model-reply path
 instead: it applies `verified` directly, which is how a reviewer records a deliberate skip.
 
-To use it, the hive needs `workflow.enabled: true` and `cncf/techdocs` bound to
+### Which agent fills a profile
+
+The first of these that names an enabled agent is the one kicked (a replica is never
+chosen: its base agent is):
+
+1. the pin, `workflow.dispatch.profiles.<profile>.agent`. A pin that names no enabled agent
+   stops the hand-off; it never falls through to another agent;
+2. an agent named after the profile (`techdocs-drafter`);
+3. the first enabled `writer`, `docs` or `feature` agent, in that role order, by name;
+4. the hive's standard agent for the work, so a default fleet needs no setup: for a profile
+   that opens a pull request (`techdocs-drafter`) the issue worker, the `scanner` role that
+   every issue without a lane of its own goes to; for a profile that reviews
+   (`techdocs-verifier`) the `reviewer`. It must be allowed to work on the bound repository
+   (its `repos:` scope, when it has one, includes `cncf/techdocs`).
+
+No other agent is picked on its own: a supervisor, guide or brainstorm agent opens no pull
+requests. On a hive with the standard roster (scanner, reviewer, ci-maintainer, quality,
+guide, brainstorm, supervisor) the drafter is therefore the scanner and the verifier the
+reviewer.
+
+When nothing fills a profile the hand-off cannot happen, and the item stays withheld from the
+generic lanes, so the hive says so in three places:
+
+- **Settings → Repos**: the repository's workflow row lists each profile of the bound model
+  with the agent it is handed to. A profile nothing fills shows a warning naming it, and
+  the picker next to it saves the pin (owner only, `PUT /api/workflows/dispatch/profiles`,
+  audited `workflow_dispatch_agent`). **Automatic** clears the pin. The next pass uses the
+  pick; no restart is needed.
+- **Activity Monitor**: the item's row wears a `no agent for <profile>` badge whose hover
+  gives the reason.
+- **Send to *profile***: the manual send answers with the same reason and where to fix it.
+
+The hive log repeats it on each pass (`workflow dispatch: item not handed off`, with the
+profile and the reason).
+
+To use the workflow, the hive needs `workflow.enabled: true` and `cncf/techdocs` bound to
 `cncf-techdocs-assessment`; dispatch is on by default (`workflow.dispatch.enabled`). Pin the
-agents if the default pick is wrong:
+agents, here or with the picker, if the default pick is wrong:
 
 ```yaml
 workflow:
@@ -270,8 +304,9 @@ without a `/verify` comment.
 
 ### Starting the drafter by hand (fallback)
 
-When no agent fills the profile or the hive predates automatic dispatch, a hive owner starts the
-draft by hand:
+When no agent fills the profile (pick one first: see
+[Which agent fills a profile](#which-agent-fills-a-profile)) or the hive predates automatic
+dispatch, a hive owner starts the draft by hand:
 
 1. Check the request is accepted: `triage/accepted` is on the issue, applied by a maintainer
    with write access to `cncf/techdocs`, and the hive's workflow column shows **Accepted**.
