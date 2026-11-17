@@ -1,0 +1,10 @@
+{
+  "data": [
+    {"id": "anthropic/claude-fable-5.2", "pricing": {"prompt": "0.00001", "completion": "0.00005", "input_cache_read": "0.000001", "input_cache_write": "0.0000125"}},
+    {"id": "anthropic/claude-fable-5.1", "pricing": {"prompt": "0.00001", "completion": "0.00005", "input_cache_read": "0.000001", "input_cache_write": "0.0000125"}},
+    {"id": "anthropic/claude-haiku-5.5", "pricing": {"prompt": "0.000001", "completion": "0.000005", "input_cache_read": "0.0000001", "input_cache_write": "0.00000125"}},
+    {"id": "anthropic/claude-opus-6", "pricing": {"prompt": "0.0001", "completion": "0.0005", "input_cache_read": "0.00001", "input_cache_write": "0.000125"}},
+    {"id": "anthropic/claude-sonnet-6", "pricing": {"prompt": "0.000003", "completion": "0.000015"}},
+    {"id": "anthropic/claude-nova-1", "pricing": {"prompt": "0.000002", "completion": "0.000008", "input_cache_read": "0.0000002", "input_cache_write": "0.0000025"}}
+  ]
+}

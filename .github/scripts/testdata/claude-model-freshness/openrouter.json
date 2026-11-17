@@ -1,0 +1,19 @@
+{
+  "data": [
+    {"id": "anthropic/claude-opus-5.5"},
+    {"id": "anthropic/claude-opus-4.1"},
+    {"id": "anthropic/claude-fable-5"},
+    {"id": "anthropic/claude-fable-5.1"},
+    {"id": "anthropic/claude-fable-5.2"},
+    {"id": "anthropic/claude-fable-5.2:batch"},
+    {"id": "anthropic/claude-haiku-5.5"},
+    {"id": "anthropic/claude-mythos-5"},
+    {"id": "anthropic/claude-mythos-5.5-preview"},
+    {"id": "anthropic/claude-sonnet-6", "expiration_date": "2026-12-01"},
+    {"id": "anthropic/claude-opus-6-fast"},
+    {"id": "anthropic/claude-3.7-sonnet"},
+    {"id": "~anthropic/claude-opus-latest"},
+    {"id": "google/gemini-9-pro"},
+    {"id": null}
+  ]
+}
