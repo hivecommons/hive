@@ -24,9 +24,11 @@ build_msg() {
   git init -q "$TMP/r"
   (
     cd "$TMP/r"
-    GIT_AUTHOR_NAME="hive-release[bot]" GIT_AUTHOR_EMAIL="hive-release@hive.kubestellar.io" \
-    GIT_COMMITTER_NAME="hive-release[bot]" GIT_COMMITTER_EMAIL="hive-release@hive.kubestellar.io" git \
-      commit -q --allow-empty -s -m "images: bump x 1 -> 2"
+    # Exported so the --amend below has a committer too: CI runners have no
+    # global git identity.
+    export GIT_AUTHOR_NAME="hive-release[bot]" GIT_AUTHOR_EMAIL="hive-release@hive.kubestellar.io"
+    export GIT_COMMITTER_NAME="hive-release[bot]" GIT_COMMITTER_EMAIL="hive-release@hive.kubestellar.io"
+    git commit -q --allow-empty -s -m "images: bump x 1 -> 2"
     trailers="$(bash "$SCRIPT" "$login" "$id" "$@")"
     args=()
     while IFS= read -r t; do [ -n "$t" ] && args+=(--trailer "$t"); done <<<"$trailers"
