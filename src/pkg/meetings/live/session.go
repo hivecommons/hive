@@ -226,6 +226,13 @@ func (s *session) onUpdate(u meetings.Update) {
 	}
 	switch {
 	case ev.Type == meetings.EventSegment && ev.Final, ev.Type == meetings.EventChat:
+	case ev.Type == meetings.EventSegment:
+		// A partial transcript only lets the persona acknowledge a
+		// request early; Spek and open asks wait for the final line.
+		if s.persona != nil {
+			s.persona.ObservePartial(betty.Line{Who: ev.Who(), Text: ev.Text, Spoken: true})
+		}
+		return
 	default:
 		return
 	}
