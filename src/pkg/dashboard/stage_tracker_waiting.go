@@ -81,9 +81,13 @@ var stageTrackerReturnedStages = []int{stagelabels.NeedsAuthor.Number(), stagela
 // standing meta issues and already-decided rows never count: hold is the
 // operator's own choice, an advisory asks for nothing, a bot Dependency
 // Dashboard is a control panel whatever labels it wears, and a decided
-// row is the hive's to act on next.
+// row is the hive's to act on next. A decision whose effect timed out is
+// no longer the hive's: nothing re-runs it, so the row waits on a person
+// again by its real stage (projectbluefin/bluefin-bling#128 sat five days
+// as "no effect after 30m" and never reached Waiting on you).
 func stageTrackerWaitKind(it StageTrackerItem) (kind, who string) {
-	if stageTrackerOnHold(it) || it.Advisory != nil || it.Decided != nil || stageTrackerWaitStandingMeta(it) {
+	decided := it.Decided != nil && it.Decided.Effect != decidedEffectTimedOut
+	if stageTrackerOnHold(it) || it.Advisory != nil || decided || stageTrackerWaitStandingMeta(it) {
 		return "", ""
 	}
 	switch {
