@@ -69524,7 +69524,7 @@ function burnAreaChart() {
       let inner;
       if (!defaultsOk && sources.length === 0) {
         inner = '<div class="config-field-hint" id="cfg-agent-sandbox-source-error" role="alert" style="color:var(--red)">'
-          + esc(g.sandboxDefaultsProblem) + '. No agent has a complete sandbox block to copy either: set the default image in Settings, Security first, or set this agent's image under Sandbox settings.</div>';
+          + esc(g.sandboxDefaultsProblem) + '. No agent has a complete sandbox block to copy either: set the default image in Settings, Security first, or set the image under Sandbox settings below.</div>';
       } else {
         const opts = (defaultsOk ? '<option value="">agent_sandbox defaults</option>' : '')
           + sources.map(n => '<option value="' + esc(n) + '">Copy from ' + esc(n) + '</option>').join('');
