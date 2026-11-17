@@ -5,7 +5,8 @@
     // or full sender address is ever listed, only the sender's domain.
     // Self-contained: it renders into #inbox-mail-log and nothing else.
     const INBOX_MAIL_LOG_FIRST_LOAD_MS = 6000;
-    const INBOX_MAIL_LOG_REFRESH_MS = 120000;
+    // A reload is never more frequent than this, whatever asks for it.
+    const INBOX_MAIL_LOG_MIN_RELOAD_MS = 30000;
     const INBOX_MAIL_LOG_BYTES_PER_KB = 1024;
     const INBOX_MAIL_LOG_BYTES_PER_MB = 1048576;
     const INBOX_MAIL_LOG_REASONS = {
@@ -24,6 +25,7 @@
     const INBOX_MAIL_LOG_SKIPS = { type: 'type not accepted', content: 'content does not match', size: 'too large', count: 'over the attachment count' };
     let _inboxMailLog = null; // { events, files_enabled }
     let _inboxMailLogOpen = false;
+    let _inboxMailLogLoadedAt = 0;
 
     function inboxMailLogCanView() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
     function inboxMailLogSize(bytes) {
@@ -81,10 +83,14 @@
       el.hidden = !html;
       el.innerHTML = html;
       const details = el.querySelector('details');
-      if (details) details.addEventListener('toggle', () => { _inboxMailLogOpen = details.open; });
+      // Opening the list reloads it (no timer of its own: the list also
+      // reloads when the tab comes back to the foreground).
+      if (details) details.addEventListener('toggle', () => { _inboxMailLogOpen = details.open; if (details.open) fetchInboxMailLog(); });
     }
     async function fetchInboxMailLog() {
       if (!inboxMailLogCanView()) return;
+      if (Date.now() - _inboxMailLogLoadedAt < INBOX_MAIL_LOG_MIN_RELOAD_MS) return;
+      _inboxMailLogLoadedAt = Date.now();
       try {
         const r = await fetch('/api/inbox/email/recent');
         if (!r.ok) return;
@@ -94,5 +100,5 @@
     }
     if (typeof window !== 'undefined' && typeof document !== 'undefined') {
       setTimeout(fetchInboxMailLog, INBOX_MAIL_LOG_FIRST_LOAD_MS);
-      setInterval(() => { if (!document.hidden) fetchInboxMailLog(); }, INBOX_MAIL_LOG_REFRESH_MS);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchInboxMailLog(); });
     }
