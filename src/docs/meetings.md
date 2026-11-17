@@ -16,6 +16,9 @@ The feature is off until `meetings.enabled` is set.
 ## Consent and privacy
 
 - The first thing hive posts in a meeting is the consent notice (`meetings.consent_text`), before any other message. The default names the persona: "Betty Bee from the hive has joined to take notes and help with research. Betty records this meeting's transcript. Type 'betty leave' or 'hive leave' to remove Betty." With the persona off it is "Hive has joined to take notes and help with research. It records this meeting's transcript. Type 'hive leave' to remove it."
+- **Nothing from before the notice is kept.** Until the notice is delivered (`consent_posted_at` set: Quorum confirmed the chat line, or hive spoke it), every transcript segment, draft and chat line is discarded: not stored, and not handed to Betty, Spektacular, research, knowledge facts, the Inbox hand-off or drafts. A line that arrives after the notice but belongs before it is discarded too: one at or below Quorum's transcript cursor when the notice landed (`consent_seq`), a chat line stamped earlier, or, for two minutes, a segment that began before the last speech heard while the notice was pending. Hive keeps only the count, `pre_consent_dropped` on the meeting. It does not buffer and release: those lines are gone. A reconnect or restart while the notice is pending asks Quorum for no replay, so nothing buffered from that time comes back.
+- A leave phrase is honoured before the notice too: the bot leaves, and the line itself is not kept.
+- Vexa keeps its own copy of what the bot transcribes from the moment it is admitted, pre-consent lines included, and has no API to delete part of a live meeting's transcript. That copy goes when hive deletes the meeting upstream (`meeting.delete` at hand-off or purge), which erases the whole meeting. Quorum's in-memory replay buffer is cleared at the same time.
 - Anyone in the meeting can type or say a leave phrase (`meetings.persona.leave_phrases`: "betty leave" or "hive leave", also "Betty, leave" or "hive, please leave") and the bot leaves at once.
 - The bot joins as the persona's display name, `Betty Bee from the hive` (`meetings.persona.display_name`; `meetings.bot_name` overrides it). With the persona off it joins as `hive (notes)`.
 - No audio is stored. Hive keeps the transcript under `/data/meetings` for `meetings.retention_days` (30 by default) after the meeting ends, then purges it. The transcript is deleted from Vexa at hand-off, and at the latest when hive purges it.
@@ -140,7 +143,7 @@ Only the hive owner can send hive to a meeting.
 
 Voice is fixed when the bot joins: Vexa only lets a bot speak if it was started with voice. Hive starts every bot able to speak while `meetings.voice_on_address` is true (and when you tick **Voice**), so the toggle can turn speaking on later; with `meetings.voice_on_address` false and **Voice** unticked, turning voice on later has no effect and hive keeps answering in chat (the panel says so).
 
-If the meeting platform's chat is unavailable, hive cannot post the consent notice. It retries about once a minute and posts nothing else into the meeting until the notice is out; the transcript, notes and research still show in the panel.
+If the meeting platform's chat is unavailable, hive cannot post the consent notice. It retries a few times and posts nothing else into the meeting until the notice is out; with voice on it speaks the notice instead, and otherwise it leaves (`consent_undelivered`). Until the notice is delivered the panel shows no transcript, notes or research: those lines are discarded, not held back.
 
 The same operations are available over the [meetings API](api-reference/knowledge.md) (`/api/meetings`).
 
