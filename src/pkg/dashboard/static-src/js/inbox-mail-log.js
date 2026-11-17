@@ -75,8 +75,54 @@
         escapeHtml(inboxMailLogSize(ev.bytes)),
         escapeHtml(inboxMailLogReason(ev)),
       ].filter(Boolean);
-      return '<li class="muted-xs">' + parts.join(' · ') + '</li>';
+      return '<li class="muted-xs">' + parts.join(' · ') + inboxMailLogHelpHtml(ev) + '</li>';
     }
+    // Only an https link the hive built is ever rendered.
+    function inboxMailLogLink(url, label, title) {
+      if (typeof url !== 'string' || url.indexOf('https://') !== 0) return '';
+      return '<a class="text-accent" href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(title) + '">' + label + '</a>';
+    }
+    // Under a refused or held mail (hivecommons/hive#18744): how to try
+    // again, what the outcome means, a prefilled problem report, and for a
+    // mail that awaits approval the owner's Approve and Decline.
+    function inboxMailLogHelpHtml(ev) {
+      if (ev.outcome !== 'rejected' && ev.outcome !== 'awaiting_approval') return '';
+      const pending = (ev.pending_items || []).filter(id => /^[0-9a-f]+$/.test(id));
+      let actions = '';
+      if (pending.length) {
+        const ids = escapeHtml(pending.join(','));
+        actions = window._hiveRole === 'owner'
+          ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxMailLogApprove" data-arg0="' + ids + '" title="Let this mail be shared and transcribed like any other Inbox item">✓ Approve</button>' +
+            '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxMailLogDecline" data-arg0="' + ids + '" title="Delete what this mail brought">✕ Decline</button>'
+          : '<span>The hive\'s owner can approve or decline it.</span>';
+      } else if (ev.outcome === 'awaiting_approval') {
+        actions = '<span>Already approved or declined.</span>';
+      }
+      const fix = ev.how_to_fix ? '<span><strong>How to try again:</strong> ' + escapeHtml(ev.how_to_fix) + '.</span>' : '';
+      const help = inboxMailLogLink(ev.help_url, fix ? 'What this means' : 'How to try again', 'Open the documentation for this outcome');
+      const report = inboxMailLogLink(ev.report_url, 'Report a problem', 'Open a new issue prefilled with the reason code, the date and the hive version: no sender, subject or file name');
+      const html = [actions, fix, help, report].filter(Boolean).join(' ');
+      return html ? '<div class="inbox-mail-log-help">' + html + '</div>' : '';
+    }
+    // Approve or decline every item a held mail brought, then reload both
+    // lists.
+    async function inboxMailLogAct(ids, action) {
+      let failed = '';
+      for (const id of String(ids || '').split(',').filter(Boolean)) {
+        try {
+          const r = await fetch('/api/inbox/email/' + encodeURIComponent(id) + '/' + action, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+          const data = await r.json().catch(() => ({}));
+          if (!r.ok) failed = data.error || ('HTTP ' + r.status);
+        } catch (e) { failed = e.message; }
+      }
+      if (failed) showToast('Could not ' + action + ': ' + failed, 'error');
+      else showToast(action === 'approve' ? 'Approved' : 'Declined and deleted', 'success');
+      _inboxMailLogLoadedAt = 0;
+      await fetchInboxMailLog();
+      if (typeof fetchInbox === 'function') await fetchInbox();
+    }
+    function inboxMailLogApprove(ids) { return inboxMailLogAct(ids, 'approve'); }
+    function inboxMailLogDecline(ids) { return inboxMailLogAct(ids, 'decline'); }
     function inboxMailLogHtml(data) {
       const events = (data && Array.isArray(data.events)) ? data.events : [];
       if (!events.length) return '';
@@ -89,7 +135,7 @@
       const off = data.files_enabled === false ? '<div class="muted-xs">Mail-in files are turned off on this hive: attachments mailed to it are refused.</div>' : '';
       return '<details class="inbox-mail-log"' + (_inboxMailLogOpen ? ' open' : '') + '><summary class="muted-xs">' + summary + '</summary>' + off +
         '<ul class="inbox-mail-log-list">' + events.map(inboxMailLogRow).join('') + '</ul>' +
-        '<div class="muted-xs">Only the sender\'s domain, the size and the reason are kept; a refused mail also bounces to its sender with the reason.</div></details>';
+        '<div class="muted-xs">Only the sender\'s domain, the size and the reason are kept. A refused mail bounces to its sender with the reason and how to try again; the hive itself sends no mail.</div></details>';
     }
     function renderInboxMailLog() {
       const el = document.getElementById('inbox-mail-log');

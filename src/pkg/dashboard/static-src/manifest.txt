@@ -31,6 +31,7 @@ css/chat.css
 css/nous.css
 css/knowledge.css
 css/inbox.css
+css/inbox-access.css
 css/meetings.css
 css/calendar.css
 css/meeting-attendee.css
@@ -137,6 +138,8 @@ js/inbox.js
 js/inbox-delete.js
 js/inbox-recorder.js
 js/inbox-mail-log.js
+js/inbox-note.js
+js/inbox-input-methods.js
 js/meetings.js
 js/calendar.js
 js/meeting-attendee.js

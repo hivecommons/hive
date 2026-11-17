@@ -1,0 +1,28 @@
+    /* Inbox access: the input-methods row, the Quick note box and hit
+       targets. Tokens only; see src/docs/inbox-input-methods.md. */
+    /* Input methods are not sources: the chips are quieter than a source
+       pill (outline only, muted text) and do nothing but show a note. */
+    .inbox-inputs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4); margin-bottom: var(--sp-3); }
+    .inbox-input-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .kc-pill.inbox-input-chip { position: relative; border: var(--line-width) dashed var(--border); background: transparent; color: var(--muted); font-family: inherit; font-weight: 400; cursor: help; }
+    .kc-pill.inbox-input-chip[data-input-state="works_today"] { border-style: solid; }
+    .kc-pill.inbox-input-chip:hover, .kc-pill.inbox-input-chip[aria-expanded="true"] { color: var(--text); border-color: var(--muted); }
+    .kc-pill.inbox-input-chip:focus-visible { color: var(--text); outline: 2px solid var(--accent); outline-offset: 2px; }
+    .inbox-input-note { margin: var(--sp-0) var(--sp-0) var(--sp-3); padding: var(--sp-2) var(--sp-3); border: var(--line-width) dashed var(--border); border-radius: var(--r); }
+    .inbox-input-note .hv-btn { margin-left: var(--sp-2); }
+    /* Quick note: a text box in the Add panel. */
+    .inbox-note { margin-top: var(--sp-3); }
+    .inbox-note-label { display: block; margin-bottom: var(--sp-1); font-size: var(--fs-sm); font-weight: 600; }
+    .inbox-note-text { box-sizing: border-box; width: 100%; min-height: calc(2 * var(--tap-target)); resize: vertical; font-family: inherit; }
+    /* Hit targets: every small control in the Inbox answers over at least
+       --tap-target. The hit area grows through a transparent pseudo-element,
+       so the controls keep their size and the list keeps its density. */
+    .inbox-check { position: relative; cursor: pointer; }
+    .inbox-check::before { content: ""; position: absolute; top: 0; left: 50%; width: var(--tap-target); height: var(--tap-target); margin-left: calc(var(--tap-target) / -2); }
+    .inbox-toggle { min-height: var(--tap-target); cursor: pointer; }
+    .inbox-panel .btn-sm, .inbox-rec-panel .btn-sm, [id="inbox-mail-log"] .btn-sm { position: relative; }
+    .inbox-pills a, .inbox-link, .inbox-more, .inbox-fact-link { position: relative; display: inline-block; }
+    .inbox-panel .btn-sm::before, .inbox-rec-panel .btn-sm::before, [id="inbox-mail-log"] .btn-sm::before, .inbox-pills a::before, .inbox-link::before, .inbox-more::before, .inbox-fact-link::before, .kc-pill.inbox-input-chip::before {
+      content: ""; position: absolute;
+      inset: min(0px, calc((100% - var(--tap-target)) / 2));
+    }

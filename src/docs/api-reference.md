@@ -23,6 +23,7 @@ History point limits, timestamp cutoffs, incremental cost reads and ETag/304 beh
 | Inception | [`api-reference/inception.md`](api-reference/inception.md) | 14 |
 | Beads | [`api-reference/beads.md`](api-reference/beads.md) | 5 |
 | Sessions | [`api-reference/sessions.md`](api-reference/sessions.md) | 8 |
+| Customers | [`api-reference/customers.md`](api-reference/customers.md) | 7 |
 | Dashboard miscellaneous | [`api-reference/dashboard-misc.md`](api-reference/dashboard-misc.md) | 56 |
 | Hub SaaS | [`api-reference/hub-saas.md`](api-reference/hub-saas.md) | 102 |
 | Hub server | [`api-reference/hub-server.md`](api-reference/hub-server.md) | 46 |
@@ -78,6 +79,10 @@ History point limits, timestamp cutoffs, incremental cost reads and ETag/304 beh
 ## Sessions
 
 8 routes — see [api-reference/sessions.md](api-reference/sessions.md).
+
+## Customers
+
+7 routes — see [api-reference/customers.md](api-reference/customers.md).
 
 ## Dashboard miscellaneous
 
