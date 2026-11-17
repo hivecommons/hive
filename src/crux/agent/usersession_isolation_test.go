@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/crux"
 )
@@ -287,7 +288,13 @@ func TestUserSessionLoginsAreCopiedNeverSymlinkedOrBridgedConfig(t *testing.T) {
 	f := sessionLifecycleTmux("")
 	r, p := newTestSessionRuntimeWithPriv(t, f, nil)
 	for _, rel := range userSessionLoginFiles {
-		writeSharedLogin(t, rel, "login-"+rel)
+		content := "login-" + rel
+		if rel == userSessionClaudeLoginRel {
+			// The Claude login is copied only when it parses as a credential
+			// (usersession_login.go); the fixture is synthetic.
+			content = string(bridgeTestCreds(t, "shared", time.Now().Add(time.Hour).UnixMilli()))
+		}
+		writeSharedLogin(t, rel, content)
 	}
 	// Files that execute commands or hold unrelated secrets must never travel.
 	forbidden := []string{

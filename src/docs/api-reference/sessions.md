@@ -6,17 +6,17 @@ Sessions are interactive, named CLI-agent terminals. Each runs as its own unpriv
 
 | Method | Path | Auth | Purpose | Source |
 |---|---|---|---|---|
-| `GET` | `/api/sessions` | Dashboard auth/session | Sessions, vendors and limits | `pkg/dashboard/api_sessions.go:181` |
-| `POST` | `/api/sessions` | Owner or read-write | Create a session `{name, group, vendor, shared?, seed_items?}`; answers 202 at once with the session `preparing`, the start runs in the background (`seed_items`: see [Seeding from the Inbox](#seeding-from-the-inbox)) | `pkg/dashboard/api_sessions.go:182` |
-| `PATCH` | `/api/sessions/{id}` | Session creator or owner | Rename, regroup or (un)share `{name?, group?, shared?}` | `pkg/dashboard/api_sessions.go:183` |
-| `DELETE` | `/api/sessions/{id}` | Session creator or owner | Close a running session (metadata kept, marked `ended`); on an ended session, remove its metadata and delete its sandbox files | `pkg/dashboard/api_sessions.go:184` |
-| `GET` | `/api/sessions/{id}/log` | Dashboard auth/session | Redacted scrollback `?lines=N` (capped at 5000) | `pkg/dashboard/api_sessions.go:185` |
-| `POST` | `/api/sessions/{id}/input` | Owner or read-write | Queue `{text, submit}` for the pane; answers 202 with `{queued: {id, position}, queue}` and the text is typed once the CLI prompt is idle (size-capped, audited at delivery without the text) | `pkg/dashboard/api_sessions.go:186` |
-| `DELETE` | `/api/sessions/{id}/input/{queue_id}` | Owner or read-write | Cancel your own queued send (the creator or an owner may cancel anyone's); 409 while it is being delivered | `pkg/dashboard/api_sessions.go:190` |
-| `POST` | `/api/sessions/{id}/upload` | Owner or read-write | Multipart `file`; returns the absolute path inside the session directory | `pkg/dashboard/api_sessions.go:187` |
-| `POST` | `/api/sessions/{id}/resume` | Owner or read-write | Reopen an ended session's last conversation where the vendor supports it (409 otherwise); answers 202 with the session `preparing` | `pkg/dashboard/api_sessions.go:188` |
-| `POST` | `/api/sessions/{id}/keyboard` | Owner or read-write | `{"action":"take"\|"release"}` the keyboard lease: the one writable terminal | `pkg/dashboard/api_sessions.go:189` |
-| `POST` | `/api/sessions/{id}/seed` | Owner or read-write | Send Inbox items `{items: [{source, id}]}` into a running session: one enveloped file each under `.hive/inbox/`, then a queued Send naming them (see [Seeding from the Inbox](#seeding-from-the-inbox)) | `pkg/dashboard/api_sessions.go:191` |
+| `GET` | `/api/sessions` | Dashboard auth/session | Sessions, vendors and limits | `pkg/dashboard/api_sessions.go:182` |
+| `POST` | `/api/sessions` | Owner or read-write | Create a session `{name, group, vendor, shared?, seed_items?}`; answers 202 at once with the session `preparing`, the start runs in the background (`seed_items`: see [Seeding from the Inbox](#seeding-from-the-inbox)) | `pkg/dashboard/api_sessions.go:183` |
+| `PATCH` | `/api/sessions/{id}` | Session creator or owner | Rename, regroup or (un)share `{name?, group?, shared?}` | `pkg/dashboard/api_sessions.go:184` |
+| `DELETE` | `/api/sessions/{id}` | Session creator or owner | Close a running session (metadata kept, marked `ended`); on an ended session, remove its metadata and delete its sandbox files | `pkg/dashboard/api_sessions.go:185` |
+| `GET` | `/api/sessions/{id}/log` | Dashboard auth/session | Redacted scrollback `?lines=N` (capped at 5000) | `pkg/dashboard/api_sessions.go:186` |
+| `POST` | `/api/sessions/{id}/input` | Owner or read-write | Queue `{text, submit}` for the pane; answers 202 with `{queued: {id, position}, queue}` and the text is typed once the CLI prompt is idle (size-capped, audited at delivery without the text) | `pkg/dashboard/api_sessions.go:187` |
+| `DELETE` | `/api/sessions/{id}/input/{queue_id}` | Owner or read-write | Cancel your own queued send (the creator or an owner may cancel anyone's); 409 while it is being delivered | `pkg/dashboard/api_sessions.go:191` |
+| `POST` | `/api/sessions/{id}/upload` | Owner or read-write | Multipart `file`; returns the absolute path inside the session directory | `pkg/dashboard/api_sessions.go:188` |
+| `POST` | `/api/sessions/{id}/resume` | Owner or read-write | Reopen an ended session's last conversation where the vendor supports it (409 otherwise); answers 202 with the session `preparing` | `pkg/dashboard/api_sessions.go:189` |
+| `POST` | `/api/sessions/{id}/keyboard` | Owner or read-write | `{"action":"take"\|"release"}` the keyboard lease: the one writable terminal | `pkg/dashboard/api_sessions.go:190` |
+| `POST` | `/api/sessions/{id}/seed` | Owner or read-write | Send Inbox items `{items: [{source, id}]}` into a running session: one enveloped file each under `.hive/inbox/`, then a queued Send naming them (see [Seeding from the Inbox](#seeding-from-the-inbox)) | `pkg/dashboard/api_sessions.go:192` |
 
 ## Session object
 
@@ -104,6 +104,14 @@ After `needs_signin`, `blocked` or `manual` the hive keeps reading the screen, s
 **Audit.** `session_autostart` records `session`, `vendor`, `outcome` (the state), `answered`, `secs` and, when stopped, `screen`; a session that reaches its prompt later is audited again with `after=<previous state>`.
 
 **Turning it off.** Settings → Dashboard → **Answer the CLI startup screens** (`dashboard.sessions.autostart`, default on), or `HIVE_SESSIONS_AUTOSTART=false`, which overrides the saved value. Off means no seeded HOME, no answers and no `startup` block.
+
+## Vendor logins in a session
+
+A session's HOME gets copies of the hive's shared vendor logins (the allowlist is in the [Security model](../security-model.md)), so a session opens signed in as the fleet.
+
+The Claude login is copied **without its refresh token**. A session uses the fleet's current access token and cannot refresh it, so it can never rotate the login out from under the agents ([#18724](https://github.com/hivecommons/hive/issues/18724)). The hive replaces the copy whenever the shared login changes (an agent's refresh is published, or someone signs in from the dashboard), within one credential-bridge poll (5 seconds by default). If the fleet's access token has expired and nothing has refreshed it yet (no Claude agent has run since), a Claude session reports an expired login until an agent's next start or a dashboard sign-in renews the shared one; signing in again from the dashboard is the direct fix.
+
+If a session's HOME holds a complete Claude login that is usable and strictly newer than the shared one (a copy from an older release that the CLI refreshed, or a sign-in done inside the session), the hive adopts it into the shared login, keeps the replaced file as `.credentials.json.stale-<UTC time>`, and records `user_session_login_adopted` with `session`, `trigger` (`boot`, `watchdog`, `sign-in`, `session-start` or `session-remove`) and `stale_shared_file`, never token material. The check also runs before a session is deleted; a login that cannot be adopted makes the delete fail (`500`, the session is kept) rather than lose it. A hive whose agents were locked out this way recovers at its next boot or poll without a new sign-in, provided the session that holds the login has not been deleted.
 
 ## Seeding from the Inbox
 

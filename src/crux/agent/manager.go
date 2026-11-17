@@ -611,6 +611,7 @@ type Manager struct {
 	// claudeOperatorModeLogOnce guards the one-time "re-bridge and watchdog
 	// suspended" log for operator-token mode (claude_operator_token_mode.go).
 	claudeOperatorModeLogOnce sync.Once
+	sessionLogins             sessionLoginCache // user-session login copies already judged (usersession_login.go)
 	uidMap                    *UIDMap
 	sharedPool                SharedSessionPool
 	uidMapPath                string
