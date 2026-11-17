@@ -31,7 +31,6 @@ const (
 	AuditClaudeCredentialRebridged = crux.AuditClaudeCredentialRebridged
 	AuditClaudeCredentialRefreshed = crux.AuditClaudeCredentialRefreshed
 	AuditUserSessionLoginAdopted   = crux.AuditUserSessionLoginAdopted
-	AuditClaudeCredentialRefreshed = crux.AuditClaudeCredentialRefreshed
 )
 
 // auditActorSystem attributes an event to the hive process itself rather than
