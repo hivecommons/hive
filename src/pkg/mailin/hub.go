@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"mime/multipart"
 	"net/http"
 	"os"
 	"strings"
@@ -59,29 +60,36 @@ func (h *HubClient) token() (string, error) {
 	return t, nil
 }
 
-func (h *HubClient) do(ctx context.Context, method, path string, body []byte) (*http.Response, error) {
+// request is one call to the hub.
+type request struct {
+	method, path string
+	contentType  string
+	body         io.Reader
+	header       http.Header
+}
+
+func (h *HubClient) do(ctx context.Context, c *http.Client, rq request) (*http.Response, error) {
 	tok, err := h.token()
 	if err != nil {
 		return nil, err
 	}
-	var rd io.Reader
-	if body != nil {
-		rd = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(h.BaseURL, "/")+path, rd)
+	req, err := http.NewRequestWithContext(ctx, rq.method, strings.TrimRight(h.BaseURL, "/")+rq.path, rq.body)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+tok)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	for k, v := range rq.header {
+		req.Header[k] = v
 	}
-	return h.client().Do(req)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	if rq.contentType != "" {
+		req.Header.Set("Content-Type", rq.contentType)
+	}
+	return c.Do(req)
 }
 
 // FetchHosts returns the hive hosts the hub routes mail for, lower-cased.
 func (h *HubClient) FetchHosts(ctx context.Context) ([]string, error) {
-	resp, err := h.do(ctx, http.MethodGet, wire.HostsPath, nil)
+	resp, err := h.do(ctx, h.client(), request{method: http.MethodGet, path: wire.HostsPath})
 	if err != nil {
 		return nil, err
 	}
@@ -104,14 +112,70 @@ func (h *HubClient) FetchHosts(ctx context.Context) ([]string, error) {
 	return out, nil
 }
 
+// inlineDelivery returns d with every attachment's bytes in Data, for the
+// JSON encoding.
+func inlineDelivery(d wire.Delivery) (wire.Delivery, error) {
+	if d.Files == nil {
+		return d, nil
+	}
+	files := *d.Files
+	files.Attachments = append([]wire.Attachment(nil), d.Files.Attachments...)
+	for i, a := range files.Attachments {
+		if len(a.Data) > 0 || a.Path == "" {
+			continue
+		}
+		data, err := os.ReadFile(a.Path)
+		if err != nil {
+			return d, err
+		}
+		files.Attachments[i].Data = data
+	}
+	d.Files = &files
+	return d, nil
+}
+
+// deliveryBody encodes d: JSON when its attachments total at most
+// wire.InlineFilesBytes (what every spoke understands), otherwise
+// multipart streamed from the spool, never held in memory whole.
+func deliveryBody(d wire.Delivery) (contentType string, body io.Reader, err error) {
+	if wire.FilesBytes(d) <= wire.InlineFilesBytes {
+		d, err := inlineDelivery(d)
+		if err != nil {
+			return "", nil, err
+		}
+		b, err := json.Marshal(d)
+		if err != nil {
+			return "", nil, err
+		}
+		return wire.ContentTypeJSON, bytes.NewReader(b), nil
+	}
+	pr, pw := io.Pipe()
+	mw := multipart.NewWriter(pw)
+	go func() { _ = pw.CloseWithError(wire.WriteMultipart(mw, d)) }()
+	return mw.FormDataContentType(), pr, nil
+}
+
 // Deliver posts one delivery. A 4xx other than 408/429 is ErrRejected
-// (permanent); anything else that is not 2xx is a temporary failure.
+// (permanent); anything else that is not 2xx is a temporary failure. The
+// routing headers let the hub route without parsing the body.
 func (h *HubClient) Deliver(ctx context.Context, d wire.Delivery) error {
-	body, err := json.Marshal(d)
+	ct, body, err := deliveryBody(d)
 	if err != nil {
 		return err
 	}
-	resp, err := h.do(ctx, http.MethodPost, wire.InboundPath, body)
+	if c, ok := body.(io.Closer); ok {
+		defer c.Close()
+	}
+	hdr := http.Header{}
+	hdr.Set(wire.HeaderDelivery, d.ID)
+	hdr.Set(wire.HeaderKind, string(d.Kind))
+	hdr.Set(wire.HeaderRecipient, d.Recipient)
+	// No client timeout: the caller's context bounds a large upload.
+	c := h.HTTP
+	if c == nil {
+		c = &http.Client{}
+	}
+	resp, err := h.do(ctx, c, request{method: http.MethodPost, path: wire.InboundPath, contentType: ct, body: body, header: hdr})
 	if err != nil {
 		return err
 	}

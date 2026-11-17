@@ -331,7 +331,7 @@ func TestCalendarEmailsAddLimits(t *testing.T) {
 }
 
 func TestMailRelayPathsMatchWire(t *testing.T) {
-	if meetingsInvitesPath != wire.SpokeInvitesPath || meetingsCalendarProofPath != wire.SpokeProofPath || inboxEmailPath != wire.SpokeFilesPath {
+	if meetingsInvitesPath != wire.SpokeInvitesPath || meetingsCalendarProofPath != wire.SpokeProofPath || inboxEmailPath != wire.SpokeFilesPath || inboxEmailChunkPath != wire.SpokeFilesChunkPath {
 		t.Fatal("the hub forwards to wire.Spoke*Path; the dashboard must serve the same paths")
 	}
 }

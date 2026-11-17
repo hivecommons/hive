@@ -93,6 +93,9 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_HUB_SECRET` | Required for spokes registered to a protected hub; optional for a standalone hub with `/data/saas/hub-secret.key` | `/data/saas/hub-secret.key` on the hub when present; no fallback for spoke heartbeat auth | Bearer secret for spoke heartbeats and hub/spoke SaaS APIs. Self-hosted (`byo-`) hives registered through self-service never receive it: they hold only their own `HIVE_HEARTBEAT_KEY`, and the hub never tries `HIVE_HUB_SECRET` or anything derived from it for a `byo-` ID. |
 | `HIVE_HUB_SELFSERVICE_REGISTRATION` | No | off | Enables the self-service registration API (`/api/hub/selfservice/*`) that lets a signed-in user register a hive they run themselves under the reserved `byo-<login>--<name>` ID namespace, after proving `permissions.admin` on every listed repo with their own GitHub token ([#18060](https://github.com/hivecommons/hive/issues/18060)). Accepts `1/true/yes/on`. When off, every route but `GET /api/hub/selfservice/status` answers `404` and the status reports `enabled: false`. Read per request; no restart needed. |
 | `HIVE_HUB_MAIL_TOKEN` | Only on a hub that routes mail from `hive-mx` | none | Bearer token `hive-mx` presents on `GET /api/mail/hosts` and `POST /api/mail/inbound` ([#18395](https://github.com/hivecommons/hive/issues/18395)); the same value as the `hive-mx` Secret. Unset: both endpoints answer `404`. Read per request. Secret. |
+| `HIVE_HUB_MAIL_MAX_BODY_BYTES` | No | `50331648` | Largest delivery `POST /api/mail/inbound` accepts from a `hive-mx` that sends routing headers (48 MiB, this route only; [#18564](https://github.com/hivecommons/hive/issues/18564)). Without routing headers the cap stays 8 MiB. |
+| `HIVE_HUB_MAIL_CHUNK_BYTES` | No | `786432` | Piece size when the hub relays a large mail-in delivery to the spoke (768 KiB, under the 1 MiB ingress default); clamped to 64 KiB to 8 MiB. |
+| `HIVE_HUB_MAIL_SPOOL_DIR` | No | system temp directory | Where the hub keeps a delivery on disk while it relays it. |
 | `HIVE_HUB_SELFSERVICE_MAX_PER_USER` | No | `5` | Maximum self-service hives one user may have registered at once; the next registration answers `429` until one is removed. |
 | `HIVE_HUB_SELFSERVICE_EXPIRY` | No | `24h` | How long a self-service hive may go without an accepted heartbeat before the expiry sweep revokes its key and removes its registry entry (counted from the last accepted heartbeat, or from registration while there has been none). Reported by `GET /api/hub/selfservice/status` as `expiry`. Go duration syntax. |
 | `HIVE_HUB_SELFSERVICE_SWEEP_INTERVAL` | No | `10m` | How often the self-service expiry sweep (`src/pkg/hub/selfservice_expiry.go`) runs. Each removal writes `audit: selfservice_hive_expired` (see [audit-log.md](audit-log.md)). Read at startup; restart after changing. Go duration syntax. |
@@ -415,7 +418,8 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_SCHEDULE_TICK_S` | No | `15` | Seconds between the meeting scheduler's checks for a Calendar meeting to join. |
 | `HIVE_MEETINGS_SCHEDULE_LEAD_S` | No | `60` | Seconds before a scheduled meeting's start that hive joins it (`0` joins at the start). |
 | `HIVE_MEETINGS_EMAIL_INVITES_ENABLED` | No | `true` | Accept calendar invites mailed to `hive@<host>` through hive-mx. Overrides `meetings.email.invites_enabled`. |
-| `HIVE_MEETINGS_EMAIL_FILES_ENABLED` | No | `true` | Accept Markdown, audio and image attachments mailed to `hive@<host>` as Inbox items. Overrides `meetings.email.files_enabled`. |
+| `HIVE_MEETINGS_EMAIL_FILES_ENABLED` | No | `true` | Accept Markdown, audio, video and image attachments and text bodies mailed to `hive@<host>` as Inbox items. Overrides `meetings.email.files_enabled`. |
+| `HIVE_INBOX_EMAIL_MAX_BYTES` | No | `50331648` | Largest mail-in delivery a spoke assembles from relayed pieces (`POST /api/inbox/email/chunk`, 48 MiB). |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_MEETING` | No | `200000` | Per-meeting LLM token budget for Spektacular live mode. |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_HOUR` | No | `500000` | Hive-wide hourly token ceiling across meetings. |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_DAY` | No | `2000000` | Hive-wide daily token ceiling across meetings. |
@@ -458,7 +462,7 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 
 ### Mail receiver (`hive-mx`)
 
-`hive-mx` is the cluster's receive-only mail receiver ([#18395](https://github.com/hivecommons/hive/issues/18395)): it accepts mail only for `hive@<hive host>`, keeps calendar invites, mail-in files and proof codes, and posts them to the hub. It never sends mail, offers no AUTH and relays nothing. It reads only these variables; see [meetings.md](meetings.md#inviting-betty-by-email).
+`hive-mx` is the cluster's receive-only mail receiver ([#18395](https://github.com/hivecommons/hive/issues/18395)): it accepts mail only for `hive@<hive host>`, keeps calendar invites, mail-in files and text bodies, and proof codes, and posts them to the hub. It never sends mail, offers no AUTH and relays nothing. It reads only these variables; see [meetings.md](meetings.md#inviting-betty-by-email).
 
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
@@ -468,11 +472,18 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MX_HEALTH_LISTEN` | No | `:8080` | `/healthz` and `/readyz` (ready once the first host list loaded). |
 | `HIVE_MX_DOMAIN` | No | `mx.hive.hivecommons.dev` | Name hive-mx greets with. |
 | `HIVE_MX_HOSTS_REFRESH_S` | No | `60` | Seconds between host list refreshes. A failed refresh keeps the last list. |
-| `HIVE_MX_MAX_MESSAGE_BYTES` | No | `2097152` | SMTP SIZE limit (2 MB). |
+| `HIVE_MX_MAX_MESSAGE_BYTES` | No | `36700160` | SMTP SIZE limit (35 MiB: a 25 MB attachment after base64). |
 | `HIVE_MX_MAX_RECIPIENTS` | No | `5` | Recipients per message. |
 | `HIVE_MX_MAX_CONNECTIONS` | No | `100` | Concurrent SMTP connections. |
-| `HIVE_MX_MAX_FILE_BYTES` | No | `2097152` | Largest decoded mail-in attachment. |
+| `HIVE_MX_MAX_FILE_BYTES` | No | `26214400` | Largest decoded mail-in attachment (25 MiB). |
+| `HIVE_MX_MAX_FILES_BYTES` | No | `31457280` | All decoded mail-in attachments of one message (30 MiB). |
 | `HIVE_MX_MAX_FILES` | No | `10` | Mail-in attachments kept per message. |
+| `HIVE_MX_MAX_MARKDOWN_BYTES` | No | `2097152` | Largest Markdown attachment (checked in memory; it has no magic number). |
+| `HIVE_MX_MAX_BODY_BYTES` | No | `262144` | Text body kept as a note (256 KiB); a longer body is cut. |
+| `HIVE_MX_SPOOL_DIR` | No | system temp directory | Where a message and its audio, video and image attachments are spooled while it is processed; mount a size-limited `emptyDir`. |
+| `HIVE_MX_MAX_CONCURRENT_DATA` | No | `8` | Messages processed at once (`451` past it); with the SIZE limit it bounds the spool. |
+| `HIVE_MX_HIVE_DAILY_BYTES` | No | `536870912` | Message bytes delivered per hive per 24 hours (512 MiB); past it the sender gets `452` and retries later. |
+| `HIVE_MX_DELIVER_TIMEOUT_S` | No | `120` | Seconds hive-mx waits for the hub per recipient (a large delivery is relayed to the spoke in pieces meanwhile). |
 | `HIVE_MX_IP_MESSAGES_PER_HOUR` | No | `60` | Messages per remote IP per hour (burst of a quarter of it). |
 | `HIVE_MX_DOMAIN_MESSAGES_PER_HOUR` | No | `120` | Messages per sender (MAIL FROM) organizational domain per hour. |
 | `HIVE_MX_TLS_CERT` | No | none | PEM certificate file; with `HIVE_MX_TLS_KEY` it turns on STARTTLS. Re-read when the file changes. Without it hive-mx accepts plain SMTP only. |

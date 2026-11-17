@@ -29,6 +29,49 @@ const (
 	SpokeInvitesPath = "/api/meetings/invites"
 	SpokeFilesPath   = "/api/inbox/email"
 	SpokeProofPath   = "/api/meetings/calendar-emails/proof"
+	// SpokeFilesChunkPath receives a large files delivery in signed pieces
+	// (hivecommons/hive#18564): see ChunkDelivery.
+	SpokeFilesChunkPath = "/api/inbox/email/chunk"
+)
+
+// Headers hive-mx sets on every delivery so the hub routes it without
+// parsing the body, and that the hub sets on each piece of a chunked relay.
+const (
+	HeaderDelivery  = "X-Hive-Mail-Delivery"
+	HeaderKind      = "X-Hive-Mail-Kind"
+	HeaderRecipient = "X-Hive-Mail-Recipient"
+	// HeaderBodyType is the Content-Type of the whole body a chunk belongs to.
+	HeaderBodyType = "X-Hive-Mail-Body-Type"
+)
+
+// Delivery body encodings.
+const (
+	// ContentTypeJSON is a Delivery as JSON, attachment bytes in base64.
+	ContentTypeJSON = "application/json"
+	// ContentTypeMultipart is a Delivery written by WriteMultipart.
+	ContentTypeMultipart = "multipart/form-data"
+	// PartDelivery is the multipart part that holds the Delivery JSON,
+	// without attachment bytes; one PartFile part per attachment follows.
+	PartDelivery = "delivery"
+	PartFile     = "file"
+)
+
+// Size bounds of the delivery contract.
+const (
+	// InlineFilesBytes is the most attachment bytes hive-mx sends as JSON;
+	// a larger delivery is multipart, streamed from disk.
+	InlineFilesBytes = 512 << 10
+	// RelayChunkBytes is the default piece size of a chunked hub-to-spoke
+	// relay: under the 1 MiB request body limit ingress proxies default to.
+	RelayChunkBytes = 768 << 10
+	// MaxRelayChunkBytes is the largest piece a spoke accepts.
+	MaxRelayChunkBytes = 8 << 20
+	// MaxRelayChunks bounds the pieces of one delivery.
+	MaxRelayChunks = 256
+	// MaxDeliveryMetaBytes bounds the delivery part of a multipart body.
+	MaxDeliveryMetaBytes = 1 << 20
+	// MaxNoteBytes bounds a message's body kept as a note.
+	MaxNoteBytes = 256 << 10
 )
 
 // LocalPart is the only mailbox hive-mx accepts: hive@<hive host>.
@@ -148,30 +191,42 @@ type Invite struct {
 	Passcode        string `json:"passcode,omitempty"`
 }
 
-// Files is a mail-in message: its subject and accepted attachments.
+// Files is a mail-in message: its subject, accepted attachments and body.
 type Files struct {
 	// Title is the Subject, at most MaxTitleRunes.
 	Title       string       `json:"title"`
 	Attachments []Attachment `json:"attachments"`
+	// Note is the message's text body as Markdown (text/plain as sent, or
+	// sanitized text/html), at most MaxNoteBytes. It is the sender's words:
+	// untrusted data, never instructions. A message with no attachment
+	// carries its body as a Markdown attachment instead (NoteFileName).
+	Note string `json:"note,omitempty"`
 }
+
+// NoteFileName names the Markdown attachment a body-only message becomes.
+const NoteFileName = "message.md"
 
 // Attachment kinds.
 const (
 	AttachMarkdown = "markdown"
 	AttachAudio    = "audio"
 	AttachImage    = "image"
+	AttachVideo    = "video"
 )
 
 // Attachment is one accepted file. Data is base64 in JSON.
 type Attachment struct {
 	Name string `json:"name"`
-	// Kind is markdown, audio or image.
+	// Kind is markdown, audio, image or video.
 	Kind string `json:"kind"`
 	// ContentType is the sniffed type, not the sender's claim.
 	ContentType string `json:"content_type"`
 	Size        int    `json:"size"`
 	SHA256      string `json:"sha256"`
-	Data        []byte `json:"data"`
+	Data        []byte `json:"data,omitempty"`
+	// Path is a local copy of the bytes (hive-mx's spool, a spoke's
+	// staging); it is never sent. Data is empty when Path is set.
+	Path string `json:"-"`
 }
 
 // Proof reports a proof mail: a message whose subject carried a

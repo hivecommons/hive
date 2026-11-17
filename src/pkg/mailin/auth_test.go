@@ -81,7 +81,7 @@ func runAuth(t *testing.T, r *fakeResolver, env Envelope, raw []byte) (a struct 
 	DKIM                             []string
 }) {
 	t.Helper()
-	got := Authenticate(context.Background(), r, env, raw, headerOf(t, raw))
+	got := Authenticate(context.Background(), r, env, bytes.NewReader(raw), headerOf(t, raw))
 	a.From, a.DMARC, a.Policy, a.SPF = got.From, got.DMARC, got.DMARCPolicy, got.SPF
 	a.SPFAligned, a.DKIMAligned, a.Aligned = got.SPFAligned, got.DKIMAligned, got.Aligned
 	for _, d := range got.DKIM {
