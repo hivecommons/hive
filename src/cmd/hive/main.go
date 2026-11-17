@@ -4136,6 +4136,10 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 	// did not support failed at every launch for a day, visible only as a WARN
 	// line inside the pod.
 	b.agentMgr.SetAuditSink(b.dashSrv.AgentAuditSink())
+	// The Sessions runtime records in the same store when it adopts a login
+	// from a session HOME into the shared login (at a session's start or
+	// removal); the credential watchdog's adoptions go through the manager.
+	b.userSessionRuntime().SetAuditSink(b.dashSrv.AgentAuditSink())
 
 	// Compile the operator's state-triggered hooks (RFC #4001). Every sink the
 	// vetted actions act through exists by this point: the notifier, the agent

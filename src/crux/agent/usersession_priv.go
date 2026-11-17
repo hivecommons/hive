@@ -371,6 +371,17 @@ func (r *UserSessionRuntime) Remove(id string) error {
 			r.logger.Warn("user session kill before removal failed", "id", id, "error", err)
 		}
 	}
+	// The session's CLI is gone (killed above), so its login can no longer
+	// change. If that login is the newest one on this hive, it goes into the
+	// shared file BEFORE the sandbox is deleted: removing a session must never
+	// remove the only valid login. A login that cannot be judged or adopted
+	// keeps the sandbox, and the caller retries.
+	// (The CLI creates files and directories with private modes; the hive
+	// must be able to look at the login path to judge it.)
+	r.makeHomeReadable(id)
+	if err := r.syncClaudeLogin(id, sessionLoginTriggerRemove, sessionLoginModeRemove); err != nil {
+		return fmt.Errorf("keeping the session's login before removal: %w", err)
+	}
 	r.workspaceMu.Lock()
 	err := r.removeWorktrees(id)
 	r.workspaceMu.Unlock()

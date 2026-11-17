@@ -23,7 +23,9 @@ import (
 // session write access to the shared file (and, for settings.json, a hook that
 // every agent would run). Instead a fixed allowlist of the minimal login
 // files per vendor (userSessionLoginFiles) is COPIED into the session HOME as
-// read-only (0400), session-owned files. Nothing that can execute a command
+// read-only (0400), session-owned files; the Claude login is copied without
+// its refresh token, so a session can never rotate the fleet's login
+// (usersession_login.go). Nothing that can execute a command
 // (settings.json, hooks, MCP/extension config) is ever copied, and ~/.config
 // (gh's hosts.yml, goose extensions) is not bridged at all.
 const (
@@ -66,9 +68,12 @@ var userSessionLoginFiles = []string{
 const userSessionMkdirScript = `umask 027; mkdir -p -- "$@"`
 
 // userSessionCopyLoginScript writes stdin to $1 (replacing any previous copy)
-// as a read-only file. set -C makes the redirect fail instead of following a
-// symlink or overwriting.
-const userSessionCopyLoginScript = `set -e; umask 077; rm -f -- "$1"; set -C; cat > "$1"; chmod ` + userSessionLoginFileMode + ` -- "$1"`
+// as a read-only file. The bytes go to a temporary beside the destination and
+// are renamed over it, so a CLI reading the login never sees it missing or
+// half written. set -C makes the redirect fail instead of following a symlink
+// or overwriting; a directory at the destination is refused rather than
+// moved into.
+const userSessionCopyLoginScript = `set -e; umask 077; if [ -d "$1" ] && [ ! -L "$1" ]; then exit 1; fi; t="$1.hive-new"; rm -f -- "$t"; set -C; cat > "$t"; chmod ` + userSessionLoginFileMode + ` -- "$t"; mv -f -- "$t" "$1"`
 
 // userSessionPrepareScript (run as root) creates the sandbox dir root-owned and
 // not writable by the session, then the three session-owned children. $1 is
@@ -155,18 +160,38 @@ func (r *UserSessionRuntime) prepareSandbox(id string, uid int) error {
 	return nil
 }
 
-// copyLoginFiles refreshes the read-only login copies. A missing source is
-// skipped (that vendor was never signed in fleet-wide); a failed copy is
-// logged and skipped so one unreadable login cannot block the session.
+// copyLoginFiles brings the session's login copies up to date. A missing
+// source is skipped (that vendor was never signed in fleet-wide); a failed
+// copy is logged and skipped so one unreadable login cannot block the session.
+//
+// The Claude login is not a plain copy: the session gets it without the
+// refresh token, and a newer login already in the session HOME is adopted
+// into the shared file first (usersession_login.go).
+//
+// For every other vendor the copy is skipped when the session's file was
+// written after the shared one. That is the state of an unchanged copy from
+// an earlier start, and also of a login the CLI in the session rewrote itself
+// (a token refresh): re-copying an older shared file over it on a resume
+// would destroy the only current login. A shared file that changed since
+// (a new fleet sign-in) is newer than the copy and is copied.
 func (r *UserSessionRuntime) copyLoginFiles(id string, uid int) {
 	home := userSessionHome(id)
 	for _, rel := range userSessionLoginFiles {
+		if rel == userSessionClaudeLoginRel {
+			// Reported (log and audit) inside; a failure must not block the
+			// session, which then starts on whatever copy it has.
+			_ = r.syncClaudeLogin(id, sessionLoginTriggerStart, sessionLoginModeStart)
+			continue
+		}
 		src := filepath.Join(sharedAgentHome, rel)
+		dest := filepath.Join(home, rel)
+		if sessionLoginCopyIsCurrent(src, dest) {
+			continue
+		}
 		data, ok := readLoginSource(src)
 		if !ok {
 			continue
 		}
-		dest := filepath.Join(home, rel)
 		ctx, cancel := context.WithTimeout(context.Background(), userSessionCmdTimeout)
 		out, err := r.priv(ctx, userSessionSpec(uid), strings.NewReader(data), "sh", "-c", userSessionCopyLoginScript, "sh", dest)
 		cancel()
@@ -174,6 +199,20 @@ func (r *UserSessionRuntime) copyLoginFiles(id string, uid int) {
 			r.logger.Warn("user session login copy failed", "id", id, "file", rel, "error", outputErr("copy", err, out))
 		}
 	}
+}
+
+// sessionLoginCopyIsCurrent reports whether the session already holds a login
+// file at dest written after the shared file src, so src must not replace it.
+func sessionLoginCopyIsCurrent(src, dest string) bool {
+	di, err := os.Lstat(dest)
+	if err != nil || !di.Mode().IsRegular() {
+		return false
+	}
+	si, err := os.Stat(src)
+	if err != nil {
+		return false
+	}
+	return di.ModTime().After(si.ModTime())
 }
 
 // readLoginSource reads one shared login file: a regular file (symlinks are
