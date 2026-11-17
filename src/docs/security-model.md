@@ -566,11 +566,33 @@ importance:
   when it is newer. The audit entry is the record of it, and a dashboard
   sign-in puts the hive back on the operator's account.
   The other vendors' files are still plain copies, refresh token included
-  where the vendor stores one. Codex's ChatGPT login and an OpenCode OAuth
-  entry rotate on refresh and can split from the shared file the same way;
-  Gemini's Google refresh token and the Copilot CLI token do not rotate. For
-  all of them a resume no longer overwrites a file the session's CLI rewrote
-  after the shared one was written.
+  where the vendor stores one. Gemini's Google refresh token and the Copilot
+  CLI token do not rotate. Codex's ChatGPT login (`.codex/auth.json`) and an
+  OpenCode OAuth entry (`opencode/auth.json`) do, so a session that refreshes
+  its copy holds the only valid login; for these two the hive **adopts** that
+  login back into the shared file the agents link to
+  ([#18740](https://github.com/hivecommons/hive/issues/18740)). Codex: the
+  session's file was written after the shared one, holds a ChatGPT login
+  with a different refresh token and records a later `last_refresh`, and the
+  shared file itself holds a ChatGPT login (an API-key login does not rotate
+  and is never replaced). OpenCode, per provider entry: both entries are
+  `oauth`, the session's has a different refresh token and a later
+  `expires`, and the session's file was written after the shared one; only
+  those entries are replaced, every other entry of the shared file is kept,
+  and a provider the shared file does not hold is not added. Only those
+  fields and modification times decide; token values are never logged. The
+  replaced file is kept as `auth.json.stale-<UTC time>`, the new one keeps the
+  old one's mode (and owner, where the hive may set it), and
+  `user_session_login_adopted` names the session, trigger, vendor and file.
+  It runs when the Claude check runs, deletion included: a newer login that
+  cannot be adopted keeps the session. Unlike Claude, a session still holds a
+  copy that can refresh, because whether each CLI accepts a login without its
+  refresh token has not been verified. So a session and an agent can still
+  refresh the same token within one poll; the shared file then converges on
+  the newer login at the next poll, and the hive never overwrites a shared
+  file that changed after it was compared. For all of these vendors a resume
+  no longer overwrites a file the session's CLI rewrote after the shared one
+  was written.
 - **Terminal access is bound.** ttyd listens on loopback without a secret a
   session uid could not read (its `-c` credential is visible in `/proc`), so
   session attaches are gated by a per-session token, HMAC-SHA256 of the tmux
@@ -637,9 +659,10 @@ importance:
   ([inbox-recording.md](inbox-recording.md)); `/terminal/` and `/api/` keep
   `display-capture=()`.
 
-Audit: `user_session_login_adopted` (a newer Claude login found in a session
-home was adopted into the shared login; session id, trigger and the preserved
-file's path, never token material), `session_created`, `session_started` (the
+Audit: `user_session_login_adopted` (a newer Claude, Codex or OpenCode login
+found in a session home was adopted into the shared login; session id,
+trigger, the preserved file's path and, for Codex and OpenCode, the vendor and
+file, never token material), `session_created`, `session_started` (the
 outcome of the background start), `session_autostart` (how the startup auto-answer ended and which
 screens it answered), `session_closed`, `session_renamed`, `session_input` and
 `session_upload` record the user and session id (never input text).
