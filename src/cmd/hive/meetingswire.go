@@ -229,6 +229,7 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 		Notes:    notes,
 		Policy: live.Policy{
 			ChatPostsPerMinute:   m.ChatPostsPerMinuteOrDefault(),
+			ChatAnswerBurst:      m.ChatAnswerBurstOrDefault(),
 			ResearchPerMeeting:   m.ResearchPerMeetingOrDefault(),
 			VoiceOnAddress:       m.VoiceOnAddressEnabled(),
 			MaxTokensPerMeeting:  m.Budget.MaxTokensPerMeetingOrDefault(),

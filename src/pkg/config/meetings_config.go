@@ -54,6 +54,9 @@ const (
 	// DefaultMeetingsChatPostsPerMinute caps hive's chat posts into one
 	// meeting.
 	DefaultMeetingsChatPostsPerMinute = 6
+	// DefaultMeetingsChatAnswerBurst is the extra posts a minute addressed
+	// answers may take.
+	DefaultMeetingsChatAnswerBurst = 3
 	// DefaultMeetingsLobbyTimeoutS is how long hive waits in a meeting
 	// lobby before it gives up and leaves.
 	DefaultMeetingsLobbyTimeoutS = 600
@@ -128,6 +131,7 @@ const (
 	MeetingsResearchPoolSizeEnv    = "HIVE_MEETINGS_RESEARCH_POOL_SIZE"
 	MeetingsResearchPerMeetingEnv  = "HIVE_MEETINGS_RESEARCH_PER_MEETING"
 	MeetingsChatPostsPerMinuteEnv  = "HIVE_MEETINGS_CHAT_POSTS_PER_MINUTE"
+	MeetingsChatAnswerBurstEnv     = "HIVE_MEETINGS_CHAT_ANSWER_BURST"
 	MeetingsLobbyTimeoutEnv        = "HIVE_MEETINGS_LOBBY_TIMEOUT_S"
 	MeetingsRetentionDaysEnv       = "HIVE_MEETINGS_RETENTION_DAYS"
 	MeetingsConsentTextEnv         = "HIVE_MEETINGS_CONSENT_TEXT"
@@ -182,6 +186,11 @@ type MeetingsConfig struct {
 	// ChatPostsPerMinute caps hive's chat posts into one meeting. Zero or
 	// negative means the default.
 	ChatPostsPerMinute int `yaml:"chat_posts_per_minute,omitempty" json:"chat_posts_per_minute,omitempty"`
+	// ChatAnswerBurst is how many extra chat posts a minute the persona's
+	// answers to requests addressed to her may take beyond
+	// ChatPostsPerMinute, so parallel answers are not held for a minute
+	// (#18590). Zero or negative means the default.
+	ChatAnswerBurst int `yaml:"chat_answer_burst,omitempty" json:"chat_answer_burst,omitempty"`
 	// LobbyTimeoutS is how long hive waits in a lobby. Zero or negative
 	// means the default.
 	LobbyTimeoutS int `yaml:"lobby_timeout_s,omitempty" json:"lobby_timeout_s,omitempty"`
@@ -595,6 +604,12 @@ func (m MeetingsConfig) ChatPostsPerMinuteOrDefault() int {
 	return meetingsEnvInt(MeetingsChatPostsPerMinuteEnv, m.ChatPostsPerMinute, DefaultMeetingsChatPostsPerMinute)
 }
 
+// ChatAnswerBurstOrDefault returns the extra chat posts a minute addressed
+// persona answers may take.
+func (m MeetingsConfig) ChatAnswerBurstOrDefault() int {
+	return meetingsEnvInt(MeetingsChatAnswerBurstEnv, m.ChatAnswerBurst, DefaultMeetingsChatAnswerBurst)
+}
+
 // LobbyTimeoutSOrDefault returns the lobby timeout in seconds.
 func (m MeetingsConfig) LobbyTimeoutSOrDefault() int {
 	return meetingsEnvInt(MeetingsLobbyTimeoutEnv, m.LobbyTimeoutS, DefaultMeetingsLobbyTimeoutS)
@@ -756,6 +771,7 @@ func (m MeetingsConfig) Validate() error {
 		{"meetings.research_pool_size", m.ResearchPoolSize},
 		{"meetings.research_per_meeting", m.ResearchPerMeeting},
 		{"meetings.chat_posts_per_minute", m.ChatPostsPerMinute},
+		{"meetings.chat_answer_burst", m.ChatAnswerBurst},
 		{"meetings.lobby_timeout_s", m.LobbyTimeoutS},
 		{"meetings.retention_days", m.RetentionDays},
 		{"meetings.budget.max_tokens_per_meeting", m.Budget.MaxTokensPerMeeting},
