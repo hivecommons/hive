@@ -29,7 +29,14 @@ const (
 	EnvMaxRecipients   = "HIVE_MX_MAX_RECIPIENTS"
 	EnvMaxConnections  = "HIVE_MX_MAX_CONNECTIONS"
 	EnvMaxFileBytes    = "HIVE_MX_MAX_FILE_BYTES"
+	EnvMaxFilesBytes   = "HIVE_MX_MAX_FILES_BYTES"
 	EnvMaxFiles        = "HIVE_MX_MAX_FILES"
+	EnvMaxMarkdown     = "HIVE_MX_MAX_MARKDOWN_BYTES"
+	EnvMaxBodyBytes    = "HIVE_MX_MAX_BODY_BYTES"
+	EnvSpoolDir        = "HIVE_MX_SPOOL_DIR"
+	EnvMaxConcurrent   = "HIVE_MX_MAX_CONCURRENT_DATA"
+	EnvHiveDailyBytes  = "HIVE_MX_HIVE_DAILY_BYTES"
+	EnvDeliverTimeoutS = "HIVE_MX_DELIVER_TIMEOUT_S"
 	EnvIPPerHour       = "HIVE_MX_IP_MESSAGES_PER_HOUR"
 	EnvDomainPerHour   = "HIVE_MX_DOMAIN_MESSAGES_PER_HOUR"
 	EnvTLSCert         = "HIVE_MX_TLS_CERT"
@@ -38,12 +45,15 @@ const (
 
 // Config defaults.
 const (
-	DefaultListen          = ":2525"
-	DefaultHealthListen    = ":8080"
-	DefaultHubTokenFile    = "/var/run/secrets/hive-mx/token"
-	DefaultMaxConnections  = 100
-	DefaultIPPerHour       = 60
-	DefaultDomainPerHour   = 120
+	DefaultListen         = ":2525"
+	DefaultHealthListen   = ":8080"
+	DefaultHubTokenFile   = "/var/run/secrets/hive-mx/token"
+	DefaultMaxConnections = 100
+	DefaultIPPerHour      = 60
+	DefaultDomainPerHour  = 120
+	// DefaultHiveDailyBytes is each hive's daily budget of message bytes.
+	DefaultHiveDailyBytes  = 512 << 20
+	hiveBudgetWindow       = 24 * time.Hour
 	rateBurstDivisor       = 4
 	healthReadHeaderTimout = 5 * time.Second
 	shutdownGrace          = 10 * time.Second
@@ -61,6 +71,10 @@ type Config struct {
 	Limits               Limits
 	IPPerHour            int
 	DomainPerHour        int
+	HiveDailyBytes       int64
+	SpoolDir             string
+	MaxConcurrentData    int
+	DeliverTimeout       time.Duration
 	TLSCert, TLSKey      string
 	// Resolver is the DNS used for SPF, DKIM and DMARC (net.DefaultResolver
 	// when nil; tests pass a fake).
@@ -85,23 +99,30 @@ func envStr(getenv func(string) string, key, def string) string {
 // back to its default. The hub URL is required.
 func ConfigFromEnv(getenv func(string) string) (Config, error) {
 	c := Config{
-		Listen:          envStr(getenv, EnvListen, DefaultListen),
-		HealthListen:    envStr(getenv, EnvHealthListen, DefaultHealthListen),
-		Domain:          envStr(getenv, EnvDomain, DefaultDomain),
-		HubURL:          envStr(getenv, EnvHubURL, ""),
-		HubTokenFile:    envStr(getenv, EnvHubTokenFile, DefaultHubTokenFile),
-		HostsRefresh:    time.Duration(envInt(getenv, EnvHostsRefreshS, int(defaultHostsPoll/time.Second))) * time.Second,
-		MaxMessageBytes: int64(envInt(getenv, EnvMaxMessageBytes, DefaultMaxMessageBytes)),
-		MaxRecipients:   envInt(getenv, EnvMaxRecipients, DefaultMaxRecipients),
-		MaxConnections:  envInt(getenv, EnvMaxConnections, DefaultMaxConnections),
-		IPPerHour:       envInt(getenv, EnvIPPerHour, DefaultIPPerHour),
-		DomainPerHour:   envInt(getenv, EnvDomainPerHour, DefaultDomainPerHour),
-		TLSCert:         envStr(getenv, EnvTLSCert, ""),
-		TLSKey:          envStr(getenv, EnvTLSKey, ""),
+		Listen:            envStr(getenv, EnvListen, DefaultListen),
+		HealthListen:      envStr(getenv, EnvHealthListen, DefaultHealthListen),
+		Domain:            envStr(getenv, EnvDomain, DefaultDomain),
+		HubURL:            envStr(getenv, EnvHubURL, ""),
+		HubTokenFile:      envStr(getenv, EnvHubTokenFile, DefaultHubTokenFile),
+		HostsRefresh:      time.Duration(envInt(getenv, EnvHostsRefreshS, int(defaultHostsPoll/time.Second))) * time.Second,
+		MaxMessageBytes:   int64(envInt(getenv, EnvMaxMessageBytes, DefaultMaxMessageBytes)),
+		MaxRecipients:     envInt(getenv, EnvMaxRecipients, DefaultMaxRecipients),
+		MaxConnections:    envInt(getenv, EnvMaxConnections, DefaultMaxConnections),
+		IPPerHour:         envInt(getenv, EnvIPPerHour, DefaultIPPerHour),
+		DomainPerHour:     envInt(getenv, EnvDomainPerHour, DefaultDomainPerHour),
+		HiveDailyBytes:    int64(envInt(getenv, EnvHiveDailyBytes, DefaultHiveDailyBytes)),
+		SpoolDir:          envStr(getenv, EnvSpoolDir, ""),
+		MaxConcurrentData: envInt(getenv, EnvMaxConcurrent, DefaultMaxConcurrentData),
+		DeliverTimeout:    time.Duration(envInt(getenv, EnvDeliverTimeoutS, int(DefaultDeliverTimeout/time.Second))) * time.Second,
+		TLSCert:           envStr(getenv, EnvTLSCert, ""),
+		TLSKey:            envStr(getenv, EnvTLSKey, ""),
 	}
 	c.Limits = DefaultLimits()
 	c.Limits.MaxFileBytes = envInt(getenv, EnvMaxFileBytes, DefaultMaxFileBytes)
+	c.Limits.MaxFilesBytes = envInt(getenv, EnvMaxFilesBytes, DefaultMaxFilesBytes)
 	c.Limits.MaxFiles = envInt(getenv, EnvMaxFiles, DefaultMaxFiles)
+	c.Limits.MaxMarkdownBytes = envInt(getenv, EnvMaxMarkdown, DefaultMaxMarkdownBytes)
+	c.Limits.MaxBodyBytes = envInt(getenv, EnvMaxBodyBytes, DefaultMaxBodyBytes)
 	if c.HubURL == "" {
 		return c, fmt.Errorf("%s is required", EnvHubURL)
 	}
@@ -173,6 +194,8 @@ func Run(ctx context.Context, c Config, log *slog.Logger) error {
 		Limits: c.Limits, Hosts: hosts, Hub: hub, TLSConfig: tlsCfg, Logger: log, Resolver: c.Resolver,
 		IPLimiter:     NewRateLimiter(c.IPPerHour, time.Hour, max(1, c.IPPerHour/rateBurstDivisor), nil),
 		DomainLimiter: NewRateLimiter(c.DomainPerHour, time.Hour, max(1, c.DomainPerHour/rateBurstDivisor), nil),
+		HiveBudget:    NewByteBudget(c.HiveDailyBytes, hiveBudgetWindow, nil),
+		SpoolDir:      c.SpoolDir, MaxConcurrentData: c.MaxConcurrentData, DeliverTimeout: c.DeliverTimeout,
 	})
 	ln, err := net.Listen("tcp", c.Listen)
 	if err != nil {
