@@ -4606,6 +4606,18 @@
     .hive-dialog-check { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--muted); margin: calc(-1 * var(--sp-4)) 0 var(--sp-6); cursor: pointer; }
     .hive-dialog-check input { accent-color: var(--accent); margin: 0; }
     .hive-dialog-buttons { display: flex; gap: 10px; justify-content: flex-end; }
+    /* Export / link viewer (hiveExportViewer): the handed-over text sits in
+       the dialog's own type and colour tokens, full width, read-only and
+       selectable, so an OAuth URL reads as part of the dialog rather than a
+       stray form control. A link is one wrapped line; an export is a <pre>. */
+    .hive-export-dialog { width: 560px; }
+    .hive-export-dialog .hive-dialog-title { margin-bottom: var(--sp-3); }
+    .hive-export-dialog .hive-dialog-body { margin-bottom: var(--sp-6); white-space: normal; }
+    .hive-export-note { margin: 0 0 var(--sp-4); }
+    .hive-export-link, .hive-export-text { display: block; width: 100%; box-sizing: border-box; margin: 0; padding: var(--sp-4) var(--sp-5); font: inherit; color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); border: 1px solid var(--border); border-radius: var(--r); cursor: text; user-select: all; -webkit-user-select: all; }
+    .hive-export-link { word-break: break-all; overflow-wrap: anywhere; white-space: normal; line-height: 1.5; }
+    .hive-export-text { font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.5; white-space: pre; overflow: auto; min-height: 8em; max-height: 50vh; }
+    .hive-export-link:focus-visible, .hive-export-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
     .release-notes-dialog { width: 720px; }
     .release-notes-caveat { margin-bottom: var(--sp-4); }
     .release-notes-body { max-height: min(55vh, 520px); margin-bottom: var(--sp-7); } /* scroll via .modal-scroll */
@@ -57354,45 +57366,92 @@ function burnAreaChart() {
       const m = String(header || '').match(/filename="?([^";]+)"?/i);
       return (m && m[1]) ? m[1] : (fallback || 'hive-export.txt');
     }
+    // Selects the whole content of a read-only text element so a click (or
+    // the Copy fallback) hands the user the exact string without dragging.
+    function hiveSelectAllText(el) {
+      if (!el || !window.getSelection || !document.createRange) return;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    // In-app viewer for text the dashboard hands to the user: a single link
+    // (OAuth authorization URLs, terminal URLs, external links) or a text
+    // export (JSON, YAML, CSV). No textarea: a link is one full-width,
+    // read-only, selectable line in the dialog's own type and colour tokens;
+    // a multi-line export is a read-only <pre> that scrolls with the body.
+    // Open (when a new tab can load the URL) is primary, Copy secondary and
+    // Close a ghost button, so the one action the user came for leads.
     function hiveExportViewer(opts) {
       const cfg = opts || {};
       const title = cfg.title || cfg.filename || 'Export';
       const text = String(cfg.text == null ? '' : cfg.text);
+      const sourceURL = cfg.sourceURL || '';
+      const token = localStorage.getItem('hive-token') || '';
+      const canOpen = !!(sourceURL && (cfg.allowOpen || !token));
+      const isLink = !!sourceURL && text.trim().indexOf('\n') < 0;
       const overlay = document.createElement('div');
       overlay.className = 'hive-dialog-overlay';
       hiveRememberModalOpen(overlay);
       overlay.innerHTML = `<div class="hive-dialog hive-export-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-export-title">
         <div id="hive-export-title" class="hive-dialog-title"></div>
         <div class="hive-dialog-body long modal-scroll hive-export-body">
-          <div class="cmp-note hive-export-note"></div>
-          <textarea class="hive-export-text" readonly spellcheck="false"></textarea>
+          <p class="hive-export-note"></p>
+          ${isLink
+            ? '<code class="hive-export-link" tabindex="0" aria-readonly="true"></code>'
+            : '<pre class="hive-export-text" tabindex="0" aria-readonly="true"></pre>'}
         </div>
         <div class="hive-dialog-buttons">
-          <a class="hv-btn btn-secondary hive-export-open" target="_blank" rel="noopener noreferrer" hidden>Open in new tab</a>
+          <button type="button" class="hv-btn btn-ghost hive-dialog-btn hive-export-close">Close</button>
           <button type="button" class="hv-btn btn-secondary hive-export-copy">Copy to clipboard</button>
-          <button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-initial-focus>Close</button>
+          <a class="hv-btn btn-primary hive-export-open" target="_blank" rel="noopener noreferrer" hidden>Open in new tab</a>
         </div></div>`;
       overlay.querySelector('#hive-export-title').textContent = title;
       const note = overlay.querySelector('.hive-export-note');
-      const textarea = overlay.querySelector('.hive-export-text');
-      textarea.value = text;
-      const sourceURL = cfg.sourceURL || '';
-      const token = localStorage.getItem('hive-token') || '';
-      const canOpen = !!(sourceURL && (cfg.allowOpen || !token));
-      if (note) note.textContent = sourceURL && token && !cfg.allowOpen ? 'Rendered in-app because this dashboard uses a bearer token that a new tab would not receive.' : 'Rendered in-app so the browser does not prompt for downloads.';
+      const textEl = overlay.querySelector(isLink ? '.hive-export-link' : '.hive-export-text');
+      textEl.textContent = text;
+      textEl.setAttribute('aria-label', title);
+      textEl.addEventListener('click', function() { hiveSelectAllText(textEl); });
+      textEl.addEventListener('focus', function() { hiveSelectAllText(textEl); });
+      let noteText = cfg.note;
+      if (noteText == null) {
+        if (sourceURL && token && !cfg.allowOpen) noteText = 'Shown here because this dashboard signs in with a token that a new tab would not carry. Copy what you need from it.';
+        else if (isLink) noteText = canOpen ? 'Open this link to continue, then come back here when you are done.' : 'Copy this link and open it in a browser, then come back here when you are done.';
+        else noteText = 'Copy the text below to save it.';
+      }
+      if (noteText) note.textContent = noteText; else note.remove();
       const open = overlay.querySelector('.hive-export-open');
-      if (open && canOpen) { open.href = sourceURL; open.hidden = false; }
-      overlay.querySelector('.hive-export-copy').addEventListener('click', function(e) {
+      const copy = overlay.querySelector('.hive-export-copy');
+      copy.setAttribute('aria-label', 'Copy ' + title + ' to clipboard');
+      if (canOpen) {
+        open.href = sourceURL;
+        open.hidden = false;
+        open.setAttribute('aria-label', 'Open ' + title + ' in a new tab');
+        open.setAttribute('data-initial-focus', '');
+      } else {
+        open.remove();
+        copy.classList.remove('btn-secondary');
+        copy.classList.add('btn-primary');
+        copy.setAttribute('data-initial-focus', '');
+      }
+      copy.addEventListener('click', function(e) {
         e.preventDefault();
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(function(){ showToast('Copied ' + title + ' to clipboard', 'success'); }, function(){ textarea.focus(); textarea.select(); showToast('Clipboard blocked — selected text for manual copy', 'error'); });
+          navigator.clipboard.writeText(text).then(function(){ showToast('Copied ' + title + ' to clipboard', 'success'); }, function(){ textEl.focus(); hiveSelectAllText(textEl); showToast('Clipboard blocked — selected text for manual copy', 'error'); });
         } else {
-          textarea.focus(); textarea.select();
+          textEl.focus(); hiveSelectAllText(textEl);
           showToast('Selected text for manual copy', 'info');
         }
       });
       document.body.appendChild(overlay);
-      hiveWireDialog(overlay, function(){}, undefined, '.primary', null, close => close());
+      // Enter activates the focused action (Open leads with initial focus);
+      // anywhere else it closes, as the other dialogs do.
+      hiveWireDialog(overlay, function(){}, undefined, '.hive-export-close', null, function(close) {
+        const active = document.activeElement;
+        if (active && (active === copy || active === open) && active.isConnected) { active.click(); return; }
+        close();
+      });
     }
     function hiveBinaryExportNotice(name, detail) {
       hiveAlert((detail || 'This export is binary and cannot be rendered safely in the dashboard.') + '\n\nBrowser downloads are disabled by policy to avoid native permission prompts. Use the API or CLI from a trusted shell if you need to save this file.', name || 'Binary export');

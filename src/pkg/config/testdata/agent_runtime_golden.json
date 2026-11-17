@@ -782,6 +782,7 @@
   "chat": {
     "grounded_answers": {}
   },
+  "customers": {},
   "duplicate_sweep": {},
   "good_first_issue": {},
   "supersession_sweep": {},

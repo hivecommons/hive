@@ -648,5 +648,8 @@ func (m *Manager) RepairClaudeCredentialBridges(trigger string) []string {
 func (m *Manager) rebridgeClaudeCredentialsAfterSignIn() {
 	if claude.HasUsableToken(sharedClaudeBridgeTarget()) {
 		m.RepairClaudeCredentialBridges(claudeBridgeTriggerSignIn)
+		// Sessions hold a refresh-less copy of the login; give them the new
+		// one now rather than on the next poll.
+		m.syncUserSessionClaudeLogins(sessionLoginTriggerSignIn)
 	}
 }

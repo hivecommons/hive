@@ -49,6 +49,15 @@ const (
 	// shared one. The detail's kept= says which; it never carries token
 	// material.
 	AuditClaudeCredentialRebridged = "claude_credential_rebridged"
+
+	// AuditUserSessionLoginAdopted is recorded when a user session's HOME held
+	// a Claude login strictly newer than the shared one (the CLI in the
+	// session refreshed, or signed in, on its own copy) and hive adopted it
+	// into the shared login so the fleet and the session keep ONE login. The
+	// detail names the session, the trigger (boot, watchdog, sign-in,
+	// session-start, session-remove) and where the replaced shared file was
+	// preserved; it never carries token material.
+	AuditUserSessionLoginAdopted = "user_session_login_adopted"
 )
 
 // AuditSink receives agent lifecycle events for durable, queryable recording.
