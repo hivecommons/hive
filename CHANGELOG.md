@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v6.43.0)
+
+### Added
+
+- The admin MCP can now change label-driven approval with the new `governor.label_driven` operation, the same settings Settings → Repos saves through `PUT /api/config/governor/repos` (owner only). It edits the trusted bots (`project.label_driven_trusted_bots`), the default approval labels, org-member trust, and each repository's opt-in and own approval labels. Lists take `{add, remove, clear}`, and `clear` restores the built-in default. The preview shows each change before → after and names every bot, label or repository that lets more people release parked work, with an extra warning for `github-actions[bot]`. A confirm is refused if the settings changed since the preview. An operator working only through the MCP no longer has to open the dashboard to trust a bot such as projectbluefin's `mergeraptor[bot]`, whose `/triage accepted` otherwise left issues parked at `stage/045`.
+
+### Fixed
+
+- The `stage/085-needs-decision` comment always says why a decision is needed. When a PR was held at 085 on the same head after the contributor lane's own read of the reviewer verdict came back empty, the hive re-parked it with a bare route and posted "Needs a decision, not a merge:" followed by nothing, although the stage pass held the reviewer's `requires_human` verdict and finding ([projectbluefin/fsdk-containers#553](https://github.com/projectbluefin/fsdk-containers/pull/553)). The re-park now carries the reviewer's verdict, finding and question; the shared-CI permission park carries its cause; and any 085 route that still has no reason renders "the reviewer asked for a human decision" with a warning in the hive log naming the PR and head.
+
 ## 2026-11-17 (v6.42.1)
 
 ### Changed
