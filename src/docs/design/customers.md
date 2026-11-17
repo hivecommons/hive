@@ -402,6 +402,24 @@ artefact they materialise to a per-query budget. Access is not decided in the
 GraphQL layer at all: every resolver calls the customers service with the
 viewer of the request, the same service the REST routes use.
 
+**Merge, split and the graph view.** Merge folds one customer into another and
+moves every edge across; the merge is recorded on the target with the source as
+it stood and the identities, tags and goals it brought, so unmerge can give back
+exactly those. Unmerge moves back only the edges whose `via` identity belonged
+to the restored person, so activity the target produced on its own stays put.
+Split works the same way in the other direction: the edges that the named
+identities produced move with them. Two dashboard users are never merged, and a
+`hive_user` identity is never split off. Both are full-view actions and audited
+(`customer_merge`, `customer_unmerge`, `customer_split`). Export is owner only
+and audited (`customer_export`); it holds the profile, merge history, hints and
+at most 10,000 edge references.
+
+The graph view is a static SVG drawn from the same GraphQL endpoint (one query:
+a person's edges and, under each, the people on that artefact). It does not
+reuse the knowledge graph canvas, which is animated and styled inline; the
+customers view is a small radial drawing that stays readable on a phone and
+follows the page's design tokens.
+
 ## 12. Agents and privacy guard rails
 
 **Agents.** Hive selects from the graph for the agent; the agent does not
