@@ -33709,6 +33709,23 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return !!(b?.effectiveness?.unattributed) || !b?.model || String(b.model).toLowerCase() === 'unknown';
     }
 
+    // Tooltip text for a bucket's per-repository and weekly slices (#18716).
+    // Returns '' when the bucket has neither (older servers, or no PRs).
+    function governorPRModelSliceDetail(b) {
+      const pct = v => `${((Number(v) || 0) * 100).toFixed(0)}%`;
+      const rework = s => (s.merged || 0) > 0 ? `, first-pass ${pct(s.first_pass_merge_rate)}, avg fix ${(Number(s.avg_fix_attempts) || 0).toFixed(1)}` : '';
+      const repos = Array.isArray(b?.repos) ? b.repos : [];
+      const weeks = Array.isArray(b?.weeks) ? b.weeks : [];
+      const parts = [];
+      if (repos.length) {
+        parts.push('By repository:\n' + repos.map(r => `${r.repo || 'unknown'}: ${r.prs || 0} PRs (${r.merged || 0} merged${rework(r)})`).join('\n'));
+      }
+      if (weeks.length) {
+        parts.push('Weekly trend (week of, by PR created date):\n' + weeks.map(w => `${w.week_start}: ${w.prs || 0} PRs (${w.merged || 0} merged${rework(w)})`).join('\n'));
+      }
+      return parts.join('\n\n');
+    }
+
     // Column definitions for the PRs-by-model table; rendered once as a sticky
     // header (with the ? tooltips) and repeated per cell only as data-label for
     // the narrow breakpoint.
@@ -33839,10 +33856,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
               const sliceRework = s => `${s.prs || 0} PRs (${s.merged || 0} merged, ${s.open || 0} open, ${s.closed_unmerged || 0} closed-unmerged) · first pass ${s.first_pass_merged || 0}/${s.sample_prs || 0} · avg rounds ${(s.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(s.avg_fix_attempts || 0).toFixed(1)}`;
               const sources = (b.sources || []).map(src => `${src.model || 'unknown'} / ${src.backend || 'unknown'}: ${sliceRework(src)}`).join('\n');
               const effortBreakdown = (b.efforts || []).map(e => `effort ${e.effort || 'unknown'}: ${sliceRework(e)}`).join('\n');
+              const sliceDetail = governorPRModelSliceDetail(b);
               const agentBreakdown = (b.agents || []).map(a => `${a.agent || 'unknown'} / ${a.backend || b.backend || 'unknown'}: ${a.prs} PRs (${a.merged || 0} merged, ${a.open || 0} open, ${a.closed_unmerged || 0} closed-unmerged)`).join('\n');
               const scoreFormula = measured ? ' × (1 − fail) × (1 − no ship)' : ' (first-pass bound only: no runs recorded, so the run factors were skipped)';
               const scoreLine = eff.rank ? `\nRank #${eff.rank} · score ${(Number(eff.score) || 0).toFixed(3)} = Wilson lower bound(${eff.first_pass_merged ?? '?'}/${eff.merged_prs ?? b.merged ?? 0} first pass)${scoreFormula}` : (unattributed ? '\nUnattributed: no model recorded, listed but not ranked' : `\nUnranked: fewer than ${data.min_merged_prs || 5} merged PRs`);
-              const tip = `${b.model || 'unknown'} via ${backends.join(', ')}${scoreLine}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${values.first_pass}${ci(eff.first_pass_merge_rate_ci || rw.first_pass_merge_rate_ci)} · PR run rate ${values.pr_runs}${measured ? ci(eff.verified_pr_run_rate_ci) : ''} · failure ${values.fail}${measured ? ci(eff.failure_rate_ci) : ''} · nothing-to-ship ${values.no_ship}${measured ? ci(eff.nothing_to_ship_rate_ci) : ''}${measured ? '' : '\n— = no runs recorded, not a measured 0%'}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${sources ? '\n\nRaw model ids folded into this row:\n' + sources : ''}${agentBreakdown ? '\n\n' + agentBreakdown : ''}${effortBreakdown ? '\n\nBy effort:\n' + effortBreakdown : ''}`;
+              const tip = `${b.model || 'unknown'} via ${backends.join(', ')}${scoreLine}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${values.first_pass}${ci(eff.first_pass_merge_rate_ci || rw.first_pass_merge_rate_ci)} · PR run rate ${values.pr_runs}${measured ? ci(eff.verified_pr_run_rate_ci) : ''} · failure ${values.fail}${measured ? ci(eff.failure_rate_ci) : ''} · nothing-to-ship ${values.no_ship}${measured ? ci(eff.nothing_to_ship_rate_ci) : ''}${measured ? '' : '\n— = no runs recorded, not a measured 0%'}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${sources ? '\n\nRaw model ids folded into this row:\n' + sources : ''}${agentBreakdown ? '\n\n' + agentBreakdown : ''}${effortBreakdown ? '\n\nBy effort:\n' + effortBreakdown : ''}${sliceDetail ? '\n\n' + sliceDetail : ''}`;
               return `<div class="gov-pr-model-row${unattributed ? ' unattributed' : ''}" title="${escapeHtml(tip)}">
                 <div><div class="gov-pr-model-name">${rank}${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${backendChips}</div></div>
                 <div class="gov-pr-model-bar" aria-label="${escapeHtml(tip)}">
