@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	graphql "github.com/graph-gophers/graphql-go"
+
 	"github.com/hivecommons/hive/pkg/customers"
 )
 
@@ -291,5 +293,143 @@ func TestLimits(t *testing.T) {
 	res = slow.engine.Exec(ctx, ownerV, `{ me { name } }`, "", nil)
 	if len(res.Body) == 0 {
 		t.Fatal("a cancelled query must still answer")
+	}
+}
+
+func withViewer(v customers.Viewer, budget int64) context.Context {
+	return context.WithValue(context.Background(), requestKey{}, &request{viewer: v, limit: budget})
+}
+
+func TestPageAndHelpers(t *testing.T) {
+	f := newFixture(t, Limits{MaxDepth: 8, MaxQueryBytes: 1000, MaxPage: 10, MaxNodes: 100, Timeout: time.Second})
+	n := func(v int32) *int32 { return &v }
+	for _, tc := range []struct {
+		first *int32
+		want  int
+	}{{nil, 10}, {n(0), 10}, {n(-4), 10}, {n(3), 3}, {n(500), 10}} {
+		if got := f.engine.page(tc.first); got != tc.want {
+			t.Errorf("page(%v) = %d, want %d", tc.first, got, tc.want)
+		}
+	}
+	wide := newFixture(t, Limits{})
+	if got := wide.engine.page(nil); got != defaultPage {
+		t.Fatalf("default page = %d", got)
+	}
+	if optional("") != nil || *optional("x") != "x" {
+		t.Fatal("optional")
+	}
+	if got := list(nil); got == nil || len(got) != 0 {
+		t.Fatal("list(nil) must be an empty, non-nil list")
+	}
+	if got := (&personConnection{}).Nodes(); got == nil || len(got) != 0 {
+		t.Fatal("an empty person page must be an empty list")
+	}
+	if got := (&edgeConnection{}).Nodes(); got == nil || len(got) != 0 {
+		t.Fatal("an empty edge page must be an empty list")
+	}
+}
+
+// A resolver reached without a request (no viewer) sees nothing.
+func TestResolversWithoutAViewer(t *testing.T) {
+	f := newFixture(t, Limits{})
+	q := &query{e: f.engine}
+	if _, err := q.Me(context.Background()); err == nil {
+		t.Fatal("Me without a viewer must fail")
+	}
+	if p, err := q.Person(context.Background(), struct{ ID graphql.ID }{ID: graphql.ID(f.ada.ID)}); err != nil || p != nil {
+		t.Fatalf("Person without a viewer = %v, %v; want null", p, err)
+	}
+	if a, err := q.Artefact(context.Background(), struct{ Ref string }{Ref: f.shared}); err != nil || a != nil {
+		t.Fatalf("Artefact without a viewer = %v, %v; want null", a, err)
+	}
+	if _, err := q.People(context.Background(), struct {
+		Tag   *string
+		First *int32
+		After *string
+	}{}); err == nil {
+		t.Fatal("People without a viewer must fail")
+	}
+}
+
+// Even handed a person the viewer may not see, the edge and artefact
+// resolvers ask the service again and come back empty.
+func TestResolversRecheckTheViewer(t *testing.T) {
+	f := newFixture(t, Limits{})
+	ada := &personResolver{e: f.engine, p: f.ada}
+	conn, err := ada.Edges(withViewer(readV, 100), struct {
+		Predicate *string
+		First     *int32
+		After     *string
+	}{})
+	if err != nil || len(conn.Nodes()) != 0 || conn.Next() != nil {
+		t.Fatalf("read-only Edges on another person = %+v, %v; want empty", conn, err)
+	}
+	hidden := &artefactResolver{e: f.engine, ref: f.private}
+	people, err := hidden.People(withViewer(rwV, 100), struct{ First *int32 }{})
+	if err != nil || len(people) != 0 {
+		t.Fatalf("People on an artefact the viewer may not see = %v, %v; want empty", people, err)
+	}
+	if hidden.Kind() != customers.RefMeeting || hidden.Ref() != f.private {
+		t.Fatal("artefact fields")
+	}
+}
+
+func TestSuggestedSatisfactionAndCursors(t *testing.T) {
+	f := newFixture(t, Limits{})
+	if _, err := f.svc.Store().SuggestSatisfaction(f.ada.ID, customers.LevelNeutral, []string{f.shared}); err != nil {
+		t.Fatal(err)
+	}
+	body := mustOK(t, f, ownerV, `query($id: ID!) { person(id: $id) { satisfaction { level suggestedLevel suggestedEvidence } } }`, map[string]any{"id": f.ada.ID})
+	if !strings.Contains(body, `"suggestedLevel":"neutral","suggestedEvidence":["gh:issue:o/r#1"]`) {
+		t.Fatalf("suggestion = %s", body)
+	}
+	// The owner's own profile has no suggestion: an empty list, not null.
+	body = mustOK(t, f, ownerV, `{ me { satisfaction { level suggestedLevel suggestedEvidence } } }`, nil)
+	if !strings.Contains(body, `"level":"unknown","suggestedLevel":null,"suggestedEvidence":[]`) {
+		t.Fatalf("no suggestion = %s", body)
+	}
+	// A cursor past the end is an empty last page; a blank tag is no filter.
+	body = mustOK(t, f, ownerV, `{ people(after: "999", tag: "  ") { nodes { name } next } }`, nil)
+	if !strings.Contains(body, `"nodes":[],"next":null`) {
+		t.Fatalf("cursor past the end = %s", body)
+	}
+	if out, _ := exec(t, f, ownerV, `{ people(after: "-1") { nodes { name } } }`, nil); len(out.Errors) == 0 {
+		t.Fatal("a negative cursor was accepted")
+	}
+	// A malformed edge cursor is an error, not a silent first page.
+	if out, _ := exec(t, f, ownerV, `{ me { edges(after: "zz") { nodes { predicate } } } }`, nil); len(out.Errors) == 0 {
+		t.Fatal("a malformed edge cursor was accepted")
+	}
+	// Edge pages carry a cursor while there is more.
+	body = mustOK(t, f, ownerV, `query($id: ID!) { person(id: $id) { edges(first: 1) { nodes { predicate } next } } }`, map[string]any{"id": f.ada.ID})
+	if strings.Contains(body, `"next":null`) || !strings.Contains(body, `"predicate":"attended"`) {
+		t.Fatalf("first edge page = %s", body)
+	}
+}
+
+// TestNodeBudgetAtEveryResolver: each resolver that materialises a node
+// charges the budget and stops when it is spent.
+func TestNodeBudgetAtEveryResolver(t *testing.T) {
+	none := newFixture(t, Limits{MaxDepth: 8, MaxQueryBytes: 1000, MaxPage: 10, MaxNodes: 0, Timeout: time.Second})
+	for _, q := range []string{
+		`{ me { name } }`,
+		`query($id: ID!) { person(id: $id) { name } }`,
+		`{ people { nodes { name } } }`,
+		`{ artefact(ref: "gh:issue:o/r#1") { ref } }`,
+	} {
+		out, res := exec(t, none, ownerV, q, map[string]any{"id": none.ada.ID})
+		if len(out.Errors) == 0 || !strings.Contains(out.Errors[0].Message, "too many nodes") || res.Errors == 0 {
+			t.Errorf("no budget, %s: %+v", q, out.Errors)
+		}
+	}
+	one := newFixture(t, Limits{MaxDepth: 8, MaxQueryBytes: 1000, MaxPage: 10, MaxNodes: 1, Timeout: time.Second})
+	for _, q := range []string{
+		`query($id: ID!) { person(id: $id) { edges { nodes { predicate } } } }`,
+		`{ artefact(ref: "gh:issue:o/r#1") { people { predicate } } }`,
+	} {
+		out, _ := exec(t, one, ownerV, q, map[string]any{"id": one.ada.ID})
+		if len(out.Errors) == 0 || !strings.Contains(out.Errors[0].Message, "too many nodes") {
+			t.Errorf("budget of one, %s: %+v", q, out.Errors)
+		}
 	}
 }
