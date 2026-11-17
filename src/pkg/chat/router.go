@@ -80,10 +80,7 @@ func (s *Service) routeMessage(ctx context.Context, msg Message) {
 		if s.handlePendingCheckpointReply(ctx, msg, content) {
 			return
 		}
-		if s.handlePendingPersonaReply(ctx, msg, content) {
-			return
-		}
-		s.handlePendingInterviewReply(ctx, msg, content)
+		s.handlePendingPersonaReply(ctx, msg, content)
 		return
 	}
 

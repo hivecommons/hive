@@ -39,11 +39,10 @@ type agentStatusFrame struct {
 }
 
 type statusSnapshot struct {
-	Agents    []agentSnapshot   `json:"agents"`
-	Governor  governorSnapshot  `json:"governor"`
-	Budget    budgetSnapshot    `json:"budget"`
-	Inception inceptionSnapshot `json:"inception"`
-	Runs      runSnapshotList   `json:"runs"`
+	Agents   []agentSnapshot  `json:"agents"`
+	Governor governorSnapshot `json:"governor"`
+	Budget   budgetSnapshot   `json:"budget"`
+	Runs     runSnapshotList  `json:"runs"`
 }
 
 type agentSnapshot struct {
@@ -181,7 +180,7 @@ func sseErr(ctx context.Context, err error) error {
 
 // handleSSEBlock dispatches one SSE frame by its `event:` name. Unnamed frames
 // carry the full status snapshot; agent-status frames carry only agents and
-// must not reset governor/inception/runs state or the topic.
+// must not reset governor/runs state or the topic.
 func (s *Service) handleSSEBlock(block string) {
 	event := ""
 	var data []string
@@ -239,7 +238,6 @@ func (s *Service) onSSEEvent(snap *statusSnapshot) {
 
 	s.diffAgents(prev, snap)
 	s.diffGovernor(prev, snap)
-	s.diffInception(prev, snap)
 	s.refreshRunsFromSnapshot(snap)
 	s.updateTopic(snap)
 }

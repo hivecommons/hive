@@ -8,7 +8,7 @@ import (
 )
 
 func TestDashboardChatActor(t *testing.T) {
-	for _, command := range []string{"!kick worker fix it", "!runs approve repo/a#1", "!runs reject repo/a#1 needs work", "!inception start an idea", "approve", "reject needs work"} {
+	for _, command := range []string{"!kick worker fix it", "!runs approve repo/a#1", "!runs reject repo/a#1 needs work", "approve", "reject needs work"} {
 		t.Run(command, func(t *testing.T) {
 			for _, author := range []string{"alice", "bob"} {
 				var methods []string
