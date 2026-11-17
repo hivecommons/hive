@@ -470,6 +470,7 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 			"meetings.llm.anthropic_model":               m.LLM.AnthropicModel,
 			"meetings.llm.timeout_ms":                    strconv.Itoa(m.LLM.TimeoutMS),
 			"meetings.llm.max_in_flight":                 strconv.Itoa(m.LLM.MaxInFlight),
+			"meetings.llm.per_meeting_in_flight":         strconv.Itoa(meetingsPerMeetingInFlight(m.LLM)),
 			"meetings.persona.enabled":                   boolString(persona.Enabled),
 			"meetings.persona.preset":                    persona.Preset,
 			"meetings.persona.name":                      persona.Name,
@@ -593,4 +594,17 @@ func (s *Server) handleMeetingsSettingsPost(w http.ResponseWriter, r *http.Reque
 	out := s.meetingsSettings(r.Context(), next)
 	out.RestartRequired = changed
 	jsonResponse(w, out)
+}
+
+// meetingsPerMeetingInFlight is meetings.llm.per_meeting_in_flight as it
+// applies: the default when unset, never above max_in_flight.
+func meetingsPerMeetingInFlight(l config.MeetingsLLMConfig) int {
+	n, ceiling := l.PerMeetingInFlight, l.MaxInFlight
+	if n <= 0 {
+		n = config.DefaultMeetingsLLMPerMeetingInFlight
+	}
+	if ceiling <= 0 {
+		ceiling = config.DefaultMeetingsLLMMaxInFlight
+	}
+	return min(n, ceiling)
 }
