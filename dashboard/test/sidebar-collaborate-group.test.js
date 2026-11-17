@@ -174,7 +174,8 @@ for (const sessionsEnabled of [true, false]) {
     const inDashboard = dashboard.querySelectorAll('.oc-nav-item').map((e) => e.getAttribute('data-section'));
     for (const id of COLLABORATE_SECTIONS) assert.ok(!inDashboard.includes(id), `${id} is not in the Dashboard group`);
     // Links authored in the Dashboard group are still sorted by the saved layout.
-    assert.deepEqual(inDashboard, ['overview-section', 'governor', 'pr-throughput-section', 'activity-monitor-section']);
+    // runs-section is the v6 line's Runs link, placed after governor by the default layout.
+    assert.deepEqual(inDashboard, ['overview-section', 'governor', 'runs-section', 'pr-throughput-section', 'activity-monitor-section']);
   });
 }
 
