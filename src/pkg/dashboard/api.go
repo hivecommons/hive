@@ -540,6 +540,7 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerInboxRecordingRoutes()
 	s.registerMeetingsRoutes()
 	s.registerCompanionRoutes()
+	s.registerCompanionTokenRoutes()
 	s.registerMeetingsScheduleRoutes()
 	s.registerMeetingsPersonaRoutes()
 	s.registerMeetingsModelRoutes()

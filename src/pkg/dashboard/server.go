@@ -2402,6 +2402,13 @@ func (s *Server) authenticate(next http.Handler) http.Handler {
 			widgetTokenIdentity(r)
 		}
 
+		// Desktop companion token (#18596): admits ONLY the companion meeting
+		// routes, as the minting user at their live role (read-write or
+		// owner). It never reaches the token page or any other route.
+		if !trusted && s.companionTokenAuthenticates(r) {
+			trusted = true
+		}
+
 		if !trusted && r.URL.Path == "/api/knowledge/export" {
 			profile, reason := authenticateContributorToken(registrationTokenFromAuthorization(r), s.contributorTokenPolicy())
 			if profile == nil && reason == contributorTokenExpired {
