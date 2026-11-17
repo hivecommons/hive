@@ -228,7 +228,9 @@ func (m *Manager) rebridgeCopilotConfig(agentName, link, target, trigger string)
 	if backup == "" {
 		return false
 	}
-	m.logger.Warn("copilot config bridge: a private config.json had replaced the shared-login symlink; re-linked",
+	// A completed repair is routine self-healing, not a fault: WARN made the
+	// fleet self-report it as an unclassified repeated error (#18497).
+	m.logger.Info("copilot config bridge: a private config.json had replaced the shared-login symlink; re-linked",
 		"agent", agentName,
 		"trigger", trigger,
 		"backup", backup,
