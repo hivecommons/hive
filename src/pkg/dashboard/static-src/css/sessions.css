@@ -72,6 +72,11 @@
     .sessions-presence { color: var(--muted); font-size: var(--fs-xs); cursor: help; }
     .sessions-presence.mine { color: var(--accent); font-weight: var(--fw-semibold); }
     .sessions-watching { border: 1px dashed var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); font-size: var(--fs-xs); cursor: help; }
+    /* Startup auto-answer status (pane header): a spinner while the hive gets
+       the CLI to its prompt, green once started, amber when a person is needed. */
+    .sessions-startup { display: inline-flex; align-items: center; gap: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); color: var(--muted); font-size: var(--fs-xs); cursor: help; }
+    .sessions-startup[data-kind="ok"] { color: var(--green); }
+    .sessions-startup[data-kind="attention"] { color: var(--yellow); border-color: var(--yellow); }
     /* Queued Send list under the input bar. */
     .sessions-queue { display: grid; gap: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); padding: var(--sp-3) var(--sp-4); background: var(--card-bg); font-size: var(--fs-xs); color: var(--muted); }
     .sessions-queue[hidden] { display: none; }

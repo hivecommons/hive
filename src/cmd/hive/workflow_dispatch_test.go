@@ -93,3 +93,52 @@ func TestWorkflowDispatchActive(t *testing.T) {
 		t.Fatal("nil config active")
 	}
 }
+
+// On a standard fleet (no writer, docs or feature agent) the drafter's
+// item goes to the scanner and the verifier's to the reviewer, so the
+// TechDocs workflow starts out of the box; an agent scoped away from the
+// item's repository is not picked (hivecommons/hive#18690).
+func TestResolveWorkflowDispatchAgentStandardFleet(t *testing.T) {
+	cfg := &config.Config{}
+	cfg.Project.Org = "cncf"
+	cfg.Agents = map[string]config.AgentConfig{}
+	for _, name := range []string{"brainstorm", "ci-maintainer", "guide", "quality", "reviewer", "scanner", "supervisor"} {
+		cfg.Agents[name] = config.AgentConfig{Enabled: true}
+	}
+	drafter := github.WorkflowDispatch{Repo: "techdocs", Number: 395, Kind: workflowmodel.KindIssue, State: "accepted",
+		Target: workflowmodel.DispatchTarget{Profile: "techdocs-drafter", Produces: []string{"pull-request", "push"}}}
+	verifier := github.WorkflowDispatch{Repo: "techdocs", Number: 400, Kind: workflowmodel.KindPR, State: "drafting",
+		Target: workflowmodel.DispatchTarget{Profile: "techdocs-verifier", Reply: "/verify", Produces: []string{"comment"}}}
+	if got := resolveWorkflowDispatchAgent(cfg, drafter, false); got.Agent != "scanner" {
+		t.Fatalf("drafter = %+v; want scanner", got)
+	}
+	if got := resolveWorkflowDispatchAgent(cfg, verifier, false); got.Agent != "reviewer" {
+		t.Fatalf("verifier = %+v; want reviewer", got)
+	}
+	cands, skips := scheduler.PlanWorkflowDispatch([]github.WorkflowDispatch{drafter, verifier}, scheduler.WorkflowDispatchPlanDeps{
+		Agent: func(d github.WorkflowDispatch) (string, bool) {
+			r := resolveWorkflowDispatchAgent(cfg, d, false)
+			return r.Agent, r.OK()
+		},
+	})
+	if len(cands) != 1 || cands[0].Agent != "scanner" || len(skips) != 1 || skips[0].Reason != scheduler.WorkflowSkipNoReply {
+		t.Fatalf("plan = %+v skips %+v", cands, skips)
+	}
+
+	scoped := cfg.Agents["scanner"]
+	scoped.Repos = []string{"cncf/website"}
+	cfg.Agents["scanner"] = scoped
+	got := resolveWorkflowDispatchAgent(cfg, drafter, true)
+	if got.OK() || got.Problem == "" {
+		t.Fatalf("a scanner scoped to another repository was picked: %+v", got)
+	}
+	_, skips = scheduler.PlanWorkflowDispatch([]github.WorkflowDispatch{drafter}, scheduler.WorkflowDispatchPlanDeps{
+		Agent: func(d github.WorkflowDispatch) (string, bool) {
+			r := resolveWorkflowDispatchAgent(cfg, d, false)
+			return r.Agent, r.OK()
+		},
+	})
+	if len(skips) != 1 || skips[0].Reason != scheduler.WorkflowSkipNoAgent || skips[0].Profile != "techdocs-drafter" {
+		t.Fatalf("skips = %+v", skips)
+	}
+}

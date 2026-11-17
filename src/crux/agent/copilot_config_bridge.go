@@ -1,15 +1,19 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/hivecommons/hive/crux/agent/copilottoken"
 	"github.com/hivecommons/hive/crux/sharedfile"
 )
 
@@ -37,12 +41,36 @@ import (
 // none, the private copy may be the only login the fleet has, so it is left in
 // place (logged once). A later dashboard login or token sync fills the shared
 // file and the next launch relinks.
+//
+// Keeping the link alive while the agent runs (#18671): the CLI does its own
+// atomic save a few seconds after it starts, so a launch-time relink alone is
+// undone almost at once and a later dashboard login never reaches the running
+// agent. The pane poller therefore checks the link on every tick
+// (relinkCopilotConfigAfterCLISave, one Lstat while the link is intact) and
+// repairs it within one poll interval of the save. Before the private copy is
+// moved aside, the fields the CLI wrote to it are merged into the shared file
+// (mergeCopilotConfigIntoShared), so relinking loses nothing the CLI saved.
+// The credential fields are the one exception: the shared file's login always
+// wins, because the private copy holds whatever token the CLI had in memory,
+// which is older than a dashboard login made since.
 
 // Repair triggers, recorded in the log.
 const (
 	copilotBridgeTriggerLaunch      = "launch"
 	copilotBridgeTriggerLoginPrompt = "login-prompt"
+	copilotBridgeTriggerCLISave     = "cli-save"
 )
+
+// copilotConfigCredentialKeys are the config.json fields that together make up
+// the login. The merge never copies them from a private copy into the shared
+// file: the shared login is authoritative (dashboard device flow, token sync),
+// and mixing one file's token map with another's identity yields a config the
+// CLI reads as logged out.
+var copilotConfigCredentialKeys = map[string]bool{
+	"copilotTokens":    true,
+	"lastLoggedInUser": true,
+	"loggedInUsers":    true,
+}
 
 // copilotConfigBackupInfix names a private config moved aside by the repair.
 const copilotConfigBackupInfix = ".bak-"
@@ -142,34 +170,105 @@ func copilotConfigDiverged(link, target string) bool {
 // with a nil error when there is nothing to repair (a symlink, an absent path,
 // a directory).
 func repairCopilotConfigBridge(link, target string) (string, error) {
+	backup, _, err := repairCopilotConfigBridgeMerged(link, target)
+	return backup, err
+}
+
+// repairCopilotConfigBridgeMerged is repairCopilotConfigBridge that also
+// reports whether CLI-written fields were merged into the shared file first.
+// When another hive writer holds the shared config it does nothing this time
+// ("" and a nil error): the poller retries on its next tick.
+func repairCopilotConfigBridgeMerged(link, target string) (string, bool, error) {
 	copilotBridgeMu.Lock()
 	defer copilotBridgeMu.Unlock()
 
 	info, err := os.Lstat(link)
 	if err != nil || !info.Mode().IsRegular() {
-		return "", nil
+		return "", false, nil
 	}
 	same, err := claudeBridgeLinkIsTarget(link, target)
 	if err != nil {
-		return "", nil
+		return "", false, nil
 	}
 	if same {
-		return "", fmt.Errorf("%w: %s", errCopilotBridgeLinkIsTarget, link)
+		return "", false, fmt.Errorf("%w: %s", errCopilotBridgeLinkIsTarget, link)
 	}
 	if copilotCredentialFileHasTokens(link) && !copilotCredentialFileHasTokens(target) {
-		return "", errCopilotBridgeSharedEmpty
+		return "", false, errCopilotBridgeSharedEmpty
+	}
+	// Best effort: a private copy or shared file that cannot be read or parsed
+	// is relinked without a merge, exactly as before #18671; the backup still
+	// holds every field the CLI wrote.
+	merged, busy, _ := mergeCopilotConfigIntoShared(link, target)
+	if busy {
+		return "", false, nil
 	}
 	backup, err := moveAsideCopilotConfig(link, copilotBridgeNow())
 	if err != nil {
-		return "", fmt.Errorf("move private copilot config aside: %w", err)
+		return "", merged, fmt.Errorf("move private copilot config aside: %w", err)
 	}
 	pruneCopilotConfigBackups(link, backup)
 	if err := os.Symlink(target, link); err != nil {
-		// EEXIST: the CLI saved again between the rename and now. The next
-		// launch repairs that one.
-		return backup, fmt.Errorf("restore copilot config symlink: %w", err)
+		// EEXIST: the CLI saved again between the rename and now. The poller
+		// repairs that one on its next tick.
+		return backup, merged, fmt.Errorf("restore copilot config symlink: %w", err)
 	}
-	return backup, nil
+	return backup, merged, nil
+}
+
+// mergeCopilotConfigIntoShared folds the fields the Copilot CLI wrote to the
+// private copy at link into the shared config at target, so relinking does not
+// throw them away. Credential fields (copilotConfigCredentialKeys) are never
+// copied: the shared login wins. The shared file is rewritten only when the
+// merge changes it, through copilottoken.WriteConfig (temp file + rename, the
+// shared mode, owner preserved), and only while holding sharedCopilotConfigMu
+// so it cannot race a dashboard login. busy reports that another hive writer
+// holds that lock; nothing was read or written. Contents are never logged.
+func mergeCopilotConfigIntoShared(link, target string) (merged, busy bool, err error) {
+	privateData, err := sharedfile.ReadNoFollow(link, copilotConfigMaxBytes)
+	if err != nil {
+		return false, false, err
+	}
+	private, err := copilottoken.ParseConfig(privateData)
+	if err != nil {
+		return false, false, err
+	}
+	if !sharedCopilotConfigMu.TryLock() {
+		return false, true, nil
+	}
+	defer sharedCopilotConfigMu.Unlock()
+	sharedData, err := sharedfile.ReadNoFollow(target, copilotConfigMaxBytes)
+	if err != nil {
+		return false, false, err
+	}
+	shared, err := copilottoken.ParseConfig(sharedData)
+	if err != nil {
+		return false, false, err
+	}
+	out := mergeCopilotConfigFields(shared, private)
+	if reflect.DeepEqual(out, shared) {
+		return false, false, nil
+	}
+	if err := copilottoken.WriteConfig(target, out, sharedConfigDesiredMode); err != nil {
+		return false, false, err
+	}
+	return true, false, nil
+}
+
+// mergeCopilotConfigFields returns shared overlaid with every non-credential
+// field of private. Neither input is modified.
+func mergeCopilotConfigFields(shared, private map[string]interface{}) map[string]interface{} {
+	out := make(map[string]interface{}, len(shared)+len(private))
+	for k, v := range shared {
+		out[k] = v
+	}
+	for k, v := range private {
+		if copilotConfigCredentialKeys[k] {
+			continue
+		}
+		out[k] = v
+	}
+	return out
 }
 
 // moveAsideCopilotConfig renames path to a free <path>.bak-<UTC timestamp>[-N]
@@ -215,7 +314,7 @@ func pruneCopilotConfigBackups(link, keep string) {
 // rebridgeCopilotConfig runs the repair for one agent and logs the outcome. It
 // reports whether the link was restored.
 func (m *Manager) rebridgeCopilotConfig(agentName, link, target, trigger string) bool {
-	backup, err := repairCopilotConfigBridge(link, target)
+	backup, merged, err := repairCopilotConfigBridgeMerged(link, target)
 	if err != nil {
 		if prev, loaded := copilotBridgeWarned.Swap(link, err.Error()); loaded && prev == err.Error() {
 			return false
@@ -229,14 +328,44 @@ func (m *Manager) rebridgeCopilotConfig(agentName, link, target, trigger string)
 		return false
 	}
 	// A completed repair is routine self-healing, not a fault: WARN made the
-	// fleet self-report it as an unclassified repeated error (#18497).
-	m.logger.Info("copilot config bridge: a private config.json had replaced the shared-login symlink; re-linked",
+	// fleet self-report it as an unclassified repeated error (#18497). The
+	// running-agent repair follows every CLI save, so it logs at DEBUG; the
+	// launch and login-prompt repairs stay at INFO.
+	level := slog.LevelInfo
+	if trigger == copilotBridgeTriggerCLISave {
+		level = slog.LevelDebug
+	}
+	m.logger.Log(context.Background(), level, "copilot config bridge: a private config.json had replaced the shared-login symlink; re-linked",
 		"agent", agentName,
 		"trigger", trigger,
 		"backup", backup,
+		"merged_cli_fields", merged,
 		"cause", "Copilot CLI saves its config with a temp file renamed over the link",
 		"see", "hivecommons/hive#18443")
 	return true
+}
+
+// relinkCopilotConfigAfterCLISave is the pane poller's per-tick hook (#18671):
+// when the Copilot CLI's own atomic save has replaced a running agent's
+// config.json symlink with a private regular file, merge the CLI's fields into
+// the shared file and relink, so a later dashboard login reaches the agent
+// without a restart. An intact link costs one Lstat. The #18445 guard holds: a
+// private copy holding the only login is left in place.
+func (m *Manager) relinkCopilotConfigAfterCLISave(agent *AgentProcess) bool {
+	m.mu.RLock()
+	name, uid, backend := agent.Name, agent.UID, effectiveBackend(agent)
+	m.mu.RUnlock()
+	if backend != "copilot" {
+		return false
+	}
+	link, target, ok := copilotConfigBridgePaths(name, uid, backend)
+	if !ok {
+		return false
+	}
+	if info, err := os.Lstat(link); err != nil || !info.Mode().IsRegular() {
+		return false
+	}
+	return m.rebridgeCopilotConfig(name, link, target, copilotBridgeTriggerCLISave)
 }
 
 // repairCopilotConfigOnLoginPrompt is the poller's hook: a Copilot agent stuck

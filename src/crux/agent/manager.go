@@ -566,6 +566,7 @@ type Manager struct {
 	lastRateLimitRelaunch time.Time
 	cliMemory             cliMemoryState         // shared-store warning and drain hook, see cli_memory_drain.go
 	strayGitIdentity      strayGitIdentityWarned // warn-once state, see git_identity_warn_dedupe.go
+	firstRunNoticeLogged  sync.Map               // agents whose first-run notice was logged; never under m.mu (claude_first_run.go)
 
 	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on
 	// the output-capture goroutines, and taking m.mu there risks startup
@@ -1274,6 +1275,7 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 	defer ticker.Stop()
 	menuEscapes := 0
 	dialogAnswers := 0
+	var blocking kickBlockingScreen
 	// lastWorking records whether the most recent poll saw the agent mid-turn.
 	lastWorking := false
 	// Inference-routed agents run Claude Code too, so a permission dialog in
@@ -1349,6 +1351,13 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 				}
 				menuEscapes++
 				m.dismissTUIMenuForKick(agent, footer, menuEscapes)
+				continue
+			}
+			// A known blocking screen is answered, or named in a fast failure (claude_first_run.go).
+			if handled, reason := m.handleBlockingScreenForKick(agent, dialogBackend, visible, &blocking); handled {
+				if reason != "" {
+					return false, reason
+				}
 				continue
 			}
 			if paneShowsConsentScreen(visible) {

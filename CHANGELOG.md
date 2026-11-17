@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.299.0)
+
+### Added
+
+- Added a [Kick refusals](src/docs/kick-refusals.md) docs page that explains `kick_refusal` and every reason a kick is refused (the agent's model declining, startup deferral, paused, failed start, stopped, provider backoff, restart hold, cancelled by restart, delivery already in progress, no session, sandbox misconfiguration, unknown agent), what to do about each, and when it is normal. The dashboard's "Kick failed" toast now has a "What does this mean?" button, the navbar health hover names the page for `kick_refusal`, and `POST /api/kick/{agent}`, `GET /api/kick/{agent}/status` and the deep-health `kick_refusal` check return a `docs_url` field when the failure matches a documented reason. Fixes #18692.
+
+## 2026-11-17 (v5.298.2)
+
+### Fixed
+
+- **A dashboard Copilot re-login now reaches running Copilot agents without a restart** ([#18671](https://github.com/hivecommons/hive/issues/18671)). The Copilot CLI's own save, seconds after launch, replaced the freshly relinked `~/.copilot/config.json` symlink with a private copy again, so a later login written to the shared file only reached each agent after its next restart. The pane poller now checks the link on every tick and relinks it within one poll interval of a CLI save, first merging the fields the CLI wrote into the shared file so nothing it saved is lost; the shared login always wins over the token in the private copy, and a private copy holding the only login is still left in place.
+
 ## 2026-11-17 (v5.298.1)
 
 ### Fixed

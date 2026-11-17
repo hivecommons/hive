@@ -27,6 +27,12 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
+			// The Copilot CLI's own atomic save replaces the config.json
+			// symlink seconds after launch; relink it within one poll interval
+			// so a later dashboard login reaches this running agent (#18671).
+			// One Lstat while the link is intact; a no-op for other backends.
+			m.relinkCopilotConfigAfterCLISave(agent)
+
 			// Scrollback capture for dashboard display + ring buffer diff
 			output := m.captureTmuxPaneForAgent(agent)
 			if output == "" {
@@ -477,6 +483,9 @@ func (m *Manager) watchForTrustPromptForAgent(agent *AgentProcess, ctx context.C
 					m.logger.Warn("Claude Code permission dialog on screen; the agent is meant to run with --dangerously-skip-permissions — answering option 1",
 						"agent", agent.Name, "dialog", title, "option", key)
 				}
+				if label == claudeFirstRunNoticeLabel {
+					m.noteClaudeFirstRunNotice(agent, "launch")
+				}
 				answeredAt[label] = time.Now()
 				time.Sleep(paneCaptureSleep)
 				// An empty key means the affirmative option is already selected
@@ -580,6 +589,12 @@ func looksLikeEchoedKickContent(line string) bool {
 
 func (m *Manager) checkKickRefusal(agent *AgentProcess, line string) {
 	if looksLikeEchoedKickContent(line) {
+		return
+	}
+	// Claude Code's first-run security notice says "Due to prompt injection
+	// risks, …", which matches the "prompt injection" refusal pattern; it is
+	// CLI onboarding text, not the model declining a kick.
+	if strings.Contains(line, claudeFirstRunNoticeInjectionMarker) {
 		return
 	}
 	lower := strings.ToLower(line)

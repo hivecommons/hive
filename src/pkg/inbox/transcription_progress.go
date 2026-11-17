@@ -6,8 +6,9 @@ import (
 	"github.com/hivecommons/hive/pkg/transcribe"
 )
 
-// Live progress of machine transcriptions. Runs execute one at a time per
-// hive in the order they were queued; each queued or running item has a
+// Live progress of machine transcriptions. Runs execute in the order they
+// were queued, at most transcribeConcurrency at a time per hive (one by
+// default, see transcription_auto.go); each queued or running item has a
 // txJob holding its live phase and position. Nothing here is persisted: a
 // progress tick is in-memory only, the record on disk changes on status
 // transitions.
@@ -45,7 +46,8 @@ type txJob struct {
 	etaAt        time.Time
 }
 
-// txEnqueue appends a job for it; the head of an empty queue is ready at once.
+// txEnqueue appends a job for it; it is ready at once while fewer than
+// transcribeConcurrency jobs are ahead of it.
 func (s *Service) txEnqueue(it Item, provider, model string, speed transcribe.Speed) *txJob {
 	j := &txJob{
 		source: it.Source, id: it.ID, ready: make(chan struct{}), provider: provider, model: model,
@@ -55,22 +57,24 @@ func (s *Service) txEnqueue(it Item, provider, model string, speed transcribe.Sp
 	s.txQMu.Lock()
 	defer s.txQMu.Unlock()
 	s.txQueue = append(s.txQueue, j)
-	if len(s.txQueue) == 1 {
+	if len(s.txQueue) <= s.transcribeConcurrency() {
 		close(j.ready)
 	}
 	return j
 }
 
-// txDequeue removes j and wakes the next job.
+// txDequeue removes j and, when j held a run slot, wakes the first job
+// still waiting (the one that moves into the last slot).
 func (s *Service) txDequeue(j *txJob) {
 	s.txQMu.Lock()
 	defer s.txQMu.Unlock()
+	slots := s.transcribeConcurrency()
 	for i, q := range s.txQueue {
 		if q == j {
-			wasHead := i == 0
+			wasActive := i < slots
 			s.txQueue = append(s.txQueue[:i:i], s.txQueue[i+1:]...)
-			if wasHead && len(s.txQueue) > 0 {
-				close(s.txQueue[0].ready)
+			if wasActive && len(s.txQueue) >= slots {
+				close(s.txQueue[slots-1].ready)
 			}
 			return
 		}
@@ -125,7 +129,9 @@ func (s *Service) txLive(source, id string, st *TranscriptionState) bool {
 		}
 		st.AudioSeconds = j.audioSeconds
 		if j.started.IsZero() {
-			st.QueuePosition = i
+			// Jobs inside a run slot wait for nothing; the rest wait for
+			// this many runs to finish.
+			st.QueuePosition = max(0, i-s.transcribeConcurrency()+1)
 			return true
 		}
 		started := j.started

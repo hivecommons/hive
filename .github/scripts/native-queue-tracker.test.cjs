@@ -27,10 +27,14 @@ test('real queue position, state and provider age never invent pipeline progress
   const before = JSON.stringify([q, row]);
   const html = render(q);
   assert.match(html, /value="3"/);
-  assert.match(html, /AWAITING_CHECKS/);
-  assert.match(html, /queued 10m/);
+  // GitHub's own state, in words; the wait is the entry's enqueue age.
+  assert.match(html, /front #7 awaiting checks, in queue 10m/);
   assert.match(html, /on this page/);
-  assert.match(html, /Enqueue is not testing or merge completion/);
+  assert.match(html, /checked 1m ago/);
+  // Queued is not testing and not merged: nothing on the line says so (the
+  // help mark may mention the words only to say what they are not).
+  const line = html.match(/<span class="ham-native-line">(.*?)<\/span><span class="ham-merged-meta">/)[1];
+  assert.doesNotMatch(line, /testing:|merged|data-ham-key|[0-9]+%|ETA [0-9]/);
   assert.doesNotMatch(html, /data-ham-key|[0-9]+%|ETA [0-9]/);
   assert.equal(JSON.stringify([q, row]), before);
 });
@@ -42,10 +46,19 @@ test('unknown, stale, unavailable and partial snapshots cannot claim empty curre
   q.stale = true;
   q.state = 'unavailable';
   const html = render(q);
-  assert.match(html, /STALE/);
-  assert.match(html, /coverage incomplete/);
-  assert.match(html, /does not prove an empty queue/);
-  assert.match(render({ ...queue(), observed_at: '2026-10-30T10:00:00Z' }), /STALE/);
+  // A failed refresh stands out and never reads as an empty queue.
+  assert.match(html, /ham-native-badge-problem">refresh failed/);
+  assert.match(html, /queue unknown; last refresh failed/);
+  assert.doesNotMatch(html, /nothing queued/);
+  // The caveat lives once, in the help mark.
+  assert.equal((html.match(/does not prove the queue is empty now/g) || []).length, 2, 'aria-label and tooltip text only');
+  // Evidence far older than the rotation explains is a problem; a normal
+  // rotation delay is an age, not an alarm.
+  assert.match(render({ ...queue(), observed_at: '2026-10-30T10:00:00Z' }), /ham-native-badge-problem">not checked for 130m/);
+  const delayed = render({ ...queue(), entries: [], observed_at: '2026-10-30T12:01:00Z', stale: true });
+  assert.match(delayed, /nothing queued at last check/);
+  assert.match(delayed, /checked 9m ago/);
+  assert.doesNotMatch(delayed, /STALE|ham-native-badge-problem/);
 });
 
 test('unknown member mapping never trusts a FIFO member list or PR-head green', () => {
@@ -53,10 +66,16 @@ test('unknown member mapping never trusts a FIFO member list or PR-head green', 
   q.entries = [];
   q.candidates = [{ sha: 'synthetic-only', membership: 'unknown', members: [{ pr: 999, head: 'unproved' }], ci: 'unknown', checks: [] }];
   const html = render(q);
-  assert.match(html, /Member mapping unknown/);
+  assert.match(html, /members not proven/);
   assert.match(html, /synthetic-only/);
   assert.doesNotMatch(html, /#999|unproved/);
-  assert.match(html, /never copied from PR heads/);
+  assert.match(html, /required checks unknown \(policy unreadable\)/);
+  assert.doesNotMatch(html, /checks passed/);
+  assert.match(html, /never the PR.s; missing, pending, skipped or unreadable checks are never shown as passing/);
+  // A group whose synthetic ref is gone is history, not a live candidate.
+  const finished = render({ ...queue(), entries: [], candidates: [{ ...q.candidates[0], expired: true, reason: 'Synthetic ref unavailable or changed; lifecycle outcome unknown.' }] });
+  assert.match(finished, /1 finished group \(outcome not observed\)/);
+  assert.doesNotMatch(finished, /Test group|synthetic-only|testing:/);
 });
 
 test('parallel candidate cards retain exact members and exact candidate CI drilldown', () => {
@@ -67,12 +86,15 @@ test('parallel candidate cards retain exact members and exact candidate CI drill
     checks: [{ name: 'test-' + i, status: i ? 'completed' : 'in_progress', conclusion: i ? 'failure' : '', url: 'https://github.com/o/r/actions/runs/' + i }],
   }));
   const html = render(q, [row], []);
-  assert.equal((html.match(/<article class="nq-candidate">/g) || []).length, 2);
-  assert.match(html, /Candidate required CI: pending/);
-  assert.match(html, /Candidate required CI: failed/);
-  assert.match(html, /outside current page\/filters/);
+  assert.equal((html.match(/<div class="ham-native-group">/g) || []).length, 2);
+  assert.match(html, /2 groups testing: checks running, checks failed/);
+  assert.match(html, /ham-native-badge-problem">checks failed/);
+  // The SHA is shortened to 12 characters; the full value stays in the title.
+  assert.match(html, /Test group <code title="candidate-one">candidate-on<\/code> · checks running/);
+  assert.match(html, /Test group <code title="candidate-two">candidate-tw<\/code> · checks failed/);
+  assert.match(html, /on another page/);
   assert.match(html, /https:\/\/github.com\/o\/r\/actions\/runs\/1/);
-  assert.match(render(q, [{ ...row, head: 'new-head' }]), /outside tracker snapshot or head changed/);
+  assert.match(render(q, [{ ...row, head: 'new-head' }]), /outside snapshot or head changed/);
 });
 
 test('repo filters, unknown age, bounded outcomes and safe links remain explicit', () => {
@@ -86,8 +108,9 @@ test('repo filters, unknown age, bounded outcomes and safe links remain explicit
   const html = render(q);
   assert.match(html, /entry-removed/);
   assert.match(html, /actual-merge/);
-  assert.match(html, /Removal\/destroyed is not proof/);
-  assert.match(html, /gaps after restart/);
+  assert.match(html, /2 receipts/);
+  // Receipts are behind the click; only a merged receipt means merged.
+  assert.match(html, /only a merged receipt means merged/);
   assert.equal(context.stageTrackerNativeLink('javascript:invalid', 'check'), 'check');
 });
 

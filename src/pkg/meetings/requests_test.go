@@ -204,3 +204,44 @@ func TestRequestRecordFailure(t *testing.T) {
 		t.Fatal("nothing can be recorded in a missing store")
 	}
 }
+
+// A platform-initiated join (Discord `/hive join`) talks by default when the
+// bot is voice-capable: the live Discord test joined with voice off and
+// answered every spoken question in chat.
+func TestPlatformJoinVoiceOnWhenCapable(t *testing.T) {
+	q := newFakeQuorum()
+	m := newTestManager(t, q, 0)
+	m.opts.VoiceOnAddress = true
+	m.opts.AutoApprove = func(p Person) bool { return p.ID == "owner-id" }
+	m.StartRequests()
+	all := q.stream("")
+	q.joinRes = JoinResult{MeetingID: "q-v1", State: StateLive}
+	all <- Event{Type: EventState, MeetingID: "q-v1", State: StateRequested, Platform: PlatformDiscord, GuildID: "g", ChannelID: "c", RequestedBy: &Person{ID: "owner-id", Name: "Owner"}}
+	var got Meeting
+	eventually(t, "auto approved", func() bool {
+		x, ok := m.findNative("q-v1")
+		got = x
+		return ok && x.State == StateLive
+	})
+	q.mu.Lock()
+	lastVoice := q.joins[len(q.joins)-1].Voice
+	q.mu.Unlock()
+	if !got.VoiceCapable || !got.VoiceEnabled || !lastVoice {
+		t.Fatalf("auto-approved platform join must talk when capable: %+v", got)
+	}
+	// The owner can still turn it off.
+	if off, err := m.SetVoice(got.ID, false); err != nil || off.VoiceEnabled {
+		t.Fatalf("voice off = %+v, %v", off, err)
+	}
+
+	// A bot that cannot speak stays silent.
+	m.opts.VoiceOnAddress = false
+	all <- Event{Type: EventState, MeetingID: "q-v2", State: StateRequested, Platform: PlatformDiscord, GuildID: "g", ChannelID: "c2", RequestedBy: &Person{ID: "u9", Name: "Ana"}}
+	var pending Meeting
+	eventually(t, "second request", func() bool { x, ok := m.findNative("q-v2"); pending = x; return ok })
+	q.joinRes = JoinResult{MeetingID: "q-v2", State: StateJoining}
+	x, err := m.ApproveRequest(context.Background(), pending.ID, false)
+	if err != nil || x.VoiceEnabled || x.VoiceCapable {
+		t.Fatalf("not capable = %+v, %v", x, err)
+	}
+}

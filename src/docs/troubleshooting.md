@@ -223,6 +223,8 @@ Two more card behaviors remove the old one-reason-per-click treasure hunt:
   does not repair memory exhaustion.
 - **A paused agent's primary action is always its pause toggle.** With a live session the button is `▶ resume`, and its tooltip names anything resuming will *not* clear. If the session is also down, the one button reads `▶ start & resume` and clears both flags in a single click — client-side chaining of the two existing endpoints (`POST /api/resume/{agent}` first, so the fresh session is never born paused, then `POST /api/restart/{agent}`). No new API surface; scripts can chain the same two calls. A paused agent never offers a bare Start.
 
+A "Kick failed" toast or a `kick_refusal` health warning is explained reason by reason in [Kick refusals](kick-refusals.md).
+
 If the card says the agent should be running (session up, scheduling shows a cadence, next kick has an ETA) and it still misbehaves, *then* drop into the session as described below.
 
 ### CLI restarted at an empty prompt

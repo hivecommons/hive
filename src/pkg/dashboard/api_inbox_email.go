@@ -1,6 +1,7 @@
 package dashboard
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -75,6 +76,10 @@ func (s *Server) storeMailFiles(w http.ResponseWriter, src *inbox.EmailSource, d
 	ids := make([]string, 0, len(items))
 	for _, it := range items {
 		ids = append(ids, it.ID)
+		// Mailed-in audio from a trusted sender is transcribed at once; an
+		// unapproved one waits for the owner's approval (AutoTranscribe
+		// skips it).
+		s.inboxAutoTranscribe(it, inbox.AutoTranscribeActor)
 	}
 	s.webhookLogger().Info("mail-in files received", "delivery", d.ID, "files", len(ids), "trusted", trusted)
 	jsonResponse(w, map[string]any{"items": ids, "awaiting_approval": !trusted})
@@ -94,7 +99,22 @@ func (s *Server) handleInboxEmailApprove(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	s.auditFromRequest(r, "inbox-email-approve", it.ID, "")
+	s.inboxAutoTranscribe(it, requestUser(r))
 	jsonResponse(w, it)
+}
+
+// inboxAutoTranscribe queues the transcription of a mailed-in recording
+// that may be transcribed now, audited as inbox_transcribe by actor. It runs
+// in the background; anything not transcribable is left alone.
+func (s *Server) inboxAutoTranscribe(it inbox.Item, actor string) {
+	if s.deps == nil || s.deps.Inbox == nil {
+		return
+	}
+	s.deps.Inbox.AutoTranscribe(context.Background(), it, inbox.TranscribeOptions{Actor: actor, Audit: func(a inbox.TranscribeAudit) {
+		if s.audit != nil {
+			s.audit.Log(a.Actor, "inbox_transcribe", auditDetail(a.Fields()...), "")
+		}
+	}})
 }
 
 func (s *Server) handleInboxEmailDecline(w http.ResponseWriter, r *http.Request) {

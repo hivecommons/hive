@@ -62,6 +62,11 @@ type UserSessionSpec struct {
 	// by every session of the hive, that `spektacular init <vendor>` has been
 	// run in. Empty keeps the session's own empty work directory as cwd.
 	WorkspaceRepo string
+	// SeedOnboarding makes the runtime pre-seed the session HOME so the CLI
+	// skips its first-run onboarding and the trust question for the session's
+	// own working directory (only where no state exists yet). The dashboard
+	// sets it when the startup auto-answer is on.
+	SeedOnboarding bool
 	// SpektacularBinary is the spektacular executable to run `init` with
 	// (runs.spektacular.binary); empty means the default name on PATH.
 	SpektacularBinary string
@@ -78,6 +83,43 @@ type UserSessionProbe struct {
 	Attached int
 	// Activity is tmux's last-activity time for the session.
 	Activity time.Time
+}
+
+// UserSessionStartupKind classifies what a freshly started session's CLI is
+// showing, as far as the startup auto-answer is concerned.
+type UserSessionStartupKind string
+
+const (
+	// UserSessionStartupLoading: nothing recognised yet (the CLI is still
+	// drawing, or it shows a screen the hive does not know).
+	UserSessionStartupLoading UserSessionStartupKind = "loading"
+	// UserSessionStartupScreen: a known STARTUP screen (first-run notice,
+	// folder trust, onboarding, update menu) the hive may answer.
+	UserSessionStartupScreen UserSessionStartupKind = "screen"
+	// UserSessionStartupReady: the CLI reached its input prompt, or is already
+	// working on something.
+	UserSessionStartupReady UserSessionStartupKind = "ready"
+	// UserSessionStartupSignIn: the CLI is asking for a login. Never answered.
+	UserSessionStartupSignIn UserSessionStartupKind = "signin"
+	// UserSessionStartupRefused: a prompt the hive must not answer in a
+	// session (a tool or command permission prompt, a question from the CLI).
+	UserSessionStartupRefused UserSessionStartupKind = "refused"
+	// UserSessionStartupGone: the session is not running any more.
+	UserSessionStartupGone UserSessionStartupKind = "gone"
+)
+
+// UserSessionStartupStep is one read of a session's visible screen by the
+// startup auto-answer.
+type UserSessionStartupStep struct {
+	Kind UserSessionStartupKind
+	// Screen names the screen for Screen and Refused ("claude workspace
+	// trust"); empty otherwise.
+	Screen string
+	// Typed is true when a person has typed into the session through an
+	// attached terminal. Nothing is ever answered once it is.
+	Typed bool
+	// Answered is true when this step sent the screen's answer.
+	Answered bool
 }
 
 // UserSessionResume names a vendor-native conversation a session can resume.

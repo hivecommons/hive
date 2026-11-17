@@ -10,6 +10,7 @@
     .wf-enabled-toggle .config-toggle-label { font-weight: 700; }
     .wf-enabled-explain { margin: 0 0 var(--sp-4); max-width: 60em; }
     .wf-derivation-off { color: var(--status-warn); }
+    .wf-dispatch-gap { color: var(--status-warn); white-space: normal; }
     .wf-prov, .wf-compiled { display: inline-block; border-radius: var(--r-pill); padding: var(--sp-1) var(--sp-3); font-size: var(--fs-xs); font-weight: 700; white-space: nowrap; border: var(--line-width) solid var(--border); color: var(--muted); }
     .wf-prov-built-in { color: var(--status-info); border-color: color-mix(in srgb, var(--status-info) 40%, transparent); background: color-mix(in srgb, var(--status-info) 10%, transparent); }
     .wf-prov-curated { color: var(--status-ok); border-color: color-mix(in srgb, var(--status-ok) 40%, transparent); background: color-mix(in srgb, var(--status-ok) 10%, transparent); }

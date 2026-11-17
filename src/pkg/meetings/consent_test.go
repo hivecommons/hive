@@ -112,7 +112,7 @@ func TestConsentUnconfirmedChatAndVoiceOffLeaves(t *testing.T) {
 	if got.ConsentPostedAt != nil || got.StateReason != ReasonConsentUndelivered {
 		t.Fatalf("meeting %+v", got)
 	}
-	if !strings.Contains(got.ConsentError, "chat delivery not confirmed") || !strings.Contains(got.ConsentError, "voice off") {
+	if !strings.Contains(got.ConsentError, "chat delivery not confirmed") || !strings.Contains(got.ConsentError, "joined without voice") {
 		t.Fatalf("consent error %q", got.ConsentError)
 	}
 	if _, leaves := q.snapshot(); len(leaves) != 1 || leaves[0] != "q1" {
@@ -136,17 +136,23 @@ func TestConsentChatAndVoiceFailLeaves(t *testing.T) {
 	}
 }
 
-func TestConsentVoiceCapableButMutedLeaves(t *testing.T) {
+// The live Teams test: chat had no composer and the owner had turned voice
+// replies off, so she left at once. The consent notice is not a voice
+// reply: a bot that joined able to speak says it.
+func TestConsentSpokenWhenVoiceRepliesOff(t *testing.T) {
 	q := &confirmingQuorum{fakeQuorum: newFakeQuorum(), confirmEr: []error{errNoComposer}}
-	// The owner turned voice off before the bot went live: hive may not speak.
 	m, mt := liveTeams(t, q, true, func(m *Manager, mt Meeting) {
 		if _, err := m.SetVoice(mt.ID, false); err != nil {
 			t.Fatal(err)
 		}
 	})
-	eventually(t, "left", stateIs(m, mt.ID, StateEnded))
-	if s := q.says(); len(s) != 0 {
-		t.Fatalf("says %q", s)
+	eventually(t, "consent", func() bool { got, _ := m.Get(mt.ID); return got.ConsentPostedAt != nil })
+	got, _ := m.Get(mt.ID)
+	if got.ConsentVia != ConsentViaVoice || got.State != StateLive || got.VoiceEnabled {
+		t.Fatalf("meeting %+v", got)
+	}
+	if s := q.says(); len(s) != 1 || s[0] != testConsent {
+		t.Fatalf("says %q, want the consent notice", s)
 	}
 }
 

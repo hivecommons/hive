@@ -3581,6 +3581,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	// at once (hivecommons/hive#16521).
 	github.SetCIEvidenceHook(b.dashSrv.RefreshCIEvidence)
 	wireSpektacularRunner(b.cfg, b.dashSrv, b.logger)
+	// The meetings TTS service, for the persona sample and the preset
+	// voice previews in Settings, Meeting attendee (#18710).
+	wireMeetingsTTS(b.cfg, b.dashSrv)
 	// Meetings (hivecommons/hive#18289): the Quorum child, only when
 	// meetings.enabled is set. Stopped on shutdown.
 	if sup := wireMeetings(b.ctx, b.cfg, b.logger); sup != nil {
@@ -3598,7 +3601,11 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 			if fn := meetingsResearchStatus(b.cfg, researchPool); fn != nil {
 				b.dashSrv.SetMeetingsResearchStatus(fn)
 			}
-			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger, b.dashSrv.HiveStatusBrief); lr != nil {
+			var hiveStatus hiveStatusSource
+			if b.dashSrv != nil {
+				hiveStatus = b.dashSrv
+			}
+			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger, hiveStatus); lr != nil {
 				b.meetingsLive = lr
 				b.cleanup.push(lr.Close)
 				b.cleanup.push(routeResearch(researchPool, lr))

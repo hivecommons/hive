@@ -181,7 +181,7 @@ func meetingSpekArgs(m meetings.Meeting, contextDir string) []string {
 // retrieval and may be nil.
 func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings.Store, kapi *knowledge.KnowledgeAPI,
 	beadStores func() map[string]*beads.Store, research live.ResearchDispatcher, logger *slog.Logger,
-	hiveStatus func(context.Context) (string, error)) *live.Runner {
+	hiveStatus hiveStatusSource) *live.Runner {
 	if cfg == nil || mgr == nil || store == nil {
 		return nil
 	}
@@ -268,13 +268,13 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPersona, llm config.ResolvedMeetingsLLM,
 	store *meetings.Store, kapi *knowledge.KnowledgeAPI, beadStores func() map[string]*beads.Store,
 	slotsDir string, maxTokens int, canResearch bool, logger *slog.Logger,
-	hiveStatus func(context.Context) (string, error)) func(meetings.Meeting) *betty.Engine {
+	hiveStatus hiveStatusSource) func(meetings.Meeting) *betty.Engine {
 	if !persona.Enabled {
 		return nil
 	}
 	var retrievers []betty.Retriever
 	if hiveStatus != nil {
-		retrievers = append(retrievers, betty.HiveStatusRetriever{Brief: hiveStatus})
+		retrievers = append(retrievers, betty.HiveStatusRetriever{Brief: hiveStatus.HiveStatusBrief, Item: hiveStatus.HiveItemBrief})
 	}
 	if kapi != nil {
 		stores := betty.FileStores(kapi.FileStores)
@@ -528,4 +528,11 @@ func meetingSpekEnv(getenv func(string) string, llm config.ResolvedMeetingsLLM, 
 		env = append(env, "SPEK_MEETING_LLM=none")
 	}
 	return env
+}
+
+// hiveStatusSource is the dashboard's live hive state for the meeting
+// attendee (*dashboard.Server): the status brief and one-item lookups.
+type hiveStatusSource interface {
+	HiveStatusBrief(ctx context.Context) (string, error)
+	HiveItemBrief(ctx context.Context, number int) (string, bool)
 }

@@ -110,8 +110,10 @@ type WorkflowDispatchCandidate struct {
 
 // WorkflowDispatchSkip is an item the plan did not hand off, and why.
 type WorkflowDispatchSkip struct {
-	Ref    string
-	Reason string
+	Ref string
+	// Profile is the model profile the item is handed to.
+	Profile string
+	Reason  string
 }
 
 // Skip reasons.
@@ -125,8 +127,10 @@ const (
 
 // WorkflowDispatchPlanDeps are the decisions PlanWorkflowDispatch defers.
 type WorkflowDispatchPlanDeps struct {
-	// Agent resolves the hive agent that fills a profile.
-	Agent func(profile string) (string, bool)
+	// Agent resolves the hive agent that fills the item's profile. It is
+	// given the item so the pick can depend on its repository and on
+	// whether the profile opens a pull request or reviews one.
+	Agent func(d github.WorkflowDispatch) (string, bool)
 	// Eligible reports whether the agent may be kicked now (not paused,
 	// governor gate open). Nil admits every agent.
 	Eligible func(agent string) bool
@@ -155,36 +159,36 @@ func PlanWorkflowDispatch(items []github.WorkflowDispatch, deps WorkflowDispatch
 		seen[ref] = true
 		agent, ok := "", false
 		if deps.Agent != nil {
-			agent, ok = deps.Agent(d.Target.Profile)
+			agent, ok = deps.Agent(d)
 		}
 		if !ok {
-			skips = append(skips, WorkflowDispatchSkip{Ref: ref, Reason: WorkflowSkipNoAgent})
+			skips = append(skips, WorkflowDispatchSkip{Ref: ref, Profile: d.Target.Profile, Reason: WorkflowSkipNoAgent})
 			continue
 		}
 		if deps.Eligible != nil && !deps.Eligible(agent) {
-			skips = append(skips, WorkflowDispatchSkip{Ref: ref, Reason: WorkflowSkipIneligible})
+			skips = append(skips, WorkflowDispatchSkip{Ref: ref, Profile: d.Target.Profile, Reason: WorkflowSkipIneligible})
 			continue
 		}
 		var trigger *github.DispatchReply
 		if d.Target.Reply != "" {
 			if deps.Reply == nil {
-				skips = append(skips, WorkflowDispatchSkip{Ref: ref, Reason: WorkflowSkipNoReply})
+				skips = append(skips, WorkflowDispatchSkip{Ref: ref, Profile: d.Target.Profile, Reason: WorkflowSkipNoReply})
 				continue
 			}
 			r, found, err := deps.Reply(d)
 			if err != nil {
-				skips = append(skips, WorkflowDispatchSkip{Ref: ref, Reason: WorkflowSkipReplyError + ": " + err.Error()})
+				skips = append(skips, WorkflowDispatchSkip{Ref: ref, Profile: d.Target.Profile, Reason: WorkflowSkipReplyError + ": " + err.Error()})
 				continue
 			}
 			if !found {
-				skips = append(skips, WorkflowDispatchSkip{Ref: ref, Reason: WorkflowSkipNoReply})
+				skips = append(skips, WorkflowDispatchSkip{Ref: ref, Profile: d.Target.Profile, Reason: WorkflowSkipNoReply})
 				continue
 			}
 			trigger = &r
 		}
 		key := WorkflowDispatchKey(d, trigger)
 		if deps.Done != nil && deps.Done(key) {
-			skips = append(skips, WorkflowDispatchSkip{Ref: ref, Reason: WorkflowSkipDone})
+			skips = append(skips, WorkflowDispatchSkip{Ref: ref, Profile: d.Target.Profile, Reason: WorkflowSkipDone})
 			continue
 		}
 		out = append(out, WorkflowDispatchCandidate{Dispatch: d, Agent: agent, Key: key, Trigger: trigger})
