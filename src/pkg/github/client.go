@@ -57,6 +57,11 @@ type Client struct {
 	// transiently refused fetch does not publish the repo as empty
 	// (enumerate_lastgood.go). Zero value is ready to use.
 	lastGoodEnum lastGoodEnumeration
+	// openSnapshots keeps each repo's newest set of open issue numbers so a
+	// parent's tracker progress counts children filed in another managed
+	// repo (cross_repo_children.go, hivecommons/hive#18680). Zero value is
+	// ready to use.
+	openSnapshots openIssueSnapshots
 	// forge is the per-repo state cache EnumerateActionable reads listings
 	// from when attached (forgestate_reader.go, hivecommons/hive#13375).
 	// Nil lists GitHub directly.
@@ -1899,11 +1904,14 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		splitParents = nil
 	}
 	openByNumber := make(map[int]*gh.Issue, len(allIssues))
+	openNumbers := make(map[int]struct{}, len(allIssues))
 	for _, issue := range allIssues {
 		if !issue.IsPullRequest() {
 			openByNumber[issue.GetNumber()] = issue
+			openNumbers[issue.GetNumber()] = struct{}{}
 		}
 	}
+	c.openSnapshots.store(fullRepoName(owner, repoName), openNumbers)
 
 	for _, issue := range allIssues {
 		if issue.IsPullRequest() {
@@ -2079,7 +2087,7 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 		})
 	}
 	dropMutualBlocks(actionable, c.logger)
-	annotateIssueChildren(repo, subIssueSummaries, splitParents, openByNumber, actionable, details)
+	annotateIssueChildren(fullRepoName(owner, repoName), subIssueSummaries, splitParents, openByNumber, c.openSnapshots.isOpen, actionable, details)
 
 	// Keep an honest fallback if a future exclusion path is added without a
 	// dedicated category. This is the same enumeration snapshot, not a second

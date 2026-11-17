@@ -13,17 +13,17 @@ import (
 )
 
 func TestParentMarker_RoundTrip(t *testing.T) {
-	body := withParentMarker("Child body.\n", 12361)
+	body := withParentMarker("Child body.\n", "", 12361)
 	if !strings.HasSuffix(body, ParentMarker(12361)) || !strings.Contains(body, "Child body.") {
 		t.Fatalf("body = %q", body)
 	}
 	if ParseParentMarker(body) != 12361 {
 		t.Fatalf("parse = %d", ParseParentMarker(body))
 	}
-	if again := withParentMarker(body, 12361); again != body {
+	if again := withParentMarker(body, "", 12361); again != body {
 		t.Fatalf("marker must not repeat: %q", again)
 	}
-	if withParentMarker("x", 0) != "x" || ParseParentMarker("no marker") != 0 {
+	if withParentMarker("x", "", 0) != "x" || ParseParentMarker("no marker") != 0 {
 		t.Fatal("zero parent / absent marker must be no-ops")
 	}
 	if ParseParentMarker("<!-- hive:parent #42 -->") != 42 {
@@ -45,28 +45,28 @@ func TestChildrenOf_SummaryThenLedgerAndMarkerFallback(t *testing.T) {
 	}
 	summaries := map[int]IssueChildren{1: {Total: 4, Completed: 4}}
 
-	if got := childrenOf("acme/widgets", 1, summaries, ledger, open); got == nil || *got != (IssueChildren{Total: 4, Completed: 4}) {
+	if got := childrenOf("acme/widgets", 1, summaries, ledger, open, nil); got == nil || *got != (IssueChildren{Total: 4, Completed: 4}) {
 		t.Fatalf("summary must win: %+v", got)
 	}
 	// No summary: ledger children 3 and 4 (closed: absent from the snapshot)
 	// plus body-marked open child 2; the other repo's #6 is ignored.
-	got := childrenOf("acme/widgets", 1, nil, ledger, open)
+	got := childrenOf("acme/widgets", 1, nil, ledger, open, nil)
 	if got == nil || *got != (IssueChildren{Total: 3, Completed: 2}) {
 		t.Fatalf("fallback = %+v", got)
 	}
 	if got.Open() != 1 || got.AllClosed() {
 		t.Fatalf("open=%d allClosed=%v", got.Open(), got.AllClosed())
 	}
-	if childrenOf("acme/widgets", 2, nil, ledger, open) != nil {
+	if childrenOf("acme/widgets", 2, nil, ledger, open, nil) != nil {
 		t.Fatal("a leaf has no children")
 	}
-	if got := splitChildrenOf(ledger, "ACME/Widgets", 1); len(got) != 2 || got[0] != 3 || got[1] != 4 {
+	if got := splitChildrenOf(ledger, "ACME/Widgets", 1); len(got) != 2 || got[0] != (ChildRef{Number: 3}) || got[1] != (ChildRef{Number: 4}) {
 		t.Fatalf("splitChildrenOf = %v", got)
 	}
 }
 
 func TestDecomposedParentCloseComment(t *testing.T) {
-	got := decomposedParentCloseComment([]int{3, 4, 5}, map[int]int{3: 30, 5: 50})
+	got := decomposedParentCloseComment([]ChildRef{{Number: 3}, {Number: 4}, {Number: 5}}, map[ChildRef]int{{Number: 3}: 30, {Number: 5}: 50})
 	if !strings.HasPrefix(got, parentAutoCloseMarker) {
 		t.Fatalf("missing marker: %q", got)
 	}
@@ -234,7 +234,7 @@ func TestAnnotateIssueChildren_SetsParentsOnly(t *testing.T) {
 	actionable := []Issue{{Repo: "acme/widgets", Number: 1}, {Repo: "acme/widgets", Number: 2}}
 	details := []RepoWorkIssue{{Repo: "acme/widgets", Number: 3}, {Repo: "acme/widgets"}}
 	summaries := map[int]IssueChildren{1: {Total: 2, Completed: 1}, 3: {Total: 1, Completed: 1}}
-	annotateIssueChildren("acme/widgets", summaries, nil, nil, actionable, details)
+	annotateIssueChildren("acme/widgets", summaries, nil, nil, nil, actionable, details)
 	if actionable[0].Children == nil || actionable[0].Children.Total != 2 || actionable[1].Children != nil {
 		t.Fatalf("actionable = %+v", actionable)
 	}

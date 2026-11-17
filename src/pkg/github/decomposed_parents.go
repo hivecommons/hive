@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net/http"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -73,82 +72,134 @@ func ParentMarker(n int) string {
 	return parentMarkerPrefix + strconv.Itoa(n) + " -->"
 }
 
-var parentMarkerRe = regexp.MustCompile(`<!--\s*hive:parent\s+#?(\d+)\s*-->`)
+// parentMarkerRe matches both marker forms: the bare same-repo
+// `<!-- hive:parent N -->` and the cross-repo `<!-- hive:parent owner/repo#N -->`
+// (hivecommons/hive#18680). Group 1 is the repo ("" for the bare form),
+// group 2 the number.
+var parentMarkerRe = regexp.MustCompile(`<!--\s*hive:parent\s+(?:([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#|#)?(\d+)\s*-->`)
 
-// ParseParentMarker returns the parent issue number a body's marker names,
-// or 0 when there is none.
+// ParseParentMarker returns the parent issue number a body's bare
+// (same-repo) marker names, or 0 when there is none. A cross-repo marker
+// names an issue in another repo, so it is not reported here; read it with
+// ParseParentMarkerRef.
 func ParseParentMarker(body string) int {
-	m := parentMarkerRe.FindStringSubmatch(body)
-	if m == nil {
+	repo, n := ParseParentMarkerRef(body)
+	if repo != "" {
 		return 0
 	}
-	n, _ := strconv.Atoi(m[1])
 	return n
 }
 
 // withParentMarker appends the parent marker to body unless one for the same
-// parent is already present.
-func withParentMarker(body string, parent int) string {
-	if parent <= 0 || ParseParentMarker(body) == parent {
+// parent is already present. parentRepo is "" for a parent in the child's own
+// repo, or the parent's "owner/name" for a cross-repo parent; a bare marker
+// for the same number on a cross-repo child is replaced by the full form.
+func withParentMarker(body, parentRepo string, parent int) string {
+	if parent <= 0 {
 		return body
+	}
+	parentRepo = strings.TrimSpace(parentRepo)
+	want := ParentMarkerFor(parentRepo, parent)
+	if repo, n := ParseParentMarkerRef(body); n == parent {
+		if strings.EqualFold(repo, parentRepo) {
+			return body
+		}
+		if repo == "" && parentRepo != "" {
+			return strings.Replace(body, parentMarkerRe.FindString(body), want, 1)
+		}
 	}
 	body = strings.TrimRight(body, "\n")
 	if body == "" {
-		return ParentMarker(parent)
+		return want
 	}
-	return body + "\n\n" + ParentMarker(parent)
+	return body + "\n\n" + want
 }
 
-// splitChildrenOf inverts the ledger: the child numbers recorded under
-// repo#parent, sorted.
-func splitChildrenOf(children map[string]SplitParent, repo string, parent int) []int {
+// splitChildrenOf inverts the ledger: the children recorded under
+// parentRepo#parent, sorted. parentRepo is matched as a full "owner/name"
+// (case-insensitive); a child filed in another repo (SplitParent.ParentRepo
+// set, hivecommons/hive#18680) is returned with its own repo, a same-repo
+// child with Repo "".
+func splitChildrenOf(children map[string]SplitParent, parentRepo string, parent int) []ChildRef {
 	if len(children) == 0 || parent <= 0 {
 		return nil
 	}
-	prefix := strings.ToLower(strings.TrimSpace(repo)) + "#"
-	var out []int
+	want := strings.ToLower(strings.TrimSpace(parentRepo))
+	var out []ChildRef
 	for key, sp := range children {
-		if sp.Parent != parent || !strings.HasPrefix(key, prefix) {
+		if sp.Parent != parent {
 			continue
 		}
-		n, err := strconv.Atoi(strings.TrimPrefix(key, prefix))
-		if err != nil || n <= 0 || n == parent {
+		i := strings.LastIndex(key, "#")
+		if i <= 0 {
 			continue
 		}
-		out = append(out, n)
+		childRepo := strings.ToLower(key[:i])
+		n, err := strconv.Atoi(key[i+1:])
+		if err != nil || n <= 0 {
+			continue
+		}
+		ownerRepo := childRepo
+		if sp.ParentRepo != "" {
+			ownerRepo = strings.ToLower(strings.TrimSpace(sp.ParentRepo))
+		}
+		if ownerRepo != want {
+			continue
+		}
+		ref := ChildRef{Number: n}
+		if childRepo != want {
+			ref.Repo = childRepo
+		} else if n == parent {
+			continue
+		}
+		out = append(out, ref)
 	}
-	sort.Ints(out)
+	sortChildRefs(out)
 	return out
 }
 
 // childrenOf resolves a parent's tracked children from what enumeration
-// already has in hand: GitHub's sub-issue summary first; failing that, the
-// ledger and body markers inverted against the open snapshot. In the
-// fallback a child absent from the open snapshot is counted as closed (the
-// snapshot is every open issue in the repo), and a body-marked child that
-// is open counts as open — the marker cannot name closed children, so a
-// marker-only parent is exempt from stalling but is never auto-closed on
-// that evidence alone (closeDecomposedParent re-reads the children).
-func childrenOf(repo string, parent int, summaries map[int]IssueChildren, ledger map[string]SplitParent, open map[int]*gh.Issue) *IssueChildren {
+// already has in hand: GitHub's sub-issue summary first (it counts
+// sub-issues in any repo); failing that, the ledger and body markers
+// inverted against the open snapshot. repo is the parent's repo as
+// "owner/name". In the fallback a same-repo child absent from the open
+// snapshot is counted as closed (the snapshot is every open issue in the
+// repo), and a body-marked child that is open counts as open — the marker
+// cannot name closed children, so a marker-only parent is exempt from
+// stalling but is never auto-closed on that evidence alone
+// (closeDecomposedParent re-reads the children). A child in another repo
+// (hivecommons/hive#18680) is resolved through crossOpen, that repo's
+// newest open snapshot; while nothing is known about that repo it counts as
+// open, so a parent is never shown done on missing evidence.
+func childrenOf(repo string, parent int, summaries map[int]IssueChildren, ledger map[string]SplitParent, open map[int]*gh.Issue, crossOpen crossRepoOpenFunc) *IssueChildren {
 	if s, ok := summaries[parent]; ok && s.Total > 0 {
 		s := s
 		return &s
 	}
-	seen := map[int]bool{}
-	for _, n := range splitChildrenOf(ledger, repo, parent) {
-		seen[n] = true
+	seen := map[ChildRef]bool{}
+	for _, ref := range splitChildrenOf(ledger, repo, parent) {
+		seen[ref] = true
 	}
 	for n, issue := range open {
-		if n != parent && issue != nil && ParseParentMarker(issue.GetBody()) == parent {
-			seen[n] = true
+		if n != parent && issue != nil && markerNamesParent(issue.GetBody(), repo, parent) {
+			seen[ChildRef{Number: n}] = true
 		}
 	}
 	if len(seen) == 0 {
 		return nil
 	}
 	out := &IssueChildren{Total: len(seen)}
-	for n := range seen {
-		if _, isOpen := open[n]; !isOpen {
+	for ref := range seen {
+		if ref.Repo == "" {
+			if _, isOpen := open[ref.Number]; !isOpen {
+				out.Completed++
+			}
+			continue
+		}
+		if crossOpen == nil {
+			continue
+		}
+		if isOpen, known := crossOpen(ref.Repo, ref.Number); known && !isOpen {
 			out.Completed++
 		}
 	}
@@ -157,21 +208,40 @@ func childrenOf(repo string, parent int, summaries map[int]IssueChildren, ledger
 
 // annotateIssueChildren sets Children on every enumerated row that is a
 // decomposed parent.
-func annotateIssueChildren(repo string, summaries map[int]IssueChildren, ledger map[string]SplitParent, open map[int]*gh.Issue, actionable []Issue, details []RepoWorkIssue) {
+func annotateIssueChildren(repo string, summaries map[int]IssueChildren, ledger map[string]SplitParent, open map[int]*gh.Issue, crossOpen crossRepoOpenFunc, actionable []Issue, details []RepoWorkIssue) {
 	for i := range actionable {
-		actionable[i].Children = childrenOf(repo, actionable[i].Number, summaries, ledger, open)
+		actionable[i].Children = childrenOf(repo, actionable[i].Number, summaries, ledger, open, crossOpen)
 	}
 	for i := range details {
 		if details[i].Number > 0 {
-			details[i].Children = childrenOf(repo, details[i].Number, summaries, ledger, open)
+			details[i].Children = childrenOf(repo, details[i].Number, summaries, ledger, open, crossOpen)
 		}
 	}
 }
 
 // subIssueRef is one child as GET .../issues/{parent}/sub_issues reports it.
+// RepositoryURL ("https://api.github.com/repos/owner/name") names the
+// child's repo, which differs from the parent's for a cross-repo sub-issue
+// (hivecommons/hive#18680); empty means the parent's repo.
 type subIssueRef struct {
-	Number int    `json:"number"`
-	State  string `json:"state"`
+	Number        int    `json:"number"`
+	State         string `json:"state"`
+	RepositoryURL string `json:"repository_url,omitempty"`
+}
+
+// repo returns the child's lowercased "owner/name" from RepositoryURL, or
+// "" when the payload did not carry one.
+func (r subIssueRef) repo() string {
+	u := strings.TrimRight(strings.TrimSpace(r.RepositoryURL), "/")
+	i := strings.LastIndex(u, "/repos/")
+	if i < 0 {
+		return ""
+	}
+	full := u[i+len("/repos/"):]
+	if strings.Count(full, "/") != 1 {
+		return ""
+	}
+	return strings.ToLower(full)
 }
 
 // listSubIssues reads a parent's native sub-issue list. go-github v72 has no
@@ -205,36 +275,46 @@ func (c *Client) listSubIssues(ctx context.Context, owner, repoName string, pare
 
 // decomposedChildren re-reads a parent's children live, right before a
 // close: the native sub-issue list when it has entries, otherwise each
-// ledger-recorded child by number. Returns the sorted child numbers and
-// how many are open; ok is false when nothing could be read.
-func (c *Client) decomposedChildren(ctx context.Context, owner, repoName string, parent int) (children []int, open int, ok bool, err error) {
+// ledger-recorded child, read from its own repo. Returns the sorted
+// children and how many are open; ok is false when nothing could be read.
+// A child in another repo (hivecommons/hive#18680) carries that repo.
+func (c *Client) decomposedChildren(ctx context.Context, owner, repoName string, parent int) (children []ChildRef, open int, ok bool, err error) {
+	parentFull := strings.ToLower(owner + "/" + repoName)
 	refs, err := c.listSubIssues(ctx, owner, repoName, parent)
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("listing sub-issues of %s/%s#%d: %w", owner, repoName, parent, err)
 	}
 	if len(refs) > 0 {
 		for _, r := range refs {
-			if r.Number <= 0 || r.Number == parent {
+			ref := ChildRef{Number: r.Number}
+			if childRepo := r.repo(); childRepo != "" && childRepo != parentFull {
+				ref.Repo = childRepo
+			}
+			if r.Number <= 0 || (ref.Repo == "" && r.Number == parent) {
 				continue
 			}
-			children = append(children, r.Number)
+			children = append(children, ref)
 			if !strings.EqualFold(r.State, "closed") {
 				open++
 			}
 		}
-		sort.Ints(children)
+		sortChildRefs(children)
 		return children, open, len(children) > 0, nil
 	}
 	ledger, lerr := LoadSplitParents("")
 	if lerr != nil {
 		return nil, 0, false, nil
 	}
-	for _, n := range splitChildrenOf(ledger, owner+"/"+repoName, parent) {
-		child, _, gerr := c.client.Issues.Get(ctx, owner, repoName, n)
-		if gerr != nil {
-			return nil, 0, false, fmt.Errorf("reading child %s/%s#%d: %w", owner, repoName, n, gerr)
+	for _, ref := range splitChildrenOf(ledger, parentFull, parent) {
+		childOwner, childName := owner, repoName
+		if ref.Repo != "" {
+			childOwner, childName = c.splitRepo(ref.Repo)
 		}
-		children = append(children, n)
+		child, _, gerr := c.client.Issues.Get(ctx, childOwner, childName, ref.Number)
+		if gerr != nil {
+			return nil, 0, false, fmt.Errorf("reading child %s/%s#%d: %w", childOwner, childName, ref.Number, gerr)
+		}
+		children = append(children, ref)
 		if !strings.EqualFold(child.GetState(), "closed") {
 			open++
 		}
@@ -247,14 +327,16 @@ func (c *Client) decomposedChildren(ctx context.Context, owner, repoName string,
 const parentAutoCloseMarker = "<!-- hive:parent-autoclose -->"
 
 // decomposedParentCloseComment is the one comment the sweep leaves on a
-// parent it closes. closers maps child → merged PR number (0 = unknown).
-func decomposedParentCloseComment(children []int, closers map[int]int) string {
+// parent it closes. closers maps child → merged PR number (0 = unknown); a
+// cross-repo child's PR lives in the child's repo, so both are written in
+// full owner/repo#N form.
+func decomposedParentCloseComment(children []ChildRef, closers map[ChildRef]int) string {
 	parts := make([]string, 0, len(children))
-	for _, n := range children {
-		if pr := closers[n]; pr > 0 {
-			parts = append(parts, fmt.Sprintf("#%d → PR #%d", n, pr))
+	for _, ref := range children {
+		if pr := closers[ref]; pr > 0 {
+			parts = append(parts, fmt.Sprintf("%s → PR %s", ref, ChildRef{Repo: ref.Repo, Number: pr}))
 		} else {
-			parts = append(parts, fmt.Sprintf("#%d", n))
+			parts = append(parts, ref.String())
 		}
 	}
 	return parentAutoCloseMarker + "\nAll children delivered: " + strings.Join(parts, ", ") + ".\n\nEvery tracked child of this issue is closed, so the hive is closing it as completed. Reopen it if something it asked for is still missing."
@@ -279,10 +361,14 @@ func (c *Client) closeDecomposedParent(ctx context.Context, in IssueStageInput, 
 	if !ok || open > 0 {
 		return false
 	}
-	closers := map[int]int{}
-	for _, n := range children {
-		if closer, found := c.closedByPullRequestReference(ctx, owner, name, n, 0); found {
-			closers[n] = closer.Number
+	closers := map[ChildRef]int{}
+	for _, ref := range children {
+		childOwner, childName := owner, name
+		if ref.Repo != "" {
+			childOwner, childName = c.splitRepo(ref.Repo)
+		}
+		if closer, found := c.closedByPullRequestReference(ctx, childOwner, childName, ref.Number, 0); found {
+			closers[ref] = closer.Number
 		}
 	}
 	if _, err := stagelabels.Enforce(ctx, c.StageLabeler(), stagelabels.IssueItem, owner, name, in.Number, in.Labels, stagelabels.Desired{}); err != nil && logger != nil {

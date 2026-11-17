@@ -123,6 +123,15 @@ type IssueRequest struct {
 	// progress bar instead of only a "Part of #N" line in the body
 	// (hivecommons/hive#9435). A failure to link does not fail the create.
 	Parent int `json:"parent,omitempty"` // issue only
+	// ParentRepo is the repo Parent lives in when it is not Repo
+	// (hivecommons/hive#18680): a tracker in one managed repo whose child's
+	// work lives in another. The child is filed in Repo — where its work
+	// lives — and linked back in full cross-repo form (`Part of
+	// owner/repo#N`, `<!-- hive:parent owner/repo#N -->`, and a native
+	// cross-repo sub-issue link). Both repos must be managed by this hive;
+	// when Repo is not, the child falls back to ParentRepo, so a child is
+	// never filed in an unmanaged repo. Empty means Repo.
+	ParentRepo string `json:"parent_repo,omitempty"` // issue only
 	// BlockedBy lists issue numbers in the same repo that must close before
 	// this one is ready. On an "issue" request the watcher records each as a
 	// GitHub "blocked by" dependency of the new issue after creating it
@@ -214,6 +223,10 @@ type IssueResponse struct {
 	// when a requested link did not succeed; the issue is still created OK.
 	ParentLinked    bool   `json:"parent_linked,omitempty"`
 	ParentLinkError string `json:"parent_link_error,omitempty"`
+	// RepoFallbackFrom names the repo a cross-repo child asked to be filed
+	// in when the hive does not manage it (hivecommons/hive#18680): the
+	// child was filed in the parent's repo instead, which Number/URL name.
+	RepoFallbackFrom string `json:"repo_fallback_from,omitempty"`
 	// BlockedByLinked lists the req.BlockedBy numbers that were recorded as
 	// GitHub "blocked by" dependencies of the created issue; BlockedByErrors
 	// names each one that could not be, with the reason (#9839).
@@ -515,6 +528,23 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 			slog.String("path", path), slog.String("reason", shapeErr))
 		return
 	}
+	// Cross-repo decomposition (hivecommons/hive#18680): resolve which
+	// managed repo the child is filed in before the repository gate, so an
+	// unmanaged child repo falls back to the parent's instead of being
+	// refused, and an unmanaged parent repo is refused like any other.
+	var repoFallbackFrom string
+	if kind == "issue" && req.Parent > 0 && strings.TrimSpace(req.ParentRepo) != "" {
+		if err := c.validateIssueRequestRepo(req.ParentRepo); err != nil {
+			c.quarantineFailedIssueRequest(path, req, kind, "parent repository refused", IssueResponse{Error: err.Error()}, nowFn)
+			return
+		}
+		repoFallbackFrom = c.resolveChildIssueRepo(&req)
+		if repoFallbackFrom != "" {
+			c.logger.Info("issue-request watcher: child repo is not managed by this hive; filing in the parent's repo",
+				slog.String("requested_repo", repoFallbackFrom), slog.String("repo", req.Repo),
+				slog.Int("parent", req.Parent), slog.String("agent", req.Agent))
+		}
+	}
 	// The repository gate: an impossible, placeholder or out-of-scope repo
 	// can never be written to, so it is quarantined now rather than retried
 	// — still before authorization and before any GitHub call.
@@ -603,8 +633,12 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 	if kind == "issue" && req.Parent > 0 {
 		// Machine-readable child → parent marker (hivecommons/hive#12857):
 		// the sub-issue link below is best-effort and the ledger is
-		// spoke-local, so the body carries the relation too.
-		body = withParentMarker(body, req.Parent)
+		// spoke-local, so the body carries the relation too. A cross-repo
+		// child names its parent in full owner/repo#N form, in the marker
+		// and in the "Part of" line (hivecommons/hive#18680).
+		parentRepo := c.crossRepoParent(req)
+		body = withCrossRepoParentReference(body, parentRepo, req.Parent)
+		body = withParentMarker(body, parentRepo, req.Parent)
 	}
 	if kind == "issue" {
 		// An empty dedupe checklist is not an issue (hivecommons/hive#15381):
@@ -648,7 +682,7 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 		body = AppendTrailer(body, meta)
 	}
 
-	resp := IssueResponse{At: nowFn().UTC().Format(time.RFC3339)}
+	resp := IssueResponse{At: nowFn().UTC().Format(time.RFC3339), RepoFallbackFrom: repoFallbackFrom}
 	// #17298: a request that starts work on an issue (a claim, or a comment
 	// announcing a start — the kick path for epic-driven work) is checked
 	// against the same claim-target gate as hive-open-pr before any write,
@@ -941,7 +975,12 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 			// error, …) is logged and surfaced in the result but never turns
 			// a successful create into a failure or a retry.
 			if req.Parent > 0 && !res.Consolidated && res.ID > 0 {
-				if linkErr := c.AddSubIssue(ctx, req.Repo, req.Parent, res.ID); linkErr != nil {
+				parentRepo := c.crossRepoParent(req)
+				linkRepo := req.Repo
+				if parentRepo != "" {
+					linkRepo = parentRepo
+				}
+				if linkErr := c.AddSubIssue(ctx, linkRepo, req.Parent, res.ID); linkErr != nil {
 					resp.ParentLinkError = linkErr.Error()
 					c.logger.Warn("issue-request watcher: sub-issue link failed, issue still created",
 						slog.String("repo", req.Repo), slog.Int("number", res.Number),
@@ -952,8 +991,8 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 					// child may inherit the parent's acknowledgement. Only
 					// relay-made links are recorded; a sub-issue link anyone
 					// adds later in the GitHub UI confers nothing.
-					linkOwner, linkRepo := c.splitRepo(req.Repo)
-					if recErr := RecordSplitParent("", linkOwner+"/"+linkRepo, res.Number, req.Parent, req.Agent); recErr != nil {
+					childOwner, childRepo := c.splitRepo(req.Repo)
+					if recErr := RecordSplitParentRef("", childOwner+"/"+childRepo, res.Number, parentRepo, req.Parent, req.Agent); recErr != nil {
 						c.logger.Warn("issue-request watcher: sub-issue linked but split-parent ledger write failed; child will not inherit acknowledgement",
 							slog.String("repo", req.Repo), slog.Int("number", res.Number),
 							slog.Int("parent", req.Parent), slog.String("error", recErr.Error()))
