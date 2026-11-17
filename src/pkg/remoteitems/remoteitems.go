@@ -267,12 +267,44 @@ type Poller struct {
 	Logger       *slog.Logger
 }
 
-// Run performs one pass over repos for the owner login: list, track, prune,
-// fetch feedback, deliver. Errors on one repo or item never stop the pass.
-// resumer may be nil (everything is queued as a handoff).
+// Target is one watched repo and the login the hive's writes there appear
+// under: the hive owner's, or the App bot's when the repo writes as the bot
+// (project.remote_write_identity, hivecommons/hive#18516).
+type Target struct {
+	Repo  string
+	Login string
+}
+
+// Run performs one pass over repos for one login; see RunTargets.
 func (p *Poller) Run(ctx context.Context, repos []string, login string, resumer Resumer, now time.Time) Outcome {
+	targets := make([]Target, 0, len(repos))
+	for _, r := range repos {
+		targets = append(targets, Target{Repo: r, Login: login})
+	}
+	return p.RunTargets(ctx, targets, resumer, now)
+}
+
+// RunTargets performs one pass over targets, each listed under its own
+// login: list, track, prune, fetch feedback, deliver. Errors on one repo or
+// item never stop the pass. resumer may be nil (everything is queued as a
+// handoff). A target without a login is skipped; a repo not in targets
+// drops its tracked items.
+func (p *Poller) RunTargets(ctx context.Context, targets []Target, resumer Resumer, now time.Time) Outcome {
 	var out Outcome
-	if p == nil || p.Store == nil || p.Fetch == nil || p.Marker == nil || strings.TrimSpace(login) == "" || len(repos) == 0 {
+	loginFor := map[string]string{}
+	var repos []string
+	for _, t := range targets {
+		repo, login := strings.TrimSpace(t.Repo), strings.TrimSpace(t.Login)
+		if repo == "" || login == "" {
+			continue
+		}
+		if _, dup := loginFor[strings.ToLower(repo)]; dup {
+			continue
+		}
+		loginFor[strings.ToLower(repo)] = login
+		repos = append(repos, repo)
+	}
+	if p == nil || p.Store == nil || p.Fetch == nil || p.Marker == nil || len(repos) == 0 {
 		return out
 	}
 	logger := p.Logger
@@ -294,6 +326,7 @@ func (p *Poller) Run(ctx context.Context, repos []string, login string, resumer 
 			continue
 		}
 		out.Repos++
+		login := loginFor[strings.ToLower(repo)]
 		items, err := p.Fetch.ListOwnOpenItems(ctx, repo, login)
 		if err != nil {
 			out.ListErrs++
@@ -355,6 +388,7 @@ func (p *Poller) Run(ctx context.Context, repos []string, login string, resumer 
 			continue
 		}
 		var fresh []Comment
+		login := loginFor[strings.ToLower(it.Repo)]
 		for _, c := range comments {
 			if !c.CreatedAt.After(it.Cursor) || strings.EqualFold(c.Author, login) || strings.HasSuffix(c.Author, "[bot]") || strings.TrimSpace(c.Body) == "" {
 				continue
