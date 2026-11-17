@@ -1,0 +1,1 @@
+- A scanner "not agent work" verdict on an issue (not startable by an agent, not a code defect, needs a human) now parks the issue with `needs-human` and takes `help wanted` off, so it leaves the Actionable lane and the scanner stops re-triaging it; a repeated verdict with no human reply since is not posted again (#18675).

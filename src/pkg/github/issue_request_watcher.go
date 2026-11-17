@@ -724,7 +724,11 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 				parkBlocked = true
 			}
 		}
-		if key := relayStatusNoteKey(body); key != "" && (c.notificationsQuiet() || c.attentionPilot()) {
+		if handled, verdictErr := c.relayScannerIssueVerdict(ctx, req, body, &resp); handled || verdictErr != nil {
+			// A scanner "not agent work" verdict on an issue parks it on a
+			// person and is posted once (hivecommons/hive#18675).
+			err = verdictErr
+		} else if key := relayStatusNoteKey(body); key != "" && (c.notificationsQuiet() || c.attentionPilot()) {
 			// A one-line state note (awaiting-ci, parking, already fixed)
 			// is a section of the item's status comment in quiet mode or
 			// under the attention pilot.

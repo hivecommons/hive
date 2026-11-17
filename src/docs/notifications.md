@@ -525,6 +525,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).parkClankerRequestedPR` | `attention` |  |
 | `github.(*Client).redirectToExistingPR` | `attention` |  |
 | `github.(*Client).relayScannerNote` | `attention` | scanner PR note: an unchanged or edited note records a suppressed comment (#18451) |
+| `github.(*Client).relayScannerIssueVerdict` | `attention` | scanner "not agent work" verdict on an issue: parks it `needs-human` and posts once; a repeat with no human reply since records a suppressed comment (#18675) |
 | `github.(*Client).remindAttention` | `attention` | attention-pilot reminder: at most one per unresolved episode per `reminder_interval`; write-back gate consulted first |
 | `github.(*Client).resolveDuplicateFixGroup` | `attention` |  |
 | `github.(*Client).upsertScannerNote` | `attention` | one scanner note per PR; a new comment only for the first note or when the author must act on a new head (#18451) |
@@ -775,6 +776,23 @@ The rule lives in the relay, not only in the scanner policy, because a
 prompt-only rule drifts. Set `HIVE_SCANNER_NOTE_UPSERT=off` (or `0`,
 `false`, `no`) on the hive to turn it off. It is on by default.
 `src/pkg/github/scanner_note_test.go` pins this behaviour.
+
+### Scanner verdict on an issue: park, then post once
+
+A scanner comment on an open issue that concludes the issue is not agent
+work (it opens with `needs-human` or "not a defect", or says "not started /
+not startable by an agent", "not agent work", "not a code defect", "needs a
+human", "out of the work queue" or "no PR to open") used to be only a
+comment: the issue stayed `stage/010-actionable` with `help wanted`, and the
+scanner re-triaged it every pass
+([#18675](https://github.com/hivecommons/hive/issues/18675)). The relay now
+adds `needs-human` (a Parked fact, so the issue leaves the Actionable lane,
+the enumeration suppresses it and the claim gate refuses it), takes
+`help wanted` off, and posts the verdict marked
+`<!-- hive:scanner-verdict -->`. A later verdict on the same issue with no
+human comment since the marked one posts nothing and completes with
+`already_existed`. `/hive approve`, `/hive decision` or removing
+`needs-human` returns the issue to the queue. `src/pkg/github/scanner_issue_verdict_test.go` pins this behaviour.
 
 ### Per-PR workflow comments post only on a finding
 
