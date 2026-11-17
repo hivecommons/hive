@@ -45108,17 +45108,23 @@
         "tags": [
           "Sessions"
         ],
-        "summary": "Close a session (creator or owner)",
-        "description": "Kills tmux and keeps the metadata marked ended; on an ended session removes its metadata.",
+        "summary": "Close or delete a session (creator or owner)",
+        "description": "On a running session: kills tmux and keeps the metadata marked ended (with remove=true it is then deleted). On an ended or failed session: starts the delete and answers 202 at once with the session as deleting; the files are removed by a background job, the record goes when they are gone, and a failure puts the previous status back with delete_error.",
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "Closed (running session), or removed=true: nothing was left on disk and the record is gone"
+          },
+          "202": {
+            "description": "The delete is running in the background; body carries the session with status deleting"
           },
           "403": {
             "description": "Not the creator or an owner"
           },
           "404": {
             "description": "Unknown session"
+          },
+          "409": {
+            "description": "The session is still being prepared, or changed state meanwhile"
           }
         },
         "parameters": [
@@ -45126,6 +45132,15 @@
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "remove",
+            "in": "query",
+            "required": false,
+            "description": "true: delete a running session after closing it",
             "schema": {
               "type": "string"
             }

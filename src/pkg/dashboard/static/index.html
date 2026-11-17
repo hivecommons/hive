@@ -55621,6 +55621,12 @@ function burnAreaChart() {
     // then `running`, or `failed` with the error on the record.
     const SESSIONS_STATUS_PREPARING = 'preparing';
     const SESSIONS_STATUS_FAILED = 'failed';
+    // A session is `deleting` from the DELETE (202) until the hive's
+    // background job has removed its files, which can take a minute or more;
+    // then the record is gone, or the previous status is back with
+    // `delete_error` saying why the delete failed.
+    const SESSIONS_STATUS_DELETING = 'deleting';
+    const SESSIONS_DELETING_TEXT = 'Deleting this session… Its files are being removed, which can take a minute or more for a session with large caches. The tab closes by itself when it is done; you can leave this page.';
     // While a session is preparing the list is polled faster than the regular
     // SESSIONS_POLL_MS so the tab flips to a terminal soon after it starts.
     const SESSIONS_PREPARING_POLL_MS = 2000;
@@ -55663,6 +55669,9 @@ function burnAreaChart() {
     let _sessionsPrepPollOn = false;
     let _sessionsVoice = null;
     const _sessionsFrames = {};
+    // Sessions whose delete this browser started (id -> name), so the outcome
+    // is announced when the list shows it.
+    const _sessionsDeleting = {};
     const _sessionsFrameFailed = {};
     // Extension slot for the input bar: other features (for example future
     // "Seed from..." providers) register {id, label, title, run(ctx)} here and
@@ -55726,6 +55735,7 @@ function burnAreaChart() {
       if (session.status === SESSIONS_STATUS_ENDED) return 'ended';
       if (session.status === SESSIONS_STATUS_PREPARING) return 'preparing';
       if (session.status === SESSIONS_STATUS_FAILED) return 'failed';
+      if (session.status === SESSIONS_STATUS_DELETING) return 'deleting';
       return 'terminal';
     }
     // Send (and upload) need a write role; the read role only watches.
@@ -55767,6 +55777,13 @@ function burnAreaChart() {
     }
     function sessionsHasPreparing(sessions) {
       return (sessions || []).some(function(s) { return s && s.status === SESSIONS_STATUS_PREPARING; });
+    }
+    function sessionsHasDeleting(sessions) {
+      return (sessions || []).some(function(s) { return s && s.status === SESSIONS_STATUS_DELETING; });
+    }
+    // Why the last delete of a session failed ('' when it did not).
+    function sessionsDeleteErrorText(s) {
+      return s && s.delete_error ? 'The last delete failed: ' + String(s.delete_error) + '. Nothing was lost; you can retry.' : '';
     }
     // The line shown in a preparing or failed tab: the server's message
     // ("preparing workspace: cloning org/repo (first session on this hive)")
@@ -56002,6 +56019,7 @@ function burnAreaChart() {
       if (wasEnabled !== _sessionsData.enabled) sessionsApplyVisibility();
       if (!_sessionsData.enabled) { dashboardClearInterval('sessions-poll'); return; }
       if (!_sessionsRole) await sessionsLoadRole();
+      sessionsSettleDeletes(_sessionsData.sessions);
       _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, sessionsClaimFocus(_sessionsData.sessions) || _sessionsSelected || sessionsStoreGet(SESSIONS_SELECTED_KEY));
       renderSessions();
     }
@@ -56060,20 +56078,23 @@ function burnAreaChart() {
       const ended = s.status === SESSIONS_STATUS_ENDED;
       const preparing = s.status === SESSIONS_STATUS_PREPARING;
       const failed = s.status === SESSIONS_STATUS_FAILED;
+      const deleting = s.status === SESSIONS_STATUS_DELETING;
       const attached = Number(s.attached) || 0;
       const badge = attached > 0 ? '<span class="sessions-attached" title="' + esc(SESSIONS_TYPING_NOTE) + '">' + attached + '</span>' : '';
-      const title = preparing || failed ? sessionsStatusText(s)
+      const title = deleting ? 'Deleting…' : preparing || failed ? sessionsStatusText(s)
         : (s.status === SESSIONS_STATUS_RUNNING ? sessionsPresenceText(s) + '\n' : '') + sessionsWorkspaceLabel(sessionsSessionWorkspace(s));
-      const dot = preparing
+      const dot = deleting
+        ? '<span class="sessions-spinner" role="img" aria-label="Deleting"></span>'
+        : preparing
         ? '<span class="sessions-spinner" role="img" aria-label="Preparing"></span>'
         : '<span class="sessions-tab-dot" data-status="' + esc(s.status || '') + '"></span>';
-      return '<button type="button" role="tab" class="sessions-tab' + (selected ? ' active' : '') + (ended ? ' ended' : '') + (preparing ? ' preparing' : '') + (failed ? ' failed' : '') + '" id="sessions-tab-' + esc(s.id) + '"'
+      return '<button type="button" role="tab" class="sessions-tab' + (selected ? ' active' : '') + (ended ? ' ended' : '') + (preparing ? ' preparing' : '') + (failed ? ' failed' : '') + (deleting ? ' deleting ended' : '') + '" id="sessions-tab-' + esc(s.id) + '"'
         + ' title="' + esc(title) + '"'
         + ' aria-selected="' + selected + '" aria-controls="sessions-pane-' + esc(s.id) + '" tabindex="' + (selected ? '0' : '-1') + '"'
         + ' data-action="sessionsSelect" data-arg0="' + esc(s.id) + '" data-keydown-action="sessionsTabKey" data-arg-types="s,e" data-keys="*" data-arg1="">'
         + dot
         + '<span class="sessions-tab-name">' + esc(s.name || s.id) + '</span>'
-        + '<span class="sessions-tab-vendor">' + esc(s.vendor || '') + '</span>' + badge + '</button>';
+        + '<span class="sessions-tab-vendor">' + esc(deleting ? 'deleting…' : (s.vendor || '')) + '</span>' + badge + '</button>';
     }
     function sessionsTabsHtml() {
       return sessionsGroupSessions(_sessionsData.sessions).map(function(g) {
@@ -56130,7 +56151,7 @@ function burnAreaChart() {
       let closeItem = '<button type="button" class="danger" data-action="sessionsClose" data-arg0="' + esc(s.id) + '">Close session</button>';
       if (s.status === SESSIONS_STATUS_PREPARING) closeItem = '';
       else if (s.status === SESSIONS_STATUS_FAILED || s.status === SESSIONS_STATUS_ENDED) closeItem = '<button type="button" class="danger" data-action="sessionsClose" data-arg0="' + esc(s.id) + '">Delete session</button>';
-      const menu = canManage
+      const menu = canManage && s.status !== SESSIONS_STATUS_DELETING
         ? '<details class="sessions-menu"><summary class="hv-btn btn-secondary btn-sm" aria-label="Session actions">⋯</summary><div class="sessions-menu-items">'
           + '<button type="button" data-action="sessionsRename" data-arg0="' + esc(s.id) + '">Rename</button>'
           + '<button type="button" data-action="sessionsRegroup" data-arg0="' + esc(s.id) + '">Change group</button>'
@@ -56194,8 +56215,17 @@ function burnAreaChart() {
         return '<div class="sessions-status sessions-status-preparing" role="status" aria-live="polite"><span class="sessions-spinner" aria-hidden="true"></span>'
           + '<span class="sessions-status-text">' + esc(sessionsStatusText(s)) + ' The terminal opens here by itself once the session is running.</span></div>';
       }
+      if (mode === 'deleting') {
+        return '<div class="sessions-status sessions-status-preparing sessions-status-deleting" role="status" aria-live="polite"><span class="sessions-spinner" aria-hidden="true"></span>'
+          + '<span class="sessions-status-text">' + esc(SESSIONS_DELETING_TEXT) + '</span></div>';
+      }
+      // A delete that failed left the session as it was: say why, offer a retry.
+      const deleteFailed = s.delete_error
+        ? '<div class="sessions-status sessions-status-failed sessions-delete-failed" role="alert"><span class="sessions-status-text">' + esc(sessionsDeleteErrorText(s)) + '</span>'
+          + (can ? '<div class="sessions-form-actions"><button type="button" class="hv-btn btn-primary btn-sm" data-action="sessionsDeleteRetry" data-arg0="' + esc(s.id) + '">Retry delete</button></div>' : '') + '</div>'
+        : '';
       if (mode === 'failed') {
-        return '<div class="sessions-status sessions-status-failed" role="alert"><span class="sessions-status-text">' + esc(sessionsStatusText(s)) + '</span>'
+        return deleteFailed + '<div class="sessions-status sessions-status-failed" role="alert"><span class="sessions-status-text">' + esc(sessionsStatusText(s)) + '</span>'
           + (can ? '<div class="sessions-form-actions"><button type="button" class="hv-btn btn-primary btn-sm" data-action="sessionsRetry" data-arg0="' + esc(s.id) + '">Retry</button>'
             + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="sessionsClose" data-arg0="' + esc(s.id) + '">Delete</button></div>' : '') + '</div>';
       }
@@ -56213,7 +56243,7 @@ function burnAreaChart() {
           lead = 'This session has ended and cannot be resumed (the CLI left no conversation to continue). Start again opens a fresh ' + (s.vendor || 'CLI') + ' session with the same name and group; the scrollback below stays.';
           actions = can ? restartBtn('btn-primary') : '';
         }
-        note = '<div class="sessions-note">' + esc(lead) + esc(failedResume) + actions + '</div>';
+        note = deleteFailed + '<div class="sessions-note">' + esc(lead) + esc(failedResume) + actions + '</div>';
       } else {
         note = '<div class="sessions-note">The live terminal could not be opened, so you see a read-only scrollback that refreshes every few seconds.</div>';
       }
@@ -56294,14 +56324,15 @@ function burnAreaChart() {
     // terminal (or shows its failure) within seconds of the start finishing,
     // and while the hive is getting a running session's CLI ready.
     function sessionsSyncPreparingPoll(sessions) {
-      const want = sessionsHasPreparing(sessions) || sessionsHasStartupPreparing(sessions);
+      const want = sessionsHasPreparing(sessions) || sessionsHasStartupPreparing(sessions) || sessionsHasDeleting(sessions);
       if (want && !_sessionsPrepPollOn) { _sessionsPrepPollOn = true; dashboardSetInterval('sessions-preparing-poll', loadSessions, SESSIONS_PREPARING_POLL_MS); }
       if (!want && _sessionsPrepPollOn) { _sessionsPrepPollOn = false; dashboardClearInterval('sessions-preparing-poll'); }
     }
     function sessionsSummary(sessions) {
       const running = (sessions || []).filter(function(s) { return s.status === SESSIONS_STATUS_RUNNING; }).length;
       const preparing = (sessions || []).filter(function(s) { return s.status === SESSIONS_STATUS_PREPARING; }).length;
-      return running + ' running · ' + (preparing ? preparing + ' preparing · ' : '') + (sessions || []).length + ' total';
+      const deleting = (sessions || []).filter(function(s) { return s.status === SESSIONS_STATUS_DELETING; }).length;
+      return running + ' running · ' + (preparing ? preparing + ' preparing · ' : '') + (deleting ? deleting + ' deleting · ' : '') + (sessions || []).length + ' total';
     }
     function sessionsShowSelected() {
       Array.prototype.forEach.call(document.querySelectorAll('#sessions-panes .sessions-pane'), function(pane) {
@@ -56310,7 +56341,7 @@ function burnAreaChart() {
       const s = sessionsSelectedSession();
       if (!s) { sessionsStopLogPoll(); return; }
       const mode = sessionsViewMode(_sessionsRole, s);
-      if (mode === 'preparing' || mode === 'failed') { sessionsStopLogPoll(); return; }
+      if (mode === 'preparing' || mode === 'failed' || mode === 'deleting') { sessionsStopLogPoll(); return; }
       if (mode === 'terminal' && !_sessionsFrameFailed[s.id]) { sessionsStopLogPoll(); sessionsAttachTerminal(s); } else sessionsStartLogPoll();
     }
 
@@ -56514,23 +56545,74 @@ function burnAreaChart() {
       const group = await hivePrompt({ title: 'Change group', label: 'Group (leave empty for none)', defaultValue: s.group || '', confirmLabel: 'Move', options: options });
       if (group !== null && group !== undefined && group !== false && group !== (s.group || '')) sessionsPatch(id, { group: group }, group ? 'Moved to ' + group + '.' : 'Removed from its group.');
     }
-    async function sessionsClose(id) {
+    // ── Close and delete ──
+    // DELETE on a running session closes it: the record stays, `ended`. On an
+    // ended or failed one it starts the delete. The hive answers 202 at once
+    // and removes the files in the background, so the tab shows "Deleting…"
+    // (no controls) until a list no longer has the session; a failure brings
+    // the tab back as it was with the reason and a retry. 200 with
+    // removed=true means nothing was left to remove and the record is gone.
+    function sessionsDropLocal(id) {
+      delete _sessionsFrames[id];
+      delete _sessionsDeleting[id];
+      _sessionsData.sessions = (_sessionsData.sessions || []).filter(function(x) { return x.id !== id; });
+      if (_sessionsSelected === id) _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, '');
+    }
+    async function sessionsDelete(id) {
       const s = (_sessionsData.sessions || []).find(function(x) { return x.id === id; });
       if (!s) return;
+      const name = s.name || s.id;
+      const closing = s.status === SESSIONS_STATUS_RUNNING;
+      try {
+        const data = await sessionsApi('/' + encodeURIComponent(id), 'DELETE');
+        if (data && data.deleting) {
+          _sessionsDeleting[id] = name;
+          Object.assign(s, data.session || {}, { status: SESSIONS_STATUS_DELETING, delete_error: '' });
+          renderSessions();
+          loadSessions();
+        } else if (data && data.removed) {
+          sessionsDropLocal(id);
+          renderSessions();
+          showToast('Session ' + name + ' deleted.', 'success');
+        } else {
+          // Closed: the record stays (ended), so the list is the truth.
+          showToast('Session closed.', 'success');
+          await loadSessions();
+        }
+      } catch (e) {
+        showToast('Could not ' + (closing ? 'close' : 'delete') + ' ' + name + ': ' + e.message, 'error');
+        loadSessions();
+      }
+    }
+    async function sessionsClose(id) {
+      const s = (_sessionsData.sessions || []).find(function(x) { return x.id === id; });
+      if (!s || s.status === SESSIONS_STATUS_DELETING) return;
       const gone = s.status === SESSIONS_STATUS_FAILED || s.status === SESSIONS_STATUS_ENDED;
       const ok = await hiveConfirm(gone
-        ? { title: 'Delete this session?', message: 'Deleting "' + (s.name || s.id) + '" removes its record and files; an ended session can no longer be resumed.', confirmLabel: 'Delete session', danger: true }
+        ? { title: 'Delete this session?', message: 'Deleting "' + (s.name || s.id) + '" removes its record and files; an ended session can no longer be resumed. Work in its workspace is kept on its branch.', confirmLabel: 'Delete session', danger: true }
         : { title: 'Close this session?', message: 'Closing "' + (s.name || s.id) + '" ends the CLI process for everyone attached and discards its scrollback.', confirmLabel: 'Close session', danger: true });
       if (!ok) return;
-      try {
-        await sessionsApi('/' + encodeURIComponent(id), 'DELETE');
-        delete _sessionsFrames[id];
-        _sessionsData.sessions = (_sessionsData.sessions || []).filter(function(x) { return x.id !== id; });
-        if (_sessionsSelected === id) _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, '');
-        renderSessions();
-        showToast('Session closed.', 'success');
-      } catch (e) { showToast('Could not close the session: ' + e.message, 'error'); }
+      await sessionsDelete(id);
     }
+    // Retry a delete that failed (the reason is on the pane): no second confirm.
+    function sessionsDeleteRetry(id) { return sessionsDelete(id); }
+    // Announce the outcome of the deletes this browser started, from a fresh
+    // list: gone means deleted, back in another status means it failed.
+    function sessionsSettleDeletes(sessions) {
+      Object.keys(_sessionsDeleting).forEach(function(id) {
+        const name = _sessionsDeleting[id];
+        const s = (sessions || []).find(function(x) { return x && x.id === id; });
+        if (s && s.status === SESSIONS_STATUS_DELETING) return;
+        delete _sessionsDeleting[id];
+        if (!s) {
+          delete _sessionsFrames[id];
+          showToast('Session ' + name + ' deleted.', 'success');
+          return;
+        }
+        showToast('Could not delete ' + name + ': ' + (s.delete_error || 'the hive did not say why') + '.', 'error');
+      });
+    }
+    // ── Resume ──
     async function sessionsResume(id) {
       try {
         const data = await sessionsApi('/' + encodeURIComponent(id) + '/resume', 'POST', {});

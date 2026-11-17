@@ -245,16 +245,30 @@ func newUserSessionPrivCmd(ctx context.Context, user string, stdin io.Reader, ar
 	return cmd, nil
 }
 
+// userSessionRootKillScript signals the process group $1 with KILL. `kill` is
+// the shell's builtin: the image ships no kill binary, so `su-exec root kill`
+// could never run ("su-exec: kill: No such file or directory"), the cancel
+// failed, and Wait kept blocking until the child finished by itself and then
+// reported the cancel's error over a command that had succeeded. The -s form
+// is the one dash and bash both take with a negative pid; the second form is
+// for a shell that only knows the signal-name flag.
+const userSessionRootKillScript = `kill -s KILL -- "-$1" 2>/dev/null || kill -KILL "-$1"`
+
 // killUserSessionRootGroup ends a root child (and everything it spawned, via
 // its process group) through the setuid helper, the only way the hive's uid
 // can signal a root process.
 func killUserSessionRootGroup(pid int, env []string) error {
-	kill := exec.Command(userSuExecBinary, userSessionRootSpec, "kill", "-KILL", "--", "-"+strconv.Itoa(pid))
+	kill := exec.Command(userSuExecBinary, userSessionRootKillArgv(pid)...)
 	kill.Env = env
 	if out, err := kill.CombinedOutput(); err != nil {
 		return outputErr("killing privileged child", err, out)
 	}
 	return nil
+}
+
+// userSessionRootKillArgv is the su-exec argv killUserSessionRootGroup runs.
+func userSessionRootKillArgv(pid int) []string {
+	return []string{userSessionRootSpec, "sh", "-c", userSessionRootKillScript, "sh", strconv.Itoa(pid)}
 }
 
 // privRun is r.priv bound to the standard command timeout.
@@ -350,60 +364,6 @@ func (r *UserSessionRuntime) openSocketDirToAttacher(uid int) error {
 	out, err := r.privRun(userSessionRootSpec, nil, "sh", "-c", userSessionSocketDirScript, "sh", dir, strconv.Itoa(userSessionAttachGID()), strconv.Itoa(uid))
 	if err != nil {
 		return outputErr("opening the session socket dir to the terminal attacher", err, out)
-	}
-	return nil
-}
-
-// Remove ends the session and deletes everything it owned: its worktree of the
-// shared workspace clone (uncommitted work is auto-saved onto its branch first,
-// see userSessionWorktreeRemoveScript), the sandbox (home, work dir, uploads,
-// tmp) and the uid's tmux socket dir, so a later session that is allocated the
-// same uid starts clean. Directories earlier releases created for the id are
-// removed too. A failure is returned and the caller must keep the session
-// record (and its uid slot) so the removal is retried.
-func (r *UserSessionRuntime) Remove(id string) error {
-	if err := checkUserSessionID(id); err != nil {
-		return err
-	}
-	uid, uidErr := r.sessionUID(id)
-	if uidErr == nil {
-		if err := r.killAs(uid, id); err != nil {
-			r.logger.Warn("user session kill before removal failed", "id", id, "error", err)
-		}
-	}
-	// The session's CLI is gone (killed above), so its login can no longer
-	// change. If that login is the newest one on this hive, it goes into the
-	// shared file BEFORE the sandbox is deleted: removing a session must never
-	// remove the only valid login. A login that cannot be judged or adopted
-	// keeps the sandbox, and the caller retries.
-	// (The CLI creates files and directories with private modes; the hive
-	// must be able to look at the login path to judge it.)
-	r.makeHomeReadable(id)
-	if err := r.syncClaudeLogin(id, sessionLoginTriggerRemove, sessionLoginModeRemove); err != nil {
-		return fmt.Errorf("keeping the session's login before removal: %w", err)
-	}
-	r.workspaceMu.Lock()
-	err := r.removeWorktrees(id)
-	r.workspaceMu.Unlock()
-	if err != nil {
-		return fmt.Errorf("removing session worktree: %w", err)
-	}
-	dir := userSessionSandboxDir(id)
-	if _, err := os.Lstat(dir); err == nil {
-		if out, err := r.privRun(userSessionRootSpec, nil, "rm", "-rf", "--one-file-system", "--", dir); err != nil {
-			return outputErr("removing session sandbox", err, out)
-		}
-	}
-	if uidErr == nil {
-		sock := userSessionTmuxSocketDir(uid)
-		if out, err := r.privRun(userSessionRootSpec, nil, "rm", "-rf", "--one-file-system", "--", sock); err != nil {
-			return outputErr("removing session tmux socket dir", err, out)
-		}
-	}
-	for _, p := range legacyUserSessionPaths(id) {
-		if err := os.RemoveAll(p); err != nil {
-			return fmt.Errorf("removing legacy session dir %s: %w", p, err)
-		}
 	}
 	return nil
 }
