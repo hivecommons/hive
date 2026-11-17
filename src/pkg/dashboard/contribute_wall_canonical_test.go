@@ -193,3 +193,31 @@ func TestGroupWallModelStatsByCanonicalUnit(t *testing.T) {
 		t.Fatalf("nil input = %#v", got)
 	}
 }
+
+// group=canonical sums the #18721 run-cause split along with the counts, so a
+// merged row's scenarios still sum to runs and failure_kinds to the failures.
+func TestGroupWallModelStatsByCanonicalSumsRunCauses(t *testing.T) {
+	rows := []WallModelStats{
+		{Model: "claude-opus-5-5", Runs: 3, CanonicalModel: "claude-opus-5-5", failedRuns: 1, Abandoned: 1,
+			Scenarios:    map[string]int{scenarioEnvFailure: 1, "abandoned_handback": 1, "clean_complete": 1},
+			FailureKinds: WallModelFailureKinds{Environment: 1}},
+		{Model: "anthropic/claude-opus-5-5", Runs: 2, CanonicalModel: "claude-opus-5-5", failedRuns: 1,
+			Scenarios:    map[string]int{scenarioTaskFailure: 1, "clean_complete": 1},
+			FailureKinds: WallModelFailureKinds{Task: 1}},
+	}
+	out := groupWallModelStatsByCanonical(rows)
+	if len(out) != 1 {
+		t.Fatalf("out = %#v", out)
+	}
+	g := out[0]
+	if g.Abandoned != 1 || g.FailureKinds != (WallModelFailureKinds{Environment: 1, Task: 1}) {
+		t.Fatalf("grouped causes = %#v", g)
+	}
+	sum := 0
+	for _, n := range g.Scenarios {
+		sum += n
+	}
+	if sum != g.Runs || g.Scenarios["clean_complete"] != 2 {
+		t.Fatalf("scenarios = %#v, runs %d", g.Scenarios, g.Runs)
+	}
+}
