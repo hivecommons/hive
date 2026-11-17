@@ -93,7 +93,8 @@ const topicClaimsHeader = "## 📌 Topic claims (one PR per topic)"
 // topicClaimsUsage is how an agent claims, reads and releases a topic.
 const topicClaimsUsage = "Claim a new topic right after opening its PR: `bd topic claim <key> --repo <owner/name> --pr <n> --branch <branch>`.\n" +
 	"Read one back with `bd topic get <key>`; give one up with `bd topic release <key>`. A second claim on an\n" +
-	"open topic for a different PR is refused. Hive releases a claim when its PR merges or closes.\n"
+	"open topic for a different PR is refused. Hive releases a claim when its PR merges or closes.\n" +
+	"In a sandbox, use `hive-topic` with the same arguments; `hive-topic claim <key>` without --pr claims the PR hive opens from this kick.\n"
 
 // topicClaimsSection renders the ${TOPIC_CLAIMS} block. It always carries the
 // usage lines, so a template that places the variable teaches the command
@@ -110,6 +111,11 @@ func topicClaimsSection(claims []TopicClaim) string {
 			line := fmt.Sprintf("  %s → %s#%d", c.Key, c.Repo, c.PR)
 			if c.Branch != "" {
 				line += " (branch " + c.Branch + ")"
+			}
+			if c.PR == 0 {
+				// A pending claim from a sandboxed kick (#18572): hive binds
+				// it once the PR opened from the branch appears.
+				line = fmt.Sprintf("  %s → %s, PR not opened yet (pending on branch %s)", c.Key, c.Repo, c.Branch)
 			}
 			b.WriteString(line + "\n")
 		}

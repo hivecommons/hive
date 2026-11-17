@@ -1011,7 +1011,7 @@
           "Meetings"
         ],
         "summary": "List my calendar emails",
-        "description": "The signed-in user's calendar email addresses with proof status and pending codes, the hive's address (hive@<host>) and the meetings.email switches. ?all=1 adds the whole allowlist for the owner. Any role.",
+        "description": "The signed-in user's calendar email addresses with proof status and pending codes, the hive's address (hive@<host>) and the meetings.email switches. An unproven address whose latest proof mail was refused carries last_failure. The owner also gets recent_proof_attempts (proof mails whose code matched no address, sender masked). ?all=1 adds the whole allowlist for the owner. Any role.",
         "parameters": [
           {
             "name": "all",
@@ -1038,14 +1038,14 @@
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                       }
                     },
                     "allowlist": {
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                       }
                     },
                     "invites_enabled": {
@@ -1053,6 +1053,14 @@
                     },
                     "files_enabled": {
                       "type": "boolean"
+                    },
+                    "recent_proof_attempts": {
+                      "type": "array",
+                      "description": "Owner only: recent proof mails whose code matched no address, newest first; kept in memory",
+                      "items": {
+                        "type": "object",
+                        "description": "Proof attempt: at, from (masked, a***@example.com), reason (code not recognized)"
+                      }
                     }
                   }
                 }
@@ -1101,7 +1109,7 @@
                   "properties": {
                     "email": {
                       "type": "object",
-                      "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                      "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                     },
                     "address": {
                       "type": "string"
@@ -6709,6 +6717,18 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "write_identity": {
+                      "type": "string"
+                    },
+                    "write_identities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "bot_login": {
+                      "type": "string"
                     }
                   }
                 }
@@ -6763,6 +6783,18 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "write_identity": {
+                      "type": "string"
+                    },
+                    "write_identities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "bot_login": {
+                      "type": "string"
                     }
                   }
                 }
@@ -6777,6 +6809,85 @@
           },
           "500": {
             "description": "The config file could not be written; the previous list is restored on the proxy and nothing changed"
+          }
+        }
+      }
+    },
+    "/api/config/reference-repos/write-identity": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set the remote write identity",
+        "description": "Sets project.remote_write_identity: whose name the hive's writes to granted reference repos carry (bot: the App bot where the repo's owner installed the App, else the owner's connected account; bot_only: the App bot or read-only; owner: the owner's connected account). Refused when a hand-written write entry would have no credential under the new value. Re-resolves the reference repos before answering. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "write_identity"
+                ],
+                "properties": {
+                  "write_identity": {
+                    "type": "string",
+                    "enum": [
+                      "bot",
+                      "bot_only",
+                      "owner"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current reference repos, resolved under the new value (same body as GET /api/config/reference-repos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reference_repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "write_kinds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "write_identity": {
+                      "type": "string"
+                    },
+                    "write_identities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "bot_login": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown value, or a hand-written write entry would have no credential; nothing was stored"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "500": {
+            "description": "The config file could not be written; the setting is unchanged"
           }
         }
       }

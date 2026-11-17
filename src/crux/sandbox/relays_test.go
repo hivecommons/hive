@@ -23,10 +23,10 @@ func writeRelaySource(t *testing.T) string {
 }
 
 func TestRelayNamesAreSandboxSafeOnly(t *testing.T) {
-	// hive-review is the only relay with a sandbox spool today (#14986); a
+	// Only relays that write the sandbox spool (#14986, #18572, #18573); a
 	// relay that needs the pod-local drop boxes must not be added here.
-	if strings.Join(RelayNames, ",") != "hive-review" {
-		t.Errorf("RelayNames = %v, want only hive-review", RelayNames)
+	if strings.Join(RelayNames, ",") != "hive-review,hive-open-issue,hive-topic" {
+		t.Errorf("RelayNames = %v, want hive-review, hive-open-issue and hive-topic", RelayNames)
 	}
 }
 
@@ -116,9 +116,11 @@ func TestStageRelaysCopiesFromEnvDir(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	info, err := os.Stat(filepath.Join(dir, "hive-review"))
-	if err != nil || info.Mode().Perm() != relayFileMode {
-		t.Fatalf("staged relay = %v, %v, want mode %o", info, err, relayFileMode)
+	for _, name := range []string{"hive-review", "hive-open-issue", "hive-topic"} {
+		info, err := os.Stat(filepath.Join(dir, name))
+		if err != nil || info.Mode().Perm() != relayFileMode {
+			t.Fatalf("staged relay %s = %v, %v, want mode %o", name, info, err, relayFileMode)
+		}
 	}
 	cleanup()
 	if _, err := os.Stat(dir); !os.IsNotExist(err) {
@@ -190,6 +192,13 @@ func TestPodmanRunStagesAndMountsRelays(t *testing.T) {
 	}
 	if mount == "" {
 		t.Fatalf("podman args carry no relay mount:\n%s", raw)
+	}
+	// Every relay is on the sandbox PATH: the wrapper prepends the mount,
+	// and the preflight names each one it supplies.
+	for _, want := range []string{RelayMountPath, `PATH="$relay_dir:$PATH"`, "hive-review, hive-open-issue, hive-topic"} {
+		if !strings.Contains(string(raw), want) {
+			t.Errorf("podman args missing %q:\n%s", want, raw)
+		}
 	}
 	if _, err := os.Stat(mount); !os.IsNotExist(err) {
 		t.Errorf("the staged relay dir %s must be removed after the run: %v", mount, err)

@@ -58,15 +58,32 @@ func TestConsentErrorRecordedAndThrottled(t *testing.T) {
 	q := newFakeQuorum()
 	m := newTestManager(t, q, 0)
 	m.opts.ConsentRetry = time.Hour
-	q.chatErr = &ToolError{Code: CodePlatformUnavailable, Message: "chat not available"}
+	// A transient failure (a rate limit) is recorded and retried later, not
+	// on every line.
+	q.chatErr = &ToolError{Code: CodeRateLimited, Message: "slow down"}
 	mt, _ := m.Join(context.Background(), JoinRequest{URL: "https://meet.google.com/x"})
 	ch := q.stream("q1")
 	ch <- Event{Type: EventState, State: StateLive}
 	eventually(t, "consent error", func() bool { got, _ := m.Get(mt.ID); return got.ConsentError != "" })
 	ch <- Event{Type: EventChat, Author: &Person{Name: "Ana"}, Text: "hi"}
 	eventually(t, "line stored", func() bool { tr, _ := m.Transcript(mt.ID); return len(tr) == 1 })
-	if got, _ := m.Get(mt.ID); got.ConsentPostedAt != nil {
-		t.Fatal("a throttled retry must not post")
+	if got, _ := m.Get(mt.ID); got.ConsentPostedAt != nil || got.State != StateLive {
+		t.Fatalf("a throttled retry must not post: %+v", got)
+	}
+}
+
+func TestConsentChatUnavailableWithoutVoiceLeaves(t *testing.T) {
+	// Chat that cannot deliver the notice (platform_unavailable) on a
+	// meeting without voice: hive leaves instead of listening untold.
+	q := newFakeQuorum()
+	m := newTestManager(t, q, 0)
+	q.chatErr = &ToolError{Code: CodePlatformUnavailable, Message: "chat not available"}
+	mt, _ := m.Join(context.Background(), JoinRequest{URL: "https://meet.google.com/x"})
+	q.stream("q1") <- Event{Type: EventState, State: StateLive}
+	eventually(t, "left", stateIs(m, mt.ID, StateEnded))
+	got, _ := m.Get(mt.ID)
+	if got.ConsentPostedAt != nil || got.StateReason != ReasonConsentUndelivered || got.ConsentError == "" {
+		t.Fatalf("meeting %+v", got)
 	}
 }
 
@@ -139,7 +156,15 @@ func TestPlatformJoinRequests(t *testing.T) {
 	if _, err := m.ApproveRequest(context.Background(), third.ID, false); err == nil {
 		t.Fatal("want the join error")
 	}
+	// The failed approval keeps the request open and names why.
+	if x, _ := m.Get(third.ID); x.State != StateRequested || x.StateReason != "join failed" {
+		t.Fatalf("after a failed approve = %+v", x)
+	}
 	q.joinErr = nil
+	q.joinRes = JoinResult{MeetingID: "q-d3", State: StateJoining}
+	if x, err := m.ApproveRequest(context.Background(), third.ID, false); err != nil || x.State != StateJoining || x.StateReason != "" {
+		t.Fatalf("retried approve = %+v, %v", x, err)
+	}
 
 	// A snapshot-only request (no requester) is still recorded.
 	all <- Event{Type: EventState, MeetingID: "q-d5", State: StateRequested, GuildID: "g5", ChannelID: "c5"}

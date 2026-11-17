@@ -124,7 +124,7 @@ func TestMeetingPersonaFactoryBadCABundle(t *testing.T) {
 	persona.Enabled = true
 	llm := config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeOpenAI, Endpoint: "https://gw", Model: "m", AgentBackend: "corp-gw",
 		CABundle: filepath.Join(t.TempDir(), "absent.pem"), MaxInFlight: 1}
-	e := meetingPersonaFactory(cfg, persona, llm, store, nil, nil, "", 0, false, slog.New(slog.DiscardHandler))(meetings.Meeting{ID: "m1"})
+	e := meetingPersonaFactory(cfg, persona, llm, store, nil, nil, "", 0, false, slog.New(slog.DiscardHandler), nil)(meetings.Meeting{ID: "m1"})
 	if e == nil {
 		t.Fatal("want an engine")
 	}

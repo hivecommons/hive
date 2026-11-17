@@ -362,6 +362,32 @@ func (c *Client) ChatPost(ctx context.Context, nativeID, text string) error {
 	return c.Call(ctx, "chat.post", textArgs{nativeID, text}, nil)
 }
 
+// confirmArgs is chat.post with confirm:true (quorum 0.2.2+).
+type confirmArgs struct {
+	MeetingID string `json:"meeting_id"`
+	Text      string `json:"text"`
+	Confirm   bool   `json:"confirm"`
+}
+
+// DeliveryConfirmed is chat.post's delivery when the platform reported the
+// line in the meeting.
+const DeliveryConfirmed = "confirmed"
+
+// ChatPostConfirmed calls chat.post with confirm:true and reports whether
+// Quorum confirmed the line reached the meeting. A send the platform
+// reports as failed is an error (platform_unavailable); an older Quorum that
+// answers no delivery, or a delivery Quorum could not verify in time, is
+// (false, nil): not known to be posted.
+func (c *Client) ChatPostConfirmed(ctx context.Context, nativeID, text string) (bool, error) {
+	var r struct {
+		Delivery string `json:"delivery"`
+	}
+	if err := c.Call(ctx, "chat.post", confirmArgs{nativeID, text, true}, &r); err != nil {
+		return false, err
+	}
+	return r.Delivery == DeliveryConfirmed, nil
+}
+
 // Say calls say.
 func (c *Client) Say(ctx context.Context, nativeID, text string) error {
 	return c.Call(ctx, "say", textArgs{nativeID, text}, nil)

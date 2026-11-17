@@ -165,7 +165,7 @@ func (s *Server) handleMeetingsInvites(w http.ResponseWriter, r *http.Request) {
 			jsonError(w, err.Error(), http.StatusUnprocessableEntity)
 			return
 		}
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.webhookLogger().Info("email invite received", "delivery", d.ID, "invites", len(d.Invites), "trusted", trusted)
@@ -182,13 +182,20 @@ func (s *Server) handleCalendarEmailProof(w http.ResponseWriter, r *http.Request
 		jsonError(w, "calendar emails are not available on this hive", http.StatusConflict)
 		return
 	}
-	e, err := st.Prove(d.Proof.Code, d.Auth.From, d.Auth.Aligned)
+	e, err := st.ProveAuth(d.Proof.Code, d.Auth)
 	switch {
 	case err == nil:
 		s.webhookLogger().Info("calendar email proven", "delivery", d.ID)
 		jsonResponse(w, map[string]any{"proven": true, "email": e.Email})
 	case errors.Is(err, mailallow.ErrUnknownCode), errors.Is(err, mailallow.ErrNotProven):
-		// Permanent: the sender's server bounces it, which tells the user.
+		// Permanent: the sender's server bounces it. The reason is also on
+		// the entry (Settings row) or, for an unknown code, in the owner's
+		// recent proof attempts (#18579).
+		reason := mailallow.AttemptCodeNotRecognized
+		if e.LastFailure != nil {
+			reason = e.LastFailure.Reason
+		}
+		s.webhookLogger().Info("calendar email proof refused", "delivery", d.ID, "reason", reason)
 		jsonError(w, err.Error(), http.StatusUnprocessableEntity)
 	default:
 		jsonError(w, "could not record the proof", http.StatusInternalServerError)
@@ -235,13 +242,54 @@ type calendarEmailView struct {
 	Code          string     `json:"code,omitempty"`
 	CodeExpiresAt *time.Time `json:"code_expires_at,omitempty"`
 	LastError     string     `json:"last_error,omitempty"`
+	// LastFailure is the latest failed proof: reason code, time, the SPF,
+	// DKIM and alignment results, and Message, the plain-language reason
+	// with what to do (#18579).
+	LastFailure *calendarEmailFailureView `json:"last_failure,omitempty"`
 	// Active is false when the user no longer has access to this hive: the
 	// address is then not on the effective allowlist.
 	Active bool `json:"active"`
 }
 
+// calendarEmailFailureView is a failed proof as the Settings row shows it.
+type calendarEmailFailureView struct {
+	mailallow.ProofFailure
+	Message string `json:"message"`
+}
+
+// proofFromNone stands in for the From address of a from-mismatch proof
+// whose From header the receiver could not read as one address.
+const proofFromNone = "(none: the From header was missing, repeated or unparsable)"
+
+// proofFailureMessage says in plain words why a proof of email failed and
+// what to do about it.
+func proofFailureMessage(f mailallow.ProofFailure, email string) string {
+	switch f.Reason {
+	case mailallow.ReasonCodeNotAligned:
+		domain := f.FromDomain
+		if domain == "" {
+			domain = email[strings.LastIndexByte(email, '@')+1:]
+		}
+		return "Your mail server did not authenticate this address: neither SPF nor DKIM passed for " + domain +
+			". Turn on DKIM for the domain, add the sending server to SPF, or prove an address from a provider that signs mail."
+	case mailallow.ReasonCodeFromMismatch:
+		seen := f.From
+		if seen == "" {
+			seen = proofFromNone
+		}
+		return "The proof came from a different address than the one registered: the mail's From was " + seen + ". Send it from " + email + " itself."
+	case mailallow.ReasonCodeExpired:
+		return "The code expired. Remove and add the address again."
+	default:
+		return "The proof mail did not count. Send it again."
+	}
+}
+
 func (s *Server) calendarEmailView(e mailallow.Entry, withLogin bool) calendarEmailView {
 	v := calendarEmailView{Email: e.Email, Proven: e.Proven(), ProvenAt: e.ProvenAt, Code: e.Code, LastError: e.LastError, Active: s.hasMailAccess(e.Login)}
+	if f := e.LastFailure; f != nil && !e.Proven() {
+		v.LastFailure = &calendarEmailFailureView{ProofFailure: *f, Message: proofFailureMessage(*f, e.Email)}
+	}
 	if e.Code != "" {
 		t := e.CodeExpiresAt
 		v.CodeExpiresAt = &t
@@ -286,7 +334,13 @@ func (s *Server) handleCalendarEmailsList(w http.ResponseWriter, r *http.Request
 		"invites_enabled": em.InvitesOn(),
 		"files_enabled":   em.FilesOn(),
 	}
-	if r.URL.Query().Get("all") == "1" && isOwnerRole(r.Header.Get("X-Hive-Role")) {
+	owner := isOwnerRole(r.Header.Get("X-Hive-Role"))
+	if owner {
+		// Proof mails whose code matched nothing (a typo), masked: the
+		// owner's view of the hive's mail activity (#18579).
+		out["recent_proof_attempts"] = st.RecentAttempts()
+	}
+	if r.URL.Query().Get("all") == "1" && owner {
 		all := []calendarEmailView{}
 		for _, e := range st.All() {
 			all = append(all, s.calendarEmailView(e, true))
