@@ -12,9 +12,9 @@ import (
 // for the topic, then the REST summary gives its lead paragraph.
 
 const (
-	// maxTopicWords is the longest topic looked up; longer questions are
+	// wikiMaxTopicWords is the longest topic looked up; longer questions are
 	// not entity lookups and go to the general web search.
-	maxTopicWords = 6
+	wikiMaxTopicWords = 6
 	// wikipediaTitles is how many opensearch titles are asked for; the
 	// second is used when the first is a disambiguation page.
 	wikipediaTitles = "2"
@@ -61,7 +61,7 @@ func definitionTopic(c cleanedQuery) (topic string, ok bool) {
 		}
 	}
 	w := words(topic)
-	if len(w) == 0 || len(w) > maxTopicWords {
+	if len(w) == 0 || len(w) > wikiMaxTopicWords {
 		return "", false
 	}
 	for _, x := range w {
