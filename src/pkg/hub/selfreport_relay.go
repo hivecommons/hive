@@ -261,7 +261,6 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 		npsJSONError(w, "hub GitHub App token is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	_ = botLogin
 	client := hubFeedbackAuthoringHTTPClient()
 	owner, repo, _ := splitHubRepo(req.Repo)
 	if req.Action == selfReportRecoverAction {
@@ -359,7 +358,7 @@ func (s *HubServer) handleSelfReportIngest(w http.ResponseWriter, r *http.Reques
 	if existing.Number > 0 {
 		comment := fmt.Sprintf("<!-- hive:selfreport-seen hive=%s fp=%s --> Also seen on **%s** (v%s) at %s — relayed via hub.",
 			req.HiveID, req.Fingerprint, req.HiveID, orUnknown(req.Version), time.Now().UTC().Format(time.RFC3339))
-		if _, err := postHubGitHubIssueComment(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, comment); err != nil {
+		if err := upsertHubSelfReportSeenLog(r.Context(), client, feedbackGitHubAPIBase, token, owner, repo, existing.Number, botLogin, comment); err != nil {
 			if s.logger != nil {
 				s.logger.Error("selfreport relay: comment failed", "hive", req.HiveID, "issue", existing.Number, "error", err)
 			}
@@ -675,6 +674,99 @@ func postHubGitHubIssueComment(ctx context.Context, client *http.Client, apiBase
 		return resp.StatusCode, fmt.Errorf("github create comment: %d", resp.StatusCode)
 	}
 	return resp.StatusCode, nil
+}
+
+// upsertHubSelfReportSeenLog folds one relayed "also seen" sighting into the
+// hub's single seen-log comment on the issue (hivecommons/hive#18608): the
+// first join posts it, later joins edit it in place, so a fleet-report issue
+// no longer gains a notifying comment per relayed sighting. Only a comment
+// the hub's App wrote (botLogin) is edited; with no known login any author
+// carrying the marker is accepted. A failed comment listing falls back to a
+// new comment so a join is never lost.
+func upsertHubSelfReportSeenLog(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int, botLogin, sighting string) error {
+	existing, err := findHubSelfReportSeenLog(ctx, client, apiBase, token, owner, repo, number, botLogin)
+	if err == nil && existing.ID > 0 {
+		body := fleetreport.SeenLog(existing.Body, sighting)
+		if body == existing.Body {
+			return nil
+		}
+		return patchHubGitHubIssueComment(ctx, client, apiBase, token, owner, repo, existing.ID, body)
+	}
+	_, err = postHubGitHubIssueComment(ctx, client, apiBase, token, owner, repo, number, fleetreport.SeenLog("", sighting))
+	return err
+}
+
+type hubIssueComment struct {
+	ID   int64  `json:"id"`
+	Body string `json:"body"`
+	User struct {
+		Login string `json:"login"`
+	} `json:"user"`
+}
+
+// hubSeenLogMaxPages bounds the comment pages scanned for the seen log.
+const hubSeenLogMaxPages = 10
+
+func findHubSelfReportSeenLog(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int, botLogin string) (hubIssueComment, error) {
+	ctx = hubGitHubCallerContext(ctx, "selfreport_seen_log")
+	for page := 1; page <= hubSeenLogMaxPages; page++ {
+		u := fmt.Sprintf("%s/repos/%s/%s/issues/%d/comments?per_page=100&page=%d", strings.TrimRight(apiBase, "/"), owner, repo, number, page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+		if err != nil {
+			return hubIssueComment{}, err
+		}
+		req.Header.Set("Accept", "application/vnd.github+json")
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		if err != nil {
+			return hubIssueComment{}, err
+		}
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 8<<20))
+		resp.Body.Close()
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			return hubIssueComment{}, fmt.Errorf("github list comments: %d", resp.StatusCode)
+		}
+		var comments []hubIssueComment
+		if err := json.Unmarshal(raw, &comments); err != nil {
+			return hubIssueComment{}, err
+		}
+		for _, cm := range comments {
+			if !strings.Contains(cm.Body, fleetreport.SeenLogMarker) {
+				continue
+			}
+			if botLogin != "" && !strings.EqualFold(cm.User.Login, botLogin) {
+				continue
+			}
+			return cm, nil
+		}
+		if len(comments) < 100 {
+			break
+		}
+	}
+	return hubIssueComment{}, nil
+}
+
+func patchHubGitHubIssueComment(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, id int64, body string) error {
+	ctx = hubGitHubCallerContext(ctx, "selfreport_seen_log")
+	data, _ := json.Marshal(map[string]string{"body": body})
+	u := fmt.Sprintf("%s/repos/%s/%s/issues/comments/%d", strings.TrimRight(apiBase, "/"), owner, repo, id)
+	req, err := http.NewRequestWithContext(ctx, http.MethodPatch, u, bytes.NewReader(data))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return fmt.Errorf("github edit comment: %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func patchHubGitHubIssueBody(ctx context.Context, client *http.Client, apiBase, token, owner, repo string, number int, body string) error {
