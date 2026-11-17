@@ -1299,6 +1299,11 @@ type FrontendReferenceRepo struct {
 	// CredentialLogin is the GitHub login the writes appear under
 	// (hivecommons/hive#18197): the hive owner's, or a write_token_file's.
 	CredentialLogin string `json:"credential_login,omitempty"`
+	// CredentialIdentity says which identity that login is ("bot", "owner"
+	// or "token_file") and CredentialNote why, per
+	// project.remote_write_identity (hivecommons/hive#18516).
+	CredentialIdentity string `json:"credential_identity,omitempty"`
+	CredentialNote     string `json:"credential_note,omitempty"`
 }
 
 type FrontendRepo struct {
@@ -1860,7 +1865,7 @@ func (s *Server) Start() error {
 
 	// authenticate is outermost so the identity headers it injects from a
 	// per-user session are visible to roleEnforcement's read-only write-gate.
-	handler := s.withServerTiming(s.noIndex(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux)))))
+	handler := s.withServerTiming(s.withHostedGatewayPassthrough(s.noIndex(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux))))))
 
 	const dashboardReadTimeout = 30 * time.Second
 	const dashboardIdleTimeout = 120 * time.Second
@@ -2797,7 +2802,7 @@ async function poll(interval,flowId){
 </script></body></html>`
 
 func (s *Server) Handler() http.Handler {
-	return s.noIndex(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux))))
+	return s.withHostedGatewayPassthrough(s.noIndex(s.authenticate(s.roleEnforcement(s.securityHeaders(s.mux)))))
 }
 
 func (s *Server) roleEnforcement(next http.Handler) http.Handler {
