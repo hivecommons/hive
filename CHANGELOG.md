@@ -11,6 +11,22 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v6.44.0)
+
+### Added
+
+- Added a [Kick refusals](src/docs/kick-refusals.md) docs page that explains `kick_refusal` and every reason a kick is refused (the agent's model declining, startup deferral, paused, failed start, stopped, provider backoff, restart hold, cancelled by restart, delivery already in progress, no session, sandbox misconfiguration, unknown agent), what to do about each, and when it is normal. The dashboard's "Kick failed" toast now has a "What does this mean?" button, the navbar health hover names the page for `kick_refusal`, and `POST /api/kick/{agent}`, `GET /api/kick/{agent}/status` and the deep-health `kick_refusal` check return a `docs_url` field when the failure matches a documented reason. Fixes #18692.
+- The admin MCP can now read the Operations page's "Most effective models" table. `effective_models_read` returns its ranked and not-yet-ranked models for `window` `7d`, `30d` or `all`, and `filter` `all`, `hive` or `contributor`, the panel's own chips. With the filter, an MCP session can finally separate PRs the hive's own agents opened from PRs contributors' models opened. `pr_models_read` always mixes the two and joins contributor run statistics to both. The answer also carries the panel's `coverage` block, which says how far back the PR and run history actually reach, so an `all` answer is not mistaken for lifetime totals. `pr_models_read`, `contributor_model_stats_read` and `effective_models_read` also take an `offset`, so a list longer than the cap of 50 rows can be read page by page. Before, `contributor_model_stats_read` stopped at 50 of 74 models on a busy hive. A cut answer gives `next_offset`. All three are read-only, need no write access, and refuse an unknown window, filter or offset with its reason.
+- The admin MCP can now read the Cost card's "cost by work item" table. `launch_cost_read` returns the hive's estimated spend per issue and PR from `GET /api/launch-cost` (#12128): how many kicks named each item, the even-split share and the undivided upper bound, the agents and PR heads involved, and the unattributed and backend-unsupported buckets, so the reader can see how much spend could not be tied to any item. `limit` and `offset` page the list, and `ref` narrows it to one issue or PR and adds that item's launches. Until now an MCP session could see spend by agent and model through `spend_read`, but never which work the tokens went to. The tool is read-only, needs no write access, asks the endpoint for only the rows it returns, and refuses a bad `offset` or `ref` with its reason.
+
+### Changed
+
+- CI: the DCO app now honours an author's own DCO remediation commit (`.github/dco.yml`, `allowRemediationCommits.individual`), so a v5 -> v6 top-up that carries commits whose author email has no matching sign-off can be unblocked by the author without rewriting history (#18697).
+
+### Fixed
+
+- **A bound workflow now starts on a standard hive, and a profile nothing can fill is no longer silent** ([#18690](https://github.com/hivecommons/hive/issues/18690)). A workflow model hands some states to an agent profile (TechDocs: an Accepted request to `techdocs-drafter`, a draft to `techdocs-verifier`), but the hive only accepted a pinned agent, an agent named after the profile, or a `writer`, `docs` or `feature` agent. A default roster has none of those, so every pass logged `no agent fills the profile`, the item stayed withheld from every other lane, and nothing in the dashboard said why. The resolver now ends with a last resort: the hive's issue worker (the `scanner` role) for a profile that opens a pull request and the `reviewer` for one that reviews, in both cases only an agent allowed to work on the bound repository; a supervisor, guide or brainstorm agent is never picked on its own. When still nothing fills a profile, the repository's workflow row on Settings → Repos warns and offers an agent picker that saves `workflow.dispatch.profiles.<profile>.agent` (owner only, `PUT /api/workflows/dispatch/profiles`, no restart), the item's Activity Monitor row wears a `no agent for <profile>` badge with the reason, and **Send to *profile*** answers with the reason and where to fix it. Operators who relied on a profile staying unfilled should set `workflow.dispatch.profiles.<profile>.disabled: true`.
+
 ## 2026-11-17 (v6.43.0)
 
 ### Added
