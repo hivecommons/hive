@@ -250,6 +250,16 @@ func TestSessionSeedAuditAndRoutedMark(t *testing.T) {
 	e := newSessionTestEnv(t, true)
 	withSeedInbox(t, e)
 	id := e.create(t, callerOwner, "named one")
+	// The queued send touches the session store after this handler returns.
+	// Wait for the worker before TempDir removes the store.
+	t.Cleanup(func() {
+		waitSessionsFor(t, "the seed queue worker to stop", func() bool {
+			e.s.sessionQueuesMu.Lock()
+			defer e.s.sessionQueuesMu.Unlock()
+			q := e.s.sessionQueueFor(id, false)
+			return q == nil || !q.running
+		})
+	})
 	if rec := e.do(t, callerOwner, "POST", "/api/sessions/"+id+"/seed", seedBody("rec-1", "rec-2")); rec.Code != http.StatusAccepted {
 		t.Fatalf("seed = %d", rec.Code)
 	}
