@@ -3634,6 +3634,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		b.cleanup.push(stop)
 		b.customers = svc
 		b.dashSrv.SetCustomersService(svc)
+		if b.sched != nil {
+			installCustomersAgentContext(svc, b.sched.SetCustomerContextLookup)
+		}
 	}
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
 	ghClientFn := func() *github.Client { return b.ghClient }

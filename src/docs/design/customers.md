@@ -394,7 +394,33 @@ query it.
   and no person ids. Scanned and fenced as untrusted. The pattern is the
   maintainer-notes block (`src/pkg/scheduler/kick_maintainer_notes.go`).
 - A people retriever for the meeting persona
-  (`src/pkg/meetings/betty/retrieve.go`).
+  (`src/pkg/meetings/betty/retrieve_people.go`).
+
+What crosses into a prompt is built in one place, `customers.RenderKickContext`
+and `customers.PeopleBriefs`, and the scheduler and the meetings package see
+only the finished text or a small struct, never the customers package:
+
+- Only customers; a suggested person is never included. A login is matched on
+  the exact GitHub identity.
+- Only a login, the active tags, up to three goals a person confirmed, and a
+  count. Never an email, an id, notes or the satisfaction assessment. A goal the
+  hive inferred and nobody confirmed stays out.
+- A goal is text a person typed, so `SafeGoal` scans it with `ioscan`, removes
+  control characters, and drops the whole goal if it holds anything that looks
+  like an address or one of this store's ids, or if `ioscan` finds anything.
+  What remains sits inside one `<untrusted-customer-data nonce="...">` fence
+  with a fresh nonce, and any fence marker in the text is rewritten.
+- The kick block is at most 1,024 bytes, people lines first, and a line that
+  does not fit is left out rather than cut. The scheduler appends it only when
+  it starts with the block header, and asks about at most 20 logins.
+- The persona's snippet is a name, tags and confirmed goals, nothing else. The
+  persona speaks in a room that can hold people who are not users, so notes and
+  the satisfaction assessment have no field to travel in. Betty fences snippets
+  as data in its own prompt as well.
+
+Retrieval by name here is not identity resolution: a word in a question is
+matched against the words of a customer's name or their login to find a profile
+to describe, and nothing is linked or created.
 
 **Personal data of people who never signed up.** A hive sees issue authors,
 meeting attendees and mail senders who never created an account on it. The

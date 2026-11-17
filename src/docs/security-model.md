@@ -147,6 +147,19 @@ envelope before it reaches spektacular or an agent prompt
 scanned for them. Session state is pruned and logs are scrubbed
 ([security.md](security.md)).
 
+Customer profiles follow the same rule. An agent cannot read the customers
+store. When a kick is about an issue whose author, assignee or claimer is a
+customer, the hive adds one short block to the prompt: their GitHub login, the
+tags that are on, and the goals a person confirmed. The block is capped at 1,024
+bytes. It never holds an email address, an id, notes or the satisfaction
+assessment. A goal is text a person typed, so it is scanned by `ioscan` first. A
+goal that holds an address, an id or a recognised attack is dropped whole. The
+rest sit inside a fence with a random nonce, marked as data and not as
+instructions. The meeting persona gets the same slice for a customer a question
+names: a name, tags and confirmed goals. It never says notes or the satisfaction
+assessment aloud, because a room can hold people who are not the hive's users.
+Goals the hive inferred stay out until a person confirms them.
+
 Untrusted recordings transcribed by the built-in whisper provider are decoded
 and transcribed outside the hive process, in the `hive-whisper` sandbox: a
 separate `hive-transcribe` uid with no home, shell or supplementary groups,
