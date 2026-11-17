@@ -41068,6 +41068,17 @@ function burnAreaChart() {
         return counts;
       })();
 
+      // A by_model row shows the canonical model id (the one the Governor's
+      // PRs-by-model card and run stats group by, #18718) with the raw name the
+      // token collector recorded in its tooltip. Rows are still one per raw
+      // name: spend is priced per raw model and is not regrouped.
+      const costModelCanonical = m => {
+        const c = String(m.canonical_model || '');
+        return c && c !== 'unknown' && c !== m.name ? c : '';
+      };
+      const costModelLabel = m => costModelCanonical(m) || m.name || 'unknown';
+      const costModelTitle = m => costModelCanonical(m) ? ` title="Reported as ${esc(m.name)}"` : '';
+
       // Per-model estimated cost table. Every model shows a $ estimate now —
       // exact list price where known, a coarse tier estimate (~) otherwise.
       const models = sortCostRows((est.by_model || []).map(m => {
@@ -41084,7 +41095,7 @@ function burnAreaChart() {
           ? `<span class="cagents-badge" title="Agents using this model now: ${esc(users.join(', '))}">${users.length}</span>`
           : `<span class="cagents-zero" title="No running agent on this model right now">—</span>`;
         return `<tr>
-          <td class="cmodel">${esc(m.name || 'unknown')}</td>
+          <td class="cmodel"${costModelTitle(m)}>${esc(costModelLabel(m))}</td>
           <td class="cnum" style="text-align:center">${agentsCell}</td>
           <td class="cnum">${fmtTokens(m.input)}${miniSparkSvg(modelSeries(m.name, 'i'), 'var(--blue)', `${m.name || 'model'} input tokens`)}</td>
           <td class="cnum">${fmtTokens(m.output)}${miniSparkSvg(modelSeries(m.name, 'o'), 'var(--purple)', `${m.name || 'model'} output tokens`)}</td>
