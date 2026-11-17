@@ -18,15 +18,19 @@ import (
 	"github.com/hivecommons/hive/pkg/mailin/wire"
 )
 
-// Mail-in files (hivecommons/hive#18395, #18564): Markdown, audio, video
-// and image attachments and text bodies mailed to hive@<host> become Inbox
-// items of the email source.
+// Mail-in files (hivecommons/hive#18395, #18564, #18699): Markdown, audio,
+// video, image and office document attachments and text bodies mailed to
+// hive@<host> become Inbox items of the email source.
 //
 //   - POST /api/inbox/email                      relay-signed, from the hub
 //   - POST /api/inbox/email/chunk                relay-signed piece of a large delivery
+//   - POST /api/inbox/email/report               relay-signed: a mail the receiver refused, and why
+//   - GET  /api/inbox/email/recent               the recent-mail log: accepted and refused, no content
 //   - POST /api/inbox/email/{id}/approve|decline owner: the approval queue
 //   - GET  /api/inbox/email/{id}/file            the stored file
 func (s *Server) registerInboxEmailRoutes() {
+	s.mux.HandleFunc("POST /api/inbox/email/report", s.handleInboxEmailReport)
+	s.mux.HandleFunc("GET /api/inbox/email/recent", s.handleInboxEmailRecent)
 	s.mux.HandleFunc("POST /api/inbox/email", s.handleInboxEmail)
 	s.mux.HandleFunc("POST /api/inbox/email/chunk", s.handleInboxEmailChunk)
 	s.mux.HandleFunc("POST /api/inbox/email/{id}/approve", s.handleInboxEmailApprove)
@@ -51,6 +55,8 @@ func (s *Server) handleInboxEmail(w http.ResponseWriter, r *http.Request) {
 	}
 	// 409 is permanent for the sender (hive-mx bounces the mail).
 	if !s.meetingsEmailConfig().FilesOn() {
+		s.recordMail(inbox.MailEvent{Outcome: inbox.MailRejected, Kind: string(wire.KindFiles), Reason: wire.ReasonMailInOff,
+			SenderDomain: mailSenderDomain(d.Auth), Bytes: mailFilesBytes(d), Files: mailFileCount(d)})
 		jsonError(w, "this hive does not accept mail-in files", http.StatusConflict)
 		return
 	}
@@ -61,12 +67,106 @@ func (s *Server) handleInboxEmail(w http.ResponseWriter, r *http.Request) {
 	s.storeMailFiles(w, src, d)
 }
 
+// mailSenderDomain is the sender's domain as the recent-mail log keeps it:
+// the From header's, or the envelope sender's when there is none.
+func mailSenderDomain(auth wire.Auth) string {
+	if auth.FromDomain != "" {
+		return inbox.SenderDomainOf(auth.FromDomain)
+	}
+	if auth.From != "" {
+		return inbox.SenderDomainOf(auth.From)
+	}
+	return inbox.SenderDomainOf(auth.EnvelopeFrom)
+}
+
+// mailFilesBytes is the size of a delivery's attachments, held in memory or
+// staged on disk.
+func mailFilesBytes(d wire.Delivery) int64 {
+	if d.Files == nil {
+		return 0
+	}
+	var n int64
+	for _, a := range d.Files.Attachments {
+		n += max(int64(len(a.Data)), int64(a.Size))
+	}
+	return n
+}
+
+func mailFileCount(d wire.Delivery) int {
+	if d.Files == nil {
+		return 0
+	}
+	return len(d.Files.Attachments)
+}
+
+// recordMail adds an event to the recent-mail log (hivecommons/hive#18699).
+// The log is a diagnostic aid: a failure to write it never fails the mail.
+func (s *Server) recordMail(ev inbox.MailEvent) {
+	if s.deps == nil || s.deps.Inbox == nil {
+		return
+	}
+	src := s.deps.Inbox.Email()
+	if src == nil {
+		return
+	}
+	if err := src.RecordMail(ev); err != nil {
+		s.webhookLogger().Warn("recent-mail log not written", "err", err)
+	}
+}
+
+// handleInboxEmailReport takes a relay-signed refusal report from the mail
+// receiver: a message for this hive that it turned away, the SMTP code and
+// the reason category. It carries no content and stores nothing else.
+func (s *Server) handleInboxEmailReport(w http.ResponseWriter, r *http.Request) {
+	d, ok := s.readRelayedDelivery(w, r, wire.KindReport)
+	if !ok {
+		return
+	}
+	if d.Report == nil {
+		jsonError(w, "invalid delivery", http.StatusBadRequest)
+		return
+	}
+	s.recordMail(inbox.MailEvent{
+		At: d.ReceivedAt, Outcome: inbox.MailRejected, Reason: d.Report.Reason, Code: d.Report.Code,
+		SenderDomain: d.Report.SenderDomain, Bytes: d.Report.Bytes, Files: d.Report.Attachments, Skipped: d.Report.Skipped,
+	})
+	s.webhookLogger().Info("mail refusal reported", "delivery", d.ID, "reason", d.Report.Reason, "code", d.Report.Code)
+	jsonResponse(w, map[string]any{"recorded": true})
+}
+
+// handleInboxEmailRecent (owner or read-write) lists the recent-mail log,
+// newest first: what was mailed to this hive, accepted or refused, and the
+// reason of a refusal. No subject, file name or full sender address.
+func (s *Server) handleInboxEmailRecent(w http.ResponseWriter, r *http.Request) {
+	if !requireInboxPlaybackRole(w, r) {
+		return
+	}
+	events := []inbox.MailEvent{}
+	if s.deps != nil && s.deps.Inbox != nil {
+		if src := s.deps.Inbox.Email(); src != nil {
+			events = src.RecentMail()
+		}
+	}
+	w.Header().Set("Cache-Control", "private, no-store")
+	jsonResponse(w, map[string]any{"events": events, "files_enabled": s.meetingsEmailConfig().FilesOn()})
+}
+
 // storeMailFiles adds a verified files delivery to the email source.
 func (s *Server) storeMailFiles(w http.ResponseWriter, src *inbox.EmailSource, d wire.Delivery) {
 	trusted := s.mailTrusted(d.Auth)
 	items, err := src.Add(d, trusted)
+	ev := inbox.MailEvent{Outcome: inbox.MailAccepted, Kind: string(wire.KindFiles), SenderDomain: mailSenderDomain(d.Auth),
+		Bytes: mailFilesBytes(d), Files: len(items)}
+	if d.Files != nil {
+		ev.Skipped = d.Files.Skipped
+	}
+	if !trusted {
+		ev.Outcome = inbox.MailAwaitingApproval
+	}
 	switch {
 	case errors.Is(err, inbox.ErrEmailQuota):
+		ev.Outcome, ev.Reason, ev.Files = inbox.MailRejected, wire.ReasonHiveStorageFull, mailFileCount(d)
+		s.recordMail(ev)
 		jsonError(w, err.Error(), http.StatusInsufficientStorage)
 		return
 	case err != nil:
@@ -81,6 +181,7 @@ func (s *Server) storeMailFiles(w http.ResponseWriter, src *inbox.EmailSource, d
 		// skips it).
 		s.inboxAutoTranscribe(it, inbox.AutoTranscribeActor)
 	}
+	s.recordMail(ev)
 	s.webhookLogger().Info("mail-in files received", "delivery", d.ID, "files", len(ids), "trusted", trusted)
 	jsonResponse(w, map[string]any{"items": ids, "awaiting_approval": !trusted})
 }
@@ -159,7 +260,8 @@ func (s *Server) handleInboxEmailFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer rc.Close()
-	// A video is a download like audio: CSP sandbox and nosniff below.
+	// A video or a document is a download like audio: CSP sandbox and
+	// nosniff below.
 	disposition := "attachment"
 	if m.Kind == wire.AttachImage {
 		disposition = "inline"

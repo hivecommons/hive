@@ -133,3 +133,123 @@ func TestInboxEmailUnavailable(t *testing.T) {
 		t.Fatalf("blocked spool: %d", rec.Code)
 	}
 }
+
+// TestInboxEmailDocumentsAndRecentMail (hivecommons/hive#18699): an office
+// document mailed in becomes an Inbox item with the file attached, and the
+// recent-mail log lists what was accepted and what was refused, with the
+// reason and without any content.
+func TestInboxEmailDocumentsAndRecentMail(t *testing.T) {
+	s, src := mailFilesServer(t)
+	const pptxType = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	deck := wire.Attachment{Name: "KubeCon Talk.pptx", Kind: wire.AttachDocument, ContentType: pptxType, Data: []byte("PK\x03\x04deck")}
+
+	d := filesDelivery("bob@example.com", true, deck)
+	d.Files.Title = "Testing1-2-3"
+	d.Files.Skipped = []wire.SkippedFile{{Ext: "key", Reason: wire.SkipType}}
+	rec := relayPost(s, inboxEmailPath, d, testMailRelayKey)
+	var out struct {
+		Items []string `json:"items"`
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &out)
+	if rec.Code != http.StatusOK || len(out.Items) != 1 {
+		t.Fatalf("document delivery: %d %s", rec.Code, rec.Body)
+	}
+	items, _ := src.List(t.Context())
+	if len(items) != 1 || items[0].UploadKind != wire.AttachDocument || items[0].Title != "Testing1-2-3" || items[0].AwaitingApproval {
+		t.Fatalf("items %+v", items)
+	}
+	c, err := src.Fetch(t.Context(), items[0])
+	if err != nil || !strings.Contains(c.Markdown, "A document, stored as an attachment") || !strings.Contains(c.Markdown, "KubeCon Talk.pptx") {
+		t.Fatalf("content %v %q", err, c.Markdown)
+	}
+	// The file is a download with its stored type.
+	rec = serve(s, userReq(http.MethodGet, "/api/inbox/email/"+out.Items[0]+"/file", "alice", "owner", ""))
+	body, _ := io.ReadAll(rec.Body)
+	if rec.Code != http.StatusOK || rec.Header().Get("Content-Type") != pptxType || !strings.HasPrefix(rec.Header().Get("Content-Disposition"), "attachment") ||
+		rec.Header().Get("X-Content-Type-Options") != "nosniff" || string(body) != string(deck.Data) {
+		t.Fatalf("file: %d %v", rec.Code, rec.Header())
+	}
+
+	// An outsider's mail awaits approval; a refusal report from the mail
+	// receiver is recorded; so are this hive's own refusals.
+	if rec := relayPost(s, inboxEmailPath, filesDelivery("stranger@example.org", true, deck), testMailRelayKey); rec.Code != http.StatusOK {
+		t.Fatalf("outsider: %d %s", rec.Code, rec.Body)
+	}
+	report := wire.Delivery{Kind: wire.KindReport, Recipient: "hive@acme.hive.hivecommons.dev", Report: &wire.Report{
+		Code: 550, Reason: wire.ReasonUnsupported, SenderDomain: "Example.NET", Bytes: 4096, Attachments: 1,
+		Skipped: []wire.SkippedFile{{Ext: "key", Reason: wire.SkipType}, {Ext: "<b>x</b>", Reason: "made up reason"}},
+	}}
+	if rec := relayPost(s, inboxEmailReportPath, report, testMailRelayKey); rec.Code != http.StatusOK {
+		t.Fatalf("report: %d %s", rec.Code, rec.Body)
+	}
+	if rec := relayPost(s, inboxEmailReportPath, report, "wrong-key"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("report with a bad signature: %d", rec.Code)
+	}
+	if rec := relayPost(s, inboxEmailReportPath, wire.Delivery{Kind: wire.KindReport}, testMailRelayKey); rec.Code != http.StatusBadRequest {
+		t.Fatalf("report without a body: %d", rec.Code)
+	}
+	if rec := relayPost(s, inboxEmailReportPath, filesDelivery("bob@example.com", true, deck), testMailRelayKey); rec.Code != http.StatusBadRequest {
+		t.Fatalf("a files delivery on the report path: %d", rec.Code)
+	}
+	t.Setenv("HIVE_MEETINGS_EMAIL_FILES_ENABLED", "off")
+	if rec := relayPost(s, inboxEmailPath, filesDelivery("bob@example.com", true, deck), testMailRelayKey); rec.Code != http.StatusConflict {
+		t.Fatalf("files off: %d", rec.Code)
+	}
+	t.Setenv("HIVE_MEETINGS_EMAIL_FILES_ENABLED", "")
+
+	var listing struct {
+		Events       []inbox.MailEvent `json:"events"`
+		FilesEnabled bool              `json:"files_enabled"`
+	}
+	rec = serve(s, userReq(http.MethodGet, "/api/inbox/email/recent", "alice", "owner", ""))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("recent: %d %s", rec.Code, rec.Body)
+	}
+	raw := rec.Body.String()
+	if err := json.Unmarshal([]byte(raw), &listing); err != nil || len(listing.Events) != 4 || !listing.FilesEnabled {
+		t.Fatalf("recent: %v %s", err, raw)
+	}
+	// Newest first.
+	off, refused, pending, accepted := listing.Events[0], listing.Events[1], listing.Events[2], listing.Events[3]
+	if off.Outcome != inbox.MailRejected || off.Reason != wire.ReasonMailInOff || off.SenderDomain != "example.com" {
+		t.Errorf("files-off event %+v", off)
+	}
+	if refused.Outcome != inbox.MailRejected || refused.Reason != wire.ReasonUnsupported || refused.Code != 550 || refused.SenderDomain != "example.net" ||
+		refused.Bytes != 4096 || refused.Files != 1 || len(refused.Skipped) != 2 || refused.Skipped[0] != (wire.SkippedFile{Ext: "key", Reason: wire.SkipType}) ||
+		refused.Skipped[1] != (wire.SkippedFile{Ext: "bxb", Reason: "madeupreason"}) {
+		t.Errorf("reported event %+v", refused)
+	}
+	if pending.Outcome != inbox.MailAwaitingApproval || pending.SenderDomain != "example.org" || pending.Files != 1 {
+		t.Errorf("awaiting event %+v", pending)
+	}
+	if accepted.Outcome != inbox.MailAccepted || accepted.Kind != string(wire.KindFiles) || accepted.SenderDomain != "example.com" || accepted.Files != 1 ||
+		accepted.Bytes != int64(len(deck.Data)) || len(accepted.Skipped) != 1 || accepted.At.IsZero() {
+		t.Errorf("accepted event %+v", accepted)
+	}
+	// No content: no subject, file name or full address.
+	for _, private := range []string{"Testing1-2-3", "KubeCon", "bob@", "stranger@", "<b>"} {
+		if strings.Contains(raw, private) {
+			t.Errorf("the recent-mail log holds %q: %s", private, raw)
+		}
+	}
+	if rec := serve(s, userReq(http.MethodGet, "/api/inbox/email/recent", "carol", "read", "")); rec.Code != http.StatusForbidden {
+		t.Fatalf("a reader listed recent mail: %d", rec.Code)
+	}
+
+	// A full spool is recorded as a refusal by the hive.
+	full := &inbox.EmailSource{Dir: filepath.Join(t.TempDir(), "q"), QuotaBytes: 1}
+	s.deps.Inbox.EnableEmail(full)
+	if rec := relayPost(s, inboxEmailPath, filesDelivery("bob@example.com", true, deck), testMailRelayKey); rec.Code != http.StatusInsufficientStorage {
+		t.Fatalf("quota: %d", rec.Code)
+	}
+	if evs := full.RecentMail(); len(evs) != 1 || evs[0].Outcome != inbox.MailRejected || evs[0].Reason != wire.ReasonHiveStorageFull || evs[0].Files != 1 {
+		t.Fatalf("quota event %+v", evs)
+	}
+
+	// Without an email source the listing is empty, not an error.
+	s.deps.Inbox.EnableEmail(nil)
+	rec = serve(s, userReq(http.MethodGet, "/api/inbox/email/recent", "alice", "owner", ""))
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"events":[]`) {
+		t.Fatalf("recent without a source: %d %s", rec.Code, rec.Body)
+	}
+}

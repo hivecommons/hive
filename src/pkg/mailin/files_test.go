@@ -1,6 +1,8 @@
 package mailin
 
 import (
+	"archive/zip"
+	"bytes"
 	"strings"
 	"testing"
 
@@ -102,7 +104,9 @@ func TestAcceptFile(t *testing.T) {
 		"archive.zip":   []byte("PK\x03\x04"),
 		"image.svg":     []byte("<svg></svg>"),
 		"song.mp3.exe":  mp3Data,
-		"invoice.pdf":   []byte("%PDF-1.7"),
+		"invoice.pdf":   pngData,
+		"deck.pptm":     []byte("PK\x03\x04"),
+		"old.doc":       []byte("\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1"),
 		"voice.m4a.png": m4aData,
 	}
 	for name, data := range bad {
@@ -125,6 +129,80 @@ func TestSafeName(t *testing.T) {
 	for in, want := range cases {
 		if got := safeName(in); got != want {
 			t.Errorf("%q: %q, want %q", in, got, want)
+		}
+	}
+}
+
+// ooxml builds a ZIP container holding the named parts.
+func ooxml(t *testing.T, parts ...string) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for _, name := range parts {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := w.Write([]byte("<x/>")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+var pdfData = []byte("%PDF-1.7\n%\xE2\xE3\xCF\xD3\n1 0 obj\n")
+
+// Office documents (hivecommons/hive#18699).
+func pptxData(t *testing.T) []byte {
+	return ooxml(t, ooxmlContentTypes, "_rels/.rels", "ppt/presentation.xml", "ppt/slides/slide1.xml")
+}
+
+func docxData(t *testing.T) []byte { return ooxml(t, ooxmlContentTypes, "word/document.xml") }
+
+func xlsxData(t *testing.T) []byte { return ooxml(t, ooxmlContentTypes, "xl/workbook.xml") }
+
+// TestAcceptDocuments (hivecommons/hive#18699): PDF, Word, PowerPoint and
+// Excel files are accepted by extension and content; a container that is
+// another kind of document, a plain archive, a macro-enabled or a damaged
+// one is not.
+func TestAcceptDocuments(t *testing.T) {
+	pptx, docx, xlsx := pptxData(t), docxData(t), xlsxData(t)
+	for name, want := range map[string]struct {
+		data []byte
+		ct   string
+	}{
+		"report.pdf": {pdfData, ctPDF}, "Deck.PPTX": {pptx, ctPPTX}, "memo.docx": {docx, ctDOCX}, "numbers.xlsx": {xlsx, ctXLSX},
+	} {
+		a, ok := acceptFile(name, want.data)
+		if !ok || a.Kind != wire.AttachDocument || a.ContentType != want.ct || a.Size != len(want.data) {
+			t.Errorf("%s: %v %+v", name, ok, a)
+		}
+	}
+	if got := sniff(pdfData); got != ctPDF {
+		t.Errorf("pdf sniffed as %q", got)
+	}
+	if got := sniff(pptx); got != ctZip {
+		t.Errorf("pptx sniffed as %q", got)
+	}
+	macro := ooxml(t, ooxmlContentTypes, "ppt/presentation.xml", "ppt/vbaProject.bin")
+	for name, data := range map[string][]byte{
+		"deck.pptx":      docx,
+		"memo.docx":      xlsx,
+		"numbers.xlsx":   pptx,
+		"archive.pptx":   ooxml(t, "readme.txt"),
+		"notypes.pptx":   ooxml(t, "ppt/presentation.xml"),
+		"macro.pptx":     macro,
+		"truncated.pptx": pptx[:len(pptx)/2],
+		"head.pptx":      []byte("PK\x03\x04"),
+		"fake.pdf":       pptx,
+		"fake.docx":      pdfData,
+		"deck.png":       pptx,
+	} {
+		if _, ok := acceptFile(name, data); ok {
+			t.Errorf("%s accepted", name)
 		}
 	}
 }

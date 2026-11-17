@@ -2648,9 +2648,14 @@ func (s *Server) isPublicPath(path string) bool {
 		// browser comes back from linear.app with no hive session. The
 		// single-use state token is the credential, verified server-side.
 		return true
-	case path == meetingsInvitesPath || path == meetingsCalendarProofPath || path == inboxEmailPath:
+	case path == meetingsInvitesPath || path == meetingsCalendarProofPath || path == inboxEmailPath ||
+		path == inboxEmailChunkPath || path == inboxEmailReportPath:
 		// hive-mx mail relayed by the hub (#18395): hive-mx and the hub hold
-		// no dashboard session. NOT actually open: each handler fails closed
+		// no dashboard session. The chunk path carries every delivery over
+		// one relay piece (#18564): left out of this list, a mail with more
+		// than about 512 KiB of attachments was turned away here with a 401
+		// and retried by its sender until it expired (#18699).
+		// NOT actually open: each handler fails closed
 		// without this hive's relay key and verifies the hub's relay
 		// signature (X-Hive-Relay-Delivery, skew and replay checks) over the
 		// raw body before reading it.

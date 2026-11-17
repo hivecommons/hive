@@ -435,11 +435,13 @@ says mailed-in files are turned off.
 
 Mail sent to `hive@<your hive's dashboard host>` reaches the cluster's
 receive-only mail receiver, hive-mx, which keeps only the subject, the text
-body and the accepted attachments: Markdown (`.md`), audio (`.m4a`, `.mp3`,
-`.wav`, `.ogg`, `.webm`), video (`.mp4`, `.mov`, `.mkv`) and image (`.png`,
-`.jpg`, `.gif`, `.webp`), type checked by content, at most 10 files, 25 MB
-per file and 35 MiB per message ([#18395](https://github.com/hivecommons/hive/issues/18395),
-[#18564](https://github.com/hivecommons/hive/issues/18564); how mail
+body and the accepted attachments: Markdown (`.md`), office documents
+(`.pdf`, `.docx`, `.pptx`, `.xlsx`), audio (`.m4a`, `.mp3`, `.wav`, `.ogg`,
+`.webm`), video (`.mp4`, `.mov`, `.mkv`) and image (`.png`, `.jpg`, `.gif`,
+`.webp`), type checked by content, at most 10 files, 25 MB per file and
+35 MiB per message ([#18395](https://github.com/hivecommons/hive/issues/18395),
+[#18564](https://github.com/hivecommons/hive/issues/18564),
+[#18699](https://github.com/hivecommons/hive/issues/18699); how mail
 reaches hive-mx is in [meetings.md](meetings.md#inviting-betty-by-email)).
 The hub relays them to the hive, in signed pieces when they are large. Each
 attachment becomes one `email` item (✉️), titled with the subject (and the
@@ -470,10 +472,47 @@ images or other remote content.
   as an attachment of the item; an `.mp4` or `.mov` goes to the same
   transcription path, which reads its audio track (as a dropped video
   does), while an `.mkv` is stored only and the item says so. **Images** are
-  stored as attachments of the item and shown as a thumbnail; **📎 Open
-  file** downloads any of them (owner and read-write).
+  stored as attachments of the item and shown as a thumbnail. **Office
+  documents** (PDF, Word, PowerPoint, Excel) are stored as attachments of
+  the item; their text is not extracted, and a macro-enabled or damaged
+  document, or one whose content is not what its extension says, is left
+  out. **📎 Open file** downloads any of them (owner and read-write).
 - Nothing in a mail is executed or followed. Turn mail-in files off with
   `meetings.email.files_enabled: false`; senders then get a bounce.
+
+### When a mail does not show up
+
+Under the item list, owners and read-write users see **✉️ Recent mail**: the
+last 50 messages mailed to the hive, received or refused, newest first.
+Each line has the time, the outcome (received, awaiting approval or
+refused), the sender's domain, the number of files, the size and, for a
+refusal or an attachment that was left out, the reason. It never holds a
+subject, a file name or a full sender address. The same list is
+`GET /api/inbox/email/recent`.
+
+| Reason | What happened | What to do |
+|---|---|---|
+| attachment type not accepted | Every attachment was of a type off the list above (for example `.key`, `.zip`, `.pptm`) and the mail had no text | Send an accepted type, or export to PDF |
+| an attachment was damaged, macro-enabled or not what its extension says | The file's content does not match its extension | Re-save the file and send it again |
+| an attachment was over the size limit | Over 25 MB for one file, or 30 MB of attachments in one mail | Send a smaller file |
+| the message was over the size limit | Over 35 MiB as sent (attachments grow by a third in transit) | Send a smaller file |
+| the message had no text, calendar invite or attachment | An empty mail | Add text or a file |
+| mail-in files are turned off on this hive | `meetings.email.files_enabled: false` | Turn it back on |
+| this hive's mail storage is full | The 1 GiB spool is full | Decline or delete items |
+| this hive reached its daily volume of mail | 512 MiB a day by default; the sender's server retries | Wait, or raise `HIVE_MX_HIVE_DAILY_BYTES` |
+
+A refused mail also bounces: the sender's mail provider returns it with the
+same reason in the error text, for example `550 5.6.0 nothing to deliver: a
+.key attachment is not an accepted type. Accepted types: md, pdf, docx,
+pptx, xlsx, ...`. An attachment left out of a mail that was otherwise
+received (it had text, or another accepted file) does not bounce; it is
+listed on the mail's line as "left out".
+
+A mail that is on neither the list nor in the sender's bounces did not reach
+the hive's address: check the address (`hive@` and the hive's dashboard
+host, nothing else) and the sender's outbox. The operator's view is the
+receiver's log: see
+[What hive-mx logs](meetings.md#what-hive-mx-logs).
 
 ## Deleting an item
 

@@ -3,6 +3,7 @@ package mailin
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -451,5 +452,283 @@ func TestSMTPBusyAndSpoolErrors(t *testing.T) {
 	}
 	if entries, _ := os.ReadDir(s.o.SpoolDir); len(entries) != 0 {
 		t.Fatal("a failed read left its spool file")
+	}
+}
+
+// logBuffer collects JSON log lines from the server's goroutines.
+type logBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *logBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *logBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+// lines decodes the log lines whose message is msg.
+func (b *logBuffer) lines(t *testing.T, msg string) []map[string]any {
+	t.Helper()
+	var out []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(b.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("log line %q: %v", line, err)
+		}
+		if m["msg"] == msg {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// waitLines polls for n log lines with msg: a session's last line is
+// written after the client has its reply.
+func (b *logBuffer) waitLines(t *testing.T, msg string, n int) []map[string]any {
+	t.Helper()
+	const tries, pause = 200, 10 * time.Millisecond
+	var got []map[string]any
+	for i := 0; i < tries; i++ {
+		if got = b.lines(t, msg); len(got) >= n {
+			return got
+		}
+		time.Sleep(pause)
+	}
+	t.Fatalf("%d %q log lines, want %d:\n%s", len(got), msg, n, b.String())
+	return nil
+}
+
+func docAttachment(name string, body []byte) part {
+	return part{contentType: "application/octet-stream", disposition: `attachment; filename="` + name + `"`, body: body}
+}
+
+// TestSMTPOfficeDocumentsAccepted (hivecommons/hive#18699): a mail with
+// only office documents attached, and no body, is delivered with each file
+// attached, and the session leaves one INFO line with the outcome and no
+// content: no subject, no file name, no full sender address.
+func TestSMTPOfficeDocumentsAccepted(t *testing.T) {
+	logs := &logBuffer{}
+	hub, reports := &fakeHub{}, &fakeHub{}
+	spool := t.TempDir()
+	pptx := pptxData(t)
+	addr := startServer(t, Options{Hub: hub, Reporter: reports, SpoolDir: spool, Logger: slog.New(slog.NewJSONHandler(logs, nil))})
+	c := dial(t, addr)
+	msg := buildMail("Ada <ada@example.com>", "Testing1-2-3 confidential",
+		docAttachment("KubeCon Talk.pptx", pptx), docAttachment("report.pdf", pdfData),
+		docAttachment("memo.docx", docxData(t)), docAttachment("numbers.xlsx", xlsxData(t)))
+	if err := send(t, c, "bounce@example.com", []string{"hive@" + testHost}, msg); err != nil {
+		t.Fatalf("office documents refused: %v", err)
+	}
+	got := hub.deliveries()
+	if len(got) != 1 || got[0].Kind != wire.KindFiles || len(got[0].Files.Attachments) != 4 || len(got[0].Files.Skipped) != 0 {
+		t.Fatalf("deliveries %+v", got)
+	}
+	a := got[0].Files.Attachments[0]
+	if a.Name != "KubeCon Talk.pptx" || a.Kind != wire.AttachDocument || a.ContentType != ctPPTX || a.Size != len(pptx) {
+		t.Fatalf("pptx attachment %+v", a)
+	}
+	if len(reports.deliveries()) != 0 {
+		t.Fatal("an accepted message was reported as refused")
+	}
+	lines := logs.waitLines(t, "hive-mx: message accepted", 1)
+	l := lines[0]
+	if l["level"] != "INFO" || l["outcome"] != outcomeAccepted || l["code"] != float64(smtpAccepted) || l["sender_domain"] != "example.com" ||
+		l["attachments"] != float64(4) || l["accepted_files"] != float64(4) || l["kind"] != string(wire.KindFiles) {
+		t.Fatalf("outcome line %+v", l)
+	}
+	if size, _ := l["bytes"].(float64); size < float64(len(pptx)) {
+		t.Fatalf("bytes %v", l["bytes"])
+	}
+	if hosts, _ := l["rcpt_hosts"].([]any); len(hosts) != 1 || hosts[0] != testHost {
+		t.Fatalf("rcpt_hosts %+v", l["rcpt_hosts"])
+	}
+	for _, private := range []string{"ada@example.com", "bounce@example.com", "Testing1-2-3", "confidential", "KubeCon", "Talk"} {
+		if strings.Contains(logs.String(), private) {
+			t.Errorf("the log holds %q:\n%s", private, logs.String())
+		}
+	}
+}
+
+// TestSMTPRejectionReasons (hivecommons/hive#18699): each refusal answers
+// with a reply that says why, leaves one INFO line with its reason
+// category, and, when it is about the message, is reported to the hive
+// without any content.
+func TestSMTPRejectionReasons(t *testing.T) {
+	to := []string{"hive@" + testHost}
+	big := append(append([]byte(nil), pngData...), make([]byte, 4096)...)
+	smallFiles := DefaultLimits()
+	smallFiles.MaxFileBytes = 64
+	refuse := func(wire.Delivery) error { return fmt.Errorf("%w: HTTP 422: hive refused the delivery", ErrRejected) }
+	cases := []struct {
+		name     string
+		opts     Options
+		msg      []byte
+		hubErr   func(wire.Delivery) error
+		code     int
+		reply    string
+		reason   string
+		outcome  string
+		reported bool
+	}{
+		{"empty", Options{}, buildMail("ada@example.com", "hi", part{contentType: "text/plain", body: []byte(" \r\n "), raw: true}), nil,
+			550, "no text, no calendar invite and no attachment", wire.ReasonEmpty, outcomeRejected, true},
+		{"unsupported type", Options{}, buildMail("ada@example.com", "deck", docAttachment("Slides.key", []byte("keynote"))), nil,
+			550, "a .key attachment is not an accepted type", wire.ReasonUnsupported, outcomeRejected, true},
+		{"content mismatch", Options{}, buildMail("ada@example.com", "deck", docAttachment("deck.pptx", docxData(t))), nil,
+			550, "a .pptx attachment is damaged, macro-enabled or not what its extension says", wire.ReasonContentMismatch, outcomeRejected, true},
+		{"attachment too large", Options{Limits: smallFiles}, buildMail("ada@example.com", "pic", docAttachment("huge.png", big)), nil,
+			552, "a .png attachment is over the 0 MB per-file limit", wire.ReasonAttachmentTooLarge, outcomeRejected, true},
+		{"message too large", Options{MaxMessageBytes: 2048}, buildMail("ada@example.com", "pic", docAttachment("huge.png", big)), nil,
+			552, "the message is over the 0 MB limit", wire.ReasonMessageTooLarge, outcomeRejected, true},
+		{"malformed", Options{}, []byte("this is not a header\r\n\r\nx\r\n"), nil,
+			550, "could not be parsed", wire.ReasonMalformed, outcomeRejected, true},
+		{"hive daily volume", Options{HiveBudget: NewByteBudget(1, 24*time.Hour, nil)}, inviteMail(t, "google.ics"), nil,
+			452, "daily volume", wire.ReasonHiveVolume, outcomeDeferred, true},
+		{"hive refused", Options{}, inviteMail(t, "google.ics"), refuse,
+			550, "the hive refused this message", wire.ReasonHiveRefused, outcomeRejected, false},
+		{"hub down", Options{}, inviteMail(t, "google.ics"), func(wire.Delivery) error { return errors.New("connection refused") },
+			451, "temporary failure", reasonTemporary, outcomeDeferred, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			logs := &logBuffer{}
+			hub, reports := &fakeHub{err: tc.hubErr}, &fakeHub{}
+			o := tc.opts
+			o.Hub, o.Reporter, o.Logger = hub, reports, slog.New(slog.NewJSONHandler(logs, nil))
+			c := dial(t, startServer(t, o))
+			err := send(t, c, "bounce@mail.example.com", to, tc.msg)
+			var se *smtp.SMTPError
+			if !errors.As(err, &se) || se.Code != tc.code || !strings.Contains(se.Message, tc.reply) {
+				t.Fatalf("reply %v, want %d ...%s...", err, tc.code, tc.reply)
+			}
+			if len(hub.deliveries()) != 0 {
+				t.Fatalf("delivered %+v", hub.deliveries())
+			}
+			l := logs.waitLines(t, "hive-mx: message "+tc.outcome, 1)[0]
+			if l["level"] != "INFO" || l["reason"] != tc.reason || l["code"] != float64(tc.code) || l["outcome"] != tc.outcome {
+				t.Fatalf("outcome line %+v", l)
+			}
+			if hosts, _ := l["rcpt_hosts"].([]any); len(hosts) != 1 || hosts[0] != testHost {
+				t.Fatalf("rcpt_hosts %+v", l["rcpt_hosts"])
+			}
+			if strings.Contains(logs.String(), "bounce@") || strings.Contains(logs.String(), "ada@") || strings.Contains(logs.String(), "Slides") {
+				t.Fatalf("the log holds an address or a file name:\n%s", logs.String())
+			}
+			rep := reports.deliveries()
+			if !tc.reported {
+				if len(rep) != 0 {
+					t.Fatalf("reported %+v", rep)
+				}
+				return
+			}
+			if len(rep) != 1 || rep[0].Kind != wire.KindReport || rep[0].Recipient != to[0] || rep[0].Report == nil || rep[0].Files != nil || rep[0].Auth.From != "" {
+				t.Fatalf("reports %+v", rep)
+			}
+			if r := rep[0].Report; r.Reason != tc.reason || r.Code != tc.code || r.SenderDomain == "" || strings.Contains(r.SenderDomain, "@") {
+				t.Fatalf("report %+v", r)
+			}
+		})
+	}
+
+	// The reply of a refused attachment names the accepted types, and the
+	// report lists the extension and the reason only.
+	reports := &fakeHub{}
+	c := dial(t, startServer(t, Options{Hub: &fakeHub{}, Reporter: reports}))
+	err := send(t, c, "bounce@example.com", to, buildMail("ada@example.com", "deck", docAttachment("Slides.key", []byte("keynote"))))
+	if err == nil || !strings.Contains(err.Error(), "Accepted types: "+AcceptedExtensions) || !strings.Contains(AcceptedExtensions, "pptx") {
+		t.Fatalf("reply %v", err)
+	}
+	rep := reports.deliveries()
+	if len(rep) != 1 || rep[0].Report.Attachments != 1 || len(rep[0].Report.Skipped) != 1 || rep[0].Report.Skipped[0] != (wire.SkippedFile{Ext: "key", Reason: wire.SkipType}) || rep[0].Report.SenderDomain != "example.com" {
+		t.Fatalf("report %+v", rep)
+	}
+
+	// A hub or hive that does not take reports does not change the reply.
+	down := &fakeHub{err: func(wire.Delivery) error { return fmt.Errorf("%w: HTTP 400", ErrRejected) }}
+	c = dial(t, startServer(t, Options{Hub: &fakeHub{}, Reporter: down}))
+	if err := send(t, c, "bounce@example.com", to, buildMail("ada@example.com", "deck", docAttachment("Slides.key", []byte("keynote")))); smtpCode(err) != 550 {
+		t.Fatalf("reply with a failing reporter: %v", err)
+	}
+}
+
+// TestSMTPRefusalsBeforeDataAreLogged (hivecommons/hive#18699): a refusal
+// at MAIL FROM or RCPT TO, and a session that ends without a message, each
+// leave an INFO line, so "never arrived" and "refused" can be told apart.
+func TestSMTPRefusalsBeforeDataAreLogged(t *testing.T) {
+	logs := &logBuffer{}
+	logger := slog.New(slog.NewJSONHandler(logs, nil))
+	addr := startServer(t, Options{Hub: &fakeHub{}, Logger: logger})
+	c := dial(t, addr)
+	if err := c.Mail("bounce@example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Rcpt("hive@unknown.hive.hivecommons.dev", nil); smtpCode(err) != 550 {
+		t.Fatalf("unknown host: %v", err)
+	}
+	if err := c.Rcpt("bob@"+testHost, nil); smtpCode(err) != 550 || !strings.Contains(err.Error(), "hive@<its host>") {
+		t.Fatalf("unknown mailbox: %v", err)
+	}
+	if err := c.Quit(); err != nil {
+		t.Fatal(err)
+	}
+	refused := logs.waitLines(t, "hive-mx: command refused", 2)
+	if l := refused[0]; l["reason"] != reasonUnknownRecipient || l["rcpt_host"] != "unknown.hive.hivecommons.dev" || l["code"] != float64(550) || l["sender_domain"] != "example.com" || l["stage"] != stageRcpt {
+		t.Fatalf("unknown recipient line %+v", l)
+	}
+	if l := refused[1]; l["reason"] != reasonUnknownMailbox || l["rcpt_host"] != testHost {
+		t.Fatalf("unknown mailbox line %+v", l)
+	}
+	if l := logs.waitLines(t, "hive-mx: session ended without a message", 1)[0]; l["stage"] != stageMail || l["level"] != "INFO" {
+		t.Fatalf("session line %+v", l)
+	}
+	if strings.Contains(logs.String(), "bounce@") || strings.Contains(logs.String(), "bob@") {
+		t.Fatalf("the log holds an address:\n%s", logs.String())
+	}
+
+	// Host list not loaded, and a rate limit.
+	logs2 := &logBuffer{}
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	addr = startServer(t, Options{Hub: &fakeHub{}, Hosts: &HostSet{}, Logger: slog.New(slog.NewJSONHandler(logs2, nil)),
+		IPLimiter: NewRateLimiter(1, time.Hour, 1, func() time.Time { return now })})
+	c = dial(t, addr)
+	if err := c.Mail("bounce@example.com", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Rcpt("hive@"+testHost, nil); smtpCode(err) != 451 {
+		t.Fatalf("host list not loaded: %v", err)
+	}
+	_ = c.Reset()
+	if err := c.Mail("bounce@example.com", nil); smtpCode(err) != 450 {
+		t.Fatalf("rate limit: %v", err)
+	}
+	refused = logs2.waitLines(t, "hive-mx: command refused", 2)
+	if refused[0]["reason"] != reasonHostsNotLoaded || refused[0]["outcome"] != outcomeDeferred || refused[1]["reason"] != reasonRateIP || refused[1]["stage"] != stageMail {
+		t.Fatalf("refusal lines %+v", refused)
+	}
+
+	// A session that delivered a message leaves no "without a message" line.
+	logs3 := &logBuffer{}
+	c = dial(t, startServer(t, Options{Hub: &fakeHub{}, Logger: slog.New(slog.NewJSONHandler(logs3, nil))}))
+	if err := send(t, c, "bounce@example.com", []string{"hive@" + testHost}, inviteMail(t, "google.ics")); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Quit(); err != nil {
+		t.Fatal(err)
+	}
+	logs3.waitLines(t, "hive-mx: message accepted", 1)
+	const settle = 100 * time.Millisecond
+	time.Sleep(settle)
+	if got := logs3.lines(t, "hive-mx: session ended without a message"); len(got) != 0 {
+		t.Fatalf("a delivered session logged %+v", got)
 	}
 }

@@ -350,3 +350,88 @@ func TestLimitsWithDefaults(t *testing.T) {
 		t.Fatal("the per-file cap is 25 MB (#18564)")
 	}
 }
+
+// TestParseDocumentsAndSkips (hivecommons/hive#18699): office documents are
+// accepted, in memory and spooled; every attachment left out is listed by
+// extension and reason, never by name, also when nothing is left to deliver.
+func TestParseDocumentsAndSkips(t *testing.T) {
+	pptx := pptxData(t)
+	att := func(name string, body []byte) part {
+		return part{contentType: "application/octet-stream", disposition: `attachment; filename="` + name + `"`, body: body}
+	}
+	docs := buildMail("ada@example.com", "KubeCon deck", att("deck.pptx", pptx), att("report.pdf", pdfData), att("memo.docx", docxData(t)), att("numbers.xlsx", xlsxData(t)))
+	for _, dir := range []string{"", t.TempDir()} {
+		p, err := ParseReader(bytes.NewReader(docs), DefaultLimits(), dir)
+		if err != nil || p.Kind != wire.KindFiles || len(p.Files.Attachments) != 4 || p.Attachments != 4 || len(p.Skipped) != 0 {
+			t.Fatalf("spool %q: %v %+v", dir, err, p)
+		}
+		for _, a := range p.Files.Attachments {
+			if a.Kind != wire.AttachDocument || a.Size == 0 || a.SHA256 == "" || (dir != "") != (a.Path != "") {
+				t.Fatalf("spool %q: attachment %+v", dir, a)
+			}
+		}
+		if a := p.Files.Attachments[0]; a.Name != "deck.pptx" || a.ContentType != ctPPTX || a.Size != len(pptx) || a.SHA256 != sha256Hex(pptx) {
+			t.Fatalf("pptx %+v", a)
+		}
+		p.Cleanup()
+	}
+
+	// Refused attachments, each with its reason; nothing is left.
+	lim := DefaultLimits()
+	lim.MaxFileBytes = 64
+	big := append(append([]byte(nil), pngData...), make([]byte, 4096)...)
+	raw := buildMail("ada@example.com", "secret subject",
+		att("Quarterly Secret.key", []byte("keynote")), att("lie.pptx", docxData(t)), att("huge.png", big), att("noext", mdData))
+	want := []wire.SkippedFile{{Ext: "key", Reason: wire.SkipType}, {Ext: "pptx", Reason: wire.SkipSize}, {Ext: "png", Reason: wire.SkipSize}, {Ext: "", Reason: wire.SkipType}}
+	for _, dir := range []string{"", t.TempDir()} {
+		p, err := ParseReader(bytes.NewReader(raw), lim, dir)
+		if !errors.Is(err, ErrNothingToDeliver) || p.Attachments != 4 || len(p.Skipped) != len(want) {
+			t.Fatalf("spool %q: %v %+v", dir, err, p)
+		}
+		for i, sk := range p.Skipped {
+			if sk != want[i] {
+				t.Errorf("spool %q: skipped[%d] = %+v, want %+v", dir, i, sk, want[i])
+			}
+		}
+		if dir != "" {
+			if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+				t.Fatalf("refused files left %d spooled files", len(entries))
+			}
+		}
+	}
+
+	// A document whose content is another kind's is a content mismatch, in
+	// memory and spooled (the spooled copy is removed).
+	for _, dir := range []string{"", t.TempDir()} {
+		p, err := ParseReader(bytes.NewReader(buildMail("ada@example.com", "x", att("lie.pptx", docxData(t)))), DefaultLimits(), dir)
+		if !errors.Is(err, ErrNothingToDeliver) || len(p.Skipped) != 1 || p.Skipped[0] != (wire.SkippedFile{Ext: "pptx", Reason: wire.SkipContent}) {
+			t.Fatalf("spool %q: %v %+v", dir, err, p.Skipped)
+		}
+		if dir != "" {
+			if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+				t.Fatalf("mismatched document left %d spooled files", len(entries))
+			}
+		}
+	}
+
+	// A body with a refused attachment is still delivered, and the
+	// delivery says what was left out; a file over the count is listed too.
+	lim = DefaultLimits()
+	lim.MaxFiles = 1
+	p, err := Parse(buildMail("ada@example.com", "mixed",
+		part{contentType: "text/plain", body: []byte("see attached"), raw: true},
+		att("slides.key", []byte("keynote")), att("a.png", pngData), att("b.png", pngData)), lim)
+	if err != nil || len(p.Files.Attachments) != 1 || p.Files.Note != "see attached" || p.Attachments != 3 {
+		t.Fatalf("mixed: %v %+v", err, p)
+	}
+	if len(p.Files.Skipped) != 2 || p.Files.Skipped[0] != (wire.SkippedFile{Ext: "key", Reason: wire.SkipType}) || p.Files.Skipped[1] != (wire.SkippedFile{Ext: "png", Reason: wire.SkipCount}) {
+		t.Fatalf("mixed skipped %+v", p.Files.Skipped)
+	}
+
+	// An extension is reduced to letters and digits and bounded.
+	for in, want := range map[string]string{"a.PPTX": "pptx", "x.tar.gz": "gz", "evil.<script>": "script", "none": "", "x." + strings.Repeat("e", 40): strings.Repeat("e", wire.MaxExtRunes)} {
+		if got := extLabel(in); got != want {
+			t.Errorf("extLabel(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
