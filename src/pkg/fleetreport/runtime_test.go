@@ -1302,6 +1302,8 @@ func TestRecurringRuntimeMessagesAreClassified(t *testing.T) {
 		"proxy: CONNECT dial failed":                                                                     ClassProxyConnectDialFailed,
 		"proxy: plain HTTP forward failed":                                                               ClassProxyPlainForwardFailed,
 		"copilot sniff: upstream dial failed":                                                            ClassProxyConnectDialFailed,
+		"proxy upstream dial failed":                                                                     ClassProxyConnectDialFailed,
+		"transparent proxy upstream dial failed":                                                         ClassProxyConnectDialFailed,
 		"inference no route":                                                                             ClassInferenceNoRoute,
 		"inference upstream error":                                                                       ClassInferenceUpstreamError,
 		"copilot transcript activity scan outlived its interval; agent liveness reads may lag":           ClassTranscriptScanSlow,
