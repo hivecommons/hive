@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v6.42.1)
+
+### Changed
+
+- The advisor test tooling now includes a disposable-container probe (`src/test/advisor_toolless_probe/`) to investigate whether Codex and Copilot runs at the pinned CLI versions can execute tools or leak a canary; real-login verification remains outstanding for #18421.
+
 ## 2026-11-17 (v6.42.0)
 
 ### Added
