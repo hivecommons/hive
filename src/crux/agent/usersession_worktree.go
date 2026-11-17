@@ -361,8 +361,8 @@ func (r *UserSessionRuntime) removeWorktrees(id string) error {
 			return err
 		}
 	}
-	if out, err := r.privRunFor(userSessionWorktreeTimeout, userSessionRootSpec, nil, "rm", "-rf", "--one-file-system", "--", dir); err != nil {
-		return outputErr("removing session worktrees dir", err, out)
+	if err := r.removeTree("removing session worktrees dir", dir); err != nil {
+		return err
 	}
 	return os.RemoveAll(userSessionSpekInitMarkerDir(id))
 }
