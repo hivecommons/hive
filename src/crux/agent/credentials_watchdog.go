@@ -250,6 +250,12 @@ func (m *Manager) StartCredentialWatchdog(ctx context.Context) {
 	// then runs on every bridge poll. It is not gated on an agent using
 	// Claude: sessions use the shared login either way.
 	m.syncUserSessionClaudeLogins(sessionLoginTriggerBoot)
+	// A refreshed grant an earlier run saved but never got into the shared
+	// file is adopted now, before anything can present the dead token
+	// (claude_shared_grant.go).
+	if !m.claudeOperatorTokenMode() {
+		m.settlePendingSharedClaudeGrant(claudeSharedRefreshNow())
+	}
 	for {
 		select {
 		case <-ctx.Done():

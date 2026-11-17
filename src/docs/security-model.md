@@ -537,8 +537,14 @@ importance:
   therefore gets the Claude login **without its refresh token**, and only the
   login's own token block, nothing else stored in that file. It can use the
   fleet's current access token and cannot rotate or carry away the long-lived
-  grant. Refreshing stays where it was: with the agents' credential bridge and
-  the dashboard sign-in, the only writers of the shared file. The hive keeps
+  grant. Who refreshes it: the hive itself, once, ahead of expiry
+  ([#18731](https://github.com/hivecommons/hive/issues/18731); it redeems the
+  shared refresh token and holds the new grant on disk and in memory until the
+  shared file has it, `HIVE_CLAUDE_SHARED_REFRESH=off` disables it), the
+  agents' credential bridge when a CLI refreshed first anyway, and the
+  dashboard sign-in. A session never refreshes. All writers of the shared file
+  go through one function under one lock that accepts only a usable credential
+  expiring strictly later than the current one. The hive keeps
   the copies current (it replaces them, atomically and as the session's uid,
   when the shared login changes), so a session depends on the fleet's login
   being refreshed by an agent or a sign-in; a session cannot do that itself.

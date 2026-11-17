@@ -124,6 +124,15 @@ type claudeSharedRefreshState struct {
 	// tick (or a concurrent caller) does not present the same refresh token
 	// a second time, which is precisely the reuse that revokes the grant.
 	inFlight bool
+
+	// A refreshed grant not yet in the shared file (claude_shared_grant.go).
+	pending         *claude.OAuthTokens
+	pendingLifetime time.Duration
+	pendingOnDisk   bool
+	pendingChecked  bool
+	writeFailures   int
+	writeNotBefore  time.Time
+	writeErr        string
 }
 
 // claudeSharedRefreshEnabled reports whether the central refresh is on
@@ -208,6 +217,11 @@ func (m *Manager) refreshSharedClaudeCredential() claudeSharedRefreshOutcome {
 	}
 	target := sharedClaudeBridgeTarget()
 	now := claudeSharedRefreshNow()
+	// A grant already redeemed but not yet written comes first: the token
+	// endpoint is never called while one is held (claude_shared_grant.go).
+	if out, held := m.settlePendingSharedClaudeGrant(now); held {
+		return out
+	}
 	tok := claude.LoadTokens(target)
 
 	st := &m.claudeSharedRefresh
@@ -229,6 +243,9 @@ func (m *Manager) refreshSharedClaudeCredential() claudeSharedRefreshOutcome {
 
 	fresh, err := claudeRefreshTokens(tok)
 	if err != nil {
+		if errors.Is(err, claude.ErrRefreshGrantRejected) && m.reconcileBeforeRejectingSharedClaude(tok, target, now) {
+			return claudeSharedRefreshSuperseded
+		}
 		m.recordSharedClaudeRefreshFailure(tok.ExpiresAt, now, err)
 		return claudeSharedRefreshFailed
 	}
@@ -237,45 +254,11 @@ func (m *Manager) refreshSharedClaudeCredential() claudeSharedRefreshOutcome {
 		return claudeSharedRefreshFailed
 	}
 
-	// Write under the bridge lock so a promotion racing with this pass and
-	// this write cannot interleave; keep the later-expiring credential.
-	claudeBridgeMu.Lock()
-	current := claude.LoadTokens(target)
-	if current != nil && current.ExpiresAt > fresh.ExpiresAt {
-		claudeBridgeMu.Unlock()
-		m.logger.Info("claude shared login: a fresher credential reached the shared file while the hive was refreshing it; keeping the fresher one",
-			"shared", target, "expires_at", time.UnixMilli(current.ExpiresAt).UTC().Format(time.RFC3339))
-		return claudeSharedRefreshSuperseded
-	}
-	werr := claude.WriteCredentials(fresh, target)
-	claudeBridgeMu.Unlock()
-	if werr != nil {
-		m.recordSharedClaudeRefreshFailure(tok.ExpiresAt, now, werr)
-		return claudeSharedRefreshFailed
-	}
-
-	// Agents launched from now on that cannot read the file (manager_env.go)
-	// should get this token, not the one cached at boot. m.mu is never taken
-	// while claudeBridgeMu is held; it is released above.
-	m.mu.Lock()
-	m.claudeAuthToken = fresh.AccessToken
-	m.mu.Unlock()
-
-	st.mu.Lock()
-	st.lifetime = time.Duration(fresh.ExpiresAt-now.UnixMilli()) * time.Millisecond
-	st.failedExpiresAt, st.notBefore, st.rejectedExpiresAt = 0, time.Time{}, 0
-	st.mu.Unlock()
-
-	expires := time.UnixMilli(fresh.ExpiresAt).UTC().Format(time.RFC3339)
-	m.logger.Info("claude shared login: refreshed the shared Claude credential ahead of expiry; agents read the new token through their credential bridges and do not refresh it themselves",
-		"shared", target, "expires_at", expires, "lead", lead.String(),
-		"previous_expires_at", time.UnixMilli(tok.ExpiresAt).UTC().Format(time.RFC3339))
-	m.audit(AuditClaudeCredentialRefreshed, "", auditFields(
-		"outcome", "success",
-		"trigger", "timer",
-		"expires_at", expires,
-	))
-	return claudeSharedRefreshWritten
+	// The old refresh token is dead from here on: keep the new grant on disk
+	// and in memory until the shared file has it, then write it under the
+	// bridge lock with the same "strictly newer wins" rule as every writer.
+	m.holdSharedClaudeGrant(fresh, target, time.Duration(fresh.ExpiresAt-now.UnixMilli())*time.Millisecond)
+	return m.flushPendingSharedClaudeGrant(now)
 }
 
 // recordSharedClaudeRefreshFailure logs and audits one failed pass and arms

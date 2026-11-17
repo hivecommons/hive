@@ -701,6 +701,58 @@ expiry`, and the audit log records `claude_credential_refreshed` with
 bridge promotes its copy exactly as before (`kept=agent`). File contents are
 never logged. `HIVE_CLAUDE_SHARED_REFRESH=off` turns the central refresh off.
 
+Kill switch: with `HIVE_CLAUDE_SHARED_REFRESH=off` the hive never calls the
+token endpoint for the shared login. Each CLI then refreshes for itself, and
+the only protection is the after-the-fact repair by the agents' credential
+bridge and the session adopt-back, which cannot stop N CLIs from racing one
+refresh token. Use it only if the hive's own refresh misbehaves; a pending
+grant left by an earlier run is still adopted at boot with it off.
+
+The new refresh token must not be lost. The provider kills the old refresh
+token the moment it answers, so the hive saves the new grant to
+`.credentials.pending` (mode 0600, fsynced, beside the shared file) before it
+writes the shared file, holds it in memory, and retries the write with backoff
+(5 s doubling to 5 min, with no overall limit) without calling the token
+endpoint again. After a restart a pending grant newer than the shared file is
+adopted at boot; an older one is deleted. If the write keeps failing the hive
+logs `claude shared login: the hive redeemed the shared Claude grant but could
+NOT save the new one`, records `claude_credential_refreshed` with
+`reason=new grant could not be saved`, and raises the dashboard banner
+"The hive refreshed the shared Claude login but cannot write the new one",
+which names the time the login the agents read expires. Fix the disk space or
+ownership of `/data/home/.claude`, or sign in from the dashboard, before then.
+This closes the window while the process lives; across a crash it narrows it to
+the milliseconds between the provider's answer and the pending file's fsync,
+or to the case where both files fail and the process dies before either
+recovers. A refused grant is also not final while a newer one exists: before
+marking the login rejected the hive publishes any newer credential from an
+agent or session home and compares the shared file again.
+
+Everything that writes the shared login (this refresher, the agents' bridge
+promote-on-race, the session adopt-back) goes through one function under one
+lock, which writes only a usable credential that expires strictly later than
+the current one. Only the typed token block is ever written; any other content
+in the file is dropped, as the dashboard sign-in does, on purpose.
+
+Live check (a real CLI is needed; the unit tests cannot cover it). The hive
+assumes a running Claude CLI re-reads the rewritten file through its
+credential symlink instead of refreshing with a refresh token it cached; if
+it does not, its later refresh presents a dead token and trips the provider's
+reuse detection. The hive does not restart agents on a refresh. To confirm, on
+a hive with at least two Claude agents:
+
+1. Note each agent's pane and set `HIVE_CLAUDE_SHARED_REFRESH_LEAD` to a value
+   just under the current remaining lifetime so the next minute's pass refreshes
+   (or wait for the natural pass).
+2. Watch for `claude shared login: refreshed the shared Claude credential`
+   and the `claude_credential_refreshed` audit entry with `outcome=success`.
+3. Leave the agents running past the OLD access token's expiry and send each a
+   task. They must keep working with no `OAuth token revoked`, no login prompt,
+   and no `claude credential bridge ... re-bridged` entry with `kept=agent`
+   (that entry means a CLI refreshed on its own).
+4. If any agent shows the prompt, or a `kept=agent` entry appears, a running
+   CLI is not picking the file up: set `HIVE_CLAUDE_SHARED_REFRESH=off` and report it.
+
 If the shared grant is already dead, the hive's own refresh is rejected too:
 the log says
 `claude shared login: the authorization server rejected the shared refresh grant`
