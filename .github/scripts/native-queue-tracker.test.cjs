@@ -31,8 +31,11 @@ test('real queue position, state and provider age never invent pipeline progress
   assert.match(html, /front #7 awaiting checks, in queue 10m/);
   assert.match(html, /on this page/);
   assert.match(html, /checked 1m ago/);
-  // Queued is not testing and not merged: nothing on the line says so.
-  assert.doesNotMatch(html, /testing:|merged|data-ham-key|[0-9]+%|ETA [0-9]/);
+  // Queued is not testing and not merged: nothing on the line says so (the
+  // help mark may mention the words only to say what they are not).
+  const line = html.match(/<span class="ham-native-line">(.*?)<\/span><span class="ham-merged-meta">/)[1];
+  assert.doesNotMatch(line, /testing:|merged|data-ham-key|[0-9]+%|ETA [0-9]/);
+  assert.doesNotMatch(html, /data-ham-key|[0-9]+%|ETA [0-9]/);
   assert.equal(JSON.stringify([q, row]), before);
 });
 
@@ -86,8 +89,9 @@ test('parallel candidate cards retain exact members and exact candidate CI drill
   assert.equal((html.match(/<div class="ham-native-group">/g) || []).length, 2);
   assert.match(html, /2 groups testing: checks running, checks failed/);
   assert.match(html, /ham-native-badge-problem">checks failed/);
-  assert.match(html, /Test group <code title="candidate-one">candidate-one<\/code> · checks running/);
-  assert.match(html, /Test group <code title="candidate-two">candidate-two<\/code> · checks failed/);
+  // The SHA is shortened to 12 characters; the full value stays in the title.
+  assert.match(html, /Test group <code title="candidate-one">candidate-on<\/code> · checks running/);
+  assert.match(html, /Test group <code title="candidate-two">candidate-tw<\/code> · checks failed/);
   assert.match(html, /on another page/);
   assert.match(html, /https:\/\/github.com\/o\/r\/actions\/runs\/1/);
   assert.match(render(q, [{ ...row, head: 'new-head' }]), /outside snapshot or head changed/);

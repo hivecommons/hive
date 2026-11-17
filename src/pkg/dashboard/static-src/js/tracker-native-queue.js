@@ -217,11 +217,12 @@
       const problems = scopes.filter(s => s.facts.problem || s.facts.failing).length;
       const newest = scopes.map(s => s.facts.ageMs).filter(Number.isFinite).sort((a, b) => a - b)[0];
       const branches = queues.length === 1 ? '1 branch' : queues.length + ' branches';
-      // "nothing queued" is only said about branches that have been read.
-      const known = scopes.filter(s => s.facts.state !== 'unknown').length;
+      // "nothing queued" is only said about branches that were actually read:
+      // not one still waiting for its first visit, nor one whose refresh failed.
+      const read = scopes.filter(s => s.facts.state === 'observed' || s.facts.state === 'not-enabled').length;
       const headline = queued ? queued + (queued === 1 ? ' PR queued' : ' PRs queued') + ' on ' + branches
-        : known === queues.length ? 'nothing queued on ' + branches
-        : known ? 'nothing queued on ' + known + ' of ' + queues.length + ' branches' : branches + ', none checked yet';
+        : read === queues.length ? 'nothing queued on ' + branches
+        : read ? 'nothing queued on ' + read + ' of ' + queues.length + ' branches' : branches;
       const summary = [headline,
         testing ? testing + (testing === 1 ? ' group testing' : ' groups testing') : '',
         problems ? problems + (problems === 1 ? ' branch needs attention' : ' branches need attention') : '',
