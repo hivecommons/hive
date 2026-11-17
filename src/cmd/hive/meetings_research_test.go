@@ -187,7 +187,7 @@ func TestWithResearchAgentsSurvivesReconcile(t *testing.T) {
 	if got := withResearchAgents(cfgs); len(got) != 1 {
 		t.Fatalf("unwired pool adds nothing: %v", got)
 	}
-	on := &config.Config{Meetings: config.MeetingsConfig{Enabled: true, ResearchPoolSize: 2}, Agents: cfgs}
+	on := &config.Config{Meetings: config.MeetingsConfig{Enabled: true, ResearchPoolSize: 2}, AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: cfgs}}
 	if wireMeetingsResearch(on, &fakeResearchRuntime{added: map[string]config.AgentConfig{}}, nil) == nil {
 		t.Fatal("pool not wired")
 	}
@@ -214,7 +214,7 @@ func TestMeetingsResearchStatus(t *testing.T) {
 	}
 	t.Cleanup(func() { researchAgents.Store(nil) })
 	cfg := &config.Config{Meetings: config.MeetingsConfig{Enabled: true, ResearchPoolSize: 2},
-		Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude", Model: "m1"}, "a": {Backend: "codex"}}}
+		AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude", Model: "m1"}, "a": {Backend: "codex"}}}}
 	d := wireMeetingsResearch(cfg, &fakeResearchRuntime{added: map[string]config.AgentConfig{}}, nil)
 	fn := meetingsResearchStatus(cfg, d)
 	if fn == nil {
@@ -224,7 +224,7 @@ func TestMeetingsResearchStatus(t *testing.T) {
 	if len(st.Agents) != 2 || st.Available != 2 || st.BaseAgent != "scanner" || st.Backend != "claude" || st.Model != "m1" {
 		t.Fatalf("status = %+v", st)
 	}
-	if got := researchBaseName(&config.Config{Agents: map[string]config.AgentConfig{"b": {}, "a": {}}}); got != "a" {
+	if got := researchBaseName(&config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"b": {}, "a": {}}}}); got != "a" {
 		t.Fatalf("first by name, got %q", got)
 	}
 	if researchBaseName(nil) != "" {
