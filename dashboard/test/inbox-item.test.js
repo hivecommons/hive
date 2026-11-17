@@ -116,8 +116,10 @@ test('Play and Share are icon buttons with an accessible name and a tooltip; Tra
 
 test('a trailing recording id leaves the title for the meta line, the full title is the tooltip', () => {
   const ctx = makeContext('owner');
-  assert.deepEqual(vm.runInContext('inboxTitleParts("Meeting notes: google meet meeting 2026-11-17 (mtg-078395cc1f76)")', ctx), { title: 'Meeting notes: google meet meeting 2026-11-17', id: 'mtg-078395cc1f76', full: 'Meeting notes: google meet meeting 2026-11-17 (mtg-078395cc1f76)' });
-  assert.deepEqual(vm.runInContext('inboxTitleParts("Standup (notes)")', ctx), { title: 'Standup (notes)', id: '', full: 'Standup (notes)' });
+  // Objects cross the vm boundary with another Object prototype: compare by value.
+  const parts = s => JSON.parse(JSON.stringify(vm.runInContext('inboxTitleParts(' + JSON.stringify(s) + ')', ctx)));
+  assert.deepEqual(parts('Meeting notes: google meet meeting 2026-11-17 (mtg-078395cc1f76)'), { title: 'Meeting notes: google meet meeting 2026-11-17', id: 'mtg-078395cc1f76', full: 'Meeting notes: google meet meeting 2026-11-17 (mtg-078395cc1f76)' });
+  assert.deepEqual(parts('Standup (notes)'), { title: 'Standup (notes)', id: '', full: 'Standup (notes)' });
   const html = vm.runInContext('inboxItemHtml(' + JSON.stringify(Object.assign({}, readyItem, { source: 'hive-recording', title: 'Meeting notes: teams meeting 2026-11-17 (mtg-814d078a559b)', recorded_at: '2026-11-17T08:00:00Z' })) + ')', ctx);
   assert.match(html, /<div class="kb-fact-title inbox-title" title="Meeting notes: teams meeting 2026-11-17 \(mtg-814d078a559b\)">Meeting notes: teams meeting 2026-11-17<\/div>/);
   assert.match(html, /hive-recording · recorded 2h ago · 2m 5s · <span class="inbox-meta-id" title="Recording id">mtg-814d078a559b<\/span>/);
