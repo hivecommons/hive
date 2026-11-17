@@ -331,9 +331,12 @@ func TestUserSessionWorkspaceIsClonedOnceWithAWorktreePerSession(t *testing.T) {
 	}
 	adds := privCallsWithScript(p, userSessionWorktreeAddScript)
 	secondUser := strconv.Itoa(defaultUserSessionUIDBase+testSecondSlot-1) + ":" + strconv.Itoa(defaultUserSessionGID)
-	want := [][3]string{{testSessionSpecUser, ws1, userSessionWorktreeBranch(testSessionID)}, {secondUser, ws2, userSessionWorktreeBranch(testSecondSessionID)}}
+	// The add script runs on every start, as the session uid, because only
+	// that uid can see whether the worktree is already there: the resume of
+	// the first session runs it again (a no-op inside the script).
+	want := [][3]string{{testSessionSpecUser, ws1, userSessionWorktreeBranch(testSessionID)}, {secondUser, ws2, userSessionWorktreeBranch(testSecondSessionID)}, {testSessionSpecUser, ws1, userSessionWorktreeBranch(testSessionID)}}
 	if len(adds) != len(want) {
-		t.Fatalf("worktree add ran %d times, want once per session: %+v", len(adds), adds)
+		t.Fatalf("worktree add ran %d times, want once per start: %+v", len(adds), adds)
 	}
 	for i, c := range adds {
 		if c.user != want[i][0] || c.argv[4] != clone || c.argv[5] != want[i][1] || c.argv[6] != want[i][2] {
