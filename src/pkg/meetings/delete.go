@@ -76,6 +76,7 @@ func (m *Manager) Delete(ctx context.Context, id string) (DeleteResult, error) {
 	m.clearLobby(id)
 	m.mu.Lock()
 	delete(m.consentAt, id)
+	delete(m.consentTries, id)
 	m.mu.Unlock()
 	if err := m.opts.Store.Remove(id); err != nil {
 		return res, err
