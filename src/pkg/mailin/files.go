@@ -11,28 +11,57 @@ import (
 )
 
 // fileType is an accepted attachment extension: its Inbox kind and the
-// sniffed content types that may back it.
+// sniffed content types that may back it, each mapped to the content type
+// the file is stored as.
 type fileType struct {
 	kind  string
-	sniff []string
+	sniff map[string]string
+}
+
+// Sniffed content types beyond the stored ones. An ISO base media file
+// whose brand is shared by audio and video recorders is "application/mp4"
+// until its extension says which.
+const (
+	ctMP4Generic = "application/mp4"
+	ctAudioMP4   = "audio/mp4"
+	ctVideoMP4   = "video/mp4"
+	ctQuickTime  = "video/quicktime"
+	ctMatroska   = "video/x-matroska"
+	ctWebM       = "audio/webm"
+	ctMarkdown   = "text/markdown"
+)
+
+func same(cts ...string) map[string]string {
+	m := make(map[string]string, len(cts))
+	for _, ct := range cts {
+		m[ct] = ct
+	}
+	return m
 }
 
 // fileTypes is the mail-in allowlist. The type is decided by content
 // sniffing; the extension only has to agree with it.
 var fileTypes = map[string]fileType{
-	".md":       {wire.AttachMarkdown, []string{"text/markdown"}},
-	".markdown": {wire.AttachMarkdown, []string{"text/markdown"}},
-	".m4a":      {wire.AttachAudio, []string{"audio/mp4"}},
-	".mp3":      {wire.AttachAudio, []string{"audio/mpeg"}},
-	".wav":      {wire.AttachAudio, []string{"audio/wave"}},
-	".ogg":      {wire.AttachAudio, []string{"audio/ogg"}},
-	".webm":     {wire.AttachAudio, []string{"audio/webm"}},
-	".png":      {wire.AttachImage, []string{"image/png"}},
-	".jpg":      {wire.AttachImage, []string{"image/jpeg"}},
-	".jpeg":     {wire.AttachImage, []string{"image/jpeg"}},
-	".gif":      {wire.AttachImage, []string{"image/gif"}},
-	".webp":     {wire.AttachImage, []string{"image/webp"}},
+	".md":       {wire.AttachMarkdown, same(ctMarkdown)},
+	".markdown": {wire.AttachMarkdown, same(ctMarkdown)},
+	".m4a":      {wire.AttachAudio, map[string]string{ctAudioMP4: ctAudioMP4, ctMP4Generic: ctAudioMP4}},
+	".mp3":      {wire.AttachAudio, same("audio/mpeg")},
+	".wav":      {wire.AttachAudio, same("audio/wave")},
+	".ogg":      {wire.AttachAudio, same("audio/ogg")},
+	// WebM (audio or video) goes to transcription as it is.
+	".webm": {wire.AttachAudio, same(ctWebM)},
+	".mp4":  {wire.AttachVideo, map[string]string{ctVideoMP4: ctVideoMP4, ctMP4Generic: ctVideoMP4, ctAudioMP4: ctVideoMP4}},
+	".mov":  {wire.AttachVideo, map[string]string{ctQuickTime: ctQuickTime, ctMP4Generic: ctQuickTime, ctVideoMP4: ctQuickTime}},
+	".mkv":  {wire.AttachVideo, same(ctMatroska)},
+	".png":  {wire.AttachImage, same("image/png")},
+	".jpg":  {wire.AttachImage, same("image/jpeg")},
+	".jpeg": {wire.AttachImage, same("image/jpeg")},
+	".gif":  {wire.AttachImage, same("image/gif")},
+	".webp": {wire.AttachImage, same("image/webp")},
 }
+
+// AcceptedExtensions is the allowlist as the SMTP reply lists it.
+const AcceptedExtensions = "md, m4a, mp3, wav, ogg, webm, mp4, mov, mkv, png, jpg, gif, webp"
 
 // maxNameRunes bounds an attachment file name.
 const maxNameRunes = 120
@@ -40,26 +69,65 @@ const maxNameRunes = 120
 // sniffLen is how much of a file content sniffing looks at.
 const sniffLen = 512
 
-// mp4 "ftyp" brands that carry audio (M4A and the generic ISO brands
-// phone recorders use).
-var m4aBrands = []string{"M4A ", "M4B ", "mp42", "isom", "mp41", "iso2", "dash"}
+// ISO base media "ftyp" brands: audio only, video only, and the generic
+// ones both kinds of recorder write.
+var (
+	m4aBrands   = []string{"M4A ", "M4B "}
+	videoBrands = []string{"M4V ", "M4VH", "M4VP", "avc1", "iso4", "iso5", "iso6", "3gp4", "3gp5", "3gp6", "3g2a", "MSNV", "mp71"}
+	mp4Brands   = []string{"mp42", "isom", "mp41", "iso2", "dash"}
+	qtBrands    = []string{"qt  "}
+	// qtAtoms start a QuickTime movie written without an ftyp box.
+	qtAtoms = []string{"moov", "mdat", "wide", "free", "skip", "pnot"}
+)
 
-// sniff names the content type of b among the types mail-in accepts, ""
-// for anything else.
-func sniff(b []byte) string {
-	head := b
+func hasString(list []string, s string) bool {
+	for _, v := range list {
+		if v == s {
+			return true
+		}
+	}
+	return false
+}
+
+// sniffISO names an ISO base media / QuickTime head, "" for none.
+func sniffISO(head []byte) string {
+	if len(head) < 8 {
+		return ""
+	}
+	box := string(head[4:8])
+	if box != "ftyp" {
+		// A box size starts with a zero byte below 16 MiB; text never does.
+		if head[0] == 0 && hasString(qtAtoms, box) {
+			return ctQuickTime
+		}
+		return ""
+	}
+	if len(head) < 12 {
+		return ""
+	}
+	switch brand := string(head[8:12]); {
+	case hasString(m4aBrands, brand):
+		return ctAudioMP4
+	case hasString(videoBrands, brand):
+		return ctVideoMP4
+	case hasString(qtBrands, brand):
+		return ctQuickTime
+	case hasString(mp4Brands, brand):
+		return ctMP4Generic
+	}
+	return ""
+}
+
+// sniffHead names the content type of a file's first bytes among the
+// binary types mail-in accepts, "" for anything else.
+func sniffHead(head []byte) string {
 	if len(head) > sniffLen {
 		head = head[:sniffLen]
 	}
+	if ct := sniffISO(head); ct != "" {
+		return ct
+	}
 	switch {
-	case len(head) >= 12 && string(head[4:8]) == "ftyp":
-		brand := string(head[8:12])
-		for _, m := range m4aBrands {
-			if brand == m {
-				return "audio/mp4"
-			}
-		}
-		return ""
 	case bytes.HasPrefix(head, []byte("ID3")),
 		len(head) >= 2 && head[0] == 0xFF && head[1]&0xE0 == 0xE0 && head[1]&0x06 != 0:
 		// ID3 tag or an MPEG audio frame sync with a valid layer.
@@ -69,14 +137,27 @@ func sniff(b []byte) string {
 	case bytes.HasPrefix(head, []byte("OggS\x00")):
 		return "audio/ogg"
 	case bytes.HasPrefix(head, []byte("\x1A\x45\xDF\xA3")):
-		return "audio/webm"
+		// EBML: the DocType says Matroska or WebM.
+		if bytes.Contains(head, []byte("matroska")) {
+			return ctMatroska
+		}
+		return ctWebM
 	}
 	switch ct := http.DetectContentType(head); ct {
 	case "image/png", "image/jpeg", "image/gif", "image/webp":
 		return ct
 	}
+	return ""
+}
+
+// sniff names the content type of b among the types mail-in accepts, ""
+// for anything else.
+func sniff(b []byte) string {
+	if ct := sniffHead(b); ct != "" {
+		return ct
+	}
 	if isMarkdownText(b) {
-		return "text/markdown"
+		return ctMarkdown
 	}
 	return ""
 }
@@ -95,21 +176,32 @@ func isMarkdownText(b []byte) bool {
 	return true
 }
 
-// acceptFile checks one attachment against the allowlist: the extension
-// must be allowed and the sniffed type must match it.
-func acceptFile(name string, data []byte) (wire.Attachment, bool) {
+// classify checks a file name against the allowlist. It returns the
+// accepted type, the cleaned name and whether the extension is allowed.
+func classify(name string) (fileType, string, bool) {
 	name = safeName(name)
 	ft, ok := fileTypes[strings.ToLower(path.Ext(name))]
+	return ft, name, ok
+}
+
+// match returns the stored content type when the sniffed type ct backs ft.
+func (ft fileType) match(ct string) (string, bool) {
+	stored, ok := ft.sniff[ct]
+	return stored, ok
+}
+
+// acceptFile checks one attachment held in memory against the allowlist:
+// the extension must be allowed and the sniffed type must match it.
+func acceptFile(name string, data []byte) (wire.Attachment, bool) {
+	ft, name, ok := classify(name)
 	if !ok || len(data) == 0 {
 		return wire.Attachment{}, false
 	}
-	got := sniff(data)
-	for _, want := range ft.sniff {
-		if got == want {
-			return wire.Attachment{Name: name, Kind: ft.kind, ContentType: got, Size: len(data), Data: data}, true
-		}
+	ct, ok := ft.match(sniff(data))
+	if !ok {
+		return wire.Attachment{}, false
 	}
-	return wire.Attachment{}, false
+	return wire.Attachment{Name: name, Kind: ft.kind, ContentType: ct, Size: len(data), Data: data}, true
 }
 
 // safeName keeps the base name of an attachment, without path separators

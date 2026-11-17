@@ -50,6 +50,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [dibs domain cutover](dibs-domain-cutover.md) — staged operator sequence for moving dibs to `dibs.hivecommons.dev`, including DNS, Let's Encrypt quota hold, Certificate/Ingress manifests, redirect verification, and rollback.
 - [Serving spokes from the fleet wildcard certificate](spoke-wildcard-tls.md) — how to point a cluster's provisioned spokes at the wildcard instead of one certificate per hive, the two cluster prerequisites that must hold first, and which hosts a wildcard cannot cover.
 - [Tagged releases](releases.md) — **Release maintainer:** trigger/version rules, manual recovery, channel relationship, and release SBOM artifacts.
+- [Release-feed watcher](release-feeds.md) — **Off until an agent lists a source:** kicks an agent when a tracked GitHub release/tag, PyPI package or index publishes a new version, with `${NEW_RELEASES}` in the prompt.
 - [Release sentinel](release-sentinel.md) — **Opt-in; off by default:** bounded repair for failing release CI, human escalation, and separately opted-in retagging.
 - [Dashboard-triggered standalone upgrades](dashboard-standalone-upgrades.md) — the dashboard upgrade button for standalone (Compose/Podman-Quadlet) hives: the `HIVE_DEPLOYMENT_RUNTIME`/`HIVE_DEPLOYMENT_PODMAN_MODE` runtime contract, the closed host-side helper (`hive-dashboard-upgrade-helper.sh`), and why an unproven runtime deliberately hides the button.
 ### Dashboards and integration reference

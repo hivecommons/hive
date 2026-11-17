@@ -71,7 +71,8 @@ func TestMeetingAttendeeTabBehaviour(t *testing.T) {
 	for _, f := range []string{"maLanguageLabel", "maFlag", "maRenderIntro", "renderGovMeetingAttendee", "maSetData", "maPreset",
 		"maOverrideNote", "maPresetCardHtml", "maField", "maTextInput", "maVoiceOptions", "maLanguageOptions", "maVoiceTypeOptions",
 		"maPersonaHtml", "maBehaviourHtml", "maEmailHtml", "maRender", "maRefreshPreview", "maInput", "maCapInput",
-		"maLanguageChanged", "maPickPreset", "maRequestBody", "maSampleSrc", "maMyEmailsHtml", "maEmailToggle"} {
+		"maLanguageChanged", "maPickPreset", "maRequestBody", "maSampleSrc", "maMyEmailsHtml", "maEmailToggle",
+		"maProofFailureHtml", "maProofAuthSummary", "maProofAttemptsHtml"} {
 		parts = append(parts, jsFunc(t, html, f))
 	}
 	parts = append(parts,
@@ -115,6 +116,18 @@ func TestMeetingAttendeeTabBehaviour(t *testing.T) {
 		`_maState.mine = { address: 'hive@h.example', emails: [{ email: 'me@x.org', proven: false, code: 'hive-proof-aaaaaaaaaaaa', active: true, last_error: 'the proof mail came from a different address' }, { email: 'old@x.org', proven: true, active: false }] };`,
 		`email = maEmailHtml();`,
 		`assert.ok(email.includes('hive-proof-aaaaaaaaaaaa') && email.includes('data-action="maRemoveMyEmail" data-arg0="me@x.org"') && email.includes('different address') && email.includes('not on the allowlist'), email);`,
+		// A failed proof shows the server's plain-language reason, the auth
+		// results and Check again (#18579); the owner's unknown-code attempts
+		// show masked.
+		`_maState.mine = { address: 'a', emails: [{ email: 'me@x.org', proven: false, code: 'c', last_error: 'raw', last_failure: { reason: 'not_aligned', at: '2026-11-16T12:00:00Z', message: 'Your mail server did not authenticate this address: neither SPF nor DKIM passed for x.org.', from_domain: 'x.org', spf: 'softfail', spf_domain: 'x.org', dkim: [{ domain: 'x.org', result: 'fail' }], aligned: false } }], recent_proof_attempts: [{ at: '2026-11-16T12:01:00Z', from: 't***@y.org', reason: 'code not recognized' }] };`,
+		`email = maEmailHtml();`,
+		`assert.ok(email.includes('data-ma-proof-failure="not_aligned"') && email.includes('neither SPF nor DKIM passed for x.org') && !email.includes('>raw<'), email);`,
+		`assert.ok(email.includes('SPF softfail for x.org; DKIM fail for x.org; aligned with x.org: no.'), email);`,
+		`assert.ok(email.includes('data-action="maLoadMyEmails">Check again'), 'check again');`,
+		`assert.ok(email.includes('(11/16 12:00') && email.includes('Recent proof attempts') && email.includes('t***@y.org') && email.includes('11/16 12:01') && email.includes('code not recognized'), email);`,
+		`assert.strictEqual(maProofAuthSummary({ aligned: true }), 'What the mail server saw: SPF none; DKIM none; aligned with the From domain: yes.');`,
+		`assert.strictEqual(maProofFailureHtml({ last_failure: { reason: 'expired', message: 'The code expired. Remove and add the address again.' } }).includes('The code expired'), true);`,
+		`assert.strictEqual(maProofFailureHtml({}), ''); assert.ok(maProofAttemptsHtml(null) === '' && maProofAttemptsHtml({ recent_proof_attempts: [{}] }).includes('unknown sender'));`,
 		`_maState.mine = { emails: [] }; assert.ok(maEmailHtml().includes('not added a calendar email'));`,
 		`_maState.mine = { error: 'boom' }; assert.ok(maEmailHtml().includes('boom'));`,
 		`_maState.mine = { address: 'a', emails: [{ email: 'e@x.org', proven: false }] }; assert.ok(maEmailHtml().includes('code expired'));`,

@@ -21,10 +21,19 @@ package config
 // backend is the agent's backend name (typically "litellm"); it selects which
 // explicit gateway to consult.
 func (g GovernorConfig) ResolveLiteLLMInferenceKey(backend string) string {
+	key, _ := g.ResolveLiteLLMInferenceKeyWithSource(backend)
+	return key
+}
+
+// ResolveLiteLLMInferenceKeyWithSource is ResolveLiteLLMInferenceKey plus the
+// log-safe source ("file:<path>" / "env:<NAME>") the key came from. The
+// inference proxy re-runs it at request time so a rotated key is picked up
+// without a restart (hive#18532).
+func (g GovernorConfig) ResolveLiteLLMInferenceKeyWithSource(backend string) (string, string) {
 	if len(g.Gateways) > 0 {
 		if gw := g.ResolveGateway(backend); gw != nil {
-			return gw.ResolveAPIKey()
+			return gw.ResolveAPIKeyWithSource()
 		}
 	}
-	return g.LiteLLM.ResolveAPIKey()
+	return g.LiteLLM.ResolveAPIKeyWithSource()
 }

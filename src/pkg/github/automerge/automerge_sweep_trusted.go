@@ -12,6 +12,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/effects"
 	hgithub "github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -162,6 +163,9 @@ func (c *Engine) trySweepSelfAuthoredPR(ctx context.Context, displayRepo, owner,
 		return c.updateBranchAndSkip(ctx, displayRepo, owner, repo, number, evaluatedHeadSHA, pr.GetBase().GetSHA(), "behind", pr)
 	}
 	if (mergeableState == "dirty" || mergeableState == "conflicting") && !laneBehind {
+		if reason, ok := c.resolveConflictingDependabotPR(ctx, displayRepo, owner, repo, pr, number, evaluatedHeadSHA); ok {
+			return reject(reason)
+		}
 		return reject("conflicting")
 	}
 	baseBranch := ""
@@ -920,13 +924,20 @@ func (c *Engine) isForkPR(pr *gh.PullRequest) bool {
 // date — update-branch, merge-forward, a merge-train rebase request — asks
 // this first: Renovate stops rebasing a branch for good once another identity
 // has committed to it (projectbluefin/utah#1097), and under strict freshness
-// it rebases a behind branch itself. A nil PR is never a bot branch.
+// it rebases a behind branch itself. A Dependabot branch is the exception on
+// the update-branch steps (dependabotUpdateBranchAllowed, #18441). A nil PR
+// is never a bot branch.
 func (c *Engine) leaveBaseSyncToDependencyBot(displayRepo, owner, repo string, pr *gh.PullRequest, step string) bool {
 	if pr == nil {
 		return false
 	}
 	headRef, author := pr.GetHead().GetRef(), hgithub.SafeGetLogin(pr.GetUser())
 	if !hgithub.DependencyBotBranch(headRef, author) {
+		return false
+	}
+	if dependabotUpdateBranchAllowed(pr, step) {
+		// Dependabot never rebases a merely-behind branch and ignores the
+		// App's commands, so the App updates it (#18441).
 		return false
 	}
 	number, headSHA := pr.GetNumber(), pr.GetHead().GetSHA()
@@ -943,8 +954,8 @@ func (c *Engine) leaveBaseSyncToDependencyBot(displayRepo, owner, repo string, p
 // workflow-file refusal, so a head GitHub refused to update is not sent again
 // every tick (projectbluefin/utah#1001) until the head or the base moves.
 // pr is the PR payload the lane evaluated (fork head, dependency-bot branch);
-// nil reads as a same-repo, non-bot head. A dependency bot's branch is never
-// updated: it holds as "behind" until the bot rebases it.
+// nil reads as a same-repo, non-bot head. A dependency bot's branch other than
+// Dependabot's is never updated: it holds as "behind" until the bot rebases it.
 func (c *Engine) updateBranchAndSkip(ctx context.Context, displayRepo, owner, repo string, number int, headSHA, baseSHA, reason string, pr *gh.PullRequest) (AutoMergeSweepEvent, string, error) {
 	if c.leaveBaseSyncToDependencyBot(displayRepo, owner, repo, pr, "update-branch") {
 		return AutoMergeSweepEvent{}, "behind", nil
@@ -1100,6 +1111,23 @@ func (c *Engine) commentTrustedAuthorMerge(ctx context.Context, owner, repo stri
 	body := fmt.Sprintf("merged by Hive trusted-author auto-merge: author @%s holds role %s and GitHub permission %s on repo; CI green at %s.", author, role, permission, sha)
 	if login := strings.TrimPrefix(role, trustedAuthorRoleOperatorApprovedPrefix); login != role {
 		body = fmt.Sprintf("merged by Hive on behalf of @%s, who approved this head (%s) with \"Approve and let hive merge\": author @%s holds no trusted-author role; CI green at %s.", login, stagelabels.OperatorApprovalAdmission(login), author, sha)
+	}
+	return c.postAutoMergeNote(ctx, owner, repo, number, body)
+}
+
+// postAutoMergeNote records that the hive merged the PR. Nobody has to act
+// on it, so in github.notifications.mode: quiet (the default) it becomes the
+// auto-merge section of the PR's hive:status card, edited in place: an edit
+// emails nobody, where a fresh comment on every merge emailed the author and
+// every watcher (~32 a day, hivecommons/hive#18452). prstatus.Write
+// neutralises the @logins in it, so the card never notifies either. Mode
+// normal keeps today's standalone comment. A merge that waits on a person
+// is not this note: the 085 / 090 entry comments still post as their own
+// comment.
+func (c *Engine) postAutoMergeNote(ctx context.Context, owner, repo string, number int, body string) error {
+	if c.stagePolicy().QuietNotifications {
+		_, err := c.writeStatusSectionWith(ctx, owner, repo, number, prstatus.KeyAutoMerge, body, prstatus.Write)
+		return err
 	}
 	_, _, err := c.gh.Issues.CreateComment(ctx, owner, repo, number, &gh.IssueComment{Body: gh.Ptr(body)})
 	return err

@@ -55,6 +55,15 @@ import (
 // accepted (a copied request), is set aside as .rejected and never staged.
 // That is what stands in for the file-owner forge check the pod-local path
 // relies on.
+//
+// The spool is typed (hivecommons/hive#18572, #18573). An envelope's kind
+// says which relay a request is for: review (the default, hive-review),
+// issue (hive-open-issue) or topic (hive-topic). Each kind is staged in its
+// own dir and runs through the handler that serves it in-pod:
+// handleOneReviewRequest, handleOneIssueRequest, or the topic handler cmd/hive
+// installs over the agents' bead stores. The kind is bound into the MAC
+// (crux.SandboxSpoolMAC), so a request signed as one kind is refused as any
+// other, and the seen-MAC replay guard is shared across kinds.
 
 // sandboxReviewSpoolsDirForTest lets tests point the relay at a temp dir.
 var sandboxReviewSpoolsDirForTest string
@@ -86,6 +95,19 @@ type reviewRequestSource struct {
 	// agent, when set, is the manifest-attributed owner of a sandbox spool.
 	// It replaces the request's agent field, and the UID check is skipped.
 	agent string
+	// issueAuthz authorizes a spooled issue request. The spool is drained
+	// by the review watcher's loop, so it carries the authorizer installed
+	// with SetSandboxSpoolRelays rather than reading the issue watcher's.
+	issueAuthz IssueRequestAuthorizer
+	// repo and branch are the kick's target and PR branch from the manifest;
+	// a topic claim with no PR number binds to the PR opened from branch.
+	repo, branch string
+}
+
+// spoolSource is how a manifest's spool is attributed.
+func (c *Client) spoolSource(s sandboxReviewSpool) reviewRequestSource {
+	issueAuthz, _ := c.sandboxSpoolRelays()
+	return reviewRequestSource{agent: s.Agent, issueAuthz: issueAuthz, repo: s.Repo, branch: s.Branch}
 }
 
 type sandboxReviewSpool struct {
@@ -94,8 +116,41 @@ type sandboxReviewSpool struct {
 }
 
 // staging is the hive-owned dir a spool's requests are processed in.
+// Reviews are staged at its top level, as they always were; every other
+// kind in a subdirectory named for it (stagingFor).
 func (s sandboxReviewSpool) staging() string {
 	return strings.TrimSuffix(s.path, ".json") + ".d"
+}
+
+// stagingFor is the staging dir of one request kind.
+func stagingFor(staging, kind string) string {
+	if kind == crux.SandboxSpoolKindReview {
+		return staging
+	}
+	return filepath.Join(staging, kind)
+}
+
+// stagedAnywhere reports whether name is already staged under any kind, so
+// a request never replaces one still retrying and two kinds never share a
+// result file name in the spool.
+func stagedAnywhere(staging, name string) bool {
+	for _, kind := range crux.SandboxSpoolKinds {
+		if _, err := os.Lstat(filepath.Join(stagingFor(staging, kind), name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// stagingHasRequest reports whether any kind's staging dir still holds a
+// request.
+func stagingHasRequest(staging string) bool {
+	for _, kind := range crux.SandboxSpoolKinds {
+		if dirHasReviewRequest(stagingFor(staging, kind)) {
+			return true
+		}
+	}
+	return false
 }
 
 // workspace is the kick workspace the spool lives in, and rel the spool's
@@ -126,14 +181,19 @@ func (c *Client) processSandboxReviewSpools(ctx context.Context, nowFn func() ti
 		if err == nil {
 			c.ingestSandboxSpool(root, rel, staging, s.Key, nowFn())
 		}
-		c.processReviewRequestDir(ctx, staging, reviewRequestSource{agent: s.Agent}, nowFn)
+		src := c.spoolSource(s)
+		c.processReviewRequestDir(ctx, staging, src, nowFn)
+		c.processSandboxIssueDir(ctx, stagingFor(staging, crux.SandboxSpoolKindIssue), src, nowFn)
+		c.processSandboxTopicDir(ctx, stagingFor(staging, crux.SandboxSpoolKindTopic), src, nowFn)
 		spoolPending := false
 		if root != nil {
-			mirrorSandboxResults(root, rel, staging)
+			for _, kind := range crux.SandboxSpoolKinds {
+				mirrorSandboxResults(root, rel, stagingFor(staging, kind))
+			}
 			spoolPending = rootSpoolPending(root, rel)
 			_ = root.Close()
 		}
-		if s.EndedAt != nil && !spoolPending && !dirHasReviewRequest(staging) {
+		if s.EndedAt != nil && !spoolPending && !stagingHasRequest(staging) {
 			_ = os.RemoveAll(staging)
 			_ = os.Remove(s.path)
 		}
@@ -253,12 +313,13 @@ func sandboxSpoolRefusal(m crux.SandboxReviewSpool, now time.Time) string {
 	return ""
 }
 
-// ingestSandboxSpool moves each request out of the spool into staging. A
-// name already staged (a request still retrying) waits in the spool for a
-// later pass rather than replacing it. A file that is not yet valid JSON is
-// left alone for inFlightGrace, in case the sandbox is still writing it.
-// Only the request inside an envelope MACed with this run's key is staged;
-// anything else is set aside (sandboxSpoolEnvelope).
+// ingestSandboxSpool moves each request out of the spool into the staging
+// dir of its kind. A name already staged (a request still retrying) waits in
+// the spool for a later pass rather than replacing it. A file that is not
+// yet valid JSON is left alone for inFlightGrace, in case the sandbox is
+// still writing it. Only the request inside an envelope MACed with this
+// run's key for its kind is staged; anything else is set aside
+// (sandboxSpoolEnvelope).
 func (c *Client) ingestSandboxSpool(root *os.Root, rel, staging, key string, now time.Time) {
 	d, err := root.Open(rel)
 	if err != nil {
@@ -274,8 +335,7 @@ func (c *Client) ingestSandboxSpool(root *os.Root, rel, staging, key string, now
 			continue
 		}
 		name := e.Name()
-		dst := filepath.Join(staging, name)
-		if _, err := os.Lstat(dst); err == nil {
+		if stagedAnywhere(staging, name) {
 			continue
 		}
 		src := filepath.Join(rel, name)
@@ -291,11 +351,16 @@ func (c *Client) ingestSandboxSpool(root *os.Root, rel, staging, key string, now
 		if !json.Valid(data) && now.Sub(fi.ModTime()) < inFlightGrace {
 			continue
 		}
-		request, mac, reason := sandboxSpoolEnvelope(data, key)
+		kind, request, mac, reason := sandboxSpoolEnvelope(data, key)
 		if reason != "" {
 			c.rejectSandboxSpoolFile(root, src, reason, now)
 			continue
 		}
+		dir := stagingFor(staging, kind)
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			continue // left in the spool for the next pass
+		}
+		dst := filepath.Join(dir, name)
 		marker, err := markSpoolMACSeen(staging, mac)
 		if errors.Is(err, fs.ErrExist) {
 			c.rejectSandboxSpoolFile(root, src, "replay of a request this spool already accepted", now)
@@ -312,20 +377,25 @@ func (c *Client) ingestSandboxSpool(root *os.Root, rel, staging, key string, now
 	}
 }
 
-// sandboxSpoolEnvelope returns the request inside data and its MAC, or why
-// data is not a request this run's sandbox wrote. A request without the key
-// is indistinguishable from one another agent planted, so it is refused.
-func sandboxSpoolEnvelope(data []byte, key string) (request []byte, mac, reason string) {
+// sandboxSpoolEnvelope returns the kind of the request inside data, the
+// request and its MAC, or why data is not a request this run's sandbox
+// wrote. A request without the key is indistinguishable from one another
+// agent planted, so it is refused; so is a kind the relay does not serve.
+func sandboxSpoolEnvelope(data []byte, key string) (kind string, request []byte, mac, reason string) {
 	var env crux.SandboxReviewEnvelope
 	if err := json.Unmarshal(data, &env); err != nil || env.Request == "" || env.MAC == "" {
-		return nil, "", "not a signed spool envelope"
+		return "", nil, "", "not a signed spool envelope"
+	}
+	kind, ok := crux.NormalizeSandboxSpoolKind(env.Kind)
+	if !ok {
+		return "", nil, "", fmt.Sprintf("unknown spool request kind %q", env.Kind)
 	}
 	request = []byte(env.Request)
-	want := crux.SandboxReviewMAC(key, request)
+	want := crux.SandboxSpoolMAC(key, env.Kind, request)
 	if !hmac.Equal([]byte(env.MAC), []byte(want)) {
-		return nil, "", "MAC does not match this run's spool key"
+		return "", nil, "", "MAC does not match this run's spool key"
 	}
-	return request, want, ""
+	return kind, request, want, ""
 }
 
 // markSpoolMACSeen records that this spool accepted a request with mac, so

@@ -331,7 +331,101 @@ func TestCalendarEmailsAddLimits(t *testing.T) {
 }
 
 func TestMailRelayPathsMatchWire(t *testing.T) {
-	if meetingsInvitesPath != wire.SpokeInvitesPath || meetingsCalendarProofPath != wire.SpokeProofPath || inboxEmailPath != wire.SpokeFilesPath {
+	if meetingsInvitesPath != wire.SpokeInvitesPath || meetingsCalendarProofPath != wire.SpokeProofPath || inboxEmailPath != wire.SpokeFilesPath || inboxEmailChunkPath != wire.SpokeFilesChunkPath {
 		t.Fatal("the hub forwards to wire.Spoke*Path; the dashboard must serve the same paths")
+	}
+}
+
+// TestCalendarEmailProofFailureReasons (hivecommons/hive#18579): each
+// refused proof shows its reason, time and authentication results on the
+// user's row in plain words; an unknown code shows, masked, only in the
+// owner's recent proof attempts.
+func TestCalendarEmailProofFailureReasons(t *testing.T) {
+	s, st := mailServer(t)
+	e, _ := st.Add("bob", "bob@example.com")
+	proof := func(code string, auth wire.Auth) {
+		t.Helper()
+		d := wire.Delivery{Kind: wire.KindProof, Auth: auth, Proof: &wire.Proof{Code: code}}
+		if rec := relayPost(s, meetingsCalendarProofPath, d, testMailRelayKey); rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("proof %+v: %d %s", auth, rec.Code, rec.Body)
+		}
+	}
+	type listing struct {
+		Emails   []calendarEmailView      `json:"emails"`
+		Attempts []mailallow.ProofAttempt `json:"recent_proof_attempts"`
+	}
+	list := func(user, role string) (listing, string) {
+		t.Helper()
+		rec := serve(s, userReq(http.MethodGet, meetingsCalendarEmailsPath, user, role, ""))
+		var l listing
+		if err := json.Unmarshal(rec.Body.Bytes(), &l); err != nil {
+			t.Fatal(err)
+		}
+		return l, rec.Body.String()
+	}
+	cases := []struct {
+		auth   wire.Auth
+		reason string
+		want   string
+	}{
+		{wire.Auth{From: "bob@example.com", FromDomain: "example.com", SPF: "fail", SPFDomain: "example.com", DKIM: []wire.DKIMResult{{Domain: "example.com", Result: "fail"}}, DMARC: "fail"},
+			mailallow.ReasonCodeNotAligned, "neither SPF nor DKIM passed for example.com. Turn on DKIM"},
+		{wire.Auth{From: "eve@other.example", FromDomain: "other.example", SPF: "pass", Aligned: true},
+			mailallow.ReasonCodeFromMismatch, "different address than the one registered: the mail's From was eve@other.example. Send it from bob@example.com"},
+	}
+	for _, c := range cases {
+		proof(e.Code, c.auth)
+		l, body := list("bob", "read")
+		f := l.Emails[0].LastFailure
+		if f == nil || f.Reason != c.reason || f.At.IsZero() || !strings.Contains(f.Message, c.want) || f.SPF != c.auth.SPF || f.Aligned != c.auth.Aligned {
+			t.Fatalf("%s: %+v", c.reason, f)
+		}
+		if strings.Contains(body, "recent_proof_attempts") {
+			t.Fatal("a reader saw the proof attempts")
+		}
+	}
+	// The JSON field names the UI reads.
+	_, body := list("bob", "read")
+	for _, k := range []string{`"last_failure":{`, `"reason":"from_mismatch"`, `"from":"eve@other.example"`, `"spf":"pass"`, `"aligned":true`, `"message":"`} {
+		if !strings.Contains(body, k) {
+			t.Errorf("list misses %s: %s", k, body)
+		}
+	}
+
+	// Unknown code: owner-only, masked.
+	proof("hive-proof-zzzzzzzzzzzz", wire.Auth{From: "Typo@Example.org", Aligned: true})
+	l, _ := list("alice", "owner")
+	if len(l.Attempts) != 1 || l.Attempts[0].From != "t***@example.org" || l.Attempts[0].Reason != mailallow.AttemptCodeNotRecognized {
+		t.Fatalf("owner attempts %+v", l.Attempts)
+	}
+	if _, body := list("bob", "read"); strings.Contains(body, "t***@example.org") {
+		t.Fatal("a reader saw an unknown-code attempt")
+	}
+
+	// Expired code: still recognized, the row says it expired.
+	now := time.Now()
+	clockStore, err := mailallow.Open(filepath.Join(t.TempDir(), "a.json"), func() time.Time { return now })
+	if err != nil {
+		t.Fatal(err)
+	}
+	old, _ := clockStore.Add("bob", "old@example.com")
+	now = now.Add(mailallow.CodeTTL + time.Hour)
+	s.SetMailAllowlist(clockStore)
+	proof(old.Code, wire.Auth{From: "old@example.com", Aligned: true})
+	if l, _ := list("bob", "read"); l.Emails[0].LastFailure == nil || l.Emails[0].LastFailure.Reason != mailallow.ReasonCodeExpired || !strings.Contains(l.Emails[0].LastFailure.Message, "The code expired") {
+		t.Fatalf("expired %+v", l.Emails)
+	}
+}
+
+func TestProofFailureMessage(t *testing.T) {
+	got := proofFailureMessage(mailallow.ProofFailure{Reason: mailallow.ReasonCodeNotAligned}, "ann@clubs.example")
+	if !strings.Contains(got, "passed for clubs.example.") {
+		t.Fatalf("not aligned without From domain: %q", got)
+	}
+	if got := proofFailureMessage(mailallow.ProofFailure{Reason: mailallow.ReasonCodeFromMismatch}, "a@b.example"); !strings.Contains(got, "From was "+proofFromNone+".") {
+		t.Fatalf("from mismatch without From: %q", got)
+	}
+	if got := proofFailureMessage(mailallow.ProofFailure{Reason: "other"}, "a@b.example"); !strings.Contains(got, "did not count") {
+		t.Fatalf("unknown reason: %q", got)
 	}
 }

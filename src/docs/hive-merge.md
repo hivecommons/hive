@@ -995,8 +995,9 @@ merges use merge commits; other PRs squash). It refuses excluded labels
 (`hold`, `do-not-merge`, and `needs-human` by default), existing hold/exempt
 labels, fork PRs whose author is not a repo member, and any PR with an
 outstanding `CHANGES_REQUESTED` review. Each merge records the tier as
-`trusted-author` and leaves an audit comment naming the author role, GitHub
-permission, and green head SHA.
+`trusted-author` and records an audit note naming the author role, GitHub
+permission, and green head SHA: an `auto-merge` section of the PR's `hive:status`
+card in `quiet` notification mode (the default), a standalone comment in `normal`.
 
 ```yaml
 auto_merge:

@@ -790,8 +790,8 @@ func TestPRRequestWatcher_HoldsUntrustedReporterPRAtL6(t *testing.T) {
 
 func assertReporterTrustHoldLabels(t *testing.T, applied []string) {
 	t.Helper()
-	if len(applied) != 2 || applied[0] != "hold" || applied[1] != "needs-human" {
-		t.Fatalf("labels applied = %v, want [hold needs-human]", applied)
+	if len(applied) != 2 || applied[0] != DefaultDecisionNeededLabel || applied[1] != "needs-human" {
+		t.Fatalf("labels applied = %v, want [decision-needed needs-human]", applied)
 	}
 }
 

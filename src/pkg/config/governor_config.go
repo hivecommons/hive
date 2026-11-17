@@ -29,6 +29,11 @@ type GovernorConfig struct {
 	// for a sweep. Cooldown bounds kicks per PR head (default 600 seconds).
 	CIFailureWebhookKick   *bool `yaml:"ci_failure_webhook_kick,omitempty"`
 	CIFailureKickCooldownS int   `yaml:"ci_failure_kick_cooldown_s,omitempty"`
+	// ReleaseFeeds is the release-feed watcher (hivecommons/hive#18494): per
+	// agent, the upstream feeds whose new versions kick that agent with a
+	// ${NEW_RELEASES} block. Nil (the default) means off. See
+	// docs/release-feeds.md.
+	ReleaseFeeds *ReleaseFeedsConfig `yaml:"release_feeds,omitempty" json:"ReleaseFeeds,omitempty"`
 	// DependencyBotRebaseAfterS is how long a dependency-bot PR may sit
 	// behind or conflicting with its base before the dependency-bot sweep
 	// treats a bot that stopped rebasing it as stranded: it asks the bot to
@@ -346,6 +351,44 @@ type LabelsConfig struct {
 	// (hivecommons/hive#12581). The trust axis (`role/<tier>`) is not
 	// renameable.
 	Author AuthorLabelsConfig `yaml:"author"`
+	// ReadyForReview is the gate label the hive applies when its work on a
+	// PR is done and a maintainer must review it (the ACMM level gate at
+	// L3-L5). Defaults to DefaultReadyForReviewLabel. The hive never
+	// applies `hold` itself (hivecommons/hive#18468): a person's `hold`
+	// means hands-off. Blank or `hold` keeps the default.
+	ReadyForReview string `yaml:"ready_for_review,omitempty"`
+	// DecisionNeeded is the gate label the hive applies when it is blocked
+	// on a human decision (reporter trust, self-authorization, the hold
+	// guard, an owner-only delegated decision). Defaults to
+	// DefaultDecisionNeededLabel. Blank or `hold` keeps the default.
+	DecisionNeeded string `yaml:"decision_needed,omitempty"`
+}
+
+// Default hive gate label names (hivecommons/hive#18468); they match
+// github.DefaultReadyForReviewLabel / github.DefaultDecisionNeededLabel.
+const (
+	DefaultReadyForReviewLabel = "ready-for-review"
+	DefaultDecisionNeededLabel = "decision-needed"
+)
+
+// ReadyForReviewLabelOrDefault returns governor.labels.ready_for_review or
+// its default. `hold` is never returned: the hive must not apply it.
+func (c LabelsConfig) ReadyForReviewLabelOrDefault() string {
+	return gateLabelOrDefault(c.ReadyForReview, DefaultReadyForReviewLabel)
+}
+
+// DecisionNeededLabelOrDefault returns governor.labels.decision_needed or
+// its default. `hold` is never returned: the hive must not apply it.
+func (c LabelsConfig) DecisionNeededLabelOrDefault() string {
+	return gateLabelOrDefault(c.DecisionNeeded, DefaultDecisionNeededLabel)
+}
+
+func gateLabelOrDefault(v, def string) string {
+	v = strings.TrimSpace(v)
+	if v == "" || strings.EqualFold(v, "hold") {
+		return def
+	}
+	return v
 }
 
 // AuthorLabelsConfig is governor.labels.author: the label names for the

@@ -733,7 +733,13 @@ not what it records:
   stage-regressed notes, the trusted-human 071 note and the duplicate-PR
   redirect are sections of a single comment marked `<!-- hive:status -->`.
   The comment is created the first time a note is due and PATCHed for every
-  later note; only the creation sends email.
+  later note; only the creation sends email. The auto-merge note ("merged by
+  Hive trusted-author auto-merge …" or "merged by Hive on behalf of …") is
+  the card's `auto-merge` section too, with its @-mentions neutralised, so
+  a merge no longer emails the author and every watcher; in `normal` it is
+  still its own comment. A merge that waits on a person (the 085
+  needs-decision and 090 ready-for-human-merge entry comments) still posts
+  a comment of its own.
 - **No "no findings" reviews.** A reviewer whose whole body is the clean
   acknowledgement — or whose body says it has no findings while its verdict
   report approves with an empty findings list, as the plain `reviewer`
@@ -772,6 +778,11 @@ post on issues and merged PRs as comments of their own:
 - a contributor's **claim marker** (`<!-- hive:claim … -->`) posted by the
   contribute hub — claim readers scan every hive comment body for the
   marker, so the section is as authoritative as the comment was;
+- the sentinel's **informational notice** for a trusted author's PR (no
+  label, merge not blocked), as a `sentinel` section stamped
+  `<!-- hive-sentinel-notice <head> -->`. A sentinel **hold**
+  (`sentinel-alert` label, maintainer review required) is never folded: it
+  always posts its own `<!-- hive-sentinel -->` comment (hivecommons/hive#18453);
 - an agent's relayed **status notes**: `hive/awaiting-ci: …`, `Parking on
   stage/045-needs-decision: …` and `Already fixed …`. Any other relayed
   comment — a finding, a triage verdict with evidence, a question — is still
@@ -881,7 +892,10 @@ auto-merge lane (dashboard queue, self-authored App sweep, trusted bot authors,
 or trusted authors). Trusted authors (the Hive App, configured trusted bots and
 owner/trusted-author allow-list entries) default to an informational notice and
 audit/dashboard finding only; no alert label is added unless the operator opts
-into blocking them. A maintainer who removes the label keeps the PR clear until
+into blocking them. In `github.notifications.mode: quiet` (the default) that
+informational notice is a `sentinel` section of the PR's `hive:status` card,
+edited in place, rather than a comment; an alert that needs a maintainer always
+gets its own comment ([#18453](https://github.com/hivecommons/hive/issues/18453)). A maintainer who removes the label keeps the PR clear until
 the author pushes again: the sweep reads the clearance back from the alert
 comment it left for that head (alert comment present, label absent), so it
 survives a hub restart or a second replica and nothing else needs to be posted.
@@ -908,7 +922,7 @@ push re-arms it.
 |---|---|---|
 | `sentinel.enabled` | **on** when unset | `false` disables the sweep entirely. |
 | `sentinel.label` | `sentinel-alert` | Label added to untrusted flagged PRs (created red if missing). Neutral on purpose: it means "look closely", not "malicious". This configured label is also added to Hive's hold/exclude set and blocks Hive approval plus every auto-merge lane until a human removes it. |
-| `sentinel.trusted_authors_block` | `false` | When `false`, trusted author findings are notice-only: comment, audit/dashboard record, no label, no approval/merge block. Set `true` to add the blocking label for trusted authors too. A PR the hive opens to supersede an adopted contributor PR (body line `Supersedes #N (…; original commits by @login preserved).`) is judged by the adopted PR's author, not by the App: its code is that author's, so an untrusted author's flagged head gets the label on the App's PR too. A maintainer who removed the label from the adopted PR at the same head is not asked again; any later head is judged afresh. |
+| `sentinel.trusted_authors_block` | `false` | When `false`, trusted author findings are notice-only: audit/dashboard record, no label, no approval/merge block. The notice is the `sentinel` section of the PR's `hive:status` card in `github.notifications.mode: quiet` (the default) and its own comment in `normal` mode. Set `true` to add the blocking label and post the alert comment for trusted authors too. A PR the hive opens to supersede an adopted contributor PR (body line `Supersedes #N (…; original commits by @login preserved).`) is judged by the adopted PR's author, not by the App: its code is that author's, so an untrusted author's flagged head gets the label on the App's PR too. A maintainer who removed the label from the adopted PR at the same head is not asked again; any later head is judged afresh. |
 | `sentinel.sensitive_paths` | shipped defaults (`sentinel.DefaultSensitivePaths`) | Glob list (same syntax as `intent.guardrail_path_patterns`; `**` crosses directories) that **replaces** the defaults when set. Defaults cover OWNERS/CODEOWNERS/MAINTAINERS, SECURITY.md, GOVERNANCE.md, `.github/workflows/**`, actions, dependabot, codeql, rulesets, CI config, Makefile/Justfile, pre-commit hooks, `policies/**`, `hive.yaml*`, `gh-wrapper*`, proxy rules, Dockerfiles, `install.sh`, dependency manifests and lockfiles, release workflows, `.env*`/key material, `deploy/**`, Terraform, Helm/k8s manifests. |
 | `project.repo_policies[].sentinel_sensitive_paths` | unset = `sentinel.sensitive_paths` | One repository's own sensitive-path list. It replaces the hive-wide list for that repository's pull requests only, stricter or looser, and a change to `sentinel.sensitive_paths` does not reach it. `[]` matches nothing. Set in hive.yaml, in Settings → Security (**Sensitive files per repository**) or with the admin MCP `sentinel.settings` `repo_sensitive_paths`; clearing it returns the repository to the hive-wide list. Like any Sentinel setting, it applies to heads Sentinel evaluates after the change. |
 | `sentinel.disabled_behaviors` | empty | Rule names from the table above to switch off. Unknown names are rejected. |

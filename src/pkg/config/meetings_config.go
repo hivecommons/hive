@@ -260,8 +260,13 @@ type MeetingsDiscordConfig struct {
 // MeetingsLLMConfig is meetings.llm. With nothing set it resolves like the
 // knowledge advisor: governor.litellm's endpoint, key and default model.
 type MeetingsLLMConfig struct {
-	// Mode is auto (default), openai, anthropic or none.
+	// Mode is auto (default), openai, anthropic, agent-backend, claude-cli
+	// (agent-backend with backend claude) or none.
 	Mode string `yaml:"mode,omitempty" json:"mode,omitempty"`
+	// Backend is the agent backend the agent-backend mode answers through
+	// (hivecommons/hive#18517): one the hive's agents are configured with.
+	// Empty uses the backend most of the hive's agents run on.
+	Backend string `yaml:"backend,omitempty" json:"backend,omitempty"`
 	// Endpoint is an OpenAI-compatible base URL; empty uses governor.litellm.
 	Endpoint string `yaml:"endpoint,omitempty" json:"endpoint,omitempty"`
 	// Model is the model name; empty uses governor.litellm.default_model.
@@ -287,6 +292,11 @@ const (
 	MeetingsLLMModeOpenAI    = "openai"
 	MeetingsLLMModeAnthropic = "anthropic"
 	MeetingsLLMModeNone      = "none"
+	// MeetingsLLMModeAgentBackend answers through one of the hive's agent
+	// backends, in its no-tools completion profile (#18517).
+	MeetingsLLMModeAgentBackend = "agent-backend"
+	// MeetingsLLMModeClaudeCLI is agent-backend with backend claude.
+	MeetingsLLMModeClaudeCLI = "claude-cli"
 	// DefaultMeetingsLLMTimeoutMS matches Spek's own per-call cap.
 	DefaultMeetingsLLMTimeoutMS = 2500
 	// DefaultMeetingsLLMMaxInFlight lets a few meetings reason at once.
@@ -315,6 +325,7 @@ const (
 	MeetingsAnthropicModelEnv   = "HIVE_MEETINGS_ANTHROPIC_MODEL"
 	MeetingsLLMTimeoutEnv       = "HIVE_MEETINGS_LLM_TIMEOUT_MS"
 	MeetingsLLMMaxInFlightEnv   = "HIVE_MEETINGS_LLM_MAX_IN_FLIGHT"
+	MeetingsLLMBackendEnv       = "HIVE_MEETINGS_LLM_BACKEND"
 )
 
 // ResolvedMeetingsLLM is the effective meetings model. Keys are secrets;
@@ -334,18 +345,34 @@ type ResolvedMeetingsLLM struct {
 	MaxInFlight    int
 	// Reason explains Backend none.
 	Reason string
+	// AgentBackend is the agent backend (claude, ...) on the agent-backend
+	// backend; Model is then that backend's model. On the openai backend it
+	// names the model gateway (vllm, llm-d or a named gateway) the
+	// agent-backend mode resolved, and is empty otherwise.
+	AgentBackend string
+	// CABundle is an optional PEM file of private CAs the openai backend's
+	// endpoint is verified against (a named gateway's ca_bundle).
+	CABundle string
+	// CLI is the completion-profile launch settings on the agent-backend
+	// backend.
+	CLI ResolvedMeetingsCLI
 }
 
 // Label is the panel's one-line description of the model in use.
 func (r ResolvedMeetingsLLM) Label() string {
 	switch r.Backend {
 	case MeetingsLLMModeOpenAI:
+		if r.AgentBackend != "" {
+			return r.AgentBackend + " model " + r.Model
+		}
 		return "model " + r.Model
 	case MeetingsLLMModeAnthropic:
 		if r.AnthropicModel != "" {
 			return "Anthropic " + r.AnthropicModel
 		}
 		return "Anthropic (Spektacular default model)"
+	case MeetingsLLMModeAgentBackend:
+		return r.AgentBackend + " CLI " + r.Model
 	default:
 		return r.Reason
 	}
@@ -369,6 +396,9 @@ func (c *Config) ResolveMeetingsLLM(ctx context.Context) ResolvedMeetingsLLM {
 		MaxInFlight:    meetingsEnvInt(MeetingsLLMMaxInFlightEnv, l.MaxInFlight, DefaultMeetingsLLMMaxInFlight),
 		AnthropicModel: meetingsEnvString(MeetingsAnthropicModelEnv, l.AnthropicModel, ""),
 	}
+	if mode == MeetingsLLMModeAgentBackend || mode == MeetingsLLMModeClaudeCLI {
+		return c.resolveMeetingsAgentBackend(ctx, mode, r)
+	}
 	if mode == MeetingsLLMModeAuto || mode == MeetingsLLMModeAnthropic {
 		file := meetingsEnvString(MeetingsAnthropicKeyFileEnv, l.AnthropicKeyFile, DefaultMeetingsAnthropicKeyFile)
 		if key, err := meetingsSecret(ctx, MeetingsAnthropicKeyEnv, file); err == nil && key != "" {
@@ -381,6 +411,14 @@ func (c *Config) ResolveMeetingsLLM(ctx context.Context) ResolvedMeetingsLLM {
 			return none
 		}
 	}
+	return c.resolveMeetingsOpenAI(ctx, r, strings.TrimSpace(c.Governor.LiteLLM.DefaultModel))
+}
+
+// resolveMeetingsOpenAI resolves the OpenAI-compatible path: meetings.llm's
+// endpoint and key, else governor.litellm's, and the model, else
+// defaultModel. It returns Backend none when either is missing.
+func (c *Config) resolveMeetingsOpenAI(ctx context.Context, r ResolvedMeetingsLLM, defaultModel string) ResolvedMeetingsLLM {
+	l := c.Meetings.LLM
 	r.Endpoint = strings.TrimRight(meetingsEnvString(MeetingsLLMEndpointEnv, l.Endpoint, ""), "/")
 	if r.Endpoint == "" {
 		r.Endpoint = strings.TrimRight(c.Governor.LiteLLM.ResolveEndpoint(), "/")
@@ -392,9 +430,9 @@ func (c *Config) ResolveMeetingsLLM(ctx context.Context) ResolvedMeetingsLLM {
 	if r.APIKey == "" {
 		r.APIKey = c.Governor.LiteLLM.ResolveAPIKey()
 	}
-	r.Model = meetingsEnvString(MeetingsLLMModelEnv, l.Model, strings.TrimSpace(c.Governor.LiteLLM.DefaultModel))
+	r.Model = meetingsEnvString(MeetingsLLMModelEnv, l.Model, defaultModel)
 	if r.Endpoint == "" || r.Model == "" {
-		return none
+		return ResolvedMeetingsLLM{Backend: MeetingsLLMModeNone, Reason: MeetingsLLMNoModelReason}
 	}
 	r.Backend = MeetingsLLMModeOpenAI
 	return r
@@ -668,10 +706,14 @@ func (m MeetingsConfig) Validate() error {
 			return err
 		}
 	}
-	switch strings.ToLower(meetingsEnvString(MeetingsLLMModeEnv, m.LLM.Mode, MeetingsLLMModeAuto)) {
+	switch mode := strings.ToLower(meetingsEnvString(MeetingsLLMModeEnv, m.LLM.Mode, MeetingsLLMModeAuto)); mode {
 	case MeetingsLLMModeAuto, MeetingsLLMModeOpenAI, MeetingsLLMModeAnthropic, MeetingsLLMModeNone:
+	case MeetingsLLMModeAgentBackend, MeetingsLLMModeClaudeCLI:
+		if err := validateMeetingsAgentBackend(mode, m.LLM.Backend); err != nil {
+			return err
+		}
 	default:
-		return fmt.Errorf("meetings.llm.mode %q is not auto, openai, anthropic or none", m.LLM.Mode)
+		return fmt.Errorf("meetings.llm.mode %q is not auto, openai, anthropic, agent-backend, claude-cli or none", m.LLM.Mode)
 	}
 	if u := meetingsEnvString(MeetingsLLMEndpointEnv, m.LLM.Endpoint, ""); u != "" {
 		if err := validateMeetingsURL("meetings.llm.endpoint", u); err != nil {

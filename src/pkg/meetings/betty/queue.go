@@ -113,7 +113,7 @@ func (e *Engine) onLine(l Line) {
 	}
 	switch {
 	case trig.Intro:
-		e.emit(Reply{Text: e.s.Persona.Intro(), Trigger: TriggerIntro, Question: l.Text, VoiceWanted: trig.VoiceWanted})
+		e.emit(Reply{Kind: replyKind(trig), Text: e.s.Persona.Intro(), Trigger: TriggerIntro, Question: l.Text, VoiceWanted: trig.VoiceWanted})
 	case trig.Addressed:
 		e.addressed(l, trig, now)
 	case question:
@@ -397,7 +397,10 @@ func (e *Engine) onAddressedAnswer(p *pending, a answered) {
 	rep := Reply{Kind: replyKind(p.trig), Text: text, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted,
 		NeedsResearch: a.ans.NeedsResearch, Sources: a.ans.Sources}
 	weak := a.ans.NeedsResearch || a.ans.Confidence < e.s.MinConfidence
-	if a.err == nil && weak && e.d.CanResearch && !p.thoughts && e.isQuestion(p) {
+	// The hive's own state was in the context: the answer is the hive's
+	// live data, and the research agents (public web only) know less.
+	live := hasHiveStatus(p.snips)
+	if a.err == nil && weak && !live && e.d.CanResearch && !p.thoughts && e.isQuestion(p) {
 		dig := phrasesFor(e.s.Persona.Language).digIn
 		rep.Text = dig
 		if answer := clipFn(a.ans.Answer); answer != "" && a.ans.Confidence >= e.s.MinConfidence {

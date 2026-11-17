@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -210,6 +212,7 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 			r.rememberStageWrite(f, from, out.Stage, d.Reason)
 		}
 	}
+	noteTriageCleared(r.opts.Store, key, f, out.Removed)
 	if err == nil {
 		// The gate's refusal is a fact about the record: readers that
 		// compare the record with the item's labels must know the labels
@@ -225,6 +228,25 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 		return tr, fmt.Errorf("stage engine: write %s: %w", f.Ref, err)
 	}
 	return tr, nil
+}
+
+// noteTriageCleared records on the issue's record that this write took the
+// reporter-trust awaiting label off. Every hive write that can remove it —
+// the issue sweep's batch and every FactSink submission — passes through
+// Reconcile, so this is the one place the removal is booked; a later read
+// that finds the label back makes the hive yield it on that issue
+// (hivecommons/hive#18387).
+func noteTriageCleared(store *stagelabels.Store, key string, f Facts, removed []string) {
+	if store == nil || f.Issue == nil || f.Ref.Kind != stagelabels.IssueItem {
+		return
+	}
+	label := strings.TrimSpace(f.Issue.TriageAwaitingLabel)
+	if label == "" {
+		return
+	}
+	if slices.ContainsFunc(removed, func(l string) bool { return strings.EqualFold(l, label) }) {
+		store.NoteTriageCleared(key, f.ObservedAt)
+	}
 }
 
 // noteCoveringPR keeps the issue record's memory of its covering PR in

@@ -134,6 +134,19 @@
 set -euo pipefail
 
 REQ_DIR="/var/run/hive-metrics/issue-requests"
+# Inside a sandbox (Podman or a Kubernetes Job) the pod-local relay dir is not
+# reachable. Hive sets HIVE_SANDBOX_REQUEST_DIR to the kick's request spool and
+# HIVE_SANDBOX_SPOOL_KEY to a per-run key (hivecommons/hive#18573); the request
+# is then written there as {"kind": "issue", "request": "<request JSON>",
+# "mac": "<hex HMAC-SHA256(key, "issue\n" + request JSON)>"}. The relay runs it
+# through the same issue handler and gates, attributed to the kick's own agent
+# whatever "agent" says. The older HIVE_REVIEW_* names are accepted too.
+SPOOL_DIR="${HIVE_SANDBOX_REQUEST_DIR:-${HIVE_REVIEW_REQUEST_DIR:-}}"
+SPOOL_KEY="${HIVE_SANDBOX_SPOOL_KEY:-${HIVE_REVIEW_SPOOL_KEY:-}}"
+if [ -n "$SPOOL_DIR" ] && [ -n "$SPOOL_KEY" ]; then
+  REQ_DIR="$SPOOL_DIR"
+  export HIVE_OPEN_ISSUE_SPOOL_KEY="$SPOOL_KEY"
+fi
 
 KIND="issue"
 case "${1:-}" in
@@ -535,8 +548,16 @@ if dry_run == "1":
     print("hive-open-issue: DRY RUN — no request written, nothing will be created. Would write %s:" % path)
     print(json.dumps(req, indent=2))
     sys.exit(0)
+data = json.dumps(req)
+# Sandbox spool: sign for this run. Read from the environment, never argv:
+# argv is visible to every user.
+key = os.environ.get("HIVE_OPEN_ISSUE_SPOOL_KEY", "")
+if key:
+    import hashlib, hmac
+    mac = hmac.new(key.encode(), ("issue\n" + data).encode(), hashlib.sha256).hexdigest()
+    data = json.dumps({"kind": "issue", "request": data, "mac": mac})
 with open(temporary, "w") as fh:
-    json.dump(req, fh)
+    fh.write(data)
 os.replace(temporary, path)
 PY
 

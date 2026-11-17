@@ -646,6 +646,67 @@ three places, all for a repository bound to a non-default model only:
   still declares them; labels a model dropped *before* this change shipped are never reclaimed
   automatically.
 
+## Agent dispatch
+
+A model's agent grants (`spec.agents`) say which profile may act in which states. The compiler
+also resolves where the hive **hands an item to** a profile, and the compiled `Profile` carries
+the result as `dispatch` (state id → `DispatchTarget`, `pkg/workflowmodel/dispatch.go`) next to
+the grants themselves (`agents`).
+
+**Where and when.** A grant may declare it:
+
+```yaml
+agents:
+- profile: techdocs-verifier
+  states: [drafting]
+  produces: [comment]
+  dispatch:
+    states: [drafting]       # subset of states; [] = never dispatch automatically
+    reply: /verify           # empty: once on entering the state
+    instructions: Post the fact-check report as one PR comment.
+```
+
+Without a `dispatch` block the convention applies: the grant's **first** state is its entry
+state. A profile that produces a pull request or a push is dispatched once on entering it. A
+profile that produces neither (a verifier, a reviewer) is dispatched on the reply that releases
+the gate out of its entry state into a non-terminal state, when the state declares that reply.
+For the curated `cncf-techdocs-assessment` model this gives, with no new field:
+
+| State | Profile | Trigger |
+|-------|---------|---------|
+| `accepted` (issue) | `techdocs-drafter` | on entry (`triage/accepted`, no covering PR) |
+| `drafting` (PR) | `techdocs-verifier` | the reviewer's `/verify` |
+
+Two profiles dispatched in one state, or a dispatch state outside the grant, refuse the compile
+(`duplicate-dispatch`, `unknown-state`); a dispatch reply the state does not declare is a
+`dispatch-reply-undeclared` warning. The built-in `hive-default` model never dispatches: its
+grants describe the fleet that already runs it.
+
+**Deliverable.** For a profile that produces a pull request, the target also names the
+deliverable: the first pull-request state among the grant's later states, with the labels and
+draft flag that state's first derivation rule requires (TechDocs: a draft PR labeled
+`Docs analysis`, landing in `drafting`). The dispatch prompt asks for exactly that.
+
+**Who fills a profile.** A model names roles; a hive names agents. `workflow.dispatch` maps one
+to the other (`config.WorkflowDispatchAgent`):
+
+```yaml
+workflow:
+  dispatch:
+    enabled: true            # default; dispatch also needs workflow.enabled
+    profiles:
+      techdocs-drafter:
+        agent: writer        # default below
+        prompt_template: ""  # default: the built-in prompt
+      techdocs-verifier:
+        disabled: true       # never dispatch automatically
+```
+
+An unset `agent` resolves to an enabled agent named after the profile, else the first enabled
+agent (by name) whose role is `writer`, then `docs`, then `feature`. A configured agent that does
+not exist or is disabled fills nothing: a typo never falls back to another agent. Replica
+overlays are never chosen; the base agent is kicked.
+
 ## Ingest from cluster and from written specs (RFC phase 6)
 
 Two more ways into a draft model, beside the repository ingest of phase 3a. Both end in the

@@ -25,6 +25,27 @@ var (
 	ErrSessionEnded    = errors.New("meetings: live session has ended")
 )
 
+// Spektacular live mode statuses shown on the Meetings panel
+// (hivecommons/hive#18590 finding 8; live mode itself is
+// hivecommons/spektacular#126). They lead with what the room loses.
+const (
+	// spekStoppedStatus: the child exited for good for this meeting.
+	spekStoppedStatus = "Notes and clarifying questions are off for this meeting: Spektacular live mode is not running (it needs a spektacular with the meeting command, hivecommons/spektacular#126). The transcript, the persona and research still work."
+	// spekPausedStatus: hive could not reach the child (it is restarting,
+	// or never came up); cleared when Spek writes again.
+	spekPausedStatus = "Notes and clarifying questions are paused: Spektacular live mode is not running right now (restarting, or it needs a spektacular with the meeting command, hivecommons/spektacular#126). The transcript, the persona and research still work."
+)
+
+// setSpekStatus updates the panel's Spektacular status when it changes.
+func (s *session) setSpekStatus(status string) {
+	if s.state.SpekStatus == status {
+		return
+	}
+	s.state.SpekStatus = status
+	s.emit(Event{Kind: EventSpek, Reason: status})
+	s.save()
+}
+
 // defaultPersonaName names the attendee in hive's notices without a
 // persona.
 const defaultPersonaName = "Hive"
@@ -183,10 +204,8 @@ func (s *session) run(ctx context.Context) {
 				// research signals and approvals; only Spek's questions and
 				// notes stop.
 				spekGone, lines = true, nil
-				s.state.SpekStatus = "Spektacular live mode is not running for this meeting (needs a spektacular with the meeting command, hivecommons/spektacular#126); the transcript and research still work, questions and notes do not"
 				s.log().Warn("[meetings] spektacular live mode stopped; continuing without it")
-				s.emit(Event{Kind: EventSpek, Reason: s.state.SpekStatus})
-				s.save()
+				s.setSpekStatus(spekStoppedStatus)
 				continue
 			}
 			s.onIntent(ctx, line)
@@ -232,6 +251,12 @@ func (s *session) onUpdate(u meetings.Update) {
 	if len(ev.Raw) > 0 {
 		if err := s.spek.SendLine(ev.Raw); err != nil {
 			s.log().Warn("[meetings] forwarding to spek", "error", err)
+			// The child is down (between restarts, or a spektacular
+			// without the meeting command): say so on the panel now rather
+			// than only once it gives up.
+			if s.state.SpekStatus == "" {
+				s.setSpekStatus(spekPausedStatus)
+			}
 		}
 	}
 	if s.persona != nil {
@@ -279,6 +304,10 @@ func (s *session) onIntent(ctx context.Context, line []byte) {
 	if err := json.Unmarshal(line, &in); err != nil {
 		s.log().Warn("[meetings] spek wrote a non-JSON line; skipped", "error", err)
 		return
+	}
+	// Spek is talking again after a restart: notes and questions are back.
+	if s.state.SpekStatus == spekPausedStatus {
+		s.setSpekStatus("")
 	}
 	if in.Type == intentHeartbeat {
 		now := s.now()

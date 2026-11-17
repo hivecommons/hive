@@ -2,13 +2,13 @@
 // (hivecommons/hive#18395, part of the Betty plan #18391). It accepts mail
 // only for hive@<known hive host>, authenticates the sender (SPF, DKIM,
 // DMARC alignment), keeps only a calendar invite's scheduling fields, a
-// mail-in message's accepted attachments, or a proof code, and posts the
-// result to the hub, which routes it to the hive. It never sends mail,
-// offers no AUTH and relays nothing.
+// mail-in message's accepted attachments and text body, or a proof code,
+// and posts the result to the hub, which routes it to the hive. It never
+// sends mail, offers no AUTH and relays nothing. A message is spooled to
+// disk while it is processed, never held in memory whole (#18564).
 package mailin
 
 import (
-	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/tls"
@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"net"
 	"net/mail"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -48,6 +49,16 @@ type Options struct {
 	// MAIL FROM domain; nil disables a limit.
 	IPLimiter     *RateLimiter
 	DomainLimiter *RateLimiter
+	// HiveBudget bounds the message bytes delivered per hive host per day;
+	// nil disables it.
+	HiveBudget *ByteBudget
+	// SpoolDir holds each message, and its audio, video and image
+	// attachments, while it is processed: a message is never held in
+	// memory whole. "" is the system temp directory.
+	SpoolDir string
+	// MaxConcurrentData bounds the messages processed at once, which bounds
+	// the spool's size (MaxConcurrentData * about twice MaxMessageBytes).
+	MaxConcurrentData int
 	// TLSConfig enables STARTTLS when set.
 	TLSConfig    *tls.Config
 	ReadTimeout  time.Duration
@@ -60,13 +71,20 @@ type Options struct {
 
 // Defaults.
 const (
-	DefaultDomain          = "mx.hive.hivecommons.dev"
-	DefaultMaxRecipients   = 5
-	DefaultMaxMessageBytes = 2 << 20
+	DefaultDomain        = "mx.hive.hivecommons.dev"
+	DefaultMaxRecipients = 5
+	// DefaultMaxMessageBytes is the SIZE limit, 35 MiB (36700160): a 25 MB
+	// attachment after base64 (hivecommons/hive#18564).
+	DefaultMaxMessageBytes = 35 << 20
 	DefaultReadTimeout     = 60 * time.Second
 	DefaultWriteTimeout    = 60 * time.Second
-	DefaultDeliverTimeout  = 45 * time.Second
-	deliveryIDBytes        = 16
+	// DefaultDeliverTimeout bounds the hub post per recipient; a large
+	// delivery is relayed to the spoke in pieces while hive-mx waits.
+	DefaultDeliverTimeout    = 120 * time.Second
+	DefaultMaxConcurrentData = 8
+	deliveryIDBytes          = 16
+	// spoolMessagePattern names a message spooled by DATA.
+	spoolMessagePattern = "hive-mx-msg-*.eml"
 )
 
 // NewServer builds the SMTP server. Serve it on a listener.
@@ -104,7 +122,10 @@ func NewServer(o Options) *smtp.Server {
 	if o.Hosts == nil {
 		o.Hosts = &HostSet{}
 	}
-	s := smtp.NewServer(&backend{o: o})
+	if o.MaxConcurrentData <= 0 {
+		o.MaxConcurrentData = DefaultMaxConcurrentData
+	}
+	s := smtp.NewServer(&backend{o: o, data: make(chan struct{}, o.MaxConcurrentData)})
 	s.Domain = o.Domain
 	s.MaxRecipients = o.MaxRecipients
 	s.MaxMessageBytes = o.MaxMessageBytes
@@ -124,14 +145,18 @@ func (a slogAdapter) Println(v ...interface{}) {
 	a.l.Debug("hive-mx: smtp", "detail", strings.TrimSpace(fmt.Sprintln(v...)))
 }
 
-type backend struct{ o Options }
+type backend struct {
+	o Options
+	// data is the semaphore of messages in DATA processing.
+	data chan struct{}
+}
 
 func (b *backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 	var ip net.IP
 	if addr, ok := c.Conn().RemoteAddr().(*net.TCPAddr); ok {
 		ip = addr.IP
 	}
-	return &session{o: b.o, ip: ip, helo: c.Hostname()}, nil
+	return &session{o: b.o, data: b.data, ip: ip, helo: c.Hostname()}, nil
 }
 
 // SMTP replies.
@@ -140,7 +165,10 @@ var (
 	errHostsNotLoaded   = &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "recipient list not loaded yet, try again later"}
 	errIPRate           = &smtp.SMTPError{Code: 450, EnhancedCode: smtp.EnhancedCode{4, 7, 1}, Message: "too many messages from your address, try again later"}
 	errDomainRate       = &smtp.SMTPError{Code: 450, EnhancedCode: smtp.EnhancedCode{4, 7, 1}, Message: "too many messages from your domain, try again later"}
-	errNothing          = &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 6, 0}, Message: "no calendar invite or supported attachment (md, m4a, mp3, wav, ogg, webm, png, jpg, gif, webp)"}
+	errNothing          = &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 6, 0}, Message: "no text, calendar invite or supported attachment (" + AcceptedExtensions + ")"}
+	errBusy             = &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 2}, Message: "too busy, try again later"}
+	errSpool            = &smtp.SMTPError{Code: 452, EnhancedCode: smtp.EnhancedCode{4, 3, 1}, Message: "insufficient storage, try again later"}
+	errHiveBudget       = &smtp.SMTPError{Code: 452, EnhancedCode: smtp.EnhancedCode{4, 2, 2}, Message: "this hive has received its daily volume of mail, try again tomorrow"}
 	errMalformed        = &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 6, 0}, Message: "message could not be parsed"}
 	errTemporary        = &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "temporary failure, try again later"}
 	errRejected         = &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 7, 1}, Message: "delivery refused"}
@@ -148,6 +176,7 @@ var (
 
 type session struct {
 	o    Options
+	data chan struct{}
 	ip   net.IP
 	helo string
 
@@ -205,36 +234,84 @@ func newDeliveryID() string {
 	return hex.EncodeToString(b)
 }
 
-func (s *session) Data(r io.Reader) error {
-	raw, err := io.ReadAll(r)
+// spool copies the message to a new file in the spool directory. The
+// SMTP reader enforces the SIZE limit (552 past it).
+func (s *session) spool(r io.Reader) (*os.File, int64, error) {
+	f, err := os.CreateTemp(s.o.SpoolDir, spoolMessagePattern)
 	if err != nil {
-		// ErrDataTooLarge and friends carry their own SMTP status.
+		s.o.Logger.Warn("hive-mx: cannot create a spool file", "err", err)
+		return nil, 0, errSpool
+	}
+	n, err := io.Copy(f, r)
+	if err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		var se *smtp.SMTPError
+		if errors.As(err, &se) {
+			// ErrDataTooLarge and friends carry their own SMTP status.
+			return nil, 0, err
+		}
+		var pe *os.PathError
+		if errors.As(err, &pe) {
+			s.o.Logger.Warn("hive-mx: spool write failed", "err", err)
+			return nil, 0, errSpool
+		}
+		return nil, 0, err
+	}
+	return f, n, nil
+}
+
+func (s *session) Data(r io.Reader) error {
+	select {
+	case s.data <- struct{}{}:
+		defer func() { <-s.data }()
+	default:
+		return errBusy
+	}
+	f, size, err := s.spool(r)
+	if err != nil {
 		return err
 	}
+	defer func() {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+	}()
 	s.mu.Lock()
 	from, rcpts := s.from, append([]string(nil), s.rcpts...)
 	s.mu.Unlock()
 
-	p, perr := Parse(raw, s.o.Limits)
+	p, perr := ParseReader(io.NewSectionReader(f, 0, size), s.o.Limits, s.o.SpoolDir)
+	defer p.Cleanup()
 	switch {
 	case errors.Is(perr, ErrNothingToDeliver):
 		s.o.Logger.Info("hive-mx: nothing to deliver", "remote_ip", ipString(s.ip))
 		return errNothing
 	case perr != nil:
+		var pe *os.PathError
+		if errors.As(perr, &pe) {
+			s.o.Logger.Warn("hive-mx: attachment spool failed", "err", perr)
+			return errSpool
+		}
 		s.o.Logger.Info("hive-mx: unparsable message", "remote_ip", ipString(s.ip))
 		return errMalformed
 	}
-	hdr, herr := mail.ReadMessage(bytes.NewReader(raw))
+	hdr, herr := mail.ReadMessage(io.NewSectionReader(f, 0, size))
 	var header mail.Header
 	if herr == nil {
 		header = hdr.Header
 	}
 	ctx := context.Background()
-	auth := Authenticate(ctx, s.o.Resolver, Envelope{RemoteIP: s.ip, HELO: s.helo, MailFrom: from}, raw, header)
+	auth := Authenticate(ctx, s.o.Resolver, Envelope{RemoteIP: s.ip, HELO: s.helo, MailFrom: from}, io.NewSectionReader(f, 0, size), header)
 
 	now := s.o.Now().UTC()
-	var temp, rejected int
+	var temp, rejected, overBudget int
 	for _, rcpt := range rcpts {
+		host := wire.RecipientHost(rcpt)
+		if !s.o.HiveBudget.Reserve(host, size) {
+			overBudget++
+			s.o.Logger.Info("hive-mx: hive over its daily byte budget", "remote_ip", ipString(s.ip), "bytes", size)
+			continue
+		}
 		d := wire.Delivery{
 			ID: newDeliveryID(), Kind: p.Kind, Recipient: rcpt, MessageID: p.MessageID,
 			ReceivedAt: now, Auth: auth, Invites: p.Invites, Files: p.Files,
@@ -247,18 +324,24 @@ func (s *session) Data(r io.Reader) error {
 		cancel()
 		switch {
 		case err == nil:
-			s.o.Logger.Info("hive-mx: delivered", "delivery", d.ID, "kind", string(d.Kind), "dmarc", auth.DMARC)
+			s.o.Logger.Info("hive-mx: delivered", "delivery", d.ID, "kind", string(d.Kind), "dmarc", auth.DMARC, "bytes", size)
 		case errors.Is(err, ErrRejected):
 			rejected++
+			s.o.HiveBudget.Refund(host, size)
 			s.o.Logger.Info("hive-mx: hub refused delivery", "delivery", d.ID, "kind", string(d.Kind))
 		default:
 			temp++
+			s.o.HiveBudget.Refund(host, size)
 			s.o.Logger.Warn("hive-mx: delivery failed", "delivery", d.ID, "kind", string(d.Kind), "err", err)
 		}
 	}
 	switch {
 	case temp > 0:
 		return errTemporary
+	case overBudget > 0:
+		// A hive is full for today: the sender retries later (a copy
+		// already delivered to another hive is deduplicated by its spoke).
+		return errHiveBudget
 	case rejected == len(rcpts) && rejected > 0:
 		return errRejected
 	}

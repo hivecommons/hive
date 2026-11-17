@@ -815,7 +815,7 @@
           "Meetings"
         ],
         "summary": "List my calendar emails",
-        "description": "The signed-in user's calendar email addresses with proof status and pending codes, the hive's address (hive@<host>) and the meetings.email switches. ?all=1 adds the whole allowlist for the owner. Any role.",
+        "description": "The signed-in user's calendar email addresses with proof status and pending codes, the hive's address (hive@<host>) and the meetings.email switches. An unproven address whose latest proof mail was refused carries last_failure. The owner also gets recent_proof_attempts (proof mails whose code matched no address, sender masked). ?all=1 adds the whole allowlist for the owner. Any role.",
         "parameters": [
           {
             "name": "all",
@@ -842,14 +842,14 @@
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                       }
                     },
                     "allowlist": {
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                       }
                     },
                     "invites_enabled": {
@@ -857,6 +857,14 @@
                     },
                     "files_enabled": {
                       "type": "boolean"
+                    },
+                    "recent_proof_attempts": {
+                      "type": "array",
+                      "description": "Owner only: recent proof mails whose code matched no address, newest first; kept in memory",
+                      "items": {
+                        "type": "object",
+                        "description": "Proof attempt: at, from (masked, a***@example.com), reason (code not recognized)"
+                      }
                     }
                   }
                 }
@@ -905,7 +913,7 @@
                   "properties": {
                     "email": {
                       "type": "object",
-                      "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                      "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                     },
                     "address": {
                       "type": "string"
@@ -1498,6 +1506,215 @@
           },
           "403": {
             "description": "Owner access required"
+          },
+          "503": {
+            "description": "Config is not available"
+          }
+        }
+      }
+    },
+    "/api/meetings/model": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Meetings model",
+        "description": "meetings.llm.mode, backend and model as set, the label the meeting panel shows, the backends that can answer for meetings, the backends the hive's agents use, the defaults and the env overrides that are set. Owner or read-write.",
+        "responses": {
+          "200": {
+            "description": "The model settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string"
+                    },
+                    "backend": {
+                      "type": "string"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "What the meeting panel shows for the resolved model"
+                    },
+                    "modes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "supported_backends": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "refused_backends": {
+                      "type": "object",
+                      "description": "Why each known backend that cannot answer for meetings is refused",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "agent_backends": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "default_backend": {
+                      "type": "string"
+                    },
+                    "default_model": {
+                      "type": "string"
+                    },
+                    "default_models": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "env_overrides": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "restart_required": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "503": {
+            "description": "Config is not available"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Save the meetings model",
+        "description": "Saves meetings.llm.mode, backend and model; omitted fields are kept and the change applies after a restart (restart_required). A backend with no meetings completion profile is refused. Owner only. Audited as meetings_model_settings.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "auto",
+                      "openai",
+                      "anthropic",
+                      "agent-backend",
+                      "claude-cli",
+                      "none"
+                    ]
+                  },
+                  "backend": {
+                    "type": "string"
+                  },
+                  "model": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The saved model settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "mode": {
+                      "type": "string"
+                    },
+                    "backend": {
+                      "type": "string"
+                    },
+                    "model": {
+                      "type": "string"
+                    },
+                    "label": {
+                      "type": "string",
+                      "description": "What the meeting panel shows for the resolved model"
+                    },
+                    "modes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "supported_backends": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "refused_backends": {
+                      "type": "object",
+                      "description": "Why each known backend that cannot answer for meetings is refused",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "agent_backends": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "default_backend": {
+                      "type": "string"
+                    },
+                    "default_model": {
+                      "type": "string"
+                    },
+                    "default_models": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
+                    "env_overrides": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "restart_required": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, unknown mode or unsupported backend"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "500": {
+            "description": "Saving the config failed"
           },
           "503": {
             "description": "Config is not available"
@@ -6304,6 +6521,173 @@
         }
       }
     },
+    "/api/config/prompt-sources": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Get prompt and definition source repos",
+        "description": "Lists the hive's managed repos and whether agents' prompt_source / definition_source may read from each, via the config-volume allowlist or an owner approval (#18490). Requires owner role.",
+        "responses": {
+          "200": {
+            "description": "Prompt source gate state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "managed": {
+                            "type": "boolean"
+                          },
+                          "owner_approved": {
+                            "type": "boolean"
+                          },
+                          "seed_allowed": {
+                            "type": "boolean"
+                          },
+                          "allowed": {
+                            "type": "boolean"
+                          },
+                          "approved_by": {
+                            "type": "string"
+                          },
+                          "approved_at": {
+                            "type": "string",
+                            "description": "RFC 3339 time of the owner approval."
+                          }
+                        }
+                      },
+                      "description": "One row per managed repo (project.repos), then any owner approval whose repo is no longer managed (inert)."
+                    },
+                    "seed_enabled": {
+                      "type": "boolean",
+                      "description": "variables.security.allow_github_prompt from the config volume."
+                    },
+                    "seed_allowlist": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trust_notice": {
+                      "type": "string"
+                    },
+                    "seed_only_note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/config/prompt-sources/owner-repos": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Approve or revoke a managed repo as a prompt source",
+        "description": "Approves (allowed: true, with acknowledge_trust: true) or revokes (allowed: false) one of the hive's managed repos as a prompt_source / definition_source repo. A repo outside project.repos, a malformed slug, or an approval without acknowledge_trust is refused with 400 and nothing changes. Persisted to variables.security.owner_github_prompt_repos in the running config and audit-logged. Requires owner role.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "repo",
+                  "allowed"
+                ],
+                "properties": {
+                  "repo": {
+                    "type": "string",
+                    "description": "owner/repo slug of a managed repo."
+                  },
+                  "allowed": {
+                    "type": "boolean"
+                  },
+                  "acknowledge_trust": {
+                    "type": "boolean",
+                    "description": "Must be true to approve: anyone who can merge to the repo can steer the hive's agents."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Updated prompt source gate state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "managed": {
+                            "type": "boolean"
+                          },
+                          "owner_approved": {
+                            "type": "boolean"
+                          },
+                          "seed_allowed": {
+                            "type": "boolean"
+                          },
+                          "allowed": {
+                            "type": "boolean"
+                          },
+                          "approved_by": {
+                            "type": "string"
+                          },
+                          "approved_at": {
+                            "type": "string",
+                            "description": "RFC 3339 time of the owner approval."
+                          }
+                        }
+                      },
+                      "description": "One row per managed repo (project.repos), then any owner approval whose repo is no longer managed (inert)."
+                    },
+                    "seed_enabled": {
+                      "type": "boolean",
+                      "description": "variables.security.allow_github_prompt from the config volume."
+                    },
+                    "seed_allowlist": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "trust_notice": {
+                      "type": "string"
+                    },
+                    "seed_only_note": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/config/reference-repos": {
       "get": {
         "tags": [
@@ -7695,6 +8079,364 @@
           },
           "502": {
             "description": "URL fetch failed or returned a non-200 status"
+          }
+        }
+      }
+    },
+    "/api/agents/discovered": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "List agents discovered in managed repos",
+        "description": "Agent definitions found under .hive/agents/*.yaml in managed repos that pass the repo-sourced prompt allowlist, with their approval status. Nothing runs until an owner approves an entry.",
+        "responses": {
+          "200": {
+            "description": "Discovered definitions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "False when discovery is not running (no GitHub client)."
+                    },
+                    "pending": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "owner/repo:path of the definition file."
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "prompt_path": {
+                            "type": "string",
+                            "description": "Sibling <name>.md that becomes prompt_source on approval, when present."
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Agent key the definition maps to."
+                          },
+                          "display_name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "emoji": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "invalid",
+                              "approved",
+                              "rejected",
+                              "orphaned"
+                            ]
+                          },
+                          "agent": {
+                            "type": "string",
+                            "description": "Registered agent, once approved."
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "first_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "decided_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "decided_by": {
+                            "type": "string"
+                          },
+                          "orphaned_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/discovered/approve": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Approve a discovered agent",
+        "description": "Owner-only. Re-reads the definition through the allowlist gate and registers the agent with definition_source (marked discovered) and, when a sibling <name>.md exists, prompt_source. Backend, model and mode come from this request, never the file; tools stay unset for the owner to grant.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Agent key; defaults to the definition's normalized metadata.name."
+                  },
+                  "backend": {
+                    "type": "string",
+                    "description": "Defaults to copilot."
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "ADVISORY",
+                      "ISSUES_ONLY",
+                      "ISSUES_AND_PRS",
+                      "ISSUES_PRS_MERGE",
+                      "NO_GITHUB"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "approved"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, mode or agent name"
+          },
+          "403": {
+            "description": "Owner role required, or the repo is no longer allowlisted"
+          },
+          "404": {
+            "description": "Unknown entry"
+          },
+          "409": {
+            "description": "Entry is not pending, or the agent name is taken"
+          },
+          "502": {
+            "description": "The definition could not be read or parsed"
+          },
+          "503": {
+            "description": "Discovery is not running"
+          }
+        }
+      }
+    },
+    "/api/agents/discovered/reject": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Reject a discovered agent",
+        "description": "Owner-only. A rejected definition stays rejected until its file is removed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "rejected"
+                    },
+                    "id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "404": {
+            "description": "Unknown entry"
+          },
+          "409": {
+            "description": "Entry is not pending"
+          },
+          "503": {
+            "description": "Discovery is not running"
+          }
+        }
+      }
+    },
+    "/api/agents/discovered/refresh": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Rescan managed repos for agent definitions",
+        "description": "Owner-only. Rescans every managed repo now instead of waiting for the timer and returns the refreshed list.",
+        "responses": {
+          "200": {
+            "description": "Discovered definitions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "False when discovery is not running (no GitHub client)."
+                    },
+                    "pending": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "owner/repo:path of the definition file."
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "prompt_path": {
+                            "type": "string",
+                            "description": "Sibling <name>.md that becomes prompt_source on approval, when present."
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Agent key the definition maps to."
+                          },
+                          "display_name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "emoji": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "invalid",
+                              "approved",
+                              "rejected",
+                              "orphaned"
+                            ]
+                          },
+                          "agent": {
+                            "type": "string",
+                            "description": "Registered agent, once approved."
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "first_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "decided_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "decided_by": {
+                            "type": "string"
+                          },
+                          "orphaned_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "503": {
+            "description": "Discovery is not running"
           }
         }
       }
@@ -11325,6 +12067,10 @@
                     },
                     "linear_issue": {
                       "type": "string"
+                    },
+                    "per_repo": {
+                      "type": "boolean",
+                      "description": "Advisory report in every repo (governor.advisory.per_repo, default false)"
                     }
                   }
                 }
@@ -11376,6 +12122,10 @@
                   "linear_issue": {
                     "type": "string",
                     "description": "Required when target is linear"
+                  },
+                  "per_repo": {
+                    "type": "boolean",
+                    "description": "Off: one Hive Advisory Report in the primary repo covers all repos. On: each monitored repo also gets its own report."
                   }
                 }
               }
@@ -43308,14 +44058,14 @@
           "Inbox"
         ],
         "summary": "Receive mail-in files (hub relay)",
-        "description": "Markdown, audio and image attachments hive-mx received for hive@<host>. A sender whose From address passed DMARC alignment and is a proven calendar email of a user with access becomes normal Inbox items; anyone else's items await the owner's approval. Relay signature: X-Hive-Relay-Timestamp, X-Hive-Relay-Signature-256 (HMAC-SHA256 with this hive's relay key over timestamp.delivery.body) and X-Hive-Relay-Delivery; no session.",
+        "description": "Markdown, audio, video and image attachments and text bodies hive-mx received for hive@<host> (#18395, #18564); a body-only mail arrives as message.md and a mail's body is kept as each item's note. A sender whose From address passed DMARC alignment and is a proven calendar email of a user with access becomes normal Inbox items; anyone else's items await the owner's approval. Relay signature: X-Hive-Relay-Timestamp, X-Hive-Relay-Signature-256 (HMAC-SHA256 with this hive's relay key over timestamp.delivery.body) and X-Hive-Relay-Delivery; no session.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "description": "hive-mx delivery (pkg/mailin/wire.Delivery) of kind files: id, kind, recipient, message_id, received_at, auth, files {title, attachments[] {name, kind, content_type, size, sha256, data}}"
+                "description": "hive-mx delivery (pkg/mailin/wire.Delivery) of kind files: id, kind, recipient, message_id, received_at, auth, files {title, note, attachments[] {name, kind, content_type, size, sha256, data}}"
               }
             }
           }
@@ -43353,6 +44103,74 @@
           },
           "413": {
             "description": "Delivery too large"
+          },
+          "503": {
+            "description": "This hive holds no relay key"
+          },
+          "507": {
+            "description": "The email spool is full"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/chunk": {
+      "post": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Receive one piece of a large mail-in delivery (hub relay)",
+        "description": "The hub relays a files delivery larger than one request in order, each piece signed with this hive's relay key over the relay delivery id <delivery id>.<index>.<count> (X-Hive-Relay-Delivery), so the order and count are covered and each piece passes the replay check. X-Hive-Mail-Body-Type is the whole body's type (multipart/form-data from hive-mx, or application/json). Pieces are staged on disk; the last one decodes the body, checks each file's size and SHA-256 and stores it like POST /api/inbox/email. No session.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary",
+                "description": "One piece of the delivery body, at most 8 MiB"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Piece staged ({piece, pieces}), or, for the last piece, stored ({items, awaiting_approval})",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "piece": {
+                      "type": "integer"
+                    },
+                    "pieces": {
+                      "type": "integer"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "awaiting_approval": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid piece, missing piece or undecodable body"
+          },
+          "401": {
+            "description": "Relay signature rejected or piece replayed"
+          },
+          "409": {
+            "description": "Mail-in files are off or unavailable"
+          },
+          "413": {
+            "description": "Piece or delivery too large"
           },
           "503": {
             "description": "This hive holds no relay key"
@@ -45360,6 +46178,97 @@
           },
           "409": {
             "description": "Already ended",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/hive-recording/{id}": {
+      "delete": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Delete a hive recording",
+        "description": "An owner, or the read-write member who recorded it. Deletes a finished recording for good: its stored audio and chunks, the Inbox item and its state, and its Knowledge fact with the machine transcript. What was already shared from it (RFC, issues, DIBS ideas, spek seeds) is not touched. Audited as `inbox_recording_delete`.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Recording id (the Inbox item id)"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "deleted": {
+                      "type": "boolean"
+                    },
+                    "fact_removed": {
+                      "type": "boolean"
+                    },
+                    "shares_kept": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Read role, or a read-write member deleting someone else's recording",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Unknown recording",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Still in progress, or being transcribed",
             "content": {
               "application/json": {
                 "schema": {

@@ -487,3 +487,20 @@ func TestSweepStaleCopilotConfigTmp(t *testing.T) {
 	// Missing directories are not an error.
 	m.sweepStaleCopilotConfigTmp("scanner", filepath.Join(t.TempDir(), "nohome"))
 }
+
+// A completed relink is routine self-healing and must not log at WARN, or the
+// fleet self-reports it as an unclassified repeated error (#18497).
+func TestRebridgeCopilotConfig_SuccessLogsInfoNotWarn(t *testing.T) {
+	m, buf, ap, link, target := copilotBridgeFixture(t)
+	simulateCopilotSave(t, link, copilotBridgeTestNoLogin)
+	if !m.rebridgeCopilotConfig(ap.Name, link, target, copilotBridgeTriggerLoginPrompt) {
+		t.Fatal("diverged copy must be relinked")
+	}
+	out := buf.String()
+	if !strings.Contains(out, "re-linked") {
+		t.Fatalf("relink not logged:\n%s", out)
+	}
+	if strings.Contains(out, "level=WARN") {
+		t.Fatalf("successful relink must not log at WARN:\n%s", out)
+	}
+}

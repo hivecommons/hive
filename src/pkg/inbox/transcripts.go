@@ -231,6 +231,16 @@ func (s *TranscriptStore) Put(rec TranscriptRecord) error {
 	return writeFileAtomic(s.path(rec.Source, rec.ID), data)
 }
 
+// Delete removes one record; a missing record is not an error.
+func (s *TranscriptStore) Delete(source, id string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.Remove(s.path(source, id)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
+}
+
 // Usage returns what was spent this month and today (UTC).
 func (s *TranscriptStore) Usage(now time.Time) TranscriptUsage {
 	s.mu.Lock()

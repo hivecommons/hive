@@ -83,7 +83,8 @@ func (c *Client) isKnownNonHumanAuthor(user *gh.User) bool {
 
 // SelfAuthorization is the gate's finding for one PR request.
 type SelfAuthorization struct {
-	// Held is true when the PR must carry "hold" regardless of ACMM level.
+	// Held is true when the PR must carry the decision-needed gate label
+	// regardless of ACMM level (it carried `hold` before #18468).
 	Held bool
 	// Issue is the agent-filed issue that decided it, for the log and the
 	// explanatory comment. Zero when Held is false.
@@ -278,7 +279,7 @@ func splitRepoRef(repo, defaultOwner string) (string, string) {
 	return strings.TrimSpace(defaultOwner), repo
 }
 
-// selfAuthorizationNotice is the comment left on a held PR. A "hold" label with
+// selfAuthorizationNotice is the comment left on a held PR. A gate label with
 // no explanation reads as a malfunction, and the person who has to clear it
 // needs to know what would clear it.
 func selfAuthorizationNotice(finding SelfAuthorization) string {
@@ -288,8 +289,8 @@ func selfAuthorizationNotice(finding SelfAuthorization) string {
 >
 > This PR's only tracked rationale is %s#%d, which the hive filed itself — %s. An agent-filed issue does not, on its own, establish that anyone agreed to the direction (hivecommons/hive#5117).
 >
-> The change may well be right; nothing here is a review of it. To release the hold, acknowledge the direction on that issue — comment on it, assign yourself, or add the `+"`%s`"+` label — and remove the `+"`hold`"+` label here.`,
-		SelfAuthorizationNoticeMarker, finding.Repo, finding.Issue, finding.Reason, HumanAckLabel)
+> The change may well be right; nothing here is a review of it. To release the hold, acknowledge the direction on that issue — comment on it, assign yourself, or add the `+"`%s`"+` label — and remove the `+"`%s`"+` label here.`,
+		SelfAuthorizationNoticeMarker, finding.Repo, finding.Issue, finding.Reason, HumanAckLabel, DecisionNeededLabelName())
 }
 
 // SelfAuthorizationNoticeMarker marks comments created by the #5117
@@ -460,5 +461,10 @@ func isHoldLabelEvent(event *gh.IssueEvent) bool {
 	if event.GetEvent() != "labeled" && event.GetEvent() != "unlabeled" {
 		return false
 	}
-	return strings.EqualFold(event.GetLabel().GetName(), "hold")
+	// The #5117 gate applies decision-needed (hivecommons/hive#18468); the
+	// literal `hold` it applied before is still read so an older hold's
+	// history is judged the same way. Mixing the two only makes the check
+	// more conservative: a person's later `hold` is the latest event.
+	name := event.GetLabel().GetName()
+	return strings.EqualFold(name, DecisionNeededLabelName()) || strings.EqualFold(name, LegacyHiveHoldLabel)
 }

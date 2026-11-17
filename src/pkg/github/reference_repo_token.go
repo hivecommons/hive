@@ -29,6 +29,10 @@ import (
 //     so a rotation is picked up without a restart. A derived entry never
 //     reads it.
 //
+// project.remote_write_identity (hivecommons/hive#18516) adds a third
+// source in front of the owner: the hive's own GitHub App, only on a granted
+// repo whose owner installed it themselves. See reference_repo_identity.go.
+//
 // Boot refuses a hand-written write-mode entry that has neither (see
 // VerifyReferenceRepoWriteCredential) so the failure is a config error with
 // the repo named, not a 401 a day later. A derived entry is downgraded to

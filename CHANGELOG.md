@@ -290,6 +290,79 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 - The signed-commit reconciler's intentional refusal to rewrite a foreign or merge commit no longer files repeated unclassified-error fleet reports; its warning and PR remediation remain visible ([#17924](https://github.com/hivecommons/hive/issues/17924)).
 - Dashboard logs one summary warning per five minutes for dropped SSE events instead of one warning per event, so a stalled browser tab no longer triggers repeated-error fleet reports (#17995).
+## 2026-11-17 (v5.291.0)
+
+### Added
+
+- Meetings agent-backend mode now answers through `copilot` and `omp` (one tool-less CLI per call with the agents' sign-in, usage charged to the meeting), through `vllm`, `llm-d` and every named model gateway on the OpenAI-compatible path, and on hives that sign Claude in only with `HIVE_CLAUDE_OAUTH_TOKEN`; `codex`, `gemini`, watsonx and the other CLIs are refused at validation and in the Settings picker with the specific reason.
+
+### Changed
+
+- Sentinel: in `github.notifications.mode: quiet` (the default) the informational notice on a trusted author's PR (no label, merge not blocked) is now a `sentinel` section of the PR's `hive:status` card, edited in place, instead of a new comment per PR. A sentinel hold (`sentinel-alert` label, maintainer review required), including one from `sentinel.trusted_authors_block`, still posts its own comment, and `normal` mode is unchanged (#18453).
+- The hive no longer applies `hold` itself: a PR its ACMM level gate holds for review now gets `ready-for-review`, and items blocked on a human decision (reporter trust, self-authorization, the hold guard's re-hold, owner-only decisions) get `decision-needed`; both block merging exactly like `hold`, carry a label description saying who acts next, and are renameable via `governor.labels.ready_for_review` / `governor.labels.decision_needed`. A `hold` a person adds still means hands-off. On boot the hive swaps the `hold` labels it can prove it applied (App label event plus its gate notice) for the new labels and leaves every other `hold` alone; the SHA-hold sweep now gives every reporter `needs-sha` instead of `hold`.
+
+## 2026-11-17 (v5.290.0)
+
+### Added
+
+- **Owners can approve their own managed repos as prompt and definition sources.** Settings → Security → Prompt sources and the owner-only `GET /api/config/prompt-sources` / `PUT /api/config/prompt-sources/owner-repos` let the hive owner allow one of the hive's `project.repos` for `agents.<n>.prompt_source` and `definition_source` without editing the config volume, behind a confirm naming the trust implication (whoever can merge there can steer the agents). Approvals cover that repo only, are audit-logged as `config_prompt_source_repo`, persist to `variables.security.owner_github_prompt_repos` in the PVC runtime config, and lapse if the repo leaves `project.repos`. Non-owners get 403, repos outside the hive are refused, and the seed `github_prompt_allowlist` path is unchanged ([#18490](https://github.com/hivecommons/hive/issues/18490)).
+- Long-lived agents can claim a topic for one pull request with `bd topic claim <key> --repo <owner/name> --pr <n>`: the claim is stored in the agent's bead store, a second open claim for the same topic is refused, the kick lists the agent's claims (also as `${TOPIC_CLAIMS}`) so it finds its PR by number after a branch rename, the FIX-BEFORE-NEW and held-PR blocks show the topic next to the PR, and hive releases the claim when the PR merges or closes.
+- Sandboxed agent kicks now get hive's own `hive-review` relay on `PATH`. The Job runtime copies it in from the running hive image by digest, through a restricted-SCC-safe init container. Podman bind-mounts it read-only. Project images no longer need to include hive's scripts, only bash and python3, and a kick on an image without them fails with a clear message (#18512).
+- Sandboxed reviewers now get the PR they review. Hive fetches `refs/pull/N/head` (fork PRs included) and the PR's base with its clone token and checks the head out on `pr-N`. It writes `.hive/pr/N.json`, marked untrusted, with the PR's metadata, changed files, capped diff and review comments, and names both in the kick prompt. Review kicks never push. ([#18513](https://github.com/hivecommons/hive/issues/18513))
+- Reference repos: new `project.remote_write_identity` (`bot` default, `bot_only`, `owner`) picks whether a hive's writes on a granted remote repo appear as its GitHub App bot (only where the repo's owner installed the App) or as the hive owner's connected account; without the App, `bot` falls back to the owner and `bot_only` stays read-only (#18516).
+- Meetings can answer through the hive's own agent backends: `meetings.llm.mode: agent-backend` (or `claude-cli`) runs Betty on a warm, tool-less Claude Code CLI per meeting with `claude-sonnet-5-5` by default and Spek through `hive meeting-llm`, using the agents' sign-in and charging the meeting budget; Settings, Meeting attendee, Model picks the mode, backend and model from the agents' catalog, and the panel shows the model name.
+- Hive reviewers can now post findings as inline, line-anchored comments: `hive-review --comments-file` sends the summary and every line comment in one GitHub review, so each finding is its own resolvable thread with a single notification, and a finding whose line is not in the diff is moved into the summary instead of failing the review.
+- CEL `triggers:` rules can now match `pr.labeled`: when an already-seen PR gains a label the eval cycle emits it once, with the new labels in `event.added_labels`, so a rule like `event.kind == "pr.labeled" && "hive-review" in event.added_labels` kicks the reviewer right after a maintainer opts a PR into review instead of waiting for its cadence (#18538).
+- The dashboard sidebar has a new Collaborate group holding Inbox, Calendar, Meetings and Inception (spek), moved out of Intelligence.
+- Inbox: hive recordings get a 🗑 Delete action. It removes the audio stored on the hive, the Inbox item and the recording's Knowledge fact with its transcript, after an in-page confirm that says shared copies (RFCs, issues, DIBS ideas, spek seeds) stay. Owners can delete any recording, read-write members only their own, read members none; each delete is audited as `inbox_recording_delete` (`DELETE /api/inbox/hive-recording/{id}`).
+
+### Fixed
+
+- In a hive with several repos, every repo now gets its own governor (advisory) issue and the digest is posted to each, including repos added later in Settings; a repo where the hive cannot create the issue shows a dashboard warning instead of failing silently.
+- The agent inference proxy now picks up a rotated LiteLLM or gateway key file without a restart, re-resolves the key and retries once on an upstream 401, and logs `key_source` and `key_changed_since_start` on auth failures; an `api_key_file` outside `/secrets` or `/data/secrets` is now rejected at dashboard/API save with the allowed dirs listed, warned about at boot and once at runtime with the source actually used, and the effective key source is shown in the governor config API and the LiteLLM tab (#18532, #18533).
+- Dashboard: the Meetings and Calendar panels wait for the viewer's role instead of telling the owner they are not allowed, say when the hive is unreachable instead of staying on "Loading meetings…", sit inside the dashboard like other sections (they had lost their card padding), and lay out the join form, meeting rows (status pill, platform, time, a plain-language error with the raw one under details) and empty states like the rest of the dashboard.
+- Inbox ● Record: the "Saved to the Inbox" panel now follows the recording's item, says "Transcribed. See the item below." (or why transcription failed or is off) and then closes itself with the toast countdown; the item preview shows the plain transcript text instead of the provenance line and untrusted-data envelope; hive recordings and dropped audio files get a plain "Transcript made by this hive with <provider>/<model> on <date>." line; and the player says how long the audio is kept on this hive instead of "the recording is not stored".
+- Agent restarts no longer log a warning when tmux has no server or session to kill before relaunching (#18486).
+
+## 2026-11-16 (v5.289.1)
+
+### Changed
+
+- The AGENTS.md injection cap defaults to 32 KiB (was 8 KiB), so a 13 KB AGENTS.md now reaches agents in full; set `repos.<repo>.agents_md_max_bytes` to override it per repo (hard ceiling 256 KiB) or `HIVE_AGENTS_MD_MAX_BYTES` for the default, the truncation warning is logged once per file change, and `/api/status` repos report each repo's AGENTS.md size and any dropped sections.
+
+### Fixed
+
+- Workflow-model repositories no longer flap `stage/020-claimed` every cycle: the in-progress sweep leaves a stage label the bound model derives for the issue (TechDocs "Accepted") in place and does not treat it as a claim, and out-of-cycle stage facts derive through the same bound model as the sweeps (#18434).
+- Meetings: hive ships Quorum v0.2.1, which sends Vexa the full join link (`meeting_url`) for Zoom meetings, so sending hive to a Zoom link no longer fails with "unsupported platform 'zoom' without a meeting_url".
+
+## 2026-11-16 (v5.289.0)
+
+### Added
+
+- Settings, Meeting attendee now shows Betty's email address with everyone's calendar emails and proof status, lets each user add, prove and remove their own calendar emails, lists mailed-in files waiting for approval, and lets the owner turn calendar invites and mail-in files on or off.
+- Mail Markdown, audio and image files to `hive@<your hive's host>` and they land in the Inbox as email items: from an allowlisted calendar email they are routable, shareable and transcribed like voice items; from anyone else they wait for the owner's Approve or Decline.
+- The hub sign-in, access-needed and link-preview pages now also show the LF Projects legal footer.
+- Every hub page (public pages, fleet views, hosted dashboard, contribute landing and error page) now shows the LF Projects legal footer linking to lfprojects.org/policies/.
+
+### Fixed
+
+- Dashboard: the "rejected hub-proxied request with unverified proxy proof" warning is now logged at most once a minute per reason and path (with a suppressed count) instead of once per request; the request is still rejected with 403 (#18377).
+- Hub heartbeat collect no longer times out when the PVC scan behind `app_keys_held` stalls: the scan is bounded to 2s and falls back to the last completed result (#18484).
+- The scanner (and every repair queue) no longer pushes onto a PR branch the hive App did not open while someone else is working on it ([#18488](https://github.com/hivecommons/hive/issues/18488)). A red or conflicted non-App PR whose head was pushed within `HIVE_SCANNER_BUSY_BRANCH_MINUTES` (default 60), or whose PR or linked issue another worker holds a live claim on, moves from FIX-BEFORE-NEW and the CI_FAILING push queue to a "BUSY BRANCHES — suggest, do not push" list, and the agent posts the fix as one suggestion comment for the worker to apply as its own signed commit. Idle branches, App-authored lane branches and in-place adoptions are listed exactly as before.
+
+## 2026-11-16 (v5.288.0)
+
+### Added
+
+- Gateway spend is priced from the gateway: OpenRouter's catalog prices, LiteLLM `/model/info`, or a new per-gateway `prices:` block (input, cached input, output per 1M tokens). Cached prompt tokens are billed at the cache-read rate. Gateway models with no price show as "price unknown" instead of $0 or a tier guess, and the usage gauge gets a spend row per gateway.
+- Inbox recordings are transcribed automatically when you stop, with the hive's transcription provider (auto: the built-in whisper first), with the usual progress bar and time-left estimate. The transcriber reads the recording from the hive's own disk (new `AudioOpener`; no HTTP call to itself). Nothing runs until `inbox.transcription` is enabled with consent; from then on every dashboard recording counts as opted in whatever the mode, and recordings made while it was off are picked up by the transcription sweep.
+- Inbox ● Record can record a meeting tab's audio together with the microphone in Chrome and Edge on a computer: you pick the tab and tick "Share tab audio", the video track is dropped, the two are mixed in the browser (Web Audio) and both get a level meter. The consent notice then says remote participants are recorded too and must have been told. Where the browser cannot share tab audio (Safari, Firefox, phones) the option is hidden with the reason, and a share without an audio track warns and records the microphone only. The dashboard document's Permissions-Policy gains `display-capture=(self)`; `/terminal/` and `/api/` keep it closed.
+- Drop audio and video onto the Inbox (mp3, m4a, aac, wav, ogg, opus, webm, mp4, mov, checked by container signature): the file streams straight to the hive's disk under the recording size cap (`inbox.recording.max_bytes`, 200 MiB), plays back from disk through the same-origin stream, and is transcribed as soon as it is added when transcription is enabled (otherwise 🎧 Transcribe shows why it is unavailable); the machine transcript lands in the item's Knowledge fact. Originals are deleted after the recordings retention (5 days, `inbox.uploads.media_retention_days` overrides) while the transcript and item stay; video keeps only its audio track. Uploads now get a 20-minute read window instead of the dashboard's 30-second read timeout.
+- A weekly workflow compares hive's static model fallbacks and curated OpenRouter suggestions against OpenRouter's public catalog, plus npm release metadata, and keeps one tracking issue listing any drift. A unit test now fails on empty or duplicate static lists and on Go/JS copies that disagree.
+
+### Fixed
+
+- Self-upgrade no longer aborts with `cannot unmarshal string "dashboard" into Go value of type json.Number` when the hive container's probes use a named port; named ports are kept in the backfilled startupProbe, and a probe decode problem now skips the backfill with a warning instead of blocking the image upgrade (#18479).
 
 ## 2026-11-16 (v5.287.0)
 

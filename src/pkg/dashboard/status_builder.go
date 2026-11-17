@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/agentsmd"
 	"github.com/hivecommons/hive/crux/paneclass"
 	"github.com/hivecommons/hive/crux/skillreg"
 	"github.com/hivecommons/hive/crux/watchdog"
@@ -1059,9 +1060,9 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		// running" — an agent parked at its idle prompt after a fruitless kick
 		// read exactly like one mid-task (#7421). A kicked turn the manager has
 		// seen END is idle, whatever the process state says; liveness is not
-		// evidence of work.
+		// evidence of work. An agent never kicked is idle too (#18458).
 		busy := "idle"
-		if proc.State == crux.StateRunning && !proc.KickOutcome.Settled(proc.LastKick) {
+		if proc.TurnInFlight() {
 			busy = "working"
 		}
 		// awaitingCI (#9673 item 3): the manager's CI-poll guard already
@@ -2691,6 +2692,9 @@ func buildReposWithForge(cfg *config.Config, actionable *github.ActionableResult
 					r.UpstreamLastCheck = sum.LastRunAt.UTC().Format(time.RFC3339)
 				}
 			}
+		}
+		if st, ok := agentsmd.StatusFor(full); ok {
+			r.AgentsMd = &st
 		}
 		if actionable != nil && !r.Paused && !countsPresent {
 			r.CountsIncomplete = true

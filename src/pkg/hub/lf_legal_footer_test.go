@@ -71,3 +71,17 @@ func TestLFLegalFooterOnContributeLanding(t *testing.T) {
 	}
 	assertLFLegalFooter(t, "contribute landing", body)
 }
+
+func TestLFLegalFooterOnSignInAndPreviewPages(t *testing.T) {
+	rec := httptest.NewRecorder()
+	(&HubServer{}).writeProviderPicker(rec, nil, "")
+	assertLFLegalFooter(t, "sign-in page", rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	writeLinkPreview(rec)
+	assertLFLegalFooter(t, "link preview page", rec.Body.String())
+
+	rec = httptest.NewRecorder()
+	newHubServerForTest(t).writeHiveAccessDeniedPage(rec, "octo", "demo", "demo.example.test")
+	assertLFLegalFooter(t, "hive access denied page", rec.Body.String())
+}

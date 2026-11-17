@@ -229,7 +229,9 @@
         "Human": "",
         "Clanker": "",
         "Hive": ""
-      }
+      },
+      "ReadyForReview": "",
+      "DecisionNeeded": ""
     },
     "Sensing": {
       "GHRatePatterns": [
@@ -707,7 +709,8 @@
       "ExecTimeoutS": 0,
       "HTTPTimeoutS": 0,
       "AllowGitHubPrompt": false,
-      "GitHubPromptAllowlist": null
+      "GitHubPromptAllowlist": null,
+      "OwnerGitHubPromptRepos": null
     },
     "Defs": null
   },

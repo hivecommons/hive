@@ -2206,7 +2206,7 @@ func litellmSectionResponse(lc *config.LiteLLMConfig) map[string]interface{} {
 	if apiKeyFileLooksLikeKey {
 		apiKeyFile = maskSecretHint(apiKeyFile)
 	}
-	key := lc.ResolveAPIKey()
+	key, keySource := lc.ResolveAPIKeyWithSource()
 	keySHA256 := ""
 	if key != "" {
 		keySHA256 = config.APIKeySHA256(key)
@@ -2224,7 +2224,13 @@ func litellmSectionResponse(lc *config.LiteLLMConfig) map[string]interface{} {
 		"keySHA256":              keySHA256,
 		// redactSecret guards the pathological case of a key-like env var
 		// NAME appearing in the source string.
-		"keySource": redactSecret(lc.ResolveAPIKeySource(), key),
+		"keySource": redactSecret(keySource, key),
+		// hive#18533: the effective source in display form, noting a configured
+		// api_key_file that is outside the allowed dirs and therefore ignored,
+		// plus the allowed dirs so the tab can say where to mount the Secret.
+		"keySourceDescription": redactSecret(config.DescribeKeySource(keySource, lc.APIKeyFile), key),
+		"apiKeyFileAllowed":    !lc.ConfiguredKeyFileSkipped(),
+		"allowedKeyFileDirs":   config.SecretFileRoots(),
 	}
 }
 
@@ -2379,9 +2385,8 @@ func (s *Server) handleGovernorLiteLLM(w http.ResponseWriter, r *http.Request) {
 		// upsert applies. This is the LiteLLM twin of that handler and carries
 		// the identical defect — the guardrail above short-circuits for ANY
 		// absolute path, so an arbitrary file could be stored and later read.
-		if keyFile != "" && !config.SecretFilePathAllowed(keyFile) {
-			jsonError(w, "api_key_file must be under /secrets or "+config.WritableSecretsDir,
-				http.StatusBadRequest)
+		if msg := config.SecretFilePathRejection("api_key_file", keyFile); msg != "" {
+			jsonError(w, msg, http.StatusBadRequest)
 			return
 		}
 		lc.APIKeyFile = keyFile

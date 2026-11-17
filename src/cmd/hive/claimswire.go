@@ -464,6 +464,37 @@ func claimsInflightLookup(ledger *claims.Ledger, org string) scheduler.InflightL
 	}
 }
 
+// claimsPRLeaseLookup adapts the worker-claim ledger to the scheduler's
+// busy-branch guard (hivecommons/hive#18488): a live claim on a PR or its
+// linked issue means a worker is on that branch. Only real claims count —
+// a kick listing is not a worker — and the holding agent is reported so the
+// guard can ignore the kicked agent's own claim.
+func claimsPRLeaseLookup(ledger *claims.Ledger, org string) scheduler.PRLeaseLookup {
+	if ledger == nil {
+		return nil
+	}
+	return func(repo string, number int) (string, string, bool) {
+		if number <= 0 {
+			return "", "", false
+		}
+		c, ok := ledger.Lookup(repo, number)
+		if !ok && org != "" && !strings.Contains(repo, "/") {
+			c, ok = ledger.Lookup(org+"/"+repo, number)
+		}
+		if !ok {
+			return "", "", false
+		}
+		holderAgent := ""
+		if c.Kind == claims.KindAgent {
+			holderAgent = c.HolderID
+			if holderAgent == "" {
+				holderAgent = c.Holder
+			}
+		}
+		return fmt.Sprintf("%s (%s) until %s", c.Holder, c.Kind, c.ExpiresAt.UTC().Format(time.RFC3339)), holderAgent, true
+	}
+}
+
 // composeInflight ORs several in-flight lookups; nil entries are skipped.
 func composeInflight(lookups ...scheduler.InflightLookup) scheduler.InflightLookup {
 	var live []scheduler.InflightLookup

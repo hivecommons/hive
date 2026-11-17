@@ -28,6 +28,16 @@
 # hive, not by any agent uid. Post the comment WITHOUT a verdict and the comment
 # is all that survives — nothing is routed, nothing is labeled.
 #
+# Inline findings (hivecommons/hive#18531) — one review, N line threads:
+#   hive-review <number> --repo <owner/repo> --comment --body-file <summary> \
+#     --comments-file <c.json> --verdict-file <v>
+# <c.json> is a JSON array of {"path","line","body"} objects, optionally with
+# "side" ("RIGHT", the PR head, by default; "LEFT" for a deleted line) and
+# "start_line" for a multi-line range. The hive submits the summary and every
+# comment in ONE GitHub review, so the PR gets one notification and each
+# finding becomes its own resolvable thread. A comment whose line is not in
+# the PR diff is moved into the summary instead of failing the review.
+#
 # Nothing worth commenting on? Record the verdict anyway — an unrecorded
 # judgement reads downstream as "never reviewed", so the PR comes back forever:
 #   hive-review <number> --repo <owner/repo> --record-verdict --verdict-file <v>
@@ -59,6 +69,7 @@ set -euo pipefail
 REQ_DIR="${HIVE_REVIEW_REQUEST_DIR:-/var/run/hive-metrics/review-requests}"
 
 REPO=""; NUMBER=""; EVENT=""; BODY=""; BODY_FILE=""; THREAD=""; VERDICT_FILE=""; VERDICT=""; REVISE=0
+COMMENTS_FILE=""; COMMENTS=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -69,6 +80,8 @@ while [ $# -gt 0 ]; do
     --body-file=*) BODY_FILE="${1#*=}"; shift;;
     --verdict-file) VERDICT_FILE="$2"; shift 2;;
     --verdict-file=*) VERDICT_FILE="${1#*=}"; shift;;
+    --comments-file) COMMENTS_FILE="$2"; shift 2;;
+    --comments-file=*) COMMENTS_FILE="${1#*=}"; shift;;
     --approve|-a) EVENT="approve"; shift;;
     --request-changes|-r) EVENT="request_changes"; shift;;
     --comment|-c) EVENT="comment"; shift;;
@@ -112,6 +125,15 @@ if [ -n "$VERDICT_FILE" ]; then
   fi
 fi
 
+if [ -n "$COMMENTS_FILE" ]; then
+  if [ -f "$COMMENTS_FILE" ]; then
+    COMMENTS="$(cat "$COMMENTS_FILE")"
+  else
+    echo "hive-review: comments file not found: $COMMENTS_FILE" >&2
+    exit 2
+  fi
+fi
+
 if [ -z "$REPO" ] || [ -z "$NUMBER" ] || [ -z "$EVENT" ]; then
   echo "hive-review: --repo, a PR number (or URL), and one of --approve/--request-changes/--comment/--resolve-thread/--record-verdict are required" >&2
   exit 2
@@ -126,6 +148,10 @@ if [ "$EVENT" = "resolve_thread" ] && [ -z "$THREAD" ]; then
 fi
 if [ -n "$THREAD" ] && [ "$EVENT" != "comment" ] && [ "$EVENT" != "resolve_thread" ]; then
   echo "hive-review: --thread only applies to --comment (in-thread reply) or --resolve-thread" >&2
+  exit 2
+fi
+if [ -n "$COMMENTS" ] && { [ -n "$THREAD" ] || [ "$EVENT" = "resolve_thread" ] || [ "$EVENT" = "record_verdict" ]; }; then
+  echo "hive-review: --comments-file only applies to a PR-level review (--comment/--approve/--request-changes)" >&2
   exit 2
 fi
 if [ "$EVENT" != "approve" ] && [ "$EVENT" != "resolve_thread" ] && [ "$EVENT" != "record_verdict" ] && [ -z "$BODY" ]; then
@@ -157,9 +183,9 @@ if ! command -v python3 >/dev/null 2>&1; then
   exit 1
 fi
 
-python3 - "$TEMP_FILE" "$REQ_FILE" "$REPO" "$NUMBER" "$EVENT" "$BODY" "$AGENT" "$THREAD" "$VERDICT" "$REVISE" <<'PY'
+python3 - "$TEMP_FILE" "$REQ_FILE" "$REPO" "$NUMBER" "$EVENT" "$BODY" "$AGENT" "$THREAD" "$VERDICT" "$REVISE" "$COMMENTS" <<'PY'
 import json, os, sys
-temporary, path, repo, number, event, body, agent, thread, verdict, revise = sys.argv[1:11]
+temporary, path, repo, number, event, body, agent, thread, verdict, revise, comments = sys.argv[1:12]
 req = {"repo": repo, "number": int(number), "event": event, "agent": agent}
 if revise == "1":
     req["revise"] = True
@@ -205,6 +231,47 @@ if verdict.strip():
                              % (i, obj.get("repo"), obj.get("number"), repo, number))
             raise SystemExit(2)
     req["report"] = verdict
+if comments.strip():
+    # Same checks the relay makes, so a bad file fails here with the fix
+    # named instead of quarantining the whole review server-side.
+    try:
+        parsed = json.loads(comments)
+    except ValueError as exc:
+        sys.stderr.write("hive-review: --comments-file is not valid JSON: %s\n" % exc)
+        raise SystemExit(2)
+    if not isinstance(parsed, list):
+        sys.stderr.write("hive-review: --comments-file must hold a JSON array of {\"path\",\"line\",\"body\"} objects\n")
+        raise SystemExit(2)
+    out = []
+    for i, c in enumerate(parsed):
+        if not isinstance(c, dict):
+            sys.stderr.write("hive-review: comment %d is not a JSON object\n" % i)
+            raise SystemExit(2)
+        p, line, text = c.get("path"), c.get("line"), c.get("body")
+        if not isinstance(p, str) or not p.strip() or p.startswith("/"):
+            sys.stderr.write("hive-review: comment %d needs a repository-relative \"path\"\n" % i)
+            raise SystemExit(2)
+        if not isinstance(line, int) or isinstance(line, bool) or line <= 0:
+            sys.stderr.write("hive-review: comment %d needs a positive integer \"line\"\n" % i)
+            raise SystemExit(2)
+        if not isinstance(text, str) or not text.strip():
+            sys.stderr.write("hive-review: comment %d needs a non-empty \"body\"\n" % i)
+            raise SystemExit(2)
+        item = {"path": p, "line": line, "body": text}
+        side = str(c.get("side", "RIGHT") or "RIGHT").upper()
+        if side not in ("RIGHT", "LEFT"):
+            sys.stderr.write("hive-review: comment %d \"side\" must be RIGHT or LEFT\n" % i)
+            raise SystemExit(2)
+        item["side"] = side
+        start = c.get("start_line")
+        if start not in (None, 0):
+            if not isinstance(start, int) or isinstance(start, bool) or start <= 0 or start >= line:
+                sys.stderr.write("hive-review: comment %d \"start_line\" must be a positive integer below \"line\"\n" % i)
+                raise SystemExit(2)
+            item["start_line"] = start
+        out.append(item)
+    if out:
+        req["comments"] = out
 data = json.dumps(req)
 # Read from the environment, never argv: argv is visible to every user.
 key = os.environ.get("HIVE_REVIEW_SPOOL_KEY", "")
@@ -223,6 +290,8 @@ elif [ -n "$THREAD" ]; then
   echo "hive-review: requested $EVENT on thread $THREAD of $REPO#$NUMBER as the App bot"
 elif [ "$REVISE" = "1" ]; then
   echo "hive-review: requested revision of the existing review on $REPO#$NUMBER (edits in place; no notification)"
+elif [ -n "$COMMENTS" ]; then
+  echo "hive-review: requested $EVENT review with inline comments on $REPO#$NUMBER as the App bot (one review, one notification)"
 else
   echo "hive-review: requested $EVENT review on $REPO#$NUMBER as the App bot"
 fi

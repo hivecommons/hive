@@ -44,6 +44,10 @@ const (
 	CodeUnknownEvent     = "unknown-event"
 	CodeNoVersion        = "no-version"
 	CodeInferred         = "inferred-element"
+	// CodeDuplicateDispatch refuses two profiles dispatched in one state;
+	// CodeDispatchReply warns that a dispatch reply is not a state reply.
+	CodeDuplicateDispatch = "duplicate-dispatch"
+	CodeDispatchReply     = "dispatch-reply-undeclared"
 )
 
 // ErrCompile wraps a compile refused by error diagnostics.
@@ -84,6 +88,12 @@ type Profile struct {
 	Replies map[string][]string `json:"replies,omitempty"`
 	// Labels is the label set to reconcile.
 	Labels LabelSet `json:"labels,omitzero"`
+	// Agents are the model's agent grants, as declared.
+	Agents []AgentGrant `json:"agents,omitempty"`
+	// Dispatch maps a state id to the profile the hive hands items in that
+	// state to (dispatch.go). Empty for hive-default and for a model with
+	// no agent grants.
+	Dispatch map[string]DispatchTarget `json:"dispatch,omitempty"`
 	// Diagnostics are the warnings left after a successful compile.
 	Diagnostics []Diagnostic `json:"diagnostics,omitempty"`
 	// replyEffects maps state id → NormalizeReply(verb) → the transition
@@ -189,6 +199,7 @@ func (c *compiler) run() {
 	c.roles()
 	c.events()
 	c.derivation()
+	c.dispatch()
 	c.inferred()
 }
 

@@ -50,4 +50,12 @@ type VarSecurityConfig struct {
 	// bounds the blast radius to repos the operator explicitly trusts, so the
 	// feature cannot be used to read every repo the App happens to be installed on.
 	GitHubPromptAllowlist []string `yaml:"github_prompt_allowlist,omitempty"`
+	// OwnerGitHubPromptRepos is the owner-approved subset of the hive's own
+	// managed repos that prompt_source and definition_source may read from,
+	// each approved on its own from the dashboard (hivecommons/hive#18490).
+	// Unlike GitHubPromptAllowlist it needs no AllowGitHubPrompt, and an entry
+	// counts only while the repo is still in project.repos. Written only by the
+	// owner-only dashboard endpoint through Save; the overlay cannot set it.
+	// See owner_prompt_repos.go.
+	OwnerGitHubPromptRepos []OwnerPromptRepo `yaml:"owner_github_prompt_repos,omitempty"`
 }
