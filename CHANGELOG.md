@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v6.44.4)
+
+### Fixed
+
+- A pull request whose only standing change request is on an older commit the author has already pushed past now waits on the reviewer, not the author. The contributor and trusted-author lanes used to treat any standing `CHANGES_REQUESTED` review as the author's turn, whatever commit it was on. So a clanker PR whose author had pushed the fix sat at `stage/072-returned-to-contributor`, its author was nudged, and once the adoption grace ran out the Activity monitor asked "@author has been offline … take the PR over now?" On projectbluefin/chairlift#799 that lasted about 2h 45m after the author had pushed and commented. The lanes now return `re-review-requested:<reviewer>` and the PR routes to `stage/085-needs-decision`, where the 085 note and the monitor name the reviewer, the commit their review was on and the author's push since, and ask for a re-review or a dismissal. The author gets no nudge and no adoption clock runs. A request on the current head, one carried to it by a merge of the base, red CI or a swarm `changes_requested` on the new head is still the author's, as before. The hive never dismisses the review itself.
+
 ## 2026-11-17 (v6.44.3)
 
 ### Fixed
