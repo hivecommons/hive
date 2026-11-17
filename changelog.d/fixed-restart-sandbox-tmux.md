@@ -1,1 +1,0 @@
-- Dashboard Restart on a sandboxed (`runtime: job`) agent no longer launches an interactive tmux session on the hive pod; it refuses and the next kick starts a Job (#18826).
