@@ -26,3 +26,14 @@ func ValidateImagePullSecrets(names []string) error {
 	}
 	return nil
 }
+
+// inheritPullSecrets keeps a per-agent list and falls back to the global one:
+// registry credentials are a cluster fact like the workspace claim, so a
+// per-agent block that names none inherits them. The pod gets the union of
+// hive's own pod secrets, the Job service account's and this list (#18819).
+func inheritPullSecrets(own, global []string) []string {
+	if len(own) == 0 {
+		return global
+	}
+	return own
+}
