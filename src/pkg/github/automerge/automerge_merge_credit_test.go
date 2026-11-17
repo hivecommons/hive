@@ -1,52 +1,142 @@
 package automerge
 
+// Issue-author credit at merge time (hivecommons/hive#14581): the sweep's
+// merge request carries `Co-authored-by: <issue author>` for the humans who
+// opened the issues the PR closes, the branch's own trailers are kept, a
+// trailer the branch already carries is not duplicated, and the switch
+// turns the whole thing off.
+
 import (
-	"bytes"
 	"context"
-	"fmt"
-	"log/slog"
-	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
-	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/fleetreport/slogfeed"
 	hgithub "github.com/hivecommons/hive/pkg/github"
 )
 
-func TestUnsignedSquashRefusalIsNotSelfReported(t *testing.T) {
-	message := "Fix"
-	api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/repos/acme/widget/pulls/7/commits" {
-			t.Errorf("unexpected request: %s", r.URL.Path)
-			http.NotFound(w, r)
-			return
-		}
-		fmt.Fprintf(w, `[{"commit":{"message":%q}}]`, message)
-	}))
+func TestContributorLaneMergeCreditsIssueAuthor(t *testing.T) {
+	fx := validContributorFixture()
+	fx.issueAuthor, fx.issueAuthorID = "Danathar", 12345
+	fx.commitMessages = []string{
+		"Fix the widget\n\nSigned-off-by: " + contributorLaneTestAuthor + " <" + contributorLaneTestAuthor + "@example.com>",
+		"Address review\n\nSigned-off-by: " + contributorLaneTestAuthor + " <" + contributorLaneTestAuthor + "@example.com>",
+	}
+	api := newContributorLaneAPI(t, &fx)
 	defer api.Close()
-
-	var logs bytes.Buffer
-	observations := 0
-	logger := slog.New(slogfeed.NewWithObserver(slog.NewTextHandler(&logs, nil), func(_, _, _, _ string) { observations++ }))
-	client := hgithub.NewClient("token", "acme", []string{"widget"}, logger, api.URL)
-	client.SetCreditIssueAuthors(func(string) bool { return false })
-	engine := New(client, Options{Logger: logger})
-	pr := &gh.PullRequest{Number: gh.Ptr(7)}
-	for range 5 {
-		_, _, refused := engine.mergeOptions(context.Background(), "acme", "widget", pr, "unsigned-head", "squash")
-		if refused != autoMergeReasonSquashUnsigned {
-			t.Fatalf("unsigned squash refusal = %q", refused)
-		}
+	policy := defaultContributorLanePolicy()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+	engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
+	if _, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy); err != nil || reason != "" {
+		t.Fatalf("reason=%q err=%v, want merge", reason, err)
 	}
-	if observations != 0 || !strings.Contains(logs.String(), "level=INFO msg=\"automerge refused squash without Signed-off-by\"") {
-		t.Fatalf("observations = %d, logs = %q", observations, logs.String())
+	if fx.merges != 1 {
+		t.Fatalf("merges = %d, want 1", fx.merges)
 	}
+	got, _ := fx.mergeBody["commit_message"].(string)
+	want := "* Fix the widget\n\nSigned-off-by: " + contributorLaneTestAuthor + " <" + contributorLaneTestAuthor + "@example.com>\n\n" +
+		"* Address review\n\nSigned-off-by: " + contributorLaneTestAuthor + " <" + contributorLaneTestAuthor + "@example.com>\n\n" +
+		"Co-authored-by: Danathar <12345+Danathar@users.noreply.github.com>"
+	if got != want {
+		t.Fatalf("squash commit_message =\n%s\nwant\n%s", got, want)
+	}
+	if fx.mergeBody["merge_method"] != "squash" || fx.mergeBody["sha"] != "sha7" {
+		t.Fatalf("merge request lost its method/sha: %+v", fx.mergeBody)
+	}
+	if strings.Count(got, "Signed-off-by:") != 2 {
+		t.Fatalf("branch sign-offs not preserved:\n%s", got)
+	}
+	if fx.issueGets != 1 || fx.commitLists != 1 {
+		t.Fatalf("issue GETs = %d, commit lists = %d; want one each", fx.issueGets, fx.commitLists)
+	}
+}
 
-	message = "Fix\n\nSigned-off-by: Author <author@example.com>"
-	got, _, refused := engine.mergeOptions(context.Background(), "acme", "widget", pr, "signed-head", "squash")
-	if refused != "" || !strings.Contains(got, "Signed-off-by: Author <author@example.com>") {
-		t.Fatalf("signed squash message = %q, refusal = %q", got, refused)
+func TestContributorLaneMergeCreditOff(t *testing.T) {
+	fx := validContributorFixture()
+	fx.issueAuthor, fx.issueAuthorID = "Danathar", 12345
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	policy := defaultContributorLanePolicy()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+	engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
+	engine.transport.(*hgithub.Client).SetCreditIssueAuthors(func(string) bool { return false })
+	if _, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy); err != nil || reason != "" {
+		t.Fatalf("reason=%q err=%v, want merge", reason, err)
+	}
+	// Credit off still rebuilds the squash body from the branch commits so
+	// the sign-off lands (hivecommons/hive#18203), but reads no issue.
+	signoff := "Signed-off-by: " + contributorLaneTestAuthor + " <" + contributorLaneTestAuthor + "@example.com>"
+	if got, _ := fx.mergeBody["commit_message"].(string); got != signoff || fx.merges != 1 {
+		t.Fatalf("credit off: merge body %+v (merges %d), want only the branch sign-off", fx.mergeBody, fx.merges)
+	}
+	if fx.issueGets != 0 || fx.commitLists != 1 {
+		t.Fatalf("credit off read issue (%d) / commits (%d), want 0 / 1", fx.issueGets, fx.commitLists)
+	}
+}
+
+// A PR author who filed their own issue is not their own co-author: the
+// merge credits nobody and sends only the branch sign-off
+// (hivecommons/hive#18203).
+func TestContributorLaneMergeCreditSkipsSelf(t *testing.T) {
+	fx := validContributorFixture()
+	fx.issueAuthor = contributorLaneTestAuthor
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	policy := defaultContributorLanePolicy()
+	clock := &contributorLaneClock{at: time.Date(2026, 10, 15, 13, 0, 0, 0, time.UTC)}
+	engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
+	if _, reason, err := engine.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy); err != nil || reason != "" {
+		t.Fatalf("reason=%q err=%v, want merge", reason, err)
+	}
+	signoff := "Signed-off-by: " + contributorLaneTestAuthor + " <" + contributorLaneTestAuthor + "@example.com>"
+	if got, _ := fx.mergeBody["commit_message"].(string); got != signoff || fx.commitLists != 1 {
+		t.Fatalf("self-filed issue: merge body %+v (commit lists %d)", fx.mergeBody, fx.commitLists)
+	}
+}
+
+// The self-authored lane: a hive-opened PR already carries the trailer from
+// issue-coauthor.sh, so the merge adds no credit (the rebuilt body keeps the
+// branch trailers); a hive PR whose branch lacks
+// it gains it.
+func TestSelfAuthoredSweepMergeCredit(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		commits []string
+		want    string
+	}{
+		{
+			name:    "branch already credits the issue author",
+			commits: []string{"Fix\n\nSigned-off-by: hive[bot] <hive@example.com>\nCo-authored-by: Dana Thar <12345+Danathar@users.noreply.github.com>"},
+			want:    "Signed-off-by: hive[bot] <hive@example.com>\nCo-authored-by: Dana Thar <12345+Danathar@users.noreply.github.com>",
+		},
+		{
+			name:    "branch lacks the trailer",
+			commits: []string{"Fix\n\nSigned-off-by: hive[bot] <hive@example.com>"},
+			want:    "Signed-off-by: hive[bot] <hive@example.com>\n\nCo-authored-by: Danathar <12345+Danathar@users.noreply.github.com>",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			merges := 0
+			var mergeBody map[string]any
+			fx := selfSweepFixture{
+				body:           testIntentLinkedBody,
+				mergeApplied:   true,
+				mergeCalls:     &merges,
+				issueAuthor:    "Danathar",
+				issueAuthorID:  12345,
+				commitMessages: tc.commits,
+				mergeBody:      &mergeBody,
+			}
+			api := newSelfSweepGuardAPI(t, fx)
+			defer api.Close()
+			c := newAutoMergeSweepClient(api.URL)
+			if _, reason, err := c.trySweepSelfAuthoredPR(context.Background(), "acme/widget", "acme", "widget", 7, true); err != nil || reason != "" {
+				t.Fatalf("trySweepSelfAuthoredPR = (reason %q, err %v), want merge", reason, err)
+			}
+			got, _ := mergeBody["commit_message"].(string)
+			if merges != 1 || got != tc.want {
+				t.Fatalf("merges = %d, commit_message = %q, want %q", merges, got, tc.want)
+			}
+		})
 	}
 }
