@@ -24,7 +24,8 @@ type gateway struct {
 	mu      sync.Mutex
 	calls   int
 	offered map[string]bool
-	script  [][2]string // wire tool name, JSON arguments
+	script  [][2]string   // wire tool name and JSON arguments; "" is prose, "!400" a rejection
+	block   chan struct{} // when set, each request waits on it
 }
 
 func (g *gateway) serve(t *testing.T) *httptest.Server {
@@ -49,6 +50,18 @@ func (g *gateway) serve(t *testing.T) *httptest.Server {
 		}
 		step := g.script[min(g.calls, len(g.script)-1)]
 		g.calls++
+		if g.block != nil {
+			<-g.block
+		}
+		switch step[0] {
+		case "!400":
+			http.Error(w, `{"error":{"message":"bad request"}}`, http.StatusBadRequest)
+			return
+		case "":
+			content, _ := json.Marshal(step[1])
+			_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"stop","message":{"content":`+string(content)+`}}]}`)
+			return
+		}
 		args, _ := json.Marshal(step[1])
 		_, _ = io.WriteString(w, `{"choices":[{"finish_reason":"tool_calls","message":{"content":"","tool_calls":[{"id":"c`+
 			string(rune('0'+g.calls))+`","function":{"name":"`+step[0]+`","arguments":`+string(args)+`}}]}}]}`)
