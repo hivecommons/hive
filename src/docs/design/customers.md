@@ -256,6 +256,43 @@ One optional sweep, `customers`. Steps:
 
 A normal sweep (A to D) makes zero GitHub calls, and a test holds that.
 
+What the first sweep (steps A to C, `customers` in
+`src/cmd/hive/sweep_workers.go`, every ten minutes) reads:
+
+| Source | Identity | Edge |
+|---|---|---|
+| Access list (`dashboard.authorized_users`) | dashboard user; a `github:<login>` entry also proves the GitHub login | none; owner and merger earn `maintainer` |
+| Owner's connected GitHub account | GitHub login, when there is exactly one owner | none |
+| Proven calendar emails | email of the dashboard user who proved it | none |
+| Last GitHub enumeration: issues | author, assignees, logins mentioned in the body | reported, assigned, mentioned_in |
+| Last GitHub enumeration: pull requests | author, requested reviewers | authored, review_requested |
+| Claims ledger | human, contributor and external holders | claimed |
+| Inbox uploads | the dashboard user who added it | added |
+| Approved mail | the sender address | sent |
+| Calendar events | organiser and attendee addresses, who added it | organised, invited, added |
+| Meetings | who sent hive in (dashboard user, address or platform id) | added |
+
+Bots, the hive's own author account, agent claims, mail awaiting approval,
+purged meetings and display names produce nothing. Not read yet, and left to
+the next sweep PR: recordings, the merged ledger, review evidence, contributor
+profiles and connector fact authors, none of which the sweep can reach without
+a new accessor.
+
+The sweep is an optional sweep, so it is shed with the other optional sweeps
+when the GitHub budget is low, although it spends none of that budget itself.
+
+Automatic tags come from role, association and history: `maintainer` from an
+owner or merger role or a GitHub author association of owner, member or
+collaborator; `contributor` from an authored pull request; `end-user` from a
+reported issue with no pull request; `stakeholder` from meeting, calendar or
+mail activity with no GitHub activity.
+
+Existence is answered per artefact kind. A meeting exists until it is deleted
+or its transcript is purged; a Calendar event while the schedule holds it; an
+Inbox upload while its store holds it; a mail item while it exists and is
+approved. When a store is turned off nothing can say an artefact is gone, so
+its edges are kept. GitHub references have no resolver and are kept.
+
 Because the feature is on by default, the discovery sweep does not merge before
 forget, the role checks and retention pruning are merged and tested.
 

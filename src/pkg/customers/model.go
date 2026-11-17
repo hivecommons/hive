@@ -116,9 +116,14 @@ func IdentityKey(kind IdentityKind, value string) string {
 	return string(kind) + ":" + NormalizeIdentity(kind, value)
 }
 
+// githubUserPrefix is the provider prefix a dashboard session name may
+// carry: "github:alice" and "alice" are the same dashboard user.
+const githubUserPrefix = "github:"
+
 // NormalizeIdentity canonicalises a value for its kind. Logins and emails
-// compare case-insensitively; a leading "@" on a login is dropped. A name is
-// only trimmed: it is never a key.
+// compare case-insensitively; a leading "@" on a login is dropped. A
+// dashboard user is the same with or without the "github:" provider prefix,
+// as the access list treats it. A name is only trimmed: it is never a key.
 func NormalizeIdentity(kind IdentityKind, value string) string {
 	v := strings.TrimSpace(value)
 	switch kind {
@@ -126,6 +131,8 @@ func NormalizeIdentity(kind IdentityKind, value string) string {
 		return v
 	case KindGitHub:
 		return strings.ToLower(strings.TrimPrefix(v, "@"))
+	case KindHiveUser:
+		return strings.TrimPrefix(strings.ToLower(v), githubUserPrefix)
 	default:
 		return strings.ToLower(v)
 	}
