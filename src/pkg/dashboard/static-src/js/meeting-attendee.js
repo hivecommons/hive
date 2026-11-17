@@ -376,14 +376,44 @@
         const how = !e.proven && e.code
           ? '<div class="muted-xs">Send an email from ' + escapeHtml(e.email) + ' to <code>' + escapeHtml(mine.address || '') + '</code> with <code>' + escapeHtml(e.code) + '</code> in the subject.</div>'
           : (!e.proven ? '<div class="muted-xs">The code expired: add the address again for a new one.</div>' : '');
-        const err = e.last_error ? '<div class="kc-error muted-xs">' + escapeHtml(e.last_error) + '</div>' : '';
+        const err = maProofFailureHtml(e);
         const inactive = e.active === false ? ' <span class="muted-xs">(no access to this hive: not on the allowlist)</span>' : '';
         return '<li><span class="ma-email">' + escapeHtml(e.email) + ' ' + state + '</span>' + inactive +
           ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="maRemoveMyEmail" data-arg0="' + escapeHtml(e.email) + '"' + (on ? '' : ' disabled') + '>Remove</button>' + how + err + '</li>';
       }).join('') + '</ul>';
-      return '<div class="section-label m-0">My calendar emails</div>' + rows +
+      return '<div class="section-label m-0">My calendar emails</div>' + rows + maProofAttemptsHtml(mine) +
         '<div class="ma-add-email"><input class="kb-search-box" type="email" data-ma-new-email placeholder="you@example.com" autocomplete="email" aria-label="Calendar email to add"' + (on ? '' : ' disabled') + '>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="maAddMyEmail"' + (on ? '' : ' disabled') + '>Add</button></div>';
+    }
+
+    // Why the latest proof mail of a row did not count (#18579): the
+    // server's plain-language reason with what to do, the SPF, DKIM and
+    // alignment results hive-mx saw, and a Check again button.
+    function maProofFailureHtml(e) {
+      const f = e.last_failure;
+      if (!f) return e.last_error ? '<div class="kc-error muted-xs">' + escapeHtml(e.last_error) + '</div>' : '';
+      const when = f.at ? ' <span class="muted-xs">(' + escapeHtml(new Date(f.at).toLocaleString()) + ')</span>' : '';
+      return '<div class="kc-error muted-xs" data-ma-proof-failure="' + escapeHtml(f.reason || '') + '">' + escapeHtml(f.message || e.last_error || '') + when + '</div>' +
+        '<div class="muted-xs" data-ma-proof-auth>' + escapeHtml(maProofAuthSummary(f)) + '</div>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="maLoadMyEmails">Check again</button>';
+    }
+
+    function maProofAuthSummary(f) {
+      const yes = b => (b ? 'yes' : 'no');
+      const spf = 'SPF ' + (f.spf || 'none') + (f.spf_domain ? ' for ' + f.spf_domain : '');
+      const dkim = (f.dkim || []).length
+        ? 'DKIM ' + f.dkim.map(d => (d.result || 'none') + ' for ' + d.domain).join(', ')
+        : 'DKIM none';
+      return 'What the mail server saw: ' + spf + '; ' + dkim + '; aligned with ' + (f.from_domain || 'the From domain') + ': ' + yes(f.aligned) + '.';
+    }
+
+    // Owner only: proof mails whose code matched no address (a typo), with
+    // the sender masked. The server sends them to the owner alone.
+    function maProofAttemptsHtml(mine) {
+      const list = (mine && mine.recent_proof_attempts) || [];
+      if (!list.length) return '';
+      return '<div class="section-label m-0">Recent proof attempts</div><ul class="ma-proof-attempts">' +
+        list.map(a => '<li>' + escapeHtml(a.from || 'unknown sender') + ' <span class="muted-xs">' + escapeHtml(a.at ? new Date(a.at).toLocaleString() : '') + '</span>: ' + escapeHtml(a.reason || '') + '</li>').join('') + '</ul>';
     }
 
     async function maLoadMyEmails() {

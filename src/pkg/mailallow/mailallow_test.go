@@ -137,11 +137,15 @@ func TestCodeExpiryAndReissue(t *testing.T) {
 	if got := s.List("carol"); got[0].Code != "" {
 		t.Fatal("expired code still listed")
 	}
-	if _, err := s.Prove(e.Code, "carol@example.net", true); !errors.Is(err, ErrUnknownCode) {
+	// An expired code is still recognized: the failure says it expired.
+	if _, err := s.Prove(e.Code, "carol@example.net", true); !errors.Is(err, ErrNotProven) {
 		t.Fatalf("expired code: %v", err)
 	}
+	if got := s.List("carol")[0]; got.LastError != ReasonExpired || got.LastFailure == nil || got.LastFailure.Reason != ReasonCodeExpired {
+		t.Fatalf("expired failure %+v", got)
+	}
 	fresh, err := s.Add("carol", "carol@example.net")
-	if err != nil || fresh.Code == "" || fresh.Code == e.Code {
+	if err != nil || fresh.Code == "" || fresh.Code == e.Code || fresh.LastError != "" || fresh.LastFailure != nil {
 		t.Fatalf("reissue %+v %v", fresh, err)
 	}
 	if _, err := s.Prove("", "carol@example.net", true); !errors.Is(err, ErrUnknownCode) {
@@ -265,5 +269,88 @@ func TestSaveFailures(t *testing.T) {
 	}
 	if err := s.Remove("hal", "hal2@example.com"); err == nil {
 		t.Fatal("write over a directory succeeded")
+	}
+}
+
+// TestProveFailureSummary (hivecommons/hive#18579): each failed proof
+// records its reason code, the time and the authentication results, and a
+// success clears them.
+func TestProveFailureSummary(t *testing.T) {
+	s, c, path := newStore(t)
+	e, _ := s.Add("ann", "ann@example.com")
+	dkim := []wire.DKIMResult{{Domain: "mailer.example.net", Result: "pass"}}
+	for i := 0; i <= maxFailureDKIM; i++ {
+		dkim = append(dkim, wire.DKIMResult{Domain: "x.example", Result: "fail"})
+	}
+	cases := []struct {
+		name   string
+		auth   wire.Auth
+		reason string
+		text   string
+	}{
+		{"not aligned", wire.Auth{From: "Ann@Example.com", SPF: "softfail", SPFDomain: "example.com", DKIM: dkim, DMARC: "fail"}, ReasonCodeNotAligned, ReasonNotAligned},
+		{"from mismatch", wire.Auth{From: "mallory@evil.example", FromDomain: "evil.example", SPF: "pass", SPFDomain: "evil.example", SPFAligned: true, DMARC: "pass", Aligned: true}, ReasonCodeFromMismatch, ReasonFromMismatch},
+	}
+	for _, tc := range cases {
+		c.t = c.t.Add(time.Minute)
+		if _, err := s.ProveAuth(e.Code, tc.auth); !errors.Is(err, ErrNotProven) {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		got := s.List("ann")[0]
+		f := got.LastFailure
+		if got.LastError != tc.text || f == nil || f.Reason != tc.reason || !f.At.Equal(c.t) {
+			t.Fatalf("%s: %+v %+v", tc.name, got, f)
+		}
+		if f.SPF != tc.auth.SPF || f.SPFDomain != tc.auth.SPFDomain || f.SPFAligned != tc.auth.SPFAligned || f.Aligned != tc.auth.Aligned || f.DMARC != tc.auth.DMARC {
+			t.Fatalf("%s: auth summary %+v", tc.name, f)
+		}
+	}
+	// The DKIM list is bounded, and a From without FromDomain still names
+	// its domain.
+	_, _ = s.ProveAuth(e.Code, wire.Auth{From: "ann@example.com", DKIM: dkim})
+	f := s.List("ann")[0].LastFailure
+	if len(f.DKIM) != maxFailureDKIM || f.DKIM[0].Domain != "mailer.example.net" || f.FromDomain != "example.com" {
+		t.Fatalf("dkim summary %+v", f)
+	}
+	// Persisted with the entry.
+	s2, err := Open(path, c.now)
+	if err != nil || s2.List("ann")[0].LastFailure == nil {
+		t.Fatalf("failure not persisted: %v", err)
+	}
+	// A success clears the failure.
+	if got, err := s.ProveAuth(e.Code, wire.Auth{From: "ann@example.com", Aligned: true}); err != nil || got.LastFailure != nil || got.LastError != "" {
+		t.Fatalf("proof %+v %v", got, err)
+	}
+}
+
+// TestRecentAttempts: a code that matches no entry is kept, masked, for the
+// owner; the list is bounded and newest first.
+func TestRecentAttempts(t *testing.T) {
+	s, c, _ := newStore(t)
+	if got := s.RecentAttempts(); len(got) != 0 {
+		t.Fatalf("attempts %+v", got)
+	}
+	if _, err := s.Prove("hive-proof-aaaaaaaaaaaa", "Typo@Example.com", true); !errors.Is(err, ErrUnknownCode) {
+		t.Fatal(err)
+	}
+	got := s.RecentAttempts()
+	if len(got) != 1 || got[0].From != "t***@example.com" || got[0].Reason != AttemptCodeNotRecognized || !got[0].At.Equal(c.t) {
+		t.Fatalf("attempt %+v", got)
+	}
+	for i := 0; i < maxRecentAttempts+3; i++ {
+		c.t = c.t.Add(time.Second)
+		_, _ = s.Prove("hive-proof-bbbbbbbbbbbb", "x@example.org", false)
+	}
+	got = s.RecentAttempts()
+	if len(got) != maxRecentAttempts || !got[0].At.Equal(c.t) || !got[0].At.After(got[1].At) {
+		t.Fatalf("bounded attempts %d %+v", len(got), got[0])
+	}
+}
+
+func TestMaskEmail(t *testing.T) {
+	for in, want := range map[string]string{"": "", "nobody": "***", "@x.org": "***", " Ann@Example.COM ": "a***@example.com"} {
+		if got := MaskEmail(in); got != want {
+			t.Errorf("%q: %q, want %q", in, got, want)
+		}
 	}
 }
