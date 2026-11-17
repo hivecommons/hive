@@ -1112,13 +1112,19 @@ author's `author_association` is not `OWNER`, `MEMBER` or `COLLABORATOR`, the
 PR has no `ok-to-test` label and Prow has reported no presubmit status on the
 head (a status other than `tide` from the account that reports `tide`), the
 lane posts `/ok-to-test` once per head with the same per-head marker and
-mutation-boundary dedupe as the trusted-lane command. If Prow replies
-`Cannot trigger testing until a trusted user`, the lane logs it once with
+mutation-boundary dedupe as the trusted-lane command. The lane treats the
+command as refused when the merge bot says so, in upstream Prow's words
+(`@<app>: Cannot trigger testing until a trusted user …`) or
+cncf/prow-github-actions' (`Cannot /ok-to-test because Error: <app> is not a
+reviewer or approver …`), each naming the App. It also treats it as refused,
+whatever the reply, when its command for an earlier head is more than 10
+minutes old and the PR still has no `ok-to-test` label and Prow reported no
+presubmit status on that head. A refused command is logged once with
 `skipped=prow-rejects-bot-commands`, leaves one
-`<!-- hive-ok-to-test-rejected -->` needs-human note and never posts the
-command on that PR again; making the App a Prow trusted user is the
-repository's Prow configuration. The merge-request relay's read-only
-evaluation posts nothing.
+`<!-- hive-ok-to-test-rejected -->` needs-human note and is never posted on
+that PR again; making the App a Prow trusted user is the repository's Prow
+configuration. The same refusal reader serves the same-repo held-runs
+command. The merge-request relay's read-only evaluation posts nothing.
 
 A PR merges through this tier only when all of the following hold:
 

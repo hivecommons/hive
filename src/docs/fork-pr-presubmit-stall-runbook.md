@@ -22,7 +22,7 @@ gh pr view <n> --repo <org>/<repo> --comments | grep -i -E "tide|not mergeable|r
 
 ## 2. Start the presubmits
 
-The contributor lane now posts `/ok-to-test` itself, once per head, on a fork PR it admitted whose author is not an org member or collaborator ([#17474](https://github.com/hivecommons/hive/issues/17474); see [hive-merge.md](hive-merge.md)). This step is needed only when that did not help: the PR carries the hive's `needs-human` note saying Prow rejected the App (`Cannot trigger testing until a trusted user`), or the lane did not admit the PR.
+The contributor lane now posts `/ok-to-test` itself, once per head, on a fork PR it admitted whose author is not an org member or collaborator ([#17474](https://github.com/hivecommons/hive/issues/17474); see [hive-merge.md](hive-merge.md)). This step is needed only when that did not help: the PR carries the hive's `needs-human` note saying Prow rejected the App (`Cannot trigger testing until a trusted user`, or cncf/prow-github-actions' `Cannot /ok-to-test because …`) or that an earlier post had no effect (no `ok-to-test` label and no presubmit after 10 minutes), or the lane did not admit the PR.
 
 A human with write access comments on the PR. This is Prow's `/ok-to-test` (trigger plugin, shows as Tide `Jobs X, Y have not succeeded`), not the same-repo `hive-ok-to-test` GitHub Actions workflow (shows as `workflow-approval-required:<ctx>`; see [github-app-setup.md](github-app-setup.md)), which never covers fork heads:
 
