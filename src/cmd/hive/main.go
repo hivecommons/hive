@@ -1125,6 +1125,7 @@ func (b *boot) wireBootClosures() {
 			},
 			WorkflowRepoFile:        workflowRepoFile(func() *github.Client { return b.ghClient }),
 			WorkflowProvisionLabels: workflowProvisionLabels(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
+			WorkflowDispatchPrepare: workflowDispatchPrepare(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
 			WorkflowEmitChecks:      workflowEmitChecks(b.cfg, func() *github.Client { return b.ghClient }),
 			WorkflowClusterRunner:   workflowClusterRunner(),
 			WorkflowSpecLLM:         newWorkflowSpecRunner(func() *config.Config { return b.cfg }),
@@ -3590,6 +3591,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				rt = b.agentMgr
 			}
 			researchPool := wireMeetingsResearch(b.cfg, rt, b.logger)
+			if fn := meetingsResearchStatus(b.cfg, researchPool); fn != nil {
+				b.dashSrv.SetMeetingsResearchStatus(fn)
+			}
 			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger, b.dashSrv.HiveStatusBrief); lr != nil {
 				b.meetingsLive = lr
 				b.cleanup.push(lr.Close)
@@ -3598,12 +3602,15 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 			// Drafts people ask Betty for, approved in the dashboard (#18406).
 			b.wireMeetingsActions(store)
 			// Owner API, live panel and /api/events frames (#18292).
-			b.dashSrv.SetMeetingsService(&meetingsDashboard{mgr: mgr, live: b.meetingsLive})
-			// Scheduled meetings and the Calendar section (#18394).
+			md := &meetingsDashboard{mgr: mgr, live: b.meetingsLive}
+			// Scheduled meetings and the Calendar section (#18394). Wired
+			// first so a deleted meeting's Calendar entry goes with it.
 			if svc, stop := wireMeetingsSchedule(b.cfg, mgr, b.logger); svc != nil {
 				b.cleanup.push(stop)
 				b.dashSrv.SetMeetingsScheduleService(svc)
+				md.sched = svc.sched
 			}
+			b.dashSrv.SetMeetingsService(md)
 			// Ended meetings become inbox items; transcripts are purged
 			// after meetings.retention_days (#18293).
 			b.wireMeetingsInbox(mgr, store)
@@ -4004,7 +4011,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		if err := b.cfg.ExpandAgentReplicas(); err != nil {
 			b.logger.Warn("failed to expand agent replicas after config reload", "error", err)
 		}
-		addedAgents := b.agentMgr.ReconcileAgents(b.cfg.EnabledAgents())
+		addedAgents := b.agentMgr.ReconcileAgents(withResearchAgents(b.cfg.EnabledAgents()))
 		for _, added := range addedAgents {
 			if ac, ok := b.cfg.Agents[added]; ok && !ac.OnDemand {
 				deps.startAgent(b.ctx, b.agentMgr, added, b.logger)

@@ -90,6 +90,7 @@ const (
 	ClassInferenceBackendAuthFailure = "inference_backend_auth_failure"
 	ClassSHAPollCommitMsgUnavail     = "sha_poll_commit_message_unavailable"
 	ClassKickFreshnessWithheld       = "kick_freshness_withheld"
+	ClassOpenPRGuardLabelFailed      = "open_pr_guard_label_failed"
 	ClassModelsEndpointEmpty         = "models_endpoint_empty"
 	ClassAgentLoginRequired          = "agent_login_required"
 	ClassPRRequestHeadUnpushed       = "pr_request_head_unpushed"
@@ -102,6 +103,11 @@ const (
 	ClassTranscriptScanSlow          = "transcript_scan_slow"
 	ClassSharedCIRerunForbidden      = "shared_ci_rerun_forbidden"
 	ClassIssueClaimEffectFailed      = "issue_claim_effect_failed"
+	// ClassSpekStreamUnavailable: a Spektacular live meeting child
+	// (`spektacular meeting`) keeps exiting and is restarted with backoff
+	// (hivecommons/hive#18630). A spektacular without the command is
+	// detected once and never restarted, so it does not reach this class.
+	ClassSpekStreamUnavailable = "spek_stream_unavailable"
 	// A restart or normal stop can invalidate a pending bootstrap without
 	// indicating a restart storm; only repeated interruptions are reportable.
 	ClassStartupKickInterrupted = "startup_kick_interrupted"
@@ -217,6 +223,7 @@ var Classes = map[string]ClassSpec{
 	ClassInferenceUpstreamError:      {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed", "inference translate request failed"}},
 	ClassSHAPollCommitMsgUnavail:     {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"sha poll: commit message fetch non-200"}},
 	ClassKickFreshnessWithheld:       {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"kick withheld: every ref failed the freshness check"}},
+	ClassOpenPRGuardLabelFailed:      {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"open-pr guard: could not label issue", "open-pr guard: could not ensure label"}},
 	ClassModelsEndpointEmpty:         {Component: "dashboard", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"no models found from any endpoint"}},
 	ClassAgentLoginRequired:          {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"login required detected", "watchdog: agent credential failure"}},
 	ClassPRRequestHeadUnpushed:       {Component: "github-relay", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"head branch is not on the remote"}},
@@ -228,6 +235,7 @@ var Classes = map[string]ClassSpec{
 	ClassAgentLifecycleRepeated:      {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"failed to send kick", "agent cli crashed (bare shell detected)", "tmux kill-session before restart failed", "agent tmux session missing", "would restart dead agent"}},
 	ClassSharedCIRerunForbidden:      {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"shared-ci rerun forbidden"}},
 	ClassIssueClaimEffectFailed:      {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"issue-claims: github side effect failed"}},
+	ClassSpekStreamUnavailable:       {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"[spektacular] stream child exited; restarting", "[spektacular] stream child keeps exiting; giving up", "[spektacular] stream child did not restart"}},
 	ClassTranscriptScanSlow:          {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"transcript activity scan outlived its interval"}},
 }
 

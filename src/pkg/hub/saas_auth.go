@@ -879,6 +879,9 @@ var publicExactPaths = map[string]struct{}{
 	ssoHandoffPath:         {},
 	"/tokens.css":          {},
 	spokeWidgetSummaryPath: {},
+	// The desktop companion's settings route (#18596); see
+	// spokeCompanionMeetingsPath.
+	spokeCompanionInfoPath: {},
 	spokeWebhookRelayPath:  {},
 	// The hive-mx mail relay targets (#18395, mail_relay.go). Like the
 	// webhook receiver, each spoke handler fails closed without a valid
@@ -890,7 +893,7 @@ var publicExactPaths = map[string]struct{}{
 	wire.SpokeFilesChunkPath: {},
 }
 
-var publicTreePaths = []string{"/api/contribute", "/api/leaderboard", "/contribute", "/leaderboard", "/snapshot"}
+var publicTreePaths = []string{"/api/contribute", "/api/leaderboard", "/contribute", "/leaderboard", "/snapshot", spokeCompanionMeetingsPath}
 
 var publicStaticAssetPrefixes = []string{"/static/infra/", "/static/integrations/"}
 
@@ -959,6 +962,20 @@ const knowledgeExportPath = "/api/knowledge/export"
 // Authorization, so the hub never forwards it to GitHub); anything else is a
 // 401.
 const spokeWidgetSummaryPath = "/api/widget/summary"
+
+// spokeCompanionInfoPath and spokeCompanionMeetingsPath are the spoke's
+// desktop companion routes (#18596). The companion app has no browser
+// session, so the hub's nginx auth_request gate must wave them through,
+// exactly like spokeWidgetSummaryPath. This does NOT open them to anonymous
+// callers: the spoke admits these paths only with a hub session, the shared
+// token, or a per-user companion token (X-Hive-Companion-Token, never
+// Authorization, so the hub never forwards it to GitHub) whose user still
+// has read-write or owner access; anything else is a 401. The token page
+// (/companion/token) stays behind the hub gate.
+const (
+	spokeCompanionInfoPath     = "/api/companion/info"
+	spokeCompanionMeetingsPath = "/api/companion/meetings"
+)
 
 // spokeWebhookRelayPath is the spoke's GitHub App webhook receiver, the path
 // the hub POSTs every relayed delivery to (relayWebhookToSpoke in webhook.go,

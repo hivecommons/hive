@@ -27,6 +27,7 @@ func (s *Server) registerWorkflowRoutes() {
 	s.mux.HandleFunc("GET /api/workflows/bindings", s.handleWorkflowBindingsGet)
 	s.mux.HandleFunc("PUT /api/workflows/bindings", s.handleWorkflowBindingPut)
 	s.mux.HandleFunc("PUT /api/workflows/enabled", s.handleWorkflowEnabledPut)
+	s.mux.HandleFunc("POST /api/workflows/dispatch", s.handleWorkflowDispatch)
 	s.mux.HandleFunc("GET /api/workflows/{name}/{version}", s.handleWorkflowGet)
 	s.mux.HandleFunc("PUT /api/workflows/{name}/{version}", s.handleWorkflowSave)
 	s.mux.HandleFunc("DELETE /api/workflows/{name}/{version}", s.handleWorkflowDelete)

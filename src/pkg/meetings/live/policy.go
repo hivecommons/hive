@@ -24,12 +24,25 @@ const (
 
 // Policy is the per-meeting policy configuration.
 type Policy struct {
-	ChatPostsPerMinute   int
+	ChatPostsPerMinute int
+	// ChatAnswerBurst is the extra chat posts a minute the persona's
+	// answers to addressed requests may take once ChatPostsPerMinute is
+	// spent; zero means none.
+	ChatAnswerBurst      int
 	ResearchPerMeeting   int
 	VoiceOnAddress       bool
 	MaxTokensPerMeeting  int
 	MaxIntentsPerMeeting int
 	AnswerWindow         time.Duration
+}
+
+// answerBurst is the extra chat room for addressed answers: none when the
+// chat rate is unlimited or no burst is set.
+func answerBurst(p Policy) rateLimiter {
+	if p.ChatPostsPerMinute <= 0 || p.ChatAnswerBurst <= 0 {
+		return rateLimiter{}
+	}
+	return rateLimiter{n: p.ChatAnswerBurst, window: rateWindow}
 }
 
 func (p Policy) withDefaults() Policy {

@@ -59,7 +59,16 @@ func Gather(ctx context.Context, rs []Retriever, query string, terms []string, t
 	}
 	for n := 0; n < len(rs); n++ {
 		select {
-		case <-done:
+		case i := <-done:
+			// The hive's live state answers a question about the hive on
+			// its own: do not wait for slower sources such as web search
+			// (#18590, a live-state answer within HiveStatusBudget).
+			mu.Lock()
+			live := hasHiveStatus(results[i])
+			mu.Unlock()
+			if live {
+				n = len(rs)
+			}
 		case <-ctx.Done():
 			n = len(rs)
 		}

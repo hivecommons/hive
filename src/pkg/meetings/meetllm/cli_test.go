@@ -23,6 +23,8 @@ const (
 	fakeCrash     = "crash"
 	fakeCrashOnce = "crashonce"
 	fakeError     = "error"
+	// fakeSlow answers after half a second, so turns overlap.
+	fakeSlow = "slow"
 )
 
 // fakeTokensPerTurn is what the fake reports per turn: 10+5+3+2.
@@ -46,6 +48,7 @@ while IFS= read -r line; do
   echo "$line" >> "$D/turns"
   case "` + behaviour + `" in
     hang) sleep 30 ;;
+    slow) sleep 0.5 ;;
     crash) exit 1 ;;
     crashonce) if [ ! -f "$D/crashed" ]; then : > "$D/crashed"; exit 1; fi ;;
     error) echo '{"type":"result","subtype":"error_during_execution","is_error":true,"result":"","usage":{"input_tokens":10,"output_tokens":5,"cache_creation_input_tokens":3,"cache_read_input_tokens":2}}'; continue ;;

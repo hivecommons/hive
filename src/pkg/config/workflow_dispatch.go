@@ -66,6 +66,17 @@ func (c WorkflowDispatchConfig) Profile(name string) WorkflowDispatchProfile {
 // profile is disabled, or a configured agent does not exist (a typo never
 // falls back to another agent).
 func (c *Config) WorkflowDispatchAgent(profile string) (agent string, ok bool) {
+	return c.workflowDispatchAgent(profile, true)
+}
+
+// WorkflowDispatchAgentForManual is WorkflowDispatchAgent for the owner's
+// "Send to <profile>": a profile disabled for automatic dispatch still
+// resolves, since a person chose to hand the item off.
+func (c *Config) WorkflowDispatchAgentForManual(profile string) (agent string, ok bool) {
+	return c.workflowDispatchAgent(profile, false)
+}
+
+func (c *Config) workflowDispatchAgent(profile string, honorDisabled bool) (agent string, ok bool) {
 	if c == nil {
 		return "", false
 	}
@@ -74,7 +85,7 @@ func (c *Config) WorkflowDispatchAgent(profile string) (agent string, ok bool) {
 		return "", false
 	}
 	set := c.Workflow.Dispatch.Profile(profile)
-	if set.Disabled {
+	if set.Disabled && honorDisabled {
 		return "", false
 	}
 	usable := func(name string) bool {

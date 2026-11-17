@@ -14,11 +14,12 @@ import (
 
 // Inbox seed files (POST /api/sessions/{id}/seed). The dashboard sends Inbox
 // items into a session as markdown files under <cwd>/.hive/inbox, where cwd is
-// the session's shared workspace checkout (or its own work dir when it has
-// none). Like an upload, the file is written AS THE SESSION'S UID through the
-// su-exec helper, never as the hive's uid into a directory the session
-// controls: a symlink planted by any session uid only reaches what that uid
-// can already reach, and the script refuses one at .hive or .hive/inbox.
+// the session's worktree of the shared workspace clone (or its own work dir
+// when it has none). Like an upload, the file is written AS THE SESSION'S UID
+// through the su-exec helper, never as the hive's uid into a directory the
+// session controls: a symlink planted by any session uid only reaches what
+// that uid can already reach, and the script refuses one at .hive or
+// .hive/inbox.
 const (
 	// userSessionInboxDir is the seed directory relative to the session cwd.
 	userSessionInboxDir = ".hive/inbox"
@@ -59,19 +60,18 @@ if [ -d "$d/$name" ] || [ -L "$d/$name" ]; then rm -f -- "$t"; exit ` + userSess
 mv -f -- "$t" "$d/$name"`
 
 // userSessionInboxCwd validates the working directory a seed is written
-// under: "" is the session's own work dir; anything else must be exactly a
-// workspace checkout path (<workspace root>/<org>/<repo>).
+// under: "" is the session's own work dir; anything else must be exactly this
+// session's worktree (<workspace root>/.sessions/<id>/<org>/<repo>) or, for a
+// session recorded before per-session worktrees, the shared clone
+// (<workspace root>/<org>/<repo>) it still runs in.
 func userSessionInboxCwd(id, workspace string) (string, error) {
 	if strings.TrimSpace(workspace) == "" {
 		return userSessionWorkDir(id), nil
 	}
 	clean := filepath.Clean(workspace)
-	rel, err := filepath.Rel(userSessionWorkspaceRoot(), clean)
-	if err != nil {
-		return "", fmt.Errorf("workspace %q is not a session workspace", workspace)
-	}
-	org, name, ok := strings.Cut(filepath.ToSlash(rel), "/")
-	if !ok || !userSessionRepoPartPattern.MatchString(org) || !userSessionRepoPartPattern.MatchString(name) || clean != userSessionWorkspaceDir(org, name) {
+	org, name := filepath.Base(filepath.Dir(clean)), filepath.Base(clean)
+	if !userSessionRepoPartPattern.MatchString(org) || !userSessionRepoPartPattern.MatchString(name) ||
+		(clean != userSessionWorktreeDir(id, org, name) && clean != userSessionWorkspaceDir(org, name)) {
 		return "", fmt.Errorf("workspace %q is not a session workspace", workspace)
 	}
 	return clean, nil
@@ -79,9 +79,9 @@ func userSessionInboxCwd(id, workspace string) (string, error) {
 
 // StoreInboxFile writes data as <cwd>/.hive/inbox/<fileName>, as the session
 // uid, owned by that uid with mode 0640 and the directory's group (the
-// sessions group in the shared workspace), and returns
-// its absolute path. workspace is the session's workspace checkout ("" for a
-// session without one). fileName must be a plain name.
+// sessions group in the setgid worktree), and returns its absolute path.
+// workspace is the session's worktree ("" for a session without one).
+// fileName must be a plain name.
 func (r *UserSessionRuntime) StoreInboxFile(id, workspace, fileName string, data []byte) (string, error) {
 	if err := checkUserSessionID(id); err != nil {
 		return "", err

@@ -1,1 +1,0 @@
-- Avoid spurious runtime self-reports when automerge safely refuses a squash of unsigned commits; the refusal remains visible in logs.
