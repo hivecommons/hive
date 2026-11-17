@@ -59,6 +59,15 @@ const (
 	// says whether the grant itself was rejected (operator sign-in needed)
 	// or the attempt failed transiently. It never carries token material.
 	AuditClaudeCredentialRefreshed = "claude_credential_refreshed"
+
+	// AuditUserSessionLoginAdopted is recorded when a user session's HOME held
+	// a Claude login strictly newer than the shared one (the CLI in the
+	// session refreshed, or signed in, on its own copy) and hive adopted it
+	// into the shared login so the fleet and the session keep ONE login. The
+	// detail names the session, the trigger (boot, watchdog, sign-in,
+	// session-start, session-remove) and where the replaced shared file was
+	// preserved; it never carries token material.
+	AuditUserSessionLoginAdopted = "user_session_login_adopted"
 )
 
 // AuditSink receives agent lifecycle events for durable, queryable recording.
