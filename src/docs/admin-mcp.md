@@ -832,6 +832,7 @@ The audit log cannot tell an assistant-mediated write from a dashboard action.
 | Governor                     | `governor.feature_settings`, `governor.general_settings`, `governor.thresholds`, `governor.threshold_scaling`                                                                                                                           |
 | Issue filter                 | `project.issue_filter`                                                                                                                                                                                                                  |
 | Sentinel                     | `sentinel.settings`                                                                                                                                                                                                                     |
+| Label-driven approval        | `governor.label_driven`                                                                                                                                                                                                                 |
 | Write-back                   | `writeback.kind_policy`                                                                                                                                                                                                                 |
 | Merge settings               | `auto_merge.update`                                                                                                                                                                                                                     |
 | Let hive decide              | `decisions.delegate_settings`                                                                                                                                                                                                           |
@@ -998,6 +999,37 @@ cannot tell from its side whether the record carries one.
 Neither operation itself adds or removes a label, approves, or merges
 anything. Turning reporter trust on does make later scans mark each held
 issue as waiting for triage, with a label and a one-time comment.
+
+`governor.label_driven` changes label-driven approval, the settings on
+Settings → Repos, through `PUT /api/config/governor/repos` (owner only):
+
+- `trusted_bots` (`project.label_driven_trusted_bots`), the bot logins whose
+  label additions count as a trusted triager's, and `approval_labels`
+  (`project.label_driven_approval_labels`), the default approval labels. Both
+  take `{add, remove, clear}`; `clear` puts the built-in default back
+  (`kubestellar-prow[bot]`, `triage/accepted`) and the preview says so.
+- `trust_org_members` (`project.label_driven_trust_org_members`), true or
+  false.
+- `repos`: `{"owner/repo": {"enabled": true, "approval_labels": {...}}}` opts
+  a repository in and edits its own approval labels
+  (`project.repo_policies[].label_driven`,
+  `label_driven_approval_labels`); `null` or `"enabled": false` opts it out
+  and drops its own labels. A repository not in `project.repos` is refused.
+
+For example, to trust the bot a Prow deployment adds labels as:
+
+```json
+{"operation": "governor.label_driven",
+ "args": {"trusted_bots": {"add": ["mergeraptor[bot]"]}}}
+```
+
+The preview calls a change widening when it lets more people or bots release
+parked work: a bot or an approval label added, org members trusted, or a
+repository opted in, each named. Adding `github-actions[bot]` also warns that
+it is the shared identity of every workflow in the repository, including
+workflows started by untrusted events. The supersede-park actors list
+(`project.label_driven_supersede_park_actors`) is not offered: it has no
+Settings control either. These keys are not hub-managed.
 
 `agent.cadences` and `writeback.kind_policy` change two more settings an
 owner otherwise changes on the dashboard, through the endpoints those

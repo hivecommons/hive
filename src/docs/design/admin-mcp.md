@@ -648,6 +648,13 @@ Phase 5 registers the fleet-level write operations under that contract:
   takes `repo_sensitive_paths`, one repository's own list, which the endpoint takes per
   repository (`sentinel.repoSensitivePaths`, `null` clears), so the op sends only the
   repositories that change.
+- `governor.label_driven` wraps `PUT /api/config/governor/repos` for label-driven approval
+  (`labelDrivenApproval`: trusted bots, default approval labels, org-member trust; and
+  `repoLabelDriven`: each repository's opt-in and own labels, `null` clears), the same
+  pattern: `{add, remove, clear}` lists merged onto the values read at preview, a
+  `ConfirmGuard` fingerprint, and a disclosure that names every bot, label, org-member trust or
+  repository opt-in that lets more people release parked work. The endpoint leaves fields it
+  is not sent alone, so the op sends only what changes.
 - `agent.cadences` and `writeback.kind_policy` wrap `PUT /api/config/agent/{name}/cadences` and
   `PUT /api/config/governor/features` (its `writebackKinds` field) for two settings that had no
   operation: one agent's per-mode cadences and the write-back gate's per-kind overrides. They use

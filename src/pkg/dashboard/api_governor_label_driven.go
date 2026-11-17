@@ -8,15 +8,22 @@ import (
 
 // labelDrivenRepoBody is one repo's entry in PUT /api/config/governor/repos
 // repoLabelDriven (hivecommons/hive#11313). A nil entry clears the opt-in.
+// Enabled writes project.repo_policies[].label_driven and ApprovalLabels
+// project.repo_policies[].label_driven_approval_labels[]; Settings → Repos
+// and the admin MCP's governor.label_driven both send it.
 type labelDrivenRepoBody struct {
 	Enabled        bool      `json:"enabled"`
 	ApprovalLabels *[]string `json:"approvalLabels,omitempty"`
 }
 
-// labelDrivenApprovalBody carries the project-wide label-driven trust knobs.
-// Every field is optional; nil means "leave as is". An empty approvalLabels
-// or trustedBots list restores the built-in default rather than disabling
-// the feature, since an empty list cannot round-trip through yaml omitempty.
+// labelDrivenApprovalBody carries the project-wide label-driven trust knobs:
+// project.label_driven_approval_labels[], project.label_driven_trust_org_members
+// and project.label_driven_trusted_bots[] (Settings → Repos, and the admin
+// MCP's governor.label_driven). The supersede-park actors list has no field
+// here. Every field is optional; nil means "leave as is". An
+// empty approvalLabels or trustedBots list restores the built-in default
+// rather than disabling the feature, since an empty list cannot round-trip
+// through yaml omitempty.
 type labelDrivenApprovalBody struct {
 	ApprovalLabels  *[]string `json:"approvalLabels,omitempty"`
 	TrustOrgMembers *bool     `json:"trustOrgMembers,omitempty"`
