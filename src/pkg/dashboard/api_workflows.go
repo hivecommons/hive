@@ -84,7 +84,7 @@ func (s *Server) handleWorkflowList(w http.ResponseWriter, r *http.Request) {
 		"enabled":   s.deps.Config != nil && s.deps.Config.Workflow.Enabled,
 		// Which agent fills each bound model's profiles, or why none
 		// does, and the agents the owner can pin (hivecommons/hive#18690).
-		"dispatch": workflowDispatchProfiles(s.deps.Config, s.workflowProfileLookup()),
+		"dispatch": s.workflowDispatchStatuses(),
 		"agents":   workflowDispatchAgentChoices(s.deps.Config),
 	})
 }
@@ -245,7 +245,7 @@ func (s *Server) handleWorkflowBindingPut(w http.ResponseWriter, r *http.Request
 	}
 	resp := map[string]interface{}{
 		"changed": changed, "bindings": s.workflowBindings(),
-		"dispatch": workflowDispatchProfiles(s.deps.Config, s.workflowProfileLookup()),
+		"dispatch": s.workflowDispatchStatuses(),
 		"agents":   workflowDispatchAgentChoices(s.deps.Config),
 	}
 	if body.Name != "" {

@@ -32,9 +32,14 @@ import (
 //  3. for an issue, take the agent claim on the issue-claims ledger FIRST;
 //     a claim someone else holds stops the hand-off;
 //  4. append one kick per hand-off to the cycle's messages. On delivery the
-//     key is written to the durable dispatch log, so neither a later cycle
-//     nor a restart repeats it; a failed or deferred kick leaves the key
-//     free for the next cycle.
+//     key is written to the durable dispatch log as a pending hand-off, so
+//     neither a later cycle nor a restart repeats it; a failed or deferred
+//     kick leaves the key free for the next cycle;
+//  5. on later cycles, review each pending hand-off whose item is still in
+//     its state (workflow_dispatch_handoff.go): an agent that declined or
+//     ended its turn without the deliverable did not start it, and the
+//     item is handed once more to a different agent that qualifies
+//     (hivecommons/hive#18749).
 
 // workflowDispatchLogFile is the durable log under the workflow store root.
 const workflowDispatchLogFile = "workflow-dispatch.json"
@@ -66,6 +71,13 @@ type workflowDispatchRuntime struct {
 	// drafts caches ListWorkflowDraftPRs per repository for
 	// workflowDraftListTTL.
 	drafts map[string]workflowDraftCacheEntry
+	// seen are the items in a dispatched state as of the latest pass
+	// (workflowHandoffSeenKey), so the dashboard lists a hand-off that was
+	// not started only while its item is still waiting in that state.
+	seen map[string]bool
+	// absences counts, per hand-off key, the consecutive passes its item
+	// was missing from the dispatched items. Only the eval cycle touches it.
+	absences map[string]int
 }
 
 type workflowDraftCacheEntry struct {
@@ -243,14 +255,24 @@ func workflowDispatchReplyFor(ctx context.Context, ghClient *github.Client) func
 // resolveWorkflowDispatchAgent resolves the hive agent that fills the
 // item's profile (config.ResolveWorkflowDispatch), telling the resolver the
 // item's repository and whether the profile opens a pull request or reviews
-// one, which the last-resort pick depends on (hivecommons/hive#18690).
-func resolveWorkflowDispatchAgent(cfg *config.Config, d github.WorkflowDispatch, manual bool) config.WorkflowDispatchResolution {
-	return cfg.ResolveWorkflowDispatch(d.Target.Profile, config.WorkflowDispatchNeed{Repo: d.Repo, Reviews: !d.Target.ProducesChange()}, manual)
+// one: every step picks only an agent that may do that there
+// (hivecommons/hive#18690, hivecommons/hive#18749). exclude names agents an
+// earlier hand-off of the item went to without starting it.
+func resolveWorkflowDispatchAgent(cfg *config.Config, d github.WorkflowDispatch, manual bool, exclude ...string) config.WorkflowDispatchResolution {
+	need := workflowDispatchNeedFor(d)
+	need.Exclude = exclude
+	return cfg.ResolveWorkflowDispatch(d.Target.Profile, need, manual)
 }
 
-// planWorkflowDispatchKicks plans the cycle's hand-offs and claims each
-// issue for its agent before returning the kick.
-func planWorkflowDispatchKicks(ctx context.Context, cfg *config.Config, ghClient *github.Client, actionable *github.ActionableResult, ledger *claims.Ledger, eligible func(agent string) bool, logger *slog.Logger) []workflowDispatchKick {
+// workflowDispatchFix is where the owner closes a gap, for the log.
+func workflowDispatchFix(profile string) string {
+	return "pick an agent that may do the profile's work on the repository's workflow row in Settings → Repos (workflow.dispatch.profiles." + profile + ".agent), or raise an agent's mode"
+}
+
+// planWorkflowDispatchKicks reviews the hand-offs already made, plans the
+// cycle's new ones and claims each issue for its agent before returning the
+// kick. turn reads how an agent's most recent kick ended (nil: unknown).
+func planWorkflowDispatchKicks(ctx context.Context, cfg *config.Config, ghClient *github.Client, actionable *github.ActionableResult, ledger *claims.Ledger, eligible func(agent string) bool, turn func(agent string) (workflowAgentTurn, bool), logger *slog.Logger) []workflowDispatchKick {
 	if !workflowDispatchActive(cfg) || ghClient == nil {
 		return nil
 	}
@@ -258,22 +280,51 @@ func planWorkflowDispatchKicks(ctx context.Context, cfg *config.Config, ghClient
 	dlog := rt.dispatchLog(cfg, logger)
 	now := time.Now()
 	items := workflowDispatchItems(ctx, cfg, ghClient, actionable, logger)
+	reply := workflowDispatchReplyFor(ctx, ghClient)
+	if rt.absences == nil {
+		rt.absences = map[string]int{}
+	}
+	seen := reviewWorkflowHandoffs(cfg, dlog, items, reply, turn, ledger, actionable != nil, rt.absences, now, logger)
+	if actionable != nil {
+		rt.noteSeen(seen)
+	}
 	if len(items) == 0 {
 		return nil
 	}
+	return buildWorkflowDispatchKicks(cfg, rt, dlog, items, reply, ledger, eligible, now, logger)
+}
+
+// buildWorkflowDispatchKicks plans the hand-offs of items and claims each
+// issue for its agent.
+func buildWorkflowDispatchKicks(cfg *config.Config, rt *workflowDispatchRuntime, dlog *scheduler.WorkflowDispatchLog, items []github.WorkflowDispatch, reply func(d github.WorkflowDispatch) (github.DispatchReply, bool, error), ledger *claims.Ledger, eligible func(agent string) bool, now time.Time, logger *slog.Logger) []workflowDispatchKick {
+	problems := map[string]string{}
 	cands, skips := scheduler.PlanWorkflowDispatch(items, scheduler.WorkflowDispatchPlanDeps{
 		Agent: func(d github.WorkflowDispatch) (string, bool) {
 			r := resolveWorkflowDispatchAgent(cfg, d, false)
+			if !r.OK() {
+				problems[d.Ref()] = r.Problem
+			}
 			return r.Agent, r.OK()
 		},
 		Eligible: eligible,
-		Reply:    workflowDispatchReplyFor(ctx, ghClient),
+		Reply:    reply,
 		Done:     func(key string) bool { return dlog.Done(key) || rt.inFlight(key, now) },
+		Prior: func(key string) (scheduler.WorkflowDispatchEntry, bool) {
+			e, ok := dlog.Get(key)
+			return e, ok && e.Retryable()
+		},
+		RetryAgent: func(d github.WorkflowDispatch, tried []string) (string, bool) {
+			r := resolveWorkflowDispatchAgent(cfg, d, false, tried...)
+			if !r.OK() {
+				problems[d.Ref()] = r.Problem
+			}
+			return r.Agent, r.OK()
+		},
 	})
 	for _, s := range skips {
 		if logger != nil && s.Reason != scheduler.WorkflowSkipDone && s.Reason != scheduler.WorkflowSkipNoReply {
 			logger.Info("workflow dispatch: item not handed off", "item", s.Ref, "profile", s.Profile, "reason", s.Reason,
-				"fix", "pin an agent on the repository's workflow row in Settings → Repos (workflow.dispatch.profiles."+s.Profile+".agent)")
+				"problem", problems[s.Ref], "fix", workflowDispatchFix(s.Profile))
 		}
 	}
 	var out []workflowDispatchKick
@@ -281,6 +332,7 @@ func planWorkflowDispatchKicks(ctx context.Context, cfg *config.Config, ghClient
 		if !claimForWorkflowDispatch(cfg, ledger, c, logger) {
 			continue
 		}
+		c.AgentMode = cfg.AgentInteractionMode(c.Agent).String()
 		set := cfg.Workflow.Dispatch.Profile(c.Dispatch.Target.Profile)
 		msg := scheduler.BuildWorkflowDispatchPrompt(c, set.PromptTemplate)
 		var refs []string
@@ -290,14 +342,14 @@ func planWorkflowDispatchKicks(ctx context.Context, cfg *config.Config, ghClient
 		rt.markPending(c.Key, now)
 		out = append(out, workflowDispatchKick{
 			Message: scheduler.KickMessage{Agent: c.Agent, Message: msg, IssueRefs: refs},
-			Entry: scheduler.WorkflowDispatchEntry{
+			Entry: scheduler.NextWorkflowDispatchEntry(scheduler.WorkflowDispatchEntry{
 				Key: c.Key, Ref: c.Dispatch.Ref(), Profile: c.Dispatch.Target.Profile,
 				State: c.Dispatch.State, Agent: c.Agent, By: "governor",
-			},
+			}, c.Prior),
 		})
 		if logger != nil {
 			logger.Info("workflow dispatch: handing item to agent", "item", c.Dispatch.Ref(), "model", c.Dispatch.Model,
-				"state", c.Dispatch.State, "profile", c.Dispatch.Target.Profile, "agent", c.Agent)
+				"state", c.Dispatch.State, "profile", c.Dispatch.Target.Profile, "agent", c.Agent, "agent_mode", c.AgentMode, "retry", c.Prior != nil)
 		}
 	}
 	return out
@@ -335,7 +387,7 @@ func claimForWorkflowDispatch(cfg *config.Config, ledger *claims.Ledger, c sched
 }
 
 // recordWorkflowDispatchDelivered writes the durable record of a delivered
-// hand-off.
+// hand-off: pending until a later pass sees whether it started.
 func recordWorkflowDispatchDelivered(cfg *config.Config, k workflowDispatchKick, at time.Time, logger *slog.Logger) {
 	rt := workflowDispatchRT
 	e := k.Entry
@@ -381,11 +433,21 @@ func workflowDispatchPrepare(cfg *config.Config, client func() *github.Client, l
 			return dashboard.WorkflowDispatchPlan{}, dashboard.WorkflowDispatchNoAgentError(res)
 		}
 		agent := res.Agent
-		c := scheduler.WorkflowDispatchCandidate{Dispatch: d, Agent: agent, Key: scheduler.WorkflowDispatchKey(d, nil), ManualBy: by}
+		c := scheduler.WorkflowDispatchCandidate{Dispatch: d, Agent: agent, Key: scheduler.WorkflowDispatchKey(d, nil), ManualBy: by, AgentMode: res.Mode}
+		// An earlier hand-off of this state carries its attempts over, so
+		// a send that is not started either is not retried without end.
+		var prior *scheduler.WorkflowDispatchEntry
+		if e, ok := workflowDispatchRT.dispatchLog(cfg, logger).Get(c.Key); ok {
+			prior = &e
+			if e.Status == scheduler.WorkflowHandoffNotStarted && e.Agent != agent {
+				// The agent that did not start it may still hold the claim.
+				releaseWorkflowDispatchClaim(cfg, ledger, d, e.Agent)
+			}
+		}
 		if !claimForWorkflowDispatch(cfg, ledger, c, logger) {
 			return dashboard.WorkflowDispatchPlan{}, dashboard.ErrWorkflowDispatchHeld
 		}
-		entry := scheduler.WorkflowDispatchEntry{Key: c.Key, Ref: d.Ref(), Profile: d.Target.Profile, State: d.State, Agent: agent, By: by}
+		entry := scheduler.NextWorkflowDispatchEntry(scheduler.WorkflowDispatchEntry{Key: c.Key, Ref: d.Ref(), Profile: d.Target.Profile, State: d.State, Agent: agent, By: by}, prior)
 		return dashboard.WorkflowDispatchPlan{
 			Ref: d.Ref(), Model: d.Model, State: d.State, Profile: d.Target.Profile, Agent: agent,
 			Message: scheduler.BuildWorkflowDispatchPrompt(c, cfg.Workflow.Dispatch.Profile(d.Target.Profile).PromptTemplate),

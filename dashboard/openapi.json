@@ -40140,7 +40140,7 @@
                       },
                       "dispatch": {
                         "type": "array",
-                        "description": "Every bound repository's profiles: repo, profile, agent, source, pinned, disabled, problem (why nothing fills it), states",
+                        "description": "Every bound repository's profiles: repo, profile, agent, source, mode, needs, pinned, disabled, problem (why nothing fills it), states, candidates (each pinnable agent with its mode and whether it may do what the profile needs), not_started (hand-offs an agent declined or did not act on)",
                         "items": {
                           "type": "object"
                         }

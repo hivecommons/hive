@@ -306,10 +306,7 @@
     .oc-sidebar-footer .layout-toggle { width: 100%; text-align: center; padding: var(--sp-4); margin: var(--sp-0); }
     .oc-agent-actions {
       display: flex; gap: var(--sp-2); padding: var(--sp-4) var(--sp-5);
-      margin: var(--sp-3) var(--sp-0) var(--sp-0);
-      border-top: 1px solid var(--border);
-      background: var(--bg-soft);
-      position: sticky; bottom: var(--sp-0); z-index: var(--z-sticky);
+      margin: var(--sp-0);
     }
     .oc-agent-actions .oc-agent-add-btn { flex: 1 1 auto; }
     .oc-agent-actions .oc-agent-group-btn { flex: 0 0 auto; }
@@ -9101,16 +9098,14 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <div class="oc-tree-toggle" data-action="ocToggleAgentTree" data-arg-types="t">
         <span class="oc-tree-arrow">▼</span> <span>Agents</span>
       </div>
-      <div class="oc-tree-children" id="oc-agent-tree">
-        <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
-      </div>
-      <div id="nous-sidebar-config" data-feature="experiment_lab" hidden style="padding:var(--sp-1) var(--sp-4) var(--sp-3) var(--sp-8);font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
-        <div><span id="nous-sb-mode"></span></div>
-        <div id="nous-sb-phase" style="opacity:0.8"></div>
-      </div>
-      <div class="oc-agent-actions" aria-label="Agent actions">
-        <button type="button" class="hv-btn btn-primary btn-sm oc-agent-add-btn" data-action="openAddAgentDialog" title="Add a new agent from a template or from scratch">＋ Add agent</button>
-        <button type="button" class="hv-btn btn-secondary btn-sm oc-agent-group-btn" data-action="ocAddSidebarGroup" title="Create a sidebar group for organizing agents">＋ Group</button>
+      <div class="oc-tree-children" id="oc-agent-tree-body">
+        <div id="oc-agent-tree">
+          <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
+        </div>
+        <div class="oc-agent-actions" aria-label="Agent actions">
+          <button type="button" class="hv-btn btn-primary btn-sm oc-agent-add-btn" data-action="openAddAgentDialog" title="Add a new agent from a template or from scratch">＋ Add agent</button>
+          <button type="button" class="hv-btn btn-secondary btn-sm oc-agent-group-btn" data-action="ocAddSidebarGroup" title="Create a sidebar group for organizing agents">＋ Group</button>
+        </div>
       </div>
     </div>
     <div class="oc-nav-group">
@@ -10956,6 +10951,14 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'contributors-section', 'sessions-section', 'acmm-eval-section', 'debug-section', 'audit-section',
       'logs-section', 'nous-section', 'faq-section'
     ]);
+    // Level-driven defaults: a section listed here starts collapsed once the
+    // hive runs at or above the ACMM level, until the operator picks a state
+    // themselves. At L6 the hive runs itself, so the Agents card is minimized.
+    // The last seen level is cached so a reload does not flash the card open
+    // before the first status arrives.
+    const ACMM_AUTONOMOUS_LEVEL = 6;
+    const DASHBOARD_LEVEL_COLLAPSED_SECTIONS = Object.freeze({ 'agents-section': ACMM_AUTONOMOUS_LEVEL });
+    const DASHBOARD_ACMM_LEVEL_CACHE_KEY = 'hive-acmm-level-last';
     const DASHBOARD_COLLAPSE_DEFAULTS_KEY = 'hive.dashboard.collapseDefaults';
     const DASHBOARD_COLLAPSE_DEFAULTS_VERSION = 'v1';
     const DASHBOARD_COLLAPSE_DEFAULTS_LEGACY = 'legacy';
@@ -11724,7 +11727,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
         return '';
       } else if (sectionId === 'agents-section') {
         const agents = data.agents || window._lastAgents || [];
-        inner = typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now(), data.governor) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text);
+        inner = agentsAttentionBadgeHtml(agents) + (typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now(), data.governor) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text));
       } else if (sectionId === 'lifecycle-section') {
         inner = miniBar([{ label: 'in flight', value: nums[0] || 0, color: 'var(--blue)' }, { label: 'merged', value: nums[1] || 0, color: 'var(--green)' }, { label: 'blocked', value: nums[2] || 0, color: 'var(--red)' }], text);
       } else {
@@ -11763,7 +11766,20 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       const activeAgents = agents.filter(a => a && !agentIsDisabled(a));
       const off = activeAgents.filter(a => a && (a.paused || a.stopped || a.offByCadence || a.unscheduledInMode || a.state === 'stopped' || a.state === 'failed')).length;
       const on = Math.max(0, activeAgents.length - off);
-      return `${agents.length} agents · ${on} on · ${off} off${disabled > 0 ? ` · ${disabled} disabled` : ''}`;
+      const attention = agentsNeedingAttention(agents);
+      return `${agents.length} agents · ${on} on · ${off} off${disabled > 0 ? ` · ${disabled} disabled` : ''}${attention > 0 ? ` · ${attention} need attention` : ''}`;
+    }
+    /** Agents the owner must act on: signed out, expired, stopped or failed (not disabled by choice). */
+    function agentsNeedingAttention(agents) {
+      return (Array.isArray(agents) ? agents : []).filter(a => {
+        if (!a || agentIsDisabled(a)) return false;
+        const isDown = a.state !== 'running';
+        return agentCollapsedAuthInfo(a, isDown).needsLogin || a.state === 'stopped' || a.state === 'failed' || a.state === 'blocked';
+      }).length;
+    }
+    function agentsAttentionBadgeHtml(agents) {
+      const n = agentsNeedingAttention(agents);
+      return n > 0 ? `<span class="badge-status status-badge agents-attention-badge" data-status="attention" title="${n} agent${n === 1 ? '' : 's'} need your attention">${n} need attention</span>` : '';
     }
     let _lastHiveAdvice = null;
     function agentCollapsedParseNextKick(value, nowMs) {
@@ -12357,6 +12373,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       sectionId = dashboardAliasSectionId(sectionId);
       return dashboardCollapseDefaultsActive() && DASHBOARD_DEFAULT_COLLAPSED_SECTIONS.indexOf(sectionId) >= 0;
     }
+    /** Current ACMM level (same status field the header badge shows); falls back to the cached level before the first status. */
+    function dashboardAcmmLevel() {
+      const st = typeof window !== 'undefined' ? window._lastStatus : null;
+      if (st && st.acmmLevel != null) { const n = Number(st.acmmLevel); return Number.isFinite(n) ? n : 0; }
+      try { const c = Number(localStorage.getItem(DASHBOARD_ACMM_LEVEL_CACHE_KEY)); return Number.isFinite(c) ? c : 0; } catch (e) { return 0; }
+    }
+    /** Remember the level from the latest status so the next load starts in the right state. */
+    function dashboardRememberAcmmLevel(level) {
+      try {
+        const n = String(Number(level) || 0);
+        if (localStorage.getItem(DASHBOARD_ACMM_LEVEL_CACHE_KEY) !== n) localStorage.setItem(DASHBOARD_ACMM_LEVEL_CACHE_KEY, n);
+      } catch (e) { /* storage unavailable */ }
+    }
+    /** True when the hive's level makes this section start collapsed (no operator choice involved). */
+    function dashboardLevelDefaultCollapsed(sectionId) {
+      const min = DASHBOARD_LEVEL_COLLAPSED_SECTIONS[dashboardAliasSectionId(sectionId)];
+      return min != null && dashboardAcmmLevel() >= min;
+    }
     /** Check whether a dashboard section is collapsed: explicit localStorage choice first, then the default. */
     function isSectionCollapsed(sectionId) {
       sectionId = dashboardAliasSectionId(sectionId);
@@ -12365,13 +12399,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const raw = localStorage.getItem(SECTION_LS_PREFIX + sectionId);
       if (raw === '1') return true;
       if (raw === '0') return false;
-      return dashboardDefaultCollapsed(sectionId);
+      return dashboardDefaultCollapsed(sectionId) || dashboardLevelDefaultCollapsed(sectionId);
     }
     /** Write the per-section key: '1' collapsed, '0' explicitly expanded where the default is collapsed, removed otherwise. */
     function writeSectionCollapsedKey(sectionId, collapsed) {
       if (collapsed) {
         localStorage.setItem(SECTION_LS_PREFIX + sectionId, '1');
-      } else if (dashboardDefaultCollapsed(sectionId)) {
+      } else if (dashboardDefaultCollapsed(sectionId) || DASHBOARD_LEVEL_COLLAPSED_SECTIONS[sectionId] != null) {
+        // A level-driven section always keeps an explicit '0', otherwise an
+        // expand made below the level would collapse again when the level rises.
         localStorage.setItem(SECTION_LS_PREFIX + sectionId, '0');
       } else {
         localStorage.removeItem(SECTION_LS_PREFIX + sectionId);
@@ -13169,7 +13205,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       document.querySelectorAll('[data-feature="experiment_lab"]').forEach(el => {
         if (experimentOn) {
           el.hidden = false;
-          if (el.id !== 'nous-section' && el.id !== 'nous-sidebar-config') el.style.display = '';
+          if (el.id !== 'nous-section') el.style.display = '';
         } else {
           el.hidden = true;
           el.style.display = 'none';
@@ -20712,14 +20748,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { profile: String(t.profile), state: String(t.state || ''), reply: String(t.reply || ''), agent: String(t.agent || ''), problem: String(t.problem || '') };
     }
 
-    // Pure: the row's short reason when no hive agent fills the profile
-    // its state is handed to (hivecommons/hive#18690): the hand-off cannot
-    // happen and no other lane is offered the item, so the row says so
-    // instead of looking claimed and idle. '' when an agent fills it.
+    // Pure: the row's short reason when its hand-off cannot happen or did
+    // not start. No hive agent fills the profile its state is handed to
+    // (hivecommons/hive#18690), or the agent it was handed to declined or
+    // did not act (`workflows.repos[repo].handoffs` keyed by item number,
+    // hivecommons/hive#18749). No other lane is offered the item either
+    // way, so the row says so instead of looking claimed and idle. null
+    // when an agent fills the profile and the hand-off is under way.
     function stageTrackerWorkflowGapOf(item, workflows) {
       const t = stageTrackerWorkflowDispatchOf(item, workflows);
-      if (!t || !t.problem) return null;
-      return { profile: t.profile, word: 'no agent for ' + t.profile, tip: 'Not handed off: ' + t.problem + '. Pick an agent for it on the repository\'s workflow row in Settings → Repos.' };
+      if (!t) return null;
+      if (t.problem) return { profile: t.profile, word: 'no agent for ' + t.profile, tip: 'Not handed off: ' + t.problem + '. Pick an agent for it on the repository\'s workflow row in Settings → Repos.' };
+      const wf = stageTrackerWorkflowOf({ workflows }, item.repo);
+      const h = wf && wf.handoffs ? wf.handoffs[String(Number(item.number) || 0)] : null;
+      if (!h || String(h.profile || '') !== t.profile || (h.state && String(h.state) !== t.state)) return null;
+      const next = h.retrying
+        ? 'The hive hands it to another agent that may do the work, if there is one.'
+        : 'It waits for an owner: use Send to ' + t.profile + ' in this row\'s ⋯ menu.';
+      return { profile: t.profile, word: 'not started: ' + t.profile, tip: 'Hand-off not started: ' + String(h.reason || (String(h.agent || 'the agent') + ' did not act')) + '. ' + next };
     }
     function stageTrackerWorkflowGapHtml(item, workflows) {
       const g = stageTrackerWorkflowGapOf(item, workflows);
@@ -44495,22 +44541,6 @@ function burnAreaChart() {
       // section header (#12532); the header keeps the mode · N summary.
       if (typeof refreshDashboardSectionSummaries === 'function' && window._lastStatus) refreshDashboardSectionSummaries(window._lastStatus);
 
-      // Update sidebar config — only show at ACMM L4+
-      const NOUS_SIDEBAR_MIN_LEVEL = 4;
-      const modeColors = { observe: 'var(--blue)', suggest: 'var(--yellow)', evolve: 'var(--green)' };
-      const currentACMM = window._lastStatus ? (window._lastStatus.acmmLevel || 0) : 0;
-      const sbConfig = document.getElementById('nous-sidebar-config');
-      const sbMode = document.getElementById('nous-sb-mode');
-      const sbPhase = document.getElementById('nous-sb-phase');
-      if (sbConfig) {
-        sbConfig.style.display = currentACMM >= NOUS_SIDEBAR_MIN_LEVEL ? '' : 'none';
-        if (sbMode) { sbMode.textContent = mode; sbMode.style.color = modeColors[mode] || 'var(--muted)'; }
-        if (sbPhase) {
-          const rp = (phases.repo || {}).phase || 'IDLE';
-          sbPhase.textContent = 'repo:' + rp;
-        }
-      }
-
       let html = '';
 
       // Fresh lab (no baseline, no experiments, no principles yet):
@@ -55324,6 +55354,7 @@ function burnAreaChart() {
         'knowledge-section', 'inbox-section', 'contributors-section', 'debug-section', 'logs-section',
         'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'
       ];
+      dashboardRememberAcmmLevel(data.acmmLevel || 0);
       COLLAPSIBLE_SECTION_IDS.forEach(applySectionCollapse);
       refreshDashboardSectionSummaries(data);
       // Update compact-all button text
@@ -63539,8 +63570,6 @@ function burnAreaChart() {
         level >= ACMM_CONTRIBUTORS_MIN_LEVEL ? show(contributorsSection, '') : hide(contributorsSection);
         level >= ACMM_LEADERBOARD_MIN_LEVEL ? show(leaderboardSection, '') : hide(leaderboardSection);
         (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSection, '') : hide(nousSection);
-        const nousSidebarCfg = document.getElementById('nous-sidebar-config');
-        (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
         level >= ACMM_DEBUG_MIN_LEVEL ? show(debugSection, '') : hide(debugSection);
         hide(logsSection);
 
@@ -71469,7 +71498,9 @@ function burnAreaChart() {
     // (hivecommons/hive#18690). GET /api/workflows and the pin's own
     // response carry `dispatch` (one entry per bound repository and
     // profile: the resolved agent, how it was resolved, the pin, or the
-    // problem when nothing fills it) and `agents` (who can be pinned).
+    // problem when nothing fills it, `candidates` saying which agents may
+    // do the profile's work, `not_started` listing the hand-offs an agent
+    // declined) and `agents` (who can be pinned).
     function workflowDispatchApply(data) {
       _workflowState.dispatch = Array.isArray(data && data.dispatch) ? data.dispatch : [];
       _workflowState.agents = Array.isArray(data && data.agents) ? data.agents : [];
@@ -71485,31 +71516,43 @@ function burnAreaChart() {
 
     // Pure: what one profile's row says — the option list of its picker
     // (the default first, then every agent that can be pinned, plus a pin
-    // that no longer names an enabled agent so it stays visible) and, when
-    // nothing fills the profile, the warning.
+    // that no longer names an enabled agent so it stays visible), the
+    // warning when nothing fills the profile, and the hand-offs an agent
+    // declined or did not act on. An agent whose mode does not let it do
+    // what the profile needs (`candidates`, hivecommons/hive#18749) is
+    // listed but cannot be picked, with the reason on hover.
     function workflowDispatchProfileView(d, agents) {
       const pinned = String(d.pinned || '');
       const agent = String(d.agent || '');
       const auto = pinned ? 'Automatic' : (agent ? 'Automatic (' + agent + ')' : 'Automatic (none available)');
       const options = [{ value: '', label: auto, selected: !pinned }];
       const names = (agents || []).map(String);
+      const cand = {};
+      for (const c of (Array.isArray(d.candidates) ? d.candidates : [])) if (c && c.agent) cand[String(c.agent)] = c;
       if (pinned && names.indexOf(pinned) < 0) options.push({ value: pinned, label: pinned + ' (not an enabled agent)', selected: true });
-      for (const n of names) options.push({ value: n, label: n, selected: n === pinned });
-      const warning = d.problem ? 'Not handed off: ' + d.problem + '. Items in this profile\'s states wait until an agent is picked.' : '';
+      for (const n of names) {
+        const c = cand[n];
+        const unfit = !!c && c.qualifies === false;
+        const mode = c && c.mode ? String(c.mode) : '';
+        options.push({ value: n, label: unfit ? n + ' (' + (mode || 'not allowed') + ', cannot do this)' : n, selected: n === pinned, disabled: unfit && n !== pinned, title: unfit ? n + ' ' + String(c.reason || 'may not do what this profile needs') : '' });
+      }
+      const warning = d.problem ? 'Not handed off: ' + d.problem + '. Items in this profile\'s states wait until an agent that may do the work is picked.' : '';
       const how = pinned ? 'pinned' : (WORKFLOW_DISPATCH_SOURCE_WORD[String(d.source || '')] || '');
       const note = warning ? '' : (agent ? 'handed to ' + agent + (how ? ' (' + how + ')' : '') : '') + (d.disabled ? ' · automatic hand-off off, manual send only' : '');
-      return { profile: String(d.profile), options, warning, note };
+      const stalled = (Array.isArray(d.not_started) ? d.not_started : []).map(h => 'Hand-off of ' + String(h.ref || '') + ' not started: ' + String(h.reason || 'the agent did not act') + '. ' + (h.retrying ? 'The hive hands it to another agent that may do the work, if there is one.' : 'It waits for an owner: use Send to ' + String(d.profile) + ' on the item\'s row in the Activity Monitor.'));
+      return { profile: String(d.profile), options, warning, note, stalled };
     }
 
     function renderRepoWorkflowProfileRows(repo, profiles, agents, locked) {
       return (profiles || []).map(d => {
         const v = workflowDispatchProfileView(d, agents);
-        const opts = v.options.map(o => `<option value="${esc(o.value)}" ${o.selected ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
-        const tip = 'Which hive agent the ' + v.profile + ' profile of this workflow is handed to (workflow.dispatch.profiles.' + v.profile + '.agent). Automatic picks an agent named after the profile, then a writer, docs or feature agent, then the hive\'s standard agent for the work.';
+        const opts = v.options.map(o => `<option value="${esc(o.value)}" ${o.selected ? 'selected' : ''} ${o.disabled ? 'disabled' : ''}${o.title ? ` title="${esc(o.title)}"` : ''}>${esc(o.label)}</option>`).join('');
+        const tip = 'Which hive agent the ' + v.profile + ' profile of this workflow is handed to (workflow.dispatch.profiles.' + v.profile + '.agent). Automatic picks an agent named after the profile, then a writer, docs or feature agent, then the hive\'s standard agent for the work, and only ever an agent whose mode lets it do what the profile needs.';
         const msg = v.warning
           ? `<span class="rt-inherit wf-dispatch-gap" role="alert">${esc(v.warning)}</span>`
           : (v.note ? `<span class="rt-inherit">${esc(v.note)}</span>` : '');
-        return `<div class="config-list-item ld-sub wf-dispatch-profile" data-wf-profile="${esc(v.profile)}"><label class="rt-check" title="${esc(tip)}">${esc(v.profile)} agent <select ${locked ? 'disabled' : ''} data-change-action="setWorkflowProfileAgent" data-arg0="${esc(v.profile)}" data-arg-types="s,v">${opts}</select></label>${msg}</div>`;
+        const stalled = v.stalled.map(line => `<span class="rt-inherit wf-dispatch-gap" data-wf-stalled="1" role="alert">${esc(line)}</span>`).join('');
+        return `<div class="config-list-item ld-sub wf-dispatch-profile" data-wf-profile="${esc(v.profile)}"><label class="rt-check" title="${esc(tip)}">${esc(v.profile)} agent <select ${locked ? 'disabled' : ''} data-change-action="setWorkflowProfileAgent" data-arg0="${esc(v.profile)}" data-arg-types="s,v">${opts}</select></label>${msg}${stalled}</div>`;
       }).join('');
     }
 

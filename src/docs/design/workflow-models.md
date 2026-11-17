@@ -703,9 +703,27 @@ workflow:
 ```
 
 An unset `agent` resolves to an enabled agent named after the profile, else the first enabled
-agent (by name) whose role is `writer`, then `docs`, then `feature`. A configured agent that does
-not exist or is disabled fills nothing: a typo never falls back to another agent. Replica
-overlays are never chosen; the base agent is kicked.
+agent (by name) whose role is `writer`, then `docs`, then `feature`, then the last resort
+described under **Which agent fills a profile** below. A configured agent that does not exist,
+is disabled, or may not do what the profile needs fills nothing: a typo never falls back to
+another agent. Replica overlays are never chosen; the base agent is kicked.
+
+**A grant describes a role; it grants a session nothing.** The model's `tools` and `produces`
+say what the profile's work is (`AgentGrant`: "which agent profile may act in which states"),
+and the compiler uses them to decide where a profile is dispatched and what its deliverable is.
+They are not an authorization. A hive agent acts with the mode and capabilities its own config
+gives it (`mode:` and `converse:` in the agent config, else the default for its name at the
+hive's ACMM level), which the agent manager writes to the session's mode and capability files
+and the write gates enforce: `hive-open-pr` and the push relay refuse an agent whose mode is not
+push-capable (`Manager.AuthorizePROpen`, `AuthorizePushBranch`) or that the repository's
+effective ACMM level does not allow (`Config.PRRepoPolicyRefusal`), and a comment needs
+`ISSUES_ONLY` or the `converse` capability. Dispatch therefore **selects an agent that already
+holds what the profile needs**; it never widens a session for the hand-off. Applying a scoped
+grant to the kicked session was considered and rejected: mode is the hive owner's decision per
+agent and per ACMM level, and a model imported from a marketplace must not be able to raise
+it. The hand-off prompt says the same thing to the agent: the model's description of the role,
+then the mode its own session runs in, and what to do if that does not cover the deliverable
+(hivecommons/hive#18749).
 
 **The dispatch pass** (`pkg/scheduler/workflow_dispatch.go`, `cmd/hive/workflow_dispatch.go`).
 Every eval cycle, with `workflow.enabled` on:
@@ -724,20 +742,90 @@ Every eval cycle, with `workflow.enabled` on:
 - An issue is claimed for that agent on the issue-claims ledger first (agent claim, 8 h); a
   claim someone else holds stops the hand-off. A pull request is not claimed.
 - The kick goes ahead of the governor kicks (a lane takes one kick per pass). On delivery the
-  key is written to `workflow-dispatch.json` under the workflow store root and a
-  `workflow-dispatch` audit row is recorded; a failed or deferred kick frees the key for the
-  next pass, and an in-flight mark lapses after 30 minutes.
+  key is written to `workflow-dispatch.json` under the workflow store root as a **pending**
+  hand-off (`status: handed_off`) and a `workflow-dispatch` audit row is recorded; a failed or
+  deferred kick frees the key for the next pass, and an in-flight mark lapses after 30 minutes.
+
+**A delivered kick is not a started hand-off** (hivecommons/hive#18749,
+`pkg/scheduler/workflow_dispatch_handoff.go`, `cmd/hive/workflow_dispatch_handoff.go`). An agent
+can decline, or end its turn having done nothing, and a record that counted the delivery would
+hide that for good. Each pass therefore reviews every pending record whose item is still in the
+state it was handed off in (`scheduler.ReviewWorkflowHandoff`) against the deliverable the model
+requires for that state:
+
+| Profile | Deliverable seen when |
+|---------|-----------------------|
+| produces a pull request or a push | the item leaves the state (the pull request covers the issue); an item still in the state has none yet |
+| reviews | the item's `updated_at` moves past the hand-off (its comment) |
+
+A pending record whose item is missing from the dispatched items on three consecutive
+passes that enumerated the repositories (`workflowHandoffLeftPasses`; one short enumeration
+settles nothing) is settled as `started` (`scheduler.WorkflowHandoffLeftState`): the
+deliverable landed or a person moved the item on. If the item later returns to the state (a discarded
+draft) it is not handed off again on its own; that retry stays a person's choice.
+
+The hand-off is recorded `not_started`, with the reason, when:
+
+- the recorded agent may not do what the profile needs (a record written before the resolver
+  checked that; see recovery below);
+- the agent declined. Three signals, all read from the agent manager's status of the agent's
+  most recent kick, and only when that kick is the hand-off: the kick-refusal flag the pane
+  watcher raises on a model's refusal (the dashboard's `agent_declined`,
+  `src/docs/kick-refusals.md`), a turn the kick-outcome classifier ended as a stand-down (the
+  prompt asks an agent whose session cannot do the work to end on a `STAND DOWN` line with
+  the reason), or as a question or a nothing-produced report;
+- the agent's turn ended and the deliverable has not shown up within 15 minutes
+  (`WorkflowHandoffGrace`: the pull-request relay opens the pull request after the turn, and
+  the item is read from a cache). A later kick delivered to the agent also proves the turn
+  ended;
+- nothing is known about the turn (a restart forgets it) and 2 hours have passed
+  (`WorkflowHandoffCeiling`).
+
+A hand-off that was not started releases the issue claim its agent took, logs
+`workflow dispatch: hand-off not started` with the reason and what comes next, and is no
+longer "done" (`WorkflowDispatchLog.Done`), so the next pass plans it again for a **different**
+agent that qualifies (`WorkflowDispatchNeed.Exclude`): one automatic retry
+(`WorkflowDispatchMaxAttempts` = 2 hand-offs in all, the owner's manual sends included). If no
+other agent qualifies, or the retry is not started either, the item waits for the owner's
+**Send to *profile***. The retry's prompt names the earlier agent and the reason. A hand-off
+to an agent that could never have done the work counts as no attempt and does not exclude the
+agent, so it is picked once its mode allows.
+
+**Recovery of records from before this was tracked.** A record with no `status` is a hand-off
+whose kick landed and of which nothing more is known. It blocks re-planning as before until
+the pass reviews it under the same rules. In particular a record for an agent that may not do
+what the profile needs (an Accepted request "dispatched" to an advisory scanner) becomes
+`not_started` on the first pass after the upgrade and the item is handed to the agent that
+qualifies, with no owner action.
+
+`GET /api/workflows` lists the not-started hand-offs whose item still waits under each
+profile (`dispatch[].not_started`), and the tracker payload carries them per repository as
+`workflows.repos[repo].handoffs` keyed by item number, so the workflow row on Settings → Repos
+and the item's Activity Monitor row (`not started: <profile>` badge) both show them
+(`Dependencies.WorkflowDispatchHandoffs`).
 
 **Which agent fills a profile.** `Config.ResolveWorkflowDispatch(profile, need, manual)` is the
-one resolver (hivecommons/hive#18690). In order: the pin
-`workflow.dispatch.profiles.<profile>.agent` (a pin that names no enabled agent is a problem,
-never a fallback); an agent named after the profile; the first enabled `writer`, `docs` or
-`feature` agent; then the last resort, which needs the item (`need`): for a target that
-produces a pull request or a push the issue worker (`WorkflowDispatchIssueWorkerRole`, the
-`scanner` role, kept equal to `classify.DefaultLane` by a test), for a reviewing target the
-`reviewer` role, in both cases only an agent whose `repos:` scope serves the item's repository
-(`AgentServesRepo`). No other role is picked on its own. The result carries `Agent` and
-`Source`, or `Problem`: one sentence saying why nothing fills the profile. The pass logs it
+one resolver (hivecommons/hive#18690). Every step accepts only an enabled agent that may do
+what the profile needs in the item's repository (hivecommons/hive#18749,
+`pkg/config/workflow_dispatch_capability.go`): a target that produces a pull request or a push
+needs a push-capable mode (`ISSUES_AND_PRS` or above) and the repository's ACMM level to allow
+the agent, the same two checks the pull-request relay applies; a reviewing target needs
+comment rights (`ISSUES_ONLY` or above, or `converse: true`). In order: the pin
+`workflow.dispatch.profiles.<profile>.agent` (a pin that names no enabled agent, or an agent
+that may not do what the profile needs, is a problem, never a fallback and never a silent
+pick); an agent named after the profile; the first `writer`, `docs` or `feature` agent; then
+the last resort, which needs the item (`need`), among the agents whose `repos:` scope serves
+the item's repository (`AgentServesRepo`): for a target that produces a pull request or a push
+the issue worker (`WorkflowDispatchIssueWorkerRole`, the `scanner` role, kept equal to
+`classify.DefaultLane` by a test), for a reviewing target the `reviewer` role, and failing
+that the first agent by name that qualifies. On a hive whose scanner runs `ADVISORY` and
+whose `quality` agent runs `ISSUES_AND_PRS`, the drafter is `quality`. The result carries
+`Agent`, `Source` and the agent's `Mode`, or `Problem`: one sentence saying why nothing fills
+the profile. When no agent may do the work it reads
+`no agent on this hive may open pull requests in <repo>; agents are advisory-only`.
+`Config.WorkflowDispatchCandidates(need)` lists every pinnable agent with its mode and whether
+it qualifies, and why not; `GET /api/workflows` carries it per profile (`candidates`) so the
+picker lists the agents that do not qualify as unpickable, with the reason. The pass logs it
 with the profile; `GET /api/workflows` lists it per bound repository and profile (`dispatch`,
 with the pickable `agents`) for the workflow row on Settings → Repos, whose picker saves the
 pin through `PUT /api/workflows/dispatch/profiles {profile, agent}`
@@ -753,13 +841,15 @@ resolves; when nothing fills it the error gives the reason and names the picker)
 the kick lands, records the hand-off under the automatic key, so the pass does not repeat it.
 
 The built-in prompt names the item, model, state and trigger, the state's guidance
-(`dispatch.instructions`, waiting reasons, column hint), the tools and outputs the grant
-allows, and the deliverable: for a PR-producing profile a (draft) pull request labeled with
+(`dispatch.instructions`, waiting reasons, column hint), the role as the model describes it
+(the grant's tools and outputs, stated as a description that grants the session nothing), the
+mode the kicked agent's own session runs in and what that lets it do, how to decline when the
+session cannot do the work, and the deliverable: for a PR-producing profile a (draft) pull request labeled with
 the deliverable state's labels plus the item's stateless model labels, `hive-open-pr --issues
 N` and `Refs #N`; for a reviewing profile one comment on the item. Gate labels (`GuardedLabels`)
 are never to be applied. `prompt_template` replaces it; placeholders: `${REF}`, `${REPO}`,
 `${NUMBER}`, `${TITLE}`, `${URL}`, `${KIND}`, `${MODEL}`, `${STATE}`, `${STATE_LABEL}`,
-`${PROFILE}`, `${AGENT}`, `${TRIGGER}`, `${INSTRUCTIONS}`, `${DELIVERABLE}`.
+`${PROFILE}`, `${AGENT}`, `${AGENT_MODE}`, `${TRIGGER}`, `${INSTRUCTIONS}`, `${DELIVERABLE}`.
 
 ## Ingest from cluster and from written specs (RFC phase 6)
 

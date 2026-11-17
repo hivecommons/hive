@@ -27,16 +27,14 @@
       <div class="oc-tree-toggle" data-action="ocToggleAgentTree" data-arg-types="t">
         <span class="oc-tree-arrow">▼</span> <span>Agents</span>
       </div>
-      <div class="oc-tree-children" id="oc-agent-tree">
-        <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
-      </div>
-      <div id="nous-sidebar-config" data-feature="experiment_lab" hidden style="padding:var(--sp-1) var(--sp-4) var(--sp-3) var(--sp-8);font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
-        <div><span id="nous-sb-mode"></span></div>
-        <div id="nous-sb-phase" style="opacity:0.8"></div>
-      </div>
-      <div class="oc-agent-actions" aria-label="Agent actions">
-        <button type="button" class="hv-btn btn-primary btn-sm oc-agent-add-btn" data-action="openAddAgentDialog" title="Add a new agent from a template or from scratch">＋ Add agent</button>
-        <button type="button" class="hv-btn btn-secondary btn-sm oc-agent-group-btn" data-action="ocAddSidebarGroup" title="Create a sidebar group for organizing agents">＋ Group</button>
+      <div class="oc-tree-children" id="oc-agent-tree-body">
+        <div id="oc-agent-tree">
+          <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
+        </div>
+        <div class="oc-agent-actions" aria-label="Agent actions">
+          <button type="button" class="hv-btn btn-primary btn-sm oc-agent-add-btn" data-action="openAddAgentDialog" title="Add a new agent from a template or from scratch">＋ Add agent</button>
+          <button type="button" class="hv-btn btn-secondary btn-sm oc-agent-group-btn" data-action="ocAddSidebarGroup" title="Create a sidebar group for organizing agents">＋ Group</button>
+        </div>
       </div>
     </div>
     <div class="oc-nav-group">
