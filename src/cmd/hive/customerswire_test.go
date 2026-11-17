@@ -16,7 +16,7 @@ import (
 func wireTestCustomers(t *testing.T) *customersDashboard {
 	t.Helper()
 	dir := t.TempDir()
-	svc, stop := wireCustomersAt(filepath.Join(dir, "customers"), filepath.Join(dir, "graph"), nil)
+	svc, stop := wireCustomersAt(filepath.Join(dir, "customers"), filepath.Join(dir, "graph"), nil, nil)
 	if svc == nil {
 		t.Fatal("wireCustomersAt returned no service")
 	}
@@ -26,7 +26,7 @@ func wireTestCustomers(t *testing.T) *customersDashboard {
 
 func TestWireCustomersHonoursTheSwitch(t *testing.T) {
 	t.Setenv(config.EnvCustomersEnabled, "false")
-	if svc, stop := wireCustomers(&config.Config{}, nil); svc != nil || stop != nil {
+	if svc, stop := wireCustomers(&config.Config{}, nil, nil); svc != nil || stop != nil {
 		t.Fatal("customers.enabled off must open no store")
 	}
 	// A store that cannot be opened turns the feature off instead of
@@ -35,7 +35,7 @@ func TestWireCustomersHonoursTheSwitch(t *testing.T) {
 	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if svc, _ := wireCustomersAt(filepath.Join(blocked, "customers"), filepath.Join(blocked, "graph"), nil); svc != nil {
+	if svc, _ := wireCustomersAt(filepath.Join(blocked, "customers"), filepath.Join(blocked, "graph"), nil, nil); svc != nil {
 		t.Fatal("an unusable data dir must yield no service")
 	}
 }

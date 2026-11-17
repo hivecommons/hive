@@ -174,6 +174,11 @@ func (d *meetingsDashboard) Subscribe(fn func(dashboard.MeetingFrame)) func() {
 	if d.live != nil {
 		unsubLive = d.live.Observe(func(ev live.Event) {
 			fn(dashboard.MeetingFrame{MeetingID: ev.MeetingID, Kind: ev.Kind, Data: ev})
+			if ev.Line != nil {
+				// One of the bot's own lines: it joins the transcript the
+				// panel shows, like the people's lines.
+				fn(dashboard.MeetingFrame{MeetingID: ev.MeetingID, Kind: "line", Data: ev.Line})
+			}
 		})
 	}
 	return func() {

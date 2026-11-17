@@ -72,11 +72,12 @@ func TestAckSkippedBehindLongSpeech(t *testing.T) {
 	ctx := context.Background()
 	s.queueVoice(betty.Reply{}, strings.Repeat("x", 180)) // 12 s
 	s.flushVoice(ctx)
-	if s.speakAck(ctx, "One moment.") {
+	ack := betty.Reply{Kind: betty.KindVoice, Text: "One moment.", Trigger: betty.TriggerAck}
+	if s.speakAck(ctx, ack, ack.Text) {
 		t.Fatal("an ack behind 12 s of speech is skipped")
 	}
 	clk.add(10 * time.Second)
-	if !s.speakAck(ctx, "One moment.") {
+	if !s.speakAck(ctx, ack, ack.Text) {
 		t.Fatal("an ack behind 2 s of speech is spoken")
 	}
 }
@@ -129,7 +130,7 @@ func TestSpeechTime(t *testing.T) {
 	}
 }
 
-// Answers flushed together say which question each answers: the live
+// Answers flushed together each open with the topic they answer: the live
 // Discord test posted "Yes, Andy, I can hear you" (to an earlier "Betty,
 // are you there?") beside the board pressure answer with no attribution.
 func TestBatchedAnswersAreAttributed(t *testing.T) {
@@ -138,7 +139,7 @@ func TestBatchedAnswersAreAttributed(t *testing.T) {
 	h.mt.m[h.m.ID] = h.m
 	ctx := context.Background()
 	hear := "Yes, Andy, I can hear you loud and clear."
-	bp := "Andy (re: board pressure): BP is 40/12."
+	bp := "On board pressure: BP is 40/12."
 	s.queueVoice(betty.Reply{Asker: "Andy Anderson", Topic: "are you there"}, hear)
 	s.queueVoice(betty.Reply{Asker: "Andy Anderson", Topic: "board pressure", Attributed: true}, bp)
 	s.flushVoice(ctx)
@@ -146,7 +147,7 @@ func TestBatchedAnswersAreAttributed(t *testing.T) {
 	if len(says) != 0 || len(posts) != 2 {
 		t.Fatalf("posts %q says %q", posts, says)
 	}
-	if !contains(posts, "Andy Anderson (re: are you there): "+hear) || !contains(posts, bp) {
+	if !contains(posts, "On are you there: "+hear) || !contains(posts, bp) {
 		t.Fatalf("batched answers must each name their question: %q", posts)
 	}
 
@@ -171,16 +172,16 @@ func contains(list []string, s string) bool {
 func TestTrySpeakReasons(t *testing.T) {
 	ctx := context.Background()
 	h, s, _ := voiceSession(t, Policy{VoiceOnAddress: true})
-	if reason, err := s.trySpeak(ctx, "hi"); reason != "" || err != nil {
+	if reason, _, err := s.trySpeak(ctx, "hi"); reason != "" || err != nil {
 		t.Fatalf("voice on = %q %v", reason, err)
 	}
 	h.m.VoiceEnabled = false
 	h.mt.m[h.m.ID] = h.m
-	if reason, _ := s.trySpeak(ctx, "hi"); reason != speakVoiceDisabled {
+	if reason, _, _ := s.trySpeak(ctx, "hi"); reason != speakVoiceDisabled {
 		t.Fatalf("voice off = %q", reason)
 	}
 	_, p, _ := voiceSession(t, Policy{})
-	if reason, _ := p.trySpeak(ctx, "hi"); reason != speakPolicyOff {
+	if reason, _, _ := p.trySpeak(ctx, "hi"); reason != speakPolicyOff {
 		t.Fatalf("policy off = %q", reason)
 	}
 }

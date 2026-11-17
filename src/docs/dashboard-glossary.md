@@ -57,7 +57,7 @@ The operator sidebar keeps the existing destinations, IDs, `data-action` handler
 | Group | Items |
 | --- | --- |
 | Dashboard | Overview, Governor, Throughput |
-| Collaborate | Inbox, Calendar, Meetings, Inception (spek) |
+| Collaborate | Inbox, Calendar, Meetings, Customers, Inception (spek) |
 | Agents | Dynamic agent tree, `+ Add agent`, `+ Group` |
 | Resources | Projects, Contributors |
 | Intelligence | Advisory, ACMM Eval, Knowledge, Experiment Lab |

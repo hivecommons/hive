@@ -370,7 +370,7 @@ func (s *Store) Observe(obs []Observation) (map[int]string, error) {
 		batch := map[string]*seen{}
 		var order []string
 		for n, o := range obs {
-			if o.Kind == KindName || o.Kind == KindHiveUser || !identityKinds[o.Kind] {
+			if o.Kind == KindName || !identityKinds[o.Kind] {
 				continue
 			}
 			value := NormalizeIdentity(o.Kind, o.Value)
@@ -380,6 +380,11 @@ func (s *Store) Observe(obs []Observation) (map[int]string, error) {
 			key := IdentityKey(o.Kind, value)
 			if pid, ok := s.owner[key]; ok {
 				owners[n] = pid
+				continue
+			}
+			if o.Kind == KindHiveUser {
+				// A dashboard user is a customer through the access list,
+				// never a suggestion.
 				continue
 			}
 			if s.tombs[s.tombstoneHash(key)] {

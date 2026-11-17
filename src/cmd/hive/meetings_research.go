@@ -137,12 +137,15 @@ type researchObserver interface {
 	Observe(fn func(research.Event)) (remove func())
 }
 
-// researchSignal maps a pool event onto the live loop's signal. queued and
-// running carry nothing the loop needs: it marks an item queued when it
-// dispatches it and running on its first finding.
+// researchSignal maps a pool event onto the live loop's signal. queued
+// carries nothing the loop needs: it marks an item queued when it
+// dispatches it. running tells it the kick reached its agent, which ends
+// the wait of a request queued behind another question.
 func researchSignal(ev research.Event) (live.ResearchSignal, bool) {
 	sig := live.ResearchSignal{KickID: ev.KickID, Text: ev.Text}
 	switch ev.Kind {
+	case research.EventRunning:
+		sig.Kind = live.SignalRunning
 	case research.EventFinding:
 		sig.Kind = live.SignalFinding
 	case research.EventDone:

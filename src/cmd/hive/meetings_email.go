@@ -33,6 +33,8 @@ func (b *boot) wireMailAllowlist(baseDir string) *mailallow.Store {
 	if b.dashSrv != nil {
 		b.dashSrv.SetMailAllowlist(st)
 	}
+	// The customers sweep reads proven calendar emails from it (#18742).
+	b.mailAllow = st
 	return st
 }
 
