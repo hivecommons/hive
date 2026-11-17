@@ -1537,6 +1537,13 @@
                         "type": "string"
                       }
                     },
+                    "refused_backends": {
+                      "type": "object",
+                      "description": "Why each known backend that cannot answer for meetings is refused",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    },
                     "agent_backends": {
                       "type": "array",
                       "items": {
@@ -1642,6 +1649,13 @@
                     "supported_backends": {
                       "type": "array",
                       "items": {
+                        "type": "string"
+                      }
+                    },
+                    "refused_backends": {
+                      "type": "object",
+                      "description": "Why each known backend that cannot answer for meetings is refused",
+                      "additionalProperties": {
                         "type": "string"
                       }
                     },

@@ -30,9 +30,14 @@ type MeetingsModelView struct {
 	Label string `json:"label"`
 	// Modes are the selectable meetings.llm.mode values.
 	Modes []string `json:"modes"`
-	// SupportedBackends can answer for meetings; any other backend is
-	// listed by the picker but cannot be chosen.
+	// SupportedBackends can answer for meetings (CLI backends with a
+	// completion profile, LiteLLM, vllm, llm-d and the hive's named model
+	// gateways); any other backend is listed by the picker but cannot be
+	// chosen.
 	SupportedBackends []string `json:"supported_backends"`
+	// RefusedBackends says, per known backend that cannot answer for
+	// meetings, why (#18549).
+	RefusedBackends map[string]string `json:"refused_backends"`
 	// AgentBackends are the backends the hive's agents are configured with.
 	AgentBackends []string `json:"agent_backends"`
 	// DefaultBackend and DefaultModel apply when backend and model are
@@ -66,7 +71,8 @@ func meetingsModelView(r *http.Request, cfg *config.Config, getenv func(string) 
 		Mode: l.Mode, Backend: l.Backend, Model: l.Model,
 		Label:             cfg.ResolveMeetingsLLM(r.Context()).Label(),
 		Modes:             append([]string{}, config.MeetingsLLMModes...),
-		SupportedBackends: config.MeetingsLLMSupportedBackends(),
+		SupportedBackends: cfg.MeetingsLLMSupportedBackendsFor(),
+		RefusedBackends:   config.MeetingsRefusedBackendReasons(),
 		AgentBackends:     []string{},
 		DefaultBackend:    defBackend,
 		DefaultModel:      cfg.MeetingsDefaultModelFor(defBackend),
@@ -85,6 +91,16 @@ func meetingsModelView(r *http.Request, cfg *config.Config, getenv func(string) 
 		}
 	}
 	sort.Strings(v.AgentBackends)
+	// A gateway the picker lists that cannot answer (a watsonx one, or one
+	// with no endpoint) says why too.
+	for _, gw := range cfg.Governor.Gateways {
+		name := strings.ToLower(strings.TrimSpace(gw.Name))
+		if why := cfg.MeetingsLLMBackendRefusalFor(name); name != "" && why != "" {
+			if _, known := v.RefusedBackends[name]; !known {
+				v.RefusedBackends[name] = why
+			}
+		}
+	}
 	for _, b := range v.SupportedBackends {
 		v.DefaultModels[b] = cfg.MeetingsDefaultModelFor(b)
 	}
@@ -104,7 +120,8 @@ func (s *Server) handleMeetingsModelGet(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleMeetingsModelPut saves meetings.llm.mode, backend and model (owner
-// only). A backend without a meetings completion profile is refused.
+// only). A backend that cannot answer for meetings is refused with the
+// reason.
 func (s *Server) handleMeetingsModelPut(w http.ResponseWriter, r *http.Request) {
 	if !requireOwnerRole(w, r) {
 		return
@@ -127,7 +144,7 @@ func (s *Server) handleMeetingsModelPut(w http.ResponseWriter, r *http.Request) 
 	if req.Model != nil {
 		next.Model = strings.TrimSpace(*req.Model)
 	}
-	if err := config.ValidateMeetingsLLMChoice(next.Mode, next.Backend); err != nil {
+	if err := s.deps.Config.ValidateMeetingsLLMSelection(next.Mode, next.Backend); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
