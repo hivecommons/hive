@@ -397,6 +397,12 @@ type Client struct {
 	// the per-agent push-capability policy + forge-resistance. nil fails closed.
 	// Set by StartReviewRequestWatcher.
 	reviewAuthz ReviewRequestAuthorizer
+	// sandboxSpoolIssueAuthz and sandboxSpoolTopic serve the issue and topic
+	// kinds of the sandbox request spool (hivecommons/hive#18572, #18573).
+	// Set by SetSandboxSpoolRelays; nil refuses the kind.
+	sandboxSpoolMu         sync.Mutex
+	sandboxSpoolIssueAuthz IssueRequestAuthorizer
+	sandboxSpoolTopic      SandboxTopicHandler
 	// reviewBots is classification.review_bots (hivecommons/hive#7360): the
 	// external review-bot logins whose threads the hive may reply in and
 	// resolve. Zero value = feature off: the monitor reports nothing and the
