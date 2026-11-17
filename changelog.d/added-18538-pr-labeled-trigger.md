@@ -1,1 +1,0 @@
-- CEL `triggers:` rules can now match `pr.labeled`: when an already-seen PR gains a label the eval cycle emits it once, with the new labels in `event.added_labels`, so a rule like `event.kind == "pr.labeled" && "hive-review" in event.added_labels` kicks the reviewer right after a maintainer opts a PR into review instead of waiting for its cadence (#18538).
