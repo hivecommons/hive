@@ -220,6 +220,9 @@ type Pipeline struct {
 	Concurrency *Concurrency `json:"concurrency,omitempty"`
 	// Levels is the number of topological levels in Nodes (0 when empty).
 	Levels int `json:"levels"`
+	// TektonRuns, on a Tekton pipeline, says where its post-merge
+	// PipelineRuns are observed (tekton_observe.go).
+	TektonRuns *TektonObserve `json:"tektonRuns,omitempty"`
 }
 
 // Trigger is one event that starts a pipeline.
@@ -414,6 +417,11 @@ func (m *Model) Validate() error {
 		pipelines[p.ID] = true
 		if _, err := Levels(p.Nodes); err != nil {
 			fail("pipeline %q: %v", p.ID, err)
+		}
+		if p.TektonRuns != nil {
+			if err := p.TektonRuns.Validate(); err != nil {
+				fail("pipeline %q: %v", p.ID, err)
+			}
 		}
 	}
 	var checkRefs func(states []State)
