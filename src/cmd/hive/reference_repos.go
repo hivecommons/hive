@@ -188,6 +188,7 @@ func (b *boot) wireReferenceRepos() {
 	}
 	rt := b.newReferenceRepoRuntime()
 	if len(b.cfg.Project.ReferenceRepos) == 0 && rt.deriver == nil {
+		b.referenceRepos = rt
 		return
 	}
 	b.wireReferenceReposWith(rt)
@@ -290,6 +291,19 @@ func (b *boot) applyEditedReferenceRepos(ctx context.Context, refs []config.Refe
 	return nil
 }
 
+// lockRemoteWriteIdentity serializes the dashboard transaction with
+// re-resolution and discards any prepared resolution after a failed save.
+func (b *boot) lockRemoteWriteIdentity() func() {
+	if rt := b.referenceRepos; rt != nil {
+		rt.mu.Lock()
+		return func() {
+			rt.pendingIdentity = nil
+			rt.mu.Unlock()
+		}
+	}
+	return func() {}
+}
+
 // ownerIdentityChanged is the dashboard's hook after the owner connects,
 // reconnects or disconnects their GitHub account (hivecommons/hive#18197):
 // the reference-repo policies are re-resolved so a derived entry flips
@@ -311,4 +325,43 @@ func (b *boot) ownerIdentityStore() *github.OwnerIdentityStore {
 		b.ownerIdentity = github.NewOwnerIdentityStore("")
 	}
 	return b.ownerIdentity
+}
+
+// checkRemoteWriteIdentity prepares a full resolution under the proposed
+// identity without publishing it. The dashboard holds rt.mu for this call.
+func (b *boot) checkRemoteWriteIdentity(ctx context.Context, setting string) error {
+	if b.githubProxy == nil || b.cfg == nil {
+		return nil
+	}
+	if err := config.ValidateRemoteWriteIdentity(setting); err != nil {
+		return err
+	}
+	rt := b.referenceRepos
+	if rt == nil {
+		rt = b.newReferenceRepoRuntime()
+	}
+	rt.pendingIdentity = nil
+	deps := rt.deps
+	deps.writeIdentity = func() string { return setting }
+	handWritten := config.HandWrittenReferenceRepos(b.cfg.Project.ReferenceRepos)
+	derived := rt.deriver.derive(ctx, b.cfg, b.logger)
+	merged := mergedReferenceRepos(b.cfg, handWritten, derived, b.logger)
+	res, err := buildReferenceRepoPolicies(ctx, merged, deps, b.logger)
+	if err != nil {
+		return err
+	}
+	rt.pendingIdentity = &res
+	return nil
+}
+
+// remoteWriteIdentityChanged publishes the prepared resolution after saving.
+// The dashboard still holds rt.mu; notices use the boot context.
+func (b *boot) remoteWriteIdentityChanged() {
+	rt := b.referenceRepos
+	if rt == nil || rt.pendingIdentity == nil {
+		return
+	}
+	res := *rt.pendingIdentity
+	rt.pendingIdentity = nil
+	b.installReferenceRepoResolution(b.ctx, rt, res)
 }

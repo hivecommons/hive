@@ -335,6 +335,8 @@ type referenceRepoRuntime struct {
 	// lastDerived are the derived entries as buildReferenceRepoPolicies
 	// resolved them on the last successful pass.
 	lastDerived []config.ReferenceRepo
+	// pendingIdentity is prepared under mu and published only after saving.
+	pendingIdentity *referenceRepoResolution
 }
 
 // derivedEntries returns the derived entries of a resolved list.
@@ -379,6 +381,12 @@ func (b *boot) applyReferenceRepos(ctx context.Context, rt *referenceRepoRuntime
 	if err != nil {
 		return err
 	}
+	b.installReferenceRepoResolution(ctx, rt, res)
+	return nil
+}
+
+// installReferenceRepoResolution publishes a resolution while rt.mu is held.
+func (b *boot) installReferenceRepoResolution(ctx context.Context, rt *referenceRepoRuntime, res referenceRepoResolution) {
 	// The resolved entries replace the list in memory only: a derived entry
 	// is never written back to any config file (yaml:"-" on its provenance
 	// and the save test in reference_repos_derive_test.go guard that), and
@@ -393,7 +401,6 @@ func (b *boot) applyReferenceRepos(ctx context.Context, rt *referenceRepoRuntime
 	// Likewise the own-item follow-up: reads on the remote repos and resume
 	// kicks, bounded, never on the boot or reload path.
 	go b.pollRemoteItems(ctx, rt, res.repos)
-	return nil
 }
 
 // rederiveReferenceRepos is the pass a reload or the poller runs: never

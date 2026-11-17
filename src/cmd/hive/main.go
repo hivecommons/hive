@@ -1343,6 +1343,9 @@ func (b *boot) wireBootClosures() {
 			OwnerIdentity:                b.ownerIdentityStore(),
 			OwnerIdentityChanged:         b.ownerIdentityChanged,
 			RepoAgents:                   b.repoAgents,
+			LockRemoteWriteIdentity:      b.lockRemoteWriteIdentity,
+			CheckRemoteWriteIdentity:     b.checkRemoteWriteIdentity,
+			RemoteWriteIdentityChanged:   b.remoteWriteIdentityChanged,
 			ReviewConfigApplied: func(rc config.ReviewConfig) {
 				if b.ghClient == nil {
 					return

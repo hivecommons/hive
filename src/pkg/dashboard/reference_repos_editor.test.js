@@ -31,12 +31,13 @@ const fnSrc = name => {
 const makeDoc = () => {
   const doc = {};
   const makeEl = tag => {
-    const el = { tag, children: [], listeners: {}, className: '', title: '', _text: '' };
+    const el = { tag, children: [], listeners: {}, attributes: {}, className: '', title: '', _text: '' };
     Object.defineProperty(el, 'textContent', {
       get() { return el._text + el.children.map(c => c.textContent).join(''); },
       set(v) { el._text = String(v); el.children = []; },
     });
     el.appendChild = c => { el.children.push(c); return c; };
+    el.setAttribute = (name, value) => { el.attributes[name] = value; };
     el.addEventListener = (type, fn) => { (el.listeners[type] = el.listeners[type] || []).push(fn); };
     el.fire = (type, ev) => (el.listeners[type] || []).map(fn => fn(ev || {}));
     el.find = pred => {
@@ -53,7 +54,7 @@ const makeDoc = () => {
   return doc;
 };
 
-const setup = ({ entries, kinds = ['issues', 'prs'], put, identity = null, api = () => { throw new Error('no identity call expected'); } }) => {
+const setup = ({ entries, kinds = ['issues', 'prs'], put, identity = null, meta, api = () => { throw new Error('no identity call expected'); } }) => {
   const doc = makeDoc();
   const toasts = [];
   const calls = [];
@@ -68,11 +69,12 @@ const setup = ({ entries, kinds = ['issues', 'prs'], put, identity = null, api =
   };
   const render = new Function('document', 'window', 'fetch', 'showToast', '_inceptionAuthHeaders', 'saveErrorMessage', 'loadReferenceRepos', 'setTimeout',
     fnSrc('referenceRepoNode') + '\n' + fnSrc('referenceRepoYamlHint') + '\n' + fnSrc('referenceRepoDerivedLink') + '\n' +
-    fnSrc('referenceRepoCredentialChip') + '\n' + fnSrc('renderOwnerIdentityPanel') + '\n' + fnSrc('renderReferenceReposPanel') + '\nreturn renderReferenceReposPanel;')(
+    fnSrc('referenceRepoCredentialChip') + '\n' + fnSrc('referenceRepoWriteMeta') + '\n' + fnSrc('referenceRepoIdentityLine') + '\n' + fnSrc('renderWriteIdentityPanel') + '\n' +
+    fnSrc('renderOwnerIdentityPanel') + '\n' + fnSrc('renderReferenceReposPanel') + '\nreturn renderReferenceReposPanel;')(
     doc, { _githubBaseUrl: 'https://github.example.com/' }, fetchStub, (m, k) => toasts.push([m, k]), () => ({}), async res => res.errorMessage,
     () => reloads.push(Date.now()), fn => fn());
   const host = doc.createElement('div');
-  render(host, entries, kinds, identity);
+  render(host, entries, kinds, identity, meta);
   return { doc, host, toasts, calls, reloads };
 };
 const identityPanel = host => host.find(n => String(n.className).includes('cfg-owner-identity') && !String(n.className).includes('-status'))[0];
@@ -219,7 +221,7 @@ test('identity panel: unavailable store, not connected, connected and revoked st
   assert.strictEqual(buttons(host, 'Connect GitHub account').length, 0);
 
   ({ host } = setup({ entries: [], put: () => { throw new Error('no save'); }, identity: { connected: false, usable: false, reason: 'the hive owner has not connected a GitHub account', scope_required: 'public_repo' } }));
-  assert.match(identityPanel(host).textContent, /Not connected: write-tier reference repos are served read-only/);
+  assert.match(identityPanel(host).textContent, /Not connected: entries that would post as you are served read-only/);
   assert.strictEqual(buttons(host, 'Connect GitHub account').length, 1);
   assert.strictEqual(buttons(host, 'Disconnect').length, 0);
 
@@ -309,4 +311,77 @@ test('a hand-written write entry shows its credential login; a read-only one sho
   assert.strictEqual(inputs(hive, 'checkbox').length, 2, 'hand-written rows stay editable');
   assert.strictEqual(docs.find(n => n.className === 'rt-inherit')[0].textContent, 'read-only');
   assert.strictEqual(acme.find(n => String(n.className).includes('cfg-reference-repo-state'))[0].textContent, 'issues+prs \u00b7 write-tier as nate-double-u');
+});
+
+// hivecommons/hive#18516: "Post on other projects as" offers the three
+// values, marks the current one, PUTs a change and reloads; every write
+// entry says which identity it will actually post as and why.
+const identityChoices = host => host.find(n => String(n.className).includes('cfg-write-identity-choices'))[0].children;
+
+test('write identity control: three choices, default bot, provenance line', () => {
+  const { host } = setup({ entries: [], put: () => { throw new Error('no save'); } });
+  const choices = identityChoices(host);
+  assert.deepStrictEqual(choices.map(c => c.textContent), ['Hive bot, falling back to me', 'Hive bot only', 'Me']);
+  assert.ok(choices[0].className.includes('btn-primary'), 'bot is the default when the server sends nothing');
+  assert.ok(!choices[1].className.includes('btn-primary') && !choices[2].className.includes('btn-primary'));
+  assert.deepStrictEqual(choices.map(c => c.attributes.role), ['radio', 'radio', 'radio']);
+  assert.deepStrictEqual(choices.map(c => c.attributes['aria-checked']), ['true', 'false', 'false']);
+  assert.match(choices[0].title, /elsewhere as your connected account/);
+  assert.match(choices[1].title, /read-only everywhere else/);
+  assert.match(choices[2].title, /connected GitHub account/);
+  assert.match(host.textContent, /Post on other projects as:/);
+  assert.match(host.textContent, /came from the hive you commissioned, not from you personally/);
+  assert.match(host.textContent, /never asks anyone to install it/);
+});
+
+test('choosing an identity PUTs it, toasts and reloads; a refusal is shown and nothing reloads', async () => {
+  let { host, calls, toasts, reloads } = setup({
+    entries: [], meta: { write_identity: 'bot', write_identities: ['bot', 'bot_only', 'owner'], bot_login: 'hivecommons-hive[bot]' },
+    put: call => { assert.strictEqual(call.url, '/api/config/reference-repos/write-identity'); assert.strictEqual(call.opts.method, 'PUT'); return { ok: true, json: async () => ({}) }; },
+  });
+  assert.match(host.textContent, /hive bot \(hivecommons-hive\[bot\]\)/);
+  await identityChoices(host)[2].fire('click')[0];
+  assert.deepStrictEqual(calls[0].body, { write_identity: 'owner' });
+  assert.deepStrictEqual(toasts, [['Now posting on other projects as: Me', 'success']]);
+  assert.strictEqual(reloads.length, 1);
+
+  ({ host, calls, toasts, reloads } = setup({
+    entries: [], meta: { write_identity: 'owner', write_identities: ['bot', 'bot_only', 'owner'] },
+    put: () => ({ ok: false, status: 400, errorMessage: 'project.reference_repos acme/site: write: [issues] has no credential' }),
+  }));
+  await identityChoices(host)[1].fire('click')[0];
+  assert.deepStrictEqual(calls[0].body, { write_identity: 'bot_only' });
+  assert.strictEqual(reloads.length, 0);
+  assert.match(host.find(n => String(n.className).includes('cfg-write-identity-status'))[0].textContent, /has no credential/);
+  identityChoices(host).forEach(b => assert.strictEqual(b.disabled, false));
+});
+
+test('per-repo lines use the resolved identity and backend explanation, not the selected policy', () => {
+  const entries = [
+    { repo: 'hivecommons/docs', write: ['issues', 'prs'], derived_from: 'cncf/techdocs#395', credential_state: 'write-tier', credential_login: 'hivecommons-hive[bot]', credential_identity: 'bot', credential_note: "the hive's GitHub App is installed on hivecommons" },
+    { repo: 'acme/site', write: ['issues'], derived_from: 'cncf/techdocs#395', credential_state: 'write-tier', credential_login: 'nate-double-u', credential_identity: 'owner', credential_note: "the hive's GitHub App is not installed on acme" },
+    { repo: 'noapp/site', write: ['issues'], credential_state: 'write-tier', credential_login: 'nate-double-u', credential_identity: 'owner', credential_note: 'this hive has no GitHub App credentials' },
+    { repo: 'hand/written', write: ['issues'], write_token_file: '/token', credential_state: 'write-tier', credential_login: 'service', credential_identity: 'token_file', credential_note: 'write_token_file' },
+    { repo: 'zeta/site', derived_from: 'cncf/techdocs#395', credential_state: 'read-only', credential_reason: 'the hive owner has not connected a GitHub account', credential_note: 'this hive has no GitHub App credentials' },
+    { repo: 'retry/site', write: ['issues'], credential_state: 'unresolved', credential_note: "could not check whether the hive's GitHub App is installed on retry; retrying on the next pass" },
+    { repo: 'plain/readonly' },
+  ];
+  const line = row => (row.find(n => String(n.className).includes('cfg-reference-repo-identity'))[0] || {}).textContent;
+  let { host } = setup({ entries, put: () => { throw new Error('no save'); }, meta: { write_identity: 'owner', write_identities: ['bot', 'bot_only', 'owner'] } });
+  let r = rows(host);
+  assert.strictEqual(line(r[0]), "posts as hivecommons-hive[bot]: the hive's GitHub App is installed on hivecommons");
+  assert.strictEqual(line(r[1]), "posts as nate-double-u: the hive's GitHub App is not installed on acme");
+  assert.strictEqual(line(r[2]), 'posts as nate-double-u: this hive has no GitHub App credentials');
+  assert.strictEqual(line(r[3]), 'posts as service: write_token_file');
+  assert.strictEqual(line(r[4]), 'read-only: this hive has no GitHub App credentials');
+  assert.match(r[4].textContent, /the hive owner has not connected a GitHub account/);
+  assert.strictEqual(line(r[5]), "read-only this pass: could not check whether the hive's GitHub App is installed on retry; retrying on the next pass");
+  assert.strictEqual(line(r[6]), undefined, 'a plain read-only entry has no identity line');
+
+  ({ host } = setup({ entries: [{ repo: 'acme/site', write: ['issues'], credential_state: 'write-tier', credential_identity: 'owner', credential_login: 'nate-double-u', credential_note: 'this hive posts on other projects as its owner' }], put: () => { throw new Error('no save'); }, meta: { write_identity: 'bot', write_identities: ['bot', 'bot_only', 'owner'] } }));
+  assert.strictEqual(line(rows(host)[0]), 'posts as nate-double-u: this hive posts on other projects as its owner');
+  assert.doesNotMatch(host.textContent, /@nate-double-u/, 'never an @-mention');
+
+  ({ host } = setup({ entries: [{ repo: 'legacy/site', write: ['issues'], credential_state: 'write-tier', credential_identity: 'owner', credential_login: 'nate-double-u' }], put: () => { throw new Error('no save'); } }));
+  assert.strictEqual(line(rows(host)[0]), 'posts as nate-double-u', 'missing notes must not invent an installation status');
 });

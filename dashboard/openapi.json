@@ -6505,6 +6505,18 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "write_identity": {
+                      "type": "string"
+                    },
+                    "write_identities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "bot_login": {
+                      "type": "string"
                     }
                   }
                 }
@@ -6559,6 +6571,18 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "write_identity": {
+                      "type": "string"
+                    },
+                    "write_identities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "bot_login": {
+                      "type": "string"
                     }
                   }
                 }
@@ -6573,6 +6597,85 @@
           },
           "500": {
             "description": "The config file could not be written; the previous list is restored on the proxy and nothing changed"
+          }
+        }
+      }
+    },
+    "/api/config/reference-repos/write-identity": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set the remote write identity",
+        "description": "Sets project.remote_write_identity: whose name the hive's writes to granted reference repos carry (bot: the App bot where the repo's owner installed the App, else the owner's connected account; bot_only: the App bot or read-only; owner: the owner's connected account). Refused when a hand-written write entry would have no credential under the new value. Re-resolves the reference repos before answering. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "write_identity"
+                ],
+                "properties": {
+                  "write_identity": {
+                    "type": "string",
+                    "enum": [
+                      "bot",
+                      "bot_only",
+                      "owner"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current reference repos, resolved under the new value (same body as GET /api/config/reference-repos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reference_repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "write_kinds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "write_identity": {
+                      "type": "string"
+                    },
+                    "write_identities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "bot_login": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown value, or a hand-written write entry would have no credential; nothing was stored"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "500": {
+            "description": "The config file could not be written; the setting is unchanged"
           }
         }
       }

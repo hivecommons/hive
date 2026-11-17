@@ -5039,6 +5039,10 @@
     .cfg-reference-repo-state-read-only, .cfg-reference-repo-state-unresolved { color: var(--warning, var(--muted)); }
     .cfg-reference-repo-reason { flex-basis: 100%; }
     .cfg-owner-identity { flex-wrap: wrap; gap: var(--space-2, 0.5rem); }
+    .cfg-write-identity { flex-wrap: wrap; gap: var(--space-2, 0.5rem); }
+    .cfg-write-identity-choices { display: flex; flex-wrap: wrap; gap: var(--space-2, 0.5rem); }
+    .cfg-write-identity-status { flex-basis: 100%; }
+    .cfg-reference-repo-identity { flex-basis: 100%; }
     .cfg-owner-identity-status { flex-basis: 100%; }
     .cfg-owner-identity-code { font-size: var(--fs-md, 1rem); letter-spacing: 0.08em; }
     .config-list-item .remove-item {
@@ -37627,9 +37631,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const state = String(rr.credential_state || '');
       const reason = String(rr.credential_reason || '');
       const login = String(rr.credential_login || '');
+      const identity = String(rr.credential_identity || '');
+      const note = String(rr.credential_note || '');
       const chips = {
-        'write-tier': ['ok', login ? '🔑 as ' + login : '🔑 owner account', 'Issues and PRs here appear under the hive owner\'s GitHub account' + (login ? ' (' + login + ')' : '') + ', never under the hive\'s App.'],
-        'read-only': ['ro', 'read-only', reason || 'The hive owner has not connected a GitHub account, so the entry was downgraded to read-only.'],
+        'write-tier': identity === 'bot'
+          ? ['ok', '🤖 as ' + (login || 'hive bot'), 'Issues and PRs here appear under the hive\'s GitHub App' + (login ? ' (' + login + ')' : '') + (note ? ': ' + note : '') + '.']
+          : ['ok', login ? '🔑 as ' + login : '🔑 owner account', 'Issues and PRs here appear under ' + (identity === 'token_file' ? 'the write_token_file account' : 'the hive owner\'s GitHub account') + (login ? ' (' + login + ')' : '') + (note ? '; ' + note : '') + '.'],
+        'read-only': ['ro', 'read-only', reason || 'No credential covers this repo, so the entry was downgraded to read-only.'],
+        'unresolved': ['warn', 'unresolved', reason || 'The App installation could not be checked; served read-only until the next pass resolves it.'],
       };
       const chip = chips[state];
       const chipHTML = chip
@@ -68294,7 +68303,7 @@ function burnAreaChart() {
           <div id="cfg-repo-add-status" style="font-size:0.72rem;margin-top:var(--sp-3)"></div>
           ${defaultWarn}
         </div>
-        <div class="settings-subsection-title mt-4">Reference repos ${yamlHint('project.reference_repos[]')} ${settingHelpMark('settings', 'repos', 'Reference repos', 'Repositories outside this project that agents may clone and read but do not manage: no queue, no kicks, no work items. Read-only by default; a write opt-in allows opening issues and/or PRs there with a credential the hive verifies on save. A repo is either monitored above or a reference repo, never both.')}</div>
+        <div class="settings-subsection-title mt-4">Reference repos ${yamlHint('project.reference_repos[]')} ${settingHelpMark('settings', 'repos', 'Reference repos', 'Repositories outside this project that agents may clone and read but do not manage: no queue, no kicks, no work items. Read-only by default; a write opt-in allows opening issues and/or PRs there with a credential the hive verifies on save. Post on other projects as (project.remote_write_identity) picks whether those posts appear as the hive bot or as you. A repo is either monitored above or a reference repo, never both.')}</div>
         <div id="cfg-reference-repos-host"><div class="fs-sm text-muted">Loading…</div></div>
         ${anyLabelDriven ? `<div class="ld-defaults" id="cfg-label-driven-defaults">
           <div class="config-toggle">
@@ -68366,7 +68375,7 @@ function burnAreaChart() {
         } catch (ie) {
           identity = { unavailable: ie.message };
         }
-        renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || ['issues', 'prs'], identity);
+        renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || ['issues', 'prs'], identity, referenceRepoWriteMeta(d));
       } catch (e) {
         host = host || document.getElementById('cfg-reference-repos-host');
         if (!host) return;
@@ -68405,6 +68414,81 @@ function burnAreaChart() {
       return hint;
     }
 
+    /* referenceRepoWriteMeta picks project.remote_write_identity (#18516)
+       out of a GET/PUT /api/config/reference-repos response. */
+    function referenceRepoWriteMeta(d) {
+      d = d || {};
+      return {
+        write_identity: d.write_identity || 'bot',
+        write_identities: (d.write_identities && d.write_identities.length) ? d.write_identities : ['bot', 'bot_only', 'owner'],
+        bot_login: d.bot_login || ''
+      };
+    }
+
+    /* Show the actual resolved identity and the backend's explanation, rather
+       than inferring installation status from the selected policy. */
+    function referenceRepoIdentityLine(entry) {
+      const state = entry.credential_state || '';
+      const note = entry.credential_note || '';
+      if (state === 'write-tier') {
+        const who = entry.credential_login || (entry.credential_identity === 'bot' ? 'the hive bot' : 'the connected account');
+        return 'posts as ' + who + (note ? ': ' + note : '');
+      }
+      if (state === 'unresolved') return 'read-only this pass' + (note ? ': ' + note : '');
+      if (state === 'read-only') return 'read-only' + (note ? ': ' + note : '');
+      return '';
+    }
+
+    /* renderWriteIdentityPanel is the "Post on other projects as" control
+       (#18516, project.remote_write_identity): three choices, owner-only on
+       the server, saved at once and re-resolved before the section reloads. */
+    function renderWriteIdentityPanel(host, meta, onDone) {
+      const labels = { bot: 'Hive bot, falling back to me', bot_only: 'Hive bot only', owner: 'Me' };
+      const titles = {
+        bot: 'Post as the hive\'s GitHub App where the project installed it; elsewhere as your connected account; read-only if you have not connected one.',
+        bot_only: 'Post only as the hive\'s GitHub App where the project installed it; read-only everywhere else, even with your account connected.',
+        owner: 'Post as your connected GitHub account on every project.'
+      };
+      const panel = referenceRepoNode('div', 'config-list-item cfg-write-identity');
+      panel.appendChild(referenceRepoNode('span', 'config-repo-name', 'Post on other projects as:'));
+      const group = referenceRepoNode('div', 'cfg-write-identity-choices');
+      group.setAttribute && group.setAttribute('role', 'radiogroup');
+      const status = referenceRepoNode('span', 'fs-sm text-muted cfg-write-identity-status');
+      const choices = [];
+      (meta.write_identities || []).forEach(value => {
+        const on = value === meta.write_identity;
+        const btn = referenceRepoNode('button', 'hv-btn btn-sm' + (on ? ' btn-primary' : ''), labels[value] || value);
+        btn.title = titles[value] || '';
+        if (btn.setAttribute) { btn.setAttribute('role', 'radio'); btn.setAttribute('aria-checked', on ? 'true' : 'false'); }
+        btn.addEventListener('click', async () => {
+          if (on) return;
+          choices.forEach(b => { b.disabled = true; });
+          status.textContent = 'Saving…';
+          try {
+            const res = await fetch('/api/config/reference-repos/write-identity', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify({ write_identity: value })
+            });
+            if (!res.ok) throw new Error(await saveErrorMessage(res));
+            showToast('Now posting on other projects as: ' + (labels[value] || value), 'success');
+            onDone();
+          } catch (e) {
+            choices.forEach(b => { b.disabled = false; });
+            status.textContent = e.message;
+            status.className = 'fs-sm text-danger cfg-write-identity-status';
+          }
+        });
+        choices.push(btn);
+        group.appendChild(btn);
+      });
+      panel.appendChild(group);
+      panel.appendChild(status);
+      host.appendChild(panel);
+      host.appendChild(referenceRepoNode('p', 'config-help',
+        'The hive bot' + (meta.bot_login ? ' (' + meta.bot_login + ')' : '') + ' makes clear the work came from the hive you commissioned, not from you personally; it is used only on projects that installed the hive\'s GitHub App themselves, and the hive never asks anyone to install it.'));
+    }
+
     /* referenceRepoCredentialChip is the per-entry credential state for a
        write entry (#18197): "<tier> · <state>" with the login the writes
        appear under, and the reason when the state is not write-tier. */
@@ -68428,7 +68512,7 @@ function burnAreaChart() {
       const title = referenceRepoNode('span', 'config-repo-name', 'Remote-repo identity');
       panel.appendChild(title);
       if (!identity || identity.unavailable) {
-        panel.appendChild(referenceRepoNode('span', 'text-muted fs-sm', 'Unavailable on this hive' + (identity && identity.unavailable ? ' (' + identity.unavailable + ')' : '') + '. Write-tier entries are served read-only.'));
+        panel.appendChild(referenceRepoNode('span', 'text-muted fs-sm', 'Unavailable on this hive' + (identity && identity.unavailable ? ' (' + identity.unavailable + ')' : '') + '. Entries that would post as you are served read-only.'));
         host.appendChild(panel);
         return;
       }
@@ -68443,14 +68527,14 @@ function burnAreaChart() {
         panel.appendChild(who);
         if (!identity.usable && identity.reason) panel.appendChild(referenceRepoNode('span', 'text-muted fs-sm cfg-reference-repo-reason', identity.reason));
         const disconnect = referenceRepoNode('button', 'hv-btn btn-sm', identity.usable ? 'Disconnect' : 'Remove token');
-        disconnect.title = 'Remove the token from this hive. Every write-tier reference repo drops to read-only.';
+        disconnect.title = 'Remove the token from this hive. Every reference repo that posts as you drops to read-only.';
         disconnect.addEventListener('click', async () => {
           disconnect.disabled = true;
           setStatus('Disconnecting…');
           try {
             const res = await fetch('/api/github-owner-identity', { method: 'DELETE', headers: _inceptionAuthHeaders() });
             if (!res.ok) throw new Error(await saveErrorMessage(res));
-            showToast('GitHub account disconnected; remote repos are read-only until one is connected', 'success');
+            showToast('GitHub account disconnected; repos that posted as you are read-only until one is connected', 'success');
             onDone();
           } catch (e) {
             disconnect.disabled = false;
@@ -68460,13 +68544,13 @@ function burnAreaChart() {
         panel.appendChild(disconnect);
         if (!identity.usable) panel.appendChild(connectButton());
       } else {
-        panel.appendChild(referenceRepoNode('span', 'text-muted fs-sm', 'Not connected: write-tier reference repos are served read-only.'));
+        panel.appendChild(referenceRepoNode('span', 'text-muted fs-sm', 'Not connected: entries that would post as you are served read-only.'));
         panel.appendChild(connectButton());
       }
       panel.appendChild(status);
       host.appendChild(panel);
       const help = referenceRepoNode('p', 'config-help',
-        'Issues and PRs the hive opens in repos it does not manage are written as the hive owner\'s own GitHub account, never as the hive\'s App. ' +
+        'Where the choice above posts as you, issues and PRs the hive opens in repos it does not manage are written as your own GitHub account. ' +
         'Connecting asks GitHub for the public_repo scope (public repositories only) through a one-time device flow; the token stays on this hive as an owner-only file and is never sent to the hub. ' +
         'Disconnecting here removes it from the hive; to revoke it on GitHub too, remove the authorization under Settings → Applications on github.com.');
       host.appendChild(help);
@@ -68527,17 +68611,19 @@ function burnAreaChart() {
     /* renderReferenceReposPanel paints the identity panel, the editable list
        and wires Save. entries is edited in place until Save; a failed Save
        keeps the edits. */
-    function renderReferenceReposPanel(host, entries, kinds, identity) {
+    function renderReferenceReposPanel(host, entries, kinds, identity, meta) {
       if (!host) return;
+      meta = meta || referenceRepoWriteMeta(null);
       /* derived_from is carried through so the server can tell a derived
          entry (rebuilt from its request issue, never saved) from an
          operator's. */
-      entries = entries.map(e => ({ repo: e.repo || '', write: (e.write || []).slice(), write_token_file: e.write_token_file || '', derived_from: e.derived_from || '', credential_state: e.credential_state || '', credential_reason: e.credential_reason || '', credential_login: e.credential_login || '' }));
+      entries = entries.map(e => ({ repo: e.repo || '', write: (e.write || []).slice(), write_token_file: e.write_token_file || '', derived_from: e.derived_from || '', credential_state: e.credential_state || '', credential_reason: e.credential_reason || '', credential_login: e.credential_login || '', credential_identity: e.credential_identity || '', credential_note: e.credential_note || '' }));
       host.textContent = '';
+      renderWriteIdentityPanel(host, meta, () => loadReferenceRepos());
       renderOwnerIdentityPanel(host, identity, () => loadReferenceRepos());
       host.appendChild(referenceRepoNode('p', 'config-help',
         'Read-only by default: agents clone and read these repos and are never told they are out of scope, but every write is refused. ' +
-        'Tick issues and/or prs to let agents open issues or PRs there as the connected account above (PRs go through that account\'s fork). ' +
+        'Tick issues and/or prs to let agents open issues or PRs there as the identity chosen above (as you, PRs go through your fork). ' +
         'A write_token_file is a path on the hive host and can only be set in the config file by the operator; one that is set is shown here and kept. ' +
         'Saving checks the credential and applies the change without a restart.'));
       const list = referenceRepoNode('div', 'config-list');
@@ -68561,6 +68647,8 @@ function burnAreaChart() {
             row.appendChild(referenceRepoNode('span', 'config-repo-name', entry.repo));
             row.appendChild(referenceRepoDerivedLink(entry.derived_from));
             row.appendChild(referenceRepoCredentialChip(entry));
+            const derivedLine = referenceRepoIdentityLine(entry);
+            if (derivedLine) row.appendChild(referenceRepoNode('span', 'fs-sm cfg-reference-repo-identity', derivedLine));
             if (entry.credential_reason) row.appendChild(referenceRepoNode('span', 'text-muted fs-sm cfg-reference-repo-reason', entry.credential_reason));
             list.appendChild(row);
             return;
@@ -68591,6 +68679,8 @@ function burnAreaChart() {
              the login it writes as, or why it has none yet. */
           if (entry.write.length && entry.credential_state) row.appendChild(referenceRepoCredentialChip(entry));
           else row.appendChild(referenceRepoNode('span', 'rt-inherit', entry.write.length ? entry.write.join('+') : 'read-only'));
+          const line = entry.write.length ? referenceRepoIdentityLine(entry) : '';
+          if (line) row.appendChild(referenceRepoNode('span', 'fs-sm cfg-reference-repo-identity', line));
           const remove = referenceRepoNode('button', 'remove-item', '\u2715');
           remove.title = 'Remove ' + entry.repo + ' from the reference repos';
           remove.addEventListener('click', () => { entries.splice(i, 1); paintRows(); });
@@ -68663,7 +68753,7 @@ function burnAreaChart() {
             throw new Error(msg);
           }
           const d = await res.json();
-          renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || kinds, identity);
+          renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || kinds, identity, d.write_identity ? referenceRepoWriteMeta(d) : meta);
           showToast('Reference repos saved', 'success');
         } catch (e) {
           saveBtn.disabled = false;
