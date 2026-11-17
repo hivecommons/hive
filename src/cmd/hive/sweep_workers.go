@@ -147,6 +147,11 @@ func (b *boot) sweepJobs() []sweepJob {
 		{"customers", fixed(customersSweepInterval), sweepOptional, func(ctx context.Context, _ *github.Client, cfg *config.Config) {
 			b.runCustomersSweep(ctx, cfg)
 		}},
+		// Customers goal and satisfaction inference (#18742): opt-in, on the
+		// meetings model route, suggestions only. Makes no GitHub call.
+		{"customers_inference", fixed(customersInferenceInterval), sweepOptional, func(ctx context.Context, _ *github.Client, cfg *config.Config) {
+			b.runCustomersInference(ctx, cfg)
+		}},
 		{"rfc_notify", fixed(rfcnotify.DefaultInterval + time.Second), sweepOptional, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
 			runRFCNotifySweep(ctx, newRFCNotifySource(gh, notify), len(cfg.Project.Repos), cfg, b.dashSrv, notify, b.logger)
 		}},

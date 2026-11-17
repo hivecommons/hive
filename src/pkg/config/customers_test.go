@@ -51,3 +51,35 @@ func TestCustomersEnabledEnvOverridesConfig(t *testing.T) {
 		t.Fatal("a nil config with no usable env is the default, on")
 	}
 }
+
+func TestCustomersInferenceDefaultsOffAndNeedsCustomers(t *testing.T) {
+	t.Setenv(EnvCustomersEnabled, "")
+	t.Setenv(EnvCustomersInferenceEnabled, "")
+	var cfg Config
+	if cfg.CustomersInferenceEnabled() {
+		t.Fatal("inference must default off")
+	}
+	on, off := true, false
+	cfg.Customers.Inference.Enabled = &on
+	if !cfg.CustomersInferenceEnabled() {
+		t.Fatal("explicit true")
+	}
+	cfg.Customers.Enabled = &off
+	if cfg.CustomersInferenceEnabled() {
+		t.Fatal("inference must not run with the Customers section off")
+	}
+	cfg.Customers.Enabled = nil
+	t.Setenv(EnvCustomersInferenceEnabled, "false")
+	if cfg.CustomersInferenceEnabled() {
+		t.Fatal("env false must win over config true")
+	}
+	t.Setenv(EnvCustomersInferenceEnabled, "true")
+	if !(&Config{}).CustomersInferenceEnabled() {
+		t.Fatal("env true must win over the default")
+	}
+	var none *Config
+	t.Setenv(EnvCustomersInferenceEnabled, "")
+	if none.CustomersInferenceEnabled() {
+		t.Fatal("a nil config has inference off")
+	}
+}
