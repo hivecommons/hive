@@ -681,6 +681,21 @@ pre-existing items on <repo> (backfill off)` — and the dashboard shows
 "hive can now write to `<repo>`; N existing PRs were left untouched —
 enable backfill to process them".
 
+The guard keeps the hive from *starting* to write on old items. Three
+writes on an item the hive has already written to are upkeep of its own
+state, so the guard does not apply to them: the blocked repair of a
+`blocked` the hive applied (`hive-applied-block`), the park re-check note on
+a park the hive applied (`hive-applied-park`), and a stage-label move on a PR
+whose `stage/*` labels the hive applied (`hive-applied-stage`). For the last,
+the stage labeler reads the PR's timeline once the guard would hold the
+write (and again when its stage labels change, or after 30 minutes): every
+`stage/*` label it carries must have been applied last by one of the hive's
+own accounts. A stage label a person applied, or a PR with none, stays under
+the guard. Only the guard is lifted: the opt-in label, the level, a pause,
+the repo mode and `own_only` still decide the write as they would for a
+newer PR. Such a write is not counted among the pre-existing items left
+untouched.
+
 ### Duplicate-write suppression
 
 Policy decides whether a kind may write to an item; the content layer under
