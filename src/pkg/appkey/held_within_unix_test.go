@@ -22,14 +22,30 @@ func TestHeldFingerprintsWithinBoundsSlowScan(t *testing.T) {
 	r := &Resolver{DataDir: dir}
 	start := time.Now()
 	got := r.HeldFingerprintsWithin(100 * time.Millisecond)
-	if el := time.Since(start); el > 2*time.Second {
-		t.Fatalf("HeldFingerprintsWithin blocked %v on a stalled scan", el)
+	elapsed := time.Since(start)
+	r.boundMu.Lock()
+	done := r.inflight
+	r.boundMu.Unlock()
+	if done == nil {
+		t.Fatal("stalled scan is not in flight")
+	}
+	t.Cleanup(func() {
+		// Opening the FIFO releases the reader; wait for the worker before
+		// another test can replace the package's fingerprint function.
+		f, err := os.OpenFile(fifo, os.O_WRONLY, 0)
+		if err != nil {
+			t.Errorf("release stalled scan: %v", err)
+			return
+		}
+		if err := f.Close(); err != nil {
+			t.Errorf("close FIFO: %v", err)
+		}
+		<-done
+	})
+	if elapsed > 2*time.Second {
+		t.Fatalf("HeldFingerprintsWithin blocked %v on a stalled scan", elapsed)
 	}
 	if got != nil {
 		t.Fatalf("no completed scan yet, want nil, got %v", got)
-	}
-	// Release the stalled scan so the goroutine exits.
-	if f, err := os.OpenFile(fifo, os.O_WRONLY, 0); err == nil {
-		f.Close()
 	}
 }

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"mime"
+	"os"
 	"strings"
 
 	"github.com/emersion/go-message"
@@ -27,18 +28,28 @@ type Limits struct {
 	MaxFiles int
 	// MaxCalendarBytes caps one calendar part.
 	MaxCalendarBytes int
+	// MaxMarkdownBytes caps one Markdown attachment, which is checked in
+	// memory (it has no magic number).
+	MaxMarkdownBytes int
+	// MaxBodyBytes caps the text body kept as a note; a longer body is cut.
+	MaxBodyBytes int
 }
 
-// Default limits.
+// Default limits (hivecommons/hive#18564): a 25 MB attachment fits in the
+// 35 MB SIZE limit after base64.
 const (
-	DefaultMaxFileBytes     = 2 << 20
-	DefaultMaxFilesBytes    = 2 << 20
+	DefaultMaxFileBytes     = 25 << 20
+	DefaultMaxFilesBytes    = 30 << 20
 	DefaultMaxFiles         = 10
 	DefaultMaxCalendarBytes = 512 << 10
+	DefaultMaxMarkdownBytes = 2 << 20
+	DefaultMaxBodyBytes     = wire.MaxNoteBytes
 	// maxParts bounds the MIME parts walked per message.
 	maxParts = 100
 	// maxDepth bounds multipart nesting.
 	maxDepth = 8
+	// spoolFilePattern names an attachment spooled by ParseReader.
+	spoolFilePattern = "hive-mx-file-*"
 )
 
 // DefaultLimits are the limits hive-mx runs with unless overridden.
@@ -48,7 +59,33 @@ func DefaultLimits() Limits {
 		MaxFilesBytes:    DefaultMaxFilesBytes,
 		MaxFiles:         DefaultMaxFiles,
 		MaxCalendarBytes: DefaultMaxCalendarBytes,
+		MaxMarkdownBytes: DefaultMaxMarkdownBytes,
+		MaxBodyBytes:     DefaultMaxBodyBytes,
 	}
+}
+
+// withDefaults fills the limits a caller left at zero.
+func (l Limits) withDefaults() Limits {
+	d := DefaultLimits()
+	if l.MaxFileBytes <= 0 {
+		l.MaxFileBytes = d.MaxFileBytes
+	}
+	if l.MaxFilesBytes <= 0 {
+		l.MaxFilesBytes = d.MaxFilesBytes
+	}
+	if l.MaxFiles <= 0 {
+		l.MaxFiles = d.MaxFiles
+	}
+	if l.MaxCalendarBytes <= 0 {
+		l.MaxCalendarBytes = d.MaxCalendarBytes
+	}
+	if l.MaxMarkdownBytes <= 0 {
+		l.MaxMarkdownBytes = d.MaxMarkdownBytes
+	}
+	if l.MaxBodyBytes <= 0 {
+		l.MaxBodyBytes = d.MaxBodyBytes
+	}
+	return l
 }
 
 // Parsed is what hive-mx keeps of a message.
@@ -61,9 +98,22 @@ type Parsed struct {
 	ProofCode string
 }
 
+// Cleanup removes the attachments ParseReader spooled to disk.
+func (p Parsed) Cleanup() {
+	if p.Files == nil {
+		return
+	}
+	for _, a := range p.Files.Attachments {
+		if a.Path != "" {
+			_ = os.Remove(a.Path)
+		}
+	}
+}
+
 // ErrNothingToDeliver is returned for a message that is not a proof mail
-// and carries neither a calendar invite nor an accepted attachment.
-var ErrNothingToDeliver = errors.New("mailin: no calendar invite or supported attachment")
+// and carries neither a calendar invite, an accepted attachment nor a text
+// body.
+var ErrNothingToDeliver = errors.New("mailin: no calendar invite, supported attachment or text body")
 
 // errTooComplex is returned for a message nested or split beyond the caps.
 var errTooComplex = errors.New("mailin: message structure too complex")
@@ -73,11 +123,40 @@ func isCalendarType(mt string) bool {
 	return mt == "text/calendar" || mt == "application/ics"
 }
 
-// Parse classifies a message. The priority is proof code in the subject,
-// then calendar invite, then mail-in files. The body text is never kept.
+// Parse classifies a message held in memory; see ParseReader.
 func Parse(raw []byte, lim Limits) (Parsed, error) {
+	return ParseReader(bytes.NewReader(raw), lim, "")
+}
+
+// bodyText collects a message's text body: the first text/plain part and
+// the first text/html part that are not attachments.
+type bodyText struct {
+	plain, html []byte
+	havePlain   bool
+	haveHTML    bool
+}
+
+// note is the body as Markdown: text/plain when it has any text, else the
+// sanitized HTML.
+func (b bodyText) note() string {
+	if t := cleanText(b.plain); t != "" {
+		return t
+	}
+	return htmlToMarkdown(b.html)
+}
+
+// ParseReader classifies a message. The priority is proof code in the
+// subject, then calendar invite, then mail-in files and the text body. A
+// message's text body becomes the note of its files, or, with no accepted
+// attachment, a Markdown file of its own (wire.NoteFileName).
+//
+// With spoolDir set, audio, video and image attachments are streamed to
+// files there (Attachment.Path) instead of being held in memory; the
+// caller removes them with Parsed.Cleanup, also on error.
+func ParseReader(r io.Reader, lim Limits, spoolDir string) (Parsed, error) {
+	lim = lim.withDefaults()
 	var p Parsed
-	ent, err := message.Read(bytes.NewReader(raw))
+	ent, err := message.Read(r)
 	if err != nil && !message.IsUnknownCharset(err) && !message.IsUnknownEncoding(err) {
 		return p, fmt.Errorf("mailin: read message: %w", err)
 	}
@@ -95,62 +174,191 @@ func Parse(raw []byte, lim Limits) (Parsed, error) {
 		return p, nil
 	}
 
-	var files []wire.Attachment
-	filesBytes, parts := 0, 0
+	w := walker{lim: lim, spoolDir: spoolDir}
 	walkErr := ent.Walk(func(path []int, e *message.Entity, err error) error {
-		parts++
-		if parts > maxParts || len(path) > maxDepth {
+		w.parts++
+		if w.parts > maxParts || len(path) > maxDepth {
 			return errTooComplex
 		}
 		if err != nil {
 			// Unknown charset or transfer encoding: skip the part.
 			return nil
 		}
-		mt, params, _ := e.Header.ContentType()
-		mt = strings.ToLower(mt)
-		if strings.HasPrefix(mt, "multipart/") {
-			return nil
-		}
-		if isCalendarType(mt) {
-			data, rerr := readCapped(e.Body, lim.MaxCalendarBytes)
-			if rerr != nil {
-				return nil
-			}
-			if inv, cerr := ParseCalendar(data); cerr == nil {
-				p.Invites = append(p.Invites, inv...)
-			}
-			return nil
-		}
-		name := attachmentName(e.Header, params)
-		if name == "" || len(files) >= lim.MaxFiles {
-			return nil
-		}
-		data, rerr := readCapped(e.Body, lim.MaxFileBytes)
-		if rerr != nil || filesBytes+len(data) > lim.MaxFilesBytes {
-			return nil
-		}
-		if a, ok := acceptFile(name, data); ok {
-			sum := sha256.Sum256(data)
-			a.SHA256 = hex.EncodeToString(sum[:])
-			files = append(files, a)
-			filesBytes += len(data)
-		}
-		return nil
+		return w.part(e)
 	})
+	p.Files = &wire.Files{Title: p.Subject, Attachments: w.files}
 	if walkErr != nil {
 		return p, walkErr
 	}
-	p.Invites = dedupeInvites(p.Invites)
+	p.Invites = dedupeInvites(w.invites)
+	note := w.body.note()
 	switch {
 	case len(p.Invites) > 0:
-		p.Kind = wire.KindInvite
-	case len(files) > 0:
+		p.Cleanup()
+		p.Kind, p.Files = wire.KindInvite, nil
+	case len(w.files) > 0:
 		p.Kind = wire.KindFiles
-		p.Files = &wire.Files{Title: p.Subject, Attachments: files}
+		p.Files.Note = note
+	case note != "":
+		data := []byte(note)
+		sum := sha256.Sum256(data)
+		p.Kind = wire.KindFiles
+		p.Files.Attachments = []wire.Attachment{{
+			Name: wire.NoteFileName, Kind: wire.AttachMarkdown, ContentType: ctMarkdown,
+			Size: len(data), SHA256: hex.EncodeToString(sum[:]), Data: data,
+		}}
 	default:
+		p.Files = nil
 		return p, ErrNothingToDeliver
 	}
 	return p, nil
+}
+
+// walker holds what the MIME walk has kept so far.
+type walker struct {
+	lim        Limits
+	spoolDir   string
+	parts      int
+	invites    []wire.Invite
+	files      []wire.Attachment
+	filesBytes int
+	body       bodyText
+}
+
+func (w *walker) part(e *message.Entity) error {
+	mt, params, _ := e.Header.ContentType()
+	mt = strings.ToLower(mt)
+	if strings.HasPrefix(mt, "multipart/") {
+		return nil
+	}
+	if isCalendarType(mt) {
+		data, rerr := readCapped(e.Body, w.lim.MaxCalendarBytes)
+		if rerr != nil {
+			return nil
+		}
+		if inv, cerr := ParseCalendar(data); cerr == nil {
+			w.invites = append(w.invites, inv...)
+		}
+		return nil
+	}
+	name := attachmentName(e.Header, params)
+	if name == "" {
+		w.bodyPart(e, mt)
+		return nil
+	}
+	if len(w.files) >= w.lim.MaxFiles {
+		return nil
+	}
+	a, ok, err := w.attachment(name, e.Body)
+	if err != nil {
+		return err
+	}
+	if ok {
+		w.files = append(w.files, a)
+		w.filesBytes += a.Size
+	}
+	return nil
+}
+
+// bodyPart keeps the first inline text/plain and text/html parts.
+func (w *walker) bodyPart(e *message.Entity, mt string) {
+	if disp, _, err := e.Header.ContentDisposition(); err == nil && strings.EqualFold(disp, "attachment") {
+		return
+	}
+	switch {
+	case mt == "text/plain" && !w.body.havePlain:
+		w.body.plain, w.body.havePlain = readCut(e.Body, w.lim.MaxBodyBytes), true
+	case mt == "text/html" && !w.body.haveHTML:
+		// HTML carries markup around the text: read more of it, the note
+		// is cut to MaxBodyBytes after sanitizing.
+		w.body.html, w.body.haveHTML = readCut(e.Body, w.lim.MaxBodyBytes*htmlBodyFactor), true
+	}
+}
+
+// htmlBodyFactor is how much more raw HTML than note text is read.
+const htmlBodyFactor = 4
+
+// attachment reads one named part. A refused part is skipped (ok false);
+// err is only an I/O failure of the spool.
+func (w *walker) attachment(name string, body io.Reader) (wire.Attachment, bool, error) {
+	ft, name, allowed := classify(name)
+	if !allowed {
+		return wire.Attachment{}, false, nil
+	}
+	room := min(w.lim.MaxFileBytes, w.lim.MaxFilesBytes-w.filesBytes)
+	if room <= 0 {
+		return wire.Attachment{}, false, nil
+	}
+	if ft.kind == wire.AttachMarkdown || w.spoolDir == "" {
+		limit := room
+		if ft.kind == wire.AttachMarkdown {
+			limit = min(room, w.lim.MaxMarkdownBytes)
+		}
+		data, rerr := readCapped(body, limit)
+		if rerr != nil {
+			return wire.Attachment{}, false, nil
+		}
+		a, ok := acceptFile(name, data)
+		if ok {
+			sum := sha256.Sum256(data)
+			a.SHA256 = hex.EncodeToString(sum[:])
+		}
+		return a, ok, nil
+	}
+	head := make([]byte, sniffLen)
+	n, rerr := io.ReadFull(body, head)
+	if rerr != nil && !errors.Is(rerr, io.ErrUnexpectedEOF) {
+		return wire.Attachment{}, false, nil
+	}
+	head = head[:n]
+	ct, ok := ft.match(sniffHead(head))
+	if !ok {
+		return wire.Attachment{}, false, nil
+	}
+	path, size, sum, err := spoolPart(w.spoolDir, head, body, room)
+	switch {
+	case errors.Is(err, errPartTooLarge):
+		return wire.Attachment{}, false, nil
+	case err != nil:
+		return wire.Attachment{}, false, err
+	}
+	return wire.Attachment{Name: name, Kind: ft.kind, ContentType: ct, Size: size, SHA256: sum, Path: path}, true, nil
+}
+
+// spoolPart writes head and the rest of body to a new file in dir, failing
+// with errPartTooLarge (and removing the file) past limit bytes.
+func spoolPart(dir string, head []byte, body io.Reader, limit int) (path string, size int, sum string, err error) {
+	f, err := os.CreateTemp(dir, spoolFilePattern)
+	if err != nil {
+		return "", 0, "", err
+	}
+	defer func() {
+		if cerr := f.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
+		if err != nil {
+			_ = os.Remove(f.Name())
+			path = ""
+		}
+	}()
+	h := sha256.New()
+	out := io.MultiWriter(f, h)
+	if _, err = out.Write(head); err != nil {
+		return "", 0, "", err
+	}
+	rest := int64(limit - len(head))
+	if rest < 0 {
+		return "", 0, "", errPartTooLarge
+	}
+	copied, err := io.Copy(out, io.LimitReader(body, rest+1))
+	if err != nil {
+		// A truncated or undecodable part: skip it like an oversize one.
+		return "", 0, "", errPartTooLarge
+	}
+	if copied > rest {
+		return "", 0, "", errPartTooLarge
+	}
+	return f.Name(), len(head) + int(copied), hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // dedupeInvites keeps one invite per UID and RECURRENCE-ID, the highest
@@ -183,6 +391,12 @@ func dedupeInvites(in []wire.Invite) []wire.Invite {
 
 // errPartTooLarge is returned by readCapped for a part over its cap.
 var errPartTooLarge = errors.New("mailin: part too large")
+
+// readCut reads at most limit bytes of r, dropping the rest.
+func readCut(r io.Reader, limit int) []byte {
+	data, _ := io.ReadAll(io.LimitReader(r, int64(limit)))
+	return data
+}
 
 // readCapped reads r fully, failing when it holds more than limit bytes.
 func readCapped(r io.Reader, limit int) ([]byte, error) {

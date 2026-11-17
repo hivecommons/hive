@@ -19,6 +19,11 @@ var (
 	wavData  = []byte("RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00")
 	oggData  = []byte("OggS\x00\x02\x00\x00\x00\x00")
 	webmData = []byte("\x1A\x45\xDF\xA3\x9F\x42\x86\x81\x01")
+	mkvData  = []byte("\x1A\x45\xDF\xA3\xA3\x42\x86\x81\x01\x42\x82\x88matroska")
+	mp4Data  = []byte("\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom")
+	m4vData  = []byte("\x00\x00\x00\x18ftypM4V \x00\x00\x00\x00M4V isom")
+	movData  = []byte("\x00\x00\x00\x14ftypqt  \x00\x00\x00\x00qt  ")
+	oldMov   = []byte("\x00\x00\x00\x08wide\x00\x00\x00\x10mdat")
 	mdData   = []byte("# Notes\n\n- one\n- two\r\n\tindented\f\n")
 )
 
@@ -30,7 +35,13 @@ func TestSniff(t *testing.T) {
 		{pngData, "image/png"}, {jpegData, "image/jpeg"}, {gifData, "image/gif"}, {webpData, "image/webp"},
 		{m4aData, "audio/mp4"}, {mp3Data, "audio/mpeg"}, {mp3Sync, "audio/mpeg"}, {wavData, "audio/wave"},
 		{oggData, "audio/ogg"}, {webmData, "audio/webm"}, {mdData, "text/markdown"},
-		{[]byte("\x00\x00\x00\x20ftypqt  \x00"), ""},
+		{[]byte("\x00\x00\x00\x20ftypqt  \x00"), ctQuickTime},
+		{mp4Data, ctMP4Generic}, {m4vData, ctVideoMP4}, {movData, ctQuickTime}, {oldMov, ctQuickTime}, {mkvData, ctMatroska},
+		{[]byte("\x00\x00\x00\x20ftypXXXX\x00"), ""},
+		{[]byte("\x00\x00\x00\x20ftyp"), ""},
+		{[]byte("\x00\x00\x00\x20blob\x00\x00"), ""},
+		// Text that happens to spell an atom name is still Markdown.
+		{[]byte("one free day"), ctMarkdown},
 		{[]byte("MZ\x90\x00\x03\x00\x00\x00"), ""},
 		{[]byte("\x7fELF\x02\x01\x01"), ""},
 		{[]byte{0xC3, 0x28}, ""},
@@ -57,6 +68,30 @@ func TestAcceptFile(t *testing.T) {
 	}
 	if a, _ := acceptFile("memo.m4a", m4aData); a.Kind != wire.AttachAudio || a.ContentType != "audio/mp4" {
 		t.Errorf("kind %+v", a)
+	}
+	// Video, by extension and sniffed container (#18564).
+	for name, want := range map[string]struct {
+		data []byte
+		kind string
+		ct   string
+	}{
+		"clip.mp4":   {mp4Data, wire.AttachVideo, ctVideoMP4},
+		"clip2.mp4":  {m4vData, wire.AttachVideo, ctVideoMP4},
+		"phone.mov":  {movData, wire.AttachVideo, ctQuickTime},
+		"old.mov":    {oldMov, wire.AttachVideo, ctQuickTime},
+		"film.mkv":   {mkvData, wire.AttachVideo, ctMatroska},
+		"memo2.m4a":  {mp4Data, wire.AttachAudio, ctAudioMP4},
+		"voice.webm": {webmData, wire.AttachAudio, ctWebM},
+	} {
+		a, ok := acceptFile(name, want.data)
+		if !ok || a.Kind != want.kind || a.ContentType != want.ct {
+			t.Errorf("%s: %v %+v", name, ok, a)
+		}
+	}
+	for name, data := range map[string][]byte{"film.mkv": webmData, "clip.mp4": movData[:8], "song.m4a": m4vData, "movie.mov": mkvData} {
+		if _, ok := acceptFile(name, data); ok {
+			t.Errorf("%s accepted with the wrong content", name)
+		}
 	}
 	bad := map[string][]byte{
 		"evil.exe":      []byte("MZ\x90\x00"),

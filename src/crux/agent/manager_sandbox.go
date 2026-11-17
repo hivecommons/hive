@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -42,7 +43,18 @@ func openShellPreflightWarnings(blocks []config.SandboxOpenShellConfig) []string
 func (m *Manager) SetSandboxConfig(cfg config.AgentSandboxConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	was := make(map[string]bool, len(m.agents))
+	for name, agent := range m.agents {
+		was[name] = m.agentSandboxEnabledLocked(agent)
+	}
 	m.sandboxConfig = cfg
+	// Turning the global gate on can move agents into sandbox mode just as a
+	// per-agent toggle does; their interactive sessions go the same way.
+	for name, agent := range m.agents {
+		if !was[name] && m.agentSandboxEnabledLocked(agent) {
+			m.enterSandboxModeLocked(agent)
+		}
+	}
 }
 
 func (m *Manager) SetSandboxLauncher(l sandbox.Launcher) {
@@ -99,7 +111,7 @@ func (m *Manager) validateSandboxKickLocked(agent *AgentProcess) (string, error)
 		return "", fmt.Errorf("agent %s cannot be kicked: %s", agent.Name, notRunningReason(agent))
 	}
 	if agent.State == StateRunning {
-		return "", fmt.Errorf("agent %s cannot be kicked: sandbox execution already running", agent.Name)
+		return "", sandboxKickBlockedError(agent)
 	}
 	if strings.TrimSpace(m.sandboxConfig.Image) == "" && strings.TrimSpace(agent.Config.SandboxImage(m.sandboxConfig)) == "" {
 		return "", fmt.Errorf("agent %s sandbox image is not configured", agent.Name)
@@ -156,7 +168,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	launcher := m.sandboxLauncher
 	switch runtime {
 	case config.SandboxRuntimeJob:
-		launcher = m.jobLauncherLocked(agent.Config.SandboxJob(m.sandboxConfig))
+		launcher = m.jobLauncherLocked(agent.Config.SandboxJob(m.sandboxConfig), time.Duration(agent.Config.SandboxTimeoutS(m.sandboxConfig))*time.Second)
 	case config.SandboxRuntimeOpenShell:
 		launcher = m.openshellLauncherLocked(agent.Config.SandboxOpenShell(m.sandboxConfig))
 	case config.SandboxRuntimeSubstrate:
@@ -165,6 +177,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	repo := m.project.PrimaryRepo()
 	now := time.Now()
 	agent.State = StateRunning
+	agent.sandboxKickActive = true
 	agent.StartedAt = &now
 	agent.LastKick = &now
 	agent.LastKickMessage = message
@@ -241,7 +254,23 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	if spec.reviewOnly() {
 		prReader, _ = m.sandboxPRClient.(crux.PRReviewContextReader)
 	}
-	go m.runSandboxKick(runCtx, agent.Name, runtime, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, prReader, mutationBoundary)
+	// A fix kick that names one of the agent's PRs adds its commits to that
+	// PR (hivecommons/hive#18574). Only a kick that may push, through a PR
+	// client that can read the target, gets one: without the reader the
+	// executor could not check the PR is the agent's own, so the kick opens
+	// a new PR as before.
+	var targetReader crux.PRPushTargetReader
+	if pushEnabled {
+		if n, source := sandboxTargetPRFromKickMessage(message, m.project.Org+"/"+repo); n > 0 {
+			if r, ok := m.sandboxPRClient.(crux.PRPushTargetReader); ok {
+				spec.TargetPR, spec.TargetPRSource, targetReader = n, source, r
+			} else {
+				m.logger.Warn("sandbox kick names an existing PR but the PR client cannot read PR targets; the kick opens a new PR instead",
+					"name", agent.Name, "pr", n, "source", source)
+			}
+		}
+	}
+	go m.runSandboxKick(runCtx, agent.Name, runtime, spec, launcher, runner, cloneMinter, pushMinter, pushEnabled, prClient, prReader, targetReader, mutationBoundary)
 	return nil
 }
 
@@ -266,18 +295,19 @@ func (m *Manager) tieredSandboxMinterLocked(tier string) pushbroker.TokenMinter 
 	}
 }
 
-func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator, prReader crux.PRReviewContextReader, mutationBoundary effects.Boundary) {
+func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec SandboxKickSpec, launcher sandbox.Launcher, runner sandboxCommandRunner, cloneMinter, minter pushbroker.TokenMinter, pushEnabled bool, prClient PRCreator, prReader crux.PRReviewContextReader, targetReader crux.PRPushTargetReader, mutationBoundary effects.Boundary) {
 	started := time.Now()
 	exec := &SandboxExecutor{
-		Launcher:    launcher,
-		Runner:      runner,
-		CloneMinter: cloneMinter,
-		Minter:      minter,
-		PushEnabled: pushEnabled,
-		PRClient:    prClient,
-		PRReader:    prReader,
-		Mutation:    mutationBoundary,
-		Logger:      m.logger,
+		Launcher:       launcher,
+		Runner:         runner,
+		CloneMinter:    cloneMinter,
+		Minter:         minter,
+		PushEnabled:    pushEnabled,
+		PRClient:       prClient,
+		PRReader:       prReader,
+		PRTargetReader: targetReader,
+		Mutation:       mutationBoundary,
+		Logger:         m.logger,
 	}
 	res, err := exec.Run(ctx, spec)
 	ended := time.Now()
@@ -307,6 +337,7 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 		return
 	}
 	agent.cancel = nil
+	agent.sandboxKickActive = false
 	// The run record is what a sandboxed agent's health and activity derive
 	// from: there is no session to probe between kicks. Recorded on every
 	// outcome but an operator cancel, and persisted so a pod roll does not
@@ -356,6 +387,9 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 		if errors.Is(err, ErrSandboxRunReportedFailure) {
 			m.auditSandbox(name, "sandbox_pr_withheld", fmt.Sprintf("workspace=%s commits=%d branch=%s reason=%s", res.Workspace, res.CommitCount, res.Branch, res.PRWithheld))
 		}
+		if errors.Is(err, ErrSandboxTargetPRRefused) {
+			m.auditSandbox(name, "sandbox_target_pr_refused", fmt.Sprintf("repo=%s/%s, number=%d, source=%s, commits=%d, reason=%s", spec.Org, spec.Repo, spec.TargetPR, spec.TargetPRSource, res.CommitCount, err.Error()))
+		}
 		m.auditSandbox(name, "sandbox_failed", err.Error())
 		if res.Broker != nil && res.Broker.Error != "" {
 			m.auditSandbox(name, "sandbox_broker_rejected", res.Broker.Error)
@@ -380,7 +414,40 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 	if res.PR != nil && res.PR.URL != "" {
 		detail += " pr=" + res.PR.URL
 	}
+	if res.TargetPR > 0 {
+		detail += fmt.Sprintf(" target_pr=%d", res.TargetPR)
+	}
 	m.auditSandbox(name, "sandbox_complete", detail)
+	m.creditSandboxPR(name, spec, res, effectiveBackend(agent), agent.Config.Model)
+}
+
+// creditSandboxPR records the agent_pr_created entry for a PR the kick
+// opened when the PR client did not record it itself (a client without
+// crux.AgentPRCreator, such as the sidecar's callback adapter). The detail
+// carries the repo=/number= pairs every governor resolver parses, so the PR
+// routes back to this agent (hivecommons/hive#18575). A push to an existing
+// PR opened nothing and records nothing: that PR's credit already exists.
+func (m *Manager) creditSandboxPR(name string, spec SandboxKickSpec, res SandboxKickResult, backend, model string) {
+	if res.PR == nil || res.PR.Number <= 0 || res.PRAttributed || res.TargetPR > 0 {
+		return
+	}
+	pairs := []string{
+		"repo=" + spec.Org + "/" + spec.Repo,
+		"number=" + strconv.Itoa(res.PR.Number),
+		"author=" + res.PR.Author,
+		"url=" + res.PR.URL,
+		"reused=" + strconv.FormatBool(res.PR.AlreadyExisted),
+		"head=" + res.Branch,
+		"via=sandbox",
+		"agent=" + name,
+	}
+	if backend != "" {
+		pairs = append(pairs, "backend="+backend)
+	}
+	if model != "" {
+		pairs = append(pairs, "model="+model)
+	}
+	m.auditSandbox(name, crux.AuditActionAgentPRCreated, strings.Join(pairs, ", "))
 }
 
 func (m *Manager) auditSandbox(agent, action, detail string) {
@@ -397,11 +464,21 @@ func (m *Manager) setSandboxJobLauncherFactoryForTest(f func(config.SandboxJobCo
 
 // jobLauncherLocked returns the launcher for a sandbox.runtime: job kick:
 // the injected factory's, or a real in-cluster kubejob.Launcher.
-func (m *Manager) jobLauncherLocked(job config.SandboxJobConfig) sandbox.Launcher {
+func (m *Manager) jobLauncherLocked(job config.SandboxJobConfig, kickTimeout time.Duration) sandbox.Launcher {
 	if m.sandboxJobLauncherFactory != nil {
 		return m.sandboxJobLauncherFactory(job)
 	}
-	return &kubejob.Launcher{Options: JobOptionsFromConfig(job)}
+	return &kubejob.Launcher{Options: jobOptionsForKick(job, kickTimeout)}
+}
+
+// jobOptionsForKick is JobOptionsFromConfig plus the Job's
+// activeDeadlineSeconds, derived from the kick timeout, so a Job that sits
+// Pending or Unschedulable after hive lost track of it fails on its own
+// instead of waiting forever (hivecommons/hive#18525).
+func jobOptionsForKick(job config.SandboxJobConfig, kickTimeout time.Duration) kubejob.Options {
+	opts := JobOptionsFromConfig(job)
+	opts.ActiveDeadlineSeconds = kubejob.ActiveDeadlineSeconds(kickTimeout)
+	return opts
 }
 
 func (m *Manager) setSandboxOpenShellLauncherFactoryForTest(f func(config.SandboxOpenShellConfig) sandbox.Launcher) {

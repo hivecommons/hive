@@ -163,8 +163,9 @@ type Deps struct {
 
 // input is one queued engine input.
 type input struct {
-	line  *Line
-	offer string
+	line    *Line
+	partial *Line
+	offer   string
 }
 
 // Engine is one meeting's persona. Observe, Offer, Restyle and Skip are
@@ -200,6 +201,9 @@ type Engine struct {
 	lastPost time.Time
 	total    int
 	acks     int
+	// earlyAck is when each speaker was acknowledged from a partial
+	// transcript; their final line then gets no second ack.
+	earlyAck map[string]time.Time
 }
 
 type timedLine struct {
@@ -227,6 +231,7 @@ func New(s Settings, d Deps) *Engine {
 		retrieved: make(chan retrieval, inboxDepth),
 		answers:   make(chan answered, inboxDepth),
 		pending:   map[int]*pending{},
+		earlyAck:  map[string]time.Time{},
 		done:      make(chan struct{}),
 	}
 }
@@ -269,6 +274,25 @@ func (e *Engine) Observe(l Line) {
 	case e.in <- input{line: &l}:
 	default:
 		e.log.Warn("[meetings] persona input queue full; line skipped")
+	}
+}
+
+// ObservePartial offers one partial (not yet final) spoken line. When it
+// already addresses the persona with a request and a spoken answer is
+// wanted, the acknowledgement is spoken at once instead of after the
+// final transcript; the answer still waits for the final line. Lines that
+// do not address her are dropped here, so partials never crowd the queue.
+func (e *Engine) ObservePartial(l Line) {
+	if !l.Spoken || strings.TrimSpace(l.Text) == "" {
+		return
+	}
+	if t := e.match.Match(l.Text, true); !t.Addressed || t.Intro {
+		return
+	}
+	select {
+	case e.in <- input{partial: &l}:
+	default:
+		// A partial is only an early hint; the final line follows.
 	}
 }
 
@@ -318,9 +342,17 @@ func (e *Engine) Restyle(ctx context.Context, text string) string {
 // research summary as a short chat answer in the persona's voice, posted
 // once on Replies; on failure or timeout the summary is posted as is. It
 // does not block.
-func (e *Engine) FollowUp(query, summary string) {
+func (e *Engine) FollowUp(query, summary string) { e.FollowUpIn(query, summary, false) }
+
+// FollowUpIn is FollowUp in the channel the question was asked in: voice
+// (two sentences, no links) when voice is true, else chat.
+func (e *Engine) FollowUpIn(query, summary string, voice bool) {
+	kind, clipFn := KindChat, ClipChat
+	if voice {
+		kind, clipFn = KindVoice, ClipVoice
+	}
 	p := phrasesFor(e.s.Persona.Language)
-	raw := ClipChat(fmt.Sprintf(p.digged, clip(query, maxFollowUpQuery), strings.TrimSpace(summary)))
+	raw := clipFn(fmt.Sprintf(p.digged, clip(query, maxFollowUpQuery), strings.TrimSpace(summary)))
 	ctx := e.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -333,15 +365,34 @@ func (e *Engine) FollowUp(query, summary string) {
 			cancel()
 			out = strings.Trim(strings.TrimSpace(out), "\"")
 			if err == nil && out != "" && !strings.Contains(out, "{") {
-				text = ClipChat(out)
+				text = clipFn(out)
 			}
 		}
 		select {
-		case e.out <- Reply{Kind: KindChat, Text: text, Trigger: TriggerFollowUp, Question: query}:
+		case e.out <- Reply{Kind: kind, Text: text, Trigger: TriggerFollowUp, Question: query, VoiceWanted: voice}:
 		case <-ctx.Done():
 		}
 	}()
 }
+
+// ResearchFailedText is what she says when a deep dive could not start or
+// finish, in the persona's language: "I couldn't look that up: <reason>."
+func (e *Engine) ResearchFailedText(reason string) string {
+	reason = strings.TrimRight(strings.TrimSpace(reason), ".")
+	if reason == "" {
+		reason = "something went wrong"
+	}
+	return fmt.Sprintf(phrasesFor(e.s.Persona.Language).failed, clip(reason, maxFailReason))
+}
+
+// ResearchProgressText is the one progress note for a deep dive that runs
+// long.
+func (e *Engine) ResearchProgressText() string {
+	return phrasesFor(e.s.Persona.Language).still
+}
+
+// maxFailReason bounds the reason quoted in a failure notice.
+const maxFailReason = 160
 
 // maxFollowUpQuery bounds the question quoted in a raw follow-up.
 const maxFollowUpQuery = 80
@@ -382,9 +433,12 @@ func (e *Engine) run() {
 		case <-e.ctx.Done():
 			return
 		case in := <-e.in:
-			if in.line != nil {
+			switch {
+			case in.line != nil:
 				e.onLine(*in.line)
-			} else {
+			case in.partial != nil:
+				e.onPartial(*in.partial)
+			default:
 				e.onOffer(in.offer)
 			}
 		case id := <-e.timers:

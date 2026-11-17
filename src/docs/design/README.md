@@ -29,6 +29,17 @@ that status is the thing to check before treating a page as current behaviour:
   the auth model per platform, polling over webhooks, the fact shape, the
   Teams playback gap and the privacy posture.
 
+- [Betty on Zoom without a Zoom app: dial-in, desktop companion, live stream](meetings-without-a-zoom-app.md) -
+  **design only.** #18596: Zoom now refuses web-client meeting bots and
+  reserves its Meeting SDK for human use, so this page compares the ways
+  Betty can still take part without a Zoom app, RTMS or any bot-detection
+  evasion: phone dial-in (paid host, about $1.10 per meeting-hour, spoken
+  consent only), a desktop companion that streams the user's own call audio
+  to their hive (free account, attestation as the consent gate, per-user
+  revocable token), and Zoom's RTMP live stream (paid, listen-only).
+  Recommends the companion, macOS first, and records its streaming contract,
+  distribution plan and prototype PR set.
+
 - [Email to Inbox: a per-hive inbound address](email-inbox.md) - **design only /
   proposed.** Gives every hive a unique, unguessable inbound address
   (`<uid>@inbox.<hub domain>`, plus-addressing as routing tags) whose mail lands

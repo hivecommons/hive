@@ -88,7 +88,13 @@
     function meetingsFriendlyReason(m) {
       const raw = String(m.state_reason || '');
       if (!raw) return '';
+      // Discord has no guest lobby: a blocked Discord join is the bot's own
+      // server permissions on that voice channel (#18598).
+      if (m.platform === 'discord' && (m.state === 'blocked' || /blocked|no permission/.test(raw))) {
+        return 'The Discord bot cannot join that voice channel. In the server, give the bot\'s role View Channel, Connect and Speak on the channel, then try again.';
+      }
       if (m.state === 'blocked') return 'The meeting refused a guest bot.';
+      if (/consent_undelivered/.test(raw)) return 'Left: the consent notice could not be delivered' + (m.consent_error ? ' (' + m.consent_error + ')' : '') + '.';
       if (/lobby_timeout/.test(raw)) return 'Nobody admitted hive from the lobby in time.';
       if (/platform_unavailable/.test(raw)) return 'This meeting platform is not available on this hive right now.';
       if (/invalid_argument/.test(raw)) return 'The meeting service did not accept this meeting link.';
@@ -114,7 +120,7 @@
       if (request) {
         return '<div class="meetings-row" data-state="requested"><div class="meetings-row-main"><div class="meetings-row-head">' +
           '<span class="meetings-row-title">' + escapeHtml((m.requested_by.name || m.requested_by.id || 'someone') + ' asked hive into ' + meetingsLabel(m)) + '</span>' +
-          '<span class="kc-pill" data-status="syncing">join request</span></div></div>' +
+          '<span class="kc-pill" data-status="syncing">join request</span></div>' + meetingsReasonHtml(m) + '</div>' +
           '<div class="meetings-row-actions">' +
           '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsApproveRequest" data-arg0="' + escapeHtml(m.id) + '">Approve</button>' +
           '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button></div></div>';
@@ -128,7 +134,8 @@
         '<span class="kc-pill" data-status="' + escapeHtml(MEETINGS_PILL_STATUS[state] || '') + '">' + escapeHtml(state) + '</span></div>' +
         (meta ? '<div class="muted-xs">' + escapeHtml(meta) + '</div>' : '') +
         meetingsReasonHtml(m) +
-        (m.consent_error && !m.consent_posted_at ? '<div class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</div>' : '') +
+        (active && m.consent_error && !m.consent_posted_at ? '<div class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</div>' : '') +
+        (m.consent_via === 'voice' ? '<div class="muted-xs">consent notice spoken: the meeting chat could not deliver it</div>' : '') +
         (m.voice_enabled && !m.voice_capable ? '<div class="muted-xs">joined without voice; replies go to chat</div>' : '') +
         '</div><div class="meetings-row-actions">' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +

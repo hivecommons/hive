@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -133,17 +134,44 @@ func (s *Server) registerMeetingsRoutes() {
 	s.mux.HandleFunc("GET /api/meetings/{id}/ws", s.handleMeetingsWS)
 }
 
-func meetingsError(w http.ResponseWriter, err error) {
+// meetingsErrorStatus maps a MeetingsService error to its HTTP status: the
+// dashboard sentinels to 404/400/409, anything else (Quorum refusing or
+// failing a call, a store error) to 502.
+func meetingsErrorStatus(err error) int {
 	switch {
 	case errors.Is(err, ErrMeetingNotFound):
-		jsonError(w, err.Error(), http.StatusNotFound)
+		return http.StatusNotFound
 	case errors.Is(err, ErrMeetingInvalid):
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		return http.StatusBadRequest
 	case errors.Is(err, ErrMeetingConflict):
-		jsonError(w, err.Error(), http.StatusConflict)
+		return http.StatusConflict
 	default:
-		jsonError(w, err.Error(), http.StatusBadGateway)
+		return http.StatusBadGateway
 	}
+}
+
+// meetingsError answers a failed meetings call with its mapped status.
+func (s *Server) meetingsError(w http.ResponseWriter, r *http.Request, err error) {
+	s.writeMeetingsError(w, r, err, meetingsErrorStatus(err))
+}
+
+// writeMeetingsError logs a failed meetings call, then answers it. Every
+// failure is logged with the error because the answer alone is not enough:
+// the hosted ingress replaces a 502 body with its generic "hive unavailable"
+// page, so a Discord join Quorum refused ("blocked: the bot has no
+// permission...") reached the owner as "hive is restarting" and left no
+// trace in the spoke log. A caller mistake (4xx) logs at Info, a dependency
+// or store failure at Warn.
+func (s *Server) writeMeetingsError(w http.ResponseWriter, r *http.Request, err error, status int) {
+	if s.logger != nil {
+		level := slog.LevelInfo
+		if status >= http.StatusInternalServerError {
+			level = slog.LevelWarn
+		}
+		s.logger.Log(r.Context(), level, "[meetings] call failed",
+			"method", r.Method, "path", r.URL.Path, "status", status, "error", err.Error())
+	}
+	jsonError(w, err.Error(), status)
 }
 
 func (s *Server) handleMeetingsJoin(w http.ResponseWriter, r *http.Request) {
@@ -163,7 +191,7 @@ func (s *Server) handleMeetingsJoin(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	m, err := svc.Join(ctx, req, strings.TrimSpace(r.Header.Get("X-Hive-User")))
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_join", auditDetail("platform", req.Platform, "voice", boolString(req.Voice)), "")
@@ -187,7 +215,7 @@ func (s *Server) handleMeetingsList(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := svc.List()
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	jsonResponse(w, map[string]any{"meetings": list})
@@ -203,7 +231,7 @@ func (s *Server) handleMeetingsGet(w http.ResponseWriter, r *http.Request) {
 	}
 	m, err := svc.Live(r.PathValue("id"))
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	jsonResponse(w, m)
@@ -221,7 +249,7 @@ func (s *Server) handleMeetingsLeave(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	m, err := svc.Leave(ctx, r.PathValue("id"))
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_leave", auditDetail("meeting", r.PathValue("id")), "")
@@ -247,7 +275,7 @@ func (s *Server) handleMeetingsVoice(w http.ResponseWriter, r *http.Request) {
 	}
 	m, err := svc.SetVoice(r.PathValue("id"), *req.Enabled)
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_voice", auditDetail("meeting", r.PathValue("id"), "enabled", boolString(*req.Enabled)), "")
@@ -264,7 +292,7 @@ func (s *Server) handleMeetingsApprove(w http.ResponseWriter, r *http.Request) {
 	}
 	id, rid := r.PathValue("id"), r.PathValue("rid")
 	if err := svc.ApproveResearch(id, rid); err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_research_approve", auditDetail("meeting", id, "rid", rid), "")
@@ -297,7 +325,7 @@ func (s *Server) handleMeetingsRequestApprove(w http.ResponseWriter, r *http.Req
 	defer cancel()
 	m, err := svc.ApproveRequest(ctx, r.PathValue("id"), body.Voice)
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_request_approve", auditDetail("meeting", r.PathValue("id"), "voice", boolString(body.Voice)), "")
@@ -316,7 +344,7 @@ func (s *Server) handleMeetingsRequestDecline(w http.ResponseWriter, r *http.Req
 	defer cancel()
 	m, err := svc.DeclineRequest(ctx, r.PathValue("id"))
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_request_decline", auditDetail("meeting", r.PathValue("id")), "")
@@ -340,7 +368,7 @@ func (s *Server) handleMeetingsWS(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	snap, err := svc.Live(id)
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	conn, err := meetingsUpgrader.Upgrade(w, r, nil)

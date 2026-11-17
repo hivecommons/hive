@@ -186,7 +186,8 @@ func currentBaseTestPR(fork bool, headRef, author, mergeableState string) *gh.Pu
 // committed to it). A repo listed in auto_merge.require_current_base, or a
 // head GitHub itself reports behind under its up-to-date rule, holds as
 // "behind" for the bot to rebase; a repo gated only by the hive-wide default
-// merges it as tested. An ordinary PR on the same repo is still updated.
+// merges it as tested. An ordinary PR on the same repo is still updated, and
+// so is a Dependabot PR, which never rebases a merely-behind branch (#18441).
 func TestCurrentBaseGateLeavesDependencyBotBranchToTheBot(t *testing.T) {
 	const head = "sha-head"
 	cases := []struct {
@@ -199,7 +200,7 @@ func TestCurrentBaseGateLeavesDependencyBotBranchToTheBot(t *testing.T) {
 	}{
 		{name: "renovate bot on a listed repo holds", pr: currentBaseTestPR(false, "renovate/actions-checkout-5.x", "renovate[bot]", "clean"), strict: true, wantStop: true, wantReason: "behind"},
 		{name: "renovate head ref under another account holds", pr: currentBaseTestPR(false, "renovate/go-deps", "castrojo", "clean"), strict: true, wantStop: true, wantReason: "behind"},
-		{name: "dependabot author holds", pr: currentBaseTestPR(false, "dependabot/npm_and_yarn/x", "dependabot[bot]", "clean"), strict: true, wantStop: true, wantReason: "behind"},
+		{name: "dependabot author is updated by the App (#18441)", pr: currentBaseTestPR(false, "dependabot/npm_and_yarn/x", "dependabot[bot]", "behind"), strict: true, wantStop: true, wantReason: basePreparationReady, wantUpdates: 1},
 		{name: "github up-to-date rule holds on a default-gated repo", pr: currentBaseTestPR(false, "renovate/x", "renovate[bot]", "behind"), wantStop: true, wantReason: "behind"},
 		{name: "default-gated repo merges as tested", pr: currentBaseTestPR(false, "renovate/x", "renovate[bot]", "clean")},
 		{name: "ordinary PR is still updated", pr: currentBaseTestPR(false, "feature", "alice", "behind"), strict: true, wantStop: true, wantReason: basePreparationReady, wantUpdates: 1},

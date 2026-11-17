@@ -156,3 +156,70 @@ func TestSameTopicRepoAndProjection(t *testing.T) {
 		t.Fatal("non-topic bead counted as a topic")
 	}
 }
+
+// A pending claim (hivecommons/hive#18572) is made before its PR exists,
+// moves with a later kick's branch, is refused against a PR-bound claim on
+// another branch, and is bound by the PR opened from its branch.
+func TestClaimTopicForBranchPendingAndBind(t *testing.T) {
+	s := newTopicStore(t)
+	for name, args := range map[string][3]string{
+		"bad key":   {"a b", "acme/widget", "b"},
+		"no repo":   {"k", "", "b"},
+		"no branch": {"k", "acme/widget", " "},
+	} {
+		if _, err := s.ClaimTopicForBranch("deps", args[0], args[1], args[2]); err == nil {
+			t.Errorf("%s: pending claim accepted", name)
+		}
+	}
+
+	c, err := s.ClaimTopicForBranch("deps", "K", "acme/widget", "hive/deps-1")
+	if err != nil || c.PR != 0 || c.Branch != "hive/deps-1" || c.Key != "k" || c.State != TopicStateOpen {
+		t.Fatalf("pending claim = %+v, %v", c, err)
+	}
+	if again, err := s.ClaimTopicForBranch("deps", "k", "acme/widget", "hive/deps-1"); err != nil || again.BeadID != c.BeadID {
+		t.Fatalf("idempotent pending claim = %+v, %v", again, err)
+	}
+	// An earlier kick opened no PR: the pending claim follows the new kick.
+	moved, err := s.ClaimTopicForBranch("deps", "k", "acme/widget", "hive/deps-2")
+	if err != nil || moved.BeadID != c.BeadID || moved.Branch != "hive/deps-2" {
+		t.Fatalf("moved pending claim = %+v, %v", moved, err)
+	}
+	if _, err := s.ClaimTopicForBranch("deps", "k", "other/widget", "hive/deps-2"); !errors.Is(err, ErrTopicClaimed) {
+		t.Fatalf("pending claim in another repo = %v, want ErrTopicClaimed", err)
+	}
+
+	if n, err := s.BindTopicBranch("acme/widget", "hive/deps-1", 9); err != nil || n != 0 {
+		t.Fatalf("bind on a stale branch = %d, %v", n, err)
+	}
+	if n, _ := s.BindTopicBranch("acme/widget", "", 9); n != 0 {
+		t.Fatal("bind without a branch bound something")
+	}
+	if n, err := s.BindTopicBranch("widget", "hive/deps-2", 9); err != nil || n != 1 {
+		t.Fatalf("bind = %d, %v", n, err)
+	}
+	bound, ok := s.Topic("k")
+	if !ok || bound.PR != 9 || bound.Branch != "hive/deps-2" {
+		t.Fatalf("bound claim = %+v", bound)
+	}
+	// Bound: the same branch keeps it (the kick pushes onto that PR), any
+	// other branch is refused.
+	if same, err := s.ClaimTopicForBranch("deps", "k", "acme/widget", "hive/deps-2"); err != nil || same.PR != 9 {
+		t.Fatalf("same-branch pending claim on a bound topic = %+v, %v", same, err)
+	}
+	if _, err := s.ClaimTopicForBranch("deps", "k", "acme/widget", "hive/deps-3"); !errors.Is(err, ErrTopicClaimed) {
+		t.Fatalf("other-branch claim on a bound topic = %v, want ErrTopicClaimed", err)
+	}
+}
+
+// A claim with a PR number binds a pending claim in the same repo.
+func TestClaimTopicBindsPendingClaim(t *testing.T) {
+	s := newTopicStore(t)
+	pending, _ := s.ClaimTopicForBranch("deps", "k", "acme/widget", "hive/deps-1")
+	c, err := s.ClaimTopic("deps", TopicClaim{Key: "k", Repo: "acme/widget", PR: 12})
+	if err != nil || c.BeadID != pending.BeadID || c.PR != 12 || c.Branch != "hive/deps-1" {
+		t.Fatalf("binding claim = %+v, %v", c, err)
+	}
+	if _, err := s.ClaimTopic("deps", TopicClaim{Key: "k", Repo: "acme/widget", PR: 13}); !errors.Is(err, ErrTopicClaimed) {
+		t.Fatalf("claim for another PR after binding = %v", err)
+	}
+}

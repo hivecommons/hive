@@ -85,6 +85,7 @@ func TestWireMeetingsResearch(t *testing.T) {
 	if d := wireMeetingsResearch(on, struct{}{}, discardLogger()); d != nil {
 		t.Fatal("an unsupported runtime must leave research unwired")
 	}
+	t.Cleanup(func() { researchAgents.Store(nil) })
 	rt := &fakeResearchRuntime{added: map[string]config.AgentConfig{}}
 	d := wireMeetingsResearch(on, rt, discardLogger())
 	if d == nil || len(rt.added) != 3 {
@@ -126,6 +127,7 @@ func (s *fakeSpekForResearch) Lines() <-chan []byte        { return s.lines }
 func (s *fakeSpekForResearch) Close(any)                   {}
 
 func TestRouteResearch(t *testing.T) {
+	t.Cleanup(func() { researchAgents.Store(nil) })
 	if remove := routeResearch(nil, nil); remove == nil {
 		t.Fatal("always returns a func")
 	}
@@ -173,4 +175,59 @@ func newResearchTestRunner(t *testing.T, d live.ResearchDispatcher) *live.Runner
 	}
 	t.Cleanup(lr.Close)
 	return lr
+}
+
+// TestWithResearchAgentsSurvivesReconcile pins hivecommons/hive#18590
+// finding 6: the research agents are runtime-only, so the reconcile set
+// must carry them or a config reload removes them.
+func TestWithResearchAgentsSurvivesReconcile(t *testing.T) {
+	t.Cleanup(func() { researchAgents.Store(nil) })
+	researchAgents.Store(nil)
+	cfgs := map[string]config.AgentConfig{"scanner": {Backend: "claude"}}
+	if got := withResearchAgents(cfgs); len(got) != 1 {
+		t.Fatalf("unwired pool adds nothing: %v", got)
+	}
+	on := &config.Config{Meetings: config.MeetingsConfig{Enabled: true, ResearchPoolSize: 2}, AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: cfgs}}
+	if wireMeetingsResearch(on, &fakeResearchRuntime{added: map[string]config.AgentConfig{}}, nil) == nil {
+		t.Fatal("pool not wired")
+	}
+	got := withResearchAgents(cfgs)
+	if len(got) != 3 || got["research-1"].Mode != research.Mode || got["research-2"].Role != research.Role || got["scanner"].Backend != "claude" {
+		t.Fatalf("reconcile set = %+v", got)
+	}
+	if len(cfgs) != 1 {
+		t.Fatal("the caller's map is not modified")
+	}
+	// A configured agent of the same name wins.
+	cfgs["research-1"] = config.AgentConfig{Backend: "copilot"}
+	if withResearchAgents(cfgs)["research-1"].Backend != "copilot" {
+		t.Fatal("hive.yaml wins over the pool's default")
+	}
+	if got := withResearchAgents(nil); len(got) != 2 {
+		t.Fatalf("nil configs = %v", got)
+	}
+}
+
+func TestMeetingsResearchStatus(t *testing.T) {
+	if meetingsResearchStatus(nil, nil) != nil {
+		t.Fatal("no pool, no report")
+	}
+	t.Cleanup(func() { researchAgents.Store(nil) })
+	cfg := &config.Config{Meetings: config.MeetingsConfig{Enabled: true, ResearchPoolSize: 2},
+		AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"scanner": {Backend: "claude", Model: "m1"}, "a": {Backend: "codex"}}}}
+	d := wireMeetingsResearch(cfg, &fakeResearchRuntime{added: map[string]config.AgentConfig{}}, nil)
+	fn := meetingsResearchStatus(cfg, d)
+	if fn == nil {
+		t.Fatal("a pool reports")
+	}
+	st := fn()
+	if len(st.Agents) != 2 || st.Available != 2 || st.BaseAgent != "scanner" || st.Backend != "claude" || st.Model != "m1" {
+		t.Fatalf("status = %+v", st)
+	}
+	if got := researchBaseName(&config.Config{AgentRuntimeConfig: config.AgentRuntimeConfig{Agents: map[string]config.AgentConfig{"b": {}, "a": {}}}}); got != "a" {
+		t.Fatalf("first by name, got %q", got)
+	}
+	if researchBaseName(nil) != "" {
+		t.Fatal("nil config")
+	}
 }

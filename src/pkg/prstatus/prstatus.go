@@ -169,4 +169,18 @@ const (
 	// `hive/awaiting-ci:` deferral, a stage/045 parking note, an
 	// "Already fixed" verdict) that used to be its own comment.
 	KeyAgentNotePrefix = "agent-note:"
+	// KeyAutoMerge records that the hive merged the PR (the trusted-author
+	// or operator-approved auto-merge note, "merged by Hive …"), which used
+	// to be a fresh comment on every merge (hivecommons/hive#18452).
+	KeyAutoMerge = "auto-merge"
+	// KeyReviewFollowUps is the collapsible checklist of review findings
+	// held below review.backlog.min_severity, which used to be its own
+	// `<!-- hive:review-followups-comment v1 -->` comment on every
+	// reviewed PR (hivecommons/hive#18606).
+	KeyReviewFollowUps = "review-followups"
+	// KeyStageReady is the 090 ready-for-human-merge line for a PR whose
+	// only objection is the author's trust tier, which used to be its own
+	// `<!-- hive:stage-ready-for-human-merge -->` comment
+	// (hivecommons/hive#18606). A held or manual-merge 090 still posts one.
+	KeyStageReady = "stage-ready"
 )

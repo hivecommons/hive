@@ -54,6 +54,9 @@ const (
 	PlatformTeams      = "teams"
 	PlatformZoom       = "zoom"
 	PlatformDiscord    = "discord"
+	// PlatformCompanion is the desktop companion: a person's own meeting
+	// client audio, captured on their computer and relayed by hive.
+	PlatformCompanion = "companion"
 )
 
 // Meeting is one meeting hive was sent to.
@@ -82,13 +85,31 @@ type Meeting struct {
 	// (for example platform_unavailable while chat is down).
 	ConsentError    string     `json:"consent_error,omitempty"`
 	ConsentPostedAt *time.Time `json:"consent_posted_at,omitempty"`
-	LobbySince      *time.Time `json:"lobby_since,omitempty"`
-	LiveAt          *time.Time `json:"live_at,omitempty"`
-	EndedAt         *time.Time `json:"ended_at,omitempty"`
-	HandedOffAt     *time.Time `json:"handed_off_at,omitempty"`
-	PurgedAt        *time.Time `json:"purged_at,omitempty"`
-	CreatedAt       time.Time  `json:"created_at"`
-	UpdatedAt       time.Time  `json:"updated_at"`
+	// ConsentVia is how the notice was delivered: "chat" (Quorum confirmed
+	// the line in the meeting chat) or "voice" (spoken because chat could
+	// not deliver it).
+	ConsentVia string `json:"consent_via,omitempty"`
+	// Companion is set on a desktop companion meeting: who attested that
+	// the participants were told, when, and which notice they saw.
+	Companion *CompanionInfo `json:"companion,omitempty"`
+	// PreConsentDropped counts the lines (segments, drafts and chat) hive
+	// discarded because they came before the consent notice was delivered.
+	// Only the count is kept, never the content.
+	PreConsentDropped int `json:"pre_consent_dropped,omitempty"`
+	// ConsentSeq is the highest Quorum seq known to come before the notice:
+	// a line at or below it is discarded even if it arrives after.
+	ConsentSeq int64 `json:"consent_seq,omitempty"`
+	// ConsentSpeechEnd is the latest session time (seconds, a segment's
+	// `end`) heard before the notice; a segment that starts before it, and
+	// is finalized just after the notice, is discarded too.
+	ConsentSpeechEnd float64    `json:"consent_speech_end,omitempty"`
+	LobbySince       *time.Time `json:"lobby_since,omitempty"`
+	LiveAt           *time.Time `json:"live_at,omitempty"`
+	EndedAt          *time.Time `json:"ended_at,omitempty"`
+	HandedOffAt      *time.Time `json:"handed_off_at,omitempty"`
+	PurgedAt         *time.Time `json:"purged_at,omitempty"`
+	CreatedAt        time.Time  `json:"created_at"`
+	UpdatedAt        time.Time  `json:"updated_at"`
 }
 
 // Person is a meeting participant as Quorum reports it.

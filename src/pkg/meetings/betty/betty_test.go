@@ -286,11 +286,11 @@ func TestEngineIntroHelloAndSkip(t *testing.T) {
 	r := newRig(t, testSettings(), &fakeLLM{})
 	r.e.Observe(Line{Who: "Ana", Text: "Betty, introduce yourself", Spoken: true})
 	rep := r.reply()
-	if rep.Trigger != TriggerIntro || !strings.Contains(rep.Text, "Betty Bee from the hive") || !rep.VoiceWanted || rep.Kind != KindChat {
-		t.Fatalf("intro %+v", rep)
+	if rep.Trigger != TriggerIntro || !strings.Contains(rep.Text, "Betty Bee from the hive") || !rep.VoiceWanted || rep.Kind != KindVoice {
+		t.Fatalf("spoken intro must be answered by voice: %+v", rep)
 	}
 	r.e.Observe(Line{Who: "Bo", Text: "who's the bot?"})
-	if rep := r.reply(); rep.Trigger != TriggerIntro {
+	if rep := r.reply(); rep.Trigger != TriggerIntro || rep.VoiceWanted || rep.Kind != KindChat {
 		t.Fatalf("bot question %+v", rep)
 	}
 	r.e.Observe(Line{Who: "Bo", Text: "hey betty"})

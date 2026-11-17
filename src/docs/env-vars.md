@@ -66,6 +66,8 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_RELEASE_SENTINEL_ENABLED` | No | `release_sentinel.enabled` (default `false`) | Process-level override for the opt-in release sentinel ([#9585](https://github.com/hivecommons/hive/issues/9585)). `true`/`1`/`on`/`yes` turns it on and `false`/`0`/`off`/`no` turns it off regardless of config; any other value leaves the config in charge. See [release-sentinel.md](release-sentinel.md). |
 | `HIVE_RELEASE_SENTINEL_RETAG_ENABLED` | No | `release_sentinel.retag_enabled` (default `false`) | Process-level override for the release sentinel's separate retag opt-in ([#9585](https://github.com/hivecommons/hive/issues/9585)): when on, the hive moves the `v<version>` tag to a merged, marked fix PR's merge commit with one leased, atomic tag push. Same values as `HIVE_RELEASE_SENTINEL_ENABLED`. It never turns retagging on while the sentinel itself is off. See [release-sentinel.md](release-sentinel.md#retag-after-merge). |
 | `HIVE_SCANNER_BUSY_BRANCH_MINUTES` | No | `60` | Busy-branch window for the repair queues ([#18488](https://github.com/hivecommons/hive/issues/18488)). A red or conflicted PR the hive App did not open is listed as "suggest, do not push" instead of as a push target while its head is younger than this many minutes or a claim by another worker covers the PR or a linked issue; the agent posts the fix as one suggestion comment for the worker to apply as its own signed commit. Whole minutes; unset, unparsable or non-positive values keep `60`. |
+| `HIVE_RELEASE_FEED_INTERVAL` | No | `governor.release_feeds.interval_s`, else `15m` | Poll interval of the release-feed watcher ([#18494](https://github.com/hivecommons/hive/issues/18494)) as a Go duration. An explicit `interval_s` wins over it; never below `1m`. Invalid or non-positive values fall back to `15m`. See [release-feeds.md](release-feeds.md). |
+| `HIVE_RELEASE_FEED_COOLDOWN` | No | `governor.release_feeds.cooldown_s` / per-agent `cooldown_s`, else `1h` | Default minimum gap between two release-feed kicks of one agent, as a Go duration. The YAML keys win over it. See [release-feeds.md](release-feeds.md#cooldown). |
 | `HIVE_ATTRIBUTED_CLOSED_PR_LOOKBACK` | No | `14d` | Bounds the per-repo closed-PR attribution scan that feeds dashboard outcome/rework metrics during PR enumeration. The scan lists closed PRs sorted by `updated_at` descending, stops when results are older than this window, and also stops after five pages so large repositories are never walked from history on every governor tick. Values accept Go durations such as `336h`, or day counts such as `14`/`14d`; invalid or non-positive values fall back to `14d`. |
 | `HIVE_LEVEL` | No | config/pack value | ACMM level bootstrap/override used by hosted flows and the entrypoint pack selection. |
 | `HIVE_ID` | No | config or generated id | Stable hive/spoke identifier override; passed through to launched agents. |
@@ -91,6 +93,9 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_HUB_SECRET` | Required for spokes registered to a protected hub; optional for a standalone hub with `/data/saas/hub-secret.key` | `/data/saas/hub-secret.key` on the hub when present; no fallback for spoke heartbeat auth | Bearer secret for spoke heartbeats and hub/spoke SaaS APIs. Self-hosted (`byo-`) hives registered through self-service never receive it: they hold only their own `HIVE_HEARTBEAT_KEY`, and the hub never tries `HIVE_HUB_SECRET` or anything derived from it for a `byo-` ID. |
 | `HIVE_HUB_SELFSERVICE_REGISTRATION` | No | off | Enables the self-service registration API (`/api/hub/selfservice/*`) that lets a signed-in user register a hive they run themselves under the reserved `byo-<login>--<name>` ID namespace, after proving `permissions.admin` on every listed repo with their own GitHub token ([#18060](https://github.com/hivecommons/hive/issues/18060)). Accepts `1/true/yes/on`. When off, every route but `GET /api/hub/selfservice/status` answers `404` and the status reports `enabled: false`. Read per request; no restart needed. |
 | `HIVE_HUB_MAIL_TOKEN` | Only on a hub that routes mail from `hive-mx` | none | Bearer token `hive-mx` presents on `GET /api/mail/hosts` and `POST /api/mail/inbound` ([#18395](https://github.com/hivecommons/hive/issues/18395)); the same value as the `hive-mx` Secret. Unset: both endpoints answer `404`. Read per request. Secret. |
+| `HIVE_HUB_MAIL_MAX_BODY_BYTES` | No | `50331648` | Largest delivery `POST /api/mail/inbound` accepts from a `hive-mx` that sends routing headers (48 MiB, this route only; [#18564](https://github.com/hivecommons/hive/issues/18564)). Without routing headers the cap stays 8 MiB. |
+| `HIVE_HUB_MAIL_CHUNK_BYTES` | No | `786432` | Piece size when the hub relays a large mail-in delivery to the spoke (768 KiB, under the 1 MiB ingress default); clamped to 64 KiB to 8 MiB. |
+| `HIVE_HUB_MAIL_SPOOL_DIR` | No | system temp directory | Where the hub keeps a delivery on disk while it relays it. |
 | `HIVE_HUB_SELFSERVICE_MAX_PER_USER` | No | `5` | Maximum self-service hives one user may have registered at once; the next registration answers `429` until one is removed. |
 | `HIVE_HUB_SELFSERVICE_EXPIRY` | No | `24h` | How long a self-service hive may go without an accepted heartbeat before the expiry sweep revokes its key and removes its registry entry (counted from the last accepted heartbeat, or from registration while there has been none). Reported by `GET /api/hub/selfservice/status` as `expiry`. Go duration syntax. |
 | `HIVE_HUB_SELFSERVICE_SWEEP_INTERVAL` | No | `10m` | How often the self-service expiry sweep (`src/pkg/hub/selfservice_expiry.go`) runs. Each removal writes `audit: selfservice_hive_expired` (see [audit-log.md](audit-log.md)). Read at startup; restart after changing. Go duration syntax. |
@@ -413,7 +418,8 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_SCHEDULE_TICK_S` | No | `15` | Seconds between the meeting scheduler's checks for a Calendar meeting to join. |
 | `HIVE_MEETINGS_SCHEDULE_LEAD_S` | No | `60` | Seconds before a scheduled meeting's start that hive joins it (`0` joins at the start). |
 | `HIVE_MEETINGS_EMAIL_INVITES_ENABLED` | No | `true` | Accept calendar invites mailed to `hive@<host>` through hive-mx. Overrides `meetings.email.invites_enabled`. |
-| `HIVE_MEETINGS_EMAIL_FILES_ENABLED` | No | `true` | Accept Markdown, audio and image attachments mailed to `hive@<host>` as Inbox items. Overrides `meetings.email.files_enabled`. |
+| `HIVE_MEETINGS_EMAIL_FILES_ENABLED` | No | `true` | Accept Markdown, audio, video and image attachments and text bodies mailed to `hive@<host>` as Inbox items. Overrides `meetings.email.files_enabled`. |
+| `HIVE_INBOX_EMAIL_MAX_BYTES` | No | `50331648` | Largest mail-in delivery a spoke assembles from relayed pieces (`POST /api/inbox/email/chunk`, 48 MiB). |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_MEETING` | No | `200000` | Per-meeting LLM token budget for Spektacular live mode. |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_HOUR` | No | `500000` | Hive-wide hourly token ceiling across meetings. |
 | `HIVE_MEETINGS_MAX_TOKENS_PER_DAY` | No | `2000000` | Hive-wide daily token ceiling across meetings. |
@@ -456,7 +462,7 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 
 ### Mail receiver (`hive-mx`)
 
-`hive-mx` is the cluster's receive-only mail receiver ([#18395](https://github.com/hivecommons/hive/issues/18395)): it accepts mail only for `hive@<hive host>`, keeps calendar invites, mail-in files and proof codes, and posts them to the hub. It never sends mail, offers no AUTH and relays nothing. It reads only these variables; see [meetings.md](meetings.md#inviting-betty-by-email).
+`hive-mx` is the cluster's receive-only mail receiver ([#18395](https://github.com/hivecommons/hive/issues/18395)): it accepts mail only for `hive@<hive host>`, keeps calendar invites, mail-in files and text bodies, and proof codes, and posts them to the hub. It never sends mail, offers no AUTH and relays nothing. It reads only these variables; see [meetings.md](meetings.md#inviting-betty-by-email).
 
 | Variable | Required | Default | Purpose |
 |---|---:|---|---|
@@ -466,11 +472,18 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MX_HEALTH_LISTEN` | No | `:8080` | `/healthz` and `/readyz` (ready once the first host list loaded). |
 | `HIVE_MX_DOMAIN` | No | `mx.hive.hivecommons.dev` | Name hive-mx greets with. |
 | `HIVE_MX_HOSTS_REFRESH_S` | No | `60` | Seconds between host list refreshes. A failed refresh keeps the last list. |
-| `HIVE_MX_MAX_MESSAGE_BYTES` | No | `2097152` | SMTP SIZE limit (2 MB). |
+| `HIVE_MX_MAX_MESSAGE_BYTES` | No | `36700160` | SMTP SIZE limit (35 MiB: a 25 MB attachment after base64). |
 | `HIVE_MX_MAX_RECIPIENTS` | No | `5` | Recipients per message. |
 | `HIVE_MX_MAX_CONNECTIONS` | No | `100` | Concurrent SMTP connections. |
-| `HIVE_MX_MAX_FILE_BYTES` | No | `2097152` | Largest decoded mail-in attachment. |
+| `HIVE_MX_MAX_FILE_BYTES` | No | `26214400` | Largest decoded mail-in attachment (25 MiB). |
+| `HIVE_MX_MAX_FILES_BYTES` | No | `31457280` | All decoded mail-in attachments of one message (30 MiB). |
 | `HIVE_MX_MAX_FILES` | No | `10` | Mail-in attachments kept per message. |
+| `HIVE_MX_MAX_MARKDOWN_BYTES` | No | `2097152` | Largest Markdown attachment (checked in memory; it has no magic number). |
+| `HIVE_MX_MAX_BODY_BYTES` | No | `262144` | Text body kept as a note (256 KiB); a longer body is cut. |
+| `HIVE_MX_SPOOL_DIR` | No | system temp directory | Where a message and its audio, video and image attachments are spooled while it is processed; mount a size-limited `emptyDir`. |
+| `HIVE_MX_MAX_CONCURRENT_DATA` | No | `8` | Messages processed at once (`451` past it); with the SIZE limit it bounds the spool. |
+| `HIVE_MX_HIVE_DAILY_BYTES` | No | `536870912` | Message bytes delivered per hive per 24 hours (512 MiB); past it the sender gets `452` and retries later. |
+| `HIVE_MX_DELIVER_TIMEOUT_S` | No | `120` | Seconds hive-mx waits for the hub per recipient (a large delivery is relayed to the spoke in pieces meanwhile). |
 | `HIVE_MX_IP_MESSAGES_PER_HOUR` | No | `60` | Messages per remote IP per hour (burst of a quarter of it). |
 | `HIVE_MX_DOMAIN_MESSAGES_PER_HOUR` | No | `120` | Messages per sender (MAIL FROM) organizational domain per hour. |
 | `HIVE_MX_TLS_CERT` | No | none | PEM certificate file; with `HIVE_MX_TLS_KEY` it turns on STARTTLS. Re-read when the file changes. Without it hive-mx accepts plain SMTP only. |
@@ -590,6 +603,7 @@ section requires for lookups.
 | `HIVE_VANITY_MINT_WINDOW` | No | `168h` | Go duration of the rolling window `HIVE_VANITY_MINT_BUDGET` is counted over. |
 | `HIVE_IMAGE_BUILD_STALE_AFTER` | No | `90m` | Go duration a branch HEAD may stay non-ready (docker workflow queued/building, image not yet on GHCR) before the hub reports its `latest_sha_image_status` as `stale` on the dashboard (`pkg/hub/saas.go`). |
 | `HIVE_ADVISORY_POST_RETRY_BACKOFF_S` | No | `3600` | Seconds the spoke pauses advisory digest writes after a `403 Resource not accessible by integration`, when `governor.advisory.post_retry_backoff_s` is unset. Negative disables the pause. |
+| `HIVE_ADVISORY_PER_REPO` | No | `false` | When `governor.advisory.per_repo` is absent from `hive.yaml`, `true` gives every monitored repo its own Hive Advisory Report in addition to the one in the primary repo. An explicit `per_repo` (or the Settings toggle) wins. See [advisory.md](advisory.md#one-report-or-one-per-repo). |
 | `HIVE_ADVISORY_ISSUE_AGING_AFTER` | No | `45m` | Age (Go duration) after which a hive's advisory digest is bucketed `aging` in hub fleet-row freshness reporting (`pkg/hub/advisory_issue_activity.go`). Must be set **below** `HIVE_ADVISORY_ISSUE_STALE_AFTER`: if stale ≤ aging, **both** thresholds silently revert to their defaults. |
 | `HIVE_ADVISORY_ISSUE_STALE_AFTER` | No | `1h30m` | Age (Go duration) after which the same advisory-digest freshness struct is bucketed `stale` and drives the advisory-stale verdict. Same pairing rule as above: a value ≤ the aging threshold makes both revert to defaults. |
 | `HIVE_HUB_PUBLIC_URL` | No | none (chain continues) | First variable in the hub public-origin chain used to build notification deep links and to match the hub domain suffix. Precedence: `HIVE_HUB_PUBLIC_URL` → `HIVE_PUBLIC_URL` → `HIVE_HUB_BASE_URL` → `HIVE_DASHBOARD_URL` → `HIVE_HUB_URL`, then the compiled-in canonical public origin (links) or the default cluster domain (suffix match). |

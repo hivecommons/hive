@@ -90,6 +90,564 @@
     }
   ],
   "paths": {
+    "/api/companion/info": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Desktop companion settings",
+        "description": "Owner or read-write. What the desktop companion shows and sends before a capture: the consent notice and its version, the PCM sample rate, the channels and the chunk limit.",
+        "responses": {
+          "200": {
+            "description": "Companion settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "consent_version": {
+                      "type": "string"
+                    },
+                    "consent_text": {
+                      "type": "string"
+                    },
+                    "sample_rate": {
+                      "type": "integer"
+                    },
+                    "channels": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "max_chunk_bytes": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write, or another person's companion meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Meetings or companion meetings are not enabled on this hive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/companion/meetings": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Start a desktop companion meeting",
+        "description": "Owner or read-write. Starts a live meeting fed by the desktop companion (the person's own meeting client audio and microphone). The request must name the current consent_version and confirm the participants were told (consent_attested). Who attested, when and the notice version are stored with the meeting.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "app": {
+                    "type": "string"
+                  },
+                  "host_name": {
+                    "type": "string"
+                  },
+                  "consent_version": {
+                    "type": "string"
+                  },
+                  "consent_attested": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "consent_version",
+                  "consent_attested"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The meeting record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "platform": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Consent not acknowledged or a field too long",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write, or another person's companion meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Meetings or companion meetings are not enabled on this hive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/companion/meetings/{id}/audio": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Upload one companion audio chunk",
+        "description": "The companion meeting's starter (or an owner). The body is raw 16 kHz mono s16le PCM, at most max_chunk_bytes. Chunks are accepted in order per channel from seq 0; a gap answers 409 with expected_seq and a resend of a stored seq is acknowledged with duplicate: true.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Meeting id from the start response"
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "call",
+                "mic"
+              ]
+            },
+            "description": "call = the meeting app's audio, mic = the person's microphone"
+          },
+          {
+            "name": "seq",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Chunk number per channel, from 0"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored or recognised",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "seq": {
+                      "type": "integer"
+                    },
+                    "duplicate": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad channel, seq or sample count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Out of order (expected_seq) or the meeting is not live",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "expected_seq": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Chunk too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write, or another person's companion meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Meetings or companion meetings are not enabled on this hive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/companion/meetings/{id}/replies": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Betty's lines for the companion window",
+        "description": "The companion meeting's starter (or an owner). Lines hive posted for the meeting (the consent notice first) after the cursor, and the meeting state so the window notices the meeting ended.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Meeting id from the start response"
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Cursor: the next_seq of the previous call"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lines and state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "lines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "seq": {
+                            "type": "integer"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "next_seq": {
+                      "type": "integer"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write, or another person's companion meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Meetings or companion meetings are not enabled on this hive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/companion/meetings/{id}/end": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "End a companion meeting",
+        "description": "The companion meeting's starter (or an owner): the companion stopped capturing. Speech still buffered is transcribed first.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Meeting id from the start response"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The meeting record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write, or another person's companion meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Meetings or companion meetings are not enabled on this hive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/meetings/{id}/approve": {
       "post": {
         "tags": [
@@ -807,7 +1365,7 @@
           "Meetings"
         ],
         "summary": "List my calendar emails",
-        "description": "The signed-in user's calendar email addresses with proof status and pending codes, the hive's address (hive@<host>) and the meetings.email switches. ?all=1 adds the whole allowlist for the owner. Any role.",
+        "description": "The signed-in user's calendar email addresses with proof status and pending codes, the hive's address (hive@<host>) and the meetings.email switches. An unproven address whose latest proof mail was refused carries last_failure. The owner also gets recent_proof_attempts (proof mails whose code matched no address, sender masked). ?all=1 adds the whole allowlist for the owner. Any role.",
         "parameters": [
           {
             "name": "all",
@@ -834,14 +1392,14 @@
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                       }
                     },
                     "allowlist": {
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                       }
                     },
                     "invites_enabled": {
@@ -849,6 +1407,14 @@
                     },
                     "files_enabled": {
                       "type": "boolean"
+                    },
+                    "recent_proof_attempts": {
+                      "type": "array",
+                      "description": "Owner only: recent proof mails whose code matched no address, newest first; kept in memory",
+                      "items": {
+                        "type": "object",
+                        "description": "Proof attempt: at, from (masked, a***@example.com), reason (code not recognized)"
+                      }
                     }
                   }
                 }
@@ -897,7 +1463,7 @@
                   "properties": {
                     "email": {
                       "type": "object",
-                      "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                      "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                     },
                     "address": {
                       "type": "string"
@@ -6505,6 +7071,18 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "write_identity": {
+                      "type": "string"
+                    },
+                    "write_identities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "bot_login": {
+                      "type": "string"
                     }
                   }
                 }
@@ -6559,6 +7137,18 @@
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "write_identity": {
+                      "type": "string"
+                    },
+                    "write_identities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "bot_login": {
+                      "type": "string"
                     }
                   }
                 }
@@ -6573,6 +7163,85 @@
           },
           "500": {
             "description": "The config file could not be written; the previous list is restored on the proxy and nothing changed"
+          }
+        }
+      }
+    },
+    "/api/config/reference-repos/write-identity": {
+      "put": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Set the remote write identity",
+        "description": "Sets project.remote_write_identity: whose name the hive's writes to granted reference repos carry (bot: the App bot where the repo's owner installed the App, else the owner's connected account; bot_only: the App bot or read-only; owner: the owner's connected account). Refused when a hand-written write entry would have no credential under the new value. Re-resolves the reference repos before answering. Owner only.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "write_identity"
+                ],
+                "properties": {
+                  "write_identity": {
+                    "type": "string",
+                    "enum": [
+                      "bot",
+                      "bot_only",
+                      "owner"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Current reference repos, resolved under the new value (same body as GET /api/config/reference-repos)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "reference_repos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "write_kinds": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "write_identity": {
+                      "type": "string"
+                    },
+                    "write_identities": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "bot_login": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Unknown value, or a hand-written write entry would have no credential; nothing was stored"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "500": {
+            "description": "The config file could not be written; the setting is unchanged"
           }
         }
       }
@@ -7866,6 +8535,364 @@
           },
           "502": {
             "description": "URL fetch failed or returned a non-200 status"
+          }
+        }
+      }
+    },
+    "/api/agents/discovered": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "List agents discovered in managed repos",
+        "description": "Agent definitions found under .hive/agents/*.yaml in managed repos that pass the repo-sourced prompt allowlist, with their approval status. Nothing runs until an owner approves an entry.",
+        "responses": {
+          "200": {
+            "description": "Discovered definitions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "False when discovery is not running (no GitHub client)."
+                    },
+                    "pending": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "owner/repo:path of the definition file."
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "prompt_path": {
+                            "type": "string",
+                            "description": "Sibling <name>.md that becomes prompt_source on approval, when present."
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Agent key the definition maps to."
+                          },
+                          "display_name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "emoji": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "invalid",
+                              "approved",
+                              "rejected",
+                              "orphaned"
+                            ]
+                          },
+                          "agent": {
+                            "type": "string",
+                            "description": "Registered agent, once approved."
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "first_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "decided_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "decided_by": {
+                            "type": "string"
+                          },
+                          "orphaned_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/agents/discovered/approve": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Approve a discovered agent",
+        "description": "Owner-only. Re-reads the definition through the allowlist gate and registers the agent with definition_source (marked discovered) and, when a sibling <name>.md exists, prompt_source. Backend, model and mode come from this request, never the file; tools stay unset for the owner to grant.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Agent key; defaults to the definition's normalized metadata.name."
+                  },
+                  "backend": {
+                    "type": "string",
+                    "description": "Defaults to copilot."
+                  },
+                  "model": {
+                    "type": "string"
+                  },
+                  "mode": {
+                    "type": "string",
+                    "enum": [
+                      "ADVISORY",
+                      "ISSUES_ONLY",
+                      "ISSUES_AND_PRS",
+                      "ISSUES_PRS_MERGE",
+                      "NO_GITHUB"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Approved",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "approved"
+                    },
+                    "name": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body, mode or agent name"
+          },
+          "403": {
+            "description": "Owner role required, or the repo is no longer allowlisted"
+          },
+          "404": {
+            "description": "Unknown entry"
+          },
+          "409": {
+            "description": "Entry is not pending, or the agent name is taken"
+          },
+          "502": {
+            "description": "The definition could not be read or parsed"
+          },
+          "503": {
+            "description": "Discovery is not running"
+          }
+        }
+      }
+    },
+    "/api/agents/discovered/reject": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Reject a discovered agent",
+        "description": "Owner-only. A rejected definition stays rejected until its file is removed.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "id"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Rejected",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "rejected"
+                    },
+                    "id": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid body"
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "404": {
+            "description": "Unknown entry"
+          },
+          "409": {
+            "description": "Entry is not pending"
+          },
+          "503": {
+            "description": "Discovery is not running"
+          }
+        }
+      }
+    },
+    "/api/agents/discovered/refresh": {
+      "post": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "Rescan managed repos for agent definitions",
+        "description": "Owner-only. Rescans every managed repo now instead of waiting for the timer and returns the refreshed list.",
+        "responses": {
+          "200": {
+            "description": "Discovered definitions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean",
+                      "description": "False when discovery is not running (no GitHub client)."
+                    },
+                    "pending": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string",
+                            "description": "owner/repo:path of the definition file."
+                          },
+                          "repo": {
+                            "type": "string"
+                          },
+                          "path": {
+                            "type": "string"
+                          },
+                          "prompt_path": {
+                            "type": "string",
+                            "description": "Sibling <name>.md that becomes prompt_source on approval, when present."
+                          },
+                          "name": {
+                            "type": "string",
+                            "description": "Agent key the definition maps to."
+                          },
+                          "display_name": {
+                            "type": "string"
+                          },
+                          "description": {
+                            "type": "string"
+                          },
+                          "emoji": {
+                            "type": "string"
+                          },
+                          "status": {
+                            "type": "string",
+                            "enum": [
+                              "pending",
+                              "invalid",
+                              "approved",
+                              "rejected",
+                              "orphaned"
+                            ]
+                          },
+                          "agent": {
+                            "type": "string",
+                            "description": "Registered agent, once approved."
+                          },
+                          "error": {
+                            "type": "string"
+                          },
+                          "first_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "last_seen": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "decided_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "decided_by": {
+                            "type": "string"
+                          },
+                          "orphaned_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner role required"
+          },
+          "503": {
+            "description": "Discovery is not running"
           }
         }
       }
@@ -11496,6 +12523,10 @@
                     },
                     "linear_issue": {
                       "type": "string"
+                    },
+                    "per_repo": {
+                      "type": "boolean",
+                      "description": "Advisory report in every repo (governor.advisory.per_repo, default false)"
                     }
                   }
                 }
@@ -11547,6 +12578,10 @@
                   "linear_issue": {
                     "type": "string",
                     "description": "Required when target is linear"
+                  },
+                  "per_repo": {
+                    "type": "boolean",
+                    "description": "Off: one Hive Advisory Report in the primary repo covers all repos. On: each monitored repo also gets its own report."
                   }
                 }
               }
@@ -38299,6 +39334,95 @@
           }
         }
       },
+      "/api/workflows/dispatch": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Send a model-owned item to its agent profile",
+          "description": "Owner only. The stage tracker's \"Send to <profile>\" on a row of a repository bound to a workflow model whose current state the model hands to an agent profile (cncf/techdocs#395: Accepted -> techdocs-drafter, Drafting -> techdocs-verifier). Reads the item fresh, resolves its model state and the hive agent that fills the profile (workflow.dispatch.profiles.<profile>.agent; a profile disabled for automatic dispatch still resolves), takes the agent claim on an issue first, and kicks the agent with the dispatch prompt. Once the kick lands the hand-off is recorded in the dispatch log, so the automatic pass does not repeat it. Audited as workflow_dispatch.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "repo",
+                    "number"
+                  ],
+                  "properties": {
+                    "repo": {
+                      "type": "string",
+                      "description": "owner/repo"
+                    },
+                    "number": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Kick delivered",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "sent"
+                        ]
+                      },
+                      "ref": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "type": "string"
+                      },
+                      "profile": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "result": {
+                        "type": "object",
+                        "description": "Tracker toast: action dispatched, outcome, next"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Body is not {repo, number}"
+            },
+            "403": {
+              "description": "Not an owner"
+            },
+            "404": {
+              "description": "The bound model does not hand the item's current state to a profile (or workflow.enabled is off)"
+            },
+            "409": {
+              "description": "No enabled agent fills the profile, someone else holds the issue's claim, or the agent is busy"
+            },
+            "502": {
+              "description": "The item could not be read or the kick failed"
+            },
+            "503": {
+              "description": "Dispatch is not wired on this hive"
+            }
+          }
+        }
+      },
       "/api/workflows/enabled": {
         "put": {
           "tags": [
@@ -39671,14 +40795,14 @@
           "Inbox"
         ],
         "summary": "Receive mail-in files (hub relay)",
-        "description": "Markdown, audio and image attachments hive-mx received for hive@<host>. A sender whose From address passed DMARC alignment and is a proven calendar email of a user with access becomes normal Inbox items; anyone else's items await the owner's approval. Relay signature: X-Hive-Relay-Timestamp, X-Hive-Relay-Signature-256 (HMAC-SHA256 with this hive's relay key over timestamp.delivery.body) and X-Hive-Relay-Delivery; no session.",
+        "description": "Markdown, audio, video and image attachments and text bodies hive-mx received for hive@<host> (#18395, #18564); a body-only mail arrives as message.md and a mail's body is kept as each item's note. A sender whose From address passed DMARC alignment and is a proven calendar email of a user with access becomes normal Inbox items; anyone else's items await the owner's approval. Relay signature: X-Hive-Relay-Timestamp, X-Hive-Relay-Signature-256 (HMAC-SHA256 with this hive's relay key over timestamp.delivery.body) and X-Hive-Relay-Delivery; no session.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "description": "hive-mx delivery (pkg/mailin/wire.Delivery) of kind files: id, kind, recipient, message_id, received_at, auth, files {title, attachments[] {name, kind, content_type, size, sha256, data}}"
+                "description": "hive-mx delivery (pkg/mailin/wire.Delivery) of kind files: id, kind, recipient, message_id, received_at, auth, files {title, note, attachments[] {name, kind, content_type, size, sha256, data}}"
               }
             }
           }
@@ -39716,6 +40840,74 @@
           },
           "413": {
             "description": "Delivery too large"
+          },
+          "503": {
+            "description": "This hive holds no relay key"
+          },
+          "507": {
+            "description": "The email spool is full"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/chunk": {
+      "post": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Receive one piece of a large mail-in delivery (hub relay)",
+        "description": "The hub relays a files delivery larger than one request in order, each piece signed with this hive's relay key over the relay delivery id <delivery id>.<index>.<count> (X-Hive-Relay-Delivery), so the order and count are covered and each piece passes the replay check. X-Hive-Mail-Body-Type is the whole body's type (multipart/form-data from hive-mx, or application/json). Pieces are staged on disk; the last one decodes the body, checks each file's size and SHA-256 and stores it like POST /api/inbox/email. No session.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary",
+                "description": "One piece of the delivery body, at most 8 MiB"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Piece staged ({piece, pieces}), or, for the last piece, stored ({items, awaiting_approval})",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "piece": {
+                      "type": "integer"
+                    },
+                    "pieces": {
+                      "type": "integer"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "awaiting_approval": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid piece, missing piece or undecodable body"
+          },
+          "401": {
+            "description": "Relay signature rejected or piece replayed"
+          },
+          "409": {
+            "description": "Mail-in files are off or unavailable"
+          },
+          "413": {
+            "description": "Piece or delivery too large"
           },
           "503": {
             "description": "This hive holds no relay key"

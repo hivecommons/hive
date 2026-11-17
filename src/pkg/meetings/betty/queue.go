@@ -102,6 +102,11 @@ func (e *Engine) onLine(l Line) {
 	}
 	now := e.d.Now()
 	trig := e.match.Match(l.Text, l.Spoken)
+	if !trig.Addressed {
+		// Their final line did not address her after all: the next one
+		// that does gets its own ack.
+		delete(e.earlyAck, l.Who)
+	}
 	topic := TopicKey(l.Text)
 	question := IsQuestion(l.Text)
 	if !trig.Addressed && !question {
@@ -113,7 +118,7 @@ func (e *Engine) onLine(l Line) {
 	}
 	switch {
 	case trig.Intro:
-		e.emit(Reply{Text: e.s.Persona.Intro(), Trigger: TriggerIntro, Question: l.Text, VoiceWanted: trig.VoiceWanted})
+		e.emit(Reply{Kind: replyKind(trig), Text: e.s.Persona.Intro(), Trigger: TriggerIntro, Question: l.Text, VoiceWanted: trig.VoiceWanted})
 	case trig.Addressed:
 		e.addressed(l, trig, now)
 	case question:
@@ -150,13 +155,60 @@ func (e *Engine) addressed(l Line, trig Trigger, now time.Time) {
 		e.drop("budget")
 		return
 	}
-	if trig.VoiceWanted && e.d.LLM != nil {
+	if trig.VoiceWanted && e.d.LLM != nil && !e.takeEarlyAck(l.Who, now) {
 		// Speak at once so the room knows she heard; the answer follows.
 		e.emit(Reply{Kind: KindVoice, Text: e.ack(), Trigger: TriggerAck, Question: l.Text, VoiceWanted: true})
 	}
 	p := e.add(l, trig, TopicKey(trig.Rest), true, now)
 	p.waited, p.thoughts = true, thoughts
 	e.retrieve(p, trig.Rest)
+}
+
+// Early acknowledgement from partial transcripts (hivecommons/hive#18590):
+// the ack is spoken as soon as a partial line names her with a request,
+// seconds before the final line arrives.
+const (
+	// earlyAckMinWords is how much of a request a partial must carry
+	// after her name before she acknowledges it: "Betty" alone may still
+	// become a hello, which gets no ack.
+	earlyAckMinWords = 2
+	// earlyAckWindow is how long an early ack stands in for the ack of
+	// the same speaker's next final line.
+	earlyAckWindow = 30 * time.Second
+)
+
+// onPartial speaks the acknowledgement for a partial spoken line that
+// already addresses her with a request, once per speaker until their
+// final line arrives.
+func (e *Engine) onPartial(l Line) {
+	if meetings.IsBotName(l.Who, e.s.Persona.DisplayName) || e.leave.Match(l.Text) {
+		return
+	}
+	if e.d.LLM == nil || e.exhausted.Load() {
+		return
+	}
+	trig := e.match.Match(l.Text, true)
+	if !trig.Addressed || trig.Intro || !trig.VoiceWanted || len(strings.Fields(trig.Rest)) < earlyAckMinWords {
+		return
+	}
+	if _, ok := e.actionAddress(l.Text); ok {
+		return
+	}
+	now := e.d.Now()
+	if at, ok := e.earlyAck[l.Who]; ok && now.Sub(at) < earlyAckWindow {
+		return
+	}
+	if e.emit(Reply{Kind: KindVoice, Text: e.ack(), Trigger: TriggerAck, Question: l.Text, VoiceWanted: true}) {
+		e.earlyAck[l.Who] = now
+	}
+}
+
+// takeEarlyAck reports whether this speaker was already acknowledged from
+// a partial of the line now final, and clears the mark.
+func (e *Engine) takeEarlyAck(who string, now time.Time) bool {
+	at, ok := e.earlyAck[who]
+	delete(e.earlyAck, who)
+	return ok && now.Sub(at) < earlyAckWindow
 }
 
 // minThoughtLines is the transcript a spoken "Betty?" needs before she
@@ -397,7 +449,10 @@ func (e *Engine) onAddressedAnswer(p *pending, a answered) {
 	rep := Reply{Kind: replyKind(p.trig), Text: text, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted,
 		NeedsResearch: a.ans.NeedsResearch, Sources: a.ans.Sources}
 	weak := a.ans.NeedsResearch || a.ans.Confidence < e.s.MinConfidence
-	if a.err == nil && weak && e.d.CanResearch && !p.thoughts && e.isQuestion(p) {
+	// The hive's own state was in the context: the answer is the hive's
+	// live data, and the research agents (public web only) know less.
+	live := hasHiveStatus(p.snips)
+	if a.err == nil && weak && !live && e.d.CanResearch && !p.thoughts && e.isQuestion(p) {
 		dig := phrasesFor(e.s.Persona.Language).digIn
 		rep.Text = dig
 		if answer := clipFn(a.ans.Answer); answer != "" && a.ans.Confidence >= e.s.MinConfidence {

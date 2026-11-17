@@ -30,6 +30,8 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).EditIssueMarkerComment":      {Class: NotificationClassStatus, Passthrough: true},
 	"github.(*clientStatusForge).CreateComment":    {Class: NotificationClassStatus, Passthrough: true},
 	"github.(*Client).PostIssueNote":               {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*Client).PostInformationalIssueNote":  {Class: NotificationClassStatus, Passthrough: true},
+	"github.(*Client).foldReviewFollowUps":         {Class: NotificationClassStatus},
 	"automerge.(*engineStatusForge).CreateComment": {Class: NotificationClassStatus, Passthrough: true},
 
 	// status: bookkeeping readable on demand.
@@ -84,7 +86,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).bindProwLgtm":                       {Class: NotificationClassAttention},
 	"github.(*Client).commentOnHumanFiledTwin":            {Class: NotificationClassAttention},
 	"github.(*Client).createIssue":                        {Class: NotificationClassAttention},
-	"github.(*Client).handleOneIssueRequest":              {Class: NotificationClassAttention},
+	"github.(*Client).handleOneIssueRequestFrom":          {Class: NotificationClassAttention},
 	"github.(*Client).parkClankerRequestedPR":             {Class: NotificationClassAttention},
 	"github.(*Client).redirectToExistingPR":               {Class: NotificationClassAttention},
 	"github.(*Client).relayScannerNote":                   {Class: NotificationClassAttention},

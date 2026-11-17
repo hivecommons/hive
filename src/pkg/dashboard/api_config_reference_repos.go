@@ -32,6 +32,14 @@ type referenceReposSectionResponse struct {
 	ReferenceRepos []config.ReferenceRepo `json:"reference_repos"`
 	// WriteKinds is the write vocabulary the editor offers.
 	WriteKinds []string `json:"write_kinds"`
+	// WriteIdentity is project.remote_write_identity with the default
+	// applied ("bot", "bot_only" or "owner"; hivecommons/hive#18516), and
+	// WriteIdentities the vocabulary the Settings control offers.
+	WriteIdentity   string   `json:"write_identity"`
+	WriteIdentities []string `json:"write_identities"`
+	// BotLogin is the hive's GitHub App bot login ("<app>[bot]") the bot
+	// identity writes as; empty when this hive has no App bot login.
+	BotLogin string `json:"bot_login,omitempty"`
 }
 
 // handleReferenceReposGet returns project.reference_repos.
@@ -43,7 +51,7 @@ func (s *Server) handleReferenceReposGet(w http.ResponseWriter, r *http.Request)
 		jsonError(w, "config unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	jsonResponse(w, referenceReposSection(s.deps.Config))
+	jsonResponse(w, s.referenceReposSectionFor(s.deps.Config))
 }
 
 // handleReferenceReposPut replaces project.reference_repos. The body must
@@ -140,7 +148,7 @@ func (s *Server) handleReferenceReposPut(w http.ResponseWriter, r *http.Request)
 		s.logger.Info("reference repos updated via runtime settings",
 			"repos", len(next), "previous_repos", previous, "write_mode", writable)
 	}
-	jsonResponse(w, referenceReposSection(cfg))
+	jsonResponse(w, s.referenceReposSectionFor(cfg))
 }
 
 // rejectDerivedReferenceRepoEdits compares the incoming list with the live
@@ -259,7 +267,19 @@ func normalizeReferenceRepos(in []config.ReferenceRepo) []config.ReferenceRepo {
 func referenceReposSection(cfg *config.Config) referenceReposSectionResponse {
 	refs := append([]config.ReferenceRepo{}, cfg.Project.ReferenceRepos...)
 	return referenceReposSectionResponse{
-		ReferenceRepos: refs,
-		WriteKinds:     []string{config.ReferenceWriteIssues, config.ReferenceWritePRs},
+		ReferenceRepos:  refs,
+		WriteKinds:      []string{config.ReferenceWriteIssues, config.ReferenceWritePRs},
+		WriteIdentity:   cfg.Project.EffectiveRemoteWriteIdentity(),
+		WriteIdentities: append([]string(nil), config.RemoteWriteIdentities...),
 	}
+}
+
+// referenceReposSectionFor is referenceReposSection plus the App bot login
+// from the server's GitHub App auth.
+func (s *Server) referenceReposSectionFor(cfg *config.Config) referenceReposSectionResponse {
+	out := referenceReposSection(cfg)
+	if s.deps != nil && s.deps.GHAppAuth != nil {
+		out.BotLogin = s.deps.GHAppAuth.BotLogin()
+	}
+	return out
 }

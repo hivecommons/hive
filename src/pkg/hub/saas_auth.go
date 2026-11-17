@@ -886,6 +886,8 @@ var publicExactPaths = map[string]struct{}{
 	wire.SpokeInvitesPath: {},
 	wire.SpokeFilesPath:   {},
 	wire.SpokeProofPath:   {},
+	// Large mail-in files arrive in signed pieces (#18564).
+	wire.SpokeFilesChunkPath: {},
 }
 
 var publicTreePaths = []string{"/api/contribute", "/api/leaderboard", "/contribute", "/leaderboard", "/snapshot"}

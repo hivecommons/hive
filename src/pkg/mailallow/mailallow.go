@@ -38,15 +38,32 @@ const (
 	maxEmailLen = 254
 	// maxEntries bounds the whole store.
 	maxEntries = 5000
-	fileMode   = 0o600
-	dirMode    = 0o700
+	// maxRecentAttempts bounds the unknown-code proof attempts kept for
+	// the owner (in memory; a restart clears them).
+	maxRecentAttempts = 20
+	// maxFailureDKIM bounds the DKIM results kept on a failure summary.
+	maxFailureDKIM = 5
+	fileMode       = 0o600
+	dirMode        = 0o700
 )
 
 // Proof failure reasons recorded on an entry.
 const (
 	ReasonNotAligned   = "the proof mail did not pass DMARC alignment for this address"
 	ReasonFromMismatch = "the proof mail came from a different address"
+	ReasonExpired      = "the proof code had expired"
 )
+
+// Proof failure reason codes (ProofFailure.Reason), stable for the API and
+// the Settings row (hivecommons/hive#18579).
+const (
+	ReasonCodeNotAligned   = "not_aligned"
+	ReasonCodeFromMismatch = "from_mismatch"
+	ReasonCodeExpired      = "expired"
+)
+
+// AttemptCodeNotRecognized is the reason of an unknown-code proof attempt.
+const AttemptCodeNotRecognized = "code not recognized"
 
 // Errors.
 var (
@@ -70,6 +87,69 @@ type Entry struct {
 	ProvenAt      *time.Time `json:"proven_at,omitempty"`
 	// LastError is why the latest proof mail did not count.
 	LastError string `json:"last_error,omitempty"`
+	// LastFailure summarizes the latest failed proof attempt: the reason
+	// code, when it arrived and the authentication results hive-mx saw.
+	LastFailure *ProofFailure `json:"last_failure,omitempty"`
+}
+
+// ProofFailure is the authentication summary of one failed proof mail: the
+// pass/fail per mechanism and the domains, never message content.
+type ProofFailure struct {
+	Reason string    `json:"reason"`
+	At     time.Time `json:"at"`
+	// From is the From header address the receiver parsed, kept only on a
+	// from_mismatch so the owner sees which address the proof came from;
+	// "" there means the header was missing, repeated or unparsable.
+	From        string            `json:"from,omitempty"`
+	FromDomain  string            `json:"from_domain,omitempty"`
+	SPF         string            `json:"spf,omitempty"`
+	SPFDomain   string            `json:"spf_domain,omitempty"`
+	SPFAligned  bool              `json:"spf_aligned"`
+	DKIM        []wire.DKIMResult `json:"dkim,omitempty"`
+	DKIMAligned bool              `json:"dkim_aligned"`
+	DMARC       string            `json:"dmarc,omitempty"`
+	Aligned     bool              `json:"aligned"`
+}
+
+func newProofFailure(reason string, at time.Time, auth wire.Auth) *ProofFailure {
+	f := &ProofFailure{
+		Reason: reason, At: at, FromDomain: auth.FromDomain,
+		SPF: auth.SPF, SPFDomain: auth.SPFDomain, SPFAligned: auth.SPFAligned,
+		DKIMAligned: auth.DKIMAligned, DMARC: auth.DMARC, Aligned: auth.Aligned,
+	}
+	if f.FromDomain == "" {
+		if i := strings.LastIndexByte(auth.From, '@'); i >= 0 {
+			f.FromDomain = strings.ToLower(auth.From[i+1:])
+		}
+	}
+	dkim := auth.DKIM
+	if len(dkim) > maxFailureDKIM {
+		dkim = dkim[:maxFailureDKIM]
+	}
+	f.DKIM = append([]wire.DKIMResult(nil), dkim...)
+	return f
+}
+
+// ProofAttempt is a proof mail whose code matched no entry, kept for the
+// owner so a typo is visible. From is masked.
+type ProofAttempt struct {
+	At     time.Time `json:"at"`
+	From   string    `json:"from"`
+	Reason string    `json:"reason"`
+}
+
+// MaskEmail keeps an address's first character and its domain
+// ("a***@example.com"); "" stays "".
+func MaskEmail(addr string) string {
+	addr = strings.ToLower(strings.TrimSpace(addr))
+	at := strings.LastIndexByte(addr, '@')
+	switch {
+	case addr == "":
+		return ""
+	case at <= 0:
+		return "***"
+	}
+	return addr[:1] + "***" + addr[at:]
 }
 
 // Proven reports whether the address was proven.
@@ -82,6 +162,8 @@ type Store struct {
 
 	mu      sync.Mutex
 	entries []Entry
+	// attempts are the recent unknown-code proof attempts, newest last.
+	attempts []ProofAttempt
 }
 
 // NormalizeEmail returns the lower-cased bare address, or ErrInvalidEmail.
@@ -202,7 +284,7 @@ func (s *Store) Add(login, email string) (Entry, error) {
 		count++
 		if e.Email == email {
 			if !e.Proven() {
-				e.Code, e.CodeExpiresAt, e.LastError = wire.NewProofCode(), now.Add(CodeTTL), ""
+				e.Code, e.CodeExpiresAt, e.LastError, e.LastFailure = wire.NewProofCode(), now.Add(CodeTTL), "", nil
 				if err := s.saveLocked(); err != nil {
 					return Entry{}, err
 				}
@@ -240,39 +322,70 @@ func (s *Store) Remove(login, email string) error {
 }
 
 // Prove applies a proof mail: code from the subject, from the
-// authenticated From address, aligned the DMARC alignment result. The
-// matching entry is proven only when the mail was aligned and came from the
-// registered address; otherwise the failure is recorded on it.
+// authenticated From address, aligned the DMARC alignment result. See
+// ProveAuth.
 func (s *Store) Prove(code, from string, aligned bool) (Entry, error) {
+	return s.ProveAuth(code, wire.Auth{From: from, Aligned: aligned})
+}
+
+// ProveAuth applies a proof mail with its full authentication results. The
+// matching entry is proven only when its code is live, the mail was aligned
+// and it came from the registered address; otherwise the failure, with the
+// SPF, DKIM and alignment summary, is recorded on it. A code that matches
+// no entry is recorded as a recent attempt for the owner.
+func (s *Store) ProveAuth(code string, auth wire.Auth) (Entry, error) {
 	code = strings.ToLower(strings.TrimSpace(code))
-	from = strings.ToLower(strings.TrimSpace(from))
+	from := strings.ToLower(strings.TrimSpace(auth.From))
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := s.now()
 	for i := range s.entries {
 		e := &s.entries[i]
-		if code == "" || e.Code != code || now.After(e.CodeExpiresAt) {
+		if code == "" || e.Code != code {
 			continue
 		}
+		var reason string
 		switch {
+		case now.After(e.CodeExpiresAt):
+			e.LastError, reason = ReasonExpired, ReasonCodeExpired
 		case from != e.Email:
-			e.LastError = ReasonFromMismatch
-		case !aligned:
-			e.LastError = ReasonNotAligned
+			e.LastError, reason = ReasonFromMismatch, ReasonCodeFromMismatch
+		case !auth.Aligned:
+			e.LastError, reason = ReasonNotAligned, ReasonCodeNotAligned
 		default:
 			t := now
-			e.ProvenAt, e.Code, e.CodeExpiresAt, e.LastError = &t, "", time.Time{}, ""
+			e.ProvenAt, e.Code, e.CodeExpiresAt, e.LastError, e.LastFailure = &t, "", time.Time{}, "", nil
 			if err := s.saveLocked(); err != nil {
 				return Entry{}, err
 			}
 			return *e, nil
+		}
+		e.LastFailure = newProofFailure(reason, now, auth)
+		if reason == ReasonCodeFromMismatch {
+			e.LastFailure.From = from
 		}
 		if err := s.saveLocked(); err != nil {
 			return Entry{}, err
 		}
 		return *e, ErrNotProven
 	}
+	s.attempts = append(s.attempts, ProofAttempt{At: now, From: MaskEmail(from), Reason: AttemptCodeNotRecognized})
+	if over := len(s.attempts) - maxRecentAttempts; over > 0 {
+		s.attempts = append([]ProofAttempt(nil), s.attempts[over:]...)
+	}
 	return Entry{}, ErrUnknownCode
+}
+
+// RecentAttempts returns the recent unknown-code proof attempts, newest
+// first. Owner-only: the caller decides who sees them.
+func (s *Store) RecentAttempts() []ProofAttempt {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]ProofAttempt, 0, len(s.attempts))
+	for i := len(s.attempts) - 1; i >= 0; i-- {
+		out = append(out, s.attempts[i])
+	}
+	return out
 }
 
 // Allowed reports whether email is on the effective allowlist: proven by a

@@ -1,7 +1,8 @@
 // Command hive-mx is hive's receive-only mail receiver: it accepts mail for
-// hive@<hive host>, keeps only calendar invites, mail-in files and proof
-// codes, and posts them to the hub that routes them to each hive. It never
-// sends mail. Configuration is environment only; see pkg/mailin and
+// hive@<hive host>, keeps only calendar invites, mail-in files and text
+// bodies, and proof codes, and posts them to the hub that routes them to
+// each hive. Messages are spooled to disk (HIVE_MX_SPOOL_DIR), never held
+// in memory whole. It never sends mail. Configuration is environment only; see pkg/mailin and
 // src/docs/meetings.md ("Inviting Betty by email").
 package main
 

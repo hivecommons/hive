@@ -1,0 +1,1 @@
+- CI: the advisory mutation report no longer opens a PR comment for an `error` verdict (gremlins wrote no report, so there is nothing to act on); the report stays in the job summary and an earlier finding comment is edited instead. The closed-issue `/reopen` hint no longer comments when the reporter is a bot or a maintainer who can reopen it themselves (hivecommons/hive#18607).

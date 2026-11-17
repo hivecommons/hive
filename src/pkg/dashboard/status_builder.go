@@ -1014,9 +1014,9 @@ func buildAgentsWithHidden(statuses map[string]*crux.Process, cfg *config.Config
 		// running" — an agent parked at its idle prompt after a fruitless kick
 		// read exactly like one mid-task (#7421). A kicked turn the manager has
 		// seen END is idle, whatever the process state says; liveness is not
-		// evidence of work.
+		// evidence of work. An agent never kicked is idle too (#18458).
 		busy := "idle"
-		if proc.State == crux.StateRunning && !proc.KickOutcome.Settled(proc.LastKick) {
+		if proc.TurnInFlight() {
 			busy = "working"
 		}
 		// awaitingCI (#9673 item 3): the manager's CI-poll guard already
@@ -2391,6 +2391,7 @@ func buildReferenceRepos(cfg *config.Config) []FrontendReferenceRepo {
 			Full: rr.Repo, Tier: tier, ReferenceTier: tier,
 			DerivedFrom: rr.DerivedFrom, DerivedFromURL: referenceRepoSourceURL(rr.DerivedFrom, cfg.GitHub.ResolvedBaseURL()),
 			CredentialState: rr.CredentialState, CredentialReason: rr.CredentialReason, CredentialLogin: rr.CredentialLogin,
+			CredentialIdentity: rr.CredentialIdentity, CredentialNote: rr.CredentialNote,
 		})
 	}
 	return out

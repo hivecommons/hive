@@ -53,7 +53,7 @@ const makeDoc = () => {
   return doc;
 };
 
-const setup = ({ entries, kinds = ['issues', 'prs'], put, identity = null, api = () => { throw new Error('no identity call expected'); } }) => {
+const setup = ({ entries, kinds = ['issues', 'prs'], put, identity = null, meta, api = () => { throw new Error('no identity call expected'); } }) => {
   const doc = makeDoc();
   const toasts = [];
   const calls = [];
@@ -68,11 +68,12 @@ const setup = ({ entries, kinds = ['issues', 'prs'], put, identity = null, api =
   };
   const render = new Function('document', 'window', 'fetch', 'showToast', '_inceptionAuthHeaders', 'saveErrorMessage', 'loadReferenceRepos', 'setTimeout',
     fnSrc('referenceRepoNode') + '\n' + fnSrc('referenceRepoYamlHint') + '\n' + fnSrc('referenceRepoDerivedLink') + '\n' +
-    fnSrc('referenceRepoCredentialChip') + '\n' + fnSrc('renderOwnerIdentityPanel') + '\n' + fnSrc('renderReferenceReposPanel') + '\nreturn renderReferenceReposPanel;')(
+    fnSrc('referenceRepoCredentialChip') + '\n' + fnSrc('referenceRepoWriteMeta') + '\n' + fnSrc('referenceRepoIdentityLine') + '\n' + fnSrc('renderWriteIdentityPanel') + '\n' +
+    fnSrc('renderOwnerIdentityPanel') + '\n' + fnSrc('renderReferenceReposPanel') + '\nreturn renderReferenceReposPanel;')(
     doc, { _githubBaseUrl: 'https://github.example.com/' }, fetchStub, (m, k) => toasts.push([m, k]), () => ({}), async res => res.errorMessage,
     () => reloads.push(Date.now()), fn => fn());
   const host = doc.createElement('div');
-  render(host, entries, kinds, identity);
+  render(host, entries, kinds, identity, meta);
   return { doc, host, toasts, calls, reloads };
 };
 const identityPanel = host => host.find(n => String(n.className).includes('cfg-owner-identity') && !String(n.className).includes('-status'))[0];
@@ -219,7 +220,7 @@ test('identity panel: unavailable store, not connected, connected and revoked st
   assert.strictEqual(buttons(host, 'Connect GitHub account').length, 0);
 
   ({ host } = setup({ entries: [], put: () => { throw new Error('no save'); }, identity: { connected: false, usable: false, reason: 'the hive owner has not connected a GitHub account', scope_required: 'public_repo' } }));
-  assert.match(identityPanel(host).textContent, /Not connected: write-tier reference repos are served read-only/);
+  assert.match(identityPanel(host).textContent, /Not connected: entries that would post as you are served read-only/);
   assert.strictEqual(buttons(host, 'Connect GitHub account').length, 1);
   assert.strictEqual(buttons(host, 'Disconnect').length, 0);
 
@@ -309,4 +310,67 @@ test('a hand-written write entry shows its credential login; a read-only one sho
   assert.strictEqual(inputs(hive, 'checkbox').length, 2, 'hand-written rows stay editable');
   assert.strictEqual(docs.find(n => n.className === 'rt-inherit')[0].textContent, 'read-only');
   assert.strictEqual(acme.find(n => String(n.className).includes('cfg-reference-repo-state'))[0].textContent, 'issues+prs \u00b7 write-tier as nate-double-u');
+});
+
+// hivecommons/hive#18516: "Post on other projects as" offers the three
+// values, marks the current one, PUTs a change and reloads; every write
+// entry says which identity it will actually post as and why.
+const identityChoices = host => host.find(n => String(n.className).includes('cfg-write-identity-choices'))[0].children;
+
+test('write identity control: three choices, default bot, provenance line', () => {
+  const { host } = setup({ entries: [], put: () => { throw new Error('no save'); } });
+  const choices = identityChoices(host);
+  assert.deepStrictEqual(choices.map(c => c.textContent), ['Hive bot, falling back to me', 'Hive bot only', 'Me']);
+  assert.ok(choices[0].className.includes('btn-primary'), 'bot is the default when the server sends nothing');
+  assert.ok(!choices[1].className.includes('btn-primary') && !choices[2].className.includes('btn-primary'));
+  assert.match(host.textContent, /Post on other projects as:/);
+  assert.match(host.textContent, /came from the hive you commissioned, not from you personally/);
+  assert.match(host.textContent, /never asks anyone to install it/);
+});
+
+test('choosing an identity PUTs it, toasts and reloads; a refusal is shown and nothing reloads', async () => {
+  let { host, calls, toasts, reloads } = setup({
+    entries: [], meta: { write_identity: 'bot', write_identities: ['bot', 'bot_only', 'owner'], bot_login: 'hivecommons-hive[bot]' },
+    put: call => { assert.strictEqual(call.url, '/api/config/reference-repos/write-identity'); assert.strictEqual(call.opts.method, 'PUT'); return { ok: true, json: async () => ({}) }; },
+  });
+  assert.match(host.textContent, /hive bot \(hivecommons-hive\[bot\]\)/);
+  await identityChoices(host)[2].fire('click')[0];
+  assert.deepStrictEqual(calls[0].body, { write_identity: 'owner' });
+  assert.deepStrictEqual(toasts, [['Now posting on other projects as: Me', 'success']]);
+  assert.strictEqual(reloads.length, 1);
+
+  ({ host, calls, toasts, reloads } = setup({
+    entries: [], meta: { write_identity: 'owner', write_identities: ['bot', 'bot_only', 'owner'] },
+    put: () => ({ ok: false, status: 400, errorMessage: 'project.reference_repos acme/site: write: [issues] has no credential' }),
+  }));
+  await identityChoices(host)[1].fire('click')[0];
+  assert.deepStrictEqual(calls[0].body, { write_identity: 'bot_only' });
+  assert.strictEqual(reloads.length, 0);
+  assert.match(host.find(n => String(n.className).includes('cfg-write-identity-status'))[0].textContent, /has no credential/);
+  identityChoices(host).forEach(b => assert.strictEqual(b.disabled, false));
+});
+
+test('per-repo line says which identity posts there and why', () => {
+  const entries = [
+    { repo: 'hivecommons/docs', write: ['issues', 'prs'], derived_from: 'cncf/techdocs#395', credential_state: 'write-tier', credential_login: 'hivecommons-hive[bot]', credential_identity: 'bot' },
+    { repo: 'acme/site', write: ['issues', 'prs'], derived_from: 'cncf/techdocs#395', credential_state: 'write-tier', credential_login: 'nate-double-u', credential_identity: 'owner' },
+    { repo: 'zeta/site', derived_from: 'cncf/techdocs#395', credential_state: 'read-only', credential_reason: 'the hive owner has not connected a GitHub account' },
+    { repo: 'hand/written', write: ['issues'], credential_state: 'write-tier', credential_login: 'hivecommons-hive[bot]', credential_identity: 'bot' },
+    { repo: 'plain/readonly' },
+  ];
+  const line = row => (row.find(n => String(n.className).includes('cfg-reference-repo-identity'))[0] || {}).textContent;
+  let { host } = setup({ entries, put: () => { throw new Error('no save'); }, meta: { write_identity: 'bot', write_identities: ['bot', 'bot_only', 'owner'] } });
+  let r = rows(host);
+  assert.strictEqual(line(r[0]), 'posts as hivecommons-hive[bot]: App installed on hivecommons');
+  assert.strictEqual(line(r[1]), 'posts as nate-double-u: App not installed on acme');
+  assert.strictEqual(line(r[2]), 'read-only: connect your GitHub account');
+  assert.strictEqual(line(r[3]), 'posts as hivecommons-hive[bot]: App installed on hand');
+  assert.strictEqual(line(r[4]), undefined, 'a plain read-only entry has no identity line');
+
+  ({ host } = setup({ entries: [{ repo: 'acme/site', derived_from: 'cncf/techdocs#395', credential_state: 'read-only', credential_reason: 'x' }], put: () => { throw new Error('no save'); }, meta: { write_identity: 'bot_only', write_identities: ['bot', 'bot_only', 'owner'] } }));
+  assert.strictEqual(line(rows(host)[0]), 'read-only: bot only, App not installed on acme');
+
+  ({ host } = setup({ entries: [entries[1]], put: () => { throw new Error('no save'); }, meta: { write_identity: 'owner', write_identities: ['bot', 'bot_only', 'owner'] } }));
+  assert.strictEqual(line(rows(host)[0]), 'posts as nate-double-u: set to post as you');
+  assert.doesNotMatch(host.textContent, /@nate-double-u/, 'never an @-mention');
 });

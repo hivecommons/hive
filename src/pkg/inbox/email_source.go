@@ -15,13 +15,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/hivecommons/hive/pkg/mailin/wire"
 )
 
-// EmailType is the Inbox source for mail-in files: Markdown, audio and image
-// attachments mailed to hive@<host> through hive-mx (hivecommons/hive#18395,
-// design src/docs/design/email-inbox.md). It is push, not a connector: the
+// EmailType is the Inbox source for mail-in files: Markdown, audio, video
+// and image attachments and text bodies mailed to hive@<host> through
+// hive-mx (hivecommons/hive#18395, #18564, design
+// src/docs/design/email-inbox.md). It is push, not a connector: the
 // dashboard's relay-signed POST /api/inbox/email adds items to a spool under
 // connector-state/email/items, and the source lists that spool.
 //
@@ -33,8 +35,9 @@ const EmailType = "email"
 
 // Email spool limits.
 const (
-	// DefaultEmailQuotaBytes bounds the whole spool.
-	DefaultEmailQuotaBytes = 256 << 20
+	// DefaultEmailQuotaBytes bounds the whole spool (a mail-in video can
+	// be 25 MB).
+	DefaultEmailQuotaBytes = 1 << 30
 	// EmailPendingRetention is how long an unapproved item is kept.
 	EmailPendingRetention = 14 * 24 * time.Hour
 	emailIDHexLen         = 24
@@ -69,6 +72,8 @@ type EmailMeta struct {
 	MessageID   string    `json:"message_id,omitempty"`
 	DeliveryID  string    `json:"delivery_id,omitempty"`
 	ReceivedAt  time.Time `json:"received_at"`
+	// Note is the message's text body, kept with each of its files.
+	Note string `json:"note,omitempty"`
 }
 
 // EmailSource is the email spool as an Inbox source. Safe for concurrent use.
@@ -203,9 +208,46 @@ func emailTitle(subject string, a wire.Attachment, many bool) string {
 	return subject
 }
 
+// attachmentBytes is an attachment's size, held in memory or staged.
+func attachmentBytes(a wire.Attachment) int64 {
+	if a.Path != "" && len(a.Data) == 0 {
+		return int64(a.Size)
+	}
+	return int64(len(a.Data))
+}
+
+// storeAttachment writes an attachment's bytes as dir's data file: a
+// staged file is moved (the staging is under the spool), bytes in memory
+// are written.
+func storeAttachment(dir string, a wire.Attachment) error {
+	dst := filepath.Join(dir, emailDataFile)
+	if len(a.Data) > 0 || a.Path == "" {
+		return os.WriteFile(dst, a.Data, emailFileMode)
+	}
+	if err := os.Rename(a.Path, dst); err == nil {
+		return os.Chmod(dst, emailFileMode)
+	}
+	src, err := os.Open(a.Path)
+	if err != nil {
+		return err
+	}
+	defer src.Close()
+	out, err := os.OpenFile(dst, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, emailFileMode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(out, src); err != nil {
+		_ = out.Close()
+		return err
+	}
+	return out.Close()
+}
+
 // Add spools one delivery's attachments. trusted marks a sender on the
 // allowlist with DMARC alignment; everyone else's items await approval.
-// It returns the new or already present items.
+// It returns the new or already present items. An attachment is either
+// in memory (Data) or staged on disk (Path, its digest verified on
+// receipt); the message's text body is kept as each item's note.
 func (e *EmailSource) Add(d wire.Delivery, trusted bool) ([]Item, error) {
 	if d.Files == nil || len(d.Files.Attachments) == 0 {
 		return nil, nil
@@ -219,19 +261,23 @@ func (e *EmailSource) Add(d wire.Delivery, trusted bool) ([]Item, error) {
 	}
 	var incoming int64
 	for _, a := range d.Files.Attachments {
-		incoming += int64(len(a.Data))
+		incoming += attachmentBytes(a)
 	}
 	if e.usageLocked()+incoming > e.quota() {
 		return nil, ErrEmailQuota
 	}
+	note := clipNoteText(d.Files.Note)
 	many := len(d.Files.Attachments) > 1
 	var out []Item
 	for _, a := range d.Files.Attachments {
-		if len(a.Data) == 0 {
+		size := attachmentBytes(a)
+		if size == 0 {
 			continue
 		}
-		sum := sha256.Sum256(a.Data)
-		a.SHA256 = hex.EncodeToString(sum[:])
+		if len(a.Data) > 0 {
+			sum := sha256.Sum256(a.Data)
+			a.SHA256 = hex.EncodeToString(sum[:])
+		}
 		id := emailItemID(d, a)
 		if m, err := e.readMeta(id); err == nil {
 			out = append(out, e.item(m))
@@ -239,9 +285,9 @@ func (e *EmailSource) Add(d wire.Delivery, trusted bool) ([]Item, error) {
 		}
 		m := EmailMeta{
 			ID: id, Title: emailTitle(d.Files.Title, a, many), Filename: CleanUploadName(a.Name),
-			Kind: a.Kind, ContentType: a.ContentType, Size: int64(len(a.Data)), SHA256: a.SHA256,
+			Kind: a.Kind, ContentType: a.ContentType, Size: size, SHA256: a.SHA256,
 			From: d.Auth.From, Aligned: d.Auth.Aligned, Approved: trusted,
-			MessageID: d.MessageID, DeliveryID: d.ID, ReceivedAt: now,
+			MessageID: d.MessageID, DeliveryID: d.ID, ReceivedAt: now, Note: note,
 		}
 		if trusted {
 			m.ApprovedBy = "allowlist"
@@ -250,7 +296,7 @@ func (e *EmailSource) Add(d wire.Delivery, trusted bool) ([]Item, error) {
 		if err := os.MkdirAll(dir, emailDirMode); err != nil {
 			return out, err
 		}
-		if err := os.WriteFile(filepath.Join(dir, emailDataFile), a.Data, emailFileMode); err != nil {
+		if err := storeAttachment(dir, a); err != nil {
 			_ = os.RemoveAll(dir)
 			return out, err
 		}
@@ -261,6 +307,36 @@ func (e *EmailSource) Add(d wire.Delivery, trusted bool) ([]Item, error) {
 		out = append(out, e.item(m))
 	}
 	return out, nil
+}
+
+// clipNoteText bounds a note to wire.MaxNoteBytes on a rune boundary.
+func clipNoteText(s string) string {
+	s = strings.TrimSpace(strings.ToValidUTF8(s, ""))
+	if len(s) <= wire.MaxNoteBytes {
+		return s
+	}
+	s = s[:wire.MaxNoteBytes]
+	for !utf8.ValidString(s) {
+		s = s[:len(s)-1]
+	}
+	return s
+}
+
+// emailVideoAudioMIME is the type a mail-in video's container is handed
+// to the transcriber as (the providers and the whisper sandbox read the
+// audio track of an MP4 or QuickTime file), "" when it cannot be
+// transcribed here and is stored only.
+func emailVideoAudioMIME(m EmailMeta) string {
+	switch m.ContentType {
+	case "video/mp4", "video/quicktime":
+		return "audio/mp4"
+	}
+	return ""
+}
+
+// emailHasAudio reports an item the transcriber can read.
+func emailHasAudio(m EmailMeta) bool {
+	return m.Kind == wire.AttachAudio || (m.Kind == wire.AttachVideo && emailVideoAudioMIME(m) != "")
 }
 
 // Approve lets an awaiting item be routed and transcribed.
@@ -318,14 +394,18 @@ func (e *EmailSource) item(m EmailMeta) Item {
 		RecordedAt: m.ReceivedAt, Tags: []string{EmailType, m.Kind}, Origin: "email · " + m.From,
 		AddedBy: m.From, UploadKind: m.Kind, AwaitingApproval: !m.Approved, Sender: m.From,
 	}
-	if m.Kind == wire.AttachAudio {
-		// Audio has no text until it is transcribed.
+	if emailHasAudio(m) {
+		// Audio (and a video's audio track) has no text until it is
+		// transcribed.
 		it.Pending = true
 	}
-	if m.Kind == wire.AttachMarkdown {
+	switch {
+	case m.Kind == wire.AttachMarkdown:
 		if b, err := os.ReadFile(filepath.Join(e.itemDir(m.ID), emailDataFile)); err == nil {
 			it.Excerpt = truncateRunes(strings.TrimSpace(string(b)), SummaryRunes)
 		}
+	case m.Note != "":
+		it.Excerpt = truncateRunes(m.Note, SummaryRunes)
 	}
 	return it
 }
@@ -349,8 +429,9 @@ func EmailProvenance(m EmailMeta) string {
 }
 
 // Fetch implements Source. Markdown is returned as the item text (wrapped as
-// untrusted data); an image or audio file is described, its bytes served by
-// the dashboard; audio text arrives through transcription.
+// untrusted data); an image, audio or video file is described, its bytes
+// served by the dashboard; audio text arrives through transcription. The
+// message's text body follows, wrapped as untrusted data as well.
 func (e *EmailSource) Fetch(_ context.Context, it Item) (Content, error) {
 	if !validEmailID(it.ID) {
 		return Content{}, ErrEmailNotFound
@@ -372,8 +453,18 @@ func (e *EmailSource) Fetch(_ context.Context, it Item) (Content, error) {
 	case wire.AttachAudio:
 		c.Pending = true
 		c.Markdown = header + "\nAn audio file; its text appears here once it is transcribed."
+	case wire.AttachVideo:
+		if emailHasAudio(m) {
+			c.Pending = true
+			c.Markdown = header + "\nA video, stored as an attachment of this item; the text of its audio track appears here once it is transcribed."
+		} else {
+			c.Markdown = header + "\nA video, stored as an attachment of this item. Its audio cannot be transcribed on this hive (the transcriber does not read " + m.ContentType + "): download it to watch it."
+		}
 	default:
 		c.Markdown = header + "\nAn image, stored as an attachment of this item."
+	}
+	if m.Note != "" {
+		c.Markdown += "\n\n**Message:**\n\n" + WrapUntrusted(EmailType, m.ID+":note", m.Note)
 	}
 	return c, nil
 }
@@ -395,14 +486,17 @@ func (e *EmailSource) OpenAudio(_ context.Context, it Item) (LocalAudio, error) 
 	if err != nil {
 		return LocalAudio{}, err
 	}
-	if m.Kind != wire.AttachAudio {
+	if !emailHasAudio(m) {
 		return LocalAudio{}, ErrNoAudio
 	}
 	f, err := os.Open(filepath.Join(e.itemDir(it.ID), emailDataFile))
 	if err != nil {
 		return LocalAudio{}, err
 	}
-	mime := audioMIMEByExt[strings.ToLower(filepath.Ext(m.Filename))]
+	mime := emailVideoAudioMIME(m)
+	if mime == "" {
+		mime = audioMIMEByExt[strings.ToLower(filepath.Ext(m.Filename))]
+	}
 	if mime == "" {
 		mime = m.ContentType
 	}

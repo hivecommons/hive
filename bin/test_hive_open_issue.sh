@@ -640,6 +640,52 @@ check "repo inside HIVE_REPOS (case-insensitive) is written" "1" "$(find "$REQ_D
 env HIVE_AGENT=cfgbot HIVE_REPOS="org/repo" bash "$MODIFIED_SCRIPT" --repo org/repo --title t --body b >/dev/null 2>&1 || true
 check "configured placeholder-looking repo is accepted" "1" "$(find "$REQ_DIR" -name 'cfgbot-*.json' | wc -l | tr -d ' ')"
 
+# --- sandbox spool (hivecommons/hive#18573) ---
+# Runs the UNMODIFIED script: the spool redirect is the script's own behavior.
+echo ""
+echo "--- sandbox spool via HIVE_SANDBOX_REQUEST_DIR ---"
+ISSUE_SPOOL="$TMPDIR_ROOT/workspace/.hive/review-requests"
+ISSUE_KEY="0123456789abcdef0123456789abcdef"
+env HIVE_AGENT="spoolbot" HIVE_SANDBOX_REQUEST_DIR="$ISSUE_SPOOL" HIVE_SANDBOX_SPOOL_KEY="$ISSUE_KEY" \
+  bash "$SCRIPT" --repo hiveorg/widgets --title "dependency X breaks us" --body "detail" >/dev/null 2>&1 || true
+ISSUE_FILES=("$ISSUE_SPOOL"/spoolbot-*.json)
+if [ -f "${ISSUE_FILES[0]}" ]; then
+  check "spooled envelope kind is issue" "issue" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["kind"])' "${ISSUE_FILES[0]}")"
+  # The relay recomputes HMAC-SHA256(key, "issue\n" + request): the kind is bound.
+  check "envelope MAC binds the issue kind" "ok" "$(python3 -c '
+import hashlib, hmac, json, sys
+env = json.load(open(sys.argv[1]))
+want = hmac.new(sys.argv[2].encode(), ("issue\n" + env["request"]).encode(), hashlib.sha256).hexdigest()
+print("ok" if hmac.compare_digest(env["mac"], want) else "bad")' "${ISSUE_FILES[0]}" "$ISSUE_KEY")"
+  check "spooled request carries the title" "dependency X breaks us" "$(python3 -c 'import json,sys; print(json.loads(json.load(open(sys.argv[1]))["request"])["title"])' "${ISSUE_FILES[0]}")"
+  if grep -q "$ISSUE_KEY" "${ISSUE_FILES[0]}"; then
+    echo "  FAIL: the spool key itself was written into the spool"; FAIL=$((FAIL + 1))
+  else
+    echo "  PASS: the spool key is not in the spool file"; PASS=$((PASS + 1))
+  fi
+else
+  echo "  FAIL: issue request not written to HIVE_SANDBOX_REQUEST_DIR"; FAIL=$((FAIL + 4))
+fi
+
+echo ""
+echo "--- sandbox spool via the older HIVE_REVIEW_* names ---"
+OLD_SPOOL="$TMPDIR_ROOT/old/.hive/review-requests"
+env HIVE_AGENT="oldbot" HIVE_REVIEW_REQUEST_DIR="$OLD_SPOOL" HIVE_REVIEW_SPOOL_KEY="$ISSUE_KEY" \
+  bash "$SCRIPT" comment --repo hiveorg/widgets 41 --body "note" >/dev/null 2>&1 || true
+OLD_FILES=("$OLD_SPOOL"/oldbot-*.json)
+if [ -f "${OLD_FILES[0]}" ]; then
+  check "older env names spool a signed comment" "issue comment" "$(python3 -c 'import json,sys; e=json.load(open(sys.argv[1])); print(e["kind"], json.loads(e["request"])["kind"])' "${OLD_FILES[0]}")"
+else
+  echo "  FAIL: comment not written to HIVE_REVIEW_REQUEST_DIR"; FAIL=$((FAIL + 1))
+fi
+
+echo ""
+echo "--- a spool dir without a key is not a spool ---"
+NOKEY_SPOOL="$TMPDIR_ROOT/nokey/.hive/review-requests"
+env HIVE_AGENT="nokeybot" HIVE_SANDBOX_REQUEST_DIR="$NOKEY_SPOOL" bash "$MODIFIED_SCRIPT" --repo hiveorg/widgets --title t --body b >/dev/null 2>&1 || true
+check "no key: nothing written to the spool dir" "0" "$(find "$TMPDIR_ROOT/nokey" -name 'nokeybot-*.json' 2>/dev/null | wc -l | tr -d ' ')"
+check "no key: the pod-local request is plain JSON" "issue" "$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("kind",""))' "$(find "$REQ_DIR" -name 'nokeybot-*.json' | head -1)")"
+
 echo ""
 echo "=== $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ]

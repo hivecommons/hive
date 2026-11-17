@@ -115,6 +115,10 @@ func syncTopicClaims(stores map[string]*beads.Store, actionable *github.Actionab
 			continue
 		}
 		for _, claim := range store.OpenTopics() {
+			if claim.PR == 0 {
+				bindPendingTopicClaim(store, name, prs, claim, logger)
+				continue
+			}
 			pr, ok := findTopicPR(prs, claim)
 			if !ok {
 				continue
@@ -130,6 +134,39 @@ func syncTopicClaims(stores map[string]*beads.Store, actionable *github.Actionab
 				logger.Warn("topic claim branch refresh failed", "agent", name, "topic", claim.Key, "error", err)
 			}
 		}
+	}
+}
+
+// bindPendingTopicClaim binds a pending claim (made from a sandboxed kick
+// before hive opened its PR, hivecommons/hive#18572) to the PR whose head
+// branch is the claim's branch. An open PR wins over a closed one; a PR that
+// is already terminal still binds, and the next cycle releases the claim.
+func bindPendingTopicClaim(store *beads.Store, agent string, prs []github.PullRequest, claim beads.TopicClaim, logger *slog.Logger) {
+	if claim.Branch == "" {
+		return
+	}
+	number := 0
+	for _, pr := range prs {
+		if pr.HeadRef != claim.Branch || pr.Number <= 0 || !beads.SameTopicRepo(pr.Repo, claim.Repo) {
+			continue
+		}
+		if number == 0 || topicStateForPR(pr) == "" {
+			number = pr.Number
+		}
+	}
+	if number == 0 {
+		return
+	}
+	n, err := store.BindTopicBranch(claim.Repo, claim.Branch, number)
+	if logger == nil {
+		return
+	}
+	if err != nil {
+		logger.Warn("pending topic claim bind failed", "agent", agent, "topic", claim.Key, "error", err)
+		return
+	}
+	if n > 0 {
+		logger.Info("pending topic claim bound to its PR", "agent", agent, "topic", claim.Key, "repo", claim.Repo, "pr", number)
 	}
 }
 

@@ -1,9 +1,9 @@
 package mailin
 
 import (
-	"bytes"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"net/mail"
 	"strings"
@@ -48,9 +48,9 @@ type Envelope struct {
 	MailFrom string
 }
 
-// Authenticate runs SPF, DKIM and DMARC alignment for one message. raw is
-// the whole message as received.
-func Authenticate(ctx context.Context, r Resolver, env Envelope, raw []byte, header mail.Header) wire.Auth {
+// Authenticate runs SPF, DKIM and DMARC alignment for one message. raw
+// reads the whole message as received (hive-mx streams it from its spool).
+func Authenticate(ctx context.Context, r Resolver, env Envelope, raw io.Reader, header mail.Header) wire.Auth {
 	ctx, cancel := context.WithTimeout(ctx, authTimeout)
 	defer cancel()
 	a := wire.Auth{EnvelopeFrom: strings.ToLower(env.MailFrom), HELO: env.HELO}
@@ -76,7 +76,7 @@ func Authenticate(ctx context.Context, r Resolver, env Envelope, raw []byte, hea
 	}
 
 	lookupTXT := func(name string) ([]string, error) { return r.LookupTXT(ctx, name) }
-	verifs, err := dkim.VerifyWithOptions(bytes.NewReader(raw), &dkim.VerifyOptions{LookupTXT: lookupTXT, MaxVerifications: maxDKIMSignatures})
+	verifs, err := dkim.VerifyWithOptions(raw, &dkim.VerifyOptions{LookupTXT: lookupTXT, MaxVerifications: maxDKIMSignatures})
 	if err != nil && !errors.Is(err, dkim.ErrTooManySignatures) {
 		verifs = nil
 	}

@@ -164,6 +164,24 @@
         '<label class="inbox-toggle"><input type="checkbox" data-ma-field="voice_on_address" data-change-action="maInput" data-arg0="voice_on_address" data-arg-types="s,c"' + (f.voice_on_address ? ' checked' : '') + '> Speak aloud only when addressed by name (never unprompted; off sends every reply to chat)</label></section>';
     }
 
+    // ── Research agents (hivecommons/hive#18590): where Betty's deep dives
+    // go, how many agents can take one now, and a plain warning when none can.
+    function maResearchHtml() {
+      const r = (_maState && _maState.data && _maState.data.research) || {};
+      const agents = (r.agents || []).join(', ');
+      const runs = r.base_agent ? 'Runs on the <code>' + escapeHtml(r.base_agent) + '</code> agent\'s backend' +
+        (r.backend ? ' (' + escapeHtml(r.backend) + (r.model ? ', ' + escapeHtml(r.model) : '') + ')' : '') + '.' : '';
+      const status = r.wired
+        ? '<p class="muted-xs">Agents: ' + escapeHtml(agents || 'none') + ' (' + (r.available || 0) + ' available now). ' + runs + '</p>'
+        : '';
+      return '<section class="ma-section" aria-labelledby="ma-research-h"><h4 id="ma-research-h">Research</h4>' +
+        '<p class="muted-xs">When the persona needs to look something up she says so, sends it to the read-only research agents and reports back in the channel she was asked in. Pool size ' +
+        escapeHtml(String(r.pool_size || '')) + ' ' + yamlHint('meetings.research_pool_size') + '</p>' +
+        status +
+        (r.warning ? '<p class="kc-error muted-xs" role="status" data-ma-research-warning>' + escapeHtml(r.warning) + '</p>' : '') +
+        '</section>';
+    }
+
     // ── Action requests (hivecommons/hive#18406): what people may ask the
     // persona to draft in a meeting. Saved on its own through
     // PUT /api/meetings/actions/settings and applied without a restart.
@@ -250,7 +268,7 @@
       host.innerHTML =
         (d.restart_required ? '<p class="cmp-banner" role="status">Saved. Restart the hive to apply the new persona.</p>' : '') +
         (d.running ? '' : '<p class="muted-xs">Meetings are not running on this hive; the persona applies once meetings are on (Settings, Meetings).</p>') +
-        maPersonaHtml(f) + maBehaviourHtml(f) + (typeof maModelHtml === 'function' ? maModelHtml() : '') + (typeof maActionsHtml === 'function' ? maActionsHtml() : '') + maEmailHtml() +
+        maPersonaHtml(f) + maBehaviourHtml(f) + maResearchHtml() + (typeof maModelHtml === 'function' ? maModelHtml() : '') + (typeof maActionsHtml === 'function' ? maActionsHtml() : '') + maEmailHtml() +
         '<div class="hive-dialog-error" role="alert" data-ma-error></div>' +
         '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="maSave">Save</button></div>';
     }
@@ -376,14 +394,44 @@
         const how = !e.proven && e.code
           ? '<div class="muted-xs">Send an email from ' + escapeHtml(e.email) + ' to <code>' + escapeHtml(mine.address || '') + '</code> with <code>' + escapeHtml(e.code) + '</code> in the subject.</div>'
           : (!e.proven ? '<div class="muted-xs">The code expired: add the address again for a new one.</div>' : '');
-        const err = e.last_error ? '<div class="kc-error muted-xs">' + escapeHtml(e.last_error) + '</div>' : '';
+        const err = maProofFailureHtml(e);
         const inactive = e.active === false ? ' <span class="muted-xs">(no access to this hive: not on the allowlist)</span>' : '';
         return '<li><span class="ma-email">' + escapeHtml(e.email) + ' ' + state + '</span>' + inactive +
           ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="maRemoveMyEmail" data-arg0="' + escapeHtml(e.email) + '"' + (on ? '' : ' disabled') + '>Remove</button>' + how + err + '</li>';
       }).join('') + '</ul>';
-      return '<div class="section-label m-0">My calendar emails</div>' + rows +
+      return '<div class="section-label m-0">My calendar emails</div>' + rows + maProofAttemptsHtml(mine) +
         '<div class="ma-add-email"><input class="kb-search-box" type="email" data-ma-new-email placeholder="you@example.com" autocomplete="email" aria-label="Calendar email to add"' + (on ? '' : ' disabled') + '>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="maAddMyEmail"' + (on ? '' : ' disabled') + '>Add</button></div>';
+    }
+
+    // Why the latest proof mail of a row did not count (#18579): the
+    // server's plain-language reason with what to do, the SPF, DKIM and
+    // alignment results hive-mx saw, and a Check again button.
+    function maProofFailureHtml(e) {
+      const f = e.last_failure;
+      if (!f) return e.last_error ? '<div class="kc-error muted-xs">' + escapeHtml(e.last_error) + '</div>' : '';
+      const when = f.at ? ' <span class="muted-xs">(' + escapeHtml(formatDashboardDateTime(f.at)) + ')</span>' : '';
+      return '<div class="kc-error muted-xs" data-ma-proof-failure="' + escapeHtml(f.reason || '') + '">' + escapeHtml(f.message || e.last_error || '') + when + '</div>' +
+        '<div class="muted-xs" data-ma-proof-auth>' + escapeHtml(maProofAuthSummary(f)) + '</div>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="maLoadMyEmails">Check again</button>';
+    }
+
+    function maProofAuthSummary(f) {
+      const yes = b => (b ? 'yes' : 'no');
+      const spf = 'SPF ' + (f.spf || 'none') + (f.spf_domain ? ' for ' + f.spf_domain : '');
+      const dkim = (f.dkim || []).length
+        ? 'DKIM ' + f.dkim.map(d => (d.result || 'none') + ' for ' + d.domain).join(', ')
+        : 'DKIM none';
+      return 'What the mail server saw: ' + spf + '; ' + dkim + '; aligned with ' + (f.from_domain || 'the From domain') + ': ' + yes(f.aligned) + '.';
+    }
+
+    // Owner only: proof mails whose code matched no address (a typo), with
+    // the sender masked. The server sends them to the owner alone.
+    function maProofAttemptsHtml(mine) {
+      const list = (mine && mine.recent_proof_attempts) || [];
+      if (!list.length) return '';
+      return '<div class="section-label m-0">Recent proof attempts</div><ul class="ma-proof-attempts">' +
+        list.map(a => '<li>' + escapeHtml(a.from || 'unknown sender') + ' <span class="muted-xs">' + escapeHtml(a.at ? formatDashboardDateTime(a.at) : '') + '</span>: ' + escapeHtml(a.reason || '') + '</li>').join('') + '</ul>';
     }
 
     async function maLoadMyEmails() {

@@ -296,3 +296,173 @@ func TestEmailAudioTranscribesFromTheSpool(t *testing.T) {
 		t.Fatal("markdown has no audio")
 	}
 }
+
+func TestEmailVideoNoteAndStagedFile(t *testing.T) {
+	e, _ := newEmailSource(t)
+	// A staged file (hub chunked relay) is moved into its item.
+	if err := os.MkdirAll(e.StageDir(strings.Repeat("a", emailStageIDLen)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	video := []byte("\x00\x00\x00\x18ftypmp42 video bytes")
+	staged := filepath.Join(e.StageDir(strings.Repeat("a", emailStageIDLen)), "file-0")
+	if err := os.WriteFile(staged, video, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mp4 := wire.Attachment{Name: "beach.mp4", Kind: wire.AttachVideo, ContentType: "video/mp4", Size: len(video), SHA256: "abc", Path: staged}
+	mkv := att("film.mkv", wire.AttachVideo, "video/x-matroska", []byte("\x1a\x45\xdf\xa3matroska"))
+	d := emailDelivery("v1", mp4, mkv)
+	d.Files.Note = "  from the beach \xff "
+	items, err := e.Add(d, true)
+	if err != nil || len(items) != 2 {
+		t.Fatalf("add %v %d", err, len(items))
+	}
+	if _, err := os.Stat(staged); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("the staged file was not moved")
+	}
+	v, k := items[0], items[1]
+	if !v.Pending || v.UploadKind != wire.AttachVideo || v.Excerpt != "from the beach" || k.Pending {
+		t.Fatalf("items %+v %+v", v, k)
+	}
+	rc, m, err := e.Open(v.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, _ := io.ReadAll(rc)
+	_ = rc.Close()
+	if string(b) != string(video) || m.Size != int64(len(video)) || m.Note != "from the beach" {
+		t.Fatalf("stored video %q %+v", b, m)
+	}
+	la, err := e.OpenAudio(context.Background(), v)
+	if err != nil || la.MIME != "audio/mp4" {
+		t.Fatalf("video audio %+v %v", la, err)
+	}
+	_ = la.File.Close()
+	if _, err := e.OpenAudio(context.Background(), k); !errors.Is(err, ErrNoAudio) {
+		t.Fatalf("mkv audio: %v", err)
+	}
+	c, err := e.Fetch(context.Background(), v)
+	if err != nil || !c.Pending || !strings.Contains(c.Markdown, "audio track") || !strings.Contains(c.Markdown, "**Message:**") || !strings.Contains(c.Markdown, UntrustedTag) {
+		t.Fatalf("video content %+v %v", c, err)
+	}
+	c, err = e.Fetch(context.Background(), k)
+	if err != nil || c.Pending || !strings.Contains(c.Markdown, "cannot be transcribed") {
+		t.Fatalf("mkv content %+v %v", c, err)
+	}
+	// A retried delivery lands on the same items.
+	again, err := e.Add(d, true)
+	if err != nil || again[0].ID != v.ID {
+		t.Fatalf("retry %v %+v", err, again)
+	}
+	// A staged file that vanished fails the add.
+	gone := mp4
+	gone.Name, gone.Path = "gone.mp4", filepath.Join(t.TempDir(), "gone")
+	if _, err := e.Add(emailDelivery("v2", gone), true); err == nil {
+		t.Fatal("missing staged file accepted")
+	}
+	if clipNoteText(strings.Repeat("é", wire.MaxNoteBytes)) == "" || len(clipNoteText(strings.Repeat("é", wire.MaxNoteBytes))) > wire.MaxNoteBytes {
+		t.Fatal("note clip")
+	}
+}
+
+func TestStoreAttachmentMoveAndFailure(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "src")
+	if err := os.WriteFile(src, []byte("bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// A destination whose data file is a directory makes the rename fail;
+	// the copy fallback then fails too, and the error is returned.
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, emailDataFile), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, emailDataFile, "x"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := storeAttachment(dir, wire.Attachment{Path: src, Size: 5}); err == nil {
+		t.Fatal("stored over a directory")
+	}
+	// The normal case: the staged file is moved.
+	dir2 := t.TempDir()
+	if err := storeAttachment(dir2, wire.Attachment{Path: src, Size: 5}); err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir2, emailDataFile)); string(b) != "bytes" {
+		t.Fatalf("stored %q", b)
+	}
+}
+
+func TestEmailStageChunks(t *testing.T) {
+	e, now := newEmailSource(t)
+	id := strings.Repeat("0f", emailStageIDLen/2)
+	if p, err := e.StageChunk(id, 1, 3, []byte("BB"), 100); err != nil || p != "" {
+		t.Fatalf("piece 1: %q %v", p, err)
+	}
+	if p, err := e.StageChunk(id, 0, 3, []byte("AA"), 100); err != nil || p != "" {
+		t.Fatalf("piece 0: %q %v", p, err)
+	}
+	p, err := e.StageChunk(id, 2, 3, []byte("C"), 100)
+	if err != nil || p == "" {
+		t.Fatalf("last piece: %q %v", p, err)
+	}
+	if b, _ := os.ReadFile(p); string(b) != "AABBC" {
+		t.Fatalf("joined %q", b)
+	}
+	// The spool listing skips the staging directory.
+	if items, err := e.List(context.Background()); err != nil || len(items) != 0 {
+		t.Fatalf("staging listed: %v %v", items, err)
+	}
+	f, err := e.StageFile(id, 0, strings.NewReader("file"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, _ := os.ReadFile(f); string(b) != "file" {
+		t.Fatal("staged file")
+	}
+	e.DropStage(id)
+	if _, err := os.Stat(e.StageDir(id)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("stage not dropped")
+	}
+	e.DropStage("bad")
+
+	// A missing piece when the last arrives.
+	if _, err := e.StageChunk(id, 1, 2, []byte("x"), 100); !errors.Is(err, ErrEmailChunk) {
+		t.Fatalf("gap: %v", err)
+	}
+	// Bad ids and indices.
+	for _, c := range []struct {
+		id   string
+		i, n int
+	}{{"zz", 0, 1}, {id, 1, 1}, {id, -1, 2}, {id, 0, 0}} {
+		if _, err := e.StageChunk(c.id, c.i, c.n, nil, 100); !errors.Is(err, ErrEmailChunk) {
+			t.Errorf("%+v: %v", c, err)
+		}
+	}
+	if _, err := e.StageFile("zz", 0, strings.NewReader("")); !errors.Is(err, ErrEmailChunk) {
+		t.Fatal("bad stage id")
+	}
+	// Over the delivery cap, and over the spool quota.
+	if _, err := e.StageChunk(id, 0, 2, []byte("123456"), 5); !errors.Is(err, ErrEmailTooLarge) {
+		t.Fatalf("cap: %v", err)
+	}
+	e.QuotaBytes = 3
+	if _, err := e.StageChunk(id, 0, 2, []byte("1234"), 100); !errors.Is(err, ErrEmailQuota) {
+		t.Fatalf("quota: %v", err)
+	}
+	e.QuotaBytes = 0
+
+	// An abandoned delivery is pruned after EmailStageMaxAge.
+	if _, err := e.StageChunk(id, 0, 2, []byte("x"), 100); err != nil {
+		t.Fatal(err)
+	}
+	old := now.Add(-2 * EmailStageMaxAge)
+	if err := os.Chtimes(e.StageDir(id), old, old); err != nil {
+		t.Fatal(err)
+	}
+	other := strings.Repeat("1e", emailStageIDLen/2)
+	if _, err := e.StageChunk(other, 0, 2, []byte("y"), 100); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(e.StageDir(id)); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal("stale stage kept")
+	}
+}

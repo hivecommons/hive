@@ -1125,6 +1125,7 @@ func (b *boot) wireBootClosures() {
 			},
 			WorkflowRepoFile:        workflowRepoFile(func() *github.Client { return b.ghClient }),
 			WorkflowProvisionLabels: workflowProvisionLabels(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
+			WorkflowDispatchPrepare: workflowDispatchPrepare(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
 			WorkflowEmitChecks:      workflowEmitChecks(b.cfg, func() *github.Client { return b.ghClient }),
 			WorkflowClusterRunner:   workflowClusterRunner(),
 			WorkflowSpecLLM:         newWorkflowSpecRunner(func() *config.Config { return b.cfg }),
@@ -1342,6 +1343,9 @@ func (b *boot) wireBootClosures() {
 			RemergeDerivedReferenceRepos: b.remergeLastDerivedReferenceRepos,
 			OwnerIdentity:                b.ownerIdentityStore(),
 			OwnerIdentityChanged:         b.ownerIdentityChanged,
+			RepoAgents:                   b.repoAgents,
+			CheckRemoteWriteIdentity:     b.checkRemoteWriteIdentity,
+			RemoteWriteIdentityChanged:   b.remoteWriteIdentityChanged,
 			ReviewConfigApplied: func(rc config.ReviewConfig) {
 				if b.ghClient == nil {
 					return
@@ -2394,7 +2398,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 			// gate a direct `git push` is governed by, so the relay grants
 			// no privilege — it only changes which process performs the push.
 			pushBranch: b.agentMgr.AuthorizePushBranch,
-			logger:     b.logger,
+			// Sandbox spool topic requests (#18572) land in the agent's
+			// own bead store, read at call time.
+			topic:  sandboxTopicHandler(func() map[string]*beads.Store { return b.beadStores }),
+			logger: b.logger,
 		})
 		// The ACMM verdict is re-read on every (re)start; the dashboard's
 		// OnACMMLevelChanged hook restarts this generation when a runtime
@@ -2501,7 +2508,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 		if len(b.saved.KickHistory) > 0 {
 			records := make([]governor.KickRecord, len(b.saved.KickHistory))
 			for i, ke := range b.saved.KickHistory {
-				records[i] = governor.KickRecord{Timestamp: ke.Timestamp, Agent: ke.Agent, Outcome: ke.Outcome, OutcomeReason: ke.OutcomeReason}
+				records[i] = governor.KickRecord{Timestamp: ke.Timestamp, Agent: ke.Agent, Outcome: ke.Outcome, OutcomeReason: ke.OutcomeReason, Reason: ke.Reason}
 			}
 			b.gov.SeedKickHistory(records)
 			b.logger.Info("kick history restored", "entries", len(records))
@@ -2662,6 +2669,9 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			}
 		}
 	})
+	// Reap sandbox Jobs the previous process lost track of, now that the
+	// audit log can record each one (hivecommons/hive#18525).
+	startSandboxJobBootSweep(b.ctx, b.cfg, b.agentMgr, b.dashSrv.AuditLog, b.logger)
 
 	// Persist per-user dashboard sessions on the PVC (/data) so direct-route
 	// users aren't logged out by pod restarts. NOTE: use /data explicitly, NOT
@@ -3554,6 +3564,9 @@ func (b *boot) bootDashboardAPI() { b.bootDashboardAPIWith(defaultBootDashboardA
 // bootDashboardAPIWith is bootDashboardAPI with its long-lived effects
 // injected; see bootDashboardAPIDeps.
 func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
+	// Before the dependencies are built, so the dashboard's approval queue
+	// for repo-declared agents sees the discoverer (#18491).
+	b.wireRepoAgentDiscovery()
 	deps.registerAPI(b.dashSrv, b.dashboardDependencies())
 	// The hive's own unblock (blocked sweep, review-backlog block lift)
 	// re-reads the issue into the cached snapshot and the Activity Monitor
@@ -3578,7 +3591,10 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				rt = b.agentMgr
 			}
 			researchPool := wireMeetingsResearch(b.cfg, rt, b.logger)
-			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger); lr != nil {
+			if fn := meetingsResearchStatus(b.cfg, researchPool); fn != nil {
+				b.dashSrv.SetMeetingsResearchStatus(fn)
+			}
+			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger, b.dashSrv.HiveStatusBrief); lr != nil {
 				b.meetingsLive = lr
 				b.cleanup.push(lr.Close)
 				b.cleanup.push(routeResearch(researchPool, lr))
@@ -3992,7 +4008,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		if err := b.cfg.ExpandAgentReplicas(); err != nil {
 			b.logger.Warn("failed to expand agent replicas after config reload", "error", err)
 		}
-		addedAgents := b.agentMgr.ReconcileAgents(b.cfg.EnabledAgents())
+		addedAgents := b.agentMgr.ReconcileAgents(withResearchAgents(b.cfg.EnabledAgents()))
 		for _, added := range addedAgents {
 			if ac, ok := b.cfg.Agents[added]; ok && !ac.OnDemand {
 				deps.startAgent(b.ctx, b.agentMgr, added, b.logger)
@@ -6350,6 +6366,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	}
 	b.startReviewEvents()
 	b.startMatrixIngest()
+	b.startReleaseFeedWatcher()
 
 	// Webhook health re-check: in webhook mode the base tick (900s) is longer
 	// than the health window (2 × eval_interval_s), so without this a lapse
@@ -6826,7 +6843,7 @@ func persistStateWithPaths(agentMgr crux.Runtime, gov *governor.Governor, cfg *c
 	govKickHistory := gov.KickHistory()
 	kickEntries := make([]snapshot.GovKickEntry, len(govKickHistory))
 	for i, kr := range govKickHistory {
-		kickEntries[i] = snapshot.GovKickEntry{Timestamp: kr.Timestamp, Agent: kr.Agent, Outcome: kr.Outcome, OutcomeReason: kr.OutcomeReason}
+		kickEntries[i] = snapshot.GovKickEntry{Timestamp: kr.Timestamp, Agent: kr.Agent, Outcome: kr.Outcome, OutcomeReason: kr.OutcomeReason, Reason: kr.Reason}
 	}
 
 	state := &snapshot.PersistedState{

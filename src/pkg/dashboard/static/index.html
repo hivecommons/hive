@@ -5039,6 +5039,10 @@
     .cfg-reference-repo-state-read-only, .cfg-reference-repo-state-unresolved { color: var(--warning, var(--muted)); }
     .cfg-reference-repo-reason { flex-basis: 100%; }
     .cfg-owner-identity { flex-wrap: wrap; gap: var(--space-2, 0.5rem); }
+    .cfg-write-identity { flex-wrap: wrap; gap: var(--space-2, 0.5rem); }
+    .cfg-write-identity-choices { display: flex; flex-wrap: wrap; gap: var(--space-2, 0.5rem); }
+    .cfg-write-identity-status { flex-basis: 100%; }
+    .cfg-reference-repo-identity { flex-basis: 100%; }
     .cfg-owner-identity-status { flex-basis: 100%; }
     .cfg-owner-identity-code { font-size: var(--fs-md, 1rem); letter-spacing: 0.08em; }
     .config-list-item .remove-item {
@@ -8907,6 +8911,13 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item active" data-section="governor" data-action="ocNavigate" data-arg0="governor"><span class="oc-nav-emoji">🚦</span><span class="oc-nav-text">Governor</span><span id="governor-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0/0</span></a>
       <a class="oc-nav-item" data-section="pr-throughput-section" data-action="ocNavigate" data-arg0="pr-throughput-section"><span class="oc-nav-emoji">📈</span><span class="oc-nav-text">Throughput</span></a>
     </div>
+    <div class="oc-nav-group" id="collaborate-nav-group">
+      <div class="oc-nav-label">Collaborate</div>
+      <a class="oc-nav-item" data-section="inbox-section" data-action="ocNavigate" data-arg0="inbox-section"><span class="oc-nav-emoji">📥</span><span class="oc-nav-text">Inbox</span><span id="inbox-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
+      <a class="oc-nav-item" data-section="calendar-section" data-action="ocNavigate" data-arg0="calendar-section"><span class="oc-nav-emoji">📅</span><span class="oc-nav-text">Calendar</span><span id="calendar-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
+      <a class="oc-nav-item" data-section="meetings-section" data-action="ocNavigate" data-arg0="meetings-section"><span class="oc-nav-emoji">🎙</span><span class="oc-nav-text">Meetings</span></a>
+      <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spek)</span></a>
+    </div>
     <div class="oc-nav-group" id="oc-agent-nav-group">
       <div class="oc-tree-toggle" data-action="ocToggleAgentTree" data-arg-types="t">
         <span class="oc-tree-arrow">▼</span> <span>Agents</span>
@@ -8927,13 +8938,6 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <div class="oc-nav-label">Resources</div>
       <a class="oc-nav-item" data-section="repos-section" data-action="ocNavigate" data-arg0="repos-section"><span class="oc-nav-emoji">📦</span><span class="oc-nav-text">Projects</span><span id="repos-sidebar-badge" class="badge-count oc-nav-count" data-zero>0</span></a>
       <a class="oc-nav-item" data-section="contributors-section" data-action="ocNavigate" data-arg0="contributors-section"><span class="oc-nav-emoji">👥</span><span class="oc-nav-text">Contributors</span><span id="contributors-sidebar-badge" class="badge-count oc-nav-count contributor-online-trigger" tabindex="0" role="link" aria-label="Contributors" data-keydown-action="ocNavigate" data-arg0="contributors-section" data-zero hidden>0/0</span></a>
-    </div>
-    <div class="oc-nav-group">
-      <div class="oc-nav-label">Collaborate</div>
-      <a class="oc-nav-item" data-section="inbox-section" data-action="ocNavigate" data-arg0="inbox-section"><span class="oc-nav-emoji">📥</span><span class="oc-nav-text">Inbox</span><span id="inbox-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
-      <a class="oc-nav-item" data-section="calendar-section" data-action="ocNavigate" data-arg0="calendar-section"><span class="oc-nav-emoji">📅</span><span class="oc-nav-text">Calendar</span><span id="calendar-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
-      <a class="oc-nav-item" data-section="meetings-section" data-action="ocNavigate" data-arg0="meetings-section"><span class="oc-nav-emoji">🎙</span><span class="oc-nav-text">Meetings</span></a>
-      <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spek)</span></a>
     </div>
     <div class="oc-nav-group">
       <div class="oc-nav-label">Intelligence</div>
@@ -12448,11 +12452,20 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function dashboardFirstSection(region){if(!region)return null;dashboardPinNoticeAnchor(region);var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var after=false,children=Array.prototype.slice.call(region.children);for(var i=0;i<children.length;i++){if(children[i]===anchor){after=true;continue;}if(after&&dashboardIsSectionNode(children[i]))return children[i];}}return region.querySelector(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);}
     function dashboardInsertSection(region,card,before){if(!region||!card)return;dashboardPinNoticeAnchor(region);if(before){var anchor=dashboardTopAnchor(region);if(anchor&&region.children){var children=Array.prototype.slice.call(region.children),anchorIdx=children.indexOf(anchor),beforeIdx=children.indexOf(before);if(anchorIdx>=0&&beforeIdx>=0&&beforeIdx<=anchorIdx)before=dashboardFirstSection(region);}region.insertBefore(card,before);dashboardPinNoticeAnchor(region);return;}var sections=region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR);var last=sections.length?sections[sections.length-1]:null;if(last&&last!==card){var siblings=Array.prototype.slice.call(region.children),next=siblings[siblings.indexOf(last)+1]||null;region.insertBefore(card,next);}else region.appendChild(card);dashboardPinNoticeAnchor(region);}
     function dashboardApplyLayout(layout){var region=dashboardRegionEl('main');if(!region)return;dashboardPinNoticeAnchor(region);var ids=(layout&&layout.main)||[];for(var i=ids.length-1;i>=0;i--){if(dashboardFeatureSectionHidden(ids[i]))continue;var card=dashboardCardEl(ids[i]);if(card)dashboardInsertSection(region,card,dashboardFirstSection(region));}dashboardApplyHiddenSections();dashboardUpdateResetButton();dashboardSortSidebar();}
-    function dashboardSidebarNavItems(){var order=dashboardLayoutNormalize(dashboardLayoutCurrent()).main,rank={};order.forEach(function(id,i){rank[id]=i;});return Array.prototype.slice.call(document.querySelectorAll('.oc-nav-item[data-section]')).filter(function(item){return rank[item.getAttribute('data-section')]!==undefined;});}
-    function dashboardEnsureSidebarHandles(){dashboardSidebarNavItems().forEach(function(item){var sectionId=item.getAttribute('data-section'),label=(item.querySelector('.oc-nav-text')||item).textContent.trim()||sectionId;if(!item.querySelector(':scope > .oc-nav-drag-handle')){var handle=document.createElement('button');handle.type='button';handle.className='oc-nav-drag-handle';handle.draggable=true;handle.setAttribute('data-nav-order-grip','dashboard');handle.setAttribute('data-section',sectionId);handle.setAttribute('data-stop','1');handle.setAttribute('aria-label','Move '+label+' section');handle.setAttribute('aria-pressed','false');handle.title='Drag or focus and press Alt+↑/↓ to reorder';handle.textContent='⠿';item.insertBefore(handle,item.firstChild);}if(dashboardCanHideSection(sectionId)&&!item.querySelector(':scope > .oc-nav-hide-toggle')){var hide=document.createElement('button');hide.type='button';hide.className='oc-nav-hide-toggle';hide.setAttribute('data-action','toggleDashboardSectionHidden');hide.setAttribute('data-arg0',sectionId);hide.setAttribute('data-section',sectionId);hide.setAttribute('data-stop','1');hide.setAttribute('aria-label','Hide '+label);hide.setAttribute('aria-pressed','false');hide.title='Hide '+label;hide.textContent='⊘';item.appendChild(hide);}});dashboardApplyHiddenSections();}
-    function dashboardSidebarLayoutFromDom(){var ids=dashboardSidebarNavItems().map(function(item){return item.getAttribute('data-section');}).filter(Boolean);return dashboardLayoutNormalize({v:DASHBOARD_LAYOUT_VERSION,main:ids});}
+    // Sidebar nav links for layout sections. A link authored inside a named
+    // sidebar group other than the Dashboard group (Collaborate, Resources,
+    // Intelligence, Admin, Help) belongs to that group: it keeps its place and
+    // order there, and only links that live in #dashboard-section-nav-group are
+    // sorted, dragged and re-homed by the layout. The main-page card order,
+    // collapse defaults and hide toggles still cover every layout section.
+    var DASHBOARD_SIDEBAR_HOME_ID='dashboard-section-nav-group';
+    function dashboardSidebarLayoutItems(){var order=dashboardLayoutNormalize(dashboardLayoutCurrent()).main,rank={};order.forEach(function(id,i){rank[id]=i;});return Array.prototype.slice.call(document.querySelectorAll('.oc-nav-item[data-section]')).filter(function(item){return rank[item.getAttribute('data-section')]!==undefined;});}
+    function dashboardSidebarItemInOwnGroup(item,home){var group=item.closest&&item.closest('.oc-nav-group');return !!group&&group!==home;}
+    function dashboardSidebarNavItems(){var home=document.getElementById(DASHBOARD_SIDEBAR_HOME_ID);if(!home)return [];return dashboardSidebarLayoutItems().filter(function(item){return !dashboardSidebarItemInOwnGroup(item,home);});}
+    function dashboardEnsureSidebarHandles(){var draggable=dashboardSidebarNavItems();dashboardSidebarLayoutItems().forEach(function(item){var sectionId=item.getAttribute('data-section'),label=(item.querySelector('.oc-nav-text')||item).textContent.trim()||sectionId;if(draggable.indexOf(item)>=0&&!item.querySelector(':scope > .oc-nav-drag-handle')){var handle=document.createElement('button');handle.type='button';handle.className='oc-nav-drag-handle';handle.draggable=true;handle.setAttribute('data-nav-order-grip','dashboard');handle.setAttribute('data-section',sectionId);handle.setAttribute('data-stop','1');handle.setAttribute('aria-label','Move '+label+' section');handle.setAttribute('aria-pressed','false');handle.title='Drag or focus and press Alt+↑/↓ to reorder';handle.textContent='⠿';item.insertBefore(handle,item.firstChild);}if(dashboardCanHideSection(sectionId)&&!item.querySelector(':scope > .oc-nav-hide-toggle')){var hide=document.createElement('button');hide.type='button';hide.className='oc-nav-hide-toggle';hide.setAttribute('data-action','toggleDashboardSectionHidden');hide.setAttribute('data-arg0',sectionId);hide.setAttribute('data-section',sectionId);hide.setAttribute('data-stop','1');hide.setAttribute('aria-label','Hide '+label);hide.setAttribute('aria-pressed','false');hide.title='Hide '+label;hide.textContent='⊘';item.appendChild(hide);}});dashboardApplyHiddenSections();}
+    function dashboardSidebarLayoutFromDom(){var ids=dashboardSidebarNavItems().map(function(item){return item.getAttribute('data-section');}).filter(Boolean),moved={},k=0;ids.forEach(function(id){moved[id]=true;});var main=dashboardLayoutNormalize(dashboardLayoutCurrent()).main.map(function(id){return moved[id]?ids[k++]:id;});return dashboardLayoutNormalize({v:DASHBOARD_LAYOUT_VERSION,main:main.concat(ids.slice(k))});}
     function dashboardApplyOrderFromSidebar(){var layout=dashboardSidebarLayoutFromDom();dashboardApplyLayout(layout);dashboardLayoutWrite();dashboardLayoutAnnounce('Dashboard sidebar order saved.');}
-    function dashboardSortSidebar(){var order=dashboardLayoutNormalize(dashboardLayoutCurrent()).main,rank={};order.forEach(function(id,i){rank[id]=i;});var items=dashboardSidebarNavItems();var rankOf=function(el){var r=rank[el.getAttribute('data-section')];return r===undefined?order.length:r;};items.sort(function(a,b){return rankOf(a)-rankOf(b);});var home=document.getElementById('dashboard-section-nav-group')||(items.length&&items[0].closest('.oc-nav-group'));if(!home)return;items.forEach(function(item){home.appendChild(item);});dashboardEnsureSidebarHandles();Array.prototype.forEach.call(document.querySelectorAll('.oc-nav-group'),function(group){if(group===home||group.id==='oc-agent-nav-group'){group.hidden=false;return;}group.hidden=group.querySelectorAll('.oc-nav-item').length===0;});}
+    function dashboardSortSidebar(){var order=dashboardLayoutNormalize(dashboardLayoutCurrent()).main,rank={};order.forEach(function(id,i){rank[id]=i;});var home=document.getElementById(DASHBOARD_SIDEBAR_HOME_ID);if(!home)return;var items=dashboardSidebarNavItems();var rankOf=function(el){var r=rank[el.getAttribute('data-section')];return r===undefined?order.length:r;};items.sort(function(a,b){return rankOf(a)-rankOf(b);});items.forEach(function(item){home.appendChild(item);});dashboardEnsureSidebarHandles();Array.prototype.forEach.call(document.querySelectorAll('.oc-nav-group'),function(group){if(group===home||group.id==='oc-agent-nav-group'){group.hidden=false;return;}group.hidden=group.querySelectorAll('.oc-nav-item').length===0;});}
     function dashboardLayoutSlot(region,x,y,skip){var cards=Array.prototype.filter.call(region.querySelectorAll(':scope > '+DASHBOARD_LAYOUT_CARD_SELECTOR),function(c){return c!==skip;});if(!cards.length)return {region:region,before:null};var best=null,bestDist=Infinity;cards.forEach(function(card){var rect=card.getBoundingClientRect(),before=y<(rect.top+rect.height/2),anchor=before?rect.top:rect.bottom,dist=Math.abs(y-anchor)+Math.abs(x-(rect.left+rect.width/2));if(dist<bestDist){bestDist=dist;best={region:region,before:before?card:card.nextElementSibling};}});return best||{region:region,before:null};}
     function dashboardNearestRegion(x,y){return dashboardRegionEl('main');}
     function dashboardMoveIndicator(slot){var indicator=dashboardDragState&&dashboardDragState.indicator;if(!indicator||!slot||!slot.region)return;dashboardInsertSection(slot.region,indicator,slot.before);}
@@ -12463,7 +12476,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function dashboardRestoreSnapshot(){if(!dashboardKeyboardSnapshot)return;dashboardApplyLayout(dashboardKeyboardSnapshot);dashboardLayoutWrite();dashboardKeyboardSnapshot=dashboardLayoutCurrent();dashboardLayoutAnnounce('Keyboard reorder cancelled.');}
     function dashboardMoveCardByKeyboard(card,key){var current=card.parentElement;if(key==='ArrowUp'){var prev=card.previousElementSibling;while(prev&&!prev.matches(DASHBOARD_LAYOUT_CARD_SELECTOR))prev=prev.previousElementSibling;if(prev)dashboardInsertSection(current,card,prev);}else if(key==='ArrowDown'){var next=card.nextElementSibling;while(next&&!next.matches(DASHBOARD_LAYOUT_CARD_SELECTOR))next=next.nextElementSibling;if(next)dashboardInsertSection(current,next,card);}dashboardLayoutWrite();dashboardLayoutAnnounce(dashboardLayoutCardName(card)+' moved.');}
     function initDashboardSectionLayout(){dashboardEnsureSections();initializeDashboardSectionCards();dashboardApplyLayout(dashboardLayoutNormalize(dashboardLayoutRead()));var root=dashboardRegionEl('main');if(!root)return;root.addEventListener('click',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(grip){ev.preventDefault();ev.stopPropagation();}},true);root.addEventListener('pointerdown',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(grip)dashboardStartDrag(ev,grip);});root.addEventListener('pointermove',function(ev){if(dashboardDragState){ev.preventDefault();dashboardDragMove(ev);}});root.addEventListener('pointerup',function(ev){if(dashboardDragState){ev.preventDefault();dashboardEndDrag(true);}});root.addEventListener('pointercancel',function(){dashboardEndDrag(false);});root.addEventListener('keydown',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(!grip)return;var key=ev.key,card=grip.closest(DASHBOARD_LAYOUT_CARD_SELECTOR);if(!card)return;if(key===' '||key==='Enter'){ev.preventDefault();var active=grip.getAttribute('aria-pressed')==='true';if(active){dashboardKeyboardSnapshot=dashboardLayoutCurrent();grip.setAttribute('aria-pressed','false');dashboardLayoutAnnounce('Dropped '+dashboardLayoutCardName(card)+'.');}else{dashboardKeyboardSnapshot=dashboardLayoutCurrent();grip.setAttribute('aria-pressed','true');dashboardLayoutAnnounce('Picked up '+dashboardLayoutCardName(card)+'. Use arrow keys to move, Escape to cancel.');}return;}if(key==='Escape'){ev.preventDefault();dashboardRestoreSnapshot();grip.setAttribute('aria-pressed','false');return;}if(key==='ArrowUp'||key==='ArrowDown'){ev.preventDefault();if(!dashboardKeyboardSnapshot)dashboardKeyboardSnapshot=dashboardLayoutCurrent();grip.setAttribute('aria-pressed','true');dashboardMoveCardByKeyboard(card,key);}});root.addEventListener('focusin',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(grip)dashboardKeyboardSnapshot=dashboardLayoutCurrent();});root.addEventListener('focusout',function(ev){var grip=ev.target.closest&&ev.target.closest(DASHBOARD_LAYOUT_GRIP_SELECTOR);if(grip){dashboardKeyboardSnapshot=null;grip.setAttribute('aria-pressed','false');}});dashboardUpdateResetButton();initDashboardSidebarLayoutControls();}
-    function initDashboardSidebarLayoutControls(){var group=document.getElementById('dashboard-section-nav-group');if(!group||group.dataset.dashboardNavLayoutControls==='1')return;group.dataset.dashboardNavLayoutControls='1';var dragged=null;function clear(){group.querySelectorAll(':scope > .oc-drop-indicator').forEach(function(el){el.remove();});group.querySelectorAll('.oc-nav-item.dragging').forEach(function(el){el.classList.remove('dragging');});group.querySelectorAll('.oc-nav-drag-handle[aria-pressed="true"]').forEach(function(el){el.setAttribute('aria-pressed','false');});dragged=null;}function targetFor(y){var items=dashboardSidebarNavItems().filter(function(item){return item!==dragged;});var best=null,dist=Infinity;items.forEach(function(item){var rect=item.getBoundingClientRect(),mid=rect.top+rect.height/2,d=Math.abs(y-mid);if(d<dist){dist=d;best={item:item,after:y>mid};}});return best;}group.addEventListener('click',function(ev){var grip=ev.target.closest&&ev.target.closest('[data-nav-order-grip="dashboard"]');if(grip){ev.preventDefault();ev.stopPropagation();}},true);group.addEventListener('dragstart',function(ev){var grip=ev.target.closest&&ev.target.closest('[data-nav-order-grip="dashboard"]');if(!grip)return;dragged=grip.closest('.oc-nav-item[data-section]');if(!dragged)return;dragged.classList.add('dragging');grip.setAttribute('aria-pressed','true');ev.dataTransfer.effectAllowed='move';ev.dataTransfer.setData('text/plain',dragged.getAttribute('data-section')||'');});group.addEventListener('dragover',function(ev){if(!dragged)return;ev.preventDefault();ev.dataTransfer.dropEffect='move';group.querySelectorAll(':scope > .oc-drop-indicator').forEach(function(el){el.remove();});var t=targetFor(ev.clientY),indicator=document.createElement('div');indicator.className='oc-drop-indicator';if(t){if(t.after)t.item.after(indicator);else t.item.before(indicator);}else group.appendChild(indicator);});group.addEventListener('drop',function(ev){if(!dragged)return;ev.preventDefault();var t=targetFor(ev.clientY);if(t){if(t.after)t.item.after(dragged);else t.item.before(dragged);}else group.appendChild(dragged);dashboardApplyOrderFromSidebar();clear();});group.addEventListener('dragend',clear);group.addEventListener('keydown',function(ev){var grip=ev.target.closest&&ev.target.closest('[data-nav-order-grip="dashboard"]');if(!grip||!ev.altKey||(ev.key!=='ArrowUp'&&ev.key!=='ArrowDown'))return;var item=grip.closest('.oc-nav-item[data-section]');if(!item)return;ev.preventDefault();if(ev.key==='ArrowUp'){var prev=item.previousElementSibling;while(prev&&!(prev.matches&&prev.matches('.oc-nav-item[data-section]')))prev=prev.previousElementSibling;if(prev)group.insertBefore(item,prev);}else{var next=item.nextElementSibling;while(next&&!(next.matches&&next.matches('.oc-nav-item[data-section]')))next=next.nextElementSibling;if(next)group.insertBefore(next,item);}dashboardApplyOrderFromSidebar();var nextGrip=item.querySelector('[data-nav-order-grip="dashboard"]');if(nextGrip)nextGrip.focus();});}
+    function initDashboardSidebarLayoutControls(){var group=document.getElementById(DASHBOARD_SIDEBAR_HOME_ID);if(!group||group.dataset.dashboardNavLayoutControls==='1')return;group.dataset.dashboardNavLayoutControls='1';var dragged=null;function clear(){group.querySelectorAll(':scope > .oc-drop-indicator').forEach(function(el){el.remove();});group.querySelectorAll('.oc-nav-item.dragging').forEach(function(el){el.classList.remove('dragging');});group.querySelectorAll('.oc-nav-drag-handle[aria-pressed="true"]').forEach(function(el){el.setAttribute('aria-pressed','false');});dragged=null;}function targetFor(y){var items=dashboardSidebarNavItems().filter(function(item){return item!==dragged;});var best=null,dist=Infinity;items.forEach(function(item){var rect=item.getBoundingClientRect(),mid=rect.top+rect.height/2,d=Math.abs(y-mid);if(d<dist){dist=d;best={item:item,after:y>mid};}});return best;}group.addEventListener('click',function(ev){var grip=ev.target.closest&&ev.target.closest('[data-nav-order-grip="dashboard"]');if(grip){ev.preventDefault();ev.stopPropagation();}},true);group.addEventListener('dragstart',function(ev){var grip=ev.target.closest&&ev.target.closest('[data-nav-order-grip="dashboard"]');if(!grip)return;dragged=grip.closest('.oc-nav-item[data-section]');if(!dragged)return;dragged.classList.add('dragging');grip.setAttribute('aria-pressed','true');ev.dataTransfer.effectAllowed='move';ev.dataTransfer.setData('text/plain',dragged.getAttribute('data-section')||'');});group.addEventListener('dragover',function(ev){if(!dragged)return;ev.preventDefault();ev.dataTransfer.dropEffect='move';group.querySelectorAll(':scope > .oc-drop-indicator').forEach(function(el){el.remove();});var t=targetFor(ev.clientY),indicator=document.createElement('div');indicator.className='oc-drop-indicator';if(t){if(t.after)t.item.after(indicator);else t.item.before(indicator);}else group.appendChild(indicator);});group.addEventListener('drop',function(ev){if(!dragged)return;ev.preventDefault();var t=targetFor(ev.clientY);if(t){if(t.after)t.item.after(dragged);else t.item.before(dragged);}else group.appendChild(dragged);dashboardApplyOrderFromSidebar();clear();});group.addEventListener('dragend',clear);group.addEventListener('keydown',function(ev){var grip=ev.target.closest&&ev.target.closest('[data-nav-order-grip="dashboard"]');if(!grip||!ev.altKey||(ev.key!=='ArrowUp'&&ev.key!=='ArrowDown'))return;var item=grip.closest('.oc-nav-item[data-section]');if(!item)return;ev.preventDefault();if(ev.key==='ArrowUp'){var prev=item.previousElementSibling;while(prev&&!(prev.matches&&prev.matches('.oc-nav-item[data-section]')))prev=prev.previousElementSibling;if(prev)group.insertBefore(item,prev);}else{var next=item.nextElementSibling;while(next&&!(next.matches&&next.matches('.oc-nav-item[data-section]')))next=next.nextElementSibling;if(next)group.insertBefore(next,item);}dashboardApplyOrderFromSidebar();var nextGrip=item.querySelector('[data-nav-order-grip="dashboard"]');if(nextGrip)nextGrip.focus();});}
     document.addEventListener('DOMContentLoaded', initDashboardSectionLayout);
 
     /** Check whether an agent card should be compact */
@@ -20494,6 +20507,32 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return Array.isArray(list) ? list.map(v => String(v || '').trim()).filter(Boolean) : [];
     }
 
+    // Pure: the agent profile the bound model hands the item's current
+    // state to (`workflows.repos[repo].dispatch` keyed by stage number,
+    // cncf/techdocs#395), or null: an unbound repository, a PR row drawn
+    // under its issue, a state the model keeps for people, or a state that
+    // does not apply to the row's kind.
+    function stageTrackerWorkflowDispatchOf(item, workflows) {
+      if (!item || item.via_pr) return null;
+      const wf = stageTrackerWorkflowOf({ workflows }, item.repo);
+      if (!wf || !wf.dispatch) return null;
+      const t = wf.dispatch[String(Number(item.stage) || 0)];
+      if (!t || !t.profile) return null;
+      const kind = item.kind === 'pr' ? 'pr' : 'issue';
+      if (Array.isArray(t.kinds) && t.kinds.length && t.kinds.indexOf(kind) < 0) return null;
+      return { profile: String(t.profile), state: String(t.state || ''), reply: String(t.reply || '') };
+    }
+
+    // Pure: the ⋯ menu entry for that hand-off — owner only, since it
+    // kicks an agent with a prompt.
+    function stageTrackerWorkflowDispatchAction(item, workflows, ctx) {
+      const t = stageTrackerWorkflowDispatchOf(item, workflows);
+      if (!t) return null;
+      const owner = !!(ctx && ctx.owner);
+      const hint = t.reply ? 'also runs on ' + t.reply : 'hand off now';
+      return { id: 'wf-dispatch', label: 'Send to ' + t.profile, hint, profile: t.profile, enabled: owner, why: owner ? '' : 'Needs the owner role' };
+    }
+
     // Pure: a model verb as the pill prints it — "approve analysis" →
     // "Approve analysis".
     function stageTrackerWorkflowReplyLabel(verb) {
@@ -24545,6 +24584,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'decide:close-superseded': 'Close as superseded by', 'decide:close-wontfix': "Close as won't-fix",
       'decide:close-read': 'Close now', 'decide:close-deferred': 'Close now',
       'decide:close-issue': 'Close issue',
+      'wf-dispatch': 'Send to agent',
       'decide:adopt': 'Adopt (hive takes over)',
       'decide:queue-merge': 'Approve and let hive merge', 'decide:merge-now': 'Merge now as maintainer',
       'decide:adopt-now': 'Adopt now — hive takes it over', 'decide:reroute': 'Reroute to another clanker',
@@ -24716,13 +24756,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // repaint showGHAuthState schedules settles the pills within the tick.
     function stageTrackerActionCtx(repo) {
       const governor = (window._lastStatus && window._lastStatus.governor) || null;
-      if (stageTrackerAuthPending()) return { user: true, canHold: null, canHuman: true, authPending: true, login: '', governor };
+      if (stageTrackerAuthPending()) return { user: true, canHold: null, canHuman: true, owner: true, authPending: true, login: '', governor };
       const role = window._hiveRole || 'read';
       const owner = dashboardRoleAtLeast(role, 'owner');
       const user = !!window._hiveUser || owner;
       if (typeof ensureRepoHoldPermission === 'function') ensureRepoHoldPermission(repo);
       const canHold = owner || (typeof repoHoldPermissionKnown === 'function' && repoHoldPermissionKnown(repo)) ? true : (user ? null : false);
-      return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger'), login: String(window._hiveUser || ''), governor };
+      return { user, canHold, canHuman: user && dashboardRoleAtLeast(role, 'merger'), owner, login: String(window._hiveUser || ''), governor };
     }
     // Pure: the item a row's "Decide…" acts on. A PR parked at 085 (the
     // "Needs human decision" pill on the Merge queue column) decides itself;
@@ -25006,6 +25046,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ? { id: 'release', label: 'Release hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target }
         : { id: 'hold', label: 'Hold', enabled: write, why: write ? '' : STAGE_TRACKER_WHY_WRITE, sep: triage && !target });
       out.push({ id: 'retry', label: 'Re-evaluate now', hint: 'rescan', enabled: true, why: '' });
+      // A model-bound row whose state the model hands to an agent profile
+      // (cncf/techdocs#395): the owner can send it now.
+      const wfDispatch = typeof stageTrackerWorkflowDispatchAction === 'function' && typeof _stageTracker !== 'undefined' && _stageTracker ? stageTrackerWorkflowDispatchAction(item, _stageTracker.workflows, ctx) : null;
+      if (wfDispatch) out.push(wfDispatch);
       if (!has('needs-human')) out.push({ id: 'needs-human', label: 'Mark needs-human…', enabled: !!ctx.canHuman, why: ctx.canHuman ? '' : STAGE_TRACKER_WHY_ROLE });
       if (item.kind === 'issue' && String(item.state || '').toLowerCase() !== 'closed') out.push(Object.assign({ id: 'decide:close-issue', label: 'Close issue…', danger: true, hint: 'only this issue · completed' }, stageTrackerActionAllowed('decide:close-issue', ctx)));
       out.push({ id: 'open', label: 'Open on GitHub', enabled: !!item.url, why: item.url ? '' : 'No GitHub link', sep: true });
@@ -25854,6 +25898,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         case 'hold': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: true, type } };
         case 'release': return { url: '/api/repos/' + seg + '/items/' + n + '/hold', body: { held: false, type } };
         case 'retry': return { url: '/api/repos/rescan', body: {}, once: true };
+        case 'wf-dispatch': return { url: '/api/workflows/dispatch', body: { repo: item.repo, number: n } };
         case 'needs-human': return { url: '/api/review/pipeline/' + seg + '/' + n + '/send-to-human', body: { reason: payload.comment || ('flagged from the activity monitor for ' + stageTrackerRefOf(item)) } };
         case 'accept-triage': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/accept-triage', body: {} };
         case 'blocker:recheck': return item.kind === 'pr' ? null : { url: '/api/repos/' + seg + '/items/' + n + '/blocker/recheck', body: {} };
@@ -26069,7 +26114,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           // the tracker's to show, so "Approving…" must not linger beside
           // the ✓ waiting for it (#15103).
           if (result.action === 'refused') stageTrackerNoteActionFailure(it, id, result.outcome || 'refused');
-          if (result.action === STAGE_TRACKER_ACTION_NOOP || result.action === STAGE_TRACKER_ACTION_NO_EFFECT || result.action === 'refused' || result.action === 'approved') stageTrackerClearPending(pend);
+          if (result.action === STAGE_TRACKER_ACTION_NOOP || result.action === STAGE_TRACKER_ACTION_NO_EFFECT || result.action === 'refused' || result.action === 'approved' || result.action === 'dispatched') stageTrackerClearPending(pend);
           else {
             if (typeof stageTrackerDecidePending === 'function') stageTrackerDecidePending(pend, result, stageTrackerItemByKey(_stageTracker, stageTrackerTargetKey(result.target)));
             // Closed / merged: the terminal caption stays on the chevron
@@ -26807,7 +26852,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     function stageTrackerMergeBannerMs() { return stageTrackerToastMs('info') * STAGE_TRACKER_MERGE_BANNER_FACTOR; }
     const STAGE_TRACKER_ACTING_MAX_MS = 180000;
     const STAGE_TRACKER_ACTING_CAPTIONS = {
-      'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
+      'hold': 'Holding…', 'release': 'Releasing hold…', 'retry': 'Re-evaluating…', 'wf-dispatch': 'Sending to the agent…', 'needs-human': 'Marking needs-human…', 'accept-triage': 'Accepting triage…',
       'blocker:recheck': 'Checking App permissions…', 'blocker:close-partial': 'Closing as partial…',
       'decide:delegate': 'Hive deciding…', 'decide:delegate:preview': 'Asking the hive…', 'decide:delegate-all': 'Hive deciding each PR…', 'decide:delegate:rerun': 'Hive deciding again…', 'decide:approve': 'Approving…', 'decide:direction': 'Recording direction…', 'decide:close-superseded': 'Closing…', 'decide:close-wontfix': 'Closing…', 'decide:close-read': 'Closing…', 'decide:close-deferred': 'Closing…', 'decide:close-issue': 'Closing…',
       'decide:merge-now': 'Merging…', 'decide:queue-merge': 'Recording approval…',
@@ -26815,7 +26860,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       'gate:decide': 'Sending your decision…', 'gate:request-changes': 'Requesting changes…', 'gate:confirm-sentinel': 'Confirming safe…',
     };
     const STAGE_TRACKER_ACTION_WORDS = {
-      adopted: 'adopted', approved: 'approved', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
+      adopted: 'adopted', approved: 'approved', dispatched: 'sent to its agent', recommended: 'recommendation only', closed: 'closed', directed: 'direction recorded', refused: 'refused', 'decided-each': 'decided per PR',
       merged: 'merged', 'queued-for-merge': 'queued for merge — hive merges it on its next pass once CI is green', [STAGE_TRACKER_ACTION_REBASE_QUEUED]: 'rebase queued, merge to follow',
       held: 'held', released: 'hold released', 'sentinel-confirmed': 'sentinel confirmed safe', rescanned: 'rescanned', 'triage-accepted': 'triage accepted', 'needs-human': 'marked needs-human', rerouted: 'rerouted', [STAGE_TRACKER_ACTION_NOOP]: 'no change',
       [STAGE_TRACKER_ACTION_NO_EFFECT]: 'no effect yet',
@@ -37627,9 +37672,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const state = String(rr.credential_state || '');
       const reason = String(rr.credential_reason || '');
       const login = String(rr.credential_login || '');
+      const identity = String(rr.credential_identity || '');
+      const note = String(rr.credential_note || '');
       const chips = {
-        'write-tier': ['ok', login ? '🔑 as ' + login : '🔑 owner account', 'Issues and PRs here appear under the hive owner\'s GitHub account' + (login ? ' (' + login + ')' : '') + ', never under the hive\'s App.'],
-        'read-only': ['ro', 'read-only', reason || 'The hive owner has not connected a GitHub account, so the entry was downgraded to read-only.'],
+        'write-tier': identity === 'bot'
+          ? ['ok', '🤖 as ' + (login || 'hive bot'), 'Issues and PRs here appear under the hive\'s GitHub App' + (login ? ' (' + login + ')' : '') + (note ? ': ' + note : '') + '.']
+          : ['ok', login ? '🔑 as ' + login : '🔑 owner account', 'Issues and PRs here appear under ' + (identity === 'token_file' ? 'the write_token_file account' : 'the hive owner\'s GitHub account') + (login ? ' (' + login + ')' : '') + (note ? '; ' + note : '') + '.'],
+        'read-only': ['ro', 'read-only', reason || 'No credential covers this repo, so the entry was downgraded to read-only.'],
+        'unresolved': ['warn', 'unresolved', reason || 'The App installation could not be checked; served read-only until the next pass resolves it.'],
       };
       const chip = chips[state];
       const chipHTML = chip
@@ -50188,7 +50238,13 @@ function burnAreaChart() {
     function meetingsFriendlyReason(m) {
       const raw = String(m.state_reason || '');
       if (!raw) return '';
+      // Discord has no guest lobby: a blocked Discord join is the bot's own
+      // server permissions on that voice channel (#18598).
+      if (m.platform === 'discord' && (m.state === 'blocked' || /blocked|no permission/.test(raw))) {
+        return 'The Discord bot cannot join that voice channel. In the server, give the bot\'s role View Channel, Connect and Speak on the channel, then try again.';
+      }
       if (m.state === 'blocked') return 'The meeting refused a guest bot.';
+      if (/consent_undelivered/.test(raw)) return 'Left: the consent notice could not be delivered' + (m.consent_error ? ' (' + m.consent_error + ')' : '') + '.';
       if (/lobby_timeout/.test(raw)) return 'Nobody admitted hive from the lobby in time.';
       if (/platform_unavailable/.test(raw)) return 'This meeting platform is not available on this hive right now.';
       if (/invalid_argument/.test(raw)) return 'The meeting service did not accept this meeting link.';
@@ -50214,7 +50270,7 @@ function burnAreaChart() {
       if (request) {
         return '<div class="meetings-row" data-state="requested"><div class="meetings-row-main"><div class="meetings-row-head">' +
           '<span class="meetings-row-title">' + escapeHtml((m.requested_by.name || m.requested_by.id || 'someone') + ' asked hive into ' + meetingsLabel(m)) + '</span>' +
-          '<span class="kc-pill" data-status="syncing">join request</span></div></div>' +
+          '<span class="kc-pill" data-status="syncing">join request</span></div>' + meetingsReasonHtml(m) + '</div>' +
           '<div class="meetings-row-actions">' +
           '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsApproveRequest" data-arg0="' + escapeHtml(m.id) + '">Approve</button>' +
           '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button></div></div>';
@@ -50228,7 +50284,8 @@ function burnAreaChart() {
         '<span class="kc-pill" data-status="' + escapeHtml(MEETINGS_PILL_STATUS[state] || '') + '">' + escapeHtml(state) + '</span></div>' +
         (meta ? '<div class="muted-xs">' + escapeHtml(meta) + '</div>' : '') +
         meetingsReasonHtml(m) +
-        (m.consent_error && !m.consent_posted_at ? '<div class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</div>' : '') +
+        (active && m.consent_error && !m.consent_posted_at ? '<div class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</div>' : '') +
+        (m.consent_via === 'voice' ? '<div class="muted-xs">consent notice spoken: the meeting chat could not deliver it</div>' : '') +
         (m.voice_enabled && !m.voice_capable ? '<div class="muted-xs">joined without voice; replies go to chat</div>' : '') +
         '</div><div class="meetings-row-actions">' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +
@@ -51016,6 +51073,24 @@ function burnAreaChart() {
         '<label class="inbox-toggle"><input type="checkbox" data-ma-field="voice_on_address" data-change-action="maInput" data-arg0="voice_on_address" data-arg-types="s,c"' + (f.voice_on_address ? ' checked' : '') + '> Speak aloud only when addressed by name (never unprompted; off sends every reply to chat)</label></section>';
     }
 
+    // ── Research agents (hivecommons/hive#18590): where Betty's deep dives
+    // go, how many agents can take one now, and a plain warning when none can.
+    function maResearchHtml() {
+      const r = (_maState && _maState.data && _maState.data.research) || {};
+      const agents = (r.agents || []).join(', ');
+      const runs = r.base_agent ? 'Runs on the <code>' + escapeHtml(r.base_agent) + '</code> agent\'s backend' +
+        (r.backend ? ' (' + escapeHtml(r.backend) + (r.model ? ', ' + escapeHtml(r.model) : '') + ')' : '') + '.' : '';
+      const status = r.wired
+        ? '<p class="muted-xs">Agents: ' + escapeHtml(agents || 'none') + ' (' + (r.available || 0) + ' available now). ' + runs + '</p>'
+        : '';
+      return '<section class="ma-section" aria-labelledby="ma-research-h"><h4 id="ma-research-h">Research</h4>' +
+        '<p class="muted-xs">When the persona needs to look something up she says so, sends it to the read-only research agents and reports back in the channel she was asked in. Pool size ' +
+        escapeHtml(String(r.pool_size || '')) + ' ' + yamlHint('meetings.research_pool_size') + '</p>' +
+        status +
+        (r.warning ? '<p class="kc-error muted-xs" role="status" data-ma-research-warning>' + escapeHtml(r.warning) + '</p>' : '') +
+        '</section>';
+    }
+
     // ── Action requests (hivecommons/hive#18406): what people may ask the
     // persona to draft in a meeting. Saved on its own through
     // PUT /api/meetings/actions/settings and applied without a restart.
@@ -51102,7 +51177,7 @@ function burnAreaChart() {
       host.innerHTML =
         (d.restart_required ? '<p class="cmp-banner" role="status">Saved. Restart the hive to apply the new persona.</p>' : '') +
         (d.running ? '' : '<p class="muted-xs">Meetings are not running on this hive; the persona applies once meetings are on (Settings, Meetings).</p>') +
-        maPersonaHtml(f) + maBehaviourHtml(f) + (typeof maModelHtml === 'function' ? maModelHtml() : '') + (typeof maActionsHtml === 'function' ? maActionsHtml() : '') + maEmailHtml() +
+        maPersonaHtml(f) + maBehaviourHtml(f) + maResearchHtml() + (typeof maModelHtml === 'function' ? maModelHtml() : '') + (typeof maActionsHtml === 'function' ? maActionsHtml() : '') + maEmailHtml() +
         '<div class="hive-dialog-error" role="alert" data-ma-error></div>' +
         '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="maSave">Save</button></div>';
     }
@@ -51228,14 +51303,44 @@ function burnAreaChart() {
         const how = !e.proven && e.code
           ? '<div class="muted-xs">Send an email from ' + escapeHtml(e.email) + ' to <code>' + escapeHtml(mine.address || '') + '</code> with <code>' + escapeHtml(e.code) + '</code> in the subject.</div>'
           : (!e.proven ? '<div class="muted-xs">The code expired: add the address again for a new one.</div>' : '');
-        const err = e.last_error ? '<div class="kc-error muted-xs">' + escapeHtml(e.last_error) + '</div>' : '';
+        const err = maProofFailureHtml(e);
         const inactive = e.active === false ? ' <span class="muted-xs">(no access to this hive: not on the allowlist)</span>' : '';
         return '<li><span class="ma-email">' + escapeHtml(e.email) + ' ' + state + '</span>' + inactive +
           ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="maRemoveMyEmail" data-arg0="' + escapeHtml(e.email) + '"' + (on ? '' : ' disabled') + '>Remove</button>' + how + err + '</li>';
       }).join('') + '</ul>';
-      return '<div class="section-label m-0">My calendar emails</div>' + rows +
+      return '<div class="section-label m-0">My calendar emails</div>' + rows + maProofAttemptsHtml(mine) +
         '<div class="ma-add-email"><input class="kb-search-box" type="email" data-ma-new-email placeholder="you@example.com" autocomplete="email" aria-label="Calendar email to add"' + (on ? '' : ' disabled') + '>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="maAddMyEmail"' + (on ? '' : ' disabled') + '>Add</button></div>';
+    }
+
+    // Why the latest proof mail of a row did not count (#18579): the
+    // server's plain-language reason with what to do, the SPF, DKIM and
+    // alignment results hive-mx saw, and a Check again button.
+    function maProofFailureHtml(e) {
+      const f = e.last_failure;
+      if (!f) return e.last_error ? '<div class="kc-error muted-xs">' + escapeHtml(e.last_error) + '</div>' : '';
+      const when = f.at ? ' <span class="muted-xs">(' + escapeHtml(formatDashboardDateTime(f.at)) + ')</span>' : '';
+      return '<div class="kc-error muted-xs" data-ma-proof-failure="' + escapeHtml(f.reason || '') + '">' + escapeHtml(f.message || e.last_error || '') + when + '</div>' +
+        '<div class="muted-xs" data-ma-proof-auth>' + escapeHtml(maProofAuthSummary(f)) + '</div>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="maLoadMyEmails">Check again</button>';
+    }
+
+    function maProofAuthSummary(f) {
+      const yes = b => (b ? 'yes' : 'no');
+      const spf = 'SPF ' + (f.spf || 'none') + (f.spf_domain ? ' for ' + f.spf_domain : '');
+      const dkim = (f.dkim || []).length
+        ? 'DKIM ' + f.dkim.map(d => (d.result || 'none') + ' for ' + d.domain).join(', ')
+        : 'DKIM none';
+      return 'What the mail server saw: ' + spf + '; ' + dkim + '; aligned with ' + (f.from_domain || 'the From domain') + ': ' + yes(f.aligned) + '.';
+    }
+
+    // Owner only: proof mails whose code matched no address (a typo), with
+    // the sender masked. The server sends them to the owner alone.
+    function maProofAttemptsHtml(mine) {
+      const list = (mine && mine.recent_proof_attempts) || [];
+      if (!list.length) return '';
+      return '<div class="section-label m-0">Recent proof attempts</div><ul class="ma-proof-attempts">' +
+        list.map(a => '<li>' + escapeHtml(a.from || 'unknown sender') + ' <span class="muted-xs">' + escapeHtml(a.at ? formatDashboardDateTime(a.at) : '') + '</span>: ' + escapeHtml(a.reason || '') + '</li>').join('') + '</ul>';
     }
 
     async function maLoadMyEmails() {
@@ -60651,7 +60756,7 @@ function burnAreaChart() {
       { tab: 'Meetings', section: 'Meetings', label: 'Meetings (Quorum)', key: 'meetings.enabled', lazy: true, text: 'meetings quorum vexa discord live meeting notes research google meet teams zoom tenant key bot token meetings.enabled meetings.vexa.url meetings.vexa.api_key_file meetings.discord.token_file' },
       { tab: 'Hub', section: 'Contributor Relay', label: 'Fix budget', key: 'contribute.max_parallel_fixes', text: 'fix budget parallel fixes focus window red pr fix-pr preempt spawn contribute.max_parallel_fixes contribute.min_focus_window' },
       { tab: 'Logging', section: 'Logging', label: 'Governor logging', key: 'governor.logging.max_size_mb', text: 'governor logging directory level compression max size age backups governor.logging.compress governor.logging.dir governor.logging.level governor.logging.max_age_days governor.logging.max_backups governor.logging.max_size_mb' },
-      { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff update interval rewrite floor changed digest governor.advisory.update_interval_s governor.advisory.digest_min_interval' },
+      { tab: 'Advisory', section: 'Advisory', label: 'Advisory digest', key: 'governor.advisory.max_findings', text: 'advisory digest max findings show all staleness pr autoclose target linear issue retry backoff update interval rewrite floor changed digest governor.advisory.update_interval_s governor.advisory.digest_min_interval advisory report in every repo per repo governor.advisory.per_repo' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Event triggers', key: 'triggers', text: 'event triggers CEL scanner issue first seen issue.opened pr.opened github webhook rules repository agent priority' },
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Stall replan', key: 'governor.replan.enabled', text: 'stall replan approved plans architect interval threshold max replans' },
       { tab: 'Advisory', section: 'Queue health', label: 'Queue health thresholds', key: 'governor.advisory.queue_health.blocked_pr_pct', text: 'advisory queue health blocked needs human stale lane share check share thresholds' },
@@ -61788,7 +61893,9 @@ function burnAreaChart() {
       var quickStarts = AGENT_QUICK_START_TEMPLATES.map(function(t) {
         return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="applyAgentQuickStart" data-arg0="' + esc(t.id) + '" title="' + esc(t.description) + '">' + esc(t.emoji) + ' ' + esc(t.displayName) + '</button>';
       }).join('');
+      setTimeout(loadDiscoveredAgents, 0);
       return '<div style="max-width:600px;margin:0 auto">' +
+        '<div id="discovered-agents" class="mb-6"></div>' +
         '<div style="background:color-mix(in srgb, var(--accent) 7%, transparent);border:1px solid color-mix(in srgb, var(--accent) 22%, transparent);border-radius:var(--r);padding:var(--sp-5);margin-bottom:var(--sp-6)">' +
           '<div style="font-weight:700;color:var(--text);margin-bottom:var(--sp-2)">Start with a template, then tune it</div>' +
           '<p class="fs-base text-muted" style="margin:var(--sp-0) var(--sp-0) var(--sp-4)">Pick a common agent role to prefill the create form, or import/paste a full definition below.</p>' +
@@ -61820,6 +61927,75 @@ function burnAreaChart() {
     }
 
     var _pendingImportData = null;
+
+    // Agents a managed repo declares under .hive/agents/ (#18491). Nothing
+    // runs until an owner approves; backend, model, mode and tools stay
+    // owner-controlled, so Approve registers the agent with the defaults and
+    // the owner tunes them in the agent's settings afterwards.
+    var DISCOVERED_AGENT_STATUS_LABELS = {pending: 'Waiting for approval', invalid: 'Invalid definition', approved: 'Approved', rejected: 'Rejected', orphaned: 'File removed, agent paused'};
+
+    async function loadDiscoveredAgents() {
+      var box = document.getElementById('discovered-agents');
+      if (!box) return;
+      try {
+        var resp = await fetch('/api/agents/discovered', {headers:_inceptionAuthHeaders()});
+        var d = await resp.json();
+        if (!resp.ok) { box.innerHTML = ''; return; }
+        renderDiscoveredAgents(box, d);
+      } catch(e) { box.innerHTML = ''; }
+    }
+
+    function renderDiscoveredAgents(box, d) {
+      if (!d || !d.enabled) { box.innerHTML = ''; return; }
+      var entries = (d.entries || []).filter(function(e) { return e.status !== 'approved'; });
+      var rows = entries.map(function(e) {
+        var title = (e.emoji ? esc(e.emoji) + ' ' : '') + esc(e.display_name || e.name || e.path);
+        var meta = esc(e.repo) + ' · ' + esc(e.path) + ' · ' + esc(DISCOVERED_AGENT_STATUS_LABELS[e.status] || e.status);
+        var detail = e.error ? '<div class="fs-base text-muted">' + esc(e.error) + '</div>' : (e.description ? '<div class="fs-base text-muted">' + esc(e.description) + '</div>' : '');
+        var actions = '';
+        if (e.status === 'pending') {
+          actions = '<button type="button" class="hv-btn btn-primary btn-sm" data-action="approveDiscoveredAgent" data-arg0="' + esc(e.id) + '">Approve</button> ' +
+            '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="rejectDiscoveredAgent" data-arg0="' + esc(e.id) + '">Reject</button>';
+        } else if (e.status === 'invalid') {
+          actions = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="rejectDiscoveredAgent" data-arg0="' + esc(e.id) + '">Reject</button>';
+        }
+        return '<div class="config-field mb-5"><label>' + title + '</label><div class="fs-base text-muted">' + meta + '</div>' + detail + (actions ? '<div>' + actions + '</div>' : '') + '</div>';
+      }).join('');
+      box.innerHTML = '<div class="config-field mb-5"><label>Declared in your repos</label>' +
+        '<p class="fs-base text-muted">Agent definitions found under <code>.hive/agents/</code> in allowlisted managed repos. Approving registers the agent with a copilot backend; set its model, mode and tools in the agent settings. <button type="button" class="hv-btn btn-secondary btn-sm" data-action="refreshDiscoveredAgents">Rescan</button></p>' +
+        (rows || '<p class="fs-base text-muted">None waiting.</p>') + '</div>';
+    }
+
+    async function discoveredAgentAction(path, id, okMessage) {
+      try {
+        var resp = await fetch(path, {method:'POST', headers:_inceptionAuthHeaders(), body:JSON.stringify({id:id})});
+        var d = await resp.json();
+        if (!resp.ok) { showToast(d.error || 'Request failed', 'error'); return false; }
+        showToast(okMessage(d), 'success');
+        return true;
+      } catch(e) { showToast('Error: ' + e.message, 'error'); return false; }
+    }
+
+    async function approveDiscoveredAgent(id) {
+      var ok = await discoveredAgentAction('/api/agents/discovered/approve', id, function(d) { return 'Agent "' + (d.name || '?') + '" approved'; });
+      if (!ok) return;
+      closeConfigDialog();
+      fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
+    }
+
+    async function rejectDiscoveredAgent(id) {
+      if (await discoveredAgentAction('/api/agents/discovered/reject', id, function() { return 'Definition rejected'; })) loadDiscoveredAgents();
+    }
+
+    async function refreshDiscoveredAgents() {
+      var box = document.getElementById('discovered-agents');
+      try {
+        var resp = await fetch('/api/agents/discovered/refresh', {method:'POST', headers:_inceptionAuthHeaders()});
+        var d = await resp.json();
+        if (!resp.ok) { showToast(d.error || 'Rescan failed', 'error'); return; }
+        if (box) renderDiscoveredAgents(box, d);
+      } catch(e) { showToast('Error: ' + e.message, 'error'); }
+    }
 
     function applyAgentQuickStart(templateID) {
       var t = AGENT_QUICK_START_TEMPLATES.find(function(x) { return x.id === templateID; });
@@ -65743,8 +65919,9 @@ function burnAreaChart() {
         </div>
         <div class="config-toggle">
           <div class="config-toggle-switch ${g.sandboxEnabled ? 'on' : ''}" id="cfg-agent-sandbox" data-action="toggleConfigSwitch" data-section="general" data-key="sandboxEnabled"></div>
-          <span class="config-toggle-label">Run in sandbox ${settingHelpMark('sandbox-isolation', '', 'Run in sandbox', `Opt this agent into the credential-free sandbox runner. Requires the hive-wide sandbox gate in Governor → Security to be enabled.`)}${g.sandboxEffective ? ' ' + statusBadgeHTML('ready', 'sandboxed', '', 'done') : ''}</span>
+          <span class="config-toggle-label">Run in sandbox ${settingHelpMark('sandbox-isolation', '', 'Run in sandbox', `Opt this agent into the credential-free sandbox runner. Requires the hive-wide sandbox gate in Governor → Security to be enabled. Turning it on writes a complete sandbox block: the agent_sandbox defaults, or a copy of another sandboxed agent's block (its publish.verify commands excluded).`)}${g.sandboxEffective ? ' ' + statusBadgeHTML('ready', 'sandboxed', '', 'done') : ''}</span>
         </div>
+        ${sandboxSourcePickerHTML(g)}
         <details class="settings-subsection-details"><summary class="settings-subsection-summary">Substrate sandbox overrides</summary>
         ${substrateSandboxFields('general', g.sandboxSubstrate)}
         </details>
@@ -67074,6 +67251,40 @@ function burnAreaChart() {
       else note = 'No hive default set, so agents that leave Explain Mode unset do not explain.';
       return 'In force now: <strong class="text-default">' + esc(effective) + '</strong>. ' + esc(note) + ' Applies from the next kick &mdash; no restart needed.';
     }
+
+
+    // Run-in-sandbox source picker (hivecommons/hive#18525). Shown while the
+    // toggle is being turned on: the server refuses a toggle that would leave
+    // the agent with no sandbox image or runtime, so the operator picks where
+    // the block comes from — the agent_sandbox defaults when they are
+    // complete, or another agent that already has a complete block.
+    function sandboxSourcePickerHTML(g) {
+      const sources = Array.isArray(g.sandboxCopySources) ? g.sandboxCopySources : [];
+      const defaultsOk = !g.sandboxDefaultsProblem;
+      const hidden = g.sandboxEnabled ? ' style="display:none"' : '';
+      let inner;
+      if (!defaultsOk && sources.length === 0) {
+        inner = '<div class="config-field-hint" id="cfg-agent-sandbox-source-error" role="alert" style="color:var(--red)">'
+          + esc(g.sandboxDefaultsProblem) + '. No agent has a complete sandbox block to copy either: set the agent_sandbox defaults in Governor → Security first.</div>';
+      } else {
+        const opts = (defaultsOk ? '<option value="">agent_sandbox defaults</option>' : '')
+          + sources.map(n => '<option value="' + esc(n) + '">Copy from ' + esc(n) + '</option>').join('');
+        inner = '<label style="font-size:0.7rem">Sandbox settings from</label>'
+          + '<select id="cfg-agent-sandbox-source" data-change-action="markDirty" data-arg0="general" data-arg1="sandboxCopyFrom" data-arg-types="s,s,v">' + opts + '</select>'
+          + (defaultsOk ? '' : '<div class="config-field-hint" style="color:var(--muted)">' + esc(g.sandboxDefaultsProblem) + ', so a block must be copied from another agent.</div>');
+      }
+      return '<div class="config-field" id="cfg-agent-sandbox-source-wrap"' + hidden + '>' + inner + '</div>';
+    }
+
+    // Called by toggleConfigSwitch when the Run-in-sandbox toggle flips.
+    function onSandboxToggle(isOn) {
+      const wrap = document.getElementById('cfg-agent-sandbox-source-wrap');
+      if (!wrap) return;
+      wrap.style.display = isOn ? '' : 'none';
+      const sel = document.getElementById('cfg-agent-sandbox-source');
+      if (isOn && sel && sel.value) markDirty('general', 'sandboxCopyFrom', sel.value);
+      if (!isOn && _configState.dirty.general) delete _configState.dirty.general.sandboxCopyFrom;
+    }
     // ── Governor Tab Renderers ──
     function renderGovGeneral() {
       const currentId = (window._lastStatus || {}).hiveId || '';
@@ -68223,7 +68434,7 @@ function burnAreaChart() {
           <div id="cfg-repo-add-status" style="font-size:0.72rem;margin-top:var(--sp-3)"></div>
           ${defaultWarn}
         </div>
-        <div class="settings-subsection-title mt-4">Reference repos ${yamlHint('project.reference_repos[]')} ${settingHelpMark('settings', 'repos', 'Reference repos', 'Repositories outside this project that agents may clone and read but do not manage: no queue, no kicks, no work items. Read-only by default; a write opt-in allows opening issues and/or PRs there with a credential the hive verifies on save. A repo is either monitored above or a reference repo, never both.')}</div>
+        <div class="settings-subsection-title mt-4">Reference repos ${yamlHint('project.reference_repos[]')} ${settingHelpMark('settings', 'repos', 'Reference repos', 'Repositories outside this project that agents may clone and read but do not manage: no queue, no kicks, no work items. Read-only by default; a write opt-in allows opening issues and/or PRs there with a credential the hive verifies on save. Post on other projects as (project.remote_write_identity) picks whether those posts appear as the hive bot or as you. A repo is either monitored above or a reference repo, never both.')}</div>
         <div id="cfg-reference-repos-host"><div class="fs-sm text-muted">Loading…</div></div>
         ${anyLabelDriven ? `<div class="ld-defaults" id="cfg-label-driven-defaults">
           <div class="config-toggle">
@@ -68295,7 +68506,7 @@ function burnAreaChart() {
         } catch (ie) {
           identity = { unavailable: ie.message };
         }
-        renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || ['issues', 'prs'], identity);
+        renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || ['issues', 'prs'], identity, referenceRepoWriteMeta(d));
       } catch (e) {
         host = host || document.getElementById('cfg-reference-repos-host');
         if (!host) return;
@@ -68334,6 +68545,89 @@ function burnAreaChart() {
       return hint;
     }
 
+    /* referenceRepoWriteMeta picks project.remote_write_identity (#18516)
+       out of a GET/PUT /api/config/reference-repos response. */
+    function referenceRepoWriteMeta(d) {
+      d = d || {};
+      return {
+        write_identity: d.write_identity || 'bot',
+        write_identities: (d.write_identities && d.write_identities.length) ? d.write_identities : ['bot', 'bot_only', 'owner'],
+        bot_login: d.bot_login || ''
+      };
+    }
+
+    /* referenceRepoIdentityLine says, for one write entry, which identity the
+       hive will actually post as there and why (#18516): "posts as <login>:
+       App installed on <org>", "posts as <login>: App not installed on
+       <org>", or why it is read-only. Empty for a plain read-only entry. */
+    function referenceRepoIdentityLine(entry, setting) {
+      const org = String(entry.repo || '').split('/')[0];
+      const state = entry.credential_state || '';
+      if (state === 'write-tier') {
+        const who = entry.credential_login || 'the connected account';
+        if (entry.credential_identity === 'bot') return 'posts as ' + who + ': App installed on ' + org;
+        if (entry.credential_identity === 'token_file') return 'posts as ' + who + ': write_token_file';
+        if (setting === 'owner') return 'posts as ' + who + ': set to post as you';
+        return 'posts as ' + who + ': App not installed on ' + org;
+      }
+      if (state === 'unresolved') return 'read-only this pass: could not check the App on ' + org;
+      if (state === 'read-only') {
+        if (setting === 'bot_only') return 'read-only: bot only, App not installed on ' + org;
+        return 'read-only: connect your GitHub account';
+      }
+      return '';
+    }
+
+    /* renderWriteIdentityPanel is the "Post on other projects as" control
+       (#18516, project.remote_write_identity): three choices, owner-only on
+       the server, saved at once and re-resolved before the section reloads. */
+    function renderWriteIdentityPanel(host, meta, onDone) {
+      const labels = { bot: 'Hive bot, falling back to me', bot_only: 'Hive bot only', owner: 'Me' };
+      const titles = {
+        bot: 'Post as the hive\'s GitHub App where the project installed it; elsewhere as your connected account; read-only if you have not connected one.',
+        bot_only: 'Post only as the hive\'s GitHub App where the project installed it; read-only everywhere else, even with your account connected.',
+        owner: 'Post as your connected GitHub account on every project.'
+      };
+      const panel = referenceRepoNode('div', 'config-list-item cfg-write-identity');
+      panel.appendChild(referenceRepoNode('span', 'config-repo-name', 'Post on other projects as:'));
+      const group = referenceRepoNode('div', 'cfg-write-identity-choices');
+      group.setAttribute && group.setAttribute('role', 'radiogroup');
+      const status = referenceRepoNode('span', 'fs-sm text-muted cfg-write-identity-status');
+      const choices = [];
+      (meta.write_identities || []).forEach(value => {
+        const on = value === meta.write_identity;
+        const btn = referenceRepoNode('button', 'hv-btn btn-sm' + (on ? ' btn-primary' : ''), labels[value] || value);
+        btn.title = titles[value] || '';
+        if (btn.setAttribute) { btn.setAttribute('role', 'radio'); btn.setAttribute('aria-checked', on ? 'true' : 'false'); }
+        btn.addEventListener('click', async () => {
+          if (on) return;
+          choices.forEach(b => { b.disabled = true; });
+          status.textContent = 'Saving…';
+          try {
+            const res = await fetch('/api/config/reference-repos/write-identity', {
+              method: 'PUT',
+              headers: _inceptionAuthHeaders(),
+              body: JSON.stringify({ write_identity: value })
+            });
+            if (!res.ok) throw new Error(await saveErrorMessage(res));
+            showToast('Now posting on other projects as: ' + (labels[value] || value), 'success');
+            onDone();
+          } catch (e) {
+            choices.forEach(b => { b.disabled = false; });
+            status.textContent = e.message;
+            status.className = 'fs-sm text-danger cfg-write-identity-status';
+          }
+        });
+        choices.push(btn);
+        group.appendChild(btn);
+      });
+      panel.appendChild(group);
+      panel.appendChild(status);
+      host.appendChild(panel);
+      host.appendChild(referenceRepoNode('p', 'config-help',
+        'The hive bot' + (meta.bot_login ? ' (' + meta.bot_login + ')' : '') + ' makes clear the work came from the hive you commissioned, not from you personally; it is used only on projects that installed the hive\'s GitHub App themselves, and the hive never asks anyone to install it.'));
+    }
+
     /* referenceRepoCredentialChip is the per-entry credential state for a
        write entry (#18197): "<tier> · <state>" with the login the writes
        appear under, and the reason when the state is not write-tier. */
@@ -68357,7 +68651,7 @@ function burnAreaChart() {
       const title = referenceRepoNode('span', 'config-repo-name', 'Remote-repo identity');
       panel.appendChild(title);
       if (!identity || identity.unavailable) {
-        panel.appendChild(referenceRepoNode('span', 'text-muted fs-sm', 'Unavailable on this hive' + (identity && identity.unavailable ? ' (' + identity.unavailable + ')' : '') + '. Write-tier entries are served read-only.'));
+        panel.appendChild(referenceRepoNode('span', 'text-muted fs-sm', 'Unavailable on this hive' + (identity && identity.unavailable ? ' (' + identity.unavailable + ')' : '') + '. Entries that would post as you are served read-only.'));
         host.appendChild(panel);
         return;
       }
@@ -68372,14 +68666,14 @@ function burnAreaChart() {
         panel.appendChild(who);
         if (!identity.usable && identity.reason) panel.appendChild(referenceRepoNode('span', 'text-muted fs-sm cfg-reference-repo-reason', identity.reason));
         const disconnect = referenceRepoNode('button', 'hv-btn btn-sm', identity.usable ? 'Disconnect' : 'Remove token');
-        disconnect.title = 'Remove the token from this hive. Every write-tier reference repo drops to read-only.';
+        disconnect.title = 'Remove the token from this hive. Every reference repo that posts as you drops to read-only.';
         disconnect.addEventListener('click', async () => {
           disconnect.disabled = true;
           setStatus('Disconnecting…');
           try {
             const res = await fetch('/api/github-owner-identity', { method: 'DELETE', headers: _inceptionAuthHeaders() });
             if (!res.ok) throw new Error(await saveErrorMessage(res));
-            showToast('GitHub account disconnected; remote repos are read-only until one is connected', 'success');
+            showToast('GitHub account disconnected; repos that posted as you are read-only until one is connected', 'success');
             onDone();
           } catch (e) {
             disconnect.disabled = false;
@@ -68389,13 +68683,13 @@ function burnAreaChart() {
         panel.appendChild(disconnect);
         if (!identity.usable) panel.appendChild(connectButton());
       } else {
-        panel.appendChild(referenceRepoNode('span', 'text-muted fs-sm', 'Not connected: write-tier reference repos are served read-only.'));
+        panel.appendChild(referenceRepoNode('span', 'text-muted fs-sm', 'Not connected: entries that would post as you are served read-only.'));
         panel.appendChild(connectButton());
       }
       panel.appendChild(status);
       host.appendChild(panel);
       const help = referenceRepoNode('p', 'config-help',
-        'Issues and PRs the hive opens in repos it does not manage are written as the hive owner\'s own GitHub account, never as the hive\'s App. ' +
+        'Where the choice above posts as you, issues and PRs the hive opens in repos it does not manage are written as your own GitHub account. ' +
         'Connecting asks GitHub for the public_repo scope (public repositories only) through a one-time device flow; the token stays on this hive as an owner-only file and is never sent to the hub. ' +
         'Disconnecting here removes it from the hive; to revoke it on GitHub too, remove the authorization under Settings → Applications on github.com.');
       host.appendChild(help);
@@ -68456,17 +68750,19 @@ function burnAreaChart() {
     /* renderReferenceReposPanel paints the identity panel, the editable list
        and wires Save. entries is edited in place until Save; a failed Save
        keeps the edits. */
-    function renderReferenceReposPanel(host, entries, kinds, identity) {
+    function renderReferenceReposPanel(host, entries, kinds, identity, meta) {
       if (!host) return;
+      meta = meta || referenceRepoWriteMeta(null);
       /* derived_from is carried through so the server can tell a derived
          entry (rebuilt from its request issue, never saved) from an
          operator's. */
-      entries = entries.map(e => ({ repo: e.repo || '', write: (e.write || []).slice(), write_token_file: e.write_token_file || '', derived_from: e.derived_from || '', credential_state: e.credential_state || '', credential_reason: e.credential_reason || '', credential_login: e.credential_login || '' }));
+      entries = entries.map(e => ({ repo: e.repo || '', write: (e.write || []).slice(), write_token_file: e.write_token_file || '', derived_from: e.derived_from || '', credential_state: e.credential_state || '', credential_reason: e.credential_reason || '', credential_login: e.credential_login || '', credential_identity: e.credential_identity || '' }));
       host.textContent = '';
+      renderWriteIdentityPanel(host, meta, () => loadReferenceRepos());
       renderOwnerIdentityPanel(host, identity, () => loadReferenceRepos());
       host.appendChild(referenceRepoNode('p', 'config-help',
         'Read-only by default: agents clone and read these repos and are never told they are out of scope, but every write is refused. ' +
-        'Tick issues and/or prs to let agents open issues or PRs there as the connected account above (PRs go through that account\'s fork). ' +
+        'Tick issues and/or prs to let agents open issues or PRs there as the identity chosen above (as you, PRs go through your fork). ' +
         'A write_token_file is a path on the hive host and can only be set in the config file by the operator; one that is set is shown here and kept. ' +
         'Saving checks the credential and applies the change without a restart.'));
       const list = referenceRepoNode('div', 'config-list');
@@ -68490,6 +68786,8 @@ function burnAreaChart() {
             row.appendChild(referenceRepoNode('span', 'config-repo-name', entry.repo));
             row.appendChild(referenceRepoDerivedLink(entry.derived_from));
             row.appendChild(referenceRepoCredentialChip(entry));
+            const derivedLine = referenceRepoIdentityLine(entry, meta.write_identity);
+            if (derivedLine) row.appendChild(referenceRepoNode('span', 'fs-sm cfg-reference-repo-identity', derivedLine));
             if (entry.credential_reason) row.appendChild(referenceRepoNode('span', 'text-muted fs-sm cfg-reference-repo-reason', entry.credential_reason));
             list.appendChild(row);
             return;
@@ -68520,6 +68818,8 @@ function burnAreaChart() {
              the login it writes as, or why it has none yet. */
           if (entry.write.length && entry.credential_state) row.appendChild(referenceRepoCredentialChip(entry));
           else row.appendChild(referenceRepoNode('span', 'rt-inherit', entry.write.length ? entry.write.join('+') : 'read-only'));
+          const line = entry.write.length ? referenceRepoIdentityLine(entry, meta.write_identity) : '';
+          if (line) row.appendChild(referenceRepoNode('span', 'fs-sm cfg-reference-repo-identity', line));
           const remove = referenceRepoNode('button', 'remove-item', '\u2715');
           remove.title = 'Remove ' + entry.repo + ' from the reference repos';
           remove.addEventListener('click', () => { entries.splice(i, 1); paintRows(); });
@@ -68592,7 +68892,7 @@ function burnAreaChart() {
             throw new Error(msg);
           }
           const d = await res.json();
-          renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || kinds, identity);
+          renderReferenceReposPanel(host, d.reference_repos || [], d.write_kinds || kinds, identity, d.write_identity ? referenceRepoWriteMeta(d) : meta);
           showToast('Reference repos saved', 'success');
         } catch (e) {
           saveBtn.disabled = false;
@@ -76044,6 +76344,11 @@ function burnAreaChart() {
               <input type="text" value="${esc(a.linear_issue || '')}" placeholder="ONB-123" data-change-action="markDirty" data-arg0="advisory" data-arg1="linear_issue" data-arg-types="s,s,w">
             </div>
           </div>
+          <div class="config-toggle" style="margin-top:10px">
+            <div class="config-toggle-switch ${a.per_repo ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="advisory" data-key="per_repo"></div>
+            <span class="config-toggle-label">Advisory report in every repo ${yamlHint('governor.advisory.per_repo')}</span>
+          </div>
+          <div class="config-help">Off: one Hive Advisory Report in your primary repo covers all repos. On: each monitored repo also gets its own report.</div>
           <div class="config-field">
             <label>Update interval (s) ${yamlHint('governor.advisory.update_interval_s')} ${settingHelpMark('advisory', '', 'Update interval (s)', `How often the digest comment on the pinned advisory issue is checked and refreshed. 0 = default (60s, every governor cycle). Longer values (30&ndash;3600s) reduce GitHub API writes and notification churn on watched repos; changes apply live from the next cycle. Unchanged digests are already skipped, and the periodic forced refresh that heals hand-edited comments stretches with this interval.`)}</label>
             <input type="number" min="0" max="3600" step="1" value="${updateIntervalS}" data-change-action="gh76">
@@ -77026,6 +77331,7 @@ function burnAreaChart() {
       }
       markDirty(section, key, isOn);
       if (section === 'review' && (key === 'fan_out' || key === 'combined_perspectives')) refreshReviewerAgentSummary();
+      if (section === 'general' && key === 'sandboxEnabled' && typeof onSandboxToggle === 'function') onSandboxToggle(isOn);
     }
 
     function markDirtyMergeTrain(key, value) {
