@@ -16797,6 +16797,38 @@ test('already-done label is applied as before when the issue has no sub-issues o
   }
 });
 
+// projectbluefin/utah-packages#1175: "already resolved" with no PR or commit
+// is a claim the hub refuses to label, so the relay must not label it either.
+test('already-done label is not applied when the reason cites no PR or commit', () => {
+  const relay = loadRelay({});
+  const log = console.log; const logged = []; console.log = (...a) => logged.push(a.join(' '));
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    const before = relay.__commands.length;
+    relay.markIssueAlreadyDone({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, 'external mirror outage already resolved (HTTP 200)');
+    const after = relay.__commands.slice(before);
+    assert.strictEqual(after.filter(c => /gh /.test(c)).length, 0,
+      `no read and no label without a citation: ${JSON.stringify(after)}`);
+    assert.strictEqual(logged.filter(l => /cites no PR or commit/.test(l) && /not applying the 'hive\/already-done' label/.test(l)).length, 1,
+      `expected one line saying why, got ${JSON.stringify(logged)}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('already-done label is still applied when the reason cites a commit or a merged PR', () => {
+  for (const reason of ['already fixed by commit e6d3de3', 'merged PR #532 already resolves this', 'already fixed in https://github.com/foo/bar/pull/532']) {
+    const relay = loadRelay({});
+    const log = console.log; console.log = () => {};
+    try {
+      relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+      const before = relay.__commands.length;
+      relay.markIssueAlreadyDone({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, reason);
+      const after = relay.__commands.slice(before);
+      assert.strictEqual(after.filter(c => /gh issue edit/.test(c) && c.includes('--add-label') && c.includes('hive/already-done')).length, 1,
+        `${reason} must still label: ${JSON.stringify(after)}`);
+    } finally { console.log = log; teardown(relay); }
+  }
+});
+
 test('already-done label is not applied when the sub-issue read fails', () => {
   const relay = loadRelay({ subIssuesSummary: new Error('Command failed: gh api') });
   const log = console.log; const logged = []; console.log = (...a) => logged.push(a.join(' '));
