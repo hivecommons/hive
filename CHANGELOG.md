@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.299.0)
+
+### Added
+
+- Added a [Kick refusals](src/docs/kick-refusals.md) docs page that explains `kick_refusal` and every reason a kick is refused (the agent's model declining, startup deferral, paused, failed start, stopped, provider backoff, restart hold, cancelled by restart, delivery already in progress, no session, sandbox misconfiguration, unknown agent), what to do about each, and when it is normal. The dashboard's "Kick failed" toast now has a "What does this mean?" button, the navbar health hover names the page for `kick_refusal`, and `POST /api/kick/{agent}`, `GET /api/kick/{agent}/status` and the deep-health `kick_refusal` check return a `docs_url` field when the failure matches a documented reason. Fixes #18692.
+
 ## 2026-11-17 (v5.298.2)
 
 ### Fixed
