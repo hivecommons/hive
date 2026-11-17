@@ -45,7 +45,7 @@ func (f *secondaryReportForge) seed(full string, number int, state, body string,
 	})
 }
 
-func issueHasLabel(issue map[string]any, name string) bool {
+func secondaryForgeIssueHasLabel(issue map[string]any, name string) bool {
 	labels, _ := issue["labels"].([]map[string]any)
 	for _, l := range labels {
 		if l["name"] == name {
@@ -106,7 +106,7 @@ func (f *secondaryReportForge) handler() http.Handler {
 			if state != "all" && issue["state"] != state {
 				continue
 			}
-			if label != "" && !issueHasLabel(issue, label) {
+			if label != "" && !secondaryForgeIssueHasLabel(issue, label) {
 				continue
 			}
 			items = append(items, issue)

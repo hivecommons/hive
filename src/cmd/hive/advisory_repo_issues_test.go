@@ -327,8 +327,8 @@ func TestAdvisoryPerRepo_SwitchedOffStopsUpdatingAndClearsAlerts(t *testing.T) {
 // its repo list straight from advisoryPerRepoSecondaryRepos, so the default
 // (off) can never fan out to every repo again (#18568).
 func TestAdvisorySecondaryHelpers_OnlyFedThePerRepoGatedList(t *testing.T) {
-	const repoArg = 2
-	helpers := map[string]bool{"ensureSecondaryAdvisoryIssues": true, "postAdvisoryDigestToSecondaryRepos": true}
+	// helpers maps each per-repo helper to the index of its repos argument.
+	helpers := map[string]int{"ensureSecondaryAdvisoryIssues": 2, "postAdvisoryDigestToSecondaryRepos": 3}
 	files, err := filepath.Glob("*.go")
 	if err != nil {
 		t.Fatal(err)
@@ -345,7 +345,11 @@ func TestAdvisorySecondaryHelpers_OnlyFedThePerRepoGatedList(t *testing.T) {
 		}
 		ast.Inspect(f, func(n ast.Node) bool {
 			call, ok := n.(*ast.CallExpr)
-			if !ok || !helpers[calledName(call.Fun)] {
+			if !ok {
+				return true
+			}
+			repoArg, isHelper := helpers[calledName(call.Fun)]
+			if !isHelper {
 				return true
 			}
 			seen++
