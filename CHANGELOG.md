@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.298.1)
+
+### Fixed
+
+- Stop retrying the closing-issue link when GitHub rejects it with the permanent "exceeds manual reference limit" error, so the PR-claim sweep no longer repeats WARN logs and selfreports (#18666).
+
 ## 2026-11-17 (v5.298.0)
 
 ### Added
