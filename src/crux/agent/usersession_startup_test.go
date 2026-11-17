@@ -118,6 +118,9 @@ func TestClassifyUserSessionStartup(t *testing.T) {
 		{"claude input prompt", "claude", sessionStartupClaudeReadyPane, crux.UserSessionStartupReady, nil},
 		{"codex input prompt", "codex", sessionStartupCodexReadyPane, crux.UserSessionStartupReady, nil},
 		{"already working", "claude", sessionStartupWorkingPane, crux.UserSessionStartupReady, nil},
+		// A menu's "Esc to cancel" hint reads as a busy footer; a login menu
+		// carrying it must still be sign-in, never a working (ready) CLI.
+		{"claude login menu with a cancel hint", "claude", sessionStartupClaudeLoginPane + "\n\n Enter to confirm · Esc to cancel", crux.UserSessionStartupSignIn, nil},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

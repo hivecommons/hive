@@ -89,10 +89,12 @@ func userSessionShowsSignIn(visible string) bool {
 // returns what it shows plus, for a startup screen, the keys that answer it.
 // The order is the safety argument:
 //
-//  1. a CLI that is already working is past startup (and whatever it shows
-//     now belongs to the person);
-//  2. a sign-in screen is reported before anything could match it as a menu;
-//  3. a refused prompt or a known startup screen;
+//  1. a sign-in screen is reported before anything could match it as a menu;
+//  2. a refused prompt or a known startup screen;
+//  3. a CLI that is already working is past startup. This comes after the
+//     screens on purpose: the busy-footer test also matches the "Esc to
+//     cancel" hint under a trust or login menu, and reading such a menu as a
+//     working CLI would release the queued request into it;
 //  4. the input prompt, by the agents' readiness test, with any pending menu
 //     ruled out.
 func classifyUserSessionStartup(vendor, visible string) (crux.UserSessionStartupStep, []string) {
@@ -101,9 +103,6 @@ func classifyUserSessionStartup(vendor, visible string) (crux.UserSessionStartup
 		return loading, nil
 	}
 	ready := crux.UserSessionStartupStep{Kind: crux.UserSessionStartupReady}
-	if paneShowsActiveWork(visible) {
-		return ready, nil
-	}
 	if userSessionShowsSignIn(visible) {
 		return crux.UserSessionStartupStep{Kind: crux.UserSessionStartupSignIn}, nil
 	}
@@ -112,6 +111,9 @@ func classifyUserSessionStartup(vendor, visible string) (crux.UserSessionStartup
 			return crux.UserSessionStartupStep{Kind: crux.UserSessionStartupRefused, Screen: scr.Label}, nil
 		}
 		return crux.UserSessionStartupStep{Kind: crux.UserSessionStartupScreen, Screen: scr.Label}, scr.Keys
+	}
+	if paneShowsActiveWork(visible) {
+		return ready, nil
 	}
 	if paneShowsInputPrompt(visible) && !paneShowsConsentScreen(visible) && !panesignal.ShowsNumberedSelection(visible) {
 		return ready, nil
