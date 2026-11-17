@@ -1,0 +1,1 @@
+- **Betty answers a spoken "introduce yourself" by voice.** The intro reply did not carry the reply kind, so it went to the meeting chat even when the request was spoken and voice was on; typed intro requests still get a chat reply. ([#18590](https://github.com/hivecommons/hive/issues/18590))
