@@ -66,9 +66,13 @@ func TestConsentErrorRecordedAndThrottled(t *testing.T) {
 	ch <- Event{Type: EventState, State: StateLive}
 	eventually(t, "consent error", func() bool { got, _ := m.Get(mt.ID); return got.ConsentError != "" })
 	ch <- Event{Type: EventChat, Author: &Person{Name: "Ana"}, Text: "hi"}
-	eventually(t, "line stored", func() bool { tr, _ := m.Transcript(mt.ID); return len(tr) == 1 })
+	// The line came before the notice: counted, never stored.
+	eventually(t, "line dropped", func() bool { got, _ := m.Get(mt.ID); return got.PreConsentDropped == 1 })
 	if got, _ := m.Get(mt.ID); got.ConsentPostedAt != nil || got.State != StateLive {
 		t.Fatalf("a throttled retry must not post: %+v", got)
+	}
+	if tr, _ := m.Transcript(mt.ID); len(tr) != 0 {
+		t.Fatalf("a pre-consent line was stored: %+v", tr)
 	}
 }
 
