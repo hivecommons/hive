@@ -566,14 +566,14 @@ func (p *Pool) translate(ev crux.KickEvent) (Event, bool, func()) {
 		case crux.OutputSignalError:
 			out.Kind, out.Text = EventFailed, ev.Text
 		default:
-			return Event{}, false
+			return Event{}, false, nil
 		}
 	case crux.KickEventCompleted:
 		out.Kind = EventDone
 	case crux.KickEventFailed:
 		out.Kind, out.Text = EventFailed, ev.Detail
 	default:
-		return Event{}, false
+		return Event{}, false, nil
 	}
 	if out.Kind == EventDone || out.Kind == EventFailed {
 		tk.done = true
