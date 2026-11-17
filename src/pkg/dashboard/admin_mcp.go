@@ -135,6 +135,20 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 		}
 		return adminmcp.ContributorQueueReadResult(tool, data, args)
 	}
+	if tool == adminmcp.ToolLaunchCostRead {
+		// The Cost card's "cost by work item" endpoint, as the caller. offset
+		// and ref are checked first, and the tool asks for only the rows up
+		// to the page it returns.
+		path, err := adminmcp.LaunchCostReadPath(args)
+		if err != nil {
+			return nil, err
+		}
+		data, err := p.get(tool, path)
+		if err != nil {
+			return nil, err
+		}
+		return adminmcp.LaunchCostResult(data, args)
+	}
 	if tool == adminmcp.ToolGitHubAPIUsage {
 		// The GitHub API card's own endpoint, as the caller, with the
 		// per-caller view. It makes one free GET /rate_limit and no other

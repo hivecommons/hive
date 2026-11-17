@@ -369,6 +369,7 @@ func toolDefs(writesEnabled bool, unavailableReason string) []map[string]any {
 		{ToolClaudeAuthStatus, "Read which Claude auth mode is active through the existing /api/claude-auth/status endpoint: mode is \"long-lived token\" (an operator-supplied claude setup-token token) or \"dashboard sign-in\", with logged_in. Never returns token material. Read-only."},
 		{ToolAutonomyReadiness, "Read autonomy/readiness status through the existing Nous status endpoint."},
 		{ToolSpendRead, "Read spend and budget status through the existing cost endpoint."},
+		{ToolLaunchCostRead, launchCostReadDescription},
 		{ToolPRModelsRead, prModelsReadDescription},
 		{ToolContributorModelStatsRead, contributorModelStatsReadDescription},
 		{ToolGitHubAPIUsage, gitHubAPIUsageDescription},
@@ -410,6 +411,8 @@ func AllowedTool(name string) bool {
 		return true
 	}
 	switch name {
+	case ToolLaunchCostRead:
+		return true
 	case ToolHiveStatus, ToolFleetStatus, ToolVersionRead, ToolClaudeAuthStatus, ToolAgentsList, ToolRunsList, ToolLeasesList, ToolClaimsList,
 		ToolPlansList, ToolAuditLog, ToolSettingsRead, ToolAutonomyReadiness, ToolSpendRead, ToolPRModelsRead, ToolContributorModelStatsRead, ToolGitHubAPIUsage,
 		ToolContributorsList, ToolKnowledgeRead, ToolHiveAdvisor, ToolAdvisorRecords, ToolAgentNudgeStatus,
@@ -475,6 +478,8 @@ func inputSchema(name string) map[string]any {
 		props = contributorQueueReadSchema()
 	case ToolGitHubAPIUsage:
 		props = gitHubAPIUsageSchema()
+	case ToolLaunchCostRead:
+		props = launchCostReadSchema()
 	case ToolPRModelsRead:
 		props = prModelsReadSchema()
 	case ToolContributorModelStatsRead:
@@ -846,6 +851,11 @@ func ReadPath(tool string, limit int) (string, bool) {
 		return "/api/config/governor", true
 	case ToolAutonomyReadiness:
 		return "/api/nous/status", true
+	case ToolLaunchCostRead:
+		// With arguments it goes through LaunchCostReadPath, which checks
+		// offset and ref; this is its first page.
+		path, err := LaunchCostReadPath(nil)
+		return path, err == nil
 	case ToolSpendRead:
 		return "/api/cost", true
 	case ToolPRModelsRead, ToolContributorModelStatsRead:

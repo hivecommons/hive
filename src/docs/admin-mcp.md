@@ -346,6 +346,7 @@ capped at 256 KiB.
 | `claude_auth_status`           | Claude auth mode (`long-lived token` or `dashboard sign-in`); no token                                                   |
 | `autonomy_readiness`           | Autonomy readiness                                                                                                       |
 | `spend_read`                   | Spend                                                                                                                    |
+| `launch_cost_read`             | Cost per issue and PR, as on the Cost card (see [Cost by work item](#cost-by-work-item)); optional `ref`, `offset`       |
 | `pr_models_read`               | PRs by model, as on the Governor card: outcomes, rework and effectiveness rank per model (see note 8); optional `window` |
 | `contributor_model_stats_read` | Contributor run stats by model: runs, verified-PR share, failure rate; optional `days` (0-365, default 7)                |
 | `github_api_usage`             | GitHub API budget and who is spending it (see note 7); optional `limit`                                                  |
@@ -590,6 +591,41 @@ for the modes.
 `false`, its fixed ten `top_consumers`, and a `note` saying that `by_caller`,
 `window_totals`, `agent_caps` and `window_seconds` are missing. Upgrade the
 hive for the full answer.
+
+### Cost by work item
+
+`launch_cost_read` answers "which issues and PRs is the hive spending its
+tokens on?". It returns the Cost card's **cost by work item** table, from
+`GET /api/launch-cost` (#12128), as the caller.
+
+The figures are inferred, not measured:
+- Every governor and review-swarm kick records the work it was launched for.
+- Token usage is joined against those kicks by time. Usage belongs to the
+  agent's most recent launch, up to the ownership horizon.
+- Spend that can't be placed lands in `unattributed` or `backend_unsupported`.
+  Both are always present. A backend without per-message timing (Copilot,
+  bob) cannot be placed at all.
+- The answer carries the endpoint's `disclaimer` and `limitations`. It is not
+  a bill.
+
+What the answer holds:
+- `by_ref` has one row per issue or PR, highest spend first:
+  - `launches`: how many kicks named it;
+  - `share_usd` and `share_tokens`: each launch split evenly across the items
+    it named;
+  - `launch_usd` and `launch_tokens`: the undivided upper bound;
+  - `agents`, `head_shas`, and the first and last launch time.
+- `limit` (default 20, at most 50) and `offset` page `by_ref`. The tool asks
+  the endpoint for only the rows up to the page it returns. `by_ref_total` is
+  the full count, and `next_offset` is given when more rows follow.
+- `ref` (`owner/repo#123`) narrows the answer to one item. Only then does it
+  also return `by_launch`, that item's launches, newest first and capped to
+  `limit`. Without `ref`, `by_launch` (every kick in the window, which the
+  Cost card does not list) is left out, and `_admin_mcp` says so.
+- Totals (`total_usd`, `attributed_tokens`, `total_tokens`) and the two
+  buckets always describe the whole window. `ref` narrows only the rows.
+
+`spend_read` has spend by agent and by model, but not by work item.
 
 ### What a read masks
 
