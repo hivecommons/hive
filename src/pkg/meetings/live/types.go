@@ -136,6 +136,10 @@ type State struct {
 	Persona string `json:"persona,omitempty"`
 	// PersonaReplies counts the persona's posted replies.
 	PersonaReplies int `json:"persona_replies,omitempty"`
+	// PersonaTimings are the last answers' stage timings, newest last;
+	// PersonaLatency sums them (timing.go, #18590).
+	PersonaTimings []PersonaTiming `json:"persona_timings,omitempty"`
+	PersonaLatency *PersonaLatency `json:"persona_latency,omitempty"`
 }
 
 // StateDoc is the side document name the state is stored under.

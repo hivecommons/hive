@@ -76,6 +76,8 @@ type session struct {
 	persona *betty.Engine
 	// fileTokens is the usage-ledger total already charged.
 	fileTokens int
+	// lastSay is how long the meeting's last say call took (timing.go).
+	lastSay time.Duration
 	// spekQueue keeps Spek's asks and chat offers in order while an ask is
 	// being restyled by the persona off the session goroutine; restyled
 	// carries the results back.
@@ -439,7 +441,7 @@ func (s *session) say(ctx context.Context, text string) {
 	m, err := s.r.opts.Meetings.Get(s.id)
 	if err == nil && m.VoiceEnabled && s.r.opts.Policy.VoiceOnAddress {
 		cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
-		err = s.r.opts.Meetings.Say(cctx, s.id, text)
+		err = s.timedSay(func() error { return s.r.opts.Meetings.Say(cctx, s.id, text) })
 		cancel()
 		if err == nil {
 			return
@@ -707,6 +709,7 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 			return
 		}
 		if s.speak(ctx, text) {
+			s.recordAckSay()
 			s.emitPersona(rep)
 		} else {
 			s.drop("ack_no_voice")
@@ -745,6 +748,7 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 }
 
 func (s *session) emitPersona(rep betty.Reply) {
+	s.recordTiming(rep)
 	raw, _ := json.Marshal(rep)
 	s.emit(Event{Kind: EventPersona, Reason: rep.Trigger, Intent: raw})
 }
@@ -785,7 +789,7 @@ func (s *session) speak(ctx context.Context, text string) bool {
 	}
 	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
 	defer cancel()
-	return s.r.opts.Meetings.Say(cctx, s.id, text) == nil
+	return s.timedSay(func() error { return s.r.opts.Meetings.Say(cctx, s.id, text) }) == nil
 }
 
 // queuedSpek is one of Spek's asks or chat offers waiting its turn while an

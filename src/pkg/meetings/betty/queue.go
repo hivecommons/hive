@@ -45,6 +45,8 @@ type pending struct {
 	snips    []Snippet
 	// thoughts: a spoken request with no question.
 	thoughts bool
+	// stages are the request's stage marks (timing.go).
+	stages stageTimes
 }
 
 type retrieval struct {
@@ -56,6 +58,8 @@ type answered struct {
 	id  int
 	ans Answer
 	err error
+	// done is when the model call returned.
+	done time.Time
 }
 
 // rememberTopic records a topic as answered, for dedupe.
@@ -155,12 +159,17 @@ func (e *Engine) addressed(l Line, trig Trigger, now time.Time) {
 		e.drop("budget")
 		return
 	}
+	early := e.hadEarlyAck(l.Who, now)
 	if trig.VoiceWanted && e.d.LLM != nil && !e.takeEarlyAck(l.Who, now) {
 		// Speak at once so the room knows she heard; the answer follows.
 		e.emit(Reply{Kind: KindVoice, Text: e.ack(), Trigger: TriggerAck, Question: l.Text, VoiceWanted: true})
 	}
 	p := e.add(l, trig, TopicKey(trig.Rest), true, now)
 	p.waited, p.thoughts = true, thoughts
+	if trig.VoiceWanted && e.d.LLM != nil {
+		// Acknowledged from the partial transcript, or just now.
+		p.stages.ackAt, p.stages.earlyAck = now, early
+	}
 	e.retrieve(p, trig.Rest)
 }
 
@@ -201,6 +210,13 @@ func (e *Engine) onPartial(l Line) {
 	if e.emit(Reply{Kind: KindVoice, Text: e.ack(), Trigger: TriggerAck, Question: l.Text, VoiceWanted: true}) {
 		e.earlyAck[l.Who] = now
 	}
+}
+
+// hadEarlyAck reports whether this speaker has an early ack standing,
+// without clearing it.
+func (e *Engine) hadEarlyAck(who string, now time.Time) bool {
+	at, ok := e.earlyAck[who]
+	return ok && now.Sub(at) < earlyAckWindow
 }
 
 // takeEarlyAck reports whether this speaker was already acknowledged from
@@ -352,7 +368,8 @@ func (e *Engine) proceed(p *pending) {
 		return
 	}
 	if e.d.LLM == nil {
-		e.emit(Reply{Kind: replyKind(p.trig), Text: fallbackNoModel, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted})
+		e.emit(Reply{Kind: replyKind(p.trig), Text: fallbackNoModel, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted,
+			Timing: e.timing(p, true, now)})
 		e.finish(p, "")
 		return
 	}
@@ -365,6 +382,7 @@ func (e *Engine) proceed(p *pending) {
 	system := SystemPrompt(e.s.Persona)
 	prompt := answerPrompt(mode, p.line.Who, p.line.Text, p.snips, recent, p.addressed && p.trig.VoiceWanted)
 	id := p.id
+	p.stages.modelStart = now
 	go func() {
 		ctx, cancel := context.WithTimeout(e.ctx, timeout)
 		defer cancel()
@@ -374,7 +392,7 @@ func (e *Engine) proceed(p *pending) {
 			a, err = ParseAnswer(raw)
 		}
 		select {
-		case e.answers <- answered{id: id, ans: a, err: err}:
+		case e.answers <- answered{id: id, ans: a, err: err, done: e.d.Now()}:
 		case <-e.ctx.Done():
 		}
 	}()
@@ -399,7 +417,8 @@ func (e *Engine) onAnswer(p *pending, a answered) {
 		e.finish(p, reason)
 		return
 	}
-	if e.emit(Reply{Text: text, Trigger: TriggerQuestion, Question: p.line.Text, NeedsResearch: a.ans.NeedsResearch, Sources: a.ans.Sources}) {
+	if e.emit(Reply{Text: text, Trigger: TriggerQuestion, Question: p.line.Text, NeedsResearch: a.ans.NeedsResearch, Sources: a.ans.Sources,
+		Timing: e.timing(p, false, now)}) {
 		e.posts = append(e.posts, now)
 		e.lastPost = now
 		e.total++
@@ -461,6 +480,7 @@ func (e *Engine) onAddressedAnswer(p *pending, a answered) {
 		rep.NeedsResearch = true
 		rep.Research = clip(researchQuery(p), maxResearchQuery)
 	}
+	rep.Timing = e.timing(p, a.err != nil || a.ans.Answer == "", e.d.Now())
 	e.emit(rep)
 	e.rememberTopic(p.topic)
 	e.rememberTopic(TopicKey(text))
