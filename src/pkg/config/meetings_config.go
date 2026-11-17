@@ -284,6 +284,10 @@ type MeetingsLLMConfig struct {
 	// MaxInFlight caps concurrent model calls across meetings. Zero means
 	// DefaultMeetingsLLMMaxInFlight.
 	MaxInFlight int `yaml:"max_in_flight,omitempty" json:"max_in_flight,omitempty"`
+	// PerMeetingInFlight caps one meeting's concurrent model calls, so the
+	// persona answers several requests at once (#18590); it never exceeds
+	// MaxInFlight. Zero means DefaultMeetingsLLMPerMeetingInFlight.
+	PerMeetingInFlight int `yaml:"per_meeting_in_flight,omitempty" json:"per_meeting_in_flight,omitempty"`
 }
 
 // Meetings LLM modes and defaults.
@@ -301,6 +305,9 @@ const (
 	DefaultMeetingsLLMTimeoutMS = 2500
 	// DefaultMeetingsLLMMaxInFlight lets a few meetings reason at once.
 	DefaultMeetingsLLMMaxInFlight = 4
+	// DefaultMeetingsLLMPerMeetingInFlight lets one meeting's persona work
+	// on a few requests at once.
+	DefaultMeetingsLLMPerMeetingInFlight = 3
 	// DefaultMeetingsLLMKeyFile and DefaultMeetingsAnthropicKeyFile are the
 	// keystore-sealed secret files.
 	DefaultMeetingsLLMKeyFile       = WritableSecretsDir + "/meetings_llm_api_key"
@@ -325,7 +332,9 @@ const (
 	MeetingsAnthropicModelEnv   = "HIVE_MEETINGS_ANTHROPIC_MODEL"
 	MeetingsLLMTimeoutEnv       = "HIVE_MEETINGS_LLM_TIMEOUT_MS"
 	MeetingsLLMMaxInFlightEnv   = "HIVE_MEETINGS_LLM_MAX_IN_FLIGHT"
-	MeetingsLLMBackendEnv       = "HIVE_MEETINGS_LLM_BACKEND"
+	// MeetingsLLMPerMeetingInFlightEnv overrides per_meeting_in_flight.
+	MeetingsLLMPerMeetingInFlightEnv = "HIVE_MEETINGS_LLM_PER_MEETING_IN_FLIGHT"
+	MeetingsLLMBackendEnv            = "HIVE_MEETINGS_LLM_BACKEND"
 )
 
 // ResolvedMeetingsLLM is the effective meetings model. Keys are secrets;
@@ -343,6 +352,9 @@ type ResolvedMeetingsLLM struct {
 	AnthropicModel string
 	TimeoutMS      int
 	MaxInFlight    int
+	// PerMeetingInFlight is one meeting's concurrent model calls, at most
+	// MaxInFlight.
+	PerMeetingInFlight int
 	// Reason explains Backend none.
 	Reason string
 	// AgentBackend is the agent backend (claude, ...) on the agent-backend
@@ -396,6 +408,8 @@ func (c *Config) ResolveMeetingsLLM(ctx context.Context) ResolvedMeetingsLLM {
 		MaxInFlight:    meetingsEnvInt(MeetingsLLMMaxInFlightEnv, l.MaxInFlight, DefaultMeetingsLLMMaxInFlight),
 		AnthropicModel: meetingsEnvString(MeetingsAnthropicModelEnv, l.AnthropicModel, ""),
 	}
+	r.PerMeetingInFlight = min(r.MaxInFlight,
+		meetingsEnvInt(MeetingsLLMPerMeetingInFlightEnv, l.PerMeetingInFlight, DefaultMeetingsLLMPerMeetingInFlight))
 	if mode == MeetingsLLMModeAgentBackend || mode == MeetingsLLMModeClaudeCLI {
 		return c.resolveMeetingsAgentBackend(ctx, mode, r)
 	}
@@ -750,6 +764,7 @@ func (m MeetingsConfig) Validate() error {
 		{"meetings.budget.max_intents_per_meeting", m.Budget.MaxIntentsPerMeeting},
 		{"meetings.llm.timeout_ms", m.LLM.TimeoutMS},
 		{"meetings.llm.max_in_flight", m.LLM.MaxInFlight},
+		{"meetings.llm.per_meeting_in_flight", m.LLM.PerMeetingInFlight},
 	} {
 		if f.v < 0 {
 			return fmt.Errorf("%s must not be negative (got %d)", f.key, f.v)

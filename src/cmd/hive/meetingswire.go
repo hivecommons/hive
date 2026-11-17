@@ -296,6 +296,9 @@ func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPe
 			Timeout:   betty.DefaultAddressedTimeout,
 			UsageFile: meetingUsageFile(store, mt.ID), MaxTokens: maxTokens,
 			SlotsDir: slotsDir, MaxInFlight: llm.MaxInFlight,
+			// Several requests are answered at once, each call reserving
+			// budget against the others in flight (#18590).
+			Gate: meetllm.NewGate(llm.PerMeetingInFlight),
 		}
 		switch llm.Backend {
 		case config.MeetingsLLMModeOpenAI:
@@ -320,9 +323,10 @@ func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPe
 
 // meetingCLIModel is the persona's model on an agent backend
 // (hivecommons/hive#18517, #18549), in the backend's no-tools completion
-// profile with the agents' sign-in: one warm CLI for the meeting, started
-// now so the first question finds it ready, on a backend with a warm mode;
-// one CLI per call otherwise. It reports false when the backend has no
+// profile with the agents' sign-in: a pool of warm CLIs for the meeting
+// (one per concurrent answer, #18590), the first started now so the first
+// question finds it ready, on a backend with a warm mode; one CLI per call
+// otherwise. It reports false when the backend has no
 // profile.
 func meetingCLIModel(llm config.ResolvedMeetingsLLM, mc meetllm.Config, meetingID string, logger *slog.Logger) (betty.MeetLLM, bool) {
 	mc.Provider, mc.Backend, mc.Model = meetllm.ProviderAgentBackend, llm.AgentBackend, llm.Model
@@ -338,19 +342,28 @@ func meetingCLIModel(llm config.ResolvedMeetingsLLM, mc meetllm.Config, meetingI
 		}
 		return betty.MeetLLM{Config: mc}, true
 	}
-	sess, err := meetllm.NewCLISession(mc)
+	pool, err := meetllm.NewCLIPool(mc, meetingCLIPoolSize(llm, mc))
 	if err != nil {
 		if logger != nil {
 			logger.Error("[meetings] persona model not started", "meeting", meetingID, "backend", llm.AgentBackend, "error", err)
 		}
 		return betty.MeetLLM{}, false
 	}
-	if err := sess.Warm(); err != nil && logger != nil {
+	if err := pool.Warm(); err != nil && logger != nil {
 		// The first call retries the start.
 		logger.Warn("[meetings] persona CLI not warmed", "meeting", meetingID, "backend", llm.AgentBackend, "error", err)
 	}
-	mc.Session = sess
+	mc.Pool = pool
 	return betty.MeetLLM{Config: mc}, true
+}
+
+// meetingCLIPoolSize is how many warm CLIs one meeting may run: its
+// concurrent answers (the gate's size), else the resolved per-meeting cap.
+func meetingCLIPoolSize(llm config.ResolvedMeetingsLLM, mc meetllm.Config) int {
+	if mc.Gate != nil {
+		return mc.Gate.Size()
+	}
+	return llm.PerMeetingInFlight
 }
 
 // applyMeetingCLITimeouts widens the persona's per-call timeouts to the CLI
