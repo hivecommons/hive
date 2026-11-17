@@ -1,0 +1,372 @@
+package dashboard
+
+import (
+	"encoding/json"
+	"errors"
+	"log/slog"
+	"net/http"
+	"strconv"
+	"strings"
+
+	"github.com/hivecommons/hive/pkg/config"
+)
+
+// Customers: a profile per person (hivecommons/hive#18742). The store and
+// its rules live in pkg/customers, which this package does not import; the
+// service below is installed by cmd/hive.
+//
+// Who may do what:
+//   - the verified owner and read-write users see every profile and every
+//     suggestion, and may add, edit, accept and dismiss;
+//   - only the verified owner may forget a person;
+//   - anyone else who is signed in sees only their own profile ("me") and
+//     may edit its name, identities, tags and goals, through
+//     POST /api/customers/me/edit and no other route.
+//
+// The service enforces the same rules again on the viewer it is handed, so
+// a mistake here cannot widen what a read-only user reaches.
+
+// Service errors. The implementation wraps these so the handlers can pick a
+// status code.
+var (
+	ErrCustomerNotFound  = errors.New("customer not found")
+	ErrCustomerInvalid   = errors.New("invalid customer request")
+	ErrCustomerConflict  = errors.New("customer request conflicts with the current state")
+	ErrCustomerForbidden = errors.New("you do not have access to this customer")
+)
+
+const (
+	// customersMaxBody bounds a customers request body.
+	customersMaxBody = 16 << 10
+	// customersSelfEditPath is the one write a read-only user may make: an
+	// edit to their own profile. roleEnforcement lets exactly this through.
+	customersSelfEditPath = "/api/customers/me/edit"
+	// customersMeID is the id alias for the viewer's own profile.
+	customersMeID = "me"
+)
+
+// CustomersViewer is who is asking. Full is the owner and read-write view;
+// Owner adds forget.
+type CustomersViewer struct {
+	User  string
+	Full  bool
+	Owner bool
+}
+
+// CustomerIdentityInput is one identity on an add request.
+type CustomerIdentityInput struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
+
+// CustomerAddRequest is the body of POST /api/customers.
+type CustomerAddRequest struct {
+	Name       string                  `json:"name"`
+	Identities []CustomerIdentityInput `json:"identities,omitempty"`
+}
+
+// CustomerEditRequest is the body of POST /api/customers/{id}/edit: one
+// change, named by Op (name, notes, identity_add, identity_remove, tag,
+// goal_add, goal_edit, goal_confirm, goal_reject, satisfaction_set,
+// satisfaction_confirm, satisfaction_reject).
+type CustomerEditRequest struct {
+	Op     string `json:"op"`
+	Name   string `json:"name,omitempty"`
+	Notes  string `json:"notes,omitempty"`
+	Kind   string `json:"kind,omitempty"`
+	Value  string `json:"value,omitempty"`
+	Key    string `json:"key,omitempty"`
+	Tag    string `json:"tag,omitempty"`
+	State  string `json:"state,omitempty"`
+	GoalID string `json:"goal_id,omitempty"`
+	Text   string `json:"text,omitempty"`
+	Level  string `json:"level,omitempty"`
+}
+
+// CustomerResult is one profile as the viewer sees it. View is JSON-encoded
+// as returned; ID and Me are for the audit line.
+type CustomerResult struct {
+	View any
+	ID   string
+	Me   bool
+}
+
+// CustomersService is the people store as the dashboard sees it. Every
+// method takes the viewer and applies the access rules itself. Errors wrap
+// the ErrCustomer* sentinels.
+type CustomersService interface {
+	// List returns the viewer's own profile and, with the full view, every
+	// customer and suggestion.
+	List(v CustomersViewer) (any, error)
+	// Get returns one profile; id may be "me".
+	Get(v CustomersViewer, id string) (CustomerResult, error)
+	Add(v CustomersViewer, req CustomerAddRequest) (CustomerResult, error)
+	Edit(v CustomersViewer, id string, req CustomerEditRequest) (CustomerResult, error)
+	// Forget deletes a person and returns how many edges went with them.
+	Forget(v CustomersViewer, id string) (edges int, err error)
+	Accept(v CustomersViewer, suggestionID string) (CustomerResult, error)
+	Dismiss(v CustomersViewer, suggestionID string) error
+}
+
+type customersHolder struct{ svc CustomersService }
+
+// SetCustomersService installs the people store (nil removes it).
+func (s *Server) SetCustomersService(svc CustomersService) {
+	s.customers.Store(&customersHolder{svc: svc})
+}
+
+func (s *Server) customersService(w http.ResponseWriter) (CustomersService, bool) {
+	h := s.customers.Load()
+	if h == nil || h.svc == nil {
+		jsonError(w, "customers are turned off on this hive (Settings, Customers)", http.StatusServiceUnavailable)
+		return nil, false
+	}
+	return h.svc, true
+}
+
+func (s *Server) registerCustomersRoutes() {
+	s.mux.HandleFunc("GET /api/customers", s.handleCustomersList)
+	s.mux.HandleFunc("POST /api/customers", s.handleCustomersAdd)
+	s.mux.HandleFunc("GET /api/customers/{id}", s.handleCustomersGet)
+	s.mux.HandleFunc("POST /api/customers/{id}/edit", s.handleCustomersEdit)
+	s.mux.HandleFunc("DELETE /api/customers/{id}", s.handleCustomersForget)
+	s.mux.HandleFunc("POST /api/customers/suggestions/{sid}/accept", s.handleCustomersAccept)
+	s.mux.HandleFunc("POST /api/customers/suggestions/{sid}/dismiss", s.handleCustomersDismiss)
+}
+
+// readOnlySelfService reports whether a write from a read-only user is one
+// of the few a read-only user may make to their own data. It is consulted
+// by roleEnforcement, which refuses every other write from the read role.
+func readOnlySelfService(r *http.Request) bool {
+	return r.Method == http.MethodPost && r.URL.Path == customersSelfEditPath
+}
+
+// customersViewer works out who is asking. The owner role counts only when
+// authenticate verified it; a read-only viewer must be a named user, since
+// their profile is keyed on the name.
+func customersViewer(w http.ResponseWriter, r *http.Request) (CustomersViewer, bool) {
+	role := r.Header.Get("X-Hive-Role")
+	user := strings.TrimSpace(r.Header.Get("X-Hive-User"))
+	if isOwnerRole(role) {
+		if r.Header.Get(ownerRoleVerifiedHeader) != "true" {
+			jsonError(w, "sign in to see your customer profile", http.StatusForbidden)
+			return CustomersViewer{}, false
+		}
+		return CustomersViewer{User: requestUser(r), Full: true, Owner: true}, true
+	}
+	if config.RoleAtLeast(role, config.RoleReadWrite) {
+		return CustomersViewer{User: requestUser(r), Full: true}, true
+	}
+	if user == "" {
+		jsonError(w, "sign in to see your customer profile", http.StatusForbidden)
+		return CustomersViewer{}, false
+	}
+	return CustomersViewer{User: user}, true
+}
+
+// customersFullViewer admits only the full view (verified owner or
+// read-write).
+func customersFullViewer(w http.ResponseWriter, r *http.Request) (CustomersViewer, bool) {
+	v, ok := customersViewer(w, r)
+	if !ok {
+		return v, false
+	}
+	if !v.Full {
+		jsonError(w, "owner or read-write access required", http.StatusForbidden)
+		return v, false
+	}
+	return v, true
+}
+
+func customersErrorStatus(err error) int {
+	switch {
+	case errors.Is(err, ErrCustomerNotFound):
+		return http.StatusNotFound
+	case errors.Is(err, ErrCustomerInvalid):
+		return http.StatusBadRequest
+	case errors.Is(err, ErrCustomerConflict):
+		return http.StatusConflict
+	case errors.Is(err, ErrCustomerForbidden):
+		return http.StatusForbidden
+	default:
+		return http.StatusInternalServerError
+	}
+}
+
+// customersError answers a failed call. A store failure is logged; its text
+// is not sent to the browser.
+func (s *Server) customersError(w http.ResponseWriter, r *http.Request, err error) {
+	status := customersErrorStatus(err)
+	if status >= http.StatusInternalServerError {
+		if s.logger != nil {
+			s.logger.Log(r.Context(), slog.LevelWarn, "[customers] call failed",
+				"method", r.Method, "path", r.URL.Path, "error", err.Error())
+		}
+		jsonError(w, "the customers store could not complete the request", status)
+		return
+	}
+	jsonError(w, err.Error(), status)
+}
+
+func decodeCustomersBody(w http.ResponseWriter, r *http.Request, into any) bool {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, customersMaxBody)).Decode(into); err != nil {
+		jsonError(w, "invalid request body: "+err.Error(), http.StatusBadRequest)
+		return false
+	}
+	return true
+}
+
+// handleCustomersList answers the Customers section. With the feature off
+// it says so with a 200, so the page can hide the section without an error.
+func (s *Server) handleCustomersList(w http.ResponseWriter, r *http.Request) {
+	h := s.customers.Load()
+	if h == nil || h.svc == nil {
+		jsonResponse(w, map[string]any{"enabled": false})
+		return
+	}
+	v, ok := customersViewer(w, r)
+	if !ok {
+		return
+	}
+	out, err := h.svc.List(v)
+	if err != nil {
+		s.customersError(w, r, err)
+		return
+	}
+	jsonResponse(w, out)
+}
+
+func (s *Server) handleCustomersGet(w http.ResponseWriter, r *http.Request) {
+	v, ok := customersViewer(w, r)
+	if !ok {
+		return
+	}
+	svc, ok := s.customersService(w)
+	if !ok {
+		return
+	}
+	res, err := svc.Get(v, r.PathValue("id"))
+	if err != nil {
+		s.customersError(w, r, err)
+		return
+	}
+	if !res.Me {
+		s.auditFromRequest(r, "customer_profile_open", auditDetail("person", res.ID), "")
+	}
+	jsonResponse(w, res.View)
+}
+
+func (s *Server) handleCustomersAdd(w http.ResponseWriter, r *http.Request) {
+	v, ok := customersFullViewer(w, r)
+	if !ok {
+		return
+	}
+	svc, ok := s.customersService(w)
+	if !ok {
+		return
+	}
+	var req CustomerAddRequest
+	if !decodeCustomersBody(w, r, &req) {
+		return
+	}
+	res, err := svc.Add(v, req)
+	if err != nil {
+		s.customersError(w, r, err)
+		return
+	}
+	s.auditFromRequest(r, "customer_add", auditDetail("person", res.ID, "identities", strconv.Itoa(len(req.Identities))), "")
+	jsonResponse(w, res.View)
+}
+
+// handleCustomersEdit applies one change to a profile. A read-only user
+// reaches it only as /api/customers/me/edit; the service then limits them
+// to their own name, identities, tags and goals.
+func (s *Server) handleCustomersEdit(w http.ResponseWriter, r *http.Request) {
+	v, ok := customersViewer(w, r)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	if !v.Full && id != customersMeID {
+		// Never reached through roleEnforcement, which lets a read-only
+		// user post to the "me" path only. Kept so the rule does not
+		// depend on that middleware alone.
+		jsonError(w, ErrCustomerNotFound.Error(), http.StatusNotFound)
+		return
+	}
+	svc, ok := s.customersService(w)
+	if !ok {
+		return
+	}
+	var req CustomerEditRequest
+	if !decodeCustomersBody(w, r, &req) {
+		return
+	}
+	res, err := svc.Edit(v, id, req)
+	if err != nil {
+		s.customersError(w, r, err)
+		return
+	}
+	// The audit line names the person and the kind of change, never the
+	// value: the log outlives a forget.
+	s.auditFromRequest(r, "customer_edit", auditDetail("person", res.ID, "op", req.Op, "self", boolString(res.Me)), "")
+	jsonResponse(w, res.View)
+}
+
+func (s *Server) handleCustomersForget(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	v, ok := customersViewer(w, r)
+	if !ok {
+		return
+	}
+	svc, ok := s.customersService(w)
+	if !ok {
+		return
+	}
+	id := r.PathValue("id")
+	edges, err := svc.Forget(v, id)
+	if err != nil {
+		s.customersError(w, r, err)
+		return
+	}
+	s.auditFromRequest(r, "customer_forget", auditDetail("person", id, "edges", strconv.Itoa(edges)), "")
+	jsonResponse(w, map[string]any{"forgotten": true, "edges_removed": edges})
+}
+
+func (s *Server) handleCustomersAccept(w http.ResponseWriter, r *http.Request) {
+	v, ok := customersFullViewer(w, r)
+	if !ok {
+		return
+	}
+	svc, ok := s.customersService(w)
+	if !ok {
+		return
+	}
+	res, err := svc.Accept(v, r.PathValue("sid"))
+	if err != nil {
+		s.customersError(w, r, err)
+		return
+	}
+	s.auditFromRequest(r, "customer_accept", auditDetail("person", res.ID), "")
+	jsonResponse(w, res.View)
+}
+
+func (s *Server) handleCustomersDismiss(w http.ResponseWriter, r *http.Request) {
+	v, ok := customersFullViewer(w, r)
+	if !ok {
+		return
+	}
+	svc, ok := s.customersService(w)
+	if !ok {
+		return
+	}
+	sid := r.PathValue("sid")
+	if err := svc.Dismiss(v, sid); err != nil {
+		s.customersError(w, r, err)
+		return
+	}
+	s.auditFromRequest(r, "customer_dismiss", auditDetail("suggestion", sid), "")
+	jsonResponse(w, map[string]any{"dismissed": true})
+}

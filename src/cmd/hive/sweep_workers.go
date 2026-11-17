@@ -142,6 +142,11 @@ func (b *boot) sweepJobs() []sweepJob {
 		{"rfc_existing", baseInterval, sweepOptional, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
 			runRFCExistingCheck(ctx, newRFCCoverageForge(gh), cfg, b.dashSrv, coverage, b.lastActionable.Load(), b.logger)
 		}},
+		// Customers discovery (#18742) reads state the hive already holds and
+		// is never handed the client: a pass makes no GitHub call.
+		{"customers", fixed(customersSweepInterval), sweepOptional, func(ctx context.Context, _ *github.Client, cfg *config.Config) {
+			b.runCustomersSweep(ctx, cfg)
+		}},
 		{"rfc_notify", fixed(rfcnotify.DefaultInterval + time.Second), sweepOptional, func(ctx context.Context, gh *github.Client, cfg *config.Config) {
 			runRFCNotifySweep(ctx, newRFCNotifySource(gh, notify), len(cfg.Project.Repos), cfg, b.dashSrv, notify, b.logger)
 		}},

@@ -202,8 +202,10 @@ func (m *Manager) CompanionAudio(ctx context.Context, id, user string, asOwner b
 }
 
 // CompanionReplies returns Betty's lines for the companion window after
-// the cursor. A meeting that is no longer live answers no lines and its
-// state, so the window can close.
+// the cursor. A meeting that is no longer live answers its state, so the
+// window can close, and the lines Quorum still held when hive left (the
+// "Leaving now." line among them, companion_tail.go) until the window has
+// fetched them or companionTailGrace has passed.
 func (m *Manager) CompanionReplies(ctx context.Context, id, user string, asOwner bool, after int64) (CompanionReplies, error) {
 	mt, err := m.companionMeeting(id, user, asOwner)
 	if err != nil {
@@ -211,6 +213,7 @@ func (m *Manager) CompanionReplies(ctx context.Context, id, user string, asOwner
 	}
 	out := CompanionReplies{Lines: []CompanionLine{}, NextSeq: max(after, 0), State: mt.State}
 	if mt.State != StateLive {
+		out.Lines, out.NextSeq = m.companionTail(id, after)
 		return out, nil
 	}
 	cq, err := m.companionQuorum()

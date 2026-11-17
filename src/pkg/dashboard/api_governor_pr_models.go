@@ -2,6 +2,7 @@ package dashboard
 
 import (
 	"encoding/json"
+	"math"
 	"net/http"
 	"sort"
 	"strings"
@@ -29,6 +30,11 @@ type governorPRModelsResponse struct {
 	Unknown      int                                  `json:"unknown"`
 	MostReworked []governorPRMostReworkedItem         `json:"most_reworked,omitempty"`
 	FixerQueue   map[string]governor.FixerQueueStatus `json:"fixer_queue,omitempty"`
+	// Coverage discloses how much history the counts rest on (same shape as
+	// /api/contribute/effective-models). EarliestPRCreatedAt is the oldest
+	// created_at among the PRs counted, omitted when there are none.
+	Coverage            contributeEffectiveModelsCoverage `json:"coverage"`
+	EarliestPRCreatedAt string                            `json:"earliest_pr_created_at,omitempty"`
 }
 
 // governorPRModelBucket is one canonical model (modelfamily.Canonical folds
@@ -59,16 +65,19 @@ type governorPRModelSource struct {
 }
 
 type governorPRModelRework struct {
-	SamplePRs            int     `json:"sample_prs"`
-	FirstPassMerged      int     `json:"first_pass_merged"`
-	FirstPassMergeRate   float64 `json:"first_pass_merge_rate"`
-	AvgReviewRounds      float64 `json:"avg_review_rounds"`
-	WorstReviewRounds    int     `json:"worst_review_rounds"`
-	AvgFixAttempts       float64 `json:"avg_fix_attempts"`
-	WorstFixAttempts     int     `json:"worst_fix_attempts"`
-	AvgFollowUpCommits   float64 `json:"avg_follow_up_commits"`
-	HumanChangeRequests  int     `json:"human_change_requests"`
-	MedianTimeToMergeMin int     `json:"median_time_to_merge_minutes"`
+	SamplePRs          int     `json:"sample_prs"`
+	FirstPassMerged    int     `json:"first_pass_merged"`
+	FirstPassMergeRate float64 `json:"first_pass_merge_rate"`
+	// FirstPassMergeRateCI is the Wilson 95% interval [low, high]; omitted
+	// when no merged PRs were sampled.
+	FirstPassMergeRateCI []float64 `json:"first_pass_merge_rate_ci,omitempty"`
+	AvgReviewRounds      float64   `json:"avg_review_rounds"`
+	WorstReviewRounds    int       `json:"worst_review_rounds"`
+	AvgFixAttempts       float64   `json:"avg_fix_attempts"`
+	WorstFixAttempts     int       `json:"worst_fix_attempts"`
+	AvgFollowUpCommits   float64   `json:"avg_follow_up_commits"`
+	HumanChangeRequests  int       `json:"human_change_requests"`
+	MedianTimeToMergeMin int       `json:"median_time_to_merge_minutes"`
 }
 
 type governorPRModelEffectiveness struct {
@@ -83,6 +92,12 @@ type governorPRModelEffectiveness struct {
 	VerifiedPRRunRate  float64 `json:"verified_pr_run_rate"`
 	FailureRate        float64 `json:"failure_rate"`
 	NothingToShipRate  float64 `json:"nothing_to_ship_rate"`
+	// Wilson 95% intervals [low, high]; omitted when the denominator is 0
+	// (merged PRs for the first-pass rate, runs for the three run rates).
+	FirstPassMergeRateCI []float64 `json:"first_pass_merge_rate_ci,omitempty"`
+	VerifiedPRRunRateCI  []float64 `json:"verified_pr_run_rate_ci,omitempty"`
+	FailureRateCI        []float64 `json:"failure_rate_ci,omitempty"`
+	NothingToShipRateCI  []float64 `json:"nothing_to_ship_rate_ci,omitempty"`
 }
 
 type governorPRMostReworkedItem struct {
@@ -114,7 +129,9 @@ func (s *Server) handleGovernorPRModels(w http.ResponseWriter, r *http.Request) 
 	actionable := s.lastActionableForPRModels()
 	resp := aggregateGovernorPRModels(actionable.PRs.Attributed, window, time.Now())
 	resp.FixerQueue = s.governorFixerQueue()
-	runs, _, _ := readEffectiveModelRuns(s.effectiveModelTaskRunLogPath(), governorPRModelsWindowDuration(window))
+	now := time.Now()
+	runs, rotated, _ := readEffectiveModelRuns(s.effectiveModelTaskRunLogPath(), governorPRModelsWindowDuration(window))
+	resp.Coverage = effectiveModelsCoverage(governorPRModelsWindowDuration(window), ghpkg.AttributedClosedPRLookback(), runs, rotated, now)
 	effective := aggregateEffectiveModelsFromPRAggregation(resp, aggregateEffectiveRunStats(runs, effectiveModelsFilterAll), effectiveModelsFilterAll, minMergedPRs)
 	applyGovernorPRModelEffectiveness(&resp, effective, minMergedPRs)
 	w.Header().Set("Content-Type", "application/json")
@@ -224,6 +241,11 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 		}
 		addOutcome(&ab.PRs, &ab.Merged, &ab.ClosedUnmerged, &ab.Open, outcome)
 		resp.Total++
+		if !pr.CreatedAt.IsZero() {
+			if ts := pr.CreatedAt.UTC().Format(time.RFC3339); resp.EarliestPRCreatedAt == "" || ts < resp.EarliestPRCreatedAt {
+				resp.EarliestPRCreatedAt = ts
+			}
+		}
 		if model == modelfamily.Unknown {
 			resp.Unknown++
 		}
@@ -322,8 +344,18 @@ func applyGovernorPRModelEffectiveness(resp *governorPRModelsResponse, effective
 			VerifiedPRRunRate:  row.VerifiedPRRunRate,
 			FailureRate:        row.FailureRate,
 			NothingToShipRate:  row.NothingToShipRate,
+
+			FirstPassMergeRateCI: wilsonCI(row.FirstPassMerged, row.MergedPRs),
+			VerifiedPRRunRateCI:  wilsonCI(rateCount(row.VerifiedPRRunRate, row.RunCount), row.RunCount),
+			FailureRateCI:        wilsonCI(rateCount(row.FailureRate, row.RunCount), row.RunCount),
+			NothingToShipRateCI:  wilsonCI(rateCount(row.NothingToShipRate, row.RunCount), row.RunCount),
 		}
 	}
+}
+
+// rateCount recovers the integer numerator behind rate = k/n.
+func rateCount(rate float64, n int) int {
+	return int(math.Round(rate * float64(n)))
 }
 
 type reworkAccumulator struct {
@@ -360,6 +392,7 @@ func (a *reworkAccumulator) add(r ghpkg.PRReworkStats) {
 
 func (a reworkAccumulator) finish() governorPRModelRework {
 	out := governorPRModelRework{
+		FirstPassMergeRateCI: wilsonCI(a.firstPass, a.sample),
 		SamplePRs:            a.sample,
 		FirstPassMerged:      a.firstPass,
 		WorstReviewRounds:    a.worstReviewRounds,

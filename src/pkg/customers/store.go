@@ -1,6 +1,7 @@
 package customers
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -64,6 +65,9 @@ type Store struct {
 	hints  []Hint
 	tombs  map[string]bool
 	owner  map[string]string // identity key -> person id
+	// saved is the bytes last written, so an unchanged store is not
+	// rewritten.
+	saved []byte
 }
 
 // Open opens <dir>/people.json, creating dir if needed. A missing file is
@@ -152,7 +156,7 @@ func (s *Store) reindexLocked() {
 	s.owner = map[string]string{}
 	for id, p := range s.people {
 		for _, i := range p.Identities {
-			if i.Kind == KindName {
+			if i.Kind == KindName || i.Claimed {
 				continue
 			}
 			s.owner[i.Key()] = id
@@ -249,7 +253,16 @@ func (s *Store) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(s.path, data)
+	if bytes.Equal(data, s.saved) {
+		// Nothing changed: a sweep that found nothing new must not
+		// rewrite the file.
+		return nil
+	}
+	if err := writeAtomic(s.path, data); err != nil {
+		return err
+	}
+	s.saved = data
+	return nil
 }
 
 // writeAtomic writes data to a temp file beside path and renames it over.
@@ -513,7 +526,8 @@ func (s *Store) SetNotes(id, notes string) (Person, error) {
 }
 
 // Forget deletes a customer and leaves a salted-hash tombstone for each of
-// their identities, so a later sweep does not rebuild them. The returned
+// their confirmed identities, so a later sweep does not rebuild them. An
+// unconfirmed claim is not tombstoned: it may be someone else's. The returned
 // person is what was deleted; the caller removes their edges. Hive-user
 // identities and names are not tombstoned: a dashboard user who signs in
 // again gets a fresh, empty profile.
@@ -526,14 +540,14 @@ func (s *Store) Forget(id string) (Person, error) {
 		}
 		out = clonePerson(p)
 		for _, i := range p.Identities {
-			if i.Kind == KindName || i.Kind == KindHiveUser {
+			if i.Kind == KindName || i.Kind == KindHiveUser || i.Claimed {
 				continue
 			}
 			s.tombs[s.tombstoneHash(i.Key())] = true
 		}
 		for _, m := range p.MergedFrom {
 			for _, i := range m.Person.Identities {
-				if i.Kind == KindName || i.Kind == KindHiveUser {
+				if i.Kind == KindName || i.Kind == KindHiveUser || i.Claimed {
 					continue
 				}
 				s.tombs[s.tombstoneHash(i.Key())] = true

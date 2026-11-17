@@ -256,6 +256,43 @@ One optional sweep, `customers`. Steps:
 
 A normal sweep (A to D) makes zero GitHub calls, and a test holds that.
 
+What the first sweep (steps A to C, `customers` in
+`src/cmd/hive/sweep_workers.go`, every ten minutes) reads:
+
+| Source | Identity | Edge |
+|---|---|---|
+| Access list (`dashboard.authorized_users`) | dashboard user; a `github:<login>` entry also proves the GitHub login | none; owner and merger earn `maintainer` |
+| Owner's connected GitHub account | GitHub login, when there is exactly one owner | none |
+| Proven calendar emails | email of the dashboard user who proved it | none |
+| Last GitHub enumeration: issues | author, assignees, logins mentioned in the body | reported, assigned, mentioned_in |
+| Last GitHub enumeration: pull requests | author, requested reviewers | authored, review_requested |
+| Claims ledger | human, contributor and external holders | claimed |
+| Inbox uploads | the dashboard user who added it | added |
+| Approved mail | the sender address | sent |
+| Calendar events | organiser and attendee addresses, who added it | organised, invited, added |
+| Meetings | who sent hive in (dashboard user, address or platform id) | added |
+
+Bots, the hive's own author account, agent claims, mail awaiting approval,
+purged meetings and display names produce nothing. Not read yet, and left to
+the next sweep PR: recordings, the merged ledger, review evidence, contributor
+profiles and connector fact authors, none of which the sweep can reach without
+a new accessor.
+
+The sweep is an optional sweep, so it is shed with the other optional sweeps
+when the GitHub budget is low, although it spends none of that budget itself.
+
+Automatic tags come from role, association and history: `maintainer` from an
+owner or merger role or a GitHub author association of owner, member or
+collaborator; `contributor` from an authored pull request; `end-user` from a
+reported issue with no pull request; `stakeholder` from meeting, calendar or
+mail activity with no GitHub activity.
+
+Existence is answered per artefact kind. A meeting exists until it is deleted
+or its transcript is purged; a Calendar event while the schedule holds it; an
+Inbox upload while its store holds it; a mail item while it exists and is
+approved. When a store is turned off nothing can say an artefact is gone, so
+its edges are kept. GitHub references have no resolver and are kept.
+
 Because the feature is on by default, the discovery sweep does not merge before
 forget, the role checks and retention pruning are merged and tested.
 
@@ -265,7 +302,7 @@ forget, the role checks and retention pruning are merged and tested.
 |---|---|---|
 | Owner | Everyone; suggested people; export; forget | Everyone |
 | Read-write | Everyone; suggested people | Everyone, except forget and export |
-| Read-only | Only their own "me" | Only their own name, identities, tags and goals |
+| Read-only | Only their own "me" | Only their own name, identities (as unconfirmed claims), tags and goals |
 
 - The owner and read-write admission is the one used for playing an Inbox
   recording.
@@ -273,9 +310,23 @@ forget, the role checks and retention pruning are merged and tested.
   a person route for any other id answers as if the id did not exist, and
   every GraphQL resolver that returns a person checks the viewer. A test walks
   the role matrix over every route and over each GraphQL path.
-- A read-only user editing their own identities cannot claim an identity that
-  belongs to another person; such a claim becomes a "Same person?" hint for an
-  owner or read-write user to confirm.
+- An identity a read-only user adds to their own profile is an **unconfirmed
+  claim**. It is shown on their profile and does nothing else: it is not a
+  key, resolves nobody and attracts no edges, whether or not the identity
+  belongs to someone else, so the answer tells the claimant nothing about
+  other profiles. An owner or read-write user confirms it; if it belongs to
+  another person, confirming raises a "Same person?" hint instead of linking.
+  A trusted source (section 5) proving the same identity also upgrades it.
+- A read-only user's view of their own profile leaves out the maintainers'
+  working material: notes, the satisfaction assessment, merge history, edge
+  counts and hints (a hint names another profile).
+- A read-only user must be a named, signed-in user. An anonymous viewer has
+  no profile.
+- Writes go through one route for the read-only role,
+  `POST /api/customers/me/edit`, which the dashboard's read-only write gate
+  lets through by exact method and path. The handlers apply the rules and the
+  store's service applies them again on the viewer it is handed, so the two
+  cannot drift apart silently.
 
 ## 11. GraphQL
 

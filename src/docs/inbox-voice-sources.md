@@ -99,7 +99,7 @@ see the issue linked from the changelog entry.
 spec on its own. To work the spec out **yourself**, interactively, send the
 item into an [Inception (spek)](inception.md) session instead: record, get a
 transcript (Plaud's, or the hive's own with 🎧 Transcribe, see
-[Inbox transcription](inbox-transcription.md)), then **🔗 Share ▾ → Hive →
+[Inbox transcription](inbox-transcription.md)), then **🔗 Share → Hive →
 spek…** (owners and read-write users). The dialog offers:
 
 - **Start a new session**: the name is the item's title, the group `inbox`,
@@ -147,7 +147,8 @@ Each Inbox item shows what the source has for the recording:
   transcript block the recording has: `transaction_polish` (AI-cleaned),
   then `transaction` (raw), then `outline`, following `next_cursor` pages.
 - **Duration and recording time** — from the listing.
-- **▶ Play recording** (owner or read-write) — plays the recording in an
+- **▶ Play recording** (the play icon button, named for screen readers and
+  on hover; owner or read-write) — plays the recording in an
   inline HTML5 player that streams from the hive's own origin
   (`GET /api/inbox/{source}/{id}/audio/stream`). The hive mints a fresh
   presigned link (Plaud: `get_file`, valid 24h), fetches the audio itself and
@@ -168,7 +169,8 @@ Each Inbox item shows what the source has for the recording:
   presigned link itself (`{url, expires_at}`, audited as `inbox_audio`) for
   API clients. The Plaud card's *Include 24h audio link* option only decides
   whether a sync also writes a link into the fact.
-- **🔗 Share ▾** — the only per-item menu besides ▶ Play and Transcript
+- **🔗 Share** (the link icon button) — the only per-item menu besides ▶ Play
+  and the Transcript / Text toggle
   (arrow keys move, Esc closes and returns focus). It has two labelled groups.
   **Hive** (owners and read-write users; read users see only Link):
   **RFC…** (**Retry RFC…** after a failure), **spek…** (into an
@@ -664,6 +666,21 @@ From the hive: **Report a problem** on the mail's line under
 the reply text from the bounce and the day. Leave out addresses, the
 subject and the file.
 
+## Neural input
+
+There is no neural (brain-computer interface) source, because no vendor
+publishes an API, SDK or export that yields text or speech. People who use
+such a device drive an ordinary computer with it and reach the Inbox through
+the dashboard; **＋ Add → Quick note** takes typed or dictated text
+([Quick note](inbox-uploads.md#quick-note)).
+
+Under the source chips the Inbox shows a quieter row, **Works today** and
+**Neural input (coming soon)**. Those chips are not sources: they only show
+a short explanation, and there is nothing to connect. Hive is not affiliated
+with the projects named; a listing reflects interest, not a commitment from
+them. The full list, with what each can and cannot do today, is in
+[Input methods and the Inbox](inbox-input-methods.md).
+
 ## Deleting an item
 
 Every Inbox item can be deleted
@@ -770,5 +787,8 @@ See [api-reference/knowledge.md](api-reference/knowledge.md) for
 `GET /api/inbox` always answers `200`: on a hive with no voice connector
 configured it returns an empty `items` list and every source as
 `configured: false`, and the Inbox panel shows its empty state with a
-"Connect sources" button. A connector added under Knowledge → Integrations
+"Connect sources" button. The response also carries `input_methods`, the
+static catalogue behind the input-methods row
+([Input methods and the Inbox](inbox-input-methods.md)); its entries are
+never sources. A connector added under Knowledge → Integrations
 starts syncing after the next hive restart.

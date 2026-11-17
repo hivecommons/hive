@@ -190,7 +190,7 @@ Full entry: [Knowledge](dashboard-sections/workflow-and-agents.md#knowledge).
 
 Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge.
 
-The top of the section shows the address to send things to, `hive@<dashboard host>`, with a Copy button; every item can be deleted with **🗑 Delete**, or several at once from **Hive (n) ▾ → Delete…**. Full entry: [Inbox](dashboard-sections/workflow-and-agents.md#inbox).
+The top of the section shows the address to send things to, `hive@<dashboard host>`, with a Copy button; every item can be deleted with **🗑 Delete**, or several at once from **Hive (n) ▾ → Delete…**. Under the source chips, a quieter row lists input methods: **Works today** (dictation, gaze typing and switch access, through **＋ Add → Quick note**) and **Neural input (coming soon)**; those chips only explain and connect nothing ([Input methods and the Inbox](inbox-input-methods.md)). Full entry: [Inbox](dashboard-sections/workflow-and-agents.md#inbox).
 
 ## Calendar
 
@@ -203,6 +203,26 @@ Right after Inbox in the left menu. Each row shows the title, organizer, start a
 Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.
 
 Owner only. The top of the section shows the address to add to a calendar invite, `hive@<dashboard host>`, with a Copy button, above the form that takes a link. Approve research past the per-meeting cap and answer Discord join requests here; settings are under Settings, Meetings, and the persona under Settings, Meeting attendee. Full entry: [Meetings](meetings.md).
+
+## Customers
+
+The people you build for: who each one is, what they are trying to get done, and how it is going for them.
+
+In the Collaborate group of the left menu, after Meetings. Everyone who signs in has their own profile, shown first as **Me**. The hive owner and read-write users also see every other customer and a collapsed **Suggested** list; a read-only user sees only their own profile.
+
+- **Customers** are dashboard users and people added by hand with **Add customer**. Each row shows the name, the tags that are on, the satisfaction level, how many goals are confirmed and how many suggestions wait for review.
+- **Suggested** are people hive has seen in issues, pull requests, meetings and mail who are not customers. Hive keeps only a key, counts and a few references for them. **Accept** makes one a customer; **Dismiss** removes the suggestion for good and keeps no readable trace.
+
+Opening a profile shows:
+
+- **Goals**: what the person is trying to get done. Add one, or confirm, edit or reject the ones hive suggests. A suggestion shows the references that led to it. A goal counts only once a person confirms it, and a rejected suggestion is not offered again.
+- **Satisfaction** (owner and read-write only): a level (Unknown, At risk, Neutral, Satisfied) with what led to it. There is no score. Hive may suggest a level; it never changes one a person set.
+- **Tags**: click a tag to turn it on or off. A tag marked manual stays as set; **Reset to automatic** hands it back to hive.
+- **Identities**: the logins, addresses and ids the person is known by. An identity a read-only user adds to their own profile is shown as unconfirmed, and does nothing, until the owner or a read-write user presses **Confirm**. The hive user identity cannot be changed.
+- **Activity** and **Notes** (owner and read-write only). The person does not see the notes.
+- **Forget** (owner only): deletes the person, their identities and their activity links, and stops hive rebuilding the profile.
+
+Nothing in this section leaves the hive. Turn it off with **Settings › Features › Customers** (`customers.enabled`), which takes effect when the hive restarts. API: [customers](api-reference/customers.md). Design: [customers](design/customers.md).
 
 ## Contributors
 

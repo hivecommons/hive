@@ -306,10 +306,7 @@
     .oc-sidebar-footer .layout-toggle { width: 100%; text-align: center; padding: var(--sp-4); margin: var(--sp-0); }
     .oc-agent-actions {
       display: flex; gap: var(--sp-2); padding: var(--sp-4) var(--sp-5);
-      margin: var(--sp-3) var(--sp-0) var(--sp-0);
-      border-top: 1px solid var(--border);
-      background: var(--bg-soft);
-      position: sticky; bottom: var(--sp-0); z-index: var(--z-sticky);
+      margin: var(--sp-0);
     }
     .oc-agent-actions .oc-agent-add-btn { flex: 1 1 auto; }
     .oc-agent-actions .oc-agent-group-btn { flex: 0 0 auto; }
@@ -6121,20 +6118,43 @@
     @media (max-width: 768px) { .kb-layout { grid-template-columns: 1fr; } }
 
     /* Inbox (voice recordings / dictations triage) */
-    .inbox-toolbar { flex-wrap: wrap; gap: var(--sp-3); margin-bottom: var(--sp-4); }
-    .inbox-sources { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    /* Header: one quiet sources line (configured chips, "+N more", Connect
+       sources), then one toolbar row: primary actions left, view controls
+       right. Every control is an hv-btn of the compact size. */
+    .inbox-sources { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+    .inbox-sources-rest { margin-top: calc(-1 * var(--sp-1)); }
+    .inbox-sources-rest[hidden] { display: none; }
+    .inbox-sources-rest .kc-pill { opacity: var(--opacity-disabled, 0.6); }
+    .inbox-sources-more { color: var(--text-muted); }
+    .inbox-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+    .inbox-toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .inbox-toolbar .hv-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
     .inbox-toggle { display: inline-flex; align-items: center; gap: var(--sp-2); }
     .inbox-list { max-height: none; }
     .inbox-item { cursor: default; }
     .inbox-item-focus { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r); }
     .inbox-check { display: flex; align-items: flex-start; padding-top: var(--sp-1); }
     .inbox-icon { flex-shrink: 0; font-size: var(--fs-lg); line-height: 1; padding-top: var(--sp-1); }
+    /* Item: title, one meta line (source, time, length, id, Knowledge
+       state, fact link), a clamped preview, then one row of icon buttons. */
+    .inbox-title { margin-bottom: 0; }
+    .inbox-meta { overflow-wrap: anywhere; }
+    .inbox-meta-id { font-family: var(--font-mono); font-size: var(--fs-2xs, var(--fs-xs)); color: var(--text-faint); }
+    .inbox-meta-state { font-weight: var(--fw-semibold); color: var(--text-muted); }
+    .inbox-meta-state[data-status="ok"] { color: var(--green); }
+    .inbox-meta-state[data-status="not loaded"] { color: var(--orange); }
     .inbox-pills { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
     .inbox-link { font-size: var(--fs-xs); }
-    .inbox-summary { white-space: pre-wrap; font-size: var(--fs-sm); margin-top: var(--sp-2); }
-    .inbox-summary.is-collapsed { max-height: 6.5em; overflow: hidden; position: relative; }
-    .inbox-summary.is-collapsed::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2.5em; background: linear-gradient(to bottom, transparent, var(--surface)); }
-    .inbox-more { padding: 0; font-size: var(--fs-xs); }
+    .inbox-summary { white-space: pre-wrap; font-size: var(--fs-sm); margin-top: var(--sp-2); max-width: 80ch; overflow-wrap: anywhere; }
+    .inbox-summary.is-collapsed { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+    .inbox-more { padding-inline: var(--sp-1); font-size: var(--fs-xs); }
+    .inbox-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
+    .inbox-actions .inbox-action-text { gap: var(--sp-1); padding-inline: var(--sp-2); }
+    .inbox-ic { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .inbox-action.btn-icon .inbox-ic { width: 1.1em; height: 1.1em; }
+    .inbox-actions-sep { width: var(--line-width, 1px); align-self: stretch; margin-inline: var(--sp-2); background: var(--line-subtle); }
+    .inbox-action-danger { color: var(--text-muted); }
+    .inbox-action-danger:hover, .inbox-action-danger:focus-visible { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 40%, transparent); }
     .inbox-pending { margin-top: var(--sp-2); font-style: italic; }
     .inbox-media:not(:empty) { margin-top: var(--sp-2); }
     .inbox-email-image { display: block; max-width: min(100%, 320px); max-height: 240px; margin-top: var(--sp-2); border-radius: var(--radius-sm, 4px); }
@@ -6238,6 +6258,34 @@
     a.inbox-share-pill:hover, a.inbox-share-pill:focus-visible { text-decoration: underline; }
     .inbox-share-more { text-decoration: none; color: var(--text-faint); }
     .inbox-share-more:hover, .inbox-share-more:focus-visible { text-decoration: underline; }
+    /* Inbox access: the input-methods row, the Quick note box and hit
+       targets. Tokens only; see src/docs/inbox-input-methods.md. */
+    /* Input methods are not sources: the chips are quieter than a source
+       pill (outline only, muted text) and do nothing but show a note. */
+    .inbox-inputs { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-4); margin-bottom: var(--sp-3); }
+    .inbox-input-group { display: inline-flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .kc-pill.inbox-input-chip { position: relative; border: var(--line-width) dashed var(--border); background: transparent; color: var(--muted); font-family: inherit; font-weight: 400; cursor: help; }
+    .kc-pill.inbox-input-chip[data-input-state="works_today"] { border-style: solid; }
+    .kc-pill.inbox-input-chip:hover, .kc-pill.inbox-input-chip[aria-expanded="true"] { color: var(--text); border-color: var(--muted); }
+    .kc-pill.inbox-input-chip:focus-visible { color: var(--text); outline: 2px solid var(--accent); outline-offset: 2px; }
+    .inbox-input-note { margin: var(--sp-0) var(--sp-0) var(--sp-3); padding: var(--sp-2) var(--sp-3); border: var(--line-width) dashed var(--border); border-radius: var(--r); }
+    .inbox-input-note .hv-btn { margin-left: var(--sp-2); }
+    /* Quick note: a text box in the Add panel. */
+    .inbox-note { margin-top: var(--sp-3); }
+    .inbox-note-label { display: block; margin-bottom: var(--sp-1); font-size: var(--fs-sm); font-weight: 600; }
+    .inbox-note-text { box-sizing: border-box; width: 100%; min-height: calc(2 * var(--tap-target)); resize: vertical; font-family: inherit; }
+    /* Hit targets: every small control in the Inbox answers over at least
+       --tap-target. The hit area grows through a transparent pseudo-element,
+       so the controls keep their size and the list keeps its density. */
+    .inbox-check { position: relative; cursor: pointer; }
+    .inbox-check::before { content: ""; position: absolute; top: 0; left: 50%; width: var(--tap-target); height: var(--tap-target); margin-left: calc(var(--tap-target) / -2); }
+    .inbox-toggle { min-height: var(--tap-target); cursor: pointer; }
+    .inbox-panel .btn-sm, .inbox-rec-panel .btn-sm, [id="inbox-mail-log"] .btn-sm { position: relative; }
+    .inbox-pills a, .inbox-link, .inbox-more, .inbox-fact-link { position: relative; display: inline-block; }
+    .inbox-panel .btn-sm::before, .inbox-rec-panel .btn-sm::before, [id="inbox-mail-log"] .btn-sm::before, .inbox-pills a::before, .inbox-link::before, .inbox-more::before, .inbox-fact-link::before, .kc-pill.inbox-input-chip::before {
+      content: ""; position: absolute;
+      inset: min(0px, calc((100% - var(--tap-target)) / 2));
+    }
     /* Meetings: hive as a live meeting participant (Quorum) */
     .meetings-panel { display: flex; flex-direction: column; gap: var(--sp-4); }
     .meetings-join { display: flex; flex-direction: column; gap: var(--sp-3); }
@@ -6259,6 +6307,12 @@
     .meetings-line { margin: 0 0 var(--sp-1); white-space: pre-wrap; }
     .meetings-line.is-partial { opacity: 0.6; font-style: italic; }
     .meetings-who { font-weight: 600; margin-right: var(--sp-1); }
+    .meetings-line.is-reply { padding: var(--sp-1) var(--sp-2); border-left: 2px solid var(--accent); border-radius: var(--r); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    .meetings-line.is-reply.is-undelivered { border-left-color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
+    .meetings-reply-meta { margin-right: var(--sp-1); font-size: var(--fs-xs); color: var(--muted); }
+    .meetings-reach.is-unreachable { margin: 0 0 var(--sp-2); padding: var(--sp-2); border: 1px solid var(--red); border-radius: var(--r); font-size: var(--fs-sm); color: var(--red); }
+    .inbox-assistant-line { display: block; padding-left: var(--sp-2); border-left: 2px solid var(--accent); color: var(--accent); }
+    .inbox-assistant-line.is-undelivered { border-left-color: var(--red); color: var(--red); }
     .meetings-side { display: flex; flex-direction: column; gap: var(--sp-3); }
     .meetings-side ul { margin: 0; padding-left: var(--sp-4); font-size: var(--fs-sm); }
     .meetings-research { display: flex; flex-direction: column; gap: var(--sp-2); font-size: var(--fs-sm); }
@@ -6315,6 +6369,28 @@
     .ma-my-emails { list-style: none; margin: var(--sp-1) 0; padding: 0; display: grid; gap: var(--sp-1); }
     .ma-add-email { display: flex; gap: var(--sp-2); align-items: center; margin: var(--sp-1) 0 var(--sp-2); }
     .ma-add-email .kb-search-box { flex: 1; min-width: 0; }
+    /* Customers: a profile per person (hivecommons/hive issue 18742) */
+    .customers-panel { display: flex; flex-direction: column; gap: var(--sp-5); }
+    .customers-block { display: flex; flex-direction: column; gap: var(--sp-2); }
+    .customers-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+    .customers-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); }
+    .customers-row[data-me="true"] { border-color: var(--accent); }
+    .customers-row-main { flex: 1 1 16em; min-width: 0; }
+    .customers-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .customers-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); }
+    .customers-chip[data-state="off"] { opacity: 0.55; }
+    .customers-chip[data-source="manual"] { border-color: var(--accent); }
+    .customers-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr) auto; gap: var(--sp-2); align-items: end; }
+    .customers-form label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
+    .customers-inline { display: flex; flex-wrap: wrap; align-items: end; gap: var(--sp-2); }
+    .customers-inline label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); flex: 1 1 12em; }
+    .customers-profile-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .customers-profile-name { font-size: var(--fs-md); flex: 1 1 12em; min-width: 0; }
+    .customers-evidence { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--muted); overflow-wrap: anywhere; }
+    .customers-notes { width: 100%; min-height: 6em; }
+    @media (max-width: 720px) {
+      .customers-form { grid-template-columns: 1fr; }
+    }
     /* Email-in address row shared by Inbox, Calendar and Meetings (#18693) */
     .email-in { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
     .email-in-label { font-size: var(--fs-xs); font-weight: 700; color: var(--muted); }
@@ -9021,22 +9097,21 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item" data-section="inbox-section" data-action="ocNavigate" data-arg0="inbox-section"><span class="oc-nav-emoji">📥</span><span class="oc-nav-text">Inbox</span><span id="inbox-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
       <a class="oc-nav-item" data-section="calendar-section" data-action="ocNavigate" data-arg0="calendar-section"><span class="oc-nav-emoji">📅</span><span class="oc-nav-text">Calendar</span><span id="calendar-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
       <a class="oc-nav-item" data-section="meetings-section" data-action="ocNavigate" data-arg0="meetings-section"><span class="oc-nav-emoji">🎙</span><span class="oc-nav-text">Meetings</span></a>
+      <a class="oc-nav-item" data-section="customers-section" data-action="ocNavigate" data-arg0="customers-section" hidden><span class="oc-nav-emoji">🪪</span><span class="oc-nav-text">Customers</span></a>
       <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spek)</span></a>
     </div>
     <div class="oc-nav-group" id="oc-agent-nav-group">
       <div class="oc-tree-toggle" data-action="ocToggleAgentTree" data-arg-types="t">
         <span class="oc-tree-arrow">▼</span> <span>Agents</span>
       </div>
-      <div class="oc-tree-children" id="oc-agent-tree">
-        <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
-      </div>
-      <div id="nous-sidebar-config" data-feature="experiment_lab" hidden style="padding:var(--sp-1) var(--sp-4) var(--sp-3) var(--sp-8);font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
-        <div><span id="nous-sb-mode"></span></div>
-        <div id="nous-sb-phase" style="opacity:0.8"></div>
-      </div>
-      <div class="oc-agent-actions" aria-label="Agent actions">
-        <button type="button" class="hv-btn btn-primary btn-sm oc-agent-add-btn" data-action="openAddAgentDialog" title="Add a new agent from a template or from scratch">＋ Add agent</button>
-        <button type="button" class="hv-btn btn-secondary btn-sm oc-agent-group-btn" data-action="ocAddSidebarGroup" title="Create a sidebar group for organizing agents">＋ Group</button>
+      <div class="oc-tree-children" id="oc-agent-tree-body">
+        <div id="oc-agent-tree">
+          <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
+        </div>
+        <div class="oc-agent-actions" aria-label="Agent actions">
+          <button type="button" class="hv-btn btn-primary btn-sm oc-agent-add-btn" data-action="openAddAgentDialog" title="Add a new agent from a template or from scratch">＋ Add agent</button>
+          <button type="button" class="hv-btn btn-secondary btn-sm oc-agent-group-btn" data-action="ocAddSidebarGroup" title="Create a sidebar group for organizing agents">＋ Group</button>
+        </div>
       </div>
     </div>
     <div class="oc-nav-group">
@@ -9511,6 +9586,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="meetings-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Meetings section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🎙 Meetings</h2>
     <div class="section-body">
       <div id="meetings-panel" class="meetings-panel"><p class="muted-xs">Loading meetings…</p></div>
+    </div>
+  </div>
+  <div class="mt-6 mb-8" id="customers-section" data-dashboard-section="customers-section" hidden>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="customers-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Customers section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🪪 Customers</h2>
+    <div class="section-body">
+      <div id="customers-panel" class="customers-panel"><p class="muted-xs">Loading customers…</p></div>
     </div>
   </div>
   <div class="mt-6 mb-8" id="debug-section" data-dashboard-section="debug-section">
@@ -10872,10 +10953,18 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     // keeps the historical all-expanded default forever) or is new ('v1').
     const DASHBOARD_DEFAULT_COLLAPSED_SECTIONS = Object.freeze([
       'pr-throughput-section', 'token-panel', 'cost-panel', 'advisory-section', 'knowledge-section', 'inbox-section',
-      'calendar-section', 'meetings-section',
+      'calendar-section', 'meetings-section', 'customers-section',
       'contributors-section', 'sessions-section', 'acmm-eval-section', 'debug-section', 'audit-section',
       'logs-section', 'nous-section', 'faq-section'
     ]);
+    // Level-driven defaults: a section listed here starts collapsed once the
+    // hive runs at or above the ACMM level, until the operator picks a state
+    // themselves. At L6 the hive runs itself, so the Agents card is minimized.
+    // The last seen level is cached so a reload does not flash the card open
+    // before the first status arrives.
+    const ACMM_AUTONOMOUS_LEVEL = 6;
+    const DASHBOARD_LEVEL_COLLAPSED_SECTIONS = Object.freeze({ 'agents-section': ACMM_AUTONOMOUS_LEVEL });
+    const DASHBOARD_ACMM_LEVEL_CACHE_KEY = 'hive-acmm-level-last';
     const DASHBOARD_COLLAPSE_DEFAULTS_KEY = 'hive.dashboard.collapseDefaults';
     const DASHBOARD_COLLAPSE_DEFAULTS_VERSION = 'v1';
     const DASHBOARD_COLLAPSE_DEFAULTS_LEGACY = 'legacy';
@@ -10988,6 +11077,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'inbox-section': { title: '📥 Inbox', summary: '0 to triage' },
       'calendar-section': { title: '📅 Calendar', summary: 'nothing scheduled' },
       'meetings-section': { title: '🎙 Meetings', summary: 'no live meetings' },
+      'customers-section': { title: '🪪 Customers', summary: 'your profile' },
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
@@ -11029,6 +11119,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'meetings-section': { heading: 'Meetings', help: 'Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.' },
       'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge.' },
       'calendar-section': { heading: 'Calendar', help: 'Meetings hive will join, about a minute before each starts: add one, approve or decline requests, or skip and cancel.' },
+      'customers-section': { heading: 'Customers', help: 'The people you build for: who each one is, what they are trying to get done, and how it is going for them.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
@@ -11642,7 +11733,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
         return '';
       } else if (sectionId === 'agents-section') {
         const agents = data.agents || window._lastAgents || [];
-        inner = typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now(), data.governor) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text);
+        inner = agentsAttentionBadgeHtml(agents) + (typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now(), data.governor) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text));
       } else if (sectionId === 'lifecycle-section') {
         inner = miniBar([{ label: 'in flight', value: nums[0] || 0, color: 'var(--blue)' }, { label: 'merged', value: nums[1] || 0, color: 'var(--green)' }, { label: 'blocked', value: nums[2] || 0, color: 'var(--red)' }], text);
       } else {
@@ -11681,7 +11772,20 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       const activeAgents = agents.filter(a => a && !agentIsDisabled(a));
       const off = activeAgents.filter(a => a && (a.paused || a.stopped || a.offByCadence || a.unscheduledInMode || a.state === 'stopped' || a.state === 'failed')).length;
       const on = Math.max(0, activeAgents.length - off);
-      return `${agents.length} agents · ${on} on · ${off} off${disabled > 0 ? ` · ${disabled} disabled` : ''}`;
+      const attention = agentsNeedingAttention(agents);
+      return `${agents.length} agents · ${on} on · ${off} off${disabled > 0 ? ` · ${disabled} disabled` : ''}${attention > 0 ? ` · ${attention} need attention` : ''}`;
+    }
+    /** Agents the owner must act on: signed out, expired, stopped or failed (not disabled by choice). */
+    function agentsNeedingAttention(agents) {
+      return (Array.isArray(agents) ? agents : []).filter(a => {
+        if (!a || agentIsDisabled(a)) return false;
+        const isDown = a.state !== 'running';
+        return agentCollapsedAuthInfo(a, isDown).needsLogin || a.state === 'stopped' || a.state === 'failed' || a.state === 'blocked';
+      }).length;
+    }
+    function agentsAttentionBadgeHtml(agents) {
+      const n = agentsNeedingAttention(agents);
+      return n > 0 ? `<span class="badge-status status-badge agents-attention-badge" data-status="attention" title="${n} agent${n === 1 ? '' : 's'} need your attention">${n} need attention</span>` : '';
     }
     let _lastHiveAdvice = null;
     function agentCollapsedParseNextKick(value, nowMs) {
@@ -12275,6 +12379,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       sectionId = dashboardAliasSectionId(sectionId);
       return dashboardCollapseDefaultsActive() && DASHBOARD_DEFAULT_COLLAPSED_SECTIONS.indexOf(sectionId) >= 0;
     }
+    /** Current ACMM level (same status field the header badge shows); falls back to the cached level before the first status. */
+    function dashboardAcmmLevel() {
+      const st = typeof window !== 'undefined' ? window._lastStatus : null;
+      if (st && st.acmmLevel != null) { const n = Number(st.acmmLevel); return Number.isFinite(n) ? n : 0; }
+      try { const c = Number(localStorage.getItem(DASHBOARD_ACMM_LEVEL_CACHE_KEY)); return Number.isFinite(c) ? c : 0; } catch (e) { return 0; }
+    }
+    /** Remember the level from the latest status so the next load starts in the right state. */
+    function dashboardRememberAcmmLevel(level) {
+      try {
+        const n = String(Number(level) || 0);
+        if (localStorage.getItem(DASHBOARD_ACMM_LEVEL_CACHE_KEY) !== n) localStorage.setItem(DASHBOARD_ACMM_LEVEL_CACHE_KEY, n);
+      } catch (e) { /* storage unavailable */ }
+    }
+    /** True when the hive's level makes this section start collapsed (no operator choice involved). */
+    function dashboardLevelDefaultCollapsed(sectionId) {
+      const min = DASHBOARD_LEVEL_COLLAPSED_SECTIONS[dashboardAliasSectionId(sectionId)];
+      return min != null && dashboardAcmmLevel() >= min;
+    }
     /** Check whether a dashboard section is collapsed: explicit localStorage choice first, then the default. */
     function isSectionCollapsed(sectionId) {
       sectionId = dashboardAliasSectionId(sectionId);
@@ -12283,13 +12405,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const raw = localStorage.getItem(SECTION_LS_PREFIX + sectionId);
       if (raw === '1') return true;
       if (raw === '0') return false;
-      return dashboardDefaultCollapsed(sectionId);
+      return dashboardDefaultCollapsed(sectionId) || dashboardLevelDefaultCollapsed(sectionId);
     }
     /** Write the per-section key: '1' collapsed, '0' explicitly expanded where the default is collapsed, removed otherwise. */
     function writeSectionCollapsedKey(sectionId, collapsed) {
       if (collapsed) {
         localStorage.setItem(SECTION_LS_PREFIX + sectionId, '1');
-      } else if (dashboardDefaultCollapsed(sectionId)) {
+      } else if (dashboardDefaultCollapsed(sectionId) || DASHBOARD_LEVEL_COLLAPSED_SECTIONS[sectionId] != null) {
+        // A level-driven section always keeps an explicit '0', otherwise an
+        // expand made below the level would collapse again when the level rises.
         localStorage.setItem(SECTION_LS_PREFIX + sectionId, '0');
       } else {
         localStorage.removeItem(SECTION_LS_PREFIX + sectionId);
@@ -12482,7 +12606,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','inbox-section','calendar-section','meetings-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','inbox-section','calendar-section','meetings-section','customers-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
@@ -12502,8 +12626,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var dashboardKeyboardSnapshot=null;
     function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
     function experimentLabEnabled(){return dashboardFeatureEnabled('experiment_lab');}
+    function customersFeatureEnabled(){return window._customersEnabled===true;}
     function sessionsFeatureEnabled(){return window._sessionsEnabled===true;}
-    function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);if(id==='sessions-section')return !sessionsFeatureEnabled();return id==='nous-section'&&!experimentLabEnabled();}
+    function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);if(id==='sessions-section')return !sessionsFeatureEnabled();if(id==='customers-section')return !customersFeatureEnabled();return id==='nous-section'&&!experimentLabEnabled();}
     function dashboardCanHideSection(id){id=dashboardAliasSectionId(id);return DASHBOARD_LAYOUT_TEMPLATE.main.indexOf(id)>=0&&DASHBOARD_HIDE_DENYLIST.indexOf(id)<0&&!dashboardFeatureSectionHidden(id);}
     function dashboardHiddenSectionsRead(){try{var raw=localStorage.getItem(DASHBOARD_HIDDEN_SECTIONS_KEY),arr=raw?JSON.parse(raw):[];return Array.isArray(arr)?arr.filter(function(id,i){return dashboardCanHideSection(id)&&arr.indexOf(id)===i;}):[];}catch(e){return [];}}
     function dashboardHiddenSectionsWrite(ids){try{var valid=(ids||[]).filter(function(id,i,a){return dashboardCanHideSection(id)&&a.indexOf(id)===i;});if(valid.length)localStorage.setItem(DASHBOARD_HIDDEN_SECTIONS_KEY,JSON.stringify(valid));else localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);}catch(e){}dashboardUpdateLayoutMenuState();}
@@ -13086,7 +13211,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       document.querySelectorAll('[data-feature="experiment_lab"]').forEach(el => {
         if (experimentOn) {
           el.hidden = false;
-          if (el.id !== 'nous-section' && el.id !== 'nous-sidebar-config') el.style.display = '';
+          if (el.id !== 'nous-section') el.style.display = '';
         } else {
           el.hidden = true;
           el.style.display = 'none';
@@ -20629,14 +20754,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { profile: String(t.profile), state: String(t.state || ''), reply: String(t.reply || ''), agent: String(t.agent || ''), problem: String(t.problem || '') };
     }
 
-    // Pure: the row's short reason when no hive agent fills the profile
-    // its state is handed to (hivecommons/hive#18690): the hand-off cannot
-    // happen and no other lane is offered the item, so the row says so
-    // instead of looking claimed and idle. '' when an agent fills it.
+    // Pure: the row's short reason when its hand-off cannot happen or did
+    // not start. No hive agent fills the profile its state is handed to
+    // (hivecommons/hive#18690), or the agent it was handed to declined or
+    // did not act (`workflows.repos[repo].handoffs` keyed by item number,
+    // hivecommons/hive#18749). No other lane is offered the item either
+    // way, so the row says so instead of looking claimed and idle. null
+    // when an agent fills the profile and the hand-off is under way.
     function stageTrackerWorkflowGapOf(item, workflows) {
       const t = stageTrackerWorkflowDispatchOf(item, workflows);
-      if (!t || !t.problem) return null;
-      return { profile: t.profile, word: 'no agent for ' + t.profile, tip: 'Not handed off: ' + t.problem + '. Pick an agent for it on the repository\'s workflow row in Settings → Repos.' };
+      if (!t) return null;
+      if (t.problem) return { profile: t.profile, word: 'no agent for ' + t.profile, tip: 'Not handed off: ' + t.problem + '. Pick an agent for it on the repository\'s workflow row in Settings → Repos.' };
+      const wf = stageTrackerWorkflowOf({ workflows }, item.repo);
+      const h = wf && wf.handoffs ? wf.handoffs[String(Number(item.number) || 0)] : null;
+      if (!h || String(h.profile || '') !== t.profile || (h.state && String(h.state) !== t.state)) return null;
+      const next = h.retrying
+        ? 'The hive hands it to another agent that may do the work, if there is one.'
+        : 'It waits for an owner: use Send to ' + t.profile + ' in this row\'s ⋯ menu.';
+      return { profile: t.profile, word: 'not started: ' + t.profile, tip: 'Hand-off not started: ' + String(h.reason || (String(h.agent || 'the agent') + ' did not act')) + '. ' + next };
     }
     function stageTrackerWorkflowGapHtml(item, workflows) {
       const g = stageTrackerWorkflowGapOf(item, workflows);
@@ -33488,20 +33623,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
               const pct = v => `${((Number(v) || 0) * 100).toFixed(0)}%`;
               const unattributed = governorPRModelUnattributed(b);
               const rank = eff.rank ? `<span class="gov-pr-model-rank">#${eff.rank}</span>` : (unattributed ? '<span class="gov-pr-model-rank unattributed" title="No model recorded on these PRs; listed but not ranked">unattributed</span>' : '');
+              const measured = Number(eff.runs || 0) > 0;
+              const runPct = v => measured ? pct(v) : '—';
+              const ci = r => Array.isArray(r) && r.length === 2 ? ` (95% CI ${pct(r[0])}–${pct(r[1])})` : '';
               const values = {
                 merged: String(eff.merged_prs ?? b.merged ?? 0),
                 first_pass: pct(eff.first_pass_merge_rate ?? rw.first_pass_merge_rate),
-                pr_runs: pct(eff.verified_pr_run_rate),
-                fail: pct(eff.failure_rate),
-                no_ship: pct(eff.nothing_to_ship_rate),
+                pr_runs: runPct(eff.verified_pr_run_rate),
+                fail: runPct(eff.failure_rate),
+                no_ship: runPct(eff.nothing_to_ship_rate),
               };
               const metrics = `<div class="gov-pr-model-metrics" role="group" aria-label="Model effectiveness metrics">${GOV_PR_MODEL_COLUMNS.map(([key, label]) => `<div class="gov-pr-model-metric" data-label="${label}">${values[key]}</div>`).join('')}</div>`;
               const backends = Array.isArray(b.backends) && b.backends.length ? b.backends : String(b.backend || 'unknown').split(',').map(x => x.trim()).filter(Boolean);
               const backendChips = backends.map(x => `<span class="gov-pr-model-backend">${escapeHtml(x)}</span>`).join('');
               const sources = (b.sources || []).map(src => `${src.model || 'unknown'} / ${src.backend || 'unknown'}: ${src.prs || 0} PRs (${src.merged || 0} merged)`).join('\n');
               const agentBreakdown = (b.agents || []).map(a => `${a.agent || 'unknown'} / ${a.backend || b.backend || 'unknown'}: ${a.prs} PRs (${a.merged || 0} merged, ${a.open || 0} open, ${a.closed_unmerged || 0} closed-unmerged)`).join('\n');
-              const scoreLine = eff.rank ? `\nRank #${eff.rank} · score ${(Number(eff.score) || 0).toFixed(3)} = Wilson lower bound(${eff.first_pass_merged ?? '?'}/${eff.merged_prs ?? b.merged ?? 0} first pass) × (1 − fail) × (1 − no ship)` : (unattributed ? '\nUnattributed: no model recorded, listed but not ranked' : `\nUnranked: fewer than ${data.min_merged_prs || 5} merged PRs`);
-              const tip = `${b.model || 'unknown'} via ${backends.join(', ')}${scoreLine}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${values.first_pass} · PR run rate ${values.pr_runs} · failure ${values.fail} · nothing-to-ship ${values.no_ship}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${sources ? '\n\nRaw model ids folded into this row:\n' + sources : ''}${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
+              const scoreFormula = measured ? ' × (1 − fail) × (1 − no ship)' : ' (first-pass bound only: no runs recorded, so the run factors were skipped)';
+              const scoreLine = eff.rank ? `\nRank #${eff.rank} · score ${(Number(eff.score) || 0).toFixed(3)} = Wilson lower bound(${eff.first_pass_merged ?? '?'}/${eff.merged_prs ?? b.merged ?? 0} first pass)${scoreFormula}` : (unattributed ? '\nUnattributed: no model recorded, listed but not ranked' : `\nUnranked: fewer than ${data.min_merged_prs || 5} merged PRs`);
+              const tip = `${b.model || 'unknown'} via ${backends.join(', ')}${scoreLine}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${values.first_pass}${ci(eff.first_pass_merge_rate_ci || rw.first_pass_merge_rate_ci)} · PR run rate ${values.pr_runs}${measured ? ci(eff.verified_pr_run_rate_ci) : ''} · failure ${values.fail}${measured ? ci(eff.failure_rate_ci) : ''} · nothing-to-ship ${values.no_ship}${measured ? ci(eff.nothing_to_ship_rate_ci) : ''}${measured ? '' : '\n— = no runs recorded, not a measured 0%'}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${sources ? '\n\nRaw model ids folded into this row:\n' + sources : ''}${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
               return `<div class="gov-pr-model-row${unattributed ? ' unattributed' : ''}" title="${escapeHtml(tip)}">
                 <div><div class="gov-pr-model-name">${rank}${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${backendChips}</div></div>
                 <div class="gov-pr-model-bar" aria-label="${escapeHtml(tip)}">
@@ -33537,6 +33676,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           return `<li><a${href}>${escapeHtml(label)}</a> ${escapeHtml(pr.model || 'unknown')} · ${pr.review_rounds || 0} rounds · ${pr.fix_attempts || 0} fixes · ${pr.follow_up_commits || 0} follow-up commits${fixers}</li>`;
         }).join('')}</ol>
       </div>` : '';
+      const cov = data && data.coverage;
+      const covParts = [];
+      if (cov && cov.closed_prs_partial) covParts.push(`closed PRs: last ${cov.closed_pr_lookback_days || 0} days scanned${data.earliest_pr_created_at ? ` (earliest counted ${escapeHtml(String(data.earliest_pr_created_at).slice(0, 10))})` : ''}`);
+      if (cov && cov.runs_partial) covParts.push(`runs: ${cov.runs_since ? 'since ' + escapeHtml(String(cov.runs_since).slice(0, 10)) : 'none retained'} (older runs rotated out)`);
+      const coverageNote = covParts.length ? `<div class="gov-pr-model-sub gov-pr-model-sub-spaced gov-pr-models-coverage">Partial history: ${covParts.join(' · ')}. Run columns come from the task-run log; — means no runs recorded, not a measured 0%.</div>` : '';
       const header = data && total > 0 ? `<div class="gov-pr-model-row gov-pr-model-head" aria-hidden="false">
           <div>Model</div>
           <div>Outcome</div>
@@ -33551,6 +33695,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <span class="gov-pr-models-toggle" data-stop="1">${buttons}${sortButtons}</span>
         </div>
         <div class="section-body" id="governor-pr-models-section-body"><div class="gov-pr-models">
+          ${coverageNote}
           ${header}
           ${rows}
           ${reworkTable}
@@ -44402,22 +44547,6 @@ function burnAreaChart() {
       // section header (#12532); the header keeps the mode · N summary.
       if (typeof refreshDashboardSectionSummaries === 'function' && window._lastStatus) refreshDashboardSectionSummaries(window._lastStatus);
 
-      // Update sidebar config — only show at ACMM L4+
-      const NOUS_SIDEBAR_MIN_LEVEL = 4;
-      const modeColors = { observe: 'var(--blue)', suggest: 'var(--yellow)', evolve: 'var(--green)' };
-      const currentACMM = window._lastStatus ? (window._lastStatus.acmmLevel || 0) : 0;
-      const sbConfig = document.getElementById('nous-sidebar-config');
-      const sbMode = document.getElementById('nous-sb-mode');
-      const sbPhase = document.getElementById('nous-sb-phase');
-      if (sbConfig) {
-        sbConfig.style.display = currentACMM >= NOUS_SIDEBAR_MIN_LEVEL ? '' : 'none';
-        if (sbMode) { sbMode.textContent = mode; sbMode.style.color = modeColors[mode] || 'var(--muted)'; }
-        if (sbPhase) {
-          const rp = (phases.repo || {}).phase || 'IDLE';
-          sbPhase.textContent = 'repo:' + rp;
-        }
-      }
-
       let html = '';
 
       // Fresh lab (no baseline, no experiments, no principles yet):
@@ -48166,8 +48295,10 @@ function burnAreaChart() {
     const INBOX_BUSY_POLL_MS = 5000;
     const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗', 'hive-recording': '⏺️', upload: '📎', email: '✉️' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
-    // Summaries longer than this many characters start collapsed.
+    // Summaries longer than this many characters, or more lines than the
+    // clamp (the CSS line-clamp of .inbox-summary.is-collapsed), start collapsed.
     const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
+    const INBOX_SUMMARY_CLAMP_LINES = 3;
     let _inboxCache = null;
     let _inboxSelected = new Set();
     let _inboxShowProcessed = false;
@@ -48197,8 +48328,51 @@ function burnAreaChart() {
     let _inboxAddOpen = false;
     let _inboxUploadQueue = Promise.resolve();
     let _inboxPointerInside = false;
+    // Whether the "+N more" disclosure of unconfigured sources is open.
+    let _inboxSourcesOpen = false;
 
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
+    // Inline SVG glyphs for the per-item icon buttons (play, share, text
+    // disclosure, open file, delete). Each is decorative: the button carries
+    // the accessible name (aria-label) and the tooltip (title).
+    function inboxIconSvg(name) {
+      const paths = {
+        play: '<path d="M4.5 3.2v9.6a.6.6 0 0 0 .9.5l7.6-4.8a.6.6 0 0 0 0-1L5.4 2.7a.6.6 0 0 0-.9.5z" fill="currentColor" stroke="none"/>',
+        share: '<path d="M6.8 9.2a3 3 0 0 0 4.2 0l2-2a3 3 0 0 0-4.2-4.2l-1 1"/><path d="M9.2 6.8a3 3 0 0 0-4.2 0l-2 2a3 3 0 0 0 4.2 4.2l1-1"/>',
+        'chevron-right': '<path d="M6 3.5 10.5 8 6 12.5"/>',
+        'chevron-down': '<path d="M3.5 6 8 10.5 12.5 6"/>',
+        file: '<path d="M10.5 5.5 6.2 9.8a1.5 1.5 0 0 0 2.1 2.1l4.6-4.6a3 3 0 0 0-4.2-4.2L4 7.8a4.2 4.2 0 0 0 6 6l3-3"/>',
+        trash: '<path d="M3 4.5h10"/><path d="M6.5 4.5V3h3v1.5"/><path d="M4.5 4.5l.6 8.2a1 1 0 0 0 1 .8h3.8a1 1 0 0 0 1-.8l.6-8.2"/>'
+      };
+      return '<svg class="inbox-ic" viewBox="0 0 16 16" aria-hidden="true" focusable="false">' + (paths[name] || '') + '</svg>';
+    }
+    // inboxTitleParts splits a trailing recording id off a title:
+    // "Meeting notes: standup 2026-11-17 (mtg-078395cc1f76)" becomes
+    // { title: "Meeting notes: standup 2026-11-17", id: "mtg-078395cc1f76" }.
+    // The id goes to the meta line; the full title stays as the tooltip.
+    function inboxTitleParts(title) {
+      const full = String(title || '');
+      const m = /^(.*\S)\s*\(((?:mtg|rec|meeting)-[A-Za-z0-9_-]+)\)\s*$/.exec(full);
+      return m ? { title: m[1], id: m[2], full } : { title: full, id: '', full };
+    }
+    // inboxMarkdownToText renders a Markdown preview as plain text: heading
+    // marks, emphasis, code ticks, list bullets, quotes and link syntax go,
+    // the words stay (mentions stay plain text). Blank runs collapse.
+    function inboxMarkdownToText(md) {
+      return String(md || '')
+        .replace(/```[^\n]*\n?/g, '')
+        .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '')
+        .replace(/^[ \t]*>[ \t]?/gm, '')
+        .replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/gm, '')
+        .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+        .replace(/(\*\*|__)(.+?)\1/g, '$2')
+        .replace(/(^|[^\w*])\*([^*\n]+)\*(?!\w)/g, '$1$2')
+        .replace(/`([^`\n]*)`/g, '$1')
+        .replace(/[ \t]+$/gm, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
     // Uploaded documents have no audio; uploaded audio/video does. Mailed-in
     // audio (source email) is opened as a file, not streamed.
     function inboxItemHasAudio(it) { return !it || (it.source !== 'upload' && it.source !== 'email') || (it.source === 'upload' && (it.upload_kind === 'audio' || it.upload_kind === 'video')); }
@@ -48271,17 +48445,21 @@ function burnAreaChart() {
       return html;
     }
 
-    // Summary / memo text: collapsed past INBOX_SUMMARY_COLLAPSE_CHARS with a
-    // more/less toggle. Falls back to the pending note or the fact excerpt.
+    // Summary / memo text: a plain-text preview (a document's Markdown is
+    // rendered as text) clamped to INBOX_SUMMARY_CLAMP_LINES lines with a
+    // Show more / Show less toggle once it is longer than
+    // INBOX_SUMMARY_COLLAPSE_CHARS or that many lines. Falls back to the
+    // pending note or the fact excerpt.
     function inboxSummaryHtml(it, key) {
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
       const cached = _inboxContent[key];
-      const summary = (cached && cached.summary) || it.summary || '';
+      const raw = (cached && cached.summary) || it.summary || '';
+      const summary = it.source === 'upload' || it.source === 'email' ? inboxMarkdownToText(raw) : raw;
       if (summary) {
-        const long = summary.length > INBOX_SUMMARY_COLLAPSE_CHARS;
+        const long = summary.length > INBOX_SUMMARY_COLLAPSE_CHARS || summary.split('\n').length > INBOX_SUMMARY_CLAMP_LINES;
         const expanded = _inboxExpanded.has(key);
         let html = '<div class="inbox-summary' + (long && !expanded ? ' is-collapsed' : '') + '">' + escapeHtml(summary) + '</div>';
-        if (long) html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-more" data-action="inboxToggleSummary" data-arg0="' + src + '" data-arg1="' + id + '">' + (expanded ? 'less' : 'more') + '</button>';
+        if (long) html += '<button type="button" class="hv-btn btn-ghost btn-sm inbox-more" data-action="inboxToggleSummary" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (expanded ? 'true' : 'false') + '">' + (expanded ? 'Show less' : 'Show more') + '</button>';
         return html;
       }
       // Any text (a machine transcript included) means the item is not
@@ -48316,7 +48494,7 @@ function burnAreaChart() {
       if (it.source === 'upload' && !inboxItemHasAudio(it) && !c.transcript) return '<div class="inbox-transcript"><div class="muted-xs"><strong>Extracted text</strong></div><pre class="inbox-transcript-text">' + escapeHtml(c.markdown || '') + '</pre></div>';
       let html = '<div class="inbox-transcript">';
       if (c.transcript && c.transcript_label) html += '<div class="muted-xs"><strong>' + escapeHtml(c.transcript_label) + '</strong></div>';
-      if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
+      if (c.transcript) html += '<pre class="inbox-transcript-text">' + (it.source === 'meeting' ? meetingsTranscriptTextHtml(c.transcript) : escapeHtml(c.transcript)) + '</pre>';
       else html += '<div class="muted-xs">No transcript yet' + (c.pending ? (it.source === 'plaud' ? ': Plaud has not transcribed this recording.' : ': the meeting platform has not produced a transcript for this recording.') + (it.transcribable || it.transcribe_unavailable ? ' Hive can transcribe this: see 🎧 Transcribe on this item.' : '') : '.') + '</div>';
       if (c.highlights) html += '<div class="muted-xs inbox-highlights"><strong>Highlights</strong> (flagged on the device)<pre class="inbox-transcript-text">' + escapeHtml(c.highlights) + '</pre></div>';
       return html + '</div>';
@@ -48379,6 +48557,20 @@ function burnAreaChart() {
         (elapsed ? '<span class="kc-progress-elapsed" title="elapsed">' + escapeHtml(elapsed) + '</span>' : '') + '</div></div>';
     }
 
+    // What the item's Knowledge fact holds, as a status word in the meta
+    // line (not a control, not a floating pill): the source's own text, this
+    // hive's machine transcript, or metadata only while no text exists yet.
+    function inboxFactStateHtml(it) {
+      if (!it.fact_slug) return '';
+      const factStates = {
+        ready: { label: 'In knowledge', status: 'ok', title: 'Stored as a Knowledge fact with the source\'s own text; knowledge search and agents see it.' },
+        machine: { label: 'In knowledge (machine text)', status: 'ok', title: 'Stored as a Knowledge fact with this hive\'s machine transcript; the source\'s own text replaces it when it exists.' },
+        pending: { label: 'Pending text', status: 'not loaded', title: 'Stored as a Knowledge fact with metadata only (title, date, duration, highlights); no text yet, so knowledge search finds no words.' },
+      };
+      const fs = factStates[it.fact_state] || factStates.ready;
+      return '<span class="inbox-meta-state" role="status" data-status="' + fs.status + '" data-fact-state="' + escapeHtml(it.fact_state || 'ready') + '" title="' + escapeHtml(fs.title) + '">' + escapeHtml(fs.label) + '</span>';
+    }
+
     // Machine transcription: a state pill (spinner while queued/running, the
     // reason when it failed or was skipped), the progress bar while busy, and
     // the 🎧 Transcribe / Retry button on pending items with audio, for
@@ -48386,16 +48578,7 @@ function burnAreaChart() {
     function inboxTranscriptionHtml(it, key) {
       const st = it.transcription;
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
-      // What the item's Knowledge fact holds, as a status pill (not a
-      // control): the source's own text, this hive's machine transcript, or
-      // metadata only while no text exists yet.
-      const factStates = {
-        ready: { label: 'In knowledge', status: 'ok', title: 'Stored as a Knowledge fact with the source\'s own text; knowledge search and agents see it.' },
-        machine: { label: 'In knowledge (machine text)', status: 'ok', title: 'Stored as a Knowledge fact with this hive\'s machine transcript; the source\'s own text replaces it when it exists.' },
-        pending: { label: 'Pending text', status: 'not loaded', title: 'Stored as a Knowledge fact with metadata only (title, date, duration, highlights); no text yet, so knowledge search finds no words.' },
-      };
-      const fs = factStates[it.fact_state] || factStates.ready;
-      let html = it.fact_slug ? '<span class="kc-pill" role="status" data-status="' + fs.status + '" data-fact-state="' + escapeHtml(it.fact_state || 'ready') + '" title="' + escapeHtml(fs.title) + '">' + escapeHtml(fs.label) + '</span>' : '';
+      let html = '';
       if (st && st.status) {
         const busy = st.status === 'queued' || st.status === 'running';
         const pill = st.status === 'done' ? 'ok' : (st.status === 'failed' ? 'error' : (busy ? 'syncing' : ''));
@@ -48568,13 +48751,18 @@ function burnAreaChart() {
       // The backing Knowledge fact is a plain link in the metadata line, not
       // an action: it only opens the fact.
       const factLink = it.fact_slug ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
+      // The title is shown without its trailing recording id; the id and the
+      // Knowledge state join the meta line, and the full title is the tooltip.
+      const tp = inboxTitleParts(it.title || it.id);
+      const idMeta = tp.id ? '<span class="inbox-meta-id" title="Recording id">' + escapeHtml(tp.id) + '</span>' : '';
+      const state = inboxFactStateHtml(it);
       // Files and links someone added show where they came from and who
       // added them ("upload · notes.md · added 2h ago by ana").
       const meta = it.source === 'upload'
-        ? [escapeHtml(it.origin || 'upload'), when ? 'added ' + when : '', it.added_by ? 'by ' + escapeHtml(it.added_by) : '', dur, factLink].filter(Boolean).join(' · ')
+        ? [escapeHtml(it.origin || 'upload'), when ? 'added ' + when : '', it.added_by ? 'by ' + escapeHtml(it.added_by) : '', dur, idMeta, state, factLink].filter(Boolean).join(' · ')
         : it.source === 'email'
-          ? ['email', it.sender ? 'from ' + escapeHtml(it.sender) : '', when ? 'received ' + when : '', escapeHtml(it.upload_kind || '')].filter(Boolean).join(' · ')
-          : [escapeHtml(it.source), when ? 'recorded ' + when : '', it.recorded_by ? 'by ' + escapeHtml(it.recorded_by) : '', dur, factLink].filter(Boolean).join(' · ');
+          ? ['email', it.sender ? 'from ' + escapeHtml(it.sender) : '', when ? 'received ' + when : '', escapeHtml(it.upload_kind || ''), idMeta, state].filter(Boolean).join(' · ')
+          : [escapeHtml(it.source), when ? 'recorded ' + when : '', it.recorded_by ? 'by ' + escapeHtml(it.recorded_by) : '', dur, idMeta, state, factLink].filter(Boolean).join(' · ');
       const routes = it.routes || {};
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
@@ -48587,30 +48775,40 @@ function burnAreaChart() {
       }
       const owner = viewerIsOwner();
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
+      // The action row: icon buttons of one size (play, share, open file,
+      // delete) and one compact text toggle (Transcript / Text). Every icon
+      // button names itself with aria-label and title. A destructive control
+      // goes last, after the separator: #18694's Delete for every item kind
+      // drops in there with the same inbox-action-danger class.
       let actions = '';
       // A hive recording past retention has no audio left: no play control.
       if (it.audio_expired) actions += '<span class="muted-xs inbox-audio-expired" title="The raw audio was deleted by retention; the transcript and the Knowledge fact are kept">audio expired (kept ' + (Number(it.audio_retention_days) || 5) + ' days)</span>';
-      else if (inboxViewerCanPlay() && inboxItemHasAudio(it)) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
-      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + (it.source === 'upload' && !inboxItemHasAudio(it) ? ' Text' : ' Transcript') + '</button>';
-      if (it.source === 'email' && inboxViewerCanPlay()) actions += '<a class="hv-btn btn-secondary btn-sm" href="' + escapeHtml(inboxEmailFileUrl(it)) + '" target="_blank" rel="noopener noreferrer" title="Open the mailed-in file">📎 Open file</a>';
+      else if (inboxViewerCanPlay() && inboxItemHasAudio(it)) actions += '<button type="button" class="hv-btn btn-icon btn-sm inbox-action inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" aria-label="Play recording" title="Play recording (streams through this hive)">' + inboxIconSvg('play') + '</button>';
+      const txOpen = _inboxTranscriptOpen.has(key);
+      const txLabel = it.source === 'upload' && !inboxItemHasAudio(it) ? 'Text' : 'Transcript';
+      actions += '<button type="button" class="hv-btn btn-ghost btn-sm inbox-action inbox-action-text" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (txOpen ? 'true' : 'false') + '" title="' + (txOpen ? 'Hide the ' : 'Show the ') + txLabel.toLowerCase() + '">' + inboxIconSvg(txOpen ? 'chevron-down' : 'chevron-right') + txLabel + '</button>';
+      if (it.source === 'email' && inboxViewerCanPlay()) actions += '<a class="hv-btn btn-icon btn-sm inbox-action" href="' + escapeHtml(inboxEmailFileUrl(it)) + '" target="_blank" rel="noopener noreferrer" aria-label="Open file" title="Open the mailed-in file">' + inboxIconSvg('file') + '</a>';
       if (it.awaiting_approval) {
-        if (owner) actions += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxEmailApprove" data-arg0="' + id + '" title="Let this mailed-in item be shared and transcribed like any other">✓ Approve</button>' +
-          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxEmailDecline" data-arg0="' + id + '" title="Delete this mailed-in item">✕ Decline</button>';
+        if (owner) actions += '<button type="button" class="hv-btn btn-primary btn-sm inbox-action" data-action="inboxEmailApprove" data-arg0="' + id + '" title="Let this mailed-in item be shared and transcribed like any other">Approve</button>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm inbox-action" data-action="inboxEmailDecline" data-arg0="' + id + '" title="Delete this mailed-in item">Decline</button>';
       } else {
-        actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
+        actions += '<button type="button" class="hv-btn btn-icon btn-sm inbox-action inbox-share" data-action="inboxShare" data-arg0="' + src + '" data-arg1="' + id + '" aria-label="Share" title="Share: file this item in the hive, or copy a link to it (not the recording)" data-arg-types="s,s,t" aria-haspopup="menu" aria-expanded="false">' + inboxIconSvg('share') + '</button>';
       }
-      if (typeof inboxDeleteButtonHtml === 'function') actions += inboxDeleteButtonHtml(it);
+      // Delete for every item kind (#18694, inbox-delete.js) is the last
+      // control, set apart by a separator.
+      const del = typeof inboxDeleteButtonHtml === 'function' ? inboxDeleteButtonHtml(it) : '';
+      if (del) actions += '<span class="inbox-actions-sep" role="separator"></span>' + del;
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
-        (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
+        (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(tp.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
-        '<div class="kb-fact-body"><div class="kb-fact-title">' + escapeHtml(it.title || it.id) + '</div>' +
-        '<div class="muted-xs">' + meta + '</div>' +
+        '<div class="kb-fact-body"><div class="kb-fact-title inbox-title"' + (tp.id ? ' title="' + escapeHtml(tp.full) + '"' : '') + '>' + escapeHtml(tp.title) + '</div>' +
+        '<div class="muted-xs inbox-meta">' + meta + '</div>' +
         inboxSummaryHtml(it, key) +
         '<div class="inbox-media" data-inbox-media="' + escapeHtml(key) + '"></div>' +
         (it.source === 'email' && it.upload_kind === 'image' && inboxViewerCanPlay() ? '<img class="inbox-email-image" loading="lazy" src="' + escapeHtml(inboxEmailFileUrl(it)) + '" alt="' + escapeHtml(it.title || 'mailed-in image') + '">' : '') +
         (pills ? '<div class="inbox-pills">' + pills + '</div>' : '') +
         inboxTranscriptionHtml(it, key) +
-        '<div class="kc-actions mt-2">' + actions + '</div>' +
+        '<div class="inbox-actions">' + actions + '</div>' +
         inboxTranscriptHtml(it, key) + '</div></div>';
     }
 
@@ -48668,7 +48866,7 @@ function burnAreaChart() {
     // retention deletes it (audio_expires_at); a third-party source's audio
     // is only streamed through and never stored here.
     function inboxAudioNoteText(it, fmtDate) {
-      const restart = ' Click ▶ Play recording again to restart.';
+      const restart = ' Click Play again to restart.';
       if (it && (it.source === 'hive-recording' || it.source === 'upload')) {
         const exp = it.audio_expires_at && !String(it.audio_expires_at).startsWith('0001') ? it.audio_expires_at : '';
         const when = exp && fmtDate ? fmtDate(exp) : '';
@@ -48910,39 +49108,62 @@ function burnAreaChart() {
       if (badge) setSidebarCountBadge(badge, unprocessed, unprocessed + ' unprocessed');
       setSectionSummary('inbox-section', unprocessed + ' to triage · ' + items.length + ' total');
       const owner = viewerIsOwner();
-      const sources = (data.sources || []).map(s => {
-        const status = s.connected ? 'ok' : (s.configured ? 'error' : '');
-        const label = inboxSourceIcon(s.type) + ' ' + escapeHtml(s.type) + (s.connected ? (s.account ? ': ' + escapeHtml(s.account) : ': connected') : s.configured ? ': not connected' : ': not configured');
-        return '<span class="kc-pill" data-status="' + status + '">' + label + '</span>';
-      }).join(' ');
       const settings = data.settings || {};
       const rules = Array.isArray(settings.rules) ? settings.rules.length : 0;
-      let html = '<div class="row-between inbox-toolbar">' +
-        '<div class="inbox-sources">' + (sources || '<span class="muted-xs">No voice sources configured.</span>') +
-        ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenIntegrations">Connect sources</button></div>' +
-        '<div class="kc-actions">' +
+      if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
+      const shown = items.filter(it => _inboxShowProcessed || !it.processed);
+      // Sources line: only configured sources are chips (with the account
+      // hint); the rest sit behind a "+N more" disclosure next to Connect
+      // sources, so the header is one quiet line instead of a wall of
+      // "not configured".
+      const sources = inboxSourcesHtml(data.sources || []);
+      // Toolbar, one row: primary actions on the left (Record, Add), the
+      // view controls on the right (Show processed, Select all, the bulk
+      // Hive menu, Auto-routing), every one of them a button of one size.
+      const sel = _inboxSelected.size;
+      const canSelect = inboxCanShare(window._hiveRole) && shown.length > 0;
+      let html = sources +
+        '<div class="inbox-toolbar" role="toolbar" aria-label="Inbox actions">' +
+        '<div class="inbox-toolbar-group">' +
         (typeof inboxRecordButtonHtml === 'function' ? inboxRecordButtonHtml(settings) : '') +
-        '<label class="muted-xs inbox-toggle"><input type="checkbox" data-change-action="inboxToggleProcessed"' + (_inboxShowProcessed ? ' checked' : '') + '> show processed</label>' +
-        (inboxCanAdd() ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxToggleAdd" aria-expanded="' + (_inboxAddOpen ? 'true' : 'false') + '" aria-controls="inbox-add" title="Add files to the Inbox (or drop them anywhere on it, or paste with Ctrl/Cmd+V)">＋ Add</button>' : '') +
+        (inboxCanAdd() ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxToggleAdd" aria-expanded="' + (_inboxAddOpen ? 'true' : 'false') + '" aria-controls="inbox-add" title="Add files, a link or a quick note to the Inbox (or drop files anywhere on it, or paste with Ctrl/Cmd+V)">＋ Add</button>' : '') +
+        '</div><div class="inbox-toolbar-group">' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm inbox-filter" data-action="inboxToggleProcessed" aria-pressed="' + (_inboxShowProcessed ? 'true' : 'false') + '" title="Also list items already filed or kept as Knowledge">Show processed</button>' +
+        (canSelect ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxSelectAll" title="' + (sel === shown.length ? 'Clear the selection' : 'Select every listed item for the Hive menu') + '">' + (sel === shown.length ? 'Clear selection' : 'Select all') + '</button>' : '') +
+        (canSelect && sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxBulkMenu" data-arg-types="t" aria-haspopup="menu" aria-expanded="false" title="File, keep or delete the selected items">Hive (' + sel + ') ▾</button>' : '') +
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
+      if (typeof inboxInputMethodsHtml === 'function') html += inboxInputMethodsHtml();
       if (typeof emailInRowHtml === 'function') html += emailInRowHtml('inbox', data.email_in);
       if (data.error) html += '<div class="kc-error muted-note">' + escapeHtml(data.error) + '</div>';
       if (window._hiveRoleFailed && !window._hiveRole) html += '<div class="muted-xs">Could not determine your role, so actions are read-only. It will retry automatically.</div>';
       if (inboxCanAdd()) html += inboxAddPanelHtml() + inboxUploadsHtml();
       if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
-      if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
-      const shown = items.filter(it => _inboxShowProcessed || !it.processed);
-      if (inboxCanShare(window._hiveRole) && shown.length) {
-        const sel = _inboxSelected.size;
-        html += '<div class="kc-actions mb-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxSelectAll">' + (sel === shown.length ? 'Clear selection' : 'Select all') + '</button>' +
-          (sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxBulkMenu" data-arg-types="t" aria-haspopup="menu" aria-expanded="false">Hive (' + sel + ') ▾</button>' : '') + '</div>';
-      }
       if (!shown.length) html += '<div class="muted-note">' + (items.length ? 'Everything is triaged. Toggle “show processed” to see filed and dismissed items.' : 'Nothing yet. Connect Plaud or another voice source under Knowledge → Integrations; new recordings land here after the next sync (a newly added connector starts on the next hive restart).') + '</div>';
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
-      inboxPreserveAudio(panel, () => { panel.innerHTML = html; });
+      const paint = () => { panel.innerHTML = html; };
+      inboxPreserveAudio(panel, typeof inboxNoteKeepFocus === 'function' ? () => inboxNoteKeepFocus(paint) : paint);
       inboxApplyFocus(panel);
     }
+
+    // inboxSourceChip is one source as a chip: connected (with its account),
+    // configured but not connected, or not configured.
+    function inboxSourceChip(s) {
+      const status = s.connected ? 'ok' : (s.configured ? 'error' : '');
+      const label = inboxSourceIcon(s.type) + ' ' + escapeHtml(s.type) + (s.connected ? (s.account ? ': ' + escapeHtml(s.account) : ': connected') : s.configured ? ': not connected' : ': not configured');
+      return '<span class="kc-pill inbox-source" data-status="' + status + '" data-source="' + escapeHtml(s.type) + '">' + label + '</span>';
+    }
+    function inboxSourcesHtml(all) {
+      const configured = all.filter(s => s.configured || s.connected);
+      const rest = all.filter(s => !(s.configured || s.connected));
+      const connect = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenIntegrations" title="Connect a voice or meeting source under Knowledge → Integrations">Connect sources</button>';
+      let html = '<div class="inbox-sources">' + (configured.length ? configured.map(inboxSourceChip).join(' ') : '<span class="muted-xs">No voice sources configured.</span>');
+      if (rest.length && configured.length) html += ' <button type="button" class="hv-btn btn-ghost btn-sm inbox-sources-more" data-action="inboxToggleSources" aria-expanded="' + (_inboxSourcesOpen ? 'true' : 'false') + '" aria-controls="inbox-sources-rest" title="' + (_inboxSourcesOpen ? 'Hide' : 'Show') + ' the ' + rest.length + ' sources that are not configured">' + (_inboxSourcesOpen ? 'Hide ' + rest.length + ' more' : '+' + rest.length + ' more') + '</button>';
+      html += ' ' + connect + '</div>';
+      if (rest.length && configured.length) html += '<div id="inbox-sources-rest" class="inbox-sources inbox-sources-rest"' + (_inboxSourcesOpen ? '' : ' hidden') + '>' + rest.map(inboxSourceChip).join(' ') + '</div>';
+      return html;
+    }
+    function inboxToggleSources() { _inboxSourcesOpen = !_inboxSourcesOpen; renderInbox(); }
 
     function inboxToggleProcessed() { _inboxShowProcessed = !_inboxShowProcessed; renderInbox(); }
     function inboxToggleSelect(src, id) {
@@ -49555,13 +49776,14 @@ function burnAreaChart() {
       const u = inboxUploadSettings();
       const exts = (Array.isArray(u.extensions) ? u.extensions : []).concat(Array.isArray(u.media_extensions) ? u.media_extensions : []);
       const limit = (u.max_files_per_drop ? 'up to ' + u.max_files_per_drop + ' files' : 'several files') + (u.max_file_bytes ? ' of ' + inboxFmtBytes(u.max_file_bytes) + ' each' : '') + (u.max_media_bytes ? ' (audio and video up to ' + inboxFmtBytes(u.max_media_bytes) + ', transcribed when transcription is on)' : '');
-      return '<div class="inbox-add" id="inbox-add" role="group" aria-label="Add files to the Inbox">' +
+      return '<div class="inbox-add" id="inbox-add" role="group" aria-label="Add files, links and notes to the Inbox">' +
         '<p class="muted-xs m-0">Drop files anywhere on the Inbox, paste them with Ctrl/Cmd+V, or choose them here: ' + escapeHtml(limit) + '. Supported: ' + escapeHtml(exts.join(' ')) + '. Files stay on this hive; their text reaches an LLM only when you share the item.</p>' +
         '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxChooseFiles">Choose files…</button>' +
         '<input type="file" multiple hidden class="inbox-file-input" id="inbox-file-input" accept="' + escapeHtml(exts.join(',')) + '" data-change-action="inboxPickFiles" data-arg-types="t" aria-label="Files to add to the Inbox"></div>' +
         (u.links ? '<div class="kc-actions mt-2"><input type="url" class="kb-search-box inbox-add-url" id="inbox-add-url" placeholder="https://… (a page, or a linked md, json, csv… file)" autocomplete="off" aria-label="Link to add to the Inbox" data-enter-action="inboxAddUrlFromField">' +
           '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddUrlFromField">Add link</button></div>' +
-          '<p class="muted-xs m-0">The hive fetches the link itself (public http/https addresses only, at most 3 redirects) and reads it like a dropped file.</p>' : '') + '</div>';
+          '<p class="muted-xs m-0">The hive fetches the link itself (public http/https addresses only, at most 3 redirects) and reads it like a dropped file.</p>' : '') +
+        (typeof inboxNoteHtml === 'function' ? inboxNoteHtml() : '') + '</div>';
     }
     function inboxToggleAdd() { _inboxAddOpen = !_inboxAddOpen; renderInbox(); if (_inboxAddOpen) { const b = document.querySelector('#inbox-add [data-action="inboxChooseFiles"]'); if (b && b.focus) b.focus(); } }
     function inboxChooseFiles() { const el = document.getElementById('inbox-file-input'); if (el) el.click(); }
@@ -49651,7 +49873,10 @@ function burnAreaChart() {
       // like a dropped one; pasting into a field stays a normal paste.
       const text = String((e.clipboardData && e.clipboardData.getData && e.clipboardData.getData('text')) || '').trim();
       const field = e.target && e.target.closest && e.target.closest('input, textarea, [contenteditable="true"]');
-      if (field || !inboxUploadSettings().links || !INBOX_URL_RE.test(text)) return;
+      if (field) return;
+      // Text of several lines goes to the Quick note box for review.
+      if (typeof inboxPasteAsNote === 'function' && inboxPasteAsNote(text)) { e.preventDefault(); return; }
+      if (!inboxUploadSettings().links || !INBOX_URL_RE.test(text)) return;
       e.preventDefault();
       inboxAddUrl(text);
     }
@@ -49791,8 +50016,8 @@ function burnAreaChart() {
       // A mailed-in item that waits for approval has ✕ Decline instead.
       if (it.awaiting_approval || !inboxCanDelete(it, window._hiveRole, window._hiveUser)) return '';
       const busy = inboxDeleteBusy(it);
-      return '<button type="button" class="hv-btn btn-secondary btn-sm inbox-delete" data-action="inboxDeleteItem" data-arg0="' + escapeHtml(it.source) + '" data-arg1="' + escapeHtml(it.id) + '"' +
-        (busy ? ' disabled aria-disabled="true" title="Being transcribed: delete it once the transcription finishes"' : ' title="Delete this item from the Inbox; anything already shared from it stays"') + '>🗑 Delete</button>';
+      return '<button type="button" class="hv-btn btn-icon btn-sm inbox-action inbox-action-danger inbox-delete" data-action="inboxDeleteItem" data-arg0="' + escapeHtml(it.source) + '" data-arg1="' + escapeHtml(it.id) + '" aria-label="Delete"' +
+        (busy ? ' disabled aria-disabled="true" title="Being transcribed: delete it once the transcription finishes"' : ' title="Delete this item from the Inbox; anything already shared from it stays"') + '>' + inboxIconSvg('trash') + '</button>';
     }
     // The bulk menu's own group, after the Hive group.
     function inboxDeleteBulkGroups() {
@@ -50829,6 +51054,165 @@ function burnAreaChart() {
       setTimeout(fetchInboxMailLog, INBOX_MAIL_LOG_FIRST_LOAD_MS);
       document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchInboxMailLog(); });
     }
+    // ── Inbox: Quick note (hivecommons/hive#18747) ──
+    // A text box in the ＋ Add panel that makes an Inbox item from typed or
+    // dictated text. The note is sent as a markdown file through the same
+    // upload path as a dropped file (POST /api/inbox/uploads), so the hive
+    // applies the same size cap, retention, extraction and auto-routing, and
+    // records who added it. A multi-line paste onto the Inbox lands in the
+    // box for review; nothing is created until Add note is chosen.
+    // See src/docs/inbox-uploads.md.
+    const INBOX_NOTE_FIELD_ID = 'inbox-add-note';
+    const INBOX_NOTE_MIME = 'text/markdown';
+    let _inboxNoteDraft = '';
+    let _inboxNoteError = '';
+    let _inboxNoteBusy = false;
+    function inboxNoteBytes(text) { return new Blob([text]).size; }
+    // inboxNoteName is the generated file name: note-YYYY-MM-DD-HHMMSS.md
+    // in the viewer's local time.
+    function inboxNoteName(when) {
+      const p = n => String(n).padStart(2, '0');
+      return 'note-' + when.getFullYear() + '-' + p(when.getMonth() + 1) + '-' + p(when.getDate()) + '-' + p(when.getHours()) + p(when.getMinutes()) + p(when.getSeconds()) + '.md';
+    }
+    function inboxNoteFile(text, when) { return new File([text + '\n'], inboxNoteName(when), { type: INBOX_NOTE_MIME }); }
+    function inboxNoteHtml() {
+      const max = Number(inboxUploadSettings().max_file_bytes) || 0;
+      return '<div class="inbox-note"><label class="inbox-note-label" for="' + INBOX_NOTE_FIELD_ID + '">Quick note</label>' +
+        '<textarea class="kb-search-box inbox-note-text" id="' + INBOX_NOTE_FIELD_ID + '" rows="3" placeholder="Type or dictate a note" aria-describedby="inbox-note-help" data-input-action="inboxNoteInput" data-arg-types="v">' + escapeHtml(_inboxNoteDraft) + '</textarea>' +
+        '<div class="kc-actions mt-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxAddNote"' + (_inboxNoteBusy ? ' disabled' : '') + '>Add note</button>' +
+        '<span class="muted-xs" id="inbox-note-help">Becomes an Inbox item, saved as a markdown file under your name' + (max ? ' (up to ' + escapeHtml(inboxFmtBytes(max)) + ')' : '') + '. Text of several lines pasted onto the Inbox lands here first.</span></div>' +
+        (_inboxNoteError ? '<p class="kc-error muted-xs m-0" role="alert">' + escapeHtml(_inboxNoteError) + '</p>' : '') + '</div>';
+    }
+    function inboxNoteInput(value) { _inboxNoteDraft = String(value == null ? '' : value); }
+    // inboxAddNote sends the note as one markdown file. The text stays in the
+    // box until the hive has accepted it, so a refused or failed note is not
+    // lost.
+    function inboxAddNote() {
+      if (!inboxCanAdd() || _inboxNoteBusy) return Promise.resolve(null);
+      const el = document.getElementById(INBOX_NOTE_FIELD_ID);
+      if (el) _inboxNoteDraft = String(el.value || '');
+      const text = _inboxNoteDraft.trim();
+      const max = Number(inboxUploadSettings().max_file_bytes) || 0;
+      _inboxNoteError = '';
+      if (!text) _inboxNoteError = 'Type or dictate a note first.';
+      else if (max && inboxNoteBytes(text + '\n') > max) _inboxNoteError = 'Too long: ' + inboxFmtBytes(inboxNoteBytes(text + '\n')) + ' (the limit is ' + inboxFmtBytes(max) + '). Shorten it or add it as a file.';
+      if (_inboxNoteError) { renderInbox(); return Promise.resolve(null); }
+      _inboxNoteBusy = true;
+      return inboxAddFiles([inboxNoteFile(text, new Date())]).then(rows => {
+        const row = (rows || [])[0] || null;
+        _inboxNoteBusy = false;
+        if (row && row.status === 'done') { if (_inboxNoteDraft.trim() === text) _inboxNoteDraft = ''; }
+        else _inboxNoteError = 'The note was not added' + (row && row.error ? ': ' + row.error : '.') + ' Your text is still here.';
+        renderInbox();
+        return row;
+      });
+    }
+    // inboxPasteAsNote takes text of more than one line pasted onto the
+    // Inbox (outside a field): it opens ＋ Add and puts the text in the note
+    // box, after anything already typed there. It reports whether it took
+    // the paste.
+    function inboxPasteAsNote(text) {
+      const t = String(text || '').trim();
+      if (!inboxCanAdd() || t.indexOf('\n') < 0) return false;
+      const draft = _inboxNoteDraft.replace(/\s+$/, '');
+      _inboxNoteDraft = draft ? draft + '\n\n' + t : t;
+      _inboxNoteError = '';
+      _inboxAddOpen = true;
+      renderInbox();
+      const el = document.getElementById(INBOX_NOTE_FIELD_ID);
+      if (el && el.focus) el.focus();
+      inboxAnnounce('The pasted text is in the Quick note box. Review it, then choose Add note.');
+      return true;
+    }
+    // inboxNoteKeepFocus runs a re-render and puts the caret back in the note
+    // box when it was there, so a background refresh does not interrupt
+    // typing or dictation.
+    function inboxNoteKeepFocus(render) {
+      const el = document.getElementById(INBOX_NOTE_FIELD_ID);
+      const had = !!el && document.activeElement === el;
+      const start = had ? el.selectionStart : 0, end = had ? el.selectionEnd : 0;
+      render();
+      if (!had) return;
+      const next = document.getElementById(INBOX_NOTE_FIELD_ID);
+      if (!next || !next.focus) return;
+      next.focus();
+      try { next.setSelectionRange(start, end); } catch (e) { /* not a text control */ }
+    }
+    // ── Inbox: input methods (hivecommons/hive#18747) ──
+    // A quiet row under the source chips, from the catalogue GET /api/inbox
+    // returns as input_methods (src/pkg/inbox/input_methods.go). Two groups:
+    //   works_today: tools that already type or dictate into any text box,
+    //     so they reach the Inbox through Quick note;
+    //   coming_soon: neural interfaces with no public API or export yet.
+    // These are not connectors. A chip only shows a short explanation, on
+    // click or on focus; there is nothing to configure or connect. Names are
+    // plain text and each note says hive is not affiliated with the project.
+    // The row shows the featured entries; the full list is in the docs.
+    const INBOX_INPUT_DOCS_URL = 'https://github.com/hivecommons/hive/blob/v5/src/docs/inbox-input-methods.md';
+    const INBOX_INPUT_WORKS = 'works_today';
+    const INBOX_INPUT_SOON = 'coming_soon';
+    const INBOX_INPUT_GROUP_LABELS = { works_today: 'Works today', coming_soon: 'Neural input (coming soon)' };
+    let _inboxInputOpen = '';
+    function inboxInputMethods() {
+      const list = (_inboxCache || {}).input_methods;
+      return (Array.isArray(list) ? list : []).filter(m => m && m.id && m.name && INBOX_INPUT_GROUP_LABELS[m.state]);
+    }
+    function inboxInputLink(m) { return /^https:\/\//.test(String(m.url || '')) ? String(m.url) : ''; }
+    function inboxInputChipHtml(m) {
+      const soon = m.state === INBOX_INPUT_SOON;
+      const label = m.name + (soon ? ', coming soon' : ', works today') + ': show details';
+      return '<button type="button" class="kc-pill inbox-input-chip" data-input-state="' + escapeHtml(m.state) + '" data-input-id="' + escapeHtml(m.id) + '" data-action="inboxInputExplain" data-arg0="' + escapeHtml(m.id) + '" data-keydown-action="inboxInputClose" data-keys="Escape" aria-expanded="' + (_inboxInputOpen === m.id ? 'true' : 'false') + '" aria-controls="inbox-input-note" aria-label="' + escapeHtml(label) + '">' + escapeHtml(m.name) + '</button>';
+    }
+    // inboxInputNoteText is the whole explanation for one entry.
+    function inboxInputNoteText(m) {
+      const what = m.name + ': ' + String(m.note || '').trim();
+      if (m.state === INBOX_INPUT_WORKS) {
+        return what + ' It types into any text box, so it already reaches the Inbox: choose ＋ Add and use Quick note. There is nothing to connect. Hive is not affiliated with ' + m.name + '.';
+      }
+      return what + ' There is no public API or export of text or speech that hive can read yet, so it cannot be connected. Hive will add it as a source when one exists. What works today: anything that types or dictates into a text box can use ＋ Add, then Quick note. Hive is not affiliated with ' + m.name + '; this listing reflects interest, not a commitment from them.';
+    }
+    function inboxInputNoteHtml() {
+      const m = inboxInputMethods().find(x => x.id === _inboxInputOpen);
+      if (!m) return '<div class="inbox-input-note muted-xs" id="inbox-input-note" role="status" hidden></div>';
+      const url = inboxInputLink(m);
+      return '<div class="inbox-input-note muted-xs" id="inbox-input-note" role="status">' + escapeHtml(inboxInputNoteText(m)) +
+        (url ? ' <a class="inbox-link" href="' + escapeHtml(url) + '" target="_blank" rel="noopener noreferrer">' + escapeHtml(m.name) + ' site</a>' : '') +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxInputClose">Close</button></div>';
+    }
+    function inboxInputMethodsHtml() {
+      const shown = inboxInputMethods().filter(m => m.featured);
+      if (!shown.length) return '';
+      let html = '<div class="inbox-inputs" id="inbox-inputs" role="group" aria-label="Input methods (not connected sources)">';
+      for (const state of [INBOX_INPUT_WORKS, INBOX_INPUT_SOON]) {
+        const group = shown.filter(m => m.state === state);
+        if (group.length) html += '<span class="inbox-input-group"><span class="muted-xs">' + escapeHtml(INBOX_INPUT_GROUP_LABELS[state]) + ':</span> ' + group.map(inboxInputChipHtml).join(' ') + '</span>';
+      }
+      return html + '<a class="inbox-link" href="' + INBOX_INPUT_DOCS_URL + '" target="_blank" rel="noopener noreferrer" title="The full list of input methods, and what each can and cannot do today">more</a></div>' + inboxInputNoteHtml();
+    }
+    // inboxInputSync redraws the note and the chips' expanded state in
+    // place, so the focused chip keeps the focus.
+    function inboxInputSync() {
+      const row = document.getElementById('inbox-inputs');
+      if (!row) return;
+      row.querySelectorAll('.inbox-input-chip').forEach(c => c.setAttribute('aria-expanded', c.getAttribute('data-input-id') === _inboxInputOpen ? 'true' : 'false'));
+      const note = document.getElementById('inbox-input-note');
+      if (note) note.outerHTML = inboxInputNoteHtml();
+    }
+    function inboxInputExplain(id) {
+      if (_inboxInputOpen === id) return;
+      _inboxInputOpen = String(id || '');
+      inboxInputSync();
+    }
+    function inboxInputClose() {
+      if (!_inboxInputOpen) return;
+      _inboxInputOpen = '';
+      inboxInputSync();
+    }
+    function inboxInputOnFocus(e) {
+      const chip = e && e.target && e.target.closest ? e.target.closest('.inbox-input-chip') : null;
+      if (chip) inboxInputExplain(chip.getAttribute('data-input-id'));
+    }
+    document.addEventListener('focusin', inboxInputOnFocus);
     // ── Meetings: hive as a live meeting participant (Quorum, #18284) ──
     // Owner-only. The list comes from GET /api/meetings; an opened meeting
     // streams its transcript, Spek intents and research over
@@ -50929,6 +51313,7 @@ function burnAreaChart() {
         return 'The Discord bot cannot join that voice channel. In the server, give the bot\'s role View Channel, Connect and Speak on the channel, then try again.';
       }
       if (m.state === 'blocked') return 'The meeting refused a guest bot.';
+      if (/^unreachable$/.test(raw)) return 'Left: none of its replies could be delivered to the meeting, in chat or by voice.';
       if (/consent_undelivered/.test(raw)) return 'Left: the consent notice could not be delivered' + (m.consent_error ? ' (' + m.consent_error + ')' : '') + '.';
       if (/lobby_timeout/.test(raw)) return 'Nobody admitted hive from the lobby in time.';
       if (/platform_unavailable/.test(raw)) return 'This meeting platform is not available on this hive right now.';
@@ -51184,7 +51569,7 @@ function burnAreaChart() {
         case 'line': {
           const ev = f.data || {};
           if (ev.type === 'segment' && !ev.final) { o.partial = ev; break; }
-          o.partial = null;
+          if (ev.type !== 'reply') o.partial = null;
           o.lines.push(ev);
           if (o.lines.length > MEETINGS_MAX_LINES) o.lines.shift();
           break;
@@ -51203,6 +51588,7 @@ function burnAreaChart() {
           break;
         }
         case 'notes': meetingsRefreshLive(o.id); break;
+        case 'reach': meetingsRefreshLive(o.id); break;
         case 'spek': meetingsRefreshLive(o.id); break;
         default: break;
       }
@@ -51219,6 +51605,7 @@ function burnAreaChart() {
     }
 
     function meetingsLineHtml(ev, partial) {
+      if (ev.type === 'reply') return meetingsReplyLineHtml(ev);
       const who = (ev.speaker && ev.speaker.name) || (ev.author && ev.author.name) || '';
       return '<p class="meetings-line' + (partial ? ' is-partial' : '') + '"><span class="meetings-who">' + escapeHtml(who) + (ev.type === 'chat' ? ' (chat)' : '') + '</span>' + escapeHtml(ev.text || '') + '</p>';
     }
@@ -51236,13 +51623,15 @@ function burnAreaChart() {
       const research = (live.research || []).map(it =>
         '<div class="meetings-research-item"><div><span class="badge">' + escapeHtml(it.status) + '</span> ' + escapeHtml(it.query) + '</div>' +
         (it.summary ? '<div class="muted-xs">' + escapeHtml(it.summary) + '</div>' : '') +
+        (it.status === 'failed' && it.error ? '<div class="meetings-row-error">' + escapeHtml(it.error) + '</div>' : '') +
+        (it.waiting && it.status === 'queued' ? '<div class="muted-xs">waiting behind another question</div>' : '') +
         (it.status === 'pending_approval' ? '<button type="button" class="hv-btn btn-primary btn-sm mt-2" data-action="meetingsApprove" data-arg0="' + escapeHtml(o.id) + '" data-arg1="' + escapeHtml(it.rid) + '">Approve research</button>' : '') +
         '</div>').join('') || '<p class="muted-xs">No research yet.</p>';
       const lines = o.lines.map(ev => meetingsLineHtml(ev, false)).join('') + (o.partial ? meetingsLineHtml(o.partial, true) : '');
       const intents = o.intents.map(i => '<div>' + escapeHtml(typeof i === 'string' ? i : JSON.stringify(i)) + '</div>').join('');
       const spek = live.spek_status ? '<p class="kc-error muted-xs">' + escapeHtml(live.spek_status) + '</p>' :
         (live.spek_mode ? '<p class="muted-xs">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
-      host.innerHTML = spek + '<div class="meetings-live">' +
+      host.innerHTML = spek + meetingsReachHtml(live) + '<div class="meetings-live">' +
         '<div><div class="section-label m-0">Transcript' + (o.ws ? '' : ' (disconnected)') + '</div><div class="meetings-transcript">' + (lines || '<p class="muted-xs">Waiting for the first words…</p>') + '</div></div>' +
         '<div class="meetings-side"><div><div class="section-label m-0">Notes</div>' + notesHtml + '</div>' +
         '<div><div class="section-label m-0">Research</div><div class="meetings-research">' + research + '</div></div>' +
@@ -51313,6 +51702,67 @@ function burnAreaChart() {
       } catch (e) {
         if (errEl) errEl.textContent = e.message; else showToast('Save failed: ' + e.message, 'error');
       }
+    }
+    // The attendee's own lines (hivecommons/hive Betty round 2): every line
+    // she says or posts is in the meeting's transcript as a `reply` event
+    // ({type:'reply', author, text, at, reply:{kind, trigger, source,
+    // delivered, undelivered, fallback, timing}}). The meeting view and the
+    // Inbox show them among the participants' lines, set apart, with how
+    // each went out (spoken or chat), what it was made from, and the ones
+    // that never reached the meeting.
+    const MEETINGS_REPLY_SPOKEN_MARK = '🔊';
+    const MEETINGS_REPLY_CHAT_MARK = '💬';
+    const MEETINGS_REPLY_UNDELIVERED_MARK = '⚠';
+    // A rendered transcript labels her lines "Name (assistant, spoken; source: x): text".
+    const MEETINGS_ASSISTANT_LINE = /^([^\n:]*?) \(assistant, (spoken|chat|not delivered)([^)]*)\): /;
+
+    function meetingsReplyMark(how) {
+      if (how === 'spoken') return MEETINGS_REPLY_SPOKEN_MARK;
+      if (how === 'not delivered') return MEETINGS_REPLY_UNDELIVERED_MARK;
+      return MEETINGS_REPLY_CHAT_MARK;
+    }
+
+    function meetingsReplyHow(r) {
+      if (!r.delivered) return 'not delivered';
+      return r.kind === 'voice' ? 'spoken' : 'chat';
+    }
+
+    // One of her lines in the live meeting view.
+    function meetingsReplyLineHtml(ev) {
+      const r = ev.reply || {};
+      const who = (ev.author && ev.author.name) || 'hive';
+      const how = meetingsReplyHow(r);
+      const meta = [how + (r.fallback ? ' (fallback)' : ''), r.source ? 'source: ' + r.source : '', r.trigger || ''].filter(Boolean).join(' · ');
+      const why = !r.delivered && r.undelivered ? ' <span class="meetings-reply-meta">' + escapeHtml(r.undelivered) + '</span>' : '';
+      return '<p class="meetings-line is-reply' + (r.delivered ? '' : ' is-undelivered') + '" data-reply-kind="' + escapeHtml(how) + '">' +
+        '<span class="meetings-who">' + meetingsReplyMark(how) + ' ' + escapeHtml(who) + '</span>' +
+        '<span class="meetings-reply-meta">' + escapeHtml(meta) + '</span>' + escapeHtml(ev.text || '') + why + '</p>';
+    }
+
+    // The "can't reach participants" notice: replies are failing in chat
+    // and by voice. The Leave button on the meeting's row removes the bot;
+    // it leaves by itself if this lasts.
+    function meetingsReachHtml(live) {
+      const n = (live && live.undelivered) || 0;
+      if (!n) return '';
+      const since = live.unreachable_since ? ' since ' + meetingsFormatTime(live.unreachable_since) : '';
+      const why = live.undelivered_reason ? ' Last reason: ' + live.undelivered_reason + '.' : '';
+      if (!live.unreachable) {
+        return '<p class="muted-xs meetings-reach">' + n + ' repl' + (n === 1 ? 'y' : 'ies') + ' could not be delivered' + escapeHtml(since) + '; kept below as not delivered.' + escapeHtml(why) + '</p>';
+      }
+      return '<p class="meetings-reach is-unreachable">Can\'t reach participants: ' + n + ' replies in a row were delivered neither in chat nor by voice' + escapeHtml(since) + '.' + escapeHtml(why) +
+        ' They are kept below as not delivered. Use Leave on this meeting to remove the bot; it leaves by itself if this continues.</p>';
+    }
+
+    // A meeting's rendered transcript (the Inbox item's Transcript view):
+    // her lines are set apart from the participants', marked spoken or chat.
+    function meetingsTranscriptTextHtml(text) {
+      return String(text || '').split('\n').map(line => {
+        const m = line.match(MEETINGS_ASSISTANT_LINE);
+        if (!m) return escapeHtml(line);
+        return '<span class="inbox-assistant-line' + (m[2] === 'not delivered' ? ' is-undelivered' : '') + '" data-reply-kind="' + escapeHtml(m[2]) + '">' +
+          meetingsReplyMark(m[2]) + ' ' + escapeHtml(line) + '</span>';
+      }).join('\n');
     }
     // ── Calendar: scheduled meetings hive joins (hivecommons/hive#18394) ──
     // GET /api/meetings/schedule lists upcoming and recent scheduled
@@ -52491,6 +52941,467 @@ function burnAreaChart() {
       } catch (e) {
         if (errEl) errEl.textContent = e.message; else showToast('Save failed: ' + e.message, 'error');
       }
+    }
+    // ── Customers: a profile per person (hivecommons/hive#18742) ──
+    // GET /api/customers returns the viewer's own profile ("me") and, for
+    // the owner and read-write users, every customer and every suggested
+    // person. A read-only user sees only "me" and edits it through
+    // POST /api/customers/me/edit. Nothing shown here leaves the hive.
+    const CUSTOMERS_POLL_MS = 60000;
+    const CUSTOMERS_KIND_LABELS = {
+      hive_user: 'Hive user', github: 'GitHub', email: 'Email', git_email: 'Git email', discord: 'Discord',
+      slack: 'Slack', teams: 'Teams', meet: 'Google Meet', zoom: 'Zoom', name: 'Name'
+    };
+    // hive_user is what "me" resolves on, so it is never added by hand.
+    const CUSTOMERS_ADDABLE_KINDS = ['github', 'email', 'git_email', 'discord', 'slack', 'teams', 'meet', 'zoom', 'name'];
+    const CUSTOMERS_LEVEL_LABELS = { unknown: 'Unknown', at_risk: 'At risk', neutral: 'Neutral', satisfied: 'Satisfied' };
+    // Satisfaction level to the kc-pill status palette.
+    const CUSTOMERS_LEVEL_PILL = { at_risk: 'error', neutral: 'syncing', satisfied: 'ok' };
+    const CUSTOMERS_ORIGIN_LABELS = { hive_user: 'hive user', manual: 'added by hand', accepted: 'accepted suggestion' };
+    const CUSTOMERS_EVIDENCE_SHOWN = 5;
+    let _customersData = null;
+    let _customersError = '';
+    // The open profile; null shows the list.
+    let _customersOpen = null;
+
+    function customersIsEnabled() { return window._customersEnabled === true; }
+    function customersIsFull() { return !!(_customersData && _customersData.full); }
+    function customersIsOwner() { return !!(_customersData && _customersData.owner); }
+
+    // ── Visibility: the section shows only while customers are enabled ──
+    function customersApplyVisibility() {
+      const on = customersIsEnabled();
+      const el = document.getElementById('customers-section');
+      const nav = document.querySelector('.oc-nav-item[data-section="customers-section"]');
+      const changed = (el && el.hidden === on) || (nav && nav.hidden === on);
+      if (el) el.hidden = !on;
+      if (nav) nav.hidden = !on;
+      if (changed && typeof dashboardApplyLayout === 'function' && typeof dashboardLayoutNormalize === 'function') {
+        dashboardApplyLayout(dashboardLayoutNormalize(dashboardLayoutRead()));
+      }
+    }
+
+    async function fetchCustomers() {
+      try {
+        const r = await fetch('/api/customers');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { _customersError = data.error || ('HTTP ' + r.status); }
+        else {
+          _customersData = data;
+          _customersError = '';
+          window._customersEnabled = data.enabled === true;
+        }
+      } catch (e) {
+        if (!_customersData) _customersError = 'Customers are unreachable right now; retrying.';
+      }
+      customersApplyVisibility();
+      renderCustomers();
+    }
+    dashboardScheduleWork('customers', fetchCustomers).catch(console.error);
+    dashboardSetInterval('customers', fetchCustomers, CUSTOMERS_POLL_MS);
+
+    async function customersRequest(method, path, body) {
+      const init = { method: method };
+      if (body !== undefined) { init.headers = { 'Content-Type': 'application/json' }; init.body = JSON.stringify(body); }
+      const r = await fetch(path, init);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return data;
+    }
+
+    function customersField(name) { return document.querySelector('[data-customers-field="' + name + '"]'); }
+    function customersFieldValue(name) { return ((customersField(name) || {}).value || '').trim(); }
+
+    function customersFormatTime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime()) || d.getFullYear() < 2000) return '';
+      try { return new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' }).format(d); }
+      catch (e) { return d.toISOString().slice(0, 10); }
+    }
+
+    // customersActiveTags is the names of the tags that are on.
+    function customersActiveTags(p) {
+      return ((p && p.tags) || []).filter(t => t && t.state === 'on').map(t => t.name);
+    }
+
+    // customersGoalsSplit separates the goals a person stands behind from
+    // the ones hive inferred and is offering.
+    function customersGoalsSplit(p) {
+      const all = ((p && p.goals) || []).filter(g => g && g.id);
+      return { confirmed: all.filter(g => g.state === 'confirmed'), suggested: all.filter(g => g.state === 'suggested') };
+    }
+
+    // customersSummaryText is the collapsed section's one-line summary.
+    function customersSummaryText(data) {
+      if (!data || !data.enabled) return 'off';
+      if (!data.full) return 'your profile';
+      const people = (data.people || []).length + 1;
+      const suggested = (data.suggestions || []).length;
+      return people + ' customer' + (people === 1 ? '' : 's') + (suggested ? ' · ' + suggested + ' suggested' : '');
+    }
+
+    function customersKindOptions() {
+      return CUSTOMERS_ADDABLE_KINDS.map(k => '<option value="' + k + '">' + escapeHtml(CUSTOMERS_KIND_LABELS[k] || k) + '</option>').join('');
+    }
+
+    function customersLevelPill(level) {
+      if (!level || level === 'unknown') return '';
+      return '<span class="kc-pill" data-status="' + escapeHtml(CUSTOMERS_LEVEL_PILL[level] || '') + '">' + escapeHtml(CUSTOMERS_LEVEL_LABELS[level] || level) + '</span>';
+    }
+
+    function customersEvidenceHtml(refs) {
+      const list = (refs || []).slice(0, CUSTOMERS_EVIDENCE_SHOWN);
+      if (!list.length) return '';
+      return '<div class="customers-evidence" title="What led hive to suggest this">from ' + list.map(escapeHtml).join(', ') + '</div>';
+    }
+
+    // ── List ──
+    function customersRowHtml(p, isMe) {
+      const goals = customersGoalsSplit(p);
+      const tags = customersActiveTags(p).map(t => '<span class="badge customers-chip">' + escapeHtml(t) + '</span>').join('');
+      const pending = goals.suggested.length + (p.satisfaction && p.satisfaction.suggestion ? 1 : 0);
+      const meta = [CUSTOMERS_ORIGIN_LABELS[p.origin] || p.origin || '', goals.confirmed.length + ' goal' + (goals.confirmed.length === 1 ? '' : 's')];
+      if (pending) meta.push(pending + ' suggestion' + (pending === 1 ? '' : 's') + ' to review');
+      const updated = customersFormatTime(p.updated_at);
+      if (updated) meta.push('updated ' + updated);
+      return '<div class="customers-row" data-customer="' + escapeHtml(p.id) + '" data-me="' + (isMe ? 'true' : 'false') + '">' +
+        '<div class="customers-row-main"><div class="customers-row-title">' + escapeHtml(p.name || p.id) + (isMe ? ' <span class="badge">me</span>' : '') + '</div>' +
+        '<div class="muted-xs">' + escapeHtml(meta.filter(Boolean).join(' · ')) + '</div></div>' +
+        '<div class="customers-chips">' + tags + customersLevelPill(p.satisfaction && p.satisfaction.level) + '</div>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersOpen" data-arg0="' + (isMe ? 'me' : escapeHtml(p.id)) + '">' + (isMe ? 'My profile' : 'Open') + '</button></div>';
+    }
+
+    function customersSuggestionRowHtml(s) {
+      const id = escapeHtml(s.id);
+      const counts = Object.keys(s.counts || {}).sort().map(k => s.counts[k] + ' ' + k.replace(/_/g, ' ')).join(', ');
+      const seen = customersFormatTime(s.last_seen);
+      return '<div class="customers-row" data-customer-suggestion="' + id + '">' +
+        '<span class="badge">' + escapeHtml(CUSTOMERS_KIND_LABELS[s.kind] || s.kind || '') + '</span>' +
+        '<div class="customers-row-main"><div class="customers-row-title">' + escapeHtml(s.value || '') + '</div>' +
+        '<div class="muted-xs">' + escapeHtml([counts, seen ? 'last seen ' + seen : ''].filter(Boolean).join(' · ')) + '</div>' +
+        customersEvidenceHtml(s.evidence) + '</div>' +
+        '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersAccept" data-arg0="' + id + '" title="Make this person a customer and build their profile">Accept</button>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersDismiss" data-arg0="' + id + '" title="Do not suggest this person again; hive keeps no readable trace of them">Dismiss</button></div>';
+    }
+
+    function customersAddFormHtml() {
+      return '<details class="customers-add"><summary class="muted-xs">Add customer</summary><div class="customers-form mt-2">' +
+        '<label>Name<input class="kb-search-box" type="text" maxlength="120" data-customers-field="add-name" placeholder="Ada Lovelace" autocomplete="off"></label>' +
+        '<label>Known by (optional)<select class="kb-search-box" data-customers-field="add-kind">' + customersKindOptions() + '</select></label>' +
+        '<label>Login, address or id<input class="kb-search-box" type="text" maxlength="254" data-customers-field="add-value" placeholder="octocat" autocomplete="off"></label>' +
+        '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersAdd">Add customer</button></div>' +
+        '<div class="hive-dialog-error" role="alert" data-customers-field="add-error"></div></details>';
+    }
+
+    function customersListHtml(data) {
+      const me = data.me || {};
+      let out = '<div class="customers-block"><div class="section-label m-0">Me</div><div class="customers-list">' + customersRowHtml(me, true) + '</div></div>';
+      if (!data.full) {
+        return out + '<p class="muted-xs">You see only your own profile. The hive owner and read-write users can see the other customers.</p>';
+      }
+      const people = data.people || [];
+      const suggestions = data.suggestions || [];
+      out += customersAddFormHtml();
+      out += '<div class="customers-block"><div class="section-label m-0">Customers</div><div class="customers-list">' +
+        (people.length ? people.map(p => customersRowHtml(p, false)).join('') : '<p class="empty-dashed">No other customers yet. Add one, or accept a suggestion.</p>') + '</div></div>';
+      out += '<details class="customers-block"><summary class="muted-xs">Suggested (' + suggestions.length + ')</summary>' +
+        '<p class="muted-xs mt-2">People hive has seen in issues, pull requests, meetings and mail who are not customers. Hive keeps only a key, counts and a few references for them until you accept one.</p>' +
+        '<div class="customers-list mt-2">' + (suggestions.length ? suggestions.map(customersSuggestionRowHtml).join('') : '<p class="empty-dashed">Nobody to suggest.</p>') + '</div></details>';
+      return out;
+    }
+
+    // ── Profile ──
+    function customersIdentityRowHtml(i) {
+      const key = i.kind + ':' + i.value;
+      const fixed = i.kind === 'hive_user';
+      const meta = [];
+      if (i.claimed) meta.push('unconfirmed');
+      else if (i.manual) meta.push('added by ' + (i.by || 'a person'));
+      else if (i.source) meta.push(String(i.source).replace(/_/g, ' '));
+      let buttons = '';
+      if (i.claimed && customersIsFull()) {
+        buttons += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersIdentityConfirm" data-arg0="' + escapeHtml(i.kind) + '" data-arg1="' + escapeHtml(i.value) + '" title="Confirm this is theirs: it then links their activity">Confirm</button>';
+      }
+      if (!fixed) {
+        buttons += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityRemove" data-arg0="' + escapeHtml(key) + '">Remove</button>';
+      }
+      return '<div class="customers-row" data-claimed="' + (i.claimed ? 'true' : 'false') + '"><span class="badge">' + escapeHtml(CUSTOMERS_KIND_LABELS[i.kind] || i.kind) + '</span>' +
+        '<div class="customers-row-main"><div class="customers-row-title">' + escapeHtml(i.value) + '</div>' +
+        (meta.length ? '<div class="muted-xs">' + escapeHtml(meta.join(' · ')) + '</div>' : '') + '</div>' + buttons + '</div>';
+    }
+
+    function customersIdentitiesHtml(p) {
+      const ids = p.identities || [];
+      const note = customersIsFull() ? '' : '<p class="muted-xs">What you add here is shown as unconfirmed until the hive owner or a read-write user confirms it.</p>';
+      return '<div class="customers-block"><div class="section-label m-0">Identities</div>' + note +
+        '<div class="customers-list">' + (ids.length ? ids.map(customersIdentityRowHtml).join('') : '<p class="empty-dashed">No identities.</p>') + '</div>' +
+        '<div class="customers-inline"><label>Known by<select class="kb-search-box" data-customers-field="identity-kind">' + customersKindOptions() + '</select></label>' +
+        '<label>Login, address or id<input class="kb-search-box" type="text" maxlength="254" data-customers-field="identity-value" autocomplete="off"></label>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityAdd">Add identity</button></div></div>';
+    }
+
+    function customersTagChipHtml(name, tag) {
+      const state = tag ? tag.state : 'off';
+      const source = tag ? tag.source : 'auto';
+      const on = state === 'on';
+      const why = !tag ? 'Not set' : (source === 'manual' ? 'Set by ' + (tag.by || 'a person') : (tag.rule ? 'Automatic: ' + tag.rule : 'Automatic'));
+      let out = '<button type="button" class="badge customers-chip" data-state="' + state + '" data-source="' + escapeHtml(source) + '" aria-pressed="' + on + '" title="' + escapeHtml(why) + '"' +
+        ' data-action="customersTagSet" data-arg0="' + escapeHtml(name) + '" data-arg1="' + (on ? 'off' : 'on') + '">' + escapeHtml(name) + (tag ? ' · ' + (source === 'manual' ? 'manual' : 'auto') : '') + '</button>';
+      if (tag && source === 'manual') {
+        out += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersTagSet" data-arg0="' + escapeHtml(name) + '" data-arg1="auto" title="Hand this tag back to the automatic rules">Reset to automatic</button>';
+      }
+      return out;
+    }
+
+    function customersTagsHtml(p) {
+      const byName = {};
+      (p.tags || []).forEach(t => { if (t && t.name) byName[t.name] = t; });
+      const names = ((_customersData && _customersData.default_tags) || []).slice();
+      Object.keys(byName).forEach(n => { if (names.indexOf(n) < 0) names.push(n); });
+      return '<div class="customers-block"><div class="section-label m-0">Tags</div>' +
+        '<p class="muted-xs">Click a tag to turn it on or off. A tag you set stays as you set it; hive only changes the ones marked auto.</p>' +
+        '<div class="customers-chips">' + names.map(n => customersTagChipHtml(n, byName[n])).join('') + '</div>' +
+        '<div class="customers-inline"><label>New tag<input class="kb-search-box" type="text" maxlength="40" data-customers-field="tag-name" placeholder="early adopter" autocomplete="off"></label>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersTagAdd">Add tag</button></div></div>';
+    }
+
+    function customersGoalRowHtml(g) {
+      const id = escapeHtml(g.id);
+      const suggested = g.state === 'suggested';
+      const meta = suggested ? 'Suggested by hive' : (g.source === 'manual' ? 'Written by ' + (g.by || 'a person') : 'Suggested by hive, confirmed by ' + (g.by || 'a person'));
+      return '<div class="customers-row" data-goal-state="' + escapeHtml(g.state) + '"><div class="customers-row-main"><div>' + escapeHtml(g.text || '') + '</div>' +
+        '<div class="muted-xs">' + escapeHtml(meta) + '</div>' + customersEvidenceHtml(g.evidence) + '</div>' +
+        (suggested ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersGoalConfirm" data-arg0="' + id + '">Confirm</button>' : '') +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersGoalEdit" data-arg0="' + id + '">Edit</button>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersGoalReject" data-arg0="' + id + '">' + (suggested ? 'Reject' : 'Remove') + '</button></div>';
+    }
+
+    function customersGoalsHtml(p) {
+      const goals = customersGoalsSplit(p);
+      return '<div class="customers-block"><div class="section-label m-0">Goals</div>' +
+        '<p class="muted-xs">What this person is trying to get done. Hive suggests goals from their issues, pull requests, meetings and mail; a goal counts only once a person confirms it.</p>' +
+        '<div class="customers-list">' + (goals.confirmed.length ? goals.confirmed.map(customersGoalRowHtml).join('') : '<p class="empty-dashed">No goals yet.</p>') + '</div>' +
+        (goals.suggested.length ? '<div class="muted-xs">Suggested</div><div class="customers-list">' + goals.suggested.map(customersGoalRowHtml).join('') + '</div>' : '') +
+        '<div class="customers-inline"><label>New goal<input class="kb-search-box" type="text" maxlength="280" data-customers-field="goal-text" placeholder="Get CSV exports working for their team" autocomplete="off"></label>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersGoalAdd">Add goal</button></div></div>';
+    }
+
+    // Satisfaction is the maintainers' assessment: full view only.
+    function customersSatisfactionHtml(p) {
+      if (!customersIsFull()) return '';
+      const sat = p.satisfaction || {};
+      const level = sat.level || 'unknown';
+      const levels = (_customersData && _customersData.levels) || Object.keys(CUSTOMERS_LEVEL_LABELS);
+      const who = sat.source === 'manual' ? 'Set by ' + (sat.by || 'a person') : (sat.source === 'auto' ? 'Suggested by hive, confirmed by ' + (sat.by || 'a person') : 'Not assessed yet');
+      const buttons = levels.map(l => '<button type="button" class="hv-btn ' + (l === level ? 'btn-primary' : 'btn-secondary') + ' btn-sm" aria-pressed="' + (l === level) + '" data-action="customersSatisfactionSet" data-arg0="' + escapeHtml(l) + '">' + escapeHtml(CUSTOMERS_LEVEL_LABELS[l] || l) + '</button>').join('');
+      const sg = sat.suggestion;
+      return '<div class="customers-block"><div class="section-label m-0">Satisfaction</div>' +
+        '<p class="muted-xs">' + escapeHtml(who) + '. There is no score: only a level, and what led to it.</p>' +
+        '<div class="customers-chips">' + buttons + '</div>' + customersEvidenceHtml(sat.evidence) +
+        (sg ? '<div class="customers-row" data-satisfaction-suggestion="true"><div class="customers-row-main"><div>Hive suggests ' + customersLevelPill(sg.level) + '</div>' + customersEvidenceHtml(sg.evidence) + '</div>' +
+          '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersSatisfactionConfirm">Confirm</button>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersSatisfactionReject">Reject</button></div>' : '') + '</div>';
+    }
+
+    function customersNotesHtml(p) {
+      if (!customersIsFull()) return '';
+      return '<div class="customers-block"><div class="section-label m-0">Notes</div>' +
+        '<textarea class="kb-search-box customers-notes" maxlength="4000" data-customers-field="notes" placeholder="Notes for the owner and read-write users. The person does not see these.">' + escapeHtml(p.notes || '') + '</textarea>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersNotesSave">Save notes</button></div></div>';
+    }
+
+    function customersActivityHtml(p) {
+      if (!customersIsFull()) return '';
+      const counts = p.counts || {};
+      const keys = Object.keys(counts).sort();
+      const hints = p.hints || [];
+      return '<div class="customers-block"><div class="section-label m-0">Activity</div>' +
+        (keys.length ? '<div class="customers-chips">' + keys.map(k => '<span class="badge">' + escapeHtml(k.replace(/_/g, ' ')) + ' ' + counts[k] + '</span>').join('') + '</div>' : '<p class="empty-dashed">No activity recorded yet.</p>') +
+        (hints.length ? '<p class="muted-xs">' + hints.length + ' open "Same person?" question' + (hints.length === 1 ? '' : 's') + ' about this profile.</p>' : '') + '</div>';
+    }
+
+    function customersForgetHtml(p) {
+      if (!customersIsOwner()) return '';
+      return '<div class="customers-block"><div class="section-label m-0">Forget</div>' +
+        '<p class="muted-xs">Deletes this person, their identities and their activity links from this hive, and stops hive rebuilding the profile. It cannot be undone.</p>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-danger btn-sm" data-action="customersForget">Forget this person</button></div></div>';
+    }
+
+    function customersProfileHtml(p) {
+      const tags = customersActiveTags(p).map(t => '<span class="badge customers-chip">' + escapeHtml(t) + '</span>').join('');
+      return '<div class="customers-profile-head"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersClose">← Customers</button>' +
+        '<div class="customers-profile-name">' + escapeHtml(p.name || p.id) + (p.me ? ' <span class="badge">me</span>' : '') + '</div>' +
+        '<div class="customers-chips">' + tags + customersLevelPill(p.satisfaction && p.satisfaction.level) + '</div>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRename">Rename</button></div>' +
+        '<div class="hive-dialog-error" role="alert" data-customers-field="profile-error"></div>' +
+        customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) +
+        customersActivityHtml(p) + customersNotesHtml(p) + customersForgetHtml(p);
+    }
+
+    function renderCustomers() {
+      refreshSectionCardShell('customers-section');
+      const host = document.getElementById('customers-panel');
+      if (!host) return;
+      if (_customersError && !_customersData) {
+        host.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_customersError) + '</p>';
+        setSectionSummary('customers-section', 'unavailable');
+        return;
+      }
+      const data = _customersData || {};
+      setSectionSummary('customers-section', customersSummaryText(data));
+      if (!data.enabled) { host.innerHTML = '<p class="empty-dashed">Customers are turned off on this hive.</p>'; return; }
+      // Typing in a form must survive the background refresh.
+      const active = document.activeElement;
+      if (active && host.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
+      host.innerHTML = _customersOpen ? customersProfileHtml(_customersOpen) : customersListHtml(data);
+    }
+
+    // customersShow replaces the panel after an action, even when a field in
+    // it has the focus.
+    function customersShow() {
+      if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
+      renderCustomers();
+    }
+
+    function customersProfileError(msg) {
+      const el = customersField('profile-error');
+      if (el) el.textContent = msg || '';
+      else if (msg) showToast(msg, 'error');
+    }
+
+    // ── Actions ──
+    async function customersOpen(id) {
+      try {
+        _customersOpen = await customersRequest('GET', '/api/customers/' + encodeURIComponent(id));
+        customersShow();
+      } catch (e) { showToast('Could not open the profile: ' + e.message, 'error'); }
+    }
+
+    function customersClose() {
+      _customersOpen = null;
+      customersShow();
+      fetchCustomers();
+    }
+
+    // customersEdit applies one change to the open profile. A viewer's own
+    // profile is always addressed as "me": that is the only path a read-only
+    // user may write to.
+    async function customersEdit(body, done) {
+      if (!_customersOpen) return;
+      const id = _customersOpen.me ? 'me' : _customersOpen.id;
+      try {
+        const p = await customersRequest('POST', '/api/customers/' + encodeURIComponent(id) + '/edit', body);
+        _customersOpen = p;
+        customersShow();
+        if (p.hinted) showToast('That identity already belongs to another customer. Nothing was linked; it is now a "Same person?" question on both profiles.', 'warning');
+        else if (done) showToast(done, 'success');
+      } catch (e) { customersProfileError(e.message); }
+    }
+
+    async function customersAdd() {
+      const err = customersField('add-error');
+      const name = customersFieldValue('add-name');
+      const value = customersFieldValue('add-value');
+      if (!name) { if (err) err.textContent = 'A name is required.'; return; }
+      const body = { name: name };
+      if (value) body.identities = [{ kind: customersFieldValue('add-kind'), value: value }];
+      try {
+        const p = await customersRequest('POST', '/api/customers', body);
+        showToast('Customer added', 'success');
+        _customersOpen = p;
+        customersShow();
+        fetchCustomers();
+      } catch (e) { if (err) err.textContent = e.message; }
+    }
+
+    async function customersAccept(sid) {
+      try {
+        const p = await customersRequest('POST', '/api/customers/suggestions/' + encodeURIComponent(sid) + '/accept');
+        showToast('Accepted: ' + (p.name || 'customer') + ' now has a profile', 'success');
+      } catch (e) { showToast('Could not accept: ' + e.message, 'error'); }
+      customersShow();
+      fetchCustomers();
+    }
+
+    async function customersDismiss(sid) {
+      const ok = await hiveConfirm({ title: 'Dismiss this suggestion?', message: 'Hive will not suggest this person again and keeps no readable trace of them. You can still add them by hand later.', confirmLabel: 'Dismiss' });
+      if (!ok) return;
+      try { await customersRequest('POST', '/api/customers/suggestions/' + encodeURIComponent(sid) + '/dismiss'); }
+      catch (e) { showToast('Could not dismiss: ' + e.message, 'error'); }
+      customersShow();
+      fetchCustomers();
+    }
+
+    async function customersRename() {
+      if (!_customersOpen) return;
+      const name = await hivePrompt({ title: 'Rename', label: 'Name', defaultValue: _customersOpen.name || '', confirmLabel: 'Save' });
+      if (!name || name === _customersOpen.name) return;
+      customersEdit({ op: 'name', name: name });
+    }
+
+    function customersIdentityAdd() {
+      const value = customersFieldValue('identity-value');
+      if (!value) { customersProfileError('Enter a login, an address or an id.'); return; }
+      customersEdit({ op: 'identity_add', kind: customersFieldValue('identity-kind'), value: value });
+    }
+
+    function customersIdentityConfirm(kind, value) {
+      customersEdit({ op: 'identity_add', kind: kind, value: value }, 'Identity confirmed');
+    }
+
+    function customersIdentityRemove(key) { customersEdit({ op: 'identity_remove', key: key }); }
+
+    function customersTagSet(tag, state) { customersEdit({ op: 'tag', tag: tag, state: state }); }
+
+    function customersTagAdd() {
+      const tag = customersFieldValue('tag-name');
+      if (!tag) { customersProfileError('Enter a tag.'); return; }
+      customersEdit({ op: 'tag', tag: tag, state: 'on' });
+    }
+
+    function customersGoalAdd() {
+      const text = customersFieldValue('goal-text');
+      if (!text) { customersProfileError('Write the goal first.'); return; }
+      customersEdit({ op: 'goal_add', text: text });
+    }
+
+    async function customersGoalEdit(gid) {
+      const goal = ((_customersOpen && _customersOpen.goals) || []).find(g => g && g.id === gid);
+      if (!goal) return;
+      const text = await hivePrompt({ title: 'Edit goal', label: 'What are they trying to get done?', defaultValue: goal.text || '', confirmLabel: 'Save' });
+      if (!text || text === goal.text) return;
+      customersEdit({ op: 'goal_edit', goal_id: gid, text: text });
+    }
+
+    function customersGoalConfirm(gid) { customersEdit({ op: 'goal_confirm', goal_id: gid }, 'Goal confirmed'); }
+
+    function customersGoalReject(gid) { customersEdit({ op: 'goal_reject', goal_id: gid }); }
+
+    function customersSatisfactionSet(level) { customersEdit({ op: 'satisfaction_set', level: level }); }
+
+    function customersSatisfactionConfirm() { customersEdit({ op: 'satisfaction_confirm' }, 'Satisfaction confirmed'); }
+
+    function customersSatisfactionReject() { customersEdit({ op: 'satisfaction_reject' }); }
+
+    function customersNotesSave() { customersEdit({ op: 'notes', notes: (customersField('notes') || {}).value || '' }, 'Notes saved'); }
+
+    async function customersForget() {
+      if (!_customersOpen) return;
+      const p = _customersOpen;
+      const ok = await hiveConfirm({
+        title: 'Forget ' + (p.name || 'this person') + '?',
+        message: 'This deletes their profile, identities and activity links from this hive, and stops hive rebuilding the profile from what it sees later. It cannot be undone.',
+        confirmLabel: 'Forget', danger: true
+      });
+      if (!ok) return;
+      try {
+        await customersRequest('DELETE', '/api/customers/' + encodeURIComponent(p.id));
+        showToast('Forgotten', 'success');
+        _customersOpen = null;
+      } catch (e) { showToast('Could not forget: ' + e.message, 'error'); }
+      customersShow();
+      fetchCustomers();
     }
     // ── Vault Management ──
 
@@ -54515,6 +55426,7 @@ function burnAreaChart() {
         'knowledge-section', 'inbox-section', 'contributors-section', 'debug-section', 'logs-section',
         'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'
       ];
+      dashboardRememberAcmmLevel(data.acmmLevel || 0);
       COLLAPSIBLE_SECTION_IDS.forEach(applySectionCollapse);
       refreshDashboardSectionSummaries(data);
       // Update compact-all button text
@@ -61831,6 +62743,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Good first issue curation', key: 'good_first_issue.enabled', text: 'good first issue help wanted gfi curation new contributors coding agent clanker relay advertise welcome comment good_first_issue.enabled good_first_issue.max_per_repo good_first_issue.max_per_sweep good_first_issue.min_age good_first_issue.interval scorer body length packages score reselect cooldown docs url welcome comment template good_first_issue.min_body_chars good_first_issue.max_body_chars good_first_issue.max_packages good_first_issue.min_score good_first_issue.reselect_cooldown good_first_issue.docs_url good_first_issue.comment_template' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Jev decisions', key: 'jev.provider', text: 'jev typed decisions provider openrouter typesafe model endpoint api key env timeout jev.provider jev.model jev.endpoint jev.api_key_env jev.timeout' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Agent policy repo', key: 'policies.repo', text: 'agent policies policy repo claude.md branch path local dir poll interval policies.repo policies.branch policies.path policies.local_dir policies.poll_interval' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customers', key: 'customers.enabled', text: 'customers people profile person identities tags goals satisfaction suggested forget customer graph HIVE_CUSTOMERS_ENABLED customers.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Data directories and session retention', key: 'data.metrics_dir', text: 'data directories metrics logs agent configs claude copilot bob sessions retention prune janitor data.agents_dir data.bob_sessions_dir data.claude_sessions_dir data.copilot_sessions_dir data.logs_dir data.metrics_dir data.session_retention_days' },
       { tab: 'Features', section: 'Integrations & observability', label: 'Standalone deployment upgrades', key: 'deployment.podman_mode', text: 'deployment podman quadlet rootless rootful docker compose upgrade helper request dir deployment.podman_mode deployment.upgrade_helper deployment.upgrade_request_dir' },
@@ -62729,8 +63642,6 @@ function burnAreaChart() {
         level >= ACMM_CONTRIBUTORS_MIN_LEVEL ? show(contributorsSection, '') : hide(contributorsSection);
         level >= ACMM_LEADERBOARD_MIN_LEVEL ? show(leaderboardSection, '') : hide(leaderboardSection);
         (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSection, '') : hide(nousSection);
-        const nousSidebarCfg = document.getElementById('nous-sidebar-config');
-        (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
         level >= ACMM_DEBUG_MIN_LEVEL ? show(debugSection, '') : hide(debugSection);
         hide(logsSection);
 
@@ -70659,7 +71570,9 @@ function burnAreaChart() {
     // (hivecommons/hive#18690). GET /api/workflows and the pin's own
     // response carry `dispatch` (one entry per bound repository and
     // profile: the resolved agent, how it was resolved, the pin, or the
-    // problem when nothing fills it) and `agents` (who can be pinned).
+    // problem when nothing fills it, `candidates` saying which agents may
+    // do the profile's work, `not_started` listing the hand-offs an agent
+    // declined) and `agents` (who can be pinned).
     function workflowDispatchApply(data) {
       _workflowState.dispatch = Array.isArray(data && data.dispatch) ? data.dispatch : [];
       _workflowState.agents = Array.isArray(data && data.agents) ? data.agents : [];
@@ -70675,31 +71588,43 @@ function burnAreaChart() {
 
     // Pure: what one profile's row says — the option list of its picker
     // (the default first, then every agent that can be pinned, plus a pin
-    // that no longer names an enabled agent so it stays visible) and, when
-    // nothing fills the profile, the warning.
+    // that no longer names an enabled agent so it stays visible), the
+    // warning when nothing fills the profile, and the hand-offs an agent
+    // declined or did not act on. An agent whose mode does not let it do
+    // what the profile needs (`candidates`, hivecommons/hive#18749) is
+    // listed but cannot be picked, with the reason on hover.
     function workflowDispatchProfileView(d, agents) {
       const pinned = String(d.pinned || '');
       const agent = String(d.agent || '');
       const auto = pinned ? 'Automatic' : (agent ? 'Automatic (' + agent + ')' : 'Automatic (none available)');
       const options = [{ value: '', label: auto, selected: !pinned }];
       const names = (agents || []).map(String);
+      const cand = {};
+      for (const c of (Array.isArray(d.candidates) ? d.candidates : [])) if (c && c.agent) cand[String(c.agent)] = c;
       if (pinned && names.indexOf(pinned) < 0) options.push({ value: pinned, label: pinned + ' (not an enabled agent)', selected: true });
-      for (const n of names) options.push({ value: n, label: n, selected: n === pinned });
-      const warning = d.problem ? 'Not handed off: ' + d.problem + '. Items in this profile\'s states wait until an agent is picked.' : '';
+      for (const n of names) {
+        const c = cand[n];
+        const unfit = !!c && c.qualifies === false;
+        const mode = c && c.mode ? String(c.mode) : '';
+        options.push({ value: n, label: unfit ? n + ' (' + (mode || 'not allowed') + ', cannot do this)' : n, selected: n === pinned, disabled: unfit && n !== pinned, title: unfit ? n + ' ' + String(c.reason || 'may not do what this profile needs') : '' });
+      }
+      const warning = d.problem ? 'Not handed off: ' + d.problem + '. Items in this profile\'s states wait until an agent that may do the work is picked.' : '';
       const how = pinned ? 'pinned' : (WORKFLOW_DISPATCH_SOURCE_WORD[String(d.source || '')] || '');
       const note = warning ? '' : (agent ? 'handed to ' + agent + (how ? ' (' + how + ')' : '') : '') + (d.disabled ? ' · automatic hand-off off, manual send only' : '');
-      return { profile: String(d.profile), options, warning, note };
+      const stalled = (Array.isArray(d.not_started) ? d.not_started : []).map(h => 'Hand-off of ' + String(h.ref || '') + ' not started: ' + String(h.reason || 'the agent did not act') + '. ' + (h.retrying ? 'The hive hands it to another agent that may do the work, if there is one.' : 'It waits for an owner: use Send to ' + String(d.profile) + ' on the item\'s row in the Activity Monitor.'));
+      return { profile: String(d.profile), options, warning, note, stalled };
     }
 
     function renderRepoWorkflowProfileRows(repo, profiles, agents, locked) {
       return (profiles || []).map(d => {
         const v = workflowDispatchProfileView(d, agents);
-        const opts = v.options.map(o => `<option value="${esc(o.value)}" ${o.selected ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
-        const tip = 'Which hive agent the ' + v.profile + ' profile of this workflow is handed to (workflow.dispatch.profiles.' + v.profile + '.agent). Automatic picks an agent named after the profile, then a writer, docs or feature agent, then the hive\'s standard agent for the work.';
+        const opts = v.options.map(o => `<option value="${esc(o.value)}" ${o.selected ? 'selected' : ''} ${o.disabled ? 'disabled' : ''}${o.title ? ` title="${esc(o.title)}"` : ''}>${esc(o.label)}</option>`).join('');
+        const tip = 'Which hive agent the ' + v.profile + ' profile of this workflow is handed to (workflow.dispatch.profiles.' + v.profile + '.agent). Automatic picks an agent named after the profile, then a writer, docs or feature agent, then the hive\'s standard agent for the work, and only ever an agent whose mode lets it do what the profile needs.';
         const msg = v.warning
           ? `<span class="rt-inherit wf-dispatch-gap" role="alert">${esc(v.warning)}</span>`
           : (v.note ? `<span class="rt-inherit">${esc(v.note)}</span>` : '');
-        return `<div class="config-list-item ld-sub wf-dispatch-profile" data-wf-profile="${esc(v.profile)}"><label class="rt-check" title="${esc(tip)}">${esc(v.profile)} agent <select ${locked ? 'disabled' : ''} data-change-action="setWorkflowProfileAgent" data-arg0="${esc(v.profile)}" data-arg-types="s,v">${opts}</select></label>${msg}</div>`;
+        const stalled = v.stalled.map(line => `<span class="rt-inherit wf-dispatch-gap" data-wf-stalled="1" role="alert">${esc(line)}</span>`).join('');
+        return `<div class="config-list-item ld-sub wf-dispatch-profile" data-wf-profile="${esc(v.profile)}"><label class="rt-check" title="${esc(tip)}">${esc(v.profile)} agent <select ${locked ? 'disabled' : ''} data-change-action="setWorkflowProfileAgent" data-arg0="${esc(v.profile)}" data-arg-types="s,v">${opts}</select></label>${msg}${stalled}</div>`;
       }).join('');
     }
 
@@ -76373,6 +77298,13 @@ function burnAreaChart() {
             <div class="config-toggle-switch ${f.reentrantTurnBackgroundFleetEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="reentrantTurnBackgroundFleetEnabled"></div>
             <span class="config-toggle-label">Include background fleet ${yamlHint('turn.reentrant.background_fleet_enabled')} ${settingHelpMark('settings', 'features', 'Re-entrant background fleet', `Extends the opt-in to every enabled background agent once a soak is underway. Off keeps the rollout to named agents. HIVE_REENTRANT_TURN_BACKGROUND_FLEET overrides it.`)}</span>
           </div>
+        </div>
+        <div class="settings-subsection">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnabled"></div>
+            <span class="config-toggle-label">Customers ${yamlHint('customers.enabled')} ${settingHelpMark('settings', 'features', 'Customers', `ON by default. The Customers section keeps one profile per person: who they are, their tags, what they are trying to get done and how it is going for them. Dashboard users and people added by hand are customers; anyone else hive has seen is only a suggestion until someone accepts them. Everything is stored on this hive and nothing is sent anywhere else. Off opens no store and hides the section. A change takes effect when the hive restarts. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersEffective !== f.customersEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENABLED overrides this setting: Customers is currently <b>${f.customersEffective ? 'on' : 'off'}</b>.</p>` : ''}
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">

@@ -142,11 +142,14 @@ type Event struct {
 	Reason    string          `json:"reason,omitempty"`
 	// Platform, GuildID, ChannelID and RequestedBy are set on a `requested`
 	// state event raised from the platform (Discord `/hive join`).
-	Platform    string          `json:"platform,omitempty"`
-	GuildID     string          `json:"guild_id,omitempty"`
-	ChannelID   string          `json:"channel_id,omitempty"`
-	RequestedBy *Person         `json:"requested_by,omitempty"`
-	Raw         json.RawMessage `json:"-"`
+	Platform    string  `json:"platform,omitempty"`
+	GuildID     string  `json:"guild_id,omitempty"`
+	ChannelID   string  `json:"channel_id,omitempty"`
+	RequestedBy *Person `json:"requested_by,omitempty"`
+	// Reply is set on a `reply` event: one of the bot's own lines, written
+	// by hive into the transcript (replies.go). Quorum never sends it.
+	Reply *ReplyInfo      `json:"reply,omitempty"`
+	Raw   json.RawMessage `json:"-"`
 }
 
 // Who returns the speaker or author display name.

@@ -226,7 +226,6 @@ classification.review_bots.logins[] # TODO #11854
 classification.review_bots.max_attempts_per_thread # TODO #11854
 classification.review_bots.resolve_after_fix # TODO #11854
 compliance.frameworks[] # TODO #11854
-customers.enabled # TODO #18742 (Settings switch lands with the Customers section UI)
 contribute.token_idle_max # TODO #11854
 contribute.token_max_age # TODO #11854
 convergence.mutation.max_writers_per_target # boundary capacity tuning; yaml-only (#14645)

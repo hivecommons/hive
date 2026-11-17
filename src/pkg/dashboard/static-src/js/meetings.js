@@ -98,6 +98,7 @@
         return 'The Discord bot cannot join that voice channel. In the server, give the bot\'s role View Channel, Connect and Speak on the channel, then try again.';
       }
       if (m.state === 'blocked') return 'The meeting refused a guest bot.';
+      if (/^unreachable$/.test(raw)) return 'Left: none of its replies could be delivered to the meeting, in chat or by voice.';
       if (/consent_undelivered/.test(raw)) return 'Left: the consent notice could not be delivered' + (m.consent_error ? ' (' + m.consent_error + ')' : '') + '.';
       if (/lobby_timeout/.test(raw)) return 'Nobody admitted hive from the lobby in time.';
       if (/platform_unavailable/.test(raw)) return 'This meeting platform is not available on this hive right now.';
@@ -353,7 +354,7 @@
         case 'line': {
           const ev = f.data || {};
           if (ev.type === 'segment' && !ev.final) { o.partial = ev; break; }
-          o.partial = null;
+          if (ev.type !== 'reply') o.partial = null;
           o.lines.push(ev);
           if (o.lines.length > MEETINGS_MAX_LINES) o.lines.shift();
           break;
@@ -372,6 +373,7 @@
           break;
         }
         case 'notes': meetingsRefreshLive(o.id); break;
+        case 'reach': meetingsRefreshLive(o.id); break;
         case 'spek': meetingsRefreshLive(o.id); break;
         default: break;
       }
@@ -388,6 +390,7 @@
     }
 
     function meetingsLineHtml(ev, partial) {
+      if (ev.type === 'reply') return meetingsReplyLineHtml(ev);
       const who = (ev.speaker && ev.speaker.name) || (ev.author && ev.author.name) || '';
       return '<p class="meetings-line' + (partial ? ' is-partial' : '') + '"><span class="meetings-who">' + escapeHtml(who) + (ev.type === 'chat' ? ' (chat)' : '') + '</span>' + escapeHtml(ev.text || '') + '</p>';
     }
@@ -405,13 +408,15 @@
       const research = (live.research || []).map(it =>
         '<div class="meetings-research-item"><div><span class="badge">' + escapeHtml(it.status) + '</span> ' + escapeHtml(it.query) + '</div>' +
         (it.summary ? '<div class="muted-xs">' + escapeHtml(it.summary) + '</div>' : '') +
+        (it.status === 'failed' && it.error ? '<div class="meetings-row-error">' + escapeHtml(it.error) + '</div>' : '') +
+        (it.waiting && it.status === 'queued' ? '<div class="muted-xs">waiting behind another question</div>' : '') +
         (it.status === 'pending_approval' ? '<button type="button" class="hv-btn btn-primary btn-sm mt-2" data-action="meetingsApprove" data-arg0="' + escapeHtml(o.id) + '" data-arg1="' + escapeHtml(it.rid) + '">Approve research</button>' : '') +
         '</div>').join('') || '<p class="muted-xs">No research yet.</p>';
       const lines = o.lines.map(ev => meetingsLineHtml(ev, false)).join('') + (o.partial ? meetingsLineHtml(o.partial, true) : '');
       const intents = o.intents.map(i => '<div>' + escapeHtml(typeof i === 'string' ? i : JSON.stringify(i)) + '</div>').join('');
       const spek = live.spek_status ? '<p class="kc-error muted-xs">' + escapeHtml(live.spek_status) + '</p>' :
         (live.spek_mode ? '<p class="muted-xs">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
-      host.innerHTML = spek + '<div class="meetings-live">' +
+      host.innerHTML = spek + meetingsReachHtml(live) + '<div class="meetings-live">' +
         '<div><div class="section-label m-0">Transcript' + (o.ws ? '' : ' (disconnected)') + '</div><div class="meetings-transcript">' + (lines || '<p class="muted-xs">Waiting for the first words…</p>') + '</div></div>' +
         '<div class="meetings-side"><div><div class="section-label m-0">Notes</div>' + notesHtml + '</div>' +
         '<div><div class="section-label m-0">Research</div><div class="meetings-research">' + research + '</div></div>' +

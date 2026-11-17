@@ -89,8 +89,8 @@
       // A mailed-in item that waits for approval has ✕ Decline instead.
       if (it.awaiting_approval || !inboxCanDelete(it, window._hiveRole, window._hiveUser)) return '';
       const busy = inboxDeleteBusy(it);
-      return '<button type="button" class="hv-btn btn-secondary btn-sm inbox-delete" data-action="inboxDeleteItem" data-arg0="' + escapeHtml(it.source) + '" data-arg1="' + escapeHtml(it.id) + '"' +
-        (busy ? ' disabled aria-disabled="true" title="Being transcribed: delete it once the transcription finishes"' : ' title="Delete this item from the Inbox; anything already shared from it stays"') + '>🗑 Delete</button>';
+      return '<button type="button" class="hv-btn btn-icon btn-sm inbox-action inbox-action-danger inbox-delete" data-action="inboxDeleteItem" data-arg0="' + escapeHtml(it.source) + '" data-arg1="' + escapeHtml(it.id) + '" aria-label="Delete"' +
+        (busy ? ' disabled aria-disabled="true" title="Being transcribed: delete it once the transcription finishes"' : ' title="Delete this item from the Inbox; anything already shared from it stays"') + '>' + inboxIconSvg('trash') + '</button>';
     }
     // The bulk menu's own group, after the Hive group.
     function inboxDeleteBulkGroups() {
