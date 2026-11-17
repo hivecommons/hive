@@ -38067,7 +38067,7 @@
           "Contribute"
         ],
         "summary": "Contributor run stats by model",
-        "description": "Returns per-model run counts, verified-PR share, and failure rate for contributor-wall evidence.",
+        "description": "Returns per-model run counts, verified-PR share, and failure rate for contributor-wall evidence, plus why runs ended (#18721): `abandoned` (count), `scenarios` (scenario -> count, the same keys as /api/contribute/run-stats backends[].scenarios, summing to runs) and `failure_kinds` ({environment, task, unspecified}, summing to the failed runs behind failure_rate).",
         "responses": {
           "200": {
             "description": "OK"
