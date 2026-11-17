@@ -154,6 +154,30 @@ func ExchangeCode(code, codeVerifier, redirectURI string) (*OAuthTokens, error) 
 		"code_verifier": {codeVerifier},
 	}
 
+	tok, err := postTokenRequest(data)
+	if err != nil {
+		return nil, err
+	}
+
+	scopes := strings.Fields(tok.Scope)
+	if len(scopes) == 0 {
+		scopes = strings.Fields(DefaultScopes)
+	}
+
+	return &OAuthTokens{
+		AccessToken:  tok.AccessToken,
+		RefreshToken: tok.RefreshToken,
+		ExpiresAt:    time.Now().UnixMilli() + int64(tok.ExpiresIn)*1000,
+		Scopes:       scopes,
+	}, nil
+}
+
+// postTokenRequest sends one request to the token endpoint and returns its
+// decoded, error-checked response. Shared by the authorization-code exchange
+// and the refresh grant. The error never carries the request body or any
+// token the response held: an OAuth error payload is reported by its error
+// code and description only.
+func postTokenRequest(data url.Values) (*tokenResponse, error) {
 	client := &http.Client{Timeout: TokenExchangeTimeout}
 	resp, err := client.PostForm(tokenEndpoint(), data)
 	if err != nil {
@@ -171,22 +195,84 @@ func ExchangeCode(code, codeVerifier, redirectURI string) (*OAuthTokens, error) 
 		return nil, fmt.Errorf("parse token response: %w", err)
 	}
 	if errStr := tok.ErrorString(); errStr != "" {
+		if errStr == oauthErrorInvalidGrant {
+			return nil, fmt.Errorf("%w: %s — %s", ErrRefreshGrantRejected, errStr, tok.ErrorDesc)
+		}
 		return nil, fmt.Errorf("token error: %s — %s", errStr, tok.ErrorDesc)
 	}
 	if tok.AccessToken == "" {
 		return nil, fmt.Errorf("empty access token in response")
 	}
+	return &tok, nil
+}
+
+// oauthErrorInvalidGrant is the RFC 6749 error code the token endpoint
+// returns for a refresh token it no longer honours: rotated away by an
+// earlier refresh, revoked after a reuse was detected, or signed out.
+const oauthErrorInvalidGrant = "invalid_grant"
+
+// ErrRefreshGrantRejected is returned by RefreshTokens when the authorization
+// server refuses the refresh token itself (invalid_grant). Nothing on disk can
+// mint a token from that grant again; the recovery is an operator sign-in.
+// Callers use it to stop retrying rather than present the dead token again.
+var ErrRefreshGrantRejected = errors.New("claude refresh grant rejected by the authorization server")
+
+// ErrNoRefreshToken is returned by RefreshTokens for a token set with no
+// refresh token to redeem.
+var ErrNoRefreshToken = errors.New("claude credential has no refresh token")
+
+// RefreshTokens redeems prev's refresh token for a new access token: the
+// refresh_token grant against the same token endpoint and public client id
+// Claude Code itself uses (its credentials file carries no client secret, so
+// the grant is exactly what the CLI sends). Anthropic rotates the refresh
+// token on use; the returned set carries the new one, or prev's when the
+// server did not rotate it.
+//
+// Fields the token endpoint does not return are carried over from prev:
+// scopes (when the response names none), subscriptionType, rateLimitTier and
+// refreshTokenExpiresAt, so a credential the hive refreshed reads back
+// exactly as one Claude Code refreshed. Hive calls this ONCE per hive for the
+// shared login (crux/agent, hivecommons/hive#18731): N CLIs refreshing one
+// grant within seconds of each other trip the server's reuse detection and
+// the whole grant is revoked.
+func RefreshTokens(prev *OAuthTokens) (*OAuthTokens, error) {
+	if prev == nil || prev.RefreshToken == "" {
+		return nil, ErrNoRefreshToken
+	}
+	data := url.Values{
+		"grant_type":    {"refresh_token"},
+		"refresh_token": {prev.RefreshToken},
+		"client_id":     {ClientID},
+	}
+	if len(prev.Scopes) > 0 {
+		data.Set("scope", strings.Join(prev.Scopes, " "))
+	}
+	tok, err := postTokenRequest(data)
+	if err != nil {
+		return nil, err
+	}
+	if tok.ExpiresIn <= 0 {
+		// A token with no lifetime would be written already expired and
+		// refreshed again on the next tick, rotating the grant on every pass.
+		return nil, fmt.Errorf("token response carries no positive expires_in")
+	}
 
 	scopes := strings.Fields(tok.Scope)
 	if len(scopes) == 0 {
-		scopes = strings.Fields(DefaultScopes)
+		scopes = append([]string(nil), prev.Scopes...)
 	}
-
+	refresh := tok.RefreshToken
+	if refresh == "" {
+		refresh = prev.RefreshToken
+	}
 	return &OAuthTokens{
-		AccessToken:  tok.AccessToken,
-		RefreshToken: tok.RefreshToken,
-		ExpiresAt:    time.Now().UnixMilli() + int64(tok.ExpiresIn)*1000,
-		Scopes:       scopes,
+		AccessToken:           tok.AccessToken,
+		RefreshToken:          refresh,
+		ExpiresAt:             time.Now().UnixMilli() + int64(tok.ExpiresIn)*1000,
+		RefreshTokenExpiresAt: prev.RefreshTokenExpiresAt,
+		Scopes:                scopes,
+		SubscriptionType:      prev.SubscriptionType,
+		RateLimitTier:         prev.RateLimitTier,
 	}, nil
 }
 
