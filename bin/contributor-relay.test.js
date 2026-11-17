@@ -16248,6 +16248,98 @@ test('#7862 detectPRURLs synthesizes a candidate from "PR #N" on the verdict lin
   } finally { teardown(relay); }
 });
 
+// ── A PR opened in the contributor's own fork ────────────────────────────────
+//
+// projectbluefin/chairlift#798: the agent opened kylerankin/chairlift#3, head
+// and base both in its fork. detectPRURLs() rightly never credited it, but
+// nothing told the agent, and the task failed 25 minutes later on a frozen
+// pane while the issue sat at 010 for nine hours.
+
+test('detectForkPRURLs finds the agent\'s own fork PR, and only that', () => {
+  const relay = loadRelay({ backend: 'copilot' });
+  try {
+    const fork = 'https://github.com/kylerankin/chairlift/pull/3';
+    assert.deepStrictEqual(relay.detectForkPRURLs([`Created ${fork}`], 'projectbluefin/chairlift', 'kylerankin'), [fork],
+      'a PR in <login>/<same-name> is the agent\'s, in the wrong place');
+    assert.deepStrictEqual(relay.detectForkPRURLs([`Created ${fork}`], 'projectbluefin/chairlift', 'KyleRankin'), [fork],
+      'the login compares case-insensitively');
+    assert.deepStrictEqual(relay.detectForkPRURLs([`HIVE_VERDICT: complete — PR ${fork}`], 'projectbluefin/chairlift', ''), [fork],
+      'on a verdict line it is the agent\'s own even when the relay does not know its login');
+    assert.deepStrictEqual(relay.detectForkPRURLs(['see https://github.com/someone/chairlift/pull/9'], 'projectbluefin/chairlift', 'kylerankin'), [],
+      'another fork\'s PR seen while researching is not the agent\'s');
+    assert.deepStrictEqual(relay.detectForkPRURLs(['see https://github.com/kylerankin/other/pull/9'], 'projectbluefin/chairlift', 'kylerankin'), [],
+      'a PR in an unrelated repository is research, as before');
+    assert.deepStrictEqual(relay.detectForkPRURLs(['https://github.com/projectbluefin/chairlift/pull/808'], 'projectbluefin/chairlift', 'kylerankin'), [],
+      'a PR in the task repo is detectPRURLs\' business, not this one\'s');
+    assert.deepStrictEqual(relay.detectForkPRURLs([`Created ${fork}`], 'projectbluefin/chairlift', 'kylerankin'),
+      relay.detectForkPRURLs([`Created ${fork}`, `again ${fork}`], 'projectbluefin/chairlift', 'kylerankin'), 'deduplicated');
+    assert.deepStrictEqual(relay.detectPRURLs([`HIVE_VERDICT: complete — PR ${fork}`], 'projectbluefin/chairlift'), [],
+      'and it is still never a candidate for the task\'s own PR');
+    assert.match(relay.buildForkPRFollowUpMessage(fork, 'projectbluefin/chairlift'),
+      /gh pr create --repo projectbluefin\/chairlift --head kylerankin:<your-branch>/);
+  } finally { teardown(relay); }
+});
+
+test('a complete whose PR is in the agent\'s fork gets one follow-up and is never booked with that PR', () => {
+  const fork = 'https://github.com/test-contributor/bar/pull/3';
+  let pane = 'Working…';
+  const relay = loadRelay({ backend: 'copilot', paneText: () => pane, prMeta: new Error('gh: offline'), env: { HIVE_CONTRIBUTOR_USERNAME: 'test-contributor' } });
+  const log = console.log; const warn = console.warn; console.log = () => {}; console.warn = () => {};
+  try {
+    dispatchTask(relay, 'ct-fork-pr', 140);
+    const before = relay.__tmuxSends().length;
+    pane = `Created ${fork}\nHIVE_VERDICT: complete — PR opened\n${IDLE_PANE}`;
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0, 'held for the agent to move the PR');
+    const sends = relay.__tmuxSends().slice(before);
+    assert.strictEqual(sends.filter(c => c.includes(relay.FORK_PR_FOLLOWUP_ANCHOR)).length, 1, `one fork follow-up: ${JSON.stringify(sends)}`);
+    assert.ok(!sends.some(c => c.includes(relay.PR_CLAIM_FOLLOWUP_ANCHOR)), 'the vaguer #7862 follow-up does not also fire');
+    assert.ok(relay.__sent.some(m => m.type === 'task_progress' && /in its fork/.test(m.summary || '')));
+    assert.strictEqual(relay.getForkPRFollowUpRequested(), true);
+
+    // Mid-turn under the echoed follow-up: nothing finalizes, nothing repeats.
+    const msg = relay.buildForkPRFollowUpMessage(fork, 'foo/bar');
+    pane = `Created ${fork}\nHIVE_VERDICT: complete — PR opened\n> ${msg}\nWorking…`;
+    relay.__crashTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_complete').length, 0);
+    assert.strictEqual(relay.__tmuxSends().filter(c => c.includes(relay.FORK_PR_FOLLOWUP_ANCHOR)).length, 1, 'no second follow-up');
+
+    // The agent reopened it upstream and re-printed the verdict.
+    pane = `Created ${fork}\nHIVE_VERDICT: complete — PR opened\n> ${msg}\nCreated https://github.com/foo/bar/pull/205\nHIVE_VERDICT: complete — PR opened\n${IDLE_PANE}`;
+    relay.__crashTick();
+    const completed = relay.__sent.filter(m => m.type === 'task_complete');
+    assert.strictEqual(completed.length, 1);
+    assert.strictEqual(completed[0].pr_url, 'https://github.com/foo/bar/pull/205', 'the upstream PR is the task\'s, never the fork one');
+  } finally { console.log = log; console.warn = warn; teardown(relay); }
+});
+
+test('a pane frozen after a fork PR gets the follow-up instead of the stall failure', () => {
+  const fork = 'https://github.com/test-contributor/bar/pull/3';
+  let capture = `Created ${fork}\nwaiting`;
+  const relay = loadRelay({ backend: 'agy', paneText: () => capture, env: { HIVE_CONTRIBUTOR_USERNAME: 'test-contributor' } });
+  const warn = console.warn; console.warn = () => {};
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-fork-stall');
+    relay.__stallTick();
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    relay.__stallTick();
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    const before = relay.__tmuxSends().length;
+    relay.__stallTick(); // would confirm the stall and fail the task
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 0, 'the waiting agent is told, not failed');
+    assert.strictEqual(relay.__tmuxSends().slice(before).filter(c => c.includes(relay.FORK_PR_FOLLOWUP_ANCHOR)).length, 1);
+    assert.strictEqual(relay.getCurrentTask() && relay.getCurrentTask().task_id, 't-fork-stall');
+
+    // Spent once: a pane that freezes again is failed as before.
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    relay.__stallTick();
+    relay.__agePaneStallClock(relay.PANE_STALL_TIMEOUT_MS + 1);
+    relay.__stallTick();
+    assert.strictEqual(relay.__sent.filter(m => m.type === 'task_failed').length, 1, 'one follow-up per task, then the backstop stands');
+  } finally { console.warn = warn; teardown(relay); }
+});
+
 // ── hivecommons/hive#13146: the `wrong_base` verdict ─────────────────────────
 
 test('#13146 wrong_base carries a release branch without becoming already-done', () => {
