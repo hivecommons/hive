@@ -242,6 +242,8 @@ const issueLinkFixedMarker = "<!-- hive:issue-link-fixed -->"
 // `Part of`, or explicit leave-open wording) or targets a non-default branch,
 // Hive leaves the body alone and asks the caller to post a stage-entry comment
 // with the PR link and the limitation. Human-authored PR bodies are never edited.
+// A covering PR in another repository always gets the stage comment, since
+// GitHub's issue-list link cannot cross repositories for a Refs PR.
 func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueNumber int, claim *IssueClaimContext) (IssueStagePRLinkResult, error) {
 	if c == nil || c.client == nil {
 		return IssueStagePRLinkResult{}, ErrNoGitHubClient
@@ -258,9 +260,14 @@ func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueN
 		prRepo = owner + "/" + name
 	}
 	prOwner, prName := c.splitRepo(prRepo)
-	if prOwner == "" || prName == "" || !strings.EqualFold(prOwner+"/"+prName, owner+"/"+name) {
+	if prOwner == "" || prName == "" {
 		return IssueStagePRLinkResult{Skipped: "cross-repo"}, nil
 	}
+	// A PR in another managed repository (`Refs owner/repo#N` from, say,
+	// quorum-companion onto a hive issue) is looked up where it lives and
+	// linked by the stage comment; Hive never edits its body from here
+	// (hivecommons/hive#18676).
+	crossRepo := !strings.EqualFold(prOwner+"/"+prName, owner+"/"+name)
 
 	var out struct {
 		Repository struct {
@@ -301,7 +308,7 @@ func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueN
     }
   }
 }`
-	vars := map[string]any{"owner": owner, "name": name, "pr": claim.PRNumber}
+	vars := map[string]any{"owner": prOwner, "name": prName, "pr": claim.PRNumber}
 	if err := c.graphQL(WithRESTCaller(ctx, "hive:issue_stage_pr_link"), query, vars, &out); err != nil {
 		return IssueStagePRLinkResult{}, fmt.Errorf("EnsureIssueStagePRLink %s#%d->#%d lookup: %w", repo, issueNumber, claim.PRNumber, err)
 	}
@@ -312,10 +319,15 @@ func (c *Client) EnsureIssueStagePRLink(ctx context.Context, repo string, issueN
 		prURL = claim.PRURL
 	}
 	if prURL == "" {
-		prURL = fmt.Sprintf("https://github.com/%s/%s/pull/%d", owner, name, claim.PRNumber)
+		prURL = fmt.Sprintf("https://github.com/%s/%s/pull/%d", prOwner, prName, claim.PRNumber)
 	}
 	if !strings.EqualFold(pr.State, "OPEN") {
 		res.Skipped = "pr-not-open"
+		return res, nil
+	}
+	if crossRepo {
+		res.Skipped = "cross-repo"
+		res.StageComment = crossRepoStagePRLinkComment(prOwner+"/"+prName, prURL, claim.PRNumber)
 		return res, nil
 	}
 	if _, ok := FindClosingKeywordReference(pr.Body, owner+"/"+name, owner+"/"+name, issueNumber); ok {
@@ -398,6 +410,13 @@ func rewriteRefsIssueLinkToClosing(body, repo string, issue int) (string, bool) 
 
 func issueStagePRLinkComment(prURL string, prNumber int, explanation string) string {
 	return fmt.Sprintf("<!-- hive:issue-stage-pr-link pr=%d -->\nPR #%d covers this issue: %s\n\n%s", prNumber, prNumber, prURL, explanation)
+}
+
+// crossRepoStagePRLinkComment is the stage comment for a covering PR in
+// another repository. The marker carries the PR's repo so it cannot be
+// confused with a same-repo PR of the same number.
+func crossRepoStagePRLinkComment(prRepo, prURL string, prNumber int) string {
+	return fmt.Sprintf("<!-- hive:issue-stage-pr-link pr=%d repo=%s -->\nPR %s#%d covers this issue: %s\n\nThe PR lives in another repository, so GitHub shows no linked-PR icon here; the issue's stage follows the PR's, and this comment is the link.", prNumber, prRepo, prRepo, prNumber, prURL)
 }
 
 func bodySaysIssueStaysOpen(body, repo string, issue int) bool {

@@ -322,6 +322,64 @@ func TestClaims_LeaseRevokeKeepsClaimCoveredByHoldersPR(t *testing.T) {
 	}
 }
 
+// A hive agent's claim stays live while its open Refs PR in another managed
+// repository references the issue, past the agent TTL, and is released once
+// that PR closes (hivecommons/hive#18676). A same-repo PR does not hold it.
+func TestClaims_AgentClaimHeldForCrossRepoPR(t *testing.T) {
+	hub, s, l := claimsHub(t)
+	now := time.Now()
+	l.SetNow(func() time.Time { return now })
+	open := true
+	s.deps.IssueClaimed = func(repo string, number int) (ghpkg.IssueClaim, bool) {
+		if !open || repo != "myorg/repo1" {
+			return ghpkg.IssueClaim{}, false
+		}
+		switch number {
+		case 1:
+			return ghpkg.IssueClaim{Repo: repo, Issue: 1, PRRepo: "myorg/companion", PRNumber: 3,
+				PRURL: "https://github.com/myorg/companion/pull/3", PRAuthor: "hive[bot]", PRState: ghpkg.PRStateOpen, Reference: true}, true
+		case 2:
+			return ghpkg.IssueClaim{Repo: repo, Issue: 2, PRRepo: "myorg/repo1", PRNumber: 4, PRAuthor: "hive[bot]", PRState: ghpkg.PRStateOpen, Reference: true}, true
+		}
+		return ghpkg.IssueClaim{}, false
+	}
+	for _, n := range []int{1, 2} {
+		if _, err := l.Claim(claims.Request{Repo: "myorg/repo1", Issue: n, Holder: "scanner", HolderID: "scanner", Kind: claims.KindAgent}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if n := hub.sweepPRHeldClaims(); n != 0 {
+		t.Fatalf("sweep released %d claims while the PRs are open", n)
+	}
+	c, ok := l.Lookup("myorg/repo1", 1)
+	if !ok || !c.PRStarted || c.PRRepo != "myorg/companion" || c.PRNumber != 3 {
+		t.Fatalf("agent claim = %+v ok=%v, want held for myorg/companion#3", c, ok)
+	}
+	if same, _ := l.Lookup("myorg/repo1", 2); same.PRNumber != 0 {
+		t.Fatalf("same-repo PR must not hold the agent claim: %+v", same)
+	}
+
+	now = now.Add(claims.DefaultAgentTTL + time.Minute)
+	l.Expire()
+	if _, ok := l.Lookup("myorg/repo1", 1); !ok {
+		t.Fatal("agent claim lapsed while its cross-repo PR is open")
+	}
+	if _, ok := l.Lookup("myorg/repo1", 2); ok {
+		t.Fatal("same-repo agent claim should still expire on the agent TTL")
+	}
+	if n := hub.sweepPRHeldClaims(); n != 0 {
+		t.Fatalf("sweep released %d claims while the cross-repo PR is open", n)
+	}
+
+	open = false
+	if n := hub.sweepPRHeldClaims(); n != 1 {
+		t.Fatalf("sweep released %d claims once the cross-repo PR closed, want 1", n)
+	}
+	if _, ok := l.Lookup("myorg/repo1", 1); ok {
+		t.Fatal("agent claim survived its cross-repo PR closing")
+	}
+}
+
 // Without a covering PR by the holder — none at all, or one by somebody
 // else — a revoked lease still releases the claim.
 func TestClaims_LeaseRevokeWithoutHoldersPRReleasesClaim(t *testing.T) {

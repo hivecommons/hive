@@ -277,6 +277,10 @@ func (h *ContributeWSHub) sweepPRHeldClaims() int {
 	}
 	released := 0
 	for _, c := range l.List() {
+		if c.Kind == claims.KindAgent && c.HolderID != "" {
+			released += h.holdAgentClaimForCrossRepoPR(l, c)
+			continue
+		}
 		if c.Kind != claims.KindContributor || c.PRNumber <= 0 || c.HolderID == "" {
 			continue
 		}
@@ -292,6 +296,65 @@ func (h *ContributeWSHub) sweepPRHeldClaims() int {
 		}
 	}
 	return released
+}
+
+// holdAgentClaimForCrossRepoPR keeps a hive agent's live claim while an open
+// hive-authored PR in another managed repository references the issue
+// (hivecommons/hive#18676): the agent's work moved to that repo, so the agent
+// TTL lapsing there made the issue look abandoned and free for duplicate work.
+// A claim held this way is released once the PR merges, closes or stops
+// naming the issue. Same-repo PRs keep their existing behaviour. Returns how
+// many claims were released.
+func (h *ContributeWSHub) holdAgentClaimForCrossRepoPR(l *claims.Ledger, c claims.Claim) int {
+	if pr, ok := h.crossRepoPRForAgentClaim(c); ok {
+		l.HoldForPR(c.HolderID, c.Key(), coveringPRRepo(pr), pr.PRNumber)
+		return 0
+	}
+	if c.PRNumber <= 0 {
+		return 0
+	}
+	released := 0
+	for _, r := range l.ReleaseByHolderID(c.HolderID, claims.ReasonCoveringPRDone, c.Key()) {
+		released++
+		h.logger.Info("[claims] PR-held agent claim released", "issue", r.Key(), "holder", r.Holder, "pr_repo", r.PRRepo, "pr", r.PRNumber)
+	}
+	return released
+}
+
+// crossRepoPRForAgentClaim reports the open, hive-authored pull request in a
+// repository other than the issue's that the duplicate-PR claim ledger
+// records for the agent claim's issue, closing or Refs alike.
+func (h *ContributeWSHub) crossRepoPRForAgentClaim(c claims.Claim) (ghpkg.IssueClaim, bool) {
+	name := c.Repo
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		name = name[i+1:]
+	}
+	pr, ok := h.issueClaimedByOpenPR(c.Repo, name, c.Issue)
+	if !ok || pr.PRNumber <= 0 || pr.MergedPR || pr.ExternalAuthor {
+		return ghpkg.IssueClaim{}, false
+	}
+	if st := strings.TrimSpace(pr.PRState); st != "" && !strings.EqualFold(st, ghpkg.PRStateOpen) {
+		return ghpkg.IssueClaim{}, false
+	}
+	if prRepo := strings.TrimSpace(pr.PRRepo); prRepo == "" || sameClaimRepo(prRepo, c.Repo) {
+		return ghpkg.IssueClaim{}, false
+	}
+	return pr, true
+}
+
+// sameClaimRepo compares two repo spellings, falling back to the bare name
+// when either side omits the owner.
+func sameClaimRepo(a, b string) bool {
+	if strings.Contains(a, "/") && strings.Contains(b, "/") {
+		return strings.EqualFold(a, b)
+	}
+	bare := func(r string) string {
+		if i := strings.LastIndex(r, "/"); i >= 0 {
+			return r[i+1:]
+		}
+		return r
+	}
+	return strings.EqualFold(bare(a), bare(b))
 }
 
 // removeLegacyClaimLabelForLease tells the stage engine the contributor

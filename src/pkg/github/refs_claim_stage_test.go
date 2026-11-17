@@ -3,6 +3,7 @@ package github
 import (
 	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -171,5 +172,46 @@ func TestTrackerTaskProgress(t *testing.T) {
 	}
 	if TrackerTaskProgress("- [ ] ordinary task") != nil {
 		t.Fatal("ordinary checklist is not sub-issue progress")
+	}
+}
+
+// A Refs PR opened in another managed repository (hivecommons/hive#18676)
+// stages the issue it references as covered, and the stage reason carries the
+// PR's own stage, looked up in the PR's repository.
+func TestCrossRepoRefsClaimMirrorsPRStage(t *testing.T) {
+	ledger := NewClaimLedger(filepath.Join(t.TempDir(), "ledger.json"), testLogger())
+	pr := &gh.PullRequest{
+		Number:  gh.Ptr(3),
+		Title:   gh.Ptr("fix: release workflow"),
+		Body:    gh.Ptr("Refs hivecommons/hive#18660"),
+		HTMLURL: gh.Ptr("https://github.com/hivecommons/quorum-companion/pull/3"),
+		State:   gh.Ptr(PRStateOpen),
+		User:    &gh.User{Login: gh.Ptr("hive[bot]")},
+		Head:    &gh.PullRequestBranch{Ref: gh.Ptr("scanner/fix-release")},
+	}
+	live := claimsFromPR(pr, "hivecommons/quorum-companion", HiveIdentity{AppLogin: "hive[bot]"}, time.Now())
+	if len(live) != 1 || live[0].Repo != "hivecommons/hive" || live[0].PRRepo != "hivecommons/quorum-companion" || !live[0].Reference {
+		t.Fatalf("claims = %+v, want one cross-repo reference claim", live)
+	}
+	ledger.Reconcile(live, true)
+	result := &ActionableResult{}
+	result.Issues = IssueResultFromItems([]Issue{{Repo: "hivecommons/hive", Number: 18660}})
+	FilterClaimedIssues(result, ledger, nil, testLogger())
+	inputs := IssueStageInputs(result)
+	if len(inputs) != 1 {
+		t.Fatalf("inputs = %+v", inputs)
+	}
+	prStage := func(repo string, number int) stagelabels.Stage {
+		if repo != "hivecommons/quorum-companion" || number != 3 {
+			t.Fatalf("covering PR lookup = %s#%d, want the PR's own repository", repo, number)
+		}
+		return stagelabels.NeedsDecision
+	}
+	stage, covered, reason := IssueStageFor(inputs[0], prStage)
+	if stage != stagelabels.CoveredByPR || !covered {
+		t.Fatalf("stage = %s, covered = %v, want covered by the cross-repo PR", stage, covered)
+	}
+	if want := "PR at " + stagelabels.NeedsDecision.String(); !strings.Contains(reason, want) {
+		t.Fatalf("reason = %q, want it to carry the PR's stage (%q)", reason, want)
 	}
 }

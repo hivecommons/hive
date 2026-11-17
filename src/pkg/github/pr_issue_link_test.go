@@ -387,6 +387,7 @@ type issueStagePRLinkFixture struct {
 	state          string
 	patches        atomic.Int32
 	patchedBody    string
+	lookupRepo     string
 }
 
 func (f *issueStagePRLinkFixture) handler(t *testing.T) http.HandlerFunc {
@@ -405,6 +406,14 @@ func (f *issueStagePRLinkFixture) handler(t *testing.T) http.HandlerFunc {
 		if r.Method != http.MethodPost || !strings.HasSuffix(r.URL.Path, "/graphql") {
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
+		var q struct {
+			Variables struct {
+				Owner string `json:"owner"`
+				Name  string `json:"name"`
+			} `json:"variables"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&q)
+		f.lookupRepo = q.Variables.Owner + "/" + q.Variables.Name
 		if f.state == "" {
 			f.state = "OPEN"
 		}
@@ -535,5 +544,36 @@ func TestEnsureIssueStagePRLinkPreservesOwnerReference(t *testing.T) {
 				t.Fatalf("result=%+v err=%v patches=%d", got, err, f.patches.Load())
 			}
 		})
+	}
+}
+
+// A Refs PR in another managed repository (hivecommons/hive#18676) is looked
+// up where it lives and linked to the issue by the stage comment, which names
+// the PR's repository; its body is never edited.
+func TestEnsureIssueStagePRLinkLinksCrossRepoRefsPR(t *testing.T) {
+	f := &issueStagePRLinkFixture{body: "## Fix\n\nRefs hivecommons/hive#7", base: "main", defaultBranch: "main", author: "hive[bot]"}
+	c := newIssueStagePRLinkClient(t, f)
+	got, err := c.EnsureIssueStagePRLink(context.Background(), "hivecommons/hive", 7, &IssueClaimContext{
+		PRNumber: 3, PRRepo: "hivecommons/quorum-companion", PRURL: "https://github.com/hivecommons/quorum-companion/pull/3", Reference: true,
+	})
+	if err != nil {
+		t.Fatalf("EnsureIssueStagePRLink: %v", err)
+	}
+	if f.lookupRepo != "hivecommons/quorum-companion" {
+		t.Fatalf("PR looked up in %q, want the PR's own repository", f.lookupRepo)
+	}
+	if got.EditedBody || f.patches.Load() != 0 || got.Skipped != "cross-repo" {
+		t.Fatalf("result=%+v patches=%d, want a cross-repo stage comment and no edit", got, f.patches.Load())
+	}
+	for _, want := range []string{"<!-- hive:issue-stage-pr-link pr=3 repo=hivecommons/quorum-companion -->", "PR hivecommons/quorum-companion#3 covers this issue", "https://github.com/hivecommons/quorum-companion/pull/3"} {
+		if !strings.Contains(got.StageComment, want) {
+			t.Fatalf("stage comment = %q, missing %q", got.StageComment, want)
+		}
+	}
+
+	f.state = "CLOSED"
+	closed, err := c.EnsureIssueStagePRLink(context.Background(), "hivecommons/hive", 7, &IssueClaimContext{PRNumber: 3, PRRepo: "hivecommons/quorum-companion", Reference: true})
+	if err != nil || closed.StageComment != "" || closed.Skipped != "pr-not-open" {
+		t.Fatalf("closed cross-repo PR result=%+v err=%v, want no comment", closed, err)
 	}
 }
