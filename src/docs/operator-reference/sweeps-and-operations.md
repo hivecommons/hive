@@ -678,11 +678,15 @@ and the backfill banner. `/api/status` carries the same state under
 
 The gate persists `first_seen` per repo in `/data/metrics/writeback.json`
 (`HIVE_WRITEBACK_STATE_PATH`), and records the moment a repo first answers
-2xx after 403/404s as `writable_at`. Items created before the later of the
-two are never written to unsolicited while `backfill: false`. The sweep logs
-one line — `writeback: skipped N pre-existing items on <repo> (backfill
-off)` — and the dashboard shows "hive can now write to `<repo>`; N existing
-PRs were left untouched — enable backfill to process them".
+2xx after 403/404s as `writable_at`. A 2xx with no 403/404 before it does
+not set `writable_at`: the repo was writable all along, so `first_seen` alone
+is the cut-off (a `writable_at` an older hive stamped that way is cleared at
+startup, logged as `writeback: cleared writable_at …`). Items created before
+the later of the two are never written to unsolicited while
+`backfill: false`. The sweep logs one line — `writeback: skipped N
+pre-existing items on <repo> (backfill off)` — and the dashboard shows
+"hive can now write to `<repo>`; N existing PRs were left untouched —
+enable backfill to process them".
 
 ### Duplicate-write suppression
 

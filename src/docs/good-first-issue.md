@@ -53,7 +53,11 @@ the pitch, end to end:
    maintainer.
 4. **Hive merges it.** CI runs, the hive review runs, and a green PR from a
    claimed contributor whose tier is sufficient (`require_tiers` or
-   `registry_tiers_sufficient`) merges on its own.
+   `registry_tiers_sufficient`) merges on its own. That needs the
+   repository's auto-merge on (`acmm_level` 6 and no
+   `project.repo_policies[].auto_merge: false`); where it is off the hive
+   still reviews, a maintainer merges, and the comment says so instead of
+   promising an automatic merge.
 
 The comment also says that hive may pick the issue up itself if nobody claims
 it, and that claiming first prevents that. Note the interplay with the
@@ -160,10 +164,19 @@ Fix #<n> in github.com/<owner>/<repo> (<issue url>). First open <claim url> and 
 If nobody claims it, hive may pick it up itself — claiming first prevents that. Docs: [contributor relay](<docs>/contributor-relay.md) · [contributor lane auto-merge](<docs>/hive-merge.md#contributor-lane-auto-merge) · [trust tiers](<docs>/contributor-trust-and-roles.md) · [AGENTS.md](<AGENTS.md url>).
 ````
 
+With the repository's auto-merge off, the heading reads **How to land it:**,
+step 4 reads "Hive runs CI and reviews the PR; **a maintainer of this
+repository merges it**.", the footer link is labelled *contributor lane*, and
+the agent prompt ends "so the hive's contributor lane links it to your claim;
+the hive reviews it and a maintainer merges it." The next selecting pass edits
+an invite already posted, so turning a repository's auto-merge off or on
+corrects its open invites after the next restart.
+
 Template variables: `.Repo`, `.Number`, `.Title`, `.IssueURL`, `.ClaimURL`,
 `.RelayURL`, `.Docs`, `.Hive`, `.Reasons` / `.TopReasons` (first two),
-`.AgentsMDURL` (empty when the repository has no `AGENTS.md`), `.AgentPrompt`
-and `.Marker`. An override set in `good_first_issue.comment_template` must
+`.AgentsMDURL` (empty when the repository has no `AGENTS.md`), `.AutoMerge`
+(whether the hive merges this repository's contributor PRs itself; use
+`{{ if .AutoMerge }}` to word an override), `.AgentPrompt` and `.Marker`. An override set in `good_first_issue.comment_template` must
 contain `{{ .Marker }}` (or the literal marker); otherwise the config is
 rejected, because without the marker the sweep could not find its own
 comment.

@@ -17,6 +17,11 @@ type Vars struct {
 	Reasons []string
 	// AgentsMDURL is the repository's AGENTS.md when it has one.
 	AgentsMDURL string
+	// AutoMerge is whether the hive merges this repository's contributor
+	// PRs itself. False where its auto-merge is off (below L6, or
+	// project.repo_policies[].auto_merge: false): there a maintainer
+	// merges, so the comment must not promise an automatic merge.
+	AutoMerge bool
 }
 
 // Marker returns the comment marker so a template can place it.
@@ -60,7 +65,11 @@ func (v Vars) AgentPrompt() string {
 	fmt.Fprintf(&b, "Fix %s in github.com/%s (%s). First open %s and claim the issue through the hive relay (sign in with GitHub). ",
 		"#"+strconv.Itoa(v.Number), v.Repo, v.IssueURL(), v.ClaimURL())
 	b.WriteString("Work on a fork/branch; keep the change scoped to the issue; sign every commit with DCO (git commit -s); ")
-	fmt.Fprintf(&b, "open a PR whose description contains the line 'Fixes #%d' so the hive's contributor lane can auto-merge it once CI is green.", v.Number)
+	if v.AutoMerge {
+		fmt.Fprintf(&b, "open a PR whose description contains the line 'Fixes #%d' so the hive's contributor lane can auto-merge it once CI is green.", v.Number)
+	} else {
+		fmt.Fprintf(&b, "open a PR whose description contains the line 'Fixes #%d' so the hive's contributor lane links it to your claim; the hive reviews it and a maintainer merges it.", v.Number)
+	}
 	if v.AgentsMDURL != "" {
 		fmt.Fprintf(&b, " Read and follow %s before changing code.", v.AgentsMDURL)
 	}
@@ -77,12 +86,12 @@ Hi! This repository is maintained with [hive]({{ .Docs }}/README.md) and welcome
 {{ range .TopReasons }}
 - {{ . }}{{ end }}
 
-**How to land it (no waiting on a human):**
+**How to land it{{ if .AutoMerge }} (no waiting on a human){{ end }}:**
 
 1. **Claim it through the relay:** open {{ .ClaimURL }} and sign in with GitHub. Claiming stamps the issue so hive leaves it to you.
 2. **Fork or branch**, make the change with your agent, and sign each commit with DCO (` + "`git commit -s`" + `).
 3. **Open a PR whose description says ` + "`Fixes #{{ .Number }}`" + `** — that closing keyword is how hive's contributor lane links the PR to your claim.
-4. Hive runs CI and **merges green PRs from claimed contributors automatically**.
+4. {{ if .AutoMerge }}Hive runs CI and **merges green PRs from claimed contributors automatically**.{{ else }}Hive runs CI and reviews the PR; **a maintainer of this repository merges it**.{{ end }}
 
 <details>
 <summary>Paste this to your agent</summary>
@@ -94,7 +103,7 @@ Hi! This repository is maintained with [hive]({{ .Docs }}/README.md) and welcome
 
 Prefer not to drive the loop by hand? Run your own hive (we call them clankers) — a relay on your machine that claims, opens the PR and handles review fixes for you, and earns you a contributor profile and a leaderboard place: see {{ .RelayURL }}.
 
-If nobody claims it, hive may pick it up itself — claiming first prevents that. Docs: [contributor relay]({{ .Docs }}/contributor-relay.md) · [contributor lane auto-merge]({{ .Docs }}/hive-merge.md#contributor-lane-auto-merge) · [trust tiers]({{ .Docs }}/contributor-trust-and-roles.md){{ if .AgentsMDURL }} · [AGENTS.md]({{ .AgentsMDURL }}){{ end }}.
+If nobody claims it, hive may pick it up itself — claiming first prevents that. Docs: [contributor relay]({{ .Docs }}/contributor-relay.md) · [contributor lane{{ if .AutoMerge }} auto-merge{{ end }}]({{ .Docs }}/hive-merge.md#contributor-lane-auto-merge) · [trust tiers]({{ .Docs }}/contributor-trust-and-roles.md){{ if .AgentsMDURL }} · [AGENTS.md]({{ .AgentsMDURL }}){{ end }}.
 `
 
 // ParseTemplate parses an operator override, or DefaultTemplate when text is
