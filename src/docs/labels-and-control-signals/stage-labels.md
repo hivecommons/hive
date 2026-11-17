@@ -483,6 +483,14 @@ maintainer's behalf, so prow/tide see nothing until a person acts. The
 check digest costs two REST calls per head and is cached 10 minutes; it is
 read only for human-routed PRs.
 
+The 085 comment always names a cause. A PR the stage pass holds at 085 on
+the same head, after the lane's own route came back without a decision, is
+re-parked with the reviewer's `requires_human` verdict, finding and question
+from the stage pass's verdict read. A route that still reaches 085 with no
+reason renders "Needs a decision, not a merge: the reviewer asked for a human
+decision." and the hive logs a warning naming the PR, head and lane reason
+([projectbluefin/fsdk-containers#553](https://github.com/projectbluefin/fsdk-containers/pull/553)).
+
 ### `role/*` — would the hive auto-merge this?
 
 One per PR, derived from what the lane used for admission (registry tier,
