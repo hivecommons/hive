@@ -1,12 +1,38 @@
-    /* Customers: a profile per person (hivecommons/hive issue 18742) */
-    .customers-panel { display: flex; flex-direction: column; gap: var(--sp-5); }
-    .customers-block { display: flex; flex-direction: column; gap: var(--sp-2); }
-    .customers-list { display: flex; flex-direction: column; gap: var(--sp-2); }
-    .customers-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); }
+    /* Customers: a profile per person (hivecommons/hive issue 18742). Same rhythm as the Inbox and Calendar: a card per row, a title, a muted line, grouped actions that wrap under the content on narrow screens. */
+    .customers-panel { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; max-width: 100%; --customers-actions-w: 17rem; }
+    .customers-panel > * { min-width: 0; max-width: 100%; }
+    .customers-block { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+    .customers-list { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+    .customers-summary { display: flex; align-items: center; min-height: var(--tap-target); cursor: pointer; font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text); }
+    .customers-hint { max-width: 80ch; line-height: 1.5; }
+    .customers-group { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: var(--sp-4); min-width: 0; }
+    .customers-group-title { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text); }
+    /* Person and suggestion card: avatar, content, actions. */
+    .customers-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: var(--sp-4); row-gap: var(--sp-3); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); min-width: 0; max-width: 100%; }
+    .customers-card[data-me="true"] { border-color: var(--accent); }
+    .customers-avatar { display: inline-grid; place-items: center; width: 2.25rem; height: 2.25rem; border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--text); font-size: var(--fs-md); font-weight: var(--fw-semibold); flex: none; }
+    .customers-card[data-kind="suggestion"] .customers-avatar { background: color-mix(in srgb, var(--border) 30%, var(--surface)); }
+    .customers-row-main { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; flex: 1 1 16em; }
+    .customers-card .customers-row-main { flex: none; }
+    .customers-row-title { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; font-size: var(--fs-base); font-weight: var(--fw-semibold); }
+    .customers-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .customers-me { flex: none; }
+    .customers-row-meta { overflow-wrap: anywhere; line-height: 1.5; }
+    .customers-row-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
+    .customers-card[data-kind="suggestion"] .customers-row-actions { width: var(--customers-actions-w); }
+    .customers-why summary { cursor: pointer; width: fit-content; }
+    .customers-why-body { margin-top: var(--sp-1); overflow-wrap: anywhere; line-height: 1.5; }
+    .customers-picker { grid-column: 1 / -1; display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--r); background: var(--bg); min-width: 0; }
+    .customers-picker-filter { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
+    .customers-picker-list { display: flex; flex-wrap: wrap; gap: var(--sp-2); max-height: 12rem; overflow-y: auto; }
+    .customers-pick { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .customers-pick[hidden] { display: none; }
+    .customers-picker-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-2); }
+    /* Smaller rows inside a profile: identities, goals, hints, activity. */
+    .customers-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); min-width: 0; max-width: 100%; }
     .customers-row[data-me="true"] { border-color: var(--accent); }
-    .customers-row-main { flex: 1 1 16em; min-width: 0; }
-    .customers-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .customers-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); }
+    .customers-row .customers-row-title { overflow-wrap: anywhere; }
+    .customers-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); min-width: 0; }
     .customers-chip[data-state="off"] { opacity: 0.55; }
     .customers-chip[data-source="manual"] { border-color: var(--accent); }
     .customers-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr) auto; gap: var(--sp-2); align-items: end; }
@@ -14,9 +40,11 @@
     .customers-inline { display: flex; flex-wrap: wrap; align-items: end; gap: var(--sp-2); }
     .customers-inline label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); flex: 1 1 12em; }
     .customers-profile-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
-    .customers-profile-name { font-size: var(--fs-md); flex: 1 1 12em; min-width: 0; }
-    .customers-evidence { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--muted); overflow-wrap: anywhere; }
+    .customers-profile-name { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-md); font-weight: var(--fw-semibold); flex: 1 1 12em; min-width: 0; }
+    .customers-evidence { overflow-wrap: anywhere; line-height: 1.5; }
     .customers-notes { width: 100%; min-height: 6em; }
     @media (max-width: 720px) {
       .customers-form { grid-template-columns: 1fr; }
+      .customers-card { grid-template-columns: auto minmax(0, 1fr); padding: var(--sp-3) var(--sp-4); }
+      .customers-card .customers-row-actions, .customers-card[data-kind="suggestion"] .customers-row-actions { grid-column: 1 / -1; width: auto; justify-content: flex-start; }
     }

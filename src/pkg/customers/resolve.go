@@ -558,6 +558,29 @@ func (s *Store) ExpireSuggestions(exists func(artefact string) bool) (int, error
 	return removed, nil
 }
 
+// ExpireSuggestionsWhere deletes the suggestions drop names, and every
+// suggestion whose identity a person owns: a suggestion is for someone
+// nobody holds. Nothing is tombstoned, so a suggestion a later rule allows
+// can come back. It returns how many were deleted.
+func (s *Store) ExpireSuggestionsWhere(drop func(Suggestion) bool) (int, error) {
+	removed := 0
+	err := s.change(func() error {
+		for key, sg := range s.sugg {
+			if _, owned := s.owner[key]; !owned && (drop == nil || !drop(sg)) {
+				continue
+			}
+			delete(s.sugg, key)
+			s.dropRefsLocked(sg.ID)
+			removed++
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return removed, nil
+}
+
 // Merge folds src into dst and deletes src. The merge is recorded on dst so
 // Unmerge can undo it exactly. Two dashboard users are never merged: each
 // keeps their own "me".

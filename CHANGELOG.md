@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.307.1)
+
+### Fixed
+
+- A paused agent no longer shows an empty slot where its resume button belongs: the focused agent panel kept the toggle it first rendered (its fast path never added one, and the panel ignored the role), so a panel opened before the viewer's role settled stayed without resume until reload. Agent cards, the detail panel and the cadence table now repaint when the role settles, and a viewer below owner (or one still being checked) sees the pause/resume control disabled with "Needs the owner role" or "Checking your access..." instead of nothing. A paused sandboxed agent offers plain resume rather than "start & resume" (it has no session to start), and the cadence table shows one `paused` chip with its reason on hover instead of repeating it in every mode column (#18813).
+- Sandbox Jobs no longer lose their service account's `imagePullSecrets`: the Job pod now carries the deduplicated union of hive's own pod secrets, the Job service account's secrets (read through the API when the launcher's Role grants `get serviceaccounts`, skipped with a warning otherwise) and the new `sandbox.job.image_pull_secrets` list of Secret names, so private-registry project images pull instead of failing ImagePullBackOff. A boot and reload warning fires when `service_account` is set without `image_pull_secrets` (#18819).
+
 ## 2026-11-17 (v5.307.0)
 
 ### Added
