@@ -336,8 +336,7 @@ func scalarFact(f Facts, name string) (string, bool) {
 		}
 		return f.PR.BaseRef, true
 	case "pipeline.status":
-		// Post-merge runs are not observed yet (see workflowmodel.Facts).
-		return "unknown", true
+		return pipelineStatus(f), true
 	}
 	return "", false
 }
