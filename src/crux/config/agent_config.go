@@ -52,7 +52,7 @@ type SandboxJobConfig struct {
 	// RelayRunAsUser pins the relay init container's uid. Unset leaves it to
 	// the cluster on OpenShift (the SCC assigns one from the namespace range)
 	// and uses 65534 elsewhere, since the hive image's default user is root.
-	RelayRunAsUser *int64 `yaml:"relay_run_as_user,omitempty" json:"relay_run_as_user,omitempty"`
+	RelayRunAsUser   *int64   `yaml:"relay_run_as_user,omitempty" json:"relay_run_as_user,omitempty"`
 	ImagePullSecrets []string `yaml:"image_pull_secrets,omitempty" json:"image_pull_secrets,omitempty"`
 }
 
