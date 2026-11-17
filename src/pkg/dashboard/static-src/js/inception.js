@@ -28,6 +28,7 @@
       const deepFailNames = [];
       for (const c of deepChecks) {
         let line = c.detail ? `${c.name}: ${c.detail}` : c.name;
+        if (c.docs_url) line += ' — what this means: ' + c.docs_url;
         if (c.onboarding) line += ' — new hive? open the 🧭 Guide (top navbar) → step ‘' + (ONBOARDING_GUIDE_STEP_TITLES[c.guideStep] || ONBOARDING_GUIDE_STEP_TITLES['github-app']) + '’';
         if (c.status === 'fail') { deepFailNames.push(c.name); failing.push(line); }
         else if (c.status === 'warn') warning.push(line);

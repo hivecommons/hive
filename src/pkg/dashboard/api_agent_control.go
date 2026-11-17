@@ -45,7 +45,7 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 	if msg == "" && s.deps.Scheduler != nil {
 		if !s.deps.Scheduler.FirstScanDone() {
 			if err := s.deps.AgentMgr.ValidateKick(name); err != nil {
-				jsonError(w, err.Error(), http.StatusBadRequest)
+				jsonKickError(w, err.Error(), http.StatusBadRequest)
 				return
 			}
 			s.deps.Scheduler.DeferKickUntilFirstScan(name, func(kickMsg string) {
@@ -89,7 +89,7 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 	// is reported by GET /api/kick/{agent}/status, off the request path.
 	started, err := deliverKick(msg)
 	if err != nil {
-		jsonError(w, err.Error(), http.StatusBadRequest)
+		jsonKickError(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	if !started {
@@ -158,6 +158,9 @@ func (s *Server) handleKickStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if d.Error != "" {
 		resp["error"] = d.Error
+		if u := kickErrorDocsURL(d.Error); u != "" {
+			resp["docs_url"] = u
+		}
 	}
 	if !d.SettledAt.IsZero() {
 		resp["settledAt"] = d.SettledAt.UTC().Format(time.RFC3339)
