@@ -1443,3 +1443,22 @@ func TestSeenLogKeepsOneSectionPerHive(t *testing.T) {
 		t.Fatalf("sections = %d, want cap %d", n, seenLogMaxHives)
 	}
 }
+
+// Full-size diagnostics must not push the comment past GitHub's size limit.
+func TestSeenLogStaysUnderCommentSizeLimit(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	ev := Evidence{Class: ClassRestartStorm, Count: 2, Diagnostics: strings.Repeat("x", maxDiagnosticsBytes)}
+	body := ""
+	for i := 0; i < seenLogMaxHives; i++ {
+		body = SeenLog(body, SeenComment("fp1", fmt.Sprintf("hive-%d", i), "v5", "c", ev, t0))
+		if len(body) > seenLogMaxBytes {
+			t.Fatalf("after %d hives body = %d bytes, want <= %d", i+1, len(body), seenLogMaxBytes)
+		}
+	}
+	if !strings.Contains(body, fmt.Sprintf("hive=hive-%d ", seenLogMaxHives-1)) {
+		t.Fatalf("newest section dropped")
+	}
+	if n := strings.Count(body, SelfReportSeenMarkerPrefix); n < 2 || n >= seenLogMaxHives {
+		t.Fatalf("sections = %d, want some oldest trimmed", n)
+	}
+}

@@ -1001,6 +1001,11 @@ const SeenLogMarker = "<!-- hive:selfreport-seen-log -->"
 // seenLogMaxHives bounds the sections one seen-log comment keeps.
 const seenLogMaxHives = 25
 
+// seenLogMaxBytes bounds the seen-log comment body below GitHub's 65536-char
+// comment limit. Sections can carry up to maxDiagnosticsBytes of diagnostics
+// each, so the section count alone does not keep the body under the limit.
+const seenLogMaxBytes = 60000
+
 const seenLogHeader = SeenLogMarker + "\n**Also seen on other hives.** One section per hive, newest first; edited in place as sightings arrive. The Affected hives block in the issue body keeps the counts."
 
 // SeenLog folds sighting (a SeenComment, or any body that starts with
@@ -1022,7 +1027,13 @@ func SeenLog(previous, sighting string) string {
 			sections = append(sections, s)
 		}
 	}
-	return safeText(seenLogHeader + "\n\n" + strings.Join(sections, "\n\n"))
+	body := safeText(seenLogHeader + "\n\n" + strings.Join(sections, "\n\n"))
+	// Drop the oldest sections (always keeping the newest) until the body fits.
+	for len(body) > seenLogMaxBytes && len(sections) > 1 {
+		sections = sections[:len(sections)-1]
+		body = safeText(seenLogHeader + "\n\n" + strings.Join(sections, "\n\n"))
+	}
+	return body
 }
 
 // seenSections splits a seen-log body into its per-hive sections, each
