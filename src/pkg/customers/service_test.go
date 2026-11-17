@@ -444,3 +444,237 @@ func TestServiceWithoutIndex(t *testing.T) {
 		t.Fatalf("Forget without an index = %d, %v", n, err)
 	}
 }
+
+// privateTo is a resolver that lets only one user see each listed artefact.
+type privateTo map[string]string
+
+func (p privateTo) Exists(string) bool { return true }
+
+func (p privateTo) Visible(ref string, v Viewer) bool {
+	owner, restricted := p[ref]
+	return !restricted || owner == v.User
+}
+
+func TestEdgesAndArtefactPeopleFollowTheViewer(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "customers"), newClock().now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := OpenIndex(filepath.Join(dir, "graph"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = index.Close() })
+	private := MeetingRef("owners-only")
+	s := NewService(store, index, Resolvers{RefMeeting: privateTo{private: "olivia"}})
+
+	reed, _ := s.Get(readV, MeID)
+	ada, _ := s.Add(ownerV, "Ada", []Identity{{Kind: KindGitHub, Value: "ada"}})
+	shared := IssueRef("o/r", 1)
+	if _, err := index.Put([]Edge{
+		edge(reed.ID, PredReported, shared, "hive_user:reed", 1),
+		edge(reed.ID, PredAttended, private, "hive_user:reed", 2),
+		edge(ada.ID, PredAssigned, shared, "github:ada", 3),
+		edge(ada.ID, PredAttended, private, "github:ada", 4),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The owner sees every edge of anyone.
+	edges, next, err := s.Edges(ownerV, ada.ID, "", "", 10)
+	if err != nil || next != "" || len(edges) != 2 {
+		t.Fatalf("owner Edges(ada) = %d, %q, %v", len(edges), next, err)
+	}
+	// Read-write sees Ada, but not the artefact only the owner may open.
+	edges, _, err = s.Edges(rwV, ada.ID, "", "", 10)
+	if err != nil || len(edges) != 1 || edges[0].Artefact != shared {
+		t.Fatalf("read-write Edges(ada) = %+v, %v", edges, err)
+	}
+	// Read-only: own edges only, and still not the private artefact.
+	edges, _, err = s.Edges(readV, MeID, "", "", 10)
+	if err != nil || len(edges) != 1 || edges[0].Artefact != shared {
+		t.Fatalf("read-only Edges(me) = %+v, %v", edges, err)
+	}
+	if _, _, err := s.Edges(readV, ada.ID, "", "", 10); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("read-only Edges(ada) = %v, want ErrNotFound", err)
+	}
+	if _, _, err := s.Edges(Viewer{}, MeID, "", "", 10); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("nameless Edges = %v", err)
+	}
+
+	// Walking back from an artefact never reaches a person the viewer may
+	// not see: the read-only user finds only themselves on a shared issue.
+	people, err := s.ArtefactPeople(ownerV, shared, 10)
+	if err != nil || len(people) != 2 {
+		t.Fatalf("owner ArtefactPeople = %+v, %v", people, err)
+	}
+	people, err = s.ArtefactPeople(readV, shared, 10)
+	if err != nil || len(people) != 1 || people[0].Person.ID != reed.ID || !people[0].Person.Me || people[0].Predicate != PredReported {
+		t.Fatalf("read-only ArtefactPeople = %+v, %v", people, err)
+	}
+	if people, err := s.ArtefactPeople(ownerV, shared, 1); err != nil || len(people) != 1 {
+		t.Fatalf("limit = %+v, %v", people, err)
+	}
+	// An artefact the viewer may not see is not there for them.
+	if _, err := s.ArtefactPeople(rwV, private, 10); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ArtefactPeople on a private artefact = %v", err)
+	}
+	if s.ArtefactVisible(rwV, private) || !s.ArtefactVisible(ownerV, private) {
+		t.Fatal("ArtefactVisible must follow the artefact's own source")
+	}
+	for _, bad := range []string{"", "no-kind", "gh:bad\nref"} {
+		if s.ArtefactVisible(ownerV, bad) {
+			t.Errorf("ArtefactVisible(%q) = true", bad)
+		}
+	}
+	if s.ArtefactVisible(Viewer{Full: true}, shared) {
+		t.Fatal("a nameless viewer sees no artefact")
+	}
+
+	// No index: nothing to read, and no error.
+	bare := NewService(store, nil, nil)
+	if e, n, err := bare.Edges(ownerV, ada.ID, "", "", 10); err != nil || e != nil || n != "" {
+		t.Fatalf("Edges without an index = %v, %q, %v", e, n, err)
+	}
+	if p, err := bare.ArtefactPeople(ownerV, shared, 10); err != nil || p != nil {
+		t.Fatalf("ArtefactPeople without an index = %v, %v", p, err)
+	}
+}
+
+func edgeCounts(t *testing.T, s *Service, id string) map[string]int {
+	t.Helper()
+	c, err := s.Index().Counts(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return c
+}
+
+// TestMergeUnmergeSplitMoveEdgesExactly: an edge follows the identity that
+// produced it, through a merge, an undo and a split.
+func TestMergeUnmergeSplitMoveEdgesExactly(t *testing.T) {
+	s := newService(t)
+	a, _ := s.Add(ownerV, "Ada", []Identity{{Kind: KindGitHub, Value: "ada"}})
+	b, _ := s.Add(ownerV, "A. Lovelace", []Identity{{Kind: KindEmail, Value: "ada@example.com"}, {Kind: KindGitHub, Value: "ada-alt"}})
+	if _, err := s.Index().Put([]Edge{
+		edge(a.ID, PredAuthored, PRRef("o/r", 1), "github:ada", 1),
+		edge(b.ID, PredSent, InboxRef("email", "m1"), "email:ada@example.com", 2),
+		edge(b.ID, PredReported, IssueRef("o/r", 2), "github:ada-alt", 3),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	merged, err := s.Merge(rwV, a.ID, b.ID)
+	if err != nil || len(merged.Identities) != 3 || len(merged.MergedFrom) != 1 {
+		t.Fatalf("Merge = %+v, %v", merged, err)
+	}
+	if c := edgeCounts(t, s, a.ID); c[PredAuthored] != 1 || c[PredSent] != 1 || c[PredReported] != 1 {
+		t.Fatalf("after merge the target's edges = %v", c)
+	}
+	if c := edgeCounts(t, s, b.ID); len(c) != 0 {
+		t.Fatalf("the merged-in person still has edges: %v", c)
+	}
+
+	// Undo: the merged identities' edges go back, the target keeps its own.
+	back, err := s.Unmerge(rwV, a.ID, b.ID)
+	if err != nil || len(back.Identities) != 1 || len(back.MergedFrom) != 0 {
+		t.Fatalf("Unmerge = %+v, %v", back, err)
+	}
+	if c := edgeCounts(t, s, a.ID); len(c) != 1 || c[PredAuthored] != 1 {
+		t.Fatalf("after unmerge the target's edges = %v", c)
+	}
+	if c := edgeCounts(t, s, b.ID); c[PredSent] != 1 || c[PredReported] != 1 {
+		t.Fatalf("after unmerge the restored person's edges = %v", c)
+	}
+
+	// Split one identity off: exactly its edges move.
+	fresh, err := s.Split(ownerV, b.ID, []string{"email:ada@example.com"}, "Mail only")
+	if err != nil || fresh.Name != "Mail only" || !fresh.HasIdentity("email:ada@example.com") {
+		t.Fatalf("Split = %+v, %v", fresh, err)
+	}
+	if c := edgeCounts(t, s, fresh.ID); len(c) != 1 || c[PredSent] != 1 {
+		t.Fatalf("the new person's edges = %v", c)
+	}
+	if c := edgeCounts(t, s, b.ID); len(c) != 1 || c[PredReported] != 1 {
+		t.Fatalf("the original's edges = %v", c)
+	}
+
+	// Refusals.
+	if _, err := s.Merge(rwV, a.ID, a.ID); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("self merge = %v", err)
+	}
+	if _, err := s.Merge(rwV, a.ID, "p_missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("merge a missing person = %v", err)
+	}
+	if _, err := s.Unmerge(rwV, a.ID, b.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("unmerge twice = %v", err)
+	}
+	if _, err := s.Split(ownerV, b.ID, []string{"github:ada-alt"}, "x"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("splitting off the last identity = %v", err)
+	}
+}
+
+func TestMergeSplitExportRoles(t *testing.T) {
+	s := newService(t)
+	a, _ := s.Add(ownerV, "Ada", []Identity{{Kind: KindGitHub, Value: "ada"}})
+	b, _ := s.Add(ownerV, "Bo", []Identity{{Kind: KindGitHub, Value: "bo"}, {Kind: KindEmail, Value: "bo@example.com"}})
+	me, _ := s.Get(readV, MeID)
+	// A read-only viewer can do none of it, on anyone, themselves included.
+	for _, id := range []string{a.ID, b.ID, MeID, me.ID} {
+		if _, err := s.Merge(readV, id, a.ID); !errors.Is(err, ErrForbidden) {
+			t.Errorf("read-only Merge(%s) = %v", id, err)
+		}
+		if _, err := s.Unmerge(readV, id, a.ID); !errors.Is(err, ErrForbidden) {
+			t.Errorf("read-only Unmerge(%s) = %v", id, err)
+		}
+		if _, err := s.Split(readV, id, []string{"github:bo"}, "x"); !errors.Is(err, ErrForbidden) {
+			t.Errorf("read-only Split(%s) = %v", id, err)
+		}
+		if _, err := s.Export(readV, id); !errors.Is(err, ErrForbidden) {
+			t.Errorf("read-only Export(%s) = %v", id, err)
+		}
+	}
+	if _, err := s.Export(rwV, a.ID); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("read-write Export = %v, want ErrForbidden (the owner exports)", err)
+	}
+	// Two dashboard users are never merged.
+	alice, _ := s.Get(ownerV, MeID)
+	if _, err := s.Merge(ownerV, alice.ID, me.ID); !errors.Is(err, ErrConflict) {
+		t.Fatalf("merging two dashboard users = %v", err)
+	}
+	if _, err := s.Split(rwV, b.ID, []string{"email:bo@example.com"}, "Bo mail"); err != nil {
+		t.Fatalf("read-write Split = %v", err)
+	}
+}
+
+func TestExport(t *testing.T) {
+	s := newService(t)
+	a, _ := s.Add(ownerV, "Ada", []Identity{{Kind: KindGitHub, Value: "ada"}})
+	for _, e := range []Edit{{Op: OpNotes, Notes: "met at the summit"}, {Op: OpSatisfactionSet, Level: "at_risk"}} {
+		if _, err := s.Edit(ownerV, a.ID, e); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var edges []Edge
+	for i := 0; i < MaxEdgePage+10; i++ {
+		edges = append(edges, edge(a.ID, PredAuthored, PRRef("o/r", i+1), "github:ada", i))
+	}
+	if _, err := s.Index().Put(edges); err != nil {
+		t.Fatal(err)
+	}
+	out, err := s.Export(ownerV, a.ID)
+	if err != nil || out.Person.ID != a.ID || out.Person.Notes != "met at the summit" || out.Person.Satisfaction.Level != LevelAtRisk {
+		t.Fatalf("Export = %+v, %v", out.Person, err)
+	}
+	if len(out.Edges) != MaxEdgePage+10 || out.Truncated || out.Edges[0].Artefact == "" {
+		t.Fatalf("export edges = %d truncated=%v", len(out.Edges), out.Truncated)
+	}
+	if _, err := s.Export(ownerV, "p_missing"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("export of a missing person = %v", err)
+	}
+	bare := NewService(s.Store(), nil, nil)
+	if out, err := bare.Export(ownerV, a.ID); err != nil || out.Edges == nil || len(out.Edges) != 0 {
+		t.Fatalf("export without an index = %+v, %v", out, err)
+	}
+}

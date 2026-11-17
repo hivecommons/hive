@@ -5,12 +5,29 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 
 `GET /api/stage-tracker` adds independent PR `ci_activity`, `review_activity`
 and `code_activity` observations, also copied to `linked_prs[]`. Each is
-`{head, state, caption, detail?, actor?, source, observed_at?, since?, blocker?, url?, active?, checks_passed?, checks_total?, checks_failed?, checks_failing?, checks_pending?, perspectives_done?, perspectives_total?, perspectives?}`.
+`{head, state, caption, detail?, actor?, source, observed_at?, since?, blocker?, url?, active?, checks_passed?, checks_total?, checks_failed?, checks_failing?, checks_pending?, checks_stuck?, stuck_since?, perspectives_done?, perspectives_total?, perspectives?}`.
 These are display evidence, **not merge authorization**. An absent timestamp
 means unknown freshness; a different head invalidates the observation.
 `detail?` is the longer, plain-language sentence behind caption. `checks_failing?`
 and `checks_pending?` are string lists of check names; `perspectives?` list
-per-perspective verdicts on the head. CI is classified against the resolved
+per-perspective verdicts on the head. `checks_stuck?` names the pending checks
+that have been queued or in progress longer than `HIVE_TRACKER_CHECK_STUCK_AFTER`
+(default `2h`) and `stuck_since?` is when the oldest of them started: such a
+check is not running in any useful sense, and when every pending check is stuck
+the caption reads `CI stuck · …` and `active` is false.
+
+Every open issue and PR row (and each `linked_prs[]` entry that mirrors a listed
+PR) also carries `human_gate`: `{reasons, actions, answered?, answered_by?, waiting_on?}`.
+`reasons` are the things a person is owed right now (`review`, `decision`,
+`sentinel`, `hold`; empty when nothing is); `actions` are the gate verbs that
+would act on the row (`decide:approve`, `gate:request-changes`, `decide:delegate`,
+`gate:decide`, `gate:confirm-sentinel`, `release`) — a verb absent from the list
+has nothing to act on and is never drawn. `answered` is true when the reviewer
+asked for a person's sign-off on this head and the hive no longer parks the PR
+on it, with `answered_by` the approver when the lane recorded one. `waiting_on`
+is `{kind, text, checks?}` on a PR with no reasons: what it actually waits on
+(`conflict`, `author`, `fixing`, `checks-failing`, `checks-stuck`,
+`checks-missing`, `ci-running`, `review-pending`, `merge-queue`). CI is classified against the resolved
 required set when branch protection is known, otherwise against every check run
 observed on the head (checks_total == 0 means no count could be made). Review
 assignment comes from dispatch, current work additionally requires its actual

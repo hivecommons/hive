@@ -33,24 +33,18 @@ func (mi *meetingsInbox) build(m meetings.Meeting) (inbox.LiveMeeting, error) {
 	if err != nil {
 		return inbox.LiveMeeting{}, err
 	}
-	var b strings.Builder
-	for _, ev := range tr {
-		who := ev.Who()
-		if who == "" {
-			who = "unknown"
-		}
-		if ev.Type == meetings.EventChat {
-			who += " (chat)"
-		}
-		b.WriteString(who + ": " + strings.TrimSpace(ev.Text) + "\n")
-	}
+	// The attendee's own lines are in the transcript, in the order they
+	// were said, labelled as the assistant's ("Betty (assistant, spoken;
+	// source: ...)") so routing and summarising never read them as a
+	// participant speaking.
+	transcript := live.RenderTranscript(tr)
 	var st live.State
 	if err := mi.store.LoadDoc(m.ID, live.StateDoc, &st); err != nil && !errors.Is(err, meetings.ErrNotFound) {
 		return inbox.LiveMeeting{}, err
 	}
 	out := inbox.LiveMeeting{
 		ID: m.ID, Title: live.NotesTitle(m), Platform: m.Platform,
-		StartedAt: m.CreatedAt, Transcript: b.String(),
+		StartedAt: m.CreatedAt, Transcript: transcript,
 	}
 	if m.LiveAt != nil {
 		out.StartedAt = *m.LiveAt
@@ -59,7 +53,7 @@ func (mi *meetingsInbox) build(m meetings.Meeting) (inbox.LiveMeeting, error) {
 		out.EndedAt = *m.EndedAt
 	}
 	if len(st.Notes) > 0 {
-		out.Notes = live.RenderNotesBy(mi.attendee(), m, st.Notes)
+		out.Notes = live.RenderNotesWithReplies(mi.attendee(), m, st.Notes, tr)
 		out.Summary = strings.Join(st.Notes[live.SectionSummary], "\n")
 	}
 	return out, nil

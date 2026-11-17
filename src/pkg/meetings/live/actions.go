@@ -77,6 +77,7 @@ func (r *Runner) Announce(ctx context.Context, meetingID, text string) (string, 
 			if err != nil {
 				return "", errors.Join(ErrChatUnavailable, err)
 			}
+			r.recordAnnounce(meetingID, text)
 			return AnnouncedChat, nil
 		}
 		// The meeting is ending: let the session write its last state
@@ -118,5 +119,22 @@ func (r *Runner) appendStoredNote(ctx context.Context, meetingID, text string) e
 	}
 	cctx, cancel := context.WithTimeout(ctx, r.opts.CallTimeout)
 	defer cancel()
-	return r.opts.Notes.Upsert(cctx, NotesTitle(m), RenderNotesBy(name, m, st.Notes), []string{"meetings", meetingID, "meeting-notes"})
+	tr, _ := r.opts.Store.Transcript(meetingID)
+	return r.opts.Notes.Upsert(cctx, NotesTitle(m), RenderNotesWithReplies(name, m, st.Notes, tr), []string{"meetings", meetingID, "meeting-notes"})
+}
+
+// TriggerAnnounce is the trigger of a draft's result posted in the meeting.
+const TriggerAnnounce = "announce"
+
+// recordAnnounce keeps an announced result in the meeting's transcript as
+// one of the bot's own lines.
+func (r *Runner) recordAnnounce(meetingID, text string) {
+	name := strings.TrimSpace(r.opts.PersonaName)
+	if name == "" {
+		name = defaultPersonaName
+	}
+	info := meetings.ReplyInfo{Kind: meetings.ReplyKindChat, Trigger: TriggerAnnounce, Source: meetings.ReplySourceFixed, Delivered: true}
+	if _, err := r.opts.Store.AppendReply(meetingID, name, truncate(text, ChatMaxChars), r.opts.Now(), info); err != nil {
+		r.log.Warn("[meetings] recording an announced result", "meeting", meetingID, "error", err)
+	}
 }

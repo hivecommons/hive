@@ -48,6 +48,53 @@ func TestCanonicalFoldsSpellings(t *testing.T) {
 	}
 }
 
+// A provider or gateway path and a ":variant" suffix name how the model was
+// reached, not who made it, so they must not change the family or bucket.
+func TestFamilyIgnoresProviderPrefixAndVariant(t *testing.T) {
+	cases := []struct{ in, family, bucket string }{
+		{"claude-opus-5-5", "claude", BucketClaude},
+		{"anthropic/claude-opus-5-5", "claude", BucketClaude},
+		{"aws/claude-haiku-4-5", "claude", BucketClaude},
+		{"anthropic/claude-sonnet-5:max", "claude", BucketClaude},
+		{"gpt-6.1-sol", "gpt", BucketGPT},
+		{"openai-codex/gpt-6.1-sol", "gpt", BucketGPT},
+		{"openai-codex/gpt-6.1-terra:high", "gpt", BucketGPT},
+		{"github-copilot/gpt-5.6-terra", "gpt", BucketGPT},
+		{"gemini-3.8-flash", "gemini", BucketGemini},
+		{"github-copilot/gemini-3.8-flash", "gemini", BucketGemini},
+		{"google/gemini-3.8-flash-low", "gemini", BucketGemini},
+		{"qwen-3", "qwen", BucketOther},
+		{"lemonade/qwen-3", "qwen", BucketOther},
+		{"rits/zai-org/glm-5-3", "glm", BucketOther},
+		{"anthropic/", Unknown, Unknown},
+		{"-", Unknown, Unknown},
+	}
+	for _, c := range cases {
+		if got := Family(c.in); got != c.family {
+			t.Errorf("Family(%q)=%q want %q", c.in, got, c.family)
+		}
+		if got := Bucket(c.in); got != c.bucket {
+			t.Errorf("Bucket(%q)=%q want %q", c.in, got, c.bucket)
+		}
+	}
+}
+
+func TestSameFamilyAcrossProviderSpellings(t *testing.T) {
+	pairs := []struct{ a, b string }{
+		{"anthropic/claude-opus-5-5", "claude-sonnet-5"},
+		{"openai-codex/gpt-6.1-terra:high", "gpt-5.6-sol"},
+		{"github-copilot/gemini-3.8-flash", "gemini-4-argon"},
+	}
+	for _, p := range pairs {
+		if same, known := SameFamily(p.a, p.b); !same || !known {
+			t.Errorf("SameFamily(%q, %q): got same=%v known=%v, want same vendor", p.a, p.b, same, known)
+		}
+	}
+	if same, known := SameFamily("anthropic/claude-opus-5-5", "openai-codex/gpt-6.1-sol"); same || !known {
+		t.Errorf("prefixed cross family: got same=%v known=%v", same, known)
+	}
+}
+
 func TestSameFamily(t *testing.T) {
 	if same, known := SameFamily("claude-fable-5", "claude-opus-4-6"); !same || !known {
 		t.Fatalf("same family: got same=%v known=%v", same, known)

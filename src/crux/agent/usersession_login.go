@@ -303,7 +303,7 @@ func (o sessionLoginOps) reconcileClaudeLogin(id string, mode sessionLoginMode) 
 	if sessionClaudeLoginNewer(sess, info.ModTime(), shared, fileModTime(target), now) {
 		staleShared, perr := promoteClaudeCredential(data, target, now)
 		if perr != nil {
-			return none, fmt.Errorf("adopting the session's newer login into the shared login: %w", perr)
+			return none, fmt.Errorf("%w; adopting it failed: %w", crux.ErrUserSessionHoldsLogin, perr)
 		}
 		res := sessionLoginResult{action: sessionLoginAdopted, staleShared: staleShared}
 		if mode == sessionLoginModeRemove {

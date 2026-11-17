@@ -27,10 +27,11 @@ func TestPersonaTimingsInLiveState(t *testing.T) {
 	}
 }
 
-func TestRecordTimingKeepsTheLastAnswers(t *testing.T) {
+func TestRecordKeepsTheLastLinesAndCountsAnswers(t *testing.T) {
 	_, s := timingSession(t)
+	sent := outcome{channel: betty.KindChat}
 	for i := range maxPersonaTimings + 5 {
-		s.recordTiming(betty.Reply{Trigger: betty.TriggerAddressed, Timing: &betty.Timing{HeardAt: s.now(), AnswerMS: int64(i), OverBudget: i%2 == 0}})
+		s.record(betty.Reply{Trigger: betty.TriggerAddressed, Text: "a", Timing: &betty.Timing{HeardAt: s.now(), AnswerMS: int64(i), OverBudget: i%2 == 0}}, sent)
 	}
 	if n := len(s.state.PersonaTimings); n != maxPersonaTimings {
 		t.Fatalf("kept %d timings", n)
@@ -38,9 +39,14 @@ func TestRecordTimingKeepsTheLastAnswers(t *testing.T) {
 	if l := s.state.PersonaLatency; l.Answers != maxPersonaTimings+5 || l.OverBudget != (maxPersonaTimings+5+1)/2 {
 		t.Fatalf("latency %+v", l)
 	}
-	s.recordTiming(betty.Reply{Trigger: betty.TriggerAck})
+	// An acknowledgement is recorded with its timing, but is not an answer.
+	s.record(betty.Reply{Kind: betty.KindVoice, Trigger: betty.TriggerAck, Text: "One moment."}, outcome{channel: betty.KindVoice})
+	last := s.state.PersonaTimings[len(s.state.PersonaTimings)-1]
+	if last.Trigger != betty.TriggerAck || last.Source != betty.SourceFixed || last.HeardAt.IsZero() {
+		t.Fatalf("ack timing %+v", last)
+	}
 	if l := s.state.PersonaLatency; l.Answers != maxPersonaTimings+5 {
-		t.Fatal("a reply without timings is not counted")
+		t.Fatal("an acknowledgement is not counted as an answer")
 	}
 }
 

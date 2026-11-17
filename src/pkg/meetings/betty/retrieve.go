@@ -37,6 +37,26 @@ type Retriever interface {
 	Retrieve(ctx context.Context, query string, terms []string, limit int) []Snippet
 }
 
+// PublicRetriever marks a retriever whose query leaves the hive for a
+// third party (a search engine, Wikipedia, a weather or release API).
+type PublicRetriever interface {
+	Retriever
+	// Public reports that the retriever sends the question off the hive.
+	Public() bool
+}
+
+// withoutPublic drops the retrievers that reach the public web.
+func withoutPublic(rs []Retriever) []Retriever {
+	out := make([]Retriever, 0, len(rs))
+	for _, r := range rs {
+		if pr, ok := r.(PublicRetriever); ok && pr.Public() {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 // Gather runs every retriever in parallel and returns what arrived before
 // the deadline, in retriever order.
 func Gather(ctx context.Context, rs []Retriever, query string, terms []string, timeout time.Duration) []Snippet {
@@ -140,15 +160,9 @@ func (k KnowledgeRetriever) Retrieve(ctx context.Context, query string, _ []stri
 		if ctx.Err() != nil || len(out) >= limit {
 			break
 		}
-		for _, f := range s.Search(query, limit) {
-			if hasTag(f.Tags, codeMapTag) {
-				continue
-			}
-			out = append(out, Snippet{Source: "knowledge", Title: f.Title, Text: clip(f.Body, maxSnippetRunes)})
-			if len(out) >= limit {
-				break
-			}
-		}
+		// Content words, page-text ranking and the best passage
+		// (knowledge_docs.go).
+		out = append(out, knowledgeHits(s, query, limit-len(out))...)
 	}
 	return out
 }

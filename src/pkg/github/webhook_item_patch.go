@@ -164,6 +164,7 @@ func (c *Client) classifyWebhookPR(repo string, pr *gh.PullRequest, labels []str
 		HiveAgent:           attrMeta.Agent,
 		HiveBackend:         attrMeta.Backend,
 		HiveModel:           attrMeta.Model,
+		HiveEffort:          attrMeta.Effort,
 		HiveRun:             runKey,
 		HivePlan:            planRef,
 		ScopeContract:       scopeContract,

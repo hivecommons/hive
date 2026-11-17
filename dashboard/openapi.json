@@ -2063,13 +2063,360 @@
         }
       }
     },
+    "/api/customers/hints/{hid}/answer": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Answer a \"Same person?\" question",
+        "description": "Hive raises a question when a suggested person's address starts like a customer's login, or the reverse. Nothing is linked until it is answered. same true makes the suggested identity the customer's own and deletes the suggestion; same false closes the question and remembers it so it is not asked again. A question between two customers is answered by merging them, so same true on one is refused with 400. Owner or read-write. Audited as customer_hint_answer.",
+        "parameters": [
+          {
+            "name": "hid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Hint id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "same"
+                ],
+                "properties": {
+                  "same": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body, or a customer-to-customer question answered yes"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such question, customer or suggestion"
+          },
+          "409": {
+            "description": "The identity already belongs to another customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/merge": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Merge a customer into this one",
+        "description": "Folds the customer in from into this one: identities, tags, goals and the activity edges move across, and the merge is recorded so it can be undone. Two dashboard users cannot be merged (409). Owner or read-write. Audited as customer_merge.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "from"
+                ],
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "Customer id"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or nothing to do"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          },
+          "409": {
+            "description": "Two dashboard users, or a conflicting identity"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/unmerge": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Undo a merge",
+        "description": "Restores the customer from as it stood before it was merged into this one, and gives back exactly the identities, tags, goals and activity the merge brought. The pair is remembered as different people. Owner or read-write. Audited as customer_unmerge.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "from"
+                ],
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "Customer id"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or nothing to do"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/split": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Split identities off into a new customer",
+        "description": "Moves the named identities (kind:value) off this customer onto a new one, and the activity those identities produced moves with them. A hive user identity cannot be split off and a split must leave an identity behind. Returns the new customer. Owner or read-write. Audited as customer_split.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "identities"
+                ],
+                "properties": {
+                  "identities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Identity keys, kind:value"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Name for the new customer; defaults to the first identity"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or nothing to do"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/export": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Export everything held about a customer",
+        "description": "Owner only. Returns the profile (including notes, the satisfaction assessment and the merge history), open hints and the references behind the person's activity (at most 10,000), as a JSON download. It holds references, never the content of what they point at. Audited as customer_export.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The export",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "person": {
+                      "type": "object",
+                      "description": "The full profile"
+                    },
+                    "edges": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "person, predicate, artefact, via, source, at"
+                      }
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "hints": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
     "/api/customers/suggestions/{sid}/accept": {
       "post": {
         "tags": [
           "Customers"
         ],
         "summary": "Accept a suggested person",
-        "description": "Turns a suggestion into a customer. This is the human decision that lets the hive build a profile of someone who never signed up. Owner or read-write. Audited as customer_accept.",
+        "description": "Turns a suggestion into a customer. This is the human decision that lets the hive build a profile of someone who never signed up. With the optional body {\"into\": \"<customer id or me>\"} it attaches the suggestion to that existing customer instead: the identity becomes one of theirs (a manual decision, so it is not suggested again), no new person is created, the activity moves onto them on the next sweep, and POST /api/customers/{id}/unmerge undoes it. Owner or read-write. Audited as customer_accept, or customer_attach with the target's id.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "into": {
+                    "type": "string",
+                    "description": "Existing customer id, or me, to attach the suggestion to"
+                  }
+                }
+              }
+            }
+          }
+        },
         "parameters": [
           {
             "name": "sid",
@@ -2143,6 +2490,75 @@
           },
           "503": {
             "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/graph": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Query the customer graph (GraphQL, read-only)",
+        "description": "Runs one GraphQL query against the customer graph: people, the artefacts they touched and the edges between them. The schema has no mutations and no subscriptions, so this POST changes nothing, and any signed-in, named user may call it, the read role included. Access is decided on the viewer: the verified owner and read-write users can reach every customer; a read-only user reaches only their own profile by any path (person by id answers null, people lists only them, and an artefact's people lists only them). Suggested people are never returned. An edge to an artefact the viewer may not open where it lives is left out. Limits: depth 8, 8 KB of query text, pages of at most 100, 5,000 nodes and 5 seconds per query; introspection is off (the schema is in src/docs/api-reference/customers.md). A query that fails still answers 200 with a GraphQL errors array. Audited as customer_graph_query with the operation name, node count and error count, never the query text.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "query"
+                ],
+                "properties": {
+                  "query": {
+                    "type": "string",
+                    "description": "GraphQL query text, at most 8 KB"
+                  },
+                  "operationName": {
+                    "type": "string"
+                  },
+                  "variables": {
+                    "type": "object",
+                    "description": "Query variables"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "GraphQL response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "object",
+                      "description": "The selected fields"
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "GraphQL error: message, locations, path"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or no query"
+          },
+          "403": {
+            "description": "Not signed in as a named user, or the owner role was not verified"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive, or the graph engine is not running"
           }
         }
       }
@@ -37667,7 +38083,7 @@
           "Contribute"
         ],
         "summary": "Contributor run stats by model",
-        "description": "Returns per-model run counts, verified-PR share, and failure rate for contributor-wall evidence.",
+        "description": "Returns per-model run counts, verified-PR share, and failure rate for contributor-wall evidence, plus why runs ended (#18721): `abandoned` (count), `scenarios` (scenario -> count, the same keys as /api/contribute/run-stats backends[].scenarios, summing to runs) and `failure_kinds` ({environment, task, unspecified}, summing to the failed runs behind failure_rate).",
         "responses": {
           "200": {
             "description": "OK"
@@ -45108,17 +45524,23 @@
         "tags": [
           "Sessions"
         ],
-        "summary": "Close a session (creator or owner)",
-        "description": "Kills tmux and keeps the metadata marked ended; on an ended session removes its metadata.",
+        "summary": "Close or delete a session (creator or owner)",
+        "description": "On a running session: kills tmux and keeps the metadata marked ended (with remove=true it is then deleted). On an ended or failed session: starts the delete and answers 202 at once with the session as deleting; the files are removed by a background job, the record goes when they are gone, and a failure puts the previous status back with delete_error.",
         "responses": {
           "200": {
-            "description": "OK"
+            "description": "Closed (running session), or removed=true: nothing was left on disk and the record is gone"
+          },
+          "202": {
+            "description": "The delete is running in the background; body carries the session with status deleting"
           },
           "403": {
             "description": "Not the creator or an owner"
           },
           "404": {
             "description": "Unknown session"
+          },
+          "409": {
+            "description": "The session is still being prepared, or changed state meanwhile"
           }
         },
         "parameters": [
@@ -45126,6 +45548,15 @@
             "name": "id",
             "in": "path",
             "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "remove",
+            "in": "query",
+            "required": false,
+            "description": "true: delete a running session after closing it",
             "schema": {
               "type": "string"
             }

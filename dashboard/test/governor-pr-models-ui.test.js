@@ -37,3 +37,17 @@ test('Governor PRs by model shows unmeasured run columns as a dash and discloses
     assert.ok(indexHtml.includes(expected), `index.html missing ${expected}`);
   }
 });
+
+test('Governor PRs by model tooltip lists per-backend rework and the effort split (#18715)', () => {
+  for (const expected of [
+    'const sliceRework = s =>',
+    'first pass ${s.first_pass_merged || 0}/${s.sample_prs || 0}',
+    '${s.closed_unmerged || 0} closed-unmerged',
+    'avg fix attempts ${(s.avg_fix_attempts || 0).toFixed(1)}',
+    "${src.backend || 'unknown'}: ${sliceRework(src)}",
+    "(b.efforts || []).map(e => `effort ${e.effort || 'unknown'}: ${sliceRework(e)}`)",
+    "'\\n\\nBy effort:\\n' + effortBreakdown",
+  ]) {
+    assert.ok(indexHtml.includes(expected), `index.html missing ${expected}`);
+  }
+});

@@ -157,7 +157,7 @@ title is `[selfreport] <class>: <short message>`.
 | `agent_cli_restart_loop` | the agent CLI crashed (bare shell) or sat on a consent screen and the harness restarted it before the kick (`agent CLI crashed or stuck on consent screen, restarting before kick`, `crux/agent/manager_kick.go`, `kick_async.go`), repeated ≥5 times in 10 min — a restart loop, not transient noise. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
 | `spek_stream_unavailable` | a Spektacular live meeting child (`spektacular meeting`, `pkg/spektacular/stream.go`) keeps exiting and is restarted with exponential backoff (`[spektacular] stream child exited; restarting`), or gave up after its restart cap (`[spektacular] stream child keeps exiting; giving up`). The restart line is a WARN at most once per backoff window and INFO otherwise. A spektacular release without the `meeting` command (before hivecommons/spektacular#126) is not this class: the stream probes `spektacular meeting --help` once per installed binary, logs one INFO and never starts or restarts the child, and the Meetings panel says notes and clarifying questions are off ([#18630](https://github.com/hivecommons/hive/issues/18630)). Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | low |
 | `copilot_cli_hung` | a Copilot agent showed none of the CLI's startup chrome (input prompt, help hint, login request) 180 s after launch, outside kick delivery, so the hang detector killed its session, ran bare `copilot` to capture the error and relaunched the agent (`copilot hung with no CLI prompt, running diagnostic`, `crux/agent/manager_poll.go`), or that diagnostic saw no output before its own deadline and relaunched anyway (`diagnostic: timed out waiting for copilot error output`, `crux/agent/manager_credentials.go`; the line carries the pane's `output_tail`). The key is the message, so ≥5 in 10 min counts every Copilot agent on the hive together: its Copilot agents keep failing to reach their prompt. Typical causes are a stale Copilot token the CLI hangs on (the diagnostic restores or clears it when it sees an auth error), a blocked network path to the Copilot API, or a CLI build whose startup screen the detector does not recognise (`cliReadyIndicators`, `crux/agent/pane_classify.go`). Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
-| `proxy_connect_dial_failed` | the hive proxy could not dial the upstream host of a CONNECT request (`proxy: CONNECT dial failed`, `crux/proxy/github_proxy_connect.go`) or of a Copilot usage-sniffed connection (`copilot sniff: upstream dial failed`, `crux/proxy/github_proxy_copilot.go`) — typically DNS or network unreachability of an agent-requested host (for example a dial timeout to `telemetry.enterprise.githubcopilot.com`), repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
+| `proxy_connect_dial_failed` | the hive proxy could not dial the upstream host of a CONNECT request (`proxy: CONNECT dial failed`, `crux/proxy/github_proxy_connect.go`) or of a Copilot usage-sniffed connection (`copilot sniff: upstream dial failed`, `crux/proxy/github_proxy_copilot.go`), or the TLS dial to a GitHub-family host the proxy inspects (`proxy upstream dial failed` and `transparent proxy upstream dial failed`, `crux/proxy/github_proxy_connect.go`) — typically DNS or network unreachability of an agent-requested host (for example a dial timeout to `telemetry.enterprise.githubcopilot.com`) or the upstream closing the connection mid-handshake (`error=EOF` or a connection reset from `api.github.com:443`), repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
 | `proxy_plain_forward_failed` | the proxy could not complete an agent's plain-HTTP upstream request (`proxy: plain HTTP forward failed`, `crux/proxy/github_proxy_connect.go`), returning HTTP 502. Check the requested host and logged error, including DNS and outbound connectivity; this differs from a destination refused by the proxy policy. Log-fed: ≥5 occurrences in 10 min, clears after 20 quiet minutes | medium |
 | `proxy_tls_handshake_failed` | the hive proxy's TLS handshake with an upstream host failed (`proxy client tls handshake failed`, `transparent proxy tls handshake failed`, `copilot sniff: client tls handshake failed`, `crux/proxy/github_proxy_connect.go`, `crux/proxy/github_proxy_copilot.go`) — typically a certificate validation failure or encryption mismatch on an agent-requested host, repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
 | `review_evidence_write_failed` | the github-client failed to write a review evidence bundle to persistent storage (`review evidence: could not write bundle`, `pkg/github`), repeated ≥5 times in 10 min. Log-fed: same repeat threshold and idle clear as `agent_pane_timeout` | medium |
@@ -408,8 +408,9 @@ fingerprint:
   duplicate. The reaction is how "N hives see this" gets counted.
 - **Not found** → it opens one issue.
 
-- **Found** → the hive adds itself the way a self-report does (#13470): the
-  short `Also seen on …` comment (not a re-post of the whole body), the
+- **Found** → the hive adds itself the way a self-report does (#13470): its
+  `Also seen on …` section in the poster's single seen-log comment (not a
+  re-post of the whole body, and not a new comment per join), the
   `hive/selfreport` label, and its line in the `Affected hives` block below.
 
 For `runtime-error` reports the hive goes further and **joins first**. If no
@@ -423,9 +424,15 @@ the title; with no usable message it does not join by class at all. When
 any of those matches, the hive adds itself to that issue instead of opening
 a new one:
 
-- one comment `Also seen on **<hive>** (v<version>, <cluster>) at <time>`
+- one `Also seen on **<hive>** (v<version>, <cluster>) at <time>` section,
   carrying a `<!-- hive:selfreport-seen hive=<slug> fp=… -->` marker and its
-  diagnostics excerpt — at most once per hive per 24h;
+  diagnostics excerpt, inside a single `<!-- hive:selfreport-seen-log -->`
+  comment per poster (the hub relay, or a spoke filing directly) on that
+  issue. The first join creates the comment; later joins edit it in place
+  (newest section first, one section per hive, capped at 25). Edits do not
+  notify watchers, so a later sighting does not ping the issue; the
+  `Affected hives` block below still counts every sighting. Still at most
+  once per hive per 24h;
 - the `hive/selfreport` and `origin/selfreport` labels (the per-hive `hive/<slug>` label is retired, #12539; `hive/selfreport` is deprecated in favour of the `origin/selfreport` provenance label and is kept only so existing filters and the joiner's `label:hive/selfreport` search keep working);
 - a bump to the `Affected hives (N)` block in the issue body, edited
   idempotently between `<!-- hive:selfreport-affected -->` markers: the

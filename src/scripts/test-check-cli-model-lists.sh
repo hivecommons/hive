@@ -29,8 +29,12 @@ var claudePinnedCLIModels = []string{
 }
 GO
 }
+# A fixed requirements file, not the real one: the cases below are about the
+# Sonnet 5.5 line, and the real file grows a line with every model refresh
+# (#18753), which would otherwise fail these fixtures' two-model allowlist.
+printf '# fixture\nclaude claude-sonnet-5-5 2.1.284\n' > "$TMP/requirements.txt"
 run() { HIVE_PIN_DOCKERFILE="$TMP/Dockerfile" HIVE_MODELS_GO="$TMP/models.go" \
-  HIVE_MODEL_REQUIREMENTS="$HERE/cli-model-requirements.txt" "$@" bash "$SCRIPT" >"$TMP/out" 2>&1 && RC=0 || RC=$?; }
+  HIVE_MODEL_REQUIREMENTS="$TMP/requirements.txt" "$@" bash "$SCRIPT" >"$TMP/out" 2>&1 && RC=0 || RC=$?; }
 
 fixtures 2.1.284 2.1.284 '"claude-sonnet-5-5",'
 run env; [ $RC -eq 0 ] && grep -q consistent "$TMP/out" && pass "consistent lists pass" || fail "consistent" "$(cat "$TMP/out")"

@@ -315,6 +315,16 @@ func (m *Manager) AgentCredentialRefreshable(agentName string) (refreshable, kno
 	if backend != "claude" {
 		return false, false
 	}
+	// A credential the provider rejected on a live check (#18732) is not
+	// refreshable however the file reads: the grant behind it is dead, and
+	// reporting "refreshable" here is what sent the hub's provider status to
+	// "restart the agents" for a login only an operator can fix.
+	m.mu.RLock()
+	revoked := proc.BackendAuth.Status == BackendAuthRevoked
+	m.mu.RUnlock()
+	if revoked {
+		return false, true
+	}
 	return m.credentialFileProves(agentName, proc.UID, backend), true
 }
 

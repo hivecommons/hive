@@ -1,6 +1,9 @@
 package betty
 
-import "time"
+import (
+	"strings"
+	"time"
+)
 
 // Per-request stage timings (hivecommons/hive#18590): every answer carries
 // how long each stage took, so the meeting detail shows where the seconds
@@ -10,13 +13,19 @@ import "time"
 const (
 	// SourceHiveStatus: answered from the hive's live state.
 	SourceHiveStatus = "hive-status"
-	// SourceRetrieval: answered from knowledge, beads, code maps or web
-	// hits.
-	SourceRetrieval = "retrieval"
+	// SourceRetrieval: answered from knowledge, beads or code maps.
+	SourceRetrieval = "knowledge"
+	// SourceWeb: answered from web search hits.
+	SourceWeb = "web"
+	// SourceResearch: a deep dive's result from the research agents.
+	SourceResearch = "research"
 	// SourceModel: answered by the model with no retrieval hits.
 	SourceModel = "model"
 	// SourceFallback: the model failed or is missing; a fixed reply.
 	SourceFallback = "fallback"
+	// SourceFixed: a stock line that needs no model: the intro, a hello,
+	// an acknowledgement, a queue note.
+	SourceFixed = "fixed"
 )
 
 // Answer budgets: the time from hearing a request to having its answer.
@@ -88,6 +97,8 @@ func (e *Engine) timing(p *pending, failed bool, now time.Time) *Timing {
 		t.Source = SourceFallback
 	case hasHiveStatus(p.snips):
 		t.Source = SourceHiveStatus
+	case hasWeb(p.snips):
+		t.Source = SourceWeb
 	case len(p.snips) > 0:
 		t.Source = SourceRetrieval
 	default:
@@ -104,4 +115,21 @@ func (e *Engine) timing(p *pending, failed bool, now time.Time) *Timing {
 			"budget_ms", t.BudgetMS, "retrieve_ms", t.RetrieveMS, "model_ms", t.ModelMS)
 	}
 	return t
+}
+
+// hasWeb reports whether any snippet came from web search (web.go names
+// them "web <host>").
+func hasWeb(snips []Snippet) bool {
+	for _, s := range snips {
+		if s.Source == webSource || strings.HasPrefix(s.Source, webSource+" ") {
+			return true
+		}
+	}
+	return false
+}
+
+// fixedTiming is the timing of a stock line produced at now: heard and
+// ready at once, with no budget to meet.
+func fixedTiming(now time.Time) *Timing {
+	return &Timing{HeardAt: now, Source: SourceFixed}
 }

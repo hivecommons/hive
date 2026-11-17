@@ -30,6 +30,10 @@ func TestGovernorPRModelsUIRendersReworkStats(t *testing.T) {
 		"no runs recorded, not a measured 0%",
 		"first_pass_merge_rate_ci",
 		"closed_prs_partial",
+		"b.efforts",
+		"By effort:",
+		"avg_fix_attempts",
+		"sample_prs",
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("static/index.html missing %q", want)

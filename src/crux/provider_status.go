@@ -108,6 +108,11 @@ func providerAgentStates(e ProviderAgentEvidence) (auth, avail, label string) {
 		return ProviderAuthNeedsLogin, "", status
 	case BackendAuthUnlicensed:
 		return ProviderAuthNeedsLogin, "", status
+	case BackendAuthRevoked:
+		// The provider rejected the live token (#18732). Refreshability is
+		// irrelevant: the file looks refreshable precisely because revocation
+		// does not touch it.
+		return ProviderAuthNeedsLogin, "", status
 	case BackendAuthForbidden:
 		// Cause undetermined (#6500): never convicted as a logout.
 		return ProviderAuthUnknown, "", status
@@ -223,6 +228,9 @@ func pluralAgents(n int) string {
 func providerNextAction(auth, avail string, labels map[string]int) string {
 	switch auth {
 	case ProviderAuthNeedsLogin:
+		if labels[BackendAuthRevoked] > 0 {
+			return "Sign in to the provider again from the dashboard: it rejected the stored login (revoked); restarting the agents cannot fix it."
+		}
 		if labels[BackendAuthUnlicensed] > 0 {
 			return "Restore this account's licence/seat for the provider, then log in once; re-login alone does not fix an entitlement failure."
 		}
