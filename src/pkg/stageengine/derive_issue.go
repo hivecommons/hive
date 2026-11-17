@@ -114,7 +114,7 @@ func deriveIssue(f Facts) Decision {
 		// label as found and the next sweep re-judges it from the restarted
 		// clock.
 		Stalled: f.Issue.Stalled && stage != stagelabels.None,
-		Clear:   append(issueTriageClear(f, stage), issueParkClear(f, stage)...),
+		Clear:   append(append(issueTriageClear(f, stage), issueParkClear(f, stage)...), issueOpenPRLabelClear(f, stage)...),
 	}
 }
 
@@ -130,6 +130,19 @@ func issueParkClear(f Facts, stage stagelabels.Stage) []string {
 	is := f.Issue
 	label := strings.TrimSpace(is.ApprovedDirectionLabel)
 	if !f.Park.NeedsHuman || label == "" || stage != stagelabels.IssueNeedsDecision {
+		return nil
+	}
+	return []string{label}
+}
+
+// issueOpenPRLabelClear names `has-open-pr` once the issue sweep found no
+// open PR linking the issue (IssueFacts.StaleOpenPRLabel). The open-PR
+// guard adds the label when it refuses a dispatch, and its description says
+// an open PR links the issue; once that PR merged or closed the claim is
+// false, so the writer takes it off in the same write as the stage.
+func issueOpenPRLabelClear(f Facts, stage stagelabels.Stage) []string {
+	label := strings.TrimSpace(f.Issue.StaleOpenPRLabel)
+	if label == "" || stage == stagelabels.None {
 		return nil
 	}
 	return []string{label}

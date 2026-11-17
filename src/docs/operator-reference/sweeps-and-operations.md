@@ -492,7 +492,14 @@ between. Two mechanisms close that gap
   logged as `claim skipped: open PR already linked` with the PR number, URL
   and author, and the tracker's withheld list shows *An open pull request
   already links this issue (claim skipped)* with the PR as evidence
-  (reason `open_pr_linked`). A failed listing fails **open**: the
+  (reason `open_pr_linked`). The label comes off once the PR is gone: the
+  issue stage-label sweep asks the same listing for every open issue
+  wearing it and, when the listing succeeds and no open PR links the issue
+  any more (the PR merged or closed), removes it in the same write as the
+  stage, with no comment. A failed listing keeps it, and with the guard off
+  the sweep leaves it alone. The hive removes it once per linking PR: if it
+  comes back while still no PR links the issue, another writer owns it and
+  the hive logs that once and leaves it. A failed listing fails **open**: the
   ledger-backed guards still apply, and a flaky listing must not stall every
   claim. The gate also refuses an issue the confirming read says is already
   **closed** (`issue closed`), so an issue closed between enumerations is
