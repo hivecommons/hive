@@ -106,7 +106,7 @@ type Config struct {
 	// AdvisoryEngine is the default-off, shadow-only advisory engine over
 	// Model Gateways (hivecommons/hive#18464 phase 1). See
 	// advisory_engine_config.go.
-	AdvisoryEngine AdvisoryEngineConfig `yaml:"advisory_engine,omitempty" json:"advisory_engine,omitempty"`
+	AdvisoryEngine AdvisoryEngineConfig `yaml:"advisory_engine,omitempty" json:"advisory_engine,omitzero"`
 	Variables      VariablesConfig      `yaml:"variables,omitempty"`
 	// OTel configures standards-based OTLP trace export. It is the preferred
 	// operator-facing block; Tracing is retained as a legacy alias.
