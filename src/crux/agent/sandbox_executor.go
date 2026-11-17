@@ -90,6 +90,20 @@ type SandboxKickSpec struct {
 	// Non-empty makes the kick review-only: workspace prep checks each PR
 	// head out on pr-<n> and writes .hive/pr/<n>.json, and nothing pushes.
 	ReviewPRs []int
+	// TargetPR is an existing PR (in Org/Repo) whose head branch the kick
+	// checks out and adds its commits to instead of opening a new PR
+	// (hivecommons/hive#18574). Zero opens a new PR as before. The manager
+	// resolves it from the kick message (sandboxTargetPRFromKickMessage);
+	// the executor refuses any PR this agent may not push to.
+	TargetPR int
+	// TargetPRSource says where the kick named TargetPR, for the prompt and
+	// the run record.
+	TargetPRSource string
+
+	// targetHead and targetURL are set by workspace prep for a TargetPR
+	// kick: the head commit checked out (the push's lease) and the PR URL.
+	targetHead string
+	targetURL  string
 }
 
 // reviewOnly reports whether the kick reviews PRs and so must never push.
@@ -125,8 +139,15 @@ type SandboxKickResult struct {
 	Sandbox        sandbox.Result
 	Broker         *pushbroker.Result
 	PR             *crux.PRResult
-	TimedOut       bool
-	Error          string
+	// PRAttributed is true when the PR client credited a newly opened PR to
+	// the kick's agent itself (crux.AgentPRCreator). When it is false and a
+	// PR was opened, the manager records the credit through the sandbox audit
+	// callback instead (hivecommons/hive#18575).
+	PRAttributed bool
+	// TargetPR is the existing PR the run's commits were pushed to, or 0.
+	TargetPR int
+	TimedOut bool
+	Error    string
 }
 
 // SandboxVerifyResult is one publish.verify command's outcome.
@@ -159,9 +180,13 @@ type SandboxExecutor struct {
 	// PRReader reads a review target's metadata, diff and comments for the
 	// PR file a review kick gets. Nil still checks the PR head out.
 	PRReader crux.PRReviewContextReader
-	Logger   *slog.Logger
-	Now      func() time.Time
-	Mutation effects.Boundary
+	// PRTargetReader reads an existing PR a kick pushes to (spec.TargetPR):
+	// before the checkout and again before the push. Nil refuses every
+	// TargetPR kick.
+	PRTargetReader crux.PRPushTargetReader
+	Logger         *slog.Logger
+	Now            func() time.Time
+	Mutation       effects.Boundary
 }
 
 func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (SandboxKickResult, error) {
@@ -331,6 +356,16 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		res.Error = err.Error()
 		return res, err
 	}
+	if spec.TargetPR > 0 {
+		// The PR may have closed, changed hands or moved while the sandbox
+		// ran: ask again, and push nothing unless it is still this agent's
+		// open PR at the head the kick checked out.
+		if err := e.recheckTargetPR(ctx, spec); err != nil {
+			res.PRWithheld = err.Error()
+			res.Error = err.Error()
+			return res, err
+		}
+	}
 	broker := &pushbroker.Broker{
 		Workspace: workspace,
 		Branch:    spec.Branch,
@@ -342,6 +377,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		Runner:    e.runner(),
 		Logger:    e.Logger,
 		Mutation:  e.Mutation,
+		LeaseSHA:  spec.targetHead,
 	}
 	bres, brokerErr := broker.Run(ctx)
 	res.Broker = &bres
@@ -349,9 +385,23 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		res.Error = brokerErr.Error()
 		return res, brokerErr
 	}
+	if spec.TargetPR > 0 {
+		// The commits landed on the PR's own branch: there is no PR to
+		// open, and the PR's credit was recorded when it was opened.
+		res.TargetPR = spec.TargetPR
+		res.PR = &crux.PRResult{Number: spec.TargetPR, URL: spec.targetURL, AlreadyExisted: true}
+		return res, nil
+	}
 	if e.PRClient != nil && bres.Pushed {
 		title, body := e.sandboxPRText(ctx, workspace, spec.Agent)
-		pr, prErr := e.PRClient.CreatePR(ctx, spec.Org+"/"+spec.Repo, spec.Branch, spec.BaseRef, title, body)
+		var pr crux.PRResult
+		var prErr error
+		if creator, ok := e.PRClient.(crux.AgentPRCreator); ok {
+			pr, prErr = creator.CreateAgentPR(ctx, spec.Agent, spec.Org+"/"+spec.Repo, spec.Branch, spec.BaseRef, title, body)
+			res.PRAttributed = prErr == nil
+		} else {
+			pr, prErr = e.PRClient.CreatePR(ctx, spec.Org+"/"+spec.Repo, spec.Branch, spec.BaseRef, title, body)
+		}
 		res.PR = &pr
 		if prErr != nil {
 			res.Error = prErr.Error()
@@ -691,7 +741,7 @@ func (e *SandboxExecutor) now() time.Time {
 }
 
 func (e *SandboxExecutor) branchName(agentName string) string {
-	return "hive/" + sanitizeBranchPart(agentName) + "/" + e.now().Format("20060102150405")
+	return sandbox.WorkBranch(agentName, e.now().Format(sandbox.WorkBranchTimeLayout))
 }
 
 func sanitizeBranchPart(s string) string { return sandbox.AgentSlug(s) }
