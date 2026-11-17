@@ -1,1 +1,0 @@
-- Hosted spokes on push-reported clusters (such as vllm-d and a-ks-wec2) now get the cluster's `host_aliases` from clusters.json: the hub sends them on every heartbeat and the spoke converges its own Deployment, idempotently and keeping unrelated aliases, and both sides log a WARN when the aliases cannot be applied (#18637).
