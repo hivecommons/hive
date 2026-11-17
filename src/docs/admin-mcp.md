@@ -349,6 +349,7 @@ capped at 256 KiB.
 | `launch_cost_read`             | Cost per issue and PR, as on the Cost card (see [Cost by work item](#cost-by-work-item)); optional `ref`, `offset`       |
 | `pr_models_read`               | PRs by model, as on the Governor card: outcomes, rework and effectiveness rank per model (see note 8); optional `window` |
 | `contributor_model_stats_read` | Contributor run stats by model: runs, verified-PR share, failure rate; optional `days` (0-365, default 7)                |
+| `effective_models_read`        | Operations → Most effective models: hive-agent or contributor PRs, coverage (see note 8); optional `window`, `filter`    |
 | `github_api_usage`             | GitHub API budget and who is spending it (see note 7); optional `limit`                                                  |
 
 **Agents, runs and plans**
@@ -448,16 +449,45 @@ capped at 256 KiB.
    - It needs what the endpoint needs: a signed-in caller, with no role floor.
    - Reading it spends no core API call.
    - See [GitHub API usage](#github-api-usage) for how to read the answer.
-8. **`pr_models_read` and `contributor_model_stats_read`:** read the endpoints
-   the dashboard reads for model effectiveness, `GET /api/governor/pr-models`
-   (Governor → PRs by model) and `GET /api/contribute/run-stats/models` (the
-   contributor run stats by model), and return their answer unchanged.
-   - `window` is `7d` (default), `30d` or `all`; `days` is 0-365 (default 7),
-     and 0 reads every recorded run. Any other value is refused with its
-     reason; the endpoints themselves would quietly use their default.
-   - `limit` caps the per-model rows (`buckets`, `models`). A capped answer
-     says so in `_admin_mcp` and gives the full count.
-   - Neither carries cost: `spend_read` has spend by model.
+8. **`pr_models_read`, `contributor_model_stats_read` and
+   `effective_models_read`:** read the endpoints the dashboard reads for model
+   effectiveness, and return their answer unchanged:
+   - `GET /api/governor/pr-models` (Governor → PRs by model);
+   - `GET /api/contribute/run-stats/models` (the contributor run stats by
+     model);
+   - `GET /api/contribute/effective-models` (Operations → Most effective
+     models).
+
+   Arguments:
+   - `window` is `7d` (default), `30d` or `all`.
+   - `days` is 0-365 (default 7), and 0 reads every recorded run.
+   - `filter` (`effective_models_read` only) is `all` (default), `hive` or
+     `contributor`, the panel's All work / Hive agents / Contributor relays
+     chips:
+     - `hive` keeps the PRs the hive's own agents opened, which have no
+       contributor runs;
+     - `contributor` keeps only the PRs a verified contributor run produced.
+
+     `pr_models_read` always reads `all`, which joins contributor run stats to
+     every PR of a model.
+
+   Any other `window`, `days` or `filter` value is refused with its reason;
+   the endpoints themselves would quietly use their default.
+
+   Paging:
+   - `limit` caps the per-model rows: `buckets`, `models`, or `insufficient`
+     for `effective_models_read`, whose `ranked` list is short and always
+     returned whole.
+   - `offset` skips rows, so a list longer than the cap of 50 can be read
+     page by page.
+   - A cut answer says so in `_admin_mcp`, gives the full count as
+     `<field>_total`, and gives `next_offset` when more rows follow.
+
+   Other notes:
+   - `effective_models_read` also returns `coverage`. It says how far back the
+     closed-PR scan reaches and whether PR or run history is partial for the
+     window, so an `all` answer is not mistaken for lifetime totals.
+   - None of them carries cost: `spend_read` has spend by model.
 
 **Meta tools**
 
