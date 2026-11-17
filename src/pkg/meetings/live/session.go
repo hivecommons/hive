@@ -69,6 +69,10 @@ type session struct {
 	spek  Spek
 	state State
 	rate  rateLimiter
+	// burst is the extra chat room for answers to addressed requests;
+	// voice is the estimate of queued speech (voicequeue.go).
+	burst rateLimiter
+	voice voiceQueue
 	// persona is the meeting's attendee persona, nil when it is off. With
 	// it on, it owns the bot's voice in the meeting: Spek's say intents are
 	// dropped, its chat posts are offered to the persona, and its
@@ -95,6 +99,7 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 	s := &session{
 		r: r, id: m.ID, spek: spek,
 		rate:     rateLimiter{n: r.opts.Policy.ChatPostsPerMinute, window: rateWindow},
+		burst:    answerBurst(r.opts.Policy),
 		updates:  make(chan meetings.Update, sessionInbox),
 		signals:  make(chan ResearchSignal, sessionInbox),
 		approves: make(chan approveReq),
@@ -171,6 +176,7 @@ func (s *session) run(ctx context.Context) {
 		case rep := <-replies:
 			if !ending {
 				s.onPersonaReply(ctx, rep)
+				s.drainPersona(ctx, replies)
 			}
 		case <-ctx.Done():
 			s.spek.Close(nil)
@@ -706,7 +712,7 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 		if s.state.BudgetExhausted {
 			return
 		}
-		if s.speak(ctx, text) {
+		if s.speakAck(ctx, text) {
 			s.emitPersona(rep)
 		} else {
 			s.drop("ack_no_voice")
@@ -729,9 +735,14 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 		return
 	}
 	posted := true
-	if rep.Kind == betty.KindVoice {
-		s.say(ctx, text)
-	} else {
+	switch {
+	case rep.Kind == betty.KindVoice:
+		// Spoken with the other answers ready now, shortest first
+		// (flushVoice), falling back to chat.
+		s.queueVoice(text)
+	case rep.Trigger == betty.TriggerAddressed:
+		posted = s.postAnswer(ctx, text)
+	default:
 		posted = s.post(ctx, text)
 	}
 	if posted {
