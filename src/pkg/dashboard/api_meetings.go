@@ -64,6 +64,11 @@ type MeetingsService interface {
 	// (Discord `/hive join`) waiting for the owner.
 	ApproveRequest(ctx context.Context, id string, voice bool) (any, error)
 	DeclineRequest(ctx context.Context, id string) (any, error)
+	// Delete removes a finished meeting or a pending join request for good
+	// (ErrMeetingConflict while hive is still in it); ClearFinished deletes
+	// every finished meeting that ended before the cutoff.
+	Delete(ctx context.Context, id string) (MeetingDeleted, error)
+	ClearFinished(ctx context.Context, before time.Time) ([]MeetingDeleted, error)
 	// Live is the panel snapshot: meeting, transcript, live state.
 	Live(id string) (any, error)
 	Subscribe(fn func(MeetingFrame)) (cancel func())
@@ -132,6 +137,7 @@ func (s *Server) registerMeetingsRoutes() {
 	s.mux.HandleFunc("POST /api/meetings/{id}/approve", s.handleMeetingsRequestApprove)
 	s.mux.HandleFunc("POST /api/meetings/{id}/decline", s.handleMeetingsRequestDecline)
 	s.mux.HandleFunc("GET /api/meetings/{id}/ws", s.handleMeetingsWS)
+	s.registerMeetingsDeleteRoutes()
 }
 
 // meetingsErrorStatus maps a MeetingsService error to its HTTP status: the
@@ -481,6 +487,7 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 			"meetings.research_pool_size":                strconv.Itoa(m.ResearchPoolSizeOrDefault()),
 			"meetings.research_per_meeting":              strconv.Itoa(m.ResearchPerMeetingOrDefault()),
 			"meetings.chat_posts_per_minute":             strconv.Itoa(m.ChatPostsPerMinuteOrDefault()),
+			"meetings.chat_answer_burst":                 strconv.Itoa(m.ChatAnswerBurstOrDefault()),
 			"meetings.lobby_timeout_s":                   strconv.Itoa(m.LobbyTimeoutSOrDefault()),
 			"meetings.retention_days":                    strconv.Itoa(m.RetentionDaysOrDefault()),
 			"meetings.consent_text":                      m.ConsentTextOrDefault(),
@@ -498,6 +505,7 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 			"meetings.llm.anthropic_model":               m.LLM.AnthropicModel,
 			"meetings.llm.timeout_ms":                    strconv.Itoa(m.LLM.TimeoutMS),
 			"meetings.llm.max_in_flight":                 strconv.Itoa(m.LLM.MaxInFlight),
+			"meetings.llm.per_meeting_in_flight":         strconv.Itoa(meetingsPerMeetingInFlight(m.LLM)),
 			"meetings.persona.enabled":                   boolString(persona.Enabled),
 			"meetings.persona.preset":                    persona.Preset,
 			"meetings.persona.name":                      persona.Name,
@@ -621,4 +629,17 @@ func (s *Server) handleMeetingsSettingsPost(w http.ResponseWriter, r *http.Reque
 	out := s.meetingsSettings(r.Context(), next)
 	out.RestartRequired = changed
 	jsonResponse(w, out)
+}
+
+// meetingsPerMeetingInFlight is meetings.llm.per_meeting_in_flight as it
+// applies: the default when unset, never above max_in_flight.
+func meetingsPerMeetingInFlight(l config.MeetingsLLMConfig) int {
+	n, ceiling := l.PerMeetingInFlight, l.MaxInFlight
+	if n <= 0 {
+		n = config.DefaultMeetingsLLMPerMeetingInFlight
+	}
+	if ceiling <= 0 {
+		ceiling = config.DefaultMeetingsLLMMaxInFlight
+	}
+	return min(n, ceiling)
 }

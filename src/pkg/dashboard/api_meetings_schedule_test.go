@@ -15,6 +15,9 @@ type fakeScheduleService struct {
 	added  []MeetingScheduleAdd
 	acted  []string
 	listed int
+	// deleted are the Delete calls; deleteRes is returned for them.
+	deleted   []string
+	deleteRes MeetingScheduleDeleted
 }
 
 func (f *fakeScheduleService) List() (any, error) {

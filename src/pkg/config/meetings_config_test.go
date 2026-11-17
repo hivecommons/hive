@@ -352,7 +352,8 @@ func TestResolveMeetingsLLM(t *testing.T) {
 	cfg.Governor.LiteLLM.DefaultModel = "gpt-x"
 	r := cfg.ResolveMeetingsLLM(ctx)
 	if r.Backend != MeetingsLLMModeOpenAI || r.Endpoint != "https://litellm.example" || r.Model != "gpt-x" ||
-		r.TimeoutMS != DefaultMeetingsLLMTimeoutMS || r.MaxInFlight != DefaultMeetingsLLMMaxInFlight || r.Label() != "model gpt-x" {
+		r.TimeoutMS != DefaultMeetingsLLMTimeoutMS || r.MaxInFlight != DefaultMeetingsLLMMaxInFlight || r.Label() != "model gpt-x" ||
+		r.PerMeetingInFlight != DefaultMeetingsLLMPerMeetingInFlight {
 		t.Fatalf("litellm fallback %+v", r)
 	}
 	// Meetings' own endpoint, model and key win.
@@ -365,6 +366,10 @@ func TestResolveMeetingsLLM(t *testing.T) {
 	r = cfg.ResolveMeetingsLLM(ctx)
 	if r.Endpoint != "https://llm.example" || r.Model != "m1" || r.APIKey != "mkey" || r.TimeoutMS != 900 || r.MaxInFlight != 2 {
 		t.Fatalf("meetings llm %+v", r)
+	}
+	// One meeting never runs more calls than the hive-wide cap.
+	if r.PerMeetingInFlight != 2 {
+		t.Fatalf("per-meeting in flight %d above max_in_flight 2", r.PerMeetingInFlight)
 	}
 	// An Anthropic key switches to anthropic mode.
 	aFile := filepath.Join(dir, "a")

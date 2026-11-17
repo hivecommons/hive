@@ -3602,12 +3602,15 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 			// Drafts people ask Betty for, approved in the dashboard (#18406).
 			b.wireMeetingsActions(store)
 			// Owner API, live panel and /api/events frames (#18292).
-			b.dashSrv.SetMeetingsService(&meetingsDashboard{mgr: mgr, live: b.meetingsLive})
-			// Scheduled meetings and the Calendar section (#18394).
+			md := &meetingsDashboard{mgr: mgr, live: b.meetingsLive}
+			// Scheduled meetings and the Calendar section (#18394). Wired
+			// first so a deleted meeting's Calendar entry goes with it.
 			if svc, stop := wireMeetingsSchedule(b.cfg, mgr, b.logger); svc != nil {
 				b.cleanup.push(stop)
 				b.dashSrv.SetMeetingsScheduleService(svc)
+				md.sched = svc.sched
 			}
+			b.dashSrv.SetMeetingsService(md)
 			// Ended meetings become inbox items; transcripts are purged
 			// after meetings.retention_days (#18293).
 			b.wireMeetingsInbox(mgr, store)

@@ -212,6 +212,21 @@ func (s *Store) PurgeTranscript(id string) error {
 	return nil
 }
 
+// Remove deletes a meeting's directory: the record, its transcript and its
+// side documents. Removing a missing meeting is not an error.
+func (s *Store) Remove(id string) error {
+	p, err := s.path(id, meetingFile)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if err := os.RemoveAll(filepath.Dir(p)); err != nil {
+		return fmt.Errorf("meetings: removing %s: %w", id, err)
+	}
+	return nil
+}
+
 // validDocName keeps side document names to a plain file name.
 var validDocName = regexp.MustCompile(`^[a-z0-9_-]{1,32}\.json$`)
 
