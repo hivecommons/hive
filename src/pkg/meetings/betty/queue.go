@@ -113,7 +113,7 @@ func (e *Engine) onLine(l Line) {
 	}
 	switch {
 	case trig.Intro:
-		e.emit(Reply{Text: e.s.Persona.Intro(), Trigger: TriggerIntro, Question: l.Text, VoiceWanted: trig.VoiceWanted})
+		e.emit(Reply{Kind: replyKind(trig), Text: e.s.Persona.Intro(), Trigger: TriggerIntro, Question: l.Text, VoiceWanted: trig.VoiceWanted})
 	case trig.Addressed:
 		e.addressed(l, trig, now)
 	case question:
