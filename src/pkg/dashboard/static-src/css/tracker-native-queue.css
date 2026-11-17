@@ -1,8 +1,39 @@
-    .nq-rail { margin: var(--sp-5) 0; padding: var(--sp-5); border: 1px solid var(--border-color); border-radius: var(--r); overflow-wrap: anywhere; }
-    .nq-rail h3, .nq-rail h4, .nq-rail h5 { margin: var(--sp-4) 0; }
-    .nq-muted { color: var(--text-secondary); font-size: var(--fs-sm); }
-    .nq-scope { margin-top: var(--sp-5); border-top: 1px solid var(--border-color); }
-    .nq-candidates { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: var(--sp-5); }
-    .nq-candidate { padding: var(--sp-5); border: 1px solid var(--border-color); border-radius: var(--r-sm); min-width: 0; }
-    .nq-entries, .nq-candidate ul { padding-left: var(--sp-8); }
-    .nq-rail li { margin: var(--sp-3) 0; }
+    /* ---- Forge-owned merge queues rail (hivecommons/hive#18702) ------------
+       Built from the tracker's own parts: the preparation rail's head line
+       (.ham-train-head / .ham-train-chip), the Merged/Merge queue popover
+       lists (.ham-merged-list / .ham-merged-meta), .ham-badge modifiers and
+       the shared .config-info help mark. Tokens only. */
+    .ham-native-rail { margin: var(--sp-3) 0; padding: 0 var(--sp-2) var(--sp-3) var(--sp-5); font-size: var(--fs-sm); color: var(--text); overflow-wrap: anywhere; position: relative; --ham-train-accent: var(--line-strong); }
+    .ham-native-rail::before { content: ''; position: absolute; left: calc(var(--sp-2) + 2px); top: var(--sp-5); bottom: var(--sp-3); border-left: var(--line-width) solid var(--ham-train-accent); }
+    .ham-native-rail .ham-native-head { flex-wrap: wrap; padding-left: 0; margin-top: 0; }
+    .ham-native-rail .ham-native-head::before { content: none; }
+    .ham-native-sum { color: var(--text-faint); font-variant-numeric: tabular-nums; min-width: 0; }
+    .ham-native-help { margin-left: 0; }
+    .ham-native-list { margin-top: var(--sp-2); gap: var(--sp-1); }
+    .ham-native-list > li { grid-template-columns: auto minmax(0, 1fr) auto; row-gap: var(--sp-1); }
+    .ham-native-scope { color: var(--text); font-weight: var(--fw-medium); white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .ham-native-line { display: inline-flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-2); min-width: 0; color: var(--text); }
+    .ham-native-calm .ham-native-scope, .ham-native-calm .ham-native-line { color: var(--muted); font-weight: inherit; }
+    .ham-native-row-problem .ham-native-scope { color: var(--status-error); }
+    .ham-badge.ham-native-badge-problem { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 55%, transparent); font-weight: var(--fw-medium); }
+    .ham-badge.ham-native-badge-notice { color: var(--text-faint); border-color: var(--line-subtle); border-style: dashed; }
+    .ham-native-details { grid-column: 1 / -1; font-size: var(--fs-xs); }
+    .ham-native-details > summary { cursor: pointer; color: var(--muted); }
+    .ham-native-details > summary:hover, .ham-native-details > summary:focus-visible { color: var(--text); }
+    .ham-native-details[open] > summary { margin-bottom: var(--sp-2); }
+    .ham-native-folded { margin-top: var(--sp-2); }
+    .ham-native-folded .ham-native-list { margin-top: var(--sp-1); }
+    .ham-native-entries, .ham-native-members, .ham-native-checks, .ham-native-receipts { margin: 0 0 var(--sp-2); padding-left: var(--sp-5); }
+    .ham-native-entries > li, .ham-native-members > li, .ham-native-checks > li, .ham-native-receipts > li { grid-template-columns: auto minmax(0, 1fr) auto; }
+    .ham-native-members > li, .ham-native-checks > li, .ham-native-receipts > li { grid-template-columns: minmax(0, 1fr) auto; }
+    .ham-native-entry { min-width: 0; }
+    .ham-native-entry code, .ham-native-group-head code { font-size: var(--fs-2xs); }
+    .ham-native-group { margin: var(--sp-2) 0; padding-left: var(--sp-3); border-left: var(--line-width) solid var(--line-subtle); }
+    .ham-native-group-head { color: var(--text); margin-bottom: var(--sp-1); }
+    @media (max-width: 640px), ((pointer: coarse) and (max-width: 820px)) {
+      .ham-native-rail { padding-left: var(--sp-4); }
+      .ham-native-list > li { grid-template-columns: minmax(0, 1fr); }
+      .ham-native-scope { white-space: normal; }
+      .ham-native-list .ham-merged-meta { white-space: normal; }
+      .ham-native-details > summary { min-height: var(--tap-target); display: flex; align-items: center; }
+    }
