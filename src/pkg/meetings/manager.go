@@ -616,8 +616,9 @@ func (m *Manager) handleState(ctx context.Context, id string, ev Event) bool {
 // ensureConsent delivers the consent notice once, the first thing hive
 // says in the meeting, and reports whether hive left the meeting because it
 // could not. The notice counts as posted only when Quorum confirms the chat
-// line reached the meeting. If chat cannot deliver it and the meeting has
-// voice, hive speaks it instead; if neither works, hive leaves
+// line reached the meeting. If chat cannot deliver it and the bot joined
+// able to speak (voice_capable, whatever the voice reply setting), hive
+// speaks it instead; if neither works, hive leaves
 // (ReasonConsentUndelivered) rather than stay in a meeting that was never
 // told. Transient failures (the bot not admitted yet, a rate limit, a
 // dropped call) are retried on later events, at most ConsentAttempts times.
@@ -650,7 +651,12 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 		return false
 	}
 	why := "chat unavailable (" + chatErr.Error() + ")"
-	if mt.VoiceCapable && mt.VoiceEnabled {
+	// The consent notice is not a voice reply: the voice setting governs
+	// whether she answers out loud, but telling the room it is recorded
+	// comes first, so a bot that can speak says it whenever chat cannot
+	// carry it, even with replies set to chat (a Teams join where chat had
+	// no composer and the owner had turned voice replies off left at once).
+	if mt.VoiceCapable {
 		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
 		sayErr := m.opts.Quorum.Say(cctx, mt.NativeID, m.opts.ConsentText)
 		cancel()
@@ -661,7 +667,7 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 		}
 		why += ", voice failed (" + sayErr.Error() + ")"
 	} else {
-		why += ", voice off"
+		why += ", the bot joined without voice"
 	}
 	m.log.Warn("[meetings] consent notice could not be delivered; leaving the meeting", "meeting", mt.ID, "reason", why)
 	_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentError = why })

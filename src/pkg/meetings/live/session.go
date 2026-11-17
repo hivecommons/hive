@@ -101,6 +101,8 @@ type session struct {
 	spekQueue []queuedSpek
 	nextSeq   int
 	restyled  chan restyledAsk
+	// warmedAt is when the research pool was last warmed.
+	warmedAt time.Time
 
 	updates  chan meetings.Update
 	signals  chan ResearchSignal
@@ -186,6 +188,7 @@ func (s *session) run(ctx context.Context) {
 		s.spekGone, lines = true, nil
 		s.setSpekStatus(spekStoppedStatus)
 	}
+	s.warmResearch(ctx)
 	var replies <-chan betty.Reply
 	var researchTick <-chan time.Time
 	if s.persona != nil {
@@ -201,6 +204,7 @@ func (s *session) run(ctx context.Context) {
 		case <-researchTick:
 			if !ending {
 				s.checkDeepDives(ctx)
+				s.warmResearch(ctx)
 			}
 		case rep := <-replies:
 			if !ending {
@@ -260,6 +264,25 @@ func (s *session) run(ctx context.Context) {
 			reply <- s.snapshot()
 		}
 	}
+}
+
+// researchWarmEvery is how often a running meeting re-warms the research
+// pool (a no-op while its agents run).
+const researchWarmEvery = time.Minute
+
+// warmResearch boots the research agents when the dispatcher can, at most
+// once per researchWarmEvery.
+func (s *session) warmResearch(ctx context.Context) {
+	w, ok := s.r.opts.Research.(ResearchWarmer)
+	if !ok || w == nil {
+		return
+	}
+	now := s.now()
+	if !s.warmedAt.IsZero() && now.Sub(s.warmedAt) < researchWarmEvery {
+		return
+	}
+	s.warmedAt = now
+	w.Warm(ctx)
 }
 
 func (s *session) snapshot() State {
@@ -793,7 +816,7 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 	case rep.Kind == betty.KindVoice:
 		// Spoken with the other answers ready now, shortest first
 		// (flushVoice), falling back to chat.
-		s.queueVoice(text)
+		s.queueVoice(rep, text)
 	case rep.Trigger == betty.TriggerAddressed:
 		posted = s.postAnswer(ctx, text)
 	default:
@@ -920,16 +943,46 @@ func (s *session) checkDeepDives(ctx context.Context) {
 	}
 }
 
+// Reasons speak could not say a line, logged so a meeting where she
+// answers in chat says why (hivecommons/hive live Discord test).
+const (
+	speakNoMeeting     = "meeting record unreadable"
+	speakVoiceDisabled = "voice is off for this meeting"
+	speakPolicyOff     = "meetings.voice_on_address is off"
+	speakSayFailed     = "the say call failed"
+)
+
 // speak says text when the meeting can hear the bot, without a chat
-// fallback; it reports whether it was spoken.
+// fallback; it reports whether it was spoken. When it was not, it logs
+// why: the meeting has voice off, the voice_on_address policy is off, or
+// the say call itself failed.
 func (s *session) speak(ctx context.Context, text string) bool {
+	reason, err := s.trySpeak(ctx, text)
+	if reason == "" {
+		return true
+	}
+	s.log().Info("[meetings] not speaking", "reason", reason, "error", err)
+	return false
+}
+
+// trySpeak is speak without the log: it returns the empty reason when the
+// line was spoken.
+func (s *session) trySpeak(ctx context.Context, text string) (string, error) {
 	m, err := s.r.opts.Meetings.Get(s.id)
-	if err != nil || !m.VoiceEnabled || !s.r.opts.Policy.VoiceOnAddress {
-		return false
+	switch {
+	case err != nil:
+		return speakNoMeeting, err
+	case !m.VoiceEnabled:
+		return speakVoiceDisabled, nil
+	case !s.r.opts.Policy.VoiceOnAddress:
+		return speakPolicyOff, nil
 	}
 	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
 	defer cancel()
-	return s.timedSay(func() error { return s.r.opts.Meetings.Say(cctx, s.id, text) }) == nil
+	if err := s.timedSay(func() error { return s.r.opts.Meetings.Say(cctx, s.id, text) }); err != nil {
+		return speakSayFailed, err
+	}
+	return "", nil
 }
 
 // queuedSpek is one of Spek's asks or chat offers waiting its turn while an

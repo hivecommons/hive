@@ -58,6 +58,21 @@ type Reply struct {
 	// Timing is the answer's stage timings (timing.go), on answers to a
 	// request.
 	Timing *Timing `json:"timing,omitempty"`
+	// Asker and Topic name who asked and what about, on answers to a
+	// request; Attributed is set when Text already opens with them. The
+	// session uses them to attribute an answer it delivers late or in a
+	// batch (a spoken answer moved to chat with others), so the room can
+	// tell which question it answers (live Discord test).
+	Asker      string `json:"asker,omitempty"`
+	Topic      string `json:"topic,omitempty"`
+	Attributed bool   `json:"attributed,omitempty"`
+}
+
+// Attribute opens text with who asked and what about, in the persona's
+// language: "Andy (re: open PRs): ..." in chat, "Andy, about open PRs:
+// ..." spoken.
+func (e *Engine) Attribute(voice bool, who, topic, text string) string {
+	return attribute(e.s.Persona.Language, voice, who, topic, text)
 }
 
 // Line is one final transcript segment or chat line.

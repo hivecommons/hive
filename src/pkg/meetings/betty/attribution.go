@@ -286,6 +286,30 @@ func (e *Engine) attributed(p *pending, voice bool, modelTopic, text string, now
 	return attribute(e.s.Persona.Language, voice, p.line.Who, requestTopic(p, modelTopic), text)
 }
 
+// attributeReply sets rep's text as said for p (attributed) and records
+// who asked and what about, so the session can attribute it when it
+// delivers it late.
+func (e *Engine) attributeReply(p *pending, rep *Reply, modelTopic string, now time.Time) {
+	before := rep.Text
+	rep.Text = e.attributed(p, rep.VoiceWanted, modelTopic, rep.Text, now)
+	rep.Asker, rep.Topic = p.line.Who, replyTopic(p, modelTopic)
+	rep.Attributed = rep.Text != before
+}
+
+// replyTopic is requestTopic, falling back to the first words of the
+// request itself ("are you there") when they hold no topic word: an
+// answer delivered late must still say which question it answers.
+func replyTopic(p *pending, model string) string {
+	if t := requestTopic(p, model); t != "" {
+		return t
+	}
+	rest := strings.TrimSpace(p.trig.Rest)
+	if !p.addressed || rest == "" {
+		rest = p.line.Text
+	}
+	return cleanTopic(strings.Join(strings.Fields(recase(p.line.Text, rest)), " "))
+}
+
 // ackFor is the next acknowledgement, naming who it is for when other
 // requests are in flight.
 func (e *Engine) ackFor(who string) string {

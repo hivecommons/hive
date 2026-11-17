@@ -21,6 +21,8 @@ func TestHiveStatusBrief(t *testing.T) {
 	st.OpenItems.Buckets.Held = FrontendOpenItemKinds{Issues: 4, PRs: 1}
 	st.OpenItems.Buckets.Blocked = FrontendOpenItemKinds{Issues: 2}
 	st.Agents = append(st.Agents, FrontendAgent{Name: "coder", State: "running", Busy: "working", Doing: "fixing #13990"})
+	st.ActionableNow = FrontendActionableNow{Issues: 7, PRs: 3, Total: 10}
+	st.OverviewCoverage = &FrontendOverviewCoverage{Coverage: 81, Target: 90}
 	s.status = st
 	got, err := s.HiveStatusBrief(context.Background())
 	if err != nil {
@@ -29,6 +31,9 @@ func TestHiveStatusBrief(t *testing.T) {
 	for _, want := range []string{
 		"Open now: 40 issues and 12 PRs.",
 		"Actionable: 7 issues, 3 PRs. Held: 4 issues, 1 PRs. Blocked: 2 issues, 0 PRs.",
+		"Board pressure (BP): 40/12, that is 40 open issues and 12 open PRs",
+		"Actionable now: 10 (7 issues, 3 PRs).",
+		"Test coverage: 81% (target 90%).",
 		"Agents: 17, 1 paused, 1 blocked.",
 		"Working on: coder (fixing #13990).",
 		"Blocked: reviewer-2.",

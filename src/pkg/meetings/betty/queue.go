@@ -95,6 +95,29 @@ func (e *Engine) remember(l Line, now time.Time) {
 	e.recent = e.recent[i:]
 }
 
+// participants are the people heard in the recent transcript (never the
+// bot): a misheard wake word that is one of their names is left to them.
+func (e *Engine) participants() []string {
+	return speakers(e.recentLines(), e.s.Persona.DisplayName)
+}
+
+// speakers are the distinct speakers of lines, in first-heard order,
+// without the bot.
+func speakers(lines []recentLine, bot string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, l := range lines {
+		who := strings.TrimSpace(l.Who)
+		k := strings.ToLower(who)
+		if who == "" || seen[k] || meetings.IsBotName(who, bot) {
+			continue
+		}
+		seen[k] = true
+		out = append(out, who)
+	}
+	return out
+}
+
 func (e *Engine) recentLines() []recentLine {
 	out := make([]recentLine, len(e.recent))
 	for i, l := range e.recent {
@@ -108,7 +131,10 @@ func (e *Engine) onLine(l Line) {
 		return
 	}
 	now := e.d.Now()
-	trig := e.match.Match(l.Text, l.Spoken)
+	trig := e.match.MatchWith(l.Text, l.Spoken, e.participants())
+	if trig.Misheard {
+		e.log.Info("[meetings] addressed through a misheard name", "who", l.Who)
+	}
 	if !trig.Addressed {
 		// Their final line did not address her after all: the next one
 		// that does gets its own ack.
@@ -200,7 +226,7 @@ func (e *Engine) onPartial(l Line) {
 	if e.d.LLM == nil || e.exhausted.Load() {
 		return
 	}
-	trig := e.match.Match(l.Text, true)
+	trig := e.match.MatchWith(l.Text, true, e.participants())
 	if !trig.Addressed || trig.Intro || !trig.VoiceWanted || len(strings.Fields(trig.Rest)) < earlyAckMinWords {
 		return
 	}
@@ -375,9 +401,10 @@ func (e *Engine) proceed(p *pending) {
 		return
 	}
 	if e.d.LLM == nil {
-		text := e.attributed(p, p.trig.VoiceWanted, "", fallbackNoModel, now)
-		e.emit(Reply{Kind: replyKind(p.trig), Text: text, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted,
-			Timing: e.timing(p, true, now)})
+		rep := Reply{Kind: replyKind(p.trig), Text: fallbackNoModel, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted,
+			Timing: e.timing(p, true, now)}
+		e.attributeReply(p, &rep, "", now)
+		e.emit(rep)
 		e.finish(p, "")
 		return
 	}
@@ -428,9 +455,10 @@ func (e *Engine) onAnswer(p *pending, a answered) {
 		e.finish(p, reason)
 		return
 	}
-	said := e.attributed(p, false, a.ans.Topic, citeSources(e.s.Persona.Language, text, a.ans.Sources, p.snips), now)
-	if e.emit(Reply{Text: said, Trigger: TriggerQuestion, Question: p.line.Text, NeedsResearch: a.ans.NeedsResearch, Sources: a.ans.Sources,
-		Timing: e.timing(p, false, now)}) {
+	rep := Reply{Text: citeSources(e.s.Persona.Language, text, a.ans.Sources, p.snips), Trigger: TriggerQuestion, Question: p.line.Text,
+		NeedsResearch: a.ans.NeedsResearch, Sources: a.ans.Sources, Timing: e.timing(p, false, now)}
+	e.attributeReply(p, &rep, a.ans.Topic, now)
+	if e.emit(rep) {
 		e.posts = append(e.posts, now)
 		e.lastPost = now
 		e.total++
@@ -495,7 +523,7 @@ func (e *Engine) onAddressedAnswer(p *pending, a answered) {
 	if a.err == nil && rep.Research == "" && text != "" {
 		rep.Text = e.vouch(p, a.ans, rep.Text, live)
 	}
-	rep.Text = e.attributed(p, p.trig.VoiceWanted, a.ans.Topic, rep.Text, e.d.Now())
+	e.attributeReply(p, &rep, a.ans.Topic, e.d.Now())
 	rep.Timing = e.timing(p, a.err != nil || a.ans.Answer == "", e.d.Now())
 	e.emit(rep)
 	e.rememberTopic(p.topic)

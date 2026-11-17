@@ -20,7 +20,7 @@ const (
 	// completions, open PRs) in the brief.
 	hiveStatusMaxListed = 5
 	// hiveStatusMaxChars bounds the whole brief.
-	hiveStatusMaxChars = 1500
+	hiveStatusMaxChars = 2000
 	// hiveStatusTextCap truncates one listed item's free text.
 	hiveStatusTextCap = 80
 )
@@ -60,6 +60,7 @@ func hiveStatusBrief(status *StatusPayload, snap chatSnapshot) string {
 	fmt.Fprintf(&b, ". Actionable: %d issues, %d PRs. Held: %d issues, %d PRs. Blocked: %d issues, %d PRs. Awaiting a decision: %d.",
 		oi.Buckets.Actionable.Issues, oi.Buckets.Actionable.PRs, oi.Buckets.Held.Issues, oi.Buckets.Held.PRs,
 		oi.Buckets.Blocked.Issues, oi.Buckets.Blocked.PRs, t.AwaitingDecision)
+	hiveStatusHeadline(&b, status)
 
 	var working, blocked, done []string
 	for _, a := range snap.Agents {
@@ -94,6 +95,30 @@ func hiveStatusBrief(status *StatusPayload, snap chatSnapshot) string {
 		b.WriteString(" Some counts are last-good figures from " + status.StaleSince + ".")
 	}
 	return chatTruncate(b.String(), hiveStatusMaxChars)
+}
+
+// hiveStatusHeadline appends the dashboard's headline metrics by the names
+// the dashboard shows them: board pressure (the sidebar "BP = issues/PRs"
+// pill, the open issues and PRs on this hive's board, #17240), actionable
+// now, test coverage and stale claims. Asked "what is the board pressure of
+// the hive?" in the live Discord test she had no live number and cited an
+// old PR instead.
+func hiveStatusHeadline(b *strings.Builder, status *StatusPayload) {
+	oi := status.OpenItems
+	fmt.Fprintf(b, " Board pressure (BP): %d/%d, that is %d open issues and %d open PRs on the hive's board.", oi.Issues, oi.PRs, oi.Issues, oi.PRs)
+	if an := status.ActionableNow; an.Total > 0 || an.Issues > 0 || an.PRs > 0 {
+		fmt.Fprintf(b, " Actionable now: %d (%d issues, %d PRs).", an.Total, an.Issues, an.PRs)
+	}
+	if c := status.OverviewCoverage; c != nil && c.Coverage > 0 {
+		if c.Target > 0 {
+			fmt.Fprintf(b, " Test coverage: %d%% (target %d%%).", c.Coverage, c.Target)
+		} else {
+			fmt.Fprintf(b, " Test coverage: %d%%.", c.Coverage)
+		}
+	}
+	if sla := status.SLA; sla != nil && sla.StaleCount > 0 {
+		fmt.Fprintf(b, " Stale claims past their SLA: %d.", sla.StaleCount)
+	}
 }
 
 // hiveStatusList appends "<label>: a; b; c (and N more)." when list has items.

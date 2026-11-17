@@ -19,9 +19,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
@@ -49,6 +51,23 @@ const (
 	// "rsch-" + 16 hex characters.
 	kickIDPrefix      = "rsch-"
 	kickIDRandomBytes = 8
+
+	// coldStartSettle is how long a just-started research agent's CLI is
+	// given to boot before a kick is typed into it: a kick delivered to a
+	// pane still launching sees no CLI marker, the runtime restarts the
+	// agent as crashed, and the kick fails with "CLI did not reach input
+	// prompt" (live Discord test).
+	coldStartSettle = 20 * time.Second
+	// coldStartWait bounds the whole wait for a cold agent to settle.
+	coldStartWait = 3 * time.Minute
+	// readyPoll is how often a cold agent's status is read while waiting.
+	readyPoll = time.Second
+	// maxPromptRetries is how many times a kick that failed because the
+	// agent's CLI never reached its input prompt is queued again, after
+	// the agent settles, before the failure is reported.
+	maxPromptRetries = 2
+	// promptNotReady is the runtime's failure text for that case.
+	promptNotReady = "did not reach input prompt"
 
 	displayName = "research"
 	emoji       = "🔎"
@@ -200,16 +219,31 @@ type Pool struct {
 	// randRead fills kick ID randomness; crypto/rand.Read unless a test
 	// swaps it.
 	randRead func([]byte) (int, error)
+	// async runs a delayed enqueue or warm start (a goroutine unless a
+	// test swaps it); wait sleeps d unless ctx ends first; now is the
+	// clock.
+	async func(func())
+	wait  func(ctx context.Context, d time.Duration) bool
+	now   func() time.Time
 
 	mu      sync.Mutex
 	tracked map[string]*trackedKick
 	order   []string
+	// observers are Observe's callbacks, for failures the pool itself
+	// raises.
+	observers []func(Event)
 }
 
 type trackedKick struct {
-	agent string
-	meta  map[string]string
-	done  bool
+	// id is the kick ID Dispatch returned; a retry is queued under a new
+	// runtime ID that maps back to it.
+	id     string
+	agent  string
+	meta   map[string]string
+	prompt string
+	// retries counts re-queues after a prompt-not-ready failure.
+	retries int
+	done    bool
 }
 
 // NewPool wraps rt (normally the hive's crux.Runtime) for a pool of size
@@ -219,7 +253,64 @@ func NewPool(rt any, size int) (*Pool, error) {
 	if !ok {
 		return nil, ErrUnsupportedRuntime
 	}
-	return &Pool{rt: r, names: AgentNames(PoolSize(size)), randRead: rand.Read, tracked: make(map[string]*trackedKick)}, nil
+	return &Pool{
+		rt: r, names: AgentNames(PoolSize(size)), randRead: rand.Read, tracked: make(map[string]*trackedKick),
+		async: func(f func()) { go f() }, wait: sleepCtx, now: time.Now,
+	}, nil
+}
+
+// sleepCtx sleeps d, reporting false when ctx ends first.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return false
+	case <-t.C:
+		return true
+	}
+}
+
+// settled reports whether agent's CLI has had time to boot: running, not
+// starting, and started at least coldStartSettle ago.
+func (p *Pool) settled(agent string) bool {
+	st, err := p.rt.GetStatusFast(agent)
+	if err != nil || st == nil || st.State != crux.StateRunning || st.Starting {
+		return false
+	}
+	return st.StartedAt == nil || p.now().Sub(*st.StartedAt) >= coldStartSettle
+}
+
+// awaitSettled waits, bounded by coldStartWait, for agent to settle.
+func (p *Pool) awaitSettled(ctx context.Context, agent string) bool {
+	deadline := p.now().Add(coldStartWait)
+	for !p.settled(agent) {
+		if p.now().After(deadline) || !p.wait(ctx, readyPoll) {
+			return false
+		}
+	}
+	return true
+}
+
+// Warm starts every stopped research agent so the first research request
+// of a live meeting finds a booted CLI instead of a cold start. A meeting
+// calls it when it starts and again on its research tick, so an agent
+// stopped mid-meeting comes back. Paused or operator-stopped agents are
+// left alone. It returns at once; the starts run in the background.
+func (p *Pool) Warm(ctx context.Context) {
+	for _, name := range p.names {
+		st, err := p.rt.GetStatusFast(name)
+		if err != nil || st == nil || st.Paused || st.OperatorStopped || st.Starting ||
+			st.State == crux.StateRunning || st.State == crux.StatePaused {
+			continue
+		}
+		p.async(func() {
+			if err := p.rt.Start(context.WithoutCancel(ctx), name); err != nil {
+				return
+			}
+			p.awaitSettled(context.WithoutCancel(ctx), name)
+		})
+	}
 }
 
 // Agents returns the pool's agent names.
@@ -266,12 +357,52 @@ func (p *Pool) Dispatch(ctx context.Context, query string, meta map[string]strin
 	if err != nil {
 		return "", err
 	}
-	p.track(id, agent, meta)
-	if _, err := p.rt.EnqueueKick(agent, id, Prompt(query)); err != nil {
+	prompt := Prompt(query)
+	p.track(id, agent, meta, prompt)
+	if !p.settled(agent) {
+		// A cold (just started) agent: queue once its CLI has booted, off
+		// the caller's goroutine, so the kick is not typed into a pane
+		// still launching. A failure is reported as the kick's failed
+		// event, like any delivery failure.
+		p.async(func() { p.enqueueWhenSettled(context.WithoutCancel(ctx), id, agent, id, prompt) })
+		return id, nil
+	}
+	if _, err := p.rt.EnqueueKick(agent, id, prompt); err != nil {
 		p.untrack(id)
 		return "", fmt.Errorf("research pool: queue on %s: %w", agent, err)
 	}
 	return id, nil
+}
+
+// enqueueWhenSettled waits for agent to settle and queues prompt under
+// runtimeID (which maps to the kick id); when it cannot, the kick fails
+// through the observers.
+func (p *Pool) enqueueWhenSettled(ctx context.Context, id, agent, runtimeID, prompt string) {
+	if !p.awaitSettled(ctx, agent) {
+		p.fail(id, "research agent "+agent+" did not finish starting")
+		return
+	}
+	if _, err := p.rt.EnqueueKick(agent, runtimeID, prompt); err != nil {
+		p.fail(id, "could not queue on "+agent+": "+err.Error())
+	}
+}
+
+// fail reports a pool-side failure (a delayed enqueue that could not run)
+// as the kick's failed event.
+func (p *Pool) fail(id, reason string) {
+	p.mu.Lock()
+	tk, ok := p.tracked[id]
+	if !ok || tk.done {
+		p.mu.Unlock()
+		return
+	}
+	tk.done = true
+	out := Event{KickID: tk.id, Agent: tk.agent, Meta: tk.meta, Kind: EventFailed, Text: reason}
+	obs := slices.Clone(p.observers)
+	p.mu.Unlock()
+	for _, fn := range obs {
+		fn(out)
+	}
 }
 
 // reEnsure registers the agents again with the base Ensure was given. It
@@ -353,15 +484,20 @@ func (p *Pool) pick() (string, error) {
 	return best, nil
 }
 
-func (p *Pool) track(id, agent string, meta map[string]string) {
+func (p *Pool) track(id, agent string, meta map[string]string, prompt string) {
 	cp := make(map[string]string, len(meta))
 	for k, v := range meta {
 		cp[k] = v
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.tracked[id] = &trackedKick{agent: agent, meta: cp}
-	p.order = append(p.order, id)
+	p.trackLocked(id, &trackedKick{id: id, agent: agent, meta: cp, prompt: prompt})
+}
+
+// trackLocked records tk under the runtime ID runtimeID.
+func (p *Pool) trackLocked(runtimeID string, tk *trackedKick) {
+	p.tracked[runtimeID] = tk
+	p.order = append(p.order, runtimeID)
 	for len(p.order) > maxTrackedKicks {
 		delete(p.tracked, p.order[0])
 		p.order = p.order[1:]
@@ -372,25 +508,50 @@ func (p *Pool) track(id, agent string, meta map[string]string) {
 // returns its remover. Each kick yields queued, running, any number of
 // finding, then exactly one of done or failed.
 func (p *Pool) Observe(fn func(Event)) (remove func()) {
-	return p.rt.AddKickObserver(func(ev crux.KickEvent) {
-		if out, ok := p.translate(ev); ok {
+	p.mu.Lock()
+	p.observers = append(p.observers, fn)
+	idx := len(p.observers) - 1
+	p.mu.Unlock()
+	rm := p.rt.AddKickObserver(func(ev crux.KickEvent) {
+		out, ok, retry := p.translate(ev)
+		if retry != nil {
+			p.async(retry)
+		}
+		if ok {
 			fn(out)
 		}
 	})
+	return func() {
+		rm()
+		p.mu.Lock()
+		if idx < len(p.observers) {
+			p.observers[idx] = func(Event) {}
+		}
+		p.mu.Unlock()
+	}
 }
 
 // translate maps a runtime kick event for a tracked kick to a pool Event.
-func (p *Pool) translate(ev crux.KickEvent) (Event, bool) {
+// A failure because the agent's CLI never reached its input prompt (a
+// cold start the runtime restarted) is not reported while retries remain:
+// it returns a retry to run off the observer instead, which queues the
+// kick again once the agent settles.
+func (p *Pool) translate(ev crux.KickEvent) (Event, bool, func()) {
 	if ev.KickID == "" {
-		return Event{}, false
+		return Event{}, false, nil
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	tk, ok := p.tracked[ev.KickID]
 	if !ok || tk.done {
-		return Event{}, false
+		return Event{}, false, nil
 	}
-	out := Event{KickID: ev.KickID, Agent: tk.agent, Meta: tk.meta}
+	if ev.Event == crux.KickEventFailed && strings.Contains(ev.Detail, promptNotReady) && tk.retries < maxPromptRetries && tk.prompt != "" {
+		if retry := p.retryLocked(tk); retry != nil {
+			return Event{}, false, retry
+		}
+	}
+	out := Event{KickID: tk.id, Agent: tk.agent, Meta: tk.meta}
 	switch ev.Event {
 	case crux.KickEventQueued:
 		out.Kind = EventQueued
@@ -417,5 +578,24 @@ func (p *Pool) translate(ev crux.KickEvent) (Event, bool) {
 	if out.Kind == EventDone || out.Kind == EventFailed {
 		tk.done = true
 	}
-	return out, true
+	if out.Kind == EventQueued && tk.retries > 0 {
+		// The kick was queued already; its retry's queued event is noise.
+		return Event{}, false, nil
+	}
+	return out, true, nil
+}
+
+// retryLocked tracks a fresh runtime ID for tk and returns the delayed
+// re-queue, or nil when no ID can be made.
+func (p *Pool) retryLocked(tk *trackedKick) func() {
+	b := make([]byte, kickIDRandomBytes)
+	if _, err := p.randRead(b); err != nil {
+		return nil
+	}
+	runtimeID := kickIDPrefix + hex.EncodeToString(b)
+	tk.retries++
+	p.trackLocked(runtimeID, tk)
+	return func() {
+		p.enqueueWhenSettled(context.Background(), runtimeID, tk.agent, runtimeID, tk.prompt)
+	}
 }

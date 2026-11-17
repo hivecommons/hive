@@ -90,6 +90,7 @@ func answerPrompt(mode, who, question string, snips []Snippet, recent []recentLi
 	} else {
 		b.WriteString("Name where facts come from: give issue and PR numbers (#123) and work item ids as the context has them, and list the context numbers you used in sources.\n")
 	}
+	b.WriteString("Address people only by the names under People in the meeting. Speech-to-text sometimes mishears your own name as another word (Eddie, Ready, Betsy): a name in the transcript that is not one of those people is you being addressed, never a new participant, so never hand it the floor or speak to it.\n")
 	b.WriteString("Only state what the context or the transcript supports. If they do not answer it, say you are not sure and set confidence below 0.5; never guess numbers, names, dates or links.\n")
 	if hasHiveStatus(snips) {
 		b.WriteString("Context marked \"" + HiveStatusSource + "\" is the hive's own state read just now: answer questions about the hive's issues, PRs, agents and work from it directly, with its numbers, and set needs_research to false.\n")
@@ -101,6 +102,16 @@ func answerPrompt(mode, who, question string, snips []Snippet, recent []recentLi
 		for i, s := range snips {
 			fmt.Fprintf(&b, "[%d] %s: %s: %s\n", i+1, sanitize(s.Source), sanitize(s.Title), sanitize(s.Text))
 		}
+	}
+	if people := speakers(recent, ""); len(people) > 0 {
+		b.WriteString("\nPeople in the meeting: ")
+		for i, p := range people {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			b.WriteString(sanitize(p))
+		}
+		b.WriteString("\n")
 	}
 	if len(recent) > 0 {
 		b.WriteString("\nRecent transcript:\n")

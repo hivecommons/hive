@@ -23,6 +23,14 @@ type ResearchDispatcher interface {
 	Dispatch(ctx context.Context, query string, meta map[string]string) (kickID string, err error)
 }
 
+// ResearchWarmer is a dispatcher that can boot its agents ahead of the
+// first request: a live meeting warms the pool when it starts and keeps it
+// warm while it runs, so a question is not answered "I couldn't look that
+// up" because the agent was still cold (live Discord test).
+type ResearchWarmer interface {
+	Warm(ctx context.Context)
+}
+
 // Research signal kinds: the agent's [FINDING], [COMPLETE] and [ERROR]
 // output for a kick.
 const (
