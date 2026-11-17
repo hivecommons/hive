@@ -219,7 +219,8 @@ agents:
 
 `exclude_author_model` defaults to true. `exclude_author_family` compares the
 normalized vendor prefix before the first dash (`claude`, `gpt`, `gemini`,
-`grok`, ...). If no pool entry is eligible, `fallback` is `pinned` (use the
+`grok`, ...), after dropping a provider path and `:variant` suffix, so
+`anthropic/claude-opus-5-5` and `claude-sonnet-5` are the same family. If no pool entry is eligible, `fallback` is `pinned` (use the
 agent's configured `model`), `skip` (omit the PR from that kick), or
 `requires_human` (keep the PR visible with a human-review marker). Reviewers
 record the delegated sub-agent's model as `review_model` in the verdict artifact,
@@ -407,6 +408,10 @@ is refused at the tier the non-conversational half requires.
 
 For prompt file resolution and the complete built-in `${VAR}` reference, see
 [Policy and prompt templates](../policies/README.md).
+
+### Sandbox settings (`agents.<name>.sandbox`)
+
+An agent's `sandbox` block (image, runtime, Job fields) is editable from its General tab under "Sandbox settings: image, runtime and Job", and through `PUT /api/config/agent/<name>/general` with `sandboxImage`, `sandboxRuntime`, `sandboxJob` and `sandboxCopyFrom` (hivecommons/hive#18797). A blank value inherits the hive-wide `agent_sandbox` default, which is set under Settings, Security. "Copy sandbox settings from..." copies another agent's complete block, Secret names included and never values. Enabling a sandbox that resolves no image is refused with the field named. The full set of controls and keys is in [sandbox-isolation.md](sandbox-isolation.md#setting-up-a-sandbox-from-the-dashboard).
 
 ### Declarative extensions
 

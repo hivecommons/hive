@@ -248,6 +248,8 @@ Full entry: [Agent Logs](dashboard-sections/workflow-and-agents.md#agent-logs).
 
 Each worker Hive runs, what it is doing now, and buttons to pause, restart or configure it.
 
+The pause/resume control is owner-only but never absent: below the owner role, or while the role is still being checked, it renders disabled with the tooltip "Needs the owner role" or "Checking your access...". Cards and the detail panel repaint when the role settles. A paused sandboxed agent offers plain `resume` (no session to start). The cadence table shows a single `paused` chip (with its reason on hover) beside the agent name; the mode columns show plain `paused` text.
+
 Full entry: [Agents](dashboard-sections/workflow-and-agents.md#agents).
 
 ## Hive activity monitor

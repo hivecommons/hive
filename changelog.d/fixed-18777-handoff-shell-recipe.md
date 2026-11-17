@@ -1,0 +1,1 @@
+- A workflow hand-off to a Copilot session no longer ends in a false "no hive-open-pr tool" stand-down: the prompt now says `git` and `hive-open-pr` are shell commands (with the push and PR-request commands for the repo and issue) and that a stand-down is for a refused command, so the TechDocs drafter can open its draft PR (#18777).
