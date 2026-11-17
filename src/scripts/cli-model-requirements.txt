@@ -3,3 +3,6 @@
 # version, its allowlist must contain the model. Add a line when a CLI release
 # introduces a model (#9805).
 claude claude-sonnet-5-5 2.1.284
+claude claude-fable-5-1 2.1.257
+claude claude-haiku-5-5 2.1.293
+claude claude-fable-5-2 2.1.321

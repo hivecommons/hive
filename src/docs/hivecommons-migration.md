@@ -79,6 +79,11 @@ closing them.
    and source version, then a reviewed immutable-digest update in Hive's
    `.github/workflows/pr-verifier.yml` and the infra reusable consumer.
    Do not substitute an unverified tag or make forks use self-hosted runners.
+   Since [#18764](https://github.com/hivecommons/hive/issues/18764) Hive's own
+   `.github/workflows/pr-verifier.yml` no longer pulls this image: it records
+   `PR Type` and `PR Issue` from the in-repo port of the same v0.4.3 rules
+   (`.github/scripts/pr-verifier.cjs`), so the ARM64 constraint above no
+   longer applies to Hive's verifier.
 6. **Hosted hub web domain** — In progress under
    [#5951](https://github.com/hivecommons/hive/issues/5951); the canonical hub
    is `https://hive.hivecommons.dev`, while `https://hive.kubestellar.io`

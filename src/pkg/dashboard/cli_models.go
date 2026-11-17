@@ -266,15 +266,22 @@ func setCopilotSDKHelperPathForTest(t interface {
 // file) or fails. Live discovery via api.anthropic.com/v1/models is strongly
 // preferred; this is only a floor so the dropdown is never empty. Refreshed
 // 2026-08-03 from a live /v1/models response (11 ids, in API order);
-// claude-sonnet-5-5 added per the Claude Code 2.1.284 changelog (#9804). Keep
-// it in sync with CLAUDE_CLI_MODELS in static/index.html. Both the canonical
-// ids AND the bare aliases the CLI accepts are included.
+// claude-sonnet-5-5 added per the Claude Code 2.1.284 changelog (#9804).
+// Refreshed 2026-11-17 (#18753) from Anthropic's models overview and the
+// Claude Code changelog: claude-fable-5-2 (2.1.321), claude-fable-5-1
+// (2.1.257), claude-haiku-5-5 (2.1.293) and the bare `fable` alias, all
+// accepted by the pinned 2.1.326. Keep it in sync with CLAUDE_CLI_MODELS in
+// static/index.html. Both the canonical ids AND the bare aliases the CLI
+// accepts are included.
 var claudeStaticModels = []string{
 	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-sonnet-5-5",
 	"claude-sonnet-5",
+	"claude-fable-5-2",
+	"claude-fable-5-1",
 	"claude-fable-5",
+	"claude-haiku-5-5",
 	"claude-opus-4-8",
 	"claude-opus-4-7",
 	"claude-sonnet-4-6",
@@ -287,6 +294,7 @@ var claudeStaticModels = []string{
 	"opus",
 	"sonnet",
 	"haiku",
+	"fable",
 }
 
 // copilotStaticModels is the fallback offered when the Copilot models probe
@@ -393,6 +401,7 @@ var claudeAlwaysIncludeModels = []string{
 	"opus",
 	"sonnet",
 	"haiku",
+	"fable",
 }
 
 // bobStaticModels is bob's complete model list: exactly one entry, the auto
@@ -443,16 +452,21 @@ var geminiStaticModels = []string{
 }
 
 // claudePinnedCLIModels is the closed model set accepted by the Claude Code
-// version pinned in src/Dockerfile. The Anthropic account catalog can list
-// models that the installed CLI refuses with "version X or newer is required";
-// intersecting live and fallback lists with this set keeps the dashboard from
-// offering a value this image cannot launch (#8418).
+// version pinned in src/Dockerfile (2.1.326 as of #18753). The Anthropic
+// account catalog can list models that the installed CLI refuses with
+// "version X or newer is required"; intersecting live and fallback lists with
+// this set keeps the dashboard from offering a value this image cannot launch
+// (#8418). Each id's first accepting CLI version is recorded in
+// src/scripts/cli-model-requirements.txt.
 var claudePinnedCLIModels = []string{
 	"claude-opus-5-5",
 	"claude-opus-5",
 	"claude-sonnet-5-5",
 	"claude-sonnet-5",
+	"claude-fable-5-2",
+	"claude-fable-5-1",
 	"claude-fable-5",
+	"claude-haiku-5-5",
 	"claude-opus-4-8",
 	"claude-opus-4-7",
 	"claude-sonnet-4-6",
@@ -464,6 +478,7 @@ var claudePinnedCLIModels = []string{
 	"opus",
 	"sonnet",
 	"haiku",
+	"fable",
 }
 
 // geminiPinnedCLIModels is the conservative Gemini CLI allowlist used to bound

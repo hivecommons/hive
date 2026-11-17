@@ -18,7 +18,7 @@ auth failures or advisory post failures — it files an issue on
 `hivecommons/hive` titled `[selfreport] <class>: <short message>`, or adds
 itself to an open issue that already describes the problem (fingerprint
 match, `hive/selfreport` + class match, or keyword match on a human-filed
-issue). Joining posts one "Also seen on **<hive>**" comment per 24h and
+issue). Joining adds an "Also seen on **<hive>**" section (at most once per 24h) to one seen-log comment per poster, edited in place so it does not re-notify, and
 bumps the `Affected hives (N)` block in the body, where each hive has its own
 line — `- <hive> (instance <id>) — owner(s): @login — seen N, last <time>` —
 naming the GitHub login(s) of the hive owner (`dashboard.authorized_users`
