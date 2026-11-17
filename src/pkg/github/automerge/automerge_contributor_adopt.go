@@ -721,6 +721,9 @@ func adoptionBlockerTextFor(obs stageObservation, rec stagelabels.Record, block 
 		return fmt.Sprintf("the hive tried to re-home this PR onto `%s%d` (`%s`) and could not open the superseding PR.", adoptBranchPrefix, obs.Number, rec.AdoptReason)
 	}
 	if name := obs.Detail.RedCheck(obs.HeadSHA); name != "" {
+		if adoptionLaneObservedOnly(obs) && strings.HasPrefix(obs.Reason, stageReasonOptionalCheckFailing) {
+			return fmt.Sprintf("check `%s` is red on this head and no fix landed. It is not a required check, but auto-merge is off for this repository, so a person merges this PR: re-run or fix the check, or merge past it.", name)
+		}
 		return fmt.Sprintf("check `%s` is red on this head and no fix landed.", name)
 	}
 	if strings.HasPrefix(obs.LaneReason, "required-check-failing:") || strings.HasPrefix(obs.LaneReason, "check-failing:") {
@@ -2465,9 +2468,20 @@ func adoptionCIPending(obs stageObservation) bool {
 
 // adoptionOptionalCheckOnly reports whether the only thing the lane holds
 // against the head is an optional check: the merge gate does not read it,
-// so it is nothing a person must decide (hivecommons/hive#13040).
+// so it is nothing a person must decide (hivecommons/hive#13040). That
+// holds only where the lane merges past it. On a repo whose auto-merge is
+// off the lane only observes (repo-auto-merge-disabled) and a person
+// merges, so the red check is theirs to weigh: without the escalation the
+// PR sat at 074 with nothing for the hive to push and nobody asked
+// (projectbluefin/actions#752).
 func adoptionOptionalCheckOnly(obs stageObservation) bool {
-	return strings.HasPrefix(nonEmpty(obs.Reason, obs.LaneReason), stageReasonOptionalCheckFailing) && !verdictBlocks(obs.Detail) && !verdictNeedsHuman(obs.Detail)
+	return strings.HasPrefix(nonEmpty(obs.Reason, obs.LaneReason), stageReasonOptionalCheckFailing) && !adoptionLaneObservedOnly(obs) && !verdictBlocks(obs.Detail) && !verdictNeedsHuman(obs.Detail)
+}
+
+// adoptionLaneObservedOnly reports a head the lane only observed because
+// the repo's auto-merge is off: nothing the hive does will merge it.
+func adoptionLaneObservedOnly(obs stageObservation) bool {
+	return obs.LaneReason == observeOnlyReasonRepoAutoMergeDisabled
 }
 
 // adoptionForkGuardOnly reports a head whose only blocker is a fork guard:
@@ -2571,7 +2585,8 @@ func inPlaceRehomeReason(obs stageObservation, rec stagelabels.Record, policy St
 // adoptionStalledReason is the stage-085 reason for an adoption nobody is
 // working, or "": a supersession that opened no PR, or an adopted head that
 // sat past the dwell with CI idle and a real blocker named. A live
-// superseder is progress; an optional check alone is not a blocker.
+// superseder is progress; an optional check alone is not a blocker unless
+// the repo's auto-merge is off (adoptionOptionalCheckOnly).
 func adoptionStalledReason(obs stageObservation, rec stagelabels.Record, policy StageLabelPolicy, now time.Time) string {
 	return adoptionStalledReasonWith(obs, rec, policy, now, false)
 }
