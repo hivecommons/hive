@@ -312,3 +312,37 @@ func (b *boot) ownerIdentityStore() *github.OwnerIdentityStore {
 	}
 	return b.ownerIdentity
 }
+
+// checkRemoteWriteIdentity is the dashboard's dry run for a
+// project.remote_write_identity change (hivecommons/hive#18516): the
+// hand-written reference repos are resolved under setting with the live
+// seams, and the error a hand-written write entry would stop the next boot
+// with is returned so the change is refused instead. Nothing is installed.
+func (b *boot) checkRemoteWriteIdentity(ctx context.Context, setting string) error {
+	if b.githubProxy == nil || b.cfg == nil {
+		return nil
+	}
+	if err := config.ValidateRemoteWriteIdentity(setting); err != nil {
+		return err
+	}
+	rt := b.referenceRepos
+	if rt == nil {
+		rt = b.newReferenceRepoRuntime()
+	}
+	deps := rt.deps
+	deps.writeIdentity = func() string { return setting }
+	_, err := buildReferenceRepoPolicies(ctx, config.HandWrittenReferenceRepos(b.cfg.Project.ReferenceRepos), deps, b.logger)
+	return err
+}
+
+// remoteWriteIdentityChanged is the dashboard's hook after the setting was
+// saved: one full pass (derive, resolve, install) so the next write already
+// carries the new identity and the Settings page reloads the resolved state.
+// It runs on the boot context, not the request's, because the pass starts
+// background work (the read-only notice, the own-item follow-up).
+func (b *boot) remoteWriteIdentityChanged() {
+	if b.referenceRepos == nil || b.ctx == nil {
+		return
+	}
+	b.rederiveReferenceRepos(b.ctx)
+}

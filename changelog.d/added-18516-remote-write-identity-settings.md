@@ -1,0 +1,1 @@
+- Settings → Repos → Reference repos: owner-only "Post on other projects as" control (Hive bot, falling back to me / Hive bot only / Me) for `project.remote_write_identity`, a per-repo line saying which identity posts there and why, `PUT /api/config/reference-repos/write-identity`, and the docs (#18516).

@@ -87,7 +87,11 @@ assert.match(w2, />🔑 owner account</);
 const r = renderReferenceRepoDerived({full: 'acme/docs', derived_from: 'cncf/techdocs#395', credential_state: 'read-only', credential_reason: 'the hive owner\'s token is no longer valid'});
 assert.match(r, /<span class="repo-reference-source">cncf\/techdocs#395<\/span>/);
 assert.match(r, /data-credential-state="read-only" title="the hive owner&#39;s token is no longer valid">read-only</);
-for (const out of [w, r]) {
+// hivecommons/hive#18516: a bot-identity entry names the App bot and why.
+const b = renderReferenceRepoDerived({full: 'hivecommons/docs', derived_from: 'cncf/techdocs#395', credential_state: 'write-tier', credential_login: 'hivecommons-hive[bot]', credential_identity: 'bot', credential_note: 'the hive\'s GitHub App is installed on hivecommons'});
+assert.match(b, /data-credential-state="write-tier"[^>]*>🤖 as hivecommons-hive\[bot\]</);
+assert.match(b, /installed on hivecommons/);
+for (const out of [w, r, b]) {
   assert.doesNotMatch(out, /<button|<input|data-action=/, 'derived entries must offer no edit or delete control');
 }
 console.log('ok');

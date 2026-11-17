@@ -12,6 +12,15 @@ import (
 	"time"
 )
 
+// ConfirmingChat is a Quorum that can confirm a chat line reached the
+// meeting (chat.post confirm:true, quorum 0.2.2+). The real Client
+// implements it; the manager then marks the consent notice posted only on a
+// confirmed delivery. A Quorum without it (in-process fakes) is trusted on a
+// nil ChatPost error.
+type ConfirmingChat interface {
+	ChatPostConfirmed(ctx context.Context, nativeID, text string) (bool, error)
+}
+
 // Quorum is the slice of the Quorum client the manager uses; tests fake it.
 type Quorum interface {
 	Join(ctx context.Context, a JoinArgs) (JoinResult, error)
@@ -32,6 +41,16 @@ const (
 	// DefaultConsentRetry spaces consent-notice retries while chat is
 	// unavailable, so a platform without chat is not called on every line.
 	DefaultConsentRetry = time.Minute
+	// DefaultConsentAttempts bounds how often a transient consent failure
+	// (not_live, rate_limited, a dropped call) is retried before hive gives
+	// up and leaves: it must not stay in a meeting that was never told.
+	DefaultConsentAttempts = 3
+	// ReasonConsentUndelivered is the state reason when hive left because
+	// the consent notice could be delivered neither in chat nor by voice.
+	ReasonConsentUndelivered = "consent_undelivered"
+	// ConsentViaChat and ConsentViaVoice record how the notice was delivered.
+	ConsentViaChat  = "chat"
+	ConsentViaVoice = "voice"
 	// ReasonDeclined is the state reason for a platform join request the
 	// owner declined.
 	ReasonDeclined = "declined"
@@ -104,6 +123,9 @@ type Options struct {
 	CallTimeout  time.Duration
 	// ConsentRetry spaces consent retries; zero means DefaultConsentRetry.
 	ConsentRetry time.Duration
+	// ConsentAttempts bounds consent tries after transient failures; zero
+	// means DefaultConsentAttempts.
+	ConsentAttempts int
 	// VoiceOnAddress starts every bot able to speak (meetings.voice_on_address),
 	// so voice can be turned on later in the meeting; whether hive actually
 	// speaks is still the meeting's voice toggle.
@@ -145,13 +167,15 @@ type Manager struct {
 
 	mu        sync.Mutex
 	consentAt map[string]time.Time
-	watchers  map[string]context.CancelFunc
-	lobby     map[string]*time.Timer
-	listeners map[int]func(Update)
-	nextL     int
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	// consentTries counts consent attempts per meeting.
+	consentTries map[string]int
+	watchers     map[string]context.CancelFunc
+	lobby        map[string]*time.Timer
+	listeners    map[int]func(Update)
+	nextL        int
+	ctx          context.Context
+	cancel       context.CancelFunc
+	wg           sync.WaitGroup
 }
 
 // ErrInvalidRequest wraps a rejected JoinRequest.
@@ -185,6 +209,9 @@ func NewManager(opts Options) (*Manager, error) {
 	if opts.ConsentRetry <= 0 {
 		opts.ConsentRetry = DefaultConsentRetry
 	}
+	if opts.ConsentAttempts <= 0 {
+		opts.ConsentAttempts = DefaultConsentAttempts
+	}
 	log := opts.Logger
 	if log == nil {
 		log = slog.New(slog.DiscardHandler)
@@ -192,11 +219,12 @@ func NewManager(opts Options) (*Manager, error) {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Manager{
 		opts: opts, log: log, leave: NewLeaveMatcher(opts.LeavePhrases),
-		watchers:  map[string]context.CancelFunc{},
-		consentAt: map[string]time.Time{},
-		lobby:     map[string]*time.Timer{},
-		listeners: map[int]func(Update){},
-		ctx:       ctx, cancel: cancel,
+		watchers:     map[string]context.CancelFunc{},
+		consentAt:    map[string]time.Time{},
+		consentTries: map[string]int{},
+		lobby:        map[string]*time.Timer{},
+		listeners:    map[int]func(Update){},
+		ctx:          ctx, cancel: cancel,
 	}, nil
 }
 
@@ -544,40 +572,115 @@ func (m *Manager) handleState(ctx context.Context, id string, ev Event) bool {
 	} else {
 		m.clearLobby(id)
 	}
-	if mt.State == StateLive {
-		m.ensureConsent(ctx, mt)
+	if mt.State == StateLive && m.ensureConsent(ctx, mt) {
+		return true
 	}
 	return mt.State.Terminal()
 }
 
-// ensureConsent posts the consent notice once, the first thing hive says
-// in the meeting. A failed post is retried on the next event.
-func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) {
+// ensureConsent delivers the consent notice once, the first thing hive
+// says in the meeting, and reports whether hive left the meeting because it
+// could not. The notice counts as posted only when Quorum confirms the chat
+// line reached the meeting. If chat cannot deliver it and the meeting has
+// voice, hive speaks it instead; if neither works, hive leaves
+// (ReasonConsentUndelivered) rather than stay in a meeting that was never
+// told. Transient failures (the bot not admitted yet, a rate limit, a
+// dropped call) are retried on later events, at most ConsentAttempts times.
+func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 	if mt.ConsentPostedAt != nil || mt.State != StateLive {
-		return
+		return false
 	}
 	now := m.opts.Now()
 	m.mu.Lock()
 	last, tried := m.consentAt[mt.ID]
 	if tried && now.Sub(last) < m.opts.ConsentRetry {
 		m.mu.Unlock()
-		return
+		return false
 	}
 	m.consentAt[mt.ID] = now
+	m.consentTries[mt.ID]++
+	attempt := m.consentTries[mt.ID]
 	m.mu.Unlock()
+
+	chatErr := m.postConsentChat(ctx, mt)
+	if chatErr == nil {
+		m.markConsent(mt.ID, ConsentViaChat)
+		return false
+	}
+	if consentTransient(chatErr) && attempt < m.opts.ConsentAttempts {
+		m.log.Warn("[meetings] consent notice not posted; will retry", "meeting", mt.ID, "attempt", attempt, "error", chatErr)
+		if mt.ConsentError != chatErr.Error() {
+			_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentError = chatErr.Error() })
+		}
+		return false
+	}
+	why := "chat unavailable (" + chatErr.Error() + ")"
+	if mt.VoiceCapable && mt.VoiceEnabled {
+		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
+		sayErr := m.opts.Quorum.Say(cctx, mt.NativeID, m.opts.ConsentText)
+		cancel()
+		if sayErr == nil {
+			m.log.Info("[meetings] consent notice spoken; chat could not deliver it", "meeting", mt.ID, "chat_error", chatErr)
+			m.markConsent(mt.ID, ConsentViaVoice)
+			return false
+		}
+		why += ", voice failed (" + sayErr.Error() + ")"
+	} else {
+		why += ", voice off"
+	}
+	m.log.Warn("[meetings] consent notice could not be delivered; leaving the meeting", "meeting", mt.ID, "reason", why)
+	_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentError = why })
+	lctx, cancel := context.WithTimeout(m.ctx, m.opts.CallTimeout)
+	defer cancel()
+	if _, err := m.Leave(lctx, mt.ID, ReasonConsentUndelivered); err != nil {
+		// The bot may still be in the meeting: record the end anyway so
+		// nothing else is said, and keep the error visible.
+		m.log.Warn("[meetings] leave after undelivered consent failed", "meeting", mt.ID, "error", err)
+		m.stopWatch(mt.ID)
+		_, _ = m.finish(mt.ID, StateEnded, ReasonConsentUndelivered, nil)
+	}
+	return true
+}
+
+// postConsentChat posts the consent notice in chat. It returns nil only
+// when the line is known to be in the meeting.
+func (m *Manager) postConsentChat(ctx context.Context, mt Meeting) error {
 	cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
 	defer cancel()
-	if err := m.opts.Quorum.ChatPost(cctx, mt.NativeID, m.opts.ConsentText); err != nil {
-		// Soft failure (for example platform_unavailable while the
-		// platform's chat is down): nothing else reaches the meeting until
-		// the notice is posted, and the panel keeps showing everything.
-		m.log.Warn("[meetings] consent notice not posted; will retry", "meeting", mt.ID, "error", err)
-		if mt.ConsentError != err.Error() {
-			_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentError = err.Error() })
-		}
-		return
+	cq, ok := m.opts.Quorum.(ConfirmingChat)
+	if !ok {
+		return m.opts.Quorum.ChatPost(cctx, mt.NativeID, m.opts.ConsentText)
 	}
-	_, _ = m.update(mt.ID, nil, func(x *Meeting) { x.ConsentPostedAt, x.ConsentError = timePtr(m.opts.Now()), "" })
+	confirmed, err := cq.ChatPostConfirmed(cctx, mt.NativeID, m.opts.ConsentText)
+	if err != nil {
+		return err
+	}
+	if !confirmed {
+		return errConsentUnconfirmed
+	}
+	return nil
+}
+
+// errConsentUnconfirmed is a chat post Quorum accepted but could not
+// confirm reached the meeting (or a Quorum too old to say).
+var errConsentUnconfirmed = errors.New("chat delivery not confirmed")
+
+// consentTransient reports whether a failed consent post is worth retrying
+// rather than a definite "chat cannot deliver this": the bot not admitted
+// yet, a rate limit, or a call that never got an answer.
+func consentTransient(err error) bool {
+	if errors.Is(err, errConsentUnconfirmed) || IsCode(err, CodePlatformUnavailable) ||
+		IsCode(err, CodeInvalidArgument) || IsCode(err, CodeNotFound) {
+		return false
+	}
+	return true
+}
+
+// markConsent records the notice as delivered.
+func (m *Manager) markConsent(id, via string) {
+	_, _ = m.update(id, nil, func(x *Meeting) {
+		x.ConsentPostedAt, x.ConsentVia, x.ConsentError = timePtr(m.opts.Now()), via, ""
+	})
 }
 
 // fromHive reports whether a line is hive's own (its chat posts echo back).
@@ -599,7 +702,9 @@ func (m *Manager) handleLine(ctx context.Context, id string, ev Event) bool {
 	if err != nil {
 		return false
 	}
-	m.ensureConsent(ctx, mt)
+	if m.ensureConsent(ctx, mt) {
+		return true
+	}
 	if ev.Type == EventSegment && !ev.Final {
 		m.emit(Update{Meeting: mt, Event: &ev})
 		return false

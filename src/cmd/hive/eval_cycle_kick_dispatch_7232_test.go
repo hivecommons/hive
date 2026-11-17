@@ -1,9 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"log/slog"
 	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -495,6 +498,33 @@ func TestDispatchAgentKicks_BusyDefersLaneWithoutFailure(t *testing.T) {
 			}
 			if len(r.spansEnded) != 3 {
 				t.Fatalf("unclosed spans: %v", r.spansEnded)
+			}
+		})
+	}
+}
+
+// A busy shared CLI session pool is backpressure, not a defect: the failed
+// send must stay below WARN so it is not fleet-reported (#18544).
+func TestDispatchAgentKicks_SharedPoolBusyLogsBelowWarn(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+		warn bool
+	}{
+		{"busy pool", errors.New("auto-start stopped agent for kick: acquire shared CLI session slot: shared session pool is busy: context deadline exceeded"), false},
+		{"other failure", errors.New("tmux pane gone"), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := newKickDispatchRecorder()
+			r.sendErr["alpha"] = tc.err
+			var buf bytes.Buffer
+			logger := slog.New(slog.NewTextHandler(&buf, nil))
+			dispatchAgentKicks(kickMsgs("alpha"), false, r.deps(), logger)
+			if got := strings.Contains(buf.String(), "level=WARN"); got != tc.warn {
+				t.Fatalf("WARN logged = %v, want %v: %s", got, tc.warn, buf.String())
+			}
+			if !strings.Contains(buf.String(), "failed to send kick") {
+				t.Fatalf("diagnostic missing: %s", buf.String())
 			}
 		})
 	}
