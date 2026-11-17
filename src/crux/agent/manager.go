@@ -483,6 +483,11 @@ type AgentProcess struct {
 	// The completion handler then turns the expected cancellation into Idle
 	// instead of Failed.
 	sandboxResumeAfterCancel bool
+	// sandboxKickActive is true while a sandbox kick's goroutine is in
+	// flight. StateRunning alone cannot tell that apart from a live
+	// interactive tmux session, and the kick refusal must name which one is
+	// blocking it (hivecommons/hive#18525). Guarded by m.mu.
+	sandboxKickActive bool
 
 	// awaitingBobKey marks an agent that launchInTmux parked in StateFailed
 	// for the single, fully-recoverable reason "bob backend with no API key".
@@ -1464,24 +1469,6 @@ func (m *Manager) removeAgentsBelowACMMGateLocked(level int) {
 	}
 }
 
-// UpdateConfig updates the stored config for a running agent process so that
-// status builders (which read from AgentProcess.Config) reflect changes made
-// via the config dialog (which writes to the global Config.Agents map).
-func (m *Manager) UpdateConfig(name string, cfg config.AgentConfig) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	agent, ok := m.agents[name]
-	if !ok {
-		return fmt.Errorf("agent %s not found", name)
-	}
-
-	agent.clearAgentSpecPromptIfSpecRemoved(cfg)
-	agent.Config = cfg
-	agent.baseConfig = cfg
-	return nil
-}
-
 // ReconcileAgents makes the manager's name-keyed process table match the
 // enabled config set. New agents are added, existing agents get fresh config,
 // and removed agents have only their own hive-<name> tmux session retired.
@@ -1498,9 +1485,13 @@ func (m *Manager) ReconcileAgents(configs map[string]config.AgentConfig) []strin
 		allowedConfigs[name] = cfg
 		if existing, ok := m.agents[name]; ok {
 			delete(m.idToName, existing.ID)
+			wasSandboxed := m.agentSandboxEnabledLocked(existing)
 			existing.clearAgentSpecPromptIfSpecRemoved(cfg)
 			existing.Config = cfg
 			existing.baseConfig = cfg
+			if !wasSandboxed && m.agentSandboxEnabledLocked(existing) {
+				m.enterSandboxModeLocked(existing)
+			}
 			if cfg.ID != "" {
 				existing.ID = cfg.ID
 			} else {

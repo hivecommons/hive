@@ -187,7 +187,12 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			"sandboxSubstrate": agentSandboxSubstrateOrEmpty(agentCfg),
 			"sandboxEnabled":   agentCfg.Sandbox != nil && agentCfg.Sandbox.Enabled != nil && *agentCfg.Sandbox.Enabled,
 			"sandboxEffective": agentCfg.SandboxEnabled(s.deps.Config.AgentSandbox),
-			"replicas":         agentCfg.Replicas,
+			// What turning the sandbox on would resolve to (#18525): whether
+			// the agent's own fields plus agent_sandbox defaults are a
+			// complete block, and which other agents a block can be copied from.
+			"sandboxDefaultsProblem": agentCfg.SandboxBlockProblem(s.deps.Config.AgentSandbox),
+			"sandboxCopySources":     s.sandboxCopySources(name),
+			"replicas":               agentCfg.Replicas,
 		},
 		"cadences":     cadences,
 		"models":       models,
@@ -655,11 +660,12 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 	}
 	if v, ok := body["sandboxEnabled"]; ok {
 		if b, ok := v.(bool); ok {
-			if agentCfg.Sandbox == nil {
-				agentCfg.Sandbox = &config.AgentSandboxOverride{}
+			block, err := s.sandboxBlockForToggle(name, agentCfg, b, sandboxCopyFromBody(body))
+			if err != nil {
+				jsonError(w, err.Error(), http.StatusBadRequest)
+				return
 			}
-			bb := b
-			agentCfg.Sandbox.Enabled = &bb
+			agentCfg.Sandbox = block
 		}
 	}
 	if v, ok := body["sandboxSubstrate"]; ok {

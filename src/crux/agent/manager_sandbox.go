@@ -42,7 +42,18 @@ func openShellPreflightWarnings(blocks []config.SandboxOpenShellConfig) []string
 func (m *Manager) SetSandboxConfig(cfg config.AgentSandboxConfig) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	was := make(map[string]bool, len(m.agents))
+	for name, agent := range m.agents {
+		was[name] = m.agentSandboxEnabledLocked(agent)
+	}
 	m.sandboxConfig = cfg
+	// Turning the global gate on can move agents into sandbox mode just as a
+	// per-agent toggle does; their interactive sessions go the same way.
+	for name, agent := range m.agents {
+		if !was[name] && m.agentSandboxEnabledLocked(agent) {
+			m.enterSandboxModeLocked(agent)
+		}
+	}
 }
 
 func (m *Manager) SetSandboxLauncher(l sandbox.Launcher) {
@@ -99,7 +110,7 @@ func (m *Manager) validateSandboxKickLocked(agent *AgentProcess) (string, error)
 		return "", fmt.Errorf("agent %s cannot be kicked: %s", agent.Name, notRunningReason(agent))
 	}
 	if agent.State == StateRunning {
-		return "", fmt.Errorf("agent %s cannot be kicked: sandbox execution already running", agent.Name)
+		return "", sandboxKickBlockedError(agent)
 	}
 	if strings.TrimSpace(m.sandboxConfig.Image) == "" && strings.TrimSpace(agent.Config.SandboxImage(m.sandboxConfig)) == "" {
 		return "", fmt.Errorf("agent %s sandbox image is not configured", agent.Name)
@@ -156,7 +167,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	launcher := m.sandboxLauncher
 	switch runtime {
 	case config.SandboxRuntimeJob:
-		launcher = m.jobLauncherLocked(agent.Config.SandboxJob(m.sandboxConfig))
+		launcher = m.jobLauncherLocked(agent.Config.SandboxJob(m.sandboxConfig), time.Duration(agent.Config.SandboxTimeoutS(m.sandboxConfig))*time.Second)
 	case config.SandboxRuntimeOpenShell:
 		launcher = m.openshellLauncherLocked(agent.Config.SandboxOpenShell(m.sandboxConfig))
 	case config.SandboxRuntimeSubstrate:
@@ -165,6 +176,7 @@ func (m *Manager) startSandboxKickLocked(agent *AgentProcess, message string) er
 	repo := m.project.PrimaryRepo()
 	now := time.Now()
 	agent.State = StateRunning
+	agent.sandboxKickActive = true
 	agent.StartedAt = &now
 	agent.LastKick = &now
 	agent.LastKickMessage = message
@@ -307,6 +319,7 @@ func (m *Manager) runSandboxKick(ctx context.Context, name, runtime string, spec
 		return
 	}
 	agent.cancel = nil
+	agent.sandboxKickActive = false
 	// The run record is what a sandboxed agent's health and activity derive
 	// from: there is no session to probe between kicks. Recorded on every
 	// outcome but an operator cancel, and persisted so a pod roll does not
@@ -397,11 +410,21 @@ func (m *Manager) setSandboxJobLauncherFactoryForTest(f func(config.SandboxJobCo
 
 // jobLauncherLocked returns the launcher for a sandbox.runtime: job kick:
 // the injected factory's, or a real in-cluster kubejob.Launcher.
-func (m *Manager) jobLauncherLocked(job config.SandboxJobConfig) sandbox.Launcher {
+func (m *Manager) jobLauncherLocked(job config.SandboxJobConfig, kickTimeout time.Duration) sandbox.Launcher {
 	if m.sandboxJobLauncherFactory != nil {
 		return m.sandboxJobLauncherFactory(job)
 	}
-	return &kubejob.Launcher{Options: JobOptionsFromConfig(job)}
+	return &kubejob.Launcher{Options: jobOptionsForKick(job, kickTimeout)}
+}
+
+// jobOptionsForKick is JobOptionsFromConfig plus the Job's
+// activeDeadlineSeconds, derived from the kick timeout, so a Job that sits
+// Pending or Unschedulable after hive lost track of it fails on its own
+// instead of waiting forever (hivecommons/hive#18525).
+func jobOptionsForKick(job config.SandboxJobConfig, kickTimeout time.Duration) kubejob.Options {
+	opts := JobOptionsFromConfig(job)
+	opts.ActiveDeadlineSeconds = kubejob.ActiveDeadlineSeconds(kickTimeout)
+	return opts
 }
 
 func (m *Manager) setSandboxOpenShellLauncherFactoryForTest(f func(config.SandboxOpenShellConfig) sandbox.Launcher) {
