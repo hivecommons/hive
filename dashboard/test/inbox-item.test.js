@@ -249,12 +249,12 @@ test('an uploaded audio file is pending with its own note and keeps the player',
   assert.match(html, /data-action="inboxToggleTranscript"[^>]*title="Show the transcript"><svg[^]*?<\/svg>Transcript<\/button>/);
 });
 
-test('every item kind gets 🗑 Delete for owner and read-write, and none for read', () => {
+test('every item kind gets the trash icon Delete for owner and read-write, and none for read', () => {
   const kinds = [pendingItem, { source: 'upload', id: 'u1', title: 'notes.md' }, { source: 'meeting', id: 'm1', title: 'Weekly' }];
   for (const role of ['owner', 'read-write']) {
     const ctx = makeContext(role);
     for (const it of kinds) {
-      assert.match(ctx.inboxItemHtml(it), new RegExp('data-action="inboxDeleteItem" data-arg0="' + it.source + '" data-arg1="' + it.id + '"[^>]*>🗑 Delete</button>'), role + ' ' + it.source);
+      assert.match(ctx.inboxItemHtml(it), new RegExp('data-action="inboxDeleteItem" data-arg0="' + it.source + '" data-arg1="' + it.id + '" aria-label="Delete"[^>]*title="[^"]+"><svg class="inbox-ic"'), role + ' ' + it.source);
     }
   }
   const read = makeContext('read');
