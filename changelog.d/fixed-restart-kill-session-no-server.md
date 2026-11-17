@@ -1,1 +1,0 @@
-- Agent restarts no longer log a warning when tmux has no server or session to kill before relaunching (#18486).
