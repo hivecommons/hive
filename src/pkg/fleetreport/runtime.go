@@ -90,6 +90,7 @@ const (
 	ClassInferenceBackendAuthFailure = "inference_backend_auth_failure"
 	ClassSHAPollCommitMsgUnavail     = "sha_poll_commit_message_unavailable"
 	ClassKickFreshnessWithheld       = "kick_freshness_withheld"
+	ClassOpenPRGuardLabelFailed      = "open_pr_guard_label_failed"
 	ClassModelsEndpointEmpty         = "models_endpoint_empty"
 	ClassAgentLoginRequired          = "agent_login_required"
 	ClassPRRequestHeadUnpushed       = "pr_request_head_unpushed"
@@ -217,6 +218,7 @@ var Classes = map[string]ClassSpec{
 	ClassInferenceUpstreamError:      {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference upstream error", "inference upstream failed", "inference translate request failed"}},
 	ClassSHAPollCommitMsgUnavail:     {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"sha poll: commit message fetch non-200"}},
 	ClassKickFreshnessWithheld:       {Component: "agent-runtime", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"kick withheld: every ref failed the freshness check"}},
+	ClassOpenPRGuardLabelFailed:      {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"open-pr guard: could not label issue", "open-pr guard: could not ensure label"}},
 	ClassModelsEndpointEmpty:         {Component: "dashboard", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"no models found from any endpoint"}},
 	ClassAgentLoginRequired:          {Component: "agent-runtime", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"login required detected", "watchdog: agent credential failure"}},
 	ClassPRRequestHeadUnpushed:       {Component: "github-relay", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"head branch is not on the remote"}},
