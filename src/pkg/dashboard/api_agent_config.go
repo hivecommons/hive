@@ -192,6 +192,7 @@ func (s *Server) handleAgentConfigGet(w http.ResponseWriter, r *http.Request) {
 			// complete block, and which other agents a block can be copied from.
 			"sandboxDefaultsProblem": agentCfg.SandboxBlockProblem(s.deps.Config.AgentSandbox),
 			"sandboxCopySources":     s.sandboxCopySources(name),
+			"sandboxFields":          agentSandboxFieldsView(agentCfg, s.deps.Config.AgentSandbox),
 			"replicas":               agentCfg.Replicas,
 		},
 		"cadences":     cadences,
@@ -658,14 +659,40 @@ func (s *Server) handleAgentConfigGeneral(w http.ResponseWriter, r *http.Request
 			agentCfg.Aliases = a
 		}
 	}
-	if v, ok := body["sandboxEnabled"]; ok {
-		if b, ok := v.(bool); ok {
-			block, err := s.sandboxBlockForToggle(name, agentCfg, b, sandboxCopyFromBody(body))
-			if err != nil {
-				jsonError(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			agentCfg.Sandbox = block
+	// Sandbox block edits (#18525, #18797). Field edits land first unless a
+	// copy_from is named, so "enable + set the image" in one save sees the
+	// image; with a copy the copied block is written first and the edits go
+	// on top of it. A bare sandboxCopyFrom (no sandboxEnabled) copies and
+	// enables, the dialog's "Copy sandbox settings from" action.
+	copyFrom := sandboxCopyFromBody(body)
+	if copyFrom == "" {
+		if err := applySandboxEdits(&agentCfg, body); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	enable, hasToggle := body["sandboxEnabled"].(bool)
+	if !hasToggle && copyFrom != "" {
+		enable, hasToggle = true, true
+	}
+	if hasToggle {
+		block, err := s.sandboxBlockForToggle(name, agentCfg, enable, copyFrom)
+		if err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		agentCfg.Sandbox = block
+	}
+	if copyFrom != "" {
+		if err := applySandboxEdits(&agentCfg, body); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	if sandboxEditsPresent(body) {
+		if err := sandboxEnabledProblem(name, agentCfg, s.deps.Config.AgentSandbox); err != nil {
+			jsonError(w, err.Error(), http.StatusBadRequest)
+			return
 		}
 	}
 	if v, ok := body["sandboxSubstrate"]; ok {

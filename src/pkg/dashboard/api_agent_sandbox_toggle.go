@@ -89,7 +89,7 @@ func (s *Server) sandboxBlockForToggle(name string, agentCfg config.AgentConfig,
 		return config.CopiedSandboxBlock(&src, global, keep), nil
 	}
 	if problem := agentCfg.SandboxBlockProblem(global); problem != "" {
-		msg := fmt.Sprintf("cannot run %s in a sandbox: %s. Set the agent_sandbox defaults (Governor → Security), or pass copy_from naming an agent with a complete sandbox block", name, problem)
+		msg := fmt.Sprintf("cannot run %s in a sandbox: %s. Set the default sandbox image in Settings, Security, or set sandbox.image on this agent, or pass copy_from naming an agent with a complete sandbox block", name, problem)
 		if sources := s.sandboxCopySources(name); len(sources) > 0 {
 			msg += " (candidates: " + strings.Join(sources, ", ") + ")"
 		} else {
