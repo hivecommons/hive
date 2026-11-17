@@ -72,8 +72,14 @@ permissions:
 # was left with CANCELLED check-runs for this *required* context. GitHub
 # scores every run of a required name, so one cancelled sibling kept the PR
 # at mergeStateStatus=BLOCKED with a green survivor beside it (#11250).
+# cancel-in-progress false is not enough on its own: a queued run in a shared
+# group is cancelled by the next run to queue, so a burst of three or four
+# labels still left CANCELLED siblings (#18578). labeled/unlabeled/reopened
+# runs therefore get their own group (github.run_id) and can neither cancel
+# nor be cancelled; .github/scripts/test-required-check-concurrency.py
+# enforces it.
 concurrency:
-  group: changelog-fragment-guard-${{ github.event.pull_request.number }}
+  group: changelog-fragment-guard-${{ github.event.pull_request.number }}${{ contains(fromJSON('["labeled","unlabeled","reopened"]'), github.event.action) && format('-{0}-{1}', github.event.action, github.run_id) || '' }}
   cancel-in-progress: ${{ github.event.action == 'synchronize' }}
 
 jobs:
@@ -88,8 +94,8 @@ jobs:
     # a malformed fragment (#14629), which then broke the release `decide`
     # job on v5 and held every open v5 PR behind a red base. The guard is
     # cheap (git, grep, echo); re-running it on each label event keeps the
-    # reported verdict truthful. Label runs are not cancelled by concurrency
-    # (see above), so they cannot leave CANCELLED check-runs either.
+    # reported verdict truthful. Label runs each get their own concurrency
+    # group (see above), so they cannot leave CANCELLED check-runs either.
     # Forward-merge sync PRs (v5-topup.yml / v6-topup.yml, and the hand-rolled
     # ones maintainers open when those conflict) live on sync/* branches —
     # or on <lane>/sync-vN-to-vM when an agent opens the top-up, since the

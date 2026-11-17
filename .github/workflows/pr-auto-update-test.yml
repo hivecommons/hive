@@ -17,6 +17,9 @@ on:
       - '.github/workflows/v2-tests.yml'
       - '.github/workflows/go-security-analysis.yml'
       - '.github/workflows/pr-verifier.yml'
+      # Any workflow edit can change a required check's concurrency (#18578).
+      - '.github/scripts/test-required-check-concurrency.py'
+      - '.github/workflows/*.yml'
   push:
     branches: [v5, v6]
     paths:
@@ -34,6 +37,9 @@ on:
       - '.github/workflows/v2-tests.yml'
       - '.github/workflows/go-security-analysis.yml'
       - '.github/workflows/pr-verifier.yml'
+      # Any workflow edit can change a required check's concurrency (#18578).
+      - '.github/scripts/test-required-check-concurrency.py'
+      - '.github/workflows/*.yml'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -63,3 +69,5 @@ jobs:
           sudo apt-get install -y -qq python3-yaml
       - name: Check native queue workflow contracts
         run: python3 .github/scripts/test-native-queue-workflows.py
+      - name: Required checks are never cancelled by same-head re-checks (#18578)
+        run: python3 .github/scripts/test-required-check-concurrency.py
