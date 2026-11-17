@@ -87,6 +87,7 @@ type fakeSpek struct {
 	in       []string
 	lines    chan []byte
 	startErr error
+	sendErr  error
 	closed   bool
 	once     sync.Once
 }
@@ -108,6 +109,9 @@ func (f *fakeSpek) SendLine(line []byte) error {
 	defer f.mu.Unlock()
 	if f.closed {
 		return errors.New("closed")
+	}
+	if f.sendErr != nil {
+		return f.sendErr
 	}
 	f.in = append(f.in, string(line))
 	return nil
@@ -582,6 +586,31 @@ func TestSpekExitKeepsSessionDegraded(t *testing.T) {
 	ended.State = meetings.StateEnded
 	h.mt.push(meetings.Update{Meeting: ended})
 	h.eventually("session gone", func() bool { _, ok := h.r.session(h.m.ID); return !ok })
+}
+
+// TestSpekDownSaidPlainly pins hivecommons/hive#18590 finding 8: while
+// hive cannot reach Spektacular the panel says notes and clarifying
+// questions are off, and clears it when Spek writes again.
+func TestSpekDownSaidPlainly(t *testing.T) {
+	h := newHarness(t, Policy{}, nil)
+	h.live()
+	h.spek.mu.Lock()
+	h.spek.sendErr = errors.New("spektacular: stream child is not running")
+	h.spek.mu.Unlock()
+	h.line(meetings.EventSegment, "Ana", "let's start", true)
+	h.eventually("paused status", func() bool {
+		return strings.HasPrefix(h.state().SpekStatus, "Notes and clarifying questions are paused")
+	})
+	h.spek.mu.Lock()
+	h.spek.sendErr = nil
+	h.spek.mu.Unlock()
+	h.spek.intent(`{"type":"heartbeat"}`)
+	h.eventually("cleared", func() bool { return h.state().SpekStatus == "" })
+	h.spek.Close(nil)
+	h.eventually("stopped status", func() bool {
+		st := h.state().SpekStatus
+		return strings.HasPrefix(st, "Notes and clarifying questions are off for this meeting") && strings.Contains(st, "#126")
+	})
 }
 
 func TestUsageFileCharged(t *testing.T) {
