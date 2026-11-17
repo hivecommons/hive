@@ -35,6 +35,10 @@ type governorPRModelsResponse struct {
 	// created_at among the PRs counted, omitted when there are none.
 	Coverage            contributeEffectiveModelsCoverage `json:"coverage"`
 	EarliestPRCreatedAt string                            `json:"earliest_pr_created_at,omitempty"`
+	// HiveCostCoverage describes the launch-cost snapshot behind each
+	// bucket's hive_cost (#18717). Always present; Ready=false means no
+	// bucket carries hive_cost.
+	HiveCostCoverage governorPRModelsHiveCostCoverage `json:"hive_cost_coverage"`
 }
 
 // governorPRModelBucket is one canonical model (modelfamily.Canonical folds
@@ -57,6 +61,9 @@ type governorPRModelBucket struct {
 	// Efforts splits the bucket by the trailer's effort= value ("unknown"
 	// when absent), sorted by PRs descending (hivecommons/hive#18715).
 	Efforts []governorPRModelEffort `json:"efforts,omitempty"`
+	// HiveCost is what this model's PRs cost the hive to review and repair
+	// (#18717); omitted when the launch-cost snapshot is not ready.
+	HiveCost *governorPRModelHiveCost `json:"hive_cost,omitempty"`
 }
 
 // governorPRModelSource is one raw attribution spelling folded into a bucket.
@@ -186,6 +193,8 @@ func (s *Server) handleGovernorPRModels(w http.ResponseWriter, r *http.Request) 
 	resp.Coverage = effectiveModelsCoverage(governorPRModelsWindowDuration(window), ghpkg.AttributedClosedPRLookback(), runs, rotated, now)
 	effective := aggregateEffectiveModelsFromPRAggregation(resp, aggregateEffectiveRunStats(runs, effectiveModelsFilterAll), effectiveModelsFilterAll, minMergedPRs)
 	applyGovernorPRModelEffectiveness(&resp, effective, minMergedPRs)
+	launchCost, launchCostReady := s.launchCostSnapshotForPRModels()
+	applyGovernorPRModelHiveCost(&resp, actionable.PRs.Attributed, launchCost, launchCostReady, now)
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
 }
@@ -213,13 +222,7 @@ func normalizeGovernorPRModelsWindow(window string) string {
 
 func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.Time) governorPRModelsResponse {
 	window = normalizeGovernorPRModelsWindow(window)
-	cutoff := time.Time{}
-	switch window {
-	case governorPRModelsWindow7d:
-		cutoff = now.AddDate(0, 0, -governorPRModelsDays7)
-	case governorPRModelsWindow30d:
-		cutoff = now.AddDate(0, 0, -governorPRModelsDays30)
-	}
+	cutoff := governorPRModelsCutoff(window, now)
 
 	type bucketState struct {
 		governorPRModelBucket
@@ -396,6 +399,18 @@ func finishGovernorPRModelEfforts(m map[string]*governorPRModelSliceState) []gov
 		return out[i].Effort < out[j].Effort
 	})
 	return out
+}
+
+// governorPRModelsCutoff is the earliest PR created_at a window counts; zero
+// for "all".
+func governorPRModelsCutoff(window string, now time.Time) time.Time {
+	switch normalizeGovernorPRModelsWindow(window) {
+	case governorPRModelsWindow7d:
+		return now.AddDate(0, 0, -governorPRModelsDays7)
+	case governorPRModelsWindow30d:
+		return now.AddDate(0, 0, -governorPRModelsDays30)
+	}
+	return time.Time{}
 }
 
 // joinedBackends returns the sorted distinct backends and their comma-joined

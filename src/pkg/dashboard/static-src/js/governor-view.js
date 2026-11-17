@@ -125,6 +125,31 @@
       </div>`;
     }
 
+    // Hive review cost per authoring model (#18717): what the hive's own
+    // agents spent reviewing / fixing this model's PRs, from the cached
+    // launch-cost join. "—" means no attributed usage, not $0.
+    function governorPRModelHiveCostTip(b, data) {
+      const hc = b && b.hive_cost;
+      const cov = data && data.hive_cost_coverage;
+      if (!hc || !cov || !cov.ready) return '';
+      const prs = Number(hc.prs_with_cost) || 0;
+      const usd = hc.usd == null ? '—' : fmtUSD(hc.usd);
+      const per = hc.usd_per_merged_pr == null ? '' : ` · ${fmtUSD(hc.usd_per_merged_pr)} per merged PR`;
+      const hours = Number(cov.window_hours) || 0;
+      const windowLabel = hours ? ` (launch-cost window: last ${hours % 24 ? hours + 'h' : (hours / 24) + 'd'})` : '';
+      const noUsage = hc.usd == null ? '\n— = no attributed usage, not $0' : '';
+      return `\n\nHive review cost: ${usd} est. over ${prs} PR${prs === 1 ? '' : 's'} with launch records, ${Number(hc.launches) || 0} launch${hc.launches === 1 ? '' : 'es'}${per}${windowLabel}${noUsage}\n${cov.disclaimer || ''}`;
+    }
+    function governorPRModelsHiveCostNote(data) {
+      const cov = data && data.hive_cost_coverage;
+      if (!cov || !cov.ready || !(data.total > 0)) return '';
+      const hours = Number(cov.window_hours) || 0;
+      const span = hours ? `last ${hours % 24 ? hours + 'h' : (hours / 24) + 'd'}` : 'launch-cost window';
+      const gaps = [];
+      if (cov.unattributed_usd != null) gaps.push(`${fmtUSD(cov.unattributed_usd)} unattributed`);
+      if (cov.backend_unsupported_usd != null) gaps.push(`${fmtUSD(cov.backend_unsupported_usd)} from backends without a usage timeline`);
+      return `<div class="gov-pr-model-sub gov-pr-model-sub-spaced gov-pr-models-hive-cost">Hive review cost (hover a row) is an estimate over the ${escapeHtml(span)} of launch records${gaps.length ? '; not tied to any PR: ' + gaps.join(', ') : ''}. ${escapeHtml(cov.disclaimer || '')}</div>`;
+    }
     function renderGovernorPRModelsTile() {
       const data = govPRModelsData && govPRModelsData.window === govPRModelsWindow ? govPRModelsData : null;
       const total = data?.total || 0;
@@ -170,7 +195,7 @@
               const agentBreakdown = (b.agents || []).map(a => `${a.agent || 'unknown'} / ${a.backend || b.backend || 'unknown'}: ${a.prs} PRs (${a.merged || 0} merged, ${a.open || 0} open, ${a.closed_unmerged || 0} closed-unmerged)`).join('\n');
               const scoreFormula = measured ? ' × (1 − fail) × (1 − no ship)' : ' (first-pass bound only: no runs recorded, so the run factors were skipped)';
               const scoreLine = eff.rank ? `\nRank #${eff.rank} · score ${(Number(eff.score) || 0).toFixed(3)} = Wilson lower bound(${eff.first_pass_merged ?? '?'}/${eff.merged_prs ?? b.merged ?? 0} first pass)${scoreFormula}` : (unattributed ? '\nUnattributed: no model recorded, listed but not ranked' : `\nUnranked: fewer than ${data.min_merged_prs || 5} merged PRs`);
-              const tip = `${b.model || 'unknown'} via ${backends.join(', ')}${scoreLine}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${values.first_pass}${ci(eff.first_pass_merge_rate_ci || rw.first_pass_merge_rate_ci)} · PR run rate ${values.pr_runs}${measured ? ci(eff.verified_pr_run_rate_ci) : ''} · failure ${values.fail}${measured ? ci(eff.failure_rate_ci) : ''} · nothing-to-ship ${values.no_ship}${measured ? ci(eff.nothing_to_ship_rate_ci) : ''}${measured ? '' : '\n— = no runs recorded, not a measured 0%'}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${sources ? '\n\nRaw model ids folded into this row:\n' + sources : ''}${agentBreakdown ? '\n\n' + agentBreakdown : ''}${effortBreakdown ? '\n\nBy effort:\n' + effortBreakdown : ''}`;
+              const tip = `${b.model || 'unknown'} via ${backends.join(', ')}${scoreLine}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${values.first_pass}${ci(eff.first_pass_merge_rate_ci || rw.first_pass_merge_rate_ci)} · PR run rate ${values.pr_runs}${measured ? ci(eff.verified_pr_run_rate_ci) : ''} · failure ${values.fail}${measured ? ci(eff.failure_rate_ci) : ''} · nothing-to-ship ${values.no_ship}${measured ? ci(eff.nothing_to_ship_rate_ci) : ''}${measured ? '' : '\n— = no runs recorded, not a measured 0%'}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${sources ? '\n\nRaw model ids folded into this row:\n' + sources : ''}${agentBreakdown ? '\n\n' + agentBreakdown : ''}${effortBreakdown ? '\n\nBy effort:\n' + effortBreakdown : ''}${governorPRModelHiveCostTip(b, data)}`;
               return `<div class="gov-pr-model-row${unattributed ? ' unattributed' : ''}" title="${escapeHtml(tip)}">
                 <div><div class="gov-pr-model-name">${rank}${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${backendChips}</div></div>
                 <div class="gov-pr-model-bar" aria-label="${escapeHtml(tip)}">
@@ -211,6 +236,7 @@
       if (cov && cov.closed_prs_partial) covParts.push(`closed PRs: last ${cov.closed_pr_lookback_days || 0} days scanned${data.earliest_pr_created_at ? ` (earliest counted ${escapeHtml(String(data.earliest_pr_created_at).slice(0, 10))})` : ''}`);
       if (cov && cov.runs_partial) covParts.push(`runs: ${cov.runs_since ? 'since ' + escapeHtml(String(cov.runs_since).slice(0, 10)) : 'none retained'} (older runs rotated out)`);
       const coverageNote = covParts.length ? `<div class="gov-pr-model-sub gov-pr-model-sub-spaced gov-pr-models-coverage">Partial history: ${covParts.join(' · ')}. Run columns come from the task-run log; — means no runs recorded, not a measured 0%.</div>` : '';
+      const hiveCostNote = governorPRModelsHiveCostNote(data);
       const header = data && total > 0 ? `<div class="gov-pr-model-row gov-pr-model-head" aria-hidden="false">
           <div>Model</div>
           <div>Outcome</div>
@@ -226,6 +252,7 @@
         </div>
         <div class="section-body" id="governor-pr-models-section-body"><div class="gov-pr-models">
           ${coverageNote}
+          ${hiveCostNote}
           ${header}
           ${rows}
           ${reworkTable}

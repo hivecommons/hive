@@ -174,6 +174,12 @@ posture, and cadence controls for the hive. Its collapsible **PRs by model** nes
 sub-section reads `GET /api/governor/pr-models` with the selected `7d`, `30d`,
 or `all` window. The nested header keeps the window/sort toggles visible and its
 collapsed summary shows the current top-ranked model plus model count.
+Each model row's tooltip also shows **Hive review cost**: what the hive's own
+agents (reviewers, adjudicator, fixers) are estimated to have spent on that
+model's PRs, joined from the cached launch-cost snapshot (see
+[Launch attribution](token-tracking.md#launch-attribution)). A note under the
+header names the launch-cost window and the spend that could not be tied to any
+PR. "—" means no attributed usage, not $0.
 
 The Governor **actionable issues** and **actionable PRs** tiles use the shared
 server-side actionable partition described in [Repository card legend, issue
