@@ -6985,6 +6985,17 @@ function alreadyDoneVerdictFields(reason) {
   };
 }
 
+// alreadyDoneCitesRef says whether an already-done reason names something the
+// hub can verify: the structured evidence (a merged PR or a commit SHA), a
+// bare `#N`, or a pull-request URL. "Already resolved" alone cites nothing,
+// and the hub then refuses the label ("cited no PR or commit the hive could
+// verify"), so the relay must not have applied it (utah-packages#1175).
+function alreadyDoneCitesRef(reason) {
+  const evidence = alreadyDoneVerdictFields(reason).evidence;
+  if (evidence && (evidence.pr > 0 || evidence.commit)) return true;
+  return /(?:^|[^\w&])#\d+\b|\/pull\/\d+\b/.test(String(reason || ''));
+}
+
 function isAlreadyDoneNoWork(noWork) {
   if (!noWork || noWork.verdict !== HIVE_VERDICT_NO_WORK) return false;
   return alreadyDoneVerdictFields(noWork.reason).verdict_reason_kind === ALREADY_DONE_REASON_KIND;
@@ -8663,6 +8674,12 @@ function readOpenSubIssues(task, env) {
 
 function markIssueAlreadyDone(task, reason) {
   if (!task || task.kind !== 'issue' || !task.repo || !(task.number > 0) || task.external_id) return;
+  // The label means verified done. With no PR or commit cited there is
+  // nothing to verify: the hub comments and books its own hold instead.
+  if (!alreadyDoneCitesRef(reason)) {
+    console.log(`Task ${task.task_id}: already-done verdict on ${task.repo}#${task.number} cites no PR or commit — not applying the '${ALREADY_DONE_WORKFLOW_LABEL}' label; the hub verifies a citation before labelling and holds the issue without one`);
+    return;
+  }
   const hub = task._hub || hubs[activeHubIndex];
   if (!hubGrantsIssuesWrite(hub)) {
     console.log(`Task ${task.task_id}: already-done verdict on ${task.repo}#${task.number}, but the task credential does not carry issues:write — leaving the '${ALREADY_DONE_WORKFLOW_LABEL}' label to the hub or a human; the hub's already-done hold suppresses re-offer (#8477)`);

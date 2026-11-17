@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 )
 
@@ -45,7 +46,7 @@ func TestVerdictLedgerReasonTruncation(t *testing.T) {
 				t.Run(tc.name, func(t *testing.T) {
 					hub := ledgerHub(t.TempDir())
 					if path == "already_done_unverified" {
-						hub.markAlreadyDoneUnverified("o/r", 13110, "reporter", tc.in, nil)
+						hub.markAlreadyDoneUnverified("o/r", 13110, "reporter", tc.in, nil, time.Time{})
 					} else {
 						hub.markTaskCompletedVerdict("o/r", 13110, "", path, "reporter", tc.in)
 					}
