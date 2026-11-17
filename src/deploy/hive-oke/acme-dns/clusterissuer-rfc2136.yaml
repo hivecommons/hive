@@ -1,0 +1,24 @@
+# Added NEXT TO the Cloudflare solver, not in kustomization.yaml: apply, run the
+# staging test in README.md, then point hive-wildcard-tls at it.
+# TSIG key: the Secret `acme-dns-tsig` referenced below lives in the cert-manager
+# namespace and is a COPY of the key Knot reads from the acme-dns namespace. Key
+# name, algorithm and secret must match in both; rotate both together (see README.md).
+apiVersion: cert-manager.io/v1
+kind: ClusterIssuer
+metadata:
+  name: letsencrypt-dns01-rfc2136
+spec:
+  acme:
+    server: https://acme-v02.api.letsencrypt.org/directory
+    privateKeySecretRef:
+      name: letsencrypt-dns01-rfc2136-account
+    solvers:
+      - dns01:
+          cnameStrategy: Follow
+          rfc2136:
+            nameserver: 129.80.107.104:53
+            tsigKeyName: acme-dns-tsig
+            tsigAlgorithm: HMACSHA256
+            tsigSecretSecretRef:
+              name: acme-dns-tsig
+              key: tsig-secret
