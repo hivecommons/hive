@@ -32,3 +32,25 @@ func TestSayUsesSpeechText(t *testing.T) {
 		t.Fatalf("says %q", s)
 	}
 }
+
+// Scored live test: "Betty leave" was transcribed "Betty Lee." and she
+// stayed. A line that is only the name and a sound-alike of "leave" asks
+// her to leave; longer lines still need the phrase itself.
+func TestLeaveMatcherMisheard(t *testing.T) {
+	l := NewLeaveMatcher([]string{"betty leave", "hive leave"})
+	for text, want := range map[string]bool{
+		"Betty Lee.":             true,
+		"betty, leaf":            true,
+		"Betty please leave":     true,
+		"Hive lead!":             true,
+		"Betty leave":            true,
+		"Betty, Lee is here":     false,
+		"Lee, can you share":     false,
+		"Betty leaves the room?": false,
+		"we should leave":        false,
+	} {
+		if got := l.Match(text); got != want {
+			t.Errorf("Match(%q) = %v, want %v", text, got, want)
+		}
+	}
+}

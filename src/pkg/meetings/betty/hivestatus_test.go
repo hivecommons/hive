@@ -65,7 +65,7 @@ func TestHiveStatusAnsweredInProcess(t *testing.T) {
 		d.Retrievers = []Retriever{HiveStatusRetriever{Brief: brief}}
 	})
 	start := time.Now()
-	r.e.Observe(Line{Who: "Andy", Text: "Betty, what can you tell me about Hive right now? How many open issues are there?"})
+	r.e.Observe(Line{Who: "Andy", Text: "Betty, how many open issues does Hive have right now?"})
 	a := r.reply()
 	if a.Research != "" || a.Text != "There are 40 open issues and 12 open PRs." {
 		t.Fatalf("answered from live data, no deep dive: %+v", a)
@@ -76,5 +76,71 @@ func TestHiveStatusAnsweredInProcess(t *testing.T) {
 	p := llm.last().prompt
 	if !strings.Contains(p, "Open now: 40 issues and 12 PRs.") || !strings.Contains(p, `Context marked "hive live status" is the hive's own state`) {
 		t.Fatalf("prompt %s", p)
+	}
+}
+
+// Scored live test: board pressure, PR counts, running agents and a PR
+// lookup all went to research and failed. Questions about the hive never
+// start a deep dive, a misheard "full requests" still counts, and a PR
+// lookup is answered from the live state.
+func TestHiveQuestionsNeverResearch(t *testing.T) {
+	for _, q := range []string{
+		"Betty, what is the board pressure right now?",
+		"Betty, how many full requests are open right now?",
+		"Betty, which agents are running right now?",
+		"Betty, what is pool request 18689 about?",
+	} {
+		if !IsHiveStatusQuestion(NormalizeDomain(q)) {
+			t.Errorf("not a hive question: %q", q)
+		}
+	}
+	if got := NormalizeDomain("how many full requests and one pool request, bored pressure?"); got != "how many pull requests and one pull request, board pressure?" {
+		t.Fatalf("NormalizeDomain = %q", got)
+	}
+	if itemNumber("what is pull request 18689 about") != 18689 || itemNumber("PR #12") != 12 || itemNumber("the 3 of us") != 0 {
+		t.Fatal("itemNumber")
+	}
+	llm := &fakeLLM{reply: func(_, prompt string) (string, error) {
+		return `{"answer":"Not sure.","confidence":0.2,"needs_research":true}`, nil
+	}}
+	item := func(_ context.Context, n int) (string, bool) {
+		return "PR hivecommons/hive#18689 \"fix: x\" by andy.", n == 18689
+	}
+	brief := func(context.Context) (string, error) { return "Open now: 35 issues and 12 PRs across 13 repos.", nil }
+	r := newRigWith(t, testSettings(), llm, func(d *Deps) {
+		d.CanResearch = true
+		d.Retrievers = []Retriever{HiveStatusRetriever{Brief: brief, Item: item}}
+	})
+	r.e.Observe(Line{Who: "Andy", Text: "Betty, what is pull request 18689 about?"})
+	if a := r.reply(); a.Research != "" {
+		t.Fatalf("a hive lookup must not dig in: %+v", a)
+	}
+	if p := llm.last().prompt; !strings.Contains(p, "hivecommons/hive#18689") {
+		t.Fatalf("lookup not in the context: %s", p)
+	}
+}
+
+// Two questions in one segment each get their own answer.
+func TestTwoQuestionsInOneLine(t *testing.T) {
+	if got := splitQuestions("Betty, how many open issues are there? How many pull requests are open?"); len(got) != 2 {
+		t.Fatalf("split = %q", got)
+	}
+	if got := splitQuestions("Betty, really? ok"); len(got) != 1 {
+		t.Fatalf("short fragments stay whole: %q", got)
+	}
+	llm := &fakeLLM{reply: func(_, prompt string) (string, error) {
+		if strings.Contains(strings.ToLower(prompt), "question from andy: betty, how many pull requests") {
+			return `{"answer":"12 PRs are open.","confidence":0.9,"topic":"open PRs"}`, nil
+		}
+		return `{"answer":"35 issues are open.","confidence":0.9,"topic":"open issues"}`, nil
+	}}
+	r := newRigWith(t, testSettings(), llm, func(d *Deps) {
+		d.Retrievers = []Retriever{HiveStatusRetriever{Brief: func(context.Context) (string, error) { return "Open now: 35 issues and 12 PRs.", nil }}}
+	})
+	r.e.Observe(Line{Who: "Andy", Text: "Betty, how many open issues are there? How many pull requests are open?"})
+	a, b := r.reply(), r.reply()
+	got := a.Text + " | " + b.Text
+	if !strings.Contains(got, "35 issues") || !strings.Contains(got, "12 PRs") {
+		t.Fatalf("both questions answered: %s", got)
 	}
 }

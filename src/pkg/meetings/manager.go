@@ -88,18 +88,56 @@ var DefaultLeavePhrases = []string{"hive leave"}
 // leave hive out of this" from matching.
 const leaveSep = `[\s,.:;!-]*(?:please[\s,]+)?`
 
+// LeavingText is posted when a leave command is heard, just before the
+// bot leaves.
+const LeavingText = "Leaving now."
+
 // LeaveMatcher matches the configured leave phrases ("betty leave", "hive
 // leave") and close variants anywhere in a line.
-type LeaveMatcher struct{ re *regexp.Regexp }
+type LeaveMatcher struct {
+	re *regexp.Regexp
+	// names are the words before "leave" in the phrases ("betty",
+	// "hive"): a line that is only one of them and a sound-alike of
+	// "leave" ("Betty Lee.", "hive leaf") asks her to leave too (scored
+	// live test: "Betty leave" was transcribed "Betty Lee." and she stayed).
+	names map[string]bool
+}
+
+// leaveSounds are speech-to-text spellings of "leave" accepted when the
+// line is only the name and that word.
+var leaveSounds = map[string]bool{
+	"leave": true, "lee": true, "leaf": true, "lead": true, "leaves": true, "leaving": true,
+	"lief": true, "leeve": true, "leve": true, "leigh": true,
+}
+
+// leaveWords splits a line into lowercase words for the misheard check.
+var leaveWords = regexp.MustCompile(`[a-z']+`)
+
+// matchMisheard reports a whole line that is a name plus a sound-alike of
+// "leave", optionally with "please" between them.
+func (l *LeaveMatcher) matchMisheard(text string) bool {
+	w := leaveWords.FindAllString(strings.ToLower(text), -1)
+	switch {
+	case len(w) == 2:
+		return l.names[w[0]] && leaveSounds[w[1]]
+	case len(w) == 3:
+		return l.names[w[0]] && w[1] == "please" && leaveSounds[w[2]]
+	}
+	return false
+}
 
 // NewLeaveMatcher builds a matcher; no usable phrase means
 // DefaultLeavePhrases.
 func NewLeaveMatcher(phrases []string) *LeaveMatcher {
 	var alts []string
+	names := map[string]bool{}
 	for _, p := range phrases {
 		words := strings.Fields(strings.ToLower(p))
 		if len(words) == 0 {
 			continue
+		}
+		if len(words) == 2 && words[1] == "leave" {
+			names[words[0]] = true
 		}
 		q := make([]string, len(words))
 		for i, w := range words {
@@ -110,11 +148,13 @@ func NewLeaveMatcher(phrases []string) *LeaveMatcher {
 	if len(alts) == 0 {
 		return NewLeaveMatcher(DefaultLeavePhrases)
 	}
-	return &LeaveMatcher{re: regexp.MustCompile(`(?i)\b(?:` + strings.Join(alts, "|") + `)\b`)}
+	return &LeaveMatcher{re: regexp.MustCompile(`(?i)\b(?:` + strings.Join(alts, "|") + `)\b`), names: names}
 }
 
 // Match reports whether text asks the bot to leave.
-func (l *LeaveMatcher) Match(text string) bool { return l.re.MatchString(text) }
+func (l *LeaveMatcher) Match(text string) bool {
+	return l.re.MatchString(text) || l.matchMisheard(text)
+}
 
 var defaultLeave = NewLeaveMatcher(DefaultLeavePhrases)
 
@@ -784,6 +824,12 @@ func (m *Manager) handleLine(ctx context.Context, id string, ev Event) bool {
 		m.log.Info("[meetings] leave requested in the meeting", "meeting", id, "by", ev.Who())
 		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
 		defer cancel()
+		if mt.ConsentPostedAt != nil {
+			// Say so before going, so the room knows the command was heard.
+			if err := m.opts.Quorum.ChatPost(cctx, mt.NativeID, LeavingText); err != nil {
+				m.log.Info("[meetings] leaving confirmation not posted", "meeting", id, "error", err)
+			}
+		}
 		if _, err := m.opts.Quorum.Leave(cctx, mt.NativeID); err != nil && !IsCode(err, CodeNotFound) {
 			m.log.Warn("[meetings] leave failed", "meeting", id, "error", err)
 		}

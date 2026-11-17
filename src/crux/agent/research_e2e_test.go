@@ -9,20 +9,21 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/crux/config"
-	"github.com/hivecommons/hive/pkg/research"
 )
 
-// End-to-end guard for "research never ready": a research request runs
-// through the REAL research-pool startup path — research.NewPool over a real
-// *Manager, Warm and Dispatch from Stopped, a real tmux session — against a
-// fake Claude Code pane that opens on the first-run security notice, exactly
-// as a freshly provisioned research HOME did live. The kick must be delivered
-// with no "did not reach input prompt" failure along the way.
-//
-// It runs on real time: the pool's clock and its coldStartSettle (20s) are
-// unexported, so the test takes a little over that.
+// End-to-end guard for "research never ready": a meeting research request
+// runs through the REAL runtime startup path the research pool
+// (hive's pkg/research) drives — a runtime-added, on-demand, ADVISORY agent
+// registered with AddAgent, started from Stopped, then a queued kick — on a
+// real *Manager and a real tmux session, against a fake Claude Code pane
+// that opens on the first-run security notice, exactly as a freshly
+// provisioned research HOME did live. The kick must be delivered with no
+// "did not reach input prompt" failure along the way. The crux module may
+// not import pkg/research (crux outbound ratchet), so this test makes the
+// pool's runtime calls itself; pkg/research's tests cover the pool's own
+// cold-start wait and retry.
 
-// researchE2ETimeout bounds the whole request: coldStartSettle plus delivery.
+// researchE2ETimeout bounds the whole request: start, the notice and delivery.
 const researchE2ETimeout = 90 * time.Second
 
 // firstRunFakeCLI is a scripted Claude Code pane behind the terminal seam:
@@ -127,29 +128,21 @@ func TestResearchPool_E2E_FirstRunNoticeStillDeliversKick(t *testing.T) {
 	})
 	defer removeRuntime()
 
-	pool, err := research.NewPool(m, 1)
-	if err != nil {
-		t.Fatalf("NewPool over a real Manager: %v", err)
-	}
-	var poolEvents []research.Event
-	removePool := pool.Observe(func(ev research.Event) {
-		evMu.Lock()
-		poolEvents = append(poolEvents, ev)
-		evMu.Unlock()
-	})
-	defer removePool()
-
-	pool.Ensure(config.AgentConfig{Backend: "claude"})
-	const name = research.NamePrefix + "1"
+	// The pool's agent definition (research.AgentConfig): on demand,
+	// read-only, no repos.
+	noRepos := false
+	const name = "research-1"
+	m.AddAgent(name, config.AgentConfig{Backend: "claude", Role: "research", Mode: "ADVISORY", OnDemand: true, IncludeRepos: &noRepos})
 	forceSharedUID(t, m, name)
 	defer cleanupAgent(t, m, name)
 
 	ctx, cancel := context.WithTimeout(context.Background(), researchE2ETimeout)
 	defer cancel()
 
-	// Warm starts the stopped agent in the background; wait for it to run
-	// before dispatching so Dispatch does not race Warm's launch.
-	pool.Warm(ctx)
+	// Pool.Warm / Dispatch start a stopped agent with Start.
+	if err := m.Start(ctx, name); err != nil {
+		t.Fatalf("Start from Stopped: %v", err)
+	}
 	for {
 		st, err := m.GetStatusFast(name)
 		if err == nil && st != nil && st.State == crux.StateRunning && !st.Starting {
@@ -162,16 +155,16 @@ func TestResearchPool_E2E_FirstRunNoticeStillDeliversKick(t *testing.T) {
 	}
 
 	const query = "what is the CNCF sandbox?"
-	id, err := pool.Dispatch(ctx, query, map[string]string{"meeting": "e2e"})
-	if err != nil {
-		t.Fatalf("Dispatch: %v", err)
+	const id = "rsch-e2e0000000000001"
+	if _, err := m.EnqueueKick(name, id, "Research this.\n\nQuestion: "+query); err != nil {
+		t.Fatalf("EnqueueKick: %v", err)
 	}
 
 	delivered := func() bool {
 		evMu.Lock()
 		defer evMu.Unlock()
-		for _, ev := range poolEvents {
-			if ev.KickID == id && ev.Kind == research.EventRunning {
+		for _, ev := range runtimeEvents {
+			if ev.KickID == id && ev.Event == crux.KickEventDelivered {
 				return true
 			}
 		}
@@ -190,14 +183,8 @@ func TestResearchPool_E2E_FirstRunNoticeStillDeliversKick(t *testing.T) {
 			t.Errorf("runtime reported a prompt-not-ready failure: %+v", ev)
 		}
 	}
-	for _, ev := range poolEvents {
-		if ev.KickID == id && ev.Kind == research.EventFailed {
-			t.Errorf("pool reported the research request failed: %q", ev.Text)
-		}
-	}
 	if !wasDelivered {
-		t.Fatalf("research kick %s never delivered within %v; pool events %+v, runtime events %+v",
-			id, researchE2ETimeout, poolEvents, runtimeEvents)
+		t.Fatalf("research kick %s never delivered within %v; runtime events %+v", id, researchE2ETimeout, runtimeEvents)
 	}
 
 	noticeEnters, submitted := fake.snapshot()

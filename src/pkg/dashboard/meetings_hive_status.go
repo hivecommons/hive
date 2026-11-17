@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -22,6 +23,8 @@ const (
 	hiveStatusMaxListed = 5
 	// hiveStatusMaxChars bounds the whole brief.
 	hiveStatusMaxChars = 2000
+	// hiveStatusMaxRepos bounds the per-repo split in the brief.
+	hiveStatusMaxRepos = 3
 	// hiveStatusTextCap truncates one listed item's free text.
 	hiveStatusTextCap = 80
 )
@@ -43,8 +46,35 @@ func (s *Server) HiveStatusBrief(ctx context.Context) (string, error) {
 		return "", errHiveStatusUnavailable
 	}
 	now := time.Now()
+	status = hiveStatusEnriched(status, s.statusWithOverviewBands(status, now.UTC()))
 	snap := chatBuildSnapshot(status, "", now, nil)
 	return hiveStatusBrief(status, snap), nil
+}
+
+// hiveStatusEnriched is the status as /api/status serves it: s.status is
+// the raw snapshot, and the open-items set, the Overview totals and
+// actionable-now are derived when it is served (statusWithOverviewBands).
+// Reading the raw snapshot is how she said "0 open issues" against about
+// 35 across the hive's repos in the scored live test. A raw snapshot that
+// already carries counts (tests, older producers) is kept when the
+// derivation finds none.
+func hiveStatusEnriched(raw, derived *StatusPayload) *StatusPayload {
+	if derived == nil {
+		return raw
+	}
+	if derived.OpenItems.Total == 0 && derived.OpenItems.Issues == 0 && derived.OpenItems.PRs == 0 &&
+		(raw.OpenItems.Issues > 0 || raw.OpenItems.PRs > 0) {
+		d := *derived
+		d.OpenItems = raw.OpenItems
+		if raw.ActionableNow.Total > 0 || raw.ActionableNow.Issues > 0 || raw.ActionableNow.PRs > 0 {
+			d.ActionableNow = raw.ActionableNow
+		}
+		if raw.OverviewTotals.Issues.Forge > 0 || raw.OverviewTotals.PRs.Forge > 0 {
+			d.OverviewTotals = raw.OverviewTotals
+		}
+		return &d
+	}
+	return derived
 }
 
 func hiveStatusBrief(status *StatusPayload, snap chatSnapshot) string {
@@ -54,13 +84,21 @@ func hiveStatusBrief(status *StatusPayload, snap chatSnapshot) string {
 		t = &chatSnapshotTotals{}
 	}
 	oi := status.OpenItems
-	fmt.Fprintf(&b, "Open now: %d issues and %d PRs", oi.Issues, oi.PRs)
-	if oi.IssuesSyncing {
-		b.WriteString(" (issue count still syncing, at least this many)")
+	known := oi.Issues > 0 || oi.PRs > 0 || len(snap.PRs) == 0
+	if known {
+		fmt.Fprintf(&b, "Open now: %d issues and %d PRs", oi.Issues, oi.PRs)
+		if oi.IssuesSyncing {
+			b.WriteString(" (issue count still syncing, at least this many)")
+		}
+		hiveStatusScope(&b, oi)
+		fmt.Fprintf(&b, ". Actionable: %d issues, %d PRs. Held: %d issues, %d PRs. Blocked: %d issues, %d PRs. Awaiting a decision: %d.",
+			oi.Buckets.Actionable.Issues, oi.Buckets.Actionable.PRs, oi.Buckets.Held.Issues, oi.Buckets.Held.PRs,
+			oi.Buckets.Blocked.Issues, oi.Buckets.Blocked.PRs, t.AwaitingDecision)
+	} else {
+		// Never state a number she cannot back: no counts beside listed
+		// PRs means the counts are not in yet.
+		b.WriteString("Open issue and PR counts are not available yet (the hive is still counting); do not state a count.")
 	}
-	fmt.Fprintf(&b, ". Actionable: %d issues, %d PRs. Held: %d issues, %d PRs. Blocked: %d issues, %d PRs. Awaiting a decision: %d.",
-		oi.Buckets.Actionable.Issues, oi.Buckets.Actionable.PRs, oi.Buckets.Held.Issues, oi.Buckets.Held.PRs,
-		oi.Buckets.Blocked.Issues, oi.Buckets.Blocked.PRs, t.AwaitingDecision)
 	hiveStatusHeadline(&b, status)
 
 	var working, blocked, done []string
@@ -109,7 +147,9 @@ func hiveStatusBrief(status *StatusPayload, snap chatSnapshot) string {
 // old PR instead.
 func hiveStatusHeadline(b *strings.Builder, status *StatusPayload) {
 	oi := status.OpenItems
-	fmt.Fprintf(b, " Board pressure (BP): %d/%d, that is %d open issues and %d open PRs on the hive's board.", oi.Issues, oi.PRs, oi.Issues, oi.PRs)
+	if oi.Issues > 0 || oi.PRs > 0 {
+		fmt.Fprintf(b, " Board pressure (BP): %d/%d, that is %d open issues and %d open PRs on the hive's board.", oi.Issues, oi.PRs, oi.Issues, oi.PRs)
+	}
 	if an := status.ActionableNow; an.Total > 0 || an.Issues > 0 || an.PRs > 0 {
 		fmt.Fprintf(b, " Actionable now: %d (%d issues, %d PRs).", an.Total, an.Issues, an.PRs)
 	}
@@ -157,6 +197,35 @@ func hiveStatusBreakdown(b *strings.Builder, label string, t FrontendOverviewTot
 	hiveStatusList(b, label, out)
 }
 
+// hiveStatusScope says what the counts cover: "across 13 repos", and the
+// repos holding the most, so "35 open issues" is never read as one repo's.
+func hiveStatusScope(b *strings.Builder, oi FrontendOpenItems) {
+	if len(oi.Repos) == 0 {
+		return
+	}
+	fmt.Fprintf(b, " across %d repos", len(oi.Repos))
+	repos := slices.Clone(oi.Repos)
+	sort.SliceStable(repos, func(i, j int) bool {
+		if a, c := repos[i].Issues+repos[i].PRs, repos[j].Issues+repos[j].PRs; a != c {
+			return a > c
+		}
+		return repos[i].Repo < repos[j].Repo
+	})
+	var parts []string
+	for _, r := range repos {
+		if r.Issues == 0 && r.PRs == 0 {
+			continue
+		}
+		parts = append(parts, fmt.Sprintf("%s %d issues, %d PRs", r.Repo, r.Issues, r.PRs))
+		if len(parts) == hiveStatusMaxRepos {
+			break
+		}
+	}
+	if len(parts) > 0 {
+		b.WriteString(" (" + strings.Join(parts, "; ") + ")")
+	}
+}
+
 // hiveStatusList appends "<label>: a; b; c (and N more)." when list has items.
 func hiveStatusList(b *strings.Builder, label string, list []string) {
 	if len(list) == 0 {
@@ -171,4 +240,56 @@ func hiveStatusList(b *strings.Builder, label string, list []string) {
 		fmt.Fprintf(b, " (and %d more)", more)
 	}
 	b.WriteString(".")
+}
+
+// HiveItemBrief describes one open issue or PR by number from the hive's
+// live state ("Betty, what is pull request 18689 about?"), so a lookup is
+// answered in-process instead of going to the research agents. ok is false
+// when no open item has that number.
+func (s *Server) HiveItemBrief(ctx context.Context, number int) (string, bool) {
+	if ctx.Err() != nil || number <= 0 {
+		return "", false
+	}
+	status := s.chatStatusSnapshot()
+	if status == nil {
+		return "", false
+	}
+	for _, repo := range status.Repos {
+		name := overviewRepoName(repo)
+		for _, held := range []bool{false, true} {
+			for _, pr := range frontendRepoPRs(repo, held) {
+				if pr.pr.Number != number {
+					continue
+				}
+				line := fmt.Sprintf("PR %s#%d %q by %s", name, number, chatTruncate(pr.pr.Title, hiveStatusTextCap), pr.pr.Author)
+				if pr.pr.Draft {
+					line += ", draft"
+				}
+				if pr.pr.CIStatus != "" {
+					line += ", CI " + pr.pr.CIStatus
+				}
+				if held {
+					line += ", on hold"
+				}
+				if len(pr.pr.Labels) > 0 {
+					line += ", labels " + strings.Join(pr.pr.Labels, ", ")
+				}
+				return line + ".", true
+			}
+			for _, is := range frontendRepoIssues(repo, held) {
+				if is.Number != number {
+					continue
+				}
+				line := fmt.Sprintf("Issue %s#%d %q", name, number, chatTruncate(is.Title, hiveStatusTextCap))
+				if held {
+					line += ", on hold"
+				}
+				if len(is.Labels) > 0 {
+					line += ", labels " + strings.Join(is.Labels, ", ")
+				}
+				return line + ".", true
+			}
+		}
+	}
+	return "", false
 }

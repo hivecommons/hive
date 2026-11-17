@@ -3598,7 +3598,11 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 			if fn := meetingsResearchStatus(b.cfg, researchPool); fn != nil {
 				b.dashSrv.SetMeetingsResearchStatus(fn)
 			}
-			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger, b.dashSrv.HiveStatusBrief); lr != nil {
+			var hiveStatus hiveStatusSource
+			if b.dashSrv != nil {
+				hiveStatus = b.dashSrv
+			}
+			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger, hiveStatus); lr != nil {
 				b.meetingsLive = lr
 				b.cleanup.push(lr.Close)
 				b.cleanup.push(routeResearch(researchPool, lr))

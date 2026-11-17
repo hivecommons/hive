@@ -130,8 +130,23 @@ func (e *Engine) onLine(l Line) {
 	if strings.TrimSpace(l.Text) == "" || meetings.IsBotName(l.Who, e.s.Persona.DisplayName) || e.leave.Match(l.Text) {
 		return
 	}
+	l.Text = NormalizeDomain(l.Text)
 	now := e.d.Now()
 	trig := e.match.MatchWith(l.Text, l.Spoken, e.participants())
+	if trig.Addressed && !trig.Intro {
+		if parts := splitQuestions(l.Text); len(parts) > 1 {
+			// Two questions in one line ("Betty, how many open issues are
+			// there? How many pull requests are open?", one segment when
+			// asked a second apart): each gets its own attributed answer.
+			for i, part := range parts {
+				if i > 0 {
+					part = e.s.Persona.Name + ", " + part
+				}
+				e.onLine(Line{Who: l.Who, Text: part, Spoken: l.Spoken})
+			}
+			return
+		}
+	}
 	if trig.Misheard {
 		e.log.Info("[meetings] addressed through a misheard name", "who", l.Who)
 	}
@@ -263,6 +278,7 @@ func (e *Engine) onPartial(l Line) {
 		// waits to see whether the answer is quick.
 		return
 	}
+	l.Text = NormalizeDomain(l.Text)
 	trig := e.match.MatchWith(l.Text, true, e.participants())
 	if !trig.Addressed || trig.Intro || !trig.VoiceWanted || len(strings.Fields(trig.Rest)) < earlyAckMinWords {
 		return
@@ -554,7 +570,10 @@ func (e *Engine) onAddressedAnswer(p *pending, a answered) {
 	// The hive's own state was in the context: the answer is the hive's
 	// live data, and the research agents (public web only) know less.
 	live := hasHiveStatus(p.snips)
-	if a.err == nil && weak && !live && e.d.CanResearch && !p.thoughts && e.isQuestion(p) {
+	// A question about the hive itself never goes to the research agents
+	// (public web only, and slow): it is answered from the live state, or
+	// she says she does not have the number.
+	if a.err == nil && weak && !live && e.d.CanResearch && !p.thoughts && e.isQuestion(p) && !IsHiveStatusQuestion(p.line.Text) {
 		dig := phrasesFor(e.s.Persona.Language).digIn
 		rep.Text = dig
 		if answer := clipFn(a.ans.Answer); answer != "" && a.ans.Confidence >= e.s.MinConfidence {
@@ -606,4 +625,38 @@ func (e *Engine) isQuestion(p *pending) bool {
 // researchQuery is the request as said, for the research agent.
 func researchQuery(p *pending) string {
 	return strings.TrimSpace(p.line.Text)
+}
+
+// minSplitWords is the least a question must have to be answered on its
+// own when a line holds several.
+const minSplitWords = 3
+
+// splitQuestions splits a line holding two or more questions into them;
+// a line with one question (or fragments too short to stand alone) is
+// returned whole.
+func splitQuestions(text string) []string {
+	var parts []string
+	rest := text
+	for {
+		i := strings.Index(rest, "?")
+		if i < 0 {
+			break
+		}
+		if q := strings.TrimSpace(rest[:i+1]); q != "" {
+			parts = append(parts, q)
+		}
+		rest = rest[i+1:]
+	}
+	if tail := strings.TrimSpace(rest); tail != "" {
+		parts = append(parts, tail)
+	}
+	if len(parts) < 2 {
+		return []string{text}
+	}
+	for _, p := range parts {
+		if len(words(p)) < minSplitWords {
+			return []string{text}
+		}
+	}
+	return parts
 }

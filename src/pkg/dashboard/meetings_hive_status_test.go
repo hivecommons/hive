@@ -77,3 +77,52 @@ func TestHiveStatusListCaps(t *testing.T) {
 		t.Fatal("an empty list writes nothing")
 	}
 }
+
+// Scored live test: she said "0 open issues" while about 35 were open
+// across the hive's 13 repos, because the brief read the raw snapshot,
+// not the derived open-items set /api/status serves. The brief counts
+// every configured repo and says the scope.
+func TestHiveStatusBriefCountsAcrossRepos(t *testing.T) {
+	s := &Server{}
+	s.status = &StatusPayload{
+		HiveID: "hive-test",
+		Repos: []FrontendRepo{
+			{Name: "hive", Full: "hivecommons/hive", Issues: 20, PRs: 7},
+			{Name: "quorum", Full: "hivecommons/quorum", Issues: 10, PRs: 3},
+			{Name: "vexa", Full: "hivecommons/vexa", Issues: 5, PRs: 2},
+			{Name: "docs", Full: "hivecommons/docs"},
+		},
+	}
+	got, err := s.HiveStatusBrief(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Open now: 35 issues and 12 PRs across 4 repos",
+		"hive 20 issues, 7 PRs",
+		"Board pressure (BP): 35/12",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("brief lacks %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "0 issues and") {
+		t.Fatalf("a zero total must never be stated: %s", got)
+	}
+}
+
+// Counts that are not in yet are never stated as zero.
+func TestHiveStatusBriefNeverStatesUnbackedZero(t *testing.T) {
+	st := chatEvalStatus(time.Now())
+	st.OpenItems = FrontendOpenItems{}
+	st.ActionableNow = FrontendActionableNow{}
+	s := &Server{}
+	s.status = st
+	got, err := s.HiveStatusBrief(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(got, "not available yet") || strings.Contains(got, "Open now: 0") || strings.Contains(got, "Board pressure (BP): 0") {
+		t.Fatalf("unbacked zero stated: %s", got)
+	}
+}
