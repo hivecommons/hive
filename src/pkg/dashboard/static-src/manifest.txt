@@ -180,6 +180,7 @@ js/config-workflows-ingest-sources.js
 js/config-workflows-marketplace.js
 js/config-watchdog-security.js
 js/config-features.js
+js/config-sandbox-source.js
 js/integration-execution-settings.js
 js/config-event-triggers.js
 js/config-sentinel.js

@@ -211,10 +211,13 @@ func allDigits(s string) bool {
 
 func isDigit(c byte) bool { return c >= '0' && c <= '9' }
 
-// Family is the normalized vendor prefix before the first dash: claude, gpt,
-// gemini, grok, ... Unknown stays Unknown.
+// Family is the vendor prefix before the first dash of the Canonical id:
+// claude, gpt, gemini, grok, ... A provider or gateway path and a ":variant"
+// suffix are dropped first, so "anthropic/claude-opus-5-5" and
+// "openai-codex/gpt-6.1-sol:high" read as claude and gpt, like their bare
+// spellings. Unknown stays Unknown.
 func Family(model string) string {
-	m := Normalize(model)
+	m := Canonical(model)
 	if m == Unknown {
 		return Unknown
 	}
