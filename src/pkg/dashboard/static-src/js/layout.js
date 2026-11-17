@@ -24,8 +24,8 @@
     var dashboardKeyboardSnapshot=null;
     function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
     function experimentLabEnabled(){return dashboardFeatureEnabled('experiment_lab');}
-    function sessionsFeatureEnabled(){return window._sessionsEnabled===true;}
     function customersFeatureEnabled(){return window._customersEnabled===true;}
+    function sessionsFeatureEnabled(){return window._sessionsEnabled===true;}
     function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);if(id==='sessions-section')return !sessionsFeatureEnabled();if(id==='customers-section')return !customersFeatureEnabled();return id==='nous-section'&&!experimentLabEnabled();}
     function dashboardCanHideSection(id){id=dashboardAliasSectionId(id);return DASHBOARD_LAYOUT_TEMPLATE.main.indexOf(id)>=0&&DASHBOARD_HIDE_DENYLIST.indexOf(id)<0&&!dashboardFeatureSectionHidden(id);}
     function dashboardHiddenSectionsRead(){try{var raw=localStorage.getItem(DASHBOARD_HIDDEN_SECTIONS_KEY),arr=raw?JSON.parse(raw):[];return Array.isArray(arr)?arr.filter(function(id,i){return dashboardCanHideSection(id)&&arr.indexOf(id)===i;}):[];}catch(e){return [];}}
