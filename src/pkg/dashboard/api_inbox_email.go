@@ -136,15 +136,17 @@ func (s *Server) handleInboxEmailReport(w http.ResponseWriter, r *http.Request) 
 
 // handleInboxEmailRecent (owner or read-write) lists the recent-mail log,
 // newest first: what was mailed to this hive, accepted or refused, and the
-// reason of a refusal. No subject, file name or full sender address.
+// reason of a refusal. No subject, file name or full sender address. A
+// refused or held mail also says how to try again, where that is explained
+// and where to report a problem (mailEventViews).
 func (s *Server) handleInboxEmailRecent(w http.ResponseWriter, r *http.Request) {
 	if !requireInboxPlaybackRole(w, r) {
 		return
 	}
-	events := []inbox.MailEvent{}
+	events := []mailEventView{}
 	if s.deps != nil && s.deps.Inbox != nil {
 		if src := s.deps.Inbox.Email(); src != nil {
-			events = src.RecentMail()
+			events = mailEventViews(src, src.RecentMail())
 		}
 	}
 	w.Header().Set("Cache-Control", "private, no-store")
@@ -186,6 +188,9 @@ func (s *Server) storeMailFiles(w http.ResponseWriter, src *inbox.EmailSource, d
 		// unapproved one waits for the owner's approval (AutoTranscribe
 		// skips it).
 		s.inboxAutoTranscribe(it, inbox.AutoTranscribeActor)
+	}
+	if !trusted {
+		ev.Items = ids
 	}
 	s.recordMail(ev)
 	s.webhookLogger().Info("mail-in files received", "delivery", d.ID, "files", len(ids), "trusted", trusted)
