@@ -50,6 +50,16 @@ const (
 	// material.
 	AuditClaudeCredentialRebridged = "claude_credential_rebridged"
 
+	// AuditClaudeCredentialRefreshed is recorded when the hive itself redeems
+	// the shared Claude login's refresh grant ahead of the access token's
+	// expiry and writes the result to the shared credentials file, so the N
+	// CLIs sharing that grant never refresh it concurrently (reuse of a
+	// rotated refresh token revokes the whole grant, hivecommons/hive#18731).
+	// The detail's outcome= is "success", or "failed" with a reason= that
+	// says whether the grant itself was rejected (operator sign-in needed)
+	// or the attempt failed transiently. It never carries token material.
+	AuditClaudeCredentialRefreshed = "claude_credential_refreshed"
+
 	// AuditUserSessionLoginAdopted is recorded when a user session's HOME held
 	// a Claude login strictly newer than the shared one (the CLI in the
 	// session refreshed, or signed in, on its own copy) and hive adopted it

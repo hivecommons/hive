@@ -1053,6 +1053,12 @@ func runEvalCycle(
 	var workflowMessages []scheduler.KickMessage
 	for _, k := range planWorkflowDispatchKicks(ctx, cfg, ghClient, actionable, dashSrv.IssueClaims(), func(agent string) bool {
 		return gov.AgentEligibleForCELKick(agent) && !agentMgr.IsPaused(agent)
+	}, func(agent string) (workflowAgentTurn, bool) {
+		st, err := agentMgr.GetStatusFast(agent)
+		if err != nil {
+			return workflowAgentTurn{}, false
+		}
+		return workflowAgentTurnFrom(st)
 	}, logger) {
 		workflowMessages = append(workflowMessages, k.Message)
 		workflowKickByMessage[workflowDispatchKickKey(k.Message)] = k

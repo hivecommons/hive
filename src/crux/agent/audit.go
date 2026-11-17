@@ -29,6 +29,7 @@ const (
 	AuditClaudeTokenMissing  = crux.AuditClaudeTokenMissing
 
 	AuditClaudeCredentialRebridged = crux.AuditClaudeCredentialRebridged
+	AuditClaudeCredentialRefreshed = crux.AuditClaudeCredentialRefreshed
 	AuditUserSessionLoginAdopted   = crux.AuditUserSessionLoginAdopted
 )
 

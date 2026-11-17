@@ -39,6 +39,17 @@ import (
 // launch, on a short poll from the credential watchdog, and right after a
 // dashboard sign-in.
 //
+// Detecting is not preventing. All N CLIs hold the same access token, so
+// they reach its expiry together and refresh within seconds of each other;
+// the refresh token rotates on first use, the rest present the dead one, and
+// the authorization server revokes the WHOLE grant as a reuse, leaving
+// nothing for this repair to promote (hivecommons/hive#18731). So the hive
+// now refreshes the shared grant itself, well ahead of expiry
+// (claude_shared_refresh.go), and the CLIs find a token with hours of life
+// left whenever they look. This repair remains the backstop for the race the
+// refresher cannot win (a CLI that refreshes first anyway): its fresher
+// private copy is promoted exactly as described below.
+//
 // The repair never deletes a token. It moves the private file aside, keeps
 // whichever of the two credentials is newer AND usable in the shared file, and
 // restores the symlink:

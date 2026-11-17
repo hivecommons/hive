@@ -295,6 +295,8 @@ Each worker Hive runs, what it is doing now, and buttons to pause, restart or co
 **How the numbers are worked out.**
 
 - The header counts running workers and all workers.
+- At autonomy level L6 the hive runs itself, so the Agents section starts collapsed. Its summary still counts the workers and shows how many need your attention, such as a worker that is signed out or stopped. Open or close the section once and Hive remembers your choice on that browser, whatever the level. With no choice made, the section opens again if the level drops below L6.
+- In the left menu, **+ Add agent** and **+ Group** sit at the end of the Agents group and hide when you collapse it.
 - A worker's state comes from the hive, for example running, idle, paused or needs login.
 - A worker outside your autonomy level's usual set still shows when it is running or turned on.
 - The **Now:** line is on every card, in the full and the compact layout, and in the worker's detail panel. The next part explains its words.

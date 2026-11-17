@@ -29,7 +29,7 @@ legacy v1 host install and do not apply here.
 | Need logs without host access | [No-shell route](#no-shell-on-the-host) | Admin MCP is **v6-only**, not assumed available on v5 |
 | Notifications absent | [Notification checks](#notifications-ntfy--slack--discord-never-arrive) | Dashboard operator; outbound-network test needs container shell |
 | Agent committed but no remote branch/PR | [Publication diagnosis](#an-agent-session-completes-but-no-branch-or-pr-appears) | Container shell, with the agent's UID/HOME |
-| Login repeats or Copilot licensing fails | [Login loop](#an-agent-says-please-run-login-but-logging-in-changes-nothing), [license check](#every-copilot-agent-says-you-are-not-licensed-to-use-copilot), [one Copilot agent ignores the login](#one-copilot-agent-stays-at-the-login-prompt-after-a-dashboard-login) | Backend account owner; container admin for file-access repair |
+| Login repeats or Copilot licensing fails | [Login loop](#an-agent-says-please-run-login-but-logging-in-changes-nothing), [license check](#every-copilot-agent-says-you-are-not-licensed-to-use-copilot), [one Copilot agent ignores the login](#one-copilot-agent-stays-at-the-login-prompt-after-a-dashboard-login), [every Claude agent revoked at once](#every-claude-agent-says-oauth-token-revoked--please-run-login-at-once) | Backend account owner; container admin for file-access repair |
 | Browser terminal frozen | [Terminal recovery](#the-terminal-looks-frozen--no-new-output-and-reopening-it-doesnt-help) | Browser/dashboard first; container shell only for deeper diagnosis |
 | Agent behavior/model unexpected | [Reasoning logs](#an-agent-runs-but-not-the-way-i-expect--why-did-it-do-that), [model selection](#switching-an-agents-model) | Dashboard operator |
 | Dashboard access or API startup delays | [Auth/access](#dashboard-auth-and-access-problems), [startup response](#the-api-says-service-starting-up-please-retry), [health endpoints](#health-endpoints) | Dashboard owner or deployment admin, according to the failing layer |
@@ -668,6 +668,52 @@ curl -X POST -H "Authorization: Bearer $HIVE_DASHBOARD_TOKEN" \
 
 The restart recreates the link to the shared login. Do not open or copy the
 config file's contents: it holds the Copilot token.
+
+## Every Claude agent says "OAuth token revoked · Please run /login" at once
+
+Symptom: on a per-UID hive, every Claude agent reports
+`OAuth token revoked · Please run /login` within a minute or two of each
+other, the hive restarts each a few times and then gives up
+(`giving up on token-triggered restart`), and the credential watchdog logs
+`reason=CredentialMissing` or `login expired`. The word is *revoked*, not
+*expired*: a re-login is the only recovery for the credential on disk.
+
+Cause: every Claude agent's `~/.claude/.credentials.json` is a symlink to the
+shared `/data/home/.claude/.credentials.json`, so the fleet runs on one OAuth
+grant. Claude Code refreshes its access token itself and Anthropic rotates the
+refresh token on every use. Because all N agents hold the same access token
+they reach its expiry together and refresh within seconds of each other: the
+first refresh rotates the grant, the rest present the now-dead refresh token,
+and the authorization server treats that reuse as a stolen token and revokes
+the whole grant, the fresh one included
+([#18731](https://github.com/hivecommons/hive/issues/18731)).
+
+Prevention: the hive is the one refresher. On a timer (every minute, checked;
+`HIVE_CLAUDE_SHARED_REFRESH_INTERVAL`) it redeems the shared grant itself when
+the access token has a quarter of its lifetime left (about two hours of the
+eight; `HIVE_CLAUDE_SHARED_REFRESH_LEAD` sets the lead directly, e.g. `3h`),
+using the same refresh grant and public client id Claude Code sends, and
+writes the result atomically to the shared file. The CLIs then always find a
+token with hours of life left and never refresh it themselves. The log line
+is `claude shared login: refreshed the shared Claude credential ahead of
+expiry`, and the audit log records `claude_credential_refreshed` with
+`outcome=success`. If a CLI still refreshes first, the per-agent credential
+bridge promotes its copy exactly as before (`kept=agent`). File contents are
+never logged. `HIVE_CLAUDE_SHARED_REFRESH=off` turns the central refresh off.
+
+If the shared grant is already dead, the hive's own refresh is rejected too:
+the log says
+`claude shared login: the authorization server rejected the shared refresh grant`
+and the audit log records `claude_credential_refreshed` with `outcome=failed`
+and `reason=refresh grant rejected`. Nothing on disk can mint a token any more;
+sign in once from the dashboard. The sign-in writes a new shared credential,
+relinks any agent whose link a private refresh had replaced, and the refresher
+takes over from there. A transient failure (network, 5xx) is retried after five
+minutes and recorded with `reason=transient`; it needs no action unless it
+persists.
+
+Operator-token hives (`HIVE_CLAUDE_OAUTH_TOKEN`) are not affected: their
+agents do not use the shared file and nothing is refreshed.
 
 ## Every Copilot agent says "You are not licensed to use Copilot"
 
