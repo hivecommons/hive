@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/customers"
 	"github.com/hivecommons/hive/pkg/customers/gql"
 	"github.com/hivecommons/hive/pkg/dashboard"
+	"github.com/hivecommons/hive/pkg/meetings/betty"
+	"github.com/hivecommons/hive/pkg/scheduler"
 )
 
 const (
@@ -159,4 +162,51 @@ func (c *customersDashboard) Graph(ctx context.Context, v dashboard.CustomersVie
 	}
 	res := c.graph.Exec(ctx, customersViewer(v), req.Query, req.OperationName, req.Variables)
 	return dashboard.CustomerGraphResult{Body: res.Body, Nodes: res.Nodes, Errors: res.Errors}, nil
+}
+
+func (c *customersDashboard) AnswerHint(v dashboard.CustomersViewer, hintID string, same bool) (dashboard.CustomerResult, error) {
+	return customerResult(c.svc.AnswerHint(customersViewer(v), hintID, same))
+}
+
+// meetingsPeople holds the people directory the meeting persona reads. The
+// persona is built before customers are wired, so it asks at call time.
+var meetingsPeople atomic.Pointer[customersPeopleDirectory]
+
+func meetingsPeopleDirectory() betty.PeopleDirectory {
+	if d := meetingsPeople.Load(); d != nil {
+		return d
+	}
+	return nil
+}
+
+// customersPeopleDirectory answers the persona's "who is this?" from the
+// customers service. The persona speaks in a room, so the directory hands
+// over only what customers.PeopleBriefs allows: a name, tags and confirmed
+// goals.
+type customersPeopleDirectory struct{ svc *customers.Service }
+
+// Find implements betty.PeopleDirectory.
+func (d *customersPeopleDirectory) Find(terms []string, limit int) []betty.PersonBrief {
+	var out []betty.PersonBrief
+	for _, b := range d.svc.PeopleBriefs(terms, limit) {
+		out = append(out, betty.PersonBrief{Name: b.Name, Tags: b.Tags, Goals: b.Goals})
+	}
+	return out
+}
+
+// installCustomersAgentContext hands the customers service to the two
+// places agents and the persona read it: the kick prompt and the persona's
+// retrievers. Neither can query the store; they receive a bounded slice.
+func installCustomersAgentContext(c *customersDashboard, setKickLookup func(scheduler.CustomerContextLookup)) {
+	if c == nil {
+		meetingsPeople.Store(nil)
+		if setKickLookup != nil {
+			setKickLookup(nil)
+		}
+		return
+	}
+	meetingsPeople.Store(&customersPeopleDirectory{svc: c.svc})
+	if setKickLookup != nil {
+		setKickLookup(c.svc.KickContext)
+	}
 }

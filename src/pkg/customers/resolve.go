@@ -504,6 +504,7 @@ func (s *Store) Accept(suggestionID, by string) (Person, error) {
 			CreatedAt:    now, UpdatedAt: now,
 		}
 		delete(s.sugg, key)
+		s.dropRefsLocked(suggestionID)
 		s.people[pid] = p
 		out = clonePerson(p)
 		return nil

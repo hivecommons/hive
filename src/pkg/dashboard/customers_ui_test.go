@@ -51,6 +51,7 @@ func TestCustomersSectionWiring(t *testing.T) {
 		`data-action="customersSatisfactionReject"`,
 		`data-action="customersIdentityConfirm"`,
 		`data-action="customersForget"`,
+		`'/api/customers/hints/' + encodeURIComponent(hid) + '/answer'`,
 		`customersRequest('POST', '/api/graph', { query: CUSTOMERS_TIMELINE_QUERY, operationName: 'Timeline', variables: variables })`,
 		`person(id: $id) { edges(first: $first, after: $after) { nodes { predicate at source artefact { ref kind } } next } }`,
 		`Reset to automatic`,
@@ -83,7 +84,7 @@ func TestCustomersViewGates(t *testing.T) {
 		"customersAddFormHtml", "customersListHtml", "customersIdentityRowHtml", "customersIdentitiesHtml", "customersTagChipHtml",
 		"customersTagsHtml", "customersGoalRowHtml", "customersGoalsHtml", "customersSatisfactionHtml", "customersNotesHtml",
 		"customersActivityHtml", "customersForgetHtml", "customersProfileHtml", "customersFormatTime",
-		"customersTimelineGroups", "customersTimelineRowHtml", "customersTimelineHtml",
+		"customersTimelineGroups", "customersTimelineRowHtml", "customersTimelineHtml", "customersHintRowHtml",
 	} {
 		fns = append(fns, jsFunc(t, html, name))
 	}
@@ -104,7 +105,7 @@ const person = {
   tags: [{ name: 'maintainer', state: 'on', source: 'auto', rule: 'role:owner' }, { name: 'vip', state: 'on', source: 'manual', by: 'olivia' }, { name: 'end-user', state: 'off', source: 'auto' }],
   goals: [{ id: 'g_1', text: 'Ship exports', state: 'confirmed', source: 'manual', by: 'ada' }, { id: 'g_2', text: 'Wants SSO', state: 'suggested', source: 'auto', evidence: ['gh:issue:o/r#1'] }],
   satisfaction: { level: 'at_risk', source: 'manual', by: 'olivia', suggestion: { level: 'neutral', evidence: ['gh:pr:o/r#2'] } },
-  counts: { authored: 3 }, hints: [{ id: 'h_1' }]
+  counts: { authored: 3 }, hints: [{ id: 'h_1', other_kind: 'email', other_value: 'ada@<x>.org', reason: 'the address and the login start the same' }, { id: 'h_2', other_kind: 'customer', other_value: 'Ada B' }]
 };
 const base = { enabled: true, me: Object.assign({}, person, { id: 'p_me', me: true, name: 'Me' }), people: [person], suggestions: [{ id: 's_1', kind: 'github', value: 'stranger', counts: { authored: 2 }, evidence: ['gh:issue:o/r#9'] }], default_tags: ['maintainer', 'contributor', 'end-user', 'stakeholder'], levels: ['unknown', 'at_risk', 'neutral', 'satisfied'] };
 
@@ -118,6 +119,8 @@ must(!list.includes('<b>Ada</b>') && list.includes('&lt;b&gt;Ada&lt;/b&gt;'), 'a
 must(prof.includes('data-action="customersForget"'), 'owner profile lacks Forget');
 must(prof.includes('data-action="customersSatisfactionSet"') && prof.includes('data-action="customersSatisfactionConfirm"') && prof.includes('private note'), 'owner profile lacks satisfaction or notes');
 must(prof.includes('data-action="customersIdentityConfirm"'), 'owner cannot confirm a claimed identity');
+must(prof.includes('data-action="customersHintAnswer" data-arg0="h_1" data-arg1="yes"') && prof.includes('data-arg0="h_1" data-arg1="no"') && prof.includes('ada@&lt;x&gt;.org'), 'a suggested-identity hint lacks Yes, No or an escaped identity');
+must(!prof.includes('data-arg0="h_2" data-arg1="yes"') && prof.includes('data-arg0="h_2" data-arg1="no"'), 'a customer-to-customer hint offers Yes');
 must(prof.includes('data-action="customersGoalConfirm" data-arg0="g_2"') && prof.includes('gh:issue:o/r#1'), 'a suggested goal lacks Confirm or its evidence');
 must(!prof.includes('data-action="customersGoalConfirm" data-arg0="g_1"'), 'a confirmed goal offers Confirm');
 must(prof.includes('data-arg0="vip" data-arg1="auto"') && !prof.includes('data-arg0="maintainer" data-arg1="auto"'), 'Reset to automatic must show on manual tags only');

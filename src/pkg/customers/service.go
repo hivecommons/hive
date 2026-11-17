@@ -69,7 +69,7 @@ type PersonView struct {
 	Counts map[string]int `json:"counts,omitempty"`
 	// Hints are the open "Same person?" questions. Full view only: a hint
 	// names another profile.
-	Hints []Hint `json:"hints,omitempty"`
+	Hints []HintView `json:"hints,omitempty"`
 	// Hinted reports that the last identity edit was not linked because
 	// the identity belongs to someone else, and was raised as a question
 	// instead.
@@ -160,7 +160,9 @@ func (s *Service) view(v Viewer, p Person, isMe, detail bool) PersonView {
 		return out
 	}
 	if detail {
-		out.Hints = s.store.Hints(p.ID)
+		for _, h := range s.store.Hints(p.ID) {
+			out.Hints = append(out.Hints, s.hintView(h))
+		}
 		if s.index != nil {
 			if counts, err := s.index.Counts(p.ID); err == nil && len(counts) > 0 {
 				out.Counts = counts
@@ -395,4 +397,55 @@ func (s *Service) ArtefactPeople(v Viewer, ref string, limit int) ([]ArtefactPer
 		out = append(out, ArtefactPerson{Predicate: e.Predicate, Person: s.view(v, p, isMe, false)})
 	}
 	return out, nil
+}
+
+// HintView is a hint with what it asks about spelled out, so a person can
+// answer it without opening another profile. For a suggested person that is
+// the suggestion's identity; for a customer, their name.
+type HintView struct {
+	Hint
+	OtherKind  string `json:"other_kind,omitempty"`
+	OtherValue string `json:"other_value,omitempty"`
+}
+
+func (s *Service) hintView(h Hint) HintView {
+	v := HintView{Hint: h}
+	if sg, ok := s.store.SuggestionByID(h.Other); ok {
+		v.OtherKind, v.OtherValue = string(sg.Kind), sg.Value
+	} else if p, err := s.store.Get(h.Other); err == nil {
+		v.OtherKind, v.OtherValue = "customer", p.Name
+	}
+	return v
+}
+
+// AnswerHint answers a "Same person?" question. Yes makes the suggested
+// identity the customer's own; no closes the question and remembers it, so
+// it is not asked again. Full view only. A hint between two customers is
+// answered by merging them, which is a separate action.
+func (s *Service) AnswerHint(v Viewer, hintID string, same bool) (PersonView, error) {
+	if !v.Full {
+		return PersonView{}, ErrForbidden
+	}
+	h, ok := s.store.HintByID(hintID)
+	if !ok {
+		return PersonView{}, ErrNotFound
+	}
+	if !same {
+		if _, err := s.store.ResolveHint(hintID, false, v.User); err != nil {
+			return PersonView{}, err
+		}
+		p, err := s.store.Get(h.Person)
+		if err != nil {
+			return PersonView{}, err
+		}
+		return s.view(v, p, false, true), nil
+	}
+	if _, isSuggestion := s.store.SuggestionByID(h.Other); !isSuggestion {
+		return PersonView{}, fmt.Errorf("%w: merge the two customers instead", ErrInvalid)
+	}
+	p, err := s.store.AbsorbSuggestion(h.Person, h.Other, v.User)
+	if err != nil {
+		return PersonView{}, err
+	}
+	return s.view(v, p, false, true), nil
 }

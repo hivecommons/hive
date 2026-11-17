@@ -64,6 +64,11 @@ func (f *fakeCustomersService) Accept(v CustomersViewer, sid string) (CustomerRe
 	return f.result("p_accepted", v)
 }
 
+func (f *fakeCustomersService) AnswerHint(v CustomersViewer, hid string, same bool) (CustomerResult, error) {
+	f.note("AnswerHint", v, fmt.Sprintf("%s:%v", hid, same))
+	return f.result("p_hinted", v)
+}
+
 func (f *fakeCustomersService) Dismiss(v CustomersViewer, sid string) error {
 	f.note("Dismiss", v, sid)
 	return f.err
@@ -121,6 +126,7 @@ var (
 	custForget    = customersRoute{http.MethodDelete, "/api/customers/p_other", ""}
 	custAccept    = customersRoute{http.MethodPost, "/api/customers/suggestions/s_1/accept", ""}
 	custDismiss   = customersRoute{http.MethodPost, "/api/customers/suggestions/s_1/dismiss", ""}
+	custHint      = customersRoute{http.MethodPost, "/api/customers/hints/h_1/answer", `{"same":true}`}
 )
 
 // TestCustomersRoleMatrix walks every route as every kind of caller. The
@@ -143,6 +149,7 @@ func TestCustomersRoleMatrix(t *testing.T) {
 		{custAdd, map[string]int{"owner": ok, "read-write": ok, "merger": ok, "read": forbidden, "unverified owner": forbidden, "read with no name": forbidden}},
 		{custAccept, map[string]int{"owner": ok, "read-write": ok, "merger": ok, "read": forbidden, "unverified owner": forbidden, "read with no name": forbidden}},
 		{custDismiss, map[string]int{"owner": ok, "read-write": ok, "merger": ok, "read": forbidden, "unverified owner": forbidden, "read with no name": forbidden}},
+		{custHint, map[string]int{"owner": ok, "read-write": ok, "merger": ok, "read": forbidden, "unverified owner": forbidden, "read with no name": forbidden}},
 		{custForget, map[string]int{"owner": ok, "read-write": forbidden, "merger": forbidden, "read": forbidden, "unverified owner": forbidden, "read with no name": forbidden}},
 	}
 	s, _ := apiServer(t)
@@ -230,7 +237,7 @@ func TestCustomersOffAndErrors(t *testing.T) {
 	if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &off) != nil || off["enabled"] != false {
 		t.Fatalf("list while off = %d %s", rec.Code, rec.Body.String())
 	}
-	for _, r := range []customersRoute{custGetMe, custEditMe, custAdd, custForget, custAccept, custDismiss} {
+	for _, r := range []customersRoute{custGetMe, custEditMe, custAdd, custForget, custAccept, custDismiss, custHint} {
 		if rec := customersDo(s, custOwner, r.method, r.path, r.body); rec.Code != http.StatusServiceUnavailable {
 			t.Errorf("%s %s while off = %d, want 503", r.method, r.path, rec.Code)
 		}
@@ -287,6 +294,7 @@ func TestCustomersAudit(t *testing.T) {
 		{custReadWrite, custEditOther},
 		{custReadWrite, custAccept},
 		{custReadWrite, custDismiss},
+		{custReadWrite, custHint},
 		{custOwner, custForget},
 	}
 	for _, st := range steps {
@@ -302,8 +310,8 @@ func TestCustomersAudit(t *testing.T) {
 			count++
 		}
 	}
-	if count != 7 {
-		t.Fatalf("audited %d customer actions, want 7: %v", count, got)
+	if count != 8 {
+		t.Fatalf("audited %d customer actions, want 8: %v", count, got)
 	}
 	want := map[string]string{
 		"customer_profile_open": "olivia|person=p_other;",
@@ -311,6 +319,7 @@ func TestCustomersAudit(t *testing.T) {
 		"customer_forget":       "olivia|person=p_other, edges=3;",
 		"customer_accept":       "rita|person=p_accepted;",
 		"customer_dismiss":      "rita|suggestion=s_1;",
+		"customer_hint_answer":  "rita|person=p_hinted, same=true;",
 	}
 	for action, detail := range want {
 		if got[action] != detail {

@@ -66,6 +66,21 @@ const (
 	// ConsentSpeechEnd fence applies only this long, so a platform that
 	// restarts its session clock cannot silence the rest of the meeting.
 	ConsentSpeechWindow = 2 * time.Minute
+	// ConsentSTTLag is how long speech-to-text can take to finalize an
+	// utterance after it was spoken. A segment that arrives sooner than its
+	// own duration plus this lag after the notice began before the notice
+	// and is discarded, even when no line was heard while consent was
+	// pending (the usual case: the notice goes out on the first live state).
+	ConsentSTTLag = 3 * time.Second
+	// ConsentCursorAttempts is how many times markConsent asks Quorum for
+	// its transcript cursor before it gives up and falls back to the
+	// degraded fence.
+	ConsentCursorAttempts = 2
+	// ConsentDegradedWindow is how long after the notice every segment is
+	// discarded when Quorum's transcript cursor could not be read: without
+	// the cursor nothing says which buffered lines came before the notice,
+	// so the fence fails closed on time instead.
+	ConsentDegradedWindow = 30 * time.Second
 	// ReasonDeclined is the state reason for a platform join request the
 	// owner declined.
 	ReasonDeclined = "declined"
@@ -696,7 +711,7 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 	// no composer and the owner had turned voice replies off left at once).
 	if mt.VoiceCapable {
 		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
-		sayErr := m.opts.Quorum.Say(cctx, mt.NativeID, SpeechText(m.opts.ConsentText))
+		sayErr := m.sayConsent(cctx, mt.NativeID)
 		cancel()
 		if sayErr == nil {
 			m.log.Info("[meetings] consent notice spoken; chat could not deliver it", "meeting", mt.ID, "chat_error", chatErr)
@@ -719,6 +734,25 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 		_, _ = m.finish(mt.ID, StateEnded, ReasonConsentUndelivered, nil)
 	}
 	return true
+}
+
+// errConsentNotSpoken is a voice notice Quorum accepted but reported with no
+// audio: nothing (or too little to count) reached the room.
+var errConsentNotSpoken = errors.New("the voice notice reported no audio")
+
+// sayConsent speaks the consent notice. A Quorum that reports timing must
+// report a positive duration: a bot that could not synthesize the line
+// answers "spoken" with a zero length, and that is not a delivered notice.
+// A Quorum that cannot report timing is judged by its error alone.
+func (m *Manager) sayConsent(ctx context.Context, nativeID string) error {
+	res, err := m.say(ctx, nativeID, m.opts.ConsentText)
+	if err != nil {
+		return err
+	}
+	if _, timed := m.opts.Quorum.(TimedSayer); timed && res.DurationMS <= 0 {
+		return errConsentNotSpoken
+	}
+	return nil
 }
 
 // postConsentChat posts the consent notice in chat. It returns nil only
@@ -760,19 +794,24 @@ func consentTransient(err error) bool {
 func (m *Manager) markConsent(ctx context.Context, mt Meeting, via string) {
 	at := m.opts.Now()
 	var fence int64
+	var degraded bool
 	if tc, ok := m.opts.Quorum.(TranscriptCursor); ok {
-		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
-		res, err := tc.TranscriptRead(cctx, mt.NativeID, mt.LastSeq)
-		cancel()
-		if err != nil {
-			m.log.Warn("[meetings] reading quorum's transcript cursor for the consent fence", "meeting", mt.ID, "error", err)
-		} else {
-			fence = res.NextSeq
+		for attempt := 1; attempt <= ConsentCursorAttempts; attempt++ {
+			cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
+			res, err := tc.TranscriptRead(cctx, mt.NativeID, mt.LastSeq)
+			cancel()
+			if err == nil {
+				fence, degraded = res.NextSeq, false
+				break
+			}
+			degraded = true
+			m.log.Warn("[meetings] reading quorum's transcript cursor for the consent fence", "meeting", mt.ID, "attempt", attempt, "error", err)
 		}
 	}
 	_, _ = m.update(mt.ID, nil, func(x *Meeting) {
 		x.ConsentPostedAt, x.ConsentVia, x.ConsentError = timePtr(at), via, ""
 		x.ConsentSeq = max(x.ConsentSeq, fence)
+		x.ConsentFenceDegraded = degraded
 	})
 	// The notice is the first of hive's own lines in the meeting record.
 	kind := ReplyKindChat
@@ -785,16 +824,24 @@ func (m *Manager) markConsent(ctx context.Context, mt Meeting, via string) {
 // fromHive reports whether a line is hive's own (its chat posts echo back).
 // Platforms may decorate the bot's display name ("Betty Bee from the hive
 // (Guest)"), so a trailing parenthetical is ignored.
-func (m *Manager) fromHive(ev Event) bool {
+func (m *Manager) fromHive(id string, ev Event) bool {
 	if m.opts.BotName != "" && (ev.Author != nil && IsBotName(ev.Author.Name, m.opts.BotName) ||
 		ev.Speaker != nil && IsBotName(ev.Speaker.Name, m.opts.BotName)) {
 		return true
 	}
-	return ev.Type == EventChat && strings.TrimSpace(ev.Text) == strings.TrimSpace(m.opts.ConsentText)
+	if ev.Type == EventChat && strings.TrimSpace(ev.Text) == strings.TrimSpace(m.opts.ConsentText) {
+		return true
+	}
+	// Her own recent line under another name: a segment is judged only when
+	// final, and chat always.
+	if ev.Type == EventChat || ev.Type == EventSegment && ev.Final {
+		return m.opts.Store.IsOwnEcho(id, ev.Text, m.opts.Now())
+	}
+	return false
 }
 
 func (m *Manager) handleLine(ctx context.Context, id string, ev Event) bool {
-	if m.fromHive(ev) {
+	if m.fromHive(id, ev) {
 		return false
 	}
 	mt, err := m.opts.Store.Get(id)
@@ -865,12 +912,34 @@ func beforeConsent(mt Meeting, ev Event, now time.Time) bool {
 		}
 		return false
 	}
-	if mt.ConsentSpeechEnd > 0 && now.Sub(*mt.ConsentPostedAt) < ConsentSpeechWindow {
+	since := now.Sub(*mt.ConsentPostedAt)
+	if mt.ConsentFenceDegraded && since < ConsentDegradedWindow {
+		return true
+	}
+	if mt.ConsentSpeechEnd > 0 && since < ConsentSpeechWindow {
 		if start, ok := sessionSecs(ev.Start); ok && start < mt.ConsentSpeechEnd {
 			return true
 		}
 	}
-	return false
+	return speechBeganBeforeNotice(ev, since)
+}
+
+// speechBeganBeforeNotice reports whether a segment that arrived since
+// after the notice must have begun before it: an utterance of duration d
+// finalized by STT with a lag of at most ConsentSTTLag began no earlier
+// than d+lag before it arrived. A segment without a usable start and end is
+// not judged here.
+func speechBeganBeforeNotice(ev Event, since time.Duration) bool {
+	if ev.Type != EventSegment || since >= ConsentSpeechWindow {
+		return false
+	}
+	start, okStart := sessionSecs(ev.Start)
+	end, okEnd := sessionSecs(ev.End)
+	if !okStart || !okEnd || end < start {
+		return false
+	}
+	spoken := time.Duration((end - start) * float64(time.Second))
+	return since < spoken+ConsentSTTLag
 }
 
 // sessionSecs decodes a segment's start or end (seconds from the session
