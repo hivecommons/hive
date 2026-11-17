@@ -16,6 +16,7 @@ import (
 
 	"github.com/hivecommons/hive/crux/claude"
 	"github.com/hivecommons/hive/crux/config"
+	"github.com/hivecommons/hive/crux/internal/testutil"
 )
 
 // sharedRefreshFixture provisions n bridged Claude agents sharing one login
@@ -51,20 +52,23 @@ func sharedRefreshFixture(t *testing.T, n int, expiresAt int64) (*Manager, *fake
 // current refresh token exactly once and rotates it, and rejects any
 // presentation of a token it has already rotated away, the way reuse
 // detection revokes a grant. It never inspects anything but the refresh
-// token.
+// token. With started and release set, the first request reports on started
+// and then blocks until release is closed, so a test can hold one refresh in
+// flight deterministically.
 type fakeRefreshServer struct {
 	mu       sync.Mutex
 	calls    atomic.Int32
 	rejected atomic.Int32
 	live     string
 	lifetime time.Duration
-	delay    time.Duration
+	started  chan struct{}
+	release  chan struct{}
 }
 
 func (s *fakeRefreshServer) refresh(prev *claude.OAuthTokens) (*claude.OAuthTokens, error) {
-	s.calls.Add(1)
-	if s.delay > 0 {
-		time.Sleep(s.delay)
+	if s.calls.Add(1) == 1 && s.started != nil {
+		close(s.started)
+		<-s.release
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -96,21 +100,40 @@ func withFakeRefresh(t *testing.T, srv *fakeRefreshServer) {
 func TestSharedClaudeRefresh_NAgentsOneGrantExactlyOneRequest(t *testing.T) {
 	const n = 8
 	m, sink, links, target := sharedRefreshFixture(t, n, time.Now().Add(time.Minute).UnixMilli())
-	srv := &fakeRefreshServer{live: readTokensAt(t, target).RefreshToken, lifetime: 8 * time.Hour, delay: 20 * time.Millisecond}
+	srv := &fakeRefreshServer{
+		live: readTokensAt(t, target).RefreshToken, lifetime: 8 * time.Hour,
+		started: make(chan struct{}), release: make(chan struct{}),
+	}
 	withFakeRefresh(t, srv)
 	var logBuf bytes.Buffer
 	m.logger = slog.New(slog.NewTextHandler(&logBuf, nil))
 
-	// Every agent's tick lands at once, plus a few extra passes afterwards.
+	// One pass reaches the authorization server and is held there; every
+	// other agent's tick lands while it is in flight and must not send a
+	// second request for the same grant.
+	first := make(chan claudeSharedRefreshOutcome, 1)
+	go func() { first <- m.refreshSharedClaudeCredential() }()
+	<-srv.started
 	var wg sync.WaitGroup
-	for i := 0; i < n; i++ {
+	var skipped atomic.Int32
+	for i := 1; i < n; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			m.refreshSharedClaudeCredential()
+			if m.refreshSharedClaudeCredential() == claudeSharedRefreshSkipped {
+				skipped.Add(1)
+			}
 		}()
 	}
 	wg.Wait()
+	if got := skipped.Load(); got != n-1 {
+		t.Fatalf("%d of %d concurrent passes were skipped while one refresh was in flight, want all", got, n-1)
+	}
+	close(srv.release)
+	if got := <-first; got != claudeSharedRefreshWritten {
+		t.Fatalf("the in-flight pass = %v, want written", got)
+	}
+	// Later ticks find a credential that is not due.
 	for i := 0; i < 3; i++ {
 		if got := m.refreshSharedClaudeCredential(); got != claudeSharedRefreshSkipped {
 			t.Errorf("pass after the refresh = %v, want skipped (not due)", got)
@@ -191,16 +214,10 @@ func TestSharedClaudeRefresh_TimerRefreshesBeforeExpiryWithoutRestart(t *testing
 	}
 	defer stop()
 
-	deadline := time.Now().Add(5 * time.Second)
-	for {
-		if tok := claude.LoadTokens(links[0]); tok != nil && tok.ExpiresAt > before {
-			break
-		}
-		if time.Now().After(deadline) {
-			t.Fatal("the timer never refreshed the shared login ahead of expiry")
-		}
-		time.Sleep(5 * time.Millisecond)
-	}
+	testutil.Eventually(t, 5*time.Second, func() bool {
+		tok := claude.LoadTokens(links[0])
+		return tok != nil && tok.ExpiresAt > before
+	}, "the timer never refreshed the shared login ahead of expiry")
 	stop()
 	for _, link := range links {
 		if tok := readTokensAt(t, link); tok.ExpiresAt <= before {
