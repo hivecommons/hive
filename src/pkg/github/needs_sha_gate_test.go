@@ -83,7 +83,7 @@ func TestClassifyWebhookIssue_NeedsSHASidelined(t *testing.T) {
 				User: &gh.User{Login: gh.Ptr("maintainer")}, AuthorAssociation: gh.Ptr("MEMBER"),
 				Labels:    []*gh.Label{{Name: gh.Ptr("kind/bug")}, {Name: gh.Ptr("needs-sha")}},
 				CreatedAt: &gh.Timestamp{Time: time.Now().Add(-time.Hour)}}
-			p := c.classifyWebhookIssue("o/r", issue, issueLabelNames(issue.Labels), time.Now())
+			p := c.classifyWebhookIssue("o/r", issue, 0, issueLabelNames(issue.Labels), time.Now())
 			if p.Bucket != WebhookBucketSidelined || p.WorkIssue == nil || p.WorkIssue.Reason != "needs-sha" {
 				t.Fatalf("patch = %+v, want sidelined with reason needs-sha", p)
 			}

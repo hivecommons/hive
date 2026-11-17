@@ -99,7 +99,7 @@ func TestUpdateBranchAndSkipUpdatesBehindDependabotPR(t *testing.T) {
 
 	c := newAutoMergeSweepClient(srv.URL)
 	pr := currentBaseTestPR(false, "dependabot/npm_and_yarn/x", "dependabot[bot]", "behind")
-	event, _, err := c.updateBranchAndSkip(context.Background(), "acme/widget", "acme", "widget", 7, head, "behind", pr)
+	event, _, err := c.updateBranchAndSkip(context.Background(), "acme/widget", "acme", "widget", 7, head, pr.GetBase().GetSHA(), "behind", pr)
 	if err != nil {
 		t.Fatalf("err = %v", err)
 	}
