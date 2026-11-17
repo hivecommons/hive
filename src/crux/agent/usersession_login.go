@@ -386,15 +386,20 @@ func (r *UserSessionRuntime) loginOps() sessionLoginOps {
 // syncClaudeLogin checks one session's Claude login and reports the outcome.
 func (r *UserSessionRuntime) syncClaudeLogin(id, trigger string, mode sessionLoginMode) error {
 	res, err := r.loginOps().checkSessionClaudeLogin(id, mode)
+	reportSessionLogin(r.logger, r.loginAudit(), id, trigger, res, err)
+	return err
+}
+
+// loginAudit is the audit function of a session login check made by the
+// runtime, nil when no sink is installed.
+func (r *UserSessionRuntime) loginAudit() func(string, map[string]any) {
 	r.auditMu.Lock()
 	sink := r.auditSink
 	r.auditMu.Unlock()
-	var audit func(string, map[string]any)
-	if sink != nil {
-		audit = func(action string, fields map[string]any) { sink.Record(auditActorSystem, action, "", fields) }
+	if sink == nil {
+		return nil
 	}
-	reportSessionLogin(r.logger, audit, id, trigger, res, err)
-	return err
+	return func(action string, fields map[string]any) { sink.Record(auditActorSystem, action, "", fields) }
 }
 
 // ---- manager side
@@ -461,7 +466,9 @@ func (w *sessionLoginCache) forget(keep map[string]bool) {
 // syncUserSessionClaudeLogins checks the Claude login of every session
 // sandbox on this hive: it adopts a strictly newer login a session holds into
 // the shared file (with an audit entry) and brings every session's copy up to
-// date with the shared one. It returns the ids it adopted a login from.
+// date with the shared one. It returns the ids it adopted a Claude login
+// from. The same sweep adopts a newer Codex or OpenCode login
+// (syncUserSessionRotatingLogins).
 //
 // It runs at boot, on the credential-bridge poll and after a dashboard
 // sign-in, whether or not any agent uses Claude: sessions use the shared
@@ -484,6 +491,8 @@ func (m *Manager) syncUserSessionClaudeLogins(trigger string) []string {
 		if !e.IsDir() || !userSessionIDPattern.MatchString(id) {
 			continue
 		}
+		// Codex and OpenCode logins (usersession_login_rotating.go).
+		m.syncUserSessionRotatingLogins(id, trigger, ops, force, present)
 		path := filepath.Join(userSessionHome(id), userSessionClaudeLoginRel)
 		stamp, ok := sessionLoginStampOf(path, target)
 		if !ok {

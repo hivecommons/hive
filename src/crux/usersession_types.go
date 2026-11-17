@@ -140,7 +140,7 @@ var (
 	// written.
 	ErrUserSessionInboxSymlink = errors.New("refusing to write through a symlinked .hive/inbox directory")
 	// ErrUserSessionHoldsLogin is wrapped by Remove when the session's HOME
-	// holds a Claude login that is usable and strictly newer than the shared
+	// holds a Claude, Codex or OpenCode login strictly newer than the shared
 	// one and adopting it into the shared login failed. Nothing of the session
 	// is removed: deleting it would delete the hive's only valid sign-in.
 	ErrUserSessionHoldsLogin = errors.New("this session holds the hive's current sign-in")
