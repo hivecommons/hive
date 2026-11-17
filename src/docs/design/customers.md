@@ -265,7 +265,7 @@ forget, the role checks and retention pruning are merged and tested.
 |---|---|---|
 | Owner | Everyone; suggested people; export; forget | Everyone |
 | Read-write | Everyone; suggested people | Everyone, except forget and export |
-| Read-only | Only their own "me" | Only their own name, identities, tags and goals |
+| Read-only | Only their own "me" | Only their own name, identities (as unconfirmed claims), tags and goals |
 
 - The owner and read-write admission is the one used for playing an Inbox
   recording.
@@ -273,9 +273,23 @@ forget, the role checks and retention pruning are merged and tested.
   a person route for any other id answers as if the id did not exist, and
   every GraphQL resolver that returns a person checks the viewer. A test walks
   the role matrix over every route and over each GraphQL path.
-- A read-only user editing their own identities cannot claim an identity that
-  belongs to another person; such a claim becomes a "Same person?" hint for an
-  owner or read-write user to confirm.
+- An identity a read-only user adds to their own profile is an **unconfirmed
+  claim**. It is shown on their profile and does nothing else: it is not a
+  key, resolves nobody and attracts no edges, whether or not the identity
+  belongs to someone else, so the answer tells the claimant nothing about
+  other profiles. An owner or read-write user confirms it; if it belongs to
+  another person, confirming raises a "Same person?" hint instead of linking.
+  A trusted source (section 5) proving the same identity also upgrades it.
+- A read-only user's view of their own profile leaves out the maintainers'
+  working material: notes, the satisfaction assessment, merge history, edge
+  counts and hints (a hint names another profile).
+- A read-only user must be a named, signed-in user. An anonymous viewer has
+  no profile.
+- Writes go through one route for the read-only role,
+  `POST /api/customers/me/edit`, which the dashboard's read-only write gate
+  lets through by exact method and path. The handlers apply the rules and the
+  store's service applies them again on the viewer it is handed, so the two
+  cannot drift apart silently.
 
 ## 11. GraphQL
 

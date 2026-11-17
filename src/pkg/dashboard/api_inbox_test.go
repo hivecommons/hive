@@ -90,6 +90,9 @@ func TestInboxEndpoints(t *testing.T) {
 	if empty := decodeInboxList(t, rec0.Body.Bytes()); empty.Items == nil || len(empty.Items) != 0 || empty.Sources == nil || empty.Settings.Rules == nil {
 		t.Fatalf("empty inbox = %s", rec0.Body.String())
 	}
+	// The input-method catalogue is static: it is listed with or without
+	// a service, and never as a source (#18747).
+	assertInboxInputMethods(t, rec0.Body.Bytes())
 	if rec := doGet(s, "/api/inbox/settings"); rec.Code != http.StatusNotFound {
 		t.Fatalf("settings without service = %d, want 404", rec.Code)
 	}
@@ -103,6 +106,7 @@ func TestInboxEndpoints(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("list = %d: %s", rec.Code, rec.Body.String())
 	}
+	assertInboxInputMethods(t, rec.Body.Bytes())
 	resp := decodeInboxList(t, rec.Body.Bytes())
 	if len(resp.Items) != 1 || resp.Items[0].ID != "rec-1" || resp.Items[0].FactSlug != "plaud-plaud-rec-1" || resp.Unprocessed != 1 {
 		t.Fatalf("list = %+v", resp)
@@ -329,5 +333,27 @@ func TestInboxAudioAndContentEndpoints(t *testing.T) {
 	}
 	if rec := doGetRole(s, "/api/inbox/plaud/nope/content", "", false); rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown content = %d", rec.Code)
+	}
+}
+
+// assertInboxInputMethods checks GET /api/inbox carries the input-method
+// catalogue and that none of its entries is reported as a source.
+func assertInboxInputMethods(t *testing.T, body []byte) {
+	t.Helper()
+	var resp InboxListResponse
+	if err := json.Unmarshal(body, &resp); err != nil {
+		t.Fatalf("decode inbox list: %v", err)
+	}
+	if len(resp.InputMethods) != len(inbox.InputMethods()) || len(resp.InputMethods) == 0 {
+		t.Fatalf("input_methods = %d entries, want %d", len(resp.InputMethods), len(inbox.InputMethods()))
+	}
+	sources := map[string]bool{}
+	for _, src := range resp.Sources {
+		sources[src.Type] = true
+	}
+	for _, m := range resp.InputMethods {
+		if sources[m.ID] {
+			t.Errorf("input method %s is also listed as a source", m.ID)
+		}
 	}
 }

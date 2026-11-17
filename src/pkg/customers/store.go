@@ -152,7 +152,7 @@ func (s *Store) reindexLocked() {
 	s.owner = map[string]string{}
 	for id, p := range s.people {
 		for _, i := range p.Identities {
-			if i.Kind == KindName {
+			if i.Kind == KindName || i.Claimed {
 				continue
 			}
 			s.owner[i.Key()] = id
@@ -513,7 +513,8 @@ func (s *Store) SetNotes(id, notes string) (Person, error) {
 }
 
 // Forget deletes a customer and leaves a salted-hash tombstone for each of
-// their identities, so a later sweep does not rebuild them. The returned
+// their confirmed identities, so a later sweep does not rebuild them. An
+// unconfirmed claim is not tombstoned: it may be someone else's. The returned
 // person is what was deleted; the caller removes their edges. Hive-user
 // identities and names are not tombstoned: a dashboard user who signs in
 // again gets a fresh, empty profile.
@@ -526,14 +527,14 @@ func (s *Store) Forget(id string) (Person, error) {
 		}
 		out = clonePerson(p)
 		for _, i := range p.Identities {
-			if i.Kind == KindName || i.Kind == KindHiveUser {
+			if i.Kind == KindName || i.Kind == KindHiveUser || i.Claimed {
 				continue
 			}
 			s.tombs[s.tombstoneHash(i.Key())] = true
 		}
 		for _, m := range p.MergedFrom {
 			for _, i := range m.Person.Identities {
-				if i.Kind == KindName || i.Kind == KindHiveUser {
+				if i.Kind == KindName || i.Kind == KindHiveUser || i.Claimed {
 					continue
 				}
 				s.tombs[s.tombstoneHash(i.Key())] = true
