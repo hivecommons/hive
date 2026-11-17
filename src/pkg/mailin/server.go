@@ -171,18 +171,29 @@ func (b *backend) NewSession(c *smtp.Conn) (smtp.Session, error) {
 
 // SMTP replies.
 var (
-	errUnknownRecipient = &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "no such mailbox here"}
+	errUnknownRecipient = withHelp(&smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "no such mailbox here"}, wire.ReasonUnknownMailbox)
 	errHostsNotLoaded   = &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "recipient list not loaded yet, try again later"}
 	errIPRate           = &smtp.SMTPError{Code: 450, EnhancedCode: smtp.EnhancedCode{4, 7, 1}, Message: "too many messages from your address, try again later"}
 	errDomainRate       = &smtp.SMTPError{Code: 450, EnhancedCode: smtp.EnhancedCode{4, 7, 1}, Message: "too many messages from your domain, try again later"}
-	errUnknownMailbox   = &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "no such mailbox here: a hive takes mail only at " + wire.LocalPart + "@<its host>"}
+	errUnknownMailbox   = withHelp(&smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 1, 1}, Message: "no such mailbox here: a hive takes mail only at " + wire.LocalPart + "@<its host>"}, wire.ReasonUnknownMailbox)
 	errBusy             = &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 2}, Message: "too busy, try again later"}
 	errSpool            = &smtp.SMTPError{Code: 452, EnhancedCode: smtp.EnhancedCode{4, 3, 1}, Message: "insufficient storage, try again later"}
-	errHiveBudget       = &smtp.SMTPError{Code: 452, EnhancedCode: smtp.EnhancedCode{4, 2, 2}, Message: "this hive has received its daily volume of mail, try again tomorrow"}
-	errMalformed        = &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 6, 0}, Message: "message could not be parsed"}
+	errHiveBudget       = withHelp(&smtp.SMTPError{Code: 452, EnhancedCode: smtp.EnhancedCode{4, 2, 2}, Message: "this hive has received its daily volume of mail, try again tomorrow"}, wire.ReasonHiveVolume)
+	errMalformed        = withHelp(&smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 6, 0}, Message: "message could not be parsed"}, wire.ReasonMalformed)
 	errTemporary        = &smtp.SMTPError{Code: 451, EnhancedCode: smtp.EnhancedCode{4, 3, 0}, Message: "temporary failure, try again later"}
-	errRejected         = &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 7, 1}, Message: "the hive refused this message: its mail-in may be turned off or its mail storage full"}
+	errRejected         = withHelp(&smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 7, 1}, Message: "the hive refused this message: its mail-in may be turned off or its mail storage full"}, wire.ReasonHiveRefused)
 )
+
+// withHelp adds to a refusal how to try again, the help page and where to
+// report a problem (hivecommons/hive#18744), each on a line of its own in
+// the SMTP reply. The sender's provider returns the whole reply in its
+// bounce, which is the only message a sender gets: hive-mx sends no mail,
+// so nothing ever goes to an address that may be forged. The lines are the
+// same for every sender and say nothing about the hive or its users.
+func withHelp(e *smtp.SMTPError, reason string) *smtp.SMTPError {
+	return &smtp.SMTPError{Code: e.Code, EnhancedCode: e.EnhancedCode,
+		Message: e.Message + "\n" + strings.Join(wire.HelpLines(reason), "\n")}
+}
 
 // Session outcomes, as logged.
 const (
@@ -194,7 +205,7 @@ const (
 // Reason categories that never reach a hive (the others are wire.Reason*).
 const (
 	reasonUnknownRecipient = "unknown_recipient"
-	reasonUnknownMailbox   = "unknown_mailbox"
+	reasonUnknownMailbox   = wire.ReasonUnknownMailbox
 	reasonHostsNotLoaded   = "host_list_not_loaded"
 	reasonRateIP           = "rate_limited_ip"
 	reasonRateDomain       = "rate_limited_domain"
@@ -240,8 +251,8 @@ func skipReason(why string) string {
 func nothingToDeliver(p Parsed, lim Limits) (string, *smtp.SMTPError) {
 	lim = lim.withDefaults()
 	if len(p.Skipped) == 0 {
-		return wire.ReasonEmpty, &smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 6, 0},
-			Message: "nothing to deliver: the message has no text, no calendar invite and no attachment"}
+		return wire.ReasonEmpty, withHelp(&smtp.SMTPError{Code: 550, EnhancedCode: smtp.EnhancedCode{5, 6, 0},
+			Message: "nothing to deliver: the message has no text, no calendar invite and no attachment"}, wire.ReasonEmpty)
 	}
 	var phrases []string
 	for _, sk := range p.Skipped {
@@ -256,7 +267,7 @@ func nothingToDeliver(p Parsed, lim Limits) (string, *smtp.SMTPError) {
 	if reason == wire.ReasonAttachmentTooLarge {
 		e.Code, e.EnhancedCode = 552, smtp.EnhancedCode{5, 3, 4}
 	}
-	return reason, e
+	return reason, withHelp(e, reason)
 }
 
 type session struct {
@@ -559,8 +570,8 @@ func (s *session) receive(r io.Reader, from string, rcpts []string, rec *message
 			rec.reason = reasonSpool
 		case errors.As(err, &se) && se.Code == smtp.ErrDataTooLarge.Code:
 			rec.reason = wire.ReasonMessageTooLarge
-			return &smtp.SMTPError{Code: se.Code, EnhancedCode: se.EnhancedCode,
-				Message: fmt.Sprintf("the message is over the %d MB limit", s.o.MaxMessageBytes/bytesPerMB)}
+			return withHelp(&smtp.SMTPError{Code: se.Code, EnhancedCode: se.EnhancedCode,
+				Message: fmt.Sprintf("the message is over the %d MB limit", s.o.MaxMessageBytes/bytesPerMB)}, wire.ReasonMessageTooLarge)
 		case errors.As(err, &se):
 			rec.reason = reasonAborted
 		}
