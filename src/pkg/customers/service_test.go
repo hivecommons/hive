@@ -444,3 +444,100 @@ func TestServiceWithoutIndex(t *testing.T) {
 		t.Fatalf("Forget without an index = %d, %v", n, err)
 	}
 }
+
+// privateTo is a resolver that lets only one user see each listed artefact.
+type privateTo map[string]string
+
+func (p privateTo) Exists(string) bool { return true }
+
+func (p privateTo) Visible(ref string, v Viewer) bool {
+	owner, restricted := p[ref]
+	return !restricted || owner == v.User
+}
+
+func TestEdgesAndArtefactPeopleFollowTheViewer(t *testing.T) {
+	dir := t.TempDir()
+	store, err := Open(filepath.Join(dir, "customers"), newClock().now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	index, err := OpenIndex(filepath.Join(dir, "graph"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = index.Close() })
+	private := MeetingRef("owners-only")
+	s := NewService(store, index, Resolvers{RefMeeting: privateTo{private: "olivia"}})
+
+	reed, _ := s.Get(readV, MeID)
+	ada, _ := s.Add(ownerV, "Ada", []Identity{{Kind: KindGitHub, Value: "ada"}})
+	shared := IssueRef("o/r", 1)
+	if _, err := index.Put([]Edge{
+		edge(reed.ID, PredReported, shared, "hive_user:reed", 1),
+		edge(reed.ID, PredAttended, private, "hive_user:reed", 2),
+		edge(ada.ID, PredAssigned, shared, "github:ada", 3),
+		edge(ada.ID, PredAttended, private, "github:ada", 4),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// The owner sees every edge of anyone.
+	edges, next, err := s.Edges(ownerV, ada.ID, "", "", 10)
+	if err != nil || next != "" || len(edges) != 2 {
+		t.Fatalf("owner Edges(ada) = %d, %q, %v", len(edges), next, err)
+	}
+	// Read-write sees Ada, but not the artefact only the owner may open.
+	edges, _, err = s.Edges(rwV, ada.ID, "", "", 10)
+	if err != nil || len(edges) != 1 || edges[0].Artefact != shared {
+		t.Fatalf("read-write Edges(ada) = %+v, %v", edges, err)
+	}
+	// Read-only: own edges only, and still not the private artefact.
+	edges, _, err = s.Edges(readV, MeID, "", "", 10)
+	if err != nil || len(edges) != 1 || edges[0].Artefact != shared {
+		t.Fatalf("read-only Edges(me) = %+v, %v", edges, err)
+	}
+	if _, _, err := s.Edges(readV, ada.ID, "", "", 10); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("read-only Edges(ada) = %v, want ErrNotFound", err)
+	}
+	if _, _, err := s.Edges(Viewer{}, MeID, "", "", 10); !errors.Is(err, ErrForbidden) {
+		t.Fatalf("nameless Edges = %v", err)
+	}
+
+	// Walking back from an artefact never reaches a person the viewer may
+	// not see: the read-only user finds only themselves on a shared issue.
+	people, err := s.ArtefactPeople(ownerV, shared, 10)
+	if err != nil || len(people) != 2 {
+		t.Fatalf("owner ArtefactPeople = %+v, %v", people, err)
+	}
+	people, err = s.ArtefactPeople(readV, shared, 10)
+	if err != nil || len(people) != 1 || people[0].Person.ID != reed.ID || !people[0].Person.Me || people[0].Predicate != PredReported {
+		t.Fatalf("read-only ArtefactPeople = %+v, %v", people, err)
+	}
+	if people, err := s.ArtefactPeople(ownerV, shared, 1); err != nil || len(people) != 1 {
+		t.Fatalf("limit = %+v, %v", people, err)
+	}
+	// An artefact the viewer may not see is not there for them.
+	if _, err := s.ArtefactPeople(rwV, private, 10); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("ArtefactPeople on a private artefact = %v", err)
+	}
+	if s.ArtefactVisible(rwV, private) || !s.ArtefactVisible(ownerV, private) {
+		t.Fatal("ArtefactVisible must follow the artefact's own source")
+	}
+	for _, bad := range []string{"", "no-kind", "gh:bad\nref"} {
+		if s.ArtefactVisible(ownerV, bad) {
+			t.Errorf("ArtefactVisible(%q) = true", bad)
+		}
+	}
+	if s.ArtefactVisible(Viewer{Full: true}, shared) {
+		t.Fatal("a nameless viewer sees no artefact")
+	}
+
+	// No index: nothing to read, and no error.
+	bare := NewService(store, nil, nil)
+	if e, n, err := bare.Edges(ownerV, ada.ID, "", "", 10); err != nil || e != nil || n != "" {
+		t.Fatalf("Edges without an index = %v, %q, %v", e, n, err)
+	}
+	if p, err := bare.ArtefactPeople(ownerV, shared, 10); err != nil || p != nil {
+		t.Fatalf("ArtefactPeople without an index = %v, %v", p, err)
+	}
+}

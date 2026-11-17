@@ -51,6 +51,8 @@ func TestCustomersSectionWiring(t *testing.T) {
 		`data-action="customersSatisfactionReject"`,
 		`data-action="customersIdentityConfirm"`,
 		`data-action="customersForget"`,
+		`customersRequest('POST', '/api/graph', { query: CUSTOMERS_TIMELINE_QUERY, operationName: 'Timeline', variables: variables })`,
+		`person(id: $id) { edges(first: $first, after: $after) { nodes { predicate at source artefact { ref kind } } next } }`,
 		`Reset to automatic`,
 		`There is no score: only a level, and what led to it.`,
 	} {
@@ -81,16 +83,18 @@ func TestCustomersViewGates(t *testing.T) {
 		"customersAddFormHtml", "customersListHtml", "customersIdentityRowHtml", "customersIdentitiesHtml", "customersTagChipHtml",
 		"customersTagsHtml", "customersGoalRowHtml", "customersGoalsHtml", "customersSatisfactionHtml", "customersNotesHtml",
 		"customersActivityHtml", "customersForgetHtml", "customersProfileHtml", "customersFormatTime",
+		"customersTimelineGroups", "customersTimelineRowHtml", "customersTimelineHtml",
 	} {
 		fns = append(fns, jsFunc(t, html, name))
 	}
 	consts := ""
-	for _, name := range []string{"CUSTOMERS_KIND_LABELS", "CUSTOMERS_ADDABLE_KINDS", "CUSTOMERS_LEVEL_LABELS", "CUSTOMERS_LEVEL_PILL", "CUSTOMERS_ORIGIN_LABELS"} {
+	for _, name := range []string{"CUSTOMERS_KIND_LABELS", "CUSTOMERS_ADDABLE_KINDS", "CUSTOMERS_LEVEL_LABELS", "CUSTOMERS_LEVEL_PILL", "CUSTOMERS_ORIGIN_LABELS", "CUSTOMERS_REF_KIND_LABELS"} {
 		consts += jsConstBlock(t, html, name) + "\n"
 	}
 	script := consts + `
 const CUSTOMERS_EVIDENCE_SHOWN = 5;
 let _customersData = null;
+let _customersTimeline = { id: '', nodes: [], next: '', error: '', loading: false };
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 ` + strings.Join(fns, "\n") + `
 function must(cond, msg) { if (!cond) throw new Error(msg); }
@@ -119,6 +123,24 @@ must(!prof.includes('data-action="customersGoalConfirm" data-arg0="g_1"'), 'a co
 must(prof.includes('data-arg0="vip" data-arg1="auto"') && !prof.includes('data-arg0="maintainer" data-arg1="auto"'), 'Reset to automatic must show on manual tags only');
 must(!prof.includes('data-arg0="hive_user:ada"'), 'the hive user identity offers Remove');
 must(customersSummaryText(_customersData) === '2 customers · 1 suggested', 'summary: ' + customersSummaryText(_customersData));
+
+// The timeline is read from the graph and grouped by what it points at. It
+// shows references, escaped, and offers the next page only when there is one.
+must(prof.includes('id="customers-timeline"') && prof.includes('No activity recorded yet.'), 'an empty timeline is not rendered');
+_customersTimeline = { id: 'p_abc', next: 'cursor', error: '', loading: false, nodes: [
+  { predicate: 'reported', at: '2026-11-02T10:00:00Z', artefact: { ref: 'gh:issue:o/r#1', kind: 'gh' } },
+  { predicate: 'spoke_in', at: '2026-11-01T10:00:00Z', artefact: { ref: 'meeting:<m1>', kind: 'meeting' } },
+  { predicate: 'authored', at: '2026-10-30T10:00:00Z', artefact: { ref: 'gh:pr:o/r#2', kind: 'gh' } } ] };
+const groups = customersTimelineGroups(_customersTimeline.nodes);
+must(groups.length === 2 && groups[0].label === 'GitHub' && groups[0].nodes.length === 2 && groups[1].label === 'Meetings', 'timeline groups: ' + JSON.stringify(groups));
+let timeline = customersTimelineHtml();
+must(timeline.includes('GitHub (2)') && timeline.includes('gh:pr:o/r#2') && timeline.includes('spoke in') && timeline.includes('meeting:&lt;m1&gt;') && !timeline.includes('<m1>'), 'timeline: ' + timeline);
+must(timeline.includes('data-action="customersTimelineMore"'), 'a timeline with a next page lacks Show more');
+_customersTimeline.next = '';
+must(!customersTimelineHtml().includes('customersTimelineMore'), 'the last page still offers Show more');
+_customersTimeline = { id: 'p_abc', nodes: [], next: '', error: 'Could not load activity: boom', loading: false };
+must(customersTimelineHtml().includes('Could not load activity: boom'), 'a timeline error is not shown');
+_customersTimeline = { id: '', nodes: [], next: '', error: '', loading: false };
 
 // Read-write: no Forget.
 _customersData = Object.assign({}, base, { full: true, owner: false });
