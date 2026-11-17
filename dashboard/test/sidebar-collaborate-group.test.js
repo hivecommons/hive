@@ -199,7 +199,11 @@ test('reordering Dashboard links from the sidebar keeps Collaborate sections whe
   // Move Governor to the top of the Dashboard group, as a drag would.
   const governor = dashboard.children.find((e) => e.getAttribute('data-section') === 'governor');
   dashboard.children = [governor, ...dashboard.children.filter((e) => e !== governor)];
+  const before = [...vm.runInContext('dashboardLayoutNormalize(dashboardLayoutCurrent()).main', ctx)];
   const main = [...vm.runInContext('dashboardSidebarLayoutFromDom().main', ctx)];
-  assert.deepEqual(main.slice(0, COLLABORATE_SECTIONS.length + 2), [...COLLABORATE_SECTIONS, 'governor', 'overview-section']);
+  // Governor and Overview trade slots; every other section, Collaborate included, keeps its place.
+  const want = before.map((id) => (id === 'governor' ? 'overview-section' : id === 'overview-section' ? 'governor' : id));
+  assert.deepEqual(main, want);
+  for (const id of COLLABORATE_SECTIONS) assert.equal(main.indexOf(id), before.indexOf(id), `${id} keeps its layout position`);
   assert.equal(new Set(main).size, main.length, 'no duplicate sections');
 });
