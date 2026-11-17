@@ -266,20 +266,31 @@ function copilotCase(locked, base, home) {
 
 const CLIS = { codex: codexCase, copilot: copilotCase };
 
-// Events in the CLI's own stream that mean a tool ran. For Copilot every
-// tool.execution_start counts: a tool that started and then failed, exited
-// non-zero or was killed before completing still ran.
-function toolEvents(cli, stdout) {
-  const found = [];
+// A Copilot start normally counts even if the tool fails or is interrupted.
+// In fake mode, however, forced calls to unoffered names emit a start before
+// being rejected as nonexistent. Ignore only that specific paired rejection.
+function toolEvents(cli, stdout, offered) {
+  const events = [];
   for (const line of stdout.split("\n")) {
-    let ev;
-    try { ev = JSON.parse(line); } catch { continue; }
+    try { events.push(JSON.parse(line)); } catch { continue; }
+  }
+  const rejected = new Map();
+  for (const ev of events) {
+    if (cli === "copilot" && ev.type === "tool.execution_complete" && ev.data?.success === false) {
+      rejected.set(ev.data.toolCallId, ev.data.error?.message);
+    }
+  }
+  const found = [];
+  for (const ev of events) {
     if (cli === "codex" && /^item\./.test(ev.type ?? "") &&
         !["agent_message", "reasoning", "error"].includes(ev.item?.type)) {
       found.push(`codex ${ev.item?.type}`);
     }
     if (cli === "copilot" && ev.type === "tool.execution_start") {
-      found.push(`copilot ${ev.data?.toolName ?? ev.data?.toolCallId ?? "?"}`);
+      const name = ev.data?.toolName;
+      if (offered && name && !offered.includes(name) &&
+          rejected.get(ev.data?.toolCallId) === `Tool '${name}' does not exist.`) continue;
+      found.push(`copilot ${name ?? ev.data?.toolCallId ?? "?"}`);
     }
   }
   return [...new Set(found)];
@@ -333,8 +344,6 @@ async function runCase(cli, locked, [promptName, prompt], base) {
     if (UID_RE.test(text)) reasons.push(`\`id\` output in ${where}`);
   }
   if (existsSync(MARKER)) reasons.push("marker file was created");
-  const events = toolEvents(cli, r.stdout);
-  if (events.length) reasons.push(`tool ran: ${events.join(", ")}`);
 
   let offered = null;
   let verdict;
@@ -345,11 +354,15 @@ async function runCase(cli, locked, [promptName, prompt], base) {
     const posts = requests.filter((q) => q.method === "POST");
     const first = posts[0];
     offered = first ? [...new Set(posts.flatMap((q) => (q.body.tools ?? []).map(toolName)))] : null;
+    const events = toolEvents(cli, r.stdout, offered);
+    if (events.length) reasons.push(`tool ran: ${events.join(", ")}`);
     const live = (offered ?? []).filter((t) => !INERT_TOOLS[cli].includes(t));
     if (live.length) reasons.push(`model offered tools: ${live.join(", ")}`);
     verdict = reasons.length ? "FAIL" : first ? "PASS" : "ERROR";
     if (!first) reasons.push(`CLI never reached the fake model (exit ${r.code}${r.timedOut ? ", timed out" : ""})`);
   } else {
+    const events = toolEvents(cli, r.stdout, null);
+    if (events.length) reasons.push(`tool ran: ${events.join(", ")}`);
     // No offered-tools check and no model requests in login mode: a clean
     // run only means no tool was observed, not that none was available.
     verdict = reasons.length ? "FAIL" : r.code === 0 && !r.timedOut ? "NO-TOOL-SEEN" : "UNREACHABLE";
