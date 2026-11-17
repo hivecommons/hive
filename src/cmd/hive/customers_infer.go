@@ -40,8 +40,6 @@ const (
 	customersEvidenceBody = 240
 )
 
-const customersSourceInference = "inference"
-
 // customersEvidence collects, per customer, what they wrote or did that the
 // hive already holds: the issues they opened, the pull requests they
 // authored, and mail from them that was approved. References only point at
