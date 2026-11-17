@@ -48327,12 +48327,10 @@ function burnAreaChart() {
       } else {
         actions += iconBtn('inbox-share', 'inboxShare', 'Share', 'Share: file this item in the hive, or copy a link to it (not the recording)', 'share', ' data-arg-types="s,s,t" aria-haspopup="menu" aria-expanded="false"');
       }
-      if (inboxCanDeleteRecording(it, window._hiveRole, window._hiveUser)) {
-        const busy = it.transcription && (it.transcription.status === 'queued' || it.transcription.status === 'running');
-        actions += '<span class="inbox-actions-sep" role="separator"></span>' +
-          '<button type="button" class="hv-btn btn-icon btn-sm inbox-action inbox-action-danger inbox-delete" data-action="inboxDeleteRecording" data-arg0="' + id + '" aria-label="Delete recording"' +
-          (busy ? ' disabled aria-disabled="true" title="Being transcribed: delete it once the transcription finishes"' : ' title="Delete the audio, this Inbox item and its transcript; anything already shared from it stays"') + '>' + inboxIconSvg('trash') + '</button>';
-      }
+      // Delete for every item kind (#18694) registers inboxDeleteButtonHtml;
+      // until then only a hive recording has one.
+      const del = typeof inboxDeleteButtonHtml === 'function' ? inboxDeleteButtonHtml(it) : inboxDeleteRecordingButtonHtml(it);
+      if (del) actions += '<span class="inbox-actions-sep" role="separator"></span>' + del;
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
         (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(tp.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
@@ -48726,6 +48724,14 @@ function burnAreaChart() {
       if (!it || it.source !== 'hive-recording') return false;
       if (role === 'owner') return true;
       return role === 'read-write' && !!user && !!it.recorded_by && String(it.recorded_by).toLowerCase() === String(user).toLowerCase();
+    }
+    // inboxDeleteRecordingButtonHtml is the trash icon button of the action
+    // row for a hive recording the viewer may delete ('' otherwise).
+    function inboxDeleteRecordingButtonHtml(it) {
+      if (!inboxCanDeleteRecording(it, window._hiveRole, window._hiveUser)) return '';
+      const busy = it.transcription && (it.transcription.status === 'queued' || it.transcription.status === 'running');
+      return '<button type="button" class="hv-btn btn-icon btn-sm inbox-action inbox-action-danger inbox-delete" data-action="inboxDeleteRecording" data-arg0="' + escapeHtml(it.id) + '" aria-label="Delete recording"' +
+        (busy ? ' disabled aria-disabled="true" title="Being transcribed: delete it once the transcription finishes"' : ' title="Delete the audio, this Inbox item and its transcript; anything already shared from it stays"') + '>' + inboxIconSvg('trash') + '</button>';
     }
     // inboxDeleteRecordingText is the confirm text; with share history it
     // says that the shared copies stay.

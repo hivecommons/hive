@@ -52,7 +52,7 @@ function makeContext(role) {
     Array,
   };
   vm.createContext(ctx);
-  for (const fn of ['inboxIconSvg', 'inboxTitleParts', 'inboxMarkdownToText', 'inboxFactStateHtml', 'inboxSharePillText', 'inboxShareTargetHref', 'inboxSharePillHtml', 'inboxSharePillsHtml', 'inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemHasAudio', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxCanDeleteRecording', 'inboxItemHtml']) {
+  for (const fn of ['inboxIconSvg', 'inboxTitleParts', 'inboxMarkdownToText', 'inboxFactStateHtml', 'inboxSharePillText', 'inboxShareTargetHref', 'inboxSharePillHtml', 'inboxSharePillsHtml', 'inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemHasAudio', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxCanDeleteRecording', 'inboxDeleteRecordingButtonHtml', 'inboxItemHtml']) {
     vm.runInContext(extractFunction(fn), ctx);
   }
   return ctx;
