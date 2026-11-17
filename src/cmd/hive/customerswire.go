@@ -210,3 +210,23 @@ func installCustomersAgentContext(c *customersDashboard, setKickLookup func(sche
 		setKickLookup(c.svc.KickContext)
 	}
 }
+
+func (c *customersDashboard) Merge(v dashboard.CustomersViewer, id, from string) (dashboard.CustomerResult, error) {
+	return customerResult(c.svc.Merge(customersViewer(v), id, from))
+}
+
+func (c *customersDashboard) Unmerge(v dashboard.CustomersViewer, id, from string) (dashboard.CustomerResult, error) {
+	return customerResult(c.svc.Unmerge(customersViewer(v), id, from))
+}
+
+func (c *customersDashboard) Split(v dashboard.CustomersViewer, id string, keys []string, name string) (dashboard.CustomerResult, error) {
+	return customerResult(c.svc.Split(customersViewer(v), id, keys, name))
+}
+
+func (c *customersDashboard) Export(v dashboard.CustomersViewer, id string) (any, error) {
+	out, err := c.svc.Export(customersViewer(v), id)
+	if err != nil {
+		return nil, customersError(err)
+	}
+	return out, nil
+}

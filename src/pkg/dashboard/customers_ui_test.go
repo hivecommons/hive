@@ -51,6 +51,12 @@ func TestCustomersSectionWiring(t *testing.T) {
 		`data-action="customersSatisfactionReject"`,
 		`data-action="customersIdentityConfirm"`,
 		`data-action="customersForget"`,
+		`customersRequest('POST', '/api/graph', { query: CUSTOMERS_GRAPH_QUERY, operationName: 'Graph'`,
+		`'/api/customers/' + encodeURIComponent(id) + '/' + kind`,
+		`'/api/customers/' + encodeURIComponent(id) + '/split'`,
+		`'/export'`,
+		`hiveExportViewer({ title: 'Customer export: '`,
+		`person { id name me } } } } } } }'`,
 		`'/api/customers/hints/' + encodeURIComponent(hid) + '/answer'`,
 		`customersRequest('POST', '/api/graph', { query: CUSTOMERS_TIMELINE_QUERY, operationName: 'Timeline', variables: variables })`,
 		`person(id: $id) { edges(first: $first, after: $after) { nodes { predicate at source artefact { ref kind } } next } }`,
@@ -85,17 +91,21 @@ func TestCustomersViewGates(t *testing.T) {
 		"customersTagsHtml", "customersGoalRowHtml", "customersGoalsHtml", "customersSatisfactionHtml", "customersNotesHtml",
 		"customersActivityHtml", "customersForgetHtml", "customersProfileHtml", "customersFormatTime",
 		"customersTimelineGroups", "customersTimelineRowHtml", "customersTimelineHtml", "customersHintRowHtml",
+		"customersMergeHtml", "customersGraphBodyHtml", "customersGraphHtml",
+		"graphcanvasRound", "graphcanvasLabel", "graphcanvasLayout", "graphcanvasSvg",
 	} {
 		fns = append(fns, jsFunc(t, html, name))
 	}
 	consts := ""
-	for _, name := range []string{"CUSTOMERS_KIND_LABELS", "CUSTOMERS_ADDABLE_KINDS", "CUSTOMERS_LEVEL_LABELS", "CUSTOMERS_LEVEL_PILL", "CUSTOMERS_ORIGIN_LABELS", "CUSTOMERS_REF_KIND_LABELS"} {
+	for _, name := range []string{"CUSTOMERS_KIND_LABELS", "CUSTOMERS_ADDABLE_KINDS", "CUSTOMERS_LEVEL_LABELS", "CUSTOMERS_LEVEL_PILL", "CUSTOMERS_ORIGIN_LABELS", "CUSTOMERS_REF_KIND_LABELS",
+		"GRAPHCANVAS_W", "GRAPHCANVAS_H", "GRAPHCANVAS_RING_ARTEFACT", "GRAPHCANVAS_RING_PEOPLE", "GRAPHCANVAS_MAX_ARTEFACTS", "GRAPHCANVAS_LABEL_MAX"} {
 		consts += jsConstBlock(t, html, name) + "\n"
 	}
 	script := consts + `
 const CUSTOMERS_EVIDENCE_SHOWN = 5;
 let _customersData = null;
 let _customersTimeline = { id: '', nodes: [], next: '', error: '', loading: false };
+let _customersGraph = { id: '', on: false, nodes: null, error: '', loading: false };
 function escapeHtml(s) { return String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'); }
 ` + strings.Join(fns, "\n") + `
 function must(cond, msg) { if (!cond) throw new Error(msg); }
@@ -105,9 +115,10 @@ const person = {
   tags: [{ name: 'maintainer', state: 'on', source: 'auto', rule: 'role:owner' }, { name: 'vip', state: 'on', source: 'manual', by: 'olivia' }, { name: 'end-user', state: 'off', source: 'auto' }],
   goals: [{ id: 'g_1', text: 'Ship exports', state: 'confirmed', source: 'manual', by: 'ada' }, { id: 'g_2', text: 'Wants SSO', state: 'suggested', source: 'auto', evidence: ['gh:issue:o/r#1'] }],
   satisfaction: { level: 'at_risk', source: 'manual', by: 'olivia', suggestion: { level: 'neutral', evidence: ['gh:pr:o/r#2'] } },
+  merged_from: [{ person: { id: 'p_old', name: 'Old <Ada>' }, by: 'olivia', at: '2026-10-01T00:00:00Z' }],
   counts: { authored: 3 }, hints: [{ id: 'h_1', other_kind: 'email', other_value: 'ada@<x>.org', reason: 'the address and the login start the same' }, { id: 'h_2', other_kind: 'customer', other_value: 'Ada B' }]
 };
-const base = { enabled: true, me: Object.assign({}, person, { id: 'p_me', me: true, name: 'Me' }), people: [person], suggestions: [{ id: 's_1', kind: 'github', value: 'stranger', counts: { authored: 2 }, evidence: ['gh:issue:o/r#9'] }], default_tags: ['maintainer', 'contributor', 'end-user', 'stakeholder'], levels: ['unknown', 'at_risk', 'neutral', 'satisfied'] };
+const base = { enabled: true, me: Object.assign({}, person, { id: 'p_me', me: true, name: 'Me' }), people: [person, { id: 'p_two', name: 'Two' }], suggestions: [{ id: 's_1', kind: 'github', value: 'stranger', counts: { authored: 2 }, evidence: ['gh:issue:o/r#9'] }], default_tags: ['maintainer', 'contributor', 'end-user', 'stakeholder'], levels: ['unknown', 'at_risk', 'neutral', 'satisfied'] };
 
 // Owner: everything.
 _customersData = Object.assign({}, base, { full: true, owner: true });
@@ -125,7 +136,11 @@ must(prof.includes('data-action="customersGoalConfirm" data-arg0="g_2"') && prof
 must(!prof.includes('data-action="customersGoalConfirm" data-arg0="g_1"'), 'a confirmed goal offers Confirm');
 must(prof.includes('data-arg0="vip" data-arg1="auto"') && !prof.includes('data-arg0="maintainer" data-arg1="auto"'), 'Reset to automatic must show on manual tags only');
 must(!prof.includes('data-arg0="hive_user:ada"'), 'the hive user identity offers Remove');
-must(customersSummaryText(_customersData) === '2 customers · 1 suggested', 'summary: ' + customersSummaryText(_customersData));
+must(customersSummaryText(_customersData) === '3 customers · 1 suggested', 'summary: ' + customersSummaryText(_customersData));
+must(prof.includes('data-action="customersMerge"') && prof.includes('<option value="p_two">Two</option>') && !prof.includes('<option value="p_abc">'), 'the merge picker lists other customers only');
+must(prof.includes('data-action="customersUnmerge" data-arg0="p_old"') && prof.includes('Old &lt;Ada&gt;') && !prof.includes('<Ada>'), 'a merged profile lacks Undo or is not escaped');
+must(prof.includes('data-action="customersExport"') && prof.includes('data-action="customersGraphToggle"') && prof.includes('Show graph'), 'owner profile lacks Export or the graph toggle');
+must(prof.includes('data-action="customersSplit" data-arg0="github:ada"') && !prof.includes('data-arg0="hive_user:ada" data-action="customersSplit"') && !prof.includes('customersSplit" data-arg0="hive_user:ada"') && !prof.includes('customersSplit" data-arg0="email:ada@example.com"'), 'Split off must be offered for a confirmed identity only, never the hive user or a claim');
 
 // The timeline is read from the graph and grouped by what it points at. It
 // shows references, escaped, and offers the next page only when there is one.
@@ -145,10 +160,11 @@ _customersTimeline = { id: 'p_abc', nodes: [], next: '', error: 'Could not load 
 must(customersTimelineHtml().includes('Could not load activity: boom'), 'a timeline error is not shown');
 _customersTimeline = { id: '', nodes: [], next: '', error: '', loading: false };
 
-// Read-write: no Forget.
+// Read-write: no Forget and no Export, but merge and split.
 _customersData = Object.assign({}, base, { full: true, owner: false });
 prof = customersProfileHtml(person);
-must(!prof.includes('customersForget'), 'read-write profile offers Forget');
+must(!prof.includes('customersForget') && !prof.includes('customersExport'), 'read-write profile offers Forget or Export');
+must(prof.includes('data-action="customersMerge"') && prof.includes('data-action="customersSplit"'), 'read-write profile lacks merge or split');
 must(prof.includes('data-action="customersSatisfactionSet"'), 'read-write profile lacks satisfaction');
 
 // Read-only: own profile only; no suggestions, add, satisfaction, notes, activity, forget or confirm.
@@ -157,11 +173,40 @@ _customersData = { enabled: true, full: false, owner: false, me: mine, people: [
 list = customersListHtml(_customersData);
 prof = customersProfileHtml(mine);
 for (const banned of ['customersAccept', 'customersDismiss', 'customersAdd', 'Suggested (']) must(!list.includes(banned), 'read-only list shows ' + banned);
-for (const banned of ['customersForget', 'customersSatisfaction', 'customersNotesSave', 'customersIdentityConfirm', 'Activity']) must(!prof.includes(banned), 'read-only profile shows ' + banned);
+for (const banned of ['customersForget', 'customersSatisfaction', 'customersNotesSave', 'customersIdentityConfirm', 'Activity', 'customersMerge', 'customersUnmerge', 'customersSplit', 'customersExport']) must(!prof.includes(banned), 'read-only profile shows ' + banned);
+must(prof.includes('data-action="customersGraphToggle"'), 'a read-only user may open the graph of their own profile');
 must(prof.includes('data-action="customersGoalConfirm" data-arg0="g_9"') && prof.includes('data-action="customersGoalAdd"') && prof.includes('data-action="customersTagSet"') && prof.includes('data-action="customersIdentityAdd"'), 'read-only profile lacks its own goal, tag or identity controls');
 must(prof.includes('unconfirmed'), 'a claimed identity is not marked unconfirmed');
 must(customersSummaryText(_customersData) === 'your profile', 'read-only summary: ' + customersSummaryText(_customersData));
 must(customersSummaryText({ enabled: false }) === 'off', 'off summary');
+
+// Graph view: layout and drawing.
+const gEdges = [
+  { predicate: 'reported', artefact: { ref: 'gh:issue:o/r#1', kind: 'gh', people: [{ predicate: 'reported', person: { id: 'p_me', name: 'Me', me: true } }, { predicate: 'assigned', person: { id: 'p_x', name: 'Xavier <b>' } }] } },
+  { predicate: 'commented_on', artefact: { ref: 'gh:issue:o/r#1', kind: 'gh', people: [] } },
+  { predicate: 'attended', artefact: { ref: 'meeting:m1', kind: 'meeting', people: [{ predicate: 'attended', person: { id: 'p_x', name: 'Xavier <b>' } }, { predicate: 'spoke_in', person: { id: 'p_y', name: 'Yuri' } }] } },
+  { predicate: 'sent', artefact: null }, null, {}
+];
+const lay = graphcanvasLayout({ id: 'p_me', name: 'Me' }, gEdges);
+must(lay.nodes.filter(n => n.kind === 'person').length === 1 && lay.nodes.filter(n => n.kind === 'artefact').length === 2, 'artefacts must be unique and the person drawn once: ' + JSON.stringify(lay.nodes.map(n => n.id)));
+must(lay.nodes.filter(n => n.kind === 'other').map(n => n.id).sort().join() === 'p_x,p_y', 'the person themselves must not appear as another person, and others are unique');
+must(lay.nodes.every(n => Number.isFinite(n.x) && Number.isFinite(n.y) && n.x >= 0 && n.x <= lay.width && n.y >= 0 && n.y <= lay.height), 'a node is off the canvas or NaN');
+must(lay.links.some(l => l.from === 'p_me' && l.to === 'gh:issue:o/r#1' && l.label === 'reported, commented_on'), 'predicates on one artefact are joined');
+let svg = graphcanvasSvg(lay);
+must(svg.startsWith('<svg class="gv"') && svg.includes('data-action="customersOpen" data-arg0="p_x"') && !svg.includes('data-arg0="p_me"') && !svg.includes('<b>') && svg.includes('Xavier &lt;b&gt;'), 'svg: ' + svg.slice(0, 300));
+must(!svg.includes('style=') && !svg.includes('NaN') && (svg.match(/<circle/g) || []).length === lay.nodes.length, 'svg has inline styles, NaN, or a missing node');
+let many = [];
+for (let i = 0; i < 60; i++) many.push({ predicate: 'authored', artefact: { ref: 'gh:pr:o/r#' + i, kind: 'gh', people: [] } });
+must(graphcanvasLayout({ id: 'p', name: 'P' }, many).nodes.length === GRAPHCANVAS_MAX_ARTEFACTS + 1, 'artefacts are not bounded');
+must(graphcanvasLayout({ id: 'p', name: 'P' }, []).nodes.length === 1 && graphcanvasLayout({ id: 'p', name: 'P' }, null).links.length === 0, 'an empty graph draws only the person');
+must(graphcanvasLabel('x'.repeat(100)).length === GRAPHCANVAS_LABEL_MAX, 'labels are not bounded');
+_customersGraph = { id: 'p_abc', on: true, nodes: gEdges, error: '', loading: false };
+must(customersGraphBodyHtml(person).includes('<svg class="gv"'), 'the graph body does not draw');
+_customersGraph = { id: 'p_abc', on: true, nodes: [], error: '', loading: false };
+must(customersGraphBodyHtml(person).includes('Nothing to draw yet.'), 'an empty graph says so');
+_customersGraph = { id: 'p_abc', on: true, nodes: null, error: 'Could not load the graph: boom', loading: false };
+must(customersGraphBodyHtml(person).includes('Could not load the graph: boom'), 'a graph error is not shown');
+_customersGraph = { id: '', on: false, nodes: null, error: '', loading: false };
 must(customersLevelPill('unknown') === '' && customersLevelPill('satisfied').includes('data-status="ok"'), 'level pill');
 `
 	cmd := exec.Command(node, "-e", script)
