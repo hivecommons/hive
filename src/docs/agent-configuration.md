@@ -1299,7 +1299,7 @@ How it works and what it never does:
 - **Per-repo status.** Settings shows, on each write entry, which identity will actually post and why: `posts as hivecommons-hive[bot]: App installed on <org>`, `posts as <owner>: App not installed on <org>`, `read-only: connect your GitHub account`, or `read-only: bot only, App not installed on <org>`. A change that would leave a hand-written write entry without a credential is refused before it is saved, with the error boot would stop on.
 - **Upgrade.** Hives that never set the key read as `bot`. Where the App is not installed, nothing changes. A granted repo whose owner installed the App now gets posts as the bot instead of the owner. Choose *Me* to keep the previous behaviour everywhere.
 
-The own-item follow-up below reads under the owner token, so for now it follows only the items opened as the owner.
+The own-item follow-up below follows the items opened under either identity, each repo read with its own credential.
 
 **Fork-and-PR.** The owner's account cannot push to a repository it does not own, so a PR against a remote repo goes through the owner's fork: `gh repo fork <owner>/<name> --clone=false`, push the topic branch to `https://<host>/<login>/<name>`, then `gh pr create --repo <owner>/<name> --head <login>:<branch>`. The proxy allows exactly that (fork creation, pushes to the fork with its default branch protected, the PR against the remote) and refuses everything else on the fork. The kick spells the commands out, so `git push` and `gh pr create` need no agent-side special casing.
 
