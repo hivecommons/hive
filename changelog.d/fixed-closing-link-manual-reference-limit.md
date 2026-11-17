@@ -1,1 +1,0 @@
-- Stop retrying the closing-issue link when GitHub rejects it with the permanent "exceeds manual reference limit" error, so the PR-claim sweep no longer repeats WARN logs and selfreports (#18666).
