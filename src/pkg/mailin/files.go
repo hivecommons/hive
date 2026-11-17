@@ -1,7 +1,9 @@
 package mailin
 
 import (
+	"archive/zip"
 	"bytes"
+	"io"
 	"net/http"
 	"path"
 	"strings"
@@ -29,7 +31,57 @@ const (
 	ctMatroska   = "video/x-matroska"
 	ctWebM       = "audio/webm"
 	ctMarkdown   = "text/markdown"
+	ctPDF        = "application/pdf"
+	// ctZip is a ZIP container: an Office Open XML document until
+	// verifyContainer has looked inside.
+	ctZip  = "application/zip"
+	ctDOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+	ctPPTX = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+	ctXLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 )
+
+// Office Open XML containers (hivecommons/hive#18699): every one holds
+// ooxmlContentTypes and its kind's main part; ooxmlMacroPart marks a
+// macro-enabled document, which is refused whatever its extension says.
+const (
+	ooxmlContentTypes = "[Content_Types].xml"
+	ooxmlMacroPart    = "vbaproject.bin"
+)
+
+// ooxmlMainPart is the part that tells a Word, PowerPoint or Excel
+// container apart, by stored content type.
+var ooxmlMainPart = map[string]string{
+	ctDOCX: "word/document.xml",
+	ctPPTX: "ppt/presentation.xml",
+	ctXLSX: "xl/workbook.xml",
+}
+
+// verifyContainer looks inside a file stored as ct. A type that is not a
+// container passes; an Office Open XML document must be a readable ZIP
+// with its content types and main part, and no macro project.
+func verifyContainer(ct string, r io.ReaderAt, size int64) bool {
+	mainPart, ok := ooxmlMainPart[ct]
+	if !ok {
+		return true
+	}
+	zr, err := zip.NewReader(r, size)
+	if err != nil {
+		return false
+	}
+	var haveTypes, haveMain bool
+	for _, f := range zr.File {
+		name := strings.TrimPrefix(f.Name, "/")
+		switch {
+		case name == ooxmlContentTypes:
+			haveTypes = true
+		case name == mainPart:
+			haveMain = true
+		case strings.ToLower(path.Base(name)) == ooxmlMacroPart:
+			return false
+		}
+	}
+	return haveTypes && haveMain
+}
 
 func same(cts ...string) map[string]string {
 	m := make(map[string]string, len(cts))
@@ -58,10 +110,15 @@ var fileTypes = map[string]fileType{
 	".jpeg": {wire.AttachImage, same("image/jpeg")},
 	".gif":  {wire.AttachImage, same("image/gif")},
 	".webp": {wire.AttachImage, same("image/webp")},
+	// Office documents (#18699): stored and attached, never opened here.
+	".pdf":  {wire.AttachDocument, same(ctPDF)},
+	".docx": {wire.AttachDocument, map[string]string{ctZip: ctDOCX}},
+	".pptx": {wire.AttachDocument, map[string]string{ctZip: ctPPTX}},
+	".xlsx": {wire.AttachDocument, map[string]string{ctZip: ctXLSX}},
 }
 
 // AcceptedExtensions is the allowlist as the SMTP reply lists it.
-const AcceptedExtensions = "md, m4a, mp3, wav, ogg, webm, mp4, mov, mkv, png, jpg, gif, webp"
+const AcceptedExtensions = "md, pdf, docx, pptx, xlsx, m4a, mp3, wav, ogg, webm, mp4, mov, mkv, png, jpg, gif, webp"
 
 // maxNameRunes bounds an attachment file name.
 const maxNameRunes = 120
@@ -119,7 +176,8 @@ func sniffISO(head []byte) string {
 }
 
 // sniffHead names the content type of a file's first bytes among the
-// binary types mail-in accepts, "" for anything else.
+// binary types mail-in accepts, "" for anything else. A ZIP head is only
+// ctZip here; verifyContainer decides whether it is an office document.
 func sniffHead(head []byte) string {
 	if len(head) > sniffLen {
 		head = head[:sniffLen]
@@ -136,6 +194,10 @@ func sniffHead(head []byte) string {
 		return "audio/wave"
 	case bytes.HasPrefix(head, []byte("OggS\x00")):
 		return "audio/ogg"
+	case bytes.HasPrefix(head, []byte("%PDF-")):
+		return ctPDF
+	case bytes.HasPrefix(head, []byte("PK\x03\x04")):
+		return ctZip
 	case bytes.HasPrefix(head, []byte("\x1A\x45\xDF\xA3")):
 		// EBML: the DocType says Matroska or WebM.
 		if bytes.Contains(head, []byte("matroska")) {
@@ -198,7 +260,7 @@ func acceptFile(name string, data []byte) (wire.Attachment, bool) {
 		return wire.Attachment{}, false
 	}
 	ct, ok := ft.match(sniff(data))
-	if !ok {
+	if !ok || !verifyContainer(ct, bytes.NewReader(data), int64(len(data))) {
 		return wire.Attachment{}, false
 	}
 	return wire.Attachment{Name: name, Kind: ft.kind, ContentType: ct, Size: len(data), Data: data}, true

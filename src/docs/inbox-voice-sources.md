@@ -423,13 +423,27 @@ for a conversation Otter has no transcript for
 
 ## Files mailed to hive@ (email)
 
+The Inbox shows the address at the top, under the toolbar: **Send to this
+inbox**, the address as a link that opens a new mail, a **Copy** button and
+a one-line hint. Owner and read-write users see it; the same address is in
+the Calendar and Meetings sections for calendar invites
+([#18693](https://github.com/hivecommons/hive/issues/18693)). Nothing is
+prefilled in the mail: its subject becomes the item's title. On a hive that
+mail cannot reach (it holds no hub relay key, so no hub relays mail to it)
+the row says **Not set up yet** and links to
+[the setup guide](meetings.md#is-the-address-set-up) instead of showing an
+address that would bounce; with `meetings.email.files_enabled: false` it
+says mailed-in files are turned off.
+
 Mail sent to `hive@<your hive's dashboard host>` reaches the cluster's
 receive-only mail receiver, hive-mx, which keeps only the subject, the text
-body and the accepted attachments: Markdown (`.md`), audio (`.m4a`, `.mp3`,
-`.wav`, `.ogg`, `.webm`), video (`.mp4`, `.mov`, `.mkv`) and image (`.png`,
-`.jpg`, `.gif`, `.webp`), type checked by content, at most 10 files, 25 MB
-per file and 35 MiB per message ([#18395](https://github.com/hivecommons/hive/issues/18395),
-[#18564](https://github.com/hivecommons/hive/issues/18564); how mail
+body and the accepted attachments: Markdown (`.md`), office documents
+(`.pdf`, `.docx`, `.pptx`, `.xlsx`), audio (`.m4a`, `.mp3`, `.wav`, `.ogg`,
+`.webm`), video (`.mp4`, `.mov`, `.mkv`) and image (`.png`, `.jpg`, `.gif`,
+`.webp`), type checked by content, at most 10 files, 25 MB per file and
+35 MiB per message ([#18395](https://github.com/hivecommons/hive/issues/18395),
+[#18564](https://github.com/hivecommons/hive/issues/18564),
+[#18699](https://github.com/hivecommons/hive/issues/18699); how mail
 reaches hive-mx is in [meetings.md](meetings.md#inviting-betty-by-email)).
 The hub relays them to the hive, in signed pieces when they are large. Each
 attachment becomes one `email` item (✉️), titled with the subject (and the
@@ -460,10 +474,232 @@ images or other remote content.
   as an attachment of the item; an `.mp4` or `.mov` goes to the same
   transcription path, which reads its audio track (as a dropped video
   does), while an `.mkv` is stored only and the item says so. **Images** are
-  stored as attachments of the item and shown as a thumbnail; **📎 Open
-  file** downloads any of them (owner and read-write).
+  stored as attachments of the item and shown as a thumbnail. **Office
+  documents** (PDF, Word, PowerPoint, Excel) are stored as attachments of
+  the item; their text is not extracted, and a macro-enabled or damaged
+  document, or one whose content is not what its extension says, is left
+  out. **📎 Open file** downloads any of them (owner and read-write).
 - Nothing in a mail is executed or followed. Turn mail-in files off with
   `meetings.email.files_enabled: false`; senders then get a bounce.
+
+### When a mail does not show up
+
+Under the item list, owners and read-write users see **✉️ Recent mail**: the
+last 50 messages mailed to the hive, received or refused, newest first.
+Each line has the time, the outcome (received, awaiting approval or
+refused), the sender's domain, the number of files, the size and, for a
+refusal or an attachment that was left out, the reason. It never holds a
+subject, a file name or a full sender address. The same list is
+`GET /api/inbox/email/recent`.
+
+A mail that was received but shows **awaiting approval** says which of the
+two conditions for landing directly was not met:
+
+- **The sender could not be authenticated.** Neither SPF nor DKIM passed
+  for the domain of the `From` address. The line gives the DMARC, SPF and
+  DKIM results and the server that handed the mail over. The usual cause is
+  a mail program that sends through another provider's outgoing server
+  than the address's own (an `@icloud.com` address sent through an
+  internet provider's SMTP server, for example): the address's domain
+  does not authorize that server, and its signature is missing. Send from
+  the provider's own app or web mail, or fix the account's outgoing server.
+  Being on the allowlist does not help here; the owner can still approve
+  the item by hand.
+- **The sender is authenticated but not on the allowlist.** Add the address
+  under **Settings, Meeting attendee, Email** and prove it
+  ([Proving calendar emails](meetings.md#proving-calendar-emails)); the
+  proof mail has to pass the same authentication.
+
+Each refused or held mail on the list has, on the line under it
+([#18744](https://github.com/hivecommons/hive/issues/18744)):
+
+- **How to try again:** the fix for that reason, and **What this means**, a
+  link to the reason's entry in
+  [Mailing your hive: what the replies mean](#mailing-your-hive-what-the-replies-mean).
+- **Report a problem:** opens a new issue on the hive repository, prefilled
+  with the reason code, the SMTP reply code, the day and the hive's version.
+  It never holds the sender's address or domain, the subject or a file
+  name, and you submit it as yourself.
+- **✓ Approve** and **✕ Decline** for the owner, when the mail awaits
+  approval: they act on every item the mail brought, the same as the
+  buttons on the items themselves.
+
+A refused mail also bounces: the sender's mail provider returns it with the
+same reason in the error text, followed by how to try again, a link to the
+reason's entry below and where to report a problem. An attachment left out
+of a mail that was otherwise received (it had text, or another accepted
+file) does not bounce; it is listed on the mail's line as "left out".
+
+A mail that is on neither the list nor in the sender's bounces did not reach
+the hive's address: check the address (`hive@` and the hive's dashboard
+host, nothing else) and the sender's outbox. The operator's view is the
+receiver's log: see
+[What hive-mx logs](meetings.md#what-hive-mx-logs).
+
+## Mailing your hive: what the replies mean
+
+A hive never sends mail. What a sender hears back comes from two places:
+
+- **A refusal** is an error the hive's mail receiver gives the sender's mail
+  server while the mail is being handed over. The sender's own provider
+  turns it into a bounce ("Undeliverable", "Delivery Status Notification"),
+  usually within a minute. The bounce quotes the receiver's reply:
+
+  ```
+  550 5.6.0 nothing to deliver: a .key attachment is not an accepted type. Accepted types: md, pdf, docx, pptx, xlsx, ...
+  550 5.6.0 To try again: send the file as an accepted type (export it to PDF, for example).
+  550 5.6.0 What this means: https://github.com/hivecommons/hive/blob/v5/src/docs/inbox-voice-sources.md#unsupported-attachment
+  550 5.6.0 Report a problem: https://github.com/hivecommons/hive/issues/new/choose
+  ```
+
+  To try again, fix what the reply names and send the mail again to the
+  same address. Replying to the bounce does not reach the hive.
+- **No bounce** means the mail was handed over. It is in the hive's Inbox
+  (or on its calendar, for an invite), or it waits there for the owner's
+  approval. Nothing is sent to confirm it: people with access to the hive
+  see it under **✉️ Recent mail** in the Inbox
+  ([When a mail does not show up](#when-a-mail-does-not-show-up)).
+
+Why no confirmation mail: an automatic reply to a `From` address that was
+not authenticated goes to whoever the forger named, which is how a mail
+server ends up on blocklists. A reply only to authenticated senders is
+designed in [#18746](https://github.com/hivecommons/hive/issues/18746) and
+is not built.
+
+The entries below are the reasons, by the code the Recent mail list and a
+problem report use. The limits are the defaults.
+
+### Unsupported attachment
+
+`unsupported_attachment`: every attachment was of a type off the accepted
+list (for example `.key`, `.zip`, `.pptm`) and the mail had no text.
+**To try again:** send the file as an accepted type: Markdown, PDF, Word,
+PowerPoint, Excel, audio, video or an image. Exporting to PDF works for
+most documents.
+
+### Attachment content mismatch
+
+`attachment_content_mismatch`: a file's content is not what its extension
+says, or the file is damaged or macro-enabled. **To try again:** open the
+file, save it again in its own format without macros, and send it again.
+
+### Attachment too large
+
+`attachment_too_large`: a file is over 25 MB, or the attachments of one
+mail are over 30 MB together. **To try again:** send a smaller file, or
+split the files over several mails.
+
+### Too many attachments
+
+`too_many_attachments`: a mail may carry at most 10 files. **To try
+again:** send the files over several mails.
+
+### Message too large
+
+`message_too_large`: the mail is over 35 MiB as sent (attachments grow by a
+third in transit, so this is about 25 MB of files). **To try again:** send
+a smaller file, or split the files over several mails.
+
+### Empty message
+
+`empty_message`: the mail had no text, no calendar invite and no
+attachment. **To try again:** add text or a file.
+
+### Malformed message
+
+`malformed_message`: the mail could not be parsed. **To try again:** send
+it from another mail program. If the same mail is accepted elsewhere,
+report a problem.
+
+### Hive daily volume
+
+`hive_daily_volume`: the hive received its daily volume of mail (512 MiB by
+default). This is a temporary refusal: the sender's mail server retries by
+itself for some days, so there is usually nothing to do. The operator can
+raise `HIVE_MX_HIVE_DAILY_BYTES`.
+
+### Hive refused
+
+`hive_refused`: the hive itself turned the mail down. The Recent mail list
+of the hive says which of the next two it was. **To try again:** ask the
+hive's owner, then send the mail again.
+
+### Mail-in off
+
+`mail_in_off`: mail-in files are turned off on the hive
+(`meetings.email.files_enabled: false`). **To try again:** the owner turns
+it back on, then send the mail again.
+
+### Hive storage full
+
+`hive_storage_full`: the hive's 1 GiB mail spool is full. **To try again:**
+the owner declines or deletes mailed-in items, then send the mail again.
+
+### Unknown mailbox
+
+`unknown_mailbox`: the address is not a hive's address. A hive takes mail
+only at `hive@` followed by its dashboard host. **To try again:** copy the
+address from the top of the hive's Inbox.
+
+### Sender not authenticated
+
+`sender_not_authenticated`: the mail was received and waits for the
+owner's approval, because neither SPF nor DKIM passed for the domain of
+its `From` address. **To try again:** send from the mail provider's own
+app or web mail, or fix the account's outgoing server. The owner can
+approve this one by hand.
+
+### Sender not on allowlist
+
+`sender_not_on_allowlist`: the mail was received and waits for the owner's
+approval, because its sender is not a proven calendar email of a user of
+the hive. **To land directly next time:** add the address under
+**Settings, Meeting attendee, Email** and prove it
+([Proving calendar emails](meetings.md#proving-calendar-emails)). The owner
+can approve this one by hand.
+
+### Reporting a problem
+
+From the hive: **Report a problem** on the mail's line under
+**✉️ Recent mail**. Without access to a hive:
+[open an issue](https://github.com/hivecommons/hive/issues/new/choose) with
+the reply text from the bounce and the day. Leave out addresses, the
+subject and the file.
+
+## Deleting an item
+
+Every Inbox item can be deleted
+([#18694](https://github.com/hivecommons/hive/issues/18694)): **🗑 Delete**
+on the item, or tick several and choose **Hive (n) ▾ → Delete…**. Owner and
+read-write users can delete; a hive recording only by its recorder or an
+owner, and a mailed-in item that still waits for approval only by the owner
+(**✕ Decline**). The dashboard asks first, in the page, and says what goes:
+
+| Item | What a delete removes | What stays |
+|---|---|---|
+| Hive recording (`hive-recording`) | The audio stored on this hive, the recording's metadata, its machine transcript record, the Inbox item | Its Knowledge fact, unless you tick the box |
+| Upload or link (`upload`) | The stored file or fetched page, its extracted text, its machine transcript record, the Inbox item | Its Knowledge fact, unless you tick the box |
+| Mailed-in file (`email`) | The stored file, its machine transcript record, the Inbox item | Nothing: a mailed-in item has no Knowledge fact |
+| Meeting hive attended (`meeting`) | The Inbox item only | The meeting record, with its transcript and notes, in the **Meetings** section; delete it there to erase it |
+| Synced source (`plaud`, `zoom`, `teams`, ...) | The Inbox item only | The recording in its source, and its Knowledge fact, which the connector sync maintains |
+
+- **The Knowledge copy is kept by default.** For a recording or an upload
+  the dialog has a box, **Also remove the Knowledge copy**, unticked; tick
+  it to delete the fact too. A synced source's fact cannot be removed this
+  way, because the next sync would write it again: remove the recording in
+  its source to have the sync deprecate the fact.
+- **A deleted item does not come back.** The delete leaves a tombstone in
+  the Inbox state (`deleted_at`, `deleted_by`), so a source that still lists
+  the item on the next sync does not bring it back, and auto-routing rules
+  never fire on it.
+- **What was already shared stays.** RFCs, issues, DIBS ideas and spek
+  seeds made from the item are not touched; the dialog says how many shares
+  there were.
+- An item whose transcription is queued or running can be deleted once it
+  finishes.
+- Every deleted item is audited as `inbox_delete` with the user, the source,
+  the item and what was removed (a hive recording also as
+  `inbox_recording_delete`).
 
 ## Configuration
 
@@ -527,6 +763,7 @@ or a channel).
 
 See [api-reference/knowledge.md](api-reference/knowledge.md) for
 `GET /api/inbox`, `POST /api/inbox/route`, `POST /api/inbox/dismiss`,
+`POST /api/inbox/delete`,
 `GET|POST /api/inbox/settings`, `GET /api/inbox/{source}/{id}/content`,
 `GET /api/inbox/{source}/{id}/audio`,
 `POST /api/inbox/{source}/{id}/transcribe` ([Inbox transcription](inbox-transcription.md)) and

@@ -95,6 +95,29 @@ func (e *Engine) remember(l Line, now time.Time) {
 	e.recent = e.recent[i:]
 }
 
+// participants are the people heard in the recent transcript (never the
+// bot): a misheard wake word that is one of their names is left to them.
+func (e *Engine) participants() []string {
+	return speakers(e.recentLines(), e.s.Persona.DisplayName)
+}
+
+// speakers are the distinct speakers of lines, in first-heard order,
+// without the bot.
+func speakers(lines []recentLine, bot string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, l := range lines {
+		who := strings.TrimSpace(l.Who)
+		k := strings.ToLower(who)
+		if who == "" || seen[k] || meetings.IsBotName(who, bot) {
+			continue
+		}
+		seen[k] = true
+		out = append(out, who)
+	}
+	return out
+}
+
 func (e *Engine) recentLines() []recentLine {
 	out := make([]recentLine, len(e.recent))
 	for i, l := range e.recent {
@@ -107,8 +130,32 @@ func (e *Engine) onLine(l Line) {
 	if strings.TrimSpace(l.Text) == "" || meetings.IsBotName(l.Who, e.s.Persona.DisplayName) || e.leave.Match(l.Text) {
 		return
 	}
+	l.Text = NormalizeDomain(l.Text)
 	now := e.d.Now()
-	trig := e.match.Match(l.Text, l.Spoken)
+	trig := e.match.MatchWith(l.Text, l.Spoken, e.participants())
+	if trig.Addressed && !trig.Intro {
+		if parts := splitQuestions(l.Text); len(parts) > 1 {
+			// Two questions in one line ("Betty, how many open issues are
+			// there? How many pull requests are open?", one segment when
+			// asked a second apart): each gets its own attributed answer.
+			for i, part := range parts {
+				if i > 0 {
+					part = e.s.Persona.Name + ", " + part
+				}
+				e.onLine(Line{Who: l.Who, Text: part, Spoken: l.Spoken})
+			}
+			return
+		}
+	}
+	if trig.Misheard {
+		e.log.Info("[meetings] addressed through a misheard name", "who", l.Who)
+	}
+	if l.Spoken && (trig.Addressed || trig.Intro) && e.repeatedRequest(l.Who, requestKey(trig), now) {
+		// Said again because the first answer was slow (Meet test: a
+		// second intro and a research ack talked over the first intro).
+		e.drop("repeated_request")
+		return
+	}
 	if !trig.Addressed {
 		// Their final line did not address her after all: the next one
 		// that does gets its own ack.
@@ -163,18 +210,47 @@ func (e *Engine) addressed(l Line, trig Trigger, now time.Time) {
 		return
 	}
 	early := e.hadEarlyAck(l.Who, now)
-	if trig.VoiceWanted && e.d.LLM != nil && !e.takeEarlyAck(l.Who, now) {
+	immediate := e.s.AckDelay <= 0
+	acked := false
+	if trig.VoiceWanted && e.d.LLM != nil && !e.takeEarlyAck(l.Who, now) && immediate {
 		// Speak at once so the room knows she heard; the answer follows.
 		e.emit(Reply{Kind: KindVoice, Text: e.ackFor(l.Who), Trigger: TriggerAck, Question: l.Text, VoiceWanted: true})
+		acked = true
 	}
 	p := e.add(l, trig, TopicKey(trig.Rest), true, now)
 	p.waited, p.thoughts = true, thoughts
 	e.noteQueue(now)
 	if trig.VoiceWanted && e.d.LLM != nil {
-		// Acknowledged from the partial transcript, or just now.
-		p.stages.ackAt, p.stages.earlyAck = now, early
+		if immediate || early {
+			// Acknowledged from the partial transcript, or just now.
+			p.stages.ackAt, p.stages.earlyAck = now, early
+		} else if !acked {
+			e.armAckWatchdog(p)
+		}
 	}
 	e.retrieve(p, trig.Rest)
+}
+
+// armAckWatchdog acks p after AckDelay unless its answer is out by then
+// (answered requests leave e.pending, so the timer finds nothing).
+func (e *Engine) armAckWatchdog(p *pending) {
+	id := p.id
+	time.AfterFunc(e.s.AckDelay, func() {
+		select {
+		case e.ackTimers <- id:
+		case <-e.ctx.Done():
+		}
+	})
+}
+
+// watchdogAck says the one ack for a request still being answered.
+func (e *Engine) watchdogAck(p *pending) {
+	if !p.stages.ackAt.IsZero() || e.exhausted.Load() {
+		return
+	}
+	if e.emit(Reply{Kind: KindVoice, Text: e.ackFor(p.line.Who), Trigger: TriggerAck, Question: p.line.Text, VoiceWanted: true}) {
+		p.stages.ackAt = e.d.Now()
+	}
 }
 
 // Early acknowledgement from partial transcripts (hivecommons/hive#18590):
@@ -197,11 +273,20 @@ func (e *Engine) onPartial(l Line) {
 	if meetings.IsBotName(l.Who, e.s.Persona.DisplayName) || e.leave.Match(l.Text) {
 		return
 	}
-	if e.d.LLM == nil || e.exhausted.Load() {
+	if e.d.LLM == nil || e.exhausted.Load() || e.s.AckDelay > 0 {
+		// With the ack watchdog on, a partial line never acks: the ack
+		// waits to see whether the answer is quick.
 		return
 	}
-	trig := e.match.Match(l.Text, true)
+	l.Text = NormalizeDomain(l.Text)
+	trig := e.match.MatchWith(l.Text, true, e.participants())
 	if !trig.Addressed || trig.Intro || !trig.VoiceWanted || len(strings.Fields(trig.Rest)) < earlyAckMinWords {
+		return
+	}
+	if mayBecomeIntro(trig.Rest) || e.repeatPending(l.Who, trig.Rest, e.d.Now()) {
+		// "Betty, please introduce" is an intro still being said: an
+		// intro never gets a research ack ("Let me check on that."). A
+		// request repeated while the first is answered gets none either.
 		return
 	}
 	if _, ok := e.actionAddress(l.Text); ok {
@@ -375,9 +460,10 @@ func (e *Engine) proceed(p *pending) {
 		return
 	}
 	if e.d.LLM == nil {
-		text := e.attributed(p, p.trig.VoiceWanted, "", fallbackNoModel, now)
-		e.emit(Reply{Kind: replyKind(p.trig), Text: text, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted,
-			Timing: e.timing(p, true, now)})
+		rep := Reply{Kind: replyKind(p.trig), Text: fallbackNoModel, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted,
+			Timing: e.timing(p, true, now)}
+		e.attributeReply(p, &rep, "", now)
+		e.emit(rep)
 		e.finish(p, "")
 		return
 	}
@@ -428,9 +514,10 @@ func (e *Engine) onAnswer(p *pending, a answered) {
 		e.finish(p, reason)
 		return
 	}
-	said := e.attributed(p, false, a.ans.Topic, citeSources(e.s.Persona.Language, text, a.ans.Sources, p.snips), now)
-	if e.emit(Reply{Text: said, Trigger: TriggerQuestion, Question: p.line.Text, NeedsResearch: a.ans.NeedsResearch, Sources: a.ans.Sources,
-		Timing: e.timing(p, false, now)}) {
+	rep := Reply{Text: citeSources(e.s.Persona.Language, text, a.ans.Sources, p.snips), Trigger: TriggerQuestion, Question: p.line.Text,
+		NeedsResearch: a.ans.NeedsResearch, Sources: a.ans.Sources, Timing: e.timing(p, false, now)}
+	e.attributeReply(p, &rep, a.ans.Topic, now)
+	if e.emit(rep) {
 		e.posts = append(e.posts, now)
 		e.lastPost = now
 		e.total++
@@ -483,7 +570,10 @@ func (e *Engine) onAddressedAnswer(p *pending, a answered) {
 	// The hive's own state was in the context: the answer is the hive's
 	// live data, and the research agents (public web only) know less.
 	live := hasHiveStatus(p.snips)
-	if a.err == nil && weak && !live && e.d.CanResearch && !p.thoughts && e.isQuestion(p) {
+	// A question about the hive itself never goes to the research agents
+	// (public web only, and slow): it is answered from the live state, or
+	// she says she does not have the number.
+	if a.err == nil && weak && !live && e.d.CanResearch && !p.thoughts && e.isQuestion(p) && !IsHiveStatusQuestion(p.line.Text) {
 		dig := phrasesFor(e.s.Persona.Language).digIn
 		rep.Text = dig
 		if answer := clipFn(a.ans.Answer); answer != "" && a.ans.Confidence >= e.s.MinConfidence {
@@ -491,11 +581,17 @@ func (e *Engine) onAddressedAnswer(p *pending, a answered) {
 		}
 		rep.NeedsResearch = true
 		rep.Research = clip(researchQuery(p), maxResearchQuery)
+		if rep.Text == dig && !p.stages.ackAt.IsZero() {
+			// She already said "one moment" out loud: a spoken "I'll dig
+			// into that" right after is a second ack back to back (Meet
+			// test). It goes to chat; the follow-up is still spoken.
+			rep.Kind = KindChat
+		}
 	}
 	if a.err == nil && rep.Research == "" && text != "" {
 		rep.Text = e.vouch(p, a.ans, rep.Text, live)
 	}
-	rep.Text = e.attributed(p, p.trig.VoiceWanted, a.ans.Topic, rep.Text, e.d.Now())
+	e.attributeReply(p, &rep, a.ans.Topic, e.d.Now())
 	rep.Timing = e.timing(p, a.err != nil || a.ans.Answer == "", e.d.Now())
 	e.emit(rep)
 	e.rememberTopic(p.topic)
@@ -529,4 +625,38 @@ func (e *Engine) isQuestion(p *pending) bool {
 // researchQuery is the request as said, for the research agent.
 func researchQuery(p *pending) string {
 	return strings.TrimSpace(p.line.Text)
+}
+
+// minSplitWords is the least a question must have to be answered on its
+// own when a line holds several.
+const minSplitWords = 3
+
+// splitQuestions splits a line holding two or more questions into them;
+// a line with one question (or fragments too short to stand alone) is
+// returned whole.
+func splitQuestions(text string) []string {
+	var parts []string
+	rest := text
+	for {
+		i := strings.Index(rest, "?")
+		if i < 0 {
+			break
+		}
+		if q := strings.TrimSpace(rest[:i+1]); q != "" {
+			parts = append(parts, q)
+		}
+		rest = rest[i+1:]
+	}
+	if tail := strings.TrimSpace(rest); tail != "" {
+		parts = append(parts, tail)
+	}
+	if len(parts) < 2 {
+		return []string{text}
+	}
+	for _, p := range parts {
+		if len(words(p)) < minSplitWords {
+			return []string{text}
+		}
+	}
+	return parts
 }

@@ -20,8 +20,9 @@ import (
 	"github.com/hivecommons/hive/pkg/mailin/wire"
 )
 
-// EmailType is the Inbox source for mail-in files: Markdown, audio, video
-// and image attachments and text bodies mailed to hive@<host> through
+// EmailType is the Inbox source for mail-in files: Markdown, audio, video,
+// image and office document (PDF, Word, PowerPoint, Excel) attachments and
+// text bodies mailed to hive@<host> through
 // hive-mx (hivecommons/hive#18395, #18564, design
 // src/docs/design/email-inbox.md). It is push, not a connector: the
 // dashboard's relay-signed POST /api/inbox/email adds items to a spool under
@@ -83,6 +84,8 @@ type EmailSource struct {
 	Now        func() time.Time
 
 	mu sync.Mutex
+	// logMu guards the recent-mail log (email_log.go).
+	logMu sync.Mutex
 }
 
 // Type implements Source.
@@ -429,7 +432,7 @@ func EmailProvenance(m EmailMeta) string {
 }
 
 // Fetch implements Source. Markdown is returned as the item text (wrapped as
-// untrusted data); an image, audio or video file is described, its bytes
+// untrusted data); an image, document, audio or video file is described, its bytes
 // served by the dashboard; audio text arrives through transcription. The
 // message's text body follows, wrapped as untrusted data as well.
 func (e *EmailSource) Fetch(_ context.Context, it Item) (Content, error) {
@@ -460,6 +463,8 @@ func (e *EmailSource) Fetch(_ context.Context, it Item) (Content, error) {
 		} else {
 			c.Markdown = header + "\nA video, stored as an attachment of this item. Its audio cannot be transcribed on this hive (the transcriber does not read " + m.ContentType + "): download it to watch it."
 		}
+	case wire.AttachDocument:
+		c.Markdown = header + "\nA document, stored as an attachment of this item. Its text is not extracted: open the file to read it."
 	default:
 		c.Markdown = header + "\nAn image, stored as an attachment of this item."
 	}

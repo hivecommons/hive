@@ -17,6 +17,9 @@ type Trigger struct {
 	// VoiceWanted: the request was spoken, or asks for a spoken answer.
 	// Recorded for spoken replies (phase B); replies are chat for now.
 	VoiceWanted bool
+	// Misheard: a spoken line addressed her through a sound-alike of her
+	// name ("Eddie, please introduce yourself"; wakeword.go).
+	Misheard bool
 }
 
 // sttVariants maps common speech-to-text spellings to the word they stand
@@ -70,6 +73,8 @@ type Matcher struct {
 	// question as "..., hive?".
 	strict map[string]bool
 	who    []string
+	// soundKeys are her name's sound keys for misheard wake words.
+	soundKeys []string
 }
 
 // NewMatcher builds a matcher for a persona's name and aliases.
@@ -100,6 +105,7 @@ func NewMatcher(name string, aliases []string) *Matcher {
 	if w := normalize(words(name)); len(w) > 0 {
 		m.who = w
 	}
+	m.soundKeys = fuzzyKeys(m.names, m.strict)
 	return m
 }
 
@@ -206,6 +212,13 @@ func (m *Matcher) matchStrict(raw string, w, name []string, question bool) (stri
 
 // Match reads one line. spoken marks a speech segment (as opposed to chat).
 func (m *Matcher) Match(raw string, spoken bool) Trigger {
+	return m.MatchWith(raw, spoken, nil)
+}
+
+// MatchWith is Match knowing who is in the meeting: a spoken line opening
+// with a sound-alike of her name and a request addresses her, unless the
+// word is one of participants' names.
+func (m *Matcher) MatchWith(raw string, spoken bool, participants []string) Trigger {
 	w := normalize(words(raw))
 	var t Trigger
 	if len(w) == 0 {
@@ -246,6 +259,11 @@ func (m *Matcher) Match(raw string, spoken bool) Trigger {
 		if len(w) == len(name) && hasPrefix(w, name) {
 			t.Addressed = true
 			break
+		}
+	}
+	if !t.Addressed && spoken {
+		if rest, ok := m.matchFuzzy(w, participants); ok {
+			t.Addressed, t.Rest, t.Misheard = true, rest, true
 		}
 	}
 	if t.Addressed {

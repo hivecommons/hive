@@ -54,7 +54,7 @@
         const r = await fetch('/api/meetings');
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { _meetingsList = []; _meetingsError = data.error || ('HTTP ' + r.status); }
-        else { _meetingsList = data.meetings || []; _meetingsError = ''; }
+        else { _meetingsList = data.meetings || []; _meetingsError = ''; _meetingsEmailIn = data.email_in || null; }
       } catch (e) {
         // Keep the last list; say the hive is unreachable instead of leaving "Loading meetings…".
         if (_meetingsList === null) _meetingsList = [];
@@ -144,9 +144,25 @@
         (m.voice_enabled && !m.voice_capable ? '<div class="muted-xs">joined without voice; replies go to chat</div>' : '') +
         '</div><div class="meetings-row-actions">' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +
-        (active ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsToggleVoice" data-arg0="' + escapeHtml(m.id) + '" data-arg1="' + (m.voice_enabled ? 'false' : 'true') + '">' + (m.voice_enabled ? 'Voice on' : 'Voice off') + '</button>' +
+        (active ? meetingsVoiceToggleHtml(m) +
           '<button type="button" class="hv-btn btn-danger btn-sm" data-action="meetingsLeave" data-arg0="' + escapeHtml(m.id) + '">Leave</button>' : '') +
         meetingsDeleteButtonHtml(m) + '</div></div>';
+    }
+
+    // meetingsVoiceToggleHtml: the card's voice control names the action it
+    // takes ("Turn voice off" while voice is on), never the current state
+    // alone: a "Voice on" button that turned voice off read as the control
+    // to switch it on, and an operator who had ticked Voice at join turned
+    // it off by clicking it. aria-pressed and the title carry the state.
+    function meetingsVoiceToggleHtml(m) {
+      const on = !!(m && m.voice_enabled);
+      const label = on ? 'Turn voice off' : 'Turn voice on';
+      const title = on
+        ? 'Voice replies are on: she answers out loud when addressed. Click to answer in chat only.'
+        : 'Voice replies are off: she answers in chat. Click to let her answer out loud when addressed.';
+      return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsToggleVoice" data-arg0="' + escapeHtml((m && m.id) || '') +
+        '" data-arg1="' + (on ? 'false' : 'true') + '" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + escapeHtml(title) + '">' +
+        (on ? '🔊 ' : '🔇 ') + label + '</button>';
     }
 
     // meetingsCanDelete: a meeting in a final state, or a platform join
@@ -237,7 +253,7 @@
       if (_meetingsError) {
         html += '<p class="kc-error muted-xs">' + escapeHtml(_meetingsError) + '</p>';
       } else {
-        html += meetingsJoinFormHtml();
+        html += (typeof emailInRowHtml === 'function' ? emailInRowHtml('meetings', _meetingsEmailIn) : '') + meetingsJoinFormHtml();
       }
       const list = _meetingsList || [];
       const finished = meetingsFinished(list);

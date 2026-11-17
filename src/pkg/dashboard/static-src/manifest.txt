@@ -34,6 +34,7 @@ css/inbox.css
 css/meetings.css
 css/calendar.css
 css/meeting-attendee.css
+css/email-in.css
 css/sections-collapse.css
 css/design-system.css
 css/responsive.css
@@ -131,8 +132,11 @@ js/evidence.js
 js/approvals.js
 js/nous.js
 js/knowledge.js
+js/email-in.js
 js/inbox.js
+js/inbox-delete.js
 js/inbox-recorder.js
+js/inbox-mail-log.js
 js/meetings.js
 js/calendar.js
 js/meeting-attendee.js

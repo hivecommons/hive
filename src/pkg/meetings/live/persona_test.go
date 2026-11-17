@@ -65,6 +65,7 @@ func personaHarness(t *testing.T, p Policy, persona config.MeetingsPersonaConfig
 	t.Helper()
 	resolved := persona.Resolve()
 	s := betty.SettingsFrom(resolved)
+	s.AckDelay = 0
 	s.AnswerWait, s.MinGap = personaWait, 0
 	drops := &dropLog{m: map[string]int{}}
 	h := newHarness(t, p, func(o *Options) {

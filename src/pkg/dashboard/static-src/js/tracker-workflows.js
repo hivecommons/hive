@@ -64,7 +64,21 @@
       if (!t || !t.profile) return null;
       const kind = item.kind === 'pr' ? 'pr' : 'issue';
       if (Array.isArray(t.kinds) && t.kinds.length && t.kinds.indexOf(kind) < 0) return null;
-      return { profile: String(t.profile), state: String(t.state || ''), reply: String(t.reply || '') };
+      return { profile: String(t.profile), state: String(t.state || ''), reply: String(t.reply || ''), agent: String(t.agent || ''), problem: String(t.problem || '') };
+    }
+
+    // Pure: the row's short reason when no hive agent fills the profile
+    // its state is handed to (hivecommons/hive#18690): the hand-off cannot
+    // happen and no other lane is offered the item, so the row says so
+    // instead of looking claimed and idle. '' when an agent fills it.
+    function stageTrackerWorkflowGapOf(item, workflows) {
+      const t = stageTrackerWorkflowDispatchOf(item, workflows);
+      if (!t || !t.problem) return null;
+      return { profile: t.profile, word: 'no agent for ' + t.profile, tip: 'Not handed off: ' + t.problem + '. Pick an agent for it on the repository\'s workflow row in Settings → Repos.' };
+    }
+    function stageTrackerWorkflowGapHtml(item, workflows) {
+      const g = stageTrackerWorkflowGapOf(item, workflows);
+      return g ? `<span class="ham-badge ham-badge-wf-gap" title="${esc(g.tip)}">${esc(g.word)}</span>` : '';
     }
 
     // Pure: the ⋯ menu entry for that hand-off — owner only, since it
@@ -73,7 +87,7 @@
       const t = stageTrackerWorkflowDispatchOf(item, workflows);
       if (!t) return null;
       const owner = !!(ctx && ctx.owner);
-      const hint = t.reply ? 'also runs on ' + t.reply : 'hand off now';
+      const hint = t.problem ? 'no agent fills it' : (t.reply ? 'also runs on ' + t.reply : 'hand off now');
       return { id: 'wf-dispatch', label: 'Send to ' + t.profile, hint, profile: t.profile, enabled: owner, why: owner ? '' : 'Needs the owner role' };
     }
 

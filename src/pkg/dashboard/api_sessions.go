@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
@@ -109,6 +110,11 @@ type SessionRuntime interface {
 	// ResumeInfo captures the vendor's newest conversation for the session;
 	// workDir is where the CLI ran ("" = the session's own work dir).
 	ResumeInfo(id, vendor, workDir string) (crux.UserSessionResume, bool)
+	// StartupStep reads the session's visible screen once for the startup
+	// auto-answer and, when answer is true and it is a known startup screen
+	// nobody has typed into, answers it. It never answers a permission prompt
+	// or a login screen (api_sessions_autostart.go).
+	StartupStep(id, vendor string, answer bool) crux.UserSessionStartupStep
 	// StoreUpload writes src as the named file under the session's uploads
 	// directory, as the session's own uid, and returns its absolute path.
 	StoreUpload(id, fileName string, src io.Reader, maxBytes int64, maxFiles int) (string, int64, error)
@@ -166,6 +172,10 @@ type sessionView struct {
 	// theirs is the writable one; Queue (additive) is the pending Send queue.
 	Viewers []sessionViewer  `json:"viewers"`
 	Queue   sessionQueueView `json:"queue"`
+	// Startup (additive) is the startup auto-answer's state for a running
+	// session: getting the CLI ready, started, or the screen it stopped at
+	// (api_sessions_autostart.go). Absent when the hive has none for it.
+	Startup *sessionStartupView `json:"startup,omitempty"`
 }
 
 func (s *Server) registerSessionRoutes() {
@@ -308,6 +318,7 @@ func (s *Server) sessionViewFor(rec sessionRecord, p *crux.UserSessionProbe, rt 
 	if rec.Status == sessionStatusRunning {
 		v.Viewers = s.sessionViewers(rec.ID)
 		v.Queue = s.sessionQueueSnapshot(rec.ID, actor.user)
+		v.Startup = s.sessionStartupViewOf(rec.ID)
 	}
 	return v
 }
@@ -319,15 +330,15 @@ func (s *Server) sessionViewFor(rec sessionRecord, p *crux.UserSessionProbe, rt 
 func (s *Server) reconcileSessions(rt SessionRuntime, st *sessionStore) map[string]crux.UserSessionProbe {
 	probes := map[string]crux.UserSessionProbe{}
 	now := time.Now().UTC().Format(time.RFC3339)
-	for _, rec := range st.list() {
-		if rec.Status == sessionStatusPreparing && !s.sessionStartInFlight(rec.ID) {
-			// Only a restart leaves a preparing record with no goroutine
-			// behind it; nothing will ever move it on, so say so.
-			status := sessionStatusFailed
-			if rec.ResumeCommand != "" {
-				status = sessionStatusEnded
-			}
-			s.markSessionFailed(st, rec.ID, status, sessionRestartedWhilePreparing, now)
+	recs := st.list()
+	if hook := sessionsAfterReconcileSnapshot.Load(); hook != nil {
+		(*hook)(s)
+	}
+	for _, rec := range recs {
+		if rec.Status == sessionStatusPreparing {
+			// The snapshot is not what decides: a start may have finished
+			// since it was taken (failOrphanedPreparingSession).
+			s.failOrphanedPreparingSession(st, rec.ID, now)
 			continue
 		}
 		if rec.Status != sessionStatusRunning {
@@ -640,6 +651,9 @@ func (s *Server) setSessionStartInFlightLocked(id string, inFlight bool) {
 // here is tied to the request that asked: the runtime's privileged steps run
 // under their own deadlines.
 func (s *Server) startSessionInBackground(rt SessionRuntime, st *sessionStore, spec crux.UserSessionSpec, user, failStatus string) {
+	// First line of the startup auto-answer: a seeded HOME skips the CLI's
+	// first-run screens altogether.
+	spec.SeedOnboarding = s.deps.Config.SessionsAutostart()
 	err := rt.Start(spec)
 	now := time.Now().UTC().Format(time.RFC3339)
 	s.sessionsMu.Lock()
@@ -669,6 +683,44 @@ func (s *Server) startSessionInBackground(rt SessionRuntime, st *sessionStore, s
 		s.logger.Warn("sessions: persisting running state failed", "id", spec.ID, "error", err)
 	}
 	s.auditSession(user, auditSessionStarted, auditDetail("session", spec.ID, "vendor", spec.Vendor, "outcome", sessionStatusRunning))
+	// Take the CLI through its startup screens to the input prompt; the Send
+	// queue (and with it a parked Inbox seed) waits for that.
+	s.beginSessionAutostart(rt, st, spec.ID, spec.Vendor, user)
+}
+
+// sessionsAfterReconcileSnapshot, when set, runs in reconcileSessions right
+// after the records are listed and before any is judged. A test seam: it
+// places "a start finishes" exactly in the window the list and the judgement
+// used to race over. Never set in production.
+var sessionsAfterReconcileSnapshot atomic.Pointer[func(*Server)]
+
+// failOrphanedPreparingSession fails a `preparing` record that has no start
+// behind it, which only a restart of the hive leaves: nothing will ever move
+// it on, so the record says so.
+//
+// The decision is made under sessionsMu on the record as it is NOW, never on
+// the caller's snapshot. reconcileSessions lists the records without that
+// lock, and startSessionInBackground clears the in-flight mark and saves
+// `running` in one hold of it. A reconcile that listed the record as
+// `preparing` and then asked "is a start in flight?" used to get "no" from a
+// start that had just finished, and overwrote the running record with "the
+// hive restarted while this session was being prepared". Any session list
+// that overlapped the end of a start could do it.
+func (s *Server) failOrphanedPreparingSession(st *sessionStore, id, now string) {
+	s.sessionsMu.Lock()
+	defer s.sessionsMu.Unlock()
+	if s.sessionsPreparing[id] {
+		return
+	}
+	cur, ok := st.get(id)
+	if !ok || cur.Status != sessionStatusPreparing {
+		return
+	}
+	status := sessionStatusFailed
+	if cur.ResumeCommand != "" {
+		status = sessionStatusEnded
+	}
+	s.markSessionFailed(st, id, status, sessionRestartedWhilePreparing, now)
 }
 
 // markSessionFailed records why a start did not happen: status is `failed`

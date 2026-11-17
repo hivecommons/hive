@@ -528,6 +528,49 @@ importance:
   mode 0400, session-owned. `settings.json`, hooks, MCP or extension config,
   `gh`'s `hosts.yml` and `~/.config` are never bridged, so a session can neither
   rewrite shared configuration nor plant a hook an agent would run.
+- **One refreshable Claude login, and it is not in a session.** A copy of an
+  OAuth login that can refresh is a second holder of the grant: when the CLI
+  in a session refreshed its copy, the refresh rotated the grant, the shared
+  file the agents read was left with a dead refresh token, and every agent on
+  the hive fell to the login prompt until a person signed in again
+  ([#18724](https://github.com/hivecommons/hive/issues/18724)). A session
+  therefore gets the Claude login **without its refresh token**, and only the
+  login's own token block, nothing else stored in that file. It can use the
+  fleet's current access token and cannot rotate or carry away the long-lived
+  grant. Refreshing stays where it was: with the agents' credential bridge and
+  the dashboard sign-in, the only writers of the shared file. The hive keeps
+  the copies current (it replaces them, atomically and as the session's uid,
+  when the shared login changes), so a session depends on the fleet's login
+  being refreshed by an agent or a sign-in; a session cannot do that itself.
+  The session uid still has no access to `/data/home`: nothing is linked or
+  bound into the session, and the hive reads a session's login file as that
+  session's uid, through a size-bounded helper with the minimal session
+  environment.
+  As a safety net, a complete Claude login that is in a session home anyway (a
+  copy made before this rule, or a person signing in from inside a session)
+  is **adopted** into the shared file when it is usable and strictly newer
+  than the shared login: a later access-token expiry and a file written after
+  the shared one, or a shared login that is not usable at all. Only expiry
+  and modification time decide; token values are never logged. The replaced
+  shared file is kept beside it as `.credentials.json.stale-<UTC time>`, the
+  session is put back on a refresh-less copy, and a
+  `user_session_login_adopted` audit entry names the session and the trigger.
+  This runs at boot, on every credential-bridge poll
+  (`HIVE_CLAUDE_CREDENTIAL_BRIDGE_INTERVAL`), after a dashboard sign-in, when
+  a session starts or resumes, and before a session's sandbox is deleted: if
+  the login cannot be adopted the deletion fails and is retried, so removing
+  a session never removes the only valid login. It runs under the lock the
+  agents' bridge repair holds, so two newer logins settle on the later one.
+  Note what this means: anyone who may use a session's keyboard can sign that
+  session in with an account of their own, and that login becomes the hive's
+  when it is newer. The audit entry is the record of it, and a dashboard
+  sign-in puts the hive back on the operator's account.
+  The other vendors' files are still plain copies, refresh token included
+  where the vendor stores one. Codex's ChatGPT login and an OpenCode OAuth
+  entry rotate on refresh and can split from the shared file the same way;
+  Gemini's Google refresh token and the Copilot CLI token do not rotate. For
+  all of them a resume no longer overwrites a file the session's CLI rewrote
+  after the shared one was written.
 - **Terminal access is bound.** ttyd listens on loopback without a secret a
   session uid could not read (its `-c` credential is visible in `/proc`), so
   session attaches are gated by a per-session token, HMAC-SHA256 of the tmux
@@ -558,6 +601,24 @@ importance:
   keyboard. Renaming, closing, resuming, deleting and the `shared` flag stay
   with the creator and owners. Ids of sessions a caller may not see are never
   disclosed.
+- **Startup screens only.** When a session starts the hive takes the CLI to
+  its input prompt by answering its startup screens (first-run notice, trust
+  for the session's own working directory, onboarding, an update menu), with
+  the detector agents use restricted to those screens; a Claude Code HOME is
+  also seeded so they do not appear. This does not weaken the posture above:
+  a tool or command permission prompt is classified as refused and is never
+  answered (the refusal is checked before anything else and across every
+  vendor's patterns, and a test fails when a prompt added for agents is not
+  classified), a login or OAuth screen is never answered (the tab says
+  "needs sign-in"), the seed carries no account or credential and never
+  replaces an existing file, and nothing is sent once a person has typed
+  into the session, after the input prompt is reached, or after a bounded
+  window. Trusting the working directory is the one decision made for the
+  person: it is the session's own worktree of the hive's project repository,
+  the directory they asked to work in. Each outcome is audited as
+  `session_autostart`. `dashboard.sessions.autostart: false` or
+  `HIVE_SESSIONS_AUTOSTART=false` turns it off. See
+  [Startup auto-answer](api-reference/sessions.md#startup-auto-answer).
 - **Resume ids** never start with `-` and a resume command may carry only the
   vendor binary, a fixed set of resume words and a flag-free id, so a planted
   transcript name cannot add `--dangerously-skip-permissions`.
@@ -576,8 +637,11 @@ importance:
   ([inbox-recording.md](inbox-recording.md)); `/terminal/` and `/api/` keep
   `display-capture=()`.
 
-Audit: `session_created`, `session_started` (the outcome of the background
-start), `session_closed`, `session_renamed`, `session_input` and
+Audit: `user_session_login_adopted` (a newer Claude login found in a session
+home was adopted into the shared login; session id, trigger and the preserved
+file's path, never token material), `session_created`, `session_started` (the
+outcome of the background start), `session_autostart` (how the startup auto-answer ended and which
+screens it answered), `session_closed`, `session_renamed`, `session_input` and
 `session_upload` record the user and session id (never input text).
 `session_input` is written when a queued Send is actually typed into the pane,
 as the user who queued it, so attribution follows the sender, not the moment

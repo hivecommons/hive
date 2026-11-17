@@ -52,7 +52,7 @@ function makeContext(role) {
     Array,
   };
   vm.createContext(ctx);
-  for (const fn of ['inboxIconSvg', 'inboxTitleParts', 'inboxMarkdownToText', 'inboxFactStateHtml', 'inboxSharePillText', 'inboxShareTargetHref', 'inboxSharePillHtml', 'inboxSharePillsHtml', 'inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemHasAudio', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxCanDeleteRecording', 'inboxDeleteRecordingButtonHtml', 'inboxItemHtml']) {
+  for (const fn of ['inboxIconSvg', 'inboxTitleParts', 'inboxMarkdownToText', 'inboxFactStateHtml', 'inboxSharePillText', 'inboxShareTargetHref', 'inboxSharePillHtml', 'inboxSharePillsHtml', 'inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemHasAudio', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxDeleteKind', 'inboxCanDelete', 'inboxDeleteBusy', 'inboxDeleteButtonHtml', 'inboxItemHtml']) {
     vm.runInContext(extractFunction(fn), ctx);
   }
   return ctx;
@@ -108,10 +108,12 @@ test('Play and Share are icon buttons with an accessible name and a tooltip; Tra
     assert.match(m[0], /aria-label="[^"]+"/, m[0]);
     assert.match(m[0], /title="[^"]+"/, m[0]);
   }
-  // A hive recording's Delete is a trash icon, last, after a separator.
-  const own = vm.runInContext('inboxItemHtml(' + JSON.stringify({ source: 'hive-recording', id: 'r1', title: 'note', summary: 'x', has_transcript: true }) + ')', ctx);
-  assert.match(own, /<span class="inbox-actions-sep" role="separator"><\/span><button type="button" class="hv-btn btn-icon btn-sm inbox-action inbox-action-danger inbox-delete" data-action="inboxDeleteRecording" data-arg0="r1" aria-label="Delete recording" title="[^"]+"><svg class="inbox-ic"[^]*?<\/svg><\/button><\/div>/);
+  // Delete (every kind, #18694) is the trash icon, last, after a separator.
+  const own = vm.runInContext('inboxItemHtml(' + JSON.stringify({ source: 'hive-recording', id: 'r1', title: 'note', summary: 'x', has_transcript: true, recorded_by: 'ana' }) + ')', ctx);
+  assert.match(own, /<span class="inbox-actions-sep" role="separator"><\/span><button type="button" class="hv-btn btn-icon btn-sm inbox-action inbox-action-danger inbox-delete" data-action="inboxDeleteItem" data-arg0="hive-recording" data-arg1="r1" aria-label="Delete" title="[^"]+"><svg class="inbox-ic"[^]*?<\/svg><\/button><\/div>/);
   assert.doesNotMatch(own, /🗑 Delete/);
+  const plaudRow = vm.runInContext('inboxItemHtml(' + JSON.stringify(readyItem) + ')', ctx);
+  assert.match(plaudRow, /data-action="inboxDeleteItem" data-arg0="plaud" data-arg1="f_2" aria-label="Delete"/, 'every item kind has the slot');
 });
 
 test('a trailing recording id leaves the title for the meta line, the full title is the tooltip', () => {
@@ -245,4 +247,16 @@ test('an uploaded audio file is pending with its own note and keeps the player',
   assert.doesNotMatch(html, /Plaud/);
   assert.match(html, /data-action="inboxPlay"/);
   assert.match(html, /data-action="inboxToggleTranscript"[^>]*title="Show the transcript"><svg[^]*?<\/svg>Transcript<\/button>/);
+});
+
+test('every item kind gets 🗑 Delete for owner and read-write, and none for read', () => {
+  const kinds = [pendingItem, { source: 'upload', id: 'u1', title: 'notes.md' }, { source: 'meeting', id: 'm1', title: 'Weekly' }];
+  for (const role of ['owner', 'read-write']) {
+    const ctx = makeContext(role);
+    for (const it of kinds) {
+      assert.match(ctx.inboxItemHtml(it), new RegExp('data-action="inboxDeleteItem" data-arg0="' + it.source + '" data-arg1="' + it.id + '"[^>]*>🗑 Delete</button>'), role + ' ' + it.source);
+    }
+  }
+  const read = makeContext('read');
+  for (const it of kinds) assert.doesNotMatch(read.inboxItemHtml(it), /inboxDeleteItem/, it.source);
 });

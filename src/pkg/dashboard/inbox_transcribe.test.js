@@ -335,14 +335,169 @@ test('settings: provider selector with availability and provider-specific consen
   for (const p of ['auto', 'whisper', 'gemini', 'deepgram']) assert.match(out, new RegExp('<option value="' + p + '"'), p);
   assert.match(out, /<option value="auto" selected>auto \(now: whisper\)<\/option>/);
   assert.match(out, /<option value="gemini">gemini \(not ready\)<\/option>/);
-  assert.match(out, /data-inbox-tx-provider="whisper"><strong>whisper<\/strong>: Built in, no account[^<]*never leaves this hive\. <span class="kc-pill" data-status="ok">ready<\/span> model will download on first use/);
-  assert.match(out, /data-inbox-tx-provider="gemini">[^]*data-status="error">not ready<\/span> no GEMINI_API_KEY/);
+  // One row per provider: name, description, the pill in its own column,
+  // and what is missing on its own muted line.
+  assert.match(out, /data-inbox-tx-provider="whisper"><span class="inbox-tx-provider-name">whisper<\/span><span class="inbox-tx-provider-desc">Built in, no account[^<]*never leaves this hive\.<\/span><span class="inbox-tx-provider-status"><span class="kc-pill" data-status="ok">ready<\/span><\/span><span class="muted-xs inbox-tx-provider-detail">model will download on first use<\/span><\/div>/);
+  assert.match(out, /data-inbox-tx-provider="gemini">[^]*?<span class="inbox-tx-provider-status"><span class="kc-pill" data-status="error">not ready<\/span><\/span><span class="muted-xs inbox-tx-provider-detail">no GEMINI_API_KEY<\/span><\/div>/);
+  assert.match(out, /data-inbox-tx-provider="auto">[^]*?<span class="inbox-tx-provider-status"><span class="kc-pill" data-status="ok">now: whisper<\/span><\/span><\/div>/, 'auto shows what it picks now, and no detail line');
+  assert.doesNotMatch(out, /<li |<ul |<strong>whisper/, 'no bulleted wall of text');
   assert.match(out, /Auto currently picks whisper\. With whisper the audio stays on this hive/);
   assert.match(inboxTranscriptionFormHtml({ provider: 'bogus' }), /<option value="auto" selected>/, 'unknown provider shows auto');
   assert.match(inboxTxConsentText('whisper'), /stays on this hive/);
   assert.match(inboxTxConsentText('gemini'), /to Google \(the Gemini API\) under the hive's own Gemini credentials/);
   assert.match(inboxTxConsentText('deepgram'), /to Deepgram under the hive owner's Deepgram account/);
   assert.match(inboxTxConsentText('auto', ''), /stays on this hive \(whisper\) or is sent to Google \(Gemini\) or Deepgram/);
+});
+
+// The ⚙ dialog's layout (hivecommons/hive#18701): two sections, config keys
+// in a footnote, consent grouped with enable, provider-specific fields only
+// for the provider in use, and a Save bar that stays in view.
+const dialogHarness = () => new Function('escapeHtml', 'yamlHint', 'INBOX_TX_BYTES_PER_MB',
+  ['inboxTxProviderInfo', 'inboxTxConsentText', 'inboxTxProviderHtml', 'inboxTranscriptionFormHtml', 'inboxTranscriptionUsageHtml', 'inboxSettingsFormHtml', 'inboxTxFieldsChanged'].map(fnSrc).join('\n') +
+  '\nreturn { inboxSettingsFormHtml, inboxTranscriptionFormHtml, inboxTxFieldsChanged };',
+)(escapeHtml, p => '<span class="settings-yaml-hint">YAML <code>' + p + '</code></span>', BYTES_PER_MB);
+// hiddenFor reports whether the element carrying data-inbox-tx-for="<names>"
+// (or data-inbox-tx-mode) is rendered with the hidden attribute.
+const hiddenFor = (out, attr, names) => {
+  const m = new RegExp('<(?:label|p)[^>]* ' + attr + '="' + names + '"( hidden)?>').exec(out);
+  assert.ok(m, attr + '="' + names + '" not rendered');
+  return !!m[1];
+};
+
+test('dialog: Routing, then Transcription, each with its config keys in a footnote', () => {
+  const { inboxSettingsFormHtml } = dialogHarness();
+  const out = inboxSettingsFormHtml({ spek_repo: 'acme/rfcs', dibs_url: 'https://dibs.example.org', dibs_token_set: false, transcription: { provider: 'auto' } }, false);
+  const routing = out.indexOf('data-inbox-set="routing"'), tx = out.indexOf('data-inbox-set="transcription"');
+  assert.ok(routing > 0 && tx > routing, 'Routing comes before Transcription');
+  assert.match(out, /<h4 class="section-label inbox-set-title">Routing<\/h4>/);
+  assert.match(out, /<h4 class="section-label inbox-set-title">Transcription<\/h4>/);
+  // Routing holds the default RFC repository, the dibs URL and the rules.
+  const routingHtml = out.slice(routing, tx);
+  for (const want of ['data-inbox-field="spek-repo"', 'value="acme/rfcs"', 'data-inbox-field="dibs-url"', 'value="https://dibs.example.org"', 'class="inbox-settings-rules"', 'data-action="inboxAddRule"']) {
+    assert.ok(routingHtml.includes(want), 'routing section has ' + want);
+  }
+  // The dibs token is a status pill; its config key is not in the sentence.
+  assert.match(routingHtml, /<span>dibs token<\/span> <span class="kc-pill" data-status="error">not set<\/span>/);
+  assert.match(inboxSettingsFormHtml({ dibs_token_set: true }, false), /<span>dibs token<\/span> <span class="kc-pill" data-status="ok">set<\/span>/);
+  // Every config key sits inside a "Config keys" footnote, never elsewhere.
+  const outside = out.replace(/<details class="inbox-set-keys">[^]*?<\/details>/g, '');
+  assert.doesNotMatch(outside, /settings-yaml-hint|inbox\.transcription\.|inbox\.dibs\.|inbox\.spek\.|inbox\.rules/, 'no raw config key next to a label');
+  const notes = out.match(/<details class="inbox-set-keys"><summary class="muted-xs">Config keys<\/summary>[^]*?<\/details>/g) || [];
+  assert.strictEqual(notes.length, 2, 'one footnote per section');
+  for (const key of ['inbox.spek.repo', 'inbox.dibs.url', 'inbox.dibs.token_env', 'inbox.rules']) assert.ok(notes[0].includes(key), key);
+  for (const key of ['enabled', 'consent_acknowledged', 'provider', 'mode', 'sources[]', 'api_key_env', 'model', 'whisper_model', 'whisper_threads', 'gemini_model', 'diarize', 'language', 'max_duration_minutes', 'max_bytes', 'monthly_budget_minutes', 'daily_max_items']) {
+    assert.ok(notes[1].includes('inbox.transcription.' + key), key);
+  }
+});
+
+test('dialog: consent is grouped with enable, after the callout', () => {
+  const { inboxTranscriptionFormHtml } = dialogHarness();
+  const out = inboxTranscriptionFormHtml({ provider: 'auto' });
+  const group = /<div class="inbox-set-consent" role="group" aria-label="Consent and enable">([^]*?)<\/label><\/div>/.exec(out);
+  assert.ok(group, 'consent group');
+  const notice = group[1].indexOf('class="inbox-tx-notice"'), consent = group[1].indexOf('data-inbox-tx-field="consent_acknowledged"'), enable = group[1].indexOf('data-inbox-tx-field="enabled"');
+  assert.ok(notice >= 0 && consent > notice && enable > consent, 'callout, then consent, then enable');
+  assert.match(group[1], /<span data-inbox-tx-consent>Depending on the provider/);
+});
+
+test('dialog: every select and input uses one recipe, with its label above it', () => {
+  const { inboxSettingsFormHtml } = dialogHarness();
+  const out = inboxSettingsFormHtml({ transcription: { provider: 'auto' } }, false);
+  const controls = out.match(/<(?:select|input)(?![^>]*type="checkbox")[^>]*>/g) || [];
+  assert.ok(controls.length >= 14, 'the form has its controls: ' + controls.length);
+  for (const c of controls) assert.match(c, /class="kb-search-box"/, c);
+  assert.doesNotMatch(out, /field-input|mt-2|mt-4|mb-2/, 'spacing comes from the form, not per-control utilities');
+  assert.match(out, /<label class="inbox-field"><span class="inbox-field-label">Mode<\/span><select class="kb-search-box" data-inbox-tx-field="mode"/);
+  // The rule rows use the same recipe.
+  assert.doesNotMatch(fnSrc('inboxRuleRowHtml'), /field-input/);
+});
+
+test('dialog: provider-specific fields show only for the provider in use', () => {
+  const { inboxTranscriptionFormHtml } = dialogHarness();
+  const providers = [{ name: 'whisper', available: true }, { name: 'gemini', available: false }, { name: 'deepgram', available: false }];
+  // Deepgram selected: Deepgram fields, speaker labels and the key status; no whisper or Gemini fields.
+  let out = inboxTranscriptionFormHtml({ provider: 'deepgram', providers });
+  assert.strictEqual(hiddenFor(out, 'data-inbox-tx-for', 'deepgram'), false);
+  assert.strictEqual(hiddenFor(out, 'data-inbox-tx-for', 'whisper'), true);
+  assert.strictEqual(hiddenFor(out, 'data-inbox-tx-for', 'gemini'), true);
+  assert.strictEqual(hiddenFor(out, 'data-inbox-tx-for', 'gemini deepgram'), false, 'speaker labels');
+  assert.match(out, /<p class="muted-xs inbox-set-status" data-inbox-tx-for="deepgram">Deepgram key/);
+  // Whisper selected: only whisper's own fields.
+  out = inboxTranscriptionFormHtml({ provider: 'whisper', providers });
+  assert.strictEqual(hiddenFor(out, 'data-inbox-tx-for', 'whisper'), false);
+  assert.strictEqual(hiddenFor(out, 'data-inbox-tx-for', 'deepgram'), true);
+  assert.strictEqual(hiddenFor(out, 'data-inbox-tx-for', 'gemini deepgram'), true);
+  assert.match(out, /<p class="muted-xs inbox-set-status" data-inbox-tx-for="deepgram" hidden>/);
+  // Auto: the fields of every provider auto could pick (ready, or readiness unknown).
+  out = inboxTranscriptionFormHtml({ provider: 'auto', providers });
+  assert.strictEqual(hiddenFor(out, 'data-inbox-tx-for', 'whisper'), false);
+  assert.strictEqual(hiddenFor(out, 'data-inbox-tx-for', 'gemini'), true);
+  assert.strictEqual(hiddenFor(out, 'data-inbox-tx-for', 'deepgram'), true);
+  assert.match(out, /data-inbox-tx-unready="gemini,deepgram"/);
+  out = inboxTranscriptionFormHtml({ provider: 'auto' });
+  for (const p of ['whisper', 'gemini', 'deepgram', 'gemini deepgram']) assert.strictEqual(hiddenFor(out, 'data-inbox-tx-for', p), false, p);
+  // Hidden fields are still in the form, so saving sends the same payload.
+  out = inboxTranscriptionFormHtml({ provider: 'whisper', providers, api_key_env: 'MY_DG', model: 'nova-2', gemini_model: 'g-1' });
+  for (const want of ['data-inbox-tx-field="api_key_env" autocomplete="off" placeholder="DEEPGRAM_API_KEY" value="MY_DG"', 'data-inbox-tx-field="model" autocomplete="off" placeholder="nova-3" value="nova-2"', 'data-inbox-tx-field="gemini_model" autocomplete="off" placeholder="gemini-3.5-flash" value="g-1"', 'data-inbox-tx-field="diarize" checked']) {
+    assert.ok(out.includes(want), want);
+  }
+  // Auto-mode sources show in auto mode only; the mode a hive has is kept.
+  assert.strictEqual(hiddenFor(inboxTranscriptionFormHtml({ mode: 'auto', sources: ['plaud'] }), 'data-inbox-tx-mode', 'auto'), false);
+  assert.strictEqual(hiddenFor(inboxTranscriptionFormHtml({ mode: 'manual' }), 'data-inbox-tx-mode', 'auto'), true);
+  assert.match(inboxTranscriptionFormHtml({ mode: 'auto' }), /<option value="auto" selected>auto: /);
+});
+
+test('dialog: changing Provider or Mode shows the matching fields and rewrites the consent notice', () => {
+  const { inboxTxFieldsChanged } = dialogHarness();
+  const node = (data) => ({ dataset: data, hidden: false });
+  const forNodes = [node({ inboxTxFor: 'whisper' }), node({ inboxTxFor: 'gemini' }), node({ inboxTxFor: 'deepgram' }), node({ inboxTxFor: 'gemini deepgram' })];
+  const modeNodes = [node({ inboxTxMode: 'auto' })];
+  const values = { provider: 'deepgram', mode: 'manual' };
+  const notice = { textContent: '' };
+  const root = {
+    dataset: { inboxTxUnready: 'gemini', inboxTxResolved: 'whisper' },
+    querySelector: sel => {
+      if (sel === '[data-inbox-tx-consent]') return notice;
+      const m = /data-inbox-tx-field="([^"]+)"/.exec(sel);
+      return m ? { value: values[m[1]] } : null;
+    },
+    querySelectorAll: sel => (sel === '[data-inbox-tx-for]' ? forNodes : sel === '[data-inbox-tx-mode]' ? modeNodes : []),
+  };
+  const el = { closest: sel => (sel === '[data-inbox-tx-section]' ? root : null) };
+  const shown = () => forNodes.filter(n => !n.hidden).map(n => n.dataset.inboxTxFor);
+  inboxTxFieldsChanged(el);
+  assert.deepStrictEqual(shown(), ['deepgram', 'gemini deepgram']);
+  assert.strictEqual(modeNodes[0].hidden, true);
+  assert.match(notice.textContent, /^With Deepgram this hive sends the audio to Deepgram/);
+  values.provider = 'whisper'; values.mode = 'auto';
+  inboxTxFieldsChanged(el);
+  assert.deepStrictEqual(shown(), ['whisper']);
+  assert.strictEqual(modeNodes[0].hidden, false);
+  assert.match(notice.textContent, /^With whisper the audio stays on this hive/);
+  values.provider = 'auto';
+  inboxTxFieldsChanged(el);
+  assert.deepStrictEqual(shown(), ['whisper', 'deepgram', 'gemini deepgram'], 'auto: every provider it could pick (gemini is not ready)');
+  assert.match(notice.textContent, /^Auto currently picks whisper\. /);
+  // Outside the section, or with no element, it does nothing.
+  inboxTxFieldsChanged(null);
+  inboxTxFieldsChanged({ closest: () => null });
+  // Both selectors call it.
+  const out = dialogHarness().inboxTranscriptionFormHtml({});
+  assert.match(out, /data-inbox-tx-field="provider" data-change-action="inboxTxFieldsChanged" data-arg-types="t"/);
+  assert.match(out, /data-inbox-tx-field="mode" data-change-action="inboxTxFieldsChanged" data-arg-types="t"/);
+});
+
+test('dialog: Cancel and Save sit in a footer that stays in view in the modal', () => {
+  const { inboxSettingsFormHtml } = dialogHarness();
+  const modal = inboxSettingsFormHtml({}, false);
+  assert.match(modal, /<div class="inbox-set-footer"><div class="hive-dialog-error" role="alert" data-inbox-field="error"><\/div><div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-secondary hive-dialog-btn" data-action="kbCloseModal">Cancel<\/button><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="inboxSaveSettings">Save<\/button><\/div><\/div><\/div>$/);
+  const inline = inboxSettingsFormHtml({}, true);
+  assert.match(inline, /data-inbox-form="inline"/);
+  assert.doesNotMatch(inline, /kbCloseModal/);
+  // The stylesheet pins the modal's footer and keeps hidden fields hidden.
+  assert.match(html, /\.inbox-settings-form\[data-inbox-form="modal"\] \.inbox-set-footer \{ position: sticky; bottom: /);
+  assert.match(html, /\.inbox-settings-form \[hidden\] \{ display: none; \}/);
+  assert.match(html, /\.inbox-settings-form \.kb-search-box \{[^}]*min-height: var\(--tap-target\)/);
 });
 
 test('settings: whisper model and threads round-trip only when the form has them', () => {
@@ -364,4 +519,28 @@ test('settings: gemini model round-trips', () => {
   assert.match(inboxTranscriptionFormHtml({ gemini_model: 'gemini-3.6-flash' }), /data-inbox-tx-field="gemini_model"[^>]*value="gemini-3.6-flash"/);
   const read = inboxReadTranscription(formRoot({ enabled: { checked: false }, gemini_model: { value: ' gemini-3.6-flash ' } }), {});
   assert.strictEqual(read.transcription.gemini_model, 'gemini-3.6-flash');
+});
+
+test('auto-transcribed items wait without asking for a click; failures keep Retry', () => {
+  const { api } = itemHarness();
+  // Not started yet: a "Transcribing soon" pill, and only a secondary "Transcribe now".
+  let out = api.inboxTranscriptionHtml({ source: 'hive-recording', id: 'r1', pending: true, transcribable: true, auto_transcribe: true }, 'hive-recording/r1');
+  assert.match(out, /data-inbox-tx-auto/);
+  assert.match(out, /Transcribing soon/);
+  assert.match(out, /🎧 Transcribe now</);
+  assert.doesNotMatch(out, /🎧 Transcribe</);
+  // Queued by the hive: the queued pill and progress, no button.
+  out = api.inboxTranscriptionHtml({ source: 'upload', id: 'u1', pending: true, auto_transcribe: true, transcription: { status: 'queued' } }, 'upload/u1');
+  assert.match(out, /Transcription queued/);
+  assert.match(out, /data-inbox-tx-progress/);
+  assert.doesNotMatch(out, /data-inbox-tx-auto|inboxTranscribe/);
+  // Failed (a restart interrupted it, or the provider failed): Retry stays.
+  out = api.inboxTranscriptionHtml({ source: 'upload', id: 'u1', pending: true, transcribable: true, auto_transcribe: true, transcription: { status: 'failed', reason: 'interrupted: the hive restarted' } }, 'upload/u1');
+  assert.match(out, /interrupted: the hive restarted/);
+  assert.match(out, /Retry transcription/);
+  assert.doesNotMatch(out, /Transcribing soon/);
+  // Blocked transcription is shown as blocked, not as waiting.
+  out = api.inboxTranscriptionHtml({ source: 'upload', id: 'u2', pending: true, auto_transcribe: true, transcribe_unavailable: 'disabled' }, 'upload/u2');
+  assert.doesNotMatch(out, /Transcribing soon/);
+  assert.match(out, /Transcription is off/);
 });

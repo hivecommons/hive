@@ -3,6 +3,7 @@ package live
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 	"unicode/utf8"
 
@@ -57,10 +58,14 @@ type voiceQueue struct {
 	pending []voiceAnswer
 }
 
-// voiceAnswer is one spoken answer waiting for the flush.
+// voiceAnswer is one spoken answer waiting for the flush. asker, topic
+// and attributed come from the persona's reply (betty.Reply).
 type voiceAnswer struct {
-	text string
-	seq  int
+	text       string
+	seq        int
+	asker      string
+	topic      string
+	attributed bool
 }
 
 // backlog is the speech still queued at now.
@@ -95,8 +100,23 @@ func (s *session) drainPersona(ctx context.Context, replies <-chan betty.Reply) 
 }
 
 // queueVoice holds a spoken answer for the flush.
-func (s *session) queueVoice(text string) {
-	s.voice.pending = append(s.voice.pending, voiceAnswer{text: text, seq: len(s.voice.pending)})
+func (s *session) queueVoice(rep betty.Reply, text string) {
+	s.voice.pending = append(s.voice.pending, voiceAnswer{
+		text: text, seq: len(s.voice.pending), asker: rep.Asker, topic: rep.Topic, attributed: rep.Attributed,
+	})
+}
+
+// batchText is a flushed answer as delivered: when several answers go out
+// together (or a spoken one lands in chat beside others), each must say
+// which question it answers, so one the persona did not attribute gets
+// who asked and what about (live Discord test: "Yes, Andy, I can hear you"
+// answered an earlier "Betty, are you there?" but was posted with the
+// board pressure answer and read as part of it).
+func (s *session) batchText(a voiceAnswer, voice, batched bool) string {
+	if !batched || a.attributed || strings.TrimSpace(a.asker) == "" || s.persona == nil {
+		return a.text
+	}
+	return s.persona.Attribute(voice, a.asker, a.topic, a.text)
 }
 
 // flushVoice speaks the ready answers shortest first; once the queued
@@ -113,19 +133,20 @@ func (s *session) flushVoice(ctx context.Context) {
 		return utf8.RuneCountInString(batch[i].text) < utf8.RuneCountInString(batch[j].text)
 	})
 	moved := false
+	batched := len(batch) > 1
 	for _, a := range batch {
 		now := s.now()
 		if b := s.voice.backlog(now); b > 0 && b+speechTime(a.text) > voiceBacklogMax {
-			s.postAnswer(ctx, a.text)
+			s.postAnswer(ctx, s.batchText(a, false, true))
 			moved = true
 			continue
 		}
-		if s.speak(ctx, a.text) {
-			s.voice.queued(now, a.text)
+		if said := s.batchText(a, true, batched); s.speak(ctx, said) {
+			s.voice.queued(now, said)
 			continue
 		}
-		s.log().Info("[meetings] voice unavailable; answering in chat")
-		s.postAnswer(ctx, a.text)
+		s.log().Info("[meetings] answering in chat instead (see the not speaking reason above)")
+		s.postAnswer(ctx, s.batchText(a, false, batched))
 	}
 	if moved && s.persona != nil {
 		now := s.now()

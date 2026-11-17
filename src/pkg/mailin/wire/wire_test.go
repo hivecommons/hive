@@ -6,7 +6,7 @@ import (
 )
 
 func TestSpokePath(t *testing.T) {
-	for k, want := range map[Kind]string{KindInvite: SpokeInvitesPath, KindFiles: SpokeFilesPath, KindProof: SpokeProofPath, "other": ""} {
+	for k, want := range map[Kind]string{KindInvite: SpokeInvitesPath, KindFiles: SpokeFilesPath, KindProof: SpokeProofPath, KindReport: SpokeReportPath, "other": ""} {
 		if got := SpokePath(k); got != want {
 			t.Errorf("%s: %q, want %q", k, got, want)
 		}

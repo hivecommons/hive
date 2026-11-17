@@ -918,6 +918,10 @@
                         "type": "object",
                         "description": "Meeting record: id, platform, url or guild_id/channel_id, native_id, title, invited_by, state (requested, joining, lobby, live, ended, failed, blocked, handed_off, purged), state_reason, voice_enabled, consent_posted_at and timestamps."
                       }
+                    },
+                    "email_in": {
+                      "type": "object",
+                      "description": "This hive's email-in address, as in GET /api/inbox: address, ready, reason, files_enabled, invites_enabled, docs_url."
                     }
                   }
                 }
@@ -1762,6 +1766,10 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "email_in": {
+                      "type": "object",
+                      "description": "This hive's email-in address, as in GET /api/inbox: address, ready, reason, files_enabled, invites_enabled, docs_url."
+                    },
                     "upcoming": {
                       "type": "array",
                       "items": {
@@ -3573,6 +3581,66 @@
           },
           "503": {
             "description": "TTS not configured, or config is not available"
+          }
+        }
+      }
+    },
+    "/api/meetings/persona/preview": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Play a persona preset's introduction",
+        "description": "Speaks the preset's introduction (the text the persona says when asked to introduce itself, in the preset's language, with no pronoun note) in the preset's own voice through the meetings TTS service, and returns the audio, at most 2 MiB. The dashboard plays it when a preset card is clicked. Clips are cached in memory per TTS service, preset, voice and text, so a repeat does not call the TTS again; the X-Hive-Preview-Cache header says hit or miss. At most 30 requests per user per minute, an introduction of at most 600 characters, and a 20 second TTS timeout. Every failure is a JSON error. Owner or read-write.",
+        "parameters": [
+          {
+            "name": "preset",
+            "in": "query",
+            "required": true,
+            "description": "A persona preset id, for example betty.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The audio",
+            "headers": {
+              "X-Hive-Preview-Cache": {
+                "description": "hit when the clip came from the cache, else miss",
+                "schema": {
+                  "type": "string",
+                  "enum": [
+                    "hit",
+                    "miss"
+                  ]
+                }
+              }
+            },
+            "content": {
+              "audio/mpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Missing or unknown preset, or the introduction is too long"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "429": {
+            "description": "Rate limited; Retry-After says when to try again"
+          },
+          "502": {
+            "description": "The TTS service failed or is not reachable"
+          },
+          "503": {
+            "description": "Meetings are turned off, TTS not configured, or config is not available"
           }
         }
       }
@@ -39627,6 +39695,87 @@
           }
         }
       },
+      "/api/workflows/dispatch/profiles": {
+        "put": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Pick the hive agent a workflow profile is handed to",
+          "description": "Owner only. The agent picker on a repository's workflow row in Settings -> Repos (hivecommons/hive#18690). Pins workflow.dispatch.profiles.<profile>.agent, or clears the pin when agent is empty so the profile resolves by default again (an agent named after the profile, then a writer, docs or feature agent, then the hive's issue worker or, for a reviewing profile, the reviewer). The profile's prompt_template and disabled settings are kept. The next scheduler pass reads the live config, so no restart is needed. Audited as workflow_dispatch_agent.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "profile"
+                  ],
+                  "properties": {
+                    "profile": {
+                      "type": "string",
+                      "description": "Model profile name"
+                    },
+                    "agent": {
+                      "type": "string",
+                      "description": "An enabled agent that is not a replica; empty clears the pin"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Pin saved (or already as requested)",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "changed": {
+                        "type": "boolean"
+                      },
+                      "profile": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "dispatch": {
+                        "type": "array",
+                        "description": "Every bound repository's profiles: repo, profile, agent, source, pinned, disabled, problem (why nothing fills it), states",
+                        "items": {
+                          "type": "object"
+                        }
+                      },
+                      "agents": {
+                        "type": "array",
+                        "description": "Agents that can be picked",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Body is not {profile, agent}, or agent is not an enabled agent of this hive"
+            },
+            "403": {
+              "description": "Not an owner"
+            },
+            "500": {
+              "description": "The config could not be saved"
+            },
+            "503": {
+              "description": "Config unavailable"
+            }
+          }
+        }
+      },
       "/api/workflows/enabled": {
         "put": {
           "tags": [
@@ -40967,6 +41116,36 @@
                         }
                       }
                     },
+                    "email_in": {
+                      "type": "object",
+                      "description": "This hive's email-in address, hive@<dashboard host>, for owner and read-write callers (absent for everyone else). Mail to it becomes Inbox items; calendar invites become Calendar entries.",
+                      "properties": {
+                        "address": {
+                          "type": "string",
+                          "description": "hive@<dashboard host>; present only when ready"
+                        },
+                        "ready": {
+                          "type": "boolean",
+                          "description": "True when mail can reach this hive: it holds the hub relay key relayed deliveries are verified with"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "description": "Why ready is false: no_relay (no hub relays mail to this hive) or no_host (the hive's public host is not known)"
+                        },
+                        "files_enabled": {
+                          "type": "boolean",
+                          "description": "Mailed-in files and text bodies become Inbox items"
+                        },
+                        "invites_enabled": {
+                          "type": "boolean",
+                          "description": "Calendar invites become Calendar entries that hive joins"
+                        },
+                        "docs_url": {
+                          "type": "string",
+                          "description": "The setup guide"
+                        }
+                      }
+                    },
                     "error": {
                       "type": "string"
                     }
@@ -41118,6 +41297,171 @@
           },
           "507": {
             "description": "The email spool is full"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/recent": {
+      "get": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "List recent mail: received and refused",
+        "description": "The last 50 messages mailed to hive@<host>, newest first: received, awaiting approval or refused, with the reason category of a refusal and each attachment that was left out (extension and reason). No subject, file name, body or full sender address: only the sender's domain. Received mail and this hive's own refusals are recorded by the hive; the mail receiver's refusals arrive on POST /api/inbox/email/report. A refused or held event also says how to try again (how_to_fix), links the documentation of its reason (help_url) and a prefilled new-issue page (report_url: reason code, SMTP code, day and hive version, never the sender, a subject or a file name); an event that awaits approval lists the Inbox items it brought and those still awaiting approval, for the approve and decline routes. Owner or read-write.",
+        "responses": {
+          "200": {
+            "description": "The recent-mail log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "accepted",
+                              "awaiting_approval",
+                              "rejected"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "type": "integer",
+                            "description": "SMTP reply code the sender got for a refusal"
+                          },
+                          "sender_domain": {
+                            "type": "string"
+                          },
+                          "bytes": {
+                            "type": "integer"
+                          },
+                          "files": {
+                            "type": "integer"
+                          },
+                          "items": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "Inbox item ids of a mail that awaits approval"
+                          },
+                          "pending_items": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            },
+                            "description": "The items that still await approval"
+                          },
+                          "how_to_fix": {
+                            "type": "string",
+                            "description": "How to try again, for a refused or held mail"
+                          },
+                          "help_url": {
+                            "type": "string",
+                            "description": "Documentation of the reason"
+                          },
+                          "report_url": {
+                            "type": "string",
+                            "description": "New-issue page prefilled with the reason code, the SMTP code, the day and the hive version"
+                          },
+                          "skipped": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "ext": {
+                                  "type": "string"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          },
+                          "approval_reason": {
+                            "type": "string",
+                            "description": "Why a received mail awaits approval: sender_not_authenticated or sender_not_on_allowlist"
+                          },
+                          "auth": {
+                            "type": "object",
+                            "description": "The sender authentication the mail receiver recorded: dmarc, aligned, spf, spf_domain, dkim (domain:result), remote_ip, helo"
+                          }
+                        }
+                      }
+                    },
+                    "files_enabled": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/report": {
+      "post": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Receive a refusal report from the mail receiver (hub relay)",
+        "description": "A message for this hive that the mail receiver refused: a delivery of kind report with the SMTP code, the reason category, the sender's domain, the size, the attachment count and each skipped attachment's extension and reason. It carries no subject, file name, body or full address. Signed by the hub with this hive's relay key like the other mail deliveries; added to the recent-mail log, nothing else is stored. No session.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "pkg/mailin/wire.Delivery with kind report"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "recorded": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a report delivery"
+          },
+          "401": {
+            "description": "Relay signature rejected or delivery replayed"
+          },
+          "413": {
+            "description": "Delivery too large"
+          },
+          "503": {
+            "description": "This hive holds no relay key"
           }
         }
       }
@@ -41521,6 +41865,170 @@
           },
           "503": {
             "description": "Inbox not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/delete": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Delete inbox items of any kind",
+        "description": "Owner or read-write. Deletes items for good, one or many. A hive recording, an upload and a mailed-in file lose the file this hive stores and their machine transcript record; a meeting hive attended and an item of a synced source lose only their Inbox item. The Knowledge fact is kept unless `remove_knowledge` is true, and then only a fact this hive wrote itself (recording, upload) is removed. Every deleted item leaves a tombstone, so a later sync never lists it again; what was already shared from it is not touched. Each deleted item is audited as inbox_delete.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "items"
+                ],
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string"
+                        },
+                        "item_id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "remove_knowledge": {
+                    "type": "boolean",
+                    "description": "Also delete the Knowledge fact of items whose fact this hive wrote itself. Default false."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Items deleted; items that could not be deleted are listed in failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "integer"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string"
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "stored_removed": {
+                            "type": "boolean",
+                            "description": "The file, recording or audio this hive stored was deleted"
+                          },
+                          "knowledge_removed": {
+                            "type": "boolean"
+                          },
+                          "knowledge_kept": {
+                            "type": "boolean"
+                          },
+                          "shares_kept": {
+                            "type": "integer",
+                            "description": "Shares in the item's history; what they filed is not touched"
+                          }
+                        }
+                      }
+                    },
+                    "failed": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string"
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required, or the item is not this user's to delete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Inbox not configured, or no such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The item is being transcribed",
             "content": {
               "application/json": {
                 "schema": {
