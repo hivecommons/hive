@@ -50482,11 +50482,26 @@ function burnAreaChart() {
       if (n >= INBOX_MAIL_LOG_BYTES_PER_MB) return (n / INBOX_MAIL_LOG_BYTES_PER_MB).toFixed(1) + ' MB';
       return Math.max(1, Math.round(n / INBOX_MAIL_LOG_BYTES_PER_KB)) + ' KB';
     }
+    // Why DMARC came out as it did: the SPF and DKIM results and the server
+    // that handed the mail over.
+    function inboxMailLogAuth(a) {
+      if (!a) return '';
+      const dkim = (a.dkim || []).length ? 'DKIM ' + a.dkim.join(', ') : 'no DKIM signature';
+      const via = a.helo || a.remote_ip ? 'sent through ' + [a.helo, a.remote_ip].filter(Boolean).join(' ') : '';
+      return ['DMARC ' + (a.dmarc || 'none'), 'SPF ' + (a.spf || 'none') + (a.spf_domain ? ' for ' + a.spf_domain : ''), dkim, via].filter(Boolean).join('; ');
+    }
+    function inboxMailLogApproval(ev) {
+      if (ev.outcome !== 'awaiting_approval') return '';
+      if (ev.approval_reason === 'sender_not_authenticated') {
+        return 'the sender could not be authenticated, so the owner must approve it (' + inboxMailLogAuth(ev.auth) + ')';
+      }
+      return 'the sender is authenticated but is not a proven calendar email of a user of this hive (Settings → Meeting attendee → Email)';
+    }
     function inboxMailLogReason(ev) {
       const skipped = (ev.skipped || []).map(s => (s.ext ? '.' + s.ext : 'no extension') + ' (' + (INBOX_MAIL_LOG_SKIPS[s.reason] || s.reason || 'left out') + ')');
       const why = ev.reason ? (INBOX_MAIL_LOG_REASONS[ev.reason] || ev.reason) : '';
       const left = skipped.length ? (ev.outcome === 'rejected' ? '' : 'left out: ') + skipped.join(', ') : '';
-      return [why, left].filter(Boolean).join(': ');
+      return [[why, left].filter(Boolean).join(': '), inboxMailLogApproval(ev)].filter(Boolean).join(' · ');
     }
     function inboxMailLogOutcome(ev) {
       if (ev.outcome === 'rejected') return { status: 'error', label: 'refused' };

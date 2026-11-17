@@ -53,6 +53,82 @@ type MailEvent struct {
 	Files int `json:"files"`
 	// Skipped lists the attachments left out: extension and reason only.
 	Skipped []wire.SkippedFile `json:"skipped,omitempty"`
+	// ApprovalReason says why an accepted mail awaits approval:
+	// ApprovalNotAuthenticated or ApprovalNotOnAllowlist.
+	ApprovalReason string `json:"approval_reason,omitempty"`
+	// Auth is the sender authentication the mail receiver recorded.
+	Auth *MailAuth `json:"auth,omitempty"`
+}
+
+// Why a mail awaits the owner's approval.
+const (
+	// ApprovalNotAuthenticated: the From address did not pass DMARC
+	// alignment (neither SPF nor DKIM passed for its domain).
+	ApprovalNotAuthenticated = "sender_not_authenticated"
+	// ApprovalNotOnAllowlist: the sender is authenticated but is not a
+	// proven calendar email of a user with access to this hive.
+	ApprovalNotOnAllowlist = "sender_not_on_allowlist"
+)
+
+// maxMailDKIM bounds the DKIM results kept per event.
+const maxMailDKIM = 5
+
+// MailAuth is the authentication of a mail's sender, as domains and
+// results: enough to see why DMARC passed or failed, and which server
+// handed the mail over.
+type MailAuth struct {
+	// DMARC is pass, fail, none or temperror; Aligned is the decision a
+	// hive trusts (SPF or DKIM passed for the From domain).
+	DMARC   string `json:"dmarc,omitempty"`
+	Aligned bool   `json:"aligned"`
+	// SPF is the result for SPFDomain (the envelope sender's domain).
+	SPF       string `json:"spf,omitempty"`
+	SPFDomain string `json:"spf_domain,omitempty"`
+	// DKIM lists each signature as "domain:result"; empty when unsigned.
+	DKIM []string `json:"dkim,omitempty"`
+	// RemoteIP and HELO are the server that delivered the mail.
+	RemoteIP string `json:"remote_ip,omitempty"`
+	HELO     string `json:"helo,omitempty"`
+}
+
+// MailAuthOf summarizes a delivery's authentication for an event.
+func MailAuthOf(a wire.Auth) *MailAuth {
+	out := &MailAuth{DMARC: a.DMARC, Aligned: a.Aligned, SPF: a.SPF, SPFDomain: a.SPFDomain, RemoteIP: a.RemoteIP, HELO: a.HELO}
+	for _, d := range a.DKIM {
+		out.DKIM = append(out.DKIM, d.Domain+":"+d.Result)
+	}
+	return out
+}
+
+// mailAddrToken keeps what an IP address or a "domain:result" pair is made
+// of: mailToken's set plus the colon.
+func mailAddrToken(s string, limit int) string {
+	parts := strings.Split(s, ":")
+	for i, p := range parts {
+		parts[i] = mailToken(p, limit)
+	}
+	s = strings.Join(parts, ":")
+	if len(s) > limit {
+		s = s[:limit]
+	}
+	return s
+}
+
+func (a *MailAuth) clean() *MailAuth {
+	if a == nil {
+		return nil
+	}
+	out := &MailAuth{
+		DMARC: mailToken(a.DMARC, maxMailEventKind), Aligned: a.Aligned, SPF: mailToken(a.SPF, maxMailEventKind),
+		SPFDomain: mailToken(a.SPFDomain, maxMailDomain), RemoteIP: mailAddrToken(a.RemoteIP, maxMailReason), HELO: mailToken(a.HELO, maxMailDomain),
+	}
+	for i, d := range a.DKIM {
+		if i == maxMailDKIM {
+			break
+		}
+		out.DKIM = append(out.DKIM, mailAddrToken(d, maxMailDomain))
+	}
+	return out
 }
 
 // mailToken keeps the letters, digits and ._- of s, lower-cased, at most
@@ -88,6 +164,8 @@ func (ev MailEvent) clean() MailEvent {
 	}
 	ev.Kind = mailToken(ev.Kind, maxMailEventKind)
 	ev.Reason = mailToken(ev.Reason, maxMailReason)
+	ev.ApprovalReason = mailToken(ev.ApprovalReason, maxMailReason)
+	ev.Auth = ev.Auth.clean()
 	ev.SenderDomain = mailToken(ev.SenderDomain, maxMailDomain)
 	ev.Bytes = max(ev.Bytes, 0)
 	ev.Files = max(ev.Files, 0)

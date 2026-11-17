@@ -160,8 +160,14 @@ func (s *Server) storeMailFiles(w http.ResponseWriter, src *inbox.EmailSource, d
 	if d.Files != nil {
 		ev.Skipped = d.Files.Skipped
 	}
+	ev.Auth = inbox.MailAuthOf(d.Auth)
 	if !trusted {
-		ev.Outcome = inbox.MailAwaitingApproval
+		// Say which of the two conditions was not met: the sender was not
+		// authenticated, or is authenticated but not on the allowlist.
+		ev.Outcome, ev.ApprovalReason = inbox.MailAwaitingApproval, inbox.ApprovalNotOnAllowlist
+		if !d.Auth.Aligned {
+			ev.ApprovalReason = inbox.ApprovalNotAuthenticated
+		}
 	}
 	switch {
 	case errors.Is(err, inbox.ErrEmailQuota):

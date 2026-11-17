@@ -175,6 +175,17 @@ func TestInboxEmailDocumentsAndRecentMail(t *testing.T) {
 	if rec := relayPost(s, inboxEmailPath, filesDelivery("stranger@example.org", true, deck), testMailRelayKey); rec.Code != http.StatusOK {
 		t.Fatalf("outsider: %d %s", rec.Code, rec.Body)
 	}
+	// An allowlisted address whose mail failed authentication (sent through
+	// a server its domain does not authorize) awaits approval too, and the
+	// log says that this, not the allowlist, is why.
+	spoofed := filesDelivery("bob@example.com", false, deck)
+	spoofed.MessageID = "m-unauthenticated"
+	spoofed.Auth.DMARC, spoofed.Auth.SPF, spoofed.Auth.SPFDomain = "fail", "softfail", "example.com"
+	spoofed.Auth.RemoteIP, spoofed.Auth.HELO = "2001:db8::25", "Relay.Isp.Example"
+	spoofed.Auth.DKIM = []wire.DKIMResult{{Domain: "isp.example", Result: "pass"}}
+	if rec := relayPost(s, inboxEmailPath, spoofed, testMailRelayKey); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `"awaiting_approval":true`) {
+		t.Fatalf("unauthenticated allowlisted sender: %d %s", rec.Code, rec.Body)
+	}
 	report := wire.Delivery{Kind: wire.KindReport, Recipient: "hive@acme.hive.hivecommons.dev", Report: &wire.Report{
 		Code: 550, Reason: wire.ReasonUnsupported, SenderDomain: "Example.NET", Bytes: 4096, Attachments: 1,
 		Skipped: []wire.SkippedFile{{Ext: "key", Reason: wire.SkipType}, {Ext: "<b>x</b>", Reason: "made up reason"}},
@@ -206,11 +217,16 @@ func TestInboxEmailDocumentsAndRecentMail(t *testing.T) {
 		t.Fatalf("recent: %d %s", rec.Code, rec.Body)
 	}
 	raw := rec.Body.String()
-	if err := json.Unmarshal([]byte(raw), &listing); err != nil || len(listing.Events) != 4 || !listing.FilesEnabled {
+	if err := json.Unmarshal([]byte(raw), &listing); err != nil || len(listing.Events) != 5 || !listing.FilesEnabled {
 		t.Fatalf("recent: %v %s", err, raw)
 	}
 	// Newest first.
-	off, refused, pending, accepted := listing.Events[0], listing.Events[1], listing.Events[2], listing.Events[3]
+	off, refused, unauth, pending, accepted := listing.Events[0], listing.Events[1], listing.Events[2], listing.Events[3], listing.Events[4]
+	if unauth.Outcome != inbox.MailAwaitingApproval || unauth.ApprovalReason != inbox.ApprovalNotAuthenticated || unauth.Auth == nil ||
+		unauth.Auth.DMARC != "fail" || unauth.Auth.Aligned || unauth.Auth.SPF != "softfail" || unauth.Auth.SPFDomain != "example.com" ||
+		unauth.Auth.RemoteIP != "2001:db8::25" || unauth.Auth.HELO != "relay.isp.example" || len(unauth.Auth.DKIM) != 1 || unauth.Auth.DKIM[0] != "isp.example:pass" {
+		t.Errorf("unauthenticated event %+v %+v", unauth, unauth.Auth)
+	}
 	if off.Outcome != inbox.MailRejected || off.Reason != wire.ReasonMailInOff || off.SenderDomain != "example.com" {
 		t.Errorf("files-off event %+v", off)
 	}
@@ -219,11 +235,12 @@ func TestInboxEmailDocumentsAndRecentMail(t *testing.T) {
 		refused.Skipped[1] != (wire.SkippedFile{Ext: "bxb", Reason: "madeupreason"}) {
 		t.Errorf("reported event %+v", refused)
 	}
-	if pending.Outcome != inbox.MailAwaitingApproval || pending.SenderDomain != "example.org" || pending.Files != 1 {
+	if pending.Outcome != inbox.MailAwaitingApproval || pending.ApprovalReason != inbox.ApprovalNotOnAllowlist || pending.Auth == nil || !pending.Auth.Aligned ||
+		pending.SenderDomain != "example.org" || pending.Files != 1 {
 		t.Errorf("awaiting event %+v", pending)
 	}
 	if accepted.Outcome != inbox.MailAccepted || accepted.Kind != string(wire.KindFiles) || accepted.SenderDomain != "example.com" || accepted.Files != 1 ||
-		accepted.Bytes != int64(len(deck.Data)) || len(accepted.Skipped) != 1 || accepted.At.IsZero() {
+		accepted.Bytes != int64(len(deck.Data)) || len(accepted.Skipped) != 1 || accepted.At.IsZero() || accepted.ApprovalReason != "" {
 		t.Errorf("accepted event %+v", accepted)
 	}
 	// No content: no subject, file name or full address.

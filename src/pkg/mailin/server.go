@@ -433,7 +433,13 @@ type messageRecord struct {
 	skipped      []wire.SkippedFile
 	senderDomain string
 	dmarc        string
-	deliveries   []string
+	// spf, spfDomain, dkim ("domain:result") and aligned say why dmarc is
+	// what it is, so a failed authentication can be read off the log.
+	spf        string
+	spfDomain  string
+	dkim       []string
+	aligned    bool
+	deliveries []string
 }
 
 // skippedLabels lists skipped attachments as "ext:reason" for a log line.
@@ -479,7 +485,8 @@ func (s *session) Data(r io.Reader) error {
 		"outcome", outcomeOf(se), "code", codeOf(se), "reason", rec.reason, "rcpt_hosts", rcptHosts(rcpts),
 		"sender_domain", logHost(rec.senderDomain), "bytes", rec.bytes, "attachments", rec.attachments,
 		"accepted_files", rec.files, "skipped", skippedLabels(rec.skipped), "kind", string(rec.kind),
-		"dmarc", rec.dmarc, "deliveries", rec.deliveries, "tls", s.tls, "remote_ip", ipString(s.ip),
+		"dmarc", rec.dmarc, "dmarc_aligned", rec.aligned, "spf", rec.spf, "spf_domain", logHost(rec.spfDomain), "dkim", rec.dkim,
+		"helo", logHost(s.helo), "deliveries", rec.deliveries, "tls", s.tls, "remote_ip", ipString(s.ip),
 	}
 	s.o.Logger.Info("hive-mx: message "+outcomeOf(se), attrs...)
 	if se != nil && reportable(rec.reason) {
@@ -593,7 +600,10 @@ func (s *session) receive(r io.Reader, from string, rcpts []string, rec *message
 	}
 	ctx := context.Background()
 	auth := Authenticate(ctx, s.o.Resolver, Envelope{RemoteIP: s.ip, HELO: s.helo, MailFrom: from}, io.NewSectionReader(f, 0, size), header)
-	rec.dmarc = auth.DMARC
+	rec.dmarc, rec.spf, rec.spfDomain, rec.aligned = auth.DMARC, auth.SPF, auth.SPFDomain, auth.Aligned
+	for _, d := range auth.DKIM {
+		rec.dkim = append(rec.dkim, logHost(d.Domain)+":"+d.Result)
+	}
 	if auth.FromDomain != "" {
 		rec.senderDomain = auth.FromDomain
 	}

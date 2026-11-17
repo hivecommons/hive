@@ -172,7 +172,7 @@ func (s *Server) handleMeetingsInvites(w http.ResponseWriter, r *http.Request) {
 		s.meetingsError(w, r, err)
 		return
 	}
-	s.recordMail(inbox.MailEvent{Outcome: inbox.MailAccepted, Kind: string(wire.KindInvite), SenderDomain: mailSenderDomain(d.Auth)})
+	s.recordMail(inbox.MailEvent{Outcome: inbox.MailAccepted, Kind: string(wire.KindInvite), SenderDomain: mailSenderDomain(d.Auth), Auth: inbox.MailAuthOf(d.Auth)})
 	s.webhookLogger().Info("email invite received", "delivery", d.ID, "invites", len(d.Invites), "trusted", trusted)
 	jsonResponse(w, out)
 }

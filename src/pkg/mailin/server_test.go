@@ -546,6 +546,10 @@ func TestSMTPOfficeDocumentsAccepted(t *testing.T) {
 		l["attachments"] != float64(4) || l["accepted_files"] != float64(4) || l["kind"] != string(wire.KindFiles) {
 		t.Fatalf("outcome line %+v", l)
 	}
+	// The authentication behind the DMARC result is on the line.
+	if l["spf"] != resultPass || l["spf_domain"] != "example.com" || l["dmarc"] != resultPass || l["dmarc_aligned"] != true || l["helo"] != "client.example.com" {
+		t.Fatalf("authentication fields %+v", l)
+	}
 	if size, _ := l["bytes"].(float64); size < float64(len(pptx)) {
 		t.Fatalf("bytes %v", l["bytes"])
 	}

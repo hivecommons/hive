@@ -247,7 +247,7 @@ name, a body or a full address: the sender is logged as a domain only.
 
 | Line | When | Fields |
 |---|---|---|
-| `hive-mx: message accepted` / `message rejected` / `message deferred` | Once per DATA | `outcome`, `code` (the SMTP reply), `reason`, `rcpt_hosts`, `sender_domain`, `bytes`, `attachments`, `accepted_files`, `skipped` (`ext:reason`), `kind`, `dmarc`, `deliveries` (the ids the hub and the hive log), `tls`, `remote_ip` |
+| `hive-mx: message accepted` / `message rejected` / `message deferred` | Once per DATA | `outcome`, `code` (the SMTP reply), `reason`, `rcpt_hosts`, `sender_domain`, `bytes`, `attachments`, `accepted_files`, `skipped` (`ext:reason`), `kind`, `dmarc`, `dmarc_aligned`, `spf`, `spf_domain`, `dkim` (`domain:result` per signature), `helo`, `deliveries` (the ids the hub and the hive log), `tls`, `remote_ip` |
 | `hive-mx: command refused` | A refusal at MAIL FROM or RCPT TO | `outcome`, `code`, `reason`, `stage`, `rcpt_host`, `sender_domain`, `tls`, `remote_ip` |
 | `hive-mx: session ended without a message` | The sender connected, greeted and left without sending DATA | `stage` (`greeted`, `mail_from`, `rcpt_to`), `tls`, `remote_ip` |
 
@@ -260,6 +260,8 @@ or the hive could not be reached; the sender retries), `unknown_recipient`
 (no hive has that host), `unknown_mailbox` (not `hive@`),
 `host_list_not_loaded`, `rate_limited_ip`, `rate_limited_domain`,
 `receiver_busy`, `receiver_storage` and `transfer_aborted`.
+
+`remote_ip` is the sending server's own address: the receiver's Service keeps the client address (`externalTrafficPolicy: Local`, no proxy protocol), and SPF is evaluated against it. A `dmarc` of `fail` with `spf` not `pass` and no `dkim` entry for the `From` domain means the mail left through a server its domain does not authorize.
 
 A sender that declares a size over the limit (`MAIL FROM:<...> SIZE=n`) is
 answered `552` by the SMTP library before hive-mx sees the command; that

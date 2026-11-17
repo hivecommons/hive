@@ -490,6 +490,24 @@ refusal or an attachment that was left out, the reason. It never holds a
 subject, a file name or a full sender address. The same list is
 `GET /api/inbox/email/recent`.
 
+A mail that was received but shows **awaiting approval** says which of the
+two conditions for landing directly was not met:
+
+- **The sender could not be authenticated.** Neither SPF nor DKIM passed
+  for the domain of the `From` address. The line gives the DMARC, SPF and
+  DKIM results and the server that handed the mail over. The usual cause is
+  a mail program that sends through another provider's outgoing server
+  than the address's own (an `@icloud.com` address sent through an
+  internet provider's SMTP server, for example): the address's domain
+  does not authorize that server, and its signature is missing. Send from
+  the provider's own app or web mail, or fix the account's outgoing server.
+  Being on the allowlist does not help here; the owner can still approve
+  the item by hand.
+- **The sender is authenticated but not on the allowlist.** Add the address
+  under **Settings, Meeting attendee, Email** and prove it
+  ([Proving calendar emails](meetings.md#proving-calendar-emails)); the
+  proof mail has to pass the same authentication.
+
 | Reason | What happened | What to do |
 |---|---|---|
 | attachment type not accepted | Every attachment was of a type off the list above (for example `.key`, `.zip`, `.pptm`) and the mail had no text | Send an accepted type, or export to PDF |

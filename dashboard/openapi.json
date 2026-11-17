@@ -41365,6 +41365,14 @@
                                 }
                               }
                             }
+                          },
+                          "approval_reason": {
+                            "type": "string",
+                            "description": "Why a received mail awaits approval: sender_not_authenticated or sender_not_on_allowlist"
+                          },
+                          "auth": {
+                            "type": "object",
+                            "description": "The sender authentication the mail receiver recorded: dmarc, aligned, spf, spf_domain, dkim (domain:result), remote_ip, helo"
                           }
                         }
                       }
