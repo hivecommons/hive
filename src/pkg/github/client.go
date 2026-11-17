@@ -1009,6 +1009,9 @@ type PullRequest struct {
 	HiveAgent      string `json:"hive_agent,omitempty"`
 	HiveBackend    string `json:"hive_backend,omitempty"`
 	HiveModel      string `json:"hive_model,omitempty"`
+	// HiveEffort is the trailer's effort= value (reasoning effort requested
+	// at launch), "" when the trailer has none.
+	HiveEffort string `json:"hive_effort,omitempty"`
 	// HiveRun and HivePlan are the `Hive-Run:` / `Hive-Plan:` trailer values
 	// (ParseRunTrailers, hivecommons/hive#8310), read from the same list
 	// payload as the attribution trailer so the plan_match review perspective
@@ -2294,6 +2297,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 					HiveAgent:           attrMeta.Agent,
 					HiveBackend:         attrMeta.Backend,
 					HiveModel:           attrMeta.Model,
+					HiveEffort:          attrMeta.Effort,
 					HiveRun:             runKey,
 					HivePlan:            planRef,
 					ScopeContract:       scopeContract,
@@ -2384,6 +2388,7 @@ func (c *Client) fetchPRsWithDetails(ctx context.Context, repo string, clankerBu
 			HiveAgent:      attrMeta.Agent,
 			HiveBackend:    attrMeta.Backend,
 			HiveModel:      attrMeta.Model,
+			HiveEffort:     attrMeta.Effort,
 			HiveRun:        runKey,
 			HivePlan:       planRef,
 			ScopeContract:  scopeContract,
@@ -2575,6 +2580,7 @@ func pullRequestAttributionRecord(repo string, pr *gh.PullRequest, meta Invocati
 		HiveAgent:      meta.Agent,
 		HiveBackend:    meta.Backend,
 		HiveModel:      meta.Model,
+		HiveEffort:     meta.Effort,
 	}
 }
 
