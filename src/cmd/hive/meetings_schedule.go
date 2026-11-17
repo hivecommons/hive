@@ -31,6 +31,8 @@ const (
 // meeting scheduler (hivecommons/hive#18394).
 type meetingsSchedule struct {
 	sched *schedule.Scheduler
+	// mgr deletes the meetings a deleted Calendar entry created.
+	mgr *meetings.Manager
 	// attendee is the name the dashboard's "in a meeting" indicator uses.
 	attendee string
 	now      func() time.Time
@@ -129,6 +131,53 @@ func (d *meetingsSchedule) Act(_ context.Context, eid, action, by string) (any, 
 	return ev.Redacted(), nil
 }
 
+// Delete removes a finished Calendar entry and the meetings it created.
+// An entry still to come or live answers 409 (skip or cancel it); so does
+// one whose meeting hive is still in. Meetings already gone are skipped.
+func (d *meetingsSchedule) Delete(ctx context.Context, eid string) (dashboard.MeetingScheduleDeleted, error) {
+	out := dashboard.MeetingScheduleDeleted{ID: eid, Meetings: []dashboard.MeetingDeleted{}}
+	e, err := d.sched.Get(eid)
+	if err != nil {
+		return out, meetingsScheduleError(err)
+	}
+	if !e.Status.Terminal() {
+		return out, fmt.Errorf("%w: this meeting is %s; skip or cancel it instead", dashboard.ErrMeetingConflict, e.Status)
+	}
+	ids := schedule.LinkedMeetings(e)
+	if d.mgr != nil {
+		for _, id := range ids {
+			m, err := d.mgr.Get(id)
+			if errors.Is(err, meetings.ErrNotFound) {
+				continue
+			}
+			if err != nil {
+				return out, err
+			}
+			if !meetings.Deletable(m) {
+				return out, fmt.Errorf("%w: hive is still in this meeting; leave the meeting first", dashboard.ErrMeetingConflict)
+			}
+		}
+	}
+	if _, err := d.sched.Delete(eid); err != nil {
+		return out, meetingsScheduleError(err)
+	}
+	if d.mgr == nil {
+		return out, nil
+	}
+	for _, id := range ids {
+		res, err := d.mgr.Delete(ctx, id)
+		if errors.Is(err, meetings.ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			out.Meetings = append(out.Meetings, dashboard.MeetingDeleted{ID: id, UpstreamError: err.Error()})
+			continue
+		}
+		out.Meetings = append(out.Meetings, meetingDeleted(res, nil))
+	}
+	return out, nil
+}
+
 // wireMeetingsSchedule starts the meeting scheduler over the manager
 // (hivecommons/hive#18394): schedule.json in the meetings data directory,
 // joins HIVE_MEETINGS_SCHEDULE_LEAD_S before start, scans every
@@ -186,5 +235,5 @@ func wireMeetingsSchedule(cfg *config.Config, mgr *meetings.Manager, logger *slo
 		<-done
 		sched.Close()
 	}
-	return &meetingsSchedule{sched: sched, attendee: attendeeName(cfg.Meetings.BotNameOrDefault()), now: time.Now}, stop
+	return &meetingsSchedule{sched: sched, mgr: mgr, attendee: attendeeName(cfg.Meetings.BotNameOrDefault()), now: time.Now}, stop
 }

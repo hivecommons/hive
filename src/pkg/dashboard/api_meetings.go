@@ -63,6 +63,11 @@ type MeetingsService interface {
 	// (Discord `/hive join`) waiting for the owner.
 	ApproveRequest(ctx context.Context, id string, voice bool) (any, error)
 	DeclineRequest(ctx context.Context, id string) (any, error)
+	// Delete removes a finished meeting or a pending join request for good
+	// (ErrMeetingConflict while hive is still in it); ClearFinished deletes
+	// every finished meeting that ended before the cutoff.
+	Delete(ctx context.Context, id string) (MeetingDeleted, error)
+	ClearFinished(ctx context.Context, before time.Time) ([]MeetingDeleted, error)
 	// Live is the panel snapshot: meeting, transcript, live state.
 	Live(id string) (any, error)
 	Subscribe(fn func(MeetingFrame)) (cancel func())
@@ -131,6 +136,7 @@ func (s *Server) registerMeetingsRoutes() {
 	s.mux.HandleFunc("POST /api/meetings/{id}/approve", s.handleMeetingsRequestApprove)
 	s.mux.HandleFunc("POST /api/meetings/{id}/decline", s.handleMeetingsRequestDecline)
 	s.mux.HandleFunc("GET /api/meetings/{id}/ws", s.handleMeetingsWS)
+	s.registerMeetingsDeleteRoutes()
 }
 
 func meetingsError(w http.ResponseWriter, err error) {

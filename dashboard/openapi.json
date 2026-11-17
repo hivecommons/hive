@@ -149,6 +149,152 @@
         }
       }
     },
+    "/api/meetings/clear-finished": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Clear finished meetings",
+        "description": "Owner only. Deletes every meeting in a final state that finished before `before` (RFC 3339; empty or later than now means now), each exactly like DELETE /api/meetings/{id}. Live meetings and pending join requests stay. Each deleted meeting is audited as meeting_delete.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "before": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deleted meetings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "description": "The state the meeting was in"
+                          },
+                          "upstream_error": {
+                            "type": "string",
+                            "description": "Set when Vexa (Quorum meeting.delete) could not confirm the erase; the record on this hive is removed anyway"
+                          },
+                          "calendar_removed": {
+                            "type": "integer",
+                            "description": "Calendar entries removed because they existed only for this meeting"
+                          }
+                        }
+                      }
+                    },
+                    "count": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "before is not an RFC 3339 time"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/schedule/{eid}": {
+      "delete": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Delete a past Calendar entry",
+        "description": "Owner only. Deletes a finished Calendar entry (ended, cancelled, declined, failed, blocked, skipped) and the meetings it created, each like DELETE /api/meetings/{id}. Entries still scheduled, awaiting approval or live keep Skip and Cancel and answer 409, as does an entry whose meeting hive is still in. Audited as meeting_schedule_delete, plus meeting_delete for each meeting.",
+        "parameters": [
+          {
+            "name": "eid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Schedule event id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "meetings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "description": "The state the meeting was in"
+                          },
+                          "upstream_error": {
+                            "type": "string",
+                            "description": "Set when Vexa (Quorum meeting.delete) could not confirm the erase; the record on this hive is removed anyway"
+                          },
+                          "calendar_removed": {
+                            "type": "integer",
+                            "description": "Calendar entries removed because they existed only for this meeting"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Unknown event"
+          },
+          "409": {
+            "description": "The entry is still to come or live, or hive is still in its meeting"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
     "/api/meetings/{id}/decline": {
       "post": {
         "tags": [
@@ -438,6 +584,64 @@
       }
     },
     "/api/meetings/{id}": {
+      "delete": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Delete a finished meeting or a pending join request",
+        "description": "Owner only. Allowed for a meeting in a final state (ended, failed, blocked, declined, left, handed_off, purged) and for a pending platform join request (declined with meeting.leave, then removed). Removes the meeting record, its transcript and live state on this hive, erases it in Vexa with Quorum meeting.delete (best effort: not_found is fine, any other error is returned as upstream_error while the record is still removed) and removes the Calendar entry that existed only for this meeting. Knowledge facts and drafts already made from the meeting are not touched. Audited as meeting_delete.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "description": "The state the meeting was in"
+                    },
+                    "upstream_error": {
+                      "type": "string",
+                      "description": "Set when Vexa (Quorum meeting.delete) could not confirm the erase; the record on this hive is removed anyway"
+                    },
+                    "calendar_removed": {
+                      "type": "integer",
+                      "description": "Calendar entries removed because they existed only for this meeting"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Unknown meeting"
+          },
+          "409": {
+            "description": "Hive is still joining, in the lobby of or live in the meeting: leave the meeting first"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      },
       "get": {
         "tags": [
           "Meetings"

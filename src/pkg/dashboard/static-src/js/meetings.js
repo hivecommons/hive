@@ -20,6 +20,10 @@
     // Meeting state to the kc-pill status palette (green, blue, red, muted).
     const MEETINGS_PILL_STATUS = { live: 'ok', requested: 'syncing', joining: 'syncing', lobby: 'syncing', failed: 'error', blocked: 'error' };
 
+    // Final meeting states: the row offers 🗑 Delete and "Clear finished"
+    // takes it. Joining, lobby and live meetings are left first.
+    const MEETINGS_FINAL_STATES = { ended: 1, failed: 1, blocked: 1, handed_off: 1, purged: 1 };
+
     function meetingsIsOwner() { return window._hiveRole === 'owner'; }
     // The role is known once /api/role settled (answered, or its retries gave
     // up). Until then the panel shows a neutral loading state, never the
@@ -117,7 +121,8 @@
           '<span class="kc-pill" data-status="syncing">join request</span></div></div>' +
           '<div class="meetings-row-actions">' +
           '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsApproveRequest" data-arg0="' + escapeHtml(m.id) + '">Approve</button>' +
-          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button></div></div>';
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button>' +
+          meetingsDeleteButtonHtml(m) + '</div></div>';
       }
       const state = m.state || '';
       const when = meetingsFormatTime(m.live_at || m.created_at);
@@ -134,7 +139,88 @@
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +
         (active ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsToggleVoice" data-arg0="' + escapeHtml(m.id) + '" data-arg1="' + (m.voice_enabled ? 'false' : 'true') + '">' + (m.voice_enabled ? 'Voice on' : 'Voice off') + '</button>' +
           '<button type="button" class="hv-btn btn-danger btn-sm" data-action="meetingsLeave" data-arg0="' + escapeHtml(m.id) + '">Leave</button>' : '') +
-        '</div></div>';
+        meetingsDeleteButtonHtml(m) + '</div></div>';
+    }
+
+    // meetingsCanDelete: a meeting in a final state, or a platform join
+    // request still waiting (deleting it declines it). Owner only.
+    function meetingsCanDelete(m, role) {
+      if (!m || role !== 'owner') return false;
+      if (MEETINGS_FINAL_STATES[m.state]) return true;
+      return m.state === 'requested' && !!m.requested_by;
+    }
+
+    function meetingsDeleteButtonHtml(m) {
+      if (!meetingsCanDelete(m, window._hiveRole)) return '';
+      return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDelete" data-arg0="' + escapeHtml(m.id) + '"' +
+        ' title="Delete this meeting, its transcript and its Vexa data; facts and drafts already made from it stay">🗑 Delete</button>';
+    }
+
+    // meetingsDeleteText is the in-page confirm text for one meeting.
+    function meetingsDeleteText(m) {
+      if (m && m.state === 'requested') {
+        return 'This declines the join request and removes it. It cannot be undone.';
+      }
+      return 'This deletes the meeting record, its transcript, notes and live state on this hive, its data in Vexa, and its Calendar entry if it has no other occurrences. ' +
+        'Knowledge facts and drafts already made from it are not touched. It cannot be undone.';
+    }
+
+    // meetingsFinished lists the meetings "Clear finished" deletes: final
+    // states that finished before now.
+    function meetingsFinished(list, now) {
+      const cut = now instanceof Date ? now.getTime() : Date.now();
+      return (list || []).filter(m => {
+        if (!m || !MEETINGS_FINAL_STATES[m.state]) return false;
+        const t = new Date(m.ended_at || m.updated_at || m.created_at || 0).getTime();
+        return !isNaN(t) && t < cut;
+      });
+    }
+
+    function meetingsClearFinishedText(n) {
+      return 'This deletes ' + n + ' finished meeting' + (n === 1 ? '' : 's') + ' (ended, failed, blocked or declined): their records, transcripts, notes and live state on this hive, their data in Vexa, and Calendar entries that existed only for them. ' +
+        'Live meetings and pending join requests stay. Knowledge facts and drafts already made from them are not touched. It cannot be undone.';
+    }
+
+    function meetingsAfterDelete(ids) {
+      if (_meetingsOpen && ids.indexOf(_meetingsOpen.id) >= 0) meetingsClosePanel();
+      if (typeof calendarRefreshMeetings === 'function') calendarRefreshMeetings();
+      if (typeof fetchCalendar === 'function') fetchCalendar();
+    }
+
+    async function meetingsDelete(id) {
+      const m = (_meetingsList || []).find(x => x && x.id === id);
+      if (!m) return;
+      const ok = await hiveConfirm({ title: m.state === 'requested' ? 'Delete this join request?' : 'Delete this meeting?', message: meetingsDeleteText(m), confirmLabel: 'Delete', danger: true });
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/meetings/' + encodeURIComponent(id), { method: 'DELETE' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        if (data.upstream_error) showToast('Meeting deleted here; Vexa did not confirm its copy was erased: ' + data.upstream_error, 'warning');
+        else showToast('Meeting deleted', 'success');
+        meetingsAfterDelete([id]);
+      } catch (e) {
+        showToast('Could not delete the meeting: ' + e.message, 'error');
+      }
+      await fetchMeetings();
+    }
+
+    async function meetingsClearFinished() {
+      const now = new Date();
+      const finished = meetingsFinished(_meetingsList, now);
+      if (!finished.length) return;
+      const ok = await hiveConfirm({ title: 'Clear finished meetings?', message: meetingsClearFinishedText(finished.length), confirmLabel: 'Delete ' + finished.length, danger: true });
+      if (!ok) return;
+      try {
+        const data = await meetingsPost('/api/meetings/clear-finished', { before: now.toISOString() });
+        const deleted = data.deleted || [];
+        const upstream = deleted.filter(d => d && d.upstream_error).length;
+        showToast('Deleted ' + deleted.length + ' meeting' + (deleted.length === 1 ? '' : 's') + (upstream ? '; Vexa did not confirm ' + upstream + ' erase' + (upstream === 1 ? '' : 's') : ''), upstream ? 'warning' : 'success');
+        meetingsAfterDelete(deleted.map(d => d.id));
+      } catch (e) {
+        showToast('Could not clear finished meetings: ' + e.message, 'error');
+      }
+      await fetchMeetings();
     }
 
     function renderMeetings() {
@@ -147,6 +233,11 @@
         html += meetingsJoinFormHtml();
       }
       const list = _meetingsList || [];
+      const finished = meetingsFinished(list);
+      if (finished.length && meetingsIsOwner()) {
+        html += '<div class="meetings-row-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsClearFinished"' +
+          ' title="Delete every finished meeting after one confirm">🗑 Clear finished (' + finished.length + ')</button></div>';
+      }
       html += '<div class="meetings-list">' + (list.length ? list.map(meetingsRowHtml).join('') : (_meetingsError ? '' : '<p class="empty-dashed">No meetings yet.</p>')) + '</div>';
       html += '<div id="meetings-live-panel"></div>';
       host.innerHTML = html;
