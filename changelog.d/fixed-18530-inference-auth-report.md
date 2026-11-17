@@ -1,0 +1,1 @@
+- Repeated inference backend 401 warnings now produce an operator-action self-report identifying the rejected credential instead of an unclassified error.
