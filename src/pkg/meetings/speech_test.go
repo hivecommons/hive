@@ -25,7 +25,7 @@ func TestSayUsesSpeechText(t *testing.T) {
 	q := &confirmingQuorum{fakeQuorum: newFakeQuorum()}
 	m, mt := liveTeams(t, q, true)
 	eventually(t, "consent", func() bool { got, _ := m.Get(mt.ID); return got.ConsentPostedAt != nil })
-	if err := m.Say(t.Context(), mt.ID, "Hi, I'm Betty (she/her), see #12."); err != nil {
+	if _, err := m.Say(t.Context(), mt.ID, "Hi, I'm Betty (she/her), see #12."); err != nil {
 		t.Fatal(err)
 	}
 	if s := q.says(); len(s) != 1 || s[0] != "Hi, I'm Betty, see number 12." {

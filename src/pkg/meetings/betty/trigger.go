@@ -20,6 +20,17 @@ type Trigger struct {
 	// Misheard: a spoken line addressed her through a sound-alike of her
 	// name ("Eddie, please introduce yourself"; wakeword.go).
 	Misheard bool
+	// The domain-aware correction of a request (normalise.go), set only
+	// when speech-to-text mishearings of the product's words were fixed.
+	// Rest is then the corrected request; HeardRest is Rest as heard;
+	// Normalised is the whole line as most likely meant (the stored line
+	// keeps the words as heard); Fixes lists the corrections ("high school
+	// -> hive queue; ..."); Clarify is the short question she asks instead
+	// of answering when a correction is unsure.
+	HeardRest  string
+	Normalised string
+	Fixes      string
+	Clarify    string
 }
 
 // sttVariants maps common speech-to-text spellings to the word they stand
@@ -288,5 +299,6 @@ func (m *Matcher) MatchWith(raw string, spoken bool, participants []string) Trig
 			}
 		}
 	}
+	normaliseTrigger(&t, raw)
 	return t
 }

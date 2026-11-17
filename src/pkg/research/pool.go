@@ -229,6 +229,11 @@ type Pool struct {
 	mu      sync.Mutex
 	tracked map[string]*trackedKick
 	order   []string
+	// settling counts, per agent, the kicks waiting for a cold agent to
+	// boot before they are queued: the runtime does not know them yet, so
+	// pick adds them to the agent's load. Without it two questions asked
+	// close together both landed on research-1 while research-2 sat idle.
+	settling map[string]int
 	// observers are Observe's callbacks, for failures the pool itself
 	// raises.
 	observers []func(Event)
@@ -255,7 +260,8 @@ func NewPool(rt any, size int) (*Pool, error) {
 	}
 	return &Pool{
 		rt: r, names: AgentNames(PoolSize(size)), randRead: rand.Read, tracked: make(map[string]*trackedKick),
-		async: func(f func()) { go f() }, wait: sleepCtx, now: time.Now,
+		settling: make(map[string]int),
+		async:    func(f func()) { go f() }, wait: sleepCtx, now: time.Now,
 	}, nil
 }
 
@@ -364,7 +370,11 @@ func (p *Pool) Dispatch(ctx context.Context, query string, meta map[string]strin
 		// the caller's goroutine, so the kick is not typed into a pane
 		// still launching. A failure is reported as the kick's failed
 		// event, like any delivery failure.
-		p.async(func() { p.enqueueWhenSettled(context.WithoutCancel(ctx), id, agent, id, prompt) })
+		p.addSettling(agent, 1)
+		p.async(func() {
+			defer p.addSettling(agent, -1)
+			p.enqueueWhenSettled(context.WithoutCancel(ctx), id, agent, id, prompt)
+		})
 		return id, nil
 	}
 	if _, err := p.rt.EnqueueKick(agent, id, prompt); err != nil {
@@ -462,6 +472,45 @@ func (p *Pool) untrack(id string) {
 	}
 }
 
+// addSettling adjusts the count of kicks waiting for agent to boot.
+func (p *Pool) addSettling(agent string, n int) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.settling[agent] += n
+	if p.settling[agent] <= 0 {
+		delete(p.settling, agent)
+	}
+}
+
+// load is the work agent already has: kicks waiting in the runtime's
+// queue, the one it is running, and those waiting for it to boot.
+func (p *Pool) load(agent string) int {
+	n := p.rt.KickQueueDepth(agent)
+	if p.rt.InFlightKickID(agent) != "" {
+		n++
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return n + p.settling[agent]
+}
+
+// Busy reports that every available research agent already has work: a
+// query dispatched now is queued behind another one. A pool with no
+// available agent is not busy; Dispatch fails there with ErrNoAgents.
+func (p *Pool) Busy() bool {
+	found := false
+	for _, name := range p.names {
+		if !p.available(name) {
+			continue
+		}
+		if p.load(name) == 0 {
+			return false
+		}
+		found = true
+	}
+	return found
+}
+
 // pick returns the available agent with the fewest waiting plus running
 // kicks; ties go to the lowest-numbered agent.
 func (p *Pool) pick() (string, error) {
@@ -470,10 +519,7 @@ func (p *Pool) pick() (string, error) {
 		if !p.available(name) {
 			continue
 		}
-		load := p.rt.KickQueueDepth(name)
-		if p.rt.InFlightKickID(name) != "" {
-			load++
-		}
+		load := p.load(name)
 		if best == "" || load < bestLoad {
 			best, bestLoad = name, load
 		}

@@ -138,6 +138,7 @@ js/inbox-delete.js
 js/inbox-recorder.js
 js/inbox-mail-log.js
 js/meetings.js
+js/meetings-replies.js
 js/calendar.js
 js/meeting-attendee.js
 js/meeting-attendee-model.js

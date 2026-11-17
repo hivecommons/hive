@@ -140,15 +140,9 @@ func (k KnowledgeRetriever) Retrieve(ctx context.Context, query string, _ []stri
 		if ctx.Err() != nil || len(out) >= limit {
 			break
 		}
-		for _, f := range s.Search(query, limit) {
-			if hasTag(f.Tags, codeMapTag) {
-				continue
-			}
-			out = append(out, Snippet{Source: "knowledge", Title: f.Title, Text: clip(f.Body, maxSnippetRunes)})
-			if len(out) >= limit {
-				break
-			}
-		}
+		// Content words, page-text ranking and the best passage
+		// (knowledge_docs.go).
+		out = append(out, knowledgeHits(s, query, limit-len(out))...)
 	}
 	return out
 }
