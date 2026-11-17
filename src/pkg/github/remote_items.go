@@ -18,9 +18,16 @@ import (
 // missing token is an error rather than an unauthenticated read (a public
 // listing would work, but the poller must never run on a disconnected
 // identity: there is nothing to attribute to).
+//
+// TokenFor, when set, picks the token per repository instead
+// (hivecommons/hive#18516): a repo that writes as the App bot is read under
+// that repo's own minted bot token, so a hive whose owner never connected an
+// account still follows up on what its bot opened. When set it is the only
+// source; Token serves callers that do not set it.
 type RemoteItemsFetcher struct {
-	Token  OwnerTokenSource
-	APIURL string
+	Token    OwnerTokenSource
+	TokenFor func(repo string) (string, bool)
+	APIURL   string
 }
 
 // remoteItemsPageSize is GitHub's largest page.
@@ -32,13 +39,25 @@ const remoteItemsMaxPages = 3
 
 var _ remoteitems.Fetcher = (*RemoteItemsFetcher)(nil)
 
-func (f *RemoteItemsFetcher) client() (*gh.Client, error) {
-	if f == nil || f.Token == nil {
-		return nil, fmt.Errorf("remote items: no owner token source")
+func (f *RemoteItemsFetcher) client(repo string) (*gh.Client, error) {
+	if f == nil {
+		return nil, fmt.Errorf("remote items: no token source")
+	}
+	if f.TokenFor != nil {
+		// Authoritative when set: a repo that writes as the bot is never
+		// read under the owner's token instead (bot_only never uses it).
+		tok, ok := f.TokenFor(repo)
+		if !ok || tok == "" {
+			return nil, fmt.Errorf("remote items: no token for %s", repo)
+		}
+		return newTokenClient(tok, f.APIURL), nil
+	}
+	if f.Token == nil {
+		return nil, fmt.Errorf("remote items: no token for %s", repo)
 	}
 	tok, ok := f.Token()
 	if !ok {
-		return nil, fmt.Errorf("remote items: owner identity not connected")
+		return nil, fmt.Errorf("remote items: no usable token for %s", repo)
 	}
 	return newTokenClient(tok, f.APIURL), nil
 }
@@ -55,7 +74,7 @@ func splitSlug(repo string) (owner, name string, err error) {
 // GitHub's issues listing returns both; a PR is told apart by its
 // pull_request field.
 func (f *RemoteItemsFetcher) ListOwnOpenItems(ctx context.Context, repo, login string) ([]remoteitems.RemoteItem, error) {
-	client, err := f.client()
+	client, err := f.client(repo)
 	if err != nil {
 		return nil, err
 	}
@@ -105,7 +124,7 @@ func (f *RemoteItemsFetcher) ListOwnOpenItems(ctx context.Context, repo, login s
 // CommentsSince lists the issue comments on repo#number created after since
 // and, for a PR, its review comments and reviews too, oldest first.
 func (f *RemoteItemsFetcher) CommentsSince(ctx context.Context, repo string, number int, isPR bool, since time.Time) ([]remoteitems.Comment, error) {
-	client, err := f.client()
+	client, err := f.client(repo)
 	if err != nil {
 		return nil, err
 	}
