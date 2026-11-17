@@ -1,1 +1,0 @@
-- Reference repos: the own-item follow-up now also routes comments and reviews on issues and PRs the hive opened as its GitHub App bot (`project.remote_write_identity`), listing each repo under the login its writes appear as and reading it with that repo's own credential (#18516).
