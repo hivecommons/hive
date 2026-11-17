@@ -15,6 +15,16 @@ import (
 // fact write).
 const DefaultCallTimeout = 30 * time.Second
 
+// Deep dive follow-through defaults (hivecommons/hive#18590): the persona
+// says she is still looking once a deep dive passes
+// DefaultResearchProgressAfter, and gives up, saying so, past
+// DefaultResearchTimeout. The session checks every DefaultResearchCheckEvery.
+const (
+	DefaultResearchProgressAfter = 30 * time.Second
+	DefaultResearchTimeout       = 5 * time.Minute
+	DefaultResearchCheckEvery    = 5 * time.Second
+)
+
 // Options configures a Runner.
 type Options struct {
 	Meetings Meetings
@@ -43,6 +53,11 @@ type Options struct {
 	// IsLeave reports a leave command (the persona's leave phrases); nil
 	// means meetings.IsLeaveCommand.
 	IsLeave func(text string) bool
+	// ResearchProgressAfter, ResearchTimeout and ResearchCheckEvery time a
+	// deep dive's progress note and give-up; zero means the defaults.
+	ResearchProgressAfter time.Duration
+	ResearchTimeout       time.Duration
+	ResearchCheckEvery    time.Duration
 }
 
 // Runner starts a live session when a meeting goes live and ends it when
@@ -77,6 +92,15 @@ func NewRunner(opts Options) (*Runner, error) {
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
+	}
+	if opts.ResearchProgressAfter <= 0 {
+		opts.ResearchProgressAfter = DefaultResearchProgressAfter
+	}
+	if opts.ResearchTimeout <= 0 {
+		opts.ResearchTimeout = DefaultResearchTimeout
+	}
+	if opts.ResearchCheckEvery <= 0 {
+		opts.ResearchCheckEvery = DefaultResearchCheckEvery
 	}
 	opts.Policy = opts.Policy.withDefaults()
 	log := opts.Logger

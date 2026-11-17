@@ -309,7 +309,7 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 	issueList, issueFailClosed := s.formatIssueListWithPolicy(agentIssuesForList)
 	prList, prFailClosed := s.formatPRListWithPolicyForAgent(actionable, baseName)
 	if issueFailClosed || prFailClosed {
-		s.warnBlockedKick(agentName)
+		s.warnBlockedKick(agentName, false)
 		return "", true
 	}
 

@@ -73,8 +73,20 @@ var ErrUnsupportedRuntime = errors.New("research pool: runtime does not support 
 // ErrEmptyQuery means Dispatch was given no query.
 var ErrEmptyQuery = errors.New("research pool: empty query")
 
-// ErrNoAgents means every research agent is unavailable.
-var ErrNoAgents = errors.New("research pool: no research agent available")
+// ErrNoAgents means every research agent is unavailable. Its Reason is
+// the sayable cause a meeting is told.
+var ErrNoAgents error = &reasonError{
+	msg:    "research pool: no research agent available",
+	reason: "no research agent is available on this hive",
+}
+
+// reasonError is an error with a short reason fit to say in a meeting.
+type reasonError struct{ msg, reason string }
+
+func (e *reasonError) Error() string { return e.msg }
+
+// Reason is the sayable cause.
+func (e *reasonError) Reason() string { return e.reason }
 
 // Runtime is what the pool needs from the agent runtime. *agent.Manager
 // satisfies it; NewPool type-asserts a crux.Runtime to it.
@@ -179,6 +191,12 @@ type Pool struct {
 	rt    Runtime
 	names []string
 
+	// base is what Ensure registered the agents with; Dispatch re-registers
+	// with it when every agent has gone missing from the runtime.
+	baseMu  sync.Mutex
+	base    config.AgentConfig
+	ensured bool
+
 	// randRead fills kick ID randomness; crypto/rand.Read unless a test
 	// swaps it.
 	randRead func([]byte) (int, error)
@@ -211,6 +229,9 @@ func (p *Pool) Agents() []string { return append([]string(nil), p.names...) }
 // for one that already exists). Call it only when meetings are enabled: the
 // pool's agents exist for nothing else.
 func (p *Pool) Ensure(base config.AgentConfig) {
+	p.baseMu.Lock()
+	p.base, p.ensured = base, true
+	p.baseMu.Unlock()
 	cfg := AgentConfig(base)
 	for _, name := range p.names {
 		p.rt.AddAgent(name, cfg)
@@ -225,6 +246,12 @@ func (p *Pool) Dispatch(ctx context.Context, query string, meta map[string]strin
 		return "", ErrEmptyQuery
 	}
 	agent, err := p.pick()
+	if errors.Is(err, ErrNoAgents) && p.reEnsure() {
+		// The agents are runtime-only (not in hive.yaml), so anything that
+		// rebuilt the runtime's agent table from the config dropped them:
+		// register them again and retry once.
+		agent, err = p.pick()
+	}
 	if err != nil {
 		return "", err
 	}
@@ -245,6 +272,42 @@ func (p *Pool) Dispatch(ctx context.Context, query string, meta map[string]strin
 		return "", fmt.Errorf("research pool: queue on %s: %w", agent, err)
 	}
 	return id, nil
+}
+
+// reEnsure registers the agents again with the base Ensure was given. It
+// reports false when Ensure never ran.
+func (p *Pool) reEnsure() bool {
+	p.baseMu.Lock()
+	base, ok := p.base, p.ensured
+	p.baseMu.Unlock()
+	if ok {
+		p.Ensure(base)
+	}
+	return ok
+}
+
+// Status describes the pool for the settings page: how many agents it has
+// and how many are registered and not paused right now.
+type Status struct {
+	Agents    []string `json:"agents"`
+	Available int      `json:"available"`
+}
+
+// Status reports the pool's agents and how many can take a kick now.
+func (p *Pool) Status() Status {
+	st := Status{Agents: p.Agents()}
+	for _, name := range p.names {
+		if p.available(name) {
+			st.Available++
+		}
+	}
+	return st
+}
+
+// available reports whether name is registered and not paused.
+func (p *Pool) available(name string) bool {
+	st, err := p.rt.GetStatusFast(name)
+	return err == nil && st != nil && !st.Paused && st.State != crux.StatePaused
 }
 
 // newID returns a fresh kick ID for a research kick.
@@ -273,8 +336,7 @@ func (p *Pool) untrack(id string) {
 func (p *Pool) pick() (string, error) {
 	best, bestLoad := "", 0
 	for _, name := range p.names {
-		st, err := p.rt.GetStatusFast(name)
-		if err != nil || st == nil || st.Paused || st.State == crux.StatePaused {
+		if !p.available(name) {
 			continue
 		}
 		load := p.rt.KickQueueDepth(name)
