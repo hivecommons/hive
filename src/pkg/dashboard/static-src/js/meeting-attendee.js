@@ -164,6 +164,24 @@
         '<label class="inbox-toggle"><input type="checkbox" data-ma-field="voice_on_address" data-change-action="maInput" data-arg0="voice_on_address" data-arg-types="s,c"' + (f.voice_on_address ? ' checked' : '') + '> Speak aloud only when addressed by name (never unprompted; off sends every reply to chat)</label></section>';
     }
 
+    // ── Research agents (hivecommons/hive#18590): where Betty's deep dives
+    // go, how many agents can take one now, and a plain warning when none can.
+    function maResearchHtml() {
+      const r = (_maState && _maState.data && _maState.data.research) || {};
+      const agents = (r.agents || []).join(', ');
+      const runs = r.base_agent ? 'Runs on the <code>' + escapeHtml(r.base_agent) + '</code> agent\'s backend' +
+        (r.backend ? ' (' + escapeHtml(r.backend) + (r.model ? ', ' + escapeHtml(r.model) : '') + ')' : '') + '.' : '';
+      const status = r.wired
+        ? '<p class="muted-xs">Agents: ' + escapeHtml(agents || 'none') + ' (' + (r.available || 0) + ' available now). ' + runs + '</p>'
+        : '';
+      return '<section class="ma-section" aria-labelledby="ma-research-h"><h4 id="ma-research-h">Research</h4>' +
+        '<p class="muted-xs">When the persona needs to look something up she says so, sends it to the read-only research agents and reports back in the channel she was asked in. Pool size ' +
+        escapeHtml(String(r.pool_size || '')) + ' ' + yamlHint('meetings.research_pool_size') + '</p>' +
+        status +
+        (r.warning ? '<p class="kc-error muted-xs" role="status" data-ma-research-warning>' + escapeHtml(r.warning) + '</p>' : '') +
+        '</section>';
+    }
+
     // ── Action requests (hivecommons/hive#18406): what people may ask the
     // persona to draft in a meeting. Saved on its own through
     // PUT /api/meetings/actions/settings and applied without a restart.
@@ -250,7 +268,7 @@
       host.innerHTML =
         (d.restart_required ? '<p class="cmp-banner" role="status">Saved. Restart the hive to apply the new persona.</p>' : '') +
         (d.running ? '' : '<p class="muted-xs">Meetings are not running on this hive; the persona applies once meetings are on (Settings, Meetings).</p>') +
-        maPersonaHtml(f) + maBehaviourHtml(f) + (typeof maModelHtml === 'function' ? maModelHtml() : '') + (typeof maActionsHtml === 'function' ? maActionsHtml() : '') + maEmailHtml() +
+        maPersonaHtml(f) + maBehaviourHtml(f) + maResearchHtml() + (typeof maModelHtml === 'function' ? maModelHtml() : '') + (typeof maActionsHtml === 'function' ? maActionsHtml() : '') + maEmailHtml() +
         '<div class="hive-dialog-error" role="alert" data-ma-error></div>' +
         '<div class="hive-dialog-buttons"><button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-action="maSave">Save</button></div>';
     }

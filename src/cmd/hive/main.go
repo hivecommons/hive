@@ -3590,6 +3590,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				rt = b.agentMgr
 			}
 			researchPool := wireMeetingsResearch(b.cfg, rt, b.logger)
+			if fn := meetingsResearchStatus(b.cfg, researchPool); fn != nil {
+				b.dashSrv.SetMeetingsResearchStatus(fn)
+			}
 			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger, b.dashSrv.HiveStatusBrief); lr != nil {
 				b.meetingsLive = lr
 				b.cleanup.push(lr.Close)
@@ -4004,7 +4007,7 @@ func (b *boot) bootWatchersWith(deps bootWatchersDeps) {
 		if err := b.cfg.ExpandAgentReplicas(); err != nil {
 			b.logger.Warn("failed to expand agent replicas after config reload", "error", err)
 		}
-		addedAgents := b.agentMgr.ReconcileAgents(b.cfg.EnabledAgents())
+		addedAgents := b.agentMgr.ReconcileAgents(withResearchAgents(b.cfg.EnabledAgents()))
 		for _, added := range addedAgents {
 			if ac, ok := b.cfg.Agents[added]; ok && !ac.OnDemand {
 				deps.startAgent(b.ctx, b.agentMgr, added, b.logger)

@@ -109,6 +109,8 @@ type meetingsAttendeeState struct {
 	boot  meetingsAttendeeBoot
 	tts   MeetingsTTSResolver
 	email MeetingsAttendeeEmail
+	// research reports the meeting research pool (api_meetings_research.go).
+	research MeetingsResearchStatusFunc
 	// client calls the TTS service; nil uses a client with
 	// meetingsSampleTimeout.
 	client *http.Client
@@ -242,6 +244,9 @@ type MeetingsPersonaSettings struct {
 	// persona for (#18406); they are saved through
 	// PUT /api/meetings/actions/settings.
 	Actions MeetingsActionsSettingsView `json:"actions"`
+	// Research is the research agent pool Betty's deep dives go to, with a
+	// warning when no agent can take one (hivecommons/hive#18590).
+	Research MeetingsResearchView `json:"research"`
 }
 
 // resolvePersonaFields resolves the persona's fields as if it were on: a
@@ -348,6 +353,7 @@ func (s *Server) meetingsPersonaSettings(r *http.Request) MeetingsPersonaSetting
 		TTSConfigured:   ttsOK,
 		Email:           s.meetingsAttendeeEmail(r, email),
 		Actions:         meetingsActionsSettingsView(s.deps.Config, os.Getenv),
+		Research:        s.meetingsResearchView(m),
 	}
 }
 

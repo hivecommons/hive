@@ -1,0 +1,1 @@
+- The open-PR guard now writes the `has-open-pr` label on its own time budget, remembers a failed write per issue instead of retrying it on every claim pass, logs refusals (no write access, issue gone or locked) at INFO, and reports repeated transient failures under a new `open_pr_guard_label_failed` fleet-report class instead of `unclassified_error_repeated` (#18589).

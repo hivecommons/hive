@@ -26,6 +26,10 @@ type phrases struct {
 	acks   []string
 	digIn  string
 	digged string
+	// failed reports a deep dive that could not run or finish ("%s" is
+	// the reason); still is the progress note while it runs long.
+	failed string
+	still  string
 }
 
 // localized phrases by primary language subtag; English is the fallback.
@@ -34,31 +38,43 @@ var localized = map[string]phrases{
 		acks:   []string{"Let me check on that.", "One moment.", "Good question, let me look.", "Let me see."},
 		digIn:  "I'll dig into that and report back.",
 		digged: "I dug into %q: %s",
+		failed: "I couldn't look that up: %s.",
+		still:  "Still looking into that; I'll report back as soon as I have it.",
 	},
 	"es": {
 		acks:   []string{"Déjame revisarlo.", "Un segundo.", "Buena pregunta, lo miro.", "A ver."},
 		digIn:  "Lo investigo y les cuento.",
 		digged: "Investigué %q: %s",
+		failed: "No pude investigarlo: %s.",
+		still:  "Sigo investigándolo; les cuento en cuanto lo tenga.",
 	},
 	"fr": {
 		acks:   []string{"Je vérifie.", "Un instant.", "Bonne question, je regarde.", "Voyons voir."},
 		digIn:  "Je creuse la question et je reviens vers vous.",
 		digged: "J'ai creusé %q : %s",
+		failed: "Je n'ai pas pu faire la recherche : %s.",
+		still:  "Je cherche encore ; je reviens vers vous dès que j'ai la réponse.",
 	},
 	"de": {
 		acks:   []string{"Ich schaue kurz nach.", "Einen Moment.", "Gute Frage, ich sehe nach.", "Mal sehen."},
 		digIn:  "Ich recherchiere das und melde mich.",
 		digged: "Ich habe zu %q recherchiert: %s",
+		failed: "Ich konnte das nicht nachschlagen: %s.",
+		still:  "Ich recherchiere noch und melde mich, sobald ich es habe.",
 	},
 	"pt": {
 		acks:   []string{"Deixa eu verificar.", "Só um instante.", "Boa pergunta, vou ver.", "Vamos ver."},
 		digIn:  "Vou pesquisar e já volto com a resposta.",
 		digged: "Pesquisei %q: %s",
+		failed: "Não consegui pesquisar isso: %s.",
+		still:  "Ainda estou pesquisando; aviso assim que tiver a resposta.",
 	},
 	"it": {
 		acks:   []string{"Controllo subito.", "Un attimo.", "Bella domanda, verifico.", "Vediamo."},
 		digIn:  "Approfondisco e vi faccio sapere.",
 		digged: "Ho approfondito %q: %s",
+		failed: "Non sono riuscita a cercarlo: %s.",
+		still:  "Sto ancora cercando; vi faccio sapere appena ho la risposta.",
 	},
 }
 
