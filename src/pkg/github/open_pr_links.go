@@ -169,8 +169,25 @@ func (c *Client) InvalidateOpenPRLinks(repo string) {
 
 // canonicalRepo maps repo onto the configured spelling, so a caller naming
 // the repo bare or org-qualified shares one cache entry and one claim key.
+// The owner counts: a bare configured name means the hive's org, so
+// "otherorg/actions" is not the configured "actions" and is returned
+// unchanged — the claim ledger keys cross-repo references with this, and a
+// PR naming another org's issue must not claim the hive's issue of the same
+// number. Without an org (bare names cannot be resolved) it falls back to
+// the bare-name match.
 func (c *Client) canonicalRepo(repo string) string {
-	return canonicalConfigRepo(repo, c.getRepos())
+	repos := c.getRepos()
+	if strings.TrimSpace(c.org) == "" {
+		return canonicalConfigRepo(repo, repos)
+	}
+	owner, name := c.splitRepo(strings.TrimSpace(repo))
+	for _, cfg := range repos {
+		cfgOwner, cfgName := c.splitRepo(strings.TrimSpace(cfg))
+		if strings.EqualFold(cfgOwner, owner) && strings.EqualFold(cfgName, name) {
+			return cfg
+		}
+	}
+	return repo
 }
 
 // openPRIndexFor returns the (possibly cached) open-PR link index for repo.
