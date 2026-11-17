@@ -39671,14 +39671,14 @@
           "Inbox"
         ],
         "summary": "Receive mail-in files (hub relay)",
-        "description": "Markdown, audio and image attachments hive-mx received for hive@<host>. A sender whose From address passed DMARC alignment and is a proven calendar email of a user with access becomes normal Inbox items; anyone else's items await the owner's approval. Relay signature: X-Hive-Relay-Timestamp, X-Hive-Relay-Signature-256 (HMAC-SHA256 with this hive's relay key over timestamp.delivery.body) and X-Hive-Relay-Delivery; no session.",
+        "description": "Markdown, audio, video and image attachments and text bodies hive-mx received for hive@<host> (#18395, #18564); a body-only mail arrives as message.md and a mail's body is kept as each item's note. A sender whose From address passed DMARC alignment and is a proven calendar email of a user with access becomes normal Inbox items; anyone else's items await the owner's approval. Relay signature: X-Hive-Relay-Timestamp, X-Hive-Relay-Signature-256 (HMAC-SHA256 with this hive's relay key over timestamp.delivery.body) and X-Hive-Relay-Delivery; no session.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "description": "hive-mx delivery (pkg/mailin/wire.Delivery) of kind files: id, kind, recipient, message_id, received_at, auth, files {title, attachments[] {name, kind, content_type, size, sha256, data}}"
+                "description": "hive-mx delivery (pkg/mailin/wire.Delivery) of kind files: id, kind, recipient, message_id, received_at, auth, files {title, note, attachments[] {name, kind, content_type, size, sha256, data}}"
               }
             }
           }
@@ -39716,6 +39716,74 @@
           },
           "413": {
             "description": "Delivery too large"
+          },
+          "503": {
+            "description": "This hive holds no relay key"
+          },
+          "507": {
+            "description": "The email spool is full"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/chunk": {
+      "post": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Receive one piece of a large mail-in delivery (hub relay)",
+        "description": "The hub relays a files delivery larger than one request in order, each piece signed with this hive's relay key over the relay delivery id <delivery id>.<index>.<count> (X-Hive-Relay-Delivery), so the order and count are covered and each piece passes the replay check. X-Hive-Mail-Body-Type is the whole body's type (multipart/form-data from hive-mx, or application/json). Pieces are staged on disk; the last one decodes the body, checks each file's size and SHA-256 and stores it like POST /api/inbox/email. No session.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary",
+                "description": "One piece of the delivery body, at most 8 MiB"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Piece staged ({piece, pieces}), or, for the last piece, stored ({items, awaiting_approval})",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "piece": {
+                      "type": "integer"
+                    },
+                    "pieces": {
+                      "type": "integer"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "awaiting_approval": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid piece, missing piece or undecodable body"
+          },
+          "401": {
+            "description": "Relay signature rejected or piece replayed"
+          },
+          "409": {
+            "description": "Mail-in files are off or unavailable"
+          },
+          "413": {
+            "description": "Piece or delivery too large"
           },
           "503": {
             "description": "This hive holds no relay key"
