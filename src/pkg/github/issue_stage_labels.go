@@ -918,7 +918,7 @@ func ensureIssueStagePRLink(ctx context.Context, client *Client, in IssueStageIn
 	if !ok || rec.EntryCommented {
 		return false, false, false
 	}
-	if _, err := client.PostIssueNote(ctx, in.Repo, in.Number, prstatus.KeyIssuePRLink, link.StageComment, func(ctx context.Context) error {
+	if _, err := client.PostInformationalIssueNote(ctx, in.Repo, in.Number, prstatus.KeyIssuePRLink, link.StageComment, func(ctx context.Context) error {
 		return client.CreateIssueComment(ctx, in.Repo, in.Number, link.StageComment)
 	}); err != nil {
 		owner, name := client.splitRepo(in.Repo)
