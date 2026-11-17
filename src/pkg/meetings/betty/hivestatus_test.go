@@ -97,7 +97,7 @@ func TestHiveQuestionsNeverResearch(t *testing.T) {
 	if got := NormalizeDomain("how many full requests and one pool request, bored pressure?"); got != "how many pull requests and one pull request, board pressure?" {
 		t.Fatalf("NormalizeDomain = %q", got)
 	}
-	if itemNumber("what is pull request 18689 about") != 18689 || itemNumber("PR #12") != 12 || itemNumber("the 3 of us") != 0 {
+	if itemNumber(NormalizeDomain("what is pull request 18,689 about")) != 18689 || itemNumber("what is pull request 18689 about") != 18689 || itemNumber("PR #12") != 12 || itemNumber("the 3 of us") != 0 {
 		t.Fatal("itemNumber")
 	}
 	llm := &fakeLLM{reply: func(_, prompt string) (string, error) {

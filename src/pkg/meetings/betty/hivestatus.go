@@ -39,7 +39,7 @@ func (h HiveStatusRetriever) Retrieve(ctx context.Context, query string, _ []str
 		return nil
 	}
 	var out []Snippet
-	if n := itemNumber(query); n > 0 && h.Item != nil {
+	if n := itemNumber(NormalizeDomain(query)); n > 0 && h.Item != nil {
 		if text, ok := h.Item(ctx, n); ok {
 			out = append(out, Snippet{Source: HiveStatusSource, Title: "Open item " + strconv.Itoa(n), Text: clip(text, maxHiveStatusRunes)})
 		} else {
@@ -82,6 +82,8 @@ var sttDomainFixes = []struct {
 	{regexp.MustCompile(`(?i)\b(?:full|pool|poll|bull|pull)[\s-]+requests\b`), "pull requests"},
 	{regexp.MustCompile(`(?i)\b(?:full|pool|poll|bull)[\s-]+request\b`), "pull request"},
 	{regexp.MustCompile(`(?i)\b(?:bored|bord|board)\s+press(?:ure|er|ures)\b`), "board pressure"},
+	// STT writes "pull request 18,689": an item number has no separators.
+	{regexp.MustCompile(`(?i)(\b(?:pull\s+requests?|prs?|issues?|number)\s*#?\s*)(\d{1,3}),(\d{3})\b`), "${1}${2}${3}"},
 }
 
 // NormalizeDomain fixes known mishearings of the hive's vocabulary.
@@ -113,7 +115,7 @@ var (
 // IsHiveStatusQuestion reports whether text asks about the hive's own
 // state.
 func IsHiveStatusQuestion(text string) bool {
-	if itemNumber(text) > 0 && strings.ContainsAny(text, "0123456789") && itemRefWord.MatchString(text) {
+	if itemNumber(NormalizeDomain(text)) > 0 && itemRefWord.MatchString(text) {
 		return true
 	}
 	t := " " + strings.Join(strings.FieldsFunc(strings.ToLower(NormalizeDomain(text)), func(r rune) bool {
