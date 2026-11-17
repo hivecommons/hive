@@ -56,10 +56,14 @@ func TestRunTargets_PerRepoLogin(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := items[itemKey("hivecommons/docs", 3)]; !ok {
+	tracked := map[string]bool{}
+	for _, it := range items {
+		tracked[it.Key()] = true
+	}
+	if !tracked[itemKey("hivecommons/docs", 3)] {
 		t.Fatalf("the bot's PR must be tracked: %+v", items)
 	}
-	if _, ok := items[itemKey("acme/site", 9)]; !ok {
+	if !tracked[itemKey("acme/site", 9)] {
 		t.Fatalf("the owner's issue must be tracked: %+v", items)
 	}
 	if len(items) != 2 {
