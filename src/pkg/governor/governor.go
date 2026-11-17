@@ -72,6 +72,10 @@ type KickRecord struct {
 	// Empty while the turn is running or when the manager never classified it.
 	Outcome       string `json:"outcome,omitempty"`
 	OutcomeReason string `json:"outcomeReason,omitempty"`
+	// Reason is why an event-driven kick went out (for example "new release
+	// requests 2.32.0 -> 2.33.0"), set by RecordKickWithReason. Empty for
+	// cadence kicks, whose reason is the schedule itself.
+	Reason string `json:"reason,omitempty"`
 }
 
 type AgentReportRecord struct {
@@ -1401,6 +1405,17 @@ func (g *Governor) RecordKickForRepo(agentName, repo string) {
 // — the hosted scanner sat at its prompt for 45 minutes this way after a
 // 3-minute turn. In that case the kick is counted but the schedule is kept.
 func (g *Governor) RecordKickForRepoAt(agentName, repo string, kickedAt time.Time) {
+	g.recordKick(agentName, repo, "", kickedAt)
+}
+
+// RecordKickWithReason records an event-driven kick of agentName and keeps
+// reason on its kick-history entry, so the dashboard and persisted history
+// say why the kick went out (the release-feed watcher, #18494).
+func (g *Governor) RecordKickWithReason(agentName, reason string) {
+	g.recordKick(agentName, "", reason, time.Time{})
+}
+
+func (g *Governor) recordKick(agentName, repo, reason string, kickedAt time.Time) {
 	report, hasReport := g.validateAgentReportIfPresent(agentName)
 
 	g.mu.Lock()
@@ -1434,7 +1449,7 @@ func (g *Governor) RecordKickForRepoAt(agentName, repo string, kickedAt time.Tim
 		}
 		g.state.Continuous[agentName] = st
 	}
-	g.appendKickHistory(KickRecord{Timestamp: kickedAt, Agent: agentName, Repo: repo})
+	g.appendKickHistory(KickRecord{Timestamp: kickedAt, Agent: agentName, Repo: repo, Reason: reason})
 	if hasReport {
 		g.agentReports[agentName] = report
 	}

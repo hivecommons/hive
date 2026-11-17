@@ -1794,6 +1794,11 @@ type GovernorConfig struct {
 	// "Webhook-driven CI failure reaction".
 	CIFailureWebhookKick   *bool `yaml:"ci_failure_webhook_kick,omitempty"`
 	CIFailureKickCooldownS int   `yaml:"ci_failure_kick_cooldown_s,omitempty"`
+	// ReleaseFeeds is the release-feed watcher (hivecommons/hive#18494): per
+	// agent, the upstream feeds whose new versions kick that agent with a
+	// ${NEW_RELEASES} block. Nil (the default) means off. See
+	// docs/release-feeds.md.
+	ReleaseFeeds *ReleaseFeedsConfig `yaml:"release_feeds,omitempty" json:"ReleaseFeeds,omitempty"`
 	// MergeTrainStallWarnS is how long, in seconds, a merge train's head
 	// may sit without progressing before the Activity Monitor marks the
 	// train stalled on the queued rows' chips and the dashboard writes one

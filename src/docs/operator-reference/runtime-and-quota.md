@@ -407,6 +407,15 @@ v5 and v6 spokes) tracking one repo all stay on webhook mode.
   records `ci_failure_kick` — "CI failed on #N (check) — kicked agent X" /
   "nudged contributor lane". **Agents never watch or poll CI themselves**:
   detection is out-of-band via this webhook path, or the sweep as fallback.
+- **Upstream releases kick subscribed agents.** `governor.release_feeds`
+  lists, per agent, GitHub release/tag, PyPI or generic index feeds. The
+  release-feed watcher polls them with conditional requests every
+  `interval_s` (default `HIVE_RELEASE_FEED_INTERVAL`, else 15m) and, on a new
+  version, queues a kick for the agent through the same gates as the
+  CI-failure kick above, with the releases in `${NEW_RELEASES}`, the reason in
+  kick history, and at most one such kick per agent per cooldown
+  ([#18494](https://github.com/hivecommons/hive/issues/18494)). See
+  [release-feeds.md](../release-feeds.md).
 - **Gated workflow runs are approved for trusted heads.** GitHub holds
   workflow runs for dependabot and first-time/fork contributors behind
   "Approve and run workflows" (`action_required`); such runs create no check

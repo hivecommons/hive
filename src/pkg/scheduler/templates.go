@@ -428,6 +428,9 @@ func (s *Scheduler) substituteTemplateWithVars(template string, actionable *gith
 		"INCEPTION_REPO_URL": lit(""),
 		"MERGE_ELIGIBLE":     lit(mergeEligibleList),
 		"CI_FAILING":         lit(ciFailingList),
+		// Upstream releases the release-feed watcher found for this agent
+		// and has not yet delivered (hivecommons/hive#18494); "" when none.
+		"NEW_RELEASES": func() string { return s.newReleasesBlock(agentName) },
 	}}
 	// Caller-supplied vars lose a name clash: one already claimed by a built-in
 	// above is left alone, so no call site can redefine ${GH_AUTH}.

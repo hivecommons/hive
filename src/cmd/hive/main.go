@@ -2502,7 +2502,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 		if len(b.saved.KickHistory) > 0 {
 			records := make([]governor.KickRecord, len(b.saved.KickHistory))
 			for i, ke := range b.saved.KickHistory {
-				records[i] = governor.KickRecord{Timestamp: ke.Timestamp, Agent: ke.Agent, Outcome: ke.Outcome, OutcomeReason: ke.OutcomeReason}
+				records[i] = governor.KickRecord{Timestamp: ke.Timestamp, Agent: ke.Agent, Outcome: ke.Outcome, OutcomeReason: ke.OutcomeReason, Reason: ke.Reason}
 			}
 			b.gov.SeedKickHistory(records)
 			b.logger.Info("kick history restored", "entries", len(records))
@@ -6357,6 +6357,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	}
 	b.startReviewEvents()
 	b.startMatrixIngest()
+	b.startReleaseFeedWatcher()
 
 	// Webhook health re-check: in webhook mode the base tick (900s) is longer
 	// than the health window (2 × eval_interval_s), so without this a lapse
@@ -6833,7 +6834,7 @@ func persistStateWithPaths(agentMgr crux.Runtime, gov *governor.Governor, cfg *c
 	govKickHistory := gov.KickHistory()
 	kickEntries := make([]snapshot.GovKickEntry, len(govKickHistory))
 	for i, kr := range govKickHistory {
-		kickEntries[i] = snapshot.GovKickEntry{Timestamp: kr.Timestamp, Agent: kr.Agent, Outcome: kr.Outcome, OutcomeReason: kr.OutcomeReason}
+		kickEntries[i] = snapshot.GovKickEntry{Timestamp: kr.Timestamp, Agent: kr.Agent, Outcome: kr.Outcome, OutcomeReason: kr.OutcomeReason, Reason: kr.Reason}
 	}
 
 	state := &snapshot.PersistedState{
