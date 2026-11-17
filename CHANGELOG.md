@@ -11,6 +11,26 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.307.1)
+
+### Fixed
+
+- A paused agent no longer shows an empty slot where its resume button belongs: the focused agent panel kept the toggle it first rendered (its fast path never added one, and the panel ignored the role), so a panel opened before the viewer's role settled stayed without resume until reload. Agent cards, the detail panel and the cadence table now repaint when the role settles, and a viewer below owner (or one still being checked) sees the pause/resume control disabled with "Needs the owner role" or "Checking your access..." instead of nothing. A paused sandboxed agent offers plain resume rather than "start & resume" (it has no session to start), and the cadence table shows one `paused` chip with its reason on hover instead of repeating it in every mode column (#18813).
+- Sandbox Jobs no longer lose their service account's `imagePullSecrets`: the Job pod now carries the deduplicated union of hive's own pod secrets, the Job service account's secrets (read through the API when the launcher's Role grants `get serviceaccounts`, skipped with a warning otherwise) and the new `sandbox.job.image_pull_secrets` list of Secret names, so private-registry project images pull instead of failing ImagePullBackOff. A boot and reload warning fires when `service_account` is set without `image_pull_secrets` (#18819).
+
+## 2026-11-17 (v5.307.0)
+
+### Added
+
+- **Dashboard and API: link review perspectives to a repo file and set up an agent sandbox without editing config files (#18797).** Review Gate has owner, repo, path and ref fields with the resolver status and an Unlink button; `PUT /api/config/review` accepts `perspectives_source` (set, and `null` to clear), gated like `definition_source` by `GitHubPromptAllowed` with an error that points to Settings, Security, Prompt sources, and re-resolves the set in the same request, so no restart is needed. The 409 for inline perspective edits now names Unlink. An agent's General tab gains editable sandbox image, runtime and Job fields and a "Copy sandbox settings from..." action (Secret names only, never values); `PUT /api/config/agent/<name>/general` takes `sandboxImage`, `sandboxRuntime`, `sandboxJob` and `sandboxCopyFrom`; Settings, Security gains `agent_sandbox.job.env_from_secrets`. Saving an enabled sandbox with no image anywhere is refused with `sandbox.image` named, and the "no sandbox image" warning links to the controls that fix it.
+
+### Fixed
+
+- Fleet self-reports: the GitHub proxy's upstream TLS dial failing (`proxy upstream dial failed` / `transparent proxy upstream dial failed`, for example `error=EOF` from `api.github.com:443`) now files under the network-path class `proxy_connect_dial_failed`, with its operator remedy, instead of as an `unclassified_error_repeated` code defect ([#18763](https://github.com/hivecommons/hive/issues/18763)).
+- A workflow hand-off to a Copilot session no longer ends in a false "no hive-open-pr tool" stand-down: the prompt now says `git` and `hive-open-pr` are shell commands (with the push and PR-request commands for the repo and issue) and that a stand-down is for a refused command, so the TechDocs drafter can open its draft PR (#18777).
+- The Calendar section now has the Inbox's layout and spacing: each meeting is a row with status and platform chips, the title on its own line, a time line that leads with the next occurrence of a series (with "repeats weekly" after it, the first date in a tooltip, and the time zone shown once), a meta line, and grouped actions that wrap on narrow screens; a row awaiting approval is tinted and says in plain words why it waits; forwarded "FW:" and "Fwd:" prefixes are hidden in the title (display only); headings, the Add meeting disclosure and the empty states share one rhythm with the Inbox (#18807).
+- Model family: a model id with a provider or gateway path (`anthropic/claude-opus-5-5`, `openai-codex/gpt-6.1-terra:high`) now reads as its vendor family (`claude`, `gpt`) instead of `anthropic/claude` or `openai`. The evidence summary's by-family counts and the reviewer-accuracy card's author families stop filing those authors under `other`, and `review_models.exclude_author_family` and the same/cross-family split now treat a prefixed and a bare spelling of the same vendor as the same family, so a "cross-family" review can no longer be same-vendor. Verdicts already stamped `same_family` keep their stored value.
+
 ## 2026-11-17 (v5.306.0)
 
 ### Added

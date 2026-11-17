@@ -2400,7 +2400,23 @@
           "Customers"
         ],
         "summary": "Accept a suggested person",
-        "description": "Turns a suggestion into a customer. This is the human decision that lets the hive build a profile of someone who never signed up. Owner or read-write. Audited as customer_accept.",
+        "description": "Turns a suggestion into a customer. This is the human decision that lets the hive build a profile of someone who never signed up. With the optional body {\"into\": \"<customer id or me>\"} it attaches the suggestion to that existing customer instead: the identity becomes one of theirs (a manual decision, so it is not suggested again), no new person is created, the activity moves onto them on the next sweep, and POST /api/customers/{id}/unmerge undoes it. Owner or read-write. Audited as customer_accept, or customer_attach with the target's id.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "into": {
+                    "type": "string",
+                    "description": "Existing customer id, or me, to attach the suggestion to"
+                  }
+                }
+              }
+            }
+          }
+        },
         "parameters": [
           {
             "name": "sid",
@@ -38067,7 +38083,7 @@
           "Contribute"
         ],
         "summary": "Contributor run stats by model",
-        "description": "Returns per-model run counts, verified-PR share, and failure rate for contributor-wall evidence.",
+        "description": "Returns per-model run counts, verified-PR share, and failure rate for contributor-wall evidence, plus why runs ended (#18721): `abandoned` (count), `scenarios` (scenario -> count, the same keys as /api/contribute/run-stats backends[].scenarios, summing to runs) and `failure_kinds` ({environment, task, unspecified}, summing to the failed runs behind failure_rate).",
         "responses": {
           "200": {
             "description": "OK"

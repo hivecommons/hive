@@ -69,6 +69,7 @@ func agentSandboxFieldsView(a config.AgentConfig, global config.AgentSandboxConf
 			"schedulerName":       job.SchedulerName,
 			"ttlSeconds":          job.TTLSeconds,
 			"envFromSecrets":      nonNilStrings(job.EnvFromSecrets),
+			"imagePullSecrets":    nonNilStrings(job.ImagePullSecrets),
 		},
 	}
 }
@@ -153,6 +154,16 @@ func applySandboxJobFields(job *config.SandboxJobConfig, m map[string]interface{
 			return err
 		}
 		job.EnvFromSecrets = names
+	}
+	if v, ok := m["imagePullSecrets"]; ok {
+		names, err := secretNamesFromBody(v)
+		if err != nil {
+			return err
+		}
+		if err := config.ValidateImagePullSecrets(names); err != nil {
+			return err
+		}
+		job.ImagePullSecrets = names
 	}
 	return nil
 }

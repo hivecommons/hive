@@ -247,7 +247,16 @@ agents:
 
 **The terminal pane.** A job-runtime agent has no tmux session in the hive pod, so the dashboard's ▶ terminal does not attach ttyd for it. Instead it opens `/terminal/job/<agent>`, a read-only viewer that streams the newest Job pod's log through the same in-cluster client and RBAC the launcher already uses ([#14798](https://github.com/hivecommons/hive/issues/14798)): it follows the pod while the kick runs (waiting while the pod is `Pending`, e.g. for an accelerator node), prints the container exit code when it ends, and between kicks, when the completed Job has already been deleted, shows the last run's persisted transcript (`<workspace>/.hive/sandbox-transcript.log`, which now ends with an `exit code: N` line) or a clear "no sandbox run yet" state. The pane is observation only; there is no input path into the Job. The same terminal handoff and role check as the tmux pane apply.
 
-**RBAC.** The spoke's ServiceAccount needs a Role for `batch/jobs` (create, get, list, delete) and `pods` plus `pods/log` (get, list); the terminal viewer needs nothing beyond that same `pods/log` grant. The standalone kustomize base ships it as `sandbox-job-rbac.yaml`, and the hub provisioner grants it to every hosted spoke as `hive-sandbox-jobs`.
+**Private-registry images (#18819).** The Job pod's `imagePullSecrets` are the deduplicated union, in this order, of: hive's own pod secrets (so the `hive-relays` init container can pull the hive image), the Job service account's `imagePullSecrets`, and `sandbox.job.image_pull_secrets`. Kubernetes adds a service account's pull secrets only to a pod that has none of its own, so hive reads the service account through the API (`get serviceaccounts`) and merges the names itself. When that grant is missing or the read fails, hive logs a warning and carries on with the other two lists; it never fails the kick. `image_pull_secrets` holds Secret **names** only (DNS-1123 names, at most 32; a value is refused). A per-agent `job` block that names none inherits the `agent_sandbox.job` list. Hive reads, logs and writes names, never Secret contents. When `service_account` is set and `image_pull_secrets` is not, the boot and reload warning reminds the operator to set it if the grant is absent. The dashboard sandbox controls do not carry this field yet; the per-agent API accepts `sandboxJob.imagePullSecrets`.
+
+```yaml
+agent_sandbox:
+  job:
+    service_account: hive-spyre-job
+    image_pull_secrets: [ registry-pull ]
+```
+
+**RBAC.** The spoke's ServiceAccount needs a Role for `batch/jobs` (create, get, list, delete), `pods` plus `pods/log` (get, list) and, optionally, `serviceaccounts` (get) so the Job service account's pull secrets are merged; the terminal viewer needs nothing beyond that same `pods/log` grant. The standalone kustomize base ships it as `sandbox-job-rbac.yaml`, and the hub provisioner grants it to every hosted spoke as `hive-sandbox-jobs`.
 
 Hive warns at boot and on reload (`config.AgentSandboxGateWarnings`) when a job-runtime agent resolves no `workspace_claim` or names a runtime hive does not have, and refuses the kick with the same message rather than failing it after the agent is marked running.
 

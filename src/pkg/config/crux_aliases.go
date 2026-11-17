@@ -145,6 +145,7 @@ const (
 	ReviewModelsFallbackSkip            = cruxconfig.ReviewModelsFallbackSkip
 	RotationHeadroomSourceBuiltin       = cruxconfig.RotationHeadroomSourceBuiltin
 	RotationHeadroomSourceCCLeft        = cruxconfig.RotationHeadroomSourceCCLeft
+	MaxJobImagePullSecrets              = cruxconfig.MaxJobImagePullSecrets
 	SandboxRuntimeJob                   = cruxconfig.SandboxRuntimeJob
 	SandboxRuntimeOpenShell             = cruxconfig.SandboxRuntimeOpenShell
 	SandboxRuntimeSubstrate             = cruxconfig.SandboxRuntimeSubstrate
@@ -165,6 +166,7 @@ var (
 	ReasoningEffortsByBackend = cruxconfig.ReasoningEffortsByBackend
 	ToolPresets               = cruxconfig.ToolPresets
 	ValidSandboxRuntimes      = cruxconfig.ValidSandboxRuntimes
+	ValidateImagePullSecrets  = cruxconfig.ValidateImagePullSecrets
 )
 
 var (
