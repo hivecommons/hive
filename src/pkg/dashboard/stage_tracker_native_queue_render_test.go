@@ -53,7 +53,7 @@ assert.ok(!/merged|failed/.test(html.split('finished groups')[1].split('</div>')
 // and the tooltip span, so the sentence occurs twice), not per queue or card.
 assert.strictEqual((html.match(/ham-native-help"/g) || []).length, 1, html);
 assert.strictEqual((html.match(/never from a PR number/g) || []).length, 2, html);
-assert.ok(!html.includes('never inferred from FIFO') && !html.includes('repo filter applies here'), html);
+assert.ok(!html.includes('never inferred from FIFO') && !html.includes('Queue references remain visible across row filters'), html);
 assert.ok(!html.includes('policy unavailable'), html);
 // Details on demand: entries, the live group with its own SHA's checks, receipts.
 assert.ok(html.includes('<details class="ham-native-details"><summary>2 entries, 1 test group, 3 finished, 1 receipt</summary>'), html);
