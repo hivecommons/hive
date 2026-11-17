@@ -2421,7 +2421,7 @@ type adoptionEscape struct {
 // reason) first; failed is the warning logged on an error. Returns the
 // comments posted.
 func (c *Engine) postAdoptionEscalationNote(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, reason, body, failed string) (int, error) {
-	body = c.withStageMoveFact(obs, body)
+	body = c.withStageMoveFact(ctx, obs, body)
 	if _, _, err := c.gh.Issues.CreateComment(ctx, obs.Owner, obs.Repo, obs.Number, &gh.IssueComment{Body: gh.Ptr(body)}); err != nil {
 		c.warn(failed, "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", reason, "error", err)
 		return 0, err
@@ -2436,9 +2436,11 @@ func (c *Engine) postAdoptionEscalationNote(ctx context.Context, store *stagelab
 // `stage/085-needs-decision`" announced a label that never landed
 // (projectbluefin/fsdk-containers#491, projectbluefin/utah-packages#812).
 // The gate is asked without recording a refusal: the stage writer records
-// its own when it tries.
-func (c *Engine) withStageMoveFact(obs stageObservation, body string) string {
-	d := c.writebackGate().Decide(obs.Owner+"/"+obs.Repo, writebackItemForObservation(obs), writeback.KindStageLabel)
+// its own when it tries. It is asked with the same hive-applied-stage fact
+// the stage writer states, so an old PR whose stage label is the hive's own
+// is announced as moving, as it now does.
+func (c *Engine) withStageMoveFact(ctx context.Context, obs stageObservation, body string) string {
+	d := c.writebackGate().Decide(obs.Owner+"/"+obs.Repo, c.stageWriteItem(ctx, obs), writeback.KindStageLabel)
 	if d.Allowed {
 		return body
 	}
