@@ -55,6 +55,9 @@ type SweepInput struct {
 	Users     []HiveUser
 	Links     []ProvenLink
 	Sightings []Sighting
+	// OwnAddresses are this hive's own mail addresses (hive@<host>), which
+	// are never suggested.
+	OwnAddresses []string
 }
 
 // SweepResult counts what a sweep did.
@@ -106,6 +109,16 @@ func (s *Service) Sweep(in SweepInput) (SweepResult, error) {
 
 	// B and C. Sightings become edges for customers and suggestions for
 	// everyone else.
+	// A calendar group, a mailing list, a service mailbox and the hive's own
+	// address are never suggested; one a person already owns keeps its edges.
+	sightings := make([]Sighting, 0, len(in.Sightings))
+	for _, sg := range in.Sightings {
+		if s.deniedIdentity(sg.Kind, sg.Value, in.OwnAddresses) {
+			continue
+		}
+		sightings = append(sightings, sg)
+	}
+	in.Sightings = sightings
 	obs := make([]Observation, 0, len(in.Sightings))
 	for _, sg := range in.Sightings {
 		obs = append(obs, sg.Observation)
@@ -159,6 +172,15 @@ func (s *Service) Sweep(in SweepInput) (SweepResult, error) {
 	if res.ExpiredSuggestions, err = s.store.ExpireSuggestions(exists); err != nil {
 		return res, err
 	}
+	// A suggestion stored before a rule existed, or for an identity a
+	// person has since come to own, expires here too.
+	stale, err := s.store.ExpireSuggestionsWhere(func(sg Suggestion) bool {
+		return IsNonPersonIdentity(sg.Kind, sg.Value, in.OwnAddresses)
+	})
+	if err != nil {
+		return res, err
+	}
+	res.ExpiredSuggestions += stale
 	if res.DroppedEvidence, err = s.store.PruneEvidence(exists); err != nil {
 		return res, err
 	}
@@ -185,6 +207,21 @@ func (s *Service) Sweep(in SweepInput) (SweepResult, error) {
 		}
 	}
 	return res, nil
+}
+
+// IsNonPersonIdentity applies IsNonPersonAddress to an email identity.
+func IsNonPersonIdentity(kind IdentityKind, value string, own []string) bool {
+	return kind == KindEmail && IsNonPersonAddress(value, own...)
+}
+
+// deniedIdentity reports whether a sighting must not become a suggestion: it
+// is a non-person address that no customer owns.
+func (s *Service) deniedIdentity(kind IdentityKind, value string, own []string) bool {
+	if !IsNonPersonIdentity(kind, value, own) {
+		return false
+	}
+	_, owned := s.store.Lookup(kind, value)
+	return !owned
 }
 
 // githubPredicates are the edges that mean someone works in the repository.

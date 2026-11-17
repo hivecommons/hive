@@ -64,6 +64,11 @@ func (f *fakeCustomersService) Accept(v CustomersViewer, sid string) (CustomerRe
 	return f.result("p_accepted", v)
 }
 
+func (f *fakeCustomersService) AcceptInto(v CustomersViewer, sid, into string) (CustomerResult, error) {
+	f.note("AcceptInto", v, sid+"->"+into)
+	return f.result(into, v)
+}
+
 func (f *fakeCustomersService) AnswerHint(v CustomersViewer, hid string, same bool) (CustomerResult, error) {
 	f.note("AnswerHint", v, fmt.Sprintf("%s:%v", hid, same))
 	return f.result("p_hinted", v)
@@ -148,6 +153,7 @@ var (
 	custEditOther = customersRoute{http.MethodPost, "/api/customers/p_other/edit", `{"op":"name","name":"N"}`}
 	custForget    = customersRoute{http.MethodDelete, "/api/customers/p_other", ""}
 	custAccept    = customersRoute{http.MethodPost, "/api/customers/suggestions/s_1/accept", ""}
+	custAttach    = customersRoute{http.MethodPost, "/api/customers/suggestions/s_1/accept", `{"into":"p_other"}`}
 	custDismiss   = customersRoute{http.MethodPost, "/api/customers/suggestions/s_1/dismiss", ""}
 	custMerge     = customersRoute{http.MethodPost, "/api/customers/p_other/merge", `{"from":"p_src"}`}
 	custUnmerge   = customersRoute{http.MethodPost, "/api/customers/p_other/unmerge", `{"from":"p_src"}`}
@@ -175,6 +181,10 @@ func TestCustomersRoleMatrix(t *testing.T) {
 		{custEditOther, map[string]int{"owner": ok, "read-write": ok, "merger": ok, "read": forbidden, "unverified owner": forbidden, "read with no name": forbidden}},
 		{custAdd, map[string]int{"owner": ok, "read-write": ok, "merger": ok, "read": forbidden, "unverified owner": forbidden, "read with no name": forbidden}},
 		{custAccept, map[string]int{"owner": ok, "read-write": ok, "merger": ok, "read": forbidden, "unverified owner": forbidden, "read with no name": forbidden}},
+		// Attaching a suggestion to an existing customer is the accept route
+		// with a body: the same roles, and a read-only user, who cannot see
+		// suggestions, is refused before the service is asked.
+		{custAttach, map[string]int{"owner": ok, "read-write": ok, "merger": ok, "read": forbidden, "unverified owner": forbidden, "read with no name": forbidden}},
 		{custDismiss, map[string]int{"owner": ok, "read-write": ok, "merger": ok, "read": forbidden, "unverified owner": forbidden, "read with no name": forbidden}},
 		{custHint, map[string]int{"owner": ok, "read-write": ok, "merger": ok, "read": forbidden, "unverified owner": forbidden, "read with no name": forbidden}},
 		{custMerge, map[string]int{"owner": ok, "read-write": ok, "merger": ok, "read": forbidden, "unverified owner": forbidden, "read with no name": forbidden}},
@@ -324,6 +334,7 @@ func TestCustomersAudit(t *testing.T) {
 		{custRead, custEditMe},
 		{custReadWrite, custEditOther},
 		{custReadWrite, custAccept},
+		{custReadWrite, custAttach},
 		{custReadWrite, custDismiss},
 		{custReadWrite, custHint},
 		{custReadWrite, custMerge},
@@ -345,20 +356,22 @@ func TestCustomersAudit(t *testing.T) {
 			count++
 		}
 	}
-	if count != 12 {
-		t.Fatalf("audited %d customer actions, want 12: %v", count, got)
+	if count != 13 {
+		t.Fatalf("audited %d customer actions, want 13: %v", count, got)
 	}
 	want := map[string]string{
 		"customer_profile_open": "olivia|person=p_other;",
 		"customer_add":          "olivia|person=p_new, identities=0;",
 		"customer_forget":       "olivia|person=p_other, edges=3;",
 		"customer_accept":       "rita|person=p_accepted;",
-		"customer_dismiss":      "rita|suggestion=s_1;",
-		"customer_hint_answer":  "rita|person=p_hinted, same=true;",
-		"customer_merge":        "rita|person=p_other, from=p_src;",
-		"customer_unmerge":      "rita|person=p_other, from=p_src;",
-		"customer_split":        "rita|from=p_other, person=p_split, identities=1;",
-		"customer_export":       "olivia|person=p_other;",
+		// Ids only: never the suggested person's login or address.
+		"customer_attach":      "rita|person=p_other;",
+		"customer_dismiss":     "rita|suggestion=s_1;",
+		"customer_hint_answer": "rita|person=p_hinted, same=true;",
+		"customer_merge":       "rita|person=p_other, from=p_src;",
+		"customer_unmerge":     "rita|person=p_other, from=p_src;",
+		"customer_split":       "rita|from=p_other, person=p_split, identities=1;",
+		"customer_export":      "olivia|person=p_other;",
 	}
 	for action, detail := range want {
 		if got[action] != detail {

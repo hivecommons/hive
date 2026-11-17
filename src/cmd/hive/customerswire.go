@@ -211,6 +211,10 @@ func installCustomersAgentContext(c *customersDashboard, setKickLookup func(sche
 	}
 }
 
+func (c *customersDashboard) AcceptInto(v dashboard.CustomersViewer, suggestionID, into string) (dashboard.CustomerResult, error) {
+	return customerResult(c.svc.AcceptInto(customersViewer(v), suggestionID, into))
+}
+
 func (c *customersDashboard) Merge(v dashboard.CustomersViewer, id, from string) (dashboard.CustomerResult, error) {
 	return customerResult(c.svc.Merge(customersViewer(v), id, from))
 }
