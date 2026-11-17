@@ -4,10 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/meetings"
 	"github.com/hivecommons/hive/pkg/meetings/live"
+	"github.com/hivecommons/hive/pkg/meetings/schedule"
 )
 
 // meetingsDashboard implements dashboard.MeetingsService over the meeting
@@ -16,6 +18,8 @@ import (
 type meetingsDashboard struct {
 	mgr  *meetings.Manager
 	live *live.Runner
+	// sched, when the Calendar runs, forgets a deleted meeting's entry.
+	sched *schedule.Scheduler
 }
 
 // meetingsDashboardError maps meetings errors onto the dashboard's
@@ -28,7 +32,8 @@ func meetingsDashboardError(err error) error {
 		return fmt.Errorf("%w: %v", dashboard.ErrMeetingNotFound, err)
 	case errors.Is(err, meetings.ErrInvalidRequest), meetings.IsCode(err, meetings.CodeInvalidArgument):
 		return fmt.Errorf("%w: %v", dashboard.ErrMeetingInvalid, err)
-	case errors.Is(err, live.ErrNotPending), errors.Is(err, live.ErrSessionEnded), errors.Is(err, meetings.ErrNotLive), errors.Is(err, meetings.ErrNotRequested):
+	case errors.Is(err, live.ErrNotPending), errors.Is(err, live.ErrSessionEnded), errors.Is(err, meetings.ErrNotLive), errors.Is(err, meetings.ErrNotRequested),
+		errors.Is(err, meetings.ErrStillRunning):
 		return fmt.Errorf("%w: %v", dashboard.ErrMeetingConflict, err)
 	default:
 		return err
@@ -99,6 +104,33 @@ func (d *meetingsDashboard) DeclineRequest(ctx context.Context, id string) (any,
 		return nil, meetingsDashboardError(err)
 	}
 	return m, nil
+}
+
+// meetingDeleted is the dashboard's view of a deleted meeting; with the
+// Calendar running, the entry that existed only for it goes too.
+func meetingDeleted(res meetings.DeleteResult, sched *schedule.Scheduler) dashboard.MeetingDeleted {
+	out := dashboard.MeetingDeleted{ID: res.Meeting.ID, State: string(res.Meeting.State), UpstreamError: res.UpstreamError}
+	if sched != nil {
+		out.CalendarRemoved = sched.ForgetMeeting(res.Meeting.ID)
+	}
+	return out
+}
+
+func (d *meetingsDashboard) Delete(ctx context.Context, id string) (dashboard.MeetingDeleted, error) {
+	res, err := d.mgr.Delete(ctx, id)
+	if err != nil {
+		return dashboard.MeetingDeleted{}, meetingsDashboardError(err)
+	}
+	return meetingDeleted(res, d.sched), nil
+}
+
+func (d *meetingsDashboard) ClearFinished(ctx context.Context, before time.Time) ([]dashboard.MeetingDeleted, error) {
+	list, err := d.mgr.ClearFinished(ctx, before)
+	out := make([]dashboard.MeetingDeleted, 0, len(list))
+	for _, res := range list {
+		out = append(out, meetingDeleted(res, d.sched))
+	}
+	return out, meetingsDashboardError(err)
 }
 
 // meetingLive is the panel snapshot.

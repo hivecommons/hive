@@ -27,6 +27,9 @@ type fakeMeetingsService struct {
 	invitedBy string
 	subs      map[int]func(MeetingFrame)
 	next      int
+	deleted   []string
+	cleared   []time.Time
+	deleteRes MeetingDeleted
 }
 
 func (f *fakeMeetingsService) Join(_ context.Context, req MeetingJoinRequest, by string) (any, error) {

@@ -36,6 +36,14 @@ const (
 	spekPausedStatus = "Notes and clarifying questions are paused: Spektacular live mode is not running right now (restarting, or it needs a spektacular with the meeting command, hivecommons/spektacular#126). The transcript, the persona and research still work."
 )
 
+// spekUnsupported reports whether spek says the installed spektacular has no
+// live meeting command (spektacular.Stream.Unsupported). A Spek without that
+// method is never unsupported.
+func spekUnsupported(spek Spek) bool {
+	u, ok := spek.(interface{ Unsupported() bool })
+	return ok && u.Unsupported()
+}
+
 // setSpekStatus updates the panel's Spektacular status when it changes.
 func (s *session) setSpekStatus(status string) {
 	if s.state.SpekStatus == status {
@@ -69,6 +77,15 @@ type session struct {
 	spek  Spek
 	state State
 	rate  rateLimiter
+	// spekGone is set once Spek is down for good for this meeting (its
+	// lines closed, or the installed spektacular has no meeting command):
+	// nothing more is forwarded to it, so a meeting without live mode does
+	// not log a warning per transcript line (hivecommons/hive#18630).
+	spekGone bool
+	// burst is the extra chat room for answers to addressed requests;
+	// voice is the estimate of queued speech (voicequeue.go).
+	burst rateLimiter
+	voice voiceQueue
 	// persona is the meeting's attendee persona, nil when it is off. With
 	// it on, it owns the bot's voice in the meeting: Spek's say intents are
 	// dropped, its chat posts are offered to the persona, and its
@@ -76,6 +93,8 @@ type session struct {
 	persona *betty.Engine
 	// fileTokens is the usage-ledger total already charged.
 	fileTokens int
+	// lastSay is how long the meeting's last say call took (timing.go).
+	lastSay time.Duration
 	// spekQueue keeps Spek's asks and chat offers in order while an ask is
 	// being restyled by the persona off the session goroutine; restyled
 	// carries the results back.
@@ -95,6 +114,7 @@ func (r *Runner) newSession(m meetings.Meeting, spek Spek) *session {
 	s := &session{
 		r: r, id: m.ID, spek: spek,
 		rate:     rateLimiter{n: r.opts.Policy.ChatPostsPerMinute, window: rateWindow},
+		burst:    answerBurst(r.opts.Policy),
 		updates:  make(chan meetings.Update, sessionInbox),
 		signals:  make(chan ResearchSignal, sessionInbox),
 		approves: make(chan approveReq),
@@ -159,7 +179,13 @@ func (s *session) save() {
 func (s *session) run(ctx context.Context) {
 	defer close(s.done)
 	lines := s.spek.Lines()
-	ending, spekGone := false, false
+	ending := false
+	if spekUnsupported(s.spek) {
+		// The installed spektacular has no `meeting` command: live mode is
+		// off from the start; the stream already logged it once per binary.
+		s.spekGone, lines = true, nil
+		s.setSpekStatus(spekStoppedStatus)
+	}
 	var replies <-chan betty.Reply
 	var researchTick <-chan time.Time
 	if s.persona != nil {
@@ -179,6 +205,7 @@ func (s *session) run(ctx context.Context) {
 		case rep := <-replies:
 			if !ending {
 				s.onPersonaReply(ctx, rep)
+				s.drainPersona(ctx, replies)
 			}
 		case <-ctx.Done():
 			s.spek.Close(nil)
@@ -191,7 +218,7 @@ func (s *session) run(ctx context.Context) {
 			if u.Meeting.State.Terminal() {
 				ending = true
 				close(s.ended)
-				if spekGone {
+				if s.spekGone {
 					s.save()
 					return
 				}
@@ -211,8 +238,12 @@ func (s *session) run(ctx context.Context) {
 				// while the meeting goes on: keep the session for the panel,
 				// research signals and approvals; only Spek's questions and
 				// notes stop.
-				spekGone, lines = true, nil
-				s.log().Warn("[meetings] spektacular live mode stopped; continuing without it")
+				s.spekGone, lines = true, nil
+				if spekUnsupported(s.spek) {
+					s.log().Info("[meetings] spektacular live mode unavailable; continuing without it")
+				} else {
+					s.log().Warn("[meetings] spektacular live mode stopped; continuing without it")
+				}
 				s.setSpekStatus(spekStoppedStatus)
 				continue
 			}
@@ -263,13 +294,14 @@ func (s *session) onUpdate(u meetings.Update) {
 	default:
 		return
 	}
-	if len(ev.Raw) > 0 {
+	if len(ev.Raw) > 0 && !s.spekGone {
 		if err := s.spek.SendLine(ev.Raw); err != nil {
-			s.log().Warn("[meetings] forwarding to spek", "error", err)
 			// The child is down (between restarts, or a spektacular
 			// without the meeting command): say so on the panel now rather
-			// than only once it gives up.
+			// than only once it gives up. Warn on that transition only, not
+			// on every line while it stays down.
 			if s.state.SpekStatus == "" {
+				s.log().Warn("[meetings] forwarding to spek", "error", err)
 				s.setSpekStatus(spekPausedStatus)
 			}
 		}
@@ -305,6 +337,9 @@ func (s *session) matchAnswer(ev *meetings.Event) {
 		}
 		a.Answer, a.AnsweredBy, a.AnsweredAt = ev.Text, ev.Who(), &now
 		answered, changed = true, true
+		if s.spekGone {
+			continue
+		}
 		if err := s.spek.Send(map[string]string{"type": "answer", "qid": a.QID, "text": ev.Text, "by": ev.Who()}); err != nil {
 			s.log().Warn("[meetings] sending answer to spek", "error", err)
 		}
@@ -447,7 +482,7 @@ func (s *session) say(ctx context.Context, text string) {
 	m, err := s.r.opts.Meetings.Get(s.id)
 	if err == nil && m.VoiceEnabled && s.r.opts.Policy.VoiceOnAddress {
 		cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
-		err = s.r.opts.Meetings.Say(cctx, s.id, text)
+		err = s.timedSay(func() error { return s.r.opts.Meetings.Say(cctx, s.id, text) })
 		cancel()
 		if err == nil {
 			return
@@ -719,12 +754,17 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 	if text == "" {
 		return
 	}
+	if rep.Trigger == betty.TriggerQueue {
+		s.onQueueNote(ctx, rep, text)
+		return
+	}
 	switch rep.Trigger {
 	case betty.TriggerAck:
 		if s.state.BudgetExhausted {
 			return
 		}
-		if s.speak(ctx, text) {
+		if s.speakAck(ctx, text) {
+			s.recordAckSay()
 			s.emitPersona(rep)
 		} else {
 			s.drop("ack_no_voice")
@@ -749,9 +789,14 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 		return
 	}
 	posted := true
-	if rep.Kind == betty.KindVoice {
-		s.say(ctx, text)
-	} else {
+	switch {
+	case rep.Kind == betty.KindVoice:
+		// Spoken with the other answers ready now, shortest first
+		// (flushVoice), falling back to chat.
+		s.queueVoice(text)
+	case rep.Trigger == betty.TriggerAddressed:
+		posted = s.postAnswer(ctx, text)
+	default:
 		posted = s.post(ctx, text)
 	}
 	if posted {
@@ -764,7 +809,19 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 	s.save()
 }
 
+// onQueueNote posts the persona's "I have N questions" note: chat only,
+// through the rate limit, never charged (no model call made it).
+func (s *session) onQueueNote(ctx context.Context, rep betty.Reply, text string) {
+	if s.state.BudgetExhausted {
+		return
+	}
+	if s.post(ctx, text) {
+		s.emitPersona(rep)
+	}
+}
+
 func (s *session) emitPersona(rep betty.Reply) {
+	s.recordTiming(rep)
 	raw, _ := json.Marshal(rep)
 	s.emit(Event{Kind: EventPersona, Reason: rep.Trigger, Intent: raw})
 }
@@ -872,7 +929,7 @@ func (s *session) speak(ctx context.Context, text string) bool {
 	}
 	cctx, cancel := context.WithTimeout(ctx, s.r.opts.CallTimeout)
 	defer cancel()
-	return s.r.opts.Meetings.Say(cctx, s.id, text) == nil
+	return s.timedSay(func() error { return s.r.opts.Meetings.Say(cctx, s.id, text) }) == nil
 }
 
 // queuedSpek is one of Spek's asks or chat offers waiting its turn while an
