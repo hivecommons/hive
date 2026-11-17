@@ -11854,6 +11854,10 @@
                     },
                     "linear_issue": {
                       "type": "string"
+                    },
+                    "per_repo": {
+                      "type": "boolean",
+                      "description": "Advisory report in every repo (governor.advisory.per_repo, default false)"
                     }
                   }
                 }
@@ -11905,6 +11909,10 @@
                   "linear_issue": {
                     "type": "string",
                     "description": "Required when target is linear"
+                  },
+                  "per_repo": {
+                    "type": "boolean",
+                    "description": "Off: one Hive Advisory Report in the primary repo covers all repos. On: each monitored repo also gets its own report."
                   }
                 }
               }

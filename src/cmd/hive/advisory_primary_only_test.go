@@ -173,9 +173,16 @@ func TestAdvisoryWrites_NeverIssuedInsideALoop(t *testing.T) {
 // seams exactly once each, and reads advisoryEnsureDepsForCycle.ensure only
 // where it assigns it. The #18568 regression wired a second copy of each into
 // a per-repo loop helper, which raised all of these counts to two.
+//
+// The opt-in per-repo report (#18448, governor.advisory.per_repo) adds exactly
+// one more PostAdvisoryDigest wiring and one EnsureSecondaryAdvisoryIssue
+// wiring, both handed to the secondary helpers, whose repo list is pinned to
+// advisoryPerRepoSecondaryRepos (empty unless the owner opted in) by
+// TestAdvisorySecondaryHelpers_OnlyFedThePerRepoGatedList.
 var advisoryWriterWiring = map[string]int{
 	"EnsureAdvisoryIssue":               1,
-	"PostAdvisoryDigest":                1,
+	"EnsureSecondaryAdvisoryIssue":      1,
+	"PostAdvisoryDigest":                2,
 	"advisoryEnsureDepsForCycle.ensure": 1,
 }
 
@@ -209,7 +216,7 @@ func TestAdvisoryWriters_WiredOnceForThePrimaryOnly(t *testing.T) {
 				return true
 			}
 			switch sel.Sel.Name {
-			case "EnsureAdvisoryIssue", "PostAdvisoryDigest":
+			case "EnsureAdvisoryIssue", "EnsureSecondaryAdvisoryIssue", "PostAdvisoryDigest":
 				if !called[sel] {
 					got[sel.Sel.Name]++
 				}
