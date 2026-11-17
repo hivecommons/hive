@@ -138,8 +138,13 @@ func TestTwoQuestionsInOneLine(t *testing.T) {
 		d.Retrievers = []Retriever{HiveStatusRetriever{Brief: func(context.Context) (string, error) { return "Open now: 35 issues and 12 PRs.", nil }}}
 	})
 	r.e.Observe(Line{Who: "Andy", Text: "Betty, how many open issues are there? How many pull requests are open?"})
-	a, b := r.reply(), r.reply()
-	got := a.Text + " | " + b.Text
+	var answers []string
+	for len(answers) < 2 {
+		if rep := r.reply(); rep.Trigger != TriggerQueue {
+			answers = append(answers, rep.Text)
+		}
+	}
+	got := strings.Join(answers, " | ")
 	if !strings.Contains(got, "35 issues") || !strings.Contains(got, "12 PRs") {
 		t.Fatalf("both questions answered: %s", got)
 	}
