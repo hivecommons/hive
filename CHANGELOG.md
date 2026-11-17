@@ -11,6 +11,18 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v6.44.2)
+
+### Fixed
+
+- **The required `PR Type` and `PR Issue` checks always conclude, and the PR Verifier goes red when it cannot record them** (#18764). The pinned verifier image created each check `in_progress` and then updated it with the verdict; when GitHub answered that update with 404 (#18667), the required checks stayed `in_progress` for ever, Tide reported "Jobs PR Issue, PR Type have not succeeded", and the `verify PR contents` job still went green because the image step was `continue-on-error`. The workflow now computes both verdicts in-repo (`.github/scripts/pr-verifier.cjs`, reusing the existing port of the upstream v0.4.3 title rules, with the same check names, output titles and summaries) and records each check with one create call that is already completed — nothing is ever left in progress. A title the rules reject is still a failed `PR Type`/`PR Issue` check with a green wrapper job; a result that cannot be recorded now fails `verify PR contents` with the reason, after posting a completed `failure` check that says so. No image is pulled any more, so the job runs on the ordinary runner pool instead of a native ARM64 runner. To recover a PR whose checks are already stuck, add or remove any label on it, or for a same-repo PR dispatch `pr-verifier.yml` on its branch with its `pr_number`, so a fresh completed pair lands on its head (re-running an old run re-runs the old workflow).
+
+## 2026-11-17 (v6.44.1)
+
+### Fixed
+
+- **A serialized-lane branch update left Unknown no longer blocks that PR's lane forever.** When GitHub timed out or returned a 5xx on the lane's update-branch call, the effect ledger journaled it Unknown and then refused every retry of the same pinned update with "retries refused pending reconciliation", because the lane called the plain effect boundary and nothing ever reconciled a `branch_update`. The lane's update now reconciles like the PR client's and automerge's: the next retry reads the PR, treats a head that moved off the pinned SHA as the update having landed, and otherwise runs the update again. A 422 or 409 refusal is journaled not-applied, so it never needs reconciling. The `effect_ledger_op_stuck` self-report for these ops stops recurring ([#18726](https://github.com/hivecommons/hive/issues/18726)).
+
 ## 2026-11-17 (v6.44.0)
 
 ### Added
