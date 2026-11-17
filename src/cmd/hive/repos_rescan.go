@@ -83,6 +83,7 @@ func rescanRepos(
 
 	publishEnumeratedSnapshot(lastActionable, actionable, logger)
 	publishStageSharedCIIncidents(actionable)
+	publishStageBaseRedMemory(ghClient.BaseRedSnapshot())
 	if data, marshalErr := json.Marshal(actionable); marshalErr == nil {
 		atomicWrite(lastActionablePath, data)
 	}

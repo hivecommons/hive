@@ -169,6 +169,12 @@ type StageLabelPolicy struct {
 	// reason `base-branch-red:<checks>` and never nudged: the red is the
 	// base branch's, not the author's. nil = unknown (no deferral).
 	BaseBranchRed func(repo string, number int, head string) []string
+	// BaseRedRemembered returns the checks the CI enumeration last saw red
+	// on repo's ("owner/name") base branch baseRef and has not seen green
+	// since (hgithub.Client.BaseRedSnapshot). A head BaseBranchRed has no
+	// answer for yet is base red when every check red on it is one of these
+	// and it touches no CI-owning path (foldBaseRed). Nil means none.
+	BaseRedRemembered func(repo, baseRef string) []string
 	// ForkGuard returns the failing checks on a fork PR head (repo
 	// "owner/name", number, head SHA) that refuse it only because it is from
 	// a fork, when EVERY failing check does —
@@ -291,6 +297,10 @@ type StageTracker struct {
 	// (automerge_human_merge_path_fence.go); created on first use. Unlike
 	// obs it survives drain: it is per head, not per pass.
 	humanMergePathFence map[string]humanMergePathFenceEntry
+	// baseRedPaths remembers, per key, whether the head touches a CI-owning
+	// path (foldBaseRed); created on first use. Per head, like
+	// humanMergePathFence.
+	baseRedPaths map[string]baseRedPathsEntry
 }
 
 // stageOwner is the lane that set a PR's current stage, for which head, and
@@ -1070,6 +1080,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 		c.foldHumanReturnLabel(ctx, store, list)
 		c.foldRecordedDecision(ctx, list)
 		c.foldForkGuard(ctx, tracker, store, list, now)
+		c.foldBaseRed(ctx, tracker, list, now)
 		verdict, role, obs := resolveStage(list)
 		key := stageKey(obs.Owner, obs.Repo, obs.Number)
 		if verdict.Rank == stageRankNone {
