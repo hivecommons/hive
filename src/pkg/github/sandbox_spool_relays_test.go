@@ -48,19 +48,6 @@ func newKickSpool(t *testing.T, manifests, agent, repo, branch string) string {
 	return spool
 }
 
-func readIssueResultFile(t *testing.T, reqPath string) IssueResponse {
-	t.Helper()
-	b, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
-	if err != nil {
-		t.Fatalf("result file missing: %v", err)
-	}
-	var r IssueResponse
-	if err := json.Unmarshal(b, &r); err != nil {
-		t.Fatal(err)
-	}
-	return r
-}
-
 func readTopicResultFile(t *testing.T, reqPath string) SandboxTopicResponse {
 	t.Helper()
 	b, err := os.ReadFile(strings.TrimSuffix(reqPath, ".json") + ".result.json")
