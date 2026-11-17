@@ -1,1 +1,0 @@
-- Added a repeatable, disposable-container probe (`src/test/advisor_toolless_probe/`) that proves a Codex or Copilot run at the pinned CLI versions can execute no tool and leak no canary, the evidence step 1 of #18421 needs before either CLI can back the advisor.

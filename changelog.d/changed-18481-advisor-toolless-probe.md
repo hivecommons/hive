@@ -1,0 +1,1 @@
+- Added a disposable-container probe (`src/test/advisor_toolless_probe/`) to investigate whether Codex and Copilot runs at the pinned CLI versions can execute tools or leak a canary; real-login verification remains outstanding for #18421.
