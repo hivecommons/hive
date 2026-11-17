@@ -5,12 +5,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	gh "github.com/google/go-github/v72/github"
 )
 
 // openPRGuardServer serves one repo with the given open PRs and issue #42
@@ -21,6 +24,9 @@ type openPRGuardServer struct {
 	addedLabels []string
 	createdLbl  []string
 	failPulls   bool
+	labelCalls  int
+	// failLabels, when non-zero, answers every label add with that status.
+	failLabels int
 }
 
 func newOpenPRGuardServer(t *testing.T, prs []map[string]any, issueLabels []string) (*httptest.Server, *openPRGuardServer) {
@@ -49,8 +55,17 @@ func newOpenPRGuardServer(t *testing.T, prs []map[string]any, issueLabels []stri
 		var names []string
 		_ = json.NewDecoder(r.Body).Decode(&names)
 		obs.mu.Lock()
-		obs.addedLabels = append(obs.addedLabels, names...)
+		obs.labelCalls++
+		fail := obs.failLabels
+		if fail == 0 {
+			obs.addedLabels = append(obs.addedLabels, names...)
+		}
 		obs.mu.Unlock()
+		if fail != 0 {
+			w.WriteHeader(fail)
+			_, _ = io.WriteString(w, `{"message":"refused"}`)
+			return
+		}
 		_, _ = io.WriteString(w, `[]`)
 	})
 	mux.HandleFunc("/repos/o/r/labels/", func(w http.ResponseWriter, r *http.Request) {
@@ -265,5 +280,155 @@ func TestOpenPRGuard_InvalidateForcesRelist(t *testing.T) {
 	}
 	if !strings.HasPrefix(ClaimBlockReasonOpenPRPrefix, "open PR already linked") {
 		t.Fatalf("prefix %q drifted from the log line", ClaimBlockReasonOpenPRPrefix)
+	}
+}
+
+// guardLogBuffer captures the client's log so a test can assert levels.
+type guardLogBuffer struct {
+	mu  sync.Mutex
+	buf strings.Builder
+}
+
+func (b *guardLogBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *guardLogBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
+func captureGuardLog(c *Client) *guardLogBuffer {
+	b := &guardLogBuffer{}
+	c.logger = slog.New(slog.NewTextHandler(b, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	return b
+}
+
+func linkedIssueFixture() []map[string]any {
+	return []map[string]any{openPRFixture(18587, "Fixes #42", "someone", time.Date(2026, 11, 17, 1, 0, 0, 0, time.UTC))}
+}
+
+func (o *openPRGuardServer) labelAttempts() int {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.labelCalls
+}
+
+// hivecommons/hive#18589: a refused label write (no write access) is
+// remembered per issue and logged at INFO, so the claim surge that follows
+// neither re-tries it nor files an unclassified self-report.
+func TestOpenPRGuard_RefusedLabelIsRememberedAndLoggedAtInfo(t *testing.T) {
+	srv, obs := newOpenPRGuardServer(t, linkedIssueFixture(), nil)
+	defer srv.Close()
+	obs.failLabels = http.StatusForbidden
+	c := newTestClient(t, srv, "o", []string{"r"})
+	logs := captureGuardLog(c)
+
+	for i := 0; i < 5; i++ {
+		if _, ok := c.OpenPRLinkGuard(context.Background(), "o/r", 42, nil); !ok {
+			t.Fatalf("pass %d: guard admitted; want the claim refused even when labelling fails", i)
+		}
+	}
+	if got := obs.labelAttempts(); got != 1 {
+		t.Fatalf("label attempts = %d, want 1: a refusal must not be retried every pass", got)
+	}
+	out := logs.String()
+	if strings.Contains(out, "level=WARN") {
+		t.Fatalf("refused label logged at WARN; want INFO only:\n%s", out)
+	}
+	if !strings.Contains(out, "level=INFO") || !strings.Contains(out, "reason=forbidden") {
+		t.Fatalf("log = %s; want one INFO line with reason=forbidden", out)
+	}
+}
+
+// A transient failure WARNs once, backs off, and is retried once the
+// backoff lapses; a success then clears the memory.
+func TestOpenPRGuard_TransientLabelFailureBacksOffThenRetries(t *testing.T) {
+	srv, obs := newOpenPRGuardServer(t, linkedIssueFixture(), nil)
+	defer srv.Close()
+	obs.failLabels = http.StatusInternalServerError
+	c := newTestClient(t, srv, "o", []string{"r"})
+	logs := captureGuardLog(c)
+	cache := c.openPRLinks()
+	now := time.Date(2026, 11, 17, 1, 30, 0, 0, time.UTC)
+	cache.mu.Lock()
+	cache.now = func() time.Time { return now }
+	cache.mu.Unlock()
+
+	c.OpenPRLinkGuard(context.Background(), "o/r", 42, nil)
+	first := obs.labelAttempts()
+	if first == 0 {
+		t.Fatal("first pass did not try to label the issue")
+	}
+	for i := 0; i < 4; i++ {
+		c.OpenPRLinkGuard(context.Background(), "o/r", 42, nil)
+	}
+	if got := obs.labelAttempts(); got != first {
+		t.Fatalf("label attempts = %d, want %d inside the backoff window", got, first)
+	}
+	if n := strings.Count(logs.String(), "level=WARN msg=\"open-PR guard: could not label issue\""); n != 1 {
+		t.Fatalf("WARN lines = %d, want 1 per backoff window:\n%s", n, logs.String())
+	}
+
+	obs.mu.Lock()
+	obs.failLabels = 0
+	obs.mu.Unlock()
+	cache.mu.Lock()
+	now = now.Add(openPRLabelRetryBackoff + time.Second)
+	cache.repos = map[string]*openPRLinkIndex{}
+	cache.mu.Unlock()
+	c.OpenPRLinkGuard(context.Background(), "o/r", 42, nil)
+	if len(obs.addedLabels) != 1 || obs.addedLabels[0] != HasOpenPRLabel {
+		t.Fatalf("labels added = %v, want the label applied after the backoff", obs.addedLabels)
+	}
+	cache.mu.Lock()
+	_, remembered := cache.labelBackoff[claimKey(c.canonicalRepo("o/r"), 42)]
+	cache.mu.Unlock()
+	if remembered {
+		t.Fatal("a successful label write must clear the issue's backoff")
+	}
+}
+
+// The label write no longer inherits the caller's deadline: the listing
+// ahead of it may spend the whole budget, which is how every pass on a
+// large repo failed with `context deadline exceeded`.
+func TestOpenPRGuard_LabelWriteSurvivesSpentCallerDeadline(t *testing.T) {
+	srv, obs := newOpenPRGuardServer(t, nil, nil)
+	defer srv.Close()
+	c := newTestClient(t, srv, "o", []string{"r"})
+	ctx, cancel := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel()
+	c.markIssueHasOpenPR(ctx, "o/r", 42, nil, OpenPRLink{PRNumber: 18587})
+	if len(obs.addedLabels) != 1 || obs.addedLabels[0] != HasOpenPRLabel {
+		t.Fatalf("labels added = %v, want the label written on its own budget", obs.addedLabels)
+	}
+}
+
+func TestOpenPRLabelFailureReason(t *testing.T) {
+	status := func(code int) error {
+		return &gh.ErrorResponse{Response: &http.Response{StatusCode: code}}
+	}
+	cases := []struct {
+		name    string
+		err     error
+		reason  string
+		refused bool
+	}{
+		{"forbidden", status(http.StatusForbidden), "forbidden", true},
+		{"missing", status(http.StatusNotFound), "not-found", true},
+		{"gone", status(http.StatusGone), "not-found", true},
+		{"locked", status(http.StatusUnprocessableEntity), "unprocessable", true},
+		{"rate limit", &gh.RateLimitError{Response: &http.Response{StatusCode: http.StatusForbidden}}, "rate-limited", false},
+		{"timeout", fmt.Errorf("add labels: %w", context.DeadlineExceeded), "timeout", false},
+		{"server", status(http.StatusBadGateway), "error", false},
+	}
+	for _, tc := range cases {
+		reason, refused := openPRLabelFailureReason(tc.err)
+		if reason != tc.reason || refused != tc.refused {
+			t.Errorf("%s: got (%q, %v), want (%q, %v)", tc.name, reason, refused, tc.reason, tc.refused)
+		}
 	}
 }
