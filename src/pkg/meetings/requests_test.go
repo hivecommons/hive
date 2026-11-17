@@ -47,8 +47,8 @@ func TestReplayFromLastSeq(t *testing.T) {
 	q.mu.Unlock()
 	next <- Event{Type: EventSegment, Seq: 4, Speaker: &Person{Name: "Ana"}, Text: "one", Final: true}
 	next <- Event{Type: EventSegment, Seq: 5, Speaker: &Person{Name: "Ana"}, Text: "two", Final: true}
-	eventually(t, "two lines", func() bool { tr, _ := m.Transcript(mt.ID); return len(tr) == 2 })
-	tr, _ := m.Transcript(mt.ID)
+	eventually(t, "two lines", func() bool { tr, _ := heardLines(m, mt.ID); return len(tr) == 2 })
+	tr, _ := heardLines(m, mt.ID)
 	if tr[1].Text != "two" {
 		t.Fatalf("replayed duplicate stored: %+v", tr)
 	}
@@ -71,7 +71,7 @@ func TestConsentErrorRecordedAndThrottled(t *testing.T) {
 	if got, _ := m.Get(mt.ID); got.ConsentPostedAt != nil || got.State != StateLive {
 		t.Fatalf("a throttled retry must not post: %+v", got)
 	}
-	if tr, _ := m.Transcript(mt.ID); len(tr) != 0 {
+	if tr, _ := heardLines(m, mt.ID); len(tr) != 0 {
 		t.Fatalf("a pre-consent line was stored: %+v", tr)
 	}
 }

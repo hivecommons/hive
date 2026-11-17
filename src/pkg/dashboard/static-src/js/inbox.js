@@ -205,7 +205,7 @@
       if (it.source === 'upload' && !inboxItemHasAudio(it) && !c.transcript) return '<div class="inbox-transcript"><div class="muted-xs"><strong>Extracted text</strong></div><pre class="inbox-transcript-text">' + escapeHtml(c.markdown || '') + '</pre></div>';
       let html = '<div class="inbox-transcript">';
       if (c.transcript && c.transcript_label) html += '<div class="muted-xs"><strong>' + escapeHtml(c.transcript_label) + '</strong></div>';
-      if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
+      if (c.transcript) html += '<pre class="inbox-transcript-text">' + (it.source === 'meeting' ? meetingsTranscriptTextHtml(c.transcript) : escapeHtml(c.transcript)) + '</pre>';
       else html += '<div class="muted-xs">No transcript yet' + (c.pending ? (it.source === 'plaud' ? ': Plaud has not transcribed this recording.' : ': the meeting platform has not produced a transcript for this recording.') + (it.transcribable || it.transcribe_unavailable ? ' Hive can transcribe this: see 🎧 Transcribe on this item.' : '') : '.') + '</div>';
       if (c.highlights) html += '<div class="muted-xs inbox-highlights"><strong>Highlights</strong> (flagged on the device)<pre class="inbox-transcript-text">' + escapeHtml(c.highlights) + '</pre></div>';
       return html + '</div>';

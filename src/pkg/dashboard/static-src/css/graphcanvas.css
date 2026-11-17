@@ -1,0 +1,9 @@
+    /* Graph view: one person and what they touched (hivecommons/hive issue 18742) */
+    .gv { width: 100%; height: auto; max-height: 28rem; display: block; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-sm); }
+    .gv-link { stroke: var(--border); stroke-width: 1; }
+    .gv-node circle { stroke: var(--bg); stroke-width: 1; }
+    .gv-person circle { fill: var(--accent); }
+    .gv-artefact circle { fill: var(--muted); }
+    .gv-other circle { fill: var(--green); }
+    .gv-other { cursor: pointer; }
+    .gv-label { fill: var(--text); font-size: var(--fs-2xs); }

@@ -204,3 +204,102 @@ func TestAggregateGovernorPRModelsReworkStats(t *testing.T) {
 		t.Fatalf("most reworked = %+v, want open PR #3 then merged PR #2", got.MostReworked)
 	}
 }
+
+// One canonical model driven by two backends with different rework and two
+// efforts plus an effort-less PR: per-source and per-effort figures, and their
+// sums match the bucket (hivecommons/hive#18715).
+func TestAggregateGovernorPRModelsPerSourceAndEffortRework(t *testing.T) {
+	now := time.Date(2026, 11, 17, 12, 0, 0, 0, time.UTC)
+	created := now.AddDate(0, 0, -1)
+	prs := []ghpkg.PullRequest{
+		{Repo: "o/r", Number: 1, HiveAttributed: true, HiveModel: "claude-opus-5-5", HiveBackend: "claude", HiveEffort: "high", CreatedAt: created, MergedAt: now,
+			Rework: ghpkg.PRReworkStats{FirstPass: true}},
+		{Repo: "o/r", Number: 2, HiveAttributed: true, HiveModel: "claude-opus-5-5", HiveBackend: "claude", HiveEffort: "High", CreatedAt: created, MergedAt: now,
+			Rework: ghpkg.PRReworkStats{ReviewRounds: 1, FixAttempts: 1}},
+		{Repo: "o/r", Number: 3, HiveAttributed: true, HiveModel: "anthropic/claude-opus-5-5", HiveBackend: "omp", HiveEffort: "medium", CreatedAt: created, MergedAt: now,
+			Rework: ghpkg.PRReworkStats{ReviewRounds: 2, FixAttempts: 2}},
+		{Repo: "o/r", Number: 4, HiveAttributed: true, HiveModel: "anthropic/claude-opus-5-5", HiveBackend: "omp", CreatedAt: created, State: "closed", ClosedAt: now},
+		{Repo: "o/r", Number: 5, HiveAttributed: true, HiveModel: "anthropic/claude-opus-5-5", HiveBackend: "omp", HiveEffort: "medium", CreatedAt: created, State: "open"},
+	}
+	got := aggregateGovernorPRModels(prs, "7d", now)
+	if len(got.Buckets) != 1 {
+		t.Fatalf("buckets = %+v, want one canonical row", got.Buckets)
+	}
+	b := got.Buckets[0]
+	// Existing bucket fields keep their values.
+	if b.PRs != 5 || b.Merged != 3 || b.ClosedUnmerged != 1 || b.Open != 1 {
+		t.Fatalf("bucket outcomes = %d/%d/%d/%d, want 5/3/1/1", b.PRs, b.Merged, b.ClosedUnmerged, b.Open)
+	}
+	if b.Rework.SamplePRs != 3 || b.Rework.FirstPassMerged != 1 {
+		t.Fatalf("bucket rework = %+v, want sample 3 first pass 1", b.Rework)
+	}
+
+	if len(b.Sources) != 2 {
+		t.Fatalf("sources = %+v, want 2", b.Sources)
+	}
+	omp, claude := b.Sources[0], b.Sources[1]
+	if omp.Backend != "omp" || omp.Model != "anthropic/claude-opus-5-5" {
+		t.Fatalf("sources[0] = %+v, want omp (3 PRs) first", omp)
+	}
+	if omp.PRs != 3 || omp.Merged != 1 || omp.ClosedUnmerged != 1 || omp.Open != 1 ||
+		omp.SamplePRs != 1 || omp.FirstPassMerged != 0 || omp.FirstPassMergeRate != 0 ||
+		omp.AvgReviewRounds != 2 || omp.AvgFixAttempts != 2 {
+		t.Fatalf("omp source = %+v", omp)
+	}
+	if claude.Backend != "claude" || claude.PRs != 2 || claude.Merged != 2 || claude.ClosedUnmerged != 0 || claude.Open != 0 ||
+		claude.SamplePRs != 2 || claude.FirstPassMerged != 1 || claude.FirstPassMergeRate != 0.5 ||
+		claude.AvgReviewRounds != 0.5 || claude.AvgFixAttempts != 0.5 {
+		t.Fatalf("claude source = %+v", claude)
+	}
+
+	want := []governorPRModelEffort{
+		{Effort: "high", PRs: 2, Merged: 2, governorPRModelSliceStats: governorPRModelSliceStats{SamplePRs: 2, FirstPassMerged: 1, FirstPassMergeRate: 0.5, AvgReviewRounds: 0.5, AvgFixAttempts: 0.5}},
+		{Effort: "medium", PRs: 2, Merged: 1, governorPRModelSliceStats: governorPRModelSliceStats{Open: 1, SamplePRs: 1, AvgReviewRounds: 2, AvgFixAttempts: 2}},
+		{Effort: "unknown", PRs: 1, governorPRModelSliceStats: governorPRModelSliceStats{ClosedUnmerged: 1}},
+	}
+	if len(b.Efforts) != len(want) {
+		t.Fatalf("efforts = %+v, want %+v", b.Efforts, want)
+	}
+	for i := range want {
+		if b.Efforts[i] != want[i] {
+			t.Fatalf("efforts[%d] = %+v, want %+v", i, b.Efforts[i], want[i])
+		}
+	}
+
+	var srcPRs, srcMerged, srcFirst, effPRs, effMerged, effFirst, effClosed, effOpen int
+	for _, s := range b.Sources {
+		srcPRs, srcMerged, srcFirst = srcPRs+s.PRs, srcMerged+s.Merged, srcFirst+s.FirstPassMerged
+	}
+	for _, e := range b.Efforts {
+		effPRs, effMerged, effFirst = effPRs+e.PRs, effMerged+e.Merged, effFirst+e.FirstPassMerged
+		effClosed, effOpen = effClosed+e.ClosedUnmerged, effOpen+e.Open
+	}
+	if srcPRs != b.PRs || srcMerged != b.Merged || srcFirst != b.Rework.FirstPassMerged {
+		t.Fatalf("source sums %d/%d/%d != bucket %d/%d/%d", srcPRs, srcMerged, srcFirst, b.PRs, b.Merged, b.Rework.FirstPassMerged)
+	}
+	if effPRs != b.PRs || effMerged != b.Merged || effFirst != b.Rework.FirstPassMerged || effClosed != b.ClosedUnmerged || effOpen != b.Open {
+		t.Fatalf("effort sums %d/%d/%d/%d/%d != bucket", effPRs, effMerged, effFirst, effClosed, effOpen)
+	}
+
+	raw, err := json.Marshal(b)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Sources []map[string]any `json:"sources"`
+		Efforts []map[string]any `json:"efforts"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, key := range []string{"model", "backend", "prs", "merged", "closed_unmerged", "open", "first_pass_merged", "first_pass_merge_rate", "avg_review_rounds", "avg_fix_attempts", "sample_prs"} {
+		if _, ok := decoded.Sources[0][key]; !ok {
+			t.Fatalf("sources[0] JSON lacks %q: %s", key, raw)
+		}
+	}
+	for _, key := range []string{"effort", "prs", "merged", "closed_unmerged", "open", "first_pass_merged", "first_pass_merge_rate", "avg_review_rounds", "avg_fix_attempts"} {
+		if _, ok := decoded.Efforts[0][key]; !ok {
+			t.Fatalf("efforts[0] JSON lacks %q: %s", key, raw)
+		}
+	}
+}

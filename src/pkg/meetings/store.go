@@ -35,6 +35,8 @@ var validID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
 type Store struct {
 	dir string
 	mu  sync.Mutex
+	// echoes remembers the bot's recent lines (echo.go).
+	echoes ownEchoes
 }
 
 // NewStore creates dir if needed.

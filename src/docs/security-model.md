@@ -147,6 +147,19 @@ envelope before it reaches spektacular or an agent prompt
 scanned for them. Session state is pruned and logs are scrubbed
 ([security.md](security.md)).
 
+Customer profiles follow the same rule. An agent cannot read the customers
+store. When a kick is about an issue whose author, assignee or claimer is a
+customer, the hive adds one short block to the prompt: their GitHub login, the
+tags that are on, and the goals a person confirmed. The block is capped at 1,024
+bytes. It never holds an email address, an id, notes or the satisfaction
+assessment. A goal is text a person typed, so it is scanned by `ioscan` first. A
+goal that holds an address, an id or a recognised attack is dropped whole. The
+rest sit inside a fence with a random nonce, marked as data and not as
+instructions. The meeting persona gets the same slice for a customer a question
+names: a name, tags and confirmed goals. It never says notes or the satisfaction
+assessment aloud, because a room can hold people who are not the hive's users.
+Goals the hive inferred stay out until a person confirms them.
+
 Untrusted recordings transcribed by the built-in whisper provider are decoded
 and transcribed outside the hive process, in the `hive-whisper` sandbox: a
 separate `hive-transcribe` uid with no home, shell or supplementary groups,
@@ -182,6 +195,43 @@ the URL, the hive's own DNS lookup with the connection pinned to the checked
 address (any private, loopback, link-local, CGNAT, multicast, ULA or metadata
 answer refuses the link), every redirect re-checked (at most 3), the body
 size- and time-capped, and the environment proxy never used.
+
+### Customers: people the hive has seen
+
+The Customers section keeps one profile per person. It lives in two files on the
+hive's own volume and nothing in it leaves the hive. It is not sent to the hub,
+written to GitHub or put in a heartbeat. The design is in
+[customers](design/customers.md).
+
+Some of these people never signed up. They are issue authors, meeting guests and
+mail senders. The hive keeps only a key, a few counts and up to five references
+for them, and only until someone accepts them. A suggestion ends when the thing
+it came from is deleted. Forgetting a person deletes them and leaves a salted
+hash, so they are not rebuilt.
+
+Links between identities are made only on exact keys. A display name never links
+anyone. One link rests on an assumption you should know about. When the access
+list holds a name such as `github:alice`, or the bare login `alice` that a
+GitHub device-flow sign-in produces (the access list treats the two as one
+user), the hive treats `alice` as that person's GitHub login. A name with
+another provider prefix, an address, a dot or an underscore is not read as a
+login. The hub put that entry there after it signed the person in with GitHub,
+so the hive trusts it. If your access list is edited by hand, an entry like
+that gives the named person's profile the matching GitHub activity.
+
+A read-only user sees only their own profile. An identity they add is shown as
+unconfirmed. It links nothing until the owner or a read-write user confirms it.
+
+Goal and satisfaction suggestions are off by default, because they send text to
+a model. When the owner turns them on, the hive sends a customer's own issues,
+pull requests and approved mail to the model set up for meetings. That text can
+be about people who never signed up, so it is cleaned first. A line that holds an
+address, an id or a recognised attack is dropped, and the rest sits in a fenced
+block marked as data. The reply is checked too: at most three short goals, a
+level from a short list and no number, each citing the evidence it was given. A
+suggestion is never applied. A person confirms, edits or rejects it, and a value
+a person set is never overwritten. The model has a daily token budget, and
+nothing it suggests leaves the hive.
 
 ## 5. Network and credentials
 
@@ -537,8 +587,14 @@ importance:
   therefore gets the Claude login **without its refresh token**, and only the
   login's own token block, nothing else stored in that file. It can use the
   fleet's current access token and cannot rotate or carry away the long-lived
-  grant. Refreshing stays where it was: with the agents' credential bridge and
-  the dashboard sign-in, the only writers of the shared file. The hive keeps
+  grant. Who refreshes it: the hive itself, once, ahead of expiry
+  ([#18731](https://github.com/hivecommons/hive/issues/18731); it redeems the
+  shared refresh token and holds the new grant on disk and in memory until the
+  shared file has it, `HIVE_CLAUDE_SHARED_REFRESH=off` disables it), the
+  agents' credential bridge when a CLI refreshed first anyway, and the
+  dashboard sign-in. A session never refreshes. All writers of the shared file
+  go through one function under one lock that accepts only a usable credential
+  expiring strictly later than the current one. The hive keeps
   the copies current (it replaces them, atomically and as the session's uid,
   when the shared login changes), so a session depends on the fleet's login
   being refreshed by an agent or a sign-in; a session cannot do that itself.

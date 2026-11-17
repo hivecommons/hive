@@ -204,6 +204,28 @@ Meetings hive joins to take notes: send it to one, follow the live transcript, n
 
 Owner only. The top of the section shows the address to add to a calendar invite, `hive@<dashboard host>`, with a Copy button, above the form that takes a link. Approve research past the per-meeting cap and answer Discord join requests here; settings are under Settings, Meetings, and the persona under Settings, Meeting attendee. Full entry: [Meetings](meetings.md).
 
+## Customers
+
+The people you build for: who each one is, what they are trying to get done, and how it is going for them.
+
+In the Collaborate group of the left menu, after Meetings. Everyone who signs in has their own profile, shown first as **Me**. The hive owner and read-write users also see every other customer and a collapsed **Suggested** list; a read-only user sees only their own profile.
+
+- **Customers** are dashboard users and people added by hand with **Add customer**. Each row shows the name, the tags that are on, the satisfaction level, how many goals are confirmed and how many suggestions wait for review.
+- **Suggested** are people hive has seen in issues, pull requests, meetings and mail who are not customers. Hive keeps only a key, counts and a few references for them. **Accept** makes one a customer; **Dismiss** removes the suggestion for good and keeps no readable trace.
+
+Opening a profile shows:
+
+- **Goals**: what the person is trying to get done. Add one, or confirm, edit or reject the ones hive suggests. A suggestion shows the references that led to it. A goal counts only once a person confirms it, and a rejected suggestion is not offered again.
+- **Satisfaction** (owner and read-write only): a level (Unknown, At risk, Neutral, Satisfied) with what led to it. There is no score. Hive may suggest a level; it never changes one a person set.
+- **Tags**: click a tag to turn it on or off. A tag marked manual stays as set; **Reset to automatic** hands it back to hive.
+- **Identities**: the logins, addresses and ids the person is known by. An identity a read-only user adds to their own profile is shown as unconfirmed, and does nothing, until the owner or a read-write user presses **Confirm**. The hive user identity cannot be changed.
+- **Activity** and **Notes** (owner and read-write only). Activity also shows open "Same person?" questions: hive spots a suggested address or login that looks like one of this customer's. **Yes** makes it theirs; **No** closes the question for good. Nothing is linked until you answer. The person does not see the notes.
+- **Graph**: **Show graph** draws the person, the things they touched and the other people on those things. Click a green dot to open that person. A read-only user's graph holds only themselves.
+- **Merge** (owner and read-write): fold another customer into this profile when they are the same person. Identities, tags, goals and activity come across, and **Undo merge** gives them back exactly. Two dashboard users cannot be merged. **Split off** on an identity moves it, and the activity it produced, to a new customer.
+- **Export** and **Forget** (owner only): **Export this person** shows everything held about them in a viewer you can copy from. **Forget**: deletes the person, their identities and their activity links, and stops hive rebuilding the profile.
+
+Nothing in this section leaves the hive. Turn it off with **Settings › Features › Customers** (`customers.enabled`), which takes effect when the hive restarts. API: [customers](api-reference/customers.md). Design: [customers](design/customers.md).
+
 ## Contributors
 
 The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.
@@ -225,6 +247,8 @@ Full entry: [Agent Logs](dashboard-sections/workflow-and-agents.md#agent-logs).
 ## Agents
 
 Each worker Hive runs, what it is doing now, and buttons to pause, restart or configure it.
+
+The pause/resume control is owner-only but never absent: below the owner role, or while the role is still being checked, it renders disabled with the tooltip "Needs the owner role" or "Checking your access...". Cards and the detail panel repaint when the role settles. A paused sandboxed agent offers plain `resume` (no session to start). The cadence table shows a single `paused` chip (with its reason on hover) beside the agent name; the mode columns show plain `paused` text.
 
 Full entry: [Agents](dashboard-sections/workflow-and-agents.md#agents).
 

@@ -41,6 +41,8 @@ func SystemPrompt(p config.ResolvedMeetingsPersona) string {
 	} else {
 		b.WriteString("You may add at most one light touch of humor to a reply. Never joke about a person. Skip humor entirely if the conversation sounds tense, urgent or upset.\n")
 	}
+	// She does not say the asker's name in every reply (owner ruling).
+	b.WriteString("Do not say the name of the person you are answering: never open a reply with their name or address them by it. Name a person only to tell two people apart.\n")
 	b.WriteString("Be honest when unsure: say you are not sure rather than guess. Never claim you did something you did not do; you cannot send messages, file issues, change code or schedule anything.\n")
 	return b.String()
 }
@@ -90,13 +92,25 @@ func answerPrompt(mode, who, question string, snips []Snippet, recent []recentLi
 	} else {
 		b.WriteString("Name where facts come from: give issue and PR numbers (#123) and work item ids as the context has them, and list the context numbers you used in sources.\n")
 	}
-	b.WriteString("Address people only by the names under People in the meeting. Speech-to-text sometimes mishears your own name as another word (Eddie, Ready, Betsy): a name in the transcript that is not one of those people is you being addressed, never a new participant, so never hand it the floor or speak to it.\n")
+	b.WriteString("Do not open your answer with the asker's name or address them by name. When you must refer to a person, use only the names under People in the meeting. Speech-to-text sometimes mishears your own name as another word (Eddie, Ready, Betsy): a name in the transcript that is not one of those people is you being addressed, never a new participant, so never hand it the floor or speak to it.\n")
 	b.WriteString("Only state what the context or the transcript supports. If they do not answer it, say you are not sure and set confidence below 0.5; never guess numbers, names, dates or links.\n")
 	if hasHiveStatus(snips) {
 		b.WriteString("Context marked \"" + HiveStatusSource + "\" is the hive's own state read just now: answer questions about the hive's issues, PRs, agents and work from it directly, with its numbers, and set needs_research to false.\n")
+		b.WriteString("State every count with its scope exactly as the context words it (\"across 13 repos\", or the one repo asked about). A count the context calls \"at least\" or partial is never a total: say \"at least\" and how many repos are counted. If the context says how old the counts are, say so in one short clause. For one issue or PR say what it is about, its state, and what is blocking it, in at most three short sentences.\n")
+	}
+	b.WriteString(LocalAnswerNotes(snips))
+	var heard Normalised
+	if mode == modeAddressed {
+		b.WriteString(webSearchNote(snips))
+		// Only a request addressed to her is corrected (normalise.go).
+		heard = NormaliseAddressed(question)
+		b.WriteString(heardNote(heard))
 	}
 	b.WriteString("\n" + dataOpen + "\n")
 	fmt.Fprintf(&b, "Question from %s: %s\n", sanitize(who), sanitize(question))
+	if heard.Changed() {
+		b.WriteString(sanitize(heardAndMeant(heard)) + "\n")
+	}
 	if len(snips) > 0 {
 		b.WriteString("\nContext:\n")
 		for i, s := range snips {
@@ -132,6 +146,6 @@ func restylePrompt(text string) string {
 
 // followUpPrompt asks for a deep dive's result as a short chat answer.
 func followUpPrompt(question, summary string) string {
-	return "Earlier in the meeting you said you would dig into a question. The research is done. Tell the meeting the answer in your own voice: at most 3 sentences and 300 characters, plain text, starting with what was asked. If the research found nothing useful, say so.\n\n" +
+	return "Earlier in the meeting you said you would dig into a question. The research is done. Tell the meeting the answer in your own voice: at most 3 sentences and 300 characters, plain text, starting with what was asked. Do not address anyone by name. If the research found nothing useful, say so.\n\n" +
 		dataOpen + "\nQuestion: " + sanitize(question) + "\nResearch summary: " + sanitize(summary) + "\n" + dataClose
 }

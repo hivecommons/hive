@@ -45,6 +45,8 @@ type fakeAPI struct {
 	order                 []string // "policy", "job" in creation order
 	selfPod               string   // JSON body of hive's own pod (testSelfPod), "" = 404
 	selfPodGets           int
+	serviceAccounts       map[string]string // SA name -> JSON body; absent = 404
+	saForbidden           bool              // SA reads answer 403
 }
 
 func newFakeAPI() *fakeAPI {
@@ -122,6 +124,19 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 				f.onPodLogAfterComplete()
 			}
 			_, _ = w.Write([]byte(f.logBody))
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/serviceaccounts/"):
+			if f.saForbidden {
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(`{"kind":"Status","message":"serviceaccounts is forbidden"}`))
+				return
+			}
+			body, ok := f.serviceAccounts[r.URL.Path[strings.LastIndex(r.URL.Path, "/")+1:]]
+			if !ok {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"kind":"Status","message":"not found"}`))
+				return
+			}
+			_, _ = w.Write([]byte(body))
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pods/"+testSelfPod):
 			f.selfPodGets++
 			if f.selfPod == "" {

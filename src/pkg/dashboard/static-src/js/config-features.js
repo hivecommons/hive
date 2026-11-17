@@ -235,10 +235,9 @@
       const rvSrcStatus = rv.perspectives_source_status || '';
       const rvSrcURL = /^https:\/\/github\.com\//.test(rv.perspectives_source_url || '') ? rv.perspectives_source_url : '';
       const rvLinkedBanner = !rvLinked ? '' : `<div class="rv-perspectives-linked">
-              <div>Linked to ${rvSrcURL ? `<a href="${esc(rvSrcURL)}" target="_blank" rel="noopener noreferrer"><code>${esc(rvSrcLabel)}</code> &#8599;</a>` : `<code>${esc(rvSrcLabel)}</code>`} ${yamlHint('review.perspectives_source')} <span class="text-muted">&mdash; read-only here; change the perspectives in that file, or remove the link from hive.yaml to edit them inline.</span></div>
-              <div class="rv-perspectives-linked-status">${rvSrcStatus === 'unresolved' ? 'Not resolved yet (repo unreachable, not allowlisted, or invalid) &mdash; the inline perspectives below are in effect.' : `Status: <code>${esc(rvSrcStatus)}</code>`}</div>
-              ${rv.perspectives_source_warning ? `<div class="rv-perspectives-linked-warning">&#9888; ${esc(rv.perspectives_source_warning)}</div>` : ''}
+              <div>Linked to ${rvSrcURL ? `<a href="${esc(rvSrcURL)}" target="_blank" rel="noopener noreferrer"><code>${esc(rvSrcLabel)}</code> &#8599;</a>` : `<code>${esc(rvSrcLabel)}</code>`} ${yamlHint('review.perspectives_source')} <span class="text-muted">&mdash; the perspectives below are read-only. Change them in that file, or use Unlink under &quot;Link perspectives to a repo file&quot; to edit them here.</span></div>
             </div>`;
+      const rvSourceControls = reviewPerspectivesSourceHtml(rv, rvCanEdit);
       const rvLockAttr = rvLinked ? ' disabled' : '';
       const rvPerspectiveRow = (name, defaultFocus) => {
         const custom = rvPrompts[name] || '';
@@ -500,6 +499,7 @@
           </div>
           <div id="rv-perspectives" style="margin-top:10px">
             <p style="font-size:0.72rem;color:var(--muted);margin:var(--sp-0) var(--sp-0) var(--sp-2)">Which questions the reviewer asks of every PR, and what each one looks for. Edit the text to tell this hive&apos;s reviewer what matters in <em>your</em> repos &mdash; e.g. name the conventions doc for <code>style</code>. Blank means the built-in. Unchecking a perspective stops it running and stops its verdicts being accepted.</p>
+            ${rvSourceControls}
             ${rvLinkedBanner}
             ${rvBuiltin.map(b => rvPerspectiveRow(b.name, b.focus)).join('')}
             ${rvCustomNames.map(n => rvPerspectiveRow(n, '')).join('')}
@@ -877,6 +877,18 @@
             <div class="config-toggle-switch ${f.reentrantTurnBackgroundFleetEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="reentrantTurnBackgroundFleetEnabled"></div>
             <span class="config-toggle-label">Include background fleet ${yamlHint('turn.reentrant.background_fleet_enabled')} ${settingHelpMark('settings', 'features', 'Re-entrant background fleet', `Extends the opt-in to every enabled background agent once a soak is underway. Off keeps the rollout to named agents. HIVE_REENTRANT_TURN_BACKGROUND_FLEET overrides it.`)}</span>
           </div>
+        </div>
+        <div class="settings-subsection">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnabled"></div>
+            <span class="config-toggle-label">Customers ${yamlHint('customers.enabled')} ${settingHelpMark('settings', 'features', 'Customers', `ON by default. The Customers section keeps one profile per person: who they are, their tags, what they are trying to get done and how it is going for them. Dashboard users and people added by hand are customers; anyone else hive has seen is only a suggestion until someone accepts them. Everything is stored on this hive and nothing is sent anywhere else. Off opens no store and hides the section. A change takes effect when the hive restarts. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersEffective !== f.customersEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENABLED overrides this setting: Customers is currently <b>${f.customersEffective ? 'on' : 'off'}</b>.</p>` : ''}
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersInference ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersInferenceEnabled"></div>
+            <span class="config-toggle-label">Suggest goals and satisfaction ${yamlHint('customers.inference.enabled')} ${settingHelpMark('settings', 'features', 'Customer goal and satisfaction suggestions', `OFF by default. When on, the hive reads what a customer has written (the issues they opened, the pull requests they authored and mail from them that was approved) and asks the model configured for meetings to suggest what they are trying to get done and how it is going for them. This sends that text, which can be about people who never signed up, to that model, and spends the model's daily budget (about forty thousand tokens a day). It only ever suggests: a person confirms, edits or rejects each one, a confirmed or manual value is never overwritten, and nothing suggested is shared outside the hive. Needs Customers on and a meetings model (an OpenAI-compatible endpoint or an Anthropic key). HIVE_CUSTOMERS_INFERENCE_ENABLED overrides it. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersInferenceEffective !== f.customersInference ? `<p class="config-help">HIVE_CUSTOMERS_INFERENCE_ENABLED (or turning Customers off) overrides this setting: suggestions are currently <b>${f.customersInferenceEffective ? 'on' : 'off'}</b>.</p>` : ''}
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">

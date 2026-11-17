@@ -102,14 +102,18 @@ type Meeting struct {
 	// ConsentSpeechEnd is the latest session time (seconds, a segment's
 	// `end`) heard before the notice; a segment that starts before it, and
 	// is finalized just after the notice, is discarded too.
-	ConsentSpeechEnd float64    `json:"consent_speech_end,omitempty"`
-	LobbySince       *time.Time `json:"lobby_since,omitempty"`
-	LiveAt           *time.Time `json:"live_at,omitempty"`
-	EndedAt          *time.Time `json:"ended_at,omitempty"`
-	HandedOffAt      *time.Time `json:"handed_off_at,omitempty"`
-	PurgedAt         *time.Time `json:"purged_at,omitempty"`
-	CreatedAt        time.Time  `json:"created_at"`
-	UpdatedAt        time.Time  `json:"updated_at"`
+	ConsentSpeechEnd float64 `json:"consent_speech_end,omitempty"`
+	// ConsentFenceDegraded is set when Quorum's transcript cursor could not
+	// be read at the notice: every segment in the next ConsentDegradedWindow
+	// is discarded, since nothing says which came before the notice.
+	ConsentFenceDegraded bool       `json:"consent_fence_degraded,omitempty"`
+	LobbySince           *time.Time `json:"lobby_since,omitempty"`
+	LiveAt               *time.Time `json:"live_at,omitempty"`
+	EndedAt              *time.Time `json:"ended_at,omitempty"`
+	HandedOffAt          *time.Time `json:"handed_off_at,omitempty"`
+	PurgedAt             *time.Time `json:"purged_at,omitempty"`
+	CreatedAt            time.Time  `json:"created_at"`
+	UpdatedAt            time.Time  `json:"updated_at"`
 }
 
 // Person is a meeting participant as Quorum reports it.
@@ -142,11 +146,14 @@ type Event struct {
 	Reason    string          `json:"reason,omitempty"`
 	// Platform, GuildID, ChannelID and RequestedBy are set on a `requested`
 	// state event raised from the platform (Discord `/hive join`).
-	Platform    string          `json:"platform,omitempty"`
-	GuildID     string          `json:"guild_id,omitempty"`
-	ChannelID   string          `json:"channel_id,omitempty"`
-	RequestedBy *Person         `json:"requested_by,omitempty"`
-	Raw         json.RawMessage `json:"-"`
+	Platform    string  `json:"platform,omitempty"`
+	GuildID     string  `json:"guild_id,omitempty"`
+	ChannelID   string  `json:"channel_id,omitempty"`
+	RequestedBy *Person `json:"requested_by,omitempty"`
+	// Reply is set on a `reply` event: one of the bot's own lines, written
+	// by hive into the transcript (replies.go). Quorum never sends it.
+	Reply *ReplyInfo      `json:"reply,omitempty"`
+	Raw   json.RawMessage `json:"-"`
 }
 
 // Who returns the speaker or author display name.

@@ -1,1 +1,0 @@
-- Governor PRs by model shows "—" instead of 0% for models with no recorded runs, adds a history-coverage note and Wilson 95% intervals on its rates, and the contributor relay now detects the running model for codex so its PRs are no longer attributed to "unknown" (#18713, #18714).
