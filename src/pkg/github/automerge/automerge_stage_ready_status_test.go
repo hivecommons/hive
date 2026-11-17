@@ -69,8 +69,10 @@ func TestReadyEntryQuietFoldsIntoStatusCard(t *testing.T) {
 	if _, ok := prstatus.Get(card, prstatus.KeyStageStalled); !ok {
 		t.Fatalf("existing card section lost:\n%s", card)
 	}
+	// The fixture's PR wears none of Prow's labels, so the close asks for
+	// a GitHub approve and merge, not `/lgtm` `/approve`.
 	section, ok := prstatus.Get(card, prstatus.KeyStageReady)
-	if !ok || !strings.Contains(section, "Ready for a human merge: verdict approved `sha`") || !strings.Contains(section, "Blocked only by `role/contributor`") || !strings.Contains(section, "`/lgtm` `/approve`") {
+	if !ok || !strings.Contains(section, "Ready for a human merge: verdict approved `sha`") || !strings.Contains(section, "Blocked only by `role/contributor`") || !strings.Contains(section, "approve and merge it on GitHub") {
 		t.Fatalf("stage-ready section = %q (found %v)", section, ok)
 	}
 	if strings.Contains(card, stagelabels.ReadyCommentMarker) {

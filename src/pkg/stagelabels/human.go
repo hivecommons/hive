@@ -359,6 +359,18 @@ type Route struct {
 	// BehindBase is Evidence.BehindBase on a trust-blocked 090: the 090
 	// comment then says the branch must be brought up to date as well.
 	BehindBase string
+	// HumanMergeWhy is the one-sentence reason a person merges a 090 that
+	// is not waiting on the author's trust — auto-merge is off for the
+	// repo, the repo refuses the merge method, … — in the words the
+	// dashboard shows (prstage.HumanMergeReasonWords). It replaces the
+	// "Blocked only by `role/…`" clause, which named the wrong blocker
+	// (projectbluefin/website#1036). Empty for a trust-blocked 090.
+	HumanMergeWhy string
+	// NoProw: the repository shows none of Prow's plugin labels, so the
+	// 090 comment's closing line asks for a GitHub approve and merge
+	// instead of `/lgtm` `/approve`, which nothing there answers
+	// (projectbluefin/actions#757). False keeps the Prow wording.
+	NoProw bool
 	// Gates names the hard merge stops that ride the route as pills
 	// without choosing its stage: an open sentinel alert, a hold-class
 	// label (owner rule, hivecommons/hive#17327). The stage is the head's
@@ -893,6 +905,10 @@ func EntryCommentUpdated(body string, at time.Time) string {
 // blockedBy is the prose for the trust cause ("" when unknown). A head
 // behind a base that requires up-to-date branches (r.BehindBase) reads
 // "Blocked by …" and names the base merge as well (readyCommentBehindTail).
+// A 090 a person merges for another reason (r.HumanMergeWhy: auto-merge
+// off, merge method, …) states that reason instead of a trust cause, and a
+// repository without Prow (r.NoProw) is asked for a GitHub approve and
+// merge rather than `/lgtm` `/approve`.
 //
 // An approved manual-merge route (r.ManualMerge) names the lane rule and
 // the approver instead of a trust cause, and tells the person the one step
@@ -927,15 +943,23 @@ func ReadyComment(r Route, blockedBy string) string {
 		if len(r.Gates) > 0 {
 			held()
 		}
-		b.WriteString("\n\n<sub>The hive never merges this lane's changes itself: click **Merge** (or `/lgtm` + `/approve` for tide) to land it.</sub>")
+		if r.NoProw {
+			b.WriteString("\n\n<sub>The hive never merges this lane's changes itself: click **Merge** to land it.</sub>")
+		} else {
+			b.WriteString("\n\n<sub>The hive never merges this lane's changes itself: click **Merge** (or `/lgtm` + `/approve` for tide) to land it.</sub>")
+		}
 		return b.String()
 	}
 	if len(r.Gates) > 0 {
 		held()
-		b.WriteString("\n\n<sub>Confirm the intent (resolve the sentinel alert or lift the hold), then `/lgtm` `/approve` (or merge) if you accept it.</sub>")
+		b.WriteString("\n\n<sub>Confirm the intent (resolve the sentinel alert or lift the hold), then " + readyCommentAccept(r) + " if you accept it.</sub>")
 		return b.String()
 	}
-	if blockedBy = strings.TrimSpace(blockedBy); blockedBy != "" {
+	if why := strings.TrimSpace(r.HumanMergeWhy); why != "" {
+		b.WriteString(" ")
+		b.WriteString(strings.TrimSuffix(why, "."))
+		b.WriteString(".")
+	} else if blockedBy = strings.TrimSpace(blockedBy); blockedBy != "" {
 		b.WriteString(readyCommentBlockedLead(r))
 		b.WriteString(blockedBy)
 		b.WriteString(".")
@@ -962,10 +986,25 @@ func readyCommentBlockedLead(r Route) string {
 func readyCommentBehindTail(r Route) string {
 	base := strings.TrimSpace(r.BehindBase)
 	if base == "" {
-		return "\n\n<sub>The hive never approves on your behalf: `/lgtm` `/approve` (or merge) if you accept it.</sub>"
+		return "\n\n<sub>The hive never approves on your behalf: " + readyCommentAccept(r) + " if you accept it.</sub>"
+	}
+	approve := "`/lgtm` `/approve`"
+	if r.NoProw {
+		approve = "approve it on GitHub"
 	}
 	return " The branch is also behind `" + base + "`, which requires up-to-date branches: GitHub will not merge this head until `" + base + "` is merged into it." +
-		"\n\n<sub>The hive never approves on your behalf: `/lgtm` `/approve` if you accept it; the branch still has to be brought up to date before it can merge.</sub>"
+		"\n\n<sub>The hive never approves on your behalf: " + approve + " if you accept it; the branch still has to be brought up to date before it can merge.</sub>"
+}
+
+// readyCommentAccept is the step the 090 comment asks of a person who
+// accepts the PR: Prow's `/lgtm` `/approve` (or a merge), or, in a
+// repository without Prow, a GitHub approve and merge — `/lgtm` there is a
+// comment nothing answers (projectbluefin/actions#757).
+func readyCommentAccept(r Route) string {
+	if r.NoProw {
+		return "approve and merge it on GitHub"
+	}
+	return "`/lgtm` `/approve` (or merge)"
 }
 
 // DecisionComment renders the 085 entry comment naming what is owed. A
