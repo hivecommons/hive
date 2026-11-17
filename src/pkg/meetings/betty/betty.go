@@ -342,9 +342,17 @@ func (e *Engine) Restyle(ctx context.Context, text string) string {
 // research summary as a short chat answer in the persona's voice, posted
 // once on Replies; on failure or timeout the summary is posted as is. It
 // does not block.
-func (e *Engine) FollowUp(query, summary string) {
+func (e *Engine) FollowUp(query, summary string) { e.FollowUpIn(query, summary, false) }
+
+// FollowUpIn is FollowUp in the channel the question was asked in: voice
+// (two sentences, no links) when voice is true, else chat.
+func (e *Engine) FollowUpIn(query, summary string, voice bool) {
+	kind, clipFn := KindChat, ClipChat
+	if voice {
+		kind, clipFn = KindVoice, ClipVoice
+	}
 	p := phrasesFor(e.s.Persona.Language)
-	raw := ClipChat(fmt.Sprintf(p.digged, clip(query, maxFollowUpQuery), strings.TrimSpace(summary)))
+	raw := clipFn(fmt.Sprintf(p.digged, clip(query, maxFollowUpQuery), strings.TrimSpace(summary)))
 	ctx := e.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -357,15 +365,34 @@ func (e *Engine) FollowUp(query, summary string) {
 			cancel()
 			out = strings.Trim(strings.TrimSpace(out), "\"")
 			if err == nil && out != "" && !strings.Contains(out, "{") {
-				text = ClipChat(out)
+				text = clipFn(out)
 			}
 		}
 		select {
-		case e.out <- Reply{Kind: KindChat, Text: text, Trigger: TriggerFollowUp, Question: query}:
+		case e.out <- Reply{Kind: kind, Text: text, Trigger: TriggerFollowUp, Question: query, VoiceWanted: voice}:
 		case <-ctx.Done():
 		}
 	}()
 }
+
+// ResearchFailedText is what she says when a deep dive could not start or
+// finish, in the persona's language: "I couldn't look that up: <reason>."
+func (e *Engine) ResearchFailedText(reason string) string {
+	reason = strings.TrimRight(strings.TrimSpace(reason), ".")
+	if reason == "" {
+		reason = "something went wrong"
+	}
+	return fmt.Sprintf(phrasesFor(e.s.Persona.Language).failed, clip(reason, maxFailReason))
+}
+
+// ResearchProgressText is the one progress note for a deep dive that runs
+// long.
+func (e *Engine) ResearchProgressText() string {
+	return phrasesFor(e.s.Persona.Language).still
+}
+
+// maxFailReason bounds the reason quoted in a failure notice.
+const maxFailReason = 160
 
 // maxFollowUpQuery bounds the question quoted in a raw follow-up.
 const maxFollowUpQuery = 80
