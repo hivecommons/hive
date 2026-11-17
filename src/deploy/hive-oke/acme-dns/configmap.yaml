@@ -1,0 +1,41 @@
+# Authoritative-only Knot DNS for the delegated zone acme.hive.hivecommons.dev.
+# Dynamic updates: TSIG key `acme-dns-tsig` only, TXT only, and only on the
+# three challenge names the CNAMEs in README.md point at.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: acme-dns-knot
+  namespace: acme-dns
+data:
+  knot.conf: |
+    server:
+        listen: [ 0.0.0.0@53, "::@53" ]
+        rundir: /rundir
+    # Defines key `acme-dns-tsig` from the Secret; the secret never sits in git.
+    include: /secret/tsig-key.conf
+    log:
+      - target: stdout
+        any: info
+    acl:
+      - id: acme-update
+        key: acme-dns-tsig
+        action: update
+        update-type: [ TXT ]
+        update-owner: name
+        update-owner-match: equal
+        update-owner-name: [ hive, lke-hive, dibs ]
+    template:
+      - id: default
+        storage: /zones
+        zonefile-sync: -1
+        zonefile-load: difference-no-serial
+        journal-content: none
+    zone:
+      - domain: acme.hive.hivecommons.dev
+        file: acme.hive.hivecommons.dev.zone
+        acl: acme-update
+  acme.hive.hivecommons.dev.zone: |
+    $ORIGIN acme.hive.hivecommons.dev.
+    $TTL 60
+    @   IN SOA ns-acme.hive.hivecommons.dev. hostmaster.hivecommons.dev. ( 1 3600 600 86400 30 )
+    @   IN NS  ns-acme.hive.hivecommons.dev.

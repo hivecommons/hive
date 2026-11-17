@@ -1,0 +1,1 @@
+- Add `src/deploy/hive-oke/acme-dns/` manifests and runbook for a delegated RFC 2136 DNS-01 zone so the hub wildcard certificate can renew without Cloudflare.
