@@ -3,9 +3,12 @@ package main
 import (
 	"errors"
 	"log/slog"
+	"maps"
 	"sort"
+	"sync/atomic"
 
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/meetings/live"
 	"github.com/hivecommons/hive/pkg/research"
 )
@@ -14,22 +17,53 @@ import (
 // the research agents reuse (hivecommons/hive#18294).
 const meetingsResearchBaseAgent = "scanner"
 
+// researchBaseName is the configured agent researchBase copies from, ""
+// when there is none.
+func researchBaseName(cfg *config.Config) string {
+	if cfg == nil || len(cfg.Agents) == 0 {
+		return ""
+	}
+	if _, ok := cfg.Agents[meetingsResearchBaseAgent]; ok {
+		return meetingsResearchBaseAgent
+	}
+	names := make([]string, 0, len(cfg.Agents))
+	for n := range cfg.Agents {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+	return names[0]
+}
+
+// researchStatusSource is the slice of *research.Pool the settings page
+// reads.
+type researchStatusSource interface {
+	Status() research.Status
+}
+
+// meetingsResearchStatus reports the pool for Settings, Meeting attendee,
+// or nil when d is not a pool.
+func meetingsResearchStatus(cfg *config.Config, d live.ResearchDispatcher) dashboard.MeetingsResearchStatusFunc {
+	src, ok := d.(researchStatusSource)
+	if !ok {
+		return nil
+	}
+	base := researchBase(cfg)
+	name := researchBaseName(cfg)
+	return func() dashboard.MeetingsResearchStatus {
+		st := src.Status()
+		return dashboard.MeetingsResearchStatus{Agents: st.Agents, Available: st.Available, BaseAgent: name, Backend: base.Backend, Model: base.Model}
+	}
+}
+
 // researchBase picks the backend and model for research-1..N: the scanner's
 // when it exists, else the first configured agent's by name. Only those two
 // fields are copied; research.AgentConfig forces the read-only rest.
 func researchBase(cfg *config.Config) config.AgentConfig {
-	if cfg == nil || len(cfg.Agents) == 0 {
+	name := researchBaseName(cfg)
+	if name == "" {
 		return config.AgentConfig{}
 	}
-	a, ok := cfg.Agents[meetingsResearchBaseAgent]
-	if !ok {
-		names := make([]string, 0, len(cfg.Agents))
-		for n := range cfg.Agents {
-			names = append(names, n)
-		}
-		sort.Strings(names)
-		a = cfg.Agents[names[0]]
-	}
+	a := cfg.Agents[name]
 	return config.AgentConfig{Backend: a.Backend, Model: a.Model}
 }
 
@@ -53,11 +87,49 @@ func wireMeetingsResearch(cfg *config.Config, rt any, logger *slog.Logger) live.
 		}
 		return nil
 	}
-	pool.Ensure(researchBase(cfg))
+	base := researchBase(cfg)
+	pool.Ensure(base)
+	keepResearchAgents(pool.Agents(), research.AgentConfig(base))
 	if logger != nil {
 		logger.Info("[meetings] research pool ready", "agents", pool.Agents())
 	}
 	return pool
+}
+
+// researchAgents is the research pool's agent set once it is wired. The
+// agents are runtime-only (not in hive.yaml), so every ReconcileAgents call
+// (config reload, reviewer autoscale) must carry them, or it removes them as
+// "no longer configured" and every meeting research request then fails with
+// "no research agent available" (hivecommons/hive#18590 finding 6).
+var researchAgents atomic.Pointer[map[string]config.AgentConfig]
+
+// keepResearchAgents records the pool's agents for withResearchAgents.
+func keepResearchAgents(names []string, cfg config.AgentConfig) {
+	set := make(map[string]config.AgentConfig, len(names))
+	for _, n := range names {
+		set[n] = cfg
+	}
+	researchAgents.Store(&set)
+}
+
+// withResearchAgents returns configs plus the research pool's agents (when
+// the pool is wired and a name is not already configured), for
+// ReconcileAgents. configs is not modified.
+func withResearchAgents(configs map[string]config.AgentConfig) map[string]config.AgentConfig {
+	set := researchAgents.Load()
+	if set == nil || len(*set) == 0 {
+		return configs
+	}
+	out := maps.Clone(configs)
+	if out == nil {
+		out = make(map[string]config.AgentConfig, len(*set))
+	}
+	for n, c := range *set {
+		if _, ok := out[n]; !ok {
+			out[n] = c
+		}
+	}
+	return out
 }
 
 // researchObserver is the slice of *research.Pool that reports progress.
