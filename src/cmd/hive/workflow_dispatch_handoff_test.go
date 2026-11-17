@@ -97,7 +97,7 @@ func TestWorkflowDispatchDeclinedHandoffRetriesOnce(t *testing.T) {
 		t.Fatalf("claim = %+v %v", c, ok)
 	}
 	deliver(t, rt, dlog, kicks[0], at)
-	if again := buildWorkflowDispatchKicks(cfg, rt, dlog, items, nil, ledger, nil, true, at.Add(time.Minute), nil); len(again) != 0 {
+	if again := buildWorkflowDispatchKicks(cfg, rt, dlog, items, nil, ledger, nil, at.Add(time.Minute), nil); len(again) != 0 {
 		t.Fatalf("a pending hand-off was repeated: %+v", again)
 	}
 
