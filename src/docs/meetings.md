@@ -194,6 +194,18 @@ An update to a meeting already on the calendar (a higher SEQUENCE, or a cancella
 
 Each user registers the addresses their calendar sends invites from, under **Settings, Meeting attendee** (API: `/api/meetings/calendar-emails`). Adding an address shows a proof code such as `hive-proof-k7f3qz2mwx4a` and the instruction: send an email from that address to `hive@<host>` with this code in the subject. When that mail arrives with DMARC alignment for exactly that address, the address is marked proven. A proof mail from another address, or one that fails DMARC, is recorded on the address so the user can see why. Codes are valid for 24 hours and can be reissued; each user can register 10 addresses. Hive never sends mail, so this is how it learns which addresses are yours.
 
+When a proof mail does not count, the address stays pending and its row says why, in plain words, within a few seconds of the mail arriving ([#18579](https://github.com/hivecommons/hive/issues/18579)):
+
+| Reason | What the row says |
+| --- | --- |
+| `not_aligned` | Your mail server did not authenticate this address: neither SPF nor DKIM passed for the domain. Turn on DKIM for the domain, add the sending server to SPF, or prove an address from a provider that signs mail. |
+| `from_mismatch` | The proof came from a different address than the one registered, and names the From address hive-mx parsed, or "(none: the From header was missing, repeated or unparsable)" when there was no single readable From. |
+| `expired` | The code expired. Remove and add the address again. |
+
+The row also shows when the attempt arrived and what hive-mx saw: the SPF result and domain, each DKIM signature's result and domain, and whether either was aligned with the From domain (DMARC alignment: the domain that passed SPF or DKIM must match the From address's domain). Only these results and domains are kept, never the message. **Check again** reloads the list after you fix it and resend. In the API, an unproven address carries `last_failure` with `reason`, `at`, `from` (on `from_mismatch` only: the From address seen, shown in full because the address is the user's own entry), `from_domain`, `spf`, `spf_domain`, `spf_aligned`, `dkim`, `dkim_aligned`, `dmarc`, `aligned` and `message`.
+
+A proof mail whose code matches no address (a typo, or a code already used) has no row to land on. The owner sees it under **Recent proof attempts** in the same section (API: `recent_proof_attempts`, owner only) with the sender masked (`a***@example.com`), the time and "code not recognized". Hive keeps the latest 20 in memory; a restart clears them.
+
 ## Asking Betty to do things
 
 People in the meeting can ask Betty, spoken or typed in the meeting chat, to draft something in the hive ([#18406](https://github.com/hivecommons/hive/issues/18406)):

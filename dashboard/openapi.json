@@ -807,7 +807,7 @@
           "Meetings"
         ],
         "summary": "List my calendar emails",
-        "description": "The signed-in user's calendar email addresses with proof status and pending codes, the hive's address (hive@<host>) and the meetings.email switches. ?all=1 adds the whole allowlist for the owner. Any role.",
+        "description": "The signed-in user's calendar email addresses with proof status and pending codes, the hive's address (hive@<host>) and the meetings.email switches. An unproven address whose latest proof mail was refused carries last_failure. The owner also gets recent_proof_attempts (proof mails whose code matched no address, sender masked). ?all=1 adds the whole allowlist for the owner. Any role.",
         "parameters": [
           {
             "name": "all",
@@ -834,14 +834,14 @@
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                       }
                     },
                     "allowlist": {
                       "type": "array",
                       "items": {
                         "type": "object",
-                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                        "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                       }
                     },
                     "invites_enabled": {
@@ -849,6 +849,14 @@
                     },
                     "files_enabled": {
                       "type": "boolean"
+                    },
+                    "recent_proof_attempts": {
+                      "type": "array",
+                      "description": "Owner only: recent proof mails whose code matched no address, newest first; kept in memory",
+                      "items": {
+                        "type": "object",
+                        "description": "Proof attempt: at, from (masked, a***@example.com), reason (code not recognized)"
+                      }
                     }
                   }
                 }
@@ -897,7 +905,7 @@
                   "properties": {
                     "email": {
                       "type": "object",
-                      "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only)"
+                      "description": "Calendar email: email, proven, proven_at, code (pending proof code, own list only), code_expires_at, last_error, active (the user still has access), login (owner allowlist only), last_failure (latest refused proof: reason not_aligned, from_mismatch or expired; at; from (from_mismatch only: the From address parsed, empty when missing, repeated or unparsable); from_domain, spf, spf_domain, spf_aligned, dkim [{domain, result}], dkim_aligned, dmarc, aligned; message, the reason in plain words with what to do)"
                     },
                     "address": {
                       "type": "string"
