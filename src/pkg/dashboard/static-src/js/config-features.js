@@ -880,6 +880,13 @@
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnabled"></div>
+            <span class="config-toggle-label">Customers ${yamlHint('customers.enabled')} ${settingHelpMark('settings', 'features', 'Customers', `ON by default. The Customers section keeps one profile per person: who they are, their tags, what they are trying to get done and how it is going for them. Dashboard users and people added by hand are customers; anyone else hive has seen is only a suggestion until someone accepts them. Everything is stored on this hive and nothing is sent anywhere else. Off opens no store and hides the section. A change takes effect when the hive restarts. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersEffective !== f.customersEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENABLED overrides this setting: Customers is currently <b>${f.customersEffective ? 'on' : 'off'}</b>.</p>` : ''}
+        </div>
+        <div class="settings-subsection">
+          <div class="config-toggle">
             <div class="config-toggle-switch ${f.prFollowUpEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="prFollowUpEnabled"></div>
             <span class="config-toggle-label">PR follow-up resume ${settingHelpMark('settings', 'features', 'PR follow-up resume', `OFF by default. When an agent opens a PR, the hive remembers which live session wrote it and keeps a short handoff note (why, approach, rejected alternatives, repro, files touched). Later CI failures, changes-requested reviews, review-bot threads and comments from people with write access on that PR are sent to the same session without clearing it. When that session is gone (a restart or the agent&apos;s next regular kick), the follow-up takes the normal fix-before-new path and the agent&apos;s next kick carries the handoff note. The hive&apos;s own replies and bot comments never trigger a follow-up. Pointers are deleted when the PR merges or closes. See src/docs/design/pr-follow-up-resume.md.`)}</span>
           </div>
