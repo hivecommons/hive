@@ -1639,6 +1639,8 @@
     .ham-seg.ham-wf-seg.done .ham-stage-ico { opacity: 0.6; }
     .ham-emoji-ico { display: inline-block; width: 12px; height: 12px; font-size: var(--fs-xs); line-height: 12px; text-align: center; font-style: normal; }
     .ham-seg.ham-wf-uncovered { background: color-mix(in srgb, var(--amber) 18%, transparent); color: var(--amber); outline: 1px dashed var(--amber); }
+    /* A model-owned row whose profile no hive agent fills (hivecommons/hive issue 18690). */
+    .ham-badge-wf-gap { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-group-dist { flex: 0 0 auto; margin-left: auto; margin-right: calc(4em + var(--sp-3)); display: inline-flex; align-items: flex-end; gap: var(--sp-1); height: 0.9em; }
     .ham-gd { display: inline-block; width: 0.45em; height: 15%; border-radius: var(--sp-1); background: color-mix(in srgb, var(--text-faint) 35%, transparent); }
     .ham-gd-1 { height: 35%; background: color-mix(in srgb, var(--amber) 55%, transparent); }
@@ -1690,8 +1692,6 @@
     .ham-badge-sentinel { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-badge-sentinel.ham-sentinel-notice { color: var(--status-info); border-color: color-mix(in srgb, var(--status-info) 55%, transparent); }
     /* 072 adoption chip (maintainer-policy, hive PR 14524): "waiting on @author (maintainer, offline 26h) — adopt?" */
-    /* A model-owned row whose profile no hive agent fills (hivecommons/hive#18690). */
-    .ham-badge-wf-gap { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-badge-adoption { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
     /* "supersedes N": the closed original a live PR replaced (hive PR 15135 follow-up). Muted — a trace, not a call to act. */
     .ham-badge-supersedes { color: var(--text-faint); border-color: var(--line-subtle); text-decoration: none; }
