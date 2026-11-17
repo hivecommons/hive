@@ -487,10 +487,12 @@ without a class. Review submissions and review requests are always counted as
 | `automerge.(*engineStatusForge).CreateComment` | `status` | passthrough wrapper shared by normal-mode stage notes and the quiet-mode status-comment forge under `prstatus.Write`; attributed to its caller |
 | `github.(*clientStatusForge).CreateComment` | `status` | passthrough wrapper (status-comment forge under `prstatus.Write`); attributed to its caller |
 | `github.(*Client).PostIssueNote` | `status` | passthrough wrapper (issue status card, `attention_pilot`); attributed to its caller |
+| `github.(*Client).PostInformationalIssueNote` | `status` | passthrough wrapper (issue status card in quiet mode or under `attention_pilot`, for notes nobody acts on); attributed to its caller |
 | `github.(*Client).closeDecomposedParent` | `status` |  |
 | `github.(*Client).closeIssueForMergedPRClaimWithIssue` | `status` |  |
 | `github.(*Client).closeSupersededPRDecision` | `status` |  |
 | `github.(*Client).fileReviewBacklog` | `status` |  |
+| `github.(*Client).foldReviewFollowUps` | `status` | review Follow-ups checklist folded into the PR status card (quiet mode) |
 | `github.(*Client).foldSentinelNotice` | `status` | informational sentinel notice folded into the PR status card (quiet mode); a blocking alert is never folded |
 | `github.(*Client).joinFleetReportIssue` | `status` |  |
 | `github.(*Client).markInProgressStarted` | `status` |  |
@@ -578,7 +580,11 @@ Quiet mode (`github.notifications.mode: quiet`) folds the hive's PR
 bookkeeping into one edited `hive:status` comment (including the auto-merge
 note, under the `auto-merge` section: in `normal` mode it stays its own
 comment, and a merge blocked on a person still gets its 085 / 090 entry
-comment, hivecommons/hive#18452) but leaves issue notes as
+comment, hivecommons/hive#18452; the review Follow-ups checklist, under
+`review-followups`, and a trust-only 090 entry, under `stage-ready`, while a
+held or manual-merge 090 and every 085 stay comments, hivecommons/hive#18606)
+but leaves issue notes (except the informational `issue-pr-link` stage note)
+as
 comments of their own, so one issue lifecycle (partial merge, remainder,
 close) could still email its watchers several times. With the pilot on, the
 issue gets the same card, written through the same single status writer
