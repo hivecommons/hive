@@ -6270,6 +6270,24 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	// pack apply saw nothing to respect. Adopt them BEFORE the fullness guard,
 	// like WorkSource, so a short overlay still carries them.
 	adoptOperatorCadenceOverrides(cfg, &overlay)
+	// Review gate and agent sandbox (#18804): the dashboard saves both into
+	// the overlay (the Config marshals whole), but this reload used to rebuild
+	// them from the seed alone, so a reload that starts from the seed (the
+	// read-only ConfigMap mount on a first boot or reprovision, config-check,
+	// a watcher reload of the seed path) silently dropped
+	// review.combined_perspectives, review.require_labels,
+	// review.perspectives_source and agent_sandbox.image/job.*, the same shape
+	// as #5632 and the work source. Adopt each block whole when the overlay
+	// carries it, BEFORE the fullness guard so a short overlay still wins; an
+	// overlay that says nothing leaves the seed's block untouched. This is the
+	// same overlay-wins rule the entrypoint's boot merge applies to every
+	// block. Variables stays seed-only (see the invariant below).
+	if !reflect.DeepEqual(overlay.Review, ReviewConfig{}) {
+		cfg.Review = overlay.Review
+	}
+	if !reflect.DeepEqual(overlay.AgentSandbox, cruxconfig.AgentSandboxConfig{}) {
+		cfg.AgentSandbox = overlay.AgentSandbox
+	}
 	if len(overlay.RemovedAgents) > 0 {
 		cfg.RemovedAgents = overlay.RemovedAgents
 		cfg.PruneRemovedAgents()
