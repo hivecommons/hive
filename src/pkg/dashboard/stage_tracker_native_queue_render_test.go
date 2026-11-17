@@ -49,8 +49,10 @@ assert.strictEqual((html.match(/Test group/g) || []).length, 1, html);
 assert.ok(html.includes('3 finished groups (outcome not observed)'), html);
 assert.ok(!html.includes(gone.slice(0, 12)) && !html.includes('Validation candidate'), html);
 assert.ok(!/merged|failed/.test(html.split('finished groups')[1].split('</div>')[0]), 'finished groups claim no outcome');
-// Caveats appear once, in the help mark, not per queue or per card.
-assert.strictEqual((html.match(/never from a PR number/g) || []).length, 1, html);
+// Caveats appear once, in the single help mark (its text is in the aria-label
+// and the tooltip span, so the sentence occurs twice), not per queue or card.
+assert.strictEqual((html.match(/ham-native-help"/g) || []).length, 1, html);
+assert.strictEqual((html.match(/never from a PR number/g) || []).length, 2, html);
 assert.ok(!html.includes('never inferred from FIFO') && !html.includes('repo filter applies here'), html);
 assert.ok(!html.includes('policy unavailable'), html);
 // Details on demand: entries, the live group with its own SHA's checks, receipts.
