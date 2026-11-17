@@ -313,15 +313,20 @@ test('hit-target CSS: every small Inbox control reaches --tap-target without gro
   assert.match(rule('.inbox-toggle'), /min-height: var\(--tap-target\)/);
   // Small buttons (desktop too), pills, "+N / less" and text links: one
   // shared pseudo-element that only ever extends outwards.
-  const shared = css.slice(css.indexOf('[data-dashboard-section="inbox-section"] .btn-sm::before'));
+  const shared = css.slice(css.indexOf('.inbox-panel .btn-sm::before'));
   const selectors = shared.slice(0, shared.indexOf('{'));
-  for (const sel of ['[data-dashboard-section="inbox-section"] .btn-sm::before', '.inbox-pills a::before', '.inbox-link::before', '.inbox-more::before', '.inbox-fact-link::before', '.kc-pill.inbox-input-chip::before']) {
+  for (const sel of ['.inbox-panel .btn-sm::before', '.inbox-rec-panel .btn-sm::before', '[id="inbox-mail-log"] .btn-sm::before', '.inbox-pills a::before', '.inbox-link::before', '.inbox-more::before', '.inbox-fact-link::before', '.kc-pill.inbox-input-chip::before']) {
     assert.ok(selectors.includes(sel), sel + ' gets the larger hit area');
   }
   assert.match(shared, /position: absolute;\s*inset: min\(0px, calc\(\(100% - var\(--tap-target\)\) \/ 2\)\);/);
   assert.match(html, /class="[^"]*inbox-share-more"/, 'the +N / less link exists');
   assert.ok(fnSrc('inboxSharePillsHtml').includes('inbox-share-more') && fnSrc('inboxItemHtml').includes('class="inbox-pills"'), '+N / less sits inside .inbox-pills');
   // Not scoped to a media query, and the visible size is untouched.
+  // The three Inbox regions that hold buttons exist under those names.
+  for (const hook of ['class="inbox-panel"', 'class="inbox-rec-panel"', 'id="inbox-mail-log"']) assert.ok(html.includes(hook), hook);
+  // The dashboard pins its notices before the first section by searching
+  // for this attribute, so the stylesheet must not spell it.
+  assert.ok(!css.includes('data-dashboard-section'));
   assert.ok(!css.includes('@media'));
   assert.ok(!/\.btn-sm[^{]*\{[^}]*(min-height|padding|font-size)/.test(css), '.btn-sm keeps its size');
 });

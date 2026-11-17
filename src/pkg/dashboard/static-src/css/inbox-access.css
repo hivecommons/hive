@@ -20,9 +20,9 @@
     .inbox-check { position: relative; cursor: pointer; }
     .inbox-check::before { content: ""; position: absolute; top: 0; left: 50%; width: var(--tap-target); height: var(--tap-target); margin-left: calc(var(--tap-target) / -2); }
     .inbox-toggle { min-height: var(--tap-target); cursor: pointer; }
-    [data-dashboard-section="inbox-section"] .btn-sm { position: relative; }
+    .inbox-panel .btn-sm, .inbox-rec-panel .btn-sm, [id="inbox-mail-log"] .btn-sm { position: relative; }
     .inbox-pills a, .inbox-link, .inbox-more, .inbox-fact-link { position: relative; display: inline-block; }
-    [data-dashboard-section="inbox-section"] .btn-sm::before, .inbox-pills a::before, .inbox-link::before, .inbox-more::before, .inbox-fact-link::before, .kc-pill.inbox-input-chip::before {
+    .inbox-panel .btn-sm::before, .inbox-rec-panel .btn-sm::before, [id="inbox-mail-log"] .btn-sm::before, .inbox-pills a::before, .inbox-link::before, .inbox-more::before, .inbox-fact-link::before, .kc-pill.inbox-input-chip::before {
       content: ""; position: absolute;
       inset: min(0px, calc((100% - var(--tap-target)) / 2));
     }
