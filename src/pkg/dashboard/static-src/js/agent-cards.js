@@ -789,7 +789,17 @@
        substrate), computed at boot/reload and carried as sandbox_warnings. */
     function agentSandboxWarningsHtml(a) {
       const ws = a && Array.isArray(a.sandbox_warnings) ? a.sandbox_warnings : [];
-      return ws.map(w => `<div class="agent-error" title="${esc(w)}">⚠ ${esc(w)}</div>`).join('');
+      return ws.map(w => `<div class="agent-error" title="${esc(w)}">⚠ ${esc(w)}${sandboxImageFixLinksHtml(w, a)}</div>`).join('');
+    }
+    /* The "no sandbox image" warning is fixed in two places (#18797): this
+       agent's Sandbox settings, or the hive-wide default under Settings,
+       Security. Link both instead of describing a manual step. */
+    const NO_SANDBOX_IMAGE_WARNING = 'no sandbox image';
+    function sandboxImageFixLinksHtml(w, a) {
+      if (String(w || '').indexOf(NO_SANDBOX_IMAGE_WARNING) === -1) return '';
+      const agent = esc((a && a.name) || '');
+      return ` <a href="#" class="text-accent" data-action="openConfigDialog" data-prevent="1" data-agent="${agent}" data-config-type="agent" data-tab="General">Set this agent's image</a>`
+        + ` <a href="#" class="text-accent" data-action="openConfigDialog" data-prevent="1" data-config-type="governor" data-tab="Security">Set the default image</a>`;
     }
     function agentSandboxRun(a) {
       return (a && a.sandboxed && a.sandboxRun && a.sandboxRun.health) ? a.sandboxRun : null;

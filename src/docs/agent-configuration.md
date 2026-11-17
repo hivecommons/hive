@@ -408,6 +408,10 @@ is refused at the tier the non-conversational half requires.
 For prompt file resolution and the complete built-in `${VAR}` reference, see
 [Policy and prompt templates](../policies/README.md).
 
+### Sandbox settings (`agents.<name>.sandbox`)
+
+An agent's `sandbox` block (image, runtime, Job fields) is editable from its General tab under "Sandbox settings: image, runtime and Job", and through `PUT /api/config/agent/<name>/general` with `sandboxImage`, `sandboxRuntime`, `sandboxJob` and `sandboxCopyFrom` (hivecommons/hive#18797). A blank value inherits the hive-wide `agent_sandbox` default, which is set under Settings, Security. "Copy sandbox settings from..." copies another agent's complete block, Secret names included and never values. Enabling a sandbox that resolves no image is refused with the field named. The full set of controls and keys is in [sandbox-isolation.md](sandbox-isolation.md#setting-up-a-sandbox-from-the-dashboard).
+
 ### Declarative extensions
 
 Three optional blocks replace hardcoded behavior with declarations:

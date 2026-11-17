@@ -124,6 +124,7 @@
           <span class="config-toggle-label">Run in sandbox ${settingHelpMark('sandbox-isolation', '', 'Run in sandbox', `Opt this agent into the credential-free sandbox runner. Requires the hive-wide sandbox gate in Governor → Security to be enabled. Turning it on writes a complete sandbox block: the agent_sandbox defaults, or a copy of another sandboxed agent's block (its publish.verify commands excluded).`)}${g.sandboxEffective ? ' ' + statusBadgeHTML('ready', 'sandboxed', '', 'done') : ''}</span>
         </div>
         ${sandboxSourcePickerHTML(g)}
+        ${agentSandboxSettingsHtml(g)}
         <details class="settings-subsection-details"><summary class="settings-subsection-summary">Substrate sandbox overrides</summary>
         ${substrateSandboxFields('general', g.sandboxSubstrate)}
         </details>
@@ -1467,7 +1468,7 @@
       let inner;
       if (!defaultsOk && sources.length === 0) {
         inner = '<div class="config-field-hint" id="cfg-agent-sandbox-source-error" role="alert" style="color:var(--red)">'
-          + esc(g.sandboxDefaultsProblem) + '. No agent has a complete sandbox block to copy either: set the agent_sandbox defaults in Governor → Security first.</div>';
+          + esc(g.sandboxDefaultsProblem) + '. No agent has a complete sandbox block to copy either: set the default image in Settings, Security first, or set the image under Sandbox settings below.</div>';
       } else {
         const opts = (defaultsOk ? '<option value="">agent_sandbox defaults</option>' : '')
           + sources.map(n => '<option value="' + esc(n) + '">Copy from ' + esc(n) + '</option>').join('');
