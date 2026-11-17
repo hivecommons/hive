@@ -216,7 +216,8 @@ What `hive-mx` does with a message:
 - **Recipients:** it accepts `RCPT TO` only for `hive@<host>` where the host is a hive the hub knows (subdomain, vanity or dashboard host; the list is refreshed from the hub every 60 seconds). Everything else is refused at `RCPT`, so it is never an open relay. At most 5 recipients and 35 MiB per message (`SIZE 36700160`, so a 25 MB attachment fits after base64; a larger message gets `552` at `MAIL FROM` or `DATA`), rate limits per sender IP and per sender domain, a daily byte budget per hive (512 MiB by default, `452` past it), no AUTH, and it never sends mail. A message is spooled to disk while it is processed, never held in memory whole. STARTTLS is offered when a certificate is mounted (`HIVE_MX_TLS_CERT`, `HIVE_MX_TLS_KEY`); without one it accepts plain SMTP, which is what most senders fall back to.
 - **Sender authentication:** after DATA it checks SPF, DKIM and DMARC and records whether SPF or DKIM passed for a domain aligned with the `From` address (`adkim`/`aspf` honoured). Only an aligned sender can ever be trusted by a hive; the receiver itself decides nothing.
 - **Calendar invites:** only `text/calendar` and `application/ics` parts are read. It keeps UID, SEQUENCE, METHOD (REQUEST or CANCEL), RECURRENCE-ID, the summary (200 characters), organizer and attendees, start and end converted to UTC (Outlook's Windows time zone names such as "Eastern Standard Time" are mapped to IANA zones), RRULE and EXDATE, and the join details: the link from `X-GOOGLE-CONFERENCE`, `X-MICROSOFT-SKYPETEAMSMEETINGURL`, `LOCATION` or a link to `meet.google.com`, `teams.microsoft.com`, `teams.live.com` or `*.zoom.us` found in the description, the platform, and the meeting id and passcode where the platform uses one (Zoom `pwd`, the Teams "Meeting ID" and "Passcode" lines). Nothing else from the description is kept.
-- **Mail-in files:** a message with no invite may carry Markdown (`.md`), audio (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.webm`), video (`.mp4`, `.mov`, `.mkv`) and image (`.png`, `.jpg`, `.gif`, `.webp`) attachments. The type is decided by the file's content, not its name, and must agree with the extension; at most 10 files, 25 MB per file and 30 MB in all ([#18564](https://github.com/hivecommons/hive/issues/18564)). The subject becomes the title. Nothing in the message is executed or followed.
+- **Mail-in files:** a message with no invite may carry Markdown (`.md`), office document (`.pdf`, `.docx`, `.pptx`, `.xlsx`), audio (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.webm`), video (`.mp4`, `.mov`, `.mkv`) and image (`.png`, `.jpg`, `.gif`, `.webp`) attachments. The type is decided by the file's content, not its name, and must agree with the extension; a Word, PowerPoint or Excel file must be a readable container of that kind with no macro project. At most 10 files, 25 MB per file and 30 MB in all ([#18564](https://github.com/hivecommons/hive/issues/18564), [#18699](https://github.com/hivecommons/hive/issues/18699)). The subject becomes the title. Nothing in the message is executed or followed, and a document is stored, never opened.
+- **Refusals say why:** a message that leaves nothing to deliver is refused after DATA with a reply the sender's provider returns in its bounce, naming each attachment's extension and what was wrong with it, for example `550 5.6.0 nothing to deliver: a .key attachment is not an accepted type. Accepted types: md, pdf, docx, pptx, xlsx, ...` or `552 5.3.4 nothing to deliver: a .mp4 attachment is over the 25 MB per-file limit (30 MB of attachments per message)`. An attachment left out of a message that is otherwise delivered is listed in the delivery (`files.skipped`: extension and reason) so the hive can show it.
 - **Text body:** the message's body becomes a Markdown note. `text/plain` is kept as sent; an HTML-only body is reduced to its text, headings, lists and link targets, with no scripts, styles, images or other remote content. A message with no attachment becomes one Markdown item (`message.md`); a message with attachments keeps its body as the note on each of its items. The same allowlist, DMARC and approval rules apply as to attachments, and the body is untrusted data, never instructions. At most 256 KiB of it is kept.
 - **Proof mails:** a message whose subject carries a proof code (`hive-proof-` and 12 letters or digits) is reported as a proof of the sender address.
 
@@ -236,6 +237,45 @@ Mail reaches a hive only when all of this is true:
 4. The switch for what you send is on: `meetings.email.files_enabled` for files and notes to the Inbox, `meetings.email.invites_enabled` for invites, and for invites meetings are enabled.
 
 The dashboard can only see the last two from inside the hive. When the hive holds no relay key the sections show **Not set up yet** with a link here, and when a switch is off they say which; in both cases no address is shown, because mail to it would bounce. A hive that is not registered with a hub that runs `hive-mx` (most self-hosted hives) has no working address: add meetings with a link, and files with **＋ Add** or by dropping them on the Inbox.
+
+### What hive-mx logs
+
+Every SMTP session leaves one INFO line with its outcome
+([#18699](https://github.com/hivecommons/hive/issues/18699)), so a missing
+mail can be told apart from a refused one. No line holds a subject, a file
+name, a body or a full address: the sender is logged as a domain only.
+
+| Line | When | Fields |
+|---|---|---|
+| `hive-mx: message accepted` / `message rejected` / `message deferred` | Once per DATA | `outcome`, `code` (the SMTP reply), `reason`, `rcpt_hosts`, `sender_domain`, `bytes`, `attachments`, `accepted_files`, `skipped` (`ext:reason`), `kind`, `dmarc`, `dmarc_aligned`, `spf`, `spf_domain`, `dkim` (`domain:result` per signature), `helo`, `deliveries` (the ids the hub and the hive log), `tls`, `remote_ip` |
+| `hive-mx: command refused` | A refusal at MAIL FROM or RCPT TO | `outcome`, `code`, `reason`, `stage`, `rcpt_host`, `sender_domain`, `tls`, `remote_ip` |
+| `hive-mx: session ended without a message` | The sender connected, greeted and left without sending DATA | `stage` (`greeted`, `mail_from`, `rcpt_to`), `tls`, `remote_ip` |
+
+`reason` is one of: `empty_message`, `unsupported_attachment`,
+`attachment_content_mismatch`, `attachment_too_large`,
+`too_many_attachments`, `message_too_large`, `malformed_message`,
+`hive_daily_volume`, `hive_refused` (the hub or the hive said no: the hub's
+answer is on the `hub refused delivery` line), `delivery_failed` (the hub
+or the hive could not be reached; the sender retries), `unknown_recipient`
+(no hive has that host), `unknown_mailbox` (not `hive@`),
+`host_list_not_loaded`, `rate_limited_ip`, `rate_limited_domain`,
+`receiver_busy`, `receiver_storage` and `transfer_aborted`.
+
+`remote_ip` is the sending server's own address: the receiver's Service keeps the client address (`externalTrafficPolicy: Local`, no proxy protocol), and SPF is evaluated against it. A `dmarc` of `fail` with `spf` not `pass` and no `dkim` entry for the `From` domain means the mail left through a server its domain does not authorize.
+
+A sender that declares a size over the limit (`MAIL FROM:<...> SIZE=n`) is
+answered `552` by the SMTP library before hive-mx sees the command; that
+session shows as `session ended without a message` with `stage=greeted`.
+
+A refusal that is about the message (the first eight reasons above) is also
+reported to the hive: hive-mx posts a `report` delivery (the SMTP code, the
+reason, the sender's domain, the size, the attachment count and each
+skipped attachment's extension and reason, nothing else) to the hub, which
+signs and forwards it to the spoke's `/api/inbox/email/report`. The hive
+keeps the last 50 in the Inbox's **Recent mail** list
+([inbox-voice-sources.md](inbox-voice-sources.md#when-a-mail-does-not-show-up)).
+Reports are best effort: a hub or hive that does not take them yet changes
+nothing for the sender.
 
 ### Who can invite Betty
 

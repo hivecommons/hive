@@ -191,7 +191,7 @@ func Run(ctx context.Context, c Config, log *slog.Logger) error {
 
 	srv := NewServer(Options{
 		Domain: c.Domain, MaxRecipients: c.MaxRecipients, MaxMessageBytes: c.MaxMessageBytes,
-		Limits: c.Limits, Hosts: hosts, Hub: hub, TLSConfig: tlsCfg, Logger: log, Resolver: c.Resolver,
+		Limits: c.Limits, Hosts: hosts, Hub: hub, Reporter: hub, TLSConfig: tlsCfg, Logger: log, Resolver: c.Resolver,
 		IPLimiter:     NewRateLimiter(c.IPPerHour, time.Hour, max(1, c.IPPerHour/rateBurstDivisor), nil),
 		DomainLimiter: NewRateLimiter(c.DomainPerHour, time.Hour, max(1, c.DomainPerHour/rateBurstDivisor), nil),
 		HiveBudget:    NewByteBudget(c.HiveDailyBytes, hiveBudgetWindow, nil),
