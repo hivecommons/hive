@@ -2865,6 +2865,14 @@
     .gov-pr-model-reworked-title { color:var(--amber); font-size:var(--fs-xs); font-weight:800; letter-spacing:0.1em; text-transform:uppercase; margin-bottom:var(--sp-3); }
     .gov-pr-model-reworked ol { margin:var(--sp-0); padding-left:18px; color:var(--muted); font-size:0.74rem; }
     .gov-pr-model-reworked li { margin:var(--sp-2) var(--sp-0); }
+    .gov-pr-model-prs-toggle { margin:2px 0 0; padding:0 var(--sp-2); border:1px solid var(--border); border-radius:var(--r-pill); background:var(--bg); color:var(--muted); font-size:var(--fs-2xs); cursor:pointer; }
+    .gov-pr-model-prs-toggle[aria-expanded="true"] { color:var(--text); border-color:var(--amber); }
+    .gov-pr-model-prlist { margin:0 0 var(--sp-3); padding:var(--sp-2) var(--sp-3); border-left:2px solid var(--border); font-size:0.74rem; color:var(--muted); }
+    .gov-pr-model-prlist ol { margin:var(--sp-0); padding-left:18px; max-height:320px; overflow-y:auto; }
+    .gov-pr-model-prlist li { margin:var(--sp-1) var(--sp-0); overflow-wrap:anywhere; }
+    .gov-pr-model-prlist-outcome.merged { color:var(--green); }
+    .gov-pr-model-prlist-outcome.open { color:var(--blue); }
+    .gov-pr-model-prlist-outcome.closed { color:var(--yellow); }
     .gov-pr-model-legend { display:flex; gap:10px; flex-wrap:wrap; color:var(--muted); font-size:var(--fs-xs); margin-top:var(--sp-4); }
     .gov-pr-model-legend span::before { content:''; display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:var(--sp-2); vertical-align:middle; }
     .gov-pr-model-legend .merged::before { background:var(--green); }
@@ -33445,6 +33453,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     let govPRModelsData = null;
     let reviewerAccuracyLoading = false;
     let reviewerAccuracyData = null;
+    // Per-model PR list (#18722): the open row's model and a cache keyed by
+    // window + model, filled on demand from /api/governor/pr-models?model=….
+    let govPRModelPRsOpen = '';
+    const govPRModelPRsCache = {};
+    const govPRModelPRsLoading = {};
 
     function normalizeGovernorPRModelsWindowName(windowName) {
       return ['7d', '30d', 'all'].includes(windowName) ? windowName : '7d';
@@ -33466,6 +33479,66 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (window._lastStatus?.governor) renderGovernor(window._lastStatus.governor, window._lastStatus.cadenceMatrix || [], window._lastStatus);
     }
     window.setGovernorPRModelsSort = setGovernorPRModelsSort;
+
+    function governorPRModelPRsKey(windowName, model) {
+      return `${normalizeGovernorPRModelsWindowName(windowName)}\u0000${model}`;
+    }
+
+    async function loadGovernorPRModelPRs(model, windowName = govPRModelsWindow) {
+      const requestedWindow = normalizeGovernorPRModelsWindowName(windowName);
+      const key = governorPRModelPRsKey(requestedWindow, model);
+      if (govPRModelPRsLoading[key] || govPRModelPRsCache[key]) return;
+      govPRModelPRsLoading[key] = true;
+      try {
+        const res = await fetch(`/api/governor/pr-models?window=${encodeURIComponent(requestedWindow)}&model=${encodeURIComponent(model)}`);
+        const data = res.ok ? await res.json() : null;
+        govPRModelPRsCache[key] = data && Array.isArray(data.prs)
+          ? { prs: data.prs, truncated: !!data.prs_truncated }
+          : { prs: [], truncated: false, error: true };
+      } catch (_) {
+        govPRModelPRsCache[key] = { prs: [], truncated: false, error: true };
+      } finally {
+        delete govPRModelPRsLoading[key];
+        renderGovernorFromLastStatus();
+      }
+    }
+
+    function toggleGovernorPRModelPRs(model) {
+      govPRModelPRsOpen = govPRModelPRsOpen === model ? '' : String(model || '');
+      const pending = govPRModelPRsOpen ? loadGovernorPRModelPRs(govPRModelPRsOpen, govPRModelsWindow) : Promise.resolve();
+      renderGovernorFromLastStatus();
+      return pending;
+    }
+    window.toggleGovernorPRModelPRs = toggleGovernorPRModelPRs;
+
+    function governorPRModelPRsToggleHtml(model) {
+      const open = govPRModelPRsOpen === model;
+      return `<button type="button" class="gov-pr-model-prs-toggle" aria-expanded="${open}" data-action="toggleGovernorPRModelPRs" data-arg0="${escapeHtml(model)}" data-stop="1" title="List this model's pull requests in the window">${open ? '▾' : '▸'} PRs</button>`;
+    }
+
+    function governorPRModelPRListHtml(model) {
+      if (govPRModelPRsOpen !== model) return '';
+      const entry = govPRModelPRsCache[governorPRModelPRsKey(govPRModelsWindow, model)];
+      if (!entry) {
+        // First open, or the window pill changed while a row was open: fetch on demand.
+        loadGovernorPRModelPRs(model, govPRModelsWindow);
+        return '<div class="gov-pr-model-prlist"><div class="gov-pr-model-sub">Loading PRs…</div></div>';
+      }
+      if (entry.error) return '<div class="gov-pr-model-prlist"><div class="gov-pr-model-sub">Could not load this model\'s PRs.</div></div>';
+      if (!entry.prs.length) return '<div class="gov-pr-model-prlist"><div class="gov-pr-model-sub">No PRs for this model in the window.</div></div>';
+      const outcomeLabel = { merged: 'merged', closed_unmerged: 'closed-unmerged', open: 'open' };
+      const items = entry.prs.map(pr => {
+        const label = `${pr.repo || ''}#${pr.number || ''}`;
+        const href = pr.url ? ` href="${escapeHtml(pr.url)}" target="_blank" rel="noopener"` : '';
+        const outcome = outcomeLabel[pr.outcome] || 'open';
+        const title = pr.title ? ` ${escapeHtml(pr.title)}` : '';
+        const who = [pr.agent, pr.backend].filter(Boolean).map(escapeHtml).join(' / ');
+        const firstPass = pr.first_pass ? ' · first pass' : '';
+        return `<li><a${href}>${escapeHtml(label)}</a>${title} <span class="gov-pr-model-prlist-outcome ${outcome === 'closed-unmerged' ? 'closed' : outcome}">${outcome}</span> · ${pr.review_rounds || 0} rounds · ${pr.fix_attempts || 0} fixes${firstPass}${who ? ` · ${who}` : ''}</li>`;
+      }).join('');
+      const more = entry.truncated ? `<div class="gov-pr-model-sub">Showing the first ${entry.prs.length} PRs, most reworked first.</div>` : '';
+      return `<div class="gov-pr-model-prlist"><ol>${items}</ol>${more}</div>`;
+    }
 
     function governorPRModelUnattributed(b) {
       return !!(b?.effectiveness?.unattributed) || !b?.model || String(b.model).toLowerCase() === 'unknown';
@@ -33604,7 +33677,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
               const scoreLine = eff.rank ? `\nRank #${eff.rank} · score ${(Number(eff.score) || 0).toFixed(3)} = Wilson lower bound(${eff.first_pass_merged ?? '?'}/${eff.merged_prs ?? b.merged ?? 0} first pass)${scoreFormula}` : (unattributed ? '\nUnattributed: no model recorded, listed but not ranked' : `\nUnranked: fewer than ${data.min_merged_prs || 5} merged PRs`);
               const tip = `${b.model || 'unknown'} via ${backends.join(', ')}${scoreLine}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${values.first_pass}${ci(eff.first_pass_merge_rate_ci || rw.first_pass_merge_rate_ci)} · PR run rate ${values.pr_runs}${measured ? ci(eff.verified_pr_run_rate_ci) : ''} · failure ${values.fail}${measured ? ci(eff.failure_rate_ci) : ''} · nothing-to-ship ${values.no_ship}${measured ? ci(eff.nothing_to_ship_rate_ci) : ''}${measured ? '' : '\n— = no runs recorded, not a measured 0%'}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${sources ? '\n\nRaw model ids folded into this row:\n' + sources : ''}${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
               return `<div class="gov-pr-model-row${unattributed ? ' unattributed' : ''}" title="${escapeHtml(tip)}">
-                <div><div class="gov-pr-model-name">${rank}${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${backendChips}</div></div>
+                <div><div class="gov-pr-model-name">${rank}${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${backendChips}${governorPRModelPRsToggleHtml(b.model || 'unknown')}</div></div>
                 <div class="gov-pr-model-bar" aria-label="${escapeHtml(tip)}">
                   <div class="gov-pr-model-seg merged" style="width:${mergedPct}%"></div>
                   <div class="gov-pr-model-seg open" style="width:${openPct}%"></div>
@@ -33612,7 +33685,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
                 </div>
                 ${metrics}
                 <div class="gov-pr-model-share">${prs} · ${share.toFixed(1)}%</div>
-              </div>`;
+              </div>${governorPRModelPRListHtml(b.model || 'unknown')}`;
             }).join('');
       const reworkTable = data && total > 0 ? `<table class="gov-pr-model-table" aria-label="PR rework by model">
         <thead><tr><th>Model</th><th>First-pass</th><th>Review rounds</th><th>Fix attempts</th><th>Follow-up commits</th><th>Median merge</th><th>Sample</th></tr></thead>

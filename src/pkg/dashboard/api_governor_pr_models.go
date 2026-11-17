@@ -135,6 +135,10 @@ func (s *Server) handleGovernorPRModels(w http.ResponseWriter, r *http.Request) 
 	effective := aggregateEffectiveModelsFromPRAggregation(resp, aggregateEffectiveRunStats(runs, effectiveModelsFilterAll), effectiveModelsFilterAll, minMergedPRs)
 	applyGovernorPRModelEffectiveness(&resp, effective, minMergedPRs)
 	w.Header().Set("Content-Type", "application/json")
+	if model, ok := governorPRModelsQueryModel(r); ok {
+		_ = json.NewEncoder(w).Encode(withGovernorPRModelPRs(resp, actionable.PRs.Attributed, model, now))
+		return
+	}
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
