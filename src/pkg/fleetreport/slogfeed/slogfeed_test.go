@@ -1331,3 +1331,21 @@ func TestStageDampenerSuppressionLogsWithoutFleetReport(t *testing.T) {
 		})
 	}
 }
+
+func TestGHCRTokenTimeoutStaysInLog(t *testing.T) {
+	logger, seen, out := newFeed(t)
+	timeout := `Get "https://ghcr.io/token?scope=repository:hivecommons/hive:pull": context deadline exceeded (Client.Timeout exceeded while awaiting headers)`
+	for i := 0; i < 10; i++ {
+		logger.Warn("channel resolve: GHCR token request failed", "repo", "hivecommons/hive", "error", timeout)
+	}
+	if len(*seen) != 0 {
+		t.Fatalf("GHCR token timeout was observed for fleet reporting (#18824): %+v", *seen)
+	}
+	if n := strings.Count(out.String(), "\n"); n != 10 {
+		t.Fatalf("wrapped handler saw %d records, want 10", n)
+	}
+	logger.Warn("channel resolve: GHCR token request failed", "repo", "hivecommons/hive", "error", `Get "https://ghcr.io/token?scope=repository:hivecommons/hive:pull": dial tcp: lookup ghcr.io: no such host`)
+	if len(*seen) != 1 {
+		t.Fatalf("non-timeout GHCR failure must stay reportable, observed %+v", *seen)
+	}
+}
