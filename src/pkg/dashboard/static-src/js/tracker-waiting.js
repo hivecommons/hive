@@ -2,7 +2,8 @@
        The stage tracker payload carries waiting_on_human (stage_tracker_waiting.go):
        every open item parked on the signed-in operator / maintainers, with a
        kind (needs-decision, ready-for-human-merge, approve-needed,
-       returned-to-contributor-offline, other-human-wait) and who the wait
+       returned-to-contributor-offline, re-review-requested,
+       other-human-wait) and who the wait
        is attributed to. Three surfaces read it so a human wait is never
        silent (hivecommons/hive#15638): a second, attention-coloured badge on
        the "Hive activity monitor" sidebar item, a "Waiting on you · N" pill
@@ -19,6 +20,7 @@
       'ready-for-human-merge': 'ready for you to merge',
       'approve-needed': 'needs your approval',
       'returned-to-contributor-offline': 'contributor offline — adopt or reroute',
+      're-review-requested': 'waiting on a re-review',
       'other-human-wait': 'needs a person',
     };
     var _stageTrackerWaitingPrevCount = null;

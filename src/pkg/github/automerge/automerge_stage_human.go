@@ -550,6 +550,11 @@ func (c *Engine) humanEvidence(ctx context.Context, tracker *StageTracker, key s
 			e.CauseReason = cause
 		}
 	}
+	if reviewers, ok := prstage.ParseReReviewRequested(obs.Reason); ok {
+		// Name each reviewer's review, the commit it was on and the author's
+		// push since, from the lane's own ListReviews walk.
+		e.CauseReason = reReviewRequestedCause(obs.HeadSHA, obs.Author, reviewers, obs.Detail.StandingChangeRequests)
+	}
 	if rec, ok := c.stageStoreOrShared().Get(key); ok && rec.AdoptedHead != "" && rec.AdoptDiffFence != "" && rec.AdoptDiffFence == obs.Reason && e.CauseReason != "" {
 		// An adopted head whose diff fence is the blocker: the 085 note
 		// says the hive repaired it and why it still will not merge it.
@@ -736,6 +741,9 @@ func decisionCauseFor(reason string, workflowManual bool) string {
 		}
 	case reason == autoMergeReasonMergeRefusedReview:
 		return "GitHub refused the merge: branch protection requires an approving review from someone with write access, and the Hive App cannot give it. A GitHub **Approve** review on this head (or an App bypass in the branch rules) lets the hive merge it; the hive retries once GitHub reports the PR unblocked, or within 30 minutes"
+	case strings.HasPrefix(reason, prstage.ReReviewRequestedReasonPrefix):
+		reviewers, _ := prstage.ParseReReviewRequested(reason)
+		return reReviewRequestedCause("", "", reviewers, nil)
 	case reason == autoMergeReasonMergeRefusedMethod:
 		return "GitHub refused the merge: the repository does not allow the merge method the hive chose for this PR. The hive does not switch methods on its own: a forward merge or a `" + stagelabels.MergeCommitLabel + "` PR must never be squashed. Merge it by hand with an allowed method, or allow the method in the repository settings and the hive retries within 30 minutes"
 	case reason == "":
@@ -764,28 +772,7 @@ func mergeRefusedReviewChangeRequestCause(head string, requests []prstage.Change
 			continue
 		}
 		names = append(names, "@"+login)
-		var b strings.Builder
-		b.WriteString("@" + login + " requested changes")
-		if !r.SubmittedAt.IsZero() {
-			b.WriteString(" on " + r.SubmittedAt.UTC().Format("2006-01-02"))
-		}
-		commit := strings.TrimSpace(r.CommitID)
-		switch {
-		case commit != "" && commit == head:
-			b.WriteString(" on this head")
-		case commit != "":
-			b.WriteString(" at `" + stagelabels.ShortSHA(commit) + "`")
-		}
-		if url := strings.TrimSpace(r.URL); url != "" {
-			b.WriteString(" ([review](" + url + "))")
-		}
-		if commit != "" && head != "" && commit != head {
-			b.WriteString(", and the hive has pushed since")
-			if i := strings.Index(r.URL, "/pull/"); i > 0 {
-				b.WriteString(" ([changes since that review](" + r.URL[:i] + "/compare/" + commit + "..." + head + "))")
-			}
-		}
-		said = append(said, b.String())
+		said = append(said, changeRequestClause(r, head, "the hive"))
 	}
 	if len(said) == 0 {
 		return ""
@@ -795,6 +782,67 @@ func mergeRefusedReviewChangeRequestCause(head string, requests []prstage.Change
 		"GitHub keeps a change request standing across pushes until its reviewer re-reviews or it is dismissed, so settle it before anyone approves: " +
 		joinNames(names) + ", please re-review this head; if the request no longer applies, a maintainer can dismiss the review. " +
 		"The hive retries once GitHub reports the PR unblocked, or within 30 minutes"
+}
+
+// changeRequestClause renders one standing change request: who, when, on
+// which commit, a link to the review, and, when the commit is not head,
+// that pusher ("the hive", "@author") has pushed since, with a compare
+// link for what changed.
+func changeRequestClause(r prstage.ChangeRequestRef, head, pusher string) string {
+	var b strings.Builder
+	b.WriteString("@" + strings.TrimSpace(r.Login) + " requested changes")
+	if !r.SubmittedAt.IsZero() {
+		b.WriteString(" on " + r.SubmittedAt.UTC().Format("2006-01-02"))
+	}
+	commit := strings.TrimSpace(r.CommitID)
+	switch {
+	case commit != "" && commit == head:
+		b.WriteString(" on this head")
+	case commit != "":
+		b.WriteString(" at `" + stagelabels.ShortSHA(commit) + "`")
+	}
+	if url := strings.TrimSpace(r.URL); url != "" {
+		b.WriteString(" ([review](" + url + "))")
+	}
+	if commit != "" && head != "" && commit != head {
+		b.WriteString(", and " + pusher + " has pushed since")
+		if i := strings.Index(r.URL, "/pull/"); i > 0 {
+			b.WriteString(" ([changes since that review](" + r.URL[:i] + "/compare/" + commit + "..." + head + "))")
+		}
+	}
+	return b.String()
+}
+
+// reReviewRequestedCause is the 085 prose for a ReReviewRequestedReason:
+// every change request standing on the PR is on an older commit the author
+// has pushed past, so the PR waits on those reviewers, not on its author
+// (projectbluefin/chairlift#799). requests are the lane's standing change
+// requests; the clauses name the reviewers' own reviews when they are known
+// and fall back to the logins the reason carries.
+func reReviewRequestedCause(head, author string, reviewers []string, requests []prstage.ChangeRequestRef) string {
+	head = strings.TrimSpace(head)
+	pusher := "the author"
+	if a := strings.TrimPrefix(strings.TrimSpace(author), "@"); a != "" {
+		pusher = "@" + a
+	}
+	var said, names []string
+	for _, login := range reviewers {
+		names = append(names, "@"+login)
+		for _, r := range requests {
+			if strings.EqualFold(strings.TrimSpace(r.Login), login) && strings.TrimSpace(r.CommitID) != "" && strings.TrimSpace(r.CommitID) != head {
+				said = append(said, changeRequestClause(r, head, pusher))
+			}
+		}
+	}
+	if len(names) == 0 {
+		names = []string{"the reviewer"}
+	}
+	lead := joinNames(names) + " requested changes on an older commit, and " + pusher + " has pushed since"
+	if len(said) > 0 {
+		lead = "A change request on an older commit still stands: " + strings.Join(said, "; ")
+	}
+	return lead + ". GitHub keeps a change request blocking across pushes until its reviewer re-reviews or it is dismissed, so this PR now waits on the reviewer, not on " + pusher + ": " +
+		joinNames(names) + ", please re-review this head; if the request no longer applies, a maintainer can dismiss the review"
 }
 
 // joinNames renders "a", "a and b", "a, b and c".

@@ -331,6 +331,9 @@ func humanizeStageReason(reason string) string {
 	if r == "" {
 		return ""
 	}
+	if reviewers, ok := stageengineprstage.ParseReReviewRequested(r); ok {
+		return "waiting on " + decisionReReviewNames(reviewers) + " to re-review: the change request is on an older commit"
+	}
 	if rest, ok := strings.CutPrefix(r, "ci-reporting-stalled:"); ok {
 		return "CI reporting stalled — " + rest
 	}

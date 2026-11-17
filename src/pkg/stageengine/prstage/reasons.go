@@ -1,6 +1,7 @@
 package prstage
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -185,6 +186,42 @@ func ParseLinkedIssueReason(reason string) (kindPrefix string, issue int, label 
 		return "", 0, "", false
 	}
 	return kindPrefix, n, label, true
+}
+
+// ReReviewRequestedReasonPrefix: every change request still standing on the
+// PR was left on an older commit, and the author has pushed content since.
+// GitHub keeps such a review blocking until its reviewer re-reviews or a
+// maintainer dismisses it, so the PR waits on the reviewer, not on its
+// author. The rest names the reviewers, comma-separated.
+const ReReviewRequestedReasonPrefix = "re-review-requested:"
+
+// ReReviewRequestedReason formats the lane reason for reviewers whose change
+// requests are on older commits, sorted so the reason is stable across
+// sweeps: `re-review-requested:alice,bob`.
+func ReReviewRequestedReason(reviewers []string) string {
+	var logins []string
+	for _, r := range reviewers {
+		if r = strings.TrimPrefix(strings.TrimSpace(r), "@"); r != "" && !slices.Contains(logins, r) {
+			logins = append(logins, r)
+		}
+	}
+	slices.SortFunc(logins, func(a, b string) int { return strings.Compare(strings.ToLower(a), strings.ToLower(b)) })
+	return ReReviewRequestedReasonPrefix + strings.Join(logins, ",")
+}
+
+// ParseReReviewRequested returns the reviewers a ReReviewRequestedReason
+// names. ok is false for any other reason.
+func ParseReReviewRequested(reason string) (reviewers []string, ok bool) {
+	rest, found := strings.CutPrefix(strings.TrimSpace(reason), ReReviewRequestedReasonPrefix)
+	if !found {
+		return nil, false
+	}
+	for _, r := range strings.Split(rest, ",") {
+		if r = strings.TrimSpace(r); r != "" {
+			reviewers = append(reviewers, r)
+		}
+	}
+	return reviewers, true
 }
 
 // ClosingContradictionReason formats the refusal for a PR body that closes
