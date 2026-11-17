@@ -784,3 +784,13 @@ inbox.recording.max_seconds # see inbox.recording.enabled
 inbox.recording.max_bytes # see inbox.recording.enabled
 inbox.recording.quota_bytes # see inbox.recording.enabled
 inbox.recording.idle_finalize_minutes # see inbox.recording.enabled
+# Advisory engine phase 1 (#18464): YAML-only and default off; Settings control pending.
+advisory_engine.allow_training_providers_for_private # TODO #18464
+advisory_engine.enabled # TODO #18464
+advisory_engine.gateways[].daily_cap # TODO #18464
+advisory_engine.gateways[].model # TODO #18464
+advisory_engine.gateways[].name # TODO #18464
+advisory_engine.items_per_cycle # TODO #18464
+advisory_engine.max_turns # TODO #18464
+advisory_engine.mode # TODO #18464
+governor.gateways[].trains_on_inputs # TODO #18464
