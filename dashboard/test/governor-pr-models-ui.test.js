@@ -38,6 +38,78 @@ test('Governor PRs by model shows unmeasured run columns as a dash and discloses
   }
 });
 
+// Extracts `function name(` / `async function name(` from index.html by brace matching.
+function extractFunction(name) {
+  const re = new RegExp(`(?:async )?function ${name}\\(`);
+  const m = re.exec(indexHtml);
+  assert.ok(m, `index.html does not define ${name}()`);
+  const open = indexHtml.indexOf('{', m.index + m[0].length);
+  let depth = 0;
+  for (let i = open; i < indexHtml.length; i++) {
+    if (indexHtml[i] === '{') depth++;
+    else if (indexHtml[i] === '}' && --depth === 0) return indexHtml.slice(m.index, i + 1);
+  }
+  assert.fail(`unbalanced braces in ${name}()`);
+}
+
+test('Opening a model row requests model=… and lists its PRs with GitHub links (#18722)', async () => {
+  const vm = require('node:vm');
+  const fetchURLs = [];
+  const sandbox = {
+    fetchURLs,
+    renders: 0,
+    escapeHtml: s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;'),
+    fetch: async url => {
+      fetchURLs.push(url);
+      return {
+        ok: true,
+        json: async () => ({
+          prs: [
+            { repo: 'org/a', number: 2, title: 'reworked <b>', url: 'https://github.com/org/a/pull/2', outcome: 'merged', review_rounds: 2, fix_attempts: 1, agent: 'fixer', backend: 'pi' },
+            { repo: 'org/b', number: 4, url: 'https://github.com/org/b/pull/4', outcome: 'closed_unmerged', review_rounds: 1, fix_attempts: 2, first_pass: false },
+          ],
+          prs_truncated: true,
+        }),
+      };
+    },
+  };
+  sandbox.window = sandbox;
+  vm.createContext(sandbox);
+  const src = [
+    "let govPRModelsWindow = '30d';",
+    "let govPRModelPRsOpen = '';",
+    'const govPRModelPRsCache = {};',
+    'const govPRModelPRsLoading = {};',
+    'function renderGovernorFromLastStatus() { renders++; }',
+    ...['normalizeGovernorPRModelsWindowName', 'governorPRModelPRsKey', 'loadGovernorPRModelPRs', 'toggleGovernorPRModelPRs', 'governorPRModelPRsToggleHtml', 'governorPRModelPRListHtml'].map(extractFunction),
+    'this.api = { toggleGovernorPRModelPRs, governorPRModelPRsToggleHtml, governorPRModelPRListHtml, state: () => govPRModelPRsOpen };',
+  ].join('\n');
+  vm.runInContext(src, sandbox);
+  const api = sandbox.api;
+
+  assert.match(api.governorPRModelPRsToggleHtml('claude-opus-5.5'), /data-action="toggleGovernorPRModelPRs" data-arg0="claude-opus-5\.5"/);
+  assert.match(api.governorPRModelPRsToggleHtml('claude-opus-5.5'), /aria-expanded="false"/);
+  assert.equal(api.governorPRModelPRListHtml('claude-opus-5.5'), '', 'a closed row renders no list');
+
+  await api.toggleGovernorPRModelPRs('claude-opus-5.5');
+  assert.deepEqual(fetchURLs, ['/api/governor/pr-models?window=30d&model=claude-opus-5.5']);
+  assert.equal(api.state(), 'claude-opus-5.5');
+  assert.match(api.governorPRModelPRsToggleHtml('claude-opus-5.5'), /aria-expanded="true"/);
+  const html = api.governorPRModelPRListHtml('claude-opus-5.5');
+  assert.match(html, /<a href="https:\/\/github\.com\/org\/a\/pull\/2" target="_blank" rel="noopener">org\/a#2<\/a>/);
+  assert.match(html, /<a href="https:\/\/github\.com\/org\/b\/pull\/4" target="_blank" rel="noopener">org\/b#4<\/a>/);
+  assert.match(html, /reworked &lt;b&gt;/, 'titles are escaped');
+  assert.match(html, /closed-unmerged/);
+  assert.match(html, /Showing the first 2 PRs/, 'a truncated list says so');
+  assert.equal(api.governorPRModelPRListHtml('gpt-6.1-sol'), '', 'other rows stay closed');
+
+  // Reopening the same model in the same window uses the cache.
+  await api.toggleGovernorPRModelPRs('claude-opus-5.5');
+  assert.equal(api.state(), '');
+  await api.toggleGovernorPRModelPRs('claude-opus-5.5');
+  assert.equal(fetchURLs.length, 1, 'cached per window and model');
+});
+
 test('Governor PRs by model tooltip lists per-backend rework and the effort split (#18715)', () => {
   for (const expected of [
     'const sliceRework = s =>',
