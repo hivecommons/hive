@@ -1,6 +1,8 @@
 package config
 
 import (
+	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -53,6 +55,33 @@ type SandboxJobConfig struct {
 	// the cluster on OpenShift (the SCC assigns one from the namespace range)
 	// and uses 65534 elsewhere, since the hive image's default user is root.
 	RelayRunAsUser *int64 `yaml:"relay_run_as_user,omitempty" json:"relay_run_as_user,omitempty"`
+	// ImagePullSecrets are Secret NAMES (never values) added to the Job pod's
+	// imagePullSecrets, for a private-registry sandbox image (#18819). The pod
+	// gets the deduplicated union of hive's own pod secrets, the Job service
+	// account's imagePullSecrets (when the launcher may read it) and this list.
+	ImagePullSecrets []string `yaml:"image_pull_secrets,omitempty" json:"image_pull_secrets,omitempty"`
+}
+
+// MaxJobImagePullSecrets bounds image_pull_secrets.
+const MaxJobImagePullSecrets = 32
+
+// maxPullSecretNameLen is the Kubernetes object-name length limit.
+const maxPullSecretNameLen = 253
+
+var pullSecretNameRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$`)
+
+// ValidateImagePullSecrets refuses anything but a bounded list of Kubernetes
+// Secret names, so a pasted credential never reaches the config file.
+func ValidateImagePullSecrets(names []string) error {
+	if len(names) > MaxJobImagePullSecrets {
+		return fmt.Errorf("sandbox.job.image_pull_secrets takes at most %d names, got %d", MaxJobImagePullSecrets, len(names))
+	}
+	for _, n := range names {
+		if len(n) > maxPullSecretNameLen || !pullSecretNameRE.MatchString(n) {
+			return fmt.Errorf("sandbox.job.image_pull_secrets takes Secret names, not values: %q is not a valid name", n)
+		}
+	}
+	return nil
 }
 
 // SandboxJobToleration mirrors the subset of a Kubernetes toleration an
@@ -117,6 +146,11 @@ func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 	}
 	if out.TTLSeconds == 0 {
 		out.TTLSeconds = g.TTLSeconds
+	}
+	// Registry credentials are a cluster fact like the claim: a per-agent
+	// block that names none inherits the global list (#18819).
+	if len(out.ImagePullSecrets) == 0 {
+		out.ImagePullSecrets = g.ImagePullSecrets
 	}
 	return out
 }
