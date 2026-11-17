@@ -96,11 +96,16 @@ type Identity struct {
 	Value string       `json:"value"`
 	// Source names what produced the link ("access_list", "calendar_proof",
 	// "manual", ...).
-	Source     string    `json:"source,omitempty"`
-	Confidence float64   `json:"confidence,omitempty"`
-	Manual     bool      `json:"manual,omitempty"`
-	At         time.Time `json:"at"`
-	By         string    `json:"by,omitempty"`
+	Source     string  `json:"source,omitempty"`
+	Confidence float64 `json:"confidence,omitempty"`
+	Manual     bool    `json:"manual,omitempty"`
+	// Claimed marks an identity its own profile's read-only user added.
+	// It is shown on the profile and is not a key: it resolves nobody,
+	// produces no edges and blocks nothing until someone with the full
+	// view confirms it.
+	Claimed bool      `json:"claimed,omitempty"`
+	At      time.Time `json:"at"`
+	By      string    `json:"by,omitempty"`
 }
 
 // Key is the identity's lookup key, "kind:value" over the normalised value.
@@ -268,14 +273,27 @@ type Person struct {
 	UpdatedAt     time.Time     `json:"updated_at"`
 }
 
-// HasIdentity reports whether p holds the identity with this key.
+// HasIdentity reports whether p holds the identity with this key as a
+// confirmed identity. An unconfirmed claim does not count.
 func (p Person) HasIdentity(key string) bool {
-	for _, i := range p.Identities {
+	i := p.identityIndex(key)
+	return i >= 0 && !p.Identities[i].Claimed
+}
+
+// identityIndex is the position of the identity with this key, claimed or
+// not, or -1.
+func (p Person) identityIndex(key string) int {
+	for n, i := range p.Identities {
 		if i.Key() == key {
-			return true
+			return n
 		}
 	}
-	return false
+	return -1
+}
+
+// dropIdentity removes the identity at position n.
+func (p *Person) dropIdentity(n int) {
+	p.Identities = append(p.Identities[:n:n], p.Identities[n+1:]...)
 }
 
 // Identity returns p's first identity of a kind, or "".
