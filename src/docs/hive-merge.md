@@ -1661,8 +1661,9 @@ red — goes to `stage/085-needs-decision` as
 per head and reason, retried until GitHub accepts it), so the
 dashboard shows a person's item, not a silent 074; "waiting on maintainer
 lgtm" is only ever the state at 080+ (hivecommons/hive#12858). The dwell runs
-from the head's last hive push, a red optional check alone is not a blocker,
-and the escalation releases back to 074 when its reason clears
+from the head's last hive push, a red optional check alone is not a blocker
+unless the repo's auto-merge is off (a person merges there,
+projectbluefin/actions#752), and the escalation releases back to 074 when its reason clears
 (hivecommons/hive#13040). The issues a PR covers
 follow it: once the sweep stages a PR at 050 or later, the enumeration cycle
 writes the same stage on each linked issue (`stage/040-covered-by-pr` until
