@@ -143,6 +143,8 @@ Only the hive owner can send hive to a meeting.
 
 Voice is fixed when the bot joins: Vexa only lets a bot speak if it was started with voice. Hive starts every bot able to speak while `meetings.voice_on_address` is true (and when you tick **Voice**), so the toggle can turn speaking on later; with `meetings.voice_on_address` false and **Voice** unticked, turning voice on later has no effect and hive keeps answering in chat (the panel says so).
 
+**🗑 Delete** (owner only) removes a meeting for good: a meeting that ended, failed, was blocked, declined or left, or a join request still waiting (deleting it declines it). It deletes the meeting record, its transcript, notes and live state on this hive, erases the meeting in Vexa with Quorum's `meeting.delete`, and removes its Calendar entry when that entry existed only for this meeting. If Vexa cannot confirm the erase, the meeting is still removed here and the dashboard says so. A meeting hive is still joining, waiting in the lobby of or live in cannot be deleted: **Leave** it first. **Clear finished** deletes every finished meeting after one confirm; live meetings and pending join requests stay. Knowledge facts and drafts already made from a meeting are not touched. Each delete is audited as `meeting_delete`.
+
 If the meeting platform's chat is unavailable, hive cannot post the consent notice. It retries a few times and posts nothing else into the meeting until the notice is out; with voice on it speaks the notice instead, and otherwise it leaves (`consent_undelivered`). Until the notice is delivered the panel shows no transcript, notes or research: those lines are discarded, not held back.
 
 The same operations are available over the [meetings API](api-reference/knowledge.md) (`/api/meetings`).
@@ -155,6 +157,7 @@ The **Calendar** section, right after **Inbox** in the left menu, lists the meet
 - **Each row** shows the title, organizer, start and end, platform, the next occurrence of a repeating meeting, the source (email invite, added here, or Discord) and the status: scheduled, awaiting approval, live, ended, cancelled, declined, failed, blocked or skipped.
 - **Approve** or **Decline** a meeting awaiting approval (owner only). A declined invite stays declined when its organizer updates it.
 - **Skip** skips the next occurrence: a single meeting becomes skipped, a repeating one moves on to the one after. **Cancel** stops hive joining it at all; a meeting already live is not left (use **Leave** in Meetings).
+- **🗑 Delete** a past entry (ended, cancelled, declined, failed, blocked or skipped; owner only) to remove it together with the meetings it created, as **Delete** in Meetings does. Entries still to come keep **Skip** and **Cancel**.
 - **Open live panel** while hive is in the meeting and **Notes** once it ended open that meeting in the Meetings section.
 
 The schedule lives in `<meetings.data_dir>/schedule.json` (by default `/data/meetings/schedule.json`), rewritten atomically. Each occurrence is recorded before hive joins it, so a restart never joins the same occurrence twice; a join cut off by a restart is shown as failed rather than retried. Finished meetings stay listed for 14 days and are removed after 30.

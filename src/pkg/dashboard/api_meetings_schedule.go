@@ -61,6 +61,9 @@ type MeetingsScheduleService interface {
 	Add(ctx context.Context, req MeetingScheduleAdd) (any, error)
 	// Act runs approve, decline, cancel or skip on one event.
 	Act(ctx context.Context, eid, action, by string) (any, error)
+	// Delete removes a finished event and the finished meetings it
+	// created (ErrMeetingConflict for an event still to come or live).
+	Delete(ctx context.Context, eid string) (MeetingScheduleDeleted, error)
 }
 
 type meetingsScheduleHolder struct{ svc MeetingsScheduleService }
