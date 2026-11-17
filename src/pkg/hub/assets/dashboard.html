@@ -3201,28 +3201,45 @@
       var title = document.createElement('h2');
       title.textContent = name;
       title.style.margin = '0';
-      var note = document.createElement('div');
-      note.textContent = 'Rendered in-app so the browser does not prompt for downloads.';
-      note.style.color = 'var(--text-muted)';
-      var area = document.createElement('textarea');
-      area.readOnly = true;
-      area.value = text;
-      area.style.cssText = 'min-height:360px;max-height:60vh;resize:vertical;font-family:monospace;background:var(--surface-2);color:var(--text);border:1px solid var(--line-strong);border-radius:8px;padding:10px';
+      var note = document.createElement('p');
+      note.textContent = 'Copy the text below to save it.';
+      note.style.cssText = 'margin:0;color:var(--text-muted);font-size:var(--fs-sm)';
+      // Read-only, selectable text in the dialog's own tokens; no textarea,
+      // no resize handle. A click selects the whole export for manual copy.
+      var area = document.createElement('pre');
+      area.tabIndex = 0;
+      area.setAttribute('aria-readonly', 'true');
+      area.setAttribute('aria-label', name);
+      area.textContent = text;
+      area.style.cssText = 'margin:0;min-height:8em;max-height:60vh;overflow:auto;font-family:var(--font-mono);font-size:var(--fs-sm);line-height:1.5;background:color-mix(in srgb, var(--text) 5%, transparent);color:var(--text);border:1px solid var(--border);border-radius:var(--r);padding:var(--sp-4) var(--sp-5);cursor:text;user-select:all;-webkit-user-select:all';
+      function selectAll() {
+        if (!window.getSelection || !document.createRange) return;
+        var range = document.createRange();
+        range.selectNodeContents(area);
+        var sel = window.getSelection();
+        sel.removeAllRanges();
+        sel.addRange(range);
+      }
+      area.addEventListener('click', selectAll);
+      area.addEventListener('focus', selectAll);
       var row = document.createElement('div');
       row.style.cssText = 'display:flex;gap:8px;justify-content:flex-end';
-      var copy = document.createElement('button');
-      copy.type = 'button';
-      copy.textContent = 'Copy to clipboard';
-      copy.onclick = function() { copyHiveText(text, name); };
       var close = document.createElement('button');
       close.type = 'button';
+      close.className = 'hv-btn btn-ghost';
       close.textContent = 'Close';
       close.onclick = function() { overlay.remove(); };
-      row.appendChild(copy); row.appendChild(close);
+      var copy = document.createElement('button');
+      copy.type = 'button';
+      copy.className = 'hv-btn btn-primary';
+      copy.textContent = 'Copy to clipboard';
+      copy.setAttribute('aria-label', 'Copy ' + name + ' to clipboard');
+      copy.onclick = function() { copyHiveText(text, name); };
+      row.appendChild(close); row.appendChild(copy);
       panel.appendChild(title); panel.appendChild(note); panel.appendChild(area); panel.appendChild(row); overlay.appendChild(panel);
       overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
       document.body.appendChild(overlay);
-      close.focus();
+      copy.focus();
     }
 
     function hiveDialogOptions(first, fallbackRawHTML) {
