@@ -23,6 +23,7 @@ const src = [
   'const dashboardSectionHelpMark = () => "";',
   'const formatFixTime = () => "";',
   pick(/function governorPRModelUnattributed\(b\) \{[\s\S]*?\n    \}\n/, 'governorPRModelUnattributed'),
+  pick(/function governorPRModelSliceDetail\(b\) \{[\s\S]*?\n    \}\n/, 'governorPRModelSliceDetail'),
   pick(/const GOV_PR_MODEL_COLUMNS = \[[\s\S]*?\n    \];\n/, 'GOV_PR_MODEL_COLUMNS'),
   pick(/function governorPRModelRows\(data\) \{[\s\S]*?\n    \}\n/, 'governorPRModelRows'),
   pick(/function renderGovernorPRModelsTile\(\) \{[\s\S]*?\n    \}\n\n    function renderGovernor\(/, 'renderGovernorPRModelsTile').replace(/\n\n    function renderGovernor\($/, ''),
@@ -81,4 +82,21 @@ test('raw model ids and backends surface in the row tooltip and chips', () => {
   assert.strictEqual((out.match(/<span class="gov-pr-model-backend">claude<\/span>/g) || []).length, 1);
   assert.ok(out.includes('<span class="gov-pr-model-backend">copilot</span>'), 'each backend a chip');
   assert.ok(out.includes('Wilson lower bound'), 'tooltip states the rank formula');
+});
+
+test('per-repository and weekly lines surface in the row tooltip when present (#18716)', () => {
+  const withSlices = {
+    ...data,
+    buckets: data.buckets.map(b => b.model === 'claude-opus-5.5' ? {
+      ...b,
+      repos: [{ repo: 'org/alpha', prs: 22, merged: 22, first_pass_merge_rate: 0.95, avg_fix_attempts: 0.1 }],
+      weeks: [{ week_start: '2026-11-09', prs: 22, merged: 22, first_pass_merge_rate: 0.95, avg_fix_attempts: 0.1 }],
+    } : b),
+  };
+  const out = lifted.render(withSlices);
+  assert.ok(out.includes('By repository:'), 'tooltip lists repositories');
+  assert.ok(out.includes('org/alpha: 22 PRs (22 merged, first-pass 95%, avg fix 0.1)'), 'repo line rendered');
+  assert.ok(out.includes('2026-11-09: 22 PRs (22 merged, first-pass 95%, avg fix 0.1)'), 'weekly line rendered');
+  assert.strictEqual((out.match(/By repository:/g) || []).length, 2, 'only the bucket with repos gets the block (title + aria-label)');
+  assert.ok(!lifted.render(data).includes('By repository:'), 'no slice block for buckets without repos/weeks');
 });

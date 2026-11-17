@@ -303,3 +303,112 @@ func TestAggregateGovernorPRModelsPerSourceAndEffortRework(t *testing.T) {
 		}
 	}
 }
+
+// TestAggregateGovernorPRModelsReposAndWeeks covers the per-repo and per-week
+// slices (#18716): a short repo name with a full URL folds into the full-name
+// entry, weeks start Monday 00:00 UTC, totals add back to the bucket, and
+// weeks are absent for window=7d.
+func TestAggregateGovernorPRModelsReposAndWeeks(t *testing.T) {
+	// Wednesday 2026-09-23 12:00 UTC.
+	now := time.Date(2026, 9, 23, 12, 0, 0, 0, time.UTC)
+	monday := time.Date(2026, 9, 21, 0, 0, 0, 0, time.UTC)
+	pr := func(repo string, n int, url string, created time.Time, merged bool, rw ghpkg.PRReworkStats) ghpkg.PullRequest {
+		p := ghpkg.PullRequest{Repo: repo, Number: n, URL: url, HiveAttributed: true, HiveModel: "opus", HiveBackend: "claude", CreatedAt: created, Rework: rw}
+		if merged {
+			p.MergedAt = now
+		} else {
+			p.State = "open"
+		}
+		return p
+	}
+	prs := []ghpkg.PullRequest{
+		// Week of 2026-09-21: exactly Monday 00:00 UTC, plus one more.
+		pr("org/alpha", 1, "https://github.com/org/alpha/pull/1", monday, true, ghpkg.PRReworkStats{FirstPass: true}),
+		// Short configured name, full URL: must fold into org/alpha.
+		pr("alpha", 2, "https://github.com/org/alpha/pull/2", monday.Add(time.Hour), true, ghpkg.PRReworkStats{ReviewRounds: 2, FixAttempts: 1}),
+		// One second before the Monday boundary: previous week (2026-09-14).
+		pr("org/beta", 3, "https://github.com/org/beta/pull/3", monday.Add(-time.Second), true, ghpkg.PRReworkStats{FirstPass: true}),
+		// Week of 2026-09-07; open, so no rework counted.
+		pr("org/alpha", 4, "https://github.com/org/alpha/pull/4", monday.AddDate(0, 0, -13), false, ghpkg.PRReworkStats{ReviewRounds: 9}),
+	}
+
+	got := aggregateGovernorPRModels(prs, "30d", now)
+	if len(got.Buckets) != 1 {
+		t.Fatalf("buckets = %+v, want 1", got.Buckets)
+	}
+	b := got.Buckets[0]
+	if b.PRs != 4 || b.Merged != 3 || b.Rework.FirstPassMerged != 2 {
+		t.Fatalf("bucket = %+v, want 4 PRs, 3 merged, 2 first pass", b)
+	}
+
+	if len(b.Repos) != 2 {
+		t.Fatalf("repos = %+v, want org/alpha and org/beta", b.Repos)
+	}
+	alpha, beta := b.Repos[0], b.Repos[1]
+	if alpha.Repo != "org/alpha" || alpha.PRs != 3 || alpha.Merged != 2 || alpha.Open != 1 || alpha.FirstPassMerged != 1 ||
+		alpha.FirstPassMergeRate != 0.5 || alpha.AvgReviewRounds != 1 || alpha.AvgFixAttempts != 0.5 {
+		t.Fatalf("org/alpha = %+v", alpha)
+	}
+	if beta.Repo != "org/beta" || beta.PRs != 1 || beta.Merged != 1 || beta.FirstPassMerged != 1 || beta.FirstPassMergeRate != 1 {
+		t.Fatalf("org/beta = %+v", beta)
+	}
+
+	wantWeeks := []governorPRModelWeekBucket{
+		{WeekStart: "2026-09-07", PRs: 1, Merged: 0},
+		{WeekStart: "2026-09-14", PRs: 1, Merged: 1, FirstPassMerged: 1, FirstPassMergeRate: 1},
+		{WeekStart: "2026-09-21", PRs: 2, Merged: 2, FirstPassMerged: 1, FirstPassMergeRate: 0.5, AvgReviewRounds: 1, AvgFixAttempts: 0.5},
+	}
+	if len(b.Weeks) != len(wantWeeks) {
+		t.Fatalf("weeks = %+v, want %+v", b.Weeks, wantWeeks)
+	}
+	for i, w := range wantWeeks {
+		if b.Weeks[i] != w {
+			t.Fatalf("weeks[%d] = %+v, want %+v", i, b.Weeks[i], w)
+		}
+	}
+
+	for _, window := range []string{"30d", "all", "7d"} {
+		resp := aggregateGovernorPRModels(prs, window, now)
+		for _, bk := range resp.Buckets {
+			var rp, rm, rf int
+			for _, r := range bk.Repos {
+				rp, rm, rf = rp+r.PRs, rm+r.Merged, rf+r.FirstPassMerged
+			}
+			if rp != bk.PRs || rm != bk.Merged || rf != bk.Rework.FirstPassMerged {
+				t.Fatalf("%s %s: repos sum %d/%d/%d, bucket %d/%d/%d", window, bk.Model, rp, rm, rf, bk.PRs, bk.Merged, bk.Rework.FirstPassMerged)
+			}
+			if window == "7d" {
+				if bk.Weeks != nil {
+					t.Fatalf("7d %s: weeks = %+v, want absent", bk.Model, bk.Weeks)
+				}
+				continue
+			}
+			var wp, wm, wf int
+			for _, w := range bk.Weeks {
+				wp, wm, wf = wp+w.PRs, wm+w.Merged, wf+w.FirstPassMerged
+			}
+			if wp != bk.PRs || wm != bk.Merged || wf != bk.Rework.FirstPassMerged {
+				t.Fatalf("%s %s: weeks sum %d/%d/%d, bucket %d/%d/%d", window, bk.Model, wp, wm, wf, bk.PRs, bk.Merged, bk.Rework.FirstPassMerged)
+			}
+		}
+	}
+
+	raw, err := json.Marshal(aggregateGovernorPRModels(prs, "7d", now))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		Buckets []map[string]any `json:"buckets"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	for _, bk := range decoded.Buckets {
+		if _, ok := bk["weeks"]; ok {
+			t.Fatalf("window=7d JSON carries weeks: %v", bk)
+		}
+		if _, ok := bk["repos"]; !ok {
+			t.Fatalf("window=7d JSON missing repos: %v", bk)
+		}
+	}
+}
