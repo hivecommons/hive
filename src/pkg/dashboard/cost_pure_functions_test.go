@@ -3,6 +3,7 @@ package dashboard
 import (
 	"testing"
 
+	"github.com/hivecommons/hive/pkg/modelfamily"
 	"github.com/hivecommons/hive/pkg/tokens"
 )
 
@@ -231,5 +232,38 @@ func TestEstimatedSessions_CapsAtMaxCostSessions(t *testing.T) {
 	out := estimatedSessions(agg)
 	if len(out) > maxCostSessions {
 		t.Errorf("len = %d, exceeds maxCostSessions = %d", len(out), maxCostSessions)
+	}
+}
+
+// TestFlattenEstimated_CanonicalModel: every by_model row carries the
+// canonical id PRs-by-model groups by, the raw name stays as the row's name,
+// spellings are not regrouped, and by_agent rows carry none (#18718).
+func TestFlattenEstimated_CanonicalModel(t *testing.T) {
+	est := tokens.EstimatedCost{
+		ByModel: map[string]tokens.ModelCost{
+			"claude-opus-5-5":           {USD: 1, Priced: true, Input: 10},
+			"anthropic/claude-opus-5-5": {USD: 2, Priced: true, Input: 20},
+			"gpt-5.6-sol:high":          {USD: 3, Priced: true, Input: 30},
+		},
+		ByAgent: map[string]tokens.ModelCost{"quality": {USD: 1, Priced: true}},
+	}
+	out := flattenEstimated(est)
+	if len(out.ByModel) != 3 {
+		t.Fatalf("ByModel len = %d, want 3 (spend is not regrouped)", len(out.ByModel))
+	}
+	want := map[string]string{
+		"claude-opus-5-5":           "claude-opus-5.5",
+		"anthropic/claude-opus-5-5": "claude-opus-5.5",
+		"gpt-5.6-sol:high":          "gpt-5.6-sol",
+	}
+	for _, m := range out.ByModel {
+		if m.CanonicalModel != want[m.Name] || m.CanonicalModel != modelfamily.Canonical(m.Name) {
+			t.Errorf("%s canonical_model = %q, want %q", m.Name, m.CanonicalModel, want[m.Name])
+		}
+	}
+	for _, a := range out.ByAgent {
+		if a.CanonicalModel != "" {
+			t.Errorf("by_agent %s canonical_model = %q, want empty", a.Name, a.CanonicalModel)
+		}
 	}
 }

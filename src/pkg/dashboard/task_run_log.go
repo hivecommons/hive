@@ -414,11 +414,15 @@ func (s *Server) handleContributeRunStats(w http.ResponseWriter, r *http.Request
 		http.Error(w, "task-run log unreadable", http.StatusInternalServerError)
 		return
 	}
+	models := wallStatsList(modelStats)
+	if runStatsGroupCanonical(r) {
+		models = groupWallModelStatsByCanonical(models)
+	}
 	jsonResponse(w, map[string]any{
 		"window_days": days,
 		"total":       total,
 		"backends":    stats,
-		"models":      wallStatsList(modelStats),
+		"models":      models,
 	})
 }
 
