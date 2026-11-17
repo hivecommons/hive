@@ -112,6 +112,59 @@ func TestHandleGovernorPRModelsIncludesEffectiveMetrics(t *testing.T) {
 	if eff.RunCount != 3 || eff.VerifiedPRRunRate != float64(1)/3 || eff.FailureRate != float64(1)/3 || eff.NothingToShipRate != float64(1)/3 {
 		t.Fatalf("effectiveness run stats = %+v", eff)
 	}
+	if len(eff.FirstPassMergeRateCI) != 2 || len(eff.VerifiedPRRunRateCI) != 2 || len(eff.FailureRateCI) != 2 || len(eff.NothingToShipRateCI) != 2 {
+		t.Fatalf("effectiveness intervals missing: %+v", eff)
+	}
+	if ci := eff.FailureRateCI; ci[0] > eff.FailureRate || eff.FailureRate > ci[1] {
+		t.Fatalf("failure_rate_ci %v does not bracket %v", ci, eff.FailureRate)
+	}
+	if len(got.Buckets[0].Rework.FirstPassMergeRateCI) != 2 {
+		t.Fatalf("rework interval missing: %+v", got.Buckets[0].Rework)
+	}
+	if !got.Coverage.ClosedPRsPartial || got.Coverage.ClosedPRLookbackDays <= 0 || got.Coverage.RunsSince == "" {
+		t.Fatalf("coverage = %+v, want partial closed PRs for window=all and runs_since set", got.Coverage)
+	}
+	if got.EarliestPRCreatedAt != now.Format(time.RFC3339) {
+		t.Fatalf("earliest_pr_created_at = %q, want %q", got.EarliestPRCreatedAt, now.Format(time.RFC3339))
+	}
+}
+
+func TestHandleGovernorPRModelsOmitsIntervalsWithoutRuns(t *testing.T) {
+	s := covApiServer(t)
+	dir := t.TempDir()
+	s.SetContributorsDir(dir)
+	if s.contributeHub != nil {
+		s.contributeHub.taskRunLogFile = filepath.Join(dir, taskRunLogFileName)
+	}
+	now := time.Now().UTC()
+	s.deps.Scheduler = metricsSchedulerStub{actionable: &ghpkg.ActionableResult{
+		PRs: ghpkg.PRResult{Attributed: []ghpkg.PullRequest{
+			{Repo: "org/repo", Number: 1, HiveAttributed: true, HiveModel: "opus", HiveBackend: "copilot", CreatedAt: now, MergedAt: now, Rework: ghpkg.PRReworkStats{FirstPass: true}},
+		}},
+	}}
+	rec := httptest.NewRecorder()
+	s.handleGovernorPRModels(rec, httptest.NewRequest(http.MethodGet, "/api/governor/pr-models?window=7d", nil))
+	var raw struct {
+		Coverage map[string]any `json:"coverage"`
+		Buckets  []struct {
+			Effectiveness map[string]any `json:"effectiveness"`
+		} `json:"buckets"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if raw.Coverage == nil || len(raw.Buckets) != 1 {
+		t.Fatalf("response = %s", rec.Body.String())
+	}
+	eff := raw.Buckets[0].Effectiveness
+	if _, ok := eff["first_pass_merge_rate_ci"]; !ok {
+		t.Fatalf("first_pass_merge_rate_ci missing with merged PRs: %v", eff)
+	}
+	for _, k := range []string{"verified_pr_run_rate_ci", "failure_rate_ci", "nothing_to_ship_rate_ci"} {
+		if _, ok := eff[k]; ok {
+			t.Fatalf("%s must be omitted when runs == 0: %v", k, eff)
+		}
+	}
 }
 
 func TestAggregateGovernorPRModelsReworkStats(t *testing.T) {

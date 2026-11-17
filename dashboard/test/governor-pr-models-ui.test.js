@@ -21,3 +21,19 @@ test('Governor PRs by model renders effectiveness controls and columns', () => {
     assert.match(indexHtml, new RegExp(expected.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
 });
+
+test('Governor PRs by model shows unmeasured run columns as a dash and discloses coverage (#18713)', () => {
+  for (const expected of [
+    "const measured = Number(eff.runs || 0) > 0;",
+    "measured ? pct(v) : '—'",
+    'pr_runs: runPct(eff.verified_pr_run_rate)',
+    'fail: runPct(eff.failure_rate)',
+    'no_ship: runPct(eff.nothing_to_ship_rate)',
+    'no runs recorded, not a measured 0%',
+    'cov.closed_prs_partial',
+    'cov.runs_partial',
+    'first_pass_merge_rate_ci',
+  ]) {
+    assert.ok(indexHtml.includes(expected), `index.html missing ${expected}`);
+  }
+});
