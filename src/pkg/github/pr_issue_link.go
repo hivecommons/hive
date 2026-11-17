@@ -21,7 +21,7 @@ type ClosingLinkResult struct {
 	// closingIssuesReferences, so nothing was sent.
 	AlreadyLinked bool
 	// Skipped names why no link was attempted ("pr-not-open",
-	// "issue-not-open", "cached"); empty when a mutation ran or the pair was
+	// "issue-not-open", "cached", "manual-reference-limit"); empty when a mutation ran or the pair was
 	// already linked.
 	Skipped string
 	// Base is the PR's base branch as observed by the lookup.
@@ -174,11 +174,25 @@ func (c *Client) EnsureClosingIssueLink(ctx context.Context, repo string, prNumb
 }`
 	mvars := map[string]any{"issue": out.Repository.Issue.ID, "prs": []string{pr.ID}}
 	if err := c.graphQL(WithRESTCaller(ctx, "hive:ensure_closing_link"), mutation, mvars, nil); err != nil {
+		if isManualReferenceLimitError(err) {
+			// GitHub caps manual closing references per PR and the cap never
+			// lifts, so retrying only repeats the WARN/selfreport
+			// (hivecommons/hive#18666). Memoise the pair and skip.
+			res.Skipped = "manual-reference-limit"
+			c.closingLinks.mark(key)
+			return res, nil
+		}
 		return res, fmt.Errorf("EnsureClosingIssueLink %s/%s#%d->#%d addCloseIssueReferences: %w", owner, name, issueNumber, prNumber, err)
 	}
 	res.Linked = true
 	c.closingLinks.mark(key)
 	return res, nil
+}
+
+// isManualReferenceLimitError reports whether err is GitHub's permanent
+// "Pull request exceeds manual reference limit" rejection.
+func isManualReferenceLimitError(err error) bool {
+	return err != nil && strings.Contains(strings.ToLower(err.Error()), "exceeds manual reference limit")
 }
 
 // linkClosingIssuesForPR runs EnsureClosingIssueLink for every same-repo

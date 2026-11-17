@@ -205,6 +205,27 @@ func TestEnsureClosingIssueLinkMutationErrorIsNotCached(t *testing.T) {
 	}
 }
 
+// TestEnsureClosingIssueLinkManualReferenceLimitIsTerminal covers
+// hivecommons/hive#18666: GitHub's manual reference limit is permanent, so it
+// is recorded as a skip, not an error, and the pair is not retried.
+func TestEnsureClosingIssueLinkManualReferenceLimitIsTerminal(t *testing.T) {
+	f := &closingLinkFixture{defaultBranch: "v5", base: "v5", prState: "OPEN", issueState: "OPEN"}
+	f.mutationErr = "Pull request exceeds manual reference limit"
+	c := newClosingLinkClient(t, f)
+	for i := 0; i < 3; i++ {
+		res, err := c.EnsureClosingIssueLink(context.Background(), "hivecommons/hive", 1, 7)
+		if err != nil {
+			t.Fatalf("call %d: err = %v, want nil", i, err)
+		}
+		if res.Linked || res.Skipped == "" {
+			t.Fatalf("call %d: res = %+v, want skipped", i, res)
+		}
+	}
+	if f.mutations.Load() != 1 || f.lookups.Load() != 1 {
+		t.Fatalf("lookups=%d mutations=%d, want 1/1 (terminal error must not retry)", f.lookups.Load(), f.mutations.Load())
+	}
+}
+
 // TestCreatePR_LinksClosingIssuesOnNonDefaultBase covers the relay hook: a PR
 // opened against v6 with `Fixes #7` gets addCloseIssueReferences sent.
 func TestCreatePR_LinksClosingIssuesOnNonDefaultBase(t *testing.T) {
