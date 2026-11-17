@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.296.0)
+
+### Added
+
+- feat: range attribution core for post-merge runs (#18653)
+
 ## 2026-11-17 (v5.295.0)
 
 ### Added
