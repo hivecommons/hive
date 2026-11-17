@@ -103,7 +103,7 @@ func TestWorkflowDispatchDeclinedHandoffRetriesOnce(t *testing.T) {
 
 	// The agent stands down. The review marks the hand-off not started and
 	// frees the claim; the item is listed while it waits.
-	seen := reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(at, "STAND DOWN: my session may not push here"), ledger, true, at.Add(time.Minute), nil)
+	seen := reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(at, "STAND DOWN: my session may not push here"), ledger, true, nil, at.Add(time.Minute), nil)
 	rt.noteSeen(seen)
 	e, _ := dlog.Get(key)
 	if e.Status != scheduler.WorkflowHandoffNotStarted || !strings.Contains(e.Reason, "ci-maintainer declined the hand-off: my session may not push here") || !e.Retryable() {
@@ -136,7 +136,7 @@ func TestWorkflowDispatchDeclinedHandoffRetriesOnce(t *testing.T) {
 
 	// The retry is not started either: no third hand-off, and the list
 	// says the item waits for the owner.
-	rt.noteSeen(reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(retryAt, "STAND DOWN: no"), ledger, true, retryAt.Add(time.Minute), nil))
+	rt.noteSeen(reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(retryAt, "STAND DOWN: no"), ledger, true, nil, retryAt.Add(time.Minute), nil))
 	if e, _ = dlog.Get(key); e.Status != scheduler.WorkflowHandoffNotStarted || e.Retryable() || !dlog.Done(key) {
 		t.Fatalf("after the retry = %+v", e)
 	}
@@ -147,7 +147,7 @@ func TestWorkflowDispatchDeclinedHandoffRetriesOnce(t *testing.T) {
 		t.Fatalf("not-started list after the retry = %+v", listed)
 	}
 	// Once the item leaves the state the hand-off is no longer listed.
-	rt.noteSeen(reviewWorkflowHandoffs(cfg, dlog, nil, nil, nil, ledger, true, retryAt.Add(2*time.Hour), nil))
+	rt.noteSeen(reviewWorkflowHandoffs(cfg, dlog, nil, nil, nil, ledger, true, nil, retryAt.Add(2*time.Hour), nil))
 	if listed = rt.notStarted(cfg, nil); len(listed) != 0 {
 		t.Fatalf("an item that left the state is still listed: %+v", listed)
 	}
@@ -184,7 +184,7 @@ func TestWorkflowDispatchRecoversStaleHandoff(t *testing.T) {
 	}
 
 	now := at.Add(6 * time.Hour)
-	rt.noteSeen(reviewWorkflowHandoffs(cfg, dlog, items, nil, nil, ledger, true, now, nil))
+	rt.noteSeen(reviewWorkflowHandoffs(cfg, dlog, items, nil, nil, ledger, true, nil, now, nil))
 	e, _ := dlog.Get(key)
 	if e.Status != scheduler.WorkflowHandoffNotStarted || e.Reason != "scanner may not open pull requests in cncf/techdocs (mode ADVISORY)" || e.Attempts != 0 || !e.Retryable() {
 		t.Fatalf("recovered record = %+v", e)
@@ -309,12 +309,12 @@ func TestReviewWorkflowHandoffsReplyStarted(t *testing.T) {
 	}
 
 	// No reply lookup, or the reply is gone: nothing is decided.
-	reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(at, "STAND DOWN: no"), nil, true, at.Add(time.Minute), nil)
-	reviewWorkflowHandoffs(cfg, dlog, items, gone, declinedTurn(at, "STAND DOWN: no"), nil, true, at.Add(time.Minute), nil)
+	reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(at, "STAND DOWN: no"), nil, true, nil, at.Add(time.Minute), nil)
+	reviewWorkflowHandoffs(cfg, dlog, items, gone, declinedTurn(at, "STAND DOWN: no"), nil, true, nil, at.Add(time.Minute), nil)
 	if e, _ := dlog.Get(key); e.Status != scheduler.WorkflowHandoffPending {
 		t.Fatalf("decided without the reply: %+v", e)
 	}
-	seen := reviewWorkflowHandoffs(cfg, dlog, items, found, declinedTurn(at, "STAND DOWN: comments are not allowed"), nil, true, at.Add(time.Minute), nil)
+	seen := reviewWorkflowHandoffs(cfg, dlog, items, found, declinedTurn(at, "STAND DOWN: comments are not allowed"), nil, true, nil, at.Add(time.Minute), nil)
 	if e, _ := dlog.Get(key); e.Status != scheduler.WorkflowHandoffNotStarted || !strings.Contains(e.Reason, "comments are not allowed") {
 		t.Fatalf("declined verifier = %+v", e)
 	}
@@ -337,19 +337,41 @@ func TestWorkflowDispatchItemThatLeftTheStateIsSettled(t *testing.T) {
 	if err := dlog.Record(scheduler.NextWorkflowDispatchEntry(scheduler.WorkflowDispatchEntry{Key: key, Ref: d.Ref(), Profile: "techdocs-drafter", State: "accepted", Agent: "ci-maintainer", At: at}, nil)); err != nil {
 		t.Fatal(err)
 	}
-	reviewWorkflowHandoffs(cfg, dlog, nil, nil, nil, nil, false, at.Add(time.Hour), nil)
+	reviewWorkflowHandoffs(cfg, dlog, nil, nil, nil, nil, false, nil, at.Add(time.Hour), nil)
 	if e, _ := dlog.Get(key); e.Status != scheduler.WorkflowHandoffPending {
 		t.Fatalf("an incomplete pass decided the hand-off: %+v", e)
 	}
-	reviewWorkflowHandoffs(cfg, dlog, nil, nil, nil, nil, true, at.Add(time.Hour), nil)
+	reviewWorkflowHandoffs(cfg, dlog, nil, nil, nil, nil, true, nil, at.Add(time.Hour), nil)
 	e, _ := dlog.Get(key)
 	if e.Status != scheduler.WorkflowHandoffStarted || e.CheckedAt == nil || e.Reason != "" {
 		t.Fatalf("an item that left the state = %+v", e)
 	}
+	// With a counter, one pass without the item settles nothing: a short
+	// enumeration must not end the watch. The third in a row does, and an
+	// item seen again in between starts the count over.
+	dlog2, _ := scheduler.OpenWorkflowDispatchLog("")
+	_ = dlog2.Record(scheduler.NextWorkflowDispatchEntry(scheduler.WorkflowDispatchEntry{Key: key, Ref: d.Ref(), Profile: "techdocs-drafter", State: "accepted", Agent: "ci-maintainer", At: at}, nil))
+	absences := map[string]int{}
+	reviewWorkflowHandoffs(cfg, dlog2, nil, nil, nil, nil, true, absences, at.Add(time.Minute), nil)
+	reviewWorkflowHandoffs(cfg, dlog2, nil, nil, nil, nil, true, absences, at.Add(2*time.Minute), nil)
+	if p, _ := dlog2.Get(key); p.Status != scheduler.WorkflowHandoffPending || absences[key] != 2 {
+		t.Fatalf("settled before %d passes without the item: %+v %v", workflowHandoffLeftPasses, p, absences)
+	}
+	reviewWorkflowHandoffs(cfg, dlog2, []github.WorkflowDispatch{d}, nil, nil, nil, true, absences, at.Add(3*time.Minute), nil)
+	if len(absences) != 0 {
+		t.Fatalf("an item seen again did not reset the count: %v", absences)
+	}
+	for i := 0; i < workflowHandoffLeftPasses; i++ {
+		reviewWorkflowHandoffs(cfg, dlog2, nil, nil, nil, nil, true, absences, at.Add(time.Duration(4+i)*time.Minute), nil)
+	}
+	if p, _ := dlog2.Get(key); p.Status != scheduler.WorkflowHandoffStarted || len(absences) != 0 {
+		t.Fatalf("after %d passes without the item = %+v %v", workflowHandoffLeftPasses, p, absences)
+	}
+
 	// The issue is back in the state hours later: the settled record
 	// stands, whatever the agent's last turn looked like.
 	items := []github.WorkflowDispatch{d}
-	reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(at.Add(2*time.Hour), "STAND DOWN: no"), nil, true, at.Add(3*time.Hour), nil)
+	reviewWorkflowHandoffs(cfg, dlog, items, nil, declinedTurn(at.Add(2*time.Hour), "STAND DOWN: no"), nil, true, nil, at.Add(3*time.Hour), nil)
 	if e, _ = dlog.Get(key); e.Status != scheduler.WorkflowHandoffStarted {
 		t.Fatalf("a settled hand-off was reviewed again: %+v", e)
 	}

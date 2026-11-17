@@ -28,6 +28,12 @@ import (
 // the same delivery, a moment apart.
 const workflowHandoffKickSlack = 2 * time.Minute
 
+// workflowHandoffLeftPasses is how many consecutive passes a pending
+// hand-off's item must be missing from the dispatched items before the
+// hand-off is settled as "the item left the state": one enumeration that
+// came back short must not end the watch on a hand-off nobody started.
+const workflowHandoffLeftPasses = 3
+
 // workflowAgentTurn is what the agent manager knows about an agent's most
 // recent kick.
 type workflowAgentTurn struct {
@@ -118,8 +124,10 @@ func workflowHandoffSeenKey(ref, profile, state string) string {
 // list). A hand-off found not started frees the issue claim its agent took.
 // complete says items is the whole set of dispatched items (the cycle
 // enumerated the repositories): only then does an undecided hand-off whose
-// item is absent count as an item that left the state.
-func reviewWorkflowHandoffs(cfg *config.Config, dlog *scheduler.WorkflowDispatchLog, items []github.WorkflowDispatch, reply func(d github.WorkflowDispatch) (github.DispatchReply, bool, error), turn func(agent string) (workflowAgentTurn, bool), ledger *claims.Ledger, complete bool, now time.Time, logger *slog.Logger) map[string]bool {
+// item is absent count toward an item that left the state. absences counts
+// those passes per key, so one short enumeration does not settle a hand-off
+// (workflowHandoffLeftPasses); nil settles on the first.
+func reviewWorkflowHandoffs(cfg *config.Config, dlog *scheduler.WorkflowDispatchLog, items []github.WorkflowDispatch, reply func(d github.WorkflowDispatch) (github.DispatchReply, bool, error), turn func(agent string) (workflowAgentTurn, bool), ledger *claims.Ledger, complete bool, absences map[string]int, now time.Time, logger *slog.Logger) map[string]bool {
 	seen := map[string]bool{}
 	for _, d := range items {
 		seen[workflowHandoffSeenKey(d.Ref(), d.Target.Profile, d.State)] = true
@@ -130,10 +138,21 @@ func reviewWorkflowHandoffs(cfg *config.Config, dlog *scheduler.WorkflowDispatch
 		if e.Settled() {
 			continue
 		}
-		if complete && !seen[workflowHandoffSeenKey(e.Ref, e.Profile, e.State)] {
+		if !seen[workflowHandoffSeenKey(e.Ref, e.Profile, e.State)] {
+			if !complete {
+				continue
+			}
+			if absences != nil {
+				absences[e.Key]++
+				if absences[e.Key] < workflowHandoffLeftPasses {
+					continue
+				}
+				delete(absences, e.Key)
+			}
 			left = append(left, scheduler.WorkflowHandoffLeftState(e, now))
 			continue
 		}
+		delete(absences, e.Key)
 		undecided[e.Ref] = true
 	}
 	if err := dlog.RecordAll(left); err != nil && logger != nil {

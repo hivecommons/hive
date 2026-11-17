@@ -75,6 +75,9 @@ type workflowDispatchRuntime struct {
 	// (workflowHandoffSeenKey), so the dashboard lists a hand-off that was
 	// not started only while its item is still waiting in that state.
 	seen map[string]bool
+	// absences counts, per hand-off key, the consecutive passes its item
+	// was missing from the dispatched items. Only the eval cycle touches it.
+	absences map[string]int
 }
 
 type workflowDraftCacheEntry struct {
@@ -278,7 +281,10 @@ func planWorkflowDispatchKicks(ctx context.Context, cfg *config.Config, ghClient
 	now := time.Now()
 	items := workflowDispatchItems(ctx, cfg, ghClient, actionable, logger)
 	reply := workflowDispatchReplyFor(ctx, ghClient)
-	seen := reviewWorkflowHandoffs(cfg, dlog, items, reply, turn, ledger, actionable != nil, now, logger)
+	if rt.absences == nil {
+		rt.absences = map[string]int{}
+	}
+	seen := reviewWorkflowHandoffs(cfg, dlog, items, reply, turn, ledger, actionable != nil, rt.absences, now, logger)
 	if actionable != nil {
 		rt.noteSeen(seen)
 	}
