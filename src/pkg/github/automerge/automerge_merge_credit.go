@@ -39,7 +39,9 @@ func (c *Engine) mergeOptions(ctx context.Context, owner, repo string, pr *gh.Pu
 	}
 	message, err := creditor.SquashSignoff(ctx, owner, repo, pr.GetNumber(), method, message)
 	if err != nil {
-		c.warn("automerge refused squash without Signed-off-by", "repo", owner+"/"+repo, "pr", pr.GetNumber(), "error", err)
+		// An unsigned branch needs its author to sign off; this is an
+		// expected merge refusal, not a runtime failure.
+		c.info("automerge refused squash without Signed-off-by", "repo", owner+"/"+repo, "pr", pr.GetNumber(), "error", err)
 		return "", opts, autoMergeReasonSquashUnsigned
 	}
 	return message, opts, ""

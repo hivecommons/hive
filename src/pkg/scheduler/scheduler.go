@@ -50,19 +50,22 @@ type Scheduler struct {
 	prLease                  PRLeaseLookup
 	maintainerNotes          MaintainerNotesLookup
 	topicClaims              TopicClaimLookup
-	runAdmitter              RunAdmitter
-	triageCommenter          TriageCommenter
-	clarity                  clarityGateState
-	priorArt                 priorArtGateState
-	priorArtSearcher         PriorArtSearcher
-	questionAutocloser       QuestionAutocloser
-	lifecycle                timeline.Recorder
-	scanned                  bool
-	deferredKicks            map[string]func(string)
-	firstScanDeferred        map[string]bool
-	ioscanWarned             sync.Map
-	lastClassifierErr        atomic.Value // string: latest fail-closed classifier error
-	mu                       sync.RWMutex
+	// newReleases feeds ${NEW_RELEASES} (new_releases.go); atomic because
+	// template substitution may run with s.mu held.
+	newReleases        atomic.Pointer[newReleasesHolder]
+	runAdmitter        RunAdmitter
+	triageCommenter    TriageCommenter
+	clarity            clarityGateState
+	priorArt           priorArtGateState
+	priorArtSearcher   PriorArtSearcher
+	questionAutocloser QuestionAutocloser
+	lifecycle          timeline.Recorder
+	scanned            bool
+	deferredKicks      map[string]func(string)
+	firstScanDeferred  map[string]bool
+	ioscanWarned       sync.Map
+	lastClassifierErr  atomic.Value // string: latest fail-closed classifier error
+	mu                 sync.RWMutex
 }
 
 // SetRunTriageDeps attaches the narrow surfaces the scheduler needs for the

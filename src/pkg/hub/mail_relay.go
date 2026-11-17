@@ -7,11 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"net/url"
 	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -39,15 +41,47 @@ const (
 	// mailRelayDeliveryHeader carries a non-GitHub relay's delivery id; the
 	// spoke binds the relay signature to it (pkg/dashboard/webhook_relay.go).
 	mailRelayDeliveryHeader = "X-Hive-Relay-Delivery"
-	// mailInboundMaxBody bounds one delivery: a 2 MB message is at most
-	// about 2.7 MB of base64 attachments plus the JSON around them.
+	// mailInboundMaxBody bounds a delivery without routing headers (an
+	// older hive-mx, JSON only).
 	mailInboundMaxBody = 8 << 20
-	// mailRelayTimeout bounds the forward to the spoke; hive-mx waits for
-	// the answer so the sender's server can be told to retry.
+	// envHubMailMaxBody overrides mailInboundDefaultMaxBody, the bound of a
+	// routed delivery on this route only (#18564): 30 MB of attachments
+	// sent as multipart, plus the delivery JSON.
+	envHubMailMaxBody         = "HIVE_HUB_MAIL_MAX_BODY_BYTES"
+	mailInboundDefaultMaxBody = 48 << 20
+	// envHubMailChunkBytes overrides wire.RelayChunkBytes, the piece size
+	// of a chunked relay; it is clamped to [mailMinChunkBytes,
+	// wire.MaxRelayChunkBytes].
+	envHubMailChunkBytes = "HIVE_HUB_MAIL_CHUNK_BYTES"
+	mailMinChunkBytes    = 64 << 10
+	// envHubMailSpoolDir is where a delivery is spooled while it is
+	// relayed ("" is the system temp directory).
+	envHubMailSpoolDir = "HIVE_HUB_MAIL_SPOOL_DIR"
+	// mailRelayTimeout bounds one request to the spoke.
 	mailRelayTimeout = 30 * time.Second
+	// mailRelayTotalTimeout bounds the whole relay of one delivery (every
+	// piece of a chunked one); hive-mx waits for the answer so the
+	// sender's server can be told to retry.
+	mailRelayTotalTimeout = 100 * time.Second
+	// mailInboundDeadline is this route's read and write deadline, past
+	// the server-wide ones, so a large delivery can be read and relayed.
+	mailInboundDeadline = 2 * time.Minute
 	// mailSpokeErrBody bounds what is read of a spoke's answer.
 	mailSpokeErrBody = 4096
 )
+
+// mailEnvInt64 reads a positive integer, def when unset or invalid.
+func mailEnvInt64(key string, def int64) int64 {
+	if n, err := strconv.ParseInt(strings.TrimSpace(os.Getenv(key)), 10, 64); err == nil && n > 0 {
+		return n
+	}
+	return def
+}
+
+// mailChunkBytes is the piece size of a chunked relay.
+func mailChunkBytes() int64 {
+	return min(max(mailEnvInt64(envHubMailChunkBytes, wire.RelayChunkBytes), mailMinChunkBytes), wire.MaxRelayChunkBytes)
+}
 
 // mailDeliveryIDRE is the shape of a hive-mx delivery id (16 random bytes).
 var mailDeliveryIDRE = regexp.MustCompile(`^[0-9a-f]{32}$`)
@@ -171,33 +205,97 @@ type mailEnvelope struct {
 	Recipient string    `json:"recipient"`
 }
 
+// mailEnvelopeFromHeaders is the routing hive-mx sends in headers, ok
+// false for an older hive-mx that sends none.
+func mailEnvelopeFromHeaders(h http.Header) (mailEnvelope, bool) {
+	env := mailEnvelope{ID: h.Get(wire.HeaderDelivery), Kind: wire.Kind(h.Get(wire.HeaderKind)), Recipient: h.Get(wire.HeaderRecipient)}
+	return env, env.ID != "" || env.Kind != "" || env.Recipient != ""
+}
+
 func mailError(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(map[string]string{"error": msg})
 }
 
+// errMailSpool is a failure to spool a delivery on the hub's own disk.
+var errMailSpool = errors.New("mail relay: spool unavailable")
+
+// spoolMailBody copies a delivery body to a temp file, at most max bytes.
+func spoolMailBody(w http.ResponseWriter, body io.Reader, limit int64) (*os.File, int64, error) {
+	f, err := os.CreateTemp(os.Getenv(envHubMailSpoolDir), "hive-mail-*")
+	if err != nil {
+		return nil, 0, errMailSpool
+	}
+	n, err := io.Copy(f, http.MaxBytesReader(w, io.NopCloser(body), limit))
+	if err != nil {
+		_ = f.Close()
+		_ = os.Remove(f.Name())
+		var pe *os.PathError
+		if errors.As(err, &pe) {
+			return nil, 0, errMailSpool
+		}
+		return nil, 0, err
+	}
+	return f, n, nil
+}
+
 // handleMailInbound routes one hive-mx delivery to its hive. Status codes
 // tell hive-mx whether the sender should retry: 4xx (other than 408/429)
 // is permanent, everything else temporary.
+//
+// The body is spooled to disk, never held whole in memory. A files
+// delivery that is multipart or larger than one relay piece goes to the
+// spoke in signed pieces (relayMailChunks), each under the 1 MiB request
+// limit ingress proxies apply by default; anything else is forwarded
+// byte for byte as one request.
 func (s *HubServer) handleMailInbound(w http.ResponseWriter, r *http.Request) {
 	if !gateMail(w, r) {
 		return
 	}
-	body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, mailInboundMaxBody))
-	if err != nil {
-		var tooBig *http.MaxBytesError
-		if errors.As(err, &tooBig) {
-			mailError(w, http.StatusRequestEntityTooLarge, "delivery too large")
-			return
-		}
-		mailError(w, http.StatusBadRequest, "unreadable body")
-		return
-	}
-	var env mailEnvelope
-	if err := json.Unmarshal(body, &env); err != nil {
+	rc := http.NewResponseController(w)
+	deadline := time.Now().Add(mailInboundDeadline)
+	_ = rc.SetReadDeadline(deadline)
+	_ = rc.SetWriteDeadline(deadline)
+
+	env, routed := mailEnvelopeFromHeaders(r.Header)
+	ct := r.Header.Get("Content-Type")
+	mediaType, params, _ := mime.ParseMediaType(ct)
+	isJSON := ct == "" || mediaType == wire.ContentTypeJSON
+	switch {
+	case isJSON:
+	case mediaType == wire.ContentTypeMultipart && routed && params["boundary"] != "" && env.Kind == wire.KindFiles:
+	default:
 		mailError(w, http.StatusBadRequest, "invalid delivery")
 		return
+	}
+	limit := int64(mailInboundMaxBody)
+	if routed {
+		limit = mailEnvInt64(envHubMailMaxBody, mailInboundDefaultMaxBody)
+	}
+	spool, size, err := spoolMailBody(w, r.Body, limit)
+	if err != nil {
+		var tooBig *http.MaxBytesError
+		switch {
+		case errors.As(err, &tooBig):
+			mailError(w, http.StatusRequestEntityTooLarge, "delivery too large")
+		case errors.Is(err, errMailSpool):
+			s.logger.Warn("mail relay: cannot spool a delivery", "error", err)
+			mailError(w, http.StatusServiceUnavailable, "hub cannot take the delivery now")
+		default:
+			mailError(w, http.StatusBadRequest, "unreadable body")
+		}
+		return
+	}
+	defer func() {
+		_ = spool.Close()
+		_ = os.Remove(spool.Name())
+	}()
+	if !routed {
+		if err := json.NewDecoder(io.NewSectionReader(spool, 0, size)).Decode(&env); err != nil {
+			mailError(w, http.StatusBadRequest, "invalid delivery")
+			return
+		}
 	}
 	path := wire.SpokePath(env.Kind)
 	host := wire.RecipientHost(env.Recipient)
@@ -232,32 +330,40 @@ func (s *HubServer) handleMailInbound(w http.ResponseWriter, r *http.Request) {
 		mailError(w, http.StatusServiceUnavailable, "hive not reachable yet")
 		return
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), mailRelayTimeout)
+	ctx, cancel := context.WithTimeout(r.Context(), mailRelayTotalTimeout)
 	defer cancel()
 	if spokeWebhookRelayGuard(ctx, dashboardURL) {
 		s.logger.Warn("mail relay: refusing private or unresolvable dashboard URL", "delivery", env.ID, "hive_id", hiveID)
 		mailError(w, http.StatusBadGateway, "hive not reachable")
 		return
 	}
-	spokeURL := strings.TrimRight(dashboardURL, "/") + path
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, spokeURL, bytes.NewReader(body))
-	if err != nil {
-		mailError(w, http.StatusBadGateway, "hive not reachable")
-		return
+	base := strings.TrimRight(dashboardURL, "/")
+	chunk := mailChunkBytes()
+	var code int
+	if env.Kind == wire.KindFiles && (!isJSON || size > chunk) {
+		if ct == "" {
+			ct = wire.ContentTypeJSON
+		}
+		pieces := (size + chunk - 1) / chunk
+		if pieces > wire.MaxRelayChunks {
+			mailError(w, http.StatusRequestEntityTooLarge, "delivery too large")
+			return
+		}
+		code, err = relayMailChunks(ctx, base+wire.SpokeFilesChunkPath, h.WebhookRelayKey, env.ID, ct, spool, size, chunk)
+	} else {
+		var body []byte
+		body, err = io.ReadAll(io.NewSectionReader(spool, 0, size))
+		if err == nil {
+			code, err = relayMailOnce(ctx, base+path, h.WebhookRelayKey, env.ID, wire.ContentTypeJSON, nil, body)
+		}
 	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set(mailRelayDeliveryHeader, env.ID)
-	signWebhookRelayHeaders(req.Header, h.WebhookRelayKey, time.Now(), env.ID, body)
-	resp, err := mailRelayClient.Do(req)
 	if err != nil {
 		s.logger.Warn("mail relay: spoke unreachable", "delivery", env.ID, "hive_id", hiveID, "error", err)
 		mailError(w, http.StatusBadGateway, "hive not reachable")
 		return
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, mailSpokeErrBody))
-	_ = resp.Body.Close()
-	s.logger.Info("mail relay: delivered", "delivery", env.ID, "hive_id", hiveID, "kind", string(env.Kind), "status", resp.StatusCode)
-	switch code := resp.StatusCode; {
+	s.logger.Info("mail relay: delivered", "delivery", env.ID, "hive_id", hiveID, "kind", string(env.Kind), "status", code, "bytes", size)
+	switch {
 	case code >= 200 && code < 300:
 		w.WriteHeader(http.StatusAccepted)
 	case code == http.StatusUnauthorized, code == http.StatusNotFound, code == http.StatusMethodNotAllowed:
@@ -266,7 +372,62 @@ func (s *HubServer) handleMailInbound(w http.ResponseWriter, r *http.Request) {
 		mailError(w, http.StatusBadGateway, "hive did not accept the delivery yet")
 	case code == http.StatusRequestTimeout, code == http.StatusTooManyRequests, code >= 500:
 		mailError(w, http.StatusBadGateway, "hive unavailable")
+	case code == http.StatusRequestEntityTooLarge:
+		mailError(w, http.StatusRequestEntityTooLarge, "hive refused the delivery as too large")
 	default:
 		mailError(w, http.StatusUnprocessableEntity, "hive refused the delivery")
 	}
+}
+
+// relayMailOnce posts one signed request to the spoke and returns its
+// status. delivery is the relay delivery id the signature binds.
+func relayMailOnce(ctx context.Context, target, key, delivery, contentType string, extra http.Header, body []byte) (int, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
+	if err != nil {
+		return 0, err
+	}
+	for k, v := range extra {
+		req.Header[k] = v
+	}
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set(mailRelayDeliveryHeader, delivery)
+	signWebhookRelayHeaders(req.Header, key, time.Now(), delivery, body)
+	resp, err := mailRelayClient.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, mailSpokeErrBody))
+	_ = resp.Body.Close()
+	return resp.StatusCode, nil
+}
+
+// relayMailChunks sends a spooled files delivery to the spoke in pieces of
+// at most chunk bytes, in order, each signed with its own relay delivery
+// id (wire.ChunkDelivery). The spoke stores the pieces and processes the
+// whole body when the last one arrives; a piece it refuses stops the
+// relay, and its status is the answer.
+func relayMailChunks(ctx context.Context, target, key, id, bodyType string, spool io.ReaderAt, size, chunk int64) (int, error) {
+	pieces := int((size + chunk - 1) / chunk)
+	if pieces == 0 {
+		pieces = 1
+	}
+	extra := http.Header{}
+	extra.Set(wire.HeaderBodyType, bodyType)
+	buf := make([]byte, chunk)
+	code := 0
+	for i := 0; i < pieces; i++ {
+		off := int64(i) * chunk
+		n, err := spool.ReadAt(buf[:min(chunk, size-off)], off)
+		if err != nil && !errors.Is(err, io.EOF) {
+			return 0, err
+		}
+		code, err = relayMailOnce(ctx, target, key, wire.ChunkDelivery(id, i, pieces), "application/octet-stream", extra, buf[:n])
+		if err != nil {
+			return 0, err
+		}
+		if code < 200 || code >= 300 {
+			return code, nil
+		}
+	}
+	return code, nil
 }

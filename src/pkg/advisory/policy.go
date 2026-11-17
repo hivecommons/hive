@@ -30,7 +30,6 @@ package advisory
 
 import (
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -53,43 +52,6 @@ func PrimaryRepo(cfg *config.Config) string {
 		return cfg.Project.Repos[0]
 	}
 	return ""
-}
-
-// ManagedRepos returns every repo the hive manages, each of which carries its
-// own governor (advisory) issue (#18448): PrimaryRepo first, then the rest of
-// project.repos in configured order. An entry naming the same repository as an
-// earlier one, bare ("talks") or org-qualified ("org/talks") and in any case,
-// is dropped so one repository never gets two ensure attempts in a cycle. The
-// spelling kept is the first one seen, because callers key advisoryIssues and
-// the post gate by that exact string.
-func ManagedRepos(cfg *config.Config) []string {
-	if cfg == nil {
-		return nil
-	}
-	org := strings.TrimSpace(cfg.Project.Org)
-	seen := make(map[string]struct{}, len(cfg.Project.Repos)+1)
-	out := make([]string, 0, len(cfg.Project.Repos)+1)
-	add := func(repo string) {
-		repo = strings.TrimSpace(repo)
-		if repo == "" {
-			return
-		}
-		key := repo
-		if !strings.Contains(key, "/") && org != "" {
-			key = org + "/" + key
-		}
-		key = strings.ToLower(key)
-		if _, dup := seen[key]; dup {
-			return
-		}
-		seen[key] = struct{}{}
-		out = append(out, repo)
-	}
-	add(PrimaryRepo(cfg))
-	for _, r := range cfg.Project.Repos {
-		add(r)
-	}
-	return out
 }
 
 // IssueUnresolved reports whether the pinned advisory issue for repo is still

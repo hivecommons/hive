@@ -398,3 +398,25 @@ func TestMaintainHeldPRMergeabilityStillNotesConflictWhenBaseRefreshIsScheduled(
 		t.Fatalf("snapshot = %+v ok=%v, want ConflictNoted set", rec, ok)
 	}
 }
+
+// update-branch answers 202 before the merge is visible, so a refetch that
+// still shows the old head is propagation lag, not a WARN-worthy anomaly
+// (#18547).
+func TestMaintainHeldPRMergeabilityUnchangedHeadAfterUpdateDoesNotWarn(t *testing.T) {
+	store := newTestHoldGuardStore(t)
+	fake := &holdGuardServer{commits: map[int][]map[string]any{
+		7: {ghCommit("c1", "strategist-bot", "docs: plan")},
+	}}
+	client := newHoldGuardClient(t, fake)
+	cfg := escalationTestConfig()
+	store.Snapshot("acme/widgets", 7, "c1", []holdguard.Commit{{SHA: "c1", Author: "strategist-bot"}})
+
+	var buf bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	held := heldPRsActionable(github.PullRequest{Repo: "widgets", Number: 7, HeadSHA: "c1", BaseSHA: "b1", MergeableState: "behind"})
+	enforceHoldGuard(context.Background(), cfg, client, client, held, logger)
+
+	if out := buf.String(); strings.Contains(out, "level=WARN") {
+		t.Fatalf("unchanged head after update-branch logged a warning:\n%s", out)
+	}
+}

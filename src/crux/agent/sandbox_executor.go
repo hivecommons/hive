@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	DefaultSandboxKickTimeout = 45 * time.Minute
+	DefaultSandboxKickTimeout = kubejob.DefaultKickTimeout
 	defaultSandboxNetworkMode = sandbox.NetworkModeRestricted
 	sandboxPromptRelPath      = ".hive/kick-prompt.txt"
 	sandboxTranscriptRelPath  = sandbox.TranscriptRelPath

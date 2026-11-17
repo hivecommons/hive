@@ -16,7 +16,6 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v72/github"
-	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/oktotest"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -229,8 +228,9 @@ func TestTerminalRequiredCheckHoldLoggedOncePerHeadAndReason(t *testing.T) {
 
 // #11923: a Dependabot head autofix-pushed by github-actions[bot] can never
 // produce a pull_request_target-only required context. The sweep names it
-// required-check-never-ran and asks Dependabot to rebase exactly once per head.
-func TestTrySweepTrustedBotNudgesDependabotRebaseOncePerHead(t *testing.T) {
+// required-check-never-ran. #18441: it never posts `@dependabot rebase`,
+// which Dependabot refuses from the App and on an edited branch.
+func TestTrySweepTrustedBotHoldsAutofixDependabotHeadWithoutCommand(t *testing.T) {
 	now := time.Date(2026, 10, 14, 19, 0, 0, 0, time.UTC)
 	var comments []string
 	pr := missingRequiredPR(func(p *selfAuthoredPR) {
@@ -259,11 +259,14 @@ func TestTrySweepTrustedBotNudgesDependabotRebaseOncePerHead(t *testing.T) {
 			t.Fatalf("tick %d reason = %q, want %q", tick, reason, want)
 		}
 	}
-	if len(comments) != 1 || comments[0] != dependabotRebaseComment {
-		t.Fatalf("comments = %q, want exactly one %q", comments, dependabotRebaseComment)
+	if len(comments) != 0 {
+		t.Fatalf("comments = %q, want none (Dependabot refuses the App's commands)", comments)
 	}
-	if len(rec.claims) != 1 || rec.claims[0].Kind != effects.KindIssueComment || rec.claims[0].Target != "23" || rec.claims[0].Inputs["head_sha"] != "sha23" {
-		t.Fatalf("mutation claims = %#v, want one issue_comment claim for PR 23 head sha23", rec.claims)
+	if len(rec.claims) != 0 {
+		t.Fatalf("mutation claims = %#v, want none", rec.claims)
+	}
+	if !c.rebaseNudged("acme", "widget", 23, "sha23") {
+		t.Fatal("rebaseNudged = false; the hold must be recorded once per head")
 	}
 	if !isTerminalRequiredCheckHold(want) {
 		t.Fatalf("isTerminalRequiredCheckHold(%q) = false, want true so the hold logs once", want)
@@ -334,10 +337,10 @@ func TestDependabotRebaseNudgeDegradesOnAPIErrors(t *testing.T) {
 	if c.isAutofixPushedDependabotHead(context.Background(), "widget", "acme", "widget", pr, 23, "sha23") {
 		t.Fatal("head-commit lookup failure must not be treated as an autofix head")
 	}
-	c.nudgeDependabotRebase(context.Background(), "widget", "acme", "widget", 23, "sha23", "ci/build")
-	c.nudgeDependabotRebase(context.Background(), "widget", "acme", "widget", 23, "sha23", "ci/build")
-	if posts != 1 {
-		t.Fatalf("comment POSTs = %d, want 1 (a failed nudge is not retried for the same head)", posts)
+	c.nudgeDependabotRebase("widget", "acme", "widget", 23, "sha23", "ci/build")
+	c.nudgeDependabotRebase("widget", "acme", "widget", 23, "sha23", "ci/build")
+	if posts != 0 {
+		t.Fatalf("comment POSTs = %d, want 0 (never post a command Dependabot refuses)", posts)
 	}
 	if !c.rebaseNudged("acme", "widget", 23, "SHA23") {
 		t.Fatal("rebaseNudged = false after an attempted nudge")

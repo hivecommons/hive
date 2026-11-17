@@ -1337,3 +1337,11 @@ data:
 # workflow:
 #   enabled: false           # false (default): bindings are columns only
 #   label_gc: true           # delete labels a previous binding provisioned once nothing wears them
+#   dispatch:                # hand model states to agents (docs/design/workflow-models.md#agent-dispatch)
+#     enabled: true          # default; also needs enabled: true above
+#     profiles:
+#       techdocs-drafter:
+#         agent: writer      # default: an agent named after the profile, else role writer, docs, feature
+#         prompt_template: ""  # default: the built-in dispatch prompt
+#       techdocs-verifier:
+#         disabled: false    # true: never dispatch automatically (Send to … still works)

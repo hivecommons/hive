@@ -132,6 +132,9 @@ type Client struct {
 	issueFilter                IssueAdmitter
 	agentIssueDecisionPolicyMu sync.RWMutex
 	agentIssueDecisionPolicy   string
+	// needsSHALabelName is the configured SHA-hold label, recorded by each
+	// EnforceSHAHold sweep (guarded by issueFilterMu). Empty means the default.
+	needsSHALabelName string
 	// reporterConfirmationEnabled restores the legacy close gate for all
 	// human-filed bug-family issues when configured. Nil/false means only
 	// per-issue opt-in markers activate the gate.
@@ -1973,6 +1976,13 @@ func (c *Client) fetchIssues(ctx context.Context, repo string, now time.Time, re
 			breakdown.Filtered++
 			breakdown.ReporterConfirmation++
 			details = append(details, c.workIssue(repo, issue, labels, "filtered", issueNeedsReporterConfirmationLabel))
+			continue
+		}
+		// needs-sha: waiting on the reporter for a commit SHA. Out of every
+		// agent lane whatever the reporter-trust setting (hivecommons/hive#18542).
+		if label := c.needsSHALabelOn(labels); label != "" {
+			breakdown.Filtered++
+			details = append(details, c.workIssue(repo, issue, labels, "filtered", label))
 			continue
 		}
 		if suppress := hardSuppressIssueBucket(issueFilter, labels); suppress != "" {
@@ -4692,6 +4702,43 @@ type SHAHoldResult struct {
 // configured (config.DefaultSHAHoldTrustedLabel).
 const defaultSHAHoldLabel = "needs-sha"
 
+// NeedsSHALabelDescription is the repo label description for the SHA-hold label.
+const NeedsSHALabelDescription = "Waiting on the reporter for the commit SHA; hive won't work this until it's added."
+
+// needsSHALabelOn returns the SHA-hold label the labels carry (the configured
+// name, or the default name), or "" when none. An issue wearing it is parked
+// on the reporter and kept out of agent work lanes.
+func (c *Client) needsSHALabelOn(labels []string) string {
+	c.issueFilterMu.RLock()
+	configured := c.needsSHALabelName
+	c.issueFilterMu.RUnlock()
+	for _, name := range []string{configured, defaultSHAHoldLabel} {
+		if name = strings.TrimSpace(name); name == "" {
+			continue
+		}
+		for _, l := range labels {
+			if strings.EqualFold(strings.TrimSpace(l), name) {
+				return name
+			}
+		}
+	}
+	return ""
+}
+
+func (c *Client) setNeedsSHALabel(name string) {
+	c.issueFilterMu.Lock()
+	c.needsSHALabelName = strings.TrimSpace(name)
+	c.issueFilterMu.Unlock()
+}
+
+// ensureNeedsSHALabel creates the SHA-hold label with its description when
+// the repo lacks it. Best effort: the label add that follows still works.
+func (c *Client) ensureNeedsSHALabel(ctx context.Context, owner, repo, name string) {
+	if err := c.EnsureIssueLabel(ctx, owner+"/"+repo, name, "fbca04", NeedsSHALabelDescription); err != nil {
+		c.logger.Warn("could not ensure SHA-hold label", "repo", repo, "label", name, "error", err)
+	}
+}
+
 // shaHoldLabel returns the label the sweep applies to an issue missing a SHA.
 // It is never `hold`: a `hold` means a person said hands-off, and the hive
 // no longer applies one itself (hivecommons/hive#18468). Before #18468 an
@@ -4714,6 +4761,7 @@ func (c *Client) EnforceSHAHold(ctx context.Context, cfg SHAHoldConfig) (*SHAHol
 	}
 	result := &SHAHoldResult{}
 	owner, repo := c.splitRepo(cfg.PrimaryRepo)
+	c.setNeedsSHALabel(cfg.shaHoldLabel())
 
 	opts := &gh.IssueListByRepoOptions{
 		State:       "open",
@@ -4771,6 +4819,7 @@ func (c *Client) enforceSoftSHAHold(ctx context.Context, owner, repo string, num
 			return
 		}
 		if !hasSHA && !softHeld {
+			c.ensureNeedsSHALabel(ctx, owner, repo, soft)
 			if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{soft}); err != nil {
 				c.logger.Warn("failed to add soft SHA label", "repo", repo, "issue", number, "label", soft, "error", err)
 				result.Skipped++
@@ -4797,6 +4846,7 @@ func (c *Client) enforceSoftSHAHold(ctx context.Context, owner, repo string, num
 		result.Unheld++
 		c.logger.Info("SHA-UNHOLD", "repo", repo, "issue", number, "author", author, "label", soft)
 	case !hasSHA && !softHeld:
+		c.ensureNeedsSHALabel(ctx, owner, repo, soft)
 		if _, _, err := c.client.Issues.AddLabelsToIssue(ctx, owner, repo, number, []string{soft}); err != nil {
 			c.logger.Warn("failed to add soft SHA label", "repo", repo, "issue", number, "label", soft, "error", err)
 			result.Skipped++

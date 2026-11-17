@@ -40,7 +40,9 @@ const (
 	meetingsCalendarEmailsPath = "/api/meetings/calendar-emails"
 	meetingsCalendarProofPath  = "/api/meetings/calendar-emails/proof"
 	inboxEmailPath             = "/api/inbox/email"
-	// mailRelayMaxBody bounds one relayed delivery (the hub's own cap).
+	inboxEmailChunkPath        = "/api/inbox/email/chunk"
+	// mailRelayMaxBody bounds one delivery relayed in a single request; a
+	// larger one arrives in pieces on inboxEmailChunkPath.
 	mailRelayMaxBody = 8 << 20
 	// mailAddressLocalPart is the mailbox hive-mx accepts.
 	mailAddressLocalPart = wire.LocalPart

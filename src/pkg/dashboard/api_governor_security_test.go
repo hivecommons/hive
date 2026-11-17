@@ -148,6 +148,7 @@ func TestGovernorSecurityRejectsInvalidAdvancedValues(t *testing.T) {
 
 func TestAgentConfigGeneralPersistsSandboxOptIn(t *testing.T) {
 	s, deps := apiServer(t)
+	deps.Config.AgentSandbox.Image = "registry.example/sandbox:1"
 	rec := doPut(s, "/api/config/agent/scanner/general", map[string]any{"sandboxEnabled": true})
 	if rec.Code != http.StatusOK {
 		t.Fatalf("PUT agent general = %d, want 200: %s", rec.Code, rec.Body.String())

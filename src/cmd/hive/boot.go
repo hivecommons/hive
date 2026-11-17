@@ -39,6 +39,7 @@ import (
 	"github.com/hivecommons/hive/pkg/priorart"
 	"github.com/hivecommons/hive/pkg/promptsrc"
 	"github.com/hivecommons/hive/pkg/questionclose"
+	"github.com/hivecommons/hive/pkg/releasefeed"
 	"github.com/hivecommons/hive/pkg/repoagents"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
@@ -288,6 +289,9 @@ type boot struct {
 	// owned by its independent ticker goroutine.
 	matrixIngestSt      *matrixIngestState
 	matrixIngestStarted bool
+	// releaseFeed is the release-feed watcher (#18494), started once by
+	// startReleaseFeedWatcher.
+	releaseFeed *releasefeed.Watcher
 	// gfi is good-first-issue curation state (good_first_issue.*).
 	gfi *gfiState
 	// firstTimer is first-time contributor welcome state
