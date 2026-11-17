@@ -155,7 +155,7 @@ func TestKickContextInjectionStrings(t *testing.T) {
 	carol := mustAdd(t, s.Store(), "Carol", Identity{Kind: KindGitHub, Value: "carol"})
 	// Goals can be typed by the person themselves, even a read-only one.
 	me, _ := s.Get(readV, MeID)
-	if _, err := s.Store().AddIdentity(me.ID, Identity{Kind: KindGitHub, Value: "reedgh"}, "olivia"); err != nil {
+	if _, _, err := s.Store().AddIdentity(me.ID, Identity{Kind: KindGitHub, Value: "reedgh"}, "olivia"); err != nil {
 		t.Fatal(err)
 	}
 	for _, attack := range injections {
