@@ -124,20 +124,6 @@ test('Governor PRs by model tooltip lists per-backend rework and the effort spli
   }
 });
 
-function extractFunction(name) {
-  const start = indexHtml.indexOf('function ' + name + '(');
-  assert.notEqual(start, -1, `${name} function exists`);
-  const brace = indexHtml.indexOf('{', start);
-  let depth = 0;
-  for (let i = brace; i < indexHtml.length; i++) {
-    const ch = indexHtml[i];
-    if (ch === '{') depth++;
-    if (ch === '}') depth--;
-    if (depth === 0) return indexHtml.slice(start, i + 1);
-  }
-  throw new Error(`unterminated ${name}`);
-}
-
 test('Governor PRs by model tooltip lists repos and weekly trend when present (#18716)', () => {
   const vm = require('node:vm');
   const ctx = {};
