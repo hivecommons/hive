@@ -2581,6 +2581,10 @@ func pullRequestAttributionRecord(repo string, pr *gh.PullRequest, meta Invocati
 		HiveBackend:    meta.Backend,
 		HiveModel:      meta.Model,
 		HiveEffort:     meta.Effort,
+		// Supersedes lets the PRs-by-model card count a closed PR that
+		// another PR replaced as superseded (#18719); the body is already
+		// in hand, so this costs no GitHub call.
+		Supersedes: prSupersedesNumberOrZero(pr.GetBody()),
 	}
 }
 
