@@ -44,6 +44,30 @@ func TestGFIPublicOrigin(t *testing.T) {
 	}
 }
 
+// gfiSweepOptions hands the sweep the config's per-repo auto-merge switch,
+// so the welcome comment promises an automatic merge only where the
+// contributor lane merges (projectbluefin/common#1688).
+func TestGFISweepOptionsWireRepoAutoMerge(t *testing.T) {
+	cfg := gfiTestConfig()
+	level, off := 6, false
+	cfg.ACMMLevel = &level
+	cfg.Project.RepoPolicies = []config.RepoPolicy{{Repo: "acme/common", AutoMerge: &off}}
+	opts := gfiSweepOptions(cfg, nil, slog.New(slog.DiscardHandler))
+	if opts.RepoAutoMerge == nil {
+		t.Fatal("RepoAutoMerge not wired")
+	}
+	if opts.RepoAutoMerge("acme/common") {
+		t.Error("acme/common has auto_merge: false; the invite must not promise an automatic merge")
+	}
+	if !opts.RepoAutoMerge("acme/widgets") {
+		t.Error("acme/widgets has no override at L6; the contributor lane merges there")
+	}
+	level = 5
+	if gfiSweepOptions(cfg, nil, slog.New(slog.DiscardHandler)).RepoAutoMerge("acme/widgets") {
+		t.Error("below L6 no repository auto-merges")
+	}
+}
+
 func TestGFICandidatesProjection(t *testing.T) {
 	now := time.Now()
 	res := &github.ActionableResult{Issues: github.IssueResult{Items: []github.Issue{
