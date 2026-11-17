@@ -151,3 +151,61 @@ variables:
 		t.Errorf("overlay variables.security.allow_exec was adopted; it must stay seed-only")
 	}
 }
+
+// TestLoadWithDashboardOverlay_AgentFileOutranksDashboardOverlay reproduces the
+// standalone OpenShift report: an operator set `paused: true` and a `sandbox:`
+// block in /data/agent-configs/reviewer.yaml, but the dashboard overlay's
+// older copy of agents.reviewer (paused false, sandbox disabled) replaced it
+// on load. The agent file is the higher layer and must win; other agents the
+// file does not name keep the overlay's values.
+func TestLoadWithDashboardOverlay_AgentFileOutranksDashboardOverlay(t *testing.T) {
+	dir := t.TempDir()
+	agentsDir := filepath.Join(dir, "agent-configs")
+	if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	seed := "project:\n  org: testorg\n  repos: [repo1]\ngithub:\n  token: ghp_test123456789\ndata:\n  agents_dir: " + agentsDir + "\nagents:\n  reviewer:\n    backend: copilot\n    model: claude-sonnet-4-6\n  scanner:\n    backend: copilot\n    model: claude-sonnet-4-6\n"
+	overlay := `
+project:
+  org: testorg
+  repos: [repo1]
+agents:
+  reviewer:
+    backend: copilot
+    model: claude-sonnet-4-6
+    paused: false
+    pause_owner: operator
+    sandbox:
+      enabled: false
+  scanner:
+    backend: copilot
+    model: overlay-model
+`
+	file := `
+backend: copilot
+model: claude-sonnet-4-6
+paused: true
+pause_owner: operator
+sandbox:
+  enabled: true
+  image: reviewer/sandbox:1
+`
+	if err := os.WriteFile(filepath.Join(agentsDir, "reviewer.yaml"), []byte(file), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	seedPath := setupOverlayReviewSandbox(t, seed, overlay)
+	merged, err := LoadWithDashboardOverlay(seedPath)
+	if err != nil {
+		t.Fatalf("LoadWithDashboardOverlay: %v", err)
+	}
+	r := merged.Agents["reviewer"]
+	if !r.Paused {
+		t.Errorf("agent file paused: true lost to the dashboard overlay")
+	}
+	if r.Sandbox == nil || r.Sandbox.Image != "reviewer/sandbox:1" || r.Sandbox.Enabled == nil || !*r.Sandbox.Enabled {
+		t.Errorf("agent file sandbox block lost to the dashboard overlay: %+v", r.Sandbox)
+	}
+	if got := merged.Agents["scanner"].Model; got != "overlay-model" {
+		t.Errorf("agent without a file must keep the overlay value, got %q", got)
+	}
+}

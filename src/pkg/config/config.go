@@ -6333,6 +6333,24 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	for name := range agents {
 		cfg.ApplyAgentDefaults(name)
 	}
+	// Per-agent files (/data/agent-configs/<name>.yaml) outrank the dashboard
+	// overlay (config-layering.md, layers.go: "agent overlays ... outrank the
+	// dashboard overlay"). loadWithOverrides merged them over the seed, but the
+	// whole-entry replacement just above then buried them again under the
+	// overlay's older copy of the same agent, so an operator's `paused: true`
+	// or `sandbox:` block in the agent file never took effect while the
+	// overlay and runtime config still said otherwise (#18804). Re-apply the
+	// files last. The dashboard writes the same file on every per-agent save
+	// and pack apply, so a current file already agrees with the overlay.
+	if cfg.Data.AgentsDir != "" {
+		if files, ferr := LoadAgentOverrides(cfg.Data.AgentsDir); ferr == nil {
+			files = cfg.RejectInvalidAgentOverlays(files)
+			cfg.MergeAgentOverrides(files)
+			for name := range files {
+				cfg.ApplyAgentDefaults(name)
+			}
+		}
+	}
 	if err := cfg.ApplyAgentSpecRepoScopes(); err != nil {
 		return cfg, err
 	}

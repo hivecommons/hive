@@ -48,6 +48,8 @@ Three documented exceptions where a lower layer affects the result:
 
 Everything else: the highest layer that sets the field wins.
 
+A per-agent file replaces the whole `agents.<name>` entry from the dashboard overlay and the runtime config, so to change one agent edit `/data/agent-configs/<agent>.yaml` (`/api/config/provenance` names it as `agent-overlay`). The `review` and `agent_sandbox` blocks and every other top-level block are not per-agent and come from the dashboard overlay (`/data/hive.yaml.dashboard`) over the seed.
+
 ## The ConfigMap decides almost nothing, and nothing can write it
 
 This is the most important and least obvious fact about the system.
