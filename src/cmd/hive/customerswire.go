@@ -209,6 +209,7 @@ func installCustomersAgentContext(c *customersDashboard, setKickLookup func(sche
 	if setKickLookup != nil {
 		setKickLookup(c.svc.KickContext)
 	}
+}
 
 func (c *customersDashboard) Merge(v dashboard.CustomersViewer, id, from string) (dashboard.CustomerResult, error) {
 	return customerResult(c.svc.Merge(customersViewer(v), id, from))
