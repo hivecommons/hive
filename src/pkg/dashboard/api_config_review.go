@@ -1,6 +1,8 @@
 package dashboard
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"sort"
@@ -52,6 +54,11 @@ type reviewSection struct {
 	PerspectivesSourceWarning string `json:"perspectives_source_warning,omitempty"`
 	// PerspectivesSourceURL is the GitHub blob URL of the linked document.
 	PerspectivesSourceURL string `json:"perspectives_source_url,omitempty"`
+	// PerspectivesSourceApproved reports whether the linked repo passes
+	// GitHubPromptAllowed (seed allowlist or owner approval). False while
+	// linked means the resolver will refuse to fetch it, so the dialog says so
+	// and points at Settings, Security, Prompt sources (#18797).
+	PerspectivesSourceApproved bool `json:"perspectives_source_approved"`
 }
 
 // perspectivesSourceStatusUnresolved marks a set source with no resolved set.
@@ -113,6 +120,7 @@ func reviewSectionResponse(cfg *config.Config) reviewSection {
 	if src := rc.PerspectivesSource; src.IsSet() {
 		out.PerspectivesLinked = true
 		out.PerspectivesSourceURL = perspectivesSourceURL(*src)
+		out.PerspectivesSourceApproved = cfg != nil && cfg.GitHubPromptAllowed(src.Slug())
 		out.PerspectivesSourceStatus = perspectivesSourceStatusUnresolved
 		if lp := rc.LinkedPerspectives; lp != nil {
 			if lp.Source != "" {
@@ -214,7 +222,11 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		// perspective is only valid once its prompt exists, so validating one
 		// without the other would reject a correct pair sent in two requests.
 		// The dialog always sends both when it sends either.
-		Perspectives         *[]string          `json:"perspectives"`
+		Perspectives *[]string `json:"perspectives"`
+		// PerspectivesSource links the perspective set to a repo file
+		// (hivecommons/hive#18797). A JSON object sets it, null (or an object
+		// missing owner, repo or path) clears it, an absent key leaves it.
+		PerspectivesSource   json.RawMessage    `json:"perspectives_source"`
 		PerspectivePrompts   *map[string]string `json:"perspective_prompts"`
 		CombinedPerspectives *bool              `json:"combined_perspectives"`
 		// ReviseRepos / ReviseVerdictsBefore drive the reviewer's revisit
@@ -275,14 +287,26 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// perspectives_source is parsed and gated before anything is mutated.
+	newSource, sourceChange, srcErr := s.parsePerspectivesSourceBody(body.PerspectivesSource)
+	if srcErr != nil {
+		jsonError(w, srcErr.msg, srcErr.status)
+		return
+	}
+	linkedAfter := s.deps.Config.Review.PerspectivesSource.IsSet()
+	if sourceChange {
+		linkedAfter = newSource.IsSet()
+	}
+
 	// A linked perspective set is owned by its repo file: an inline edit
 	// would be saved and then silently replaced by the next reload, so it is
 	// refused before anything is mutated. The operator-owned review knobs
 	// (combined_perspectives, plan_match, max_perspectives_per_pr) stay
-	// editable (hivecommons/hive#17989).
-	if src := s.deps.Config.Review.PerspectivesSource; src.IsSet() && (body.Perspectives != nil || body.PerspectivePrompts != nil) {
+	// editable (hivecommons/hive#17989). Unlinking in the same request lifts
+	// the refusal.
+	if src := s.deps.Config.Review.PerspectivesSource; linkedAfter && src.IsSet() && (body.Perspectives != nil || body.PerspectivePrompts != nil) {
 		jsonError(w, "review perspectives are linked to "+perspectivesSourceLabel(*src)+
-			"; change them in that file, or remove review.perspectives_source to edit them here", http.StatusConflict)
+			"; change them in that file, or use Unlink in Review Gate (or send perspectives_source: null) to edit them here", http.StatusConflict)
 		return
 	}
 
@@ -520,6 +544,12 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 			cfg.Review.PerspectivePrompts = cleaned
 		}
 	}
+	if sourceChange {
+		cfg.Review.PerspectivesSource = newSource
+		if newSource == nil {
+			cfg.Review.LinkedPerspectives = nil
+		}
+	}
 	if body.CombinedPerspectives != nil {
 		cfg.Review.CombinedPerspectives = *body.CombinedPerspectives
 	}
@@ -701,4 +731,53 @@ func (s *Server) handleReviewConfigPut(w http.ResponseWriter, r *http.Request) {
 	}
 	s.refreshAndPersist()
 	okResponse(w, map[string]string{"status": "updated"})
+}
+
+// perspectivesSourceError is a refusal from parsePerspectivesSourceBody.
+type perspectivesSourceError struct {
+	msg    string
+	status int
+}
+
+// promptSourcesSettingsPath is where an owner approves a repo as a prompt
+// and definition source.
+const promptSourcesSettingsPath = "Settings, Security, Prompt sources"
+
+// parsePerspectivesSourceBody validates the perspectives_source request value
+// like an agent's definition_source: an object missing owner, repo or path
+// counts as unset (a clear), and a set source must name a repo that
+// GitHubPromptAllowed accepts (seed allowlist or owner approval). changed is
+// false when the key was absent. The returned source is nil for a clear.
+func (s *Server) parsePerspectivesSourceBody(raw json.RawMessage) (src *config.DefinitionSourceConfig, changed bool, perr *perspectivesSourceError) {
+	if len(raw) == 0 {
+		return nil, false, nil
+	}
+	var in struct {
+		Owner string `json:"owner"`
+		Repo  string `json:"repo"`
+		Path  string `json:"path"`
+		Ref   string `json:"ref"`
+	}
+	if string(raw) == "null" {
+		return nil, true, nil
+	}
+	if err := json.Unmarshal(raw, &in); err != nil {
+		return nil, false, &perspectivesSourceError{"perspectives_source must be an object with owner, repo, path and optional ref, or null to unlink", http.StatusBadRequest}
+	}
+	ds := &config.DefinitionSourceConfig{
+		Type:  "github",
+		Owner: sanitizeString(in.Owner),
+		Repo:  sanitizeString(in.Repo),
+		Path:  strings.TrimLeft(sanitizeString(in.Path), "/"),
+		Ref:   sanitizeString(in.Ref),
+	}
+	if !ds.IsSet() {
+		return nil, true, nil
+	}
+	if !s.deps.Config.GitHubPromptAllowed(ds.Slug()) {
+		return nil, false, &perspectivesSourceError{fmt.Sprintf(
+			"perspectives_source: repo %q is not approved as a prompt source. An owner can approve it under %s, or add it to github_prompt_allowlist on the config volume",
+			ds.Slug(), promptSourcesSettingsPath), http.StatusBadRequest}
+	}
+	return ds, true, nil
 }

@@ -2,6 +2,7 @@ package scheduler
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -310,8 +311,15 @@ func TestWorkflowDispatchPromptStatesOnlyHeldRights(t *testing.T) {
 		"The model describes the role: it uses read-repo, web-research, write-draft-pr and produces pull-request, push.",
 		"not a permission: it grants your session nothing",
 		"Your session runs in mode `ISSUES_AND_PRS`, which lets it push a branch and open a pull request through `hive-open-pr`",
-		"do not work around the hive's write gates",
+		"do not work around them",
 		"`STAND` `DOWN`",
+		// A session that looks for a tool named hive-open-pr and stands down
+		// never ran a command (hivecommons/hive#18777).
+		"`git` and `hive-open-pr` are commands in your shell, not entries in your tool list",
+		"`git push origin <branch>`",
+		"`hive-open-pr --repo " + d.Repo + " --head <branch>",
+		"`--issues " + strconv.Itoa(d.Number) + "`",
+		"an empty tool list is not a refusal",
 	} {
 		if !strings.Contains(msg, want) {
 			t.Errorf("prompt missing %q:\n%s", want, msg)
@@ -333,6 +341,9 @@ func TestWorkflowDispatchPromptStatesOnlyHeldRights(t *testing.T) {
 	v := BuildWorkflowDispatchPrompt(WorkflowDispatchCandidate{Dispatch: verifierDispatch(), Agent: "reviewer", AgentMode: "ISSUES_ONLY"}, "")
 	if !strings.Contains(v, "Your session runs in mode `ISSUES_ONLY`, which lets it comment on the item") {
 		t.Errorf("verifier prompt:\n%s", v)
+	}
+	if strings.Contains(v, "hive-open-pr --repo") {
+		t.Errorf("a commenting hand-off must not carry the pull-request recipe:\n%s", v)
 	}
 	// With the mode unknown the prompt claims nothing about the session.
 	unknown := BuildWorkflowDispatchPrompt(WorkflowDispatchCandidate{Dispatch: d, Agent: "quality"}, "")
