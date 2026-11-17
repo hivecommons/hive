@@ -1,0 +1,11 @@
+# DCO app (probot/dco) configuration.
+#
+# Allow an author to vouch for their own earlier commits with a DCO
+# remediation commit, the mechanism the DCO app documents for commits whose
+# author email has no matching Signed-off-by. This is needed when a v5 -> v6
+# top-up carries commits whose author and sign-off identities differ (see
+# hivecommons/hive#18697); it does not allow anyone to sign off on behalf of
+# another author.
+allowRemediationCommits:
+  individual: true
+  thirdParty: false

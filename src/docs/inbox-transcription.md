@@ -246,6 +246,20 @@ Everything above is editable in the Inbox under **⚙ Auto-routing →
 Transcription** and in **Settings → Inbox** (`POST /api/inbox/settings` with
 a `transcription` object).
 
+The form has two parts, **Routing** (default RFC repository, dibs URL,
+rules) and **Transcription**
+([#18701](https://github.com/hivecommons/hive/issues/18701)). Under
+Transcription: the provider selector with one row per provider (name, what
+it does, a ready or not ready pill, and what is missing on its own line);
+the consent notice with the consent and enable boxes; then the options and
+the limits. The fields of a provider (Whisper model and threads, Gemini
+model, Deepgram key variable and model, speaker labels) show only while
+that provider is selected, or, with `auto`, for every provider auto could
+pick (the ready ones); **Auto-mode sources** shows in auto mode. A field
+that is not shown keeps its value, and saving sends the same settings. Each
+part lists its config keys under **Config keys**. In the dialog, Cancel and
+Save stay in view while the form scrolls.
+
 ## Transcribing an item
 
 Items that are pending (no summary, no transcript) and whose source can mint
