@@ -434,6 +434,11 @@ type Server struct {
 	// THIS process; a `preparing` record without one is left over from a
 	// restart and is marked failed on the next reconcile. Guarded by sessionsMu.
 	sessionsPreparing map[string]bool
+	// sessionsAfterReconcileSnapshot, when set, runs in reconcileSessions
+	// right after the records are listed and before any is judged. A test
+	// seam: it places "a start finishes" exactly in the window the list and
+	// the judgement used to race over. Nil in production.
+	sessionsAfterReconcileSnapshot func()
 	// sessionSeeds holds Inbox seeds parked for sessions being created; the
 	// background start delivers each once its session is running
 	// (api_sessions_seed.go). Guarded by sessionsMu.
