@@ -574,6 +574,49 @@ a login prompt: it badged the agent 🔑, and — because a valid token was on d
 auto-restarted it straight back into the same 403, which looked like the agent
 crash-looping. Hive no longer treats a 403 as a login signal; a 401 still is.
 
+## Claude agents sit at `Please run /login` although the credential file looks valid (login revoked)
+
+Symptom: every Claude agent shows `Please run /login`, the shared
+`.credentials.json` still holds an access token and a refresh token with future
+expiries, and the hive log shows the pane poller restarting agents into the same
+prompt a few times before `giving up on token-triggered restart`. Before the fix
+for [#18732](https://github.com/hivecommons/hive/issues/18732) the login detector
+also logged `login pattern matched but the backend credential is valid — leaving
+it to the token-restart heal` on every cycle and did nothing else, so the fleet
+stayed down until someone looked.
+
+Cause: the Claude OAuth grant was revoked (or otherwise killed) at the provider.
+Revocation does not touch the file, so every on-disk check ("is there an access
+token, is it unexpired, is there a refresh grant") keeps answering yes while the
+provider refuses every token in it. A restart re-reads the same dead file.
+
+What the hive does now: "valid" means the provider accepts the token. When a
+Claude agent sits at a login prompt and its credential file passes the on-disk
+check, the hive sends the live access token to the provider's read-only usage
+endpoint (the same call the headroom probe makes, one call per two minutes per
+credential file, shared by every agent on that file) before choosing a heal.
+
+- HTTP 200: the existing bounded token-triggered restart runs as before.
+- HTTP 401: the agent is marked `revoked`. Log line:
+  `Claude login revoked: the provider rejected the stored credential — no restart
+  will be attempted; sign in again from the dashboard`, once per agent. The
+  dashboard shows a red "Claude login revoked: sign in again" banner naming the
+  agents, the hub's health verdict and remediation say the same, the login
+  detector pages the operator once (`login revoked detected`), the agent card's
+  error says so, and the agent is left running at its prompt. No restart fires
+  and the 3-per-24h restart budget is not spent.
+- Anything else (an aged-out access token the CLI would refresh on start, 403,
+  429, 5xx, network error) is inconclusive and leaves the previous behaviour.
+
+Fix: sign in to Claude again from the dashboard. The sign-in lifts the `revoked`
+mark, clears the banner, and restarts every agent still at the login prompt once
+within the next 15 minutes, even when its 24h restart window is already
+exhausted. The operator's login is a new signal, not another retry. Nothing else
+is needed; if an agent is still at the prompt a minute after the sign-in, read
+its terminal (`tmux attach -t hive-<agent>`).
+
+Token contents are never logged; the detail recorded is the HTTP status only.
+
 ## One Copilot agent stays at the login prompt after a dashboard login
 
 Symptom: the dashboard's Copilot device-flow login succeeds and every other

@@ -347,6 +347,10 @@ type AgentProcess struct {
 	// (hivecommons/hive#12466). Pruned on read; cleared by operator
 	// reset/resume alongside the counter. Owned by this agent's pane poller.
 	tokenRestartFiredAt []time.Time
+	// claudeLoginRevokedWarned gates the "Claude login revoked" WARN to once
+	// per agent per episode (#18732); cleared when the provider accepts the
+	// credential again or the operator signs in. Guarded by Manager.mu.
+	claudeLoginRevokedWarned bool
 	// restartStormBackoffUntil is the shared circuit breaker for automatic
 	// relaunch paths (crashed-session recovery, token-refresh recovery and
 	// Copilot hang diagnostics). Operator restarts bypass it; automatic loops
@@ -586,6 +590,11 @@ type Manager struct {
 	project                       ProjectContext
 	copilotAuthToken              string
 	copilotAuthTokenAuthoritative bool
+	// claudeLogin is the #18732 login-prompt routing state (live credential
+	// verification cache, operator sign-in signal); claudeCredentialVerify is
+	// its provider seam, nil for the real one. See claude_login_revoked.go.
+	claudeLogin            claudeLoginState
+	claudeCredentialVerify claudeCredentialVerifyFn
 	// copilotAuthTokenSource names where copilotAuthToken came from — one of
 	// the CopilotTokenSource* constants, "" when no token is held. Never a
 	// secret: it is the ONE thing a "not licensed" verdict cannot be triaged
