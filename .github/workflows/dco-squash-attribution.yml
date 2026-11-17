@@ -82,12 +82,20 @@ jobs:
           # default branch are excluded (see the script): without that ref a
           # sync PR re-flags every commit it carries forward. Fetch exactly
           # those three histories, in full, and nothing else.
+          #
+          # Blobless (--filter=blob:none): the checker reads only commits and
+          # trees (rev-list, log formats, diff-tree --name-only), never file
+          # contents, and git marks origin as a promisor so anything that did
+          # need a blob would lazy-fetch it. Unshallowing WITH blobs measured
+          # 38-42s on the self-hosted pool (#18609), slower than the old
+          # all-refs checkout; blobless cuts the transfer ~10x (277 MB -> 24 MB
+          # measured for v5's history).
           for attempt in $(seq 1 "$FETCH_ATTEMPTS"); do
             unshallow=()
             if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
               unshallow=(--unshallow)
             fi
-            if timeout "$FETCH_ATTEMPT_TIMEOUT_SECS" git fetch --no-tags ${unshallow[@]+"${unshallow[@]}"} origin \
+            if timeout "$FETCH_ATTEMPT_TIMEOUT_SECS" git fetch --no-tags --filter=blob:none ${unshallow[@]+"${unshallow[@]}"} origin \
                 "$HEAD_SHA" "$BASE_SHA" \
                 "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"; then
               break
