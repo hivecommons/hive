@@ -83,6 +83,14 @@ const (
 	// userSessionWorktreeTimeout bounds one worktree add (a full checkout of
 	// the project) or removal.
 	userSessionWorktreeTimeout = 10 * time.Minute
+	// userSessionWorktreeAddedLine is what userSessionWorktreeAddScript prints
+	// when it added a fresh worktree (and not when the session's worktree was
+	// already there), so the hive knows to clear stale spek init markers.
+	userSessionWorktreeAddedLine = "hive: worktree added"
+	// userSessionWorktreeCloneGoneLine is what userSessionWorktreeRemoveScript
+	// prints when the shared clone behind the worktree no longer exists, so
+	// there is no git to save the work through.
+	userSessionWorktreeCloneGoneLine = "hive: shared clone gone"
 	// userSessionWorkspaceCloningSuffix names the staging directory a clone
 	// lands in before root hands it to the sessions group and moves it into
 	// place, so a half-finished clone is never mistaken for a workspace.
@@ -139,23 +147,31 @@ chmod 2770 -- "$d"`
 // userSessionWorktreeGit defines g, the git every worktree script runs: the
 // root-owned clone and the worktree are marked safe for this one call, and
 // hooks are off, so nothing a session planted in the shared clone runs on the
-// hive's behalf. The scripts set $clone and $ws first.
-const userSessionWorktreeGit = `g() { git -c safe.directory="$clone" -c safe.directory="$ws" -c core.hooksPath=/dev/null "$@"; }`
+// hive's behalf, and so is core.fsmonitor (a command `git status` would run).
+// This narrows what the hive itself triggers; it is not an isolation boundary
+// (see security-model.md): the clone's config is shared and group-writable, so
+// a session can still name e.g. a filter driver that another session's git
+// runs, as it always could interactively. The scripts set $clone and $ws first.
+const userSessionWorktreeGit = `g() { git -c safe.directory="$clone" -c safe.directory="$ws" -c core.hooksPath=/dev/null -c core.fsmonitor=false "$@"; }`
 
 // userSessionWorktreeAddScript (run as the session uid:sessions gid) adds the
-// session's worktree of the clone: $1 the clone, $2 the (empty) worktree dir,
-// $3 the session branch. The branch is created at the clone's HEAD, or reused
-// when a removal kept it. Stale registrations are pruned first so a branch
-// whose worktree vanished can be checked out again.
+// session's worktree of the clone: $1 the clone, $2 the worktree dir, $3 the
+// session branch. A worktree that is already there (a resume) is left as it
+// is: the check runs here, as the session uid, because the hive's own uid
+// cannot see inside a session-owned 2770 directory. The branch is created at
+// the clone's HEAD, or reused when a removal kept it. Stale registrations are
+// pruned first so a branch whose worktree vanished can be checked out again.
 const userSessionWorktreeAddScript = `set -e
 clone=$1; ws=$2; b=$3
 ` + userSessionWorktreeGit + `
+if [ -e "$ws/.git" ]; then exit 0; fi
 g -C "$clone" worktree prune
 if g -C "$clone" show-ref --verify --quiet "refs/heads/$b"; then
   g -C "$clone" worktree add "$ws" "$b"
 else
   g -C "$clone" worktree add -b "$b" "$ws" HEAD
-fi`
+fi
+echo "` + userSessionWorktreeAddedLine + `"`
 
 // userSessionWorktreeRemoveScript (run as the worktree's owner uid:sessions
 // gid) removes a session's worktree without losing work: $1 the clone, $2 the
@@ -164,10 +180,14 @@ fi`
 // has checked out, a detached HEAD is saved as <branch>-detached, then the
 // worktree is removed and pruned. The session branches are deleted only when
 // the clone's HEAD already contains them; otherwise they are kept and named
-// on stdout. A failing git aborts before anything is removed.
+// on stdout. A failing git aborts before anything is removed. When the clone
+// itself is gone there is no git to save through: the script says so and
+// does nothing (the check runs as the session uid, since the clone is
+// root:<sessions gid> 2770 and the hive's own uid cannot look inside it).
 const userSessionWorktreeRemoveScript = `set -e
 clone=$1; ws=$2; b=$3
 ` + userSessionWorktreeGit + `
+if [ ! -e "$clone/.git" ]; then echo "` + userSessionWorktreeCloneGoneLine + `"; exit 0; fi
 if [ -e "$ws/.git" ]; then
   st=$(g -C "$ws" status --porcelain)
   if [ -n "$st" ]; then
@@ -312,6 +332,9 @@ func (r *UserSessionRuntime) ensureWorkspace(spec crux.UserSessionSpec, uid int)
 // is ever made. The caller holds workspaceMu.
 func (r *UserSessionRuntime) ensureWorktree(id string, uid int, org, name, clone string) (string, error) {
 	ws := userSessionWorktreeDir(id, org, name)
+	// A shortcut only: in production the hive's uid cannot search the
+	// session-owned 2770 worktree, so this fails with EACCES for an existing
+	// worktree and the add script (as the session uid) finds it instead.
 	if _, err := os.Lstat(filepath.Join(ws, ".git")); err == nil {
 		return ws, nil
 	}
@@ -331,8 +354,13 @@ func (r *UserSessionRuntime) ensureWorktree(id string, uid int, org, name, clone
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), userSessionWorktreeTimeout)
 	defer cancel()
-	if out, err := r.priv(ctx, userSessionSpec(uid), nil, "sh", "-c", userSessionWorktreeAddScript, "sh", clone, ws, userSessionWorktreeBranch(id)); err != nil {
+	out, err := r.priv(ctx, userSessionSpec(uid), nil, "sh", "-c", userSessionWorktreeAddScript, "sh", clone, ws, userSessionWorktreeBranch(id))
+	if err != nil {
 		return "", outputErr("git worktree add", err, out)
+	}
+	if !strings.Contains(string(out), userSessionWorktreeAddedLine) {
+		// The session's worktree was already there (a resume).
+		return ws, nil
 	}
 	r.logger.Info("session worktree added", "id", id, "repo", org+"/"+name, "path", ws, "branch", userSessionWorktreeBranch(id))
 	// A fresh worktree has none of spek's files, whatever an earlier one had.
@@ -384,15 +412,15 @@ func (r *UserSessionRuntime) removeWorktree(id, org, name, ws string) error {
 	}
 	repo := org + "/" + name
 	clone := userSessionWorkspaceDir(org, name)
-	if _, err := os.Lstat(filepath.Join(clone, ".git")); err != nil {
-		r.logger.Warn("session worktree: the shared clone is gone, so its worktree is deleted without git; anything uncommitted in it is lost", "id", id, "repo", repo, "path", ws)
-		return nil
-	}
 	ctx, cancel := context.WithTimeout(context.Background(), userSessionWorktreeTimeout)
 	defer cancel()
 	out, err := r.priv(ctx, userSessionSpec(uid), nil, "sh", "-c", userSessionWorktreeRemoveScript, "sh", clone, ws, userSessionWorktreeBranch(id))
 	if err != nil {
 		return outputErr("removing session worktree", err, out)
+	}
+	if strings.Contains(string(out), userSessionWorktreeCloneGoneLine) {
+		r.logger.Warn("session worktree: the shared clone is gone, so its worktree is deleted without git; anything uncommitted in it is lost", "id", id, "repo", repo, "path", ws)
+		return nil
 	}
 	if kept := strings.TrimSpace(string(out)); kept != "" {
 		r.logger.Info("session worktree removed; its work stays on a branch of the shared clone", "id", id, "repo", repo, "clone", clone, "detail", kept)

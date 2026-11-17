@@ -91,7 +91,10 @@ func workspaceRuntime(t *testing.T) (*UserSessionRuntime, *fakeTmux, *fakePriv, 
 		case userSessionWorkspaceOwnScript:
 			return true, nil, os.Rename(c.argv[4], c.argv[5])
 		case userSessionWorktreeAddScript:
-			return true, nil, os.WriteFile(filepath.Join(c.argv[5], ".git"), []byte("gitdir: "+c.argv[4]+"/.git/worktrees/x\n"), 0o644)
+			if _, err := os.Lstat(filepath.Join(c.argv[5], ".git")); err == nil {
+				return true, nil, nil
+			}
+			return true, []byte(userSessionWorktreeAddedLine + "\n"), os.WriteFile(filepath.Join(c.argv[5], ".git"), []byte("gitdir: "+c.argv[4]+"/.git/worktrees/x\n"), 0o644)
 		case userSessionWorktreeRemoveScript:
 			return true, nil, os.RemoveAll(c.argv[5])
 		}
@@ -325,7 +328,7 @@ func TestUserSessionWorkspaceIsClonedOnceWithAWorktreePerSession(t *testing.T) {
 			t.Errorf("worktree add %d = %s %v, want %v against the one clone %s", i, c.user, c.argv[4:], want[i], clone)
 		}
 	}
-	for _, s := range []string{"worktree add", "core.hooksPath=/dev/null", `safe.directory="$clone"`} {
+	for _, s := range []string{"worktree add", "core.hooksPath=/dev/null", "core.fsmonitor=false", `safe.directory="$clone"`} {
 		if !strings.Contains(userSessionWorktreeAddScript, s) {
 			t.Errorf("worktree add script lacks %q", s)
 		}

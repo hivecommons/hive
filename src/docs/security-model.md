@@ -469,7 +469,13 @@ importance:
   convenience boundary, not an isolation one: it keeps one person's working
   tree, checked-out branch and spek workflow state (`.spektacular/`) apart
   from another's, but it is group-writable like the clone, and every session
-  can still read and write the shared refs and objects. `spektacular init`
+  can still read and write the shared refs and objects. Because every session
+  can also write the clone's shared `.git/config`, one session can name a
+  command (a filter driver, for example) that another session's git runs as
+  that other session's uid, interactively as before or when the hive removes
+  its worktree; hooks and `core.fsmonitor` are off for the hive's own worktree
+  git, but this is accepted as part of the convenience boundary, not
+  prevented. `spektacular init`
   runs in the session's worktree as the session uid. Deleting a session
   commits its uncommitted work onto its branch before removing the worktree,
   and keeps any branch the clone's `HEAD` lacks. Pushing from a session uses

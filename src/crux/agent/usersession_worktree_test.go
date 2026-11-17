@@ -165,8 +165,35 @@ func TestUserSessionWorktreeScriptsOnRealGit(t *testing.T) {
 	}
 	worktrees := func() int { return len(strings.Split(git(clone, "worktree", "list", "--porcelain"), "\n\n")) }
 
+	// Adding a worktree that is already there (a resume, which the hive's own
+	// uid cannot see inside) is a no-op that does not report a fresh add.
+	ws := add("resume", "hive-session/rrrr")
+	if err := os.WriteFile(filepath.Join(ws, "wip.md"), []byte("wip\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out := script(userSessionWorktreeAddScript, clone, ws, "hive-session/rrrr"); strings.Contains(out, userSessionWorktreeAddedLine) {
+		t.Errorf("re-adding an existing worktree reported a fresh add: %q", out)
+	}
+	if b, err := os.ReadFile(filepath.Join(ws, "wip.md")); err != nil || string(b) != "wip\n" {
+		t.Errorf("re-adding an existing worktree touched its work: %q, %v", b, err)
+	}
+	script(userSessionWorktreeRemoveScript, clone, ws, "hive-session/rrrr")
+	git(clone, "branch", "-D", "hive-session/rrrr")
+
+	// A missing clone: the removal says so and touches nothing.
+	orphan := filepath.Join(dir, "orphan")
+	if err := os.MkdirAll(orphan, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if out := script(userSessionWorktreeRemoveScript, filepath.Join(dir, "no-clone"), orphan, "hive-session/oooo"); !strings.Contains(out, userSessionWorktreeCloneGoneLine) {
+		t.Errorf("removal against a missing clone reported %q", out)
+	}
+	if _, err := os.Stat(orphan); err != nil {
+		t.Errorf("removal against a missing clone deleted the worktree: %v", err)
+	}
+
 	// Clean session: worktree and branch go, nothing is reported kept.
-	ws := add("clean", "hive-session/aaaa")
+	ws = add("clean", "hive-session/aaaa")
 	if got := git(ws, "rev-parse", "--abbrev-ref", "HEAD"); got != "hive-session/aaaa" {
 		t.Fatalf("worktree is on %q, want its session branch", got)
 	}
