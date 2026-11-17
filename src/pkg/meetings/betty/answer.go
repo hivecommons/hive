@@ -55,8 +55,11 @@ func (m MeetLLM) Complete(ctx context.Context, system, prompt string) (string, e
 	return meetllm.Complete(ctx, c, hc, prompt)
 }
 
-// Close stops the meeting's warm CLI, if it has one.
+// Close stops the meeting's warm CLIs, if it has any.
 func (m MeetLLM) Close() error {
+	if m.Config.Pool != nil {
+		_ = m.Config.Pool.Close()
+	}
 	if m.Config.Session != nil {
 		return m.Config.Session.Close()
 	}
