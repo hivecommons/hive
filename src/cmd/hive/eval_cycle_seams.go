@@ -632,7 +632,14 @@ func dispatchAgentKicks(msgs []scheduler.KickMessage, releaseProbe bool, deps ki
 		}
 		if out.sendErr != nil {
 			endSpan(out.sendErr)
-			logger.Warn("failed to send kick", "agent", msg.Agent, "error", out.sendErr)
+			// Shared-pool contention is expected backpressure: the kick is
+			// retried next cycle. Log below WARN so slogfeed does not file
+			// a repeated runtime defect for a healthy busy pool (#18544).
+			level := slog.LevelWarn
+			if isSharedPoolBusyErr(out.sendErr) {
+				level = slog.LevelInfo
+			}
+			logger.Log(context.Background(), level, "failed to send kick", "agent", msg.Agent, "error", out.sendErr)
 			if deps.onFailed != nil {
 				deps.onFailed(msg, out.sendErr)
 			}
