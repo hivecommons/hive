@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/hivecommons/hive/crux"
@@ -330,8 +331,8 @@ func (s *Server) reconcileSessions(rt SessionRuntime, st *sessionStore) map[stri
 	probes := map[string]crux.UserSessionProbe{}
 	now := time.Now().UTC().Format(time.RFC3339)
 	recs := st.list()
-	if s.sessionsAfterReconcileSnapshot != nil {
-		s.sessionsAfterReconcileSnapshot()
+	if hook := sessionsAfterReconcileSnapshot.Load(); hook != nil {
+		(*hook)(s)
 	}
 	for _, rec := range recs {
 		if rec.Status == sessionStatusPreparing {
@@ -686,6 +687,12 @@ func (s *Server) startSessionInBackground(rt SessionRuntime, st *sessionStore, s
 	// queue (and with it a parked Inbox seed) waits for that.
 	s.beginSessionAutostart(rt, st, spec.ID, spec.Vendor, user)
 }
+
+// sessionsAfterReconcileSnapshot, when set, runs in reconcileSessions right
+// after the records are listed and before any is judged. A test seam: it
+// places "a start finishes" exactly in the window the list and the judgement
+// used to race over. Never set in production.
+var sessionsAfterReconcileSnapshot atomic.Pointer[func(*Server)]
 
 // failOrphanedPreparingSession fails a `preparing` record that has no start
 // behind it, which only a restart of the hive leaves: nothing will ever move

@@ -611,16 +611,13 @@ type Manager struct {
 	// claudeOperatorModeLogOnce guards the one-time "re-bridge and watchdog
 	// suspended" log for operator-token mode (claude_operator_token_mode.go).
 	claudeOperatorModeLogOnce sync.Once
+	sessionLogins             sessionLoginCache // user-session login copies already judged (usersession_login.go)
 	uidMap                    *UIDMap
 	sharedPool                SharedSessionPool
 	uidMapPath                string
 	appAuth                   AppTokenMinter
 	appNotInstalledWarned     sync.Map        // agent name -> struct{}: not-installed mint failure already logged
 	agentMint                 AgentMintIssuer // optional, opt-in mint credential (nil ⇒ off)
-
-	// sessionLogins remembers which user-session login copies the credential
-	// poll has already judged (usersession_login.go).
-	sessionLogins sessionLoginCache
 
 	// sharedPoolRenewInterval overrides the lease watcher tick (zero means
 	// defaultSharedPoolRenewInterval). Set before any watcher starts; it is

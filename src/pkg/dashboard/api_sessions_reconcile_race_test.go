@@ -23,7 +23,10 @@ func TestSessionsReconcileDoesNotFailASessionWhoseStartJustFinished(t *testing.T
 	e.s.sessionsMu.Unlock()
 
 	finished := 0
-	e.s.sessionsAfterReconcileSnapshot = func() {
+	hook := func(srv *Server) {
+		if srv != e.s {
+			return
+		}
 		// Exactly what startSessionInBackground does on success, in one hold
 		// of sessionsMu, after the reconcile took its snapshot.
 		finished++
@@ -36,8 +39,9 @@ func TestSessionsReconcileDoesNotFailASessionWhoseStartJustFinished(t *testing.T
 			t.Errorf("saving running state: %v", err)
 		}
 	}
+	sessionsAfterReconcileSnapshot.Store(&hook)
+	t.Cleanup(func() { sessionsAfterReconcileSnapshot.Store(nil) })
 	e.s.reconcileSessions(e.rt, st)
-	e.s.sessionsAfterReconcileSnapshot = nil
 
 	if finished != 1 {
 		t.Fatalf("the snapshot hook ran %d times, want 1", finished)
