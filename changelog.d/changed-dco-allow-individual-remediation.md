@@ -1,0 +1,1 @@
+CI: the DCO app now honours an author's own DCO remediation commit (`.github/dco.yml`, `allowRemediationCommits.individual`), so a v5 -> v6 top-up that carries commits whose author email has no matching sign-off can be unblocked by the author without rewriting history (#18697).
