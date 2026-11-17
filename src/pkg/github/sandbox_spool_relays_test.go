@@ -362,8 +362,8 @@ func TestSandboxSpoolTopic_ExplicitPRAndRefusal(t *testing.T) {
 	if r := readTopicResultFile(t, second); r.OK || !r.Refused {
 		t.Errorf("second claim = %+v, want refused", r)
 	}
-	if _, err := os.Lstat(second + ".denied"); err != nil {
-		t.Errorf("refused request should be set aside as .denied: %v", err)
+	if _, err := os.Stat(second); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("refused request still in the spool: %v", err)
 	}
 }
 

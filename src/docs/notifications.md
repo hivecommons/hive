@@ -519,7 +519,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).bindProwLgtm` | `attention` |  |
 | `github.(*Client).commentOnHumanFiledTwin` | `attention` |  |
 | `github.(*Client).createIssue` | `attention` |  |
-| `github.(*Client).handleOneIssueRequest` | `attention` |  |
+| `github.(*Client).handleOneIssueRequestFrom` | `attention` |  |
 | `github.(*Client).parkClankerRequestedPR` | `attention` |  |
 | `github.(*Client).redirectToExistingPR` | `attention` |  |
 | `github.(*Client).relayScannerNote` | `attention` | scanner PR note: an unchanged or edited note records a suppressed comment (#18451) |
