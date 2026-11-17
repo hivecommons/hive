@@ -53,7 +53,6 @@ type SandboxJobConfig struct {
 	// the cluster on OpenShift (the SCC assigns one from the namespace range)
 	// and uses 65534 elsewhere, since the hive image's default user is root.
 	RelayRunAsUser *int64 `yaml:"relay_run_as_user,omitempty" json:"relay_run_as_user,omitempty"`
-	// ImagePullSecrets: Secret names for the Job pod (#18819); see image_pull_secrets.go.
 	ImagePullSecrets []string `yaml:"image_pull_secrets,omitempty" json:"image_pull_secrets,omitempty"`
 }
 
@@ -120,8 +119,7 @@ func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 	if out.TTLSeconds == 0 {
 		out.TTLSeconds = g.TTLSeconds
 	}
-	out.ImagePullSecrets = inheritPullSecrets(out.ImagePullSecrets, g.ImagePullSecrets)
-	return out
+	return inheritPullSecrets(out, g)
 }
 
 // AgentRuntimeConfig is the top-level hive.yaml surface owned by the agent

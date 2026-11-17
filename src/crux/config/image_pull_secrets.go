@@ -31,9 +31,9 @@ func ValidateImagePullSecrets(names []string) error {
 // registry credentials are a cluster fact like the workspace claim, so a
 // per-agent block that names none inherits them. The pod gets the union of
 // hive's own pod secrets, the Job service account's and this list (#18819).
-func inheritPullSecrets(own, global []string) []string {
-	if len(own) == 0 {
-		return global
+func inheritPullSecrets(out, global SandboxJobConfig) SandboxJobConfig {
+	if len(out.ImagePullSecrets) == 0 {
+		out.ImagePullSecrets = global.ImagePullSecrets
 	}
-	return own
+	return out
 }
