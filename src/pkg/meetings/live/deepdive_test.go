@@ -71,7 +71,7 @@ func TestDeepDiveDispatchFailureIsSaidInChat(t *testing.T) {
 	h := deepDiveHarness(t, meetings.Meeting{Platform: meetings.PlatformGoogleMeet}, time.Hour, time.Hour)
 	h.res.err = reasonErr{reason: "no research agent is available on this hive"}
 	h.live()
-	h.line(meetings.EventChat, "Bo", "Betty, what PRs are open in the hive repo?", false)
+	h.line(meetings.EventChat, "Bo", "Betty, how does the cert rotation work?", false)
 	h.eventually("dig in", h.posted("I'll dig into that and report back."))
 	h.eventually("failure said", h.posted("I couldn't look that up: no research agent is available on this hive."))
 	it := h.state().Research[0]
