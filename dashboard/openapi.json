@@ -41301,6 +41301,137 @@
         }
       }
     },
+    "/api/inbox/email/recent": {
+      "get": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "List recent mail: received and refused",
+        "description": "The last 50 messages mailed to hive@<host>, newest first: received, awaiting approval or refused, with the reason category of a refusal and each attachment that was left out (extension and reason). No subject, file name, body or full sender address: only the sender's domain. Received mail and this hive's own refusals are recorded by the hive; the mail receiver's refusals arrive on POST /api/inbox/email/report. Owner or read-write.",
+        "responses": {
+          "200": {
+            "description": "The recent-mail log",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "events": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "accepted",
+                              "awaiting_approval",
+                              "rejected"
+                            ]
+                          },
+                          "kind": {
+                            "type": "string"
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "code": {
+                            "type": "integer",
+                            "description": "SMTP reply code the sender got for a refusal"
+                          },
+                          "sender_domain": {
+                            "type": "string"
+                          },
+                          "bytes": {
+                            "type": "integer"
+                          },
+                          "files": {
+                            "type": "integer"
+                          },
+                          "skipped": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "ext": {
+                                  "type": "string"
+                                },
+                                "reason": {
+                                  "type": "string"
+                                }
+                              }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "files_enabled": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          }
+        }
+      }
+    },
+    "/api/inbox/email/report": {
+      "post": {
+        "tags": [
+          "Inbox"
+        ],
+        "summary": "Receive a refusal report from the mail receiver (hub relay)",
+        "description": "A message for this hive that the mail receiver refused: a delivery of kind report with the SMTP code, the reason category, the sender's domain, the size, the attachment count and each skipped attachment's extension and reason. It carries no subject, file name, body or full address. Signed by the hub with this hive's relay key like the other mail deliveries; added to the recent-mail log, nothing else is stored. No session.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "description": "pkg/mailin/wire.Delivery with kind report"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Recorded",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "recorded": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Not a report delivery"
+          },
+          "401": {
+            "description": "Relay signature rejected or delivery replayed"
+          },
+          "413": {
+            "description": "Delivery too large"
+          },
+          "503": {
+            "description": "This hive holds no relay key"
+          }
+        }
+      }
+    },
     "/api/inbox/email/{id}/approve": {
       "post": {
         "tags": [
