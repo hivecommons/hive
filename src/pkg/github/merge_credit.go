@@ -127,7 +127,10 @@ type issueAuthorEntry struct {
 type MergeCreditor struct {
 	gh      *gh.Client
 	enabled func(repo string) bool
-	logger  *slog.Logger
+	// dcoRequired is the per-repo dco.required override SquashSignoff
+	// consults before refusing an unsigned squash (nil: detection only).
+	dcoRequired func(repo string) (required, ok bool)
+	logger      *slog.Logger
 
 	mu      sync.Mutex
 	authors map[string]issueAuthorEntry
@@ -416,6 +419,21 @@ func (c *Client) SetCreditIssueAuthors(fn func(repo string) bool) {
 	}
 }
 
+// SetDCORequired installs the live governor.labels.stage.dco.required
+// override the squash sign-off refusal consults (nil: detection only).
+// Nil-receiver safe like the other setters.
+func (c *Client) SetDCORequired(fn func(repo string) (required, ok bool)) {
+	if c == nil {
+		return
+	}
+	c.mergeCreditMu.Lock()
+	defer c.mergeCreditMu.Unlock()
+	c.dcoRequired = fn
+	if c.mergeCredit != nil {
+		c.mergeCredit.dcoRequired = fn
+	}
+}
+
 // MergeCreditor returns the client's shared creditor (one issue-author cache
 // for every merge path), or nil without an API client.
 func (c *Client) MergeCreditor() *MergeCreditor {
@@ -426,6 +444,7 @@ func (c *Client) MergeCreditor() *MergeCreditor {
 	defer c.mergeCreditMu.Unlock()
 	if c.mergeCredit == nil {
 		c.mergeCredit = NewMergeCreditor(c.client, c.creditIssueAuthors, c.logger)
+		c.mergeCredit.dcoRequired = c.dcoRequired
 	}
 	return c.mergeCredit
 }

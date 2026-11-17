@@ -24,7 +24,8 @@ type mergeCreditTransport interface {
 // the repo credits issue authors and the PR has one to credit, or a squash
 // needs the body rebuilt to keep the branch's Signed-off-by trailers
 // (hivecommons/hive#18203). A non-empty refused is the skip reason when the
-// squash would land with no sign-off at all; the caller must not merge.
+// squash would land with no sign-off at all in a repo that requires DCO; the
+// caller must not merge.
 func (c *Engine) mergeOptions(ctx context.Context, owner, repo string, pr *gh.PullRequest, headSHA, method string) (message string, opts *gh.PullRequestOptions, refused string) {
 	opts = &gh.PullRequestOptions{SHA: headSHA, MergeMethod: method}
 	mt, ok := c.transport.(mergeCreditTransport)
@@ -37,10 +38,15 @@ func (c *Engine) mergeOptions(ctx context.Context, owner, repo string, pr *gh.Pu
 		mt.NoteMergeCredit(owner+"/"+repo, pr.GetNumber(), credit)
 		message = credit.CommitMessage
 	}
-	message, err := creditor.SquashSignoff(ctx, owner, repo, pr.GetNumber(), method, message)
+	head := headSHA
+	if head == "" {
+		head = pr.GetHead().GetSHA()
+	}
+	message, err := creditor.SquashSignoff(ctx, owner, repo, pr.GetNumber(), pr.GetBase().GetRef(), head, method, message)
 	if err != nil {
-		// An unsigned branch needs its author to sign off; this is an
-		// expected merge refusal, not a runtime failure.
+		// An unsigned branch in a repo that requires DCO needs its author
+		// to sign off; this is an expected merge refusal, not a runtime
+		// failure.
 		c.info("automerge refused squash without Signed-off-by", "repo", owner+"/"+repo, "pr", pr.GetNumber(), "error", err)
 		return "", opts, autoMergeReasonSquashUnsigned
 	}
@@ -48,5 +54,6 @@ func (c *Engine) mergeOptions(ctx context.Context, owner, repo string, pr *gh.Pu
 }
 
 // autoMergeReasonSquashUnsigned is the skip reason when no branch commit
-// carries a Signed-off-by, so the squash would land a commit that fails DCO.
+// carries a Signed-off-by in a repo that requires DCO, so the squash would
+// land a commit that fails DCO.
 const autoMergeReasonSquashUnsigned = "squash-unsigned"

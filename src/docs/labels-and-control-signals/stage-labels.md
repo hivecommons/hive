@@ -551,6 +551,18 @@ governor:
 On an ungated repo an unsigned head keeps the lane's stage, carries `no-dco`
 as information only, and the nudge does not ask for a rebase.
 
+The same rule decides the hive's squash merges. A squash body is rebuilt from
+the branch commits so every branch `Signed-off-by` lands in the merged commit
+([#18203](https://github.com/hivecommons/hive/issues/18203)). When no branch
+commit carries a sign-off at all, the hive refuses the squash (skip reason
+`squash-unsigned`) only where the repo requires DCO: the `dco.required`
+override above, else a `dco` / `DCO` context required on the base branch or
+reported on the head, read at merge time. A head whose checks cannot be read
+keeps the refusal. On an ungated repo the unsigned squash merges with the
+message as built, so Renovate and Dependabot PRs and unsigned human commits
+are not held at `080` with nothing a person can do. The sweep lanes and the
+merge relay (`MergePR`) apply the same rule.
+
 Prow's `dco-signoff: yes` / `dco-signoff: no` (the Prow `dco` plugin's
 hard-coded names, also written by the repo's DCO workflow) are **foreign**:
 the hive never adds or removes them. #12544 tried to retire them from the
