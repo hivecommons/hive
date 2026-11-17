@@ -293,6 +293,8 @@ type JoinArgs struct {
 	// VoiceID is the TTS voice the bot speaks with (Discord's Kokoro voice,
 	// Vexa's per-speak voice). Empty uses Quorum's default.
 	VoiceID string `json:"voice_id,omitempty"`
+	// HostName names the companion's mic channel speaker.
+	HostName string `json:"host_name,omitempty"`
 }
 
 // JoinResult is meeting.join's result.

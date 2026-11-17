@@ -271,13 +271,21 @@ func (m *Manager) Join(ctx context.Context, req JoinRequest) (Meeting, error) {
 		Title: strings.TrimSpace(req.Title), InvitedBy: req.InvitedBy, State: StateRequested,
 		VoiceEnabled: req.Voice, VoiceCapable: voice, CreatedAt: now, UpdatedAt: now,
 	}
-	if err := m.opts.Store.Save(mt); err != nil {
-		return Meeting{}, err
-	}
-	res, err := m.opts.Quorum.Join(ctx, JoinArgs{
+	return m.start(ctx, mt, JoinArgs{
 		URL: req.URL, DisplayName: m.opts.BotName, Platform: req.Platform, GuildID: req.GuildID, ChannelID: req.ChannelID,
 		Voice: voice, VoiceID: strings.TrimSpace(m.opts.VoiceID),
 	})
+}
+
+// start stores a new meeting, calls meeting.join with args and starts
+// following its events. A refused join leaves the meeting failed (or
+// blocked) and returns the error.
+func (m *Manager) start(ctx context.Context, mt Meeting, args JoinArgs) (Meeting, error) {
+	now := mt.CreatedAt
+	if err := m.opts.Store.Save(mt); err != nil {
+		return Meeting{}, err
+	}
+	res, err := m.opts.Quorum.Join(ctx, args)
 	if err != nil {
 		mt.State, mt.StateReason = StateFailed, err.Error()
 		if IsCode(err, CodeBlocked) {

@@ -143,6 +143,26 @@ If the meeting platform's chat is unavailable, hive cannot post the consent noti
 
 The same operations are available over the [meetings API](api-reference/knowledge.md) (`/api/meetings`).
 
+## Desktop companion
+
+The desktop companion ([hivecommons/quorum-companion](https://github.com/hivecommons/quorum-companion), design in [#18596](https://github.com/hivecommons/hive/issues/18596)) lets Betty take part in a call the person is already in, through their **own** meeting app, without any bot joining the meeting. It is how Betty works on Zoom without a Zoom app: Zoom refuses automated web-client bots, and the companion does not try to get around that; it captures the person's own Zoom (or Teams, Meet, ...) audio on their own computer.
+
+- **Consent.** Before every capture the companion shows the companion consent notice (`GET /api/companion/info`, versioned) and the person confirms the participants were told and agreed. Zoom does not tell the other participants, so that confirmation is the consent gate. The meeting records who confirmed it, when, and the notice version (`companion` on the meeting record). The companion keeps a "Betty is listening" indicator on while it captures and offers the notice on the clipboard to paste into the meeting chat.
+- **Who can use it.** Owner or read-write users. A companion meeting can be used only by the person who started it (owners can use any). Read-only users cannot stream.
+- **Audio.** Two channels of raw 16 kHz mono s16le PCM: `call` (the meeting app's audio, everyone else) and `mic` (the person). Quorum cuts each at silences and transcribes it with the shared transcription service (`meetings.transcribe_url` is required); `mic` segments are attributed to the person, `call` segments to "Call".
+- **Betty's replies** go to the companion window (and the meeting panel) instead of a meeting chat: the consent notice first, then answers. Betty cannot speak in a companion meeting yet. Saying "betty leave" ends the meeting, as does stopping the capture.
+- **After the meeting** it is an ordinary meeting: notes, research and the Inbox hand-off are unchanged.
+
+| Route | |
+|---|---|
+| `GET /api/companion/info` | Consent notice and version, sample rate, channels, `max_chunk_bytes`. |
+| `POST /api/companion/meetings` | `{title, app, host_name, consent_version, consent_attested: true}`; 201 with the meeting record. |
+| `POST /api/companion/meetings/{id}/audio?channel=call\|mic&seq=N` | One PCM chunk; per channel in order from 0; 409 with `expected_seq` on a gap; a resend answers `duplicate: true`. |
+| `GET /api/companion/meetings/{id}/replies?after=N` | Betty's lines after the cursor, `next_seq`, and the meeting `state`. |
+| `POST /api/companion/meetings/{id}/end` | Ends the meeting after transcribing buffered speech. |
+
+The dashboard's ● Record ([Recording into the Inbox](inbox-recording.md)) stays the no-install option: it records a Chromium tab's audio and is transcribed after the recording ends, so Betty cannot answer during the call, and it cannot hear a desktop meeting app.
+
 ## Calendar
 
 The **Calendar** section, right after **Inbox** in the left menu, lists the meetings hive is scheduled to join. The scheduler checks every 15 seconds (`HIVE_MEETINGS_SCHEDULE_TICK_S`) and sends hive in 60 seconds before each start (`HIVE_MEETINGS_SCHEDULE_LEAD_S`), the same way **Send hive to a meeting** does. A meeting without an end time is still joined up to 15 minutes after it starts; after that it is marked skipped as missed.
