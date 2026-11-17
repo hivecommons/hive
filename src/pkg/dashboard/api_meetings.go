@@ -487,6 +487,7 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 			"meetings.research_pool_size":                strconv.Itoa(m.ResearchPoolSizeOrDefault()),
 			"meetings.research_per_meeting":              strconv.Itoa(m.ResearchPerMeetingOrDefault()),
 			"meetings.chat_posts_per_minute":             strconv.Itoa(m.ChatPostsPerMinuteOrDefault()),
+			"meetings.chat_answer_burst":                 strconv.Itoa(m.ChatAnswerBurstOrDefault()),
 			"meetings.lobby_timeout_s":                   strconv.Itoa(m.LobbyTimeoutSOrDefault()),
 			"meetings.retention_days":                    strconv.Itoa(m.RetentionDaysOrDefault()),
 			"meetings.consent_text":                      m.ConsentTextOrDefault(),
