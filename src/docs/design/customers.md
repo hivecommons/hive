@@ -85,7 +85,7 @@ contributor is one of several sources of identity for a person.
 |---|---|
 | `id` | Opaque, `p_` plus 12 hex characters from a random source. Never derived from personal data. |
 | `name` | Display name. |
-| `status` | `customer`, `suggested` or `dismissed`. |
+| `status` | `customer` or `suggested`. A dismissed suggestion is not kept as a status: its key becomes a tombstone (section 6). |
 | `origin` | `hive_user`, `manual` or `accepted`. |
 | `identities` | See below. |
 | `tags` | See section 7. |
@@ -130,8 +130,10 @@ name from a meeting or a connector, an email local part that matches a login.
 A display name never creates an edge and never causes a merge.
 
 Merge and split are reversible. Every manual decision (link, unlink, merge,
-split, dismiss) is pinned, and automatic resolution reads pins first, so a
-sweep cannot undo what a person decided.
+split, "not the same person") is pinned, and automatic resolution reads pins
+first, so a sweep cannot undo what a person decided. A `hive_user` identity is
+what "me" resolves on, so it is never added, removed or split off by hand, and
+two dashboard users are never merged.
 
 ## 6. Storage and retention
 
@@ -149,12 +151,15 @@ sweep cannot undo what a person decided.
   profile only to a viewer who can open it in the Inbox.
 - **Suggested people** are an identity key, counters and up to five evidence
   references. A suggestion expires with its evidence. Mail awaiting approval
-  creates nothing.
+  creates nothing. Dismissing a suggestion deletes it and tombstones its key,
+  so the hive keeps no readable trace of a person someone turned down.
 - **Tombstones.** Forgetting a person deletes the person, their identities and
   their edges, and stores one salted hash per identity. A sweep checks the
   tombstones before creating a suggestion or a link, so a forgotten person is
   not rebuilt. The salt is per hive and stays in the store; a tombstone holds
-  no readable identity.
+  no readable identity. A person adding the same identity back by hand is a
+  new human decision and clears the tombstone. A forgotten dashboard user who
+  signs in again gets a fresh, empty profile.
 
 ## 7. Tags
 

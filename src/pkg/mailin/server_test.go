@@ -615,6 +615,17 @@ func TestSMTPRejectionReasons(t *testing.T) {
 			if !errors.As(err, &se) || se.Code != tc.code || !strings.Contains(se.Message, tc.reply) {
 				t.Fatalf("reply %v, want %d ...%s...", err, tc.code, tc.reply)
 			}
+			// A refusal about the message says how to try again, where it is
+			// explained and where to report a problem (#18744).
+			if wire.Fix(tc.reason) != "" {
+				for _, want := range []string{"To try again: " + wire.Fix(tc.reason), wire.HelpURL(tc.reason), "Report a problem: " + wire.ReportURL} {
+					if !strings.Contains(se.Message, want) {
+						t.Errorf("reply %q lacks %q", se.Message, want)
+					}
+				}
+			} else if strings.Contains(se.Message, wire.HelpPageURL) {
+				t.Errorf("a receiver failure carries the help page: %q", se.Message)
+			}
 			if len(hub.deliveries()) != 0 {
 				t.Fatalf("delivered %+v", hub.deliveries())
 			}

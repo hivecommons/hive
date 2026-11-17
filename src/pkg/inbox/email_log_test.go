@@ -77,3 +77,41 @@ func TestEmailRecentMailLog(t *testing.T) {
 		t.Fatal("recorded into a blocked spool")
 	}
 }
+
+// TestEmailMailEventItems (hivecommons/hive#18744): an event keeps only
+// well-formed item ids, a bounded number of them, and PendingItems lists
+// those still in the spool and still awaiting approval.
+func TestEmailMailEventItems(t *testing.T) {
+	e := &EmailSource{Dir: filepath.Join(t.TempDir(), "items")}
+	md := wire.Attachment{Name: "n.md", Kind: wire.AttachMarkdown, ContentType: "text/markdown", Data: []byte("# hi")}
+	add := func(messageID string) string {
+		t.Helper()
+		items, err := e.Add(wire.Delivery{Kind: wire.KindFiles, MessageID: messageID, Recipient: "hive@acme.example",
+			Files: &wire.Files{Title: "notes", Attachments: []wire.Attachment{md}}}, false)
+		if err != nil || len(items) != 1 {
+			t.Fatalf("add: %v %+v", err, items)
+		}
+		return items[0].ID
+	}
+	kept, approved, declined := add("m-1"), add("m-2"), add("m-3")
+	ids := []string{kept, "../../etc/passwd", approved, "<script>", declined}
+	for i := 0; i < maxMailItems; i++ {
+		ids = append(ids, kept)
+	}
+	if err := e.RecordMail(MailEvent{Outcome: MailAwaitingApproval, Items: ids}); err != nil {
+		t.Fatal(err)
+	}
+	ev := e.RecentMail()[0]
+	if len(ev.Items) != maxMailItems || ev.Items[0] != kept || ev.Items[1] != approved || ev.Items[2] != declined {
+		t.Fatalf("items %v", ev.Items)
+	}
+	if _, err := e.Approve(approved, "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.Decline(declined); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.PendingItems([]string{kept, approved, declined, "../x", strings.Repeat("a", len(kept))}); len(got) != 1 || got[0] != kept {
+		t.Fatalf("pending %v", got)
+	}
+}
