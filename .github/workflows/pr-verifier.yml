@@ -96,10 +96,10 @@ jobs:
             '{action: "synchronize", number: $pr.number, pull_request: $pr, repository: $repo}' \
             > "${RUNNER_TEMP}/pr-verifier-event.json"
           echo "event_path=${RUNNER_TEMP}/pr-verifier-event.json" >> "$GITHUB_OUTPUT"
-      # The verifier scripts only. On pull_request_target github.sha is the
-      # BASE branch tip, so this never checks out PR code; a dispatched run
-      # checks out its own same-repo branch, which already supplied this
-      # workflow file.
+      # The verifier scripts only. On pull_request_target GitHub runs the
+      # DEFAULT branch's copy of this workflow and github.sha is that branch's
+      # tip, so this never checks out PR code; a dispatched run checks out its
+      # own same-repo branch, which already supplied this workflow file.
       - name: Check out the verifier scripts
         if: steps.dispatch_event.outputs.stale != 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
