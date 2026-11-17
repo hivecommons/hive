@@ -169,4 +169,8 @@ const (
 	// `hive/awaiting-ci:` deferral, a stage/045 parking note, an
 	// "Already fixed" verdict) that used to be its own comment.
 	KeyAgentNotePrefix = "agent-note:"
+	// KeyAutoMerge records that the hive merged the PR (the trusted-author
+	// or operator-approved auto-merge note, "merged by Hive …"), which used
+	// to be a fresh comment on every merge (hivecommons/hive#18452).
+	KeyAutoMerge = "auto-merge"
 )

@@ -548,7 +548,13 @@ not what it records:
   stage-regressed notes, the trusted-human 071 note and the duplicate-PR
   redirect are sections of a single comment marked `<!-- hive:status -->`.
   The comment is created the first time a note is due and PATCHed for every
-  later note; only the creation sends email.
+  later note; only the creation sends email. The auto-merge note ("merged by
+  Hive trusted-author auto-merge …" or "merged by Hive on behalf of …") is
+  the card's `auto-merge` section too, with its @-mentions neutralised, so
+  a merge no longer emails the author and every watcher; in `normal` it is
+  still its own comment. A merge that waits on a person (the 085
+  needs-decision and 090 ready-for-human-merge entry comments) still posts
+  a comment of its own.
 - **No "no findings" reviews.** A reviewer whose whole body is the clean
   acknowledgement — or whose body says it has no findings while its verdict
   report approves with an empty findings list, as the plain `reviewer`
