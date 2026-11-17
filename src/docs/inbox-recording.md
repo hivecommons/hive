@@ -111,14 +111,18 @@ at once.
 ## Deleting a recording
 
 **🗑 Delete** on a recording's Inbox item deletes it for good: the audio
-stored on this hive (and any chunk left over), the Inbox item and the
-recording's Knowledge fact with its transcript. Owners can delete any
-recording; read-write members only the ones they recorded; read members
-cannot. The dashboard asks first, in the page; when the item was shared, the
-question says that what was already shared (RFCs, issues, DIBS ideas, spek
-seeds) stays where it is, because delete never touches those copies. A
-recording that is being transcribed can be deleted once the transcription
-finishes. Every delete is audited as `inbox_recording_delete`.
+stored on this hive (and any chunk left over), the recording's metadata, its
+machine transcript record and the Inbox item. The recording's Knowledge fact
+with its transcript is kept unless you tick **Also remove the Knowledge
+copy** in the dialog. Owners can delete any recording; read-write members
+only the ones they recorded; read members cannot. The dashboard asks first,
+in the page; when the item was shared, the question says that what was
+already shared (RFCs, issues, DIBS ideas, spek seeds) stays where it is,
+because delete never touches those copies. A recording that is being
+transcribed can be deleted once the transcription finishes. Every delete is
+audited as `inbox_recording_delete` and `inbox_delete`. Deleting works the
+same for every other Inbox item; see
+[Deleting an item](inbox-voice-sources.md#deleting-an-item).
 
 ## Retention
 

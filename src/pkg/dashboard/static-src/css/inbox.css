@@ -26,7 +26,41 @@
     .inbox-tx { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
     .inbox-tx-reason { flex-basis: 100%; }
     .inbox-tx .kc-progress { flex-basis: 100%; }
-    .inbox-tx-providers { margin: var(--sp-1) 0 0; padding-left: var(--sp-4); display: grid; gap: var(--sp-1); }
+    /* ⚙ Inbox auto-routing dialog and Settings → Inbox (#18701): two sections,
+       Routing and Transcription, on one vertical rhythm. Labels sit above
+       their control, selects and inputs share one recipe and height, config
+       keys live in a footnote, and in the modal the Save bar stays visible
+       while the body scrolls. */
+    .inbox-settings-form { display: flex; flex-direction: column; gap: var(--sp-7); }
+    .inbox-set-section { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; }
+    .inbox-set-section + .inbox-set-section { padding-top: var(--sp-7); border-top: 1px solid var(--border); }
+    .inbox-set-section p, .inbox-set-title { margin: var(--sp-0); }
+    .inbox-set-subhead { margin-top: var(--sp-3); }
+    .inbox-set-status { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); }
+    .inbox-set-keys summary { cursor: pointer; }
+    .inbox-set-keys p { margin-top: var(--sp-3); line-height: 1.9; }
+    .inbox-set-keys .settings-yaml-hint { margin-left: var(--sp-0); margin-right: var(--sp-4); }
+    .inbox-settings-form .inbox-settings-grid { gap: var(--sp-5) var(--sp-6); align-items: start; }
+    .inbox-settings-form .inbox-field { display: flex; flex-direction: column; gap: var(--sp-2); margin: var(--sp-0); min-width: 0; }
+    .inbox-field-label { font-size: var(--fs-sm); font-weight: 600; color: var(--muted); }
+    .inbox-settings-form .kb-search-box { box-sizing: border-box; width: 100%; min-width: 0; min-height: var(--tap-target); margin: var(--sp-0); }
+    .inbox-settings-form .inbox-toggle { align-items: flex-start; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--text); }
+    .inbox-settings-form .inbox-rule { margin-bottom: var(--sp-3); }
+    .inbox-settings-rules p { margin: var(--sp-0); }
+    .inbox-set-consent { display: flex; flex-direction: column; gap: var(--sp-4); }
+    .inbox-set-consent .inbox-tx-notice { margin: var(--sp-0); padding: var(--sp-4) var(--sp-5); font-size: var(--fs-sm); line-height: 1.5; }
+    .inbox-tx-providers { display: grid; border: 1px solid var(--border); border-radius: var(--r); }
+    .inbox-tx-provider { display: grid; grid-template-columns: 6em minmax(0, 1fr) auto; gap: var(--sp-2) var(--sp-5); align-items: start; padding: var(--sp-4) var(--sp-5); font-size: var(--fs-sm); line-height: 1.45; }
+    .inbox-tx-provider + .inbox-tx-provider { border-top: 1px solid var(--border); }
+    .inbox-tx-provider-name { font-weight: 700; }
+    .inbox-tx-provider-desc { color: var(--muted); }
+    .inbox-tx-provider-status { justify-self: end; white-space: nowrap; }
+    .inbox-tx-provider-detail { grid-column: 2 / -1; }
+    /* After the display rules above, which would otherwise outrank the hidden attribute. */
+    .inbox-settings-form [hidden] { display: none; }
+    .inbox-set-footer { display: flex; flex-direction: column; gap: var(--sp-3); }
+    .inbox-set-footer .hive-dialog-error:empty { display: none; }
+    .inbox-settings-form[data-inbox-form="modal"] .inbox-set-footer { position: sticky; bottom: calc(-1 * var(--sp-6)); z-index: 1; margin: var(--sp-0) calc(-1 * var(--sp-8)) calc(-1 * var(--sp-6)); padding: var(--sp-5) var(--sp-8); border-top: 1px solid var(--border); background: var(--bg-soft); }
     .inbox-tx-spinner { display: inline-block; flex: none; width: var(--status-dot-size); height: var(--status-dot-size); border: 2px solid color-mix(in srgb, var(--accent) 30%, transparent); border-top-color: var(--accent); border-radius: var(--r-pill); animation: spin 0.8s linear infinite; vertical-align: middle; }
     .inbox-tx-notice { margin-top: var(--sp-2); padding: var(--sp-2) var(--sp-3); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--r); background: var(--bg); font-size: var(--fs-sm); }
     .kb-plaud-paste textarea { width: 100%; margin-top: var(--sp-2); font-family: var(--font-mono); font-size: var(--fs-xs); }
@@ -69,6 +103,9 @@
     @media (prefers-reduced-motion: reduce) { .inbox-rec-dot.is-live { animation: none; } }
     @media (max-width: 720px) {
       .inbox-settings-grid, .inbox-rule { grid-template-columns: 1fr; }
+      .inbox-tx-provider { grid-template-columns: minmax(0, 1fr) auto; }
+      .inbox-tx-provider-desc, .inbox-tx-provider-detail { grid-column: 1 / -1; }
+      .inbox-tx-provider-status { grid-row: 1; grid-column: 2; }
     }
     /* Share history pills: status links, not buttons. */
     a.inbox-share-pill { text-decoration: none; color: inherit; cursor: pointer; }

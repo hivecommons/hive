@@ -217,7 +217,9 @@ Voice recordings and dictations waiting for you to file them as an RFC or keep a
 - The sidebar count and the summary count items with no destination yet and not marked "Knowledge only".
 - Each item shows one pill per destination it was sent to: queued, running, filed (with a link) or failed.
 - Auto-routing rules run once per new item after a sync; the first matching rule wins.
-- The default RFC repository, dibs URL and rules can also be edited under Settings → Inbox.
+- The default RFC repository, dibs URL and rules can also be edited under Settings → Inbox. The **⚙ Auto-routing** dialog has two parts, Routing and Transcription; the config key of each setting is under **Config keys** at the end of its part.
+- **Send to this inbox**, under the toolbar, is the hive's email address (`hive@<dashboard host>`) as a link that opens a new mail, with a **Copy** button: email or forward a recording, document or note to it and it lands here. Owner and read-write users see it. On a hive that mail cannot reach it says **Not set up yet** and links to the setup guide.
+- **🗑 Delete** removes an item for good; tick several and use **Hive (n) ▾ → Delete…** to delete them together. The dialog says what goes: the file or recording this hive stores and its transcript record, or only the Inbox item for a synced source (which does not come back on the next sync) and for a meeting (its record stays in Meetings). The Knowledge copy is kept unless you tick the box. Owner and read-write users.
 
 **What it is good for.** Record an idea on your recorder, then turn it into an RFC with child issues (🔗 Share → Hive → RFC…), send it to dibs (DIBS), or just keep it searchable (Knowledge) without leaving the dashboard. See [Inbox and voice sources](../inbox-voice-sources.md).
 
