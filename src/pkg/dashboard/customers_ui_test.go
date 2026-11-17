@@ -55,6 +55,7 @@ func TestCustomersSectionWiring(t *testing.T) {
 		`'/api/customers/' + encodeURIComponent(id) + '/' + kind`,
 		`'/api/customers/' + encodeURIComponent(id) + '/split'`,
 		`'/export'`,
+		`hiveExportViewer({ title: 'Customer export: '`,
 		`person { id name me } } } } } }'`,
 		`'/api/customers/hints/' + encodeURIComponent(hid) + '/answer'`,
 		`customersRequest('POST', '/api/graph', { query: CUSTOMERS_TIMELINE_QUERY, operationName: 'Timeline', variables: variables })`,

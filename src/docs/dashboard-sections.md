@@ -222,7 +222,7 @@ Opening a profile shows:
 - **Activity** and **Notes** (owner and read-write only). Activity also shows open "Same person?" questions: hive spots a suggested address or login that looks like one of this customer's. **Yes** makes it theirs; **No** closes the question for good. Nothing is linked until you answer. The person does not see the notes.
 - **Graph**: **Show graph** draws the person, the things they touched and the other people on those things. Click a green dot to open that person. A read-only user's graph holds only themselves.
 - **Merge** (owner and read-write): fold another customer into this profile when they are the same person. Identities, tags, goals and activity come across, and **Undo merge** gives them back exactly. Two dashboard users cannot be merged. **Split off** on an identity moves it, and the activity it produced, to a new customer.
-- **Export** and **Forget** (owner only): **Export this person** downloads everything held about them. **Forget**: deletes the person, their identities and their activity links, and stops hive rebuilding the profile.
+- **Export** and **Forget** (owner only): **Export this person** shows everything held about them in a viewer you can copy from. **Forget**: deletes the person, their identities and their activity links, and stops hive rebuilding the profile.
 
 Nothing in this section leaves the hive. Turn it off with **Settings › Features › Customers** (`customers.enabled`), which takes effect when the hive restarts. API: [customers](api-reference/customers.md). Design: [customers](design/customers.md).
 

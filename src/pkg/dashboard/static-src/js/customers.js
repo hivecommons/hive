@@ -376,7 +376,7 @@
     function customersForgetHtml(p) {
       if (!customersIsOwner()) return '';
       return '<div class="customers-block"><div class="section-label m-0">Export and forget</div>' +
-        '<p class="muted-xs">Export downloads everything this hive holds about this person: the profile, the merge history and the references behind their activity.</p>' +
+        '<p class="muted-xs">Export shows everything this hive holds about this person, in a viewer you can copy from: the profile, the merge history and the references behind their activity.</p>' +
         '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersExport">Export this person</button></div>' +
         '<p class="muted-xs">Deletes this person, their identities and their activity links from this hive, and stops hive rebuilding the profile. It cannot be undone.</p>' +
         '<div class="customers-inline"><button type="button" class="hv-btn btn-danger btn-sm" data-action="customersForget">Forget this person</button></div></div>';
@@ -663,21 +663,16 @@
       } catch (e) { customersProfileError(e.message); }
     }
 
-    // customersExport downloads everything held about the open person.
+    // customersExport shows everything held about the open person in the
+    // in-app export viewer, which has copy and save affordances. The page
+    // never forces a browser download.
     async function customersExport() {
       if (!_customersOpen) return;
+      const path = '/api/customers/' + encodeURIComponent(_customersOpen.me ? 'me' : _customersOpen.id) + '/export';
       try {
-        const r = await fetch('/api/customers/' + encodeURIComponent(_customersOpen.me ? 'me' : _customersOpen.id) + '/export');
+        const r = await fetch(path);
         if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || ('HTTP ' + r.status)); }
-        const blob = new Blob([await r.text()], { type: 'application/json' });
-        const a = document.createElement('a');
-        a.href = URL.createObjectURL(blob);
-        a.download = hiveFilenameFromDisposition(r.headers.get('Content-Disposition'), 'customer-export.json');
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        setTimeout(() => URL.revokeObjectURL(a.href), 0);
-        showToast('Exported', 'success');
+        hiveExportViewer({ title: 'Customer export: ' + (_customersOpen.name || ''), text: await r.text(), mime: 'application/json', sourceURL: path });
       } catch (e) { customersProfileError('Could not export: ' + e.message); }
     }
 
