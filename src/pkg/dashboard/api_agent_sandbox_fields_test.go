@@ -161,3 +161,16 @@ func TestSecuritySectionSetsDefaultSandboxImageAndJobSecrets(t *testing.T) {
 		t.Fatalf("secret value accepted: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestApplySandboxJobFieldsImagePullSecrets(t *testing.T) {
+	var job config.SandboxJobConfig
+	if err := applySandboxJobFields(&job, map[string]interface{}{"imagePullSecrets": []interface{}{"reg-a", " reg-b "}}); err != nil {
+		t.Fatal(err)
+	}
+	if len(job.ImagePullSecrets) != 2 || job.ImagePullSecrets[1] != "reg-b" {
+		t.Errorf("ImagePullSecrets = %v", job.ImagePullSecrets)
+	}
+	if err := applySandboxJobFields(&job, map[string]interface{}{"imagePullSecrets": []interface{}{"user:pass"}}); err == nil {
+		t.Error("a value pasted as a name was accepted")
+	}
+}
