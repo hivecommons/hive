@@ -64,7 +64,7 @@ func (s *Server) handleMeetingsDelete(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	d, err := svc.Delete(ctx, r.PathValue("id"))
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	s.auditMeetingDeleted(r, d, "meetings")
@@ -107,7 +107,7 @@ func (s *Server) handleMeetingsClearFinished(w http.ResponseWriter, r *http.Requ
 		s.auditMeetingDeleted(r, d, "clear_finished")
 	}
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	jsonResponse(w, map[string]any{"deleted": list, "count": len(list)})
@@ -126,7 +126,7 @@ func (s *Server) handleMeetingsScheduleDelete(w http.ResponseWriter, r *http.Req
 	eid := r.PathValue("eid")
 	d, err := svc.Delete(ctx, eid)
 	if err != nil {
-		meetingsError(w, err)
+		s.meetingsError(w, r, err)
 		return
 	}
 	if d.Meetings == nil {
