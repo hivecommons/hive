@@ -49,13 +49,18 @@
     // pkg/dashboard/cli_models.go; keep the two lists in sync). Refreshed
     // 2026-08-03 from a live /v1/models response, in API order, plus the bare
     // aliases the claude CLI accepts as --model values; Sonnet 5.5 added per
-    // the Claude Code 2.1.284 changelog (#9804).
+    // the Claude Code 2.1.284 changelog (#9804). Refreshed 2026-11-17
+    // (#18753) from Anthropic's models overview and the Claude Code
+    // changelog: Fable 5.2, Fable 5.1, Haiku 5.5 and the `fable` alias.
     const CLAUDE_CLI_MODELS = [
       { value: 'claude-opus-5-5', label: 'Opus 5.5' },
       { value: 'claude-opus-5', label: 'Opus 5' },
       { value: 'claude-sonnet-5-5', label: 'Sonnet 5.5' },
       { value: 'claude-sonnet-5', label: 'Sonnet 5' },
+      { value: 'claude-fable-5-2', label: 'Fable 5.2' },
+      { value: 'claude-fable-5-1', label: 'Fable 5.1' },
       { value: 'claude-fable-5', label: 'Fable 5' },
+      { value: 'claude-haiku-5-5', label: 'Haiku 5.5' },
       { value: 'claude-opus-4-8', label: 'Opus 4.8' },
       { value: 'claude-opus-4-7', label: 'Opus 4.7' },
       { value: 'claude-sonnet-4-6', label: 'Sonnet 4.6' },
@@ -67,6 +72,7 @@
       { value: 'opus', label: 'Opus (alias)' },
       { value: 'sonnet', label: 'Sonnet (alias)' },
       { value: 'haiku', label: 'Haiku (alias)' },
+      { value: 'fable', label: 'Fable (alias)' },
     ];
     const COPILOT_CLI_MODELS = [
       // Auto sentinel: `copilot --model auto` lets the Copilot CLI pick/adjust
