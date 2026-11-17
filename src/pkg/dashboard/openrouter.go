@@ -307,6 +307,7 @@ func (s *Server) upsertOpenRouterGateway(key, model string) error {
 		gw.APIKeyEnv = gws[idx].APIKeyEnv
 		gw.CABundle = gws[idx].CABundle
 		gw.Prices = gws[idx].Prices
+		gw.TrainsOnInputs = gws[idx].TrainsOnInputs
 		gws[idx] = gw
 	} else {
 		gws = append(gws, gw)

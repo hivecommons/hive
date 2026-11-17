@@ -102,8 +102,12 @@ type Config struct {
 	// second model that reviews each finished turn of an advised agent and can
 	// object before the agent's next step. Opt-in; per-agent overrides live on
 	// AgentConfig.Advisor.
-	Advisor   AdvisorConfig   `yaml:"advisor,omitempty" json:"advisor,omitempty"`
-	Variables VariablesConfig `yaml:"variables,omitempty"`
+	Advisor AdvisorConfig `yaml:"advisor,omitempty" json:"advisor,omitempty"`
+	// AdvisoryEngine is the default-off, shadow-only advisory engine over
+	// Model Gateways (hivecommons/hive#18464 phase 1). See
+	// advisory_engine_config.go.
+	AdvisoryEngine AdvisoryEngineConfig `yaml:"advisory_engine,omitempty" json:"advisory_engine,omitzero"`
+	Variables      VariablesConfig      `yaml:"variables,omitempty"`
 	// OTel configures standards-based OTLP trace export. It is the preferred
 	// operator-facing block; Tracing is retained as a legacy alias.
 	OTel    OTelConfig `yaml:"otel,omitempty" json:"otel,omitempty"`

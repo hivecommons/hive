@@ -1112,6 +1112,12 @@ func runEvalCycle(
 	kickActionable = dashSrv.IntegrationKickAdmission(kickActionable)
 
 	sched.SetLastActionable(kickActionable)
+	// Shadow advisory engine (hivecommons/hive#18464 phase 1): default off,
+	// and when on it only records a read-only session's advice on the same
+	// items, in the background; nothing here waits on or acts on it.
+	if cfg.AdvisoryEngineMode() != config.AdvisoryEngineModeOff && dashSrv != nil {
+		observeAdvisoryEngine(ctx, cfg, ghClient, dashSrv, kickActionable, logger)
+	}
 	// The filter compacts agentsDue in place, so snapshot it first to report
 	// the targets it withholds alongside the other skips below.
 	dueBeforeDeferral := append([]string(nil), agentsDue...)

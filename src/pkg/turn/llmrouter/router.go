@@ -72,6 +72,10 @@ type Provider struct {
 	// MaxTokens, when positive, is sent as max_tokens. Some free endpoints
 	// default low enough to cut a long tool call mid-argument.
 	MaxTokens int
+	// TrainsOnInputs marks a provider (typically a free tier) whose terms
+	// let it train on request content. A router serving a private repository
+	// skips it unless WithAllowTrainingProvidersForPrivate opts in.
+	TrainsOnInputs bool `yaml:"trains_on_inputs" json:"trains_on_inputs,omitempty"`
 }
 
 // FromGateway builds a Provider from a configured Hive Model Gateway. model
@@ -88,6 +92,7 @@ func FromGateway(gw cruxconfig.GatewayConfig, model string, dailyCap int) (Provi
 		APIKeyEnv:       gw.APIKeyEnv,
 		APIKeyFile:      gw.APIKeyFile,
 		DailyRequestCap: dailyCap,
+		TrainsOnInputs:  gw.TrainsOnInputs,
 	}
 	// A gateway with no key source is keyless (some vLLM); only gateways
 	// that name one authenticate, through the gateway path's own resolver.
@@ -187,6 +192,10 @@ type Router struct {
 	now        func() time.Time
 	onAttempt  func(Attempt)
 	toolChoice string
+	// private marks the router as serving a private repository; with it,
+	// providers that train on inputs are skipped unless allowTraining.
+	private       bool
+	allowTraining bool
 }
 
 // Option configures a Router.
@@ -207,6 +216,27 @@ func WithAttemptHook(f func(Attempt)) Option { return func(r *Router) { r.onAtte
 // glm-4.7-flash honour it, gpt-oss-120b ignores it (and still reports
 // finish_reason "tool_calls"), so callers must not rely on it alone.
 func WithToolChoice(choice string) Option { return func(r *Router) { r.toolChoice = choice } }
+
+// WithPrivateRepo marks the content this router sends as coming from a
+// private repository. Providers with TrainsOnInputs are then skipped on
+// every call (reported as OutcomeSkipped) unless
+// WithAllowTrainingProvidersForPrivate(true) is also given. Callers that
+// cannot determine visibility should pass true.
+func WithPrivateRepo(private bool) Option { return func(r *Router) { r.private = private } }
+
+// WithAllowTrainingProvidersForPrivate is the explicit opt-in
+// (allow_training_providers_for_private) that lets providers with
+// TrainsOnInputs serve a private repository. It has no effect on public
+// repositories, where every provider is eligible.
+func WithAllowTrainingProvidersForPrivate(allow bool) Option {
+	return func(r *Router) { r.allowTraining = allow }
+}
+
+// ErrOnlyTrainingProviders is returned by New when the repository is
+// private, training providers are not allowed for it, and every provider
+// trains on inputs: such a router could never serve, and reporting that as
+// a capacity pause would retry forever.
+var ErrOnlyTrainingProviders = errors.New("llmrouter: every provider trains on inputs and the repository is private (set allow_training_providers_for_private to opt in)")
 
 // WithEnv overrides the key lookup (tests).
 func WithEnv(getenv func(string) string) Option { return func(r *Router) { r.getenv = getenv } }
@@ -239,7 +269,23 @@ func New(providers []Provider, opts ...Option) (*Router, error) {
 	for _, o := range opts {
 		o(r)
 	}
+	eligible := false
+	for _, p := range r.providers {
+		if !r.excluded(p) {
+			eligible = true
+			break
+		}
+	}
+	if !eligible {
+		return nil, ErrOnlyTrainingProviders
+	}
 	return r, nil
+}
+
+// excluded reports whether p may not see this router's content: it trains
+// on inputs, the repository is private, and there is no opt-in.
+func (r *Router) excluded(p Provider) bool {
+	return p.TrainsOnInputs && r.private && !r.allowTraining
 }
 
 var _ turn.LLMClient = (*Router)(nil)
@@ -267,6 +313,10 @@ func (r *Router) Generate(ctx context.Context, messages []turn.Message, tools []
 	for _, p := range r.providers {
 		if err := ctx.Err(); err != nil {
 			return turn.LLMResponse{}, err
+		}
+		if r.excluded(p) {
+			attempts = append(attempts, r.report(Attempt{Provider: p.Name, Outcome: OutcomeSkipped, Detail: "trains on inputs; private repository and no allow_training_providers_for_private opt-in"}))
+			continue
 		}
 		now := r.now()
 		key, extra := r.resolveAuth(p)
