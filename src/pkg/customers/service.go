@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ErrForbidden is returned when the viewer may not do what was asked. A
@@ -157,6 +158,7 @@ func (s *Service) view(v Viewer, p Person, isMe, detail bool) PersonView {
 		out.Satisfaction = Satisfaction{}
 		out.MergedFrom = nil
 		out.RejectedGoals = nil
+		out.InferredAt, out.InferredHash = time.Time{}, ""
 		return out
 	}
 	if detail {

@@ -219,6 +219,17 @@ entry like that gives the named person's profile the matching GitHub activity.
 A read-only user sees only their own profile. An identity they add is shown as
 unconfirmed. It links nothing until the owner or a read-write user confirms it.
 
+Goal and satisfaction suggestions are off by default, because they send text to
+a model. When the owner turns them on, the hive sends a customer's own issues,
+pull requests and approved mail to the model set up for meetings. That text can
+be about people who never signed up, so it is cleaned first. A line that holds an
+address, an id or a recognised attack is dropped, and the rest sits in a fenced
+block marked as data. The reply is checked too: at most three short goals, a
+level from a short list and no number, each citing the evidence it was given. A
+suggestion is never applied. A person confirms, edits or rejects it, and a value
+a person set is never overwritten. The model has a daily token budget, and
+nothing it suggests leaves the hive.
+
 ## 5. Network and credentials
 
 **Inference keys.** An agent using a self-hosted inference gateway is
