@@ -819,6 +819,27 @@ func joinNames(names []string) string {
 // reasons of its own (trust is the only objection).
 var readyEntryCause = stagelabels.EntryCause([]string{"ready for a human merge"})
 
+// sameHeadDecisionRoute is the 085 route preserveNeedsDecisionOnSameHead
+// re-parks a head on. The human route built this pass can disagree with
+// the stage pass's own verdict read: on projectbluefin/fsdk-containers#553
+// the contributor lane's verdict cache read no verdict while the stage pass
+// held `requires_human` with its finding, the route came back without a
+// decision, and the re-park posted "Needs a decision, not a merge:" with no
+// reason at all. The reasons come from the stage pass's verdict instead;
+// with no verdict known for the head the comment names
+// stagelabels.DecisionReasonUnnamed.
+func sameHeadDecisionRoute(obs stageObservation) stagelabels.Route {
+	route := stagelabels.Route{Stage: stagelabels.NeedsDecision, Head: obs.HeadSHA, SelfAuthored: obs.Lane == stageLaneSelf,
+		Holds: stagelabels.Holds(obs.Labels), Hold: obs.Hold}
+	if !obs.Detail.VerdictKnown {
+		return route
+	}
+	v := normalizeContributorLaneVerdict(obs.Detail.Verdict)
+	route.Verdict = stagelabels.VerdictRequiresHuman
+	route.Reasons = stagelabels.RequiresHumanReasons(obs.HeadSHA, v.DecisionFinding, v.DecisionQuestion, v.HumanSummaries)
+	return route
+}
+
 func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, key string, obs stageObservation, role stagelabels.Role, route stagelabels.Route) (int, error) {
 	rec, ok := store.Get(key)
 	if !ok || rec.Stage != route.Stage {
@@ -871,6 +892,11 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	case stagelabels.ReadyForHumanMerge:
 		body = stagelabels.ReadyComment(route, trustCause(obs.Reason, role))
 	case stagelabels.NeedsDecision:
+		if len(route.Reasons) == 0 {
+			// The comment falls back to DecisionReasonUnnamed; name the
+			// route that carried no reason so it can be found.
+			c.warn("stage labels: 085 route carries no reason; the entry comment names a generic one", "repo", obs.Display, "pr", obs.Number, "head", obs.HeadSHA, "reason", obs.Reason, "lane", obs.Lane)
+		}
 		body = stagelabels.DecisionComment(route) + c.workflowApprovalSnippet(obs.Reason)
 	default:
 		return 0, nil
