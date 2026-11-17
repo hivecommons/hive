@@ -1360,3 +1360,5 @@ data:
 # hive. Default on.
 # customers:
 #   enabled: true            # false (or env HIVE_CUSTOMERS_ENABLED=false) opens no store and hides the section
+#   inference:
+#     enabled: false         # true (or env HIVE_CUSTOMERS_INFERENCE_ENABLED=true) suggests goals and satisfaction with the meetings model; default off

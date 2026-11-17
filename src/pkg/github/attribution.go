@@ -413,6 +413,8 @@ func ParseAttributionTrailer(body string) (InvocationMeta, bool) {
 			meta.Backend = value
 		case "model":
 			meta.Model = value
+		case "effort":
+			meta.Effort = value
 		}
 	}
 	meta.Agent = NormalizeAttributionValue(meta.Agent)
@@ -423,6 +425,11 @@ func ParseAttributionTrailer(body string) (InvocationMeta, bool) {
 	}
 	if meta.Backend == "unknown" {
 		meta.Backend = ""
+	}
+	// effort= is optional (only effort-capable backends write it); an absent
+	// or placeholder value stays "" rather than "unknown".
+	if meta.Effort == "unknown" {
+		meta.Effort = ""
 	}
 	return meta, true
 }

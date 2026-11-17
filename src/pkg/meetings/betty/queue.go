@@ -253,7 +253,7 @@ func (e *Engine) addressed(l Line, trig Trigger, now time.Time) {
 			e.armAckWatchdog(p)
 		}
 	}
-	e.retrieve(p, trig.Rest)
+	e.retrieve(p, trig.Rest, true)
 }
 
 // armAckWatchdog acks p after AckDelay unless its answer is out by then
@@ -400,7 +400,10 @@ func (e *Engine) question(l Line, topic []string, now time.Time) {
 		return
 	}
 	p := e.add(l, Trigger{}, topic, false, now)
-	e.retrieve(p, l.Text)
+	// A question nobody addressed to her is overheard, not asked of her:
+	// it never leaves the hive for the public web unless the speaker asked
+	// for a web search by name.
+	e.retrieve(p, l.Text, cleanQuery(l.Text).Explicit)
 	id := p.id
 	time.AfterFunc(e.s.AnswerWait, func() {
 		select {
@@ -421,9 +424,13 @@ func (e *Engine) add(l Line, trig Trigger, topic []string, addressed bool, now t
 }
 
 // retrieve starts retrieval at once, in parallel with the answer wait.
-func (e *Engine) retrieve(p *pending, query string) {
+func (e *Engine) retrieve(p *pending, query string, allowPublic bool) {
 	id, terms := p.id, p.topic
-	if len(e.d.Retrievers) == 0 || len(terms) == 0 {
+	rs := e.d.Retrievers
+	if !allowPublic {
+		rs = withoutPublic(rs)
+	}
+	if len(rs) == 0 || len(terms) == 0 {
 		p.retrieved = true
 		if p.waited {
 			e.proceed(p)
@@ -431,7 +438,7 @@ func (e *Engine) retrieve(p *pending, query string) {
 		return
 	}
 	go func() {
-		snips := Gather(e.ctx, e.d.Retrievers, query, terms, e.s.RetrieveTimeout)
+		snips := Gather(e.ctx, rs, query, terms, e.s.RetrieveTimeout)
 		select {
 		case e.retrieved <- retrieval{id: id, snips: snips}:
 		case <-e.ctx.Done():

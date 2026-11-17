@@ -25,6 +25,11 @@
     const CUSTOMERS_TIMELINE_QUERY = 'query Timeline($id: ID!, $first: Int, $after: String) { person(id: $id) { edges(first: $first, after: $after) { nodes { predicate at source artefact { ref kind } } next } } }';
     const CUSTOMERS_REF_KIND_LABELS = { gh: 'GitHub', meeting: 'Meetings', event: 'Calendar', inbox: 'Inbox', fact: 'Knowledge', bead: 'Work items', audit: 'Dashboard' };
     let _customersTimeline = { id: '', nodes: [], next: '', error: '', loading: false };
+    // The graph view of the open profile, read from the customer graph:
+    // the person, their artefacts, and the other people on those artefacts.
+    const CUSTOMERS_GRAPH_EDGES = 25;
+    const CUSTOMERS_GRAPH_QUERY = 'query Graph($id: ID!, $first: Int) { person(id: $id) { id name edges(first: $first) { nodes { predicate artefact { ref kind people(first: 5) { predicate person { id name me } } } } } } }';
+    let _customersGraph = { id: '', on: false, nodes: null, error: '', loading: false };
 
     function customersIsEnabled() { return window._customersEnabled === true; }
     function customersIsFull() { return !!(_customersData && _customersData.full); }
@@ -112,39 +117,133 @@
       return '<span class="kc-pill" data-status="' + escapeHtml(CUSTOMERS_LEVEL_PILL[level] || '') + '">' + escapeHtml(CUSTOMERS_LEVEL_LABELS[level] || level) + '</span>';
     }
 
+    // A reference hive keeps for a suggestion or a goal ("gh:pr:org/repo#7",
+    // "event:<id>") is shown as something a person can read: an issue or pull
+    // request links to GitHub, anything else is named by what it is. The raw
+    // reference stays out of the page.
+    const CUSTOMERS_REF_GH = /^gh:(issue|pr):([A-Za-z0-9._-]+\/[A-Za-z0-9._-]+)#(\d+)$/;
+    const CUSTOMERS_REF_WORDS = { event: 'calendar invite', meeting: 'meeting', audit: 'dashboard activity', fact: 'knowledge entry', bead: 'work item' };
+    // How many rows of one source a suggested group shows before "Show more".
+    const CUSTOMERS_GROUP_SHOWN = 5;
+    const CUSTOMERS_SUGGESTED_GROUPS = { github: 'GitHub people', email: 'Email addresses' };
+    const CUSTOMERS_OTHER_GROUP = 'Other people';
+    const CUSTOMERS_KIND_ICONS = { github: '🐙', email: '✉️', git_email: '✉️', discord: '💬', slack: '💬', teams: '💬', meet: '🎥', zoom: '🎥' };
+    // What the panel remembers across a refresh: which disclosures are open
+    // (the Suggested group and each "Why is this suggested?"), which groups
+    // are expanded, and which picker is showing.
+    let _customersUi = { open: {}, expanded: {}, picker: '', profilePicker: false };
+
+    function customersInitial(name) {
+      const m = /[A-Za-z0-9]/.exec(String(name || ''));
+      return m ? m[0].toUpperCase() : '?';
+    }
+
+    function customersEvidenceLabel(ref) {
+      const s = String(ref || '');
+      const m = CUSTOMERS_REF_GH.exec(s);
+      if (m) {
+        const href = 'https://github.com/' + m[2] + '/' + (m[1] === 'pr' ? 'pull' : 'issues') + '/' + m[3];
+        return '<a href="' + escapeHtml(href) + '" target="_blank" rel="noopener noreferrer" title="' + escapeHtml(m[2] + '#' + m[3]) + '">' + (m[1] === 'pr' ? 'PR' : 'Issue') + ' #' + escapeHtml(m[3]) + '</a>';
+      }
+      const kind = s.split(':')[0];
+      if (kind === 'inbox') return '<span>' + (s.indexOf('inbox:email:') === 0 ? 'mail' : 'inbox file') + '</span>';
+      return '<span>' + escapeHtml(CUSTOMERS_REF_WORDS[kind] || 'activity') + '</span>';
+    }
+
     function customersEvidenceHtml(refs) {
       const list = (refs || []).slice(0, CUSTOMERS_EVIDENCE_SHOWN);
       if (!list.length) return '';
-      return '<div class="customers-evidence" title="What led hive to suggest this">from ' + list.map(escapeHtml).join(', ') + '</div>';
+      return '<div class="muted-xs customers-evidence" title="What led hive to suggest this">from ' + list.map(customersEvidenceLabel).join(', ') + '</div>';
+    }
+
+    // customersWhyHtml hides the evidence behind a disclosure, at most five
+    // references, whose open state survives a refresh.
+    function customersWhyHtml(sid, refs) {
+      const list = (refs || []).slice(0, CUSTOMERS_EVIDENCE_SHOWN);
+      if (!list.length) return '';
+      const key = 'why:' + sid;
+      return '<details class="customers-why" data-ui-key="' + escapeHtml(key) + '"' + (_customersUi.open[key] ? ' open' : '') + '>' +
+        '<summary class="muted-xs">Why is this suggested?</summary>' +
+        '<div class="muted-xs customers-why-body">Hive saw this person on ' + list.map(customersEvidenceLabel).join(', ') + '.</div></details>';
     }
 
     // ── List ──
     function customersRowHtml(p, isMe) {
       const goals = customersGoalsSplit(p);
       const tags = customersActiveTags(p).map(t => '<span class="badge customers-chip">' + escapeHtml(t) + '</span>').join('');
+      const pill = customersLevelPill(p.satisfaction && p.satisfaction.level);
       const pending = goals.suggested.length + (p.satisfaction && p.satisfaction.suggestion ? 1 : 0);
-      const meta = [CUSTOMERS_ORIGIN_LABELS[p.origin] || p.origin || '', goals.confirmed.length + ' goal' + (goals.confirmed.length === 1 ? '' : 's')];
+      const meta = [CUSTOMERS_ORIGIN_LABELS[p.origin] || p.origin || ''];
+      // No goals is the usual case, so it is not said on every row.
+      if (goals.confirmed.length) meta.push(goals.confirmed.length + ' goal' + (goals.confirmed.length === 1 ? '' : 's'));
       if (pending) meta.push(pending + ' suggestion' + (pending === 1 ? '' : 's') + ' to review');
       const updated = customersFormatTime(p.updated_at);
       if (updated) meta.push('updated ' + updated);
-      return '<div class="customers-row" data-customer="' + escapeHtml(p.id) + '" data-me="' + (isMe ? 'true' : 'false') + '">' +
-        '<div class="customers-row-main"><div class="customers-row-title">' + escapeHtml(p.name || p.id) + (isMe ? ' <span class="badge">me</span>' : '') + '</div>' +
-        '<div class="muted-xs">' + escapeHtml(meta.filter(Boolean).join(' · ')) + '</div></div>' +
-        '<div class="customers-chips">' + tags + customersLevelPill(p.satisfaction && p.satisfaction.level) + '</div>' +
-        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersOpen" data-arg0="' + (isMe ? 'me' : escapeHtml(p.id)) + '">' + (isMe ? 'My profile' : 'Open') + '</button></div>';
+      const name = p.name || p.id || '';
+      return '<div class="customers-card" data-customer="' + escapeHtml(p.id) + '" data-me="' + (isMe ? 'true' : 'false') + '">' +
+        '<span class="customers-avatar" aria-hidden="true">' + escapeHtml(customersInitial(name)) + '</span>' +
+        '<div class="customers-row-main"><div class="customers-row-title"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') + '</div>' +
+        '<div class="muted-xs customers-row-meta">' + escapeHtml(meta.filter(Boolean).join(' · ')) + '</div>' +
+        (tags || pill ? '<div class="customers-chips">' + tags + pill + '</div>' : '') + '</div>' +
+        '<div class="customers-row-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersOpen" data-arg0="' + (isMe ? 'me' : escapeHtml(p.id)) + '">' + (isMe ? 'My profile' : 'Open') + '</button></div></div>';
+    }
+
+    // customersPickerHtml lists the current customers, Me first, for a
+    // suggestion to be attached to. The filter narrows the list by name.
+    function customersPickerHtml(sid) {
+      const data = _customersData || {};
+      const me = data.me || {};
+      const people = [{ id: 'me', name: 'Me' + (me.name ? ' (' + me.name + ')' : '') }].concat((data.people || []).filter(p => p && p.id).map(p => ({ id: p.id, name: p.name || p.id })));
+      return '<div class="customers-picker" data-customers-picker="' + escapeHtml(sid) + '">' +
+        '<label class="customers-picker-filter">Find a customer<input class="kb-search-box" type="text" maxlength="120" data-customers-field="picker-filter" autocomplete="off"></label>' +
+        '<div class="customers-picker-list">' + people.map(p => '<button type="button" class="hv-btn btn-secondary btn-sm customers-pick" data-action="customersAttach" data-arg0="' + escapeHtml(sid) + '" data-arg1="' + escapeHtml(p.id) + '" data-name="' + escapeHtml(p.name.toLowerCase()) + '" title="' + escapeHtml(p.name) + '">' + escapeHtml(p.name) + '</button>').join('') + '</div>' +
+        '<div class="customers-picker-foot"><span class="muted-xs">Their identity joins that customer. You can undo it from their profile, under Merge.</span>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersPickerClose">Cancel</button></div></div>';
     }
 
     function customersSuggestionRowHtml(s) {
       const id = escapeHtml(s.id);
       const counts = Object.keys(s.counts || {}).sort().map(k => s.counts[k] + ' ' + k.replace(/_/g, ' ')).join(', ');
       const seen = customersFormatTime(s.last_seen);
-      return '<div class="customers-row" data-customer-suggestion="' + id + '">' +
-        '<span class="badge">' + escapeHtml(CUSTOMERS_KIND_LABELS[s.kind] || s.kind || '') + '</span>' +
-        '<div class="customers-row-main"><div class="customers-row-title">' + escapeHtml(s.value || '') + '</div>' +
-        '<div class="muted-xs">' + escapeHtml([counts, seen ? 'last seen ' + seen : ''].filter(Boolean).join(' · ')) + '</div>' +
-        customersEvidenceHtml(s.evidence) + '</div>' +
+      const value = s.value || '';
+      const kind = CUSTOMERS_KIND_LABELS[s.kind] || s.kind || '';
+      return '<div class="customers-card" data-kind="suggestion" data-customer-suggestion="' + id + '">' +
+        '<span class="customers-avatar" aria-hidden="true" title="' + escapeHtml(kind) + '">' + (CUSTOMERS_KIND_ICONS[s.kind] || escapeHtml(customersInitial(value))) + '</span>' +
+        '<div class="customers-row-main"><div class="customers-row-title"><span class="customers-name" title="' + escapeHtml(value) + '">' + escapeHtml(value) + '</span></div>' +
+        '<div class="muted-xs customers-row-meta">' + escapeHtml([counts, seen ? 'last seen ' + seen : ''].filter(Boolean).join(' · ')) + '</div>' +
+        customersWhyHtml(s.id, s.evidence) + '</div>' +
+        '<div class="customers-row-actions">' +
         '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersAccept" data-arg0="' + id + '" title="Make this person a customer and build their profile">Accept</button>' +
-        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersDismiss" data-arg0="' + id + '" title="Do not suggest this person again; hive keeps no readable trace of them">Dismiss</button></div>';
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersPickerOpen" data-arg0="' + id + '" title="Add this identity to a customer you already have, instead of making a new one">Add to existing…</button>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersDismiss" data-arg0="' + id + '" title="Do not suggest this person again; hive keeps no readable trace of them">Dismiss</button></div>' +
+        (_customersUi.picker === s.id ? customersPickerHtml(s.id) : '') + '</div>';
+    }
+
+    // customersSuggestionGroups orders suggestions by where hive saw them:
+    // GitHub people, then email addresses, then anyone else. Each group keeps
+    // the order the hive sent.
+    function customersSuggestionGroups(list) {
+      const by = {};
+      const order = [];
+      (list || []).forEach(s => {
+        if (!s || !s.id) return;
+        const key = CUSTOMERS_SUGGESTED_GROUPS[s.kind] ? s.kind : 'other';
+        if (!by[key]) { by[key] = []; order.push(key); }
+        by[key].push(s);
+      });
+      const rank = k => k === 'github' ? 0 : (k === 'email' ? 1 : 2);
+      order.sort((a, b) => rank(a) - rank(b));
+      return order.map(k => ({ key: k, label: CUSTOMERS_SUGGESTED_GROUPS[k] || CUSTOMERS_OTHER_GROUP, items: by[k] }));
+    }
+
+    function customersSuggestionGroupHtml(g) {
+      const open = !!_customersUi.expanded[g.key];
+      const shown = open ? g.items : g.items.slice(0, CUSTOMERS_GROUP_SHOWN);
+      const hidden = g.items.length - shown.length;
+      return '<div class="customers-group" data-customers-group="' + escapeHtml(g.key) + '"><div class="customers-group-title">' + escapeHtml(g.label) + ' <span class="muted-xs">(' + g.items.length + ')</span></div>' +
+        '<div class="customers-list">' + shown.map(customersSuggestionRowHtml).join('') + '</div>' +
+        (hidden > 0 ? '<div class="customers-row-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersShowMore" data-arg0="' + escapeHtml(g.key) + '">Show ' + hidden + ' more</button></div>' :
+          (open && g.items.length > CUSTOMERS_GROUP_SHOWN ? '<div class="customers-row-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersShowMore" data-arg0="' + escapeHtml(g.key) + '">Show fewer</button></div>' : '')) + '</div>';
     }
 
     function customersAddFormHtml() {
@@ -167,14 +266,14 @@
       out += customersAddFormHtml();
       out += '<div class="customers-block"><div class="section-label m-0">Customers</div><div class="customers-list">' +
         (people.length ? people.map(p => customersRowHtml(p, false)).join('') : '<p class="empty-dashed">No other customers yet. Add one, or accept a suggestion.</p>') + '</div></div>';
-      out += '<details class="customers-block"><summary class="muted-xs">Suggested (' + suggestions.length + ')</summary>' +
-        '<p class="muted-xs mt-2">People hive has seen in issues, pull requests, meetings and mail who are not customers. Hive keeps only a key, counts and a few references for them until you accept one.</p>' +
-        '<div class="customers-list mt-2">' + (suggestions.length ? suggestions.map(customersSuggestionRowHtml).join('') : '<p class="empty-dashed">Nobody to suggest.</p>') + '</div></details>';
+      out += '<details class="customers-block customers-suggested" data-ui-key="suggested"' + (_customersUi.open.suggested ? ' open' : '') + '><summary class="customers-summary">Suggested (' + suggestions.length + ')</summary>' +
+        '<p class="muted-xs customers-hint">People hive has seen in issues, pull requests, meetings and mail who are not customers. Hive keeps only a key, counts and a few references for them until you accept one.</p>' +
+        (suggestions.length ? customersSuggestionGroups(suggestions).map(customersSuggestionGroupHtml).join('') : '<p class="empty-dashed">Nobody to suggest.</p>') + '</details>';
       return out;
     }
 
     // ── Profile ──
-    function customersIdentityRowHtml(i) {
+    function customersIdentityRowHtml(p, i) {
       const key = i.kind + ':' + i.value;
       const fixed = i.kind === 'hive_user';
       const meta = [];
@@ -184,6 +283,9 @@
       let buttons = '';
       if (i.claimed && customersIsFull()) {
         buttons += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersIdentityConfirm" data-arg0="' + escapeHtml(i.kind) + '" data-arg1="' + escapeHtml(i.value) + '" title="Confirm this is theirs: it then links their activity">Confirm</button>';
+      }
+      if (customersIsFull() && !fixed && !i.claimed && i.kind !== 'name' && (p.identities || []).length > 1) {
+        buttons += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersSplit" data-arg0="' + escapeHtml(key) + '" title="Move this identity, and the activity it produced, to a new customer">Split off</button>';
       }
       if (!fixed) {
         buttons += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityRemove" data-arg0="' + escapeHtml(key) + '">Remove</button>';
@@ -197,7 +299,7 @@
       const ids = p.identities || [];
       const note = customersIsFull() ? '' : '<p class="muted-xs">What you add here is shown as unconfirmed until the hive owner or a read-write user confirms it.</p>';
       return '<div class="customers-block"><div class="section-label m-0">Identities</div>' + note +
-        '<div class="customers-list">' + (ids.length ? ids.map(customersIdentityRowHtml).join('') : '<p class="empty-dashed">No identities.</p>') + '</div>' +
+        '<div class="customers-list">' + (ids.length ? ids.map(i => customersIdentityRowHtml(p, i)).join('') : '<p class="empty-dashed">No identities.</p>') + '</div>' +
         '<div class="customers-inline"><label>Known by<select class="kb-search-box" data-customers-field="identity-kind">' + customersKindOptions() + '</select></label>' +
         '<label>Login, address or id<input class="kb-search-box" type="text" maxlength="254" data-customers-field="identity-value" autocomplete="off"></label>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityAdd">Add identity</button></div></div>';
@@ -243,7 +345,7 @@
       const goals = customersGoalsSplit(p);
       return '<div class="customers-block"><div class="section-label m-0">Goals</div>' +
         '<p class="muted-xs">What this person is trying to get done. Hive suggests goals from their issues, pull requests, meetings and mail; a goal counts only once a person confirms it.</p>' +
-        '<div class="customers-list">' + (goals.confirmed.length ? goals.confirmed.map(customersGoalRowHtml).join('') : '<p class="empty-dashed">No goals yet.</p>') + '</div>' +
+        '<div class="customers-list">' + (goals.confirmed.length ? goals.confirmed.map(customersGoalRowHtml).join('') : '<p class="empty-dashed">No goal yet. Add one below, or confirm one hive suggests.</p>') + '</div>' +
         (goals.suggested.length ? '<div class="muted-xs">Suggested</div><div class="customers-list">' + goals.suggested.map(customersGoalRowHtml).join('') + '</div>' : '') +
         '<div class="customers-inline"><label>New goal<input class="kb-search-box" type="text" maxlength="280" data-customers-field="goal-text" placeholder="Get CSV exports working for their team" autocomplete="off"></label>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersGoalAdd">Add goal</button></div></div>';
@@ -305,6 +407,18 @@
         (t.next ? '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersTimelineMore">Show more</button></div>' : '');
     }
 
+    // A "Same person?" hint names a suggested identity that may belong to this
+    // customer. Yes makes it theirs; No closes the question for good. A hint
+    // between two customers is answered by merging them, so it has no Yes here.
+    function customersHintRowHtml(h) {
+      const id = escapeHtml(h.id);
+      const what = h.other_kind === 'customer' ? 'the customer ' + (h.other_value || '') : (CUSTOMERS_KIND_LABELS[h.other_kind] || h.other_kind || '') + ' ' + (h.other_value || '');
+      const yes = h.other_kind === 'customer' ? '' : '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersHintAnswer" data-arg0="' + id + '" data-arg1="yes" title="Make this identity theirs: it then links its activity">Yes</button>';
+      return '<div class="customers-row" data-hint="' + id + '"><div class="customers-row-main"><div>Same person? ' + escapeHtml(what.trim()) + '</div>' +
+        '<div class="muted-xs">' + escapeHtml(h.reason || '') + '. Nothing is linked until you answer.</div></div>' + yes +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersHintAnswer" data-arg0="' + id + '" data-arg1="no" title="Not the same person: do not ask again">No</button></div>';
+    }
+
     function customersActivityHtml(p) {
       if (!customersIsFull()) return '';
       const counts = p.counts || {};
@@ -313,12 +427,69 @@
       return '<div class="customers-block"><div class="section-label m-0">Activity</div>' +
         (keys.length ? '<div class="customers-chips">' + keys.map(k => '<span class="badge">' + escapeHtml(k.replace(/_/g, ' ')) + ' ' + counts[k] + '</span>').join('') + '</div>' : '') +
         '<div id="customers-timeline" class="customers-block">' + customersTimelineHtml() + '</div>' +
-        (hints.length ? '<p class="muted-xs">' + hints.length + ' open "Same person?" question' + (hints.length === 1 ? '' : 's') + ' about this profile.</p>' : '') + '</div>';
+        (hints.length ? '<div class="customers-list">' + hints.map(customersHintRowHtml).join('') + '</div>' : '') + '</div>';
+    }
+
+    // customersAttachHtml lets the owner and read-write users pull a suggested
+    // person into the open profile: the same action as "Add to existing" on a
+    // suggestion, from the other side.
+    function customersAttachHtml(p) {
+      if (!customersIsFull()) return '';
+      const list = (_customersData && _customersData.suggestions) || [];
+      let body;
+      if (!list.length) body = '<p class="empty-dashed">Nobody is suggested right now.</p>';
+      else if (!_customersUi.profilePicker) body = '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfilePickerOpen">Add a suggested person here</button></div>';
+      else body = '<div class="customers-picker" data-customers-picker="profile">' +
+        '<label class="customers-picker-filter">Find a suggested person<input class="kb-search-box" type="text" maxlength="120" data-customers-field="picker-filter" autocomplete="off"></label>' +
+        '<div class="customers-picker-list">' + list.filter(s => s && s.id).map(s => '<button type="button" class="hv-btn btn-secondary btn-sm customers-pick" data-action="customersAttach" data-arg0="' + escapeHtml(s.id) + '" data-arg1="' + escapeHtml(p.me ? 'me' : p.id) + '" data-name="' + escapeHtml(String(s.value || '').toLowerCase()) + '" title="' + escapeHtml((CUSTOMERS_KIND_LABELS[s.kind] || s.kind || '') + ': ' + (s.value || '')) + '">' + escapeHtml((CUSTOMERS_KIND_ICONS[s.kind] || '') + ' ' + (s.value || '')) + '</button>').join('') + '</div>' +
+        '<div class="customers-picker-foot"><span class="muted-xs">Their identity joins this customer. You can undo it under Merge.</span>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersPickerClose">Cancel</button></div></div>';
+      return '<div class="customers-block"><div class="section-label m-0">Suggested people</div>' +
+        '<p class="muted-xs">Someone hive saw who is really this customer, under another login or address.</p>' + body + '</div>';
+    }
+
+    // customersMergeHtml: fold another customer into this one, and undo an
+    // earlier merge. Full view only. Two dashboard users cannot be merged; the
+    // server refuses it.
+    function customersMergeHtml(p) {
+      if (!customersIsFull()) return '';
+      const others = ((_customersData && _customersData.people) || []).filter(o => o && o.id && o.id !== p.id);
+      const merged = (p.merged_from || []).filter(m => m && m.person && m.person.id);
+      const options = others.map(o => '<option value="' + escapeHtml(o.id) + '">' + escapeHtml(o.name || o.id) + '</option>').join('');
+      return '<div class="customers-block"><div class="section-label m-0">Merge</div>' +
+        '<p class="muted-xs">If two customers are the same person, fold one into this profile. Their identities, tags, goals and activity come across, and you can undo it.</p>' +
+        (others.length ? '<div class="customers-inline"><label>Customer to fold in<select class="kb-search-box" data-customers-field="merge-from">' + options + '</select></label>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersMerge">Merge into this profile</button></div>' : '<p class="empty-dashed">No other customers to merge.</p>') +
+        (merged.length ? '<div class="muted-xs">Merged into this profile</div><div class="customers-list">' + merged.map(m =>
+          '<div class="customers-row"><div class="customers-row-main"><div>' + escapeHtml(m.person.name || m.person.id) + '</div><div class="muted-xs">merged by ' + escapeHtml(m.by || 'someone') + ' ' + escapeHtml(customersFormatTime(m.at)) + '</div></div>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersUnmerge" data-arg0="' + escapeHtml(m.person.id) + '" title="Give back its identities, tags, goals and activity">Undo merge</button></div>').join('') + '</div>' : '') + '</div>';
+    }
+
+    // The graph view: a drawing of the person, what they touched and who
+    // else was on it. Everyone who can open a profile can open its graph; a
+    // read-only user's graph holds only themselves.
+    function customersGraphBodyHtml(p) {
+      const g = _customersGraph;
+      if (!g.on) return '';
+      if (g.error) return '<p class="kc-error muted-xs">' + escapeHtml(g.error) + '</p>';
+      if (g.loading && !g.nodes) return '<p class="muted-xs">Loading the graph…</p>';
+      if (!g.nodes || !g.nodes.length) return '<p class="empty-dashed">Nothing to draw yet.</p>';
+      return graphcanvasSvg(graphcanvasLayout({ id: p.id, name: p.name }, g.nodes)) +
+        '<p class="muted-xs">Green dots are other people on the same things. Click one to open their profile.</p>';
+    }
+
+    function customersGraphHtml(p) {
+      const g = _customersGraph;
+      return '<div class="customers-block"><div class="section-label m-0">Graph</div>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" aria-pressed="' + !!g.on + '" data-action="customersGraphToggle">' + (g.on ? 'Hide graph' : 'Show graph') + '</button></div>' +
+        '<div id="customers-graph">' + customersGraphBodyHtml(p) + '</div></div>';
     }
 
     function customersForgetHtml(p) {
       if (!customersIsOwner()) return '';
-      return '<div class="customers-block"><div class="section-label m-0">Forget</div>' +
+      return '<div class="customers-block"><div class="section-label m-0">Export and forget</div>' +
+        '<p class="muted-xs">Export shows everything this hive holds about this person, in a viewer you can copy from: the profile, the merge history and the references behind their activity.</p>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersExport">Export this person</button></div>' +
         '<p class="muted-xs">Deletes this person, their identities and their activity links from this hive, and stops hive rebuilding the profile. It cannot be undone.</p>' +
         '<div class="customers-inline"><button type="button" class="hv-btn btn-danger btn-sm" data-action="customersForget">Forget this person</button></div></div>';
     }
@@ -326,12 +497,12 @@
     function customersProfileHtml(p) {
       const tags = customersActiveTags(p).map(t => '<span class="badge customers-chip">' + escapeHtml(t) + '</span>').join('');
       return '<div class="customers-profile-head"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersClose">← Customers</button>' +
-        '<div class="customers-profile-name">' + escapeHtml(p.name || p.id) + (p.me ? ' <span class="badge">me</span>' : '') + '</div>' +
+        '<div class="customers-profile-name"><span class="customers-name" title="' + escapeHtml(p.name || p.id) + '">' + escapeHtml(p.name || p.id) + '</span>' + (p.me ? '<span class="badge customers-me">me</span>' : '') + '</div>' +
         '<div class="customers-chips">' + tags + customersLevelPill(p.satisfaction && p.satisfaction.level) + '</div>' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRename">Rename</button></div>' +
         '<div class="hive-dialog-error" role="alert" data-customers-field="profile-error"></div>' +
-        customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) +
-        customersActivityHtml(p) + customersNotesHtml(p) + customersForgetHtml(p);
+        customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) + customersAttachHtml(p) +
+        customersActivityHtml(p) + customersGraphHtml(p) + customersMergeHtml(p) + customersNotesHtml(p) + customersForgetHtml(p);
     }
 
     function renderCustomers() {
@@ -349,7 +520,65 @@
       // Typing in a form must survive the background refresh.
       const active = document.activeElement;
       if (active && host.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
+      // A refresh keeps the page where the person was reading.
+      const y = window.scrollY;
       host.innerHTML = _customersOpen ? customersProfileHtml(_customersOpen) : customersListHtml(data);
+      if (Math.abs(window.scrollY - y) > 1) window.scrollTo(window.scrollX, y);
+      const pick = host.querySelector('[data-customers-picker] [data-customers-field="picker-filter"]');
+      if (pick && _customersUi.focusPicker) { _customersUi.focusPicker = false; pick.focus(); }
+    }
+
+    // The open state of each disclosure is kept, so a refresh or an action
+    // does not close what the person opened. toggle does not bubble, so it is
+    // caught on the way down.
+    document.addEventListener('toggle', function (ev) {
+      const el = ev.target;
+      if (!el || !el.matches || !el.matches('details[data-ui-key]') || !el.closest('#customers-panel')) return;
+      _customersUi.open[el.getAttribute('data-ui-key')] = !!el.open;
+    }, true);
+
+    // The picker's filter narrows its list in place, without a re-render that
+    // would take the focus away.
+    document.addEventListener('input', function (ev) {
+      const el = ev.target;
+      if (!el || !el.matches || !el.matches('[data-customers-field="picker-filter"]')) return;
+      const picker = el.closest('[data-customers-picker]');
+      if (!picker) return;
+      const q = (el.value || '').trim().toLowerCase();
+      picker.querySelectorAll('.customers-pick').forEach(b => { b.hidden = !!q && (b.getAttribute('data-name') || '').indexOf(q) < 0; });
+    });
+
+    // customersSuggestionOrder is the suggestions in the order the list shows
+    // them, so the next one can be found after an action.
+    function customersSuggestionOrder() {
+      return customersSuggestionGroups((_customersData && _customersData.suggestions) || []).reduce((acc, g) => acc.concat(g.items.map(s => s.id)), []);
+    }
+
+    // customersNeighbour is the suggestion to put the focus on once sid is
+    // gone: the one after it, else the one before.
+    function customersNeighbour(sid) {
+      const order = customersSuggestionOrder();
+      const i = order.indexOf(sid);
+      if (i < 0) return '';
+      return order[i + 1] || order[i - 1] || '';
+    }
+
+    function customersFocusSuggestion(id) {
+      const host = document.getElementById('customers-panel');
+      if (!host) return;
+      const row = id ? host.querySelector('[data-customer-suggestion="' + id + '"] [data-action="customersAccept"]') : null;
+      const target = row || host.querySelector('summary.customers-summary');
+      if (target && typeof target.focus === 'function') target.focus();
+    }
+
+    // customersAfterSuggestion refreshes the data and repaints with every
+    // disclosure as it was, then moves the focus to the next suggestion.
+    async function customersAfterSuggestion(next, gone) {
+      // The row goes at once; the refresh that follows confirms it.
+      if (gone && _customersData && _customersData.suggestions) _customersData.suggestions = _customersData.suggestions.filter(x => x && x.id !== gone);
+      customersShow();
+      await fetchCustomers();
+      if (!_customersOpen) customersFocusSuggestion(next);
     }
 
     // customersShow replaces the panel after an action, even when a field in
@@ -398,8 +627,39 @@
 
     function customersTimelineMore() { customersTimelineLoad(false); }
 
+    // customersGraphLoad reads the open profile's graph: one query for the
+    // edges and, under each, the other people on that artefact.
+    async function customersGraphLoad() {
+      const p = _customersOpen;
+      if (!p) return;
+      if (_customersGraph.id !== p.id) _customersGraph = { id: p.id, on: _customersGraph.on, nodes: null, error: '', loading: false };
+      const g = _customersGraph;
+      g.loading = true;
+      customersGraphPaint();
+      try {
+        const data = await customersRequest('POST', '/api/graph', { query: CUSTOMERS_GRAPH_QUERY, operationName: 'Graph', variables: { id: p.id, first: CUSTOMERS_GRAPH_EDGES } });
+        if (data.errors && data.errors.length) throw new Error(data.errors[0].message || 'query failed');
+        g.nodes = (data.data && data.data.person && data.data.person.edges && data.data.person.edges.nodes) || [];
+        g.error = '';
+      } catch (e) { g.error = 'Could not load the graph: ' + e.message; }
+      g.loading = false;
+      if (_customersGraph === g) customersGraphPaint();
+    }
+
+    function customersGraphPaint() {
+      const el = document.getElementById('customers-graph');
+      if (el && _customersOpen) el.innerHTML = customersGraphBodyHtml(_customersOpen);
+    }
+
+    function customersGraphToggle() {
+      _customersGraph.on = !_customersGraph.on;
+      customersShow();
+      if (_customersGraph.on) customersGraphLoad();
+    }
+
     // ── Actions ──
     async function customersOpen(id) {
+      _customersUi.profilePicker = false;
       try {
         _customersOpen = await customersRequest('GET', '/api/customers/' + encodeURIComponent(id));
         customersShow();
@@ -409,6 +669,7 @@
 
     function customersClose() {
       _customersOpen = null;
+      _customersUi.profilePicker = false;
       customersShow();
       fetchCustomers();
     }
@@ -445,21 +706,69 @@
     }
 
     async function customersAccept(sid) {
+      const next = customersNeighbour(sid);
       try {
         const p = await customersRequest('POST', '/api/customers/suggestions/' + encodeURIComponent(sid) + '/accept');
         showToast('Accepted: ' + (p.name || 'customer') + ' now has a profile', 'success');
       } catch (e) { showToast('Could not accept: ' + e.message, 'error'); }
-      customersShow();
-      fetchCustomers();
+      if (_customersUi.picker === sid) _customersUi.picker = '';
+      await customersAfterSuggestion(next, sid);
     }
 
     async function customersDismiss(sid) {
       const ok = await hiveConfirm({ title: 'Dismiss this suggestion?', message: 'Hive will not suggest this person again and keeps no readable trace of them. You can still add them by hand later.', confirmLabel: 'Dismiss' });
       if (!ok) return;
+      const next = customersNeighbour(sid);
       try { await customersRequest('POST', '/api/customers/suggestions/' + encodeURIComponent(sid) + '/dismiss'); }
       catch (e) { showToast('Could not dismiss: ' + e.message, 'error'); }
+      if (_customersUi.picker === sid) _customersUi.picker = '';
+      await customersAfterSuggestion(next, sid);
+    }
+
+    // customersShowMore expands or folds one source group of the suggestions.
+    function customersShowMore(group) {
+      _customersUi.expanded[group] = !_customersUi.expanded[group];
+      renderCustomers();
+    }
+
+    function customersPickerOpen(sid) {
+      _customersUi.picker = sid;
+      _customersUi.focusPicker = true;
       customersShow();
-      fetchCustomers();
+    }
+
+    function customersProfilePickerOpen() {
+      _customersUi.profilePicker = true;
+      _customersUi.focusPicker = true;
+      customersShow();
+    }
+
+    function customersPickerClose() {
+      _customersUi.picker = '';
+      _customersUi.profilePicker = false;
+      customersShow();
+    }
+
+    // customersAttach adds a suggested person's identity to an existing
+    // customer (an id, or "me") instead of accepting them as a new one. The
+    // server folds it in with the merge, so Undo merge on that customer's
+    // profile takes it back.
+    async function customersAttach(sid, into) {
+      const next = customersNeighbour(sid);
+      try {
+        const p = await customersRequest('POST', '/api/customers/suggestions/' + encodeURIComponent(sid) + '/accept', { into: into });
+        showToast('Added to ' + (p.name || 'the customer') + '. Undo it from their profile, under Merge.', 'success');
+        if (_customersOpen) {
+          _customersOpen = p;
+          _customersTimeline = { id: '', nodes: [], next: '', error: '', loading: false };
+          customersTimelineLoad(true);
+        }
+      } catch (e) {
+        if (_customersOpen) customersProfileError(e.message); else showToast('Could not add: ' + e.message, 'error');
+      }
+      _customersUi.picker = '';
+      _customersUi.profilePicker = false;
+      await customersAfterSuggestion(next, sid);
     }
 
     async function customersRename() {
@@ -514,6 +823,85 @@
     function customersSatisfactionReject() { customersEdit({ op: 'satisfaction_reject' }); }
 
     function customersNotesSave() { customersEdit({ op: 'notes', notes: (customersField('notes') || {}).value || '' }, 'Notes saved'); }
+
+    // customersHintAnswer answers a "Same person?" question about the open
+    // profile. Only the owner and read-write users see hints.
+    async function customersHintAnswer(hid, answer) {
+      const hints = ((_customersOpen && _customersOpen.hints) || []).map(h => h && h.id).filter(Boolean);
+      const at = hints.indexOf(hid);
+      const nextHint = hints[at + 1] || hints[at - 1] || '';
+      try {
+        _customersOpen = await customersRequest('POST', '/api/customers/hints/' + encodeURIComponent(hid) + '/answer', { same: answer === 'yes' });
+        customersShow();
+        showToast(answer === 'yes' ? 'Identity added to this profile' : 'Noted: not the same person', 'success');
+        customersTimelineLoad(true);
+        await fetchCustomers();
+        // The focus moves on to the next question, else back to the profile.
+        const host = document.getElementById('customers-panel');
+        const target = host && ((nextHint && host.querySelector('[data-hint="' + nextHint + '"] button')) || host.querySelector('[data-action="customersClose"]'));
+        if (target) target.focus();
+      } catch (e) { customersProfileError(e.message); }
+    }
+
+    // customersMerge folds the chosen customer into the open profile.
+    async function customersMerge() {
+      if (!_customersOpen) return;
+      const from = customersFieldValue('merge-from');
+      if (!from) { customersProfileError('Choose a customer to fold in.'); return; }
+      const other = ((_customersData && _customersData.people) || []).find(o => o && o.id === from);
+      const ok = await hiveConfirm({
+        title: 'Merge ' + ((other && other.name) || 'this customer') + ' into ' + (_customersOpen.name || 'this profile') + '?',
+        message: 'Their identities, tags, goals and activity move to this profile and the other profile is removed. You can undo it from this profile afterwards.',
+        confirmLabel: 'Merge'
+      });
+      if (!ok) return;
+      customersMergeRequest('merge', from, 'Merged');
+    }
+
+    function customersUnmerge(from) { customersMergeRequest('unmerge', from, 'Merge undone'); }
+
+    async function customersMergeRequest(kind, from, done) {
+      if (!_customersOpen) return;
+      const id = _customersOpen.me ? 'me' : _customersOpen.id;
+      try {
+        _customersOpen = await customersRequest('POST', '/api/customers/' + encodeURIComponent(id) + '/' + kind, { from: from });
+        _customersTimeline = { id: '', nodes: [], next: '', error: '', loading: false };
+        customersShow();
+        showToast(done, 'success');
+        customersTimelineLoad(true);
+        if (_customersGraph.on) customersGraphLoad();
+        fetchCustomers();
+      } catch (e) { customersProfileError(e.message); }
+    }
+
+    // customersSplit moves one identity, and the activity it produced, to a
+    // new customer. The open profile stays open.
+    async function customersSplit(key) {
+      if (!_customersOpen) return;
+      const value = String(key).slice(String(key).indexOf(':') + 1);
+      const name = await hivePrompt({ title: 'Split off ' + value, label: 'Name for the new customer', defaultValue: value, confirmLabel: 'Split off' });
+      if (!name) return;
+      const id = _customersOpen.me ? 'me' : _customersOpen.id;
+      try {
+        const fresh = await customersRequest('POST', '/api/customers/' + encodeURIComponent(id) + '/split', { identities: [key], name: name });
+        showToast('Split off as ' + (fresh.name || 'a new customer'), 'success');
+        await customersOpen(id);
+        fetchCustomers();
+      } catch (e) { customersProfileError(e.message); }
+    }
+
+    // customersExport shows everything held about the open person in the
+    // in-app export viewer, which has copy and save affordances. The page
+    // never forces a browser download.
+    async function customersExport() {
+      if (!_customersOpen) return;
+      const path = '/api/customers/' + encodeURIComponent(_customersOpen.me ? 'me' : _customersOpen.id) + '/export';
+      try {
+        const r = await fetch(path);
+        if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || ('HTTP ' + r.status)); }
+        hiveExportViewer({ title: 'Customer export: ' + (_customersOpen.name || ''), text: await r.text(), mime: 'application/json', sourceURL: path });
+      } catch (e) { customersProfileError('Could not export: ' + e.message); }
+    }
 
     async function customersForget() {
       if (!_customersOpen) return;

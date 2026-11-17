@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 )
 
 // ErrForbidden is returned when the viewer may not do what was asked. A
@@ -69,7 +70,7 @@ type PersonView struct {
 	Counts map[string]int `json:"counts,omitempty"`
 	// Hints are the open "Same person?" questions. Full view only: a hint
 	// names another profile.
-	Hints []Hint `json:"hints,omitempty"`
+	Hints []HintView `json:"hints,omitempty"`
 	// Hinted reports that the last identity edit was not linked because
 	// the identity belongs to someone else, and was raised as a question
 	// instead.
@@ -157,10 +158,13 @@ func (s *Service) view(v Viewer, p Person, isMe, detail bool) PersonView {
 		out.Satisfaction = Satisfaction{}
 		out.MergedFrom = nil
 		out.RejectedGoals = nil
+		out.InferredAt, out.InferredHash = time.Time{}, ""
 		return out
 	}
 	if detail {
-		out.Hints = s.store.Hints(p.ID)
+		for _, h := range s.store.Hints(p.ID) {
+			out.Hints = append(out.Hints, s.hintView(h))
+		}
 		if s.index != nil {
 			if counts, err := s.index.Counts(p.ID); err == nil && len(counts) > 0 {
 				out.Counts = counts
@@ -316,6 +320,36 @@ func (s *Service) Accept(v Viewer, suggestionID string) (PersonView, error) {
 	return s.view(v, p, false, true), nil
 }
 
+// AcceptInto attaches a suggested person to an existing customer (id may be
+// "me") instead of making them a new one. It reuses the merge: the
+// suggestion is accepted as a customer and folded into the target, so the
+// identity becomes a manual one of the target's, the activity it produced
+// moves onto the target on the next sweep, nobody is created twice, and
+// Unmerge, with the id the result names in its merge history, undoes it.
+// Full view only: a read-only user cannot see suggestions, and adds their
+// own identities as unconfirmed claims instead.
+func (s *Service) AcceptInto(v Viewer, suggestionID, intoID string) (PersonView, error) {
+	if !v.Full {
+		return PersonView{}, ErrForbidden
+	}
+	dst, dstMe, err := s.resolve(v, intoID)
+	if err != nil {
+		return PersonView{}, err
+	}
+	if len(dst.Identities) >= MaxIdentities {
+		return PersonView{}, fmt.Errorf("%w: too many identities", ErrInvalid)
+	}
+	p, err := s.store.Accept(suggestionID, v.User)
+	if err != nil {
+		return PersonView{}, err
+	}
+	merged, err := s.store.Merge(dst.ID, p.ID, v.User)
+	if err != nil {
+		return PersonView{}, err
+	}
+	return s.view(v, merged, dstMe, true), nil
+}
+
 // Dismiss turns a suggestion down. Full view only.
 func (s *Service) Dismiss(v Viewer, suggestionID string) error {
 	if !v.Full {
@@ -394,5 +428,175 @@ func (s *Service) ArtefactPeople(v Viewer, ref string, limit int) ([]ArtefactPer
 		}
 		out = append(out, ArtefactPerson{Predicate: e.Predicate, Person: s.view(v, p, isMe, false)})
 	}
+	return out, nil
+}
+
+// HintView is a hint with what it asks about spelled out, so a person can
+// answer it without opening another profile. For a suggested person that is
+// the suggestion's identity; for a customer, their name.
+type HintView struct {
+	Hint
+	OtherKind  string `json:"other_kind,omitempty"`
+	OtherValue string `json:"other_value,omitempty"`
+}
+
+func (s *Service) hintView(h Hint) HintView {
+	v := HintView{Hint: h}
+	if sg, ok := s.store.SuggestionByID(h.Other); ok {
+		v.OtherKind, v.OtherValue = string(sg.Kind), sg.Value
+	} else if p, err := s.store.Get(h.Other); err == nil {
+		v.OtherKind, v.OtherValue = "customer", p.Name
+	}
+	return v
+}
+
+// AnswerHint answers a "Same person?" question. Yes makes the suggested
+// identity the customer's own; no closes the question and remembers it, so
+// it is not asked again. Full view only. A hint between two customers is
+// answered by merging them, which is a separate action.
+func (s *Service) AnswerHint(v Viewer, hintID string, same bool) (PersonView, error) {
+	if !v.Full {
+		return PersonView{}, ErrForbidden
+	}
+	h, ok := s.store.HintByID(hintID)
+	if !ok {
+		return PersonView{}, ErrNotFound
+	}
+	if !same {
+		if _, err := s.store.ResolveHint(hintID, false, v.User); err != nil {
+			return PersonView{}, err
+		}
+		p, err := s.store.Get(h.Person)
+		if err != nil {
+			return PersonView{}, err
+		}
+		return s.view(v, p, false, true), nil
+	}
+	if _, isSuggestion := s.store.SuggestionByID(h.Other); !isSuggestion {
+		return PersonView{}, fmt.Errorf("%w: merge the two customers instead", ErrInvalid)
+	}
+	p, err := s.store.AbsorbSuggestion(h.Person, h.Other, v.User)
+	if err != nil {
+		return PersonView{}, err
+	}
+	return s.view(v, p, false, true), nil
+}
+
+// Merge folds the customer src into dst: identities, tags and goals come
+// across, and so do the activity edges. The merge is recorded on dst, so
+// Unmerge can undo it exactly. Full view only.
+func (s *Service) Merge(v Viewer, dstID, srcID string) (PersonView, error) {
+	if !v.Full {
+		return PersonView{}, ErrForbidden
+	}
+	dst, dstMe, err := s.resolve(v, dstID)
+	if err != nil {
+		return PersonView{}, err
+	}
+	src, _, err := s.resolve(v, srcID)
+	if err != nil {
+		return PersonView{}, err
+	}
+	merged, err := s.store.Merge(dst.ID, src.ID, v.User)
+	if err != nil {
+		return PersonView{}, err
+	}
+	if s.index != nil {
+		if _, err := s.index.Move(src.ID, dst.ID, func(Edge) bool { return true }); err != nil {
+			return PersonView{}, err
+		}
+	}
+	return s.view(v, merged, dstMe, true), nil
+}
+
+// Unmerge undoes a merge: the customer comes back as it stood, and the edges
+// the merged identities produced go back with it. Full view only.
+func (s *Service) Unmerge(v Viewer, dstID, srcID string) (PersonView, error) {
+	if !v.Full {
+		return PersonView{}, ErrForbidden
+	}
+	dst, dstMe, err := s.resolve(v, dstID)
+	if err != nil {
+		return PersonView{}, err
+	}
+	back, restored, err := s.store.Unmerge(dst.ID, srcID)
+	if err != nil {
+		return PersonView{}, err
+	}
+	if s.index != nil {
+		keys := make([]string, 0, len(restored.Identities))
+		for _, i := range restored.Identities {
+			keys = append(keys, i.Key())
+		}
+		if _, err := s.index.Move(dst.ID, restored.ID, ViaAny(keys)); err != nil {
+			return PersonView{}, err
+		}
+	}
+	return s.view(v, back, dstMe, true), nil
+}
+
+// Split moves the identities named by keys off a customer onto a new one,
+// and the edges those identities produced move with them. It returns the
+// new customer. Full view only.
+func (s *Service) Split(v Viewer, id string, keys []string, name string) (PersonView, error) {
+	if !v.Full {
+		return PersonView{}, ErrForbidden
+	}
+	p, _, err := s.resolve(v, id)
+	if err != nil {
+		return PersonView{}, err
+	}
+	_, fresh, err := s.store.Split(p.ID, keys, name, v.User)
+	if err != nil {
+		return PersonView{}, err
+	}
+	if s.index != nil {
+		if _, err := s.index.Move(p.ID, fresh.ID, ViaAny(keys)); err != nil {
+			return PersonView{}, err
+		}
+	}
+	return s.view(v, fresh, false, true), nil
+}
+
+// ExportMaxEdges bounds how many edges one export carries.
+const ExportMaxEdges = 10000
+
+// Export is everything the hive holds about one customer, for the owner.
+type Export struct {
+	Person Person `json:"person"`
+	// Edges are references to artefacts, never their content.
+	Edges []Edge `json:"edges"`
+	// Truncated is true when the person has more edges than ExportMaxEdges.
+	Truncated bool   `json:"truncated,omitempty"`
+	Hints     []Hint `json:"hints,omitempty"`
+}
+
+// Export returns a customer and their edges. Owner only: it holds notes, the
+// satisfaction assessment and the merge history.
+func (s *Service) Export(v Viewer, id string) (Export, error) {
+	if !v.Full || !v.Owner {
+		return Export{}, ErrForbidden
+	}
+	p, _, err := s.resolve(v, id)
+	if err != nil {
+		return Export{}, err
+	}
+	out := Export{Person: p, Edges: []Edge{}, Hints: s.store.Hints(p.ID)}
+	if s.index == nil {
+		return out, nil
+	}
+	after := ""
+	for len(out.Edges) < ExportMaxEdges {
+		page, next, err := s.index.ByPerson(p.ID, "", after, MaxEdgePage)
+		if err != nil {
+			return Export{}, err
+		}
+		out.Edges = append(out.Edges, page...)
+		if next == "" {
+			return out, nil
+		}
+		after = next
+	}
+	out.Truncated = true
 	return out, nil
 }

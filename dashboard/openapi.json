@@ -2063,13 +2063,360 @@
         }
       }
     },
+    "/api/customers/hints/{hid}/answer": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Answer a \"Same person?\" question",
+        "description": "Hive raises a question when a suggested person's address starts like a customer's login, or the reverse. Nothing is linked until it is answered. same true makes the suggested identity the customer's own and deletes the suggestion; same false closes the question and remembers it so it is not asked again. A question between two customers is answered by merging them, so same true on one is refused with 400. Owner or read-write. Audited as customer_hint_answer.",
+        "parameters": [
+          {
+            "name": "hid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Hint id"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "same"
+                ],
+                "properties": {
+                  "same": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body, or a customer-to-customer question answered yes"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such question, customer or suggestion"
+          },
+          "409": {
+            "description": "The identity already belongs to another customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/merge": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Merge a customer into this one",
+        "description": "Folds the customer in from into this one: identities, tags, goals and the activity edges move across, and the merge is recorded so it can be undone. Two dashboard users cannot be merged (409). Owner or read-write. Audited as customer_merge.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "from"
+                ],
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "Customer id"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or nothing to do"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          },
+          "409": {
+            "description": "Two dashboard users, or a conflicting identity"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/unmerge": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Undo a merge",
+        "description": "Restores the customer from as it stood before it was merged into this one, and gives back exactly the identities, tags, goals and activity the merge brought. The pair is remembered as different people. Owner or read-write. Audited as customer_unmerge.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "from"
+                ],
+                "properties": {
+                  "from": {
+                    "type": "string",
+                    "description": "Customer id"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or nothing to do"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/split": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Split identities off into a new customer",
+        "description": "Moves the named identities (kind:value) off this customer onto a new one, and the activity those identities produced moves with them. A hive user identity cannot be split off and a split must leave an identity behind. Returns the new customer. Owner or read-write. Audited as customer_split.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "identities"
+                ],
+                "properties": {
+                  "identities": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    },
+                    "description": "Identity keys, kind:value"
+                  },
+                  "name": {
+                    "type": "string",
+                    "description": "Name for the new customer; defaults to the first identity"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The customer after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it, as returned by GET /api/customers/{id}"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed body or nothing to do"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/export": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Export everything held about a customer",
+        "description": "Owner only. Returns the profile (including notes, the satisfaction assessment and the merge history), open hints and the references behind the person's activity (at most 10,000), as a JSON download. It holds references, never the content of what they point at. Audited as customer_export.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id, or me for the viewer's own profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The export",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "person": {
+                      "type": "object",
+                      "description": "The full profile"
+                    },
+                    "edges": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "person, predicate, artefact, via, source, at"
+                      }
+                    },
+                    "truncated": {
+                      "type": "boolean"
+                    },
+                    "hints": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
     "/api/customers/suggestions/{sid}/accept": {
       "post": {
         "tags": [
           "Customers"
         ],
         "summary": "Accept a suggested person",
-        "description": "Turns a suggestion into a customer. This is the human decision that lets the hive build a profile of someone who never signed up. Owner or read-write. Audited as customer_accept.",
+        "description": "Turns a suggestion into a customer. This is the human decision that lets the hive build a profile of someone who never signed up. With the optional body {\"into\": \"<customer id or me>\"} it attaches the suggestion to that existing customer instead: the identity becomes one of theirs (a manual decision, so it is not suggested again), no new person is created, the activity moves onto them on the next sweep, and POST /api/customers/{id}/unmerge undoes it. Owner or read-write. Audited as customer_accept, or customer_attach with the target's id.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "into": {
+                    "type": "string",
+                    "description": "Existing customer id, or me, to attach the suggestion to"
+                  }
+                }
+              }
+            }
+          }
+        },
         "parameters": [
           {
             "name": "sid",
@@ -22479,6 +22826,18 @@
               "default": 7
             },
             "description": "Trailing window in days; 0 aggregates everything in the live log."
+          },
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "canonical"
+              ]
+            },
+            "description": "canonical merges model rows by canonical_model (modelfamily.Canonical): runs summed, rates recomputed from summed counts, model set to the canonical id, raw_models[] listing each raw spelling with its runs. Omitted: one row per raw model, each with canonical_model (#18718)."
           }
         ],
         "responses": {
@@ -37736,7 +38095,21 @@
           "Contribute"
         ],
         "summary": "Contributor run stats by model",
-        "description": "Returns per-model run counts, verified-PR share, and failure rate for contributor-wall evidence.",
+        "description": "Returns per-model run counts, verified-PR share, failure rate and canonical_model for contributor-wall evidence, plus why runs ended (#18721): `abandoned` (count), `scenarios` (scenario -> count, the same keys as /api/contribute/run-stats backends[].scenarios, summing to runs) and `failure_kinds` ({environment, task, unspecified}, summing to the failed runs behind failure_rate). group=canonical merges rows by canonical model id.",
+        "parameters": [
+          {
+            "name": "group",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "canonical"
+              ]
+            },
+            "description": "canonical merges model rows by canonical_model (modelfamily.Canonical): runs, abandoned, scenarios and failure_kinds summed, rates recomputed from summed counts, model set to the canonical id, raw_models[] listing each raw spelling with its runs. Omitted: one row per raw model, each with canonical_model (#18718)."
+          }
+        ],
         "responses": {
           "200": {
             "description": "OK"

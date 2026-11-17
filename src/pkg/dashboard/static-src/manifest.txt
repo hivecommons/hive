@@ -36,6 +36,7 @@ css/meetings.css
 css/calendar.css
 css/meeting-attendee.css
 css/customers.css
+css/graphcanvas.css
 css/email-in.css
 css/sections-collapse.css
 css/design-system.css
@@ -148,6 +149,7 @@ js/meetings-replies.js
 js/calendar.js
 js/meeting-attendee.js
 js/meeting-attendee-model.js
+js/graphcanvas.js
 js/customers.js
 js/vault-audit.js
 js/review-queue.js
@@ -178,6 +180,7 @@ js/config-workflows-ingest-sources.js
 js/config-workflows-marketplace.js
 js/config-watchdog-security.js
 js/config-features.js
+js/config-sandbox-source.js
 js/integration-execution-settings.js
 js/config-event-triggers.js
 js/config-sentinel.js

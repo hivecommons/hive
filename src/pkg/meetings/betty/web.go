@@ -66,6 +66,9 @@ type WebRetriever struct {
 // Name implements Retriever.
 func (WebRetriever) Name() string { return webSource }
 
+// Public implements PublicRetriever.
+func (WebRetriever) Public() bool { return true }
+
 type searxResponse struct {
 	Results []struct {
 		Title   string `json:"title"`

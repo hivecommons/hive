@@ -193,6 +193,16 @@ A target in another repository is ignored, because the workspace clones the prim
 
 **Refusals fail the kick and push nothing.** A closed PR, a fork PR, a PR another agent opened, a PR no hive agent opened, a head that moved since checkout, an unreadable PR or a failed scan all fail the kick with a reason that names the PR. The run record carries the reason, and the audit log gets a `sandbox_target_pr_refused` line with `repo=`, `number=`, `source=` and `reason=`, or the broker's usual `sandbox_broker_rejected`. If the refusal comes after the run, the commits stay in the workspace, and the run record notes them as withheld.
 
+## Setting up a sandbox from the dashboard
+
+Nothing about a sandbox needs a hand edit of the config files (hivecommons/hive#18797). Everything below saves through the normal config API, which writes both `/data/hive.yaml.runtime` and `/data/hive.yaml.dashboard`.
+
+- **Hive-wide defaults.** Settings, Security, "Advanced sandbox: default image and Job settings" edits `agent_sandbox.image`, `runtime`, the Job defaults (workspace claim and mount, service account, scheduler name, TTL) and `agent_sandbox.job.env_from_secrets`. The section opens by itself when the sandbox is on and no image is set. API: `PUT /api/config/governor/security` with `agentSandboxImage`, `agentSandboxRuntime`, `agentSandboxJobWorkspaceClaim`, `agentSandboxJobEnvFromSecrets` and the other `agentSandbox*` keys.
+- **One agent.** The agent's General tab has "Sandbox settings: image, runtime and Job" with its own `sandbox.image`, `sandbox.runtime` and Job fields. A blank field inherits the hive default, shown as the placeholder. API: `PUT /api/config/agent/<name>/general` with `sandboxImage`, `sandboxRuntime` and `sandboxJob` (`workspaceClaim`, `workspaceClaimMount`, `serviceAccount`, `schedulerName`, `ttlSeconds`, `envFromSecrets`). Node selector, tolerations, resources and volumes have no field; they travel with the copy action below and survive an edit.
+- **Copy from another agent.** "Copy sandbox settings from..." lists the agents whose block is complete (an image and a usable runtime, plus a workspace claim for `runtime: job`) and copies the block, turning the sandbox on. API: `PUT /api/config/agent/<name>/general` with `{"sandboxCopyFrom": "<agent>"}`. The copy is deep. The source's `publish.verify` commands are not copied (they are written for the source's repository); the receiving agent keeps its own.
+- **Secrets are names only.** `env_from_secrets` holds Kubernetes Secret names. The API refuses anything that is not a valid name (a `KEY=value` pair, for one), so a value can never be written to the config file through these controls.
+- **Refused without an image.** Turning the sandbox on, or saving an enabled sandbox, when no image resolves from the agent or `agent_sandbox.image` is refused with 400 and a message naming `sandbox.image` and `agent_sandbox.image`. The "no sandbox image" warning on the agent card and in the General tab links to the agent's Sandbox settings and to the default image controls.
+
 ## Running sandboxed kicks as Kubernetes Jobs
 
 `sandbox.runtime: job` runs an agent's sandboxed kicks as a Kubernetes `Job` in the hive's own namespace instead of a rootless Podman container on the hive pod's node ([#6311](https://github.com/hivecommons/hive/issues/6311)). It exists for work that must run in a **different runtime than the hive image** - a different base OS, a heavyweight toolchain, or on **accelerator hardware** reached through a device plugin - while hive stays the orchestrator.
@@ -237,7 +247,16 @@ agents:
 
 **The terminal pane.** A job-runtime agent has no tmux session in the hive pod, so the dashboard's ▶ terminal does not attach ttyd for it. Instead it opens `/terminal/job/<agent>`, a read-only viewer that streams the newest Job pod's log through the same in-cluster client and RBAC the launcher already uses ([#14798](https://github.com/hivecommons/hive/issues/14798)): it follows the pod while the kick runs (waiting while the pod is `Pending`, e.g. for an accelerator node), prints the container exit code when it ends, and between kicks, when the completed Job has already been deleted, shows the last run's persisted transcript (`<workspace>/.hive/sandbox-transcript.log`, which now ends with an `exit code: N` line) or a clear "no sandbox run yet" state. The pane is observation only; there is no input path into the Job. The same terminal handoff and role check as the tmux pane apply.
 
-**RBAC.** The spoke's ServiceAccount needs a Role for `batch/jobs` (create, get, list, delete) and `pods` plus `pods/log` (get, list); the terminal viewer needs nothing beyond that same `pods/log` grant. The standalone kustomize base ships it as `sandbox-job-rbac.yaml`, and the hub provisioner grants it to every hosted spoke as `hive-sandbox-jobs`.
+**Private-registry images (#18819).** The Job pod's `imagePullSecrets` are the deduplicated union, in this order, of: hive's own pod secrets (so the `hive-relays` init container can pull the hive image), the Job service account's `imagePullSecrets`, and `sandbox.job.image_pull_secrets`. Kubernetes adds a service account's pull secrets only to a pod that has none of its own, so hive reads the service account through the API (`get serviceaccounts`) and merges the names itself. When that grant is missing or the read fails, hive logs a warning and carries on with the other two lists; it never fails the kick. `image_pull_secrets` holds Secret **names** only (DNS-1123 names, at most 32; a value is refused). A per-agent `job` block that names none inherits the `agent_sandbox.job` list. Hive reads, logs and writes names, never Secret contents. When `service_account` is set and `image_pull_secrets` is not, the boot and reload warning reminds the operator to set it if the grant is absent. The dashboard sandbox controls do not carry this field yet; the per-agent API accepts `sandboxJob.imagePullSecrets`.
+
+```yaml
+agent_sandbox:
+  job:
+    service_account: hive-spyre-job
+    image_pull_secrets: [ registry-pull ]
+```
+
+**RBAC.** The spoke's ServiceAccount needs a Role for `batch/jobs` (create, get, list, delete), `pods` plus `pods/log` (get, list) and, optionally, `serviceaccounts` (get) so the Job service account's pull secrets are merged; the terminal viewer needs nothing beyond that same `pods/log` grant. The standalone kustomize base ships it as `sandbox-job-rbac.yaml`, and the hub provisioner grants it to every hosted spoke as `hive-sandbox-jobs`.
 
 Hive warns at boot and on reload (`config.AgentSandboxGateWarnings`) when a job-runtime agent resolves no `workspace_claim` or names a runtime hive does not have, and refuses the kick with the same message rather than failing it after the agent is marked running.
 

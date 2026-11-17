@@ -3,16 +3,19 @@ package main
 import (
 	"context"
 	"net/mail"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/compliance"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/customers"
 	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/inbox"
 	"github.com/hivecommons/hive/pkg/mailallow"
+	"github.com/hivecommons/hive/pkg/mailin/wire"
 	"github.com/hivecommons/hive/pkg/meetings"
 	"github.com/hivecommons/hive/pkg/meetings/schedule"
 )
@@ -28,8 +31,8 @@ const (
 	// customersSweepInterval is how often discovery runs. Everything it
 	// reads is local, so the cost of a pass is a few file reads.
 	customersSweepInterval = 10 * time.Minute
-	// githubUserPrefix marks an access-list entry the hub authenticated
-	// with GitHub ("github:alice"): the name is a GitHub login.
+	// githubUserPrefix is the optional provider prefix of an access-list
+	// entry the hub authenticated with GitHub ("github:alice").
 	githubUserPrefix = "github:"
 )
 
@@ -44,6 +47,16 @@ const (
 	customersSourceMail       = "inbox_mail"
 	customersSourceCalendar   = "calendar"
 	customersSourceMeetings   = "meetings"
+	customersSourceAudit      = "audit_log"
+)
+
+const (
+	// customersAuditWindow is how many recent audit entries one pass reads.
+	customersAuditWindow = 5000
+	// customersLoginActionMarker marks an audit action that is a sign-in.
+	customersLoginActionMarker = "login"
+	// customersAuditDayLayout is the day an audit reference names.
+	customersAuditDayLayout = "2006-01-02"
 )
 
 // customersSources is one sweep's reading of the hive's local state.
@@ -60,12 +73,19 @@ type customersSources struct {
 	mail     []inbox.Item
 	events   []schedule.Event
 	meetings []meetings.Meeting
+	// audit is the recent dashboard audit log (step D).
+	audit []dashboard.AuditEntry
 }
 
 // customersSources reads the local stores. A store that is off or fails to
 // list contributes nothing this pass.
 func (b *boot) customersSources(ctx context.Context, cfg *config.Config) customersSources {
 	src := customersSources{cfg: cfg, last: b.lastActionable.Load()}
+	if b.dashSrv != nil {
+		if log := b.dashSrv.GetAudit(); log != nil {
+			src.audit = log.Recent(customersAuditWindow)
+		}
+	}
 	if b.ownerIdentity != nil {
 		src.ownerLogin = b.ownerIdentity.Status().Login
 	}
@@ -124,9 +144,11 @@ func customersSweepInput(src customersSources) customers.SweepInput {
 	if src.cfg == nil {
 		return in
 	}
+	in.OwnAddresses = customersOwnAddresses(src.cfg)
 	in.Users, in.Links = customersUsers(src)
 	in.Sightings = append(in.Sightings, customersGitHubSightings(src)...)
 	in.Sightings = append(in.Sightings, customersLocalSightings(src)...)
+	in.Sightings = append(in.Sightings, customersAuditSightings(src)...)
 	return in
 }
 
@@ -154,8 +176,11 @@ func customersUsers(src customersSources) ([]customers.HiveUser, []customers.Pro
 		if role == config.RoleOwner {
 			owners = append(owners, name)
 		}
-		// The hub writes a GitHub-authenticated user as "github:<login>".
-		if login, ok := strings.CutPrefix(strings.ToLower(name), githubUserPrefix); ok && login != "" {
+		// The hub writes a GitHub-authenticated user as "github:<login>",
+		// and a device-flow login is the bare login: the access list
+		// treats the two as one user. Either way the name is a GitHub
+		// login, as long as it is shaped like one.
+		if login := customersGitHubLogin(name); login != "" {
 			links = append(links, customers.ProvenLink{User: name, Identity: customers.Identity{
 				Kind: customers.KindGitHub, Value: login, Source: customersSourceAccessList,
 			}})
@@ -177,6 +202,30 @@ func customersUsers(src customersSources) ([]customers.HiveUser, []customers.Pro
 		}})
 	}
 	return users, links
+}
+
+// customersGitHubLogin is the GitHub login an access-list name stands for, or
+// "" when it is not one: a name with another provider prefix, an address or
+// anything else a login cannot be.
+func customersGitHubLogin(name string) string {
+	login := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(name)), githubUserPrefix)
+	if !customers.LooksLikeGitHubLogin(login) {
+		return ""
+	}
+	return login
+}
+
+// customersOwnAddresses are this hive's own mail addresses: hive@<dashboard
+// host>. Mail and invites sent to it are never a person.
+func customersOwnAddresses(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	u, err := url.Parse(strings.TrimSpace(cfg.Hub.DashboardURL))
+	if err != nil || u.Hostname() == "" {
+		return nil
+	}
+	return []string{wire.LocalPart + "@" + strings.ToLower(u.Hostname())}
 }
 
 // customersIsPerson reports whether a GitHub login is a person rather than
@@ -369,6 +418,7 @@ func (b *boot) customersResolvers() customers.Resolvers {
 		customers.RefMeeting: customersMeetingResolver{b: b},
 		customers.RefEvent:   customersEventResolver{b: b},
 		customers.RefInbox:   customersInboxResolver{b: b},
+		customers.RefAudit:   customersAuditResolver{now: time.Now},
 	}
 }
 
@@ -446,3 +496,52 @@ func (r customersInboxResolver) Exists(ref string) bool {
 }
 
 func (r customersInboxResolver) Visible(_ string, v customers.Viewer) bool { return v.Full }
+
+// customersAuditSightings is step D: what a dashboard user did, as one edge
+// per person per day. The audit log carries the user and the day; the
+// action's detail is never read, so nothing a person typed is copied.
+// Pseudo-users such as the system and an unproxied local session match no
+// customer and are dropped by the store.
+func customersAuditSightings(src customersSources) []customers.Sighting {
+	type key struct{ user, pred, day string }
+	seen := map[key]bool{}
+	var out []customers.Sighting
+	for _, e := range src.audit {
+		user := strings.TrimSpace(e.User)
+		if user == "" {
+			continue
+		}
+		at, err := time.Parse(time.RFC3339, e.Timestamp)
+		if err != nil {
+			continue
+		}
+		day := at.UTC().Format(customersAuditDayLayout)
+		pred := customers.PredActed
+		if strings.Contains(strings.ToLower(e.Action), customersLoginActionMarker) {
+			pred = customers.PredLoggedIn
+		}
+		k := key{strings.ToLower(user), pred, day}
+		if seen[k] {
+			continue
+		}
+		seen[k] = true
+		out = append(out, customersSighting(customers.KindHiveUser, user, pred, customers.AuditRef(day), at, customersSourceAudit))
+	}
+	return out
+}
+
+// customersAuditResolver: an audit day exists while it is inside the audit
+// log's retention. An audit edge is for the full view only: it says when
+// someone worked.
+type customersAuditResolver struct{ now func() time.Time }
+
+func (r customersAuditResolver) Exists(ref string) bool {
+	day, err := time.Parse(customersAuditDayLayout, customersRefID(ref, customers.RefAudit))
+	if err != nil {
+		return false
+	}
+	retention := time.Duration(compliance.BuiltinAuditRetentionDays) * 24 * time.Hour
+	return r.now().Sub(day) <= retention+24*time.Hour
+}
+
+func (r customersAuditResolver) Visible(_ string, v customers.Viewer) bool { return v.Full }

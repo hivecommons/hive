@@ -17,15 +17,19 @@ import (
 // event in the order it was recorded: "Ana: ...", "Bo (chat): ..." and,
 // for the bot's own lines, "Betty (assistant, spoken; source: hive-status):
 // ...".
+//
+// A participant controls their display name and their chat text, so both are
+// collapsed onto one line and a name that would read as the assistant label
+// is defused: no participant can write a line that looks like hers.
 func RenderTranscript(tr []meetings.Event) string {
 	var b strings.Builder
 	for _, ev := range tr {
-		text := strings.TrimSpace(ev.Text)
+		text := oneLine(ev.Text)
 		if ev.IsReply() {
 			b.WriteString(ev.ReplyLabel() + ": " + text + "\n")
 			continue
 		}
-		who := ev.Who()
+		who := defuseLabel(oneLine(ev.Who()))
 		if who == "" {
 			who = "unknown"
 		}
@@ -35,6 +39,26 @@ func RenderTranscript(tr []meetings.Event) string {
 		b.WriteString(who + ": " + text + "\n")
 	}
 	return b.String()
+}
+
+// assistantLabelOpen is how the bot's own label begins after her name.
+const assistantLabelOpen = "(assistant"
+
+// oneLine collapses every run of whitespace, line breaks included, to one
+// space.
+func oneLine(s string) string { return strings.Join(strings.Fields(s), " ") }
+
+// defuseLabel rewrites a participant name that contains the assistant label
+// ("Betty (assistant, chat; source: knowledge)") so the rendered line cannot
+// be read as one of hers.
+func defuseLabel(name string) string {
+	for {
+		i := strings.Index(strings.ToLower(name), assistantLabelOpen)
+		if i < 0 {
+			return name
+		}
+		name = name[:i] + "[assistant" + name[i+len(assistantLabelOpen):]
+	}
 }
 
 // Replies returns the bot's own lines of a transcript.

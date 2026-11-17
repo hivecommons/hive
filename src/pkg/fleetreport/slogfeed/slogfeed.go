@@ -115,7 +115,7 @@ func Key(msg string) string {
 }
 
 func (h *Handler) feed(r slog.Record) {
-	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) {
+	if canceledError(r, h.attrs) || expectedKickHold(r) || rateLimitedError(r) || sentinelPacingSkip(r) || upstreamUnavailableError(r) || failClosedStatus500(r) || hubHeartbeatUnavailable(r) || hubHeartbeatCachedFallback(r) || reviewCommentCapped(r) || inferenceBlockedStall(r) || automergeMergeGuardSkip(r) || reviewRetryServerError(r) || stageDampenerSuppression(r) || signedCommitOwnershipSkip(r) || claudeCredentialRebridged(r) || ghcrTransientTimeout(r) {
 		return
 	}
 	class := fleetreport.ClassUnclassifiedRepeated
@@ -158,6 +158,29 @@ const claudeCredentialRebridgedMessage = "claude credential bridge: a private cr
 // failed or refused repair logs a different message and stays reportable.
 func claudeCredentialRebridged(r slog.Record) bool {
 	return r.Level == slog.LevelWarn && strings.TrimSpace(r.Message) == claudeCredentialRebridgedMessage
+}
+
+// ghcrTransientTimeout reports whether the record's error attribute is a
+// timeout talking to the GHCR token endpoint. Every release-channel, SHA-poll
+// and self-upgrade resolver logs its own "GHCR token request failed" WARN and
+// retries on its next tick serving the previous answer, so a slow registry is
+// not a hive defect (hivecommons/hive#18824). The WARN stays in local logs;
+// non-timeout failures (auth, DNS, malformed responses) stay reportable.
+func ghcrTransientTimeout(r slog.Record) bool {
+	timedOut := false
+	r.Attrs(func(a slog.Attr) bool {
+		if a.Key != "error" {
+			return true
+		}
+		text := a.Value.String()
+		if strings.Contains(text, "ghcr.io/token") &&
+			(strings.Contains(text, "context deadline exceeded") || strings.Contains(text, "Client.Timeout exceeded")) {
+			timedOut = true
+			return false
+		}
+		return true
+	})
+	return timedOut
 }
 
 // canceledError applies the existing cancellation exclusion to structured

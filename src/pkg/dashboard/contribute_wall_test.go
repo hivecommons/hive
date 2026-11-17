@@ -262,6 +262,97 @@ func TestContributeRunStatsByModel(t *testing.T) {
 	}
 }
 
+// #18721: per-model stats say WHY runs ended — the scenario split, the
+// abandonment count and the failed runs by kind — without moving failure_rate.
+func TestContributeRunStatsByModelScenarioSplit(t *testing.T) {
+	s, dir := newWallTestServer(t, true)
+	now := time.Now().UTC().Format(time.RFC3339)
+	mk := func(outcome, signal, kind, cause string) TaskRunRecord {
+		return TaskRunRecord{TS: now, Model: "m1", Outcome: outcome, CompletionSignal: signal, FailureKind: kind, AbandonCause: cause,
+			Scenario: deriveScenario(outcome, signal, kind, cause)}
+	}
+	recs := []TaskRunRecord{
+		mk(outcomeFailed, "", TaskFailureKindEnvironment, ""),
+		mk(outcomeFailed, "", TaskFailureKindTask, ""),
+		mk(outcomeFailed, "", "", ""),
+		mk(outcomeAbandoned, "", "", abandonCauseHandback),
+		mk(outcomeAbandoned, "", "", abandonCauseDisconnect),
+		mk(outcomeCompleted, completionSignalVerdict, "", ""),
+		// A record written before the scenario field existed is classified
+		// the way appendTaskRun would have classified it.
+		{TS: now, Model: "M1", Outcome: outcomeFailed, FailureKind: TaskFailureKindEnvironment},
+	}
+	var buf bytes.Buffer
+	for _, r := range recs {
+		b, _ := json.Marshal(r)
+		buf.Write(b)
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(filepath.Join(dir, taskRunLogFileName), buf.Bytes(), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	rr := httptest.NewRecorder()
+	s.handleContributeRunStatsByModel(rr, httptest.NewRequest("GET", "/api/contribute/run-stats/models?days=1", nil))
+	var resp struct {
+		Models []WallModelStats `json:"models"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("json %s: %v", rr.Body.String(), err)
+	}
+	if len(resp.Models) != 1 {
+		t.Fatalf("models %+v", resp.Models)
+	}
+	m := resp.Models[0]
+	wantScenarios := map[string]int{
+		scenarioEnvFailure:          2,
+		scenarioTaskFailure:         1,
+		scenarioUnspecifiedFailure:  1,
+		scenarioAbandonedHandback:   1,
+		scenarioAbandonedDisconnect: 1,
+		scenarioVerdictComplete:     1,
+	}
+	if len(m.Scenarios) != len(wantScenarios) {
+		t.Fatalf("scenarios %+v, want %+v", m.Scenarios, wantScenarios)
+	}
+	sum := 0
+	for k, v := range m.Scenarios {
+		if wantScenarios[k] != v {
+			t.Errorf("scenarios[%q] = %d, want %d", k, v, wantScenarios[k])
+		}
+		sum += v
+	}
+	if m.Runs != 7 || sum != m.Runs {
+		t.Errorf("runs = %d, scenario sum = %d; want both 7", m.Runs, sum)
+	}
+	if m.Abandoned != 2 {
+		t.Errorf("abandoned = %d, want 2", m.Abandoned)
+	}
+	if m.FailureKinds != (WallModelFailureKinds{Environment: 2, Task: 1, Unspecified: 1}) {
+		t.Errorf("failure_kinds = %+v", m.FailureKinds)
+	}
+	failed := m.FailureKinds.Environment + m.FailureKinds.Task + m.FailureKinds.Unspecified
+	if m.FailureRate != float64(failed)/float64(m.Runs) || m.FailureRate != 4.0/7.0 {
+		t.Errorf("failure_rate = %v, want 4/7 (abandonments still excluded)", m.FailureRate)
+	}
+	if m.VerifiedPRShare != 0 {
+		t.Errorf("verified_pr_share = %v, want 0", m.VerifiedPRShare)
+	}
+	// The wire keys are the documented ones.
+	var raw struct {
+		Models []map[string]any `json:"models"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &raw); err != nil {
+		t.Fatal(err)
+	}
+	fk, ok := raw.Models[0]["failure_kinds"].(map[string]any)
+	if !ok || fk["environment"] != 2.0 || fk["task"] != 1.0 || fk["unspecified"] != 1.0 {
+		t.Errorf("failure_kinds on the wire = %#v", raw.Models[0]["failure_kinds"])
+	}
+	if raw.Models[0]["abandoned"] != 2.0 {
+		t.Errorf("abandoned on the wire = %#v", raw.Models[0]["abandoned"])
+	}
+}
+
 func TestContributeWallSSEPayload(t *testing.T) {
 	s, dir := newWallTestServer(t, true)
 	writeWallProfile(t, dir, "alice", "contributor", 0)
