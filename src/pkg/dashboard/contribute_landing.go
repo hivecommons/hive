@@ -5804,6 +5804,22 @@ function ccScenarioLabel(sc){
     abandoned_handback:'handed back (relay asked for new work)',abandoned_disconnect:'handed back (connection lost)',abandoned_other:'handed back'};
   return map[sc]||(sc||'').replace(/_/g,' ');
 }
+// ccModelEvidenceFailTip (#18721) is the tooltip on a wall post's "failed"
+// model-evidence figure: the model's runs split by scenario (labelled as in the
+// run history above), then its failed runs by kind, so a high failure figure
+// reads as "the contributors' environments" or "the work". Plain text for a
+// title attribute; empty when the server sent no split (an older hub).
+function ccModelEvidenceFailTip(me){
+  var sc=(me&&me.scenarios)||{},lines=[];
+  var order=['verdict_complete','idle_complete','headless_complete','env_failure','task_failure','unspecified_failure','abandoned_handback','abandoned_disconnect','abandoned_other'];
+  Object.keys(sc).filter(function(k){return order.indexOf(k)<0;}).sort().forEach(function(k){order.push(k);});
+  order.forEach(function(k){if(sc[k])lines.push(ccScenarioLabel(k)+': '+sc[k]);});
+  var fk=me&&me.failure_kinds;
+  if(fk&&((fk.environment||0)+(fk.task||0)+(fk.unspecified||0))>0){
+    lines.push('Failed runs by kind: environment '+(fk.environment||0)+' \u00b7 task '+(fk.task||0)+' \u00b7 unspecified '+(fk.unspecified||0));
+  }
+  return lines.join('\n');
+}
 function ccRenderRuns(user,data){
   var el=document.getElementById('runs-list'),cnt=document.getElementById('runs-count');
   if(!el)return;
@@ -6062,7 +6078,8 @@ function ccWallPostHTML(p){
   var tags=p.tags||{};
   var evidence='';
   if(p.model_evidence){
-    evidence='<div class="ops-note">model evidence: '+(p.model_evidence.runs||0)+' runs · '+Math.round((p.model_evidence.verified_pr_share||0)*100)+'%% verified PR · '+Math.round((p.model_evidence.failure_rate||0)*100)+'%% failed</div>';
+    var failTip=ccModelEvidenceFailTip(p.model_evidence);
+    evidence='<div class="ops-note">model evidence: '+(p.model_evidence.runs||0)+' runs · '+Math.round((p.model_evidence.verified_pr_share||0)*100)+'%% verified PR · <span'+(failTip?' title="'+esc(failTip)+'"':'')+'>'+Math.round((p.model_evidence.failure_rate||0)*100)+'%% failed</span></div>';
   }
   var controls='';
   if(ccMeUsername&&p.author&&p.author.toLowerCase()===ccMeUsername.toLowerCase())controls+='<button type="button" class="hv-btn btn-secondary btn-sm admin-act" data-wall-del="'+esc(p.id)+'">delete</button>';
