@@ -281,6 +281,27 @@ a new accessor.
 The sweep is an optional sweep, so it is shed with the other optional sweeps
 when the GitHub budget is low, although it spends none of that budget itself.
 
+Step D, in the same sweep: the dashboard audit log gives one `acted` edge per
+person per day, and one `logged_in` edge on a day they signed in. Only the user,
+the day and the kind of action are read; the detail text of an audit line is
+never copied. An audit edge exists while its day is inside the audit log's
+retention (90 days) and is shown to the full view only.
+
+"Same person?" hints are raised between a customer and a suggested person when
+a suggested address starts like one of the customer's logins (a GitHub login or
+the dashboard user name), or a suggested login starts like one of the customer's
+addresses. The comparison is on exact, lower-cased keys with any `+tag` removed.
+Locals shorter than four characters and role addresses such as `info` or
+`noreply` are skipped. A display name is never compared. A hint links nothing:
+answering yes makes the suggested identity the customer's own (recorded as
+manual, by whom), answering no pins the pair so it is not asked again. A hint
+between two customers is answered by merging them, which is the merge and split
+UI of a later PR.
+
+Step E, the budgeted GitHub search for mentions and comments on accept, is not
+built. The GitHub client has no comment or mention search, so it needs a new
+client method and a place in the API budget. It is left for its own PR.
+
 Automatic tags come from role, association and history: `maintainer` from an
 owner or merger role or a GitHub author association of owner, member or
 collaborator; `contributor` from an authored pull request; `end-user` from a

@@ -67,6 +67,7 @@ type SweepResult struct {
 	PrunedEdges        int `json:"pruned_edges"`
 	ExpiredSuggestions int `json:"expired_suggestions"`
 	DroppedEvidence    int `json:"dropped_evidence"`
+	Hints              int `json:"hints"`
 }
 
 // Sweep runs one discovery pass. It is safe to run repeatedly: the same
@@ -162,6 +163,9 @@ func (s *Service) Sweep(in SweepInput) (SweepResult, error) {
 		return res, err
 	}
 	res.Suggestions = len(s.store.Suggestions())
+	if res.Hints, err = s.store.DeriveHints(); err != nil {
+		return res, err
+	}
 
 	// Automatic tags, from role, association and history. A manual tag is
 	// never touched.
