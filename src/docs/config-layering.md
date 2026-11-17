@@ -48,7 +48,7 @@ Three documented exceptions where a lower layer affects the result:
 
 Everything else: the highest layer that sets the field wins.
 
-A per-agent file replaces the whole `agents.<name>` entry from the dashboard overlay and the runtime config, so to change one agent edit `/data/agent-configs/<agent>.yaml` (`/api/config/provenance` names it as `agent-overlay`). The `review` and `agent_sandbox` blocks and every other top-level block are not per-agent and come from the dashboard overlay (`/data/hive.yaml.dashboard`) over the seed.
+On a Kubernetes load that applies the dashboard overlay, the overlay's `agents.<name>` entry replaces the per-agent file's entry, except that a `paused: true` and a `sandbox:` block in `/data/agent-configs/<agent>.yaml` are carried forward over it (`/api/config/provenance` names that file as `agent-overlay`); an explicit overlay `converse` still wins. To unpause, use the dashboard, which writes both layers. The `review` and `agent_sandbox` blocks and every other top-level block are not per-agent and come from the dashboard overlay (`/data/hive.yaml.dashboard`) over the seed.
 
 ## The ConfigMap decides almost nothing, and nothing can write it
 

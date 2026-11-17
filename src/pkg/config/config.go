@@ -6333,21 +6333,31 @@ func loadWithDashboardOverlay(path string, validateOpts ValidateOptions) (*Confi
 	for name := range agents {
 		cfg.ApplyAgentDefaults(name)
 	}
-	// Per-agent files (/data/agent-configs/<name>.yaml) outrank the dashboard
-	// overlay (config-layering.md, layers.go: "agent overlays ... outrank the
-	// dashboard overlay"). loadWithOverrides merged them over the seed, but the
-	// whole-entry replacement just above then buried them again under the
-	// overlay's older copy of the same agent, so an operator's `paused: true`
-	// or `sandbox:` block in the agent file never took effect while the
-	// overlay and runtime config still said otherwise (#18804). Re-apply the
-	// files last. The dashboard writes the same file on every per-agent save
-	// and pack apply, so a current file already agrees with the overlay.
+	// Per-agent files (/data/agent-configs/<name>.yaml) are the higher layer
+	// (config-layering.md), but the whole-entry replacement above buried them
+	// under the overlay's older copy of the same agent, so an operator's
+	// `paused: true` or `sandbox:` block in the agent file never took effect
+	// while the overlay and runtime config still said otherwise (#18804). Carry
+	// those two operator-owned fields forward from the file. Not the whole
+	// entry: an explicit overlay `converse: false` deliberately beats the file
+	// (#7503), and pack-reconciled fields live in the overlay. `paused: false`
+	// in a file is indistinguishable from unset, so only a pause is carried;
+	// unpause through the dashboard, which writes both layers.
 	if cfg.Data.AgentsDir != "" {
 		if files, ferr := LoadAgentOverrides(cfg.Data.AgentsDir); ferr == nil {
-			files = cfg.RejectInvalidAgentOverlays(files)
-			cfg.MergeAgentOverrides(files)
-			for name := range files {
-				cfg.ApplyAgentDefaults(name)
+			for name, fa := range files {
+				a, ok := cfg.Agents[name]
+				if !ok || cfg.IsAgentRemoved(name) {
+					continue
+				}
+				if fa.Paused {
+					a.Paused = true
+					a.PauseOwner = fa.PauseOwner
+				}
+				if fa.Sandbox != nil {
+					a.Sandbox = fa.Sandbox
+				}
+				cfg.Agents[name] = a
 			}
 		}
 	}
