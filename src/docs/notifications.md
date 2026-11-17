@@ -494,7 +494,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).fileReviewBacklog` | `status` |  |
 | `github.(*Client).foldReviewFollowUps` | `status` | review Follow-ups checklist folded into the PR status card (quiet mode) |
 | `github.(*Client).foldSentinelNotice` | `status` | informational sentinel notice folded into the PR status card (quiet mode); a blocking alert is never folded |
-| `github.(*Client).joinFleetReportIssue` | `status` |  |
+| `github.(*Client).upsertFleetReportSeenLog` | `status` |  |
 | `github.(*Client).markInProgressStarted` | `status` |  |
 | `github.(*Client).postUnblockedNote` | `status` |  |
 | `github.(*Client).priorArtGateClose` | `status` |  |

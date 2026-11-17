@@ -64,6 +64,8 @@ func TestEnsureFleetReportCommentsAndReactsOnFingerprintMatch(t *testing.T) {
 		switch {
 		case r.URL.Path == "/search/issues":
 			_ = json.NewEncoder(w).Encode(map[string]any{"items": []map[string]any{{"number": 7, "html_url": "https://github.com/hivecommons/hive/issues/7"}}})
+		case r.Method == http.MethodGet && r.URL.Path == "/repos/hivecommons/hive/issues/7/comments":
+			_ = json.NewEncoder(w).Encode([]any{})
 		case r.Method == http.MethodPost && r.URL.Path == "/repos/hivecommons/hive/issues/7/comments":
 			comments.Add(1)
 			w.WriteHeader(http.StatusCreated)
@@ -146,6 +148,10 @@ type selfReportFakeGitHub struct {
 	reactions        atomic.Int64
 	existingLabels   []string
 	refuseWithStatus int
+	// issueComments is what listing the matched issue's comments returns;
+	// commentEdits records PATCHes to an existing comment.
+	issueComments []map[string]any
+	commentEdits  []string
 }
 
 func (f *selfReportFakeGitHub) handler() http.Handler {
@@ -202,6 +208,16 @@ func (f *selfReportFakeGitHub) handler() http.Handler {
 			f.reactions.Add(1)
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(map[string]any{"id": 2})
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/repos/hivecommons/hive/issues/") && strings.HasSuffix(r.URL.Path, "/comments") && r.URL.Path != "/repos/hivecommons/hive/issues/comments":
+			list := f.issueComments
+			if list == nil {
+				list = []map[string]any{}
+			}
+			_ = json.NewEncoder(w).Encode(list)
+		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/hivecommons/hive/issues/comments/"):
+			raw, _ := io.ReadAll(r.Body)
+			f.commentEdits = append(f.commentEdits, string(raw))
+			_ = json.NewEncoder(w).Encode(map[string]any{"id": 1})
 		case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/hivecommons/hive/issues/"):
 			raw, _ := io.ReadAll(r.Body)
 			f.bodyPatches = append(f.bodyPatches, string(raw))
@@ -250,7 +266,7 @@ func TestEnsureFleetReportWithOptionsJoinsViaLabelAndClass(t *testing.T) {
 	if res.Created || !res.Joined || !res.Commented || res.Number != 7 || f.creates.Load() != 0 {
 		t.Fatalf("result = %#v creates=%d", res, f.creates.Load())
 	}
-	if len(f.comments) != 1 || !strings.Contains(f.comments[0], "hive:selfreport-seen hive=hosted-aslom fp=fp-join") || !strings.Contains(f.comments[0], "Also seen on **hosted-aslom** (v5.1.0, oke-11)") {
+	if len(f.comments) != 1 || !strings.Contains(f.comments[0], fleetreport.SeenLogMarker) || !strings.Contains(f.comments[0], "hive:selfreport-seen hive=hosted-aslom fp=fp-join") || !strings.Contains(f.comments[0], "Also seen on **hosted-aslom** (v5.1.0, oke-11)") {
 		t.Fatalf("comments = %q", f.comments)
 	}
 	if f.reactions.Load() != 1 {
@@ -549,5 +565,53 @@ func TestEnsureFleetReportWithOptionsClosedCooldownBoundsTheBlock(t *testing.T) 
 	}
 	if res.ClosedAt.IsZero() || res.Created || f.creates.Load() != 1 {
 		t.Fatalf("recent closed match did not block: %#v", res)
+	}
+}
+
+// A later sighting edits the hive's one seen-log comment on the issue instead
+// of posting a new "also seen" comment per join (#18608); another account's
+// seen log is not touched.
+func TestEnsureFleetReportWithOptionsEditsOwnSeenLogInPlace(t *testing.T) {
+	previous := fleetreport.SeenLog("", fleetreport.SeenComment("fp-join", "other-hive", "v5.0.0", "oke-1", fleetreport.Evidence{}, time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)))
+	for _, tc := range []struct {
+		name, author string
+		wantEdit     bool
+	}{
+		{"own seen log", "hive-app[bot]", true},
+		{"foreign seen log", "maintainer", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			human := map[string]any{"number": 7, "state": "open", "html_url": "https://github.com/hivecommons/hive/issues/7", "body": "Restart storm on hosted hives after upgrade", "user": map[string]any{"login": "maintainer"}}
+			f := &selfReportFakeGitHub{t: t, labelHit: &human, issueComments: []map[string]any{
+				{"id": 3, "body": "unrelated", "user": map[string]any{"login": "hive-app[bot]"}},
+				{"id": 4, "body": previous, "user": map[string]any{"login": tc.author}},
+			}}
+			srv := httptest.NewServer(f.handler())
+			defer srv.Close()
+			c := NewClientForTest(srv.URL, "hivecommons", nil, slog.Default())
+			c.appBotLogin = "hive-app[bot]"
+			res, err := c.EnsureFleetReportWithOptions(context.Background(), selfReportTestReport("fp-join"), selfReportTestOptions())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if !res.Joined || !res.Commented {
+				t.Fatalf("result = %#v", res)
+			}
+			if !tc.wantEdit {
+				if len(f.commentEdits) != 0 || len(f.comments) != 1 || !strings.Contains(f.comments[0], fleetreport.SeenLogMarker) {
+					t.Fatalf("edits=%q comments=%q, want one new seen log", f.commentEdits, f.comments)
+				}
+				return
+			}
+			if len(f.comments) != 0 || len(f.commentEdits) != 1 {
+				t.Fatalf("comments=%q edits=%q, want one edit and no new comment", f.comments, f.commentEdits)
+			}
+			var edit map[string]string
+			_ = json.Unmarshal([]byte(f.commentEdits[0]), &edit)
+			mine, other := strings.Index(edit["body"], "hive=hosted-aslom "), strings.Index(edit["body"], "hive=other-hive ")
+			if mine < 0 || other < 0 || mine > other || strings.Count(edit["body"], fleetreport.SeenLogMarker) != 1 {
+				t.Fatalf("edited seen log = %q, want this hive first and other-hive kept", edit["body"])
+			}
+		})
 	}
 }
