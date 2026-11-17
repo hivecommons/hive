@@ -482,6 +482,34 @@ func ParseFixerExhausted(reason string) (attempts int, ok bool) {
 // specific cause; EntryCause leaves it out of the dedup digest.
 const decisionConsequenceReason = "the automerge lane will not merge this unattended"
 
+// RequiresHumanReasons are the 085 reasons for a reviewer `requires_human`
+// verdict on head: the verdict itself, the finding behind it, and the
+// reviewer's question (else its human-facing summaries).
+func RequiresHumanReasons(head, finding, question string, summaries []string) []string {
+	reasons := []string{"the reviewer swarm returned `requires_human` @" + ShortSHA(head)}
+	if f := strings.TrimSpace(finding); f != "" {
+		reasons = append(reasons, "the review found: "+f)
+	}
+	if q := strings.TrimSpace(question); q != "" {
+		if decisionQuestionPlaceholderMention(q) {
+			q += " _(the reviewer named no specific person; repository approvers/owners, this is yours)_"
+		}
+		reasons = append(reasons, "reviewer question: "+q)
+	} else {
+		for _, summary := range summaries {
+			if s := strings.TrimSpace(summary); s != "" {
+				reasons = append(reasons, "reviewer summary: "+s)
+			}
+		}
+	}
+	return reasons
+}
+
+// DecisionReasonUnnamed is the 085 entry comment's reason when the route
+// reached it with none: the note always names a cause, never an empty list
+// (projectbluefin/fsdk-containers#553).
+const DecisionReasonUnnamed = "the reviewer asked for a human decision"
+
 // RouteHuman decides which stage a lane's "a human must act" resolves to.
 func RouteHuman(e Evidence) Route {
 	return withGates(e, routeProgress(e))
@@ -665,22 +693,7 @@ func routeProgress(e Evidence) Route {
 			// head: the decision is made, not owed.
 			break
 		}
-		decide = append(decide, "the reviewer swarm returned `requires_human` @"+ShortSHA(e.Head))
-		if f := strings.TrimSpace(e.DecisionFinding); f != "" {
-			decide = append(decide, "the review found: "+f)
-		}
-		if q := strings.TrimSpace(e.DecisionQuestion); q != "" {
-			if decisionQuestionPlaceholderMention(q) {
-				q += " _(the reviewer named no specific person; repository approvers/owners, this is yours)_"
-			}
-			decide = append(decide, "reviewer question: "+q)
-		} else {
-			for _, summary := range e.HumanSummaries {
-				if s := strings.TrimSpace(summary); s != "" {
-					decide = append(decide, "reviewer summary: "+s)
-				}
-			}
-		}
+		decide = append(decide, RequiresHumanReasons(e.Head, e.DecisionFinding, e.DecisionQuestion, e.HumanSummaries)...)
 	}
 	// A sentinel alert or a hold-class label is a gate, not a stage
 	// (hivecommons/hive#17327): withGates rides it on whatever stage the
@@ -955,7 +968,8 @@ func readyCommentBehindTail(r Route) string {
 		"\n\n<sub>The hive never approves on your behalf: `/lgtm` `/approve` if you accept it; the branch still has to be brought up to date before it can merge.</sub>"
 }
 
-// DecisionComment renders the 085 entry comment naming what is owed.
+// DecisionComment renders the 085 entry comment naming what is owed. A
+// route with no reasons names DecisionReasonUnnamed instead of an empty list.
 func DecisionComment(r Route) string {
 	var b strings.Builder
 	b.WriteString(DecisionCommentMarker)
@@ -964,13 +978,17 @@ func DecisionComment(r Route) string {
 	} else {
 		b.WriteString("\nNeeds a decision, not a merge")
 	}
-	if len(r.Reasons) == 1 {
+	reasons := r.Reasons
+	if len(reasons) == 0 {
+		reasons = []string{DecisionReasonUnnamed}
+	}
+	if len(reasons) == 1 {
 		b.WriteString(": ")
-		b.WriteString(r.Reasons[0])
+		b.WriteString(reasons[0])
 		b.WriteString(".")
 	} else {
 		b.WriteString(":\n")
-		for _, reason := range r.Reasons {
+		for _, reason := range reasons {
 			b.WriteString("- ")
 			b.WriteString(reason)
 			b.WriteString("\n")

@@ -1450,6 +1450,9 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				verdict.Rank = stageRankOwned
 				obs.Reason = unauthorizedReason(step)
 				route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
+				if cause := decisionCause(obs.Reason); cause != "" {
+					route.Reasons = []string{cause}
+				}
 				obs.Route = &route
 			}
 			// Only re-park when the post-steps would leave 085: an adoption
@@ -1458,7 +1461,7 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 				if replacement, ok := preserveNeedsDecisionOnSameHead(prevRec, hadPrev, obs, verdict); ok {
 					verdict = replacement
 					obs.Reason = replacement.Reason
-					route := stagelabels.Route{Stage: stagelabels.NeedsDecision}
+					route := sameHeadDecisionRoute(obs)
 					obs.Route = &route
 				}
 			}
