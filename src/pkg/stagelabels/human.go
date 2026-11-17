@@ -170,6 +170,12 @@ type Evidence struct {
 	// stays true until that approval, but the 085 actions must ask for the
 	// approval rather than say no approval helps.
 	ApprovalReleasesFence bool
+	// CauseAwaitsApproval is true when CauseReason is that fence awaiting
+	// the owner's approval. Once HumanApprover is set the approval has
+	// released it, so the 085 note stops listing it: a lane stopped at a
+	// fork-guard check kept "awaiting owner approval" beside the approval
+	// itself (projectbluefin/utah-packages#1181).
+	CauseAwaitsApproval bool
 	// ForkGuard names the red checks that refuse the PR only because it is
 	// from a fork (a fork-publication or fork-secrets guard). They are not
 	// the author's to fix: only a maintainer can clear them, so they route
@@ -699,9 +705,12 @@ func routeProgress(e Evidence) Route {
 	// (hivecommons/hive#17327): withGates rides it on whatever stage the
 	// head's progress earns, and the lanes refuse the merge on the label.
 	manualMergeApproved := e.Cause == CauseDecision && e.ManualMergeRule && approver != "" && strings.TrimSpace(e.CauseReason) != "" && len(decide) == 0
-	if e.Cause == CauseDecision && strings.TrimSpace(e.CauseReason) != "" && !manualMergeApproved {
+	// The approval on this head released the workflow-path fence: it is no
+	// longer a reason, and no "will not merge unattended" stands in for it.
+	fenceReleased := e.CauseAwaitsApproval && !e.ManualMergeRule && approver != ""
+	if e.Cause == CauseDecision && strings.TrimSpace(e.CauseReason) != "" && !manualMergeApproved && !fenceReleased {
 		decide = append(decide, e.CauseReason)
-	} else if e.Cause == CauseDecision && len(e.ForkGuard) == 0 && !manualMergeApproved {
+	} else if e.Cause == CauseDecision && len(e.ForkGuard) == 0 && !manualMergeApproved && !fenceReleased {
 		decide = append(decide, decisionConsequenceReason)
 	}
 	if len(decide) > 0 {

@@ -1267,7 +1267,14 @@ A PR merges through this tier only when all of the following hold:
   does. When the approval is already recorded and the PR is parked for
   another reason, **What to do** says there is nothing more to approve
   instead of asking for it again
-  ([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254)). While the
+  ([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254)). That
+  holds when the lane stopped at an earlier gate (a fork-guard check, a
+  hold) before it reached the review gate or the fence: the stage pass then
+  reads the head's trusted approval itself (cached per head for ten
+  minutes), and the 085 note lists neither the reviewer's `requires_human`
+  question nor the fence "awaiting owner approval" that the approval
+  already answered, and the same-head 085 re-park does not ask it again
+  ([projectbluefin/utah-packages#1181](https://github.com/projectbluefin/utah-packages/pull/1181)). While the
   approval is still owed and a sentinel alert is open on the same PR, **What
   to do** says that **Approve** on the PR's Activity monitor row (or
   `approve` through the admin MCP's `repository.item_decision`) records the
@@ -1661,8 +1668,9 @@ red — goes to `stage/085-needs-decision` as
 per head and reason, retried until GitHub accepts it), so the
 dashboard shows a person's item, not a silent 074; "waiting on maintainer
 lgtm" is only ever the state at 080+ (hivecommons/hive#12858). The dwell runs
-from the head's last hive push, a red optional check alone is not a blocker,
-and the escalation releases back to 074 when its reason clears
+from the head's last hive push, a red optional check alone is not a blocker
+unless the repo's auto-merge is off (a person merges there,
+projectbluefin/actions#752), and the escalation releases back to 074 when its reason clears
 (hivecommons/hive#13040). The issues a PR covers
 follow it: once the sweep stages a PR at 050 or later, the enumeration cycle
 writes the same stage on each linked issue (`stage/040-covered-by-pr` until

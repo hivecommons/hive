@@ -5377,6 +5377,10 @@ type RepoWorkIssue struct {
 	// (liftBlockedMarkerless).
 	ReviewBacklog bool `json:"review_backlog,omitempty"`
 	OpenBlockedBy int  `json:"open_blocked_by,omitempty"`
+	// BlockedOn lists every blocker the body's blocked-on markers name
+	// ("owner/repo#N", or "issue owner/repo#N"), set only when there are
+	// several, so ReconcileBlockedIssues keeps the block until all settle.
+	BlockedOn []string `json:"blocked_on,omitempty"`
 	// OpenBlockers are the keys ("repo#N") of a decision park's open
 	// blocked-by issues, read only for such a park; the dashboard checks
 	// whether one is itself a decision park (Issue.OpenBlockers).

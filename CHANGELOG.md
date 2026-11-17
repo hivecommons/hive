@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v6.44.5)
+
+### Fixed
+
+- The duplicate-PR sweep no longer calls one dependency bot's separate bumps a "Superseded regeneration series". Renovate or Dependabot PRs for different dependencies all edit `package.json`, and the sweep used to call the older ones "superseded by construction" because they shared an author and a file. A bot series now needs the same job: titles that match once versions, dates and hashes are set aside, or byte-identical patches. One bot's different jobs form no cluster and get no comment. Real regeneration series, human and mixed-author clusters, and identical-diff and finding-identity clusters are unchanged.
+
 ## 2026-11-17 (v6.44.4)
 
 ### Fixed

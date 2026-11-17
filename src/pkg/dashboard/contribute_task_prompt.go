@@ -469,9 +469,9 @@ func buildTaskPromptBodyWithHintsAndIssueRead(repoFull, issueRef, title, sourceH
 			"fall back to its default branch ('gh repo view %s --json defaultBranchRef'). "+
 			"Run 'git fetch upstream' and start your work branch from that base with "+
 			"'git checkout -b <your-branch> upstream/<base-branch>'. Open the PR against "+
-			"the same branch, and confirm before you report done that its base is the branch "+
-			"the repository asks for. ",
-		repoFull, repoFull)
+			"the same branch, and confirm before you report done that its URL starts with "+
+			"'https://github.com/%s/pull/' and its base is the branch the repository asks for. ",
+		repoFull, repoFull, repoFull)
 	if b := strings.TrimSpace(baseBranch); b != "" {
 		baseHint = fmt.Sprintf(
 			"Base this work on the '%s' branch of %s. The checkout may be left on a "+
@@ -480,8 +480,9 @@ func buildTaskPromptBodyWithHintsAndIssueRead(repoFull, issueRef, title, sourceH
 				"with 'git show-ref --verify --quiet refs/remotes/upstream/%s', and start "+
 				"your work branch from the base with 'git checkout -b <your-branch> upstream/%s'. "+
 				"Open the PR against the same branch with 'gh pr create --base %s', and confirm "+
-				"the PR's base is '%s' before you report done. ",
-			b, repoFull, b, b, b, b)
+				"before you report done that the PR's URL starts with 'https://github.com/%s/pull/' "+
+				"and its base is '%s'. ",
+			b, repoFull, b, b, b, repoFull, b)
 	}
 	repoOwner, _, _ := strings.Cut(repoFull, "/")
 	if repoOwner == "" {
@@ -496,7 +497,19 @@ func buildTaskPromptBodyWithHintsAndIssueRead(repoFull, issueRef, title, sourceH
 			"if that directory already has a clone from a prior task, 'cd' into it "+
 			"and 'git fetch upstream' instead of re-forking). ",
 		repoOwner, repoFull, repoFull)
-	pushHint := "Push your branch to your fork's 'origin' remote, then open a PR from your fork. "
+	// The PR's base REPO, spelled out (chairlift#798 → kylerankin/chairlift#3).
+	// Without --repo, gh picks the base repo from the clone, and a clone reused
+	// across tasks can carry a default that points at the fork: the PR then
+	// opens fork-to-fork, the relay rightly never credits it, and the issue
+	// waits on a fix nobody can see. Same shape as the reference-repo path in
+	// pkg/scheduler/kickmessage.go.
+	pushHint := fmt.Sprintf(
+		"Push your branch to your fork's 'origin' remote, then open the PR against %s "+
+			"itself, never against your fork: 'gh pr create --repo %s --head <your-login>:<your-branch>' "+
+			"(read your login with 'gh api user --jq .login'), together with any --base named above. "+
+			"A clone reused from a prior task may have its default repo set to your fork, and "+
+			"without --repo gh opens the PR there. ",
+		repoFull, repoFull)
 	if canPush {
 		checkoutHint = fmt.Sprintf(
 			"You have push access to the upstream repo, so do not fork it. "+
@@ -507,7 +520,10 @@ func buildTaskPromptBodyWithHintsAndIssueRead(repoFull, issueRef, title, sourceH
 				"into it and ensure the 'upstream' remote points to %s before running "+
 				"'git fetch upstream'). ",
 			repoOwner, repoFull, repoFull, repoFull)
-		pushHint = "Push your branch to the 'upstream' remote, then open a PR from that branch. "
+		pushHint = fmt.Sprintf(
+			"Push your branch to the 'upstream' remote, then open a PR from that branch with "+
+				"'gh pr create --repo %s', together with any --base named above. ",
+			repoFull)
 	}
 	// #7790: the reused checkout's WORKING TREE, not just its branch. The
 	// reuse-the-clone clause above says "fetch"; the base-branch clause below
