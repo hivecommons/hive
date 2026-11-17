@@ -3,6 +3,8 @@ package tekton
 import (
 	"context"
 	"encoding/json"
+	"encoding/pem"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -268,5 +270,82 @@ func TestInClusterLister(t *testing.T) {
 	l.TokenPath = filepath.Join(t.TempDir(), "missing")
 	if _, err := l.ListPipelineRuns(context.Background(), observeCfg()); err == nil {
 		t.Fatal("missing token must fail")
+	}
+}
+
+type errLister struct{}
+
+func (errLister) ListPipelineRuns(context.Context, workflowmodel.TektonObserve) ([]map[string]any, error) {
+	return nil, errors.New("boom")
+}
+
+func TestObserveListerError(t *testing.T) {
+	_, err := Observe(context.Background(), errLister{}, observeCfg())
+	if err == nil || !strings.Contains(err.Error(), "tekton observe ci/tekton.dev/pipeline=release: boom") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestKubectlListerFailures(t *testing.T) {
+	cfg := workflowmodel.TektonObserve{Context: "prod", Namespace: "ci", LabelSelector: "app=release"}
+	if _, err := (&KubectlLister{Kubectl: filepath.Join(t.TempDir(), "no-such-kubectl")}).ListPipelineRuns(context.Background(), cfg); err == nil {
+		t.Fatal("missing binary must fail")
+	}
+	// echo exits 0 but prints its arguments, which are not a JSON list.
+	if _, err := (&KubectlLister{Kubectl: "echo"}).ListPipelineRuns(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "decode pipelinerun list") {
+		t.Fatalf("non-JSON output err = %v", err)
+	}
+	k := &KubectlLister{run: func(context.Context, string, ...string) ([]byte, error) { return nil, errors.New("denied") }}
+	if _, err := k.ListPipelineRuns(context.Background(), cfg); err == nil {
+		t.Fatal("run error must propagate")
+	}
+}
+
+func TestInClusterListerErrors(t *testing.T) {
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "nope", http.StatusForbidden)
+	}))
+	defer srv.Close()
+	dir := t.TempDir()
+	tokenPath := filepath.Join(dir, "token")
+	if err := os.WriteFile(tokenPath, []byte("tok"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := workflowmodel.TektonObserve{InCluster: true, Namespace: "ci", LabelSelector: "app=release"}
+
+	// Non-200 response.
+	l := &InClusterLister{APIServer: srv.URL, TokenPath: tokenPath, Client: srv.Client()}
+	if _, err := l.ListPipelineRuns(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("non-200 err = %v", err)
+	}
+
+	// CA handling when no client is injected.
+	l = &InClusterLister{APIServer: srv.URL, TokenPath: tokenPath, CAPath: filepath.Join(dir, "missing-ca")}
+	if _, err := l.ListPipelineRuns(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "serviceaccount CA") {
+		t.Fatalf("missing CA err = %v", err)
+	}
+	badCA := filepath.Join(dir, "bad-ca")
+	if err := os.WriteFile(badCA, []byte("not pem"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l.CAPath = badCA
+	if _, err := l.ListPipelineRuns(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "no certificates") {
+		t.Fatalf("bad CA err = %v", err)
+	}
+	goodCA := filepath.Join(dir, "ca.crt")
+	pemBytes := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	if err := os.WriteFile(goodCA, pemBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	l.CAPath = goodCA
+	// Trusted CA reaches the server, which answers 403: proves the pool was built.
+	if _, err := l.ListPipelineRuns(context.Background(), cfg); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Fatalf("good CA err = %v", err)
+	}
+
+	// Unreachable server.
+	l = &InClusterLister{APIServer: "http://127.0.0.1:1", TokenPath: tokenPath, Client: &http.Client{}}
+	if _, err := l.ListPipelineRuns(context.Background(), cfg); err == nil {
+		t.Fatal("unreachable server must fail")
 	}
 }
