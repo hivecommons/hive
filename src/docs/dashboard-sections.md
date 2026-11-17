@@ -190,7 +190,7 @@ Full entry: [Knowledge](dashboard-sections/workflow-and-agents.md#knowledge).
 
 Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge.
 
-The top of the section shows the address to send things to, `hive@<dashboard host>`, with a Copy button; every item can be deleted with **🗑 Delete**, or several at once from **Hive (n) ▾ → Delete…**. Full entry: [Inbox](dashboard-sections/workflow-and-agents.md#inbox).
+The top of the section shows the address to send things to, `hive@<dashboard host>`, with a Copy button; every item can be deleted with **🗑 Delete**, or several at once from **Hive (n) ▾ → Delete…**. Under the source chips, a quieter row lists input methods: **Works today** (dictation, gaze typing and switch access, through **＋ Add → Quick note**) and **Neural input (coming soon)**; those chips only explain and connect nothing ([Input methods and the Inbox](inbox-input-methods.md)). Full entry: [Inbox](dashboard-sections/workflow-and-agents.md#inbox).
 
 ## Calendar
 

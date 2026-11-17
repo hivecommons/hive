@@ -3627,6 +3627,11 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 			b.wireMeetingsInbox(mgr, store)
 		}
 	}
+	// Customers: the people store behind the Customers section (#18742).
+	if svc, stop := wireCustomers(b.cfg, b.logger); svc != nil {
+		b.cleanup.push(stop)
+		b.dashSrv.SetCustomersService(svc)
+	}
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.
 	ghClientFn := func() *github.Client { return b.ghClient }
 	b.dashSrv.InstallClaimHooks(gfiClaimHooks(b.ctx, b.cfg, b.gfiState(), ghClientFn, b.dashSrv, b.logger,

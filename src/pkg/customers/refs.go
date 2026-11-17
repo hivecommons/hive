@@ -70,10 +70,11 @@ func validRef(ref string) bool {
 }
 
 // Viewer is who is looking. Full is the owner and read-write view; without
-// it the viewer sees only their own profile.
+// it the viewer sees only their own profile. Owner adds forget and export.
 type Viewer struct {
-	User string
-	Full bool
+	User  string
+	Full  bool
+	Owner bool
 }
 
 // Resolver answers for one kind of artefact. The customers store keeps
