@@ -72,7 +72,7 @@ func TestMeetingsPersonaDisabledAndOverrides(t *testing.T) {
 	if r.Name != "Max" || strings.Join(r.Aliases, ",") != "max,maximus" || r.VoiceType != "male" || r.Humor != "off" || r.Unprompted.MinConfidence != 0.9 {
 		t.Fatalf("overrides %+v", r)
 	}
-	if strings.Contains(r.Intro(), "buzz") || !strings.Contains(r.Intro(), "he/him") {
+	if strings.Contains(r.Intro(), "buzz") || strings.Contains(r.Intro(), "he/him") || !strings.Contains(r.Intro(), "remove me") {
 		t.Fatalf("humor off uses the plain intro: %q", r.Intro())
 	}
 	if !strings.Contains(r.ConsentText(), "'max leave'") || !strings.Contains(r.ConsentText(), "Max from the hive") {
