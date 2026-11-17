@@ -524,6 +524,7 @@ without a class. Review submissions and review requests are always counted as
 | `github.(*Client).handleOneIssueRequestFrom` | `attention` |  |
 | `github.(*Client).parkClankerRequestedPR` | `attention` |  |
 | `github.(*Client).redirectToExistingPR` | `attention` |  |
+| `github.(*Client).relayNotAgentWorkNote` | `attention` | scanner not-agent-work verdict: posted once with its marker and parks the issue on `needs-human`; an identical repeat records a suppressed comment (#18675) |
 | `github.(*Client).relayScannerNote` | `attention` | scanner PR note: an unchanged or edited note records a suppressed comment (#18451) |
 | `github.(*Client).remindAttention` | `attention` | attention-pilot reminder: at most one per unresolved episode per `reminder_interval`; write-back gate consulted first |
 | `github.(*Client).resolveDuplicateFixGroup` | `attention` |  |

@@ -350,6 +350,30 @@ check "--claim refusal writes no request" "" "$(find_req claimcommentbot)"
 rm -rf "$REQ_DIR"
 mkdir -p "$REQ_DIR"
 
+# --not-agent-work <verdict> carries the verdict on a comment; a bad verdict or a non-comment is refused (#18675).
+run_script "nawbot" comment --repo "hiveorg/widgets" 5 --body "not startable" --not-agent-work needs-environment >/dev/null
+REQ_FILE="$(find_req nawbot)"
+if [ -n "$REQ_FILE" ]; then
+  GOT="$(python3 -c "import json,sys; r=json.load(open(sys.argv[1])); print(r.get('kind'), r.get('not_agent_work'))" "$REQ_FILE")"
+  check "--not-agent-work sets not_agent_work on the comment request" "comment needs-environment" "$GOT"
+else
+  echo "  FAIL: request file not created for --not-agent-work test"
+  FAIL=$((FAIL + 1))
+fi
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+set +e
+run_script "nawbadbot" comment --repo "hiveorg/widgets" 5 --body "x" --not-agent-work maybe >/dev/null 2>&1
+BAD_RC=$?
+run_script "nawissuebot" --repo "hiveorg/widgets" --title "t" --body "b" --not-agent-work needs-human >/dev/null 2>&1
+BAD_ISSUE_RC=$?
+set -e
+check "--not-agent-work with an unknown verdict is refused (exit 2)" "2" "$BAD_RC"
+check "--not-agent-work on a create is refused (exit 2)" "2" "$BAD_ISSUE_RC"
+check "--not-agent-work refusals write no request" "" "$(find_req nawbadbot)$(find_req nawissuebot)"
+rm -rf "$REQ_DIR"
+mkdir -p "$REQ_DIR"
+
 # --no-consolidate <reason> carries the reason; an empty reason or a non-create is refused.
 run_script "noconsolbot" --repo "hiveorg/widgets" --title "Unrelated" --body "b" --no-consolidate "different work"
 REQ_FILE="$(find_req noconsolbot)"

@@ -17,7 +17,7 @@
 #
 # Usage (drop-in for the common gh shapes):
 #   hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--close-on-merge] [--needs-decision] [--no-consolidate <reason>] [--claim]
-#   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--blocked-on-pr <n>]
+#   hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--blocked-on-pr <n>] [--not-agent-work <verdict>]
 #   hive-open-issue claim   --repo <owner/repo> <number|url>
 #   hive-open-issue close   --repo <owner/repo> <number|url> [--override-reason "..."]
 #   hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
@@ -72,6 +72,15 @@
 # @-mentions (the PR's author is not asked to do the hive's work), adds the
 # `blocked` label and removes `help wanted`; the hive lifts the label itself
 # once the PR merges or closes. Never @-mention the PR author in the note.
+#
+# --not-agent-work <verdict> (comment only) records a triage verdict that the
+# issue is not agent work (hivecommons/hive#18675): `not-a-defect` (a
+# configuration condition or expected behaviour), `needs-human` (a person's
+# action, access or judgement), or `needs-environment` (real logins, hardware,
+# a live meeting). The watcher posts the note once with a marker and parks the
+# issue on `needs-human`, so it leaves the Actionable lane and the scanner's
+# work list; the same verdict again with no human comment since is dropped
+# (already_existed). A person's later comment re-queues the issue.
 #
 # Every shape accepts --dry-run (-n): validate the arguments, print the exact
 # request that WOULD be written, and exit 0 without writing it — nothing is
@@ -156,6 +165,7 @@ CLOSE_ON_MERGE=0
 NEEDS_DECISION=0
 CLAIM_ON_CREATE=0
 BLOCKED_ON_PR=""
+NOT_AGENT_WORK=""
 NO_CONSOLIDATE=""
 NO_CONSOLIDATE_SET=0
 DRY_RUN=0
@@ -163,7 +173,7 @@ LABELS=()
 REMOVE_LABELS=()
 REVIEWERS=()
 TEAM_REVIEWERS=()
-SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --needs-decision, --claim, --no-consolidate, --blocked-on-pr, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
+SUPPORTED_FLAGS="--repo/-R, --title/-t, --body/-b, --body-file/-F, --label/-l, --remove-label, --reviewer, --team-reviewer, --number, --parent, --blocked-by, --close-on-merge, --needs-decision, --claim, --no-consolidate, --blocked-on-pr, --not-agent-work, --override-reason, --dry-run/-n (plus the ignored gh flags --assignee/-a, --milestone/-m, --project/-p, --template/-T, --web/-w, --editor/-e)"
 while [ $# -gt 0 ]; do
   case "$1" in
     --repo|-R) REPO="$2"; shift 2;;
@@ -197,6 +207,8 @@ while [ $# -gt 0 ]; do
     --no-consolidate=*) NO_CONSOLIDATE_SET=1; NO_CONSOLIDATE="${1#*=}"; shift;;
     --blocked-on-pr) BLOCKED_ON_PR="$2"; shift 2;;
     --blocked-on-pr=*) BLOCKED_ON_PR="${1#*=}"; shift;;
+    --not-agent-work) NOT_AGENT_WORK="$2"; shift 2;;
+    --not-agent-work=*) NOT_AGENT_WORK="${1#*=}"; shift;;
     --dry-run|-n) DRY_RUN=1; shift;;
     # Tolerate gh flags we don't need; skip a following value only for flags
     # that take one, so a bare flag can't swallow the next real argument.
@@ -263,6 +275,14 @@ fi
 
 if [ -n "${BLOCKED_ON_PR:-}" ] && [ "$KIND" != "comment" ]; then
   echo "hive-open-issue: --blocked-on-pr only applies to a comment; nothing was written." >&2
+  exit 2
+fi
+if [ -n "${NOT_AGENT_WORK:-}" ] && [ "$KIND" != "comment" ]; then
+  echo "hive-open-issue: --not-agent-work only applies to a comment; nothing was written." >&2
+  exit 2
+fi
+if [ -n "${NOT_AGENT_WORK:-}" ] && ! [[ "$NOT_AGENT_WORK" =~ ^(not-a-defect|needs-human|needs-environment)$ ]]; then
+  echo "hive-open-issue: --not-agent-work needs one of not-a-defect, needs-human, needs-environment; nothing was written." >&2
   exit 2
 fi
 if [ -n "${BLOCKED_ON_PR:-}" ] && ! [[ "$BLOCKED_ON_PR" =~ ^[0-9]+$ && "$BLOCKED_ON_PR" -gt 0 ]]; then
@@ -384,9 +404,9 @@ REMOVE_LABELS_JSON="$(printf '%s\n' "${REMOVE_LABELS[@]:-}" | python3 -c 'import
 REVIEWERS_JSON="$(printf '%s\n' "${REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 TEAM_REVIEWERS_JSON="$(printf '%s\n' "${TEAM_REVIEWERS[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
 BLOCKED_BY_JSON="$(printf '%s\n' "${BLOCKED_BY[@]:-}" | python3 -c 'import json,sys; print(json.dumps([x.rstrip("\n") for x in sys.stdin if x.rstrip("\n")]))')"
-python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" "${BLOCKED_ON_PR:-0}" "$NO_CONSOLIDATE" "$CLAIM_ON_CREATE" <<'PY'
+python3 - "$TEMP_FILE" "$REQ_FILE" "$KIND" "$REPO" "$TITLE" "${OVERRIDE_REASON:-$BODY}" "$AGENT" "$LABELS_JSON" "${NUMBER:-0}" "$DRY_RUN" "${PARENT:-0}" "$REMOVE_LABELS_JSON" "$REVIEWERS_JSON" "$TEAM_REVIEWERS_JSON" "$BLOCKED_BY_JSON" "$NEEDS_DECISION" "${BLOCKED_ON_PR:-0}" "$NO_CONSOLIDATE" "$CLAIM_ON_CREATE" "${NOT_AGENT_WORK:-}" <<'PY'
 import json, os, sys
-temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers, blocked_by, needs_decision, blocked_on_pr, no_consolidate, claim_on_create = sys.argv[1:20]
+temporary, path, kind, repo, title, body, agent, labels, number, dry_run, parent, remove_labels, reviewers, team_reviewers, blocked_by, needs_decision, blocked_on_pr, no_consolidate, claim_on_create, not_agent_work = sys.argv[1:21]
 labels = [part.strip() for value in json.loads(labels)
           for part in value.split(",") if part.strip()]
 remove_labels = [part.strip() for value in json.loads(remove_labels)
@@ -464,6 +484,10 @@ if kind == "comment" and int(blocked_on_pr) > 0:
     # --blocked-on-pr: the watcher adds the marker and the `blocked` label
     # itself (hivecommons/hive#13093).
     req["blocked_on_pr"] = int(blocked_on_pr)
+if kind == "comment" and not_agent_work:
+    # --not-agent-work: the watcher adds the marker and parks the issue on
+    # needs-human itself (hivecommons/hive#18675).
+    req["not_agent_work"] = not_agent_work
 if dry_run == "1":
     # Honour --dry-run: show exactly what would be queued, write nothing.
     print("hive-open-issue: DRY RUN — no request written, nothing will be created. Would write %s:" % path)
@@ -490,6 +514,9 @@ if [ "$KIND" = "comment" ]; then
   echo "hive-open-issue: requested comment on $REPO#$NUMBER as the App bot"
   if [ -n "${BLOCKED_ON_PR:-}" ]; then
     echo "hive-open-issue: will park the issue on $REPO#$BLOCKED_ON_PR (blocked label; help wanted removed; no one is @-mentioned)"
+  fi
+  if [ -n "${NOT_AGENT_WORK:-}" ]; then
+    echo "hive-open-issue: will record the $NOT_AGENT_WORK verdict and park the issue on needs-human (an identical repeat is dropped)"
   fi
 elif [ "$KIND" = "claim" ]; then
   echo "hive-open-issue: requested claim of $REPO#$NUMBER (hive/claimed-by-$AGENT label)"

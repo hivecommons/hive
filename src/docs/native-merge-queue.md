@@ -66,15 +66,59 @@ before rollback. Trust/review/hold/CI/soak and attribution gates remain intact.
 
 ## Activity Tracker: observed operation, not a second merge engine
 
-When enabled, **Activity Tracker → Forge-owned merge queues → GitHub merge
-queue** is a separate region beside the preparation rail, outside actual
-pipeline rows. It displays provider-observed entry positions, exact PR heads,
-provider states and enqueue ages. Readiness/preparation, native admission,
-candidate testing and an actual merged receipt are different states.
-Linked issue/PR trees are not reparented or duplicated into pipeline rows;
-references say whether that exact repository/PR/head/base is on the page,
-outside its filters/page, or absent/changed. Repository filtering applies to
-the native rail; its references are not silently dropped by row pagination.
+When enabled, **Activity Tracker → ⛓ GitHub merge queues** is a separate
+rail beside the preparation rail, outside actual pipeline rows, built from the
+tracker's own parts (the preparation rail's head line, the Merged/Merge queue
+popover lists, badges and the shared help mark). It reads overview first,
+details on demand ([#18702](https://github.com/hivecommons/hive/issues/18702)):
+
+- **One head line for the panel:** how many PRs are queued on how many
+  branches, how many test groups are running, how many branches need
+  attention, and when the newest check happened. A **?** help mark carries
+  every caveat once (membership never inferred from FIFO or ref names;
+  candidate checks belong to the synthetic SHA, never the PR head; an empty
+  list in an old snapshot does not prove an empty queue; a vanished group ref
+  is not a merge or failure receipt; repo filter and page/filter references).
+  The caveats are not repeated per branch or per group.
+- **One status line per branch that has something to say:** `repo → base`,
+  then `2 PRs queued · front #801 awaiting checks, in queue 12m · testing:
+  checks running`, then `checked 9m ago`. Entry states are GitHub's own
+  (`QUEUED`, `AWAITING_CHECKS`, `MERGEABLE`, `UNMERGEABLE`, `LOCKED`) in plain
+  words; an unknown slug is shown as-is, never invented. Branches with
+  nothing queued, no live test group and no problem are folded into a single
+  `N branches with nothing queued` line (and `N not checked yet` for scopes the
+  rotation has not visited), with the per-branch lines behind a click. When
+  every branch is calm the panel is that head line plus the folded line.
+- **Details on demand**, per branch, behind a `<details>` toggle: the full
+  entry order with exact heads and page/filter words, live test groups with
+  their proven members (or "members not proven") and the candidate SHA's
+  required checks, finished groups as a count, and lifecycle receipts.
+- **Age instead of alarm.** Evidence past the six-minute fresh window is the
+  documented normal state of a rotating reader, so it reads as `checked 9m
+  ago` (plus a dashed `awaiting re-check` badge only when PRs are queued),
+  not as a STALE banner. Warning styling (`ham-badge` in the error colour,
+  scope name in the error colour) is reserved for real problems: `refresh
+  failed`, `GitHub App auth unavailable`, `not checked for 47m` (older than
+  the fresh window plus two full rotations of the configured scopes), and
+  `checks failed` on a live group.
+- **Finished groups are history, not candidates.** A `merge_group` run whose
+  synthetic ref is gone or moved is sent with `expired: true` and never drawn
+  as a live validation candidate; the panel counts it as `N finished groups
+  (outcome not observed)`. It does not claim the group merged or failed; only
+  an observed merged receipt means merged.
+- **Required-check policy on ruleset-only branches.** Classic protection
+  answers `404 Branch not protected` for a branch protected only by rulesets;
+  that is "no classic requirements", so the rules read supplies the policy and
+  it is known. A `403` or any other classic error still leaves the policy
+  unknown, and unknown is never shown as passing.
+
+Readiness/preparation, native admission, candidate testing and an actual
+merged receipt remain different states. Linked issue/PR trees are not
+reparented or duplicated into pipeline rows; references say whether that exact
+repository/PR/head/base is on this page, on another page, or outside the
+snapshot/changed. Repository filtering applies to the rail; its references are
+not silently dropped by row pagination. The panel stays read-only and performs
+no API reads of its own; the observation budgets below are unchanged.
 
 Candidate cards identify actual `merge_group` synthetic refs and SHAs from
 authenticated events or Actions runs. **Membership is unknown** unless a signed

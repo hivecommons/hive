@@ -12,7 +12,7 @@ import (
 )
 
 func TestNativeQueueObservationExactCandidateEvidence(t *testing.T) {
-	for _, mode := range []string{"proven", "two-members", "second-member-absent", "position-gap", "no-event", "wrong-check-head", "foreign-app", "missing-check", "pending", "failed", "skipped", "policy-unavailable", "truncated", "bad-ancestry", "moved-ref", "queue-error", "no-queue"} {
+	for _, mode := range []string{"proven", "two-members", "second-member-absent", "position-gap", "no-event", "wrong-check-head", "foreign-app", "missing-check", "pending", "failed", "skipped", "policy-unavailable", "ruleset-only", "truncated", "bad-ancestry", "moved-ref", "queue-error", "no-queue"} {
 		t.Run(mode, func(t *testing.T) {
 			base, candidate, member, tree := strings.Repeat("a", 40), strings.Repeat("b", 40), strings.Repeat("c", 40), strings.Repeat("d", 40)
 			api := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -43,8 +43,18 @@ func TestNativeQueueObservationExactCandidateEvidence(t *testing.T) {
 						w.WriteHeader(http.StatusForbidden)
 						return
 					}
+					if mode == "ruleset-only" {
+						// GitHub's answer for a branch protected only by rulesets.
+						w.WriteHeader(http.StatusNotFound)
+						_, _ = w.Write([]byte(`{"message":"Branch not protected"}`))
+						return
+					}
 					_, _ = w.Write([]byte(`{"contexts":["test"],"checks":[{"context":"test","app_id":15368}]}`))
 				case strings.Contains(r.URL.Path, "/rules/branches/"):
+					if mode == "ruleset-only" {
+						_, _ = w.Write([]byte(`[{"type":"required_status_checks","parameters":{"required_status_checks":[{"context":"test","integration_id":15368}]}}]`))
+						return
+					}
 					_, _ = w.Write([]byte(`[]`))
 				case strings.Contains(r.URL.Path, "/git/ref/"):
 					sha := candidate
@@ -143,6 +153,17 @@ func TestNativeQueueObservationExactCandidateEvidence(t *testing.T) {
 			}
 			if group.CI != wantCI || (mode == "truncated" || mode == "position-gap") && (got.Complete || got.EntriesComplete) {
 				t.Fatalf("candidate evidence: %+v", group)
+			}
+			// Only a vanished or moved synthetic ref marks a finished group;
+			// a live group is never reported as expired, and an expired one
+			// never carries check evidence (its checks were never read).
+			if group.Expired != (mode == "moved-ref") || group.Expired && (len(group.Checks) != 0 || group.ChecksKnown) {
+				t.Fatalf("expired flag: %+v", group)
+			}
+			// 403 keeps policy unknown; 404 "Branch not protected" plus a
+			// readable ruleset is a known policy.
+			if (mode == "policy-unavailable" && group.ChecksKnown) || (mode == "ruleset-only" && !group.ChecksKnown) {
+				t.Fatalf("required policy readability: %+v", group)
 			}
 		})
 	}
