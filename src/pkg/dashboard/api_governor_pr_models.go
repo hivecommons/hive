@@ -54,14 +54,66 @@ type governorPRModelBucket struct {
 	Rework         governorPRModelRework        `json:"rework"`
 	Effectiveness  governorPRModelEffectiveness `json:"effectiveness"`
 	Agents         []governorPRModelAgentBucket `json:"agents,omitempty"`
+	// Efforts splits the bucket by the trailer's effort= value ("unknown"
+	// when absent), sorted by PRs descending (hivecommons/hive#18715).
+	Efforts []governorPRModelEffort `json:"efforts,omitempty"`
 }
 
 // governorPRModelSource is one raw attribution spelling folded into a bucket.
+// The outcome and rework fields are computed over this source's PRs the same
+// way the bucket's Rework is computed over merged PRs (hivecommons/hive#18715).
 type governorPRModelSource struct {
 	Model   string `json:"model"`
 	Backend string `json:"backend"`
 	PRs     int    `json:"prs"`
 	Merged  int    `json:"merged"`
+	governorPRModelSliceStats
+}
+
+// governorPRModelEffort is one effort= value within a bucket.
+type governorPRModelEffort struct {
+	Effort string `json:"effort"`
+	PRs    int    `json:"prs"`
+	Merged int    `json:"merged"`
+	governorPRModelSliceStats
+}
+
+// governorPRModelSliceStats are the outcome and rework figures shared by a
+// bucket's per-source and per-effort slices.
+type governorPRModelSliceStats struct {
+	ClosedUnmerged     int     `json:"closed_unmerged"`
+	Open               int     `json:"open"`
+	SamplePRs          int     `json:"sample_prs"`
+	FirstPassMerged    int     `json:"first_pass_merged"`
+	FirstPassMergeRate float64 `json:"first_pass_merge_rate"`
+	AvgReviewRounds    float64 `json:"avg_review_rounds"`
+	AvgFixAttempts     float64 `json:"avg_fix_attempts"`
+}
+
+// governorPRModelSliceState accumulates one per-source or per-effort slice.
+type governorPRModelSliceState struct {
+	prs, merged, closedUnmerged, open int
+	rework                            reworkAccumulator
+}
+
+func (st *governorPRModelSliceState) add(outcome string, rework ghpkg.PRReworkStats) {
+	addOutcome(&st.prs, &st.merged, &st.closedUnmerged, &st.open, outcome)
+	if outcome == "merged" {
+		st.rework.add(rework)
+	}
+}
+
+func (st *governorPRModelSliceState) finish() governorPRModelSliceStats {
+	r := st.rework.finish()
+	return governorPRModelSliceStats{
+		ClosedUnmerged:     st.closedUnmerged,
+		Open:               st.open,
+		SamplePRs:          r.SamplePRs,
+		FirstPassMerged:    r.FirstPassMerged,
+		FirstPassMergeRate: r.FirstPassMergeRate,
+		AvgReviewRounds:    r.AvgReviewRounds,
+		AvgFixAttempts:     r.AvgFixAttempts,
+	}
 }
 
 type governorPRModelRework struct {
@@ -179,6 +231,9 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 		sources  map[string]*governorPRModelSource
 		backends map[string]bool
 		rework   reworkAccumulator
+		// Per-source and per-effort slice accumulators (#18715).
+		sourceStats map[string]*governorPRModelSliceState
+		efforts     map[string]*governorPRModelSliceState
 	}
 	buckets := map[string]*bucketState{}
 	resp := governorPRModelsResponse{Window: window, MinMergedPRs: effectiveModelsMinMergedPRs()}
@@ -203,6 +258,8 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 				agents:                map[string]*governorPRModelAgentBucket{},
 				sources:               map[string]*governorPRModelSource{},
 				backends:              map[string]bool{},
+				sourceStats:           map[string]*governorPRModelSliceState{},
+				efforts:               map[string]*governorPRModelSliceState{},
 			}
 			buckets[model] = b
 		}
@@ -222,6 +279,8 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 		if outcome == "merged" {
 			b.rework.add(pr.Rework)
 		}
+		governorPRModelSlice(b.sourceStats, srcKey).add(outcome, pr.Rework)
+		governorPRModelSlice(b.efforts, governorPRModelEffortKey(pr.HiveEffort)).add(outcome, pr.Rework)
 		if score := pr.Rework.ReviewRounds + pr.Rework.FixAttempts; score > 0 {
 			resp.MostReworked = append(resp.MostReworked, governorPRMostReworkedItem{
 				Repo:                pr.Repo,
@@ -259,9 +318,13 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 	for _, b := range buckets {
 		b.Rework = b.rework.finish()
 		b.Backends, b.Backend = joinedBackends(b.backends)
-		for _, src := range b.sources {
+		for key, src := range b.sources {
+			if st := b.sourceStats[key]; st != nil {
+				src.governorPRModelSliceStats = st.finish()
+			}
 			b.Sources = append(b.Sources, *src)
 		}
+		b.Efforts = finishGovernorPRModelEfforts(b.efforts)
 		sort.Slice(b.Sources, func(i, j int) bool {
 			if b.Sources[i].PRs != b.Sources[j].PRs {
 				return b.Sources[i].PRs > b.Sources[j].PRs
@@ -306,6 +369,37 @@ func aggregateGovernorPRModels(prs []ghpkg.PullRequest, window string, now time.
 		resp.MostReworked = resp.MostReworked[:10]
 	}
 	return resp
+}
+
+// governorPRModelSlice returns the accumulator for key, creating it.
+func governorPRModelSlice(m map[string]*governorPRModelSliceState, key string) *governorPRModelSliceState {
+	st := m[key]
+	if st == nil {
+		st = &governorPRModelSliceState{}
+		m[key] = st
+	}
+	return st
+}
+
+// governorPRModelEffortKey normalises a PR's effort= value; absent is "unknown".
+func governorPRModelEffortKey(effort string) string {
+	return ghpkg.NormalizeAttributionValue(effort)
+}
+
+// finishGovernorPRModelEfforts renders the per-effort slices sorted by PRs
+// descending, then effort name.
+func finishGovernorPRModelEfforts(m map[string]*governorPRModelSliceState) []governorPRModelEffort {
+	out := make([]governorPRModelEffort, 0, len(m))
+	for effort, st := range m {
+		out = append(out, governorPRModelEffort{Effort: effort, PRs: st.prs, Merged: st.merged, governorPRModelSliceStats: st.finish()})
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].PRs != out[j].PRs {
+			return out[i].PRs > out[j].PRs
+		}
+		return out[i].Effort < out[j].Effort
+	})
+	return out
 }
 
 // joinedBackends returns the sorted distinct backends and their comma-joined

@@ -331,7 +331,8 @@ func defaultWorkflowDispatchTemplate(c WorkflowDispatchCandidate) string {
 // agent, so the prompt never tells an agent to act beyond what it holds
 // (hivecommons/hive#18749).
 func workflowPermissionLines(c WorkflowDispatchCandidate) string {
-	t := c.Dispatch.Target
+	d := c.Dispatch
+	t := d.Target
 	var b strings.Builder
 	var role []string
 	if len(t.Tools) > 0 {
@@ -352,10 +353,20 @@ func workflowPermissionLines(c WorkflowDispatchCandidate) string {
 	} else {
 		fmt.Fprintf(&b, "You act with your own session's permissions, nothing more. The deliverable needs a session that may %s.\n", needs)
 	}
+	if t.ProducesChange() {
+		// The write path is shell commands, not a tool the CLI lists: a
+		// session that looked for a tool named hive-open-pr, found none and
+		// stood down never ran a command (hivecommons/hive#18777).
+		fmt.Fprintf(&b, "`git` and `hive-open-pr` are commands in your shell, not entries in your tool list, so do not look for a tool by that name. In a checkout of %s on a new topic branch: commit with `git commit -s`, run `git push origin <branch>`, then run `hive-open-pr --repo %s --head <branch> --title \"<title>\" --body-file <file>`", d.Repo, d.Repo)
+		if d.Kind == workflowmodel.KindIssue {
+			fmt.Fprintf(&b, " with `--issues %d`", d.Number)
+		}
+		b.WriteString(". `command -v hive-open-pr` shows where it is.\n")
+	}
 	// The marker is spelled as two separately quoted words so that this
 	// instruction, echoed into the pane and wrapped, can never itself read
 	// as a stated stand-down.
-	b.WriteString("If your session cannot do that, do not work around the hive's write gates: end your reply with one line that starts with the words `STAND` `DOWN` (upper case, one space between them), then a colon and the reason, and stop. The hive then hands the item to another agent.\n")
+	b.WriteString("If the hive's write gates refuse what the deliverable needs, do not work around them: end your reply with one line that starts with the words `STAND` `DOWN` (upper case, one space between them), then a colon and the reason, and stop. The hive then hands the item to another agent. Stand down only after you ran the command and it was refused (quote its output); an empty tool list is not a refusal.\n")
 	return b.String()
 }
 

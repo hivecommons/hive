@@ -13,6 +13,29 @@ const EnvCustomersEnabled = "HIVE_CUSTOMERS_ENABLED"
 type CustomersConfig struct {
 	// Enabled turns the Customers section on. nil = true.
 	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+	// Inference gates the goal and satisfaction suggestions the hive makes
+	// with a model. Default OFF: it sends text about people, some of whom
+	// never signed up, to the model the meetings feature is configured to
+	// use.
+	Inference CustomersInferenceConfig `yaml:"inference,omitempty" json:"inference,omitempty"`
+}
+
+// EnvCustomersInferenceEnabled overrides customers.inference.enabled when it
+// holds a recognised boolean.
+const EnvCustomersInferenceEnabled = "HIVE_CUSTOMERS_INFERENCE_ENABLED"
+
+// CustomersInferenceConfig (`customers.inference:`) turns goal and
+// satisfaction inference on. Suggestions only: a person confirms, edits or
+// rejects each one, and inference never overwrites a confirmed or manual
+// value. The model is the one configured for meetings (`meetings.llm`).
+type CustomersInferenceConfig struct {
+	// Enabled turns inference on. nil = false.
+	Enabled *bool `yaml:"enabled,omitempty" json:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether inference is on (default off).
+func (c CustomersInferenceConfig) IsEnabled() bool {
+	return c.Enabled != nil && *c.Enabled
 }
 
 // IsEnabled reports whether the Customers section is on (default on).
@@ -31,4 +54,21 @@ func (c *Config) CustomersEnabled() bool {
 		return true
 	}
 	return c.Customers.IsEnabled()
+}
+
+// CustomersInferenceEnabled reports whether inference is on: the
+// HIVE_CUSTOMERS_INFERENCE_ENABLED env wins over customers.inference.enabled
+// when it holds a recognised boolean. Inference also needs the Customers
+// section itself to be on.
+func (c *Config) CustomersInferenceEnabled() bool {
+	if !c.CustomersEnabled() {
+		return false
+	}
+	if v, ok := parseBoolEnv(EnvCustomersInferenceEnabled); ok {
+		return v
+	}
+	if c == nil {
+		return false
+	}
+	return c.Customers.Inference.IsEnabled()
 }

@@ -279,6 +279,10 @@
     .rv-perspectives-linked { margin: var(--sp-0) var(--sp-0) var(--sp-3); padding: var(--sp-4) var(--sp-5); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); font-size: var(--fs-sm); }
     .rv-perspectives-linked-status, .rv-perspectives-linked-warning { margin-top: var(--sp-2); color: var(--muted); }
     .rv-perspectives-linked-warning { color: var(--yellow); }
+    .rv-psrc-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--sp-3) var(--sp-5); }
+    .rv-psrc-actions { margin-top: var(--sp-3); }
+    .cfg-inline-row { display: flex; gap: var(--sp-3); align-items: center; flex-wrap: wrap; }
+    .cfg-inline-row select { flex: 1 1 12rem; min-width: 0; }
     .am-trusted-authors-repos { min-height: 72px; }
     .am-bot-empty { color: var(--muted); margin: var(--sp-1) 0; }
     .am-bot-add { display: flex; gap: var(--sp-3); margin-top: var(--sp-4); align-items: center; }

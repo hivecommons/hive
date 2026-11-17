@@ -1,6 +1,7 @@
 package customers
 
 import (
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -64,6 +65,9 @@ type Store struct {
 	hints  []Hint
 	tombs  map[string]bool
 	owner  map[string]string // identity key -> person id
+	// saved is the bytes last written, so an unchanged store is not
+	// rewritten.
+	saved []byte
 }
 
 // Open opens <dir>/people.json, creating dir if needed. A missing file is
@@ -249,7 +253,16 @@ func (s *Store) saveLocked() error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(s.path, data)
+	if bytes.Equal(data, s.saved) {
+		// Nothing changed: a sweep that found nothing new must not
+		// rewrite the file.
+		return nil
+	}
+	if err := writeAtomic(s.path, data); err != nil {
+		return err
+	}
+	s.saved = data
+	return nil
 }
 
 // writeAtomic writes data to a temp file beside path and renames it over.

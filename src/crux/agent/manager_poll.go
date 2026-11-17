@@ -21,6 +21,9 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 	var prevLines []string
 	loginStreak := 0
 	tokenRestartProducingLogged := false
+	// A dashboard Claude sign-in that predates this poller is not its signal
+	// to restart on (#18732); only a newer one is.
+	signInGenSeen := m.claudeSignInGeneration()
 	outcomeTick := 0
 	for {
 		select {
@@ -194,7 +197,34 @@ func (m *Manager) pollTmuxOutputForAgent(agent *AgentProcess, ctx context.Contex
 				if lastKick != nil && now.Sub(*lastKick) < tokenRestartKickGrace {
 					continue
 				}
-				if tokenRestartBlockedByOutput(lastPaneChange, now) {
+				// #18732: "valid" has to mean the PROVIDER accepts the token,
+				// not that the file is well-formed — a revoked grant leaves
+				// the file intact. For Claude the heal is chosen only after a
+				// live check (claude_login_revoked.go); other backends route
+				// straight to the capped heal below.
+				heal := m.decideLoginPromptHeal(ctx, agent, &signInGenSeen, now)
+				if heal == loginHealSignInRestart {
+					m.logger.Info("restarting agent still at a login prompt after the operator signed in to Claude; token-restart window bypassed",
+						"agent", agent.Name,
+						"restarts_24h", agent.tokenRestartsInWindow(now),
+						"window_max", tokenRestartWindowMax,
+					)
+					go func() {
+						if err := m.RestartWithReason(ctx, agent.Name, "operator signed in to Claude"); err != nil {
+							m.logger.Warn("post-sign-in restart failed", "agent", agent.Name, "error", err)
+						}
+					}()
+					return // stop polling; Restart will spawn a new goroutine
+				}
+				if heal == loginHealOperatorLogin {
+					// The provider rejected the credential: the dashboard
+					// banner, the login detector's notification and the hub
+					// verdict carry it from the BackendAuthRevoked mark. No
+					// restart, and decideTokenRestart is not consulted, so
+					// the 24h ledger is untouched for the sign-in that fixes
+					// this. Deliberately no `continue`: the TLS and hung-CLI
+					// detectors below stay live.
+				} else if tokenRestartBlockedByOutput(lastPaneChange, now) {
 					if !tokenRestartProducingLogged {
 						m.logger.Info("token-triggered restart suppressed: agent is producing output",
 							"agent", agent.Name,

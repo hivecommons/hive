@@ -1,7 +1,7 @@
 # Current Settings dialog parity gaps.
 # Every entry must have a Settings control before it is removed.
 # TODO #11854
-agent_sandbox.job.env_from_secrets[] # TODO #11854
+agent_sandbox.job.image_pull_secrets[] # TODO #11854
 agent_sandbox.job.node_selector.<key> # TODO #11854
 agent_sandbox.job.relay_image # TODO #11854
 agent_sandbox.job.relay_run_as_user # TODO #11854
@@ -117,6 +117,7 @@ agents.<key>.sandbox.enabled # TODO #11854
 agents.<key>.sandbox.env_allowlist[] # TODO #11854
 agents.<key>.sandbox.image # TODO #11854
 agents.<key>.sandbox.job.env_from_secrets[] # TODO #11854
+agents.<key>.sandbox.job.image_pull_secrets[] # TODO #11854
 agents.<key>.sandbox.job.node_selector.<key> # TODO #11854
 agents.<key>.sandbox.job.relay_image # TODO #11854
 agents.<key>.sandbox.job.relay_run_as_user # TODO #11854
@@ -226,7 +227,6 @@ classification.review_bots.logins[] # TODO #11854
 classification.review_bots.max_attempts_per_thread # TODO #11854
 classification.review_bots.resolve_after_fix # TODO #11854
 compliance.frameworks[] # TODO #11854
-customers.enabled # TODO #18742 (Settings switch lands with the Customers section UI)
 contribute.token_idle_max # TODO #11854
 contribute.token_max_age # TODO #11854
 convergence.mutation.max_writers_per_target # boundary capacity tuning; yaml-only (#14645)

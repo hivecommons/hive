@@ -370,7 +370,7 @@ func (s *Store) Observe(obs []Observation) (map[int]string, error) {
 		batch := map[string]*seen{}
 		var order []string
 		for n, o := range obs {
-			if o.Kind == KindName || o.Kind == KindHiveUser || !identityKinds[o.Kind] {
+			if o.Kind == KindName || !identityKinds[o.Kind] {
 				continue
 			}
 			value := NormalizeIdentity(o.Kind, o.Value)
@@ -380,6 +380,11 @@ func (s *Store) Observe(obs []Observation) (map[int]string, error) {
 			key := IdentityKey(o.Kind, value)
 			if pid, ok := s.owner[key]; ok {
 				owners[n] = pid
+				continue
+			}
+			if o.Kind == KindHiveUser {
+				// A dashboard user is a customer through the access list,
+				// never a suggestion.
 				continue
 			}
 			if s.tombs[s.tombstoneHash(key)] {
@@ -499,6 +504,7 @@ func (s *Store) Accept(suggestionID, by string) (Person, error) {
 			CreatedAt:    now, UpdatedAt: now,
 		}
 		delete(s.sugg, key)
+		s.dropRefsLocked(suggestionID)
 		s.people[pid] = p
 		out = clonePerson(p)
 		return nil
@@ -543,6 +549,29 @@ func (s *Store) ExpireSuggestions(exists func(artefact string) bool) (int, error
 			}
 			sg.Evidence = kept
 			s.sugg[key] = sg
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	return removed, nil
+}
+
+// ExpireSuggestionsWhere deletes the suggestions drop names, and every
+// suggestion whose identity a person owns: a suggestion is for someone
+// nobody holds. Nothing is tombstoned, so a suggestion a later rule allows
+// can come back. It returns how many were deleted.
+func (s *Store) ExpireSuggestionsWhere(drop func(Suggestion) bool) (int, error) {
+	removed := 0
+	err := s.change(func() error {
+		for key, sg := range s.sugg {
+			if _, owned := s.owner[key]; !owned && (drop == nil || !drop(sg)) {
+				continue
+			}
+			delete(s.sugg, key)
+			s.dropRefsLocked(sg.ID)
+			removed++
 		}
 		return nil
 	})

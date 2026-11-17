@@ -116,9 +116,14 @@ func IdentityKey(kind IdentityKind, value string) string {
 	return string(kind) + ":" + NormalizeIdentity(kind, value)
 }
 
+// githubUserPrefix is the provider prefix a dashboard session name may
+// carry: "github:alice" and "alice" are the same dashboard user.
+const githubUserPrefix = "github:"
+
 // NormalizeIdentity canonicalises a value for its kind. Logins and emails
-// compare case-insensitively; a leading "@" on a login is dropped. A name is
-// only trimmed: it is never a key.
+// compare case-insensitively; a leading "@" on a login is dropped. A
+// dashboard user is the same with or without the "github:" provider prefix,
+// as the access list treats it. A name is only trimmed: it is never a key.
 func NormalizeIdentity(kind IdentityKind, value string) string {
 	v := strings.TrimSpace(value)
 	switch kind {
@@ -126,6 +131,8 @@ func NormalizeIdentity(kind IdentityKind, value string) string {
 		return v
 	case KindGitHub:
 		return strings.ToLower(strings.TrimPrefix(v, "@"))
+	case KindHiveUser:
+		return strings.TrimPrefix(strings.ToLower(v), githubUserPrefix)
 	default:
 		return strings.ToLower(v)
 	}
@@ -267,10 +274,15 @@ type Person struct {
 	Notes        string       `json:"notes,omitempty"`
 	// RejectedGoals is the fingerprints of goal suggestions a person
 	// turned down.
-	RejectedGoals []string      `json:"rejected_goals,omitempty"`
-	MergedFrom    []MergeRecord `json:"merged_from,omitempty"`
-	CreatedAt     time.Time     `json:"created_at"`
-	UpdatedAt     time.Time     `json:"updated_at"`
+	RejectedGoals []string `json:"rejected_goals,omitempty"`
+	// InferredAt and InferredHash record the last inference pass over this
+	// person and the evidence it read, so an unchanged person is not sent
+	// to the model again.
+	InferredAt   time.Time     `json:"inferred_at,omitempty"`
+	InferredHash string        `json:"inferred_hash,omitempty"`
+	MergedFrom   []MergeRecord `json:"merged_from,omitempty"`
+	CreatedAt    time.Time     `json:"created_at"`
+	UpdatedAt    time.Time     `json:"updated_at"`
 }
 
 // HasIdentity reports whether p holds the identity with this key as a

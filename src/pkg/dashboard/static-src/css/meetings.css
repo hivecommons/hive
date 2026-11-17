@@ -19,6 +19,12 @@
     .meetings-line { margin: 0 0 var(--sp-1); white-space: pre-wrap; }
     .meetings-line.is-partial { opacity: 0.6; font-style: italic; }
     .meetings-who { font-weight: 600; margin-right: var(--sp-1); }
+    .meetings-line.is-reply { padding: var(--sp-1) var(--sp-2); border-left: 2px solid var(--accent); border-radius: var(--r); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    .meetings-line.is-reply.is-undelivered { border-left-color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
+    .meetings-reply-meta { margin-right: var(--sp-1); font-size: var(--fs-xs); color: var(--muted); }
+    .meetings-reach.is-unreachable { margin: 0 0 var(--sp-2); padding: var(--sp-2); border: 1px solid var(--red); border-radius: var(--r); font-size: var(--fs-sm); color: var(--red); }
+    .inbox-assistant-line { display: block; padding-left: var(--sp-2); border-left: 2px solid var(--accent); color: var(--accent); }
+    .inbox-assistant-line.is-undelivered { border-left-color: var(--red); color: var(--red); }
     .meetings-side { display: flex; flex-direction: column; gap: var(--sp-3); }
     .meetings-side ul { margin: 0; padding-left: var(--sp-4); font-size: var(--fs-sm); }
     .meetings-research { display: flex; flex-direction: column; gap: var(--sp-2); font-size: var(--fs-sm); }

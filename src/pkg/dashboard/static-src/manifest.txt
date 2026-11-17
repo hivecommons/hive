@@ -35,6 +35,8 @@ css/inbox-access.css
 css/meetings.css
 css/calendar.css
 css/meeting-attendee.css
+css/customers.css
+css/graphcanvas.css
 css/email-in.css
 css/sections-collapse.css
 css/design-system.css
@@ -68,6 +70,7 @@ html/nous-inception-knowledge-contributors.html
 html/inbox.html
 html/calendar.html
 html/meetings.html
+html/customers.html
 html/debug-logs.html
 html/agents.html
 html/tracker.html
@@ -109,6 +112,7 @@ js/tracker-filter-render.js
 js/tracker-filter-fetch.js
 js/tracker-actions.js
 js/tracker-human-gate.js
+js/tracker-gate-truth.js
 js/tracker-merged.js
 js/tracker-queue.js
 js/tracker-sound.js
@@ -141,9 +145,12 @@ js/inbox-mail-log.js
 js/inbox-note.js
 js/inbox-input-methods.js
 js/meetings.js
+js/meetings-replies.js
 js/calendar.js
 js/meeting-attendee.js
 js/meeting-attendee-model.js
+js/graphcanvas.js
+js/customers.js
 js/vault-audit.js
 js/review-queue.js
 js/contributors.js
@@ -173,6 +180,7 @@ js/config-workflows-ingest-sources.js
 js/config-workflows-marketplace.js
 js/config-watchdog-security.js
 js/config-features.js
+js/config-sandbox-source.js
 js/integration-execution-settings.js
 js/config-event-triggers.js
 js/config-sentinel.js

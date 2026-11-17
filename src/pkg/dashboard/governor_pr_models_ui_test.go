@@ -36,6 +36,10 @@ func TestGovernorPRModelsUIRendersReworkStats(t *testing.T) {
 		"&model=${encodeURIComponent(model)}",
 		"gov-pr-model-prlist",
 		"prs_truncated",
+		"b.efforts",
+		"By effort:",
+		"avg_fix_attempts",
+		"sample_prs",
 	} {
 		if !strings.Contains(s, want) {
 			t.Fatalf("static/index.html missing %q", want)

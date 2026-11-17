@@ -27,6 +27,13 @@ func (m *Manager) ReloadClaudeToken() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.claudeAuthToken = claude.ReadAccessToken(claude.CredentialsPath)
+	// A reload with a usable credential on disk is a dashboard sign-in (the
+	// logout path also reloads, with the file gone): a new signal that lifts
+	// any "login revoked" mark and restarts agents still at the prompt once,
+	// outside the token-restart window (#18732).
+	if claude.HasUsableToken(claude.CredentialsPath) {
+		m.noteClaudeOperatorSignInLocked(time.Now())
+	}
 }
 
 // Copilot token sources, as reported by CopilotTokenSource. Operator-facing

@@ -324,7 +324,10 @@ hand-off is marked **not started**, with the reason, when:
 
 - the agent declined: it refused the kick, or ended its turn on a `STAND DOWN` line, on a
   question, or on a report that it produced nothing (the prompt tells an agent whose session
-  cannot do the work to end on a `STAND DOWN` line with the reason);
+  cannot do the work to end on a `STAND DOWN` line with the reason, and, for a deliverable
+  that is a pull request, spells out the shell commands: `git` and `hive-open-pr` are commands,
+  not tools in the CLI's tool list, and a stand-down is for a command the hive refused, not for
+  a tool list with no entry of that name, [#18777](https://github.com/hivecommons/hive/issues/18777));
 - the agent's turn ended and, 15 minutes later, there is still no draft pull request
   covering the issue (for the verifier: no new comment on the draft);
 - nothing is known about the turn (the hive restarted) and 2 hours have passed.

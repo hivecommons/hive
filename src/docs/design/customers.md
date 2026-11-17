@@ -211,30 +211,48 @@ Rules that hold for both:
 
 ### Inference
 
-Candidates come from what the person has already put in front of the hive:
+Status: built, opt-in. `customers.inference.enabled` defaults to **off**
+(env `HIVE_CUSTOMERS_INFERENCE_ENABLED`), because it sends text about people to a
+model, some of whom never signed up. It also needs the Customers section on.
+
+Candidates come from what a customer has already put in front of the hive, read
+from state the hive holds and with no GitHub call:
 
 | Signal | Goal evidence | Satisfaction evidence |
 |---|---|---|
-| Issues they opened | What they asked for | Age of open asks, reopen count |
-| PR outcomes | What they were trying to land | Merged, closed unmerged, time to merge, review round trips |
-| Meeting asks | Action items and asks attributed to them | Follow-through on those items |
-| Approved mail | The request in the message | Reply latency, repeat requests |
+| Issues they opened (the last enumeration) | What they asked for | Whether it is open or closed |
+| Pull requests they authored | What they were trying to land | Merged or not |
+| Approved mail from their address | The request in the message | The tone of the reply |
 
-The inference runs in the hive process through the model route the hive
-already uses for in-process inference (the meeting persona's answer path). It
-does not start an agent and it gives the model no tools.
+Meeting asks are not read yet: a meeting stores display names, never an
+identity, and a name never links a person to anything.
 
-- **Inputs are fenced as untrusted.** Evidence text is scanned and wrapped in a
-  nonce-tagged untrusted envelope, as Inbox text is.
-- **Output is bounded and typed.** The model returns a small fixed structure
-  (at most three goals of bounded length, one satisfaction level from the
-  ordinal, the evidence ids it used). Anything that does not parse, names
-  evidence it was not given or exceeds the bounds is dropped.
-- **Inference is budgeted.** A few people per tick, customers only (never
-  suggested people), a minimum interval per person, and shed when the hive's
-  budget is low. It can be turned off without turning off the section.
-- Each suggestion is audited with the person id and the evidence count, not
-  the text.
+The pass is the `customers_inference` optional sweep, every 30 minutes. It
+reads at most three due customers, only customers (never a suggested person), and
+leaves a person alone for 24 hours after a read and while their evidence has not
+changed. It runs on the model route meetings already uses in process
+(`meetllm`, through `betty.MeetLLM`): an OpenAI-compatible endpoint or the
+Anthropic API. An agent backend is not used. Calls are charged to a daily usage
+ledger of their own with a budget of 40,000 tokens, kept for seven days, and a
+spent budget ends the pass.
+
+- **Inputs are untrusted.** Each item is cleaned, cut to 300 bytes, and dropped
+  whole if it holds an address, one of this store's ids or anything `ioscan`
+  finds. What remains sits in one `untrusted-customer-evidence` fence with a
+  random nonce, and the system prompt says it is data and never an instruction.
+  The prompt carries no name, address, id, note or standing satisfaction level.
+- **Output is bounded and typed.** At most three goals, each a short, safe
+  sentence that cites only evidence it was given; one satisfaction level from the
+  ordinal with such evidence. A goal citing nothing it was given is dropped, a
+  number is never a level, and an unusable reply changes nothing and is tried
+  again later.
+- **Suggestions only.** Goals go through `SuggestGoals` and the level through
+  `SuggestSatisfaction`, which never touch a confirmed or manual value and never
+  offer a rejected suggestion again. A person confirms, edits or rejects each on
+  the profile.
+- **Audited without text.** `customer_inference` records the person id, how many
+  goals and whether a satisfaction suggestion was filed.
+- Nothing inferred leaves the hive.
 
 ## 9. Ingestion
 
@@ -255,6 +273,64 @@ One optional sweep, `customers`. Steps:
   the API budget is low.
 
 A normal sweep (A to D) makes zero GitHub calls, and a test holds that.
+
+What the first sweep (steps A to C, `customers` in
+`src/cmd/hive/sweep_workers.go`, every ten minutes) reads:
+
+| Source | Identity | Edge |
+|---|---|---|
+| Access list (`dashboard.authorized_users`) | dashboard user; a `github:<login>` entry also proves the GitHub login | none; owner and merger earn `maintainer` |
+| Owner's connected GitHub account | GitHub login, when there is exactly one owner | none |
+| Proven calendar emails | email of the dashboard user who proved it | none |
+| Last GitHub enumeration: issues | author, assignees, logins mentioned in the body | reported, assigned, mentioned_in |
+| Last GitHub enumeration: pull requests | author, requested reviewers | authored, review_requested |
+| Claims ledger | human, contributor and external holders | claimed |
+| Inbox uploads | the dashboard user who added it | added |
+| Approved mail | the sender address | sent |
+| Calendar events | organiser and attendee addresses, who added it | organised, invited, added |
+| Meetings | who sent hive in (dashboard user, address or platform id) | added |
+
+Bots, the hive's own author account, agent claims, mail awaiting approval,
+purged meetings and display names produce nothing. Not read yet, and left to
+the next sweep PR: recordings, the merged ledger, review evidence, contributor
+profiles and connector fact authors, none of which the sweep can reach without
+a new accessor.
+
+The sweep is an optional sweep, so it is shed with the other optional sweeps
+when the GitHub budget is low, although it spends none of that budget itself.
+
+Step D, in the same sweep: the dashboard audit log gives one `acted` edge per
+person per day, and one `logged_in` edge on a day they signed in. Only the user,
+the day and the kind of action are read; the detail text of an audit line is
+never copied. An audit edge exists while its day is inside the audit log's
+retention (90 days) and is shown to the full view only.
+
+"Same person?" hints are raised between a customer and a suggested person when
+a suggested address starts like one of the customer's logins (a GitHub login or
+the dashboard user name), or a suggested login starts like one of the customer's
+addresses. The comparison is on exact, lower-cased keys with any `+tag` removed.
+Locals shorter than four characters and role addresses such as `info` or
+`noreply` are skipped. A display name is never compared. A hint links nothing:
+answering yes makes the suggested identity the customer's own (recorded as
+manual, by whom), answering no pins the pair so it is not asked again. A hint
+between two customers is answered by merging them, which is the merge and split
+UI of a later PR.
+
+Step E, the budgeted GitHub search for mentions and comments on accept, is not
+built. The GitHub client has no comment or mention search, so it needs a new
+client method and a place in the API budget. It is left for its own PR.
+
+Automatic tags come from role, association and history: `maintainer` from an
+owner or merger role or a GitHub author association of owner, member or
+collaborator; `contributor` from an authored pull request; `end-user` from a
+reported issue with no pull request; `stakeholder` from meeting, calendar or
+mail activity with no GitHub activity.
+
+Existence is answered per artefact kind. A meeting exists until it is deleted
+or its transcript is purged; a Calendar event while the schedule holds it; an
+Inbox upload while its store holds it; a mail item while it exists and is
+approved. When a store is turned off nothing can say an artefact is gone, so
+its edges are kept. GitHub references have no resolver and are kept.
 
 Because the feature is on by default, the discovery sweep does not merge before
 forget, the role checks and retention pruning are merged and tested.
@@ -303,11 +379,46 @@ forget, the role checks and retention pruning are merged and tested.
 - Suggested people are never returned as a person.
 - Each query is audited (viewer, operation name, node count), not its text.
 
-Library: `github.com/graph-gophers/graphql-go`, schema-first, chosen for its
-small dependency list and built-in depth limit. The fallback, if it cannot
-pass the vulnerability, NOTICE or licence checks, is
-`github.com/graphql-go/graphql` with a hand-written depth and size check. The
-PR that adds the endpoint records which was used and the evidence.
+Library: `github.com/graph-gophers/graphql-go` v1.11.1 (BSD-2-Clause),
+schema-first, imported only by `src/pkg/customers/gql`. The decision and the
+evidence:
+
+- `go mod graph` shows it requires `opentracing-go`, `go.opentelemetry.io/otel`
+  and `otel/trace`, plus their indirect modules. Hive already requires the
+  OpenTelemetry modules at the same version (v1.47.0), and `opentracing-go` is
+  imported only by the library's optional `trace/opentracing` package, which
+  Hive does not import. Adding the library added one line to `go.mod` and its
+  own two lines to `go.sum`; no other module entered the build.
+- It has the limits this endpoint needs built in: `MaxDepth`,
+  `MaxQueryLength`, `MaxSelections` and an introspection switch.
+- The fallback, `github.com/graphql-go/graphql` with a hand-written depth and
+  size check, was not needed.
+
+Introspection is off: the standard introspection query is deeper than the
+depth limit anyway, and the schema is published in
+[the API reference](../api-reference/customers.md#the-customer-graph). The
+node limit is enforced by the resolvers, which charge every person, edge and
+artefact they materialise to a per-query budget. Access is not decided in the
+GraphQL layer at all: every resolver calls the customers service with the
+viewer of the request, the same service the REST routes use.
+
+**Merge, split and the graph view.** Merge folds one customer into another and
+moves every edge across; the merge is recorded on the target with the source as
+it stood and the identities, tags and goals it brought, so unmerge can give back
+exactly those. Unmerge moves back only the edges whose `via` identity belonged
+to the restored person, so activity the target produced on its own stays put.
+Split works the same way in the other direction: the edges that the named
+identities produced move with them. Two dashboard users are never merged, and a
+`hive_user` identity is never split off. Both are full-view actions and audited
+(`customer_merge`, `customer_unmerge`, `customer_split`). Export is owner only
+and audited (`customer_export`); it holds the profile, merge history, hints and
+at most 10,000 edge references.
+
+The graph view is a static SVG drawn from the same GraphQL endpoint (one query:
+a person's edges and, under each, the people on that artefact). It does not
+reuse the knowledge graph canvas, which is animated and styled inline; the
+customers view is a small radial drawing that stays readable on a phone and
+follows the page's design tokens.
 
 ## 12. Agents and privacy guard rails
 
@@ -319,7 +430,33 @@ query it.
   and no person ids. Scanned and fenced as untrusted. The pattern is the
   maintainer-notes block (`src/pkg/scheduler/kick_maintainer_notes.go`).
 - A people retriever for the meeting persona
-  (`src/pkg/meetings/betty/retrieve.go`).
+  (`src/pkg/meetings/betty/retrieve_people.go`).
+
+What crosses into a prompt is built in one place, `customers.RenderKickContext`
+and `customers.PeopleBriefs`, and the scheduler and the meetings package see
+only the finished text or a small struct, never the customers package:
+
+- Only customers; a suggested person is never included. A login is matched on
+  the exact GitHub identity.
+- Only a login, the active tags, up to three goals a person confirmed, and a
+  count. Never an email, an id, notes or the satisfaction assessment. A goal the
+  hive inferred and nobody confirmed stays out.
+- A goal is text a person typed, so `SafeGoal` scans it with `ioscan`, removes
+  control characters, and drops the whole goal if it holds anything that looks
+  like an address or one of this store's ids, or if `ioscan` finds anything.
+  What remains sits inside one `<untrusted-customer-data nonce="...">` fence
+  with a fresh nonce, and any fence marker in the text is rewritten.
+- The kick block is at most 1,024 bytes, people lines first, and a line that
+  does not fit is left out rather than cut. The scheduler appends it only when
+  it starts with the block header, and asks about at most 20 logins.
+- The persona's snippet is a name, tags and confirmed goals, nothing else. The
+  persona speaks in a room that can hold people who are not users, so notes and
+  the satisfaction assessment have no field to travel in. Betty fences snippets
+  as data in its own prompt as well.
+
+Retrieval by name here is not identity resolution: a word in a question is
+matched against the words of a customer's name or their login to find a profile
+to describe, and nothing is linked or created.
 
 **Personal data of people who never signed up.** A hive sees issue authors,
 meeting attendees and mail senders who never created an account on it. The

@@ -49,6 +49,7 @@ type Scheduler struct {
 	inflight                 InflightLookup
 	prLease                  PRLeaseLookup
 	maintainerNotes          MaintainerNotesLookup
+	customerContext          CustomerContextLookup
 	topicClaims              TopicClaimLookup
 	// newReleases feeds ${NEW_RELEASES} (new_releases.go); atomic because
 	// template substitution may run with s.mu held.

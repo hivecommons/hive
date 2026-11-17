@@ -20,8 +20,8 @@ const indexHtml = fs.readFileSync(path.join(__dirname, '..', '..', 'src', 'pkg',
 const DASHBOARD_GROUP_ID = 'dashboard-section-nav-group';
 const AGENT_GROUP_ID = 'oc-agent-nav-group';
 const COLLABORATE_LABEL = 'Collaborate';
-const COLLABORATE_LINKS = ['Inbox', 'Calendar', 'Meetings', 'Inception (spek)'];
-const COLLABORATE_SECTIONS = ['inbox-section', 'calendar-section', 'meetings-section', 'sessions-section'];
+const COLLABORATE_LINKS = ['Inbox', 'Calendar', 'Meetings', 'Customers', 'Inception (spek)'];
+const COLLABORATE_SECTIONS = ['inbox-section', 'calendar-section', 'meetings-section', 'customers-section', 'sessions-section'];
 const LAYOUT_KEY = 'hive.dashboard.layout';
 
 function extractFunction(name) {
@@ -114,7 +114,7 @@ function makeContext({ saved, sessionsEnabled }) {
   const root = new El({ id: 'hive-dashboard-root' });
   const all = () => sidebar.descendants();
   const ctx = {
-    window: { _lastStatus: { features: { experiment_lab: true } }, _sessionsEnabled: sessionsEnabled },
+    window: { _lastStatus: { features: { experiment_lab: true } }, _sessionsEnabled: sessionsEnabled, _customersEnabled: true },
     localStorage: {
       getItem: (k) => (k in store ? store[k] : null),
       setItem: (k, v) => { store[k] = String(v); },
@@ -140,7 +140,7 @@ function makeContext({ saved, sessionsEnabled }) {
     extractVar('DASHBOARD_LAYOUT_CARD_SELECTOR'),
     extractVar('DASHBOARD_LAYOUT_KEY'),
     extractVar('DASHBOARD_SIDEBAR_HOME_ID'),
-    ...['dashboardAliasSectionId', 'dashboardFeatureEnabled', 'experimentLabEnabled', 'sessionsFeatureEnabled',
+    ...['dashboardAliasSectionId', 'dashboardFeatureEnabled', 'experimentLabEnabled', 'sessionsFeatureEnabled', 'customersFeatureEnabled',
       'dashboardFeatureSectionHidden', 'dashboardLayoutAllIds', 'dashboardLayoutNormalize', 'dashboardLayoutRead',
       'dashboardLayoutCurrent', 'dashboardSidebarLayoutItems', 'dashboardSidebarItemInOwnGroup',
       'dashboardSidebarNavItems', 'dashboardSidebarLayoutFromDom', 'dashboardSortSidebar'].map(extractFunction),
