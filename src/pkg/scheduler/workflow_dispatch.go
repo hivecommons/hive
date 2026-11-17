@@ -103,6 +103,9 @@ type WorkflowDispatchCandidate struct {
 	Agent    string
 	Key      string
 	Trigger  *github.DispatchReply
+	// ManualBy names the person who sent the item from the dashboard
+	// ("Send to <profile>"); empty for an automatic hand-off.
+	ManualBy string
 }
 
 // WorkflowDispatchSkip is an item the plan did not hand off, and why.
@@ -209,7 +212,10 @@ func BuildWorkflowDispatchPrompt(c WorkflowDispatchCandidate, template string) s
 func workflowPromptVars(c WorkflowDispatchCandidate) map[string]string {
 	d := c.Dispatch
 	trigger := "entering the state"
-	if c.Trigger != nil {
+	switch {
+	case c.ManualBy != "":
+		trigger = fmt.Sprintf("%s, a hive owner, from the dashboard (Send to %s)", c.ManualBy, d.Target.Profile)
+	case c.Trigger != nil:
 		trigger = fmt.Sprintf("`%s` from %s (%s)", d.Target.Reply, c.Trigger.Author, c.Trigger.URL)
 	}
 	label := d.Target.StateLabel
