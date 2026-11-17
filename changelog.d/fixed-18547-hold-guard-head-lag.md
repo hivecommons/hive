@@ -1,0 +1,1 @@
+- The hold guard no longer logs a WARN (which self-reported as a defect) when GitHub has not yet shown the new head right after keeping a held PR mergeable; it retries next tick.
