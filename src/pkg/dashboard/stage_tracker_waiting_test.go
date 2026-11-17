@@ -34,17 +34,21 @@ func TestStageTrackerWaitingOnHuman_KindsAndAttribution(t *testing.T) {
 		{Repo: "o/r", Number: 60, Kind: "pr", Stage: stagelabels.NeedsDecision.Number(), Modifiers: []string{modHold}},
 		{Repo: "o/r", Number: 61, Kind: "pr", Stage: stagelabels.NeedsDecision.Number(), Advisory: &StageTrackerAdvisory{}},
 		{Repo: "o/r", Number: 62, Kind: "pr", Stage: stagelabels.NeedsDecision.Number(), Decided: &StageTrackerDecided{}},
+		// …unless the decision timed out: nothing re-runs it, so the row
+		// waits on a person by its real stage (projectbluefin/bluefin-bling#128).
+		{Repo: "o/r", Number: 64, Kind: "pr", Stage: stagelabels.NeedsDecision.Number(), Decided: &StageTrackerDecided{Effect: decidedEffectTimedOut}},
 		// a nested PR is counted once, under its issue.
 		{Repo: "o/r", Number: 63, Kind: "pr", Stage: stagelabels.NeedsDecision.Number(), NestedUnder: 20},
 		// an ordinary in-flight PR waits on nobody.
 		{Repo: "o/r", Number: 70, Kind: "pr", Stage: 60},
 	}
 	got := stageTrackerWaitingOnHuman(items)
-	if got.Count != 6 || len(got.Items) != 6 {
-		t.Fatalf("count = %d (%d items), want 6: %+v", got.Count, len(got.Items), got.Items)
+	if got.Count != 7 || len(got.Items) != 7 {
+		t.Fatalf("count = %d (%d items), want 7: %+v", got.Count, len(got.Items), got.Items)
 	}
 	want := map[int][2]string{
 		15312: {waitKindNeedsDecision, waitWhoOperator},
+		64:    {waitKindNeedsDecision, waitWhoOperator},
 		20:    {waitKindNeedsDecision, waitWhoOperator},
 		15433: {waitKindReadyForHumanMerge, waitWhoOperator},
 		30:    {waitKindApproveNeeded, waitWhoOperator},
