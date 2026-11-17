@@ -26,8 +26,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net/http"
-	"net/url"
 	"regexp"
 	"strings"
 
@@ -229,7 +227,7 @@ func (c *Client) tryRequeueNotAgentWork(ctx context.Context, displayRepo, owner,
 	if out := c.needsHumanOutcome(ctx, owner, repo, number, nil); out.applier != stageengine.NeedsHumanApplierHive {
 		return false, nil
 	}
-	if _, err := c.client.Issues.RemoveLabelForIssue(ctx, owner, repo, number, url.PathEscape(issueNeedsHumanLabel)); err != nil && !githubStatusError(err, http.StatusNotFound) {
+	if err := c.removeIssueLabel(ctx, owner, repo, number, issueNeedsHumanLabel); err != nil {
 		return false, fmt.Errorf("removing %s from %s/%s#%d: %w", issueNeedsHumanLabel, owner, repo, number, err)
 	}
 	actor := safeGetLogin(reply.GetUser())
