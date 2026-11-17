@@ -781,14 +781,21 @@ func (h *ContributeWSHub) markTaskCompletedVerdict(repo string, number int, prUR
 // evidence; it is a contributor skip label, so on an unverified claim it kept
 // unfinished work out of the queue until a maintainer noticed
 // (projectbluefin/chairlift#591, fixed later by chairlift#626).
-func (h *ContributeWSHub) markAlreadyDoneUnverified(repo string, number int, reporter, reason string, evidence *VerdictEvidence) {
+//
+// A contributor relay may already have put the label on with the task
+// credential (projectbluefin/utah-packages#1175: labelled at 11:49:55, the
+// "not labelled" comment at 11:50:11, the label left on). The hub takes off a
+// label the hive added since dispatchedAt; one a person added stays.
+func (h *ContributeWSHub) markAlreadyDoneUnverified(repo string, number int, reporter, reason string, evidence *VerdictEvidence, dispatchedAt time.Time) {
 	if h == nil || repo == "" || number <= 0 {
 		return
 	}
 	reason = truncateReasonBytes(reason)
 	hold := h.configuredAlreadyDoneUnverifiedHold()
-	// The comment goes out before the hold is booked so the hive's own
-	// comment does not count as newer issue activity that lifts the hold.
+	// The label removal and the comment go out before the hold is booked so
+	// the hive's own activity does not count as newer issue activity that
+	// lifts the hold.
+	h.removeUnverifiedAlreadyDoneLabel(repo, number, dispatchedAt)
 	if err := h.noteAlreadyDoneUnverified(context.Background(), repo, number, reporter, hold); err != nil && h.logger != nil && err != ghpkg.ErrNoGitHubClient {
 		h.logger.Warn("[contribute-ws] unverified already-done verdict comment failed",
 			"repo", repo, "number", number, "error", err.Error())

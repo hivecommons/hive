@@ -397,6 +397,15 @@ const PR_CLAIM_FOLLOWUP_ANCHOR = 'Your verdict says complete, but no PR for this
 // follow-up: a bare `complete` with no PR is booked evidence-less by the hub
 // (same issue), but it is not a contradiction the relay can put to the agent.
 const PR_CLAIM_PATTERN = /\bPRs?\b|pull[ -]request|\bopened\b/i;
+// A PR the agent opened inside its own fork (see detectForkPRURLs). The anchor
+// is the message's fixed opening, so followUpAnswered() can find the echo.
+const FORK_PR_FOLLOWUP_ANCHOR = 'That PR is in your fork, not in ';
+function buildForkPRFollowUpMessage(url, repo) {
+  const owner = (/^https:\/\/github\.com\/([^/]+)\//.exec(url) || [])[1] || '<your-login>';
+  return `${FORK_PR_FOLLOWUP_ANCHOR}${repo}, so the hive cannot see it: ${url}. ` +
+    `Close it, then open it again against the upstream repository with 'gh pr create --repo ${repo} --head ${owner}:<your-branch>' ` +
+    `(keep the --base the task gave you), and print the HIVE_VERDICT line again on its own line.`;
+}
 
 const BYTES_PER_MIB = 1024 * 1024;
 const DEFAULT_HEADLESS_MAX_OUTPUT_MIB = 16;
@@ -6557,6 +6566,40 @@ function detectPRURL(lines, repo) {
   return urls.length > 0 ? urls[0] : '';
 }
 
+// detectForkPRURLs finds this task's PR opened in the wrong place: a URL in
+// <someone>/<same-name> rather than in the task repo. detectPRURLs() is right
+// to never credit it (a PR in another repository is never this task's PR), but
+// it dropped it without a word: kylerankin/chairlift#3 was the agent's fix for
+// projectbluefin/chairlift#798, opened with base and head both in the fork, and
+// the issue sat at 010 for nine hours. Only the agent's own is counted — the
+// fork owner is the contributor's login, or the URL is on a verdict line — so
+// a researched PR in some other fork of the repo is still ignored.
+function detectForkPRURLs(lines, repo, login) {
+  if (!Array.isArray(lines) || typeof repo !== 'string') return [];
+  const [owner, name] = repo.split('/');
+  if (!owner || !name) return [];
+  const me = typeof login === 'string' ? login.trim().toLowerCase() : '';
+  const URL_RE = /https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+)\/pull\/\d+/g;
+  const seen = new Set();
+  const out = [];
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const line = lines[i];
+    if (typeof line !== 'string') continue;
+    const verdictLine = isHiveVerdictLine(line);
+    let m;
+    URL_RE.lastIndex = 0;
+    while ((m = URL_RE.exec(line)) !== null) {
+      const urlOwner = m[1].toLowerCase();
+      if (m[2].toLowerCase() !== name.toLowerCase() || urlOwner === owner.toLowerCase()) continue;
+      if (!verdictLine && (!me || urlOwner !== me)) continue;
+      if (seen.has(m[0])) continue;
+      seen.add(m[0]);
+      out.push(m[0]);
+    }
+  }
+  return out;
+}
+
 // ── Did THIS task open that PR? (kubestellar/hive#6662) ──────────────────────
 //
 // The precedence at the completion site reads "a visible PR contradicts
@@ -6985,6 +7028,17 @@ function alreadyDoneVerdictFields(reason) {
   };
 }
 
+// alreadyDoneCitesRef says whether an already-done reason names something the
+// hub can verify: the structured evidence (a merged PR or a commit SHA), a
+// bare `#N`, or a pull-request URL. "Already resolved" alone cites nothing,
+// and the hub then refuses the label ("cited no PR or commit the hive could
+// verify"), so the relay must not have applied it (utah-packages#1175).
+function alreadyDoneCitesRef(reason) {
+  const evidence = alreadyDoneVerdictFields(reason).evidence;
+  if (evidence && (evidence.pr > 0 || evidence.commit)) return true;
+  return /(?:^|[^\w&])#\d+\b|\/pull\/\d+\b/.test(String(reason || ''));
+}
+
 function isAlreadyDoneNoWork(noWork) {
   if (!noWork || noWork.verdict !== HIVE_VERDICT_NO_WORK) return false;
   return alreadyDoneVerdictFields(noWork.reason).verdict_reason_kind === ALREADY_DONE_REASON_KIND;
@@ -7311,6 +7365,10 @@ function postVerdictReviewAnswered(lines) {
 // below the pane's echo of PR_CLAIM_FOLLOWUP_MESSAGE.
 function prClaimFollowUpAnswered(lines) {
   return followUpAnswered(lines, PR_CLAIM_FOLLOWUP_ANCHOR);
+}
+
+function forkPRFollowUpAnswered(lines) {
+  return followUpAnswered(lines, FORK_PR_FOLLOWUP_ANCHOR);
 }
 
 function followUpAnswered(lines, anchor) {
@@ -8010,6 +8068,8 @@ let postVerdictReviewRequested = false;
 let lastTickConcernLines = new Set();
 // #7862: whether this task's one PR-less-complete follow-up has been spent.
 let prClaimFollowUpRequested = false;
+// Whether this task's one "that PR is in your fork" follow-up has been spent.
+let forkPRFollowUpRequested = false;
 // #7907: the verdict LINE currently on the pane and when a tick first saw it.
 // A different line (the second verdict after a #7759 follow-up) starts a new
 // sighting; the same line ages toward VERDICT_SETTLE_MS.
@@ -8020,6 +8080,7 @@ function resetPostVerdictReviewState() {
   postVerdictReviewRequested = false;
   lastTickConcernLines = new Set();
   prClaimFollowUpRequested = false;
+  forkPRFollowUpRequested = false;
   verdictFirstSeen = null;
 }
 
@@ -8663,6 +8724,12 @@ function readOpenSubIssues(task, env) {
 
 function markIssueAlreadyDone(task, reason) {
   if (!task || task.kind !== 'issue' || !task.repo || !(task.number > 0) || task.external_id) return;
+  // The label means verified done. With no PR or commit cited there is
+  // nothing to verify: the hub comments and books its own hold instead.
+  if (!alreadyDoneCitesRef(reason)) {
+    console.log(`Task ${task.task_id}: already-done verdict on ${task.repo}#${task.number} cites no PR or commit — not applying the '${ALREADY_DONE_WORKFLOW_LABEL}' label; the hub verifies a citation before labelling and holds the issue without one`);
+    return;
+  }
   const hub = task._hub || hubs[activeHubIndex];
   if (!hubGrantsIssuesWrite(hub)) {
     console.log(`Task ${task.task_id}: already-done verdict on ${task.repo}#${task.number}, but the task credential does not carry issues:write — leaving the '${ALREADY_DONE_WORKFLOW_LABEL}' label to the hub or a human; the hub's already-done hold suppresses re-offer (#8477)`);
@@ -9325,6 +9392,8 @@ function maybeRequestPRForClaimedComplete(tmuxLines, verdict, prFinding) {
   if (verdict.verdict !== HIVE_VERDICT_COMPLETE) return false;
   if (!PR_CLAIM_PATTERN.test(verdict.reason || '')) return false;
   if (prClaimFollowUpRequested) return false;
+  // The fork follow-up already told the agent exactly where its PR went.
+  if (forkPRFollowUpRequested) return false;
   if (prFinding && prFinding.url) return false;
 
   prClaimFollowUpRequested = true;
@@ -9343,6 +9412,49 @@ function maybeRequestPRForClaimedComplete(tmuxLines, verdict, prFinding) {
     task_gen: currentTask.task_gen,
     status: 'working',
     summary: 'Agent printed HIVE_VERDICT: complete but no PR for this task exists; asked it once to open the PR or downgrade to no_work_needed',
+    tmux_output: tmuxLines,
+    ...progressModelFields(),
+  });
+  return true;
+}
+
+// ── A PR opened in the contributor's own fork ────────────────────────────────
+//
+// `gh pr create` without --repo takes its base repo from the clone, and a
+// clone reused across tasks can carry a default that points at the fork. The
+// prompt now names --repo; this is the relay's half for an agent that still
+// lands one there: the PR is never booked as the task's (detectPRURLs keeps
+// that rule), but the agent is told once, while it can still act, instead of
+// the task ending as if nothing shipped. Called where the agent is not
+// mid-turn: as the task would finalize (verdict or idle chrome), and as the
+// stall backstop is about to give up on a pane that has sat unchanged — the
+// shape of the chairlift case, where the agent opened the fork PR and the
+// task failed 25 minutes later on "no pane activity". Same bounds as #7862:
+// once per task, budget spent before typing, finalization held until the
+// agent re-prints a verdict or goes idle.
+function maybeRequestUpstreamPRForForkPR(paneScanLines, tmuxLines, prFinding) {
+  if (!currentTask || currentTask.kind !== 'issue') return false;
+  if (forkPRFollowUpRequested) return false;
+  if (prFinding && prFinding.url) return false;
+  const urls = detectForkPRURLs(paneScanLines, currentTask.repo, CONTRIBUTOR_LOGIN);
+  if (urls.length === 0) return false;
+
+  forkPRFollowUpRequested = true;
+  console.warn(`Task ${currentTask.task_id}: the agent's PR ${urls[0]} is in its fork, not in ${currentTask.repo} — ` +
+    `not booking it as this task's PR; asking the agent once to reopen it upstream`);
+  try {
+    tmuxSendNudge(buildForkPRFollowUpMessage(urls[0], currentTask.repo));
+  } catch (e) {
+    console.error('Failed to send the fork-PR follow-up; continuing without it:', e.message);
+    return false;
+  }
+  send({
+    type: 'task_progress',
+    seq: nextSeq(),
+    task_id: currentTask.task_id,
+    task_gen: currentTask.task_gen,
+    status: 'working',
+    summary: `Agent opened its PR in its fork (${urls[0]}), not in ${currentTask.repo}; asked it once to reopen it upstream`,
     tmux_output: tmuxLines,
     ...progressModelFields(),
   });
@@ -9544,7 +9656,8 @@ function progressTick() {
   lastTickConcernLines = new Set(reviewMarkers ? paneScanLines.filter(l => reviewMarkers.concern.test(l)) : []);
   const secondVerdictPending = !!completionVerdict && (
     (postVerdictReviewRequested && !postVerdictReviewAnswered(paneScanLines)) ||
-    (prClaimFollowUpRequested && !prClaimFollowUpAnswered(paneScanLines)));
+    (prClaimFollowUpRequested && !prClaimFollowUpAnswered(paneScanLines)) ||
+    (forkPRFollowUpRequested && !forkPRFollowUpAnswered(paneScanLines)));
 
   // Chrome-idle grace (#5376). classifyTmuxPane() saying IDLE_COMPLETE is now
   // only a hint; it must repeat across CHROME_IDLE_GRACE_TICKS ticks before it
@@ -9679,6 +9792,11 @@ function progressTick() {
     : null;
 
   // #7862: and its one chance to back a `complete` with the PR it implies.
+  // A PR opened in the agent's own fork: its one chance to reopen it upstream.
+  // Ahead of #7862, whose "no PR exists" would be the vaguer of the two.
+  if (finalizing && maybeRequestUpstreamPRForForkPR(paneScanLines, tmuxLines, prFinding)) {
+    return;
+  }
   if (verdictCompletes && maybeRequestPRForClaimedComplete(tmuxLines, completionVerdict, prFinding)) {
     return;
   }
@@ -9852,6 +9970,10 @@ function progressTick() {
     // immediately — see the comment above PANE_STALL_CONFIRM_TICKS for why a
     // single instant cannot distinguish "stuck" from "about to finish".
     if (paneStallConfirmed(tmuxLines)) {
+      // A pane frozen after the agent opened its PR in its fork is an agent
+      // waiting at its prompt, not a dead one: tell it before giving up. The
+      // typed follow-up changes the pane, which restarts the stall clock.
+      if (maybeRequestUpstreamPRForForkPR(paneScanLines, tmuxLines, null)) return;
       // The CLI may still be mid-turn on the task we are about to give up on
       // (observed live: a slow `gh pr create` returned, with a real PR link,
       // seconds after the stall verdict). Relaunch it so the NEXT task starts
@@ -10852,6 +10974,10 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getPRClaimFollowUpRequested: () => prClaimFollowUpRequested,
     PR_CLAIM_FOLLOWUP_MESSAGE,
     PR_CLAIM_FOLLOWUP_ANCHOR,
+    detectForkPRURLs,
+    buildForkPRFollowUpMessage,
+    getForkPRFollowUpRequested: () => forkPRFollowUpRequested,
+    FORK_PR_FOLLOWUP_ANCHOR,
     PR_CLAIM_PATTERN,
     tmuxSessionHasAttachedClient,
     tmuxSessionHumanPresence,

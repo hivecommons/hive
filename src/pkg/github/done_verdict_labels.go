@@ -82,3 +82,56 @@ func (c *Client) latestLabeledAt(ctx context.Context, owner, name string, number
 		opts.Page = resp.NextPage
 	}
 }
+
+// RemoveHiveLabelAddedSince takes label off the issue when the hive itself
+// (IsHiveAuthorLogin) added it at or after since: the label a contributor
+// relay applied on the task credential for the verdict the caller just
+// refused. A label a person added, one the hive added before since, or any
+// label at all when since is zero or no hive identity is configured, stays.
+// It reads the issue's events only when the issue wears the label. Returns
+// whether it removed the label.
+func (c *Client) RemoveHiveLabelAddedSince(ctx context.Context, repo string, number int, label string, since time.Time) (bool, error) {
+	if c == nil || c.client == nil || since.IsZero() || strings.TrimSpace(label) == "" {
+		return false, nil
+	}
+	owner, name := c.splitRepo(repo)
+	issue, _, err := c.client.Issues.Get(ctx, owner, name, number)
+	if err != nil {
+		return false, err
+	}
+	on := false
+	for _, l := range issue.Labels {
+		if strings.EqualFold(l.GetName(), label) {
+			on = true
+			break
+		}
+	}
+	if !on {
+		return false, nil
+	}
+	var at time.Time
+	var actor string
+	opts := &gh.ListOptions{PerPage: 100}
+	for {
+		events, resp, err := c.client.Issues.ListIssueEvents(ctx, owner, name, number, opts)
+		if err != nil {
+			return false, err
+		}
+		for _, ev := range events {
+			if ev.GetEvent() == "labeled" && strings.EqualFold(ev.GetLabel().GetName(), label) && !ev.GetCreatedAt().Time.Before(at) {
+				at, actor = ev.GetCreatedAt().Time, ev.GetActor().GetLogin()
+			}
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		opts.Page = resp.NextPage
+	}
+	if at.IsZero() || at.Before(since) || !c.IsHiveAuthorLogin(actor) {
+		return false, nil
+	}
+	if err := c.RemoveLabelsFresh(ctx, repo, number, label); err != nil { // writeback:solicited the hub refused the contributor's unverified already-done verdict
+		return false, err
+	}
+	return true, nil
+}
