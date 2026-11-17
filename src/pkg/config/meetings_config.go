@@ -220,8 +220,8 @@ type MeetingsEmailConfig struct {
 	// InvitesEnabled accepts calendar invites sent to hive@<host>
 	// (HIVE_MEETINGS_EMAIL_INVITES_ENABLED).
 	InvitesEnabled *bool `yaml:"invites_enabled,omitempty" json:"invites_enabled,omitempty"`
-	// FilesEnabled accepts Markdown, audio and image attachments as Inbox
-	// items (HIVE_MEETINGS_EMAIL_FILES_ENABLED).
+	// FilesEnabled accepts Markdown, audio, video, image and office
+	// document attachments as Inbox items (HIVE_MEETINGS_EMAIL_FILES_ENABLED).
 	FilesEnabled *bool `yaml:"files_enabled,omitempty" json:"files_enabled,omitempty"`
 }
 

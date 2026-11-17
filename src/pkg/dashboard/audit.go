@@ -136,6 +136,7 @@ var auditSensitiveActions = map[string]bool{
 	"session_upload":                        true,
 	"signed_commit_reauthored":              true,
 	"tool_approval":                         true,
+	"user_session_login_adopted":            true,
 }
 
 type auditSummary struct {

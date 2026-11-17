@@ -112,6 +112,8 @@ func (f *fakePriv) run(_ context.Context, user string, stdin io.Reader, argv ...
 			if err := os.MkdirAll(filepath.Dir(argv[4]), 0o700); err != nil {
 				return nil, err
 			}
+			// The script replaces the previous (read-only) copy.
+			_ = os.Remove(argv[4])
 			if err := os.WriteFile(argv[4], []byte(c.stdin), 0o400); err != nil {
 				return nil, err
 			}

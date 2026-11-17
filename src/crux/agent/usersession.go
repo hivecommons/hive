@@ -138,6 +138,10 @@ type UserSessionRuntime struct {
 	// bufSeq makes every paste buffer name unique, so concurrent inputs to one
 	// session cannot paste each other's text.
 	bufSeq atomic.Uint64
+	// auditSink records a login adopted from a session HOME into the shared
+	// login (usersession_login.go); guarded by auditMu. Nil is allowed.
+	auditMu   sync.Mutex
+	auditSink crux.AuditSink
 }
 
 // NewUserSessionRuntime returns a runtime that drives the real tmux binary.
