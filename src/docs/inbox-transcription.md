@@ -325,6 +325,32 @@ The Inbox polls `GET /api/inbox/transcriptions` every 3 seconds while a job
 is queued or running and redraws only that item's progress; it stops when
 nothing is busy and re-reads the Inbox once when a job finishes.
 
+## Recordings are transcribed automatically
+
+Audio the hive holds itself is transcribed as soon as it lands in the Inbox,
+whatever `mode` says, once transcription is enabled with consent: dashboard
+recordings (when they are finalized), dropped audio and video files, and
+mailed-in audio (at once from a trusted sender, otherwise when the owner
+approves it). Nobody clicks **Transcribe**; the item shows *Transcribing
+soon* until its run is queued, then the progress bar.
+
+- **Idempotent.** An item that is queued, running or done is never started
+  again, whichever hook (creation, sweep, a second click) asks.
+- **Restarts.** At boot, records the previous process left `queued` or
+  `running` become `failed` with an `interrupted: ...` reason, and the boot
+  sweep queues them again at once, together with every recording still
+  pending. A run that had started counts toward the 3-run bound (so a
+  recording that keeps crashing the hive stops being retried); one that was
+  only waiting in the queue does not.
+- **Failures** are kept on the item (`transcription.status: failed` with the
+  `reason`) and logged, and retried as described below; **Retry
+  transcription** stays available for them.
+- **Concurrency.** Runs execute in queue order, one at a time by default;
+  `HIVE_INBOX_TRANSCRIBE_CONCURRENCY` (max 8) allows more.
+
+Meetings the hive attended through Quorum arrive with Quorum's live
+transcript, so there is nothing to transcribe for them.
+
 ## Automatic transcription (auto mode)
 
 With `mode: auto`, the hive also transcribes new pending items by itself,
@@ -336,7 +362,7 @@ connector sync, right after the auto-routing rules:
 - It queues only what today's `daily_max_items` and this month's
   `monthly_budget_minutes` leave room for; items that do not fit stay
   pending, without a skip record, and are picked up once budget frees up.
-- Runs still execute one at a time. An item that is queued, running or done
+- Runs still execute in queue order (one at a time by default). An item that is queued, running or done
   is never queued again, and a recording listed twice is queued once.
 - A **failed** item is retried after 1 hour, then 2 hours, up to 3 runs in
   total. An item **skipped for budget** is retried once the UTC day turns.

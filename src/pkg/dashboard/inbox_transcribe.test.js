@@ -520,3 +520,27 @@ test('settings: gemini model round-trips', () => {
   const read = inboxReadTranscription(formRoot({ enabled: { checked: false }, gemini_model: { value: ' gemini-3.6-flash ' } }), {});
   assert.strictEqual(read.transcription.gemini_model, 'gemini-3.6-flash');
 });
+
+test('auto-transcribed items wait without asking for a click; failures keep Retry', () => {
+  const { api } = itemHarness();
+  // Not started yet: a "Transcribing soon" pill, and only a secondary "Transcribe now".
+  let out = api.inboxTranscriptionHtml({ source: 'hive-recording', id: 'r1', pending: true, transcribable: true, auto_transcribe: true }, 'hive-recording/r1');
+  assert.match(out, /data-inbox-tx-auto/);
+  assert.match(out, /Transcribing soon/);
+  assert.match(out, /🎧 Transcribe now</);
+  assert.doesNotMatch(out, /🎧 Transcribe</);
+  // Queued by the hive: the queued pill and progress, no button.
+  out = api.inboxTranscriptionHtml({ source: 'upload', id: 'u1', pending: true, auto_transcribe: true, transcription: { status: 'queued' } }, 'upload/u1');
+  assert.match(out, /Transcription queued/);
+  assert.match(out, /data-inbox-tx-progress/);
+  assert.doesNotMatch(out, /data-inbox-tx-auto|inboxTranscribe/);
+  // Failed (a restart interrupted it, or the provider failed): Retry stays.
+  out = api.inboxTranscriptionHtml({ source: 'upload', id: 'u1', pending: true, transcribable: true, auto_transcribe: true, transcription: { status: 'failed', reason: 'interrupted: the hive restarted' } }, 'upload/u1');
+  assert.match(out, /interrupted: the hive restarted/);
+  assert.match(out, /Retry transcription/);
+  assert.doesNotMatch(out, /Transcribing soon/);
+  // Blocked transcription is shown as blocked, not as waiting.
+  out = api.inboxTranscriptionHtml({ source: 'upload', id: 'u2', pending: true, auto_transcribe: true, transcribe_unavailable: 'disabled' }, 'upload/u2');
+  assert.doesNotMatch(out, /Transcribing soon/);
+  assert.match(out, /Transcription is off/);
+});

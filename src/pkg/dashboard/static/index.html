@@ -48067,7 +48067,10 @@ function burnAreaChart() {
       // transcribed yet" line would contradict the transcript shown below.
       const hasText = !!(it.has_transcript || (it.transcription && it.transcription.status === 'done') || (cached && (cached.transcript || cached.summary)));
       if (!hasText && (it.pending || (cached && cached.pending))) {
-        const tx = it.transcribable && !it.transcribe_unavailable ? ' Hive can transcribe this: click 🎧 Transcribe.'
+        // Auto-transcribed items (the hive's own recordings, dropped and
+        // mailed-in audio, auto-mode sources) need no click.
+        const tx = it.auto_transcribe && !it.transcribe_unavailable ? ' Hive transcribes this automatically; the transcript appears here when it is ready.'
+          : it.transcribable && !it.transcribe_unavailable ? ' Hive can transcribe this: click 🎧 Transcribe.'
           : (it.transcribe_unavailable ? ' Hive can transcribe this once transcription is set up (see 🎧 Transcribe below).' : '');
         // Meeting platforms whose pending items read "<label> has no transcript"
         // (inline so the extracted function stays self-contained in tests).
@@ -48181,6 +48184,11 @@ function burnAreaChart() {
           (busy ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> ' : '') + escapeHtml(label) + '</span>';
         if (st.reason && (st.status === 'failed' || st.status === 'skipped')) html += ' <span class="muted-xs inbox-tx-reason" role="alert">' + escapeHtml(st.reason) + '</span>';
         if (busy) html += inboxTxProgressHtml(st, undefined, inboxIntentThen(it));
+      } else if (it.auto_transcribe && !it.transcribe_unavailable) {
+        // Not started yet: the hive queues it on its own (at once, or at
+        // its next sweep), so this reads as waiting, not as a to-do.
+        html += '<span class="kc-pill" data-status="syncing" data-inbox-tx-auto title="This hive transcribes this recording automatically; no click is needed">' +
+          '<span class="inbox-tx-spinner" aria-hidden="true"></span> Transcribing soon</span>';
       }
       const why = inboxTxUnavailableText(it.transcribe_unavailable);
       if (why) {
@@ -48194,7 +48202,7 @@ function burnAreaChart() {
         const retry = st && (st.status === 'failed' || st.status === 'skipped');
         html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-transcribe" data-action="inboxTranscribe" data-arg0="' + src + '" data-arg1="' + id + '"' + (inflight ? ' disabled aria-busy="true"' : '') +
           ' title="Have this hive transcribe the recording with the provider in Inbox ⚙ → Transcription; the transcript is kept on this hive only">' +
-          (inflight ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> Sending…' : (retry ? '🎧 Retry transcription' : '🎧 Transcribe')) + '</button>';
+          (inflight ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> Sending…' : (retry ? '🎧 Retry transcription' : (it.auto_transcribe ? '🎧 Transcribe now' : '🎧 Transcribe'))) + '</button>';
       }
       return html ? '<div class="inbox-tx" data-inbox-tx-slot="' + escapeHtml(key || '') + '">' + html + '</div>' : '';
     }
@@ -50580,9 +50588,25 @@ function burnAreaChart() {
         (m.voice_enabled && !m.voice_capable ? '<div class="muted-xs">joined without voice; replies go to chat</div>' : '') +
         '</div><div class="meetings-row-actions">' +
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +
-        (active ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsToggleVoice" data-arg0="' + escapeHtml(m.id) + '" data-arg1="' + (m.voice_enabled ? 'false' : 'true') + '">' + (m.voice_enabled ? 'Voice on' : 'Voice off') + '</button>' +
+        (active ? meetingsVoiceToggleHtml(m) +
           '<button type="button" class="hv-btn btn-danger btn-sm" data-action="meetingsLeave" data-arg0="' + escapeHtml(m.id) + '">Leave</button>' : '') +
         meetingsDeleteButtonHtml(m) + '</div></div>';
+    }
+
+    // meetingsVoiceToggleHtml: the card's voice control names the action it
+    // takes ("Turn voice off" while voice is on), never the current state
+    // alone: a "Voice on" button that turned voice off read as the control
+    // to switch it on, and an operator who had ticked Voice at join turned
+    // it off by clicking it. aria-pressed and the title carry the state.
+    function meetingsVoiceToggleHtml(m) {
+      const on = !!(m && m.voice_enabled);
+      const label = on ? 'Turn voice off' : 'Turn voice on';
+      const title = on
+        ? 'Voice replies are on: she answers out loud when addressed. Click to answer in chat only.'
+        : 'Voice replies are off: she answers in chat. Click to let her answer out loud when addressed.';
+      return '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsToggleVoice" data-arg0="' + escapeHtml((m && m.id) || '') +
+        '" data-arg1="' + (on ? 'false' : 'true') + '" aria-pressed="' + (on ? 'true' : 'false') + '" title="' + escapeHtml(title) + '">' +
+        (on ? '🔊 ' : '🔇 ') + label + '</button>';
     }
 
     // meetingsCanDelete: a meeting in a final state, or a platform join
@@ -51359,12 +51383,15 @@ function burnAreaChart() {
     }
 
     // maRenderIntro fills the intro placeholders the way the server does
-    // (ResolvedMeetingsPersona.Intro).
+    // (ResolvedMeetingsPersona.Intro): the persona never states pronouns,
+    // so {pronouns} renders empty and a pronoun parenthetical is dropped.
     function maRenderIntro(f) {
       const leave = (f.leave_phrases || [])[0] || '';
-      const subs = { '{name}': f.name, '{display_name}': f.display_name, '{pronouns}': f.pronouns, '{leave}': leave,
+      const subs = { '{name}': f.name, '{display_name}': f.display_name, '{pronouns}': '', '{leave}': leave,
         '{accent}': f.accent, '{voice_type}': f.voice_type, '{language}': f.language };
-      return String(f.intro_template || '').replace(/\{(name|display_name|pronouns|leave|accent|voice_type|language)\}/g, m => subs[m] || '');
+      return String(f.intro_template || '').replace(/\{(name|display_name|pronouns|leave|accent|voice_type|language)\}/g, m => subs[m] || '')
+        .replace(/\s*[(（]\s*(?:(?:she|he|they|xe|ze|it|any|ella|elle|lei|ela|il|er|sie)\s*(?:\/\s*[A-Za-z\u00C0-\u024F]+\s*){0,2})?[)）]/gi, '')
+        .replace(/\s+([.,;:!?。，、])/g, '$1');
     }
 
     function renderGovMeetingAttendee() {

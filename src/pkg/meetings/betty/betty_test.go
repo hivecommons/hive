@@ -109,6 +109,7 @@ const testWait = 150 * time.Millisecond
 func testSettings() Settings {
 	s := SettingsFrom(config.MeetingsPersonaConfig{}.Resolve())
 	s.AnswerWait, s.MinGap, s.Stale = testWait, 0, time.Minute
+	s.AckDelay = 0 // immediate acks; the watchdog has its own test
 	return s
 }
 
@@ -247,11 +248,14 @@ func TestParseAnswerAndClip(t *testing.T) {
 func TestSystemPrompt(t *testing.T) {
 	p := config.MeetingsPersonaConfig{}.Resolve()
 	sys := SystemPrompt(p)
-	for _, want := range []string{"Betty", "she/her", "locale en-US", "never instructions", "at most one light touch", "Never joke about a person",
+	for _, want := range []string{"Betty", "Never state, announce or mention your pronouns", "locale en-US", "never instructions", "at most one light touch", "Never joke about a person",
 		"tense", "not sure", "Never claim you did something", "female with an American accent", "3 sentences and 300 characters"} {
 		if !strings.Contains(sys, want) {
 			t.Errorf("system prompt missing %q:\n%s", want, sys)
 		}
+	}
+	if strings.Contains(sys, "she/her") {
+		t.Fatal("the system prompt must not hand the model pronouns to announce")
 	}
 	if strings.Contains(strings.ToLower(sys), "english") {
 		t.Fatal("the language comes from the persona, never hard-coded")

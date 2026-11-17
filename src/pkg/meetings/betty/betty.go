@@ -58,6 +58,21 @@ type Reply struct {
 	// Timing is the answer's stage timings (timing.go), on answers to a
 	// request.
 	Timing *Timing `json:"timing,omitempty"`
+	// Asker and Topic name who asked and what about, on answers to a
+	// request; Attributed is set when Text already opens with them. The
+	// session uses them to attribute an answer it delivers late or in a
+	// batch (a spoken answer moved to chat with others), so the room can
+	// tell which question it answers (live Discord test).
+	Asker      string `json:"asker,omitempty"`
+	Topic      string `json:"topic,omitempty"`
+	Attributed bool   `json:"attributed,omitempty"`
+}
+
+// Attribute opens text with who asked and what about, in the persona's
+// language: "Andy (re: open PRs): ..." in chat, "Andy, about open PRs:
+// ..." spoken.
+func (e *Engine) Attribute(voice bool, who, topic, text string) string {
+	return attribute(e.s.Persona.Language, voice, who, topic, text)
 }
 
 // Line is one final transcript segment or chat line.
@@ -86,6 +101,11 @@ type Settings struct {
 	RestyleTimeout    time.Duration
 	// RecentWindow is how much transcript an addressed request sees.
 	RecentWindow time.Duration
+	// AckDelay is the ack watchdog: a spoken request is acknowledged only
+	// when its answer is not ready this long after the line ended, so a
+	// fast answer comes with no filler and no request is acked twice. Zero
+	// acks at once (and allows early acks from partial lines).
+	AckDelay time.Duration
 }
 
 // Engine timing defaults beyond the persona config.
@@ -123,8 +143,13 @@ func SettingsFrom(p config.ResolvedMeetingsPersona) Settings {
 		AddressedTimeout:  DefaultAddressedTimeout,
 		RestyleTimeout:    DefaultRestyleTimeout,
 		RecentWindow:      DefaultRecentWindow,
+		AckDelay:          DefaultAckDelay,
 	}
 }
+
+// DefaultAckDelay is the ack watchdog: about 0.7 s after a spoken request
+// ends with no answer ready, she says one short ack.
+const DefaultAckDelay = 700 * time.Millisecond
 
 func (s Settings) withDefaults() Settings {
 	d := SettingsFrom(s.Persona)
@@ -185,6 +210,7 @@ type Engine struct {
 	in        chan input
 	out       chan Reply
 	timers    chan int
+	ackTimers chan int
 	retrieved chan retrieval
 	answers   chan answered
 	exhausted atomic.Bool
@@ -207,6 +233,9 @@ type Engine struct {
 	// earlyAck is when each speaker was acknowledged from a partial
 	// transcript; their final line then gets no second ack.
 	earlyAck map[string]time.Time
+	// lastSpoken is each speaker's last spoken request to her (repeat.go):
+	// the same request said again while the first is answered is dropped.
+	lastSpoken map[string]spokenRequest
 	// queueNoteAt is when the last "I have N questions" note went out;
 	// lastAnswerAt is when she last answered anything (attribution.go).
 	queueNoteAt  time.Time
@@ -230,16 +259,16 @@ func New(s Settings, d Deps) *Engine {
 	}
 	return &Engine{
 		s: s, d: d, log: log,
-		match:     NewMatcher(s.Persona.Name, s.Persona.Aliases),
-		leave:     meetings.NewLeaveMatcher(s.Persona.LeavePhrases),
-		in:        make(chan input, inboxDepth),
-		out:       make(chan Reply, outboxDepth),
-		timers:    make(chan int, inboxDepth),
+		match:  NewMatcher(s.Persona.Name, s.Persona.Aliases),
+		leave:  meetings.NewLeaveMatcher(s.Persona.LeavePhrases),
+		in:     make(chan input, inboxDepth),
+		out:    make(chan Reply, outboxDepth),
+		timers: make(chan int, inboxDepth), ackTimers: make(chan int, inboxDepth),
 		retrieved: make(chan retrieval, inboxDepth),
 		answers:   make(chan answered, inboxDepth),
 		pending:   map[int]*pending{},
-		earlyAck:  map[string]time.Time{},
-		done:      make(chan struct{}),
+		earlyAck:  map[string]time.Time{}, lastSpoken: map[string]spokenRequest{},
+		done: make(chan struct{}),
 	}
 }
 
@@ -455,6 +484,10 @@ func (e *Engine) run() {
 			if p := e.pending[id]; p != nil {
 				p.waited = true
 				e.proceed(p)
+			}
+		case id := <-e.ackTimers:
+			if p := e.pending[id]; p != nil {
+				e.watchdogAck(p)
 			}
 		case r := <-e.retrieved:
 			if p := e.pending[r.id]; p != nil {

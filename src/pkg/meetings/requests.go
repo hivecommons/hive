@@ -154,7 +154,10 @@ func (m *Manager) ApproveRequest(ctx context.Context, id string, voice bool) (Me
 		if res.MeetingID != "" {
 			x.NativeID = res.MeetingID
 		}
-		x.VoiceEnabled, x.VoiceCapable = voice, capable
+		// A platform-initiated join (Discord `/hive join`, auto-approved
+		// or approved in the dashboard) talks by default whenever the bot
+		// can speak; the owner can still turn voice off for the meeting.
+		x.VoiceEnabled, x.VoiceCapable = voice || capable, capable
 		x.State, x.StateReason = StateJoining, ""
 		if knownStates[res.State] && res.State != StateRequested {
 			x.State = res.State

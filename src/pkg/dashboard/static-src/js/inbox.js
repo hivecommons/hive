@@ -129,7 +129,10 @@
       // transcribed yet" line would contradict the transcript shown below.
       const hasText = !!(it.has_transcript || (it.transcription && it.transcription.status === 'done') || (cached && (cached.transcript || cached.summary)));
       if (!hasText && (it.pending || (cached && cached.pending))) {
-        const tx = it.transcribable && !it.transcribe_unavailable ? ' Hive can transcribe this: click 🎧 Transcribe.'
+        // Auto-transcribed items (the hive's own recordings, dropped and
+        // mailed-in audio, auto-mode sources) need no click.
+        const tx = it.auto_transcribe && !it.transcribe_unavailable ? ' Hive transcribes this automatically; the transcript appears here when it is ready.'
+          : it.transcribable && !it.transcribe_unavailable ? ' Hive can transcribe this: click 🎧 Transcribe.'
           : (it.transcribe_unavailable ? ' Hive can transcribe this once transcription is set up (see 🎧 Transcribe below).' : '');
         // Meeting platforms whose pending items read "<label> has no transcript"
         // (inline so the extracted function stays self-contained in tests).
@@ -243,6 +246,11 @@
           (busy ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> ' : '') + escapeHtml(label) + '</span>';
         if (st.reason && (st.status === 'failed' || st.status === 'skipped')) html += ' <span class="muted-xs inbox-tx-reason" role="alert">' + escapeHtml(st.reason) + '</span>';
         if (busy) html += inboxTxProgressHtml(st, undefined, inboxIntentThen(it));
+      } else if (it.auto_transcribe && !it.transcribe_unavailable) {
+        // Not started yet: the hive queues it on its own (at once, or at
+        // its next sweep), so this reads as waiting, not as a to-do.
+        html += '<span class="kc-pill" data-status="syncing" data-inbox-tx-auto title="This hive transcribes this recording automatically; no click is needed">' +
+          '<span class="inbox-tx-spinner" aria-hidden="true"></span> Transcribing soon</span>';
       }
       const why = inboxTxUnavailableText(it.transcribe_unavailable);
       if (why) {
@@ -256,7 +264,7 @@
         const retry = st && (st.status === 'failed' || st.status === 'skipped');
         html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-transcribe" data-action="inboxTranscribe" data-arg0="' + src + '" data-arg1="' + id + '"' + (inflight ? ' disabled aria-busy="true"' : '') +
           ' title="Have this hive transcribe the recording with the provider in Inbox ⚙ → Transcription; the transcript is kept on this hive only">' +
-          (inflight ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> Sending…' : (retry ? '🎧 Retry transcription' : '🎧 Transcribe')) + '</button>';
+          (inflight ? '<span class="inbox-tx-spinner" aria-hidden="true"></span> Sending…' : (retry ? '🎧 Retry transcription' : (it.auto_transcribe ? '🎧 Transcribe now' : '🎧 Transcribe'))) + '</button>';
       }
       return html ? '<div class="inbox-tx" data-inbox-tx-slot="' + escapeHtml(key || '') + '">' + html + '</div>' : '';
     }

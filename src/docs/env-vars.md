@@ -151,6 +151,7 @@ behavior. [Maintenance limitations](#keeping-this-reference-current) still apply
 | `HIVE_PDF_RUN_AS` | No | `hive-transcribe` | The uid the PDF sandbox runs as through su-exec; `self` runs it as the hive's own uid (development only). |
 | `HIVE_PDF_MEMORY_MB` | No | `1024` | Address-space limit (prlimit `--as`) of the PDF sandbox, in MiB. |
 | `HIVE_INBOX_TRANSCRIPTION_DAILY_MAX_ITEMS` | No | `20` | Overrides `inbox.transcription.daily_max_items`: transcription runs per UTC day. |
+| `HIVE_INBOX_TRANSCRIBE_CONCURRENCY` | No | `1` | How many Inbox transcriptions run at once (capped at 8); queued runs wait for a free slot. Keep `1` with whisper, which decodes on the hive's own CPU ([inbox-transcription.md](inbox-transcription.md)). |
 | `GEMINI_API_KEY` / `GOOGLE_API_KEY` / `GOOGLE_GENAI_API_KEY` | No | none | The hive's own Gemini API key, read in this order. Gemini model discovery already uses it; Inbox transcription with `inbox.transcription.provider: gemini` (or `auto` when whisper is unavailable) sends recordings to the Gemini API with it, in the `x-goog-api-key` header. Never stored in `hive.yaml`, never shown ([inbox-transcription.md](inbox-transcription.md)). |
 | `HIVE_WHISPER_MODEL_DIR` | No | `/data/models/whisper` | Where the built-in whisper provider keeps its ggml model (`ggml-<model>.bin`, mode 0644). Air-gapped hives pre-seed the file here; it is checked against its pinned size and SHA-256 before use ([inbox-transcription.md](inbox-transcription.md)). |
 | `HIVE_WHISPER_MODEL_DOWNLOAD` | No | `true` | `false` stops the hive from downloading a missing whisper model (air-gapped hives); whisper then reports *not ready* until the file is pre-seeded. |
@@ -430,12 +431,12 @@ Hive as a live meeting participant ([#18284](https://github.com/hivecommons/hive
 | `HIVE_MEETINGS_PERSONA_NAME` | No | `Betty` | Name the persona answers to and uses for itself. |
 | `HIVE_MEETINGS_PERSONA_DISPLAY_NAME` | No | `Betty Bee from the hive` | Meeting display name; the default bot name. At most 64 characters. |
 | `HIVE_MEETINGS_PERSONA_ALIASES` | No | `betty,betty bee,hive` | Comma-separated names that address the persona at the start or end of a line. |
-| `HIVE_MEETINGS_PERSONA_PRONOUNS` | No | `she/her` | Pronouns used in the intro and self-description only. |
+| `HIVE_MEETINGS_PERSONA_PRONOUNS` | No | `she/her` | Kept for compatibility; the persona never states pronouns. |
 | `HIVE_MEETINGS_PERSONA_LANGUAGE` | No | `en-US` | BCP-47 tag; replies use its language and regional conventions. |
 | `HIVE_MEETINGS_PERSONA_VOICE` | No | `af_heart` | TTS voice id for spoken replies (a Kokoro voice id), passed to Quorum as `QUORUM_TTS_VOICE` and as `voice_id` on `meeting.join`. |
 | `HIVE_MEETINGS_PERSONA_VOICE_TYPE` | No | `female` | `female`, `male` or `bot`; descriptive only. |
 | `HIVE_MEETINGS_PERSONA_ACCENT` | No | `American` | Free text; descriptive only. |
-| `HIVE_MEETINGS_PERSONA_INTRO_TEMPLATE` | No | the preset's intro | Intro posted when someone asks the persona to introduce itself. Placeholders `{name}`, `{display_name}`, `{pronouns}`, `{leave}`, `{accent}`, `{voice_type}`, `{language}`. |
+| `HIVE_MEETINGS_PERSONA_INTRO_TEMPLATE` | No | the preset's intro | Intro posted when someone asks the persona to introduce itself. Placeholders `{name}`, `{display_name}`, `{pronouns}` (always empty), `{leave}`, `{accent}`, `{voice_type}`, `{language}`. |
 | `HIVE_MEETINGS_PERSONA_LEAVE_PHRASES` | No | `betty leave,hive leave` | Comma-separated phrases that remove the persona from the meeting. |
 | `HIVE_MEETINGS_PERSONA_HUMOR` | No | `light` | `light` (at most one light touch, never about a person) or `off`. |
 | `HIVE_MEETINGS_PERSONA_SEARXNG_URL` | No | none | SearXNG instance the persona searches the web with (`GET /search?format=json`, 1.2 s timeout, top 3 results as untrusted data). In-cluster on hive-oke: `http://searxng.meetings.svc.cluster.local:8080`. Empty means no web search. |
