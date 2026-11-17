@@ -75,6 +75,51 @@ type WallModelStats struct {
 	Runs            int     `json:"runs"`
 	VerifiedPRShare float64 `json:"verified_pr_share"`
 	FailureRate     float64 `json:"failure_rate"`
+	// Abandoned, Scenarios and FailureKinds (#18721) say WHY a model's runs
+	// ended as they did, from data the run log already holds. Scenarios uses
+	// deriveScenario's closed vocabulary — the same keys as run-stats'
+	// backends[].scenarios — and sums to Runs. FailureKinds splits the runs
+	// behind FailureRate (outcome "failed" only) and sums to that count;
+	// abandonments stay out of it exactly as they stay out of FailureRate.
+	Abandoned    int                   `json:"abandoned"`
+	Scenarios    map[string]int        `json:"scenarios"`
+	FailureKinds WallModelFailureKinds `json:"failure_kinds"`
+}
+
+// WallModelFailureKinds counts a model's failed runs by the failure kind the
+// relay reported: the contributor's runtime (environment), the work itself
+// (task), or no usable kind (unspecified, an older relay).
+type WallModelFailureKinds struct {
+	Environment int `json:"environment"`
+	Task        int `json:"task"`
+	Unspecified int `json:"unspecified"`
+}
+
+// addRunCause books one run's scenario (and, for a failed run, its failure
+// kind) onto the model's split (#18721). A record written before the scenario
+// field existed is classified the same way appendTaskRun would have.
+func (m *WallModelStats) addRunCause(rec TaskRunRecord) {
+	sc := rec.Scenario
+	if sc == "" {
+		sc = deriveScenario(rec.Outcome, rec.CompletionSignal, rec.FailureKind, rec.AbandonCause)
+	}
+	if m.Scenarios == nil {
+		m.Scenarios = map[string]int{}
+	}
+	m.Scenarios[sc]++
+	switch rec.Outcome {
+	case outcomeAbandoned:
+		m.Abandoned++
+	case outcomeFailed:
+		switch sc {
+		case scenarioEnvFailure:
+			m.FailureKinds.Environment++
+		case scenarioTaskFailure:
+			m.FailureKinds.Task++
+		default:
+			m.FailureKinds.Unspecified++
+		}
+	}
 }
 
 type wallContext struct {
@@ -620,6 +665,7 @@ func readTaskRunModelStats(path string, window time.Duration) (map[string]WallMo
 			by[key] = a
 		}
 		a.Runs++
+		a.addRunCause(rec)
 		if rec.PRVerified {
 			a.verified++
 		}
