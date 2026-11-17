@@ -156,7 +156,15 @@ func TestPlatformJoinRequests(t *testing.T) {
 	if _, err := m.ApproveRequest(context.Background(), third.ID, false); err == nil {
 		t.Fatal("want the join error")
 	}
+	// The failed approval keeps the request open and names why.
+	if x, _ := m.Get(third.ID); x.State != StateRequested || x.StateReason != "join failed" {
+		t.Fatalf("after a failed approve = %+v", x)
+	}
 	q.joinErr = nil
+	q.joinRes = JoinResult{MeetingID: "q-d3", State: StateJoining}
+	if x, err := m.ApproveRequest(context.Background(), third.ID, false); err != nil || x.State != StateJoining || x.StateReason != "" {
+		t.Fatalf("retried approve = %+v, %v", x, err)
+	}
 
 	// A snapshot-only request (no requester) is still recorded.
 	all <- Event{Type: EventState, MeetingID: "q-d5", State: StateRequested, GuildID: "g5", ChannelID: "c5"}

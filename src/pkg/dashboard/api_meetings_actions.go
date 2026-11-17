@@ -74,12 +74,12 @@ func (s *Server) registerMeetingsActionsRoutes() {
 	s.mux.HandleFunc("POST /api/meetings/actions/{aid}/reject", s.meetingsActionAct(MeetingActionReject))
 }
 
-func meetingsActionsError(w http.ResponseWriter, err error) {
+func (s *Server) meetingsActionsError(w http.ResponseWriter, r *http.Request, err error) {
 	if errors.Is(err, ErrMeetingActionsDisabled) {
-		jsonError(w, err.Error(), http.StatusConflict)
+		s.writeMeetingsError(w, r, err, http.StatusConflict)
 		return
 	}
-	meetingsError(w, err)
+	s.meetingsError(w, r, err)
 }
 
 // handleMeetingsActionsList is the "Drafts from meetings" list.
@@ -93,7 +93,7 @@ func (s *Server) handleMeetingsActionsList(w http.ResponseWriter, r *http.Reques
 	}
 	out, err := svc.List()
 	if err != nil {
-		meetingsActionsError(w, err)
+		s.meetingsActionsError(w, r, err)
 		return
 	}
 	jsonResponse(w, out)
@@ -115,7 +115,7 @@ func (s *Server) handleMeetingsActionEdit(w http.ResponseWriter, r *http.Request
 	id := r.PathValue("aid")
 	out, err := svc.Edit(r.Context(), id, req, strings.TrimSpace(r.Header.Get("X-Hive-User")))
 	if err != nil {
-		meetingsActionsError(w, err)
+		s.meetingsActionsError(w, r, err)
 		return
 	}
 	s.auditFromRequest(r, "meeting_action_edit", auditDetail("draft", id), "")
@@ -137,7 +137,7 @@ func (s *Server) meetingsActionAct(action string) http.HandlerFunc {
 		id := r.PathValue("aid")
 		out, err := svc.Act(r.Context(), id, action, strings.TrimSpace(r.Header.Get("X-Hive-User")))
 		if err != nil {
-			meetingsActionsError(w, err)
+			s.meetingsActionsError(w, r, err)
 			return
 		}
 		s.auditFromRequest(r, "meeting_action_"+action, auditDetail("draft", id), "")
