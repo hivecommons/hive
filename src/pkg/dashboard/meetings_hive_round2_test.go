@@ -201,10 +201,10 @@ func TestHiveStatusFreshness(t *testing.T) {
 	}
 }
 
-// fakeForgeOpen is the forge cache's open-items snapshot for one repo.
-type fakeForgeOpen map[string]forgestate.Snapshot
+// fakeForgeItems is the forge cache's open-items snapshot per repo.
+type fakeForgeItems map[string]forgestate.Snapshot
 
-func (f fakeForgeOpen) Snapshot(repo string) (forgestate.Snapshot, bool) {
+func (f fakeForgeItems) Snapshot(repo string) (forgestate.Snapshot, bool) {
 	snap, ok := f[repo]
 	return snap, ok
 }
@@ -222,7 +222,7 @@ func TestHiveItemBriefCarriesSummaryStateReviewCI(t *testing.T) {
 		CreatedAt: time.Now().Add(-3 * time.Hour)}
 	verdict := &github.MergeVerdict{State: github.MergeVerdictBlocked, Reason: "required check go-test is failing"}
 	mc := &MetricsCollector{}
-	mc.forgeCounts = forgestate.NewCounts(forgestate.CountsOptions{Open: fakeForgeOpen{
+	mc.forgeCounts = forgestate.NewCounts(forgestate.CountsOptions{Open: fakeForgeItems{
 		"hivecommons/hive": {Repo: "hivecommons/hive", Ready: true, PRs: map[int]forgestate.Item{number: {Number: number, Body: body}},
 			Issues: map[int]forgestate.Item{12: {Number: 12, Body: "Held issue body from the cache."}}},
 	}})
