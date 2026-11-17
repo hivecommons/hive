@@ -143,7 +143,7 @@ class NativeQueueWorkflows(unittest.TestCase):
             self.assertNotIn("docker", str(step.get("run", "")) + str(step.get("uses", "")))
         self.assertNotIn("env", job)
         checkout = next(s for s in job["steps"] if str(s.get("uses", "")).startswith("actions/checkout@"))
-        # pull_request_target: github.sha is the base tip, never PR code.
+        # pull_request_target: github.sha is the default-branch tip, never PR code.
         self.assertEqual(checkout["with"]["ref"], "${{ github.sha }}")
         self.assertFalse(checkout["with"]["persist-credentials"])
         script = (ROOT / ".github/scripts/pr-verifier.cjs").read_text()
