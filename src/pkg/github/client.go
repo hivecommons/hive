@@ -4466,6 +4466,39 @@ func (c *Client) GetFileContentRef(ctx context.Context, owner, repo, path, ref s
 	return content, nil
 }
 
+// ListDirectoryFiles returns the names of the regular files directly inside
+// the directory at path in owner/repo at an optional git ref (an empty ref uses
+// the default branch). Subdirectories, symlinks and submodules are skipped. A
+// 404 means the directory does not exist and is reported as (nil, nil), so a
+// caller can tell "no such directory" apart from a failed read. It backs the
+// repo agent discovery scan of .hive/agents/ (hivecommons/hive#18491).
+func (c *Client) ListDirectoryFiles(ctx context.Context, owner, repo, path, ref string) ([]string, error) {
+	if c == nil {
+		return nil, ErrNoGitHubClient
+	}
+	var opts *gh.RepositoryContentGetOptions
+	if ref != "" {
+		opts = &gh.RepositoryContentGetOptions{Ref: ref}
+	}
+	fileContent, dirContent, resp, err := c.client.Repositories.GetContents(ctx, owner, repo, path, opts)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("listing %s/%s/%s: %w", owner, repo, path, err)
+	}
+	if fileContent != nil {
+		return nil, fmt.Errorf("%s/%s/%s is a file, not a directory", owner, repo, path)
+	}
+	names := make([]string, 0, len(dirContent))
+	for _, entry := range dirContent {
+		if entry.GetType() == "file" && entry.GetName() != "" {
+			names = append(names, entry.GetName())
+		}
+	}
+	return names, nil
+}
+
 // PathExistsAtRef reports whether path exists in owner/repo at the given git ref
 // (branch, tag, or commit SHA). It is used by the advisory digest to verify that
 // a finding's file reference still exists at the pinned analysis commit (#3704),

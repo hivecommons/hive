@@ -561,6 +561,9 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	// api_config_prompt_sources.go).
 	s.mux.HandleFunc("GET /api/config/prompt-sources", s.handlePromptSourcesGet)
 	s.mux.HandleFunc("PUT /api/config/prompt-sources/owner-repos", s.handlePromptSourcesOwnerRepoPut)
+	// Agents discovered in managed repos' .hive/agents/ (#18491,
+	// api_repo_agents.go): list, approve, reject, rescan.
+	s.registerRepoAgentRoutes()
 }
 
 var (

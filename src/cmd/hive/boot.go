@@ -39,6 +39,7 @@ import (
 	"github.com/hivecommons/hive/pkg/priorart"
 	"github.com/hivecommons/hive/pkg/promptsrc"
 	"github.com/hivecommons/hive/pkg/questionclose"
+	"github.com/hivecommons/hive/pkg/repoagents"
 	"github.com/hivecommons/hive/pkg/retro"
 	"github.com/hivecommons/hive/pkg/review/eventdispatch"
 	"github.com/hivecommons/hive/pkg/rotation"
@@ -197,6 +198,7 @@ type boot struct {
 	promptFetcher              promptsrc.Fetcher
 	defFetcher                 defsrc.Fetcher
 	definitionResolver         *defsrc.Resolver
+	repoAgents                 *repoagents.Discoverer // #18491; nil without a GitHub client
 	perspectivesResolver       *perspsrc.Resolver
 	pendingTokenSeed           []dashboard.TokenSparklineEntry
 	pendingFactSeed            []dashboard.FactHistoryEntry

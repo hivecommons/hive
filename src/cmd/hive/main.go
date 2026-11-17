@@ -1342,6 +1342,7 @@ func (b *boot) wireBootClosures() {
 			RemergeDerivedReferenceRepos: b.remergeLastDerivedReferenceRepos,
 			OwnerIdentity:                b.ownerIdentityStore(),
 			OwnerIdentityChanged:         b.ownerIdentityChanged,
+			RepoAgents:                   b.repoAgents,
 			ReviewConfigApplied: func(rc config.ReviewConfig) {
 				if b.ghClient == nil {
 					return
@@ -3554,6 +3555,9 @@ func (b *boot) bootDashboardAPI() { b.bootDashboardAPIWith(defaultBootDashboardA
 // bootDashboardAPIWith is bootDashboardAPI with its long-lived effects
 // injected; see bootDashboardAPIDeps.
 func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
+	// Before the dependencies are built, so the dashboard's approval queue
+	// for repo-declared agents sees the discoverer (#18491).
+	b.wireRepoAgentDiscovery()
 	deps.registerAPI(b.dashSrv, b.dashboardDependencies())
 	// The hive's own unblock (blocked sweep, review-backlog block lift)
 	// re-reads the issue into the cached snapshot and the Activity Monitor
