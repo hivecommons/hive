@@ -990,6 +990,10 @@ func runEvalCycle(
 		}()
 	}
 	kickActionable = dashSrv.IntegrationKickAdmission(kickActionable)
+	// A workflow-model state handed to an agent profile is that profile's
+	// work, not the generic lanes' (cncf/techdocs#395): withhold it here,
+	// before the cache every kick (manual ones included) is built from.
+	kickActionable = withholdWorkflowOwnedForKicks(cfg, ghClient, kickActionable, logger)
 
 	sched.SetLastActionable(kickActionable)
 	// The filter compacts agentsDue in place, so snapshot it first to report
@@ -1040,6 +1044,20 @@ func runEvalCycle(
 		messages = append(messages, scheduler.KickMessage{Agent: k.Agent, Message: k.Message, IssueRefs: []string{k.PRRef}})
 		reviewKickByMessage[k.Agent+"\x00"+k.Message] = k
 	}
+	// Workflow-model hand-offs (cncf/techdocs#395): each owned item is
+	// claimed for the agent that fills its profile, then kicked once; the
+	// durable record is written on delivery. They go ahead of the
+	// governor kicks: a lane takes one kick per pass, and an agent kicked
+	// every cycle would otherwise defer its hand-off forever.
+	workflowKickByMessage := map[string]workflowDispatchKick{}
+	var workflowMessages []scheduler.KickMessage
+	for _, k := range planWorkflowDispatchKicks(ctx, cfg, ghClient, actionable, dashSrv.IssueClaims(), func(agent string) bool {
+		return gov.AgentEligibleForCELKick(agent) && !agentMgr.IsPaused(agent)
+	}, logger) {
+		workflowMessages = append(workflowMessages, k.Message)
+		workflowKickByMessage[workflowDispatchKickKey(k.Message)] = k
+	}
+	messages = append(workflowMessages, messages...)
 	// A fix kick (a maintainer's changes_requested / `/hive decision`, or
 	// the swarm's) goes ahead of the governor kick for the same agent, or
 	// the governor kick owns the agent and the fix kick times out every
@@ -1234,8 +1252,16 @@ func runEvalCycle(
 					persistReviewDispatchStateInProgress(reviewPlan, deliveredReviewKicks, logger)
 				}
 			},
-			onDeferred: fixQueue.Deferred,
+			onDeferred: func(msg scheduler.KickMessage) {
+				if k, ok := workflowKickByMessage[workflowDispatchKickKey(msg)]; ok {
+					releaseWorkflowDispatch(k)
+				}
+				fixQueue.Deferred(msg)
+			},
 			onFailed: func(msg scheduler.KickMessage, err error) {
+				if k, ok := workflowKickByMessage[workflowDispatchKickKey(msg)]; ok {
+					releaseWorkflowDispatch(k)
+				}
 				gov.RecordKickFailure(msg.Agent, err, time.Now())
 				if k, ok := reviewKickByMessage[reviewKickKey(msg)]; ok {
 					logUndeliveredReviewKick(logger, dashSrv, k, err)
@@ -1251,6 +1277,10 @@ func runEvalCycle(
 				}
 				gov.RecordKickForRepoAt(msg.Agent, msg.Repo, deliveredAt)
 				dashSrv.AuditLog("governor", "kick", "trigger=governor-eval", msg.Agent)
+				if k, ok := workflowKickByMessage[workflowDispatchKickKey(msg)]; ok {
+					recordWorkflowDispatchDelivered(cfg, k, deliveredAt, logger)
+					dashSrv.AuditLog("governor", "workflow-dispatch", "item="+k.Entry.Ref+" profile="+k.Entry.Profile+" state="+k.Entry.State, msg.Agent)
+				}
 
 				// Record issue-scoped kicks into the lifecycle timeline. Cheap,
 				// guarded, and nil-safe (Record no-ops on a nil dashboard/store).

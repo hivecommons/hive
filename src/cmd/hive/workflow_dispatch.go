@@ -1,0 +1,306 @@
+package main
+
+import (
+	"context"
+	"log/slog"
+	"path/filepath"
+	"sync"
+	"time"
+
+	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/github"
+	"github.com/hivecommons/hive/pkg/scheduler"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
+	wfstore "github.com/hivecommons/hive/pkg/workflowmodel/store"
+)
+
+// Workflow-model agent dispatch, eval-cycle wiring (cncf/techdocs#395).
+//
+// Per cycle, after the generic kicks are planned from an actionable set
+// that no longer offers model-owned items (scheduler.WithholdWorkflowOwned):
+//
+//  1. collect every enumerated item whose bound model hands its state to a
+//     profile, plus the open drafts of repositories whose model dispatches
+//     a pull-request state (the enumeration leaves drafts out);
+//  2. plan the hand-offs (scheduler.PlanWorkflowDispatch): the agent that
+//     fills the profile, the triggering reply for a reply-started profile,
+//     and the idempotency key;
+//  3. for an issue, take the agent claim on the issue-claims ledger FIRST;
+//     a claim someone else holds stops the hand-off;
+//  4. append one kick per hand-off to the cycle's messages. On delivery the
+//     key is written to the durable dispatch log, so neither a later cycle
+//     nor a restart repeats it; a failed or deferred kick leaves the key
+//     free for the next cycle.
+
+// workflowDispatchLogFile is the durable log under the workflow store root.
+const workflowDispatchLogFile = "workflow-dispatch.json"
+
+// workflowDispatchPendingTTL bounds how long a planned, not yet delivered
+// hand-off blocks re-planning in this process. A kick a later gate
+// withholds (provider budget, quota hold, upgrade drain) reports nothing,
+// so the in-flight mark lapses on its own and the next cycle plans again.
+const workflowDispatchPendingTTL = 30 * time.Minute
+
+// workflowDispatchClaimTTL is the agent claim taken before the drafter is
+// kicked: long enough for a draft to reach its PR (the covering PR then
+// holds the issue), short enough that an abandoned hand-off frees it.
+const workflowDispatchClaimTTL = 8 * time.Hour
+
+type workflowDispatchRuntime struct {
+	once    sync.Once
+	log     *scheduler.WorkflowDispatchLog
+	mu      sync.Mutex
+	pending map[string]time.Time
+	// replies caches LatestDispatchReply per item ref, keyed on the item's
+	// updated_at: a new comment moves it, so an unchanged item costs no call.
+	replies map[string]workflowReplyCacheEntry
+}
+
+type workflowReplyCacheEntry struct {
+	updatedAt time.Time
+	reply     github.DispatchReply
+	found     bool
+}
+
+var workflowDispatchRT = &workflowDispatchRuntime{pending: map[string]time.Time{}, replies: map[string]workflowReplyCacheEntry{}}
+
+// dispatchLog opens the durable log once per process.
+func (rt *workflowDispatchRuntime) dispatchLog(cfg *config.Config, logger *slog.Logger) *scheduler.WorkflowDispatchLog {
+	rt.once.Do(func() {
+		path := ""
+		if cfg != nil {
+			path = filepath.Join(wfstore.Root(cfg.Data.WorkflowsDir), workflowDispatchLogFile)
+		}
+		l, err := scheduler.OpenWorkflowDispatchLog(path)
+		if err != nil && logger != nil {
+			logger.Warn("workflow dispatch log unreadable; starting empty", "path", path, "error", err)
+		}
+		rt.log = l
+	})
+	return rt.log
+}
+
+func (rt *workflowDispatchRuntime) inFlight(key string, now time.Time) bool {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	at, ok := rt.pending[key]
+	if ok && now.Sub(at) > workflowDispatchPendingTTL {
+		delete(rt.pending, key)
+		return false
+	}
+	return ok
+}
+
+func (rt *workflowDispatchRuntime) markPending(key string, now time.Time) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	rt.pending[key] = now
+}
+
+func (rt *workflowDispatchRuntime) clearPending(key string) {
+	rt.mu.Lock()
+	defer rt.mu.Unlock()
+	delete(rt.pending, key)
+}
+
+// workflowDispatchKick is one planned hand-off and the record its delivery
+// writes.
+type workflowDispatchKick struct {
+	Message scheduler.KickMessage
+	Entry   scheduler.WorkflowDispatchEntry
+}
+
+// workflowDispatchActive reports whether the cycle dispatches at all.
+func workflowDispatchActive(cfg *config.Config) bool {
+	return cfg != nil && cfg.Workflow.Enabled && cfg.Workflow.Dispatch.DispatchEnabled()
+}
+
+// withholdWorkflowOwnedForKicks removes model-owned items from the set the
+// generic kicks are built from. Model ownership is the model's, so it holds
+// whatever workflow.dispatch says; only workflow.enabled (no model derives
+// anything) turns it off.
+func withholdWorkflowOwnedForKicks(cfg *config.Config, ghClient *github.Client, actionable *github.ActionableResult, logger *slog.Logger) *github.ActionableResult {
+	if cfg == nil || !cfg.Workflow.Enabled || ghClient == nil {
+		return actionable
+	}
+	out, withheld := scheduler.WithholdWorkflowOwned(actionable, ghClient)
+	if withheld > 0 && logger != nil {
+		logger.Info("workflow dispatch: model-owned items withheld from generic kicks", "withheld", withheld)
+	}
+	return out
+}
+
+// workflowDispatchItems collects the cycle's model-owned items.
+func workflowDispatchItems(ctx context.Context, cfg *config.Config, ghClient *github.Client, actionable *github.ActionableResult, logger *slog.Logger) []github.WorkflowDispatch {
+	var items []github.WorkflowDispatch
+	if actionable != nil {
+		for _, issue := range actionable.Issues.Items {
+			if d, ok := ghClient.WorkflowDispatchForIssue(issue); ok {
+				items = append(items, d)
+			}
+		}
+		for _, pr := range actionable.PRs.Items {
+			if d, ok := ghClient.WorkflowDispatchForPR(pr); ok {
+				items = append(items, d)
+			}
+		}
+	}
+	for _, b := range cfg.Project.WorkflowBindings {
+		p := ghClient.WorkflowModelFor(b.Repo)
+		if !dispatchesPRState(p) {
+			continue
+		}
+		drafts, err := ghClient.ListWorkflowDraftPRs(ctx, qualifyClaimRepo(cfg.Project.Org, b.Repo))
+		if err != nil {
+			if logger != nil {
+				logger.Warn("workflow dispatch: listing drafts failed", "repo", b.Repo, "error", err)
+			}
+			continue
+		}
+		for _, pr := range drafts {
+			if d, ok := ghClient.WorkflowDispatchForPR(pr); ok {
+				items = append(items, d)
+			}
+		}
+	}
+	return items
+}
+
+func dispatchesPRState(p *workflowmodel.Profile) bool {
+	if p == nil {
+		return false
+	}
+	for _, t := range p.Dispatch {
+		if t.AppliesTo(workflowmodel.KindPR) {
+			return true
+		}
+	}
+	return false
+}
+
+// workflowDispatchReplyFor is the cached reply lookup the planner uses.
+func workflowDispatchReplyFor(ctx context.Context, ghClient *github.Client) func(d github.WorkflowDispatch) (github.DispatchReply, bool, error) {
+	rt := workflowDispatchRT
+	return func(d github.WorkflowDispatch) (github.DispatchReply, bool, error) {
+		ref := d.Ref() + "|" + d.Target.Reply
+		at := d.UpdatedAt
+		rt.mu.Lock()
+		cached, ok := rt.replies[ref]
+		rt.mu.Unlock()
+		if ok && !at.IsZero() && cached.updatedAt.Equal(at) {
+			return cached.reply, cached.found, nil
+		}
+		r, found, err := ghClient.LatestDispatchReply(ctx, d.Repo, d.Number, d.Target.Reply)
+		if err != nil {
+			return github.DispatchReply{}, false, err
+		}
+		rt.mu.Lock()
+		rt.replies[ref] = workflowReplyCacheEntry{updatedAt: at, reply: r, found: found}
+		rt.mu.Unlock()
+		return r, found, nil
+	}
+}
+
+// planWorkflowDispatchKicks plans the cycle's hand-offs and claims each
+// issue for its agent before returning the kick.
+func planWorkflowDispatchKicks(ctx context.Context, cfg *config.Config, ghClient *github.Client, actionable *github.ActionableResult, ledger *claims.Ledger, eligible func(agent string) bool, logger *slog.Logger) []workflowDispatchKick {
+	if !workflowDispatchActive(cfg) || ghClient == nil {
+		return nil
+	}
+	rt := workflowDispatchRT
+	dlog := rt.dispatchLog(cfg, logger)
+	now := time.Now()
+	items := workflowDispatchItems(ctx, cfg, ghClient, actionable, logger)
+	if len(items) == 0 {
+		return nil
+	}
+	cands, skips := scheduler.PlanWorkflowDispatch(items, scheduler.WorkflowDispatchPlanDeps{
+		Agent:    cfg.WorkflowDispatchAgent,
+		Eligible: eligible,
+		Reply:    workflowDispatchReplyFor(ctx, ghClient),
+		Done:     func(key string) bool { return dlog.Done(key) || rt.inFlight(key, now) },
+	})
+	for _, s := range skips {
+		if logger != nil && s.Reason != scheduler.WorkflowSkipDone && s.Reason != scheduler.WorkflowSkipNoReply {
+			logger.Info("workflow dispatch: item not handed off", "item", s.Ref, "reason", s.Reason)
+		}
+	}
+	var out []workflowDispatchKick
+	for _, c := range cands {
+		if !claimForWorkflowDispatch(cfg, ledger, c, logger) {
+			continue
+		}
+		set := cfg.Workflow.Dispatch.Profile(c.Dispatch.Target.Profile)
+		msg := scheduler.BuildWorkflowDispatchPrompt(c, set.PromptTemplate)
+		var refs []string
+		if c.Dispatch.Kind == workflowmodel.KindIssue {
+			refs = []string{c.Dispatch.Ref()}
+		}
+		rt.markPending(c.Key, now)
+		out = append(out, workflowDispatchKick{
+			Message: scheduler.KickMessage{Agent: c.Agent, Message: msg, IssueRefs: refs},
+			Entry: scheduler.WorkflowDispatchEntry{
+				Key: c.Key, Ref: c.Dispatch.Ref(), Profile: c.Dispatch.Target.Profile,
+				State: c.Dispatch.State, Agent: c.Agent, By: "governor",
+			},
+		})
+		if logger != nil {
+			logger.Info("workflow dispatch: handing item to agent", "item", c.Dispatch.Ref(), "model", c.Dispatch.Model,
+				"state", c.Dispatch.State, "profile", c.Dispatch.Target.Profile, "agent", c.Agent)
+		}
+	}
+	return out
+}
+
+// claimForWorkflowDispatch takes the agent claim on an issue before the
+// kick. A pull request is not claimed (an issue claim on a PR stages it as
+// an issue); its idempotency is the dispatch key alone. With no ledger the
+// hand-off proceeds: the item is already withheld from every generic lane.
+func claimForWorkflowDispatch(cfg *config.Config, ledger *claims.Ledger, c scheduler.WorkflowDispatchCandidate, logger *slog.Logger) bool {
+	if c.Dispatch.Kind != workflowmodel.KindIssue || ledger == nil {
+		return true
+	}
+	res, err := ledger.Claim(claims.Request{
+		Repo:     qualifyClaimRepo(cfg.Project.Org, c.Dispatch.Repo),
+		Issue:    c.Dispatch.Number,
+		Holder:   c.Agent,
+		HolderID: c.Agent,
+		Kind:     claims.KindAgent,
+		TTL:      workflowDispatchClaimTTL,
+	})
+	if err != nil {
+		if logger != nil {
+			logger.Warn("workflow dispatch: claim refused; not handing off", "item", c.Dispatch.Ref(), "agent", c.Agent, "error", err)
+		}
+		return false
+	}
+	if !res.Outcome.Changed() {
+		if logger != nil {
+			logger.Info("workflow dispatch: item held by another claimant; not handing off", "item", c.Dispatch.Ref(), "agent", c.Agent, "outcome", string(res.Outcome))
+		}
+		return false
+	}
+	return true
+}
+
+// recordWorkflowDispatchDelivered writes the durable record of a delivered
+// hand-off.
+func recordWorkflowDispatchDelivered(cfg *config.Config, k workflowDispatchKick, at time.Time, logger *slog.Logger) {
+	rt := workflowDispatchRT
+	e := k.Entry
+	e.At = at
+	if err := rt.dispatchLog(cfg, logger).Record(e); err != nil && logger != nil {
+		logger.Warn("workflow dispatch: recording hand-off failed", "item", e.Ref, "error", err)
+	}
+	rt.clearPending(e.Key)
+}
+
+// releaseWorkflowDispatch frees a hand-off whose kick did not land.
+func releaseWorkflowDispatch(k workflowDispatchKick) { workflowDispatchRT.clearPending(k.Entry.Key) }
+
+// workflowDispatchKickKey identifies a workflow kick among the cycle's
+// messages.
+func workflowDispatchKickKey(msg scheduler.KickMessage) string {
+	return msg.Agent + "\x00" + msg.Message
+}
