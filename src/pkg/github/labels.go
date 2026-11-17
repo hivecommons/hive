@@ -136,6 +136,10 @@ var escalationIssueLabelDefinitions = map[string]issueLabelDefinition{
 		color:       "fbca04",
 		description: "Hive is waiting for the issue reporter or a maintainer to confirm the fix",
 	},
+	defaultSHAHoldLabel: {
+		color:       "fbca04",
+		description: NeedsSHALabelDescription,
+	},
 	issueNeedsSpecLabel: {
 		color:       "bfd4f2",
 		description: "Hive needs a specification or acceptance criteria before continuing",
