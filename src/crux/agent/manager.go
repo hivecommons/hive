@@ -605,13 +605,12 @@ type Manager struct {
 	// setCopilotToken installs a value that differs from the current one, so
 	// a successful recovery (or dashboard re-login) rearms authoritative
 	// precedence for whatever fresh token the operator supplied.
-	copilotAuthTokenRejected bool
-	claudeAuthToken          string
-	claudeOperatorToken      string // HIVE_CLAUDE_OAUTH_TOKEN, read once at construction; a dashboard sign-in never replaces it
-	// claudeOperatorModeLogOnce guards the one-time "re-bridge and watchdog
-	// suspended" log for operator-token mode (claude_operator_token_mode.go).
-	claudeOperatorModeLogOnce sync.Once
-	sessionLogins             sessionLoginCache // user-session login copies already judged (usersession_login.go)
+	copilotAuthTokenRejected  bool
+	claudeAuthToken           string
+	claudeOperatorToken       string                   // HIVE_CLAUDE_OAUTH_TOKEN, read once at construction; a dashboard sign-in never replaces it
+	claudeOperatorModeLogOnce sync.Once                // one-time "re-bridge and watchdog suspended" log for operator-token mode (claude_operator_token_mode.go)
+	claudeSharedRefresh       claudeSharedRefreshState // hive's own refresh of the shared Claude login (claude_shared_refresh.go)
+	sessionLogins             sessionLoginCache        // user-session login copies already judged (usersession_login.go)
 	uidMap                    *UIDMap
 	sharedPool                SharedSessionPool
 	uidMapPath                string
