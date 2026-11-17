@@ -145,6 +145,8 @@ Voice is fixed when the bot joins: Vexa only lets a bot speak if it was started 
 
 If the meeting platform's chat is unavailable, hive cannot post the consent notice. It retries a few times and posts nothing else into the meeting until the notice is out; with voice on it speaks the notice instead, and otherwise it leaves (`consent_undelivered`). Until the notice is delivered the panel shows no transcript, notes or research: those lines are discarded, not held back.
 
+Zoom no longer lets a web-client bot join: it answers "automated bots aren't allowed" and points to its RTMS app platform ([#18596](https://github.com/hivecommons/hive/issues/18596)). The ways Betty can still follow a Zoom meeting without a Zoom app (phone dial-in, a desktop companion on a participant's computer, Zoom's live stream) and the one chosen are compared in [Betty on Zoom without a Zoom app](design/meetings-without-a-zoom-app.md); none of them is built yet.
+
 The same operations are available over the [meetings API](api-reference/knowledge.md) (`/api/meetings`).
 
 ## Calendar
