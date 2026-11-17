@@ -1,1 +1,0 @@
-- ci: let the DCO app honour an author's own remediation commit (#18703)
