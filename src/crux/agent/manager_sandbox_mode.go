@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/crux/config"
 )
 
 // sandboxModeArchiveReason labels the kick-log archive written when an agent's
@@ -56,4 +58,26 @@ func (m *Manager) enterSandboxModeLocked(agent *AgentProcess) {
 	m.logger.Info("audit: agent switched to sandbox mode; interactive session stopped",
 		"name", agent.Name, "session", agent.tmuxSession, "reaped_cli", reaped)
 	m.auditSandbox(agent.Name, "sandbox_mode_entered", "interactive tmux session "+agent.tmuxSession+" stopped")
+}
+
+// UpdateConfig updates the stored config for a running agent process so that
+// status builders (which read from AgentProcess.Config) reflect changes made
+// via the config dialog (which writes to the global Config.Agents map).
+func (m *Manager) UpdateConfig(name string, cfg config.AgentConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	agent, ok := m.agents[name]
+	if !ok {
+		return fmt.Errorf("agent %s not found", name)
+	}
+
+	wasSandboxed := m.agentSandboxEnabledLocked(agent)
+	agent.clearAgentSpecPromptIfSpecRemoved(cfg)
+	agent.Config = cfg
+	agent.baseConfig = cfg
+	if !wasSandboxed && m.agentSandboxEnabledLocked(agent) {
+		m.enterSandboxModeLocked(agent)
+	}
+	return nil
 }

@@ -1469,28 +1469,6 @@ func (m *Manager) removeAgentsBelowACMMGateLocked(level int) {
 	}
 }
 
-// UpdateConfig updates the stored config for a running agent process so that
-// status builders (which read from AgentProcess.Config) reflect changes made
-// via the config dialog (which writes to the global Config.Agents map).
-func (m *Manager) UpdateConfig(name string, cfg config.AgentConfig) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	agent, ok := m.agents[name]
-	if !ok {
-		return fmt.Errorf("agent %s not found", name)
-	}
-
-	wasSandboxed := m.agentSandboxEnabledLocked(agent)
-	agent.clearAgentSpecPromptIfSpecRemoved(cfg)
-	agent.Config = cfg
-	agent.baseConfig = cfg
-	if !wasSandboxed && m.agentSandboxEnabledLocked(agent) {
-		m.enterSandboxModeLocked(agent)
-	}
-	return nil
-}
-
 // ReconcileAgents makes the manager's name-keyed process table match the
 // enabled config set. New agents are added, existing agents get fresh config,
 // and removed agents have only their own hive-<name> tmux session retired.
