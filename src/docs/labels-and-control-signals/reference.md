@@ -191,7 +191,7 @@ Commit committer dates and SHA-keyed `check_suite` / `status` times are never us
 
 **Applies to:** Issues. **Kind:** Hard issue hold.
 
-Since [#18468](https://github.com/hivecommons/hive/issues/18468) the sweep gives every reporter the `needs-sha` label below and never applies `hold`; an untrusted reporter's issue stays out of automatic work through the reporter-trust gate. Before that, human-filed primary-repo `kind/bug` without a 7-40 hex SHA got `hold` and a notice carrying `<!-- hive:sha-hold -->`; once a SHA appears in body/comments, Hive removes `hold` only if the current hold is its own (newest `hold` event labeled by the App bot, paired with an App-authored notice at or after it). A human's hold, a re-hold, or another subsystem's hold stays. Reporters whose author association is trusted (`issue_filter.reporter_trust.trusted_associations`, default OWNER/MEMBER/COLLABORATOR) get the soft `needs-sha` row below instead, and a SHA-hold `hold` already on such an issue is swapped for it (#12002).
+Since [#18468](https://github.com/hivecommons/hive/issues/18468) the sweep gives every reporter the `needs-sha` label below and never applies `hold`; `needs-sha` itself keeps the issue out of agent work with reporter trust on or off. Before that, human-filed primary-repo `kind/bug` without a 7-40 hex SHA got `hold` and a notice carrying `<!-- hive:sha-hold -->`; once a SHA appears in body/comments, Hive removes `hold` only if the current hold is its own (newest `hold` event labeled by the App bot, paired with an App-authored notice at or after it). A human's hold, a re-hold, or another subsystem's hold stays. Reporters whose author association is trusted (`issue_filter.reporter_trust.trusted_associations`, default OWNER/MEMBER/COLLABORATOR) get the soft `needs-sha` row below instead, and a SHA-hold `hold` already on such an issue is swapped for it (#12002).
 
 The hard-suppress reconcile also lifts this `hold` once a PR referencing the issue merges after it was applied.
 
@@ -205,9 +205,9 @@ The hard-suppress reconcile also lifts this `hold` once a PR referencing the iss
 
 #### `needs-sha` from SHA-hold
 
-**Applies to:** Issues. **Kind:** Soft (informational).
+**Applies to:** Issues. **Kind:** Hard (issue gate; not a PR merge gate).
 
-Trusted-reporter `kind/bug` without a SHA gets this soft label plus the same `<!-- hive:sha-hold -->` notice instead of `hold`; the issue stays actionable. The sweep removes it once a SHA appears.
+A `kind/bug` without a SHA gets this label plus the `<!-- hive:sha-hold -->` notice. While it is on the issue no agent implements, decomposes or claims it, whatever the reporter-trust setting; the issue shows as filtered in the work list. The sweep removes it once a SHA appears, which releases the issue. Description: "Waiting on the reporter for the commit SHA; hive won't work this until it's added."
 
 **Who applies it:** Hive.
 

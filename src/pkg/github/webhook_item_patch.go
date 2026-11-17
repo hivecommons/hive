@@ -93,6 +93,9 @@ func (c *Client) classifyWebhookIssue(repo string, issue *gh.Issue, labels []str
 	if labelPresent(labels, issueNeedsReporterConfirmationLabel) {
 		return sidelined("filtered", issueNeedsReporterConfirmationLabel)
 	}
+	if label := c.needsSHALabelOn(labels); label != "" {
+		return sidelined("filtered", label)
+	}
 	if suppress := hardSuppressIssueBucket(issueFilter, labels); suppress != "" {
 		return sidelined("filtered", suppress)
 	}
