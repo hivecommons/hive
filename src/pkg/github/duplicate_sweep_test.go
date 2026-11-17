@@ -433,3 +433,34 @@ func TestSweepDuplicatePRs_PostedBodyHasNoLiveMention(t *testing.T) {
 		t.Errorf("posted body carries a live @mention:\n%s", rec.posted[2][0])
 	}
 }
+
+// projectbluefin/website#1023/#1037/#1044: one dependency bot's separate bumps
+// all edit package.json and its lockfile. With posting on, the sweep must
+// neither call them a superseded regeneration series nor post anything else.
+func TestSweepDuplicatePRs_DependencyBotBumpsGetNoComment(t *testing.T) {
+	resetDupCache()
+	bump := func(number int, title, patch, created string) dupWirePR {
+		return dupPR(number, "mergeraptor[bot]", title, fmt.Sprintf("sha%d", number), created,
+			dupWireFile{Filename: "package.json", Patch: patch},
+			dupWireFile{Filename: "package-lock.json", Patch: patch + " lock"})
+	}
+	srv, rec := newDupSweepServer(t, "projectbluefin", "website", []dupWirePR{
+		bump(1019, "chore(deps): update dependency vue-tsc to v3.3.14", "@@ vue-tsc @@", "2026-11-14T00:00:00Z"),
+		bump(1023, "chore(deps): update dependency @antfu/eslint-config to v10", "@@ eslint-config @@", "2026-11-16T00:00:00Z"),
+		bump(1037, "chore(deps): update dependency js-yaml to v5", "@@ js-yaml @@", "2026-11-17T00:00:00Z"),
+	})
+	c := newTestClient(t, srv, "projectbluefin", []string{"projectbluefin/website"})
+
+	result, err := c.SweepDuplicatePRs(context.Background(), DuplicateSweepOptions{PostComments: true})
+	if err != nil {
+		t.Fatalf("sweep: %v", err)
+	}
+	if len(result.Clusters) != 0 || result.Commented != 0 {
+		t.Fatalf("independent bumps produced clusters %+v and %d comments", result.Clusters, result.Commented)
+	}
+	rec.mu.Lock()
+	defer rec.mu.Unlock()
+	if len(rec.writes) != 0 {
+		t.Errorf("sweep wrote to GitHub for independent bumps: %v", rec.writes)
+	}
+}
