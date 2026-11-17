@@ -1,1 +1,0 @@
-- Meetings: the bundled Quorum is v0.5.1, which keeps "leave" right after the persona's name in the transcription hints; with v0.5.0's order the spoken "Betty leave" was transcribed as "Betty Lee" (#18745).
