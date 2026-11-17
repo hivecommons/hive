@@ -306,10 +306,7 @@
     .oc-sidebar-footer .layout-toggle { width: 100%; text-align: center; padding: var(--sp-4); margin: var(--sp-0); }
     .oc-agent-actions {
       display: flex; gap: var(--sp-2); padding: var(--sp-4) var(--sp-5);
-      margin: var(--sp-3) var(--sp-0) var(--sp-0);
-      border-top: 1px solid var(--border);
-      background: var(--bg-soft);
-      position: sticky; bottom: var(--sp-0); z-index: var(--z-sticky);
+      margin: var(--sp-0);
     }
     .oc-agent-actions .oc-agent-add-btn { flex: 1 1 auto; }
     .oc-agent-actions .oc-agent-group-btn { flex: 0 0 auto; }
@@ -6121,20 +6118,43 @@
     @media (max-width: 768px) { .kb-layout { grid-template-columns: 1fr; } }
 
     /* Inbox (voice recordings / dictations triage) */
-    .inbox-toolbar { flex-wrap: wrap; gap: var(--sp-3); margin-bottom: var(--sp-4); }
-    .inbox-sources { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    /* Header: one quiet sources line (configured chips, "+N more", Connect
+       sources), then one toolbar row: primary actions left, view controls
+       right. Every control is an hv-btn of the compact size. */
+    .inbox-sources { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-bottom: var(--sp-3); }
+    .inbox-sources-rest { margin-top: calc(-1 * var(--sp-1)); }
+    .inbox-sources-rest[hidden] { display: none; }
+    .inbox-sources-rest .kc-pill { opacity: var(--opacity-disabled, 0.6); }
+    .inbox-sources-more { color: var(--text-muted); }
+    .inbox-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--sp-3); margin-bottom: var(--sp-4); }
+    .inbox-toolbar-group { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .inbox-toolbar .hv-btn[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
     .inbox-toggle { display: inline-flex; align-items: center; gap: var(--sp-2); }
     .inbox-list { max-height: none; }
     .inbox-item { cursor: default; }
     .inbox-item-focus { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r); }
     .inbox-check { display: flex; align-items: flex-start; padding-top: var(--sp-1); }
     .inbox-icon { flex-shrink: 0; font-size: var(--fs-lg); line-height: 1; padding-top: var(--sp-1); }
+    /* Item: title, one meta line (source, time, length, id, Knowledge
+       state, fact link), a clamped preview, then one row of icon buttons. */
+    .inbox-title { margin-bottom: 0; }
+    .inbox-meta { overflow-wrap: anywhere; }
+    .inbox-meta-id { font-family: var(--font-mono); font-size: var(--fs-2xs, var(--fs-xs)); color: var(--text-faint); }
+    .inbox-meta-state { font-weight: var(--fw-semibold); color: var(--text-muted); }
+    .inbox-meta-state[data-status="ok"] { color: var(--green); }
+    .inbox-meta-state[data-status="not loaded"] { color: var(--orange); }
     .inbox-pills { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
     .inbox-link { font-size: var(--fs-xs); }
-    .inbox-summary { white-space: pre-wrap; font-size: var(--fs-sm); margin-top: var(--sp-2); }
-    .inbox-summary.is-collapsed { max-height: 6.5em; overflow: hidden; position: relative; }
-    .inbox-summary.is-collapsed::after { content: ''; position: absolute; left: 0; right: 0; bottom: 0; height: 2.5em; background: linear-gradient(to bottom, transparent, var(--surface)); }
-    .inbox-more { padding: 0; font-size: var(--fs-xs); }
+    .inbox-summary { white-space: pre-wrap; font-size: var(--fs-sm); margin-top: var(--sp-2); max-width: 80ch; overflow-wrap: anywhere; }
+    .inbox-summary.is-collapsed { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; line-clamp: 3; overflow: hidden; }
+    .inbox-more { padding-inline: var(--sp-1); font-size: var(--fs-xs); }
+    .inbox-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); margin-top: var(--sp-2); }
+    .inbox-actions .inbox-action-text { gap: var(--sp-1); padding-inline: var(--sp-2); }
+    .inbox-ic { width: 1em; height: 1em; flex: none; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+    .inbox-action.btn-icon .inbox-ic { width: 1.1em; height: 1.1em; }
+    .inbox-actions-sep { width: var(--line-width, 1px); align-self: stretch; margin-inline: var(--sp-2); background: var(--line-subtle); }
+    .inbox-action-danger { color: var(--text-muted); }
+    .inbox-action-danger:hover, .inbox-action-danger:focus-visible { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 40%, transparent); }
     .inbox-pending { margin-top: var(--sp-2); font-style: italic; }
     .inbox-media:not(:empty) { margin-top: var(--sp-2); }
     .inbox-email-image { display: block; max-width: min(100%, 320px); max-height: 240px; margin-top: var(--sp-2); border-radius: var(--radius-sm, 4px); }
@@ -6287,6 +6307,12 @@
     .meetings-line { margin: 0 0 var(--sp-1); white-space: pre-wrap; }
     .meetings-line.is-partial { opacity: 0.6; font-style: italic; }
     .meetings-who { font-weight: 600; margin-right: var(--sp-1); }
+    .meetings-line.is-reply { padding: var(--sp-1) var(--sp-2); border-left: 2px solid var(--accent); border-radius: var(--r); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+    .meetings-line.is-reply.is-undelivered { border-left-color: var(--red); background: color-mix(in srgb, var(--red) 8%, transparent); }
+    .meetings-reply-meta { margin-right: var(--sp-1); font-size: var(--fs-xs); color: var(--muted); }
+    .meetings-reach.is-unreachable { margin: 0 0 var(--sp-2); padding: var(--sp-2); border: 1px solid var(--red); border-radius: var(--r); font-size: var(--fs-sm); color: var(--red); }
+    .inbox-assistant-line { display: block; padding-left: var(--sp-2); border-left: 2px solid var(--accent); color: var(--accent); }
+    .inbox-assistant-line.is-undelivered { border-left-color: var(--red); color: var(--red); }
     .meetings-side { display: flex; flex-direction: column; gap: var(--sp-3); }
     .meetings-side ul { margin: 0; padding-left: var(--sp-4); font-size: var(--fs-sm); }
     .meetings-research { display: flex; flex-direction: column; gap: var(--sp-2); font-size: var(--fs-sm); }
@@ -6343,6 +6369,28 @@
     .ma-my-emails { list-style: none; margin: var(--sp-1) 0; padding: 0; display: grid; gap: var(--sp-1); }
     .ma-add-email { display: flex; gap: var(--sp-2); align-items: center; margin: var(--sp-1) 0 var(--sp-2); }
     .ma-add-email .kb-search-box { flex: 1; min-width: 0; }
+    /* Customers: a profile per person (hivecommons/hive issue 18742) */
+    .customers-panel { display: flex; flex-direction: column; gap: var(--sp-5); }
+    .customers-block { display: flex; flex-direction: column; gap: var(--sp-2); }
+    .customers-list { display: flex; flex-direction: column; gap: var(--sp-2); }
+    .customers-row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r-sm); background: var(--surface); }
+    .customers-row[data-me="true"] { border-color: var(--accent); }
+    .customers-row-main { flex: 1 1 16em; min-width: 0; }
+    .customers-row-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .customers-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); }
+    .customers-chip[data-state="off"] { opacity: 0.55; }
+    .customers-chip[data-source="manual"] { border-color: var(--accent); }
+    .customers-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr) auto; gap: var(--sp-2); align-items: end; }
+    .customers-form label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
+    .customers-inline { display: flex; flex-wrap: wrap; align-items: end; gap: var(--sp-2); }
+    .customers-inline label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); flex: 1 1 12em; }
+    .customers-profile-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
+    .customers-profile-name { font-size: var(--fs-md); flex: 1 1 12em; min-width: 0; }
+    .customers-evidence { font-family: var(--font-mono); font-size: var(--fs-2xs); color: var(--muted); overflow-wrap: anywhere; }
+    .customers-notes { width: 100%; min-height: 6em; }
+    @media (max-width: 720px) {
+      .customers-form { grid-template-columns: 1fr; }
+    }
     /* Email-in address row shared by Inbox, Calendar and Meetings (#18693) */
     .email-in { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2) var(--sp-3); margin-bottom: var(--sp-5); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
     .email-in-label { font-size: var(--fs-xs); font-weight: 700; color: var(--muted); }
@@ -9049,22 +9097,21 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       <a class="oc-nav-item" data-section="inbox-section" data-action="ocNavigate" data-arg0="inbox-section"><span class="oc-nav-emoji">📥</span><span class="oc-nav-text">Inbox</span><span id="inbox-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
       <a class="oc-nav-item" data-section="calendar-section" data-action="ocNavigate" data-arg0="calendar-section"><span class="oc-nav-emoji">📅</span><span class="oc-nav-text">Calendar</span><span id="calendar-sidebar-badge" class="badge-count oc-nav-count" data-zero hidden>0</span></a>
       <a class="oc-nav-item" data-section="meetings-section" data-action="ocNavigate" data-arg0="meetings-section"><span class="oc-nav-emoji">🎙</span><span class="oc-nav-text">Meetings</span></a>
+      <a class="oc-nav-item" data-section="customers-section" data-action="ocNavigate" data-arg0="customers-section" hidden><span class="oc-nav-emoji">🪪</span><span class="oc-nav-text">Customers</span></a>
       <a class="oc-nav-item" data-section="sessions-section" data-action="ocNavigate" data-arg0="sessions-section" hidden><span class="oc-nav-emoji">💡</span><span class="oc-nav-text">Inception (spek)</span></a>
     </div>
     <div class="oc-nav-group" id="oc-agent-nav-group">
       <div class="oc-tree-toggle" data-action="ocToggleAgentTree" data-arg-types="t">
         <span class="oc-tree-arrow">▼</span> <span>Agents</span>
       </div>
-      <div class="oc-tree-children" id="oc-agent-tree">
-        <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
-      </div>
-      <div id="nous-sidebar-config" data-feature="experiment_lab" hidden style="padding:var(--sp-1) var(--sp-4) var(--sp-3) var(--sp-8);font-size:0.65rem;color:var(--muted);line-height:1.5;display:none">
-        <div><span id="nous-sb-mode"></span></div>
-        <div id="nous-sb-phase" style="opacity:0.8"></div>
-      </div>
-      <div class="oc-agent-actions" aria-label="Agent actions">
-        <button type="button" class="hv-btn btn-primary btn-sm oc-agent-add-btn" data-action="openAddAgentDialog" title="Add a new agent from a template or from scratch">＋ Add agent</button>
-        <button type="button" class="hv-btn btn-secondary btn-sm oc-agent-group-btn" data-action="ocAddSidebarGroup" title="Create a sidebar group for organizing agents">＋ Group</button>
+      <div class="oc-tree-children" id="oc-agent-tree-body">
+        <div id="oc-agent-tree">
+          <!-- Agent items rendered dynamically by ocUpdateSidebarAgents() -->
+        </div>
+        <div class="oc-agent-actions" aria-label="Agent actions">
+          <button type="button" class="hv-btn btn-primary btn-sm oc-agent-add-btn" data-action="openAddAgentDialog" title="Add a new agent from a template or from scratch">＋ Add agent</button>
+          <button type="button" class="hv-btn btn-secondary btn-sm oc-agent-group-btn" data-action="ocAddSidebarGroup" title="Create a sidebar group for organizing agents">＋ Group</button>
+        </div>
       </div>
     </div>
     <div class="oc-nav-group">
@@ -9539,6 +9586,12 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="meetings-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Meetings section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🎙 Meetings</h2>
     <div class="section-body">
       <div id="meetings-panel" class="meetings-panel"><p class="muted-xs">Loading meetings…</p></div>
+    </div>
+  </div>
+  <div class="mt-6 mb-8" id="customers-section" data-dashboard-section="customers-section" hidden>
+    <h2 class="section-label section-header-toggle mb-4" data-action="toggleSection" data-arg0="customers-section"><button type="button" class="dashboard-grip" data-dashboard-grip data-stop="1" aria-label="Move Customers section" aria-pressed="false">⠿</button><span class="section-chevron">▼</span> 🪪 Customers</h2>
+    <div class="section-body">
+      <div id="customers-panel" class="customers-panel"><p class="muted-xs">Loading customers…</p></div>
     </div>
   </div>
   <div class="mt-6 mb-8" id="debug-section" data-dashboard-section="debug-section">
@@ -10900,10 +10953,18 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     // keeps the historical all-expanded default forever) or is new ('v1').
     const DASHBOARD_DEFAULT_COLLAPSED_SECTIONS = Object.freeze([
       'pr-throughput-section', 'token-panel', 'cost-panel', 'advisory-section', 'knowledge-section', 'inbox-section',
-      'calendar-section', 'meetings-section',
+      'calendar-section', 'meetings-section', 'customers-section',
       'contributors-section', 'sessions-section', 'acmm-eval-section', 'debug-section', 'audit-section',
       'logs-section', 'nous-section', 'faq-section'
     ]);
+    // Level-driven defaults: a section listed here starts collapsed once the
+    // hive runs at or above the ACMM level, until the operator picks a state
+    // themselves. At L6 the hive runs itself, so the Agents card is minimized.
+    // The last seen level is cached so a reload does not flash the card open
+    // before the first status arrives.
+    const ACMM_AUTONOMOUS_LEVEL = 6;
+    const DASHBOARD_LEVEL_COLLAPSED_SECTIONS = Object.freeze({ 'agents-section': ACMM_AUTONOMOUS_LEVEL });
+    const DASHBOARD_ACMM_LEVEL_CACHE_KEY = 'hive-acmm-level-last';
     const DASHBOARD_COLLAPSE_DEFAULTS_KEY = 'hive.dashboard.collapseDefaults';
     const DASHBOARD_COLLAPSE_DEFAULTS_VERSION = 'v1';
     const DASHBOARD_COLLAPSE_DEFAULTS_LEGACY = 'legacy';
@@ -11016,6 +11077,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'inbox-section': { title: '📥 Inbox', summary: '0 to triage' },
       'calendar-section': { title: '📅 Calendar', summary: 'nothing scheduled' },
       'meetings-section': { title: '🎙 Meetings', summary: 'no live meetings' },
+      'customers-section': { title: '🪪 Customers', summary: 'your profile' },
       'contributors-section': { title: '👥 Contributors', summary: '0 online / 0 registered' },
       'debug-section': { title: '🩺 Diagnostics', summary: 'health' },
       'logs-section': { title: '📋 Agent Logs', summary: 'logs' },
@@ -11057,6 +11119,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       'meetings-section': { heading: 'Meetings', help: 'Meetings hive joins to take notes: send it to one, follow the live transcript, notes and research, or make it leave.' },
       'inbox-section': { heading: 'Inbox', help: 'Voice recordings and dictations waiting for you to file them as an RFC or keep as knowledge.' },
       'calendar-section': { heading: 'Calendar', help: 'Meetings hive will join, about a minute before each starts: add one, approve or decline requests, or skip and cancel.' },
+      'customers-section': { heading: 'Customers', help: 'The people you build for: who each one is, what they are trying to get done, and how it is going for them.' },
       'contributors-section': { heading: 'Contributors', help: 'The people who lend their computers or AI helpers to your projects, and how far Hive trusts each of them.' },
       'debug-section': { heading: 'Diagnostics', help: 'Health checks for Hive itself, such as its connections, credentials and safety switches, to help you find out why something is not working.' },
       'logs-section': { heading: 'Agent Logs', help: 'The raw text output of each worker, for following what it is doing line by line.' },
@@ -11670,7 +11733,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
         return '';
       } else if (sectionId === 'agents-section') {
         const agents = data.agents || window._lastAgents || [];
-        inner = typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now(), data.governor) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text);
+        inner = agentsAttentionBadgeHtml(agents) + (typeof agentsCollapsedTilesHtml === 'function' ? agentsCollapsedTilesHtml(agents, Date.now(), data.governor) : miniBar([{ label: 'agents', value: Array.isArray(agents) ? agents.length : n0, color: 'var(--green)' }], text));
       } else if (sectionId === 'lifecycle-section') {
         inner = miniBar([{ label: 'in flight', value: nums[0] || 0, color: 'var(--blue)' }, { label: 'merged', value: nums[1] || 0, color: 'var(--green)' }, { label: 'blocked', value: nums[2] || 0, color: 'var(--red)' }], text);
       } else {
@@ -11709,7 +11772,20 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
       const activeAgents = agents.filter(a => a && !agentIsDisabled(a));
       const off = activeAgents.filter(a => a && (a.paused || a.stopped || a.offByCadence || a.unscheduledInMode || a.state === 'stopped' || a.state === 'failed')).length;
       const on = Math.max(0, activeAgents.length - off);
-      return `${agents.length} agents · ${on} on · ${off} off${disabled > 0 ? ` · ${disabled} disabled` : ''}`;
+      const attention = agentsNeedingAttention(agents);
+      return `${agents.length} agents · ${on} on · ${off} off${disabled > 0 ? ` · ${disabled} disabled` : ''}${attention > 0 ? ` · ${attention} need attention` : ''}`;
+    }
+    /** Agents the owner must act on: signed out, expired, stopped or failed (not disabled by choice). */
+    function agentsNeedingAttention(agents) {
+      return (Array.isArray(agents) ? agents : []).filter(a => {
+        if (!a || agentIsDisabled(a)) return false;
+        const isDown = a.state !== 'running';
+        return agentCollapsedAuthInfo(a, isDown).needsLogin || a.state === 'stopped' || a.state === 'failed' || a.state === 'blocked';
+      }).length;
+    }
+    function agentsAttentionBadgeHtml(agents) {
+      const n = agentsNeedingAttention(agents);
+      return n > 0 ? `<span class="badge-status status-badge agents-attention-badge" data-status="attention" title="${n} agent${n === 1 ? '' : 's'} need your attention">${n} need attention</span>` : '';
     }
     let _lastHiveAdvice = null;
     function agentCollapsedParseNextKick(value, nowMs) {
@@ -12303,6 +12379,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       sectionId = dashboardAliasSectionId(sectionId);
       return dashboardCollapseDefaultsActive() && DASHBOARD_DEFAULT_COLLAPSED_SECTIONS.indexOf(sectionId) >= 0;
     }
+    /** Current ACMM level (same status field the header badge shows); falls back to the cached level before the first status. */
+    function dashboardAcmmLevel() {
+      const st = typeof window !== 'undefined' ? window._lastStatus : null;
+      if (st && st.acmmLevel != null) { const n = Number(st.acmmLevel); return Number.isFinite(n) ? n : 0; }
+      try { const c = Number(localStorage.getItem(DASHBOARD_ACMM_LEVEL_CACHE_KEY)); return Number.isFinite(c) ? c : 0; } catch (e) { return 0; }
+    }
+    /** Remember the level from the latest status so the next load starts in the right state. */
+    function dashboardRememberAcmmLevel(level) {
+      try {
+        const n = String(Number(level) || 0);
+        if (localStorage.getItem(DASHBOARD_ACMM_LEVEL_CACHE_KEY) !== n) localStorage.setItem(DASHBOARD_ACMM_LEVEL_CACHE_KEY, n);
+      } catch (e) { /* storage unavailable */ }
+    }
+    /** True when the hive's level makes this section start collapsed (no operator choice involved). */
+    function dashboardLevelDefaultCollapsed(sectionId) {
+      const min = DASHBOARD_LEVEL_COLLAPSED_SECTIONS[dashboardAliasSectionId(sectionId)];
+      return min != null && dashboardAcmmLevel() >= min;
+    }
     /** Check whether a dashboard section is collapsed: explicit localStorage choice first, then the default. */
     function isSectionCollapsed(sectionId) {
       sectionId = dashboardAliasSectionId(sectionId);
@@ -12311,13 +12405,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const raw = localStorage.getItem(SECTION_LS_PREFIX + sectionId);
       if (raw === '1') return true;
       if (raw === '0') return false;
-      return dashboardDefaultCollapsed(sectionId);
+      return dashboardDefaultCollapsed(sectionId) || dashboardLevelDefaultCollapsed(sectionId);
     }
     /** Write the per-section key: '1' collapsed, '0' explicitly expanded where the default is collapsed, removed otherwise. */
     function writeSectionCollapsedKey(sectionId, collapsed) {
       if (collapsed) {
         localStorage.setItem(SECTION_LS_PREFIX + sectionId, '1');
-      } else if (dashboardDefaultCollapsed(sectionId)) {
+      } else if (dashboardDefaultCollapsed(sectionId) || DASHBOARD_LEVEL_COLLAPSED_SECTIONS[sectionId] != null) {
+        // A level-driven section always keeps an explicit '0', otherwise an
+        // expand made below the level would collapse again when the level rises.
         localStorage.setItem(SECTION_LS_PREFIX + sectionId, '0');
       } else {
         localStorage.removeItem(SECTION_LS_PREFIX + sectionId);
@@ -12510,7 +12606,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var DASHBOARD_LAYOUT_KEY='hive.dashboard.layout';
     var DASHBOARD_LAYOUT_VERSION=1;
     var DASHBOARD_LAYOUT_REGIONS=['main'];
-    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','inbox-section','calendar-section','meetings-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
+    var DASHBOARD_LAYOUT_TEMPLATE={main:['overview-section','governor','pr-throughput-section','repos-section','activity-monitor-section','knowledge-section','inbox-section','calendar-section','meetings-section','customers-section','review-queue-section','contributors-section','advisory-section','token-panel','cost-panel','sessions-section','acmm-eval-section','debug-section','audit-section','approvals-section','nous-section','logs-section','agents-section','agent-activity-section','faq-section']};
     var DASHBOARD_LAYOUT_GRIP_SELECTOR='[data-dashboard-grip]';
     var DASHBOARD_LAYOUT_CARD_SELECTOR='[data-dashboard-section]';
     var DASHBOARD_LAYOUT_ANCHOR_ID='dash-notices';
@@ -12530,8 +12626,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     var dashboardKeyboardSnapshot=null;
     function dashboardFeatureEnabled(name){try{return !!(window._lastStatus&&window._lastStatus.features&&window._lastStatus.features[name]===true);}catch(e){return false;}}
     function experimentLabEnabled(){return dashboardFeatureEnabled('experiment_lab');}
+    function customersFeatureEnabled(){return window._customersEnabled===true;}
     function sessionsFeatureEnabled(){return window._sessionsEnabled===true;}
-    function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);if(id==='sessions-section')return !sessionsFeatureEnabled();return id==='nous-section'&&!experimentLabEnabled();}
+    function dashboardFeatureSectionHidden(id){id=dashboardAliasSectionId(id);if(id==='sessions-section')return !sessionsFeatureEnabled();if(id==='customers-section')return !customersFeatureEnabled();return id==='nous-section'&&!experimentLabEnabled();}
     function dashboardCanHideSection(id){id=dashboardAliasSectionId(id);return DASHBOARD_LAYOUT_TEMPLATE.main.indexOf(id)>=0&&DASHBOARD_HIDE_DENYLIST.indexOf(id)<0&&!dashboardFeatureSectionHidden(id);}
     function dashboardHiddenSectionsRead(){try{var raw=localStorage.getItem(DASHBOARD_HIDDEN_SECTIONS_KEY),arr=raw?JSON.parse(raw):[];return Array.isArray(arr)?arr.filter(function(id,i){return dashboardCanHideSection(id)&&arr.indexOf(id)===i;}):[];}catch(e){return [];}}
     function dashboardHiddenSectionsWrite(ids){try{var valid=(ids||[]).filter(function(id,i,a){return dashboardCanHideSection(id)&&a.indexOf(id)===i;});if(valid.length)localStorage.setItem(DASHBOARD_HIDDEN_SECTIONS_KEY,JSON.stringify(valid));else localStorage.removeItem(DASHBOARD_HIDDEN_SECTIONS_KEY);}catch(e){}dashboardUpdateLayoutMenuState();}
@@ -13114,7 +13211,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       document.querySelectorAll('[data-feature="experiment_lab"]').forEach(el => {
         if (experimentOn) {
           el.hidden = false;
-          if (el.id !== 'nous-section' && el.id !== 'nous-sidebar-config') el.style.display = '';
+          if (el.id !== 'nous-section') el.style.display = '';
         } else {
           el.hidden = true;
           el.style.display = 'none';
@@ -19575,7 +19672,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         switch (state) {
           case 'passing': return count + ' passed';
           case 'failing': return count + ' · ' + (failing || 'failing' + (blocker ? ' (' + q(blocker) + ')' : ''));
-          case 'running': return count + ' · ' + pending('running') + (failing ? ' · ' + failing : '');
+          case 'running': return count + ' · ' + ((typeof stageTrackerStuckChecksWord === 'function' && stageTrackerStuckChecksWord(matches ? a : null, pendingCount)) || pending('running')) + (failing ? ' · ' + failing : '');
           case 'queued': return count + ' · ' + pending('queued') + (failing ? ' · ' + failing : '');
           case 'skipped': return count + ' · ' + (blocker ? q(blocker) + ' skipped' : 'skipped');
           case 'missing': {
@@ -19617,6 +19714,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const q = item.decision_needed && item.decision_needed.question ? String(item.decision_needed.question).toLowerCase() : '';
           const me = typeof window !== 'undefined' && window._hiveUser ? String(window._hiveUser).toLowerCase() : '';
           const mine = !!me && new RegExp('@' + me.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w-])').test(q);
+          if (typeof stageTrackerGateAnswered === 'function' && stageTrackerGateAnswered(item)) return count + (String(item.human_approver || '').trim() ? ' · signed off' : ' · no sign-off pending');
           return count + (mine ? ' · needs your sign-off' : ' · needs owner sign-off');
         }
         case 'reviewing': return count + ' · ' + (actor ? actor + ' reviewing' : 'in progress');
@@ -19892,7 +19990,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const humanGated = lit && !(opts && opts.gateElsewhere) && ((typeof stageTrackerPersonActsOnPR === 'function' && stageTrackerPersonActsOnPR(item)) || (typeof stageTrackerHumanGateReasons === 'function' && stageTrackerHumanGateReasons(item).length > 0));
       const cls = lit ? 'active' + (stalled ? ' ham-stalled' : '') + (humanGated ? ' ham-human-gated' : '') : (finished ? 'done' : finding ? 'failing' : settled ? 'done decided' : 'todo') + (queued ? ' ham-track-queued' : '');
       const approvalPending = kind === 'ci' && matches ? stageTrackerWorkflowApprovalPending(a) : 0;
-      const humanAction = approvalPending > 0 ? STAGE_TRACKER_WORKFLOW_APPROVAL_TIP : kind === 'review' && state === 'human_decision' ? 'Needs a person\'s decision' : '';
+      const humanAction = approvalPending > 0 ? STAGE_TRACKER_WORKFLOW_APPROVAL_TIP : kind === 'review' && state === 'human_decision' && !(typeof stageTrackerGateAnswered === 'function' && stageTrackerGateAnswered(item)) ? 'Needs a person\'s decision' : '';
       const personIco = stalled && humanAction ? stageTrackerIcon('human', 'ham-ico ham-actor-ico', humanAction) : '';
       const source = matches ? a.source || 'unavailable' : 'unavailable';
       const freshness = !Number.isFinite(observed) ? 'observation time unknown' : (stale ? 'stale · ' : 'observed · ') + new Date(observed).toISOString() + ' (' + stageTrackerAgoWord(observed, clock) + ')';
@@ -20657,14 +20755,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return { profile: String(t.profile), state: String(t.state || ''), reply: String(t.reply || ''), agent: String(t.agent || ''), problem: String(t.problem || '') };
     }
 
-    // Pure: the row's short reason when no hive agent fills the profile
-    // its state is handed to (hivecommons/hive#18690): the hand-off cannot
-    // happen and no other lane is offered the item, so the row says so
-    // instead of looking claimed and idle. '' when an agent fills it.
+    // Pure: the row's short reason when its hand-off cannot happen or did
+    // not start. No hive agent fills the profile its state is handed to
+    // (hivecommons/hive#18690), or the agent it was handed to declined or
+    // did not act (`workflows.repos[repo].handoffs` keyed by item number,
+    // hivecommons/hive#18749). No other lane is offered the item either
+    // way, so the row says so instead of looking claimed and idle. null
+    // when an agent fills the profile and the hand-off is under way.
     function stageTrackerWorkflowGapOf(item, workflows) {
       const t = stageTrackerWorkflowDispatchOf(item, workflows);
-      if (!t || !t.problem) return null;
-      return { profile: t.profile, word: 'no agent for ' + t.profile, tip: 'Not handed off: ' + t.problem + '. Pick an agent for it on the repository\'s workflow row in Settings → Repos.' };
+      if (!t) return null;
+      if (t.problem) return { profile: t.profile, word: 'no agent for ' + t.profile, tip: 'Not handed off: ' + t.problem + '. Pick an agent for it on the repository\'s workflow row in Settings → Repos.' };
+      const wf = stageTrackerWorkflowOf({ workflows }, item.repo);
+      const h = wf && wf.handoffs ? wf.handoffs[String(Number(item.number) || 0)] : null;
+      if (!h || String(h.profile || '') !== t.profile || (h.state && String(h.state) !== t.state)) return null;
+      const next = h.retrying
+        ? 'The hive hands it to another agent that may do the work, if there is one.'
+        : 'It waits for an owner: use Send to ' + t.profile + ' in this row\'s ⋯ menu.';
+      return { profile: t.profile, word: 'not started: ' + t.profile, tip: 'Hand-off not started: ' + String(h.reason || (String(h.agent || 'the agent') + ' did not act')) + '. ' + next };
     }
     function stageTrackerWorkflowGapHtml(item, workflows) {
       const g = stageTrackerWorkflowGapOf(item, workflows);
@@ -21316,7 +21424,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '',
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
-        decided: lp.decided || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
+        decided: lp.decided || null, human_gate: lp.human_gate || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
     }
     // Pure: whether a linked PR is still open (not merged / closed /
     // superseded). With `issue`, an adopted original whose hive copy is
@@ -21515,7 +21623,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-sub${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(pr, ctx) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(pr, stages, ctx) : ''}" data-ham-kind="pr" data-ham-stage="${pr.stage}" data-ham-sub-key="${esc(stageTrackerItemKey(pr))}">
           ${typeof stageTrackerRowToolsHtml === 'function' ? stageTrackerRowToolsHtml(pr) : ''}
           <div class="ham-row-head">
-            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + stageTrackerChipsHtml(pr, { gate: !!prGate }) + (prGate || (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : '')) + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(pr, hamNotesCtx(pr)) : ''))}
+            ${stageTrackerHeadColsHtml([ref], '', stageTrackerActedBadgeHtml(pr, nowMs) + stageTrackerChipsHtml(pr, { gate: !!prGate }) + (prGate || (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(pr, nowMs) : '')) + (!prGate && typeof stageTrackerGateWaitingHtml === 'function' ? stageTrackerGateWaitingHtml(pr) : '') + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(pr, hamNotesCtx(pr)) : ''))}
           </div>
           <div class="ham-strip-row">
             ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(pr, stages, ctx) : ''}
@@ -21813,7 +21921,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
             terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '', hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '', hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null, human_gate: lp.human_gate || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -21883,7 +21991,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return `<div class="ham-row${typeof stageTrackerCueClasses === 'function' ? stageTrackerCueClasses(shown, ctx) : ''}${typeof stageTrackerTrainRowClass === 'function' ? stageTrackerTrainRowClass(item, ctx.prevRow || null, ctx.nextRow || null, ctx.trainIndex && trainKey ? ctx.trainIndex[trainKey] : undefined) : ''}${typeof stageTrackerPreparationRowClass === 'function' ? stageTrackerPreparationRowClass(item, stages, ctx) : ''}${sharedCls}" tabindex="0" data-ham-kind="${esc(item.kind)}" data-ham-repo="${esc(item.repo || '')}" data-ham-stage="${Number(item.stage) || 0}"${prs ? ` data-ham-prs="${esc(prs)}"` : ''}${sharedUnder ? ` data-ham-shared-under="${sharedUnder}"` : ''}${trainKey ? ` data-ham-train="${esc(trainKey)}"` : ''}>
         ${stageTrackerRowToolsHtml(item)}
         <div class="ham-row-head">
-          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + (typeof stageTrackerWorkflowGapHtml === 'function' ? stageTrackerWorkflowGapHtml(item, ctx.workflows) : '') + stageTrackerChipsHtml(shown, { gate: !!gate }) + (gate || (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : '')) + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(item, hamNotesCtx(item)) : ''), prTargetKey)}
+          ${stageTrackerHeadColsHtml(prRefs, leadHtml, stageTrackerActedBadgeHtml(item, nowMs) + (typeof stageTrackerWorkflowGapHtml === 'function' ? stageTrackerWorkflowGapHtml(item, ctx.workflows) : '') + stageTrackerChipsHtml(shown, { gate: !!gate }) + (gate || (typeof stageTrackerLeadButtonHtml === 'function' ? stageTrackerLeadButtonHtml(item, nowMs, subRows) : '')) + (!gate && typeof stageTrackerGateWaitingHtml === 'function' ? stageTrackerGateWaitingHtml(shown) : '') + (typeof stageTrackerNotesButtonHtml === 'function' ? stageTrackerNotesButtonHtml(item, hamNotesCtx(item)) : ''), prTargetKey)}
         </div>
         <div class="ham-strip-row">
           ${typeof stageTrackerPreparationNodeHtml === 'function' ? stageTrackerPreparationNodeHtml(item, stages, ctx) : ''}
@@ -27505,7 +27613,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // returning silently (hivecommons/hive#15436).
     function stageTrackerNothingToActOn(id, rows) {
       const refs = (rows || []).map(stageTrackerRefOf).filter(Boolean).join(', ');
-      if (typeof showToast === 'function') showToast(stageTrackerActionLabel(id) + ': nothing to act on' + (refs ? ' — ' + refs + ' is not waiting on that decision' : ''), 'warning');
+      if (typeof showToast === 'function') showToast(stageTrackerActionLabel(id) + ': nothing to act on' + (typeof stageTrackerGateStaleNote === 'function' ? stageTrackerGateStaleNote(rows) : (refs ? ' — ' + refs + ' is not waiting on that decision' : '')), 'warning'); if (typeof stageTrackerGateRefresh === 'function') stageTrackerGateRefresh();
     }
     // A copy must identify the selected item, not its parent issue or a
     // decision target. Keep the canonical URL (including its forge host).
@@ -27620,7 +27728,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         // parent and its sub-rows run each PR once, with every PR named in
         // the shared confirmation. A parent with one parked PR keeps
         // deciding just that PR ("Decide PR #N › Let hive decide").
-        items = [].concat(...items.map(it => id === 'decide:delegate' ? stageTrackerDelegateTargets(it) : [stageTrackerDecisionTarget(it)]))
+        items = [].concat(...items.map(it => stageTrackerGateTargets(it, id)))
           .filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
       }
@@ -27842,7 +27950,12 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const pr = stageTrackerGateIsPR(item);
       const onHead = a => !!a && (!a.head || !item.head || String(a.head) === String(item.head));
       const review = pr && onHead(item.review_activity) ? item.review_activity : null;
-      if (review && review.state === 'human_decision') {
+      // The verdict for a head never changes; the ask is live only while
+      // the hive parks the row on a person — the predicate the verbs act
+      // on (tracker-gate-truth.js, hivecommons/hive#18769).
+      const parked = typeof stageTrackerGateParked === 'function' ? stageTrackerGateParked(item) : true;
+      const asked = !!review && review.state === 'human_decision' && parked;
+      if (asked) {
         out.push({ key: 'review', tip: String(review.blocker || review.detail || review.caption || '').trim() || 'A reviewer asked for a person\'s sign-off.' });
       }
       const stage = Number(item.stage) || 0;
@@ -27854,7 +27967,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // author's move, named by the waiting-on pill; needs_human alone does
       // not make it a decision (hivecommons/hive#17789).
       const authorDCO = /^(dco-missing|hive-signoff-attribution)$/.test(String(item.reason || '').trim());
-      const flagged = decisionStage || mods.indexOf('needs-decision') >= 0 || mods.indexOf('needs-human') >= 0 || (item.needs_human === true && !authorDCO);
+      // needs_human alone (triage needed, a human author's turn) is a
+      // decision only where one can be recorded; elsewhere the row's lead
+      // (Accept triage, Adopt) is the control.
+      const flagged = decisionStage || mods.indexOf('needs-decision') >= 0 || mods.indexOf('needs-human') >= 0 || (item.needs_human === true && !authorDCO && parked);
       // An unauthorized step and a structured blocker name the person owed
       // in their own pills (hive-bot-lacks-permission, Blocked · …); they
       // are not a decision anyone is asked for.
@@ -27866,7 +27982,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const tip = String(d.question || (attention && (attention.question || attention.reason)) || (ask && (ask.question || ask.reason)) || short || '').trim();
         // The review gate already carries the reviewer's question; the same
         // question is not a second reason.
-        if (!(review && review.state === 'human_decision' && out.length && (!tip || out[0].tip === tip))) out.push({ key: 'decision', tip: tip || 'A person\'s decision is owed.' });
+        if (!(asked && out.length && (!tip || out[0].tip === tip))) out.push({ key: 'decision', tip: tip || 'A person\'s decision is owed.' });
       }
       if (item.sentinel_alert && !item.sentinel_notice) {
         out.push({ key: 'sentinel', tip: typeof stageTrackerSentinelTipWithPaths === 'function' ? stageTrackerSentinelTipWithPaths(item) : (typeof stageTrackerSentinelTip === 'function' ? stageTrackerSentinelTip(item) : 'Sentinel alert') });
@@ -27970,7 +28086,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (Array.isArray(subRows) && subRows.length && item.kind === 'issue' && !item.via_pr && !leads.length && subRows.some(s => stageTrackerHumanGateReasons(s).length)) return '';
       const workflows = opts && opts.workflows !== undefined ? opts.workflows : (typeof _stageTracker !== 'undefined' && _stageTracker ? _stageTracker.workflows : null);
       const modelVerbs = typeof stageTrackerWorkflowReplies === 'function' ? stageTrackerWorkflowReplies(shown, workflows) : [];
+      // Only the verbs the action would act on: a verb runRowAction answers
+      // "nothing to act on" is never drawn (hivecommons/hive#18769).
       const verbs = stageTrackerHumanGateVerbs(reasons, shown, modelVerbs);
+      const offered = verbs.filter(v => v.model || typeof stageTrackerGateAccepts !== 'function' || stageTrackerGateAccepts(item, v.id));
       const text = stageTrackerHumanGateStatusText(reasons);
       const tip = stageTrackerHumanGateTip(reasons);
       const ico = typeof stageTrackerIcon === 'function' ? stageTrackerIcon('human', 'ham-ico ham-mod-ico') : '';
@@ -27980,8 +28099,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         ? stageTrackerDecisionTriggerHtml(decision, inner, tip, 'ham-gate-status ham-mod-ask')
         : `<span class="ham-gate-status ham-mod-ask" title="${esc(tip)}" aria-label="${esc(text + ' — ' + tip)}">${inner}</span>`;
       const visibleCount = stageTrackerHumanGateVisible();
-      const shownVerbs = verbs.slice(0, visibleCount);
-      const moreVerbs = verbs.slice(visibleCount);
+      const shownVerbs = offered.slice(0, visibleCount);
+      const moreVerbs = offered.slice(visibleCount);
       const acts = shownVerbs.map(v => stageTrackerHumanGateVerbHtml(item, v, stageTrackerHumanGateVerbState(v.id, shown, ctx, leads), false)).join('');
       // The menu's items wait in a <template> (no hidden buttons in the row;
       // the header-geometry harness hit-tests every button it finds) and are
@@ -28017,6 +28136,119 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (menu && open) { menu.hidden = false; b.setAttribute('aria-expanded', 'true'); const first = menu.querySelector('[role="menuitem"]'); if (first) first.focus(); }
       });
       el.addEventListener('keydown', e => { if (e.key === 'Escape') closeAll(); });
+    }
+    /* ---- The human gate's one source of truth (hivecommons/hive#18769) ---
+       The gate pill and its verbs used to read two different things: the
+       pill lit "Needs human · review" from the cached reviewer verdict for
+       the head (review_activity.state === 'human_decision'), while every
+       verb acted only on a PR the hive had actually parked on a person
+       (runRowAction → stageTrackerDecisionTarget). A verdict never changes
+       for a head, so once a person approved it the pill stayed and each
+       verb answered "nothing to act on" (hivecommons/hive#18667).
+
+       One rule now, shared by the pill and the action:
+         stageTrackerGateParked  — the hive parks the row on a person; the
+                                   review reason and a bare needs_human
+                                   stand only while it does
+         stageTrackerGateAccepts — a verb is drawn only when runRowAction
+                                   would find something to act on
+       The server states the same rule per row as `human_gate`
+       (stage_tracker_gate.go; testdata/gate_states.json pins both to one
+       table) and names what an item with no decision pending actually
+       waits on — required checks (running, stuck, unreported, red), the
+       review of a new head, the merge queue, its author, a conflict. */
+    const STAGE_TRACKER_GATE_WAIT_WORD = 'waiting on ';
+    const STAGE_TRACKER_GATE_NO_DECISION = 'No decision pending';
+    const STAGE_TRACKER_GATE_APPROVED_BY = 'Approved by @';
+    const STAGE_TRACKER_GATE_STALE = ' is not waiting on that decision';
+    // Pure: the server's gate for the row (`human_gate`), null when absent.
+    function stageTrackerServerGate(item) {
+      const g = item && item.human_gate;
+      return g && typeof g === 'object' && Array.isArray(g.reasons) ? g : null;
+    }
+    // Pure: whether the hive parks the row on a person. A PR (or an issue
+    // drawn through its one covering PR) by its own stage and pills; a
+    // plain issue when a decision can be recorded on it.
+    function stageTrackerGateParked(item) {
+      if (!item) return false;
+      if ((item.via_pr ? 'pr' : item.kind) === 'pr') return typeof stageTrackerPRParked === 'function' ? stageTrackerPRParked(item) : true;
+      return typeof stageTrackerDecisionTarget === 'function' ? !!stageTrackerDecisionTarget(item) : true;
+    }
+    // Pure: what a decide:* action on the row acts on — runRowAction's own
+    // mapping, so the pill and the click can never disagree.
+    function stageTrackerGateTargets(item, id) {
+      if (id === 'decide:delegate') return stageTrackerDelegateTargets(item);
+      return [stageTrackerDecisionTarget(item)].filter(Boolean);
+    }
+    // Pure: the action precondition — whether a gate verb would act on the
+    // row. Only the decide:* verbs have one; the rest post on the row itself.
+    function stageTrackerGateAccepts(item, id) {
+      if (String(id || '').indexOf('decide:') !== 0) return true;
+      return stageTrackerGateTargets(item, id).length > 0;
+    }
+    // Pure: whether the reviewer's sign-off ask on this head is no longer
+    // open — the verdict still reads human_decision but the hive does not
+    // park the PR on it (a person approved, or the head is not there yet).
+    function stageTrackerGateAnswered(item) {
+      if (!item || (item.via_pr ? 'pr' : item.kind) !== 'pr') return false;
+      // A closed, merged, superseded or draft head has no ask to answer.
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      if (item.state === 'closed' || item.superseded || item.superseded_by || item.adopted_by || mods.indexOf('merged') >= 0 || mods.indexOf('draft') >= 0) return false;
+      if (Number(item.stage) >= (typeof STAGE_TRACKER_TERMINAL === 'number' ? STAGE_TRACKER_TERMINAL : 110)) return false;
+      const a = item.review_activity;
+      if (!a || a.state !== 'human_decision' || (a.head && item.head && String(a.head) !== String(item.head))) return false;
+      return !stageTrackerGateParked(item);
+    }
+    // Pure: the CI words of a head with stuck required checks, '' when none
+    // is stuck: "'PR Type', 'PR Issue' stuck", or "13 running · 2 stuck".
+    function stageTrackerStuckChecksWord(a, pendingCount) {
+      const stuck = a && Array.isArray(a.checks_stuck) ? a.checks_stuck.map(String).filter(Boolean) : [];
+      if (!stuck.length) return '';
+      const names = stuck.map(n => "'" + n + "'").join(', ');
+      const moving = Math.max(0, (Number(pendingCount) || 0) - stuck.length);
+      return moving ? moving + ' running · ' + stuck.length + ' stuck (' + names + ')' : names + ' stuck';
+    }
+    // Pure: what the row waits on when no decision is pending — the
+    // server's sentence, else the CI track's own words. '' when unknown.
+    function stageTrackerGateWaitText(item) {
+      const g = stageTrackerServerGate(item);
+      if (g && g.waiting_on && g.waiting_on.text) return String(g.waiting_on.text);
+      const ci = item && item.ci_activity;
+      if (!ci || (ci.head && item.head && String(ci.head) !== String(item.head))) return '';
+      const stuck = stageTrackerStuckChecksWord(ci, Array.isArray(ci.checks_pending) ? ci.checks_pending.length : 0);
+      if (stuck) return 'required checks: ' + stuck;
+      const tally = Number(ci.checks_total) > 0 ? ' (' + (Number(ci.checks_passed) || 0) + '/' + Number(ci.checks_total) + ')' : '';
+      if (ci.state === 'failing' && Array.isArray(ci.checks_failing) && ci.checks_failing.length) return 'required checks failing: ' + ci.checks_failing.join(', ');
+      if (ci.state === 'missing' && Array.isArray(ci.checks_pending) && ci.checks_pending.length) return 'required checks not reported: ' + ci.checks_pending.join(', ');
+      return ci.state === 'running' || ci.state === 'queued' ? 'CI running' + tally : '';
+    }
+    // Pure: the passive pill of a PR whose sign-off ask is answered: who
+    // approved (when the lane recorded it) and the real blocker. '' when
+    // the ask is still open or the row never had one.
+    function stageTrackerGateWaitingHtml(item) {
+      if (!stageTrackerGateAnswered(item)) return '';
+      const g = stageTrackerServerGate(item);
+      const by = String((g && g.answered_by) || item.human_approver || '').replace(/^@/, '').trim();
+      const wait = stageTrackerGateWaitText(item);
+      const lead = by ? STAGE_TRACKER_GATE_APPROVED_BY + by : STAGE_TRACKER_GATE_NO_DECISION;
+      const text = lead + (wait ? ' · ' + STAGE_TRACKER_GATE_WAIT_WORD + wait.replace(/ \(in progress [^)]*\)/, '') : '');
+      const tip = (by ? 'A person approved this head; the reviewer\'s sign-off question is answered.' : 'The reviewer\'s sign-off question is not open: the hive does not park this head on a person.') + (wait ? ' It is ' + STAGE_TRACKER_GATE_WAIT_WORD + wait + '.' : '') + ' Nothing here needs a decision.';
+      return `<span class="ham-badge ham-gate-waiting" role="status" data-ham-gate-waiting="${esc(String((g && g.waiting_on && g.waiting_on.kind) || ''))}" title="${esc(tip)}" aria-label="${esc(text)}">${esc(text)}</span>`;
+    }
+    // The toast of a verb clicked where nothing waits on it (a stale view):
+    // it names what the item IS waiting on, and the tracker re-reads the
+    // server so the row drops the verb.
+    function stageTrackerGateStaleNote(rows) {
+      const list = (rows || []).filter(Boolean);
+      const refs = list.map(stageTrackerRefOf).filter(Boolean).join(', ');
+      if (!refs) return '';
+      const wait = list.length === 1 ? stageTrackerGateWaitText(list[0]) : '';
+      return ' — ' + refs + (wait ? ' is ' + STAGE_TRACKER_GATE_WAIT_WORD + wait : STAGE_TRACKER_GATE_STALE);
+    }
+    function stageTrackerGateRefresh() {
+      if (typeof fetchStageTracker !== 'function') return;
+      _stageTrackerEtag = ''; _stageTrackerSig = '';
+      fetchStageTracker();
     }
     function stageTrackerPRKey(repo, number) { return (repo || '') + '/pr#' + (Number(number) || 0); }
     function stageTrackerItemKey(it) { return (it.repo || '') + '/' + (it.kind || '') + '#' + (Number(it.number) || 0); }
@@ -33516,20 +33748,24 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
               const pct = v => `${((Number(v) || 0) * 100).toFixed(0)}%`;
               const unattributed = governorPRModelUnattributed(b);
               const rank = eff.rank ? `<span class="gov-pr-model-rank">#${eff.rank}</span>` : (unattributed ? '<span class="gov-pr-model-rank unattributed" title="No model recorded on these PRs; listed but not ranked">unattributed</span>' : '');
+              const measured = Number(eff.runs || 0) > 0;
+              const runPct = v => measured ? pct(v) : '—';
+              const ci = r => Array.isArray(r) && r.length === 2 ? ` (95% CI ${pct(r[0])}–${pct(r[1])})` : '';
               const values = {
                 merged: String(eff.merged_prs ?? b.merged ?? 0),
                 first_pass: pct(eff.first_pass_merge_rate ?? rw.first_pass_merge_rate),
-                pr_runs: pct(eff.verified_pr_run_rate),
-                fail: pct(eff.failure_rate),
-                no_ship: pct(eff.nothing_to_ship_rate),
+                pr_runs: runPct(eff.verified_pr_run_rate),
+                fail: runPct(eff.failure_rate),
+                no_ship: runPct(eff.nothing_to_ship_rate),
               };
               const metrics = `<div class="gov-pr-model-metrics" role="group" aria-label="Model effectiveness metrics">${GOV_PR_MODEL_COLUMNS.map(([key, label]) => `<div class="gov-pr-model-metric" data-label="${label}">${values[key]}</div>`).join('')}</div>`;
               const backends = Array.isArray(b.backends) && b.backends.length ? b.backends : String(b.backend || 'unknown').split(',').map(x => x.trim()).filter(Boolean);
               const backendChips = backends.map(x => `<span class="gov-pr-model-backend">${escapeHtml(x)}</span>`).join('');
               const sources = (b.sources || []).map(src => `${src.model || 'unknown'} / ${src.backend || 'unknown'}: ${src.prs || 0} PRs (${src.merged || 0} merged)`).join('\n');
               const agentBreakdown = (b.agents || []).map(a => `${a.agent || 'unknown'} / ${a.backend || b.backend || 'unknown'}: ${a.prs} PRs (${a.merged || 0} merged, ${a.open || 0} open, ${a.closed_unmerged || 0} closed-unmerged)`).join('\n');
-              const scoreLine = eff.rank ? `\nRank #${eff.rank} · score ${(Number(eff.score) || 0).toFixed(3)} = Wilson lower bound(${eff.first_pass_merged ?? '?'}/${eff.merged_prs ?? b.merged ?? 0} first pass) × (1 − fail) × (1 − no ship)` : (unattributed ? '\nUnattributed: no model recorded, listed but not ranked' : `\nUnranked: fewer than ${data.min_merged_prs || 5} merged PRs`);
-              const tip = `${b.model || 'unknown'} via ${backends.join(', ')}${scoreLine}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${values.first_pass} · PR run rate ${values.pr_runs} · failure ${values.fail} · nothing-to-ship ${values.no_ship}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${sources ? '\n\nRaw model ids folded into this row:\n' + sources : ''}${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
+              const scoreFormula = measured ? ' × (1 − fail) × (1 − no ship)' : ' (first-pass bound only: no runs recorded, so the run factors were skipped)';
+              const scoreLine = eff.rank ? `\nRank #${eff.rank} · score ${(Number(eff.score) || 0).toFixed(3)} = Wilson lower bound(${eff.first_pass_merged ?? '?'}/${eff.merged_prs ?? b.merged ?? 0} first pass)${scoreFormula}` : (unattributed ? '\nUnattributed: no model recorded, listed but not ranked' : `\nUnranked: fewer than ${data.min_merged_prs || 5} merged PRs`);
+              const tip = `${b.model || 'unknown'} via ${backends.join(', ')}${scoreLine}\n${prs} PRs (${share.toFixed(1)}%)\n${b.merged || 0} merged · ${b.open || 0} open · ${b.closed_unmerged || 0} closed-unmerged\nFirst-pass ${values.first_pass}${ci(eff.first_pass_merge_rate_ci || rw.first_pass_merge_rate_ci)} · PR run rate ${values.pr_runs}${measured ? ci(eff.verified_pr_run_rate_ci) : ''} · failure ${values.fail}${measured ? ci(eff.failure_rate_ci) : ''} · nothing-to-ship ${values.no_ship}${measured ? ci(eff.nothing_to_ship_rate_ci) : ''}${measured ? '' : '\n— = no runs recorded, not a measured 0%'}\nAvg rounds ${(rw.avg_review_rounds || 0).toFixed(1)} · avg fix attempts ${(rw.avg_fix_attempts || 0).toFixed(1)}${sources ? '\n\nRaw model ids folded into this row:\n' + sources : ''}${agentBreakdown ? '\n\n' + agentBreakdown : ''}`;
               return `<div class="gov-pr-model-row${unattributed ? ' unattributed' : ''}" title="${escapeHtml(tip)}">
                 <div><div class="gov-pr-model-name">${rank}${escapeHtml(b.model || 'unknown')}</div><div class="gov-pr-model-sub">${backendChips}</div></div>
                 <div class="gov-pr-model-bar" aria-label="${escapeHtml(tip)}">
@@ -33565,6 +33801,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           return `<li><a${href}>${escapeHtml(label)}</a> ${escapeHtml(pr.model || 'unknown')} · ${pr.review_rounds || 0} rounds · ${pr.fix_attempts || 0} fixes · ${pr.follow_up_commits || 0} follow-up commits${fixers}</li>`;
         }).join('')}</ol>
       </div>` : '';
+      const cov = data && data.coverage;
+      const covParts = [];
+      if (cov && cov.closed_prs_partial) covParts.push(`closed PRs: last ${cov.closed_pr_lookback_days || 0} days scanned${data.earliest_pr_created_at ? ` (earliest counted ${escapeHtml(String(data.earliest_pr_created_at).slice(0, 10))})` : ''}`);
+      if (cov && cov.runs_partial) covParts.push(`runs: ${cov.runs_since ? 'since ' + escapeHtml(String(cov.runs_since).slice(0, 10)) : 'none retained'} (older runs rotated out)`);
+      const coverageNote = covParts.length ? `<div class="gov-pr-model-sub gov-pr-model-sub-spaced gov-pr-models-coverage">Partial history: ${covParts.join(' · ')}. Run columns come from the task-run log; — means no runs recorded, not a measured 0%.</div>` : '';
       const header = data && total > 0 ? `<div class="gov-pr-model-row gov-pr-model-head" aria-hidden="false">
           <div>Model</div>
           <div>Outcome</div>
@@ -33579,6 +33820,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           <span class="gov-pr-models-toggle" data-stop="1">${buttons}${sortButtons}</span>
         </div>
         <div class="section-body" id="governor-pr-models-section-body"><div class="gov-pr-models">
+          ${coverageNote}
           ${header}
           ${rows}
           ${reworkTable}
@@ -44430,22 +44672,6 @@ function burnAreaChart() {
       // section header (#12532); the header keeps the mode · N summary.
       if (typeof refreshDashboardSectionSummaries === 'function' && window._lastStatus) refreshDashboardSectionSummaries(window._lastStatus);
 
-      // Update sidebar config — only show at ACMM L4+
-      const NOUS_SIDEBAR_MIN_LEVEL = 4;
-      const modeColors = { observe: 'var(--blue)', suggest: 'var(--yellow)', evolve: 'var(--green)' };
-      const currentACMM = window._lastStatus ? (window._lastStatus.acmmLevel || 0) : 0;
-      const sbConfig = document.getElementById('nous-sidebar-config');
-      const sbMode = document.getElementById('nous-sb-mode');
-      const sbPhase = document.getElementById('nous-sb-phase');
-      if (sbConfig) {
-        sbConfig.style.display = currentACMM >= NOUS_SIDEBAR_MIN_LEVEL ? '' : 'none';
-        if (sbMode) { sbMode.textContent = mode; sbMode.style.color = modeColors[mode] || 'var(--muted)'; }
-        if (sbPhase) {
-          const rp = (phases.repo || {}).phase || 'IDLE';
-          sbPhase.textContent = 'repo:' + rp;
-        }
-      }
-
       let html = '';
 
       // Fresh lab (no baseline, no experiments, no principles yet):
@@ -48194,8 +48420,10 @@ function burnAreaChart() {
     const INBOX_BUSY_POLL_MS = 5000;
     const INBOX_SOURCE_ICONS = { plaud: '🎙️', wisprflow: '🗣️', zoom: '📹', teams: '👥', discord: '🎧', 'google-meet': '🎥', webex: '🎬', 'slack-huddles': '💬', 'fireflies': '🪲', 'fathom': '🌊', 'limitless': '📿', 'granola': '🥣', 'otter': '🦦', 'file-drop': '📎', webhook: '🔗', 'hive-recording': '⏺️', upload: '📎', email: '✉️' };
     const INBOX_DEST_LABELS = { spek_rfc: 'RFC', dibs: 'dibs' };
-    // Summaries longer than this many characters start collapsed.
+    // Summaries longer than this many characters, or more lines than the
+    // clamp (the CSS line-clamp of .inbox-summary.is-collapsed), start collapsed.
     const INBOX_SUMMARY_COLLAPSE_CHARS = 280;
+    const INBOX_SUMMARY_CLAMP_LINES = 3;
     let _inboxCache = null;
     let _inboxSelected = new Set();
     let _inboxShowProcessed = false;
@@ -48225,8 +48453,51 @@ function burnAreaChart() {
     let _inboxAddOpen = false;
     let _inboxUploadQueue = Promise.resolve();
     let _inboxPointerInside = false;
+    // Whether the "+N more" disclosure of unconfigured sources is open.
+    let _inboxSourcesOpen = false;
 
     function inboxSourceIcon(src) { return INBOX_SOURCE_ICONS[src] || '📥'; }
+    // Inline SVG glyphs for the per-item icon buttons (play, share, text
+    // disclosure, open file, delete). Each is decorative: the button carries
+    // the accessible name (aria-label) and the tooltip (title).
+    function inboxIconSvg(name) {
+      const paths = {
+        play: '<path d="M4.5 3.2v9.6a.6.6 0 0 0 .9.5l7.6-4.8a.6.6 0 0 0 0-1L5.4 2.7a.6.6 0 0 0-.9.5z" fill="currentColor" stroke="none"/>',
+        share: '<path d="M6.8 9.2a3 3 0 0 0 4.2 0l2-2a3 3 0 0 0-4.2-4.2l-1 1"/><path d="M9.2 6.8a3 3 0 0 0-4.2 0l-2 2a3 3 0 0 0 4.2 4.2l1-1"/>',
+        'chevron-right': '<path d="M6 3.5 10.5 8 6 12.5"/>',
+        'chevron-down': '<path d="M3.5 6 8 10.5 12.5 6"/>',
+        file: '<path d="M10.5 5.5 6.2 9.8a1.5 1.5 0 0 0 2.1 2.1l4.6-4.6a3 3 0 0 0-4.2-4.2L4 7.8a4.2 4.2 0 0 0 6 6l3-3"/>',
+        trash: '<path d="M3 4.5h10"/><path d="M6.5 4.5V3h3v1.5"/><path d="M4.5 4.5l.6 8.2a1 1 0 0 0 1 .8h3.8a1 1 0 0 0 1-.8l.6-8.2"/>'
+      };
+      return '<svg class="inbox-ic" viewBox="0 0 16 16" aria-hidden="true" focusable="false">' + (paths[name] || '') + '</svg>';
+    }
+    // inboxTitleParts splits a trailing recording id off a title:
+    // "Meeting notes: standup 2026-11-17 (mtg-078395cc1f76)" becomes
+    // { title: "Meeting notes: standup 2026-11-17", id: "mtg-078395cc1f76" }.
+    // The id goes to the meta line; the full title stays as the tooltip.
+    function inboxTitleParts(title) {
+      const full = String(title || '');
+      const m = /^(.*\S)\s*\(((?:mtg|rec|meeting)-[A-Za-z0-9_-]+)\)\s*$/.exec(full);
+      return m ? { title: m[1], id: m[2], full } : { title: full, id: '', full };
+    }
+    // inboxMarkdownToText renders a Markdown preview as plain text: heading
+    // marks, emphasis, code ticks, list bullets, quotes and link syntax go,
+    // the words stay (mentions stay plain text). Blank runs collapse.
+    function inboxMarkdownToText(md) {
+      return String(md || '')
+        .replace(/```[^\n]*\n?/g, '')
+        .replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '')
+        .replace(/^[ \t]*>[ \t]?/gm, '')
+        .replace(/^[ \t]*(?:[-*+]|\d+[.)])[ \t]+/gm, '')
+        .replace(/!\[([^\]]*)\]\([^)]*\)/g, '$1')
+        .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
+        .replace(/(\*\*|__)(.+?)\1/g, '$2')
+        .replace(/(^|[^\w*])\*([^*\n]+)\*(?!\w)/g, '$1$2')
+        .replace(/`([^`\n]*)`/g, '$1')
+        .replace(/[ \t]+$/gm, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+    }
     // Uploaded documents have no audio; uploaded audio/video does. Mailed-in
     // audio (source email) is opened as a file, not streamed.
     function inboxItemHasAudio(it) { return !it || (it.source !== 'upload' && it.source !== 'email') || (it.source === 'upload' && (it.upload_kind === 'audio' || it.upload_kind === 'video')); }
@@ -48299,17 +48570,21 @@ function burnAreaChart() {
       return html;
     }
 
-    // Summary / memo text: collapsed past INBOX_SUMMARY_COLLAPSE_CHARS with a
-    // more/less toggle. Falls back to the pending note or the fact excerpt.
+    // Summary / memo text: a plain-text preview (a document's Markdown is
+    // rendered as text) clamped to INBOX_SUMMARY_CLAMP_LINES lines with a
+    // Show more / Show less toggle once it is longer than
+    // INBOX_SUMMARY_COLLAPSE_CHARS or that many lines. Falls back to the
+    // pending note or the fact excerpt.
     function inboxSummaryHtml(it, key) {
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
       const cached = _inboxContent[key];
-      const summary = (cached && cached.summary) || it.summary || '';
+      const raw = (cached && cached.summary) || it.summary || '';
+      const summary = it.source === 'upload' || it.source === 'email' ? inboxMarkdownToText(raw) : raw;
       if (summary) {
-        const long = summary.length > INBOX_SUMMARY_COLLAPSE_CHARS;
+        const long = summary.length > INBOX_SUMMARY_COLLAPSE_CHARS || summary.split('\n').length > INBOX_SUMMARY_CLAMP_LINES;
         const expanded = _inboxExpanded.has(key);
         let html = '<div class="inbox-summary' + (long && !expanded ? ' is-collapsed' : '') + '">' + escapeHtml(summary) + '</div>';
-        if (long) html += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-more" data-action="inboxToggleSummary" data-arg0="' + src + '" data-arg1="' + id + '">' + (expanded ? 'less' : 'more') + '</button>';
+        if (long) html += '<button type="button" class="hv-btn btn-ghost btn-sm inbox-more" data-action="inboxToggleSummary" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (expanded ? 'true' : 'false') + '">' + (expanded ? 'Show less' : 'Show more') + '</button>';
         return html;
       }
       // Any text (a machine transcript included) means the item is not
@@ -48344,7 +48619,7 @@ function burnAreaChart() {
       if (it.source === 'upload' && !inboxItemHasAudio(it) && !c.transcript) return '<div class="inbox-transcript"><div class="muted-xs"><strong>Extracted text</strong></div><pre class="inbox-transcript-text">' + escapeHtml(c.markdown || '') + '</pre></div>';
       let html = '<div class="inbox-transcript">';
       if (c.transcript && c.transcript_label) html += '<div class="muted-xs"><strong>' + escapeHtml(c.transcript_label) + '</strong></div>';
-      if (c.transcript) html += '<pre class="inbox-transcript-text">' + escapeHtml(c.transcript) + '</pre>';
+      if (c.transcript) html += '<pre class="inbox-transcript-text">' + (it.source === 'meeting' ? meetingsTranscriptTextHtml(c.transcript) : escapeHtml(c.transcript)) + '</pre>';
       else html += '<div class="muted-xs">No transcript yet' + (c.pending ? (it.source === 'plaud' ? ': Plaud has not transcribed this recording.' : ': the meeting platform has not produced a transcript for this recording.') + (it.transcribable || it.transcribe_unavailable ? ' Hive can transcribe this: see 🎧 Transcribe on this item.' : '') : '.') + '</div>';
       if (c.highlights) html += '<div class="muted-xs inbox-highlights"><strong>Highlights</strong> (flagged on the device)<pre class="inbox-transcript-text">' + escapeHtml(c.highlights) + '</pre></div>';
       return html + '</div>';
@@ -48407,6 +48682,20 @@ function burnAreaChart() {
         (elapsed ? '<span class="kc-progress-elapsed" title="elapsed">' + escapeHtml(elapsed) + '</span>' : '') + '</div></div>';
     }
 
+    // What the item's Knowledge fact holds, as a status word in the meta
+    // line (not a control, not a floating pill): the source's own text, this
+    // hive's machine transcript, or metadata only while no text exists yet.
+    function inboxFactStateHtml(it) {
+      if (!it.fact_slug) return '';
+      const factStates = {
+        ready: { label: 'In knowledge', status: 'ok', title: 'Stored as a Knowledge fact with the source\'s own text; knowledge search and agents see it.' },
+        machine: { label: 'In knowledge (machine text)', status: 'ok', title: 'Stored as a Knowledge fact with this hive\'s machine transcript; the source\'s own text replaces it when it exists.' },
+        pending: { label: 'Pending text', status: 'not loaded', title: 'Stored as a Knowledge fact with metadata only (title, date, duration, highlights); no text yet, so knowledge search finds no words.' },
+      };
+      const fs = factStates[it.fact_state] || factStates.ready;
+      return '<span class="inbox-meta-state" role="status" data-status="' + fs.status + '" data-fact-state="' + escapeHtml(it.fact_state || 'ready') + '" title="' + escapeHtml(fs.title) + '">' + escapeHtml(fs.label) + '</span>';
+    }
+
     // Machine transcription: a state pill (spinner while queued/running, the
     // reason when it failed or was skipped), the progress bar while busy, and
     // the 🎧 Transcribe / Retry button on pending items with audio, for
@@ -48414,16 +48703,7 @@ function burnAreaChart() {
     function inboxTranscriptionHtml(it, key) {
       const st = it.transcription;
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
-      // What the item's Knowledge fact holds, as a status pill (not a
-      // control): the source's own text, this hive's machine transcript, or
-      // metadata only while no text exists yet.
-      const factStates = {
-        ready: { label: 'In knowledge', status: 'ok', title: 'Stored as a Knowledge fact with the source\'s own text; knowledge search and agents see it.' },
-        machine: { label: 'In knowledge (machine text)', status: 'ok', title: 'Stored as a Knowledge fact with this hive\'s machine transcript; the source\'s own text replaces it when it exists.' },
-        pending: { label: 'Pending text', status: 'not loaded', title: 'Stored as a Knowledge fact with metadata only (title, date, duration, highlights); no text yet, so knowledge search finds no words.' },
-      };
-      const fs = factStates[it.fact_state] || factStates.ready;
-      let html = it.fact_slug ? '<span class="kc-pill" role="status" data-status="' + fs.status + '" data-fact-state="' + escapeHtml(it.fact_state || 'ready') + '" title="' + escapeHtml(fs.title) + '">' + escapeHtml(fs.label) + '</span>' : '';
+      let html = '';
       if (st && st.status) {
         const busy = st.status === 'queued' || st.status === 'running';
         const pill = st.status === 'done' ? 'ok' : (st.status === 'failed' ? 'error' : (busy ? 'syncing' : ''));
@@ -48596,13 +48876,18 @@ function burnAreaChart() {
       // The backing Knowledge fact is a plain link in the metadata line, not
       // an action: it only opens the fact.
       const factLink = it.fact_slug ? '<a href="#" class="inbox-fact-link" data-action="inboxOpenFact" data-prevent="1" data-arg0="' + escapeHtml(it.fact_slug) + '" data-arg1="' + escapeHtml(it.layer || '') + '" title="Open this item\'s Knowledge fact">open in Knowledge</a>' : '';
+      // The title is shown without its trailing recording id; the id and the
+      // Knowledge state join the meta line, and the full title is the tooltip.
+      const tp = inboxTitleParts(it.title || it.id);
+      const idMeta = tp.id ? '<span class="inbox-meta-id" title="Recording id">' + escapeHtml(tp.id) + '</span>' : '';
+      const state = inboxFactStateHtml(it);
       // Files and links someone added show where they came from and who
       // added them ("upload · notes.md · added 2h ago by ana").
       const meta = it.source === 'upload'
-        ? [escapeHtml(it.origin || 'upload'), when ? 'added ' + when : '', it.added_by ? 'by ' + escapeHtml(it.added_by) : '', dur, factLink].filter(Boolean).join(' · ')
+        ? [escapeHtml(it.origin || 'upload'), when ? 'added ' + when : '', it.added_by ? 'by ' + escapeHtml(it.added_by) : '', dur, idMeta, state, factLink].filter(Boolean).join(' · ')
         : it.source === 'email'
-          ? ['email', it.sender ? 'from ' + escapeHtml(it.sender) : '', when ? 'received ' + when : '', escapeHtml(it.upload_kind || '')].filter(Boolean).join(' · ')
-          : [escapeHtml(it.source), when ? 'recorded ' + when : '', it.recorded_by ? 'by ' + escapeHtml(it.recorded_by) : '', dur, factLink].filter(Boolean).join(' · ');
+          ? ['email', it.sender ? 'from ' + escapeHtml(it.sender) : '', when ? 'received ' + when : '', escapeHtml(it.upload_kind || ''), idMeta, state].filter(Boolean).join(' · ')
+          : [escapeHtml(it.source), when ? 'recorded ' + when : '', it.recorded_by ? 'by ' + escapeHtml(it.recorded_by) : '', dur, idMeta, state, factLink].filter(Boolean).join(' · ');
       const routes = it.routes || {};
       let pills = '';
       for (const d of Object.keys(routes)) pills += inboxStatePill(d, routes[d]) + ' ';
@@ -48615,30 +48900,40 @@ function burnAreaChart() {
       }
       const owner = viewerIsOwner();
       const src = escapeHtml(it.source), id = escapeHtml(it.id);
+      // The action row: icon buttons of one size (play, share, open file,
+      // delete) and one compact text toggle (Transcript / Text). Every icon
+      // button names itself with aria-label and title. A destructive control
+      // goes last, after the separator: #18694's Delete for every item kind
+      // drops in there with the same inbox-action-danger class.
       let actions = '';
       // A hive recording past retention has no audio left: no play control.
       if (it.audio_expired) actions += '<span class="muted-xs inbox-audio-expired" title="The raw audio was deleted by retention; the transcript and the Knowledge fact are kept">audio expired (kept ' + (Number(it.audio_retention_days) || 5) + ' days)</span>';
-      else if (inboxViewerCanPlay() && inboxItemHasAudio(it)) actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" title="Stream the recording through this hive and play it here">▶ Play recording</button>';
-      actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (_inboxTranscriptOpen.has(key) ? 'true' : 'false') + '">' + (_inboxTranscriptOpen.has(key) ? '▾' : '▸') + (it.source === 'upload' && !inboxItemHasAudio(it) ? ' Text' : ' Transcript') + '</button>';
-      if (it.source === 'email' && inboxViewerCanPlay()) actions += '<a class="hv-btn btn-secondary btn-sm" href="' + escapeHtml(inboxEmailFileUrl(it)) + '" target="_blank" rel="noopener noreferrer" title="Open the mailed-in file">📎 Open file</a>';
+      else if (inboxViewerCanPlay() && inboxItemHasAudio(it)) actions += '<button type="button" class="hv-btn btn-icon btn-sm inbox-action inbox-play" data-action="inboxPlay" data-arg0="' + src + '" data-arg1="' + id + '" aria-label="Play recording" title="Play recording (streams through this hive)">' + inboxIconSvg('play') + '</button>';
+      const txOpen = _inboxTranscriptOpen.has(key);
+      const txLabel = it.source === 'upload' && !inboxItemHasAudio(it) ? 'Text' : 'Transcript';
+      actions += '<button type="button" class="hv-btn btn-ghost btn-sm inbox-action inbox-action-text" data-action="inboxToggleTranscript" data-arg0="' + src + '" data-arg1="' + id + '" aria-expanded="' + (txOpen ? 'true' : 'false') + '" title="' + (txOpen ? 'Hide the ' : 'Show the ') + txLabel.toLowerCase() + '">' + inboxIconSvg(txOpen ? 'chevron-down' : 'chevron-right') + txLabel + '</button>';
+      if (it.source === 'email' && inboxViewerCanPlay()) actions += '<a class="hv-btn btn-icon btn-sm inbox-action" href="' + escapeHtml(inboxEmailFileUrl(it)) + '" target="_blank" rel="noopener noreferrer" aria-label="Open file" title="Open the mailed-in file">' + inboxIconSvg('file') + '</a>';
       if (it.awaiting_approval) {
-        if (owner) actions += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxEmailApprove" data-arg0="' + id + '" title="Let this mailed-in item be shared and transcribed like any other">✓ Approve</button>' +
-          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxEmailDecline" data-arg0="' + id + '" title="Delete this mailed-in item">✕ Decline</button>';
+        if (owner) actions += '<button type="button" class="hv-btn btn-primary btn-sm inbox-action" data-action="inboxEmailApprove" data-arg0="' + id + '" title="Let this mailed-in item be shared and transcribed like any other">Approve</button>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm inbox-action" data-action="inboxEmailDecline" data-arg0="' + id + '" title="Delete this mailed-in item">Decline</button>';
       } else {
-        actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
+        actions += '<button type="button" class="hv-btn btn-icon btn-sm inbox-action inbox-share" data-action="inboxShare" data-arg0="' + src + '" data-arg1="' + id + '" aria-label="Share" title="Share: file this item in the hive, or copy a link to it (not the recording)" data-arg-types="s,s,t" aria-haspopup="menu" aria-expanded="false">' + inboxIconSvg('share') + '</button>';
       }
-      if (typeof inboxDeleteButtonHtml === 'function') actions += inboxDeleteButtonHtml(it);
+      // Delete for every item kind (#18694, inbox-delete.js) is the last
+      // control, set apart by a separator.
+      const del = typeof inboxDeleteButtonHtml === 'function' ? inboxDeleteButtonHtml(it) : '';
+      if (del) actions += '<span class="inbox-actions-sep" role="separator"></span>' + del;
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
-        (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
+        (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(tp.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
-        '<div class="kb-fact-body"><div class="kb-fact-title">' + escapeHtml(it.title || it.id) + '</div>' +
-        '<div class="muted-xs">' + meta + '</div>' +
+        '<div class="kb-fact-body"><div class="kb-fact-title inbox-title"' + (tp.id ? ' title="' + escapeHtml(tp.full) + '"' : '') + '>' + escapeHtml(tp.title) + '</div>' +
+        '<div class="muted-xs inbox-meta">' + meta + '</div>' +
         inboxSummaryHtml(it, key) +
         '<div class="inbox-media" data-inbox-media="' + escapeHtml(key) + '"></div>' +
         (it.source === 'email' && it.upload_kind === 'image' && inboxViewerCanPlay() ? '<img class="inbox-email-image" loading="lazy" src="' + escapeHtml(inboxEmailFileUrl(it)) + '" alt="' + escapeHtml(it.title || 'mailed-in image') + '">' : '') +
         (pills ? '<div class="inbox-pills">' + pills + '</div>' : '') +
         inboxTranscriptionHtml(it, key) +
-        '<div class="kc-actions mt-2">' + actions + '</div>' +
+        '<div class="inbox-actions">' + actions + '</div>' +
         inboxTranscriptHtml(it, key) + '</div></div>';
     }
 
@@ -48696,7 +48991,7 @@ function burnAreaChart() {
     // retention deletes it (audio_expires_at); a third-party source's audio
     // is only streamed through and never stored here.
     function inboxAudioNoteText(it, fmtDate) {
-      const restart = ' Click ▶ Play recording again to restart.';
+      const restart = ' Click Play again to restart.';
       if (it && (it.source === 'hive-recording' || it.source === 'upload')) {
         const exp = it.audio_expires_at && !String(it.audio_expires_at).startsWith('0001') ? it.audio_expires_at : '';
         const when = exp && fmtDate ? fmtDate(exp) : '';
@@ -48938,20 +49233,29 @@ function burnAreaChart() {
       if (badge) setSidebarCountBadge(badge, unprocessed, unprocessed + ' unprocessed');
       setSectionSummary('inbox-section', unprocessed + ' to triage · ' + items.length + ' total');
       const owner = viewerIsOwner();
-      const sources = (data.sources || []).map(s => {
-        const status = s.connected ? 'ok' : (s.configured ? 'error' : '');
-        const label = inboxSourceIcon(s.type) + ' ' + escapeHtml(s.type) + (s.connected ? (s.account ? ': ' + escapeHtml(s.account) : ': connected') : s.configured ? ': not connected' : ': not configured');
-        return '<span class="kc-pill" data-status="' + status + '">' + label + '</span>';
-      }).join(' ');
       const settings = data.settings || {};
       const rules = Array.isArray(settings.rules) ? settings.rules.length : 0;
-      let html = '<div class="row-between inbox-toolbar">' +
-        '<div class="inbox-sources">' + (sources || '<span class="muted-xs">No voice sources configured.</span>') +
-        ' <button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenIntegrations">Connect sources</button></div>' +
-        '<div class="kc-actions">' +
+      if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
+      const shown = items.filter(it => _inboxShowProcessed || !it.processed);
+      // Sources line: only configured sources are chips (with the account
+      // hint); the rest sit behind a "+N more" disclosure next to Connect
+      // sources, so the header is one quiet line instead of a wall of
+      // "not configured".
+      const sources = inboxSourcesHtml(data.sources || []);
+      // Toolbar, one row: primary actions on the left (Record, Add), the
+      // view controls on the right (Show processed, Select all, the bulk
+      // Hive menu, Auto-routing), every one of them a button of one size.
+      const sel = _inboxSelected.size;
+      const canSelect = inboxCanShare(window._hiveRole) && shown.length > 0;
+      let html = sources +
+        '<div class="inbox-toolbar" role="toolbar" aria-label="Inbox actions">' +
+        '<div class="inbox-toolbar-group">' +
         (typeof inboxRecordButtonHtml === 'function' ? inboxRecordButtonHtml(settings) : '') +
-        '<label class="muted-xs inbox-toggle"><input type="checkbox" data-change-action="inboxToggleProcessed"' + (_inboxShowProcessed ? ' checked' : '') + '> show processed</label>' +
         (inboxCanAdd() ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="inboxToggleAdd" aria-expanded="' + (_inboxAddOpen ? 'true' : 'false') + '" aria-controls="inbox-add" title="Add files, a link or a quick note to the Inbox (or drop files anywhere on it, or paste with Ctrl/Cmd+V)">＋ Add</button>' : '') +
+        '</div><div class="inbox-toolbar-group">' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm inbox-filter" data-action="inboxToggleProcessed" aria-pressed="' + (_inboxShowProcessed ? 'true' : 'false') + '" title="Also list items already filed or kept as Knowledge">Show processed</button>' +
+        (canSelect ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxSelectAll" title="' + (sel === shown.length ? 'Clear the selection' : 'Select every listed item for the Hive menu') + '">' + (sel === shown.length ? 'Clear selection' : 'Select all') + '</button>' : '') +
+        (canSelect && sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxBulkMenu" data-arg-types="t" aria-haspopup="menu" aria-expanded="false" title="File, keep or delete the selected items">Hive (' + sel + ') ▾</button>' : '') +
         (owner ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxOpenSettings" title="Auto-routing rules, default RFC repository, dibs URL, transcription">⚙ Auto-routing (' + rules + ')</button>' : '') +
         '</div></div>';
       if (typeof inboxInputMethodsHtml === 'function') html += inboxInputMethodsHtml();
@@ -48960,19 +49264,31 @@ function burnAreaChart() {
       if (window._hiveRoleFailed && !window._hiveRole) html += '<div class="muted-xs">Could not determine your role, so actions are read-only. It will retry automatically.</div>';
       if (inboxCanAdd()) html += inboxAddPanelHtml() + inboxUploadsHtml();
       if (!settings.spek_ready && owner) html += '<p class="muted-xs">RFC filing needs at least one enabled, unpaused agent to draft the spec with spektacular (<code>inbox.spek.agent</code> overrides the default; <code>inbox.spek.binary</code> names the CLI the agent runs).</p>';
-      if (_inboxFocusKey && items.some(it => it.processed && inboxItemKey(it) === _inboxFocusKey)) _inboxShowProcessed = true;
-      const shown = items.filter(it => _inboxShowProcessed || !it.processed);
-      if (inboxCanShare(window._hiveRole) && shown.length) {
-        const sel = _inboxSelected.size;
-        html += '<div class="kc-actions mb-2"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxSelectAll">' + (sel === shown.length ? 'Clear selection' : 'Select all') + '</button>' +
-          (sel ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxBulkMenu" data-arg-types="t" aria-haspopup="menu" aria-expanded="false">Hive (' + sel + ') ▾</button>' : '') + '</div>';
-      }
       if (!shown.length) html += '<div class="muted-note">' + (items.length ? 'Everything is triaged. Toggle “show processed” to see filed and dismissed items.' : 'Nothing yet. Connect Plaud or another voice source under Knowledge → Integrations; new recordings land here after the next sync (a newly added connector starts on the next hive restart).') + '</div>';
       else html += '<div class="kb-fact-list inbox-list">' + shown.map(inboxItemHtml).join('') + '</div>';
       const paint = () => { panel.innerHTML = html; };
       inboxPreserveAudio(panel, typeof inboxNoteKeepFocus === 'function' ? () => inboxNoteKeepFocus(paint) : paint);
       inboxApplyFocus(panel);
     }
+
+    // inboxSourceChip is one source as a chip: connected (with its account),
+    // configured but not connected, or not configured.
+    function inboxSourceChip(s) {
+      const status = s.connected ? 'ok' : (s.configured ? 'error' : '');
+      const label = inboxSourceIcon(s.type) + ' ' + escapeHtml(s.type) + (s.connected ? (s.account ? ': ' + escapeHtml(s.account) : ': connected') : s.configured ? ': not connected' : ': not configured');
+      return '<span class="kc-pill inbox-source" data-status="' + status + '" data-source="' + escapeHtml(s.type) + '">' + label + '</span>';
+    }
+    function inboxSourcesHtml(all) {
+      const configured = all.filter(s => s.configured || s.connected);
+      const rest = all.filter(s => !(s.configured || s.connected));
+      const connect = '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="kbOpenIntegrations" title="Connect a voice or meeting source under Knowledge → Integrations">Connect sources</button>';
+      let html = '<div class="inbox-sources">' + (configured.length ? configured.map(inboxSourceChip).join(' ') : '<span class="muted-xs">No voice sources configured.</span>');
+      if (rest.length && configured.length) html += ' <button type="button" class="hv-btn btn-ghost btn-sm inbox-sources-more" data-action="inboxToggleSources" aria-expanded="' + (_inboxSourcesOpen ? 'true' : 'false') + '" aria-controls="inbox-sources-rest" title="' + (_inboxSourcesOpen ? 'Hide' : 'Show') + ' the ' + rest.length + ' sources that are not configured">' + (_inboxSourcesOpen ? 'Hide ' + rest.length + ' more' : '+' + rest.length + ' more') + '</button>';
+      html += ' ' + connect + '</div>';
+      if (rest.length && configured.length) html += '<div id="inbox-sources-rest" class="inbox-sources inbox-sources-rest"' + (_inboxSourcesOpen ? '' : ' hidden') + '>' + rest.map(inboxSourceChip).join(' ') + '</div>';
+      return html;
+    }
+    function inboxToggleSources() { _inboxSourcesOpen = !_inboxSourcesOpen; renderInbox(); }
 
     function inboxToggleProcessed() { _inboxShowProcessed = !_inboxShowProcessed; renderInbox(); }
     function inboxToggleSelect(src, id) {
@@ -49825,8 +50141,8 @@ function burnAreaChart() {
       // A mailed-in item that waits for approval has ✕ Decline instead.
       if (it.awaiting_approval || !inboxCanDelete(it, window._hiveRole, window._hiveUser)) return '';
       const busy = inboxDeleteBusy(it);
-      return '<button type="button" class="hv-btn btn-secondary btn-sm inbox-delete" data-action="inboxDeleteItem" data-arg0="' + escapeHtml(it.source) + '" data-arg1="' + escapeHtml(it.id) + '"' +
-        (busy ? ' disabled aria-disabled="true" title="Being transcribed: delete it once the transcription finishes"' : ' title="Delete this item from the Inbox; anything already shared from it stays"') + '>🗑 Delete</button>';
+      return '<button type="button" class="hv-btn btn-icon btn-sm inbox-action inbox-action-danger inbox-delete" data-action="inboxDeleteItem" data-arg0="' + escapeHtml(it.source) + '" data-arg1="' + escapeHtml(it.id) + '" aria-label="Delete"' +
+        (busy ? ' disabled aria-disabled="true" title="Being transcribed: delete it once the transcription finishes"' : ' title="Delete this item from the Inbox; anything already shared from it stays"') + '>' + inboxIconSvg('trash') + '</button>';
     }
     // The bulk menu's own group, after the Hive group.
     function inboxDeleteBulkGroups() {
@@ -51122,6 +51438,7 @@ function burnAreaChart() {
         return 'The Discord bot cannot join that voice channel. In the server, give the bot\'s role View Channel, Connect and Speak on the channel, then try again.';
       }
       if (m.state === 'blocked') return 'The meeting refused a guest bot.';
+      if (/^unreachable$/.test(raw)) return 'Left: none of its replies could be delivered to the meeting, in chat or by voice.';
       if (/consent_undelivered/.test(raw)) return 'Left: the consent notice could not be delivered' + (m.consent_error ? ' (' + m.consent_error + ')' : '') + '.';
       if (/lobby_timeout/.test(raw)) return 'Nobody admitted hive from the lobby in time.';
       if (/platform_unavailable/.test(raw)) return 'This meeting platform is not available on this hive right now.';
@@ -51377,7 +51694,7 @@ function burnAreaChart() {
         case 'line': {
           const ev = f.data || {};
           if (ev.type === 'segment' && !ev.final) { o.partial = ev; break; }
-          o.partial = null;
+          if (ev.type !== 'reply') o.partial = null;
           o.lines.push(ev);
           if (o.lines.length > MEETINGS_MAX_LINES) o.lines.shift();
           break;
@@ -51396,6 +51713,7 @@ function burnAreaChart() {
           break;
         }
         case 'notes': meetingsRefreshLive(o.id); break;
+        case 'reach': meetingsRefreshLive(o.id); break;
         case 'spek': meetingsRefreshLive(o.id); break;
         default: break;
       }
@@ -51412,6 +51730,7 @@ function burnAreaChart() {
     }
 
     function meetingsLineHtml(ev, partial) {
+      if (ev.type === 'reply') return meetingsReplyLineHtml(ev);
       const who = (ev.speaker && ev.speaker.name) || (ev.author && ev.author.name) || '';
       return '<p class="meetings-line' + (partial ? ' is-partial' : '') + '"><span class="meetings-who">' + escapeHtml(who) + (ev.type === 'chat' ? ' (chat)' : '') + '</span>' + escapeHtml(ev.text || '') + '</p>';
     }
@@ -51429,13 +51748,15 @@ function burnAreaChart() {
       const research = (live.research || []).map(it =>
         '<div class="meetings-research-item"><div><span class="badge">' + escapeHtml(it.status) + '</span> ' + escapeHtml(it.query) + '</div>' +
         (it.summary ? '<div class="muted-xs">' + escapeHtml(it.summary) + '</div>' : '') +
+        (it.status === 'failed' && it.error ? '<div class="meetings-row-error">' + escapeHtml(it.error) + '</div>' : '') +
+        (it.waiting && it.status === 'queued' ? '<div class="muted-xs">waiting behind another question</div>' : '') +
         (it.status === 'pending_approval' ? '<button type="button" class="hv-btn btn-primary btn-sm mt-2" data-action="meetingsApprove" data-arg0="' + escapeHtml(o.id) + '" data-arg1="' + escapeHtml(it.rid) + '">Approve research</button>' : '') +
         '</div>').join('') || '<p class="muted-xs">No research yet.</p>';
       const lines = o.lines.map(ev => meetingsLineHtml(ev, false)).join('') + (o.partial ? meetingsLineHtml(o.partial, true) : '');
       const intents = o.intents.map(i => '<div>' + escapeHtml(typeof i === 'string' ? i : JSON.stringify(i)) + '</div>').join('');
       const spek = live.spek_status ? '<p class="kc-error muted-xs">' + escapeHtml(live.spek_status) + '</p>' :
         (live.spek_mode ? '<p class="muted-xs">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
-      host.innerHTML = spek + '<div class="meetings-live">' +
+      host.innerHTML = spek + meetingsReachHtml(live) + '<div class="meetings-live">' +
         '<div><div class="section-label m-0">Transcript' + (o.ws ? '' : ' (disconnected)') + '</div><div class="meetings-transcript">' + (lines || '<p class="muted-xs">Waiting for the first words…</p>') + '</div></div>' +
         '<div class="meetings-side"><div><div class="section-label m-0">Notes</div>' + notesHtml + '</div>' +
         '<div><div class="section-label m-0">Research</div><div class="meetings-research">' + research + '</div></div>' +
@@ -51506,6 +51827,67 @@ function burnAreaChart() {
       } catch (e) {
         if (errEl) errEl.textContent = e.message; else showToast('Save failed: ' + e.message, 'error');
       }
+    }
+    // The attendee's own lines (hivecommons/hive Betty round 2): every line
+    // she says or posts is in the meeting's transcript as a `reply` event
+    // ({type:'reply', author, text, at, reply:{kind, trigger, source,
+    // delivered, undelivered, fallback, timing}}). The meeting view and the
+    // Inbox show them among the participants' lines, set apart, with how
+    // each went out (spoken or chat), what it was made from, and the ones
+    // that never reached the meeting.
+    const MEETINGS_REPLY_SPOKEN_MARK = '🔊';
+    const MEETINGS_REPLY_CHAT_MARK = '💬';
+    const MEETINGS_REPLY_UNDELIVERED_MARK = '⚠';
+    // A rendered transcript labels her lines "Name (assistant, spoken; source: x): text".
+    const MEETINGS_ASSISTANT_LINE = /^([^\n:]*?) \(assistant, (spoken|chat|not delivered)([^)]*)\): /;
+
+    function meetingsReplyMark(how) {
+      if (how === 'spoken') return MEETINGS_REPLY_SPOKEN_MARK;
+      if (how === 'not delivered') return MEETINGS_REPLY_UNDELIVERED_MARK;
+      return MEETINGS_REPLY_CHAT_MARK;
+    }
+
+    function meetingsReplyHow(r) {
+      if (!r.delivered) return 'not delivered';
+      return r.kind === 'voice' ? 'spoken' : 'chat';
+    }
+
+    // One of her lines in the live meeting view.
+    function meetingsReplyLineHtml(ev) {
+      const r = ev.reply || {};
+      const who = (ev.author && ev.author.name) || 'hive';
+      const how = meetingsReplyHow(r);
+      const meta = [how + (r.fallback ? ' (fallback)' : ''), r.source ? 'source: ' + r.source : '', r.trigger || ''].filter(Boolean).join(' · ');
+      const why = !r.delivered && r.undelivered ? ' <span class="meetings-reply-meta">' + escapeHtml(r.undelivered) + '</span>' : '';
+      return '<p class="meetings-line is-reply' + (r.delivered ? '' : ' is-undelivered') + '" data-reply-kind="' + escapeHtml(how) + '">' +
+        '<span class="meetings-who">' + meetingsReplyMark(how) + ' ' + escapeHtml(who) + '</span>' +
+        '<span class="meetings-reply-meta">' + escapeHtml(meta) + '</span>' + escapeHtml(ev.text || '') + why + '</p>';
+    }
+
+    // The "can't reach participants" notice: replies are failing in chat
+    // and by voice. The Leave button on the meeting's row removes the bot;
+    // it leaves by itself if this lasts.
+    function meetingsReachHtml(live) {
+      const n = (live && live.undelivered) || 0;
+      if (!n) return '';
+      const since = live.unreachable_since ? ' since ' + meetingsFormatTime(live.unreachable_since) : '';
+      const why = live.undelivered_reason ? ' Last reason: ' + live.undelivered_reason + '.' : '';
+      if (!live.unreachable) {
+        return '<p class="muted-xs meetings-reach">' + n + ' repl' + (n === 1 ? 'y' : 'ies') + ' could not be delivered' + escapeHtml(since) + '; kept below as not delivered.' + escapeHtml(why) + '</p>';
+      }
+      return '<p class="meetings-reach is-unreachable">Can\'t reach participants: ' + n + ' replies in a row were delivered neither in chat nor by voice' + escapeHtml(since) + '.' + escapeHtml(why) +
+        ' They are kept below as not delivered. Use Leave on this meeting to remove the bot; it leaves by itself if this continues.</p>';
+    }
+
+    // A meeting's rendered transcript (the Inbox item's Transcript view):
+    // her lines are set apart from the participants', marked spoken or chat.
+    function meetingsTranscriptTextHtml(text) {
+      return String(text || '').split('\n').map(line => {
+        const m = line.match(MEETINGS_ASSISTANT_LINE);
+        if (!m) return escapeHtml(line);
+        return '<span class="inbox-assistant-line' + (m[2] === 'not delivered' ? ' is-undelivered' : '') + '" data-reply-kind="' + escapeHtml(m[2]) + '">' +
+          meetingsReplyMark(m[2]) + ' ' + escapeHtml(line) + '</span>';
+      }).join('\n');
     }
     // ── Calendar: scheduled meetings hive joins (hivecommons/hive#18394) ──
     // GET /api/meetings/schedule lists upcoming and recent scheduled
@@ -52684,6 +53066,540 @@ function burnAreaChart() {
       } catch (e) {
         if (errEl) errEl.textContent = e.message; else showToast('Save failed: ' + e.message, 'error');
       }
+    }
+    // ── Customers: a profile per person (hivecommons/hive#18742) ──
+    // GET /api/customers returns the viewer's own profile ("me") and, for
+    // the owner and read-write users, every customer and every suggested
+    // person. A read-only user sees only "me" and edits it through
+    // POST /api/customers/me/edit. Nothing shown here leaves the hive.
+    const CUSTOMERS_POLL_MS = 60000;
+    const CUSTOMERS_KIND_LABELS = {
+      hive_user: 'Hive user', github: 'GitHub', email: 'Email', git_email: 'Git email', discord: 'Discord',
+      slack: 'Slack', teams: 'Teams', meet: 'Google Meet', zoom: 'Zoom', name: 'Name'
+    };
+    // hive_user is what "me" resolves on, so it is never added by hand.
+    const CUSTOMERS_ADDABLE_KINDS = ['github', 'email', 'git_email', 'discord', 'slack', 'teams', 'meet', 'zoom', 'name'];
+    const CUSTOMERS_LEVEL_LABELS = { unknown: 'Unknown', at_risk: 'At risk', neutral: 'Neutral', satisfied: 'Satisfied' };
+    // Satisfaction level to the kc-pill status palette.
+    const CUSTOMERS_LEVEL_PILL = { at_risk: 'error', neutral: 'syncing', satisfied: 'ok' };
+    const CUSTOMERS_ORIGIN_LABELS = { hive_user: 'hive user', manual: 'added by hand', accepted: 'accepted suggestion' };
+    const CUSTOMERS_EVIDENCE_SHOWN = 5;
+    let _customersData = null;
+    let _customersError = '';
+    // The open profile; null shows the list.
+    let _customersOpen = null;
+    // The open profile's timeline, read from the customer graph
+    // (POST /api/graph) a page at a time.
+    const CUSTOMERS_TIMELINE_PAGE = 25;
+    const CUSTOMERS_TIMELINE_QUERY = 'query Timeline($id: ID!, $first: Int, $after: String) { person(id: $id) { edges(first: $first, after: $after) { nodes { predicate at source artefact { ref kind } } next } } }';
+    const CUSTOMERS_REF_KIND_LABELS = { gh: 'GitHub', meeting: 'Meetings', event: 'Calendar', inbox: 'Inbox', fact: 'Knowledge', bead: 'Work items', audit: 'Dashboard' };
+    let _customersTimeline = { id: '', nodes: [], next: '', error: '', loading: false };
+
+    function customersIsEnabled() { return window._customersEnabled === true; }
+    function customersIsFull() { return !!(_customersData && _customersData.full); }
+    function customersIsOwner() { return !!(_customersData && _customersData.owner); }
+
+    // ── Visibility: the section shows only while customers are enabled ──
+    function customersApplyVisibility() {
+      const on = customersIsEnabled();
+      const el = document.getElementById('customers-section');
+      const nav = document.querySelector('.oc-nav-item[data-section="customers-section"]');
+      const changed = (el && el.hidden === on) || (nav && nav.hidden === on);
+      if (el) el.hidden = !on;
+      if (nav) nav.hidden = !on;
+      if (changed && typeof dashboardApplyLayout === 'function' && typeof dashboardLayoutNormalize === 'function') {
+        dashboardApplyLayout(dashboardLayoutNormalize(dashboardLayoutRead()));
+      }
+    }
+
+    async function fetchCustomers() {
+      try {
+        const r = await fetch('/api/customers');
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) { _customersError = data.error || ('HTTP ' + r.status); }
+        else {
+          _customersData = data;
+          _customersError = '';
+          window._customersEnabled = data.enabled === true;
+        }
+      } catch (e) {
+        if (!_customersData) _customersError = 'Customers are unreachable right now; retrying.';
+      }
+      customersApplyVisibility();
+      renderCustomers();
+    }
+    dashboardScheduleWork('customers', fetchCustomers).catch(console.error);
+    dashboardSetInterval('customers', fetchCustomers, CUSTOMERS_POLL_MS);
+
+    async function customersRequest(method, path, body) {
+      const init = { method: method };
+      if (body !== undefined) { init.headers = { 'Content-Type': 'application/json' }; init.body = JSON.stringify(body); }
+      const r = await fetch(path, init);
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+      return data;
+    }
+
+    function customersField(name) { return document.querySelector('[data-customers-field="' + name + '"]'); }
+    function customersFieldValue(name) { return ((customersField(name) || {}).value || '').trim(); }
+
+    function customersFormatTime(iso) {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime()) || d.getFullYear() < 2000) return '';
+      try { return new Intl.DateTimeFormat(undefined, { year: 'numeric', month: 'short', day: 'numeric' }).format(d); }
+      catch (e) { return d.toISOString().slice(0, 10); }
+    }
+
+    // customersActiveTags is the names of the tags that are on.
+    function customersActiveTags(p) {
+      return ((p && p.tags) || []).filter(t => t && t.state === 'on').map(t => t.name);
+    }
+
+    // customersGoalsSplit separates the goals a person stands behind from
+    // the ones hive inferred and is offering.
+    function customersGoalsSplit(p) {
+      const all = ((p && p.goals) || []).filter(g => g && g.id);
+      return { confirmed: all.filter(g => g.state === 'confirmed'), suggested: all.filter(g => g.state === 'suggested') };
+    }
+
+    // customersSummaryText is the collapsed section's one-line summary.
+    function customersSummaryText(data) {
+      if (!data || !data.enabled) return 'off';
+      if (!data.full) return 'your profile';
+      const people = (data.people || []).length + 1;
+      const suggested = (data.suggestions || []).length;
+      return people + ' customer' + (people === 1 ? '' : 's') + (suggested ? ' · ' + suggested + ' suggested' : '');
+    }
+
+    function customersKindOptions() {
+      return CUSTOMERS_ADDABLE_KINDS.map(k => '<option value="' + k + '">' + escapeHtml(CUSTOMERS_KIND_LABELS[k] || k) + '</option>').join('');
+    }
+
+    function customersLevelPill(level) {
+      if (!level || level === 'unknown') return '';
+      return '<span class="kc-pill" data-status="' + escapeHtml(CUSTOMERS_LEVEL_PILL[level] || '') + '">' + escapeHtml(CUSTOMERS_LEVEL_LABELS[level] || level) + '</span>';
+    }
+
+    function customersEvidenceHtml(refs) {
+      const list = (refs || []).slice(0, CUSTOMERS_EVIDENCE_SHOWN);
+      if (!list.length) return '';
+      return '<div class="customers-evidence" title="What led hive to suggest this">from ' + list.map(escapeHtml).join(', ') + '</div>';
+    }
+
+    // ── List ──
+    function customersRowHtml(p, isMe) {
+      const goals = customersGoalsSplit(p);
+      const tags = customersActiveTags(p).map(t => '<span class="badge customers-chip">' + escapeHtml(t) + '</span>').join('');
+      const pending = goals.suggested.length + (p.satisfaction && p.satisfaction.suggestion ? 1 : 0);
+      const meta = [CUSTOMERS_ORIGIN_LABELS[p.origin] || p.origin || '', goals.confirmed.length + ' goal' + (goals.confirmed.length === 1 ? '' : 's')];
+      if (pending) meta.push(pending + ' suggestion' + (pending === 1 ? '' : 's') + ' to review');
+      const updated = customersFormatTime(p.updated_at);
+      if (updated) meta.push('updated ' + updated);
+      return '<div class="customers-row" data-customer="' + escapeHtml(p.id) + '" data-me="' + (isMe ? 'true' : 'false') + '">' +
+        '<div class="customers-row-main"><div class="customers-row-title">' + escapeHtml(p.name || p.id) + (isMe ? ' <span class="badge">me</span>' : '') + '</div>' +
+        '<div class="muted-xs">' + escapeHtml(meta.filter(Boolean).join(' · ')) + '</div></div>' +
+        '<div class="customers-chips">' + tags + customersLevelPill(p.satisfaction && p.satisfaction.level) + '</div>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersOpen" data-arg0="' + (isMe ? 'me' : escapeHtml(p.id)) + '">' + (isMe ? 'My profile' : 'Open') + '</button></div>';
+    }
+
+    function customersSuggestionRowHtml(s) {
+      const id = escapeHtml(s.id);
+      const counts = Object.keys(s.counts || {}).sort().map(k => s.counts[k] + ' ' + k.replace(/_/g, ' ')).join(', ');
+      const seen = customersFormatTime(s.last_seen);
+      return '<div class="customers-row" data-customer-suggestion="' + id + '">' +
+        '<span class="badge">' + escapeHtml(CUSTOMERS_KIND_LABELS[s.kind] || s.kind || '') + '</span>' +
+        '<div class="customers-row-main"><div class="customers-row-title">' + escapeHtml(s.value || '') + '</div>' +
+        '<div class="muted-xs">' + escapeHtml([counts, seen ? 'last seen ' + seen : ''].filter(Boolean).join(' · ')) + '</div>' +
+        customersEvidenceHtml(s.evidence) + '</div>' +
+        '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersAccept" data-arg0="' + id + '" title="Make this person a customer and build their profile">Accept</button>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersDismiss" data-arg0="' + id + '" title="Do not suggest this person again; hive keeps no readable trace of them">Dismiss</button></div>';
+    }
+
+    function customersAddFormHtml() {
+      return '<details class="customers-add"><summary class="muted-xs">Add customer</summary><div class="customers-form mt-2">' +
+        '<label>Name<input class="kb-search-box" type="text" maxlength="120" data-customers-field="add-name" placeholder="Ada Lovelace" autocomplete="off"></label>' +
+        '<label>Known by (optional)<select class="kb-search-box" data-customers-field="add-kind">' + customersKindOptions() + '</select></label>' +
+        '<label>Login, address or id<input class="kb-search-box" type="text" maxlength="254" data-customers-field="add-value" placeholder="octocat" autocomplete="off"></label>' +
+        '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersAdd">Add customer</button></div>' +
+        '<div class="hive-dialog-error" role="alert" data-customers-field="add-error"></div></details>';
+    }
+
+    function customersListHtml(data) {
+      const me = data.me || {};
+      let out = '<div class="customers-block"><div class="section-label m-0">Me</div><div class="customers-list">' + customersRowHtml(me, true) + '</div></div>';
+      if (!data.full) {
+        return out + '<p class="muted-xs">You see only your own profile. The hive owner and read-write users can see the other customers.</p>';
+      }
+      const people = data.people || [];
+      const suggestions = data.suggestions || [];
+      out += customersAddFormHtml();
+      out += '<div class="customers-block"><div class="section-label m-0">Customers</div><div class="customers-list">' +
+        (people.length ? people.map(p => customersRowHtml(p, false)).join('') : '<p class="empty-dashed">No other customers yet. Add one, or accept a suggestion.</p>') + '</div></div>';
+      out += '<details class="customers-block"><summary class="muted-xs">Suggested (' + suggestions.length + ')</summary>' +
+        '<p class="muted-xs mt-2">People hive has seen in issues, pull requests, meetings and mail who are not customers. Hive keeps only a key, counts and a few references for them until you accept one.</p>' +
+        '<div class="customers-list mt-2">' + (suggestions.length ? suggestions.map(customersSuggestionRowHtml).join('') : '<p class="empty-dashed">Nobody to suggest.</p>') + '</div></details>';
+      return out;
+    }
+
+    // ── Profile ──
+    function customersIdentityRowHtml(i) {
+      const key = i.kind + ':' + i.value;
+      const fixed = i.kind === 'hive_user';
+      const meta = [];
+      if (i.claimed) meta.push('unconfirmed');
+      else if (i.manual) meta.push('added by ' + (i.by || 'a person'));
+      else if (i.source) meta.push(String(i.source).replace(/_/g, ' '));
+      let buttons = '';
+      if (i.claimed && customersIsFull()) {
+        buttons += '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersIdentityConfirm" data-arg0="' + escapeHtml(i.kind) + '" data-arg1="' + escapeHtml(i.value) + '" title="Confirm this is theirs: it then links their activity">Confirm</button>';
+      }
+      if (!fixed) {
+        buttons += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityRemove" data-arg0="' + escapeHtml(key) + '">Remove</button>';
+      }
+      return '<div class="customers-row" data-claimed="' + (i.claimed ? 'true' : 'false') + '"><span class="badge">' + escapeHtml(CUSTOMERS_KIND_LABELS[i.kind] || i.kind) + '</span>' +
+        '<div class="customers-row-main"><div class="customers-row-title">' + escapeHtml(i.value) + '</div>' +
+        (meta.length ? '<div class="muted-xs">' + escapeHtml(meta.join(' · ')) + '</div>' : '') + '</div>' + buttons + '</div>';
+    }
+
+    function customersIdentitiesHtml(p) {
+      const ids = p.identities || [];
+      const note = customersIsFull() ? '' : '<p class="muted-xs">What you add here is shown as unconfirmed until the hive owner or a read-write user confirms it.</p>';
+      return '<div class="customers-block"><div class="section-label m-0">Identities</div>' + note +
+        '<div class="customers-list">' + (ids.length ? ids.map(customersIdentityRowHtml).join('') : '<p class="empty-dashed">No identities.</p>') + '</div>' +
+        '<div class="customers-inline"><label>Known by<select class="kb-search-box" data-customers-field="identity-kind">' + customersKindOptions() + '</select></label>' +
+        '<label>Login, address or id<input class="kb-search-box" type="text" maxlength="254" data-customers-field="identity-value" autocomplete="off"></label>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityAdd">Add identity</button></div></div>';
+    }
+
+    function customersTagChipHtml(name, tag) {
+      const state = tag ? tag.state : 'off';
+      const source = tag ? tag.source : 'auto';
+      const on = state === 'on';
+      const why = !tag ? 'Not set' : (source === 'manual' ? 'Set by ' + (tag.by || 'a person') : (tag.rule ? 'Automatic: ' + tag.rule : 'Automatic'));
+      let out = '<button type="button" class="badge customers-chip" data-state="' + state + '" data-source="' + escapeHtml(source) + '" aria-pressed="' + on + '" title="' + escapeHtml(why) + '"' +
+        ' data-action="customersTagSet" data-arg0="' + escapeHtml(name) + '" data-arg1="' + (on ? 'off' : 'on') + '">' + escapeHtml(name) + (tag ? ' · ' + (source === 'manual' ? 'manual' : 'auto') : '') + '</button>';
+      if (tag && source === 'manual') {
+        out += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersTagSet" data-arg0="' + escapeHtml(name) + '" data-arg1="auto" title="Hand this tag back to the automatic rules">Reset to automatic</button>';
+      }
+      return out;
+    }
+
+    function customersTagsHtml(p) {
+      const byName = {};
+      (p.tags || []).forEach(t => { if (t && t.name) byName[t.name] = t; });
+      const names = ((_customersData && _customersData.default_tags) || []).slice();
+      Object.keys(byName).forEach(n => { if (names.indexOf(n) < 0) names.push(n); });
+      return '<div class="customers-block"><div class="section-label m-0">Tags</div>' +
+        '<p class="muted-xs">Click a tag to turn it on or off. A tag you set stays as you set it; hive only changes the ones marked auto.</p>' +
+        '<div class="customers-chips">' + names.map(n => customersTagChipHtml(n, byName[n])).join('') + '</div>' +
+        '<div class="customers-inline"><label>New tag<input class="kb-search-box" type="text" maxlength="40" data-customers-field="tag-name" placeholder="early adopter" autocomplete="off"></label>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersTagAdd">Add tag</button></div></div>';
+    }
+
+    function customersGoalRowHtml(g) {
+      const id = escapeHtml(g.id);
+      const suggested = g.state === 'suggested';
+      const meta = suggested ? 'Suggested by hive' : (g.source === 'manual' ? 'Written by ' + (g.by || 'a person') : 'Suggested by hive, confirmed by ' + (g.by || 'a person'));
+      return '<div class="customers-row" data-goal-state="' + escapeHtml(g.state) + '"><div class="customers-row-main"><div>' + escapeHtml(g.text || '') + '</div>' +
+        '<div class="muted-xs">' + escapeHtml(meta) + '</div>' + customersEvidenceHtml(g.evidence) + '</div>' +
+        (suggested ? '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersGoalConfirm" data-arg0="' + id + '">Confirm</button>' : '') +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersGoalEdit" data-arg0="' + id + '">Edit</button>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersGoalReject" data-arg0="' + id + '">' + (suggested ? 'Reject' : 'Remove') + '</button></div>';
+    }
+
+    function customersGoalsHtml(p) {
+      const goals = customersGoalsSplit(p);
+      return '<div class="customers-block"><div class="section-label m-0">Goals</div>' +
+        '<p class="muted-xs">What this person is trying to get done. Hive suggests goals from their issues, pull requests, meetings and mail; a goal counts only once a person confirms it.</p>' +
+        '<div class="customers-list">' + (goals.confirmed.length ? goals.confirmed.map(customersGoalRowHtml).join('') : '<p class="empty-dashed">No goals yet.</p>') + '</div>' +
+        (goals.suggested.length ? '<div class="muted-xs">Suggested</div><div class="customers-list">' + goals.suggested.map(customersGoalRowHtml).join('') + '</div>' : '') +
+        '<div class="customers-inline"><label>New goal<input class="kb-search-box" type="text" maxlength="280" data-customers-field="goal-text" placeholder="Get CSV exports working for their team" autocomplete="off"></label>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersGoalAdd">Add goal</button></div></div>';
+    }
+
+    // Satisfaction is the maintainers' assessment: full view only.
+    function customersSatisfactionHtml(p) {
+      if (!customersIsFull()) return '';
+      const sat = p.satisfaction || {};
+      const level = sat.level || 'unknown';
+      const levels = (_customersData && _customersData.levels) || Object.keys(CUSTOMERS_LEVEL_LABELS);
+      const who = sat.source === 'manual' ? 'Set by ' + (sat.by || 'a person') : (sat.source === 'auto' ? 'Suggested by hive, confirmed by ' + (sat.by || 'a person') : 'Not assessed yet');
+      const buttons = levels.map(l => '<button type="button" class="hv-btn ' + (l === level ? 'btn-primary' : 'btn-secondary') + ' btn-sm" aria-pressed="' + (l === level) + '" data-action="customersSatisfactionSet" data-arg0="' + escapeHtml(l) + '">' + escapeHtml(CUSTOMERS_LEVEL_LABELS[l] || l) + '</button>').join('');
+      const sg = sat.suggestion;
+      return '<div class="customers-block"><div class="section-label m-0">Satisfaction</div>' +
+        '<p class="muted-xs">' + escapeHtml(who) + '. There is no score: only a level, and what led to it.</p>' +
+        '<div class="customers-chips">' + buttons + '</div>' + customersEvidenceHtml(sat.evidence) +
+        (sg ? '<div class="customers-row" data-satisfaction-suggestion="true"><div class="customers-row-main"><div>Hive suggests ' + customersLevelPill(sg.level) + '</div>' + customersEvidenceHtml(sg.evidence) + '</div>' +
+          '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersSatisfactionConfirm">Confirm</button>' +
+          '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersSatisfactionReject">Reject</button></div>' : '') + '</div>';
+    }
+
+    function customersNotesHtml(p) {
+      if (!customersIsFull()) return '';
+      return '<div class="customers-block"><div class="section-label m-0">Notes</div>' +
+        '<textarea class="kb-search-box customers-notes" maxlength="4000" data-customers-field="notes" placeholder="Notes for the owner and read-write users. The person does not see these.">' + escapeHtml(p.notes || '') + '</textarea>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersNotesSave">Save notes</button></div></div>';
+    }
+
+    // customersTimelineGroups orders timeline entries by the kind of thing
+    // they point at, keeping each group newest first.
+    function customersTimelineGroups(nodes) {
+      const groups = {};
+      const order = [];
+      (nodes || []).forEach(n => {
+        const kind = (n && n.artefact && n.artefact.kind) || 'other';
+        if (!groups[kind]) { groups[kind] = []; order.push(kind); }
+        groups[kind].push(n);
+      });
+      return order.map(kind => ({ kind: kind, label: CUSTOMERS_REF_KIND_LABELS[kind] || kind, nodes: groups[kind] }));
+    }
+
+    function customersTimelineRowHtml(n) {
+      const ref = (n.artefact && n.artefact.ref) || '';
+      return '<div class="customers-row"><span class="badge">' + escapeHtml(String(n.predicate || '').replace(/_/g, ' ')) + '</span>' +
+        '<div class="customers-row-main"><div class="customers-evidence">' + escapeHtml(ref) + '</div></div>' +
+        '<span class="muted-xs">' + escapeHtml(customersFormatTime(n.at)) + '</span></div>';
+    }
+
+    // The timeline holds references only: an issue, a meeting or a mail item
+    // is named by its id, never quoted.
+    function customersTimelineHtml() {
+      const t = _customersTimeline;
+      if (t.error) return '<p class="kc-error muted-xs">' + escapeHtml(t.error) + '</p>';
+      if (t.loading && !t.nodes.length) return '<p class="muted-xs">Loading activity…</p>';
+      if (!t.nodes.length) return '<p class="empty-dashed">No activity recorded yet.</p>';
+      return customersTimelineGroups(t.nodes).map(g => '<div class="muted-xs">' + escapeHtml(g.label) + ' (' + g.nodes.length + ')</div>' +
+        '<div class="customers-list">' + g.nodes.map(customersTimelineRowHtml).join('') + '</div>').join('') +
+        (t.next ? '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersTimelineMore">Show more</button></div>' : '');
+    }
+
+    function customersActivityHtml(p) {
+      if (!customersIsFull()) return '';
+      const counts = p.counts || {};
+      const keys = Object.keys(counts).sort();
+      const hints = p.hints || [];
+      return '<div class="customers-block"><div class="section-label m-0">Activity</div>' +
+        (keys.length ? '<div class="customers-chips">' + keys.map(k => '<span class="badge">' + escapeHtml(k.replace(/_/g, ' ')) + ' ' + counts[k] + '</span>').join('') + '</div>' : '') +
+        '<div id="customers-timeline" class="customers-block">' + customersTimelineHtml() + '</div>' +
+        (hints.length ? '<p class="muted-xs">' + hints.length + ' open "Same person?" question' + (hints.length === 1 ? '' : 's') + ' about this profile.</p>' : '') + '</div>';
+    }
+
+    function customersForgetHtml(p) {
+      if (!customersIsOwner()) return '';
+      return '<div class="customers-block"><div class="section-label m-0">Forget</div>' +
+        '<p class="muted-xs">Deletes this person, their identities and their activity links from this hive, and stops hive rebuilding the profile. It cannot be undone.</p>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-danger btn-sm" data-action="customersForget">Forget this person</button></div></div>';
+    }
+
+    function customersProfileHtml(p) {
+      const tags = customersActiveTags(p).map(t => '<span class="badge customers-chip">' + escapeHtml(t) + '</span>').join('');
+      return '<div class="customers-profile-head"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersClose">← Customers</button>' +
+        '<div class="customers-profile-name">' + escapeHtml(p.name || p.id) + (p.me ? ' <span class="badge">me</span>' : '') + '</div>' +
+        '<div class="customers-chips">' + tags + customersLevelPill(p.satisfaction && p.satisfaction.level) + '</div>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRename">Rename</button></div>' +
+        '<div class="hive-dialog-error" role="alert" data-customers-field="profile-error"></div>' +
+        customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) +
+        customersActivityHtml(p) + customersNotesHtml(p) + customersForgetHtml(p);
+    }
+
+    function renderCustomers() {
+      refreshSectionCardShell('customers-section');
+      const host = document.getElementById('customers-panel');
+      if (!host) return;
+      if (_customersError && !_customersData) {
+        host.innerHTML = '<p class="kc-error muted-xs">' + escapeHtml(_customersError) + '</p>';
+        setSectionSummary('customers-section', 'unavailable');
+        return;
+      }
+      const data = _customersData || {};
+      setSectionSummary('customers-section', customersSummaryText(data));
+      if (!data.enabled) { host.innerHTML = '<p class="empty-dashed">Customers are turned off on this hive.</p>'; return; }
+      // Typing in a form must survive the background refresh.
+      const active = document.activeElement;
+      if (active && host.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
+      host.innerHTML = _customersOpen ? customersProfileHtml(_customersOpen) : customersListHtml(data);
+    }
+
+    // customersShow replaces the panel after an action, even when a field in
+    // it has the focus.
+    function customersShow() {
+      if (document.activeElement && typeof document.activeElement.blur === 'function') document.activeElement.blur();
+      renderCustomers();
+    }
+
+    function customersProfileError(msg) {
+      const el = customersField('profile-error');
+      if (el) el.textContent = msg || '';
+      else if (msg) showToast(msg, 'error');
+    }
+
+    // customersTimelineLoad reads one page of the open profile's edges from
+    // the customer graph. reset starts over; otherwise it appends.
+    async function customersTimelineLoad(reset) {
+      const p = _customersOpen;
+      if (!p || !customersIsFull()) return;
+      if (reset || _customersTimeline.id !== p.id) _customersTimeline = { id: p.id, nodes: [], next: '', error: '', loading: false };
+      const t = _customersTimeline;
+      if (t.loading) return;
+      t.loading = true;
+      customersTimelinePaint();
+      try {
+        const variables = { id: p.id, first: CUSTOMERS_TIMELINE_PAGE };
+        if (t.next) variables.after = t.next;
+        const data = await customersRequest('POST', '/api/graph', { query: CUSTOMERS_TIMELINE_QUERY, operationName: 'Timeline', variables: variables });
+        if (data.errors && data.errors.length) throw new Error(data.errors[0].message || 'query failed');
+        const edges = (data.data && data.data.person && data.data.person.edges) || {};
+        t.nodes = t.nodes.concat(edges.nodes || []);
+        t.next = edges.next || '';
+        t.error = '';
+      } catch (e) { t.error = 'Could not load activity: ' + e.message; }
+      t.loading = false;
+      if (_customersTimeline === t) customersTimelinePaint();
+    }
+
+    // customersTimelinePaint updates only the timeline, so a field being
+    // typed in elsewhere on the profile keeps its text and its focus.
+    function customersTimelinePaint() {
+      const el = document.getElementById('customers-timeline');
+      if (el) el.innerHTML = customersTimelineHtml();
+    }
+
+    function customersTimelineMore() { customersTimelineLoad(false); }
+
+    // ── Actions ──
+    async function customersOpen(id) {
+      try {
+        _customersOpen = await customersRequest('GET', '/api/customers/' + encodeURIComponent(id));
+        customersShow();
+        customersTimelineLoad(true);
+      } catch (e) { showToast('Could not open the profile: ' + e.message, 'error'); }
+    }
+
+    function customersClose() {
+      _customersOpen = null;
+      customersShow();
+      fetchCustomers();
+    }
+
+    // customersEdit applies one change to the open profile. A viewer's own
+    // profile is always addressed as "me": that is the only path a read-only
+    // user may write to.
+    async function customersEdit(body, done) {
+      if (!_customersOpen) return;
+      const id = _customersOpen.me ? 'me' : _customersOpen.id;
+      try {
+        const p = await customersRequest('POST', '/api/customers/' + encodeURIComponent(id) + '/edit', body);
+        _customersOpen = p;
+        customersShow();
+        if (p.hinted) showToast('That identity already belongs to another customer. Nothing was linked; it is now a "Same person?" question on both profiles.', 'warning');
+        else if (done) showToast(done, 'success');
+      } catch (e) { customersProfileError(e.message); }
+    }
+
+    async function customersAdd() {
+      const err = customersField('add-error');
+      const name = customersFieldValue('add-name');
+      const value = customersFieldValue('add-value');
+      if (!name) { if (err) err.textContent = 'A name is required.'; return; }
+      const body = { name: name };
+      if (value) body.identities = [{ kind: customersFieldValue('add-kind'), value: value }];
+      try {
+        const p = await customersRequest('POST', '/api/customers', body);
+        showToast('Customer added', 'success');
+        _customersOpen = p;
+        customersShow();
+        fetchCustomers();
+      } catch (e) { if (err) err.textContent = e.message; }
+    }
+
+    async function customersAccept(sid) {
+      try {
+        const p = await customersRequest('POST', '/api/customers/suggestions/' + encodeURIComponent(sid) + '/accept');
+        showToast('Accepted: ' + (p.name || 'customer') + ' now has a profile', 'success');
+      } catch (e) { showToast('Could not accept: ' + e.message, 'error'); }
+      customersShow();
+      fetchCustomers();
+    }
+
+    async function customersDismiss(sid) {
+      const ok = await hiveConfirm({ title: 'Dismiss this suggestion?', message: 'Hive will not suggest this person again and keeps no readable trace of them. You can still add them by hand later.', confirmLabel: 'Dismiss' });
+      if (!ok) return;
+      try { await customersRequest('POST', '/api/customers/suggestions/' + encodeURIComponent(sid) + '/dismiss'); }
+      catch (e) { showToast('Could not dismiss: ' + e.message, 'error'); }
+      customersShow();
+      fetchCustomers();
+    }
+
+    async function customersRename() {
+      if (!_customersOpen) return;
+      const name = await hivePrompt({ title: 'Rename', label: 'Name', defaultValue: _customersOpen.name || '', confirmLabel: 'Save' });
+      if (!name || name === _customersOpen.name) return;
+      customersEdit({ op: 'name', name: name });
+    }
+
+    function customersIdentityAdd() {
+      const value = customersFieldValue('identity-value');
+      if (!value) { customersProfileError('Enter a login, an address or an id.'); return; }
+      customersEdit({ op: 'identity_add', kind: customersFieldValue('identity-kind'), value: value });
+    }
+
+    function customersIdentityConfirm(kind, value) {
+      customersEdit({ op: 'identity_add', kind: kind, value: value }, 'Identity confirmed');
+    }
+
+    function customersIdentityRemove(key) { customersEdit({ op: 'identity_remove', key: key }); }
+
+    function customersTagSet(tag, state) { customersEdit({ op: 'tag', tag: tag, state: state }); }
+
+    function customersTagAdd() {
+      const tag = customersFieldValue('tag-name');
+      if (!tag) { customersProfileError('Enter a tag.'); return; }
+      customersEdit({ op: 'tag', tag: tag, state: 'on' });
+    }
+
+    function customersGoalAdd() {
+      const text = customersFieldValue('goal-text');
+      if (!text) { customersProfileError('Write the goal first.'); return; }
+      customersEdit({ op: 'goal_add', text: text });
+    }
+
+    async function customersGoalEdit(gid) {
+      const goal = ((_customersOpen && _customersOpen.goals) || []).find(g => g && g.id === gid);
+      if (!goal) return;
+      const text = await hivePrompt({ title: 'Edit goal', label: 'What are they trying to get done?', defaultValue: goal.text || '', confirmLabel: 'Save' });
+      if (!text || text === goal.text) return;
+      customersEdit({ op: 'goal_edit', goal_id: gid, text: text });
+    }
+
+    function customersGoalConfirm(gid) { customersEdit({ op: 'goal_confirm', goal_id: gid }, 'Goal confirmed'); }
+
+    function customersGoalReject(gid) { customersEdit({ op: 'goal_reject', goal_id: gid }); }
+
+    function customersSatisfactionSet(level) { customersEdit({ op: 'satisfaction_set', level: level }); }
+
+    function customersSatisfactionConfirm() { customersEdit({ op: 'satisfaction_confirm' }, 'Satisfaction confirmed'); }
+
+    function customersSatisfactionReject() { customersEdit({ op: 'satisfaction_reject' }); }
+
+    function customersNotesSave() { customersEdit({ op: 'notes', notes: (customersField('notes') || {}).value || '' }, 'Notes saved'); }
+
+    async function customersForget() {
+      if (!_customersOpen) return;
+      const p = _customersOpen;
+      const ok = await hiveConfirm({
+        title: 'Forget ' + (p.name || 'this person') + '?',
+        message: 'This deletes their profile, identities and activity links from this hive, and stops hive rebuilding the profile from what it sees later. It cannot be undone.',
+        confirmLabel: 'Forget', danger: true
+      });
+      if (!ok) return;
+      try {
+        await customersRequest('DELETE', '/api/customers/' + encodeURIComponent(p.id));
+        showToast('Forgotten', 'success');
+        _customersOpen = null;
+      } catch (e) { showToast('Could not forget: ' + e.message, 'error'); }
+      customersShow();
+      fetchCustomers();
     }
     // ── Vault Management ──
 
@@ -54708,6 +55624,7 @@ function burnAreaChart() {
         'knowledge-section', 'inbox-section', 'contributors-section', 'debug-section', 'logs-section',
         'activity-monitor-section', 'agents-section', 'agent-activity-section', 'faq-section'
       ];
+      dashboardRememberAcmmLevel(data.acmmLevel || 0);
       COLLAPSIBLE_SECTION_IDS.forEach(applySectionCollapse);
       refreshDashboardSectionSummaries(data);
       // Update compact-all button text
@@ -55467,6 +56384,12 @@ function burnAreaChart() {
     // then `running`, or `failed` with the error on the record.
     const SESSIONS_STATUS_PREPARING = 'preparing';
     const SESSIONS_STATUS_FAILED = 'failed';
+    // A session is `deleting` from the DELETE (202) until the hive's
+    // background job has removed its files, which can take a minute or more;
+    // then the record is gone, or the previous status is back with
+    // `delete_error` saying why the delete failed.
+    const SESSIONS_STATUS_DELETING = 'deleting';
+    const SESSIONS_DELETING_TEXT = 'Deleting this session… Its files are being removed, which can take a minute or more for a session with large caches. The tab closes by itself when it is done; you can leave this page.';
     // While a session is preparing the list is polled faster than the regular
     // SESSIONS_POLL_MS so the tab flips to a terminal soon after it starts.
     const SESSIONS_PREPARING_POLL_MS = 2000;
@@ -55509,6 +56432,9 @@ function burnAreaChart() {
     let _sessionsPrepPollOn = false;
     let _sessionsVoice = null;
     const _sessionsFrames = {};
+    // Sessions whose delete this browser started (id -> name), so the outcome
+    // is announced when the list shows it.
+    const _sessionsDeleting = {};
     const _sessionsFrameFailed = {};
     // Extension slot for the input bar: other features (for example future
     // "Seed from..." providers) register {id, label, title, run(ctx)} here and
@@ -55572,6 +56498,7 @@ function burnAreaChart() {
       if (session.status === SESSIONS_STATUS_ENDED) return 'ended';
       if (session.status === SESSIONS_STATUS_PREPARING) return 'preparing';
       if (session.status === SESSIONS_STATUS_FAILED) return 'failed';
+      if (session.status === SESSIONS_STATUS_DELETING) return 'deleting';
       return 'terminal';
     }
     // Send (and upload) need a write role; the read role only watches.
@@ -55613,6 +56540,13 @@ function burnAreaChart() {
     }
     function sessionsHasPreparing(sessions) {
       return (sessions || []).some(function(s) { return s && s.status === SESSIONS_STATUS_PREPARING; });
+    }
+    function sessionsHasDeleting(sessions) {
+      return (sessions || []).some(function(s) { return s && s.status === SESSIONS_STATUS_DELETING; });
+    }
+    // Why the last delete of a session failed ('' when it did not).
+    function sessionsDeleteErrorText(s) {
+      return s && s.delete_error ? 'The last delete failed: ' + String(s.delete_error) + '. Nothing was lost; you can retry.' : '';
     }
     // The line shown in a preparing or failed tab: the server's message
     // ("preparing workspace: cloning org/repo (first session on this hive)")
@@ -55848,6 +56782,7 @@ function burnAreaChart() {
       if (wasEnabled !== _sessionsData.enabled) sessionsApplyVisibility();
       if (!_sessionsData.enabled) { dashboardClearInterval('sessions-poll'); return; }
       if (!_sessionsRole) await sessionsLoadRole();
+      sessionsSettleDeletes(_sessionsData.sessions);
       _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, sessionsClaimFocus(_sessionsData.sessions) || _sessionsSelected || sessionsStoreGet(SESSIONS_SELECTED_KEY));
       renderSessions();
     }
@@ -55906,20 +56841,23 @@ function burnAreaChart() {
       const ended = s.status === SESSIONS_STATUS_ENDED;
       const preparing = s.status === SESSIONS_STATUS_PREPARING;
       const failed = s.status === SESSIONS_STATUS_FAILED;
+      const deleting = s.status === SESSIONS_STATUS_DELETING;
       const attached = Number(s.attached) || 0;
       const badge = attached > 0 ? '<span class="sessions-attached" title="' + esc(SESSIONS_TYPING_NOTE) + '">' + attached + '</span>' : '';
-      const title = preparing || failed ? sessionsStatusText(s)
+      const title = deleting ? 'Deleting…' : preparing || failed ? sessionsStatusText(s)
         : (s.status === SESSIONS_STATUS_RUNNING ? sessionsPresenceText(s) + '\n' : '') + sessionsWorkspaceLabel(sessionsSessionWorkspace(s));
-      const dot = preparing
+      const dot = deleting
+        ? '<span class="sessions-spinner" role="img" aria-label="Deleting"></span>'
+        : preparing
         ? '<span class="sessions-spinner" role="img" aria-label="Preparing"></span>'
         : '<span class="sessions-tab-dot" data-status="' + esc(s.status || '') + '"></span>';
-      return '<button type="button" role="tab" class="sessions-tab' + (selected ? ' active' : '') + (ended ? ' ended' : '') + (preparing ? ' preparing' : '') + (failed ? ' failed' : '') + '" id="sessions-tab-' + esc(s.id) + '"'
+      return '<button type="button" role="tab" class="sessions-tab' + (selected ? ' active' : '') + (ended ? ' ended' : '') + (preparing ? ' preparing' : '') + (failed ? ' failed' : '') + (deleting ? ' deleting ended' : '') + '" id="sessions-tab-' + esc(s.id) + '"'
         + ' title="' + esc(title) + '"'
         + ' aria-selected="' + selected + '" aria-controls="sessions-pane-' + esc(s.id) + '" tabindex="' + (selected ? '0' : '-1') + '"'
         + ' data-action="sessionsSelect" data-arg0="' + esc(s.id) + '" data-keydown-action="sessionsTabKey" data-arg-types="s,e" data-keys="*" data-arg1="">'
         + dot
         + '<span class="sessions-tab-name">' + esc(s.name || s.id) + '</span>'
-        + '<span class="sessions-tab-vendor">' + esc(s.vendor || '') + '</span>' + badge + '</button>';
+        + '<span class="sessions-tab-vendor">' + esc(deleting ? 'deleting…' : (s.vendor || '')) + '</span>' + badge + '</button>';
     }
     function sessionsTabsHtml() {
       return sessionsGroupSessions(_sessionsData.sessions).map(function(g) {
@@ -55976,7 +56914,7 @@ function burnAreaChart() {
       let closeItem = '<button type="button" class="danger" data-action="sessionsClose" data-arg0="' + esc(s.id) + '">Close session</button>';
       if (s.status === SESSIONS_STATUS_PREPARING) closeItem = '';
       else if (s.status === SESSIONS_STATUS_FAILED || s.status === SESSIONS_STATUS_ENDED) closeItem = '<button type="button" class="danger" data-action="sessionsClose" data-arg0="' + esc(s.id) + '">Delete session</button>';
-      const menu = canManage
+      const menu = canManage && s.status !== SESSIONS_STATUS_DELETING
         ? '<details class="sessions-menu"><summary class="hv-btn btn-secondary btn-sm" aria-label="Session actions">⋯</summary><div class="sessions-menu-items">'
           + '<button type="button" data-action="sessionsRename" data-arg0="' + esc(s.id) + '">Rename</button>'
           + '<button type="button" data-action="sessionsRegroup" data-arg0="' + esc(s.id) + '">Change group</button>'
@@ -56040,8 +56978,17 @@ function burnAreaChart() {
         return '<div class="sessions-status sessions-status-preparing" role="status" aria-live="polite"><span class="sessions-spinner" aria-hidden="true"></span>'
           + '<span class="sessions-status-text">' + esc(sessionsStatusText(s)) + ' The terminal opens here by itself once the session is running.</span></div>';
       }
+      if (mode === 'deleting') {
+        return '<div class="sessions-status sessions-status-preparing sessions-status-deleting" role="status" aria-live="polite"><span class="sessions-spinner" aria-hidden="true"></span>'
+          + '<span class="sessions-status-text">' + esc(SESSIONS_DELETING_TEXT) + '</span></div>';
+      }
+      // A delete that failed left the session as it was: say why, offer a retry.
+      const deleteFailed = s.delete_error
+        ? '<div class="sessions-status sessions-status-failed sessions-delete-failed" role="alert"><span class="sessions-status-text">' + esc(sessionsDeleteErrorText(s)) + '</span>'
+          + (can ? '<div class="sessions-form-actions"><button type="button" class="hv-btn btn-primary btn-sm" data-action="sessionsDeleteRetry" data-arg0="' + esc(s.id) + '">Retry delete</button></div>' : '') + '</div>'
+        : '';
       if (mode === 'failed') {
-        return '<div class="sessions-status sessions-status-failed" role="alert"><span class="sessions-status-text">' + esc(sessionsStatusText(s)) + '</span>'
+        return deleteFailed + '<div class="sessions-status sessions-status-failed" role="alert"><span class="sessions-status-text">' + esc(sessionsStatusText(s)) + '</span>'
           + (can ? '<div class="sessions-form-actions"><button type="button" class="hv-btn btn-primary btn-sm" data-action="sessionsRetry" data-arg0="' + esc(s.id) + '">Retry</button>'
             + '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="sessionsClose" data-arg0="' + esc(s.id) + '">Delete</button></div>' : '') + '</div>';
       }
@@ -56059,7 +57006,7 @@ function burnAreaChart() {
           lead = 'This session has ended and cannot be resumed (the CLI left no conversation to continue). Start again opens a fresh ' + (s.vendor || 'CLI') + ' session with the same name and group; the scrollback below stays.';
           actions = can ? restartBtn('btn-primary') : '';
         }
-        note = '<div class="sessions-note">' + esc(lead) + esc(failedResume) + actions + '</div>';
+        note = deleteFailed + '<div class="sessions-note">' + esc(lead) + esc(failedResume) + actions + '</div>';
       } else {
         note = '<div class="sessions-note">The live terminal could not be opened, so you see a read-only scrollback that refreshes every few seconds.</div>';
       }
@@ -56140,14 +57087,15 @@ function burnAreaChart() {
     // terminal (or shows its failure) within seconds of the start finishing,
     // and while the hive is getting a running session's CLI ready.
     function sessionsSyncPreparingPoll(sessions) {
-      const want = sessionsHasPreparing(sessions) || sessionsHasStartupPreparing(sessions);
+      const want = sessionsHasPreparing(sessions) || sessionsHasStartupPreparing(sessions) || sessionsHasDeleting(sessions);
       if (want && !_sessionsPrepPollOn) { _sessionsPrepPollOn = true; dashboardSetInterval('sessions-preparing-poll', loadSessions, SESSIONS_PREPARING_POLL_MS); }
       if (!want && _sessionsPrepPollOn) { _sessionsPrepPollOn = false; dashboardClearInterval('sessions-preparing-poll'); }
     }
     function sessionsSummary(sessions) {
       const running = (sessions || []).filter(function(s) { return s.status === SESSIONS_STATUS_RUNNING; }).length;
       const preparing = (sessions || []).filter(function(s) { return s.status === SESSIONS_STATUS_PREPARING; }).length;
-      return running + ' running · ' + (preparing ? preparing + ' preparing · ' : '') + (sessions || []).length + ' total';
+      const deleting = (sessions || []).filter(function(s) { return s.status === SESSIONS_STATUS_DELETING; }).length;
+      return running + ' running · ' + (preparing ? preparing + ' preparing · ' : '') + (deleting ? deleting + ' deleting · ' : '') + (sessions || []).length + ' total';
     }
     function sessionsShowSelected() {
       Array.prototype.forEach.call(document.querySelectorAll('#sessions-panes .sessions-pane'), function(pane) {
@@ -56156,7 +57104,7 @@ function burnAreaChart() {
       const s = sessionsSelectedSession();
       if (!s) { sessionsStopLogPoll(); return; }
       const mode = sessionsViewMode(_sessionsRole, s);
-      if (mode === 'preparing' || mode === 'failed') { sessionsStopLogPoll(); return; }
+      if (mode === 'preparing' || mode === 'failed' || mode === 'deleting') { sessionsStopLogPoll(); return; }
       if (mode === 'terminal' && !_sessionsFrameFailed[s.id]) { sessionsStopLogPoll(); sessionsAttachTerminal(s); } else sessionsStartLogPoll();
     }
 
@@ -56360,23 +57308,74 @@ function burnAreaChart() {
       const group = await hivePrompt({ title: 'Change group', label: 'Group (leave empty for none)', defaultValue: s.group || '', confirmLabel: 'Move', options: options });
       if (group !== null && group !== undefined && group !== false && group !== (s.group || '')) sessionsPatch(id, { group: group }, group ? 'Moved to ' + group + '.' : 'Removed from its group.');
     }
-    async function sessionsClose(id) {
+    // ── Close and delete ──
+    // DELETE on a running session closes it: the record stays, `ended`. On an
+    // ended or failed one it starts the delete. The hive answers 202 at once
+    // and removes the files in the background, so the tab shows "Deleting…"
+    // (no controls) until a list no longer has the session; a failure brings
+    // the tab back as it was with the reason and a retry. 200 with
+    // removed=true means nothing was left to remove and the record is gone.
+    function sessionsDropLocal(id) {
+      delete _sessionsFrames[id];
+      delete _sessionsDeleting[id];
+      _sessionsData.sessions = (_sessionsData.sessions || []).filter(function(x) { return x.id !== id; });
+      if (_sessionsSelected === id) _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, '');
+    }
+    async function sessionsDelete(id) {
       const s = (_sessionsData.sessions || []).find(function(x) { return x.id === id; });
       if (!s) return;
+      const name = s.name || s.id;
+      const closing = s.status === SESSIONS_STATUS_RUNNING;
+      try {
+        const data = await sessionsApi('/' + encodeURIComponent(id), 'DELETE');
+        if (data && data.deleting) {
+          _sessionsDeleting[id] = name;
+          Object.assign(s, data.session || {}, { status: SESSIONS_STATUS_DELETING, delete_error: '' });
+          renderSessions();
+          loadSessions();
+        } else if (data && data.removed) {
+          sessionsDropLocal(id);
+          renderSessions();
+          showToast('Session ' + name + ' deleted.', 'success');
+        } else {
+          // Closed: the record stays (ended), so the list is the truth.
+          showToast('Session closed.', 'success');
+          await loadSessions();
+        }
+      } catch (e) {
+        showToast('Could not ' + (closing ? 'close' : 'delete') + ' ' + name + ': ' + e.message, 'error');
+        loadSessions();
+      }
+    }
+    async function sessionsClose(id) {
+      const s = (_sessionsData.sessions || []).find(function(x) { return x.id === id; });
+      if (!s || s.status === SESSIONS_STATUS_DELETING) return;
       const gone = s.status === SESSIONS_STATUS_FAILED || s.status === SESSIONS_STATUS_ENDED;
       const ok = await hiveConfirm(gone
-        ? { title: 'Delete this session?', message: 'Deleting "' + (s.name || s.id) + '" removes its record and files; an ended session can no longer be resumed.', confirmLabel: 'Delete session', danger: true }
+        ? { title: 'Delete this session?', message: 'Deleting "' + (s.name || s.id) + '" removes its record and files; an ended session can no longer be resumed. Work in its workspace is kept on its branch.', confirmLabel: 'Delete session', danger: true }
         : { title: 'Close this session?', message: 'Closing "' + (s.name || s.id) + '" ends the CLI process for everyone attached and discards its scrollback.', confirmLabel: 'Close session', danger: true });
       if (!ok) return;
-      try {
-        await sessionsApi('/' + encodeURIComponent(id), 'DELETE');
-        delete _sessionsFrames[id];
-        _sessionsData.sessions = (_sessionsData.sessions || []).filter(function(x) { return x.id !== id; });
-        if (_sessionsSelected === id) _sessionsSelected = sessionsPickSelected(_sessionsData.sessions, '');
-        renderSessions();
-        showToast('Session closed.', 'success');
-      } catch (e) { showToast('Could not close the session: ' + e.message, 'error'); }
+      await sessionsDelete(id);
     }
+    // Retry a delete that failed (the reason is on the pane): no second confirm.
+    function sessionsDeleteRetry(id) { return sessionsDelete(id); }
+    // Announce the outcome of the deletes this browser started, from a fresh
+    // list: gone means deleted, back in another status means it failed.
+    function sessionsSettleDeletes(sessions) {
+      Object.keys(_sessionsDeleting).forEach(function(id) {
+        const name = _sessionsDeleting[id];
+        const s = (sessions || []).find(function(x) { return x && x.id === id; });
+        if (s && s.status === SESSIONS_STATUS_DELETING) return;
+        delete _sessionsDeleting[id];
+        if (!s) {
+          delete _sessionsFrames[id];
+          showToast('Session ' + name + ' deleted.', 'success');
+          return;
+        }
+        showToast('Could not delete ' + name + ': ' + (s.delete_error || 'the hive did not say why') + '.', 'error');
+      });
+    }
+    // ── Resume ──
     async function sessionsResume(id) {
       try {
         const data = await sessionsApi('/' + encodeURIComponent(id) + '/resume', 'POST', {});
@@ -62024,6 +63023,7 @@ function burnAreaChart() {
       { tab: 'Features', section: 'Work intake & issue lifecycle', label: 'Good first issue curation', key: 'good_first_issue.enabled', text: 'good first issue help wanted gfi curation new contributors coding agent clanker relay advertise welcome comment good_first_issue.enabled good_first_issue.max_per_repo good_first_issue.max_per_sweep good_first_issue.min_age good_first_issue.interval scorer body length packages score reselect cooldown docs url welcome comment template good_first_issue.min_body_chars good_first_issue.max_body_chars good_first_issue.max_packages good_first_issue.min_score good_first_issue.reselect_cooldown good_first_issue.docs_url good_first_issue.comment_template' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Jev decisions', key: 'jev.provider', text: 'jev typed decisions provider openrouter typesafe model endpoint api key env timeout jev.provider jev.model jev.endpoint jev.api_key_env jev.timeout' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Agent policy repo', key: 'policies.repo', text: 'agent policies policy repo claude.md branch path local dir poll interval policies.repo policies.branch policies.path policies.local_dir policies.poll_interval' },
+      { tab: 'Features', section: 'Agents & tooling', label: 'Customers', key: 'customers.enabled', text: 'customers people profile person identities tags goals satisfaction suggested forget customer graph HIVE_CUSTOMERS_ENABLED customers.enabled' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Re-entrant turns and PR follow-up windows', key: 'turn.reentrant.enabled', text: 'reentrant re-entrant turn envelope background fleet pr follow-up resume window retention turn.reentrant.enabled turn.reentrant.background_fleet_enabled turn.pr_follow_up.max_age turn.pr_follow_up.resume_id_max_age turn.pr_follow_up.retention' },
       { tab: 'Features', section: 'Agents & tooling', label: 'Data directories and session retention', key: 'data.metrics_dir', text: 'data directories metrics logs agent configs claude copilot bob sessions retention prune janitor data.agents_dir data.bob_sessions_dir data.claude_sessions_dir data.copilot_sessions_dir data.logs_dir data.metrics_dir data.session_retention_days' },
       { tab: 'Features', section: 'Integrations & observability', label: 'Standalone deployment upgrades', key: 'deployment.podman_mode', text: 'deployment podman quadlet rootless rootful docker compose upgrade helper request dir deployment.podman_mode deployment.upgrade_helper deployment.upgrade_request_dir' },
@@ -62922,8 +63922,6 @@ function burnAreaChart() {
         level >= ACMM_CONTRIBUTORS_MIN_LEVEL ? show(contributorsSection, '') : hide(contributorsSection);
         level >= ACMM_LEADERBOARD_MIN_LEVEL ? show(leaderboardSection, '') : hide(leaderboardSection);
         (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSection, '') : hide(nousSection);
-        const nousSidebarCfg = document.getElementById('nous-sidebar-config');
-        (experimentLabEnabled() && level >= ACMM_NOUS_MIN_LEVEL) ? show(nousSidebarCfg, '') : hide(nousSidebarCfg);
         level >= ACMM_DEBUG_MIN_LEVEL ? show(debugSection, '') : hide(debugSection);
         hide(logsSection);
 
@@ -70852,7 +71850,9 @@ function burnAreaChart() {
     // (hivecommons/hive#18690). GET /api/workflows and the pin's own
     // response carry `dispatch` (one entry per bound repository and
     // profile: the resolved agent, how it was resolved, the pin, or the
-    // problem when nothing fills it) and `agents` (who can be pinned).
+    // problem when nothing fills it, `candidates` saying which agents may
+    // do the profile's work, `not_started` listing the hand-offs an agent
+    // declined) and `agents` (who can be pinned).
     function workflowDispatchApply(data) {
       _workflowState.dispatch = Array.isArray(data && data.dispatch) ? data.dispatch : [];
       _workflowState.agents = Array.isArray(data && data.agents) ? data.agents : [];
@@ -70868,31 +71868,43 @@ function burnAreaChart() {
 
     // Pure: what one profile's row says — the option list of its picker
     // (the default first, then every agent that can be pinned, plus a pin
-    // that no longer names an enabled agent so it stays visible) and, when
-    // nothing fills the profile, the warning.
+    // that no longer names an enabled agent so it stays visible), the
+    // warning when nothing fills the profile, and the hand-offs an agent
+    // declined or did not act on. An agent whose mode does not let it do
+    // what the profile needs (`candidates`, hivecommons/hive#18749) is
+    // listed but cannot be picked, with the reason on hover.
     function workflowDispatchProfileView(d, agents) {
       const pinned = String(d.pinned || '');
       const agent = String(d.agent || '');
       const auto = pinned ? 'Automatic' : (agent ? 'Automatic (' + agent + ')' : 'Automatic (none available)');
       const options = [{ value: '', label: auto, selected: !pinned }];
       const names = (agents || []).map(String);
+      const cand = {};
+      for (const c of (Array.isArray(d.candidates) ? d.candidates : [])) if (c && c.agent) cand[String(c.agent)] = c;
       if (pinned && names.indexOf(pinned) < 0) options.push({ value: pinned, label: pinned + ' (not an enabled agent)', selected: true });
-      for (const n of names) options.push({ value: n, label: n, selected: n === pinned });
-      const warning = d.problem ? 'Not handed off: ' + d.problem + '. Items in this profile\'s states wait until an agent is picked.' : '';
+      for (const n of names) {
+        const c = cand[n];
+        const unfit = !!c && c.qualifies === false;
+        const mode = c && c.mode ? String(c.mode) : '';
+        options.push({ value: n, label: unfit ? n + ' (' + (mode || 'not allowed') + ', cannot do this)' : n, selected: n === pinned, disabled: unfit && n !== pinned, title: unfit ? n + ' ' + String(c.reason || 'may not do what this profile needs') : '' });
+      }
+      const warning = d.problem ? 'Not handed off: ' + d.problem + '. Items in this profile\'s states wait until an agent that may do the work is picked.' : '';
       const how = pinned ? 'pinned' : (WORKFLOW_DISPATCH_SOURCE_WORD[String(d.source || '')] || '');
       const note = warning ? '' : (agent ? 'handed to ' + agent + (how ? ' (' + how + ')' : '') : '') + (d.disabled ? ' · automatic hand-off off, manual send only' : '');
-      return { profile: String(d.profile), options, warning, note };
+      const stalled = (Array.isArray(d.not_started) ? d.not_started : []).map(h => 'Hand-off of ' + String(h.ref || '') + ' not started: ' + String(h.reason || 'the agent did not act') + '. ' + (h.retrying ? 'The hive hands it to another agent that may do the work, if there is one.' : 'It waits for an owner: use Send to ' + String(d.profile) + ' on the item\'s row in the Activity Monitor.'));
+      return { profile: String(d.profile), options, warning, note, stalled };
     }
 
     function renderRepoWorkflowProfileRows(repo, profiles, agents, locked) {
       return (profiles || []).map(d => {
         const v = workflowDispatchProfileView(d, agents);
-        const opts = v.options.map(o => `<option value="${esc(o.value)}" ${o.selected ? 'selected' : ''}>${esc(o.label)}</option>`).join('');
-        const tip = 'Which hive agent the ' + v.profile + ' profile of this workflow is handed to (workflow.dispatch.profiles.' + v.profile + '.agent). Automatic picks an agent named after the profile, then a writer, docs or feature agent, then the hive\'s standard agent for the work.';
+        const opts = v.options.map(o => `<option value="${esc(o.value)}" ${o.selected ? 'selected' : ''} ${o.disabled ? 'disabled' : ''}${o.title ? ` title="${esc(o.title)}"` : ''}>${esc(o.label)}</option>`).join('');
+        const tip = 'Which hive agent the ' + v.profile + ' profile of this workflow is handed to (workflow.dispatch.profiles.' + v.profile + '.agent). Automatic picks an agent named after the profile, then a writer, docs or feature agent, then the hive\'s standard agent for the work, and only ever an agent whose mode lets it do what the profile needs.';
         const msg = v.warning
           ? `<span class="rt-inherit wf-dispatch-gap" role="alert">${esc(v.warning)}</span>`
           : (v.note ? `<span class="rt-inherit">${esc(v.note)}</span>` : '');
-        return `<div class="config-list-item ld-sub wf-dispatch-profile" data-wf-profile="${esc(v.profile)}"><label class="rt-check" title="${esc(tip)}">${esc(v.profile)} agent <select ${locked ? 'disabled' : ''} data-change-action="setWorkflowProfileAgent" data-arg0="${esc(v.profile)}" data-arg-types="s,v">${opts}</select></label>${msg}</div>`;
+        const stalled = v.stalled.map(line => `<span class="rt-inherit wf-dispatch-gap" data-wf-stalled="1" role="alert">${esc(line)}</span>`).join('');
+        return `<div class="config-list-item ld-sub wf-dispatch-profile" data-wf-profile="${esc(v.profile)}"><label class="rt-check" title="${esc(tip)}">${esc(v.profile)} agent <select ${locked ? 'disabled' : ''} data-change-action="setWorkflowProfileAgent" data-arg0="${esc(v.profile)}" data-arg-types="s,v">${opts}</select></label>${msg}${stalled}</div>`;
       }).join('');
     }
 
@@ -76566,6 +77578,13 @@ function burnAreaChart() {
             <div class="config-toggle-switch ${f.reentrantTurnBackgroundFleetEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="reentrantTurnBackgroundFleetEnabled"></div>
             <span class="config-toggle-label">Include background fleet ${yamlHint('turn.reentrant.background_fleet_enabled')} ${settingHelpMark('settings', 'features', 'Re-entrant background fleet', `Extends the opt-in to every enabled background agent once a soak is underway. Off keeps the rollout to named agents. HIVE_REENTRANT_TURN_BACKGROUND_FLEET overrides it.`)}</span>
           </div>
+        </div>
+        <div class="settings-subsection">
+          <div class="config-toggle">
+            <div class="config-toggle-switch ${f.customersEnabled ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="customersEnabled"></div>
+            <span class="config-toggle-label">Customers ${yamlHint('customers.enabled')} ${settingHelpMark('settings', 'features', 'Customers', `ON by default. The Customers section keeps one profile per person: who they are, their tags, what they are trying to get done and how it is going for them. Dashboard users and people added by hand are customers; anyone else hive has seen is only a suggestion until someone accepts them. Everything is stored on this hive and nothing is sent anywhere else. Off opens no store and hides the section. A change takes effect when the hive restarts. See src/docs/design/customers.md.`)}</span>
+          </div>
+          ${f.customersEffective !== f.customersEnabled ? `<p class="config-help">HIVE_CUSTOMERS_ENABLED overrides this setting: Customers is currently <b>${f.customersEffective ? 'on' : 'off'}</b>.</p>` : ''}
         </div>
         <div class="settings-subsection">
           <div class="config-toggle">

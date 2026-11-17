@@ -1127,15 +1127,16 @@ func (b *boot) wireBootClosures() {
 			WorkflowPostMerge: func(ctx context.Context, repo string, m *workflowmodel.Model, defaultBranch string, prs []workflowmodel.MergedPR) (map[int]*stageengine.PostMergeFacts, error) {
 				return b.ghClient.ObservePostMerge(ctx, repo, m, defaultBranch, prs)
 			},
-			WorkflowRepoFile:        workflowRepoFile(func() *github.Client { return b.ghClient }),
-			WorkflowProvisionLabels: workflowProvisionLabels(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
-			WorkflowDispatchPrepare: workflowDispatchPrepare(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
-			WorkflowEmitChecks:      workflowEmitChecks(b.cfg, func() *github.Client { return b.ghClient }),
-			WorkflowClusterRunner:   workflowClusterRunner(),
-			WorkflowSpecLLM:         newWorkflowSpecRunner(func() *config.Config { return b.cfg }),
-			AgentMgr:                b.agentMgr,
-			Sessions:                b.userSessionRuntime(),
-			CruxRuntimeHealth:       cruxRuntimeHealthFunc(b.cruxSupervision),
+			WorkflowRepoFile:         workflowRepoFile(func() *github.Client { return b.ghClient }),
+			WorkflowProvisionLabels:  workflowProvisionLabels(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
+			WorkflowDispatchPrepare:  workflowDispatchPrepare(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
+			WorkflowDispatchHandoffs: workflowDispatchHandoffs(b.cfg, b.logger),
+			WorkflowEmitChecks:       workflowEmitChecks(b.cfg, func() *github.Client { return b.ghClient }),
+			WorkflowClusterRunner:    workflowClusterRunner(),
+			WorkflowSpecLLM:          newWorkflowSpecRunner(func() *config.Config { return b.cfg }),
+			AgentMgr:                 b.agentMgr,
+			Sessions:                 b.userSessionRuntime(),
+			CruxRuntimeHealth:        cruxRuntimeHealthFunc(b.cruxSupervision),
 			// Provider gateways (#5565 slice 3): concrete openrouter/watsonx/
 			// linearagent adapters behind the dashboard's consumer-defined
 			// interfaces — this composition root is the only non-test place that
@@ -3620,6 +3621,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				b.cleanup.push(stop)
 				b.dashSrv.SetMeetingsScheduleService(svc)
 				md.sched = svc.sched
+				b.meetingsSched = svc.sched
 			}
 			b.dashSrv.SetMeetingsService(md)
 			// Ended meetings become inbox items; transcripts are purged
@@ -3628,8 +3630,9 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 		}
 	}
 	// Customers: the people store behind the Customers section (#18742).
-	if svc, stop := wireCustomers(b.cfg, b.logger); svc != nil {
+	if svc, stop := wireCustomers(b.cfg, b.customersResolvers(), b.logger); svc != nil {
 		b.cleanup.push(stop)
+		b.customers = svc
 		b.dashSrv.SetCustomersService(svc)
 	}
 	// #8380: chain GitHub comments/labels behind the relay yank on takeover.

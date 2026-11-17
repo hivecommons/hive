@@ -99,7 +99,8 @@ func TestWorkflowDispatchActive(t *testing.T) {
 // TechDocs workflow starts out of the box; an agent scoped away from the
 // item's repository is not picked (hivecommons/hive#18690).
 func TestResolveWorkflowDispatchAgentStandardFleet(t *testing.T) {
-	cfg := &config.Config{}
+	level := 5
+	cfg := &config.Config{ACMMLevel: &level}
 	cfg.Project.Org = "cncf"
 	cfg.Agents = map[string]config.AgentConfig{}
 	for _, name := range []string{"brainstorm", "ci-maintainer", "guide", "quality", "reviewer", "scanner", "supervisor"} {
@@ -125,6 +126,11 @@ func TestResolveWorkflowDispatchAgentStandardFleet(t *testing.T) {
 		t.Fatalf("plan = %+v skips %+v", cands, skips)
 	}
 
+	// With the scanner scoped away and no other agent allowed to open pull
+	// requests, nothing fills the drafter.
+	for _, name := range []string{"brainstorm", "ci-maintainer", "guide", "quality", "reviewer"} {
+		cfg.Agents[name] = config.AgentConfig{Enabled: true, Mode: "ADVISORY"}
+	}
 	scoped := cfg.Agents["scanner"]
 	scoped.Repos = []string{"cncf/website"}
 	cfg.Agents["scanner"] = scoped

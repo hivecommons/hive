@@ -23,15 +23,15 @@ const fmt = d => 'DAY(' + d + ')';
 test('hive-stored audio names the day retention deletes it', () => {
   for (const source of ['hive-recording', 'upload']) {
     const out = inboxAudioNoteText({ source, audio_expires_at: '2026-11-21T10:00:00Z' }, fmt);
-    assert.strictEqual(out, 'The audio is kept on this hive until DAY(2026-11-21T10:00:00Z), then deleted; the transcript stays. Click ▶ Play recording again to restart.');
+    assert.strictEqual(out, 'The audio is kept on this hive until DAY(2026-11-21T10:00:00Z), then deleted; the transcript stays. Click Play again to restart.');
     assert.doesNotMatch(out, /not stored/);
   }
-  assert.strictEqual(inboxAudioNoteText({ source: 'upload' }, fmt), 'The audio is kept on this hive. Click ▶ Play recording again to restart.');
-  assert.strictEqual(inboxAudioNoteText({ source: 'hive-recording', audio_expires_at: '0001-01-01T00:00:00Z' }, fmt), 'The audio is kept on this hive. Click ▶ Play recording again to restart.');
+  assert.strictEqual(inboxAudioNoteText({ source: 'upload' }, fmt), 'The audio is kept on this hive. Click Play again to restart.');
+  assert.strictEqual(inboxAudioNoteText({ source: 'hive-recording', audio_expires_at: '0001-01-01T00:00:00Z' }, fmt), 'The audio is kept on this hive. Click Play again to restart.');
 });
 
 test('third-party audio keeps the streaming note', () => {
   for (const it of [{ source: 'plaud' }, { source: 'zoom', audio_expires_at: '2026-11-21T10:00:00Z' }, undefined]) {
-    assert.strictEqual(inboxAudioNoteText(it, fmt), 'Streaming through this hive; the recording is not stored. Click ▶ Play recording again to restart.');
+    assert.strictEqual(inboxAudioNoteText(it, fmt), 'Streaming through this hive; the recording is not stored. Click Play again to restart.');
   }
 });

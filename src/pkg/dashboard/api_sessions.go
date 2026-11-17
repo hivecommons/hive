@@ -122,8 +122,12 @@ type SessionRuntime interface {
 	// session's own uid with the sessions group and mode 0640, where cwd is
 	// workspace ("" = the session's own work dir); it returns the path.
 	StoreInboxFile(id, workspace, fileName string, data []byte) (string, error)
-	// Remove ends the session and deletes everything it owned on disk.
+	// Remove ends the session and deletes everything it owned on disk. Safe
+	// to call again after a failure or on a session that is already gone.
 	Remove(id string) error
+	// Removed reports whether nothing of the session is left on disk; false
+	// when that cannot be told.
+	Removed(id string) bool
 }
 
 type sessionLimits struct {
@@ -176,6 +180,8 @@ type sessionView struct {
 	// session: getting the CLI ready, started, or the screen it stopped at
 	// (api_sessions_autostart.go). Absent when the hive has none for it.
 	Startup *sessionStartupView `json:"startup,omitempty"`
+	// DeleteError (additive) is why the last delete of the session failed.
+	DeleteError string `json:"delete_error"`
 }
 
 func (s *Server) registerSessionRoutes() {
@@ -292,7 +298,7 @@ func (st sessionRecord) view(p *crux.UserSessionProbe, rt SessionRuntime) sessio
 		CreatedAt: st.CreatedAt, LastActivity: st.LastActivity, Status: st.Status,
 		TmuxName: sessionTmuxPrefix + st.ID, Shared: st.Shared,
 		WorkspaceRepo: st.WorkspaceRepo, Workspace: st.Workspace,
-		Message: st.Message, Error: st.Error,
+		Message: st.Message, Error: st.Error, DeleteError: st.DeleteError,
 	}
 	if st.Status == sessionStatusRunning && p != nil {
 		v.Attached = p.Attached
@@ -342,6 +348,7 @@ func (s *Server) reconcileSessions(rt SessionRuntime, st *sessionStore) map[stri
 			continue
 		}
 		if rec.Status != sessionStatusRunning {
+			s.reconcileSessionRemoval(rt, st, rec)
 			continue
 		}
 		p := rt.Probe(rec.ID)
@@ -807,55 +814,6 @@ func (s *Server) handleSessionPatch(w http.ResponseWriter, r *http.Request) {
 	jsonResponse(w, map[string]any{"ok": true, "session": updated.view(&p, rt)})
 }
 
-// handleSessionDelete closes a running session: tmux is killed and the
-// metadata is kept, marked ended, so the session can be resumed where the
-// vendor supports it. DELETE on an already ended session removes its metadata.
-func (s *Server) handleSessionDelete(w http.ResponseWriter, r *http.Request) {
-	rt, st, ok := s.sessionsGate(w)
-	if !ok {
-		return
-	}
-	rec, actor, ok := s.sessionForMutation(w, r, st)
-	if !ok {
-		return
-	}
-	if rec.Status == sessionStatusPreparing {
-		// A start is in flight; the record changes under it as soon as it
-		// finishes, so the client is asked to come back then.
-		jsonError(w, "session is still being prepared; close it once it is running or failed", http.StatusConflict)
-		return
-	}
-	if rec.Status == sessionStatusEnded || rec.Status == sessionStatusFailed {
-		// Files first: if they cannot be removed the record (and its uid slot)
-		// stays, so the slot is never handed to a new session over old data.
-		if err := rt.Remove(rec.ID); err != nil {
-			if s.logger != nil {
-				s.logger.Warn("sessions: removing session files failed", "id", rec.ID, "error", err)
-			}
-			jsonError(w, "could not remove the session's files", http.StatusInternalServerError)
-			return
-		}
-		if err := st.remove(rec.ID); err != nil {
-			jsonError(w, "could not save the session store", http.StatusInternalServerError)
-			return
-		}
-		s.auditSession(actor.user, auditSessionClosed, auditDetail("session", rec.ID, "removed", "true"))
-		jsonResponse(w, map[string]any{"ok": true})
-		return
-	}
-	// Capture the resume handle before the tmux server goes away.
-	s.markSessionEnded(rt, st, rec, time.Now().UTC().Format(time.RFC3339))
-	if err := rt.Kill(rec.ID); err != nil {
-		if s.logger != nil {
-			s.logger.Warn("sessions: kill failed", "id", rec.ID, "error", err)
-		}
-		jsonError(w, "could not close the session", http.StatusBadGateway)
-		return
-	}
-	s.auditSession(actor.user, auditSessionClosed, auditDetail("session", rec.ID))
-	jsonResponse(w, map[string]any{"ok": true})
-}
-
 func (s *Server) handleSessionLog(w http.ResponseWriter, r *http.Request) {
 	rt, st, ok := s.sessionsGate(w)
 	if !ok {
@@ -1127,15 +1085,9 @@ func (s *Server) sweepSessions(now time.Time) {
 			s.auditSession("system", auditSessionClosed, auditDetail("session", rec.ID, "reason", "idle"))
 		case sessionStatusEnded, sessionStatusFailed:
 			if ended, err := time.Parse(time.RFC3339, rec.EndedAt); err == nil && now.Sub(ended) > sessionEndedRetention {
-				// Files first; a failure keeps the record (and its uid slot)
-				// so the next sweep retries instead of orphaning the data.
-				if err := rt.Remove(rec.ID); err != nil {
-					if s.logger != nil {
-						s.logger.Warn("sessions: pruning session files failed", "id", rec.ID, "error", err)
-					}
-					continue
-				}
-				_ = st.remove(rec.ID)
+				// The same job a person's delete runs: files first, the
+				// record (and its uid slot) only once they are gone.
+				s.beginSessionDelete(rt, st, rec.ID, sessionDeleteActorSystem, sessionDeleteReasonRetention, "")
 			}
 		}
 	}

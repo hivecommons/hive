@@ -44,6 +44,12 @@ type StageTrackerActivity struct {
 	// (running, queued, or not reported), so the chevron can name the last
 	// one or two the head waits on (hivecommons/hive#16630).
 	ChecksPending []string `json:"checks_pending,omitempty"`
+	// ChecksStuck names the pending checks that have been queued or in
+	// progress longer than trackerCheckStuckAfter: they are not running in
+	// any useful sense and will not finish on their own
+	// (hivecommons/hive#18769). StuckSince is when the oldest one started.
+	ChecksStuck []string   `json:"checks_stuck,omitempty"`
+	StuckSince  *time.Time `json:"stuck_since,omitempty"`
 	// Perspective counts on the current head for the Review track: Total is
 	// the swarm's expected set for this PR (configured perspectives plus any
 	// extra one dispatched or reported for the head), Done the ones with a
@@ -88,8 +94,8 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		out.Source += "+github-commit-statuses"
 	}
 	if !a.RequiredKnown || a.RequiredSource == "" || len(a.RequiredChecks) == 0 || len(a.Required) == 0 {
-		stageTrackerCountHeadChecks(out, a)
-		out.Active = out.State == "running"
+		stageTrackerCountHeadChecks(out, a, now)
+		out.Active = out.State == "running" && !stageTrackerAllChecksStuck(out)
 		return out
 	}
 	type requiredObservation struct {
@@ -124,8 +130,8 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 			}
 		}
 		if !found {
-			stageTrackerCountHeadChecks(out, a)
-			out.Active = out.State == "running"
+			stageTrackerCountHeadChecks(out, a, now)
+			out.Active = out.State == "running" && !stageTrackerAllChecksStuck(out)
 			return out
 		}
 	}
@@ -142,6 +148,8 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	// Required checks with no run at all, or only a pending commit status:
 	// on a Prow repository, a presubmit that never ran or has not finished.
 	presubmitWaiting := map[string]bool{}
+	// Per required-check name: when its queued or running observation began.
+	pendingSince := map[string]time.Time{}
 	// Required checks with no run on the head while commit statuses were
 	// not read: unknown rather than missing, with the no-run caption.
 	noRunUnread := map[string]bool{}
@@ -188,6 +196,11 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		}
 		if state != "passing" && state != "failing" && state != "skipped" {
 			settled[name] = false
+		}
+		// Check runs only: a pending commit status carries when it was
+		// posted, not when a job started.
+		if (state == "running" || state == "queued") && check.Since != nil && check.Kind != "commit_status" {
+			pendingSince[name] = *check.Since
 		}
 		// A red required check leads, then missing/unknown, then running/queued.
 		rank := map[string]int{"passing": 0, "queued": 1, "running": 2, "skipped": 3, "unknown": 4, "missing": 5, "failing": 6}
@@ -328,6 +341,7 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 	// age rides ObservedAt for the tooltip, never a dimmer state
 	// (hivecommons/hive#16643).
 	out.Active = out.State == "running" || out.State == "queued"
+	stageTrackerMarkStuckChecks(out, pendingSince, now)
 	stageTrackerAttachTide(out, full, presubmitWaiting)
 	return out
 }
@@ -419,9 +433,10 @@ func pluralVerb(n int, one, many string) string {
 // when any name is red, running while names still lack a final result,
 // and unknown — "no check results observed" — only when the head has no
 // check run at all.
-func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivity) {
+func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivity, now time.Time) {
 	type tally struct {
 		passing, failing bool
+		run              bool
 		since            time.Time
 	}
 	byName := map[string]*tally{}
@@ -446,9 +461,11 @@ func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivi
 		}
 		if !at.Before(t.since) {
 			t.since, t.passing = at, check.State == "completed" && check.Conclusion == "success"
+			t.run = check.Kind != "commit_status"
 		}
 	}
 	out.ChecksTotal = len(order)
+	pendingSince := map[string]time.Time{}
 	for _, name := range order {
 		t := byName[name]
 		switch {
@@ -459,8 +476,14 @@ func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivi
 			out.ChecksPassed++
 		default:
 			out.ChecksPending = append(out.ChecksPending, name)
+			if t.run && !t.since.IsZero() {
+				pendingSince[name] = t.since
+			}
 		}
 	}
+	// The caller sets Active from the state on return; a head whose every
+	// pending check is stuck reports no motion there.
+	defer func() { stageTrackerMarkStuckChecks(out, pendingSince, now) }()
 	if out.ChecksTotal == 0 {
 		return
 	}

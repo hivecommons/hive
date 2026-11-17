@@ -73,6 +73,11 @@ type Dependencies struct {
 	// resolves its model state, the agent and the agent claim, and renders
 	// the prompt. Nil answers 503.
 	WorkflowDispatchPrepare workflowDispatchPrepareFunc
+	// WorkflowDispatchHandoffs lists the hand-offs an agent declined or did
+	// not act on and whose item still waits in that state
+	// (hivecommons/hive#18749), for the workflow row on Settings → Repos
+	// and the item's Activity Monitor row. Nil lists none.
+	WorkflowDispatchHandoffs func() []WorkflowDispatchHandoff
 	// WorkflowEmitChecks proposes a newly bound model's declared checks to
 	// the repository as .hive/workflows/checks.yml through the checks PR
 	// (hivecommons/hive#18355), for PUT /api/workflows/bindings. Nil leaves

@@ -136,6 +136,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 
 		PRFollowUpEnabled *bool `json:"prFollowUpEnabled"`
 
+		// #18742: customers.enabled, the one switch for the Customers
+		// section. Read at boot, so a change applies on the next restart.
+		CustomersEnabled *bool `json:"customersEnabled"`
+
 		AutonomyAutoPromote  *bool   `json:"autonomyAutoPromote"`
 		AutonomyAutoDemote   *bool   `json:"autonomyAutoDemote"`
 		AutonomyPromoteAfter *int    `json:"autonomyPromoteAfter"`
@@ -356,6 +360,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 	if body.PRFollowUpEnabled != nil {
 		cfg.Turn.PRFollowUp.Enabled = *body.PRFollowUpEnabled
 	}
+	if body.CustomersEnabled != nil {
+		on := *body.CustomersEnabled
+		cfg.Customers.Enabled = &on
+	}
 	if claimsTTLsChanged {
 		applyClaimsTTLs(&cfg.Governor.Claims, body.ClaimsTTLS, body.ClaimsHumanTTLS, body.ClaimsAgentTTLS, body.ClaimsContributorTTLS, body.ClaimsMaxTTLS)
 		// Live claims keep their expiry; claims made or renewed from now on
@@ -558,6 +566,8 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"claimsTtlS":                 int(cfg.Governor.Claims.EffectiveTTL().Seconds()),
 		"prFollowUpEnabled":          cfg.Turn.PRFollowUp.Enabled,
 		"prFollowUpEffective":        cfg.PRFollowUpResumeEnabled(),
+		"customersEnabled":           cfg.Customers.IsEnabled(),
+		"customersEffective":         cfg.CustomersEnabled(),
 		"publicationEnabled":         cfg.Publication.Enabled,
 		"publicationPrivateChannel":  cfg.Publication.PrivateChannel,
 		"publicationOwner":           cfg.Publication.Owner,

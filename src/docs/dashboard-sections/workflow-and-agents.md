@@ -192,6 +192,8 @@ Named terminal sessions where a command-line AI agent runs inside Hive; everyone
 
 **When it appears.** Whenever sessions are enabled on the hive, which is the default (`GET /api/sessions` reports `enabled: true`); with `dashboard.sessions.enabled: false` or `HIVE_SESSIONS_ENABLED=false` the section is hidden. Old `#inception-section` links open this section.
 
+**Closing and deleting.** **Close session** ends a running session's CLI and keeps the session, ended, so it can be resumed. **Delete session** on an ended or failed session removes its record and files; work in its workspace stays on its branch of the shared checkout. Deleting can take a minute or more for a session with large caches, so it runs in the background: the tab shows **Deleting…** with a spinner and no controls, and closes by itself when the hive is done. If the delete fails, the tab comes back as it was with the reason and a **Retry delete** button. See [Deleting a session](../api-reference/sessions.md#deleting-a-session).
+
 **Settings that change it.** Settings → Dashboard → **Inception (spek) sessions** (`dashboard.sessions.enabled`, default on) and the three limits beside it (`max_sessions`, `max_per_user`, `idle_ttl_hours`; 0 keeps the default). **Answer the CLI startup screens** (`dashboard.sessions.autostart`, default on) turns the startup auto-answer off or on. `HIVE_SESSIONS_ENABLED`, `HIVE_SESSIONS_AUTOSTART` and the matching `HIVE_SESSIONS_*` variables override the saved values. The terminal is drawn in the dashboard's terminal colours, so it matches the current theme. See [Inception](../inception.md) for the inception API it sits beside.
 
 ## Knowledge
@@ -295,6 +297,8 @@ Each worker Hive runs, what it is doing now, and buttons to pause, restart or co
 **How the numbers are worked out.**
 
 - The header counts running workers and all workers.
+- At autonomy level L6 the hive runs itself, so the Agents section starts collapsed. Its summary still counts the workers and shows how many need your attention, such as a worker that is signed out or stopped. Open or close the section once and Hive remembers your choice on that browser, whatever the level. With no choice made, the section opens again if the level drops below L6.
+- In the left menu, **+ Add agent** and **+ Group** sit at the end of the Agents group and hide when you collapse it.
 - A worker's state comes from the hive, for example running, idle, paused or needs login.
 - A worker outside your autonomy level's usual set still shows when it is running or turned on.
 - The **Now:** line is on every card, in the full and the compact layout, and in the worker's detail panel. The next part explains its words.

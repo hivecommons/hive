@@ -256,6 +256,43 @@ One optional sweep, `customers`. Steps:
 
 A normal sweep (A to D) makes zero GitHub calls, and a test holds that.
 
+What the first sweep (steps A to C, `customers` in
+`src/cmd/hive/sweep_workers.go`, every ten minutes) reads:
+
+| Source | Identity | Edge |
+|---|---|---|
+| Access list (`dashboard.authorized_users`) | dashboard user; a `github:<login>` entry also proves the GitHub login | none; owner and merger earn `maintainer` |
+| Owner's connected GitHub account | GitHub login, when there is exactly one owner | none |
+| Proven calendar emails | email of the dashboard user who proved it | none |
+| Last GitHub enumeration: issues | author, assignees, logins mentioned in the body | reported, assigned, mentioned_in |
+| Last GitHub enumeration: pull requests | author, requested reviewers | authored, review_requested |
+| Claims ledger | human, contributor and external holders | claimed |
+| Inbox uploads | the dashboard user who added it | added |
+| Approved mail | the sender address | sent |
+| Calendar events | organiser and attendee addresses, who added it | organised, invited, added |
+| Meetings | who sent hive in (dashboard user, address or platform id) | added |
+
+Bots, the hive's own author account, agent claims, mail awaiting approval,
+purged meetings and display names produce nothing. Not read yet, and left to
+the next sweep PR: recordings, the merged ledger, review evidence, contributor
+profiles and connector fact authors, none of which the sweep can reach without
+a new accessor.
+
+The sweep is an optional sweep, so it is shed with the other optional sweeps
+when the GitHub budget is low, although it spends none of that budget itself.
+
+Automatic tags come from role, association and history: `maintainer` from an
+owner or merger role or a GitHub author association of owner, member or
+collaborator; `contributor` from an authored pull request; `end-user` from a
+reported issue with no pull request; `stakeholder` from meeting, calendar or
+mail activity with no GitHub activity.
+
+Existence is answered per artefact kind. A meeting exists until it is deleted
+or its transcript is purged; a Calendar event while the schedule holds it; an
+Inbox upload while its store holds it; a mail item while it exists and is
+approved. When a store is turned off nothing can say an artefact is gone, so
+its edges are kept. GitHub references have no resolver and are kept.
+
 Because the feature is on by default, the discovery sweep does not merge before
 forget, the role checks and retention pruning are merged and tested.
 
@@ -303,11 +340,28 @@ forget, the role checks and retention pruning are merged and tested.
 - Suggested people are never returned as a person.
 - Each query is audited (viewer, operation name, node count), not its text.
 
-Library: `github.com/graph-gophers/graphql-go`, schema-first, chosen for its
-small dependency list and built-in depth limit. The fallback, if it cannot
-pass the vulnerability, NOTICE or licence checks, is
-`github.com/graphql-go/graphql` with a hand-written depth and size check. The
-PR that adds the endpoint records which was used and the evidence.
+Library: `github.com/graph-gophers/graphql-go` v1.11.1 (BSD-2-Clause),
+schema-first, imported only by `src/pkg/customers/gql`. The decision and the
+evidence:
+
+- `go mod graph` shows it requires `opentracing-go`, `go.opentelemetry.io/otel`
+  and `otel/trace`, plus their indirect modules. Hive already requires the
+  OpenTelemetry modules at the same version (v1.47.0), and `opentracing-go` is
+  imported only by the library's optional `trace/opentracing` package, which
+  Hive does not import. Adding the library added one line to `go.mod` and its
+  own two lines to `go.sum`; no other module entered the build.
+- It has the limits this endpoint needs built in: `MaxDepth`,
+  `MaxQueryLength`, `MaxSelections` and an introspection switch.
+- The fallback, `github.com/graphql-go/graphql` with a hand-written depth and
+  size check, was not needed.
+
+Introspection is off: the standard introspection query is deeper than the
+depth limit anyway, and the schema is published in
+[the API reference](../api-reference/customers.md#the-customer-graph). The
+node limit is enforced by the resolvers, which charge every person, edge and
+artefact they materialise to a per-query budget. Access is not decided in the
+GraphQL layer at all: every resolver calls the customers service with the
+viewer of the request, the same service the REST routes use.
 
 ## 12. Agents and privacy guard rails
 

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/hivecommons/hive/pkg/config"
@@ -16,7 +18,7 @@ import (
 func wireTestCustomers(t *testing.T) *customersDashboard {
 	t.Helper()
 	dir := t.TempDir()
-	svc, stop := wireCustomersAt(filepath.Join(dir, "customers"), filepath.Join(dir, "graph"), nil)
+	svc, stop := wireCustomersAt(filepath.Join(dir, "customers"), filepath.Join(dir, "graph"), nil, nil)
 	if svc == nil {
 		t.Fatal("wireCustomersAt returned no service")
 	}
@@ -26,7 +28,7 @@ func wireTestCustomers(t *testing.T) *customersDashboard {
 
 func TestWireCustomersHonoursTheSwitch(t *testing.T) {
 	t.Setenv(config.EnvCustomersEnabled, "false")
-	if svc, stop := wireCustomers(&config.Config{}, nil); svc != nil || stop != nil {
+	if svc, stop := wireCustomers(&config.Config{}, nil, nil); svc != nil || stop != nil {
 		t.Fatal("customers.enabled off must open no store")
 	}
 	// A store that cannot be opened turns the feature off instead of
@@ -35,7 +37,7 @@ func TestWireCustomersHonoursTheSwitch(t *testing.T) {
 	if err := os.WriteFile(blocked, []byte("x"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if svc, _ := wireCustomersAt(filepath.Join(blocked, "customers"), filepath.Join(blocked, "graph"), nil); svc != nil {
+	if svc, _ := wireCustomersAt(filepath.Join(blocked, "customers"), filepath.Join(blocked, "graph"), nil, nil); svc != nil {
 		t.Fatal("an unusable data dir must yield no service")
 	}
 }
@@ -169,5 +171,49 @@ func TestCustomersAdapterRoleMatrix(t *testing.T) {
 	}
 	if _, err := c.Accept(owner, "s_missing"); !errors.Is(err, dashboard.ErrCustomerNotFound) {
 		t.Fatalf("Accept missing = %v", err)
+	}
+}
+
+// TestCustomersAdapterGraph runs GraphQL through the adapter the dashboard
+// calls: the viewer the handler built is the viewer the engine enforces.
+func TestCustomersAdapterGraph(t *testing.T) {
+	c := wireTestCustomers(t)
+	owner := dashboard.CustomersViewer{User: "olivia", Full: true, Owner: true}
+	read := dashboard.CustomersViewer{User: "reed"}
+	ada, err := c.Add(owner, dashboard.CustomerAddRequest{Name: "Ada", Identities: []dashboard.CustomerIdentityInput{{Kind: "github", Value: "ada"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	query := dashboard.CustomerGraphRequest{
+		Query:     `query Who($id: ID!) { me { name me } person(id: $id) { name } people { nodes { name } } }`,
+		Variables: map[string]any{"id": ada.ID}, OperationName: "Who",
+	}
+	asOwner, err := c.Graph(context.Background(), owner, query)
+	if err != nil || asOwner.Errors != 0 || !strings.Contains(string(asOwner.Body), `"person":{"name":"Ada"}`) {
+		t.Fatalf("owner graph = %s, %+v, %v", asOwner.Body, asOwner, err)
+	}
+	asRead, err := c.Graph(context.Background(), read, query)
+	if err != nil || asRead.Errors != 0 {
+		t.Fatalf("read graph = %s, %v", asRead.Body, err)
+	}
+	body := string(asRead.Body)
+	if !strings.Contains(body, `"me":{"name":"reed","me":true}`) || !strings.Contains(body, `"person":null`) || strings.Contains(body, "Ada") || strings.Contains(body, "olivia") {
+		t.Fatalf("read graph leaks or lacks the viewer: %s", body)
+	}
+	if asRead.Nodes == 0 || asOwner.Nodes <= asRead.Nodes {
+		t.Fatalf("node counts: owner %d, read %d", asOwner.Nodes, asRead.Nodes)
+	}
+	// A mutation is refused by the schema.
+	bad, err := c.Graph(context.Background(), owner, dashboard.CustomerGraphRequest{Query: `mutation { forget(id: "` + ada.ID + `") }`})
+	if err != nil || bad.Errors == 0 {
+		t.Fatalf("mutation = %s, %v", bad.Body, err)
+	}
+	if _, err := c.Get(owner, ada.ID); err != nil {
+		t.Fatalf("a refused mutation changed the store: %v", err)
+	}
+	// No engine: 503 to the caller, not a panic.
+	c.graph = nil
+	if _, err := c.Graph(context.Background(), owner, query); !errors.Is(err, dashboard.ErrCustomerUnavailable) {
+		t.Fatalf("Graph without an engine = %v", err)
 	}
 }

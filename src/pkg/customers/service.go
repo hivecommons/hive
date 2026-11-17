@@ -323,3 +323,76 @@ func (s *Service) Dismiss(v Viewer, suggestionID string) error {
 	}
 	return s.store.Dismiss(suggestionID)
 }
+
+// ArtefactPerson is one person on an artefact, as the viewer sees them.
+type ArtefactPerson struct {
+	Predicate string
+	Person    PersonView
+}
+
+// Edges returns a page of a person's edges, newest first, leaving out the
+// ones whose artefact the viewer may not see where it lives. Without the
+// full view only the viewer's own edges can be read. A page can come back
+// shorter than limit when edges were left out; next is still the cursor for
+// the following page.
+func (s *Service) Edges(v Viewer, id, predicate, after string, limit int) ([]Edge, string, error) {
+	p, _, err := s.resolve(v, id)
+	if err != nil {
+		return nil, "", err
+	}
+	if s.index == nil {
+		return nil, "", nil
+	}
+	edges, next, err := s.index.ByPerson(p.ID, predicate, after, limit)
+	if err != nil {
+		return nil, "", err
+	}
+	visible := edges[:0:0]
+	for _, e := range edges {
+		if s.resolvers.Visible(e.Artefact, v) {
+			visible = append(visible, e)
+		}
+	}
+	return visible, next, nil
+}
+
+// ArtefactVisible reports whether the viewer may be told about an artefact
+// reference at all: the reference is well formed, the viewer is a named
+// user, and the artefact's own source lets them see it. It says nothing
+// about whether the artefact exists.
+func (s *Service) ArtefactVisible(v Viewer, ref string) bool {
+	if !validRef(ref) || strings.TrimSpace(v.User) == "" {
+		return false
+	}
+	return s.resolvers.Visible(ref, v)
+}
+
+// ArtefactPeople walks back from an artefact to the people on it that the
+// viewer may see. Without the full view that is at most the viewer.
+func (s *Service) ArtefactPeople(v Viewer, ref string, limit int) ([]ArtefactPerson, error) {
+	if !s.ArtefactVisible(v, ref) {
+		return nil, ErrNotFound
+	}
+	if s.index == nil {
+		return nil, nil
+	}
+	edges, err := s.index.ByArtefact(ref)
+	if err != nil {
+		return nil, err
+	}
+	if limit <= 0 || limit > MaxEdgePage {
+		limit = MaxEdgePage
+	}
+	var out []ArtefactPerson
+	for _, e := range edges {
+		if len(out) == limit {
+			break
+		}
+		p, isMe, err := s.resolve(v, e.Person)
+		if err != nil {
+			continue // not visible to this viewer, or gone
+		}
+		out = append(out, ArtefactPerson{Predicate: e.Predicate, Person: s.view(v, p, isMe, false)})
+	}
+	return out, nil
+}

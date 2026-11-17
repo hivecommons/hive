@@ -1,12 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/customers"
+	"github.com/hivecommons/hive/pkg/customers/gql"
 	"github.com/hivecommons/hive/pkg/dashboard"
 )
 
@@ -24,19 +26,21 @@ const (
 // pkg/customers; this adapter is the only place the two meet.
 type customersDashboard struct {
 	svc *customers.Service
+	// graph is the read-only GraphQL engine; nil if it failed to start.
+	graph *gql.Engine
 }
 
 // wireCustomers opens the people store and the edge index when
 // customers.enabled is on. It returns nil when the feature is off or the
 // store cannot be opened; the routes then answer 503 and the section hides.
-func wireCustomers(cfg *config.Config, logger *slog.Logger) (*customersDashboard, func()) {
+func wireCustomers(cfg *config.Config, resolvers customers.Resolvers, logger *slog.Logger) (*customersDashboard, func()) {
 	if !cfg.CustomersEnabled() {
 		return nil, nil
 	}
-	return wireCustomersAt(customersDataDir, customersGraphDir, logger)
+	return wireCustomersAt(customersDataDir, customersGraphDir, resolvers, logger)
 }
 
-func wireCustomersAt(dataDir, graphDir string, logger *slog.Logger) (*customersDashboard, func()) {
+func wireCustomersAt(dataDir, graphDir string, resolvers customers.Resolvers, logger *slog.Logger) (*customersDashboard, func()) {
 	store, err := customers.Open(dataDir, nil)
 	if err != nil {
 		if logger != nil {
@@ -44,8 +48,8 @@ func wireCustomersAt(dataDir, graphDir string, logger *slog.Logger) (*customersD
 		}
 		return nil, nil
 	}
-	// The index only serves counts and forget in this build. Without it the
-	// store still works, so a failure here is logged and not fatal.
+	// The index holds the edges. Without it the store still works, so a
+	// failure here is logged and not fatal.
 	index, err := customers.OpenIndex(graphDir)
 	if err != nil {
 		index = nil
@@ -61,7 +65,15 @@ func wireCustomersAt(dataDir, graphDir string, logger *slog.Logger) (*customersD
 			_ = index.Close()
 		}
 	}
-	return &customersDashboard{svc: customers.NewService(store, index, nil)}, stop
+	svc := customers.NewService(store, index, resolvers)
+	graph, err := gql.New(svc, gql.Limits{})
+	if err != nil {
+		graph = nil
+		if logger != nil {
+			logger.Error("[customers] graph endpoint unavailable", "error", err)
+		}
+	}
+	return &customersDashboard{svc: svc, graph: graph}, stop
 }
 
 // customersError maps a store error onto the dashboard's sentinels, which
@@ -138,4 +150,13 @@ func (c *customersDashboard) Accept(v dashboard.CustomersViewer, suggestionID st
 
 func (c *customersDashboard) Dismiss(v dashboard.CustomersViewer, suggestionID string) error {
 	return customersError(c.svc.Dismiss(customersViewer(v), suggestionID))
+}
+
+// Graph is POST /api/graph: one read-only GraphQL query as the viewer.
+func (c *customersDashboard) Graph(ctx context.Context, v dashboard.CustomersViewer, req dashboard.CustomerGraphRequest) (dashboard.CustomerGraphResult, error) {
+	if c.graph == nil {
+		return dashboard.CustomerGraphResult{}, dashboard.ErrCustomerUnavailable
+	}
+	res := c.graph.Exec(ctx, customersViewer(v), req.Query, req.OperationName, req.Variables)
+	return dashboard.CustomerGraphResult{Body: res.Body, Nodes: res.Nodes, Errors: res.Errors}, nil
 }

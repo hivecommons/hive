@@ -21,7 +21,7 @@ const fnSrc = name => {
   throw new Error('unbalanced ' + name);
 };
 const escapeHtml = s => String(s == null ? '' : s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const NAMES = ['inboxDeleteKind', 'inboxDeleteKnowledgeRemovable', 'inboxCanDelete', 'inboxDeleteBusy', 'inboxDeleteRemovesText', 'inboxDeleteKnowledgeText',
+const NAMES = ['inboxIconSvg', 'inboxDeleteKind', 'inboxDeleteKnowledgeRemovable', 'inboxCanDelete', 'inboxDeleteBusy', 'inboxDeleteRemovesText', 'inboxDeleteKnowledgeText',
   'inboxDeleteSharesText', 'inboxDeleteDialog', 'inboxDeleteButtonHtml', 'inboxDeleteBulkGroups', 'inboxDeleteRun', 'inboxDeleteItem', 'inboxDeleteSelected'];
 
 // harness runs the delete functions with the page globals they use faked.
@@ -87,7 +87,9 @@ test('the per-item control: on every kind, disabled while transcribing, absent f
   for (const it of [upload, recording, mail, meeting, plaud]) {
     const out = api.inboxDeleteButtonHtml(it);
     assert.ok(out.includes('data-action="inboxDeleteItem" data-arg0="' + it.source + '" data-arg1="' + it.id + '"'), it.source);
-    assert.match(out, /🗑 Delete<\/button>$/);
+    // An icon button (#18700): named by aria-label and a title, last in the row.
+    assert.match(out, /class="hv-btn btn-icon btn-sm inbox-action inbox-action-danger inbox-delete"[^>]* aria-label="Delete"[^>]* title="[^"]+"><svg class="inbox-ic"[^]*?<\/svg><\/button>$/);
+    assert.doesNotMatch(out, /🗑/);
     assert.doesNotMatch(out, /disabled/);
   }
   const busy = api.inboxDeleteButtonHtml(Object.assign({}, upload, { transcription: { status: 'running' } }));
@@ -97,7 +99,7 @@ test('the per-item control: on every kind, disabled while transcribing, absent f
   // An id is escaped into the attributes.
   assert.ok(api.inboxDeleteButtonHtml({ source: 'plaud', id: 'a"b' }).includes('data-arg1="a&quot;b"'));
   // The item row renders the control.
-  assert.match(fnSrc('inboxItemHtml'), /actions \+= inboxDeleteButtonHtml\(it\)/);
+  assert.match(fnSrc('inboxItemHtml'), /inboxDeleteButtonHtml\(it\)[^]*inbox-actions-sep/);
 });
 
 test('the confirmation says what is removed for each kind', () => {

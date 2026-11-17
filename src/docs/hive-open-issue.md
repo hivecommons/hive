@@ -42,7 +42,7 @@ Shapes are selected by an optional leading positional keyword (`comment`,
 `issue`):
 
 ```sh
-hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n>] [--blocked-by <n[,n]>] [--needs-decision] [--no-consolidate <reason>] [--claim]
+hive-open-issue --repo <owner/repo> --title "<t>" [--body "<b>"|--body-file f] [--label a,b] [--parent <n|owner/repo#n>] [--blocked-by <n[,n]>] [--needs-decision] [--no-consolidate <reason>] [--claim]
 hive-open-issue comment --repo <owner/repo> <number|url> --body "<b>" [--blocked-on-pr <n>] [--not-agent-work <verdict>]
 hive-open-issue claim   --repo <owner/repo> <number|url>
 hive-open-issue label   --repo <owner/repo> <number|url> [--label a,b] [--remove-label c]
@@ -59,7 +59,7 @@ hive-open-issue request-review --repo <owner/repo> <number|url> [--reviewer a,b]
 | `--remove-label` | — | label | repeatable; labels to take off the item |
 | `--reviewer` | `--add-reviewer` | request-review | repeatable; comma-separated GitHub logins to ask for a review |
 | `--team-reviewer` | — | request-review | repeatable; team slugs (an `org/` prefix is accepted) to ask for a review |
-| `--parent` | — | issue | issue number in the same repo to link the new issue to as a GitHub sub-issue. Declaring it also exempts the request from the file-set, component and canonical-subject folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)), so `--no-consolidate` is not needed for a decomposition child |
+| `--parent` | — | issue | issue number in the same repo (or `owner/repo#n` for a parent in another managed repo) to link the new issue to as a GitHub sub-issue. Declaring it also exempts the request from the file-set, component and canonical-subject folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)), so `--no-consolidate` is not needed for a decomposition child |
 | `--blocked-by` | — | issue | repeatable; issue numbers in the same repo the new issue is blocked by, recorded as GitHub "blocked by" dependencies (`#` prefix tolerated). Like `--parent`, declaring it exempts the request from the shared-path folds (see [DAG children never take a fold](#dag-children-never-take-a-fold)) |
 | `--needs-decision` | — | issue | park the new issue on a maintainer decision: the watcher applies the hive's configured needs-decision label itself (see [Parking an issue that needs a decision](#parking-an-issue-that-needs-a-decision)) |
 | `--claim` | — | issue | file the new issue **and** claim it for this agent in the same request (see [Filing your own next step](#filing-your-own-next-step)). The request carries `"claim": true`; the result reports `claimed`, or `claim_error` when the claim did not land |
@@ -139,6 +139,19 @@ issue stage sweep closes `n` as completed, and while any child is open `n`
 is never marked `stage/stalled`
 ([#12857](https://github.com/hivecommons/hive/issues/12857); see
 [labels-and-control-signals.md](labels-and-control-signals/stage-labels.md#decomposed-parents--closed-by-their-children-never-stalled)).
+
+`--parent <owner/repo#n>` (or the parent's issue URL) names a parent in
+another managed repo, for a tracker whose child work lives elsewhere
+([#18680](https://github.com/hivecommons/hive/issues/18680)). File the child in
+the repo where its work lives (`--repo`); the request carries `"parent"` and
+`"parent_repo"`. The watcher links the child as a cross-repo sub-issue of
+`owner/repo#n`, rewrites bare `#n` mentions of the parent (including the
+"Part of" line, which it adds when missing) to `owner/repo#n`, and writes the
+marker as `<!-- hive:parent owner/repo#n -->`, because a bare `#n` resolves
+only inside the child's own repo. The parent's tracker progress counts such
+children too. A parent repo this hive does not manage is refused; a child
+repo it does not manage falls back to the parent's repo, and the result's
+`repo_fallback_from` names the repo that was asked for.
 
 `--blocked-by <n[,n]>` records that the new issue must wait for issue(s) `n`
 in the same repo, as GitHub "blocked by" dependencies

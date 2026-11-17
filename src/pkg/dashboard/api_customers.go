@@ -21,7 +21,8 @@ import (
 //   - only the verified owner may forget a person;
 //   - anyone else who is signed in sees only their own profile ("me") and
 //     may edit its name, identities, tags and goals, through
-//     POST /api/customers/me/edit and no other route.
+//     POST /api/customers/me/edit and no other route. They may also query
+//     the read-only graph (POST /api/graph), where the same rule holds.
 //
 // The service enforces the same rules again on the viewer it is handed, so
 // a mistake here cannot widen what a read-only user reaches.
@@ -33,6 +34,9 @@ var (
 	ErrCustomerInvalid   = errors.New("invalid customer request")
 	ErrCustomerConflict  = errors.New("customer request conflicts with the current state")
 	ErrCustomerForbidden = errors.New("you do not have access to this customer")
+	// ErrCustomerUnavailable is a part of the feature that is not running
+	// (the graph engine failed to start).
+	ErrCustomerUnavailable = errors.New("this part of customers is not available on this hive")
 )
 
 const (
@@ -132,13 +136,19 @@ func (s *Server) registerCustomersRoutes() {
 	s.mux.HandleFunc("DELETE /api/customers/{id}", s.handleCustomersForget)
 	s.mux.HandleFunc("POST /api/customers/suggestions/{sid}/accept", s.handleCustomersAccept)
 	s.mux.HandleFunc("POST /api/customers/suggestions/{sid}/dismiss", s.handleCustomersDismiss)
+	s.registerCustomersGraphRoutes()
 }
 
 // readOnlySelfService reports whether a write from a read-only user is one
 // of the few a read-only user may make to their own data. It is consulted
 // by roleEnforcement, which refuses every other write from the read role.
 func readOnlySelfService(r *http.Request) bool {
-	return r.Method == http.MethodPost && r.URL.Path == customersSelfEditPath
+	if r.Method != http.MethodPost {
+		return false
+	}
+	// The graph endpoint is a POST that only reads: its schema has no
+	// mutations.
+	return r.URL.Path == customersSelfEditPath || r.URL.Path == customersGraphPath
 }
 
 // customersViewer works out who is asking. The owner role counts only when
@@ -188,6 +198,8 @@ func customersErrorStatus(err error) int {
 		return http.StatusConflict
 	case errors.Is(err, ErrCustomerForbidden):
 		return http.StatusForbidden
+	case errors.Is(err, ErrCustomerUnavailable):
+		return http.StatusServiceUnavailable
 	default:
 		return http.StatusInternalServerError
 	}
