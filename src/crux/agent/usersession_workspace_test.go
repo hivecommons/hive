@@ -73,7 +73,9 @@ func workspaceSpec(id string, slot int, vendor string) crux.UserSessionSpec {
 }
 
 // workspaceRuntime wires the fakes. The priv fake simulates the root hand-over
-// script by moving the staging clone into place, as root's mv would.
+// script by moving the staging clone into place, as root's mv would, and the
+// worktree scripts by creating (a .git file, as `git worktree add` writes) or
+// deleting the session's worktree.
 func workspaceRuntime(t *testing.T) (*UserSessionRuntime, *fakeTmux, *fakePriv, *fakeGit) {
 	t.Helper()
 	f := sessionLifecycleTmux("")
@@ -82,8 +84,19 @@ func workspaceRuntime(t *testing.T) (*UserSessionRuntime, *fakeTmux, *fakePriv, 
 	r.git = g.run
 	r.cloneMinter = &fakeWorkspaceMinter{token: testWorkspaceToken}
 	p.handler = func(c fakePrivCall) (bool, []byte, error) {
-		if len(c.argv) >= 7 && c.argv[0] == "sh" && c.argv[2] == userSessionWorkspaceOwnScript {
+		if len(c.argv) < 7 || c.argv[0] != "sh" {
+			return false, nil, nil
+		}
+		switch c.argv[2] {
+		case userSessionWorkspaceOwnScript:
 			return true, nil, os.Rename(c.argv[4], c.argv[5])
+		case userSessionWorktreeAddScript:
+			if _, err := os.Lstat(filepath.Join(c.argv[5], ".git")); err == nil {
+				return true, nil, nil
+			}
+			return true, []byte(userSessionWorktreeAddedLine + "\n"), os.WriteFile(filepath.Join(c.argv[5], ".git"), []byte("gitdir: "+c.argv[4]+"/.git/worktrees/x\n"), 0o644)
+		case userSessionWorktreeRemoveScript:
+			return true, nil, os.RemoveAll(c.argv[5])
 		}
 		return false, nil, nil
 	}
@@ -130,6 +143,13 @@ func TestUserSessionWorkspaceCloneLeavesNoTokenBehind(t *testing.T) {
 	}
 	if clone < 0 || helper < 0 || helper > clone || args[helper-1] != "-c" {
 		t.Fatalf("credential helper must be a one-shot `git -c` BEFORE the clone subcommand (clone -c would persist it): %v", args)
+	}
+	// The hive's own git runs no hook and no fsmonitor command, whatever the
+	// repository or its config would name.
+	for _, off := range []string{"core.hooksPath=/dev/null", "core.fsmonitor=false"} {
+		if i := indexOf(args, off); i < 1 || i > clone || args[i-1] != "-c" {
+			t.Errorf("the clone lacks a one-shot -c %s before the subcommand: %v", off, args)
+		}
 	}
 	shared := indexOf(args, "core.sharedRepository=group")
 	if shared < clone || args[shared-1] != "-c" {
@@ -211,20 +231,39 @@ func TestUserSessionWorkspaceOwnedBySessionsGroup(t *testing.T) {
 		t.Errorf("workspace %q is not under the sandbox root's workspace dir", ws)
 	}
 	for _, c := range p.calls {
-		if c.user == userSessionRootSpec && c.argv[0] == "sh" && c.argv[2] != userSessionPrepareScript && c.argv[2] != userSessionWorkspaceOwnScript && c.argv[2] != userSessionSocketDirScript {
+		if c.user == userSessionRootSpec && c.argv[0] == "sh" && c.argv[2] != userSessionPrepareScript && c.argv[2] != userSessionWorkspaceOwnScript && c.argv[2] != userSessionSocketDirScript && c.argv[2] != userSessionWorktreeOwnScript && c.argv[2] != userSessionWorkspaceSecureScript {
 			t.Errorf("unexpected root script: %v", c.argv)
+		}
+		// git in the shared clone never runs as root: a hook or config any
+		// session planted there would run with root's rights.
+		if c.user == userSessionRootSpec && len(c.argv) > 2 && (c.argv[2] == userSessionWorktreeAddScript || c.argv[2] == userSessionWorktreeRemoveScript) {
+			t.Errorf("worktree git ran as root: %v", c.argv)
+		}
+	}
+	wt := privCallsWithScript(p, userSessionWorktreeOwnScript)
+	if len(wt) != 1 || wt[0].user != userSessionRootSpec || wt[0].argv[4] != r.SessionWorkspaceDir(testSessionID, testWorkspaceRepo) ||
+		wt[0].argv[5] != strconv.Itoa(testSessionUID) || wt[0].argv[6] != strconv.Itoa(defaultUserSessionGID) || wt[0].argv[7] != strconv.Itoa(os.Getuid()) {
+		t.Errorf("worktree hand-over = %+v, want root handing the session's own dir to its uid and the sessions group", wt)
+	}
+	for _, bad := range []string{"777", "o+", "a+", "-R"} {
+		if strings.Contains(userSessionWorktreeOwnScript, bad) {
+			t.Errorf("worktree hand-over script widens access (%q)", bad)
 		}
 	}
 }
 
-// The invariant: the pane opens IN the workspace and git in the session is
-// told that root-owned checkout is safe; nothing else about the sandbox moves.
+// The invariant: the pane opens IN the session's own worktree, git in the
+// session is not told any directory is safe, and nothing else about the
+// sandbox moves.
 func TestUserSessionWorkspaceIsTheSessionCwd(t *testing.T) {
 	r, f, _, _ := workspaceRuntime(t)
 	if err := r.Start(workspaceSpec(testSessionID, testSessionSlot, "claude")); err != nil {
 		t.Fatal(err)
 	}
-	ws := r.WorkspaceDir(testWorkspaceRepo)
+	ws := r.SessionWorkspaceDir(testSessionID, testWorkspaceRepo)
+	if want := filepath.Join(userSessionWorkspaceRoot(), userSessionWorktreeDirName, testSessionID, "acme", "widgets"); ws != want {
+		t.Fatalf("session worktree = %q, want %q", ws, want)
+	}
 	cwds := 0
 	var env string
 	for _, c := range f.calls {
@@ -244,7 +283,6 @@ func TestUserSessionWorkspaceIsTheSessionCwd(t *testing.T) {
 	}
 	for _, want := range []string{
 		userSessionWorkspaceEnv + " " + ws,
-		"GIT_CONFIG_KEY_0 safe.directory", "GIT_CONFIG_VALUE_0 " + ws,
 		"HOME " + userSessionHome(testSessionID), "TMPDIR " + userSessionTmpDir(testSessionID),
 	} {
 		if !strings.Contains(env, want) {
@@ -257,36 +295,74 @@ func TestUserSessionWorkspaceIsTheSessionCwd(t *testing.T) {
 	if r.WorkDir(testSessionID) != userSessionWorkDir(testSessionID) {
 		t.Error("uploads must stay under the per-session dir, not the shared workspace")
 	}
+	// No safe.directory: the worktree is the session's own, so git's
+	// ownership check stays on and refuses a .git another uid swapped in.
+	if strings.Contains(env, "GIT_CONFIG_COUNT") || strings.Contains(env, "safe.directory") {
+		t.Errorf("session env marks a directory safe for git:\n%s", env)
+	}
 	if pairs := userSessionWorkspaceEnvPairs(""); pairs != nil {
 		t.Errorf("no workspace must add no env: %v", pairs)
 	}
 }
 
-func TestUserSessionWorkspaceIsClonedOnceAndShared(t *testing.T) {
-	r, f, _, g := workspaceRuntime(t)
+// The invariant (#18588): one clone per repository, but every session opens in
+// its own worktree of it, added by `git worktree add` against that one clone
+// as the session's own uid; a resume reuses the worktree.
+func TestUserSessionWorkspaceIsClonedOnceWithAWorktreePerSession(t *testing.T) {
+	r, f, p, g := workspaceRuntime(t)
 	if err := r.Start(workspaceSpec(testSessionID, testSessionSlot, "claude")); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.Start(workspaceSpec(testSecondSessionID, testSecondSlot, "codex")); err != nil {
 		t.Fatal(err)
 	}
-	// Resume of the first session: still no second clone, no fetch.
+	// Resume of the first session: still no second clone, no fetch, and no
+	// second worktree.
 	if err := r.Start(workspaceSpec(testSessionID, testSessionSlot, "claude")); err != nil {
 		t.Fatal(err)
 	}
-	if len(g.calls) != 1 {
-		t.Fatalf("git ran %d times, want one clone and never a fetch: %v", len(g.calls), g.calls)
+	if len(g.calls) != 1 || indexOf(g.calls[0], "clone") < 0 {
+		t.Fatalf("git ran %v, want one clone and never a fetch", g.calls)
 	}
-	ws := r.WorkspaceDir(testWorkspaceRepo)
-	for _, c := range f.calls {
-		if c.args[0] == "respawn-pane" && c.args[indexOf(c.args, "-c")+1] != ws {
-			t.Errorf("session %s did not open in the shared workspace: %v", c.socket, c.args)
+	clone := r.WorkspaceDir(testWorkspaceRepo)
+	ws1, ws2 := r.SessionWorkspaceDir(testSessionID, testWorkspaceRepo), r.SessionWorkspaceDir(testSecondSessionID, testWorkspaceRepo)
+	if ws1 == ws2 || ws1 == clone || ws2 == clone {
+		t.Fatalf("worktrees %q and %q must be distinct and not the clone %q", ws1, ws2, clone)
+	}
+	adds := privCallsWithScript(p, userSessionWorktreeAddScript)
+	secondUser := strconv.Itoa(defaultUserSessionUIDBase+testSecondSlot-1) + ":" + strconv.Itoa(defaultUserSessionGID)
+	// The add script runs on every start, as the session uid, because only
+	// that uid can see whether the worktree is already there: the resume of
+	// the first session runs it again (a no-op inside the script).
+	want := [][3]string{{testSessionSpecUser, ws1, userSessionWorktreeBranch(testSessionID)}, {secondUser, ws2, userSessionWorktreeBranch(testSecondSessionID)}, {testSessionSpecUser, ws1, userSessionWorktreeBranch(testSessionID)}}
+	if len(adds) != len(want) {
+		t.Fatalf("worktree add ran %d times, want once per start: %+v", len(adds), adds)
+	}
+	for i, c := range adds {
+		if c.user != want[i][0] || c.argv[4] != clone || c.argv[5] != want[i][1] || c.argv[6] != want[i][2] {
+			t.Errorf("worktree add %d = %s %v, want %v against the one clone %s", i, c.user, c.argv[4:], want[i], clone)
 		}
+	}
+	for _, s := range []string{"worktree add", "core.hooksPath=/dev/null", "core.fsmonitor=false", `safe.directory="$clone"`} {
+		if !strings.Contains(userSessionWorktreeAddScript, s) {
+			t.Errorf("worktree add script lacks %q", s)
+		}
+	}
+	wantCwd := []string{ws1, ws2, ws1}
+	var cwds []string
+	for _, c := range f.calls {
+		if c.args[0] == "respawn-pane" {
+			cwds = append(cwds, c.args[indexOf(c.args, "-c")+1])
+		}
+	}
+	if strings.Join(cwds, " ") != strings.Join(wantCwd, " ") {
+		t.Errorf("panes opened in %v, want %v", cwds, wantCwd)
 	}
 }
 
-// The invariant: `spektacular init <vendor>` runs as the session uid, in the
-// workspace, once per vendor, and only for vendors spek supports.
+// The invariant: `spektacular init <vendor>` runs as the session uid, in that
+// session's worktree, once per vendor per session, and only for vendors spek
+// supports.
 func TestUserSessionWorkspaceSpekInitOncePerVendor(t *testing.T) {
 	r, _, p, _ := workspaceRuntime(t)
 	for _, spec := range []crux.UserSessionSpec{
@@ -301,32 +377,30 @@ func TestUserSessionWorkspaceSpekInitOncePerVendor(t *testing.T) {
 		}
 	}
 	inits := privCallsWithScript(p, userSessionSpekInitScript)
-	if len(inits) != 2 {
-		t.Fatalf("spektacular init ran %d times, want once for claude and once for codex: %+v", len(inits), inits)
+	if len(inits) != 3 {
+		t.Fatalf("spektacular init ran %d times, want once per supported vendor per session: %+v", len(inits), inits)
 	}
-	ws := r.WorkspaceDir(testWorkspaceRepo)
-	wantVendors := []string{"claude", "codex"}
-	// claude was initialised by the first session (slot 3), codex by the
-	// second (slot 4): each init runs as the STARTING session's uid with the
-	// shared sessions group.
-	wantUsers := []string{testSessionSpecUser, strconv.Itoa(defaultUserSessionUIDBase+testSecondSlot-1) + ":" + strconv.Itoa(defaultUserSessionGID)}
+	wantWS := []string{r.SessionWorkspaceDir(testSessionID, testWorkspaceRepo), r.SessionWorkspaceDir(testSecondSessionID, testWorkspaceRepo), r.SessionWorkspaceDir(testSecondSessionID, testWorkspaceRepo)}
+	wantVendors := []string{"claude", "claude", "codex"}
+	secondUser := strconv.Itoa(defaultUserSessionUIDBase+testSecondSlot-1) + ":" + strconv.Itoa(defaultUserSessionGID)
+	// Each init runs as the session's own uid with the shared sessions
+	// group, in that session's worktree.
+	wantUsers := []string{testSessionSpecUser, secondUser, secondUser}
+	wantHomes := []string{userSessionHome(testSessionID), userSessionHome(testSecondSessionID), userSessionHome(testSecondSessionID)}
 	for i, c := range inits {
 		if c.user != wantUsers[i] {
 			t.Errorf("init %d ran as %q, want the session uid %q", i, c.user, wantUsers[i])
 		}
-		if c.argv[4] != ws || c.argv[6] != "/usr/bin/"+userSessionSpekDefaultBinary || c.argv[7] != wantVendors[i] {
-			t.Errorf("init args = %v", c.argv)
-		}
-		if c.argv[5] != userSessionHome(testSessionID) && c.argv[5] != userSessionHome(testSecondSessionID) {
-			t.Errorf("init HOME = %q, want a session home", c.argv[5])
+		if c.argv[4] != wantWS[i] || c.argv[5] != wantHomes[i] || c.argv[6] != "/usr/bin/"+userSessionSpekDefaultBinary || c.argv[7] != wantVendors[i] {
+			t.Errorf("init %d args = %v", i, c.argv)
 		}
 	}
-	for _, v := range wantVendors {
-		if _, err := os.Stat(userSessionSpekInitMarker("acme", "widgets", v)); err != nil {
-			t.Errorf("no init marker for %s: %v", v, err)
+	for _, m := range [][2]string{{testSessionID, "claude"}, {testSecondSessionID, "claude"}, {testSecondSessionID, "codex"}} {
+		if _, err := os.Stat(userSessionSpekInitMarker(m[0], m[1])); err != nil {
+			t.Errorf("no init marker for %v: %v", m, err)
 		}
 	}
-	if _, err := os.Stat(userSessionSpekInitMarker("acme", "widgets", "goose")); err == nil {
+	if _, err := os.Stat(userSessionSpekInitMarker(testSecondSessionID, "goose")); err == nil {
 		t.Error("init marker written for a vendor spek does not support")
 	}
 	for v := range userSessionSpekAgents {
@@ -356,7 +430,7 @@ func TestUserSessionWorkspaceMissingSpekDoesNotFailStart(t *testing.T) {
 	if indexOf(f.verbs(), "respawn-pane") < 0 {
 		t.Error("CLI not launched")
 	}
-	if _, err := os.Stat(userSessionSpekInitMarker("acme", "widgets", "claude")); err == nil {
+	if _, err := os.Stat(userSessionSpekInitMarker(testSessionID, "claude")); err == nil {
 		t.Error("marker written although init never ran")
 	}
 }
@@ -378,7 +452,7 @@ func TestUserSessionWorkspaceSpekInitFailureIsRetriedNotFatal(t *testing.T) {
 	if n := len(privCallsWithScript(p, userSessionSpekInitScript)); n != 2 {
 		t.Errorf("failed init should be retried on the next start, ran %d times", n)
 	}
-	if _, err := os.Stat(userSessionSpekInitMarker("acme", "widgets", "claude")); err == nil {
+	if _, err := os.Stat(userSessionSpekInitMarker(testSessionID, "claude")); err == nil {
 		t.Error("marker written for a failed init")
 	}
 	if indexOf(f.verbs(), "respawn-pane") < 0 {
@@ -436,6 +510,9 @@ func TestUserSessionWorkspaceRejectsBadRepo(t *testing.T) {
 		if r.WorkspaceDir(repo) != "" {
 			t.Errorf("WorkspaceDir(%q) = %q, want empty", repo, r.WorkspaceDir(repo))
 		}
+		if got := r.SessionWorkspaceDir(testSessionID, repo); got != "" {
+			t.Errorf("SessionWorkspaceDir(%q) = %q, want empty", repo, got)
+		}
 	}
 	if len(g.calls) != 0 || indexOf(f.verbs(), "respawn-pane") >= 0 {
 		t.Error("a malformed repo reached git or launched a CLI")
@@ -446,6 +523,11 @@ func TestUserSessionWorkspaceRejectsBadRepo(t *testing.T) {
 	t.Setenv(userSessionWorkspaceDirEnv, "/x/ws")
 	if got := r.WorkspaceDir("Acme-Inc/my.repo_1"); got != filepath.Join("/x/ws", "Acme-Inc", "my.repo_1") {
 		t.Errorf("WorkspaceDir = %q", got)
+	}
+	for _, id := range []string{"", "../x", "ABCDEF012345", testSessionID + "/.."} {
+		if got := r.SessionWorkspaceDir(id, testWorkspaceRepo); got != "" {
+			t.Errorf("SessionWorkspaceDir(%q) = %q, want empty", id, got)
+		}
 	}
 }
 
@@ -493,5 +575,132 @@ func TestUserSessionGIDGuards(t *testing.T) {
 	t.Setenv(userSessionGIDEnv, "")
 	if userSessionGID() != defaultUserSessionGID {
 		t.Error("default gid changed")
+	}
+}
+
+// The invariant (the owner's lock design for #18588): root locks the shared
+// clone's git config and hooks before any session gets a worktree of it, once
+// per clone per hive process, and with the clone's plain https origin.
+func TestUserSessionWorkspaceLockedBeforeAnyWorktree(t *testing.T) {
+	r, _, p, _ := workspaceRuntime(t)
+	if err := r.Start(workspaceSpec(testSessionID, testSessionSlot, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Start(workspaceSpec(testSecondSessionID, testSecondSlot, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	locks := privCallsWithScript(p, userSessionWorkspaceSecureScript)
+	if len(locks) != 1 {
+		t.Fatalf("lock ran %d times, want once per clone per process: %+v", len(locks), locks)
+	}
+	c := locks[0]
+	if c.user != userSessionRootSpec || c.argv[4] != r.WorkspaceDir(testWorkspaceRepo) || c.argv[5] != strconv.Itoa(defaultUserSessionGID) ||
+		c.argv[6] != "https://github.com/"+testWorkspaceRepo+".git" || c.argv[7] != userSessionWorktreeBranchDir {
+		t.Errorf("lock = %s %v", c.user, c.argv[4:])
+	}
+	lockAt, addAt := -1, -1
+	for i, call := range p.calls {
+		if len(call.argv) > 2 && call.argv[2] == userSessionWorkspaceSecureScript && lockAt < 0 {
+			lockAt = i
+		}
+		if len(call.argv) > 2 && call.argv[2] == userSessionWorktreeAddScript && addAt < 0 {
+			addAt = i
+		}
+	}
+	if lockAt < 0 || addAt < 0 || lockAt > addAt {
+		t.Errorf("lock at call %d, first worktree add at %d: the clone must be locked first", lockAt, addAt)
+	}
+	for _, want := range []string{
+		"worktreeConfig = true", "sharedRepository = group", "auto = 0",
+		"chmod 0750 -- \"$gd\"", "chmod 3770 -- \"$gd\"", "chmod 3770 -- \"$gd/worktrees\"",
+		"for d in hooks info modules", "mkdir -m 0755", "-type f -exec chmod 0644",
+		"mktemp", "echo . > \"$t\"",
+	} {
+		if !strings.Contains(userSessionWorkspaceSecureScript, want) {
+			t.Errorf("lock script lacks %q", want)
+		}
+	}
+	// The lock never runs git as root, and the hive's own git (the clone)
+	// runs no hook and no fsmonitor.
+	if strings.Contains(userSessionWorkspaceSecureScript, "git ") {
+		t.Error("the lock script runs git as root")
+	}
+	for _, want := range []string{"core.hooksPath=/dev/null", "core.fsmonitor=false"} {
+		if !strings.Contains(strings.Join(userSessionHiveGitArgs, " "), want) || !strings.Contains(userSessionWorktreeGit, want) {
+			t.Errorf("hive git lacks -c %s", want)
+		}
+	}
+}
+
+// A clone whose lock fails is not handed out: the start fails closed, before
+// any worktree is added or any CLI is launched, and the next start retries.
+func TestUserSessionWorkspaceLockFailureFailsClosed(t *testing.T) {
+	r, f, p, _ := workspaceRuntime(t)
+	inner := p.handler
+	fail := true
+	p.handler = func(c fakePrivCall) (bool, []byte, error) {
+		if fail && len(c.argv) > 2 && c.argv[2] == userSessionWorkspaceSecureScript {
+			return true, []byte("chmod: Operation not permitted"), errors.New("exit 1")
+		}
+		return inner(c)
+	}
+	err := r.Start(workspaceSpec(testSessionID, testSessionSlot, "claude"))
+	if err == nil || !strings.Contains(err.Error(), "Operation not permitted") {
+		t.Fatalf("Start = %v, want the lock failure", err)
+	}
+	if n := len(privCallsWithScript(p, userSessionWorktreeAddScript)); n != 0 {
+		t.Errorf("worktree added %d times into an unlocked clone", n)
+	}
+	if indexOf(f.verbs(), "respawn-pane") >= 0 {
+		t.Error("CLI launched in an unlocked clone")
+	}
+	fail = false
+	if err := r.Start(workspaceSpec(testSessionID, testSessionSlot, "claude")); err != nil {
+		t.Fatalf("retry after the lock recovers = %v", err)
+	}
+	if n := len(privCallsWithScript(p, userSessionWorkspaceSecureScript)); n != 2 {
+		t.Errorf("lock ran %d times, want the failed attempt and its retry", n)
+	}
+}
+
+// At boot every clone already on disk is locked (a clone from an earlier
+// release had a group-writable config and hooks), and nothing else is: not
+// the per-session worktrees dir, not a half-finished staging clone, not a
+// stray file.
+func TestUserSessionSecureWorkspacesLocksEveryCloneOnDisk(t *testing.T) {
+	r, _, p, _ := workspaceRuntime(t)
+	root := userSessionWorkspaceRoot()
+	for _, d := range []string{"acme/widgets", "acme/gadgets", "other/thing", "acme/half" + userSessionWorkspaceCloningSuffix, userSessionWorktreeDirName + "/" + testSessionID} {
+		if err := os.MkdirAll(filepath.Join(root, d), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "acme", "notes.txt"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	r.SecureWorkspaces()
+	var got []string
+	for _, c := range privCallsWithScript(p, userSessionWorkspaceSecureScript) {
+		if c.user != userSessionRootSpec {
+			t.Errorf("lock ran as %q", c.user)
+		}
+		got = append(got, c.argv[4]+" "+c.argv[6])
+	}
+	want := []string{
+		filepath.Join(root, "acme", "gadgets") + " https://github.com/acme/gadgets.git",
+		filepath.Join(root, "acme", "widgets") + " https://github.com/acme/widgets.git",
+		filepath.Join(root, "other", "thing") + " https://github.com/other/thing.git",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Errorf("locked %v, want %v", got, want)
+	}
+	// Those clones are now locked for this process: a start does not lock
+	// again.
+	p.calls = nil
+	if err := r.Start(workspaceSpec(testSessionID, testSessionSlot, "claude")); err != nil {
+		t.Fatal(err)
+	}
+	if n := len(privCallsWithScript(p, userSessionWorkspaceSecureScript)); n != 0 {
+		t.Errorf("a clone locked at boot was locked again on start (%d)", n)
 	}
 }

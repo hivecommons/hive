@@ -1,1 +1,0 @@
-- Dashboard: the Collaborate sidebar group (Inbox, Calendar, Meetings, Inception (spek)) no longer disappears into the Dashboard group when the section layout is applied, and now sits right after Dashboard, before Agents.

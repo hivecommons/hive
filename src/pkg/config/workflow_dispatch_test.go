@@ -53,6 +53,11 @@ func TestWorkflowDispatchAgent(t *testing.T) {
 			}
 		})
 	}
+	disabled := base()
+	disabled.Workflow.Dispatch.Profiles = map[string]WorkflowDispatchProfile{"techdocs-verifier": {Disabled: true}}
+	if got, ok := disabled.WorkflowDispatchAgentForManual("techdocs-verifier"); !ok || got != "alpha" {
+		t.Fatalf("manual send to a disabled profile = %q %v; want alpha", got, ok)
+	}
 	var nilCfg *Config
 	if _, ok := nilCfg.WorkflowDispatchAgent("x"); ok {
 		t.Fatal("nil config resolved an agent")

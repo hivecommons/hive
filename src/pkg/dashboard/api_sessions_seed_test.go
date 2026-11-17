@@ -333,6 +333,33 @@ func TestSessionCreateWithSeedWaitsForRunning(t *testing.T) {
 	if !strings.Contains(e.rt.typedTexts()[0], ".hive/inbox/plaud-rec-2.md") {
 		t.Errorf("instruction = %q", e.rt.typedTexts()[0])
 	}
+	// The instruction is typed before the worker's follow-up writes (touch,
+	// audit, routing the inbox item) land. Wait for them so TempDir cleanup
+	// does not race a store write (#18545).
+	e.waitSeedDeliveryQuiet(t, id)
+}
+
+// waitSeedDeliveryQuiet waits until the seed delivery for id has finished all
+// of its persistent writes: the inbox_to_session audit (written after the items
+// are routed) is present and the session's queue worker has exited.
+func (e *sessionTestEnv) waitSeedDeliveryQuiet(t *testing.T, id string) {
+	t.Helper()
+	waitSessionsFor(t, "the seed delivery to finish", func() bool {
+		audited := false
+		for _, a := range e.auditActions() {
+			if a.Action == auditInboxToSession && strings.Contains(a.Detail, "outcome="+sessionSeedOutcomeQueued) {
+				audited = true
+				break
+			}
+		}
+		if !audited {
+			return false
+		}
+		e.s.sessionQueuesMu.Lock()
+		defer e.s.sessionQueuesMu.Unlock()
+		q := e.s.sessionQueueFor(id, false)
+		return q == nil || (!q.running && len(q.items) == 0)
+	})
 }
 
 func TestSessionCreateWithSeedRefusesItemWithoutTextBeforeCreating(t *testing.T) {

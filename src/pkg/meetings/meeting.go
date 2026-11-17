@@ -54,6 +54,9 @@ const (
 	PlatformTeams      = "teams"
 	PlatformZoom       = "zoom"
 	PlatformDiscord    = "discord"
+	// PlatformCompanion is the desktop companion: a person's own meeting
+	// client audio, captured on their computer and relayed by hive.
+	PlatformCompanion = "companion"
 )
 
 // Meeting is one meeting hive was sent to.
@@ -86,6 +89,9 @@ type Meeting struct {
 	// the line in the meeting chat) or "voice" (spoken because chat could
 	// not deliver it).
 	ConsentVia string `json:"consent_via,omitempty"`
+	// Companion is set on a desktop companion meeting: who attested that
+	// the participants were told, when, and which notice they saw.
+	Companion *CompanionInfo `json:"companion,omitempty"`
 	// PreConsentDropped counts the lines (segments, drafts and chat) hive
 	// discarded because they came before the consent notice was delivered.
 	// Only the count is kept, never the content.

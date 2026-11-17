@@ -100,7 +100,7 @@ func completeAnthropic(ctx context.Context, c Config, hc *http.Client, prompt st
 	if err := json.NewDecoder(io.LimitReader(resp.Body, maxResponseBytes)).Decode(&mr); err != nil {
 		return "", fmt.Errorf("meeting-llm: decoding response: %w", err)
 	}
-	if err := recordUsage(c.UsageFile, mr.Usage.InputTokens+mr.Usage.OutputTokens, time.Now()); err != nil {
+	if err := c.charge(mr.Usage.InputTokens+mr.Usage.OutputTokens, time.Now()); err != nil {
 		return "", fmt.Errorf("meeting-llm: recording usage: %w", err)
 	}
 	if mr.StopReason == stopRefusal {

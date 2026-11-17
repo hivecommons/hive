@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"path/filepath"
 	"sync"
@@ -9,6 +11,7 @@ import (
 
 	"github.com/hivecommons/hive/pkg/claims"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/dashboard"
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/workflowmodel"
@@ -338,4 +341,44 @@ func releaseWorkflowDispatch(k workflowDispatchKick) { workflowDispatchRT.clearP
 // messages.
 func workflowDispatchKickKey(msg scheduler.KickMessage) string {
 	return msg.Agent + "\x00" + msg.Message
+}
+
+// workflowDispatchPrepare is the dashboard's WorkflowDispatchPrepare: the
+// owner's "Send to <profile>" through the same steps as the automatic
+// pass (fresh item read, model state, agent, claim first, prompt). The
+// handler kicks the agent and calls Record once the kick landed, so the
+// automatic pass does not hand the same state off again.
+func workflowDispatchPrepare(cfg *config.Config, client func() *github.Client, logger *slog.Logger) func(ctx context.Context, repo string, number int, by string, ledger *claims.Ledger) (dashboard.WorkflowDispatchPlan, error) {
+	return func(ctx context.Context, repo string, number int, by string, ledger *claims.Ledger) (dashboard.WorkflowDispatchPlan, error) {
+		gh := client()
+		if cfg == nil || gh == nil {
+			return dashboard.WorkflowDispatchPlan{}, errors.New("GitHub client unavailable")
+		}
+		if !cfg.Workflow.Enabled {
+			return dashboard.WorkflowDispatchPlan{}, fmt.Errorf("%w (workflow.enabled is off)", dashboard.ErrWorkflowDispatchNotOwned)
+		}
+		d, ok, err := gh.WorkflowDispatchForRef(ctx, qualifyClaimRepo(cfg.Project.Org, repo), number)
+		if err != nil {
+			return dashboard.WorkflowDispatchPlan{}, err
+		}
+		if !ok {
+			return dashboard.WorkflowDispatchPlan{}, dashboard.ErrWorkflowDispatchNotOwned
+		}
+		agent, ok := cfg.WorkflowDispatchAgentForManual(d.Target.Profile)
+		if !ok {
+			return dashboard.WorkflowDispatchPlan{}, fmt.Errorf("%w: %s", dashboard.ErrWorkflowDispatchNoAgent, d.Target.Profile)
+		}
+		c := scheduler.WorkflowDispatchCandidate{Dispatch: d, Agent: agent, Key: scheduler.WorkflowDispatchKey(d, nil), ManualBy: by}
+		if !claimForWorkflowDispatch(cfg, ledger, c, logger) {
+			return dashboard.WorkflowDispatchPlan{}, dashboard.ErrWorkflowDispatchHeld
+		}
+		entry := scheduler.WorkflowDispatchEntry{Key: c.Key, Ref: d.Ref(), Profile: d.Target.Profile, State: d.State, Agent: agent, By: by}
+		return dashboard.WorkflowDispatchPlan{
+			Ref: d.Ref(), Model: d.Model, State: d.State, Profile: d.Target.Profile, Agent: agent,
+			Message: scheduler.BuildWorkflowDispatchPrompt(c, cfg.Workflow.Dispatch.Profile(d.Target.Profile).PromptTemplate),
+			Record: func(at time.Time) {
+				recordWorkflowDispatchDelivered(cfg, workflowDispatchKick{Entry: entry}, at, logger)
+			},
+		}, nil
+	}
 }

@@ -90,6 +90,564 @@
     }
   ],
   "paths": {
+    "/api/companion/info": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Desktop companion settings",
+        "description": "Owner or read-write. What the desktop companion shows and sends before a capture: the consent notice and its version, the PCM sample rate, the channels and the chunk limit.",
+        "responses": {
+          "200": {
+            "description": "Companion settings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "consent_version": {
+                      "type": "string"
+                    },
+                    "consent_text": {
+                      "type": "string"
+                    },
+                    "sample_rate": {
+                      "type": "integer"
+                    },
+                    "channels": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "max_chunk_bytes": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write, or another person's companion meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Meetings or companion meetings are not enabled on this hive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/companion/meetings": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Start a desktop companion meeting",
+        "description": "Owner or read-write. Starts a live meeting fed by the desktop companion (the person's own meeting client audio and microphone). The request must name the current consent_version and confirm the participants were told (consent_attested). Who attested, when and the notice version are stored with the meeting.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "title": {
+                    "type": "string"
+                  },
+                  "app": {
+                    "type": "string"
+                  },
+                  "host_name": {
+                    "type": "string"
+                  },
+                  "consent_version": {
+                    "type": "string"
+                  },
+                  "consent_attested": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "consent_version",
+                  "consent_attested"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "The meeting record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "platform": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Consent not acknowledged or a field too long",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write, or another person's companion meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Meetings or companion meetings are not enabled on this hive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/companion/meetings/{id}/audio": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Upload one companion audio chunk",
+        "description": "The companion meeting's starter (or an owner). The body is raw 16 kHz mono s16le PCM, at most max_chunk_bytes. Chunks are accepted in order per channel from seq 0; a gap answers 409 with expected_seq and a resend of a stored seq is acknowledged with duplicate: true.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Meeting id from the start response"
+          },
+          {
+            "name": "channel",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "call",
+                "mic"
+              ]
+            },
+            "description": "call = the meeting app's audio, mic = the person's microphone"
+          },
+          {
+            "name": "seq",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Chunk number per channel, from 0"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/octet-stream": {
+              "schema": {
+                "type": "string",
+                "format": "binary"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Stored or recognised",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "seq": {
+                      "type": "integer"
+                    },
+                    "duplicate": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad channel, seq or sample count",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Out of order (expected_seq) or the meeting is not live",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    },
+                    "expected_seq": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "413": {
+            "description": "Chunk too large",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write, or another person's companion meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Meetings or companion meetings are not enabled on this hive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/companion/meetings/{id}/replies": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Betty's lines for the companion window",
+        "description": "The companion meeting's starter (or an owner). Lines hive posted for the meeting (the consent notice first) after the cursor, and the meeting state so the window notices the meeting ended.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Meeting id from the start response"
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            },
+            "description": "Cursor: the next_seq of the previous call"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lines and state",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "lines": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "seq": {
+                            "type": "integer"
+                          },
+                          "text": {
+                            "type": "string"
+                          },
+                          "at": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    },
+                    "next_seq": {
+                      "type": "integer"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Bad cursor",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write, or another person's companion meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Meetings or companion meetings are not enabled on this hive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/companion/meetings/{id}/end": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "End a companion meeting",
+        "description": "The companion meeting's starter (or an owner): the companion stopped capturing. Speech still buffered is transcribed first.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Meeting id from the start response"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The meeting record",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "No such meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not owner or read-write, or another person's companion meeting",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Meetings or companion meetings are not enabled on this hive",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/meetings/{id}/approve": {
       "post": {
         "tags": [
@@ -142,6 +700,152 @@
           },
           "409": {
             "description": "Not a pending join request"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/clear-finished": {
+      "post": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Clear finished meetings",
+        "description": "Owner only. Deletes every meeting in a final state that finished before `before` (RFC 3339; empty or later than now means now), each exactly like DELETE /api/meetings/{id}. Live meetings and pending join requests stay. Each deleted meeting is audited as meeting_delete.",
+        "requestBody": {
+          "required": false,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "before": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Deleted meetings",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "description": "The state the meeting was in"
+                          },
+                          "upstream_error": {
+                            "type": "string",
+                            "description": "Set when Vexa (Quorum meeting.delete) could not confirm the erase; the record on this hive is removed anyway"
+                          },
+                          "calendar_removed": {
+                            "type": "integer",
+                            "description": "Calendar entries removed because they existed only for this meeting"
+                          }
+                        }
+                      }
+                    },
+                    "count": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "before is not an RFC 3339 time"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/schedule/{eid}": {
+      "delete": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Delete a past Calendar entry",
+        "description": "Owner only. Deletes a finished Calendar entry (ended, cancelled, declined, failed, blocked, skipped) and the meetings it created, each like DELETE /api/meetings/{id}. Entries still scheduled, awaiting approval or live keep Skip and Cancel and answer 409, as does an entry whose meeting hive is still in. Audited as meeting_schedule_delete, plus meeting_delete for each meeting.",
+        "parameters": [
+          {
+            "name": "eid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Schedule event id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "meetings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "state": {
+                            "type": "string",
+                            "description": "The state the meeting was in"
+                          },
+                          "upstream_error": {
+                            "type": "string",
+                            "description": "Set when Vexa (Quorum meeting.delete) could not confirm the erase; the record on this hive is removed anyway"
+                          },
+                          "calendar_removed": {
+                            "type": "integer",
+                            "description": "Calendar entries removed because they existed only for this meeting"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Unknown event"
+          },
+          "409": {
+            "description": "The entry is still to come or live, or hive is still in its meeting"
           },
           "503": {
             "description": "Meetings are not enabled on this hive"
@@ -438,6 +1142,64 @@
       }
     },
     "/api/meetings/{id}": {
+      "delete": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Delete a finished meeting or a pending join request",
+        "description": "Owner only. Allowed for a meeting in a final state (ended, failed, blocked, declined, left, handed_off, purged) and for a pending platform join request (declined with meeting.leave, then removed). Removes the meeting record, its transcript and live state on this hive, erases it in Vexa with Quorum meeting.delete (best effort: not_found is fine, any other error is returned as upstream_error while the record is still removed) and removes the Calendar entry that existed only for this meeting. Knowledge facts and drafts already made from the meeting are not touched. Audited as meeting_delete.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Deleted",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "id": {
+                      "type": "string"
+                    },
+                    "state": {
+                      "type": "string",
+                      "description": "The state the meeting was in"
+                    },
+                    "upstream_error": {
+                      "type": "string",
+                      "description": "Set when Vexa (Quorum meeting.delete) could not confirm the erase; the record on this hive is removed anyway"
+                    },
+                    "calendar_removed": {
+                      "type": "integer",
+                      "description": "Calendar entries removed because they existed only for this meeting"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Unknown meeting"
+          },
+          "409": {
+            "description": "Hive is still joining, in the lobby of or live in the meeting: leave the meeting first"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      },
       "get": {
         "tags": [
           "Meetings"
@@ -38772,6 +39534,95 @@
             },
             "503": {
               "description": "No workflow store or config"
+            }
+          }
+        }
+      },
+      "/api/workflows/dispatch": {
+        "post": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Send a model-owned item to its agent profile",
+          "description": "Owner only. The stage tracker's \"Send to <profile>\" on a row of a repository bound to a workflow model whose current state the model hands to an agent profile (cncf/techdocs#395: Accepted -> techdocs-drafter, Drafting -> techdocs-verifier). Reads the item fresh, resolves its model state and the hive agent that fills the profile (workflow.dispatch.profiles.<profile>.agent; a profile disabled for automatic dispatch still resolves), takes the agent claim on an issue first, and kicks the agent with the dispatch prompt. Once the kick lands the hand-off is recorded in the dispatch log, so the automatic pass does not repeat it. Audited as workflow_dispatch.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "repo",
+                    "number"
+                  ],
+                  "properties": {
+                    "repo": {
+                      "type": "string",
+                      "description": "owner/repo"
+                    },
+                    "number": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Kick delivered",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "status": {
+                        "type": "string",
+                        "enum": [
+                          "sent"
+                        ]
+                      },
+                      "ref": {
+                        "type": "string"
+                      },
+                      "model": {
+                        "type": "string"
+                      },
+                      "state": {
+                        "type": "string"
+                      },
+                      "profile": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "result": {
+                        "type": "object",
+                        "description": "Tracker toast: action dispatched, outcome, next"
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Body is not {repo, number}"
+            },
+            "403": {
+              "description": "Not an owner"
+            },
+            "404": {
+              "description": "The bound model does not hand the item's current state to a profile (or workflow.enabled is off)"
+            },
+            "409": {
+              "description": "No enabled agent fills the profile, someone else holds the issue's claim, or the agent is busy"
+            },
+            "502": {
+              "description": "The item could not be read or the kick failed"
+            },
+            "503": {
+              "description": "Dispatch is not wired on this hive"
             }
           }
         }

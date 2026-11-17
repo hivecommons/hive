@@ -1,0 +1,1 @@
+- Meetings: the hive image ships quorum v0.3.0, which adds the desktop companion platform (#18596).
