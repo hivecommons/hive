@@ -2662,6 +2662,9 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			}
 		}
 	})
+	// Reap sandbox Jobs the previous process lost track of, now that the
+	// audit log can record each one (hivecommons/hive#18525).
+	startSandboxJobBootSweep(b.ctx, b.cfg, b.agentMgr, b.dashSrv.AuditLog, b.logger)
 
 	// Persist per-user dashboard sessions on the PVC (/data) so direct-route
 	// users aren't logged out by pod restarts. NOTE: use /data explicitly, NOT

@@ -62,6 +62,18 @@ const (
 	// DefaultPollInterval is how often the launcher re-reads the Job status.
 	DefaultPollInterval = 5 * time.Second
 
+	// DefaultKickTimeout is the sandbox kick timeout hive applies when none is
+	// configured; crux/agent's DefaultSandboxKickTimeout is this value.
+	DefaultKickTimeout = 45 * time.Minute
+
+	// DeadlineMargin is added to a kick's timeout to give the Job's
+	// activeDeadlineSeconds. Hive cancels a kick at its timeout and deletes
+	// the Job itself; the deadline is the cluster-side backstop for a Job
+	// hive lost track of (a restart mid-kick, a Job left Pending or
+	// Unschedulable), so it must land after hive's own timeout, never before
+	// (hivecommons/hive#18525).
+	DeadlineMargin = 15 * time.Minute
+
 	// requestTimeout bounds every single API call; the overall run is bounded
 	// by the caller's context (the sandbox kick timeout).
 	requestTimeout = 30 * time.Second
@@ -138,6 +150,37 @@ type Options struct {
 	// RelayRunAsUser pins the relay init container's uid. Nil leaves it to
 	// the cluster on OpenShift and uses DefaultRelayRunAsUser elsewhere.
 	RelayRunAsUser *int64
+	// ActiveDeadlineSeconds is the Job's activeDeadlineSeconds. Non-positive
+	// derives it from the run's context deadline, else from
+	// DefaultKickTimeout; either way DeadlineMargin is added. Run uses
+	// whichever of this and the context-derived value is later, so the
+	// deadline never cuts a run short of the timeout hive gave it.
+	ActiveDeadlineSeconds int64
+}
+
+// ActiveDeadlineSeconds returns the activeDeadlineSeconds for a Job running
+// one kick with the given timeout: the timeout (DefaultKickTimeout when
+// non-positive) plus DeadlineMargin.
+func ActiveDeadlineSeconds(kickTimeout time.Duration) int64 {
+	if kickTimeout <= 0 {
+		kickTimeout = DefaultKickTimeout
+	}
+	return int64((kickTimeout + DeadlineMargin) / time.Second)
+}
+
+// activeDeadline resolves the deadline for one Run: the configured value or
+// the one derived from ctx's remaining time, whichever is later.
+func (l *Launcher) activeDeadline(ctx context.Context) int64 {
+	deadline := l.Options.ActiveDeadlineSeconds
+	if dl, ok := ctx.Deadline(); ok {
+		if fromCtx := ActiveDeadlineSeconds(time.Until(dl)); fromCtx > deadline {
+			deadline = fromCtx
+		}
+	}
+	if deadline <= 0 {
+		deadline = ActiveDeadlineSeconds(DefaultKickTimeout)
+	}
+	return deadline
 }
 
 // network is Options.Network with the empty default applied.
@@ -264,7 +307,11 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 		}
 	}
 	name := jobName(spec.Name, l.now())
-	body, err := json.Marshal(l.jobManifest(ns, name, subPath, spec, relays))
+	manifest := l.jobManifest(ns, name, subPath, spec, relays)
+	if jobSpec, ok := manifest["spec"].(map[string]any); ok {
+		jobSpec["activeDeadlineSeconds"] = l.activeDeadline(ctx)
+	}
+	body, err := json.Marshal(manifest)
 	if err != nil {
 		return res, err
 	}
@@ -526,6 +573,10 @@ func (l *Launcher) jobManifest(ns, name, subPath string, spec sandbox.LaunchSpec
 	if ttl == 0 {
 		ttl = DefaultTTLSeconds
 	}
+	deadline := l.Options.ActiveDeadlineSeconds
+	if deadline <= 0 {
+		deadline = ActiveDeadlineSeconds(DefaultKickTimeout)
+	}
 
 	// Same filter as the Podman path; explicit spec.Env entries come last and win.
 	merged := map[string]string{}
@@ -644,6 +695,10 @@ func (l *Launcher) jobManifest(ns, name, subPath string, spec sandbox.LaunchSpec
 			// workspace the first attempt already changed.
 			"backoffLimit":            0,
 			"ttlSecondsAfterFinished": ttl,
+			// The cluster fails a Job still running (or never scheduled)
+			// past this, so one hive lost track of cannot sit Pending
+			// forever (hivecommons/hive#18525).
+			"activeDeadlineSeconds": deadline,
 			"template": map[string]any{
 				"metadata": map[string]any{"labels": labels},
 				"spec":     podSpec,
