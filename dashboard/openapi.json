@@ -87,6 +87,10 @@
     {
       "name": "Meetings",
       "description": "Hive as a live meeting participant (Quorum)"
+    },
+    {
+      "name": "Customers",
+      "description": "A profile per person: identities, tags, goals and satisfaction"
     }
   ],
   "paths": {
@@ -1747,6 +1751,398 @@
           },
           "503": {
             "description": "Calendar emails are not available"
+          }
+        }
+      }
+    },
+    "/api/customers": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "List customers",
+        "description": "The Customers section. Every signed-in user gets their own profile (me), created on first read. The verified owner and read-write users also get every customer and every suggested person; a read-only user gets nobody else. With customers.enabled off the answer is {enabled: false}.",
+        "responses": {
+          "200": {
+            "description": "The list",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "enabled, full, owner, me (a customer profile), people (customer profiles), suggestions (id, kind, value, counts, evidence references, first_seen, last_seen), default_tags, levels"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not signed in as a named user, or the owner role was not verified"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Add a customer",
+        "description": "Creates a customer by hand. Owner or read-write. An identity that already belongs to another customer is refused with 409; a hive_user identity cannot be added by hand. Audited as customer_add.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "identities": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "kind",
+                        "value"
+                      ],
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "github",
+                            "email",
+                            "git_email",
+                            "discord",
+                            "slack",
+                            "teams",
+                            "meet",
+                            "zoom",
+                            "name"
+                          ]
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The new customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it: id, name, status, origin, identities (kind, value, source, manual, claimed, at, by), tags (name, state, source, rule, history), goals (id, text, state, source, evidence, history), satisfaction (level, source, evidence, suggestion, history), notes, me, counts, hints, hinted. A viewer without the full view gets no notes, satisfaction, merge history, counts or hints."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid name or identity"
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "409": {
+            "description": "An identity already belongs to another customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Get a customer profile",
+        "description": "One profile. A read-only user can read only their own (id me, or their own id); any other id answers 404, exactly as an id that does not exist. Opening someone else's profile is audited as customer_profile_open.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id (p_ plus 12 hex), or me for the viewer's own profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The profile",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it: id, name, status, origin, identities (kind, value, source, manual, claimed, at, by), tags (name, state, source, rule, history), goals (id, text, state, source, evidence, history), satisfaction (level, source, evidence, suggestion, history), notes, me, counts, hints, hinted. A viewer without the full view gets no notes, satisfaction, merge history, counts or hints."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Not signed in as a named user, or the owner role was not verified"
+          },
+          "404": {
+            "description": "No such customer, or not visible to this viewer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Forget a customer",
+        "description": "Deletes the customer, their identities and every edge to them, and keeps a salted-hash tombstone per confirmed identity so discovery does not rebuild them. Owner only. Audited as customer_forget.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id (p_ plus 12 hex), or me for the viewer's own profile"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Forgotten",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "forgotten, edges_removed"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "No such customer"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/{id}/edit": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Edit a customer profile",
+        "description": "Applies one change, named by op: name, notes, identity_add, identity_remove, tag (state on, off or auto), goal_add, goal_edit, goal_confirm, goal_reject, satisfaction_set, satisfaction_confirm, satisfaction_reject. Owner and read-write users may edit anyone. A read-only user may post only to /api/customers/me/edit, and only name, identity, tag and goal changes; an identity they add is an unconfirmed claim that resolves nobody until someone with the full view confirms it. Audited as customer_edit with the person and the op, never the value.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Customer id (p_ plus 12 hex), or me for the viewer's own profile"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "op"
+                ],
+                "properties": {
+                  "op": {
+                    "type": "string",
+                    "enum": [
+                      "name",
+                      "notes",
+                      "identity_add",
+                      "identity_remove",
+                      "tag",
+                      "goal_add",
+                      "goal_edit",
+                      "goal_confirm",
+                      "goal_reject",
+                      "satisfaction_set",
+                      "satisfaction_confirm",
+                      "satisfaction_reject"
+                    ]
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "notes": {
+                    "type": "string"
+                  },
+                  "kind": {
+                    "type": "string"
+                  },
+                  "value": {
+                    "type": "string"
+                  },
+                  "key": {
+                    "type": "string",
+                    "description": "Identity key (kind:value) to remove"
+                  },
+                  "tag": {
+                    "type": "string"
+                  },
+                  "state": {
+                    "type": "string",
+                    "enum": [
+                      "on",
+                      "off",
+                      "auto"
+                    ]
+                  },
+                  "goal_id": {
+                    "type": "string"
+                  },
+                  "text": {
+                    "type": "string"
+                  },
+                  "level": {
+                    "type": "string",
+                    "enum": [
+                      "unknown",
+                      "at_risk",
+                      "neutral",
+                      "satisfied"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "The profile after the change",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it: id, name, status, origin, identities (kind, value, source, manual, claimed, at, by), tags (name, state, source, rule, history), goals (id, text, state, source, evidence, history), satisfaction (level, source, evidence, suggestion, history), notes, me, counts, hints, hinted. A viewer without the full view gets no notes, satisfaction, merge history, counts or hints."
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid change"
+          },
+          "403": {
+            "description": "This viewer may not make this change"
+          },
+          "404": {
+            "description": "No such customer, goal, tag or identity, or not visible to this viewer"
+          },
+          "409": {
+            "description": "The change conflicts with the current state"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/suggestions/{sid}/accept": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Accept a suggested person",
+        "description": "Turns a suggestion into a customer. This is the human decision that lets the hive build a profile of someone who never signed up. Owner or read-write. Audited as customer_accept.",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Suggestion id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "The new customer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "Customer profile as the viewer sees it: id, name, status, origin, identities (kind, value, source, manual, claimed, at, by), tags (name, state, source, rule, history), goals (id, text, state, source, evidence, history), satisfaction (level, source, evidence, suggestion, history), notes, me, counts, hints, hinted. A viewer without the full view gets no notes, satisfaction, merge history, counts or hints."
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such suggestion"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
+          }
+        }
+      }
+    },
+    "/api/customers/suggestions/{sid}/dismiss": {
+      "post": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Dismiss a suggested person",
+        "description": "Deletes a suggestion and tombstones its key, so it is not offered again and no readable trace is kept. Owner or read-write. Audited as customer_dismiss.",
+        "parameters": [
+          {
+            "name": "sid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Suggestion id"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Dismissed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "description": "dismissed"
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required"
+          },
+          "404": {
+            "description": "No such suggestion"
+          },
+          "503": {
+            "description": "Customers are turned off on this hive"
           }
         }
       }

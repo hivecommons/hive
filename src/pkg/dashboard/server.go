@@ -484,6 +484,9 @@ type Server struct {
 	// meetingsSchedule is the meeting scheduler behind the Calendar
 	// section (hivecommons/hive#18394); nil while meetings are off.
 	meetingsSchedule atomic.Pointer[meetingsScheduleHolder]
+	// customers is the people store behind the Customers section
+	// (hivecommons/hive#18742); nil while customers are off.
+	customers atomic.Pointer[customersHolder]
 	// meetingsAttendee is Settings, Meeting attendee: the boot persona,
 	// the TTS service and the email-in data (hivecommons/hive#18396).
 	meetingsAttendee meetingsAttendeeState
@@ -2840,7 +2843,7 @@ func (s *Server) roleEnforcement(next http.Handler) http.Handler {
 			// "/api/contributors/...", letting a "read" viewer promote/revoke/delete
 			// contributors past this gate.
 			isContributeFlow := r.URL.Path == "/api/contribute" || strings.HasPrefix(r.URL.Path, "/api/contribute/")
-			if !isContributeFlow && r.URL.Path != "/api/gh-user-auth/status" {
+			if !isContributeFlow && r.URL.Path != "/api/gh-user-auth/status" && !readOnlySelfService(r) {
 				http.Error(w, `{"error":"your permissions on this hive are read-only, so changes are not allowed. Contact the owner of this hive to ask for write permissions."}`, http.StatusForbidden)
 				return
 			}
