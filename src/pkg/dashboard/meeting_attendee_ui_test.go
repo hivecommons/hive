@@ -26,6 +26,12 @@ func TestSettingsMeetingAttendeeTabWiring(t *testing.T) {
 		"return '/api/meetings/persona/sample?' + q.toString();",
 		`data-action="maPickPreset"`,
 		`data-action="maPlaySample"`,
+		`data-action="maTogglePresetIntro"`,
+		"return '/api/meetings/persona/preview?preset=' + encodeURIComponent(id);",
+		"'Play introduction for '",
+		"const MA_INTRO_UNAVAILABLE = 'Voice preview is unavailable: ';",
+		`role="alert" data-ma-intro-status`,
+		".ma-preset.is-playing {",
 		`data-action="maCopyAddress"`,
 		`data-action="maSave"`,
 		`data-change-action="maLanguageChanged"`,
@@ -61,18 +67,23 @@ func TestMeetingAttendeeTabBehaviour(t *testing.T) {
 		"const assert = require('assert');",
 		"const escapeHtml = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\"/g, '&quot;');",
 		"const yamlHint = p => '<code>' + p + '</code>';",
-		"const document = { getElementById: () => null, querySelector: () => null };",
+		"const document = { getElementById: () => null, querySelector: () => null, querySelectorAll: () => [] };",
 		"let _maState = null;",
+		// The preset voice preview (#18710): a recording Audio stand-in.
+		"let _maIntro = { id: '', state: '', error: '' }; let _maIntroAudio = null; const _audios = [];",
+		"class Audio { constructor(src) { this.src = src; this.paused = true; _audios.push(this); } addEventListener() {} play() { this.paused = false; return Promise.resolve(); } pause() { this.paused = true; } }",
 		"let _owner = true; const viewerIsOwner = () => _owner;",
 	}
-	for _, c := range []string{"MA_LANGUAGE_LABELS", "MA_FLAG_BASE", "MA_PERSONA_FIELDS", "MA_LIST_FIELDS", "MA_CAP_FIELDS"} {
+	for _, c := range []string{"MA_LANGUAGE_LABELS", "MA_FLAG_BASE", "MA_PERSONA_FIELDS", "MA_LIST_FIELDS", "MA_CAP_FIELDS",
+		"MA_INTRO_PLAY_ICON", "MA_INTRO_STOP_ICON", "MA_INTRO_UNAVAILABLE"} {
 		parts = append(parts, jsConstBlock(t, html, c))
 	}
 	for _, f := range []string{"maLanguageLabel", "maFlag", "maRenderIntro", "renderGovMeetingAttendee", "maSetData", "maPreset",
 		"maOverrideNote", "maPresetCardHtml", "maField", "maTextInput", "maVoiceOptions", "maLanguageOptions", "maVoiceTypeOptions",
 		"maPersonaHtml", "maBehaviourHtml", "maEmailHtml", "maRender", "maRefreshPreview", "maInput", "maCapInput",
 		"maLanguageChanged", "maPickPreset", "maRequestBody", "maSampleSrc", "maMyEmailsHtml", "maEmailToggle",
-		"maProofFailureHtml", "maProofAuthSummary", "maProofAttemptsHtml"} {
+		"maProofFailureHtml", "maProofAuthSummary", "maProofAttemptsHtml",
+		"maIntroSrc", "maIntroState", "maIntroLabel", "maIntroSet", "maIntroSync", "maStopIntro", "maPlayIntro", "maIntroFailed", "maTogglePresetIntro"} {
 		parts = append(parts, jsFunc(t, html, f))
 	}
 	parts = append(parts,
@@ -89,7 +100,13 @@ func TestMeetingAttendeeTabBehaviour(t *testing.T) {
 		`assert.ok(!html.includes('value="bf_emma"'), 'voices filtered to the language');`,
 		`assert.ok(/value="bot" disabled>Bot-style \(coming later\)/.test(html), 'bot-style listed as coming later');`,
 		`assert.ok(html.includes('disabled title="Set meetings.tts_url'), 'sample disabled without TTS');`,
+		// Every real preset card offers its introduction; none plays on render.
+		`for (const p of data.presets) assert.ok(html.includes('data-action="maTogglePresetIntro" data-arg0="' + p.id + '" data-ma-preset-play aria-label="Play introduction for ' + escapeHtml(p.display_name) + '"'), p.id);`,
+		`assert.ok(html.includes('Pick one to hear its introduction') && html.includes('data-ma-intro-status'), 'preview hint and status');`,
+		`assert.strictEqual(_audios.length, 0, 'no autoplay on render');`,
 		`maPickPreset('melie'); f = _maState.form;`,
+		`assert.strictEqual(_audios.length, 1); assert.strictEqual(_audios[0].src, '/api/meetings/persona/preview?preset=melie'); assert.strictEqual(_audios[0].paused, false);`,
+		`assert.strictEqual(_maIntro.id, 'melie'); maStopIntro(); assert.strictEqual(_audios[0].paused, true); assert.strictEqual(_maIntro.id, '');`,
 		`assert.strictEqual(f.language, 'fr-FR'); assert.strictEqual(f.voice, 'ff_siwis'); assert.ok(f.intro_template.startsWith('Bonjour'));`,
 		`assert.strictEqual(f.aliases.join(','), 'mélie,melie,abeille,hive');`,
 		`maPickPreset('nobody'); assert.strictEqual(_maState.form.preset, 'melie');`,
