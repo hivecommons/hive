@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.297.0)
+
+### Added
+
+- Workflow models gain a Tekton PipelineRun observer and `tektonRuns` config for post-merge runs; the stage engine does not call it yet, so no column changes until the follow-up wiring lands ([#18646](https://github.com/hivecommons/hive/issues/18646)). A Tekton pipeline's new `tektonRuns` block names the cluster (`context` or `inCluster`), `namespace` and `labelSelector` explicitly (nothing is auto-discovered); each run's revision is read from the `pipelinesascode.tekton.dev/sha` annotation, then the `revision` param (both renameable), and fed through range attribution. A run whose revision is not a full commit SHA leaves the column `unknown` with the reason recorded instead of guessing. Existing models are unchanged.
+
 ## 2026-11-17 (v5.296.0)
 
 ### Added
