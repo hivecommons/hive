@@ -77,7 +77,7 @@ func TestReplyIsRecordedInTheTranscriptAfterTheQuestion(t *testing.T) {
 		t.Fatalf("reply timing %+v", pt)
 	}
 	// Her own line never comes back to her as a request: one model call.
-	time.Sleep(2 * personaWait)
+	<-time.After(2 * personaWait)
 	if calls, _ := llm.prompts(); len(calls) != 1 {
 		t.Fatalf("the persona answered her own line: %d model calls", len(calls))
 	}
@@ -355,7 +355,7 @@ func TestBusyResearchPoolQueuesAndSaysSo(t *testing.T) {
 		t.Fatalf("queued item %+v", it)
 	}
 	// Past the progress note and the deadline, still waiting its turn.
-	time.Sleep(2 * timeout)
+	<-time.After(2 * timeout)
 	if it := h.state().Research[0]; it.Status != ResearchQueued || it.ProgressSent {
 		t.Fatalf("a queued item is not failed or chased while it waits: %+v", it)
 	}

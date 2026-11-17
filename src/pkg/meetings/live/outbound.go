@@ -53,9 +53,9 @@ const (
 
 // Chat rate classes for an outbound line.
 const (
-	// rateNone: hive's own follow-through lines (a research summary, the
-	// budget notice), never rate limited.
-	rateNone = iota
+	// The zero value: hive's own follow-through lines (a research summary,
+	// the budget notice), never rate limited.
+	_ = iota
 	// rateChat: the chat rate limit (Spek's posts, room answers).
 	rateChat
 	// rateAnswer: the chat rate plus the answer burst (addressed answers).

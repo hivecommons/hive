@@ -119,8 +119,20 @@ func TestMeetingsDashboardAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if sl, ok := snap.(meetingLive); !ok || len(sl.Transcript) != 1 || sl.Live == nil {
+	sl, ok := snap.(meetingLive)
+	if !ok || sl.Live == nil {
 		t.Fatalf("live = %#v", snap)
+	}
+	// People's lines; hive's own reply lines (the consent notice) are in the
+	// transcript too.
+	heard := 0
+	for _, ev := range sl.Transcript {
+		if !ev.IsReply() {
+			heard++
+		}
+	}
+	if heard != 1 {
+		t.Fatalf("live transcript = %#v", sl.Transcript)
 	}
 	if _, err := d.Live("mtg-none"); !errors.Is(err, dashboard.ErrMeetingNotFound) {
 		t.Fatalf("live missing = %v", err)

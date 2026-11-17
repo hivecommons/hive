@@ -69,7 +69,7 @@ func TestWebGuard(t *testing.T) {
 		{"", "", false},
 		// Asked for by name: the web search goes out, cleaned.
 		{"search the web for hive's competitors", "hive's competitors", true},
-		{"Betty, search the web for Hives competitors.", "hives competitors", true},
+		{"Betty, search the web for Hives competitors.", "hive's competitors", true},
 		{"can you look up acme reviews online?", "acme reviews", true},
 	}
 	for _, c := range cases {

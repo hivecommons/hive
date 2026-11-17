@@ -256,6 +256,7 @@ func TestCompanionRepliesServeTheLastLinesAfterALeave(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	q.stream("qc1") <- Event{Type: EventState, MeetingID: "qc1", State: StateLive}
 	waitConsent(t, m, mt.ID)
 	q.cmu.Lock()
 	q.lines = []CompanionLine{{Seq: 1, Text: "notice"}, {Seq: 2, Text: "an answer"}, {Seq: 3, Text: LeavingText}}
@@ -301,6 +302,7 @@ func TestCompanionLastLinesExpire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	q.stream("qc1") <- Event{Type: EventState, MeetingID: "qc1", State: StateLive}
 	waitConsent(t, m, mt.ID)
 	q.cmu.Lock()
 	q.lines = []CompanionLine{{Seq: 1, Text: LeavingText}}
