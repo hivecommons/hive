@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v6.44.1)
+
+### Fixed
+
+- **A serialized-lane branch update left Unknown no longer blocks that PR's lane forever.** When GitHub timed out or returned a 5xx on the lane's update-branch call, the effect ledger journaled it Unknown and then refused every retry of the same pinned update with "retries refused pending reconciliation", because the lane called the plain effect boundary and nothing ever reconciled a `branch_update`. The lane's update now reconciles like the PR client's and automerge's: the next retry reads the PR, treats a head that moved off the pinned SHA as the update having landed, and otherwise runs the update again. A 422 or 409 refusal is journaled not-applied, so it never needs reconciling. The `effect_ledger_op_stuck` self-report for these ops stops recurring ([#18726](https://github.com/hivecommons/hive/issues/18726)).
+
 ## 2026-11-17 (v6.44.0)
 
 ### Added
