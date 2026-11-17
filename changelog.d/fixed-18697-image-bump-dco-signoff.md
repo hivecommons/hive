@@ -1,0 +1,1 @@
+- The CLI pin-bump workflow now signs its commit off for every email GitHub may attribute the squash to (the `TOPUP_PUSH_TOKEN` owner's public and primary addresses, not only the noreply one), so the DCO app no longer flags image-bump commits and blocks v5 -> v6 top-ups (#18697).
