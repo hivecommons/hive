@@ -6078,8 +6078,12 @@ function ccWallPostHTML(p){
   var tags=p.tags||{};
   var evidence='';
   if(p.model_evidence){
+    // Name the canonical model id (the one the Governor's PRs-by-model card
+    // groups by, #18718) when it differs from the tag, raw spelling in the tooltip.
+    var evCanon=String(p.model_evidence.canonical_model||''),evRaw=String(p.model_evidence.model||tags.model||'');
+    var evName=(evCanon&&evCanon!=='unknown'&&evCanon.toLowerCase()!==evRaw.toLowerCase())?' for <span class="wall-canonical-model" title="Reported as '+esc(evRaw)+'">'+esc(evCanon)+'</span>':'';
     var failTip=ccModelEvidenceFailTip(p.model_evidence);
-    evidence='<div class="ops-note">model evidence: '+(p.model_evidence.runs||0)+' runs · '+Math.round((p.model_evidence.verified_pr_share||0)*100)+'%% verified PR · <span'+(failTip?' title="'+esc(failTip)+'"':'')+'>'+Math.round((p.model_evidence.failure_rate||0)*100)+'%% failed</span></div>';
+    evidence='<div class="ops-note">model evidence'+evName+': '+(p.model_evidence.runs||0)+' runs · '+Math.round((p.model_evidence.verified_pr_share||0)*100)+'%% verified PR · <span'+(failTip?' title="'+esc(failTip)+'"':'')+'>'+Math.round((p.model_evidence.failure_rate||0)*100)+'%% failed</span></div>';
   }
   var controls='';
   if(ccMeUsername&&p.author&&p.author.toLowerCase()===ccMeUsername.toLowerCase())controls+='<button type="button" class="hv-btn btn-secondary btn-sm admin-act" data-wall-del="'+esc(p.id)+'">delete</button>';
