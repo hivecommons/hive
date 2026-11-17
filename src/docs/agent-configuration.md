@@ -489,6 +489,8 @@ Rounding out the schema — fields you will rarely touch:
 | `stats_display` | Custom sidebar metrics (key, label, source, field, style, optional icon/target). The Diagnostics **Quality stats** card mirrors the `quality` agent's configured entries. A `pct`/`pct-bar` stat with no measurement renders `—`, not `0%`. | none (an agent starts with no stats unless it is a built-in with defaults) |
 | `hidden` (packs only) | Keep a pack agent out of the default roster view | false |
 
+If a kick to an agent fails or an agent is flagged `kick_refusal`, see [Kick refusals](kick-refusals.md).
+
 ## Explain mode (debugging agent behaviour)
 
 Agents are told to act, not narrate. Every policy carries an "Output Rules — Terse Mode" block, and on inference backends the agent manager appends an explicit `EXECUTE, DO NOT NARRATE` instruction to each kick. That rule earns its keep — weak models otherwise answer a kick with a plan for someone else to run instead of running it — but it also means that when an agent does the wrong thing, there is nothing in the log saying *why*.

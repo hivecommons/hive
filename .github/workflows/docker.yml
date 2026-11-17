@@ -369,6 +369,10 @@ jobs:
             BASE_REGISTRY=${{ env.BASE_REGISTRY }}
           provenance: false
           sbom: false
+          # Materialize the stage into this builder (see the note on the
+          # whisper warm step below); without an output a cache hit stays a
+          # lazy remote reference and the main build recompiles tmux.
+          outputs: type=tar,dest=/dev/null
           cache-from: type=gha,scope=tmux-${{ steps.slug.outputs.slug }}
           cache-to: type=gha,scope=tmux-${{ steps.slug.outputs.slug }},mode=max
 
@@ -397,6 +401,19 @@ jobs:
             BASE_REGISTRY=${{ env.BASE_REGISTRY }}
           provenance: false
           sbom: false
+          # MATERIALIZE the result. Measured 2026-11-17 on v5: with no output
+          # this step reported every whisper-builder layer CACHED in ~1s, and
+          # the main build below then recompiled FFmpeg + whisper.cpp anyway
+          # (and tmux, same pattern, on runs before that). A warm step that
+          # hits its remote cache without an output never loads the layers
+          # into the builder's local cache, and the main build cannot be
+          # served from a remote cache for these stages: they share their
+          # FROM image with `runtime`, which no-cache-filters marks
+          # ignore-cache. The only builds where the main step showed these
+          # stages CACHED were the ones where the warm step MISSED and
+          # compiled locally. Exporting the stage (to /dev/null, nothing is
+          # kept) forces the layers to be pulled and recorded locally.
+          outputs: type=tar,dest=/dev/null
           cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/hive-buildcache:whisper-${{ steps.slug.outputs.slug }}
           cache-to: ${{ needs.gate.outputs.push == 'true' && format('type=registry,ref=ghcr.io/{0}/hive-buildcache:whisper-{1},mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true', github.repository_owner, steps.slug.outputs.slug) || '' }}
 
