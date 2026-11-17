@@ -96,6 +96,7 @@ func ParseSelfReport(title, body string) (SelfReport, bool) {
 var selfreportOpsRemedies = map[string]string{
 	"agent_login_required":                   "re-authenticate the agent provider (run the provider's login on the spoke so the agent CLI has a current session)",
 	"inference_auth_failed":                  "renew the inference credentials or API key the spoke's agents use",
+	"inference_backend_auth_failure":         "check and renew the inference backend credential configured on the spoke",
 	"data_disk_pressure":                     "free or grow the data disk on the spoke",
 	"github_app_token_mint_failed":           "check the GitHub App key and installation the spoke is configured with",
 	"forge_unreachable":                      "the GitHub host did not answer from the pod — check cluster egress, DNS and any proxy or hostAliases in front of it, not the App",
