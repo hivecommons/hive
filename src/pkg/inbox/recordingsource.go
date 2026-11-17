@@ -394,6 +394,12 @@ type RecordingDeleted struct {
 // (ErrRecordingTranscribing). Audited as inbox_recording_delete. It works
 // while recording is disabled: the recordings stay until retention.
 func (s *Service) DeleteRecording(id, user string, asOwner bool, opts RecordingOptions) (RecordingDeleted, error) {
+	return s.deleteRecording(id, user, asOwner, opts, false)
+}
+
+// deleteRecording is DeleteRecording; keepFact leaves the recording's
+// Knowledge fact (its machine transcript) in place (see DeleteItem).
+func (s *Service) deleteRecording(id, user string, asOwner bool, opts RecordingOptions, keepFact bool) (RecordingDeleted, error) {
 	src := s.recordingSource()
 	if src == nil {
 		return RecordingDeleted{}, ErrRecordingNotFound
@@ -421,7 +427,7 @@ func (s *Service) DeleteRecording(id, user string, asOwner bool, opts RecordingO
 	}
 	out := RecordingDeleted{ID: m.ID, RecordedBy: m.RecordedBy}
 	var errs []error
-	if src.FactDir != "" {
+	if src.FactDir != "" && !keepFact {
 		s.factMu.Lock()
 		err := os.Remove(src.factPath(m.ID))
 		s.factMu.Unlock()

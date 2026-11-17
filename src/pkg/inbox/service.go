@@ -309,6 +309,7 @@ func (s *Service) Items(ctx context.Context) ([]Item, error) {
 		}
 		out = append(out, items...)
 	}
+	out = s.Store.Live(out)
 	s.Store.Apply(out)
 	s.applyTranscripts(out)
 	sortItems(out)

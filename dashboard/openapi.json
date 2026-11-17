@@ -918,6 +918,10 @@
                         "type": "object",
                         "description": "Meeting record: id, platform, url or guild_id/channel_id, native_id, title, invited_by, state (requested, joining, lobby, live, ended, failed, blocked, handed_off, purged), state_reason, voice_enabled, consent_posted_at and timestamps."
                       }
+                    },
+                    "email_in": {
+                      "type": "object",
+                      "description": "This hive's email-in address, as in GET /api/inbox: address, ready, reason, files_enabled, invites_enabled, docs_url."
                     }
                   }
                 }
@@ -1762,6 +1766,10 @@
                 "schema": {
                   "type": "object",
                   "properties": {
+                    "email_in": {
+                      "type": "object",
+                      "description": "This hive's email-in address, as in GET /api/inbox: address, ready, reason, files_enabled, invites_enabled, docs_url."
+                    },
                     "upcoming": {
                       "type": "array",
                       "items": {
@@ -40967,6 +40975,36 @@
                         }
                       }
                     },
+                    "email_in": {
+                      "type": "object",
+                      "description": "This hive's email-in address, hive@<dashboard host>, for owner and read-write callers (absent for everyone else). Mail to it becomes Inbox items; calendar invites become Calendar entries.",
+                      "properties": {
+                        "address": {
+                          "type": "string",
+                          "description": "hive@<dashboard host>; present only when ready"
+                        },
+                        "ready": {
+                          "type": "boolean",
+                          "description": "True when mail can reach this hive: it holds the hub relay key relayed deliveries are verified with"
+                        },
+                        "reason": {
+                          "type": "string",
+                          "description": "Why ready is false: no_relay (no hub relays mail to this hive) or no_host (the hive's public host is not known)"
+                        },
+                        "files_enabled": {
+                          "type": "boolean",
+                          "description": "Mailed-in files and text bodies become Inbox items"
+                        },
+                        "invites_enabled": {
+                          "type": "boolean",
+                          "description": "Calendar invites become Calendar entries that hive joins"
+                        },
+                        "docs_url": {
+                          "type": "string",
+                          "description": "The setup guide"
+                        }
+                      }
+                    },
                     "error": {
                       "type": "string"
                     }
@@ -41521,6 +41559,170 @@
           },
           "503": {
             "description": "Inbox not configured",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/inbox/delete": {
+      "post": {
+        "tags": [
+          "Knowledge"
+        ],
+        "summary": "Delete inbox items of any kind",
+        "description": "Owner or read-write. Deletes items for good, one or many. A hive recording, an upload and a mailed-in file lose the file this hive stores and their machine transcript record; a meeting hive attended and an item of a synced source lose only their Inbox item. The Knowledge fact is kept unless `remove_knowledge` is true, and then only a fact this hive wrote itself (recording, upload) is removed. Every deleted item leaves a tombstone, so a later sync never lists it again; what was already shared from it is not touched. Each deleted item is audited as inbox_delete.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "items"
+                ],
+                "properties": {
+                  "items": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "source": {
+                          "type": "string"
+                        },
+                        "item_id": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  },
+                  "remove_knowledge": {
+                    "type": "boolean",
+                    "description": "Also delete the Knowledge fact of items whose fact this hive wrote itself. Default false."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Items deleted; items that could not be deleted are listed in failed",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "deleted": {
+                      "type": "integer"
+                    },
+                    "items": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string"
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "stored_removed": {
+                            "type": "boolean",
+                            "description": "The file, recording or audio this hive stored was deleted"
+                          },
+                          "knowledge_removed": {
+                            "type": "boolean"
+                          },
+                          "knowledge_kept": {
+                            "type": "boolean"
+                          },
+                          "shares_kept": {
+                            "type": "integer",
+                            "description": "Shares in the item's history; what they filed is not touched"
+                          }
+                        }
+                      }
+                    },
+                    "failed": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "source": {
+                            "type": "string"
+                          },
+                          "item_id": {
+                            "type": "string"
+                          },
+                          "error": {
+                            "type": "string"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "403": {
+            "description": "Owner or read-write access required, or the item is not this user's to delete",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Inbox not configured, or no such item",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "error": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "The item is being transcribed",
             "content": {
               "application/json": {
                 "schema": {

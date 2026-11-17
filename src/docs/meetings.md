@@ -140,7 +140,7 @@ Spektacular must be a version that includes the `meeting` command ([hivecommons/
 
 Only the hive owner can send hive to a meeting.
 
-1. Open **Meetings** in the dashboard sidebar.
+1. Open **Meetings** in the dashboard sidebar. The top of the section shows **Invite by email**: the hive's address, `hive@<dashboard host>`, as a link that opens a new mail, with a **Copy** button. Add it to a calendar invite and hive joins that meeting (see [Inviting Betty by email](#inviting-betty-by-email)), or go on with a link:
 2. Paste a Google Meet, Teams or Zoom link (or open "Discord voice channel instead" and enter the guild and channel IDs), optionally a title, tick **Voice** if hive may speak, and press **Send hive to a meeting**.
 3. Admit the bot if the meeting has a lobby. Hive gives up after `meetings.lobby_timeout_s` (600 seconds) in a lobby.
 4. **Open** the meeting to follow the live transcript, notes, research and Spek's intents. Use **Approve research** for items past the cap, **Voice on/off**, and **Leave**.
@@ -180,6 +180,7 @@ The dashboard's ● Record ([Recording into the Inbox](inbox-recording.md)) stay
 
 The **Calendar** section, right after **Inbox** in the left menu, lists the meetings hive is scheduled to join. The scheduler checks every 15 seconds (`HIVE_MEETINGS_SCHEDULE_TICK_S`) and sends hive in 60 seconds before each start (`HIVE_MEETINGS_SCHEDULE_LEAD_S`), the same way **Send hive to a meeting** does. A meeting without an end time is still joined up to 15 minutes after it starts; after that it is marked skipped as missed.
 
+- **Invite by email:** the top of the section shows the hive's address, `hive@<dashboard host>`, as a link that opens a new mail, with a **Copy** button: add it to a calendar invite and the meeting appears here ([#18693](https://github.com/hivecommons/hive/issues/18693)). Owner and read-write users see it. When mail cannot reach the hive, or `meetings.email.invites_enabled` is off, the row says so and links to [Is the address set up?](#is-the-address-set-up) instead of showing an address that would bounce.
 - **Add meeting:** paste a Google Meet, Teams or Zoom link (the platform comes from the link), pick the start and optionally the end, a title and a repeat (daily, every weekday, weekly, monthly). Times are entered and shown in your browser's time zone; a repeating meeting keeps its local time across daylight saving changes. The owner's own meetings are scheduled at once. A read-write user can add one too, and it waits for the owner.
 - **Each row** shows the title, organizer, start and end, platform, the next occurrence of a repeating meeting, the source (email invite, added here, or Discord) and the status: scheduled, awaiting approval, live, ended, cancelled, declined, failed, blocked or skipped.
 - **Approve** or **Decline** a meeting awaiting approval (owner only). A declined invite stays declined when its organizer updates it.
@@ -211,6 +212,19 @@ What `hive-mx` does with a message:
 The result goes to the hub with a bearer token from a mounted Secret: as JSON when its attachments total at most 512 KiB, otherwise as `multipart/form-data` streamed from the spool, with the routing (`X-Hive-Mail-Delivery`, `X-Hive-Mail-Kind`, `X-Hive-Mail-Recipient`) in headers. If the hub cannot take it, the sender's mail server is told to retry later.
 
 The hub maps the recipient host to the hive, signs the delivery with that hive's own relay key (the key it already uses for relayed GitHub webhooks) and forwards it to the spoke; it keeps the body on disk only while it relays it. A files delivery larger than one piece (768 KiB, under the 1 MiB request limit ingress proxies apply by default) goes to the spoke's `/api/inbox/email/chunk` in order, each piece signed with its own relay delivery id `<id>.<index>.<count>`; the spoke stages the pieces and stores the files when the last one arrives. The spoke refuses anything without a valid relay signature.
+
+### Is the address set up?
+
+The address is shown in three places besides **Settings, Meeting attendee**: at the top of the **Inbox** (send or forward a file or a note), the **Calendar** and **Meetings** (add it to a calendar invite), for owner and read-write users ([#18693](https://github.com/hivecommons/hive/issues/18693)). Each of those sections reads it from its own state: `email_in` in `GET /api/inbox`, `GET /api/meetings/schedule` and `GET /api/meetings`.
+
+Mail reaches a hive only when all of this is true:
+
+1. The cluster runs `hive-mx`, and a wildcard MX record points the hives' hosts at it (the operator of the hub does this once; see [Mail receiver](env-vars.md#mail-receiver-hive-mx)).
+2. The hub routes mail: it has `HIVE_HUB_MAIL_TOKEN`, and it knows this hive's host.
+3. The hive is registered with that hub and holds its relay key, which arrives with the heartbeat. Without it the hive refuses every relayed delivery.
+4. The switch for what you send is on: `meetings.email.files_enabled` for files and notes to the Inbox, `meetings.email.invites_enabled` for invites, and for invites meetings are enabled.
+
+The dashboard can only see the last two from inside the hive. When the hive holds no relay key the sections show **Not set up yet** with a link here, and when a switch is off they say which; in both cases no address is shown, because mail to it would bounce. A hive that is not registered with a hub that runs `hive-mx` (most self-hosted hives) has no working address: add meetings with a link, and files with **＋ Add** or by dropping them on the Inbox.
 
 ### Who can invite Betty
 

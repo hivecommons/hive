@@ -421,6 +421,18 @@ for a conversation Otter has no transcript for
 
 ## Files mailed to hive@ (email)
 
+The Inbox shows the address at the top, under the toolbar: **Send to this
+inbox**, the address as a link that opens a new mail, a **Copy** button and
+a one-line hint. Owner and read-write users see it; the same address is in
+the Calendar and Meetings sections for calendar invites
+([#18693](https://github.com/hivecommons/hive/issues/18693)). Nothing is
+prefilled in the mail: its subject becomes the item's title. On a hive that
+mail cannot reach (it holds no hub relay key, so no hub relays mail to it)
+the row says **Not set up yet** and links to
+[the setup guide](meetings.md#is-the-address-set-up) instead of showing an
+address that would bounce; with `meetings.email.files_enabled: false` it
+says mailed-in files are turned off.
+
 Mail sent to `hive@<your hive's dashboard host>` reaches the cluster's
 receive-only mail receiver, hive-mx, which keeps only the subject, the text
 body and the accepted attachments: Markdown (`.md`), audio (`.m4a`, `.mp3`,
@@ -462,6 +474,41 @@ images or other remote content.
   file** downloads any of them (owner and read-write).
 - Nothing in a mail is executed or followed. Turn mail-in files off with
   `meetings.email.files_enabled: false`; senders then get a bounce.
+
+## Deleting an item
+
+Every Inbox item can be deleted
+([#18694](https://github.com/hivecommons/hive/issues/18694)): **🗑 Delete**
+on the item, or tick several and choose **Hive (n) ▾ → Delete…**. Owner and
+read-write users can delete; a hive recording only by its recorder or an
+owner, and a mailed-in item that still waits for approval only by the owner
+(**✕ Decline**). The dashboard asks first, in the page, and says what goes:
+
+| Item | What a delete removes | What stays |
+|---|---|---|
+| Hive recording (`hive-recording`) | The audio stored on this hive, the recording's metadata, its machine transcript record, the Inbox item | Its Knowledge fact, unless you tick the box |
+| Upload or link (`upload`) | The stored file or fetched page, its extracted text, its machine transcript record, the Inbox item | Its Knowledge fact, unless you tick the box |
+| Mailed-in file (`email`) | The stored file, its machine transcript record, the Inbox item | Nothing: a mailed-in item has no Knowledge fact |
+| Meeting hive attended (`meeting`) | The Inbox item only | The meeting record, with its transcript and notes, in the **Meetings** section; delete it there to erase it |
+| Synced source (`plaud`, `zoom`, `teams`, ...) | The Inbox item only | The recording in its source, and its Knowledge fact, which the connector sync maintains |
+
+- **The Knowledge copy is kept by default.** For a recording or an upload
+  the dialog has a box, **Also remove the Knowledge copy**, unticked; tick
+  it to delete the fact too. A synced source's fact cannot be removed this
+  way, because the next sync would write it again: remove the recording in
+  its source to have the sync deprecate the fact.
+- **A deleted item does not come back.** The delete leaves a tombstone in
+  the Inbox state (`deleted_at`, `deleted_by`), so a source that still lists
+  the item on the next sync does not bring it back, and auto-routing rules
+  never fire on it.
+- **What was already shared stays.** RFCs, issues, DIBS ideas and spek
+  seeds made from the item are not touched; the dialog says how many shares
+  there were.
+- An item whose transcription is queued or running can be deleted once it
+  finishes.
+- Every deleted item is audited as `inbox_delete` with the user, the source,
+  the item and what was removed (a hive recording also as
+  `inbox_recording_delete`).
 
 ## Configuration
 
@@ -525,6 +572,7 @@ or a channel).
 
 See [api-reference/knowledge.md](api-reference/knowledge.md) for
 `GET /api/inbox`, `POST /api/inbox/route`, `POST /api/inbox/dismiss`,
+`POST /api/inbox/delete`,
 `GET|POST /api/inbox/settings`, `GET /api/inbox/{source}/{id}/content`,
 `GET /api/inbox/{source}/{id}/audio`,
 `POST /api/inbox/{source}/{id}/transcribe` ([Inbox transcription](inbox-transcription.md)) and
