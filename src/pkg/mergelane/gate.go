@@ -369,6 +369,13 @@ func (g *RESTGitHub) CheckRuns(ctx context.Context, repo, head string) (map[stri
 
 // UpdateBranch merges the target branch into the PR branch, pinned to
 // expectedHead. It never rebases or force-pushes.
+//
+// The call goes through effects.ExecuteReconciling, like every other
+// branch_update site: an earlier attempt journaled Unknown (a timeout or 5xx
+// whose outcome GitHub never confirmed) is resolved from the PR's live head on
+// the next round instead of refusing every retry of the same pinned update
+// forever (hivecommons/hive#18726). A 422 or 409 is GitHub refusing the update
+// outright, so it is journaled not-applied and never needs reconciling.
 func (g *RESTGitHub) UpdateBranch(ctx context.Context, repo string, number int, expectedHead string) error {
 	c, api, owner, name, err := g.rest(repo)
 	if err != nil {
@@ -378,20 +385,31 @@ func (g *RESTGitHub) UpdateBranch(ctx context.Context, repo string, number int, 
 	if err := g.allowWriteback(ctx, c, repo, number, laneWriteKind, ""); err != nil {
 		return err
 	}
+	provenance := owner + "/" + name + "#" + strconv.Itoa(number)
+	observe := func(ctx context.Context) (effects.ExternalState, error) {
+		pr, _, getErr := api.PullRequests.Get(ghub.WithRESTCaller(ctx, "hive:mergelane_reconcile_branch_update"), owner, name, number)
+		if getErr != nil {
+			return effects.ExternalState{}, getErr
+		}
+		return ghub.BranchUpdateState(pr, expectedHead, provenance), nil
+	}
 	var apiErr error
-	_, err = effects.Execute(ctx, c.MutationBoundary(), effects.Claim{
+	_, err = effects.ExecuteReconciling(ctx, c.MutationBoundary(), effects.Claim{
 		Repo:   owner + "/" + name,
 		Kind:   effects.KindBranchUpdate,
 		Target: strconv.Itoa(number),
 		Actor:  "mergelane",
 		Inputs: map[string]string{"expected_head_sha": expectedHead, "lane": "serialized"},
-	}, func(ctx context.Context) (effects.Result, error) {
+	}, observe, effects.DefaultUnresolvedTTL, func(ctx context.Context) (effects.Result, error) {
 		_, _, apiErr = api.PullRequests.UpdateBranch(ctx, owner, name, number, &gh.PullRequestBranchUpdateOptions{ExpectedHeadSHA: gh.Ptr(expectedHead)}) // writeback:gated
 		var accepted *gh.AcceptedError
 		if errors.As(apiErr, &accepted) {
 			apiErr = nil
 		}
-		return effects.Result{Provenance: owner + "/" + name + "#" + strconv.Itoa(number)}, apiErr
+		if githubStatus(apiErr, http.StatusUnprocessableEntity, http.StatusConflict) {
+			return effects.Result{}, effects.NotApplied(apiErr)
+		}
+		return effects.Result{Provenance: provenance}, apiErr
 	})
 	if githubStatus(apiErr, http.StatusUnprocessableEntity, http.StatusConflict) {
 		return ErrHeadMoved
