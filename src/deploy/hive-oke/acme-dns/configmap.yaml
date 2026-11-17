@@ -24,11 +24,25 @@ data:
         update-owner: name
         update-owner-match: equal
         update-owner-name: [ hive, lke-hive, dibs ]
+    # Response rate limiting. This server is internet-facing and authoritative,
+    # so it must not be usable as a reflector/amplifier for spoofed-source UDP
+    # floods. Per-source limit of 20 UDP responses/s; slip 2 answers about half
+    # of the excess with a truncated (TC) reply so a real client retries over
+    # TCP, and drops the rest. mod-rrl is built into knotd 3.x (no shared
+    # module path needed). Limits UDP only, so TSIG updates over TCP are unaffected.
+    mod-rrl:
+      - id: default
+        rate-limit: 20
+        slip: 2
     template:
       - id: default
+        global-module: mod-rrl/default
         storage: /zones
         zonefile-sync: -1
         zonefile-load: difference-no-serial
+        # No journal: DDNS changes live in memory only and are lost on a pod or
+        # container restart (the zone is re-seeded; cert-manager re-creates
+        # challenge records). Acceptable because challenge TXTs are short-lived.
         journal-content: none
     zone:
       - domain: acme.hive.hivecommons.dev
