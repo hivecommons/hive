@@ -54,7 +54,12 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          fetch-depth: 0
+          # Shallow on purpose: `fetch-depth: 0` fetches EVERY branch and tag
+          # (`+refs/heads/*` `+refs/tags/*`). On this repo's ref count that
+          # took 17-35s on a good day and, on #18482 (run 43960382195), hung
+          # for the whole 5-minute job budget before the check ever ran. The
+          # step below fetches only the histories the checker reads.
+          fetch-depth: 1
           # The merge commit GitHub synthesises for a PR is not what gets
           # squashed; the PR's own commits are. Check those.
           ref: ${{ github.event.pull_request.head.sha }}
@@ -62,17 +67,40 @@ jobs:
       - name: Self-test the attribution checker
         run: bash src/scripts/test-check-squash-signoff-attribution.sh
 
-      - name: Make the default branch resolvable
+      - name: Fetch the PR, base and default-branch histories
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          # A healthy targeted fetch finishes well inside this; a stalled
+          # connection is killed and retried instead of eating the job budget.
+          FETCH_ATTEMPT_TIMEOUT_SECS: '60'
+          FETCH_ATTEMPTS: '3'
         run: |
           set -euo pipefail
-          # Commits already on the default branch are excluded from the check
-          # (see the script). Without this ref a sync PR re-flags every commit
-          # it carries forward, so fetch it explicitly rather than relying on
-          # checkout having populated remote-tracking refs.
-          git fetch --no-tags origin \
-            "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"
+          # The checker walks BASE_SHA..HEAD_SHA, and commits already on the
+          # default branch are excluded (see the script): without that ref a
+          # sync PR re-flags every commit it carries forward. Fetch exactly
+          # those three histories, in full, and nothing else.
+          for attempt in $(seq 1 "$FETCH_ATTEMPTS"); do
+            unshallow=()
+            if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+              unshallow=(--unshallow)
+            fi
+            if timeout "$FETCH_ATTEMPT_TIMEOUT_SECS" git fetch --no-tags ${unshallow[@]+"${unshallow[@]}"} origin \
+                "$HEAD_SHA" "$BASE_SHA" \
+                "+refs/heads/${DEFAULT_BRANCH}:refs/remotes/origin/${DEFAULT_BRANCH}"; then
+              break
+            fi
+            if [ "$attempt" = "$FETCH_ATTEMPTS" ]; then
+              echo "::error::git fetch failed or stalled ${FETCH_ATTEMPTS} times (${FETCH_ATTEMPT_TIMEOUT_SECS}s each)" >&2
+              exit 1
+            fi
+            echo "::warning::git fetch attempt ${attempt} failed or stalled; retrying" >&2
+          done
+          test "$(git rev-parse --is-shallow-repository)" = "false"
+          git rev-parse --verify "${BASE_SHA}^{commit}" >/dev/null
+          git rev-parse --verify "${HEAD_SHA}^{commit}" >/dev/null
           git rev-parse --verify "refs/remotes/origin/${DEFAULT_BRANCH}^{commit}" >/dev/null
 
       - name: Check sign-off attribution across the PR's commits

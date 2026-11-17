@@ -87,9 +87,19 @@ type ResearchItem struct {
 	// Betty marks a deep dive the persona started on an addressed
 	// question (hivecommons/hive#18393): Spek never hears of it, and its
 	// result is reported once, restyled by the persona.
-	Betty     bool      `json:"betty,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Betty bool `json:"betty,omitempty"`
+	// Voice records that the persona's deep dive was asked by voice: its
+	// follow-up, progress note and failure notice are spoken (chat when the
+	// meeting cannot hear her).
+	Voice bool `json:"voice,omitempty"`
+	// ProgressSent records the one "still looking" note for a deep dive
+	// that runs long (hivecommons/hive#18590).
+	ProgressSent bool `json:"progress_sent,omitempty"`
+	// DispatchedAt is when the item went to the research pool (after any
+	// approval); the deep dive's progress note and timeout count from it.
+	DispatchedAt *time.Time `json:"dispatched_at,omitempty"`
+	CreatedAt    time.Time  `json:"created_at"`
+	UpdatedAt    time.Time  `json:"updated_at"`
 }
 
 // Ask is a clarifying question hive posted for Spek.

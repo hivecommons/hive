@@ -208,15 +208,22 @@ func TestReferenceRepoIdentity_PerRepoCredential(t *testing.T) {
 			}
 		}
 	}
-	// The own-item follow-up reads under the owner token, so it watches only
-	// the owner-identity repos.
+	// The own-item follow-up watches every write-tier repo under the login
+	// its writes appear as: the bot's items on the bot repo, the owner's on
+	// the owner repo.
 	res, err := buildReferenceRepoPolicies(context.Background(), refs, withIdentity(testReferenceRepoDeps(), config.RemoteWriteIdentityBot, app), testLogger())
 	if err != nil {
 		t.Fatal(err)
 	}
-	repos, login := remoteItemRepos(res.repos)
-	if len(repos) != 1 || repos[0] != "acme/site" || login != testOwnerLogin {
-		t.Fatalf("follow-up must watch only owner-identity repos, got %v as %q", repos, login)
+	targets := remoteItemTargets(res.repos)
+	want := map[string]string{"hivecommons/docs": testBotLogin, "acme/site": testOwnerLogin}
+	if len(targets) != len(want) {
+		t.Fatalf("follow-up targets = %+v", targets)
+	}
+	for _, tg := range targets {
+		if want[tg.Repo] != tg.Login {
+			t.Fatalf("follow-up for %s must list items by %q, got %q", tg.Repo, want[tg.Repo], tg.Login)
+		}
 	}
 }
 

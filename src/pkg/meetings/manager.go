@@ -2,6 +2,7 @@ package meetings
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,6 +20,15 @@ import (
 // nil ChatPost error.
 type ConfirmingChat interface {
 	ChatPostConfirmed(ctx context.Context, nativeID, text string) (bool, error)
+}
+
+// TranscriptCursor is a Quorum that can say how far its transcript has got
+// (transcript.read next_seq). The real Client implements it; the manager
+// reads it once the consent notice is delivered, so a final segment Quorum
+// already held when the notice landed is discarded even if the event stream
+// delivers it later. A Quorum without it (in-process fakes) skips that fence.
+type TranscriptCursor interface {
+	TranscriptRead(ctx context.Context, nativeID string, afterSeq int64) (TranscriptResult, error)
 }
 
 // Quorum is the slice of the Quorum client the manager uses; tests fake it.
@@ -51,6 +61,11 @@ const (
 	// ConsentViaChat and ConsentViaVoice record how the notice was delivered.
 	ConsentViaChat  = "chat"
 	ConsentViaVoice = "voice"
+	// ConsentSpeechWindow is how long after the notice a segment can still
+	// be one that began before it (a long utterance finalized late). The
+	// ConsentSpeechEnd fence applies only this long, so a platform that
+	// restarts its session clock cannot silence the rest of the meeting.
+	ConsentSpeechWindow = 2 * time.Minute
 	// ReasonDeclined is the state reason for a platform join request the
 	// owner declined.
 	ReasonDeclined = "declined"
@@ -503,7 +518,7 @@ func (m *Manager) follow(ctx context.Context, id, nativeID string, lastSeq int64
 	backoff := m.opts.ReconnectMin
 	for ctx.Err() == nil {
 		done := false
-		err := m.opts.Quorum.Events(ctx, nativeID, lastSeq, func(ev Event) bool {
+		err := m.opts.Quorum.Events(ctx, nativeID, m.replayFrom(id, lastSeq), func(ev Event) bool {
 			backoff = m.opts.ReconnectMin
 			if ev.Type == EventSegment || ev.Type == EventChat {
 				if ev.Seq > 0 && ev.Seq <= lastSeq {
@@ -531,6 +546,18 @@ func (m *Manager) follow(ctx context.Context, id, nativeID string, lastSeq int64
 		}
 		backoff = min(backoff*2, m.opts.ReconnectMax)
 	}
+}
+
+// replayFrom is the after_seq for a (re)connect. While the consent notice
+// is still pending it is 0, no replay: whatever Quorum buffered while hive
+// was away came before the notice and is not wanted. The stream opens with
+// the meeting's state, which is where the notice is posted, so a replay
+// would otherwise hand pre-consent lines over as if they came after it.
+func (m *Manager) replayFrom(id string, lastSeq int64) int64 {
+	if mt, err := m.opts.Store.Get(id); err == nil && mt.ConsentPostedAt == nil {
+		return 0
+	}
+	return lastSeq
 }
 
 // handle applies one event. It reports whether the meeting is over.
@@ -612,7 +639,7 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 
 	chatErr := m.postConsentChat(ctx, mt)
 	if chatErr == nil {
-		m.markConsent(mt.ID, ConsentViaChat)
+		m.markConsent(ctx, mt, ConsentViaChat)
 		return false
 	}
 	if consentTransient(chatErr) && attempt < m.opts.ConsentAttempts {
@@ -629,7 +656,7 @@ func (m *Manager) ensureConsent(ctx context.Context, mt Meeting) bool {
 		cancel()
 		if sayErr == nil {
 			m.log.Info("[meetings] consent notice spoken; chat could not deliver it", "meeting", mt.ID, "chat_error", chatErr)
-			m.markConsent(mt.ID, ConsentViaVoice)
+			m.markConsent(ctx, mt, ConsentViaVoice)
 			return false
 		}
 		why += ", voice failed (" + sayErr.Error() + ")"
@@ -684,10 +711,24 @@ func consentTransient(err error) bool {
 	return true
 }
 
-// markConsent records the notice as delivered.
-func (m *Manager) markConsent(id, via string) {
-	_, _ = m.update(id, nil, func(x *Meeting) {
-		x.ConsentPostedAt, x.ConsentVia, x.ConsentError = timePtr(m.opts.Now()), via, ""
+// markConsent records the notice as delivered, and raises ConsentSeq to
+// Quorum's transcript cursor at that moment when Quorum can report it.
+func (m *Manager) markConsent(ctx context.Context, mt Meeting, via string) {
+	at := m.opts.Now()
+	var fence int64
+	if tc, ok := m.opts.Quorum.(TranscriptCursor); ok {
+		cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
+		res, err := tc.TranscriptRead(cctx, mt.NativeID, mt.LastSeq)
+		cancel()
+		if err != nil {
+			m.log.Warn("[meetings] reading quorum's transcript cursor for the consent fence", "meeting", mt.ID, "error", err)
+		} else {
+			fence = res.NextSeq
+		}
+	}
+	_, _ = m.update(mt.ID, nil, func(x *Meeting) {
+		x.ConsentPostedAt, x.ConsentVia, x.ConsentError = timePtr(at), via, ""
+		x.ConsentSeq = max(x.ConsentSeq, fence)
 	})
 }
 
@@ -710,8 +751,17 @@ func (m *Manager) handleLine(ctx context.Context, id string, ev Event) bool {
 	if err != nil {
 		return false
 	}
+	pending := mt.ConsentPostedAt == nil
 	if m.ensureConsent(ctx, mt) {
 		return true
+	}
+	if pending {
+		// The line came before the notice, even if this line is what got
+		// the notice delivered just now.
+		return m.dropPreConsent(ctx, id, ev, true)
+	}
+	if beforeConsent(mt, ev, m.opts.Now()) {
+		return m.dropPreConsent(ctx, id, ev, false)
 	}
 	if ev.Type == EventSegment && !ev.Final {
 		m.emit(Update{Meeting: mt, Event: &ev})
@@ -739,6 +789,87 @@ func (m *Manager) handleLine(ctx context.Context, id string, ev Event) bool {
 	}
 	m.emit(Update{Meeting: mt, Event: &ev})
 	return false
+}
+
+// beforeConsent reports whether a line that arrived after the notice was
+// delivered still belongs to the time before it: a seq Quorum had already
+// reached when the notice landed, a chat line stamped earlier, or a
+// segment that began before the last speech heard while consent was pending.
+func beforeConsent(mt Meeting, ev Event, now time.Time) bool {
+	if mt.ConsentPostedAt == nil {
+		return true
+	}
+	if ev.Seq > 0 && ev.Seq <= mt.ConsentSeq {
+		return true
+	}
+	if ev.Type == EventChat {
+		var at time.Time
+		if len(ev.At) > 0 && json.Unmarshal(ev.At, &at) == nil && !at.IsZero() && at.Before(*mt.ConsentPostedAt) {
+			return true
+		}
+		return false
+	}
+	if mt.ConsentSpeechEnd > 0 && now.Sub(*mt.ConsentPostedAt) < ConsentSpeechWindow {
+		if start, ok := sessionSecs(ev.Start); ok && start < mt.ConsentSpeechEnd {
+			return true
+		}
+	}
+	return false
+}
+
+// sessionSecs decodes a segment's start or end (seconds from the session
+// start).
+func sessionSecs(raw json.RawMessage) (float64, bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	var v float64
+	if json.Unmarshal(raw, &v) != nil {
+		return 0, false
+	}
+	return v, true
+}
+
+// dropPreConsent discards a line from before the consent notice: it is not
+// stored and not handed to listeners (Betty, Spektacular, research, facts,
+// the Inbox hand-off), only counted. The replay cursor moves past it so a
+// reconnect or restart never brings it back. A leave phrase is still
+// honoured: a participant can always remove the bot. pending says the
+// notice was not delivered when the line arrived, so the line also raises
+// the fences that catch its late-finalized neighbours.
+func (m *Manager) dropPreConsent(ctx context.Context, id string, ev Event, pending bool) bool {
+	if cur, err := m.opts.Store.Get(id); err == nil {
+		cur.PreConsentDropped++
+		if ev.Seq > cur.LastSeq && (ev.Type == EventChat || ev.Final) {
+			cur.LastSeq = ev.Seq
+		}
+		if pending {
+			cur.ConsentSeq = max(cur.ConsentSeq, ev.Seq)
+			if end, ok := sessionSecs(ev.End); ok {
+				cur.ConsentSpeechEnd = max(cur.ConsentSpeechEnd, end)
+			}
+		}
+		// Quietly, like the replay cursor: bookkeeping, not an update.
+		if err := m.opts.Store.Save(cur); err != nil {
+			m.log.Warn("[meetings] counting a pre-consent line", "meeting", id, "error", err)
+		}
+	}
+	if ev.Type == EventSegment && !ev.Final || !m.leave.Match(ev.Text) {
+		return false
+	}
+	m.log.Info("[meetings] leave requested before the consent notice was delivered", "meeting", id)
+	mt, err := m.opts.Store.Get(id)
+	if err != nil {
+		return false
+	}
+	cctx, cancel := context.WithTimeout(ctx, m.opts.CallTimeout)
+	defer cancel()
+	if _, err := m.opts.Quorum.Leave(cctx, mt.NativeID); err != nil && !IsCode(err, CodeNotFound) {
+		m.log.Warn("[meetings] leave failed", "meeting", id, "error", err)
+	}
+	// No event on the update: the line itself is not kept or forwarded.
+	_, _ = m.finish(id, StateEnded, ReasonHiveLeave, nil)
+	return true
 }
 
 // armLobby (re)starts the lobby timer: when it fires and the meeting is

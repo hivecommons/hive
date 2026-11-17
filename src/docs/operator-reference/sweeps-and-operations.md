@@ -552,9 +552,16 @@ not what it records:
   Hive trusted-author auto-merge …" or "merged by Hive on behalf of …") is
   the card's `auto-merge` section too, with its @-mentions neutralised, so
   a merge no longer emails the author and every watcher; in `normal` it is
-  still its own comment. A merge that waits on a person (the 085
-  needs-decision and 090 ready-for-human-merge entry comments) still posts
-  a comment of its own.
+  still its own comment. The review Follow-ups checklist (findings held
+  below `review.backlog.min_severity`) is the card's collapsible
+  `review-followups` section, ticks kept across passes (a PR that already
+  has the old Follow-ups comment keeps editing that one), and a 090
+  ready-for-human-merge entry whose only objection is the author's trust
+  tier is the card's `stage-ready` line (hivecommons/hive#18606). A merge
+  that waits on a specific step from a person (every 085 needs-decision
+  entry, and a held or manual-merge 090) still posts a comment of its own.
+  On the issue side the stage note naming the covering PR
+  (`issue-pr-link`) is a section of the issue's card in quiet mode too.
 - **No "no findings" reviews.** A reviewer whose whole body is the clean
   acknowledgement — or whose body says it has no findings while its verdict
   report approves with an empty findings list, as the plain `reviewer`

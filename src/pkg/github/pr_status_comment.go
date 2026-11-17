@@ -30,6 +30,21 @@ func (c *Client) UpsertPRStatusSection(ctx context.Context, repo string, number 
 	return res.Created, err
 }
 
+// UpsertPRStatusSectionFunc is UpsertPRStatusSection for a section whose
+// text is merged with what it already says (prstatus.WriteFunc): render
+// receives the section's current body ("" when none) and is re-run on every
+// compare-and-retry read, so an edit a person made in between survives.
+// Reports whether a comment was created.
+func (c *Client) UpsertPRStatusSectionFunc(ctx context.Context, repo string, number int, key string, render func(previous string) string) (bool, error) {
+	if c == nil {
+		return false, ErrNoGitHubClient
+	}
+	owner, repoName := c.splitRepo(repo)
+	f := &clientStatusForge{c: c, owner: owner, repo: repoName, number: number}
+	res, err := prstatus.WriteFunc(ctx, f, prstatus.ItemKey(owner+"/"+repoName, number), key, render)
+	return res.Created, err
+}
+
 // ownStatusCommentLogin reports whether login is exactly this hive's App bot
 // login. Any other account, including another bot, is not the owner, and an
 // unknown App login fails closed so nothing is ever edited or deleted.

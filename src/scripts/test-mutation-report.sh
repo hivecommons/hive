@@ -218,7 +218,9 @@ run_post() {  # run_post <out-dir> [existing-id]
     MUTATION_OUT_DIR="$1" PR_NUMBER=42 GITHUB_REPOSITORY=example/hive bash "$SCRIPT" post 2>&1)
   writes=$(cat "$GH_WRITE_LOG")
 }
-mkdir -p "$TMP/out-pass" "$TMP/out-lived"
+mkdir -p "$TMP/out-pass" "$TMP/out-lived" "$TMP/out-error"
+printf '<!-- hive-mutation -->\n### Mutation testing\n\ngremlins did not produce a report for 1 package(s)\n' > "$TMP/out-error/comment.md"
+echo error > "$TMP/out-error/verdict"
 printf '<!-- hive-mutation -->\n### Mutation testing\n\nAll 3 mutant(s) in changed files were killed.\n' > "$TMP/out-pass/comment.md"
 echo pass > "$TMP/out-pass/verdict"
 printf '<!-- hive-mutation -->\n### Mutation testing\n\ngremlins found **1 surviving mutant(s)**\n' > "$TMP/out-lived/comment.md"
@@ -236,6 +238,15 @@ run_post "$TMP/out-pass" 99
 grep -q "^api -X PATCH repos/example/hive/issues/comments/99 -f body=<!-- hive-mutation -->" <<<"$writes" && pass "pass after a finding edits the existing comment, keeping the marker" || bad "pass did not edit: $writes"
 grep -q 'Resolved: no surviving or uncovered mutants' <<<"$writes" && pass "edited body is the one-line resolved note" || bad "resolved note missing: $writes"
 grep -q 'All 3 mutant' <<<"$writes" && bad "full report was written to the comment" || pass "full report stays out of the comment"
+
+echo "error verdict (#18607)"
+run_post "$TMP/out-error"
+[ -z "$writes" ] && pass "error verdict with no earlier comment posts nothing" || bad "error posted: $writes"
+out_grep -q 'verdict error and no earlier comment; not posting' && pass "error skip is logged" || bad "error skip not logged: $output"
+grep -q 'gremlins did not produce a report for 1 package' "$SUMMARY" && pass "error report lands in the step summary" || bad "summary missing error report"
+run_post "$TMP/out-error" 99
+grep -q "^api -X PATCH repos/example/hive/issues/comments/99" <<<"$writes" && pass "error after a finding edits the existing comment" || bad "error did not edit: $writes"
+grep -q 'POST' <<<"$writes" && bad "error posted a new comment" || pass "error never posts a new comment"
 
 if [ "$fail" -ne 0 ]; then
   echo "test-mutation-report.sh: FAILED"
