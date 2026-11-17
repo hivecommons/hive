@@ -1267,7 +1267,14 @@ A PR merges through this tier only when all of the following hold:
   does. When the approval is already recorded and the PR is parked for
   another reason, **What to do** says there is nothing more to approve
   instead of asking for it again
-  ([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254)). While the
+  ([Danathar/zfs-aurora-complex#254](https://github.com/Danathar/zfs-aurora-complex/pull/254)). That
+  holds when the lane stopped at an earlier gate (a fork-guard check, a
+  hold) before it reached the review gate or the fence: the stage pass then
+  reads the head's trusted approval itself (cached per head for ten
+  minutes), and the 085 note lists neither the reviewer's `requires_human`
+  question nor the fence "awaiting owner approval" that the approval
+  already answered, and the same-head 085 re-park does not ask it again
+  ([projectbluefin/utah-packages#1181](https://github.com/projectbluefin/utah-packages/pull/1181)). While the
   approval is still owed and a sentinel alert is open on the same PR, **What
   to do** says that **Approve** on the PR's Activity monitor row (or
   `approve` through the admin MCP's `repository.item_decision`) records the
