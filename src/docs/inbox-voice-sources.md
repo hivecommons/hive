@@ -664,6 +664,21 @@ From the hive: **Report a problem** on the mail's line under
 the reply text from the bounce and the day. Leave out addresses, the
 subject and the file.
 
+## Neural input
+
+There is no neural (brain-computer interface) source, because no vendor
+publishes an API, SDK or export that yields text or speech. People who use
+such a device drive an ordinary computer with it and reach the Inbox through
+the dashboard; **＋ Add → Quick note** takes typed or dictated text
+([Quick note](inbox-uploads.md#quick-note)).
+
+Under the source chips the Inbox shows a quieter row, **Works today** and
+**Neural input (coming soon)**. Those chips are not sources: they only show
+a short explanation, and there is nothing to connect. Hive is not affiliated
+with the projects named; a listing reflects interest, not a commitment from
+them. The full list, with what each can and cannot do today, is in
+[Input methods and the Inbox](inbox-input-methods.md).
+
 ## Deleting an item
 
 Every Inbox item can be deleted
@@ -770,5 +785,8 @@ See [api-reference/knowledge.md](api-reference/knowledge.md) for
 `GET /api/inbox` always answers `200`: on a hive with no voice connector
 configured it returns an empty `items` list and every source as
 `configured: false`, and the Inbox panel shows its empty state with a
-"Connect sources" button. A connector added under Knowledge → Integrations
+"Connect sources" button. The response also carries `input_methods`, the
+static catalogue behind the input-methods row
+([Input methods and the Inbox](inbox-input-methods.md)); its entries are
+never sources. A connector added under Knowledge → Integrations
 starts syncing after the next hive restart.

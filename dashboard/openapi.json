@@ -41116,6 +41116,51 @@
                         }
                       }
                     },
+                    "input_methods": {
+                      "type": "array",
+                      "description": "Static catalogue of input methods the Inbox lists but does not connect to (src/docs/inbox-input-methods.md). Not sources: no entry has settings, sync or sign-in.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "name": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "neural",
+                              "silent-speech",
+                              "gaze",
+                              "switch",
+                              "voice"
+                            ]
+                          },
+                          "state": {
+                            "type": "string",
+                            "enum": [
+                              "works_today",
+                              "coming_soon"
+                            ],
+                            "description": "works_today: already enters text, use Quick note. coming_soon: no public API or export of text or speech yet."
+                          },
+                          "note": {
+                            "type": "string",
+                            "description": "One factual sentence about the project"
+                          },
+                          "url": {
+                            "type": "string",
+                            "description": "The project's own page (https)"
+                          },
+                          "featured": {
+                            "type": "boolean",
+                            "description": "Shown in the Inbox row; the rest are listed in the docs only"
+                          }
+                        }
+                      }
+                    },
                     "email_in": {
                       "type": "object",
                       "description": "This hive's email-in address, hive@<dashboard host>, for owner and read-write callers (absent for everyone else). Mail to it becomes Inbox items; calendar invites become Calendar entries.",

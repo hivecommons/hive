@@ -149,6 +149,33 @@ Fetch rules (SSRF protection):
   the name again). When `network.upstream_proxy` matches the host, the hive
   asks the proxy to `CONNECT` to the checked IP and port.
 
+## Quick note
+
+**＋ Add** also has a **Quick note** box: type or dictate text and choose
+**Add note**. It is the way to put a thought into the Inbox without a file,
+and it works with any input method that enters text (a keyboard, dictation,
+gaze typing, switch access; see [Input methods and the Inbox](inbox-input-methods.md)).
+
+- The note is sent as a markdown file named `note-<date>-<time>.md`
+  (`note-2026-11-17-143005.md`, the browser's local time) through the same
+  route as a dropped file, `POST /api/inbox/uploads`. There is no separate
+  route and no separate storage: everything on this page applies to it. The
+  hive stores it under `connector-state/uploads/<id>/`, writes the Knowledge
+  fact, records who added it, audits it as `inbox_upload`, applies the
+  auto-routing rules and deletes it with the item.
+- A first line that is a `# ` heading becomes the item's title; otherwise
+  the item is titled after the file name.
+- The size cap is the document cap, `inbox.uploads.max_file_bytes`. The
+  browser checks it before sending and the hive enforces it; a note the hive
+  refuses stays in the box with the reason, so the text is not lost.
+- Text of **several lines** pasted onto the Inbox (outside a text field)
+  lands in the Quick note box for review instead of being dropped; nothing
+  is created until you choose **Add note**. A single pasted link is still
+  added as a link, and other single-line text is still ignored.
+- The text in the box survives the Inbox's background refreshes, and the
+  caret stays where it was.
+- Owner and read-write sessions only, like every other way of adding.
+
 ## Limits
 
 All limits have defaults; `inbox.uploads` in `hive.yaml` overrides them and
