@@ -118,6 +118,7 @@ func (s *Store) AppendReply(id, author, text string, at time.Time, info ReplyInf
 		return Event{}, err
 	}
 	ev.Raw = raw
+	s.echoes.remember(id, text, at)
 	return ev, s.AppendTranscript(id, ev)
 }
 
