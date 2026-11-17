@@ -163,6 +163,8 @@ exhaustion it suppresses kicks for all but explicitly-exempt agents.
 
 ---
 
+A kick the hive or the agent refuses is explained in [Kick refusals](kick-refusals.md).
+
 ## 4. The deterministic pipeline
 
 Before any agent is kicked, `run-pipeline.sh` runs the `pre-kick` stages defined
