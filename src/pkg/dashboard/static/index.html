@@ -24271,7 +24271,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const empty = calm.length - unchecked;
         const label = calm.length === 1 && !active.length ? '' : [empty ? (empty === 1 ? '1 branch' : empty + ' branches') + ' with nothing queued' : '',
           unchecked ? (unchecked === 1 ? '1 branch' : unchecked + ' branches') + ' not checked yet' : ''].filter(Boolean).join(', ');
-        const list = `<ul class="ham-merged-list ham-native-list ham-native-calm">${calm.map(s => `<li><span class="ham-native-scope">${stageTrackerNativeScopeName(s.q)}</span><span class="ham-native-line">${esc(stageTrackerNativeScopeLine(s.q, s.facts, nowMs))}</span><span class="ham-merged-meta">${esc(stageTrackerNativeChecked(s.q.observed_at, nowMs))}</span></li>`).join('')}</ul>`;
+        const list = `<ul class="ham-merged-list ham-native-list ham-native-calm">${calm.map(s => `<li><span class="ham-native-scope">${stageTrackerNativeScopeName(s.q)}</span><span class="ham-native-line">${esc(stageTrackerNativeScopeLine(s.q, s.facts, nowMs))}</span><span class="ham-merged-meta">${esc(stageTrackerNativeChecked(s.q.observed_at, nowMs))}</span>${stageTrackerNativeScopeDetails(s.q, s.facts, all, page, nowMs)}</li>`).join('')}</ul>`;
         folded = label ? `<details class="ham-native-details ham-native-folded"><summary>${esc(label)}</summary>${list}</details>` : list;
       }
       return head + rows + folded;
