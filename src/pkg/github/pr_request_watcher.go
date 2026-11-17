@@ -167,7 +167,7 @@ type PRRequestAuthorizer func(agent string, fileUID int) error
 //
 // holdLabel (F6) decides server-side, from the authoring agent and authoritative
 // hive config (the ACMM level), whether a freshly-opened PR must carry the
-// "hold" label. It is applied AFTER the PR is created, on the path that
+// ready-for-review gate label (the literal "hold" before #18468). It is applied AFTER the PR is created, on the path that
 // actually runs — unlike the gh-wrapper.sh tail, which was dead code (it sat
 // after `exec hive-open-pr`), so hold-gated PRs were being opened unlabeled. A
 // nil holdLabel means "never hold".
@@ -597,7 +597,7 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 	resp.DuplicateTree = res.DuplicateTree
 	resp.DuplicateReason = res.DuplicateReason
 
-	// F6: apply the ACMM "hold" label server-side, from authoritative config, on
+	// F6: apply the ACMM gate label (ready-for-review; "hold" before #18468) server-side, from authoritative config, on
 	// the path that actually runs. At hold-gated levels (L3/L4/L5) every
 	// agent-opened PR must be human-approved before merge; the label is what the
 	// merge gate keys on. The old gh-wrapper.sh `args+=("--label" "hold")` was
@@ -655,10 +655,18 @@ func (c *Client) handleOnePRRequest(ctx context.Context, path string, nowFn func
 		resp.ReporterTrustHeld = reporter.Held
 	}
 	if !res.IsDuplicate() && (holdByLevel || selfAuth.Held || reporter.Held) {
-		holdLabels := []string{"hold"}
+		// The hive never applies `hold` itself (hivecommons/hive#18468): a
+		// person's `hold` means hands-off, and the hive's own gates say who
+		// acts next. The level gate's PR is done and waits for review; the
+		// #5117 and #9665 gates wait for a human decision. Both labels block
+		// merges exactly like `hold`.
+		holdLabels := []string{ReadyForReviewLabelName()}
+		if selfAuth.Held {
+			holdLabels = []string{DecisionNeededLabelName()}
+		}
 		if reporter.Held {
 			// A reporter-trust hold is a human-only decision at every level, so
-			// it raises needs-human with the hold (hivecommons/hive#10773).
+			// it raises needs-human with the gate label (hivecommons/hive#10773).
 			holdLabels = reporterTrustHoldLabels()
 			reporter.OwnsNeedsHuman = !res.AlreadyExisted
 		}

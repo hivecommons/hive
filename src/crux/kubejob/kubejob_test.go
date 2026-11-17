@@ -43,6 +43,8 @@ type fakeAPI struct {
 	policyErr             int            // when >0, the NetworkPolicy POST fails with this status
 	policyDeleted         bool
 	order                 []string // "policy", "job" in creation order
+	selfPod               string   // JSON body of hive's own pod (testSelfPod), "" = 404
+	selfPodGets           int
 }
 
 func newFakeAPI() *fakeAPI {
@@ -120,6 +122,14 @@ func (f *fakeAPI) handler(t *testing.T) http.HandlerFunc {
 				f.onPodLogAfterComplete()
 			}
 			_, _ = w.Write([]byte(f.logBody))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/pods/"+testSelfPod):
+			f.selfPodGets++
+			if f.selfPod == "" {
+				w.WriteHeader(http.StatusNotFound)
+				_, _ = w.Write([]byte(`{"kind":"Status","message":"pods \"` + testSelfPod + `\" not found"}`))
+				return
+			}
+			_, _ = w.Write([]byte(f.selfPod))
 		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/pods/"):
 			state := `{"terminated":{"exitCode":` + itoa(f.exitCode) + `}}`
 			if f.podStatus != "terminated" {
@@ -155,6 +165,7 @@ func newLauncher(srv *httptest.Server, opts Options) *Launcher {
 		HTTPClient: srv.Client(),
 		TokenPath:  filepath.Join("/nonexistent", "token"),
 		Now:        func() time.Time { return time.Unix(1700000000, 0) },
+		PodName:    testSelfPod,
 	}
 }
 

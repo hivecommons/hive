@@ -91,6 +91,10 @@ type Item struct {
 	AudioExpired bool `json:"audio_expired,omitempty"`
 	// AudioRetentionDays is how long a hive recording's audio is kept.
 	AudioRetentionDays int `json:"audio_retention_days,omitempty"`
+	// AudioExpiresAt is when retention deletes audio this hive stores
+	// itself (a hive recording, a dropped audio file); zero when the audio
+	// lives elsewhere, is already gone, or is kept without a limit.
+	AudioExpiresAt time.Time `json:"audio_expires_at,omitzero"`
 	// AwaitingApproval marks an item from outside the hive's allowlist (the
 	// email source, #18395): it cannot be routed, shared or transcribed until
 	// the owner approves it.

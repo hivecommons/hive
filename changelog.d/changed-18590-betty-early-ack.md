@@ -1,0 +1,1 @@
+- Betty speaks her acknowledgement as soon as a partial transcript names her with a request, instead of after the final transcript, so the room hears she is on it within a couple of seconds (hivecommons/hive#18590).

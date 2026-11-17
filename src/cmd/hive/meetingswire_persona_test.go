@@ -21,7 +21,7 @@ func TestMeetingPersonaFactory(t *testing.T) {
 	persona := cfg.Meetings.Persona.Resolve()
 	llm := config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeOpenAI, Endpoint: "http://127.0.0.1:1", Model: "m", MaxInFlight: 1}
 	beadStores := func() map[string]*beads.Store { return nil }
-	fn := meetingPersonaFactory(cfg, persona, llm, store, &knowledge.KnowledgeAPI{}, beadStores, t.TempDir(), 100, true, slog.New(slog.DiscardHandler))
+	fn := meetingPersonaFactory(cfg, persona, llm, store, &knowledge.KnowledgeAPI{}, beadStores, t.TempDir(), 100, true, slog.New(slog.DiscardHandler), nil)
 	if fn == nil {
 		t.Fatal("the persona is on by default")
 	}
@@ -35,21 +35,21 @@ func TestMeetingPersonaFactory(t *testing.T) {
 	web := cfg.Meetings.Persona
 	web.SearxngURL = "http://searxng.meetings.svc.cluster.local:8080"
 	anth := config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeAnthropic, AnthropicKey: "ak", Model: config.DefaultMeetingsPersonaAnthropicModel, MaxInFlight: 1}
-	if e := meetingPersonaFactory(cfg, web.Resolve(), anth, store, nil, nil, "", 0, false, nil)(meetings.Meeting{ID: "m3"}); e == nil {
+	if e := meetingPersonaFactory(cfg, web.Resolve(), anth, store, nil, nil, "", 0, false, nil, nil)(meetings.Meeting{ID: "m3"}); e == nil {
 		t.Fatal("want an engine on the Anthropic path")
 	} else {
 		e.Close()
 	}
 	// Without a model Betty still runs (intros only).
-	if e := meetingPersonaFactory(cfg, persona, config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeNone}, store, nil, nil, "", 0, false, nil)(meetings.Meeting{ID: "m2"}); e == nil {
+	if e := meetingPersonaFactory(cfg, persona, config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeNone}, store, nil, nil, "", 0, false, nil, nil)(meetings.Meeting{ID: "m2"}); e == nil {
 		t.Fatal("want an engine without a model")
 	}
 	off := false
 	cfg.Meetings.Persona.Enabled = &off
-	if meetingPersonaFactory(cfg, cfg.Meetings.Persona.Resolve(), llm, store, nil, nil, "", 0, false, nil) != nil {
+	if meetingPersonaFactory(cfg, cfg.Meetings.Persona.Resolve(), llm, store, nil, nil, "", 0, false, nil, nil) != nil {
 		t.Fatal("persona off means no factory")
 	}
-	r := wireMeetingsLive(cfg, mustManager(t, store), store, nil, nil, nil, nil)
+	r := wireMeetingsLive(cfg, mustManager(t, store), store, nil, nil, nil, nil, nil)
 	if r == nil {
 		t.Fatal("live loop without the persona")
 	}

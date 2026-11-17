@@ -380,7 +380,7 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 	// agentsmd.ParseNearest for closest-wins nested AGENTS.md. That still has no
 	// caller — nothing on the kick path knows which FILE an agent will touch —
 	// so it stays deferred, unlike the checkout root, which is now threaded.
-	agentsSection := s.primeAgentsMd(repoRoot)
+	agentsSection := s.primeAgentsMd(primaryRepo, repoRoot)
 	if agentsSection != "" {
 		knowledgeSection = agentsSection + "\n" + knowledgeSection
 	}
@@ -402,7 +402,7 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 	mergeEligibleList, ciFailingList := "", ""
 	if guidance == nil {
 		mergeEligibleList = s.buildMergeEligibleListFor(repoInScope, elideStuffed)
-		ciFailingList = s.buildCIFailingListFor(repoInScope)
+		ciFailingList = s.buildCIFailingListForAgent(baseName, repoInScope)
 	}
 
 	// The built-in per-kick variables. Each value is already computed above, so
@@ -429,6 +429,7 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 		"GH_AUTH":               lit(s.ghAuthInstructions()),
 		"WORK_TRACKER":          lit(s.workTrackerSection()),
 		"IN_FLIGHT":             lit(inflightNote(heldInflight)),
+		"TOPIC_CLAIMS":          lit(topicClaimsSection(s.topicClaimsFor(agentName))),
 		"PROJECT_ORG":           lit(s.cfg.Project.Org),
 		"PROJECT_NAME":          lit(s.cfg.Project.Name),
 		"PROJECT_PRIMARY_REPO":  lit(fullPrimaryRepo),
@@ -455,6 +456,9 @@ func (s *Scheduler) substituteTemplate(template string, actionable *github.Actio
 		"INCEPTION_REPO_URL": lit(""),
 		"MERGE_ELIGIBLE":     lit(mergeEligibleList),
 		"CI_FAILING":         lit(ciFailingList),
+		// Upstream releases the release-feed watcher found for this agent
+		// and has not yet delivered (hivecommons/hive#18494); "" when none.
+		"NEW_RELEASES": func() string { return s.newReleasesBlock(agentName) },
 	}}
 	if guidance != nil {
 		for _, name := range guidanceBlankedVars {

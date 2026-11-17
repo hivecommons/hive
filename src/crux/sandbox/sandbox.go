@@ -45,6 +45,13 @@ type LaunchSpec struct {
 	// OnStarted reports that the launcher accepted the run, not merely that
 	// the manager queued it. Called at most once.
 	OnStarted func()
+	// Relays asks the launcher to supply hive's sandbox relays (RelayNames)
+	// on PATH inside the sandbox (#18512). Set for agent kicks only.
+	Relays bool
+	// RelayHostDir is the host directory the Podman launcher bind-mounts
+	// read-only at RelayMountPath. PodmanLauncher.Run stages it when Relays
+	// is set; PodmanArgs mounts it and wraps the command when it is non-empty.
+	RelayHostDir string
 }
 
 type Result struct {
@@ -76,6 +83,14 @@ func (l PodmanLauncher) Run(ctx context.Context, spec LaunchSpec) (res Result, r
 	}
 	if _, err := exec.LookPath(bin); err != nil {
 		return Result{}, fmt.Errorf("sandbox: podman is required but was not found in PATH: %w", err)
+	}
+	if spec.Relays && spec.RelayHostDir == "" {
+		dir, cleanup, err := StageRelays()
+		if err != nil {
+			return Result{}, err
+		}
+		defer cleanup()
+		spec.RelayHostDir = dir
 	}
 	args, err := PodmanArgs(spec)
 	if err != nil {
@@ -188,6 +203,11 @@ func PodmanArgs(spec LaunchSpec) ([]string, error) {
 		}
 		args = append(args, extra...)
 	}
+	command := spec.Command
+	if spec.RelayHostDir != "" {
+		args = append(args, "-v", filepath.Clean(spec.RelayHostDir)+":"+RelayMountPath+":ro,Z")
+		command = RelayCommand(command)
+	}
 	args = append(args, "--workdir", workdir)
 	// Name only: podman takes the value from its own environment, which Run
 	// sets from the same spec.Env. A value on the command line would be
@@ -199,7 +219,7 @@ func PodmanArgs(spec LaunchSpec) ([]string, error) {
 		}
 	}
 	args = append(args, spec.Image)
-	args = append(args, spec.Command...)
+	args = append(args, command...)
 	return args, nil
 }
 

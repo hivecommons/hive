@@ -209,6 +209,11 @@ type IssueFacts struct {
 	// then asks the writer to clear the stale label in the same write
 	// (hivecommons/hive#14586).
 	TriageAwaitingLabel string
+	// TriageClearYielded is set when the label came back after the hive
+	// removed it once (stagelabels.Record.TriageClearYielded): another
+	// writer owns it on this issue, so the deriver no longer asks for it
+	// to be cleared (hivecommons/hive#18387).
+	TriageClearYielded bool
 }
 
 // ClaimFact is the live claim on an issue.

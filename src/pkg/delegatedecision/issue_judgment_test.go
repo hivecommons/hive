@@ -167,6 +167,7 @@ func TestSelfreportOpsClassesMatchFleetReport(t *testing.T) {
 	known := map[string]bool{}
 	for _, c := range []string{
 		fleetreport.ClassAgentLoginRequired, fleetreport.ClassInferenceAuthFailed, fleetreport.ClassDataDiskPressure,
+		fleetreport.ClassInferenceBackendAuthFailure,
 		fleetreport.ClassGitHubAppTokenMintFailed, fleetreport.ClassGitHubAppNotInstalled, fleetreport.ClassGitHubAppRepoNotCovered,
 		fleetreport.ClassGitHubAppAlertsPermission, fleetreport.ClassGitHubAppStatusesPermission, fleetreport.ClassForgeUnreachable,
 		fleetreport.ClassProxyConnectDialFailed, fleetreport.ClassProxyPlainForwardFailed, fleetreport.ClassProxyTLSHandshakeFailed, fleetreport.ClassCruxRuntimeUnavailable,

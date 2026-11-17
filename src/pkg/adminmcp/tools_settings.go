@@ -62,6 +62,7 @@ var settingsSections = []SettingsSection{
 	{"variables", "/api/config/variables", "Variable definitions (names, types and scopes)."},
 	{"write_surface", "/api/config/write-surface", "Write-surface allowlist."},
 	{"reference_repos", "/api/config/reference-repos", "Reference repositories (project.reference_repos): repos the hive may study without managing, each with its write opt-in and token file path (never the token); derived entries name their request issue and credential state."},
+	{"prompt_sources", "/api/config/prompt-sources", "Repo-sourced prompt and definition gate: each managed repo with its owner approval for prompt_source / definition_source, plus the seed allowlist."},
 	{"stat_sources", "/api/config/stat-sources", "Stat sources."},
 	{"knowledge_pipeline", "/api/config/knowledge/pipeline", "Knowledge pipeline: engine, curator, primer, code maps and bead synthesizer."},
 	{"knowledge_connectors", "/api/config/knowledge/connectors", "Knowledge connectors (credentials are named, never returned)."},

@@ -84,8 +84,10 @@ func TestDashboardInternalImportCountRatchet(t *testing.T) {
 	// sealed and opened through (hivecommons/hive#18214), plus pkg/mailallow,
 	// the calendar email allowlist, and pkg/mailin (its stdlib-only wire
 	// subpackage, the hive-mx delivery contract) behind the email-in routes
-	// (hivecommons/hive#18395).
-	const maxDashboardInternalImports = 73
+	// (hivecommons/hive#18395), plus pkg/repoagents, the .hive/agents/
+	// discoverer behind the /api/agents/discovered approval routes
+	// (hivecommons/hive#18491).
+	const maxDashboardInternalImports = 74
 
 	entries, err := os.ReadDir(".")
 	if err != nil {

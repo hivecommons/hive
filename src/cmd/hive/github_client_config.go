@@ -103,6 +103,9 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	client.SetAuthorKindLabels(func() authorkind.Names { return b.cfg.Governor.Labels.Author.Names() })
 	client.SetLinearScopeTeams(b.cfg.Governor.WorkSource.Linear.Teams)
 	client.SetHoldLabels(b.githubHoldLabels())
+	// The gate labels the hive applies instead of `hold`
+	// (hivecommons/hive#18468): process-wide, like github.HoldLabels.
+	github.SetHiveGateLabelNames(b.cfg.Governor.Labels.ReadyForReviewLabelOrDefault(), b.cfg.Governor.Labels.DecisionNeededLabelOrDefault())
 	// Umbrella issues no automated claim may take and no claim stages
 	// (governor.claims.never_claim_labels, default `epic`).
 	client.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
@@ -201,6 +204,12 @@ func (b *boot) applyGitHubClientConfigHooks(client *github.Client) {
 	// in-progress sweep: a ledger claim whose 🔒 comment was budget-suppressed
 	// must still read as a claim (claimswire.go, ledgerClaimLookup).
 	client.SetIssueClaimLedger(ledgerClaimLookup(func() *claims.Ledger { return b.issueClaims }))
+	// The bound workflow model lookup the stage engine derives through: the
+	// in-progress sweep and the out-of-cycle stage facts must agree with the
+	// sweeps on a model-bound repository (hivecommons/hive#18434,
+	// stage_model_owned.go). StageReconciler also installs it, but only once
+	// a sweep builds the reconciler for this client.
+	client.SetStageWorkflowFor(stageEngineOptions(b.cfg, b.logger).WorkflowFor)
 	// Duplicate-PR claim ledger fallback for the out-of-cycle stage facts:
 	// a claim release on an issue whose covering PR the ledger already holds
 	// re-derives 040, not 010 (stage_facts_sink.go, ledgerCoveringPR).
@@ -514,8 +523,16 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// governor's cached snapshot now, instead of waiting for GitHub's
 		// `closed` delivery to come back round through the hub.
 		evictHiveClosedPR(b.dashSrv, rec, time.Now())
+		// #18493: a PR the hive merged or closed releases its topic claim.
+		if state := topicStateForAudit(rec.Action); state != "" {
+			releaseTopicClaimsForPR(b.beadStores, rec.Repo, rec.Target, state, b.logger)
+		}
 	})
 	client.SetPRTerminalObservedHook(func(obs github.PRTerminalObservation) {
+		// #18493: an observed merge or close releases the PR's topic claim.
+		if state := topicStateForTerminal(obs.State); state != "" {
+			releaseTopicClaimsForPR(b.beadStores, obs.Repo, obs.Number, state, b.logger)
+		}
 		recordPRTerminalObservedAudit(b.dashSrv, b.cfg.Project.Org, obs)
 		if obs.State != github.PRStateMerged {
 			return

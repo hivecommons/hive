@@ -30,8 +30,11 @@ type Scheduler struct {
 	agentsMdFetcher AgentsMdFetcher
 	// remoteAgents caches the materialised AGENTS.md root per "owner/repo"
 	// for the GitHub fallback in remoteAgentsRepoRoot (#17090).
-	remoteAgents              map[string]remoteAgentsMd
-	remoteAgentsMu            sync.Mutex
+	remoteAgents   map[string]remoteAgentsMd
+	remoteAgentsMu sync.Mutex
+	// agentsMdWarned is root -> "<sha256 of AGENTS.md>|<cap>" last warned
+	// about, so a truncated file is logged once per change, not per kick.
+	agentsMdWarned            sync.Map
 	auditFunc                 AuditFunc
 	advisoryFunc              AdvisoryFunc
 	classifierUnavailableFunc func(error)
@@ -45,23 +48,28 @@ type Scheduler struct {
 	// logged, so it is logged once per day.
 	classifierQuotaWarnedDay string
 	inflight                 InflightLookup
+	prLease                  PRLeaseLookup
 	maintainerNotes          MaintainerNotesLookup
-	runAdmitter              RunAdmitter
-	triageCommenter          TriageCommenter
-	clarity                  clarityGateState
-	priorArt                 priorArtGateState
-	priorArtSearcher         PriorArtSearcher
-	questionAutocloser       QuestionAutocloser
-	lifecycle                timeline.Recorder
-	taskMCPURL               string
-	agentBackend             AgentBackendLookup
-	laneDepths               map[string]int
-	scanned                  bool
-	deferredKicks            map[string]func(string)
-	firstScanDeferred        map[string]bool
-	ioscanWarned             sync.Map
-	lastClassifierErr        atomic.Value // string: latest fail-closed classifier error
-	mu                       sync.RWMutex
+	topicClaims              TopicClaimLookup
+	// newReleases feeds ${NEW_RELEASES} (new_releases.go); atomic because
+	// template substitution may run with s.mu held.
+	newReleases        atomic.Pointer[newReleasesHolder]
+	runAdmitter        RunAdmitter
+	triageCommenter    TriageCommenter
+	clarity            clarityGateState
+	priorArt           priorArtGateState
+	priorArtSearcher   PriorArtSearcher
+	questionAutocloser QuestionAutocloser
+	lifecycle          timeline.Recorder
+	taskMCPURL         string
+	agentBackend       AgentBackendLookup
+	laneDepths         map[string]int
+	scanned            bool
+	deferredKicks      map[string]func(string)
+	firstScanDeferred  map[string]bool
+	ioscanWarned       sync.Map
+	lastClassifierErr  atomic.Value // string: latest fail-closed classifier error
+	mu                 sync.RWMutex
 }
 
 // SetRunTriageDeps attaches the narrow surfaces the scheduler needs for the

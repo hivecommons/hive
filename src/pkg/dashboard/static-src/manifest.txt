@@ -136,6 +136,7 @@ js/inbox-recorder.js
 js/meetings.js
 js/calendar.js
 js/meeting-attendee.js
+js/meeting-attendee-model.js
 js/vault-audit.js
 js/review-queue.js
 js/contributors.js

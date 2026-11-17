@@ -26,7 +26,7 @@ import (
 )
 
 const (
-	DefaultSandboxKickTimeout = 45 * time.Minute
+	DefaultSandboxKickTimeout = kubejob.DefaultKickTimeout
 	defaultSandboxNetworkMode = sandbox.NetworkModeRestricted
 	sandboxPromptRelPath      = ".hive/kick-prompt.txt"
 	sandboxTranscriptRelPath  = sandbox.TranscriptRelPath
@@ -86,7 +86,29 @@ type SandboxKickSpec struct {
 	// relay (crux.SandboxReviewSpoolsDir). Empty disables spooling: the
 	// sandbox then has no way to post a review.
 	ReviewSpoolDir string
+	// ReviewPRs are the PR numbers (in Org/Repo) this kick reviews, taken
+	// from the review kick's hive-written header (hivecommons/hive#18513).
+	// Non-empty makes the kick review-only: workspace prep checks each PR
+	// head out on pr-<n> and writes .hive/pr/<n>.json, and nothing pushes.
+	ReviewPRs []int
+	// TargetPR is an existing PR (in Org/Repo) whose head branch the kick
+	// checks out and adds its commits to instead of opening a new PR
+	// (hivecommons/hive#18574). Zero opens a new PR as before. The manager
+	// resolves it from the kick message (sandboxTargetPRFromKickMessage);
+	// the executor refuses any PR this agent may not push to.
+	TargetPR int
+	// TargetPRSource says where the kick named TargetPR, for the prompt and
+	// the run record.
+	TargetPRSource string
+
+	// targetHead and targetURL are set by workspace prep for a TargetPR
+	// kick: the head commit checked out (the push's lease) and the PR URL.
+	targetHead string
+	targetURL  string
 }
+
+// reviewOnly reports whether the kick reviews PRs and so must never push.
+func (s SandboxKickSpec) reviewOnly() bool { return len(s.ReviewPRs) > 0 }
 
 type configSnapshot struct {
 	Backend         string
@@ -118,8 +140,15 @@ type SandboxKickResult struct {
 	Sandbox        sandbox.Result
 	Broker         *pushbroker.Result
 	PR             *crux.PRResult
-	TimedOut       bool
-	Error          string
+	// PRAttributed is true when the PR client credited a newly opened PR to
+	// the kick's agent itself (crux.AgentPRCreator). When it is false and a
+	// PR was opened, the manager records the credit through the sandbox audit
+	// callback instead (hivecommons/hive#18575).
+	PRAttributed bool
+	// TargetPR is the existing PR the run's commits were pushed to, or 0.
+	TargetPR int
+	TimedOut bool
+	Error    string
 }
 
 // SandboxVerifyResult is one publish.verify command's outcome.
@@ -149,10 +178,17 @@ type SandboxExecutor struct {
 	Minter      pushbroker.TokenMinter
 	PushEnabled bool
 	PRClient    PRCreator
-	Logger      *slog.Logger
-	Now         func() time.Time
-	Mutation    effects.Boundary
-	onStarted   func()
+	// PRReader reads a review target's metadata, diff and comments for the
+	// PR file a review kick gets. Nil still checks the PR head out.
+	PRReader crux.PRReviewContextReader
+	// PRTargetReader reads an existing PR a kick pushes to (spec.TargetPR):
+	// before the checkout and again before the push. Nil refuses every
+	// TargetPR kick.
+	PRTargetReader crux.PRPushTargetReader
+	Logger         *slog.Logger
+	Now            func() time.Time
+	Mutation       effects.Boundary
+	onStarted      func()
 }
 
 func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (SandboxKickResult, error) {
@@ -209,7 +245,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 	}
 	// A spool the relay cannot see is a lost review, not a failed kick: the
 	// rest of the run is still worth doing, so log and go on without one.
-	spool, spoolErr := e.openReviewSpool(spec.ReviewSpoolDir, spec.Agent, workspace)
+	spool, spoolErr := e.openReviewSpool(spec.ReviewSpoolDir, spec.Agent, workspace, spoolTargetOf(spec))
 	if spoolErr != nil && e.Logger != nil {
 		e.Logger.Warn("sandbox review spool unavailable; the sandbox cannot post reviews this kick", "agent", spec.Agent, "error", spoolErr)
 	}
@@ -237,6 +273,9 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		NetworkMode:    spec.NetworkMode,
 		ClineProvider:  provider,
 		OnStarted:      notifyStarted,
+		// hive-review and the other sandbox-safe relays come from hive, not
+		// the project image (#18512).
+		Relays: true,
 	})
 	// Launchers that only report a final successful result still prove the
 	// run was accepted; do not infer acceptance from queueing alone.
@@ -301,6 +340,14 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		res.Error = err.Error()
 		return res, err
 	}
+	// A review kick never pushes (hivecommons/hive#18513), whatever the
+	// caller wired: commits a reviewer leaves on pr-<n> are discarded.
+	if spec.reviewOnly() {
+		if count > 0 {
+			res.PRWithheld = fmt.Sprintf("review-only kick: %d commit(s) left on %s were not pushed", count, spec.Branch)
+		}
+		return res, nil
+	}
 	if count == 0 {
 		return res, nil
 	}
@@ -322,6 +369,16 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		res.Error = err.Error()
 		return res, err
 	}
+	if spec.TargetPR > 0 {
+		// The PR may have closed, changed hands or moved while the sandbox
+		// ran: ask again, and push nothing unless it is still this agent's
+		// open PR at the head the kick checked out.
+		if err := e.recheckTargetPR(ctx, spec); err != nil {
+			res.PRWithheld = err.Error()
+			res.Error = err.Error()
+			return res, err
+		}
+	}
 	broker := &pushbroker.Broker{
 		Workspace: workspace,
 		Branch:    spec.Branch,
@@ -333,6 +390,7 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		Runner:    e.runner(),
 		Logger:    e.Logger,
 		Mutation:  e.Mutation,
+		LeaseSHA:  spec.targetHead,
 	}
 	bres, brokerErr := broker.Run(ctx)
 	res.Broker = &bres
@@ -340,9 +398,23 @@ func (e *SandboxExecutor) Run(ctx context.Context, spec SandboxKickSpec) (Sandbo
 		res.Error = brokerErr.Error()
 		return res, brokerErr
 	}
+	if spec.TargetPR > 0 {
+		// The commits landed on the PR's own branch: there is no PR to
+		// open, and the PR's credit was recorded when it was opened.
+		res.TargetPR = spec.TargetPR
+		res.PR = &crux.PRResult{Number: spec.TargetPR, URL: spec.targetURL, AlreadyExisted: true}
+		return res, nil
+	}
 	if e.PRClient != nil && bres.Pushed {
 		title, body := e.sandboxPRText(ctx, workspace, spec.Agent)
-		pr, prErr := e.PRClient.CreatePR(ctx, spec.Org+"/"+spec.Repo, spec.Branch, spec.BaseRef, title, body)
+		var pr crux.PRResult
+		var prErr error
+		if creator, ok := e.PRClient.(crux.AgentPRCreator); ok {
+			pr, prErr = creator.CreateAgentPR(ctx, spec.Agent, spec.Org+"/"+spec.Repo, spec.Branch, spec.BaseRef, title, body)
+			res.PRAttributed = prErr == nil
+		} else {
+			pr, prErr = e.PRClient.CreatePR(ctx, spec.Org+"/"+spec.Repo, spec.Branch, spec.BaseRef, title, body)
+		}
 		res.PR = &pr
 		if prErr != nil {
 			res.Error = prErr.Error()
@@ -484,12 +556,11 @@ func sandboxBackendBinary(backend string) (string, error) {
 	return backendBinaryName(backend)
 }
 
+// writeSandboxPrompt writes the kick prompt confined to the workspace: on a
+// review kick the tree is the PR author's, and a .hive symlink in it must not
+// redirect the host's write (hivecommons/hive#18513).
 func writeSandboxPrompt(workspace, message string) error {
-	path := filepath.Join(workspace, sandboxPromptRelPath)
-	if err := os.MkdirAll(filepath.Dir(path), 0o770); err != nil {
-		return err
-	}
-	return os.WriteFile(path, []byte(message), 0o660)
+	return writeWorkspaceFileConfined(workspace, sandboxPromptRelPath, []byte(message))
 }
 
 func writeTranscript(path string, res sandbox.Result) error {
@@ -715,7 +786,7 @@ func (e *SandboxExecutor) now() time.Time {
 }
 
 func (e *SandboxExecutor) branchName(agentName string) string {
-	return "hive/" + sanitizeBranchPart(agentName) + "/" + e.now().Format("20060102150405")
+	return sandbox.WorkBranch(agentName, e.now().Format(sandbox.WorkBranchTimeLayout))
 }
 
 func sanitizeBranchPart(s string) string { return sandbox.AgentSlug(s) }

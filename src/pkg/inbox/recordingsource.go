@@ -82,6 +82,7 @@ func (r *RecordingSource) item(m RecordingMeta, retentionDays int) Item {
 	if m.IncludesTabAudio {
 		it.Tags = append(it.Tags, "tab-audio")
 	}
+	it.AudioExpiresAt = recordingAudioExpiresAt(m, retentionDays)
 	path := r.factPath(m.ID)
 	if data, err := os.ReadFile(path); err == nil {
 		fm, body := splitFrontMatter(string(data))
@@ -90,6 +91,15 @@ func (r *RecordingSource) item(m RecordingMeta, retentionDays int) Item {
 		it.Summary, it.HasTranscript, it.Pending, it.Excerpt = fact.Summary, fact.HasTranscript, fact.Pending, fact.Excerpt
 	}
 	return it
+}
+
+// recordingAudioExpiresAt is when the sweep deletes a finalized
+// recording's audio: retentionDays after it ended (the sweep's own rule).
+func recordingAudioExpiresAt(m RecordingMeta, retentionDays int) time.Time {
+	if m.State != RecordingFinalized || m.AudioExpired() || m.AudioFile == "" || m.FinalizedAt.IsZero() || retentionDays <= 0 {
+		return time.Time{}
+	}
+	return m.FinalizedAt.Add(time.Duration(retentionDays) * hoursPerDay * time.Hour).UTC()
 }
 
 // Fetch implements Source from the recording's fact.
@@ -361,6 +371,82 @@ func (s *Service) AbortRecording(id, user string, asOwner bool, opts RecordingOp
 	}
 	opts.audit("inbox_recording_abort", "recording", m.ID, "recorded_by", m.RecordedBy, "chunks", strconv.Itoa(m.Chunks))
 	return m, nil
+}
+
+// RecordingDeleted is what DeleteRecording removed.
+type RecordingDeleted struct {
+	ID         string `json:"id"`
+	RecordedBy string `json:"recorded_by"`
+	// FactRemoved reports that the recording's Knowledge fact (with its
+	// machine transcript) was deleted.
+	FactRemoved bool `json:"fact_removed"`
+	// SharesKept is how many shares the item's history held; what they
+	// filed (RFCs, issues, DIBS ideas, spek seeds) is not touched.
+	SharesKept int `json:"shares_kept"`
+}
+
+// DeleteRecording deletes a finished hive recording for good: the stored
+// audio and any chunk left over, the recording's metadata, its Knowledge
+// fact (the machine transcript), its transcript record and the Inbox item's
+// state. The recorder may delete their own; an owner (asOwner) anyone's.
+// Copies already shared from it (RFC, issues, DIBS, spek seeds) stay where
+// they are. A recording whose transcription is queued or running is refused
+// (ErrRecordingTranscribing). Audited as inbox_recording_delete. It works
+// while recording is disabled: the recordings stay until retention.
+func (s *Service) DeleteRecording(id, user string, asOwner bool, opts RecordingOptions) (RecordingDeleted, error) {
+	src := s.recordingSource()
+	if src == nil {
+		return RecordingDeleted{}, ErrRecordingNotFound
+	}
+	m, ok := src.Store.Get(id)
+	if !ok {
+		return RecordingDeleted{}, ErrRecordingNotFound
+	}
+	if !asOwner && (user == "" || m.RecordedBy != user) {
+		return RecordingDeleted{}, ErrRecordingNotYours
+	}
+	store := s.transcriptStore()
+	// Hold the transcription lock so no job is queued for this recording
+	// between the busy check and the delete.
+	s.txMu.Lock()
+	defer s.txMu.Unlock()
+	if store != nil {
+		if rec, ok := store.Get(RecordingType, id); ok && (rec.Status == TranscriptionQueued || rec.Status == TranscriptionRunning) {
+			return RecordingDeleted{}, ErrRecordingTranscribing
+		}
+	}
+	m, err := src.Store.Delete(id, user, asOwner)
+	if err != nil {
+		return RecordingDeleted{}, err
+	}
+	out := RecordingDeleted{ID: m.ID, RecordedBy: m.RecordedBy}
+	var errs []error
+	if src.FactDir != "" {
+		s.factMu.Lock()
+		err := os.Remove(src.factPath(m.ID))
+		s.factMu.Unlock()
+		switch {
+		case err == nil:
+			out.FactRemoved = true
+		case !os.IsNotExist(err):
+			errs = append(errs, fmt.Errorf("delete recording fact: %w", err))
+		}
+	}
+	if store != nil {
+		if err := store.Delete(RecordingType, m.ID); err != nil {
+			errs = append(errs, fmt.Errorf("delete recording transcript: %w", err))
+		}
+	}
+	if s.Store != nil {
+		n, err := s.Store.Forget(Key(RecordingType, m.ID))
+		out.SharesKept = n
+		if err != nil {
+			errs = append(errs, fmt.Errorf("forget recording item: %w", err))
+		}
+	}
+	opts.audit("inbox_recording_delete", "recording", m.ID, "recorded_by", m.RecordedBy, "bytes", strconv.FormatInt(m.Bytes, 10),
+		"fact_removed", strconv.FormatBool(out.FactRemoved), "shares_kept", strconv.Itoa(out.SharesKept))
+	return out, errors.Join(errs...)
 }
 
 // OpenRecordingAudio opens a finalized recording's audio (playback works

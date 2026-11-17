@@ -258,6 +258,24 @@ type AgentGrant struct {
 	Backend  string   `json:"backend,omitempty"`
 	Tools    []string `json:"tools,omitempty"`
 	Produces []string `json:"produces,omitempty"`
+	// Dispatch says where and when the hive hands an item to this profile
+	// (dispatch.go). Nil applies the convention: the grant's first state,
+	// on entry, or on the state's exit-gate reply for a profile that
+	// produces no pull request.
+	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
+}
+
+// AgentDispatch is an explicit dispatch rule for one agent grant.
+type AgentDispatch struct {
+	// States are the grant states in which the hive hands the item to the
+	// profile. Each must be one of the grant's states. Empty means none:
+	// the profile is never dispatched automatically.
+	States []string `json:"states,omitempty"`
+	// Reply is the human reply that starts each pass (the verifier runs on
+	// `/verify`); empty dispatches once on entering the state.
+	Reply string `json:"reply,omitempty"`
+	// Instructions are appended to the dispatch prompt verbatim.
+	Instructions string `json:"instructions,omitempty"`
 }
 
 // CheckKind is how a check is satisfied.

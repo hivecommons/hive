@@ -1,8 +1,13 @@
 package mailin
 
 import (
+	"bytes"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -99,6 +104,10 @@ func TestParseFilesMessage(t *testing.T) {
 	if strings.Join(names, ",") != "notes.md,ärger.png,memo.m4a" {
 		t.Fatalf("attachments %v", names)
 	}
+	// The text body rides along as the note of the files.
+	if p.Files.Note != "see attached" {
+		t.Fatalf("note %q", p.Files.Note)
+	}
 }
 
 func TestParseProofMessage(t *testing.T) {
@@ -123,8 +132,12 @@ func TestParseSinglePartCalendar(t *testing.T) {
 
 func TestParseRejects(t *testing.T) {
 	lim := DefaultLimits()
-	if _, err := Parse(buildMail("a@example.com", "hi", part{contentType: "text/plain", body: []byte("hello"), raw: true}), lim); !errors.Is(err, ErrNothingToDeliver) {
-		t.Fatalf("plain text: %v", err)
+	if _, err := Parse(buildMail("a@example.com", "hi", part{contentType: "text/plain", body: []byte(" \r\n "), raw: true}), lim); !errors.Is(err, ErrNothingToDeliver) {
+		t.Fatalf("blank text: %v", err)
+	}
+	// A text part sent as an attachment is not the body.
+	if _, err := Parse(buildMail("a@example.com", "hi", part{contentType: "text/plain", disposition: "attachment", body: []byte("hello"), raw: true}), lim); !errors.Is(err, ErrNothingToDeliver) {
+		t.Fatalf("attached text: %v", err)
 	}
 	if _, err := Parse([]byte("not a header line\r\n\r\nbody"), lim); err == nil {
 		t.Fatal("malformed header accepted")
@@ -195,5 +208,145 @@ func TestDedupeInvites(t *testing.T) {
 	out := dedupeInvites(in)
 	if len(out) != 3 || out[0].Sequence != 3 || out[1].RecurrenceID == nil || out[2].UID != "b" {
 		t.Fatalf("dedupe %+v", out)
+	}
+}
+
+func TestParseBodyOnlyBecomesNote(t *testing.T) {
+	p, err := Parse(buildMail("ada@example.com", "Groceries", part{contentType: "text/plain; charset=utf-8", body: []byte("milk\r\n\r\n\r\n\r\neggs\x07  \r\n"), raw: true}), DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Kind != wire.KindFiles || len(p.Files.Attachments) != 1 || p.Files.Note != "" || p.Files.Title != "Groceries" {
+		t.Fatalf("parsed %+v", p.Files)
+	}
+	a := p.Files.Attachments[0]
+	if a.Name != wire.NoteFileName || a.Kind != wire.AttachMarkdown || string(a.Data) != "milk\n\neggs" || a.Size != len(a.Data) || len(a.SHA256) != 64 {
+		t.Fatalf("note file %+v %q", a, a.Data)
+	}
+
+	// HTML only: sanitized, no scripts, no remote content.
+	html := `<html><head><title>T</title><style>p{}</style></head><body><h2>Plan</h2><p>Hello <b>there</b></p>` +
+		`<script>alert(1)</script><img src="https://tracker.example/p.gif"><ul><li>one</li><li>two</li></ul>` +
+		`<a href="https://example.com/doc">the doc</a> <a href="javascript:alert(1)">bad</a></body></html>`
+	p, err = Parse(buildMail("ada@example.com", "html", part{contentType: "text/html", body: []byte(html)}), DefaultLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(p.Files.Attachments[0].Data)
+	want := "## Plan\n\nHello there\n\n- one\n- two\n\nthe doc (https://example.com/doc) bad"
+	if got != want {
+		t.Fatalf("html note\n got %q\nwant %q", got, want)
+	}
+
+	// Both: text/plain wins.
+	p, err = Parse(buildMail("ada@example.com", "alt",
+		part{contentType: "text/plain", body: []byte("plain words"), raw: true},
+		part{contentType: "text/html", body: []byte("<p>html words</p>"), raw: true}), DefaultLimits())
+	if err != nil || string(p.Files.Attachments[0].Data) != "plain words" {
+		t.Fatalf("alternative: %v %+v", err, p.Files)
+	}
+	// An empty text/plain falls back to the HTML.
+	p, err = Parse(buildMail("ada@example.com", "alt",
+		part{contentType: "text/plain", body: []byte(" "), raw: true},
+		part{contentType: "text/html", body: []byte("<p>html words</p>"), raw: true}), DefaultLimits())
+	if err != nil || string(p.Files.Attachments[0].Data) != "html words" {
+		t.Fatalf("empty plain: %v %+v", err, p.Files)
+	}
+	// The body is cut at MaxBodyBytes.
+	lim := DefaultLimits()
+	lim.MaxBodyBytes = 10
+	p, err = Parse(buildMail("ada@example.com", "long", part{contentType: "text/plain", body: []byte(strings.Repeat("x", 100)), raw: true}), lim)
+	if err != nil || p.Files.Attachments[0].Size != 10 {
+		t.Fatalf("cut: %v %+v", err, p.Files)
+	}
+}
+
+func TestParseReaderSpoolsBinaryFiles(t *testing.T) {
+	dir := t.TempDir()
+	png := append(append([]byte(nil), pngData...), make([]byte, 2000)...)
+	raw := buildMail("ada@example.com", "media",
+		part{contentType: "image/png", disposition: "attachment; filename=shot.png", body: png},
+		part{contentType: "video/mp4", disposition: "attachment; filename=clip.mp4", body: mp4Data},
+		part{contentType: "text/markdown", disposition: "attachment; filename=n.md", body: mdData},
+		part{contentType: "image/png", disposition: "attachment; filename=lie.png", body: jpegData},
+	)
+	p, err := ParseReader(bytes.NewReader(raw), DefaultLimits(), dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Files.Attachments) != 3 {
+		t.Fatalf("attachments %+v", p.Files.Attachments)
+	}
+	for _, a := range p.Files.Attachments[:2] {
+		data, err := os.ReadFile(a.Path)
+		if err != nil || len(a.Data) != 0 || len(data) != a.Size || a.SHA256 != sha256Hex(data) {
+			t.Fatalf("%s: spooled %v %d/%d", a.Name, err, len(data), a.Size)
+		}
+	}
+	if p.Files.Attachments[1].Kind != wire.AttachVideo || p.Files.Attachments[2].Path != "" || len(p.Files.Attachments[2].Data) == 0 {
+		t.Fatalf("kinds %+v", p.Files.Attachments)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 2 {
+		t.Fatalf("spool holds %d files, want 2 (the refused one is removed)", len(entries))
+	}
+	p.Cleanup()
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("cleanup left %d files", len(entries))
+	}
+
+	// Over the per-file cap while streaming: skipped and removed.
+	lim := DefaultLimits()
+	lim.MaxFileBytes = 1000
+	p, err = ParseReader(bytes.NewReader(raw), lim, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Files.Attachments) != 2 || p.Files.Attachments[0].Name != "clip.mp4" {
+		t.Fatalf("capped %+v", p.Files.Attachments)
+	}
+	p.Cleanup()
+	// A cap below the sniff window: the large file is refused after its
+	// head, a file smaller than the window still streams.
+	lim.MaxFileBytes = 100
+	if p, err = ParseReader(bytes.NewReader(raw), lim, dir); err != nil || len(p.Files.Attachments) != 2 || p.Files.Attachments[0].Name != "clip.mp4" {
+		t.Fatalf("small cap: %v %+v", err, p.Files)
+	}
+	p.Cleanup()
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("refused files left %d spooled files", len(entries))
+	}
+
+	// An invite discards spooled files.
+	withInvite := buildMail("ada@example.com", "invite",
+		part{contentType: "image/png", disposition: "attachment; filename=shot.png", body: png},
+		part{contentType: "text/calendar; method=REQUEST", body: fixture(t, "google.ics")})
+	if p, err = ParseReader(bytes.NewReader(withInvite), DefaultLimits(), dir); err != nil || p.Kind != wire.KindInvite || p.Files != nil {
+		t.Fatalf("invite: %v %+v", err, p)
+	}
+	if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+		t.Fatalf("invite left %d spooled files", len(entries))
+	}
+
+	// A spool that cannot be written is an error, not a skipped file.
+	if _, err := ParseReader(bytes.NewReader(raw), DefaultLimits(), filepath.Join(dir, "missing")); err == nil {
+		t.Fatal("unwritable spool accepted")
+	}
+}
+
+func sha256Hex(b []byte) string {
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:])
+}
+
+func TestLimitsWithDefaults(t *testing.T) {
+	if got := (Limits{}).withDefaults(); got != DefaultLimits() {
+		t.Fatalf("zero limits %+v", got)
+	}
+	l := Limits{MaxFileBytes: 1, MaxFilesBytes: 2, MaxFiles: 3, MaxCalendarBytes: 4, MaxMarkdownBytes: 5, MaxBodyBytes: 6}
+	if l.withDefaults() != l {
+		t.Fatal("set limits were overridden")
+	}
+	if DefaultMaxFileBytes != 25<<20 {
+		t.Fatal("the per-file cap is 25 MB (#18564)")
 	}
 }

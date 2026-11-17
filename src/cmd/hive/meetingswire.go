@@ -7,8 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
+	"github.com/hivecommons/hive/crux"
+	"github.com/hivecommons/hive/crux/claude"
+	"github.com/hivecommons/hive/crux/keystore"
 	"github.com/hivecommons/hive/pkg/beads"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/knowledge"
@@ -170,7 +174,8 @@ func meetingSpekArgs(m meetings.Meeting, contextDir string) []string {
 // in the panel instead of silently. beadStores feeds the persona's work-item
 // retrieval and may be nil.
 func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings.Store, kapi *knowledge.KnowledgeAPI,
-	beadStores func() map[string]*beads.Store, research live.ResearchDispatcher, logger *slog.Logger) *live.Runner {
+	beadStores func() map[string]*beads.Store, research live.ResearchDispatcher, logger *slog.Logger,
+	hiveStatus func(context.Context) (string, error)) *live.Runner {
 	if cfg == nil || mgr == nil || store == nil {
 		return nil
 	}
@@ -178,7 +183,7 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 	binary := cfg.Runs.Spektacular.BinaryOrDefault()
 	llm := cfg.ResolveMeetingsLLM(context.Background())
 	hiveBin, err := os.Executable()
-	if err != nil && llm.Backend == config.MeetingsLLMModeOpenAI {
+	if err != nil && (llm.Backend == config.MeetingsLLMModeOpenAI || llm.Backend == config.MeetingsLLMModeAgentBackend) {
 		llm = config.ResolvedMeetingsLLM{Backend: config.MeetingsLLMModeNone, Reason: "rules only, the hive binary path is unknown"}
 	}
 	slotsDir := filepath.Join(store.Dir(), meetingLLMSlotsDir)
@@ -206,7 +211,8 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 		UsageFile: func(id string) string {
 			// `hive meeting-llm` (OpenAI-compatible) and the persona's own
 			// calls (either backend) write the meeting's usage ledger.
-			if llm.Backend != config.MeetingsLLMModeOpenAI && llm.Backend != config.MeetingsLLMModeAnthropic {
+			if llm.Backend != config.MeetingsLLMModeOpenAI && llm.Backend != config.MeetingsLLMModeAnthropic &&
+				llm.Backend != config.MeetingsLLMModeAgentBackend {
 				return ""
 			}
 			return meetingUsageFile(store, id)
@@ -222,7 +228,7 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 		},
 		Ledger:      live.NewLedger(m.Budget.MaxTokensPerHourOrDefault(), m.Budget.MaxTokensPerDayOrDefault()),
 		Logger:      logger,
-		Persona:     meetingPersonaFactory(cfg, persona, llm, store, kapi, beadStores, slotsDir, maxTokens, research != nil, logger),
+		Persona:     meetingPersonaFactory(cfg, persona, llm, store, kapi, beadStores, slotsDir, maxTokens, research != nil, logger, hiveStatus),
 		PersonaName: personaName,
 		IsLeave:     meetings.NewLeaveMatcher(persona.LeavePhrases).Match,
 	})
@@ -245,14 +251,22 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 // Anthropic Messages API on a hive with only an Anthropic key, both charged
 // to the meeting's usage file and budget. With no model she still
 // introduces herself but does not answer questions. canResearch lets an
-// addressed question she cannot answer well become a deep dive.
+// addressed question she cannot answer well become a deep dive. hiveStatus,
+// when set, is the dashboard's live hive state (open issues and PRs,
+// actionable, held and blocked counts, agents): questions about the hive
+// itself are answered from it in-process, never sent to research
+// (hivecommons/hive#18590 finding 9).
 func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPersona, llm config.ResolvedMeetingsLLM,
 	store *meetings.Store, kapi *knowledge.KnowledgeAPI, beadStores func() map[string]*beads.Store,
-	slotsDir string, maxTokens int, canResearch bool, logger *slog.Logger) func(meetings.Meeting) *betty.Engine {
+	slotsDir string, maxTokens int, canResearch bool, logger *slog.Logger,
+	hiveStatus func(context.Context) (string, error)) func(meetings.Meeting) *betty.Engine {
 	if !persona.Enabled {
 		return nil
 	}
 	var retrievers []betty.Retriever
+	if hiveStatus != nil {
+		retrievers = append(retrievers, betty.HiveStatusRetriever{Brief: hiveStatus})
+	}
 	if kapi != nil {
 		stores := betty.FileStores(kapi.FileStores)
 		retrievers = append(retrievers, betty.KnowledgeRetriever{Stores: stores})
@@ -267,6 +281,13 @@ func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPe
 	if persona.SearxngURL != "" {
 		retrievers = append(retrievers, betty.WebRetriever{BaseURL: persona.SearxngURL, Client: client})
 	}
+	// A model gateway with a private CA (its ca_bundle) gets its own client;
+	// one that cannot be built leaves the persona model-less, never
+	// unverified.
+	modelClient, clientErr := meetllm.HTTPClient(llm.CABundle)
+	if clientErr != nil && logger != nil && llm.Backend == config.MeetingsLLMModeOpenAI {
+		logger.Error("[meetings] persona model client not built; the persona answers without a model", "backend", llm.AgentBackend, "error", clientErr)
+	}
 	return func(mt meetings.Meeting) *betty.Engine {
 		var model betty.LLM
 		mc := meetllm.Config{
@@ -279,13 +300,121 @@ func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPe
 		switch llm.Backend {
 		case config.MeetingsLLMModeOpenAI:
 			mc.Endpoint, mc.Model, mc.APIKey = llm.Endpoint, llm.Model, llm.APIKey
-			model = betty.MeetLLM{Client: client, Config: mc}
+			if clientErr == nil {
+				model = betty.MeetLLM{Client: modelClient, Config: mc}
+			}
 		case config.MeetingsLLMModeAnthropic:
 			mc.Provider, mc.Model, mc.APIKey = meetllm.ProviderAnthropic, llm.Model, llm.AnthropicKey
 			model = betty.MeetLLM{Client: client, Config: mc}
 		}
-		return betty.New(betty.SettingsFrom(persona), betty.Deps{LLM: model, Retrievers: retrievers, Logger: logger, CanResearch: canResearch})
+		settings := betty.SettingsFrom(persona)
+		if llm.Backend == config.MeetingsLLMModeAgentBackend {
+			if m, ok := meetingCLIModel(llm, mc, mt.ID, logger); ok {
+				model = m
+				applyMeetingCLITimeouts(&settings, llm.CLI)
+			}
+		}
+		return betty.New(settings, betty.Deps{LLM: model, Retrievers: retrievers, Logger: logger, CanResearch: canResearch})
 	}
+}
+
+// meetingCLIModel is the persona's model on an agent backend
+// (hivecommons/hive#18517, #18549), in the backend's no-tools completion
+// profile with the agents' sign-in: one warm CLI for the meeting, started
+// now so the first question finds it ready, on a backend with a warm mode;
+// one CLI per call otherwise. It reports false when the backend has no
+// profile.
+func meetingCLIModel(llm config.ResolvedMeetingsLLM, mc meetllm.Config, meetingID string, logger *slog.Logger) (betty.MeetLLM, bool) {
+	mc.Provider, mc.Backend, mc.Model = meetllm.ProviderAgentBackend, llm.AgentBackend, llm.Model
+	mc.CLIBinary, mc.CLIHome, mc.RecycleTurns = llm.CLI.Binary, llm.CLI.Home, llm.CLI.RecycleTurns
+	mc.Timeout = time.Duration(llm.CLI.AddressedTimeoutMS) * time.Millisecond
+	mc.Getenv = meetingCLIGetenv(os.Getenv)
+	if !meetllm.SupportsWarm(llm.AgentBackend) {
+		if !meetllm.HasCompletionProfile(llm.AgentBackend) {
+			if logger != nil {
+				logger.Error("[meetings] persona model not started; the backend has no completion profile", "meeting", meetingID, "backend", llm.AgentBackend)
+			}
+			return betty.MeetLLM{}, false
+		}
+		return betty.MeetLLM{Config: mc}, true
+	}
+	sess, err := meetllm.NewCLISession(mc)
+	if err != nil {
+		if logger != nil {
+			logger.Error("[meetings] persona model not started", "meeting", meetingID, "backend", llm.AgentBackend, "error", err)
+		}
+		return betty.MeetLLM{}, false
+	}
+	if err := sess.Warm(); err != nil && logger != nil {
+		// The first call retries the start.
+		logger.Warn("[meetings] persona CLI not warmed", "meeting", meetingID, "backend", llm.AgentBackend, "error", err)
+	}
+	mc.Session = sess
+	return betty.MeetLLM{Config: mc}, true
+}
+
+// applyMeetingCLITimeouts widens the persona's per-call timeouts to the CLI
+// mode's: a warm turn is slower than an API call.
+func applyMeetingCLITimeouts(s *betty.Settings, cli config.ResolvedMeetingsCLI) {
+	ms := func(n int) time.Duration { return time.Duration(n) * time.Millisecond }
+	if cli.AddressedTimeoutMS > 0 {
+		s.AddressedTimeout = ms(cli.AddressedTimeoutMS)
+	}
+	if cli.UnpromptedTimeoutMS > 0 {
+		s.UnpromptedTimeout = ms(cli.UnpromptedTimeoutMS)
+	}
+	if cli.RestyleTimeoutMS > 0 {
+		s.RestyleTimeout = ms(cli.RestyleTimeoutMS)
+	}
+}
+
+// meetingClaudeOperatorToken is the operator's long-lived Claude token
+// (HIVE_CLAUDE_OAUTH_TOKEN), the seam tests replace.
+var meetingClaudeOperatorToken = claude.OperatorToken
+
+// meetingCopilotTokenFile is the dashboard Copilot sign-in the agents fall
+// back to (a var so tests can point it elsewhere).
+var meetingCopilotTokenFile = crux.CopilotUserTokenPath
+
+// meetingCopilotToken is the Copilot sign-in the agents get:
+// COPILOT_GITHUB_TOKEN, else the dashboard device-flow token read through
+// the keystore.
+func meetingCopilotToken(getenv func(string) string) string {
+	if v := strings.TrimSpace(getenv(meetllm.EnvCopilotToken)); v != "" {
+		return v
+	}
+	data, err := keystore.ReadFile(context.Background(), meetingCopilotTokenFile)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
+}
+
+// meetingCLIGetenv is the environment a meetings CLI reads its sign-in
+// from: base, with the sign-in variables set the way the agent launcher
+// sets them for agents. CLAUDE_CODE_OAUTH_TOKEN is the operator's
+// long-lived token only (a hive signed in with the credentials file needs
+// none), and COPILOT_GITHUB_TOKEN is the agents' Copilot token. The values
+// go to the CLI's environment only: hive never logs them or writes them to
+// disk.
+func meetingCLIGetenv(base func(string) string) func(string) string {
+	return func(k string) string {
+		switch k {
+		case meetllm.EnvClaudeOAuthToken:
+			return meetingClaudeOperatorToken()
+		case meetllm.EnvCopilotToken:
+			return meetingCopilotToken(base)
+		}
+		return base(k)
+	}
+}
+
+// meetingCLISignInEnv are, per backend, the sign-in variables `hive
+// meeting-llm` needs in the Spek child's environment to hand to the CLI.
+var meetingCLISignInEnv = map[string][]string{
+	meetllm.BackendClaude:  {"CLAUDE_CONFIG_DIR", meetllm.EnvClaudeOAuthToken},
+	meetllm.BackendCopilot: {meetllm.EnvCopilotToken, "COPILOT_GH_HOST", "GH_HOST"},
+	meetllm.BackendOMP:     {"OMP_AUTH_BROKER_URL", "OMP_AUTH_BROKER_TOKEN"},
 }
 
 // meetingLLMSlotsDir holds the in-flight slot locks `hive meeting-llm`
@@ -334,6 +463,38 @@ func meetingSpekEnv(getenv func(string) string, llm config.ResolvedMeetingsLLM, 
 		)
 		if llm.APIKey != "" {
 			env = append(env, meetllm.EnvAPIKey+"="+llm.APIKey)
+		}
+		if llm.CABundle != "" {
+			env = append(env, meetllm.EnvCABundle+"="+llm.CABundle)
+		}
+	case config.MeetingsLLMModeAgentBackend:
+		// One CLI per prompt through `hive meeting-llm`, in the backend's
+		// completion profile, with the cold-start timeout (#18517).
+		env = append(env,
+			"SPEK_MEETING_LLM=command",
+			"SPEK_MEETING_LLM_CMD="+hiveBin+" "+meetllm.Subcommand,
+			"SPEK_MEETING_LLM_TIMEOUT_MS="+strconv.Itoa(llm.CLI.OneShotTimeoutMS),
+			meetllm.EnvBackend+"="+llm.AgentBackend,
+			meetllm.EnvModel+"="+llm.Model,
+			meetllm.EnvTimeoutMS+"="+strconv.Itoa(llm.CLI.OneShotTimeoutMS),
+			meetllm.EnvUsageFile+"="+usageFile,
+			meetllm.EnvMaxTokens+"="+strconv.Itoa(maxTokens),
+			meetllm.EnvSlotsDir+"="+slotsDir,
+			meetllm.EnvMaxInFlight+"="+strconv.Itoa(llm.MaxInFlight),
+		)
+		if llm.CLI.Binary != "" {
+			env = append(env, meetllm.EnvCLIBinary+"="+llm.CLI.Binary)
+		}
+		if llm.CLI.Home != "" {
+			env = append(env, meetllm.EnvCLIHome+"="+llm.CLI.Home)
+		}
+		// The CLI's sign-in, as the agents get it: a config-dir path, or a
+		// token, kept off argv like the API keys above.
+		signIn := meetingCLIGetenv(getenv)
+		for _, k := range meetingCLISignInEnv[llm.AgentBackend] {
+			if v := signIn(k); v != "" {
+				env = append(env, k+"="+v)
+			}
 		}
 	case config.MeetingsLLMModeAnthropic:
 		env = append(env, "SPEK_MEETING_LLM=anthropic", "ANTHROPIC_API_KEY="+llm.AnthropicKey,

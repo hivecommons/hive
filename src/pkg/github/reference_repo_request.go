@@ -80,8 +80,14 @@ func DerivedReadOnlyComment(readOnly []config.ReferenceRepo) string {
 		fmt.Fprintf(&b, "- `%s`: %s\n", rr.Repo, reason)
 	}
 	b.WriteString("\nThe hive will study these repositories (clone, read files, read issues and PRs) and keep its findings in the assessment deliverable here. ")
-	b.WriteString("It will not open issues or pull requests on them. ")
-	b.WriteString("To let it, the hive owner connects their own GitHub account on the hive's dashboard (Settings → Reference repos → Connect GitHub account); issues and PRs then appear under that account, and the hive picks the change up without a restart. No GitHub App needs to be installed on these repositories.")
+	b.WriteString("It will not open issues or pull requests on them.")
+	if derivedReadOnlyBotOnly(readOnly) {
+		// bot_only (project.remote_write_identity): connecting the owner's
+		// account would not change anything, and the hive never asks a
+		// project to install its App, so there is no cure to name.
+		return AppendTrailer(b.String(), hiveWriteMeta())
+	}
+	b.WriteString(" To let it, the hive owner connects their own GitHub account on the hive's dashboard (Settings → Reference repos → Connect GitHub account); issues and PRs then appear under that account, and the hive picks the change up without a restart. No GitHub App needs to be installed on these repositories.")
 	return AppendTrailer(b.String(), hiveWriteMeta())
 }
 
@@ -263,4 +269,15 @@ func (c *Client) RepoPermission(ctx context.Context, owner, repo, login string) 
 		return "", fmt.Errorf("reading %s's permission on %s/%s: %w", login, owner, repo, err)
 	}
 	return strings.ToLower(strings.TrimSpace(perm.GetPermission())), nil
+}
+
+// derivedReadOnlyBotOnly reports whether every entry was left read-only by
+// project.remote_write_identity bot_only.
+func derivedReadOnlyBotOnly(readOnly []config.ReferenceRepo) bool {
+	for _, rr := range readOnly {
+		if !strings.HasPrefix(strings.TrimSpace(rr.CredentialReason), ReferenceReadOnlyBotOnlyPrefix) {
+			return false
+		}
+	}
+	return len(readOnly) > 0
 }

@@ -26,14 +26,10 @@
 package kubejob
 
 import (
-	"bytes"
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -41,7 +37,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/hivecommons/hive/crux/egressmark"
 	"github.com/hivecommons/hive/crux/sandbox"
 )
 
@@ -66,6 +61,18 @@ const (
 
 	// DefaultPollInterval is how often the launcher re-reads the Job status.
 	DefaultPollInterval = 5 * time.Second
+
+	// DefaultKickTimeout is the sandbox kick timeout hive applies when none is
+	// configured; crux/agent's DefaultSandboxKickTimeout is this value.
+	DefaultKickTimeout = 45 * time.Minute
+
+	// DeadlineMargin is added to a kick's timeout to give the Job's
+	// activeDeadlineSeconds. Hive cancels a kick at its timeout and deletes
+	// the Job itself; the deadline is the cluster-side backstop for a Job
+	// hive lost track of (a restart mid-kick, a Job left Pending or
+	// Unschedulable), so it must land after hive's own timeout, never before
+	// (hivecommons/hive#18525).
+	DeadlineMargin = 15 * time.Minute
 
 	// requestTimeout bounds every single API call; the overall run is bounded
 	// by the caller's context (the sandbox kick timeout).
@@ -135,6 +142,45 @@ type Options struct {
 	Network string
 	// PollInterval overrides how often the Job status is read (tests).
 	PollInterval time.Duration
+	// RelayImage is the image of the init container that supplies hive's
+	// sandbox relays to a LaunchSpec with Relays set (#18512). Empty resolves
+	// the running hive image, by digest, from hive's own pod; RelayImageNone
+	// skips the relays.
+	RelayImage string
+	// RelayRunAsUser pins the relay init container's uid. Nil leaves it to
+	// the cluster on OpenShift and uses DefaultRelayRunAsUser elsewhere.
+	RelayRunAsUser *int64
+	// ActiveDeadlineSeconds is the Job's activeDeadlineSeconds. Non-positive
+	// derives it from the run's context deadline, else from
+	// DefaultKickTimeout; either way DeadlineMargin is added. Run uses
+	// whichever of this and the context-derived value is later, so the
+	// deadline never cuts a run short of the timeout hive gave it.
+	ActiveDeadlineSeconds int64
+}
+
+// ActiveDeadlineSeconds returns the activeDeadlineSeconds for a Job running
+// one kick with the given timeout: the timeout (DefaultKickTimeout when
+// non-positive) plus DeadlineMargin.
+func ActiveDeadlineSeconds(kickTimeout time.Duration) int64 {
+	if kickTimeout <= 0 {
+		kickTimeout = DefaultKickTimeout
+	}
+	return int64((kickTimeout + DeadlineMargin) / time.Second)
+}
+
+// activeDeadline resolves the deadline for one Run: the configured value or
+// the one derived from ctx's remaining time, whichever is later.
+func (l *Launcher) activeDeadline(ctx context.Context) int64 {
+	deadline := l.Options.ActiveDeadlineSeconds
+	if dl, ok := ctx.Deadline(); ok {
+		if fromCtx := ActiveDeadlineSeconds(time.Until(dl)); fromCtx > deadline {
+			deadline = fromCtx
+		}
+	}
+	if deadline <= 0 {
+		deadline = ActiveDeadlineSeconds(DefaultKickTimeout)
+	}
+	return deadline
 }
 
 // network is Options.Network with the empty default applied.
@@ -196,6 +242,9 @@ type Launcher struct {
 	NamespacePath string
 	HTTPClient    *http.Client
 	Now           func() time.Time
+	// PodName is hive's own pod, read to resolve the relay image; empty
+	// falls back to $POD_NAME, then $HOSTNAME, then os.Hostname.
+	PodName string
 }
 
 var _ sandbox.Launcher = (*Launcher)(nil)
@@ -213,6 +262,9 @@ func (o Options) Validate() error {
 		if strings.TrimSpace(v.Claim) == "" || strings.TrimSpace(v.MountPath) == "" {
 			return fmt.Errorf("kubejob: volumes[%d] needs both claim and mount_path", i)
 		}
+	}
+	if o.RelayRunAsUser != nil && *o.RelayRunAsUser <= 0 {
+		return errors.New("kubejob: relay_run_as_user must be a positive (non-root) uid")
 	}
 	switch o.network() {
 	case NetworkDefault, NetworkNone, NetworkHost:
@@ -248,8 +300,18 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 	if err != nil {
 		return res, err
 	}
+	var relays *relayPlan
+	if spec.Relays {
+		if relays, err = l.resolveRelays(ctx, ns); err != nil {
+			return res, err
+		}
+	}
 	name := jobName(spec.Name, l.now())
-	body, err := json.Marshal(l.manifest(ns, name, subPath, spec))
+	manifest := l.jobManifest(ns, name, subPath, spec, relays)
+	if jobSpec, ok := manifest["spec"].(map[string]any); ok {
+		jobSpec["activeDeadlineSeconds"] = l.activeDeadline(ctx)
+	}
+	body, err := json.Marshal(manifest)
 	if err != nil {
 		return res, err
 	}
@@ -496,6 +558,12 @@ func (l *Launcher) delete(ctx context.Context, jobPath string) error {
 // manifest renders the batch/v1 Job. Kept as plain maps rather than client-go
 // types: the repo has no k8s.io dependency and this is the only writer.
 func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) map[string]any {
+	return l.jobManifest(ns, name, subPath, spec, nil)
+}
+
+// jobManifest is manifest plus, when relays is non-nil, the relay init
+// container, its emptyDir and the agent container's read-only mount of it.
+func (l *Launcher) jobManifest(ns, name, subPath string, spec sandbox.LaunchSpec, relays *relayPlan) map[string]any {
 	mount := spec.WorkspaceMount
 	if mount == "" {
 		mount = sandbox.DefaultWorkspaceMount
@@ -507,6 +575,10 @@ func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) m
 	ttl := l.Options.TTLSeconds
 	if ttl == 0 {
 		ttl = DefaultTTLSeconds
+	}
+	deadline := l.Options.ActiveDeadlineSeconds
+	if deadline <= 0 {
+		deadline = ActiveDeadlineSeconds(DefaultKickTimeout)
 	}
 
 	// Same filter as the Podman path; explicit spec.Env entries come last and win.
@@ -560,8 +632,18 @@ func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) m
 		"envFrom":      envFrom,
 		"volumeMounts": mounts,
 	}
-	if len(spec.Command) > 0 {
-		container["command"] = spec.Command
+	command := spec.Command
+	if relays != nil {
+		command = sandbox.RelayCommand(command)
+		mounts = append(mounts, map[string]any{"name": relayVolumeName, "mountPath": sandbox.RelayMountPath, "readOnly": true})
+		container["volumeMounts"] = mounts
+		volumes = append(volumes, map[string]any{
+			"name":     relayVolumeName,
+			"emptyDir": map[string]string{"sizeLimit": relayVolumeSizeLimit},
+		})
+	}
+	if len(command) > 0 {
+		container["command"] = command
 	}
 	if len(l.Options.Resources.Limits) > 0 || len(l.Options.Resources.Requests) > 0 {
 		container["resources"] = l.Options.Resources
@@ -576,6 +658,12 @@ func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) m
 		"securityContext": map[string]any{
 			"seccompProfile": map[string]string{"type": "RuntimeDefault"},
 		},
+	}
+	if relays != nil {
+		podSpec["initContainers"] = []map[string]any{relays.initContainer()}
+		if len(relays.pullSecrets) > 0 {
+			podSpec["imagePullSecrets"] = relays.pullSecrets
+		}
 	}
 	if len(l.Options.NodeSelector) > 0 {
 		podSpec["nodeSelector"] = l.Options.NodeSelector
@@ -610,6 +698,10 @@ func (l *Launcher) manifest(ns, name, subPath string, spec sandbox.LaunchSpec) m
 			// workspace the first attempt already changed.
 			"backoffLimit":            0,
 			"ttlSecondsAfterFinished": ttl,
+			// The cluster fails a Job still running (or never scheduled)
+			// past this, so one hive lost track of cannot sit Pending
+			// forever (hivecommons/hive#18525).
+			"activeDeadlineSeconds": deadline,
 			"template": map[string]any{
 				"metadata": map[string]any{"labels": labels},
 				"spec":     podSpec,
@@ -694,95 +786,4 @@ func (l *Launcher) namespace() (string, error) {
 		return "", fmt.Errorf("kubejob: empty namespace in %s", path)
 	}
 	return ns, nil
-}
-
-// do performs one authenticated API call and returns the response body.
-// Non-2xx responses are errors carrying the status and the API's message.
-func (l *Launcher) do(ctx context.Context, method, path string, body []byte) ([]byte, error) {
-	client, err := l.client()
-	if err != nil {
-		return nil, err
-	}
-	server := l.APIServer
-	if server == "" {
-		server = DefaultAPIServer
-	}
-	reqCtx, cancel := context.WithTimeout(ctx, requestTimeout)
-	defer cancel()
-	var rdr io.Reader
-	if body != nil {
-		rdr = bytes.NewReader(body)
-	}
-	req, err := http.NewRequestWithContext(reqCtx, method, server+path, rdr)
-	if err != nil {
-		return nil, err
-	}
-	if tok := l.token(); tok != "" {
-		req.Header.Set("Authorization", "Bearer "+tok)
-	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = resp.Body.Close() }()
-	out, err := io.ReadAll(io.LimitReader(resp.Body, maxLogBytes+1))
-	if err != nil {
-		return nil, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("%s %s: HTTP %d: %s", method, path, resp.StatusCode, apiMessage(out))
-	}
-	return out, nil
-}
-
-// apiMessage pulls the human message out of a Kubernetes Status body, falling
-// back to a trimmed raw body.
-func apiMessage(raw []byte) string {
-	var st struct {
-		Message string `json:"message"`
-	}
-	if json.Unmarshal(raw, &st) == nil && st.Message != "" {
-		return st.Message
-	}
-	s := strings.TrimSpace(string(raw))
-	if len(s) > 200 {
-		s = s[:200]
-	}
-	return s
-}
-
-func (l *Launcher) token() string {
-	path := l.TokenPath
-	if path == "" {
-		path = DefaultTokenPath
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(raw))
-}
-
-// client returns the injected HTTP client, or one trusting the in-cluster CA.
-func (l *Launcher) client() (*http.Client, error) {
-	if l.HTTPClient != nil {
-		return l.HTTPClient, nil
-	}
-	path := l.CAPath
-	if path == "" {
-		path = DefaultCAPath
-	}
-	pem, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("kubejob: reading in-cluster CA: %w", err)
-	}
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, errors.New("kubejob: in-cluster CA bundle contained no certificates")
-	}
-	l.HTTPClient = &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}, DialContext: egressmark.Dialer(0).DialContext}}
-	return l.HTTPClient, nil
 }

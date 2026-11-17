@@ -1361,6 +1361,9 @@ func (b *boot) wireBootClosures() {
 			RemergeDerivedReferenceRepos: b.remergeLastDerivedReferenceRepos,
 			OwnerIdentity:                b.ownerIdentityStore(),
 			OwnerIdentityChanged:         b.ownerIdentityChanged,
+			RepoAgents:                   b.repoAgents,
+			CheckRemoteWriteIdentity:     b.checkRemoteWriteIdentity,
+			RemoteWriteIdentityChanged:   b.remoteWriteIdentityChanged,
 			ReviewConfigApplied: func(rc config.ReviewConfig) {
 				if b.ghClient == nil {
 					return
@@ -2317,7 +2320,7 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// the direct `gh pr create` path — the request-file route grants no extra
 	// privilege. A denied request is quarantined, never opened.
 	// holdLabel (F6): at hold-gated ACMM levels (L3/L4/L5) every agent-opened
-	// PR must carry the "hold" label so the merge gate holds it for human
+	// PR must carry the ready-for-review gate label ("hold" before #18468) so the merge gate holds it for human
 	// approval. Outreach content aimed at a repository the hive does not
 	// manage is public speech into someone else's project, so it remains
 	// human-reviewed at L6 too; outreach PRs into the agent's own repos are
@@ -2572,7 +2575,10 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 			// gate a direct `git push` is governed by, so the relay grants
 			// no privilege — it only changes which process performs the push.
 			pushBranch: b.agentMgr.AuthorizePushBranch,
-			logger:     b.logger,
+			// Sandbox spool topic requests (#18572) land in the agent's
+			// own bead store, read at call time.
+			topic:  sandboxTopicHandler(func() map[string]*beads.Store { return b.beadStores }),
+			logger: b.logger,
 		})
 		// The ACMM verdict is re-read on every (re)start; the dashboard's
 		// OnACMMLevelChanged hook restarts this generation when a runtime
@@ -2679,7 +2685,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 		if len(b.saved.KickHistory) > 0 {
 			records := make([]governor.KickRecord, len(b.saved.KickHistory))
 			for i, ke := range b.saved.KickHistory {
-				records[i] = governor.KickRecord{Timestamp: ke.Timestamp, Agent: ke.Agent, Outcome: ke.Outcome, OutcomeReason: ke.OutcomeReason}
+				records[i] = governor.KickRecord{Timestamp: ke.Timestamp, Agent: ke.Agent, Outcome: ke.Outcome, OutcomeReason: ke.OutcomeReason, Reason: ke.Reason}
 			}
 			b.gov.SeedKickHistory(records)
 			b.logger.Info("kick history restored", "entries", len(records))
@@ -2846,6 +2852,9 @@ func (b *boot) bootDashboardWith(deps bootDashboardDeps) {
 			}
 		}
 	})
+	// Reap sandbox Jobs the previous process lost track of, now that the
+	// audit log can record each one (hivecommons/hive#18525).
+	startSandboxJobBootSweep(b.ctx, b.cfg, b.agentMgr, b.dashSrv.AuditLog, b.logger)
 
 	// Persist per-user dashboard sessions on the PVC (/data) so direct-route
 	// users aren't logged out by pod restarts. NOTE: use /data explicitly, NOT
@@ -3733,9 +3742,16 @@ func (b *boot) bootSupervision() {
 		contributorClaimOverrideLookup(contributorClaimGuard.Load, claimsInflightLookup(b.issueClaims, b.cfg.Project.Org)),
 		verifyOnceLookup(b.ctx, b.cfg.Project.Org, b.issueClaims, func() *github.Client { return b.ghClient }, b.logger),
 		claimEscalationLookup(b.ctx, b.cfg, b.issueClaims, func() *github.Client { return b.ghClient }, b.logger)))
+	// #18488: a live claim on a non-App PR (or its linked issue) keeps the
+	// repair queues from sending an agent to push onto that branch.
+	b.sched.SetPRLeaseLookup(claimsPRLeaseLookup(b.issueClaims, b.cfg.Project.Org))
 	// Dashboard maintainer notes on a listed item ride its kick as private
 	// context (pkg/scheduler/kick_maintainer_notes.go).
 	b.sched.SetMaintainerNotesLookup(maintainernotes.Default().List)
+	// #18493: agents' durable topic claims (bd topic) ride their kicks and tag
+	// the PR rows of the FIX-BEFORE-NEW and held-PR blocks. Read b.beadStores
+	// at call time, not at wire time.
+	b.sched.SetTopicClaimLookup(func() []scheduler.TopicClaim { return topicClaimLookup(b.beadStores)() })
 	// #9584: close answered question issues unless the author objects (default off).
 	b.questionAutoclose.Store(wireQuestionAutoclose(b.ctx, b.cfg, b.sched, func() *github.Client { return b.ghClient }, b.logger))
 	// The pr-request watcher's PR-opened hook (Linear session narration, the
@@ -3768,6 +3784,9 @@ func (b *boot) bootDashboardAPI() { b.bootDashboardAPIWith(defaultBootDashboardA
 // bootDashboardAPIWith is bootDashboardAPI with its long-lived effects
 // injected; see bootDashboardAPIDeps.
 func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
+	// Before the dependencies are built, so the dashboard's approval queue
+	// for repo-declared agents sees the discoverer (#18491).
+	b.wireRepoAgentDiscovery()
 	deps.registerAPI(b.dashSrv, b.dashboardDependencies())
 	// The hive's own unblock (blocked sweep, review-backlog block lift)
 	// re-reads the issue into the cached snapshot and the Activity Monitor
@@ -3802,7 +3821,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				rt = b.agentMgr
 			}
 			researchPool := wireMeetingsResearch(b.cfg, rt, b.logger)
-			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger); lr != nil {
+			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger, b.dashSrv.HiveStatusBrief); lr != nil {
 				b.meetingsLive = lr
 				b.cleanup.push(lr.Close)
 				b.cleanup.push(routeResearch(researchPool, lr))
@@ -4580,6 +4599,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						APIKey:       apiKey,
 						CABundle:     gw.CABundle,
 						ExtraHeaders: extraHeaders,
+						KeyResolver:  gatewayInferenceKeyResolver(b.cfg, gw, backend),
 					})
 					return
 				}
@@ -4637,6 +4657,7 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 						DefaultModel: defaultModel,
 						APIKey:       apiKey,
 						CABundle:     caBundle,
+						KeyResolver:  litellmInferenceKeyResolver(b.cfg, backend),
 					})
 					return
 				}
@@ -6615,6 +6636,20 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 				b.dashSrv.AddSystemAlert(holdMigrationFailedAlertID, "warning", holdMigrationFailedAlertMessage(b.cfg.HiveID, reportPath))
 			}
 		}
+		// hivecommons/hive#18468: the hive no longer applies `hold` itself.
+		// Swap the holds its own gates applied (App label event + gate
+		// notice) for ready-for-review / decision-needed, and make sure both
+		// labels exist with their descriptions. A person's `hold` is never
+		// touched. Off the boot path: it is bounded per repo and a failure
+		// only leaves old holds in place (still blocking) until next boot.
+		go func(ghClient *github.Client) {
+			res, err := ghClient.MigrateHiveAppliedHolds(b.ctx)
+			if err != nil {
+				b.logger.Warn("hive gate label migration incomplete; unmigrated hive holds keep blocking and retry next boot", "error", err, "relabeled", res.Relabeled, "skipped", res.Skipped)
+				return
+			}
+			b.logger.Info("hive gate label migration complete", "relabeled", res.Relabeled, "skipped", res.Skipped)
+		}(b.ghClient)
 		// Provenance-only migration. Retired reviewer labels map to agent/reviewer;
 		// redundant lane-origin labels are removed. Nothing reads origin/* as a gate,
 		// so a failure here only leaves old names on open items; the marker is not
@@ -6801,6 +6836,7 @@ func (b *boot) runLoopWith(deps runLoopDeps) {
 	}
 	b.startReviewEvents()
 	b.startMatrixIngest()
+	b.startReleaseFeedWatcher()
 
 	// Webhook health re-check: in webhook mode the base tick (900s) is longer
 	// than the health window (2 × eval_interval_s), so without this a lapse
@@ -7277,7 +7313,7 @@ func persistStateWithPaths(agentMgr crux.Runtime, gov *governor.Governor, cfg *c
 	govKickHistory := gov.KickHistory()
 	kickEntries := make([]snapshot.GovKickEntry, len(govKickHistory))
 	for i, kr := range govKickHistory {
-		kickEntries[i] = snapshot.GovKickEntry{Timestamp: kr.Timestamp, Agent: kr.Agent, Outcome: kr.Outcome, OutcomeReason: kr.OutcomeReason}
+		kickEntries[i] = snapshot.GovKickEntry{Timestamp: kr.Timestamp, Agent: kr.Agent, Outcome: kr.Outcome, OutcomeReason: kr.OutcomeReason, Reason: kr.Reason}
 	}
 
 	state := &snapshot.PersistedState{

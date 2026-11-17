@@ -1122,16 +1122,19 @@ func (c *Engine) ApplyStageLabels(ctx context.Context) (StageLabelResult, error)
 			verdict = replacement
 			obs.Reason = replacement.Reason
 		}
-		if hasLabelFold(obs.Labels, "hold") && !verdict.Terminal {
+		if holdLabel := wornHoldLabel(obs.Labels); holdLabel != "" && !verdict.Terminal {
 			// Who held it and why rides the row (hivecommons/hive#15020);
 			// a reporter-trust hold the hive put on its own PR is lifted
 			// here — the hive is the author, the reporter's trust is moot.
-			prov, notice, err := c.holdProvenance(ctx, obs.Owner, obs.Repo, obs.Number)
+			// Only the gate's own decision-needed label is ever lifted: a
+			// `hold` is a person's (or awaits the #18468 migration) and is
+			// never removed by the hive.
+			prov, notice, err := c.holdProvenance(ctx, obs.Owner, obs.Repo, obs.Number, holdLabel)
 			if err != nil {
 				c.debug("stage labels: hold provenance unreadable", "repo", obs.Display, "pr", obs.Number, "error", err)
 			}
 			hiveAuthored := pass.AuthorIsApp || obs.AuthorKind == authorkind.Hive
-			if hiveAuthored && prov.SelfImposed() && prov.ReporterTrust() {
+			if hiveAuthored && prov.SelfImposed() && prov.ReporterTrust() && strings.EqualFold(holdLabel, hgithub.DecisionNeededLabelName()) {
 				released, err := c.releaseSelfImposedReporterTrustHold(ctx, obs, prov, notice)
 				if err != nil {
 					c.warn("stage labels: could not release self-imposed reporter-trust hold", "repo", obs.Display, "pr", obs.Number, "error", err)

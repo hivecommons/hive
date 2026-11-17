@@ -45,6 +45,18 @@ func TestDeriveIssueClearsStaleTriageLabelPastClaim(t *testing.T) {
 			f.Issue.Bucket = BucketCoveredByPR
 			f.Issue.CoveringPR = &Ref{Owner: "acme", Repo: "widgets", Number: 99, Kind: stagelabels.PRItem}
 		}), stagelabels.CoveredByPR, []string{label}},
+		// hivecommons/hive#18387: the label came back after the hive's one
+		// removal, so another writer owns it and the write leaves it on.
+		{"yielded label stays on a covered issue", wearing(func(f *Facts) {
+			f.Issue.Bucket = BucketCoveredByPR
+			f.Issue.CoveringPR = &Ref{Owner: "acme", Repo: "widgets", Number: 99, Kind: stagelabels.PRItem}
+			f.Issue.TriageClearYielded = true
+		}), stagelabels.CoveredByPR, nil},
+		{"yielded label stays on a claimed issue", wearing(func(f *Facts) {
+			f.Issue.Bucket = BucketClaimed
+			f.Issue.Claim = &ClaimFact{Holder: "scanner", Kind: claims.KindAgent}
+			f.Issue.TriageClearYielded = true
+		}), stagelabels.Claimed, nil},
 		{"045 park keeps the label", wearing(func(f *Facts) { f.Park.DecisionLabel = "needs-spec" }), stagelabels.IssueNeedsDecision, nil},
 		{"umbrella claim stays untriaged", wearing(func(f *Facts) {
 			f.Issue.Bucket = BucketClaimed

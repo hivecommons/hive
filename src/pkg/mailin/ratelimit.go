@@ -76,3 +76,74 @@ func (l *RateLimiter) pruneLocked(now time.Time) {
 		l.m = map[string]*limEntry{}
 	}
 }
+
+// ByteBudget bounds the message bytes delivered per key (a hive's host)
+// in a rolling window (hivecommons/hive#18564): a sender cannot fill one
+// hive's spool by staying under the per-IP and per-domain message counts.
+type ByteBudget struct {
+	mu     sync.Mutex
+	limit  int64
+	window time.Duration
+	now    func() time.Time
+	m      map[string]*budgetEntry
+}
+
+type budgetEntry struct {
+	start time.Time
+	used  int64
+}
+
+// NewByteBudget allows limit bytes per key per window. limit <= 0
+// disables the budget.
+func NewByteBudget(limit int64, window time.Duration, now func() time.Time) *ByteBudget {
+	if now == nil {
+		now = time.Now
+	}
+	return &ByteBudget{limit: limit, window: window, now: now, m: map[string]*budgetEntry{}}
+}
+
+// Reserve takes n bytes of key's budget, false when they do not fit.
+func (b *ByteBudget) Reserve(key string, n int64) bool {
+	if b == nil || b.limit <= 0 {
+		return true
+	}
+	now := b.now()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	e, ok := b.m[key]
+	if !ok || now.Sub(e.start) >= b.window {
+		if !ok && len(b.m) >= limiterMaxKeys {
+			b.pruneLocked(now)
+		}
+		e = &budgetEntry{start: now}
+		b.m[key] = e
+	}
+	if e.used+n > b.limit {
+		return false
+	}
+	e.used += n
+	return true
+}
+
+// Refund gives back n bytes Reserve took, for a delivery that failed.
+func (b *ByteBudget) Refund(key string, n int64) {
+	if b == nil || b.limit <= 0 {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if e, ok := b.m[key]; ok {
+		e.used = max(0, e.used-n)
+	}
+}
+
+func (b *ByteBudget) pruneLocked(now time.Time) {
+	for k, e := range b.m {
+		if now.Sub(e.start) >= b.window {
+			delete(b.m, k)
+		}
+	}
+	if len(b.m) >= limiterMaxKeys {
+		b.m = map[string]*budgetEntry{}
+	}
+}

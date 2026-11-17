@@ -80,6 +80,7 @@
         }
         _inboxCache = await r.json();
         renderInbox();
+        if (typeof inboxRecSyncDone === 'function') inboxRecSyncDone(_inboxCache.items);
         clearTimeout(_inboxBusyTimer);
         if (inboxRouteBusy(_inboxCache.items)) _inboxBusyTimer = setTimeout(fetchInbox, INBOX_BUSY_POLL_MS);
         if (inboxTxAnyBusy(_inboxCache.items)) inboxTxPollSchedule();
@@ -430,6 +431,11 @@
       } else {
         actions += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="inboxShare" data-arg-types="s,s,t" data-arg0="' + src + '" data-arg1="' + id + '" aria-haspopup="menu" aria-expanded="false" title="File this item in the hive, or share a link to it (not the recording)">🔗 Share ▾</button>';
       }
+      if (inboxCanDeleteRecording(it, window._hiveRole, window._hiveUser)) {
+        const busy = it.transcription && (it.transcription.status === 'queued' || it.transcription.status === 'running');
+        actions += '<button type="button" class="hv-btn btn-secondary btn-sm inbox-delete" data-action="inboxDeleteRecording" data-arg0="' + id + '"' +
+          (busy ? ' disabled aria-disabled="true" title="Being transcribed: delete it once the transcription finishes"' : ' title="Delete the audio, this Inbox item and its transcript; anything already shared from it stays"') + '>🗑 Delete</button>';
+      }
       return '<div class="kb-fact-item inbox-item" data-inbox-key="' + escapeHtml(key) + '">' +
         (inboxCanShare(window._hiveRole) ? '<label class="inbox-check"><input type="checkbox" data-change-action="inboxToggleSelect" data-arg0="' + src + '" data-arg1="' + id + '"' + checked + ' aria-label="Select ' + escapeHtml(it.title) + '"></label>' : '') +
         '<div class="inbox-icon" title="' + src + '">' + inboxSourceIcon(it.source) + '</div>' +
@@ -493,6 +499,19 @@
       } catch (e) { return e.message; }
       return 'the browser could not play this recording';
     }
+    // inboxAudioNoteText is the line under the player. Audio this hive
+    // stores itself (its own recordings, dropped audio files) is kept until
+    // retention deletes it (audio_expires_at); a third-party source's audio
+    // is only streamed through and never stored here.
+    function inboxAudioNoteText(it, fmtDate) {
+      const restart = ' Click ▶ Play recording again to restart.';
+      if (it && (it.source === 'hive-recording' || it.source === 'upload')) {
+        const exp = it.audio_expires_at && !String(it.audio_expires_at).startsWith('0001') ? it.audio_expires_at : '';
+        const when = exp && fmtDate ? fmtDate(exp) : '';
+        return (when ? 'The audio is kept on this hive until ' + when + ', then deleted; the transcript stays.' : 'The audio is kept on this hive.') + restart;
+      }
+      return 'Streaming through this hive; the recording is not stored.' + restart;
+    }
     function inboxPlay(src, id) {
       const key = src + '/' + id;
       const target = document.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
@@ -511,7 +530,7 @@
       target.appendChild(audio);
       const note = document.createElement('div');
       note.className = 'muted-xs';
-      note.textContent = 'Streaming through this hive; the recording is not stored. Click ▶ Play recording again to restart.';
+      note.textContent = inboxAudioNoteText(inboxFind(src, id), d => formatDashboardDate(d, { year: 'numeric', month: 'short', day: 'numeric' }));
       target.appendChild(note);
     }
 
@@ -782,6 +801,39 @@
       const data = await r.json().catch(() => ({}));
       if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
       return data;
+    }
+    // inboxCanDeleteRecording: a hive recording may be deleted by an owner,
+    // or by the read-write member who recorded it; read members never.
+    function inboxCanDeleteRecording(it, role, user) {
+      if (!it || it.source !== 'hive-recording') return false;
+      if (role === 'owner') return true;
+      return role === 'read-write' && !!user && !!it.recorded_by && String(it.recorded_by).toLowerCase() === String(user).toLowerCase();
+    }
+    // inboxDeleteRecordingText is the confirm text; with share history it
+    // says that the shared copies stay.
+    function inboxDeleteRecordingText(it) {
+      const shared = ((it && it.share_history) || []).length;
+      let text = 'This deletes the audio stored on this hive, this Inbox item and its transcript in Knowledge. It cannot be undone.';
+      if (shared) text += ' What was already shared from it (' + shared + ' share' + (shared === 1 ? '' : 's') + ': RFCs, issues, DIBS ideas, spek seeds) stays where it is.';
+      return text;
+    }
+    async function inboxDeleteRecording(id) {
+      const it = inboxFind('hive-recording', id);
+      if (!it) return;
+      const ok = await hiveConfirm({ title: 'Delete this recording?', message: inboxDeleteRecordingText(it), confirmLabel: 'Delete', danger: true });
+      if (!ok) return;
+      try {
+        const r = await fetch('/api/inbox/hive-recording/' + encodeURIComponent(id), { method: 'DELETE' });
+        const data = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(data.error || ('HTTP ' + r.status));
+        const key = 'hive-recording/' + id;
+        delete _inboxContent[key];
+        _inboxSelected.delete(key);
+        showToast('Recording deleted', 'success');
+      } catch (e) {
+        showToast('Could not delete the recording: ' + e.message, 'error');
+      }
+      await fetchInbox();
     }
     // Approval queue for mailed-in files from outside the allowlist (#18395).
     async function inboxEmailAct(id, action) {

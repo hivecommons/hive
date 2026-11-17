@@ -51,7 +51,7 @@ function makeContext(role) {
     Array,
   };
   vm.createContext(ctx);
-  for (const fn of ['inboxSharePillText', 'inboxShareTargetHref', 'inboxSharePillHtml', 'inboxSharePillsHtml', 'inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemHasAudio', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxItemHtml']) {
+  for (const fn of ['inboxSharePillText', 'inboxShareTargetHref', 'inboxSharePillHtml', 'inboxSharePillsHtml', 'inboxCanShare', 'inboxIntentLabel', 'inboxIntentThen', 'inboxSourceIcon', 'inboxItemHasAudio', 'inboxItemKey', 'inboxViewerCanPlay', 'inboxApiPath', 'inboxFmtDuration', 'inboxStatePill', 'inboxSummaryHtml', 'inboxTranscriptHtml', 'inboxTxUnavailableText', 'inboxTxEtaText', 'inboxTxElapsedText', 'inboxTxProgressHtml', 'inboxTranscriptionHtml', 'inboxCanDeleteRecording', 'inboxItemHtml']) {
     vm.runInContext(extractFunction(fn), ctx);
   }
   return ctx;

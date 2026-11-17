@@ -468,6 +468,9 @@ jobs:
     - name: hive-review helper tests
       working-directory: .
       run: bash bin/test_hive_review.sh
+    - name: hive-topic helper tests
+      working-directory: .
+      run: bash bin/test_hive_topic.sh
     - name: Shared CI baseline classifier tests
       working-directory: .
       run: bash bin/test_hive_baseline_check.sh

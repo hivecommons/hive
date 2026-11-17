@@ -205,6 +205,10 @@ type Config struct {
 	// UpstreamWatch declares per-repo upstreams and filters for the fork
 	// upstream watch (hivecommons/hive#9966). Default off.
 	UpstreamWatch UpstreamWatchConfig `yaml:"upstream_watch,omitempty" json:"upstream_watch,omitempty"`
+	// Repos holds per-repository overrides keyed by the bare name from
+	// project.repos or "owner/repo" (hivecommons/hive#18495). Absent means
+	// every repo inherits the hive-wide values. See RepoSettings.
+	Repos map[string]RepoSettings `yaml:"repos,omitempty" json:"repos,omitempty"`
 	// CodeScanning turns open GitHub code scanning alerts into grouped hive
 	// issues (src/docs/code-scanning.md). Default off, opt-in per repo.
 	CodeScanning CodeScanningConfig `yaml:"code_scanning,omitempty" json:"code_scanning,omitempty"`
@@ -313,6 +317,9 @@ type WorkflowConfig struct {
 	// Marketplace configures the spoke's view of the hub workflow catalogue
 	// (hivecommons/hive#17620 phase 7).
 	Marketplace MarketplaceConfig `yaml:"marketplace,omitempty" json:"marketplace,omitempty"`
+	// Dispatch maps a bound model's agent profiles to hive agents
+	// (workflow_dispatch.go).
+	Dispatch WorkflowDispatchConfig `yaml:"dispatch,omitempty" json:"dispatch,omitzero"`
 }
 
 // LabelGCEnabled is the effective workflow.label_gc (default true).

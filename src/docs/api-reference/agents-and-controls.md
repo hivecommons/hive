@@ -44,6 +44,10 @@ Part of the [Dashboard REST API reference](../api-reference.md); see that page f
 | `GET` | `/api/agents/{name}/kicks/{id}` | Dashboard auth/session | Agent Kick Log Get | `pkg/dashboard/api.go:128` |
 | `GET` | `/agents/{name}/kicks` | Dashboard auth/session | Agent Kick History Page (HTML) | `pkg/dashboard/api.go:129` |
 | `POST` | `/api/agents/{name}/login-code` | Owner only | Agent Login Code | `pkg/dashboard/api.go:151` |
+| `GET` | `/api/agents/discovered` | Dashboard auth/session | Agents declared under `.hive/agents/*.yaml` in allowlisted managed repos, with `status` `pending` / `invalid` / `approved` / `rejected` / `orphaned`; `enabled: false` when discovery is not running ([agent configuration](../agent-configuration.md#agents-declared-in-a-managed-repo-hiveagents)) | `pkg/dashboard/api_repo_agents.go:23` |
+| `POST` | `/api/agents/discovered/approve` | Owner only | Register a pending discovered agent: body `{id, name?, backend?, model?, mode?}`; sets `definition_source` (marked `discovered`) and, with a sibling `<name>.md`, `prompt_source`; backend, model and mode come from the request, never the file | `pkg/dashboard/api_repo_agents.go:24` |
+| `POST` | `/api/agents/discovered/reject` | Owner only | Decline a pending discovered agent (body `{id}`); stays declined until the file is removed | `pkg/dashboard/api_repo_agents.go:25` |
+| `POST` | `/api/agents/discovered/refresh` | Owner only | Rescan every managed repo's `.hive/agents/` now and return the list | `pkg/dashboard/api_repo_agents.go:26` |
 
 ### Kick is asynchronous
 
