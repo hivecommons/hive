@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"net/mail"
+	"net/url"
 	"strings"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/inbox"
 	"github.com/hivecommons/hive/pkg/mailallow"
+	"github.com/hivecommons/hive/pkg/mailin/wire"
 	"github.com/hivecommons/hive/pkg/meetings"
 	"github.com/hivecommons/hive/pkg/meetings/schedule"
 )
@@ -29,8 +31,8 @@ const (
 	// customersSweepInterval is how often discovery runs. Everything it
 	// reads is local, so the cost of a pass is a few file reads.
 	customersSweepInterval = 10 * time.Minute
-	// githubUserPrefix marks an access-list entry the hub authenticated
-	// with GitHub ("github:alice"): the name is a GitHub login.
+	// githubUserPrefix is the optional provider prefix of an access-list
+	// entry the hub authenticated with GitHub ("github:alice").
 	githubUserPrefix = "github:"
 )
 
@@ -142,6 +144,7 @@ func customersSweepInput(src customersSources) customers.SweepInput {
 	if src.cfg == nil {
 		return in
 	}
+	in.OwnAddresses = customersOwnAddresses(src.cfg)
 	in.Users, in.Links = customersUsers(src)
 	in.Sightings = append(in.Sightings, customersGitHubSightings(src)...)
 	in.Sightings = append(in.Sightings, customersLocalSightings(src)...)
@@ -173,8 +176,11 @@ func customersUsers(src customersSources) ([]customers.HiveUser, []customers.Pro
 		if role == config.RoleOwner {
 			owners = append(owners, name)
 		}
-		// The hub writes a GitHub-authenticated user as "github:<login>".
-		if login, ok := strings.CutPrefix(strings.ToLower(name), githubUserPrefix); ok && login != "" {
+		// The hub writes a GitHub-authenticated user as "github:<login>",
+		// and a device-flow login is the bare login: the access list
+		// treats the two as one user. Either way the name is a GitHub
+		// login, as long as it is shaped like one.
+		if login := customersGitHubLogin(name); login != "" {
 			links = append(links, customers.ProvenLink{User: name, Identity: customers.Identity{
 				Kind: customers.KindGitHub, Value: login, Source: customersSourceAccessList,
 			}})
@@ -196,6 +202,30 @@ func customersUsers(src customersSources) ([]customers.HiveUser, []customers.Pro
 		}})
 	}
 	return users, links
+}
+
+// customersGitHubLogin is the GitHub login an access-list name stands for, or
+// "" when it is not one: a name with another provider prefix, an address or
+// anything else a login cannot be.
+func customersGitHubLogin(name string) string {
+	login := strings.TrimPrefix(strings.ToLower(strings.TrimSpace(name)), githubUserPrefix)
+	if !customers.LooksLikeGitHubLogin(login) {
+		return ""
+	}
+	return login
+}
+
+// customersOwnAddresses are this hive's own mail addresses: hive@<dashboard
+// host>. Mail and invites sent to it are never a person.
+func customersOwnAddresses(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	u, err := url.Parse(strings.TrimSpace(cfg.Hub.DashboardURL))
+	if err != nil || u.Hostname() == "" {
+		return nil
+	}
+	return []string{wire.LocalPart + "@" + strings.ToLower(u.Hostname())}
 }
 
 // customersIsPerson reports whether a GitHub login is a person rather than

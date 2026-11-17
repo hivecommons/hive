@@ -94,6 +94,7 @@ Which AI models wrote the pull requests Hive opened, how well each model's work 
 **How the numbers are worked out.**
 
 - Each row is one model. Model ids are normalised so one model gets one row: a provider prefix (`openai-codex/gpt-6.1-sol`), a `:variant` suffix (`gpt-5.6-sol:high`) and a dash between version digits (`claude-opus-5-5`) are folded into `gpt-6.1-sol`, `gpt-5.6-sol` and `claude-opus-5.5`. The backends that drove the model appear as chips under its name; hover the row to see the raw ids and how many pull requests each contributed.
+- The row's tooltip also splits the model by backend and by effort, the reasoning effort the PR's `— hive:` signature line records (`effort=high`; **unknown** when the line has none). Each backend line and each effort line shows its pull requests (merged, open, closed without merging), how many merged first pass, and the average review rounds and fix attempts of its merged pull requests, so you can see whether one harness or effort level needed more fixing. The API returns these as the extra fields on `sources[]` and as `efforts[]` on each model.
 - The bar splits a model's pull requests into merged, still open, and closed without merging.
 - **Merged** is the number of merged pull requests in the window.
 - **1st pass** is the share of merged pull requests that merged without a review-requested fix round.
@@ -104,6 +105,7 @@ Which AI models wrote the pull requests Hive opened, how well each model's work 
 - A model gets a rank only after it has at least 5 merged pull requests in the window. With fewer, the sample is too small to compare and the row is listed without a rank.
 - Rows whose pull requests carry no model id are shown last, muted, as **unattributed**. They are counted but never ranked.
 - You can show the last 7 days, the last 30 days, or all time. You can sort by rank or by count.
+- Hover a row to see where its pull requests went and how its work is trending. **By repository** lists each repository (`owner/repo`, so a short configured name and the full name count as one), with its pull requests, merged count, first-pass rate and average fix attempts. **Weekly trend** lists one line per week (weeks start Monday, UTC, by the date the pull request was opened), oldest first, with the same figures; weeks with no pull requests are left out. The weekly lines appear for the 30-day and all-time views only, since 7 days is a single week. First-pass rate and fix attempts count merged pull requests only, as the row does. The API returns these as `repos[]` and `weeks[]` on each bucket of `GET /api/governor/pr-models`.
 
 **What it is good for.** Use it when choosing which model a worker should use. A model with a low first-pass rate or a high failure rate costs more review and retry time; the rank already weighs both.
 

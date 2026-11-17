@@ -111,6 +111,9 @@ type CustomersService interface {
 	// Forget deletes a person and returns how many edges went with them.
 	Forget(v CustomersViewer, id string) (edges int, err error)
 	Accept(v CustomersViewer, suggestionID string) (CustomerResult, error)
+	// AcceptInto attaches a suggestion to the existing customer into
+	// (an id or "me") instead of making a new one; Unmerge undoes it.
+	AcceptInto(v CustomersViewer, suggestionID, into string) (CustomerResult, error)
 	Dismiss(v CustomersViewer, suggestionID string) error
 	// AnswerHint answers a "Same person?" question: same true makes the
 	// suggested identity the customer's own, false closes the question for
@@ -131,6 +134,13 @@ type CustomersService interface {
 // /unmerge: From is the customer folded in (or restored).
 type CustomerMergeRequest struct {
 	From string `json:"from"`
+}
+
+// CustomerAcceptRequest is the optional body of
+// POST /api/customers/suggestions/{sid}/accept: Into is an existing customer
+// (an id, or "me") to attach the suggestion to instead of making a new one.
+type CustomerAcceptRequest struct {
+	Into string `json:"into,omitempty"`
 }
 
 // CustomerSplitRequest is the body of POST /api/customers/{id}/split.
@@ -391,6 +401,20 @@ func (s *Server) handleCustomersAccept(w http.ResponseWriter, r *http.Request) {
 	}
 	svc, ok := s.customersService(w)
 	if !ok {
+		return
+	}
+	var body CustomerAcceptRequest
+	if r.ContentLength != 0 && !decodeCustomersBody(w, r, &body) {
+		return
+	}
+	if into := strings.TrimSpace(body.Into); into != "" {
+		res, err := svc.AcceptInto(v, r.PathValue("sid"), into)
+		if err != nil {
+			s.customersError(w, r, err)
+			return
+		}
+		s.auditFromRequest(r, "customer_attach", auditDetail("person", res.ID), "")
+		jsonResponse(w, res.View)
 		return
 	}
 	res, err := svc.Accept(v, r.PathValue("sid"))

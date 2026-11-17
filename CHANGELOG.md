@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.308.0)
+
+### Added
+
+- **Contributor run stats by model now say why runs failed.** Each model row of `GET /api/contribute/run-stats/models` (and the `models` array of `GET /api/contribute/run-stats`) gains `abandoned`, `scenarios` (the same scenario counts run-stats already gives per backend, summing to `runs`) and `failure_kinds` (`environment`, `task`, `unspecified`, summing to the failed runs). A high failure rate can now be read as "mostly the contributors' environments" or "mostly the work". `failure_rate` and the other existing fields are unchanged. On the contributor wall, hovering a post's "failed" model-evidence figure shows the split, with the labels the run history uses. (#18721)
+
 ## 2026-11-17 (v5.307.1)
 
 ### Fixed
