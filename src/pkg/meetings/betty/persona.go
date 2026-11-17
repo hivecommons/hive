@@ -106,7 +106,7 @@ func answerPrompt(mode, who, question string, snips []Snippet, recent []recentLi
 		}
 	}
 	b.WriteString(dataClose + "\n\n")
-	b.WriteString(`Reply with only a JSON object: {"answer": "<your reply>", "confidence": <0 to 1>, "needs_research": <true if answering well needs research beyond this context>, "sources": ["<context numbers you used>"]}`)
+	b.WriteString(`Reply with only a JSON object: {"answer": "<your reply>", "confidence": <0 to 1>, "needs_research": <true if answering well needs research beyond this context>, "sources": ["<context numbers you used>"], "topic": "<2 to 5 words naming what was asked, such as open PRs>"}`)
 	return b.String()
 }
 

@@ -45,6 +45,9 @@ type pending struct {
 	snips    []Snippet
 	// thoughts: a spoken request with no question.
 	thoughts bool
+	// overlapped: another request was in flight at the same time, so its
+	// answer names who and what (attribution.go).
+	overlapped bool
 }
 
 type retrieval struct {
@@ -157,10 +160,11 @@ func (e *Engine) addressed(l Line, trig Trigger, now time.Time) {
 	}
 	if trig.VoiceWanted && e.d.LLM != nil && !e.takeEarlyAck(l.Who, now) {
 		// Speak at once so the room knows she heard; the answer follows.
-		e.emit(Reply{Kind: KindVoice, Text: e.ack(), Trigger: TriggerAck, Question: l.Text, VoiceWanted: true})
+		e.emit(Reply{Kind: KindVoice, Text: e.ackFor(l.Who), Trigger: TriggerAck, Question: l.Text, VoiceWanted: true})
 	}
 	p := e.add(l, trig, TopicKey(trig.Rest), true, now)
 	p.waited, p.thoughts = true, thoughts
+	e.noteQueue(now)
 	e.retrieve(p, trig.Rest)
 }
 
@@ -198,7 +202,7 @@ func (e *Engine) onPartial(l Line) {
 	if at, ok := e.earlyAck[l.Who]; ok && now.Sub(at) < earlyAckWindow {
 		return
 	}
-	if e.emit(Reply{Kind: KindVoice, Text: e.ack(), Trigger: TriggerAck, Question: l.Text, VoiceWanted: true}) {
+	if e.emit(Reply{Kind: KindVoice, Text: e.ackFor(l.Who), Trigger: TriggerAck, Question: l.Text, VoiceWanted: true}) {
 		e.earlyAck[l.Who] = now
 	}
 }
@@ -268,6 +272,9 @@ func (e *Engine) add(l Line, trig Trigger, topic []string, addressed bool, now t
 	e.nextID++
 	p := &pending{id: e.nextID, line: l, trig: trig, topic: topic, addressed: addressed, created: now}
 	e.pending[p.id] = p
+	if addressed {
+		e.markOverlap(p)
+	}
 	return p
 }
 
@@ -352,11 +359,15 @@ func (e *Engine) proceed(p *pending) {
 		return
 	}
 	if e.d.LLM == nil {
-		e.emit(Reply{Kind: replyKind(p.trig), Text: fallbackNoModel, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted})
+		text := e.attributed(p, p.trig.VoiceWanted, "", fallbackNoModel, now)
+		e.emit(Reply{Kind: replyKind(p.trig), Text: text, Trigger: TriggerAddressed, Question: p.line.Text, VoiceWanted: p.trig.VoiceWanted})
 		e.finish(p, "")
 		return
 	}
 	p.asking = true
+	if !p.addressed {
+		e.markOverlap(p)
+	}
 	mode, timeout := modeQuestion, e.s.UnpromptedTimeout
 	var recent []recentLine
 	if p.addressed {
@@ -399,7 +410,8 @@ func (e *Engine) onAnswer(p *pending, a answered) {
 		e.finish(p, reason)
 		return
 	}
-	if e.emit(Reply{Text: text, Trigger: TriggerQuestion, Question: p.line.Text, NeedsResearch: a.ans.NeedsResearch, Sources: a.ans.Sources}) {
+	said := e.attributed(p, false, a.ans.Topic, text, now)
+	if e.emit(Reply{Text: said, Trigger: TriggerQuestion, Question: p.line.Text, NeedsResearch: a.ans.NeedsResearch, Sources: a.ans.Sources}) {
 		e.posts = append(e.posts, now)
 		e.lastPost = now
 		e.total++
@@ -461,6 +473,7 @@ func (e *Engine) onAddressedAnswer(p *pending, a answered) {
 		rep.NeedsResearch = true
 		rep.Research = clip(researchQuery(p), maxResearchQuery)
 	}
+	rep.Text = e.attributed(p, p.trig.VoiceWanted, a.ans.Topic, rep.Text, e.d.Now())
 	e.emit(rep)
 	e.rememberTopic(p.topic)
 	e.rememberTopic(TopicKey(text))

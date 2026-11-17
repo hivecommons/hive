@@ -69,6 +69,9 @@ type Answer struct {
 	Confidence    float64  `json:"confidence"`
 	NeedsResearch bool     `json:"needs_research"`
 	Sources       []string `json:"sources"`
+	// Topic is a short label for what was asked ("open PRs"), quoted when
+	// the answer is attributed.
+	Topic string `json:"topic,omitempty"`
 }
 
 // errNoJSON is returned when the reply holds no JSON object.
@@ -86,11 +89,13 @@ func ParseAnswer(raw string) (Answer, error) {
 		Confidence    float64           `json:"confidence"`
 		NeedsResearch bool              `json:"needs_research"`
 		Sources       []json.RawMessage `json:"sources"`
+		Topic         string            `json:"topic"`
 	}
 	if err := json.Unmarshal([]byte(raw[i:j+1]), &loose); err != nil {
 		return Answer{}, errNoJSON
 	}
-	a := Answer{Answer: strings.TrimSpace(loose.Answer), Confidence: loose.Confidence, NeedsResearch: loose.NeedsResearch}
+	a := Answer{Answer: strings.TrimSpace(loose.Answer), Confidence: loose.Confidence, NeedsResearch: loose.NeedsResearch,
+		Topic: cleanTopic(loose.Topic)}
 	for _, s := range loose.Sources {
 		var str string
 		if json.Unmarshal(s, &str) == nil {

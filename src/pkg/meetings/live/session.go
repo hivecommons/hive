@@ -701,6 +701,10 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 	if text == "" {
 		return
 	}
+	if rep.Trigger == betty.TriggerQueue {
+		s.onQueueNote(ctx, rep, text)
+		return
+	}
 	switch rep.Trigger {
 	case betty.TriggerAck:
 		if s.state.BudgetExhausted {
@@ -742,6 +746,17 @@ func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
 		s.deepDive(ctx, rep.Research)
 	}
 	s.save()
+}
+
+// onQueueNote posts the persona's "I have N questions" note: chat only,
+// through the rate limit, never charged (no model call made it).
+func (s *session) onQueueNote(ctx context.Context, rep betty.Reply, text string) {
+	if s.state.BudgetExhausted {
+		return
+	}
+	if s.post(ctx, text) {
+		s.emitPersona(rep)
+	}
 }
 
 func (s *session) emitPersona(rep betty.Reply) {

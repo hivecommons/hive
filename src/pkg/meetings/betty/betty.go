@@ -204,6 +204,10 @@ type Engine struct {
 	// earlyAck is when each speaker was acknowledged from a partial
 	// transcript; their final line then gets no second ack.
 	earlyAck map[string]time.Time
+	// queueNoteAt is when the last "I have N questions" note went out;
+	// lastAnswerAt is when she last answered anything (attribution.go).
+	queueNoteAt  time.Time
+	lastAnswerAt time.Time
 }
 
 type timedLine struct {
@@ -392,6 +396,9 @@ func (e *Engine) emit(r Reply) bool {
 	}
 	select {
 	case e.out <- r:
+		if r.Trigger != TriggerAck && r.Trigger != TriggerQueue {
+			e.lastAnswerAt = e.d.Now()
+		}
 		return true
 	default:
 		e.drop("reply_backlog")
