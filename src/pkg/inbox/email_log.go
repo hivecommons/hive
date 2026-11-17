@@ -34,6 +34,8 @@ const (
 	maxMailReason    = 64
 	maxMailDomain    = 253
 	maxMailEventKind = 16
+	// maxMailItems bounds the item ids kept per event.
+	maxMailItems = 20
 )
 
 // MailEvent is one message mailed to the hive.
@@ -58,6 +60,9 @@ type MailEvent struct {
 	ApprovalReason string `json:"approval_reason,omitempty"`
 	// Auth is the sender authentication the mail receiver recorded.
 	Auth *MailAuth `json:"auth,omitempty"`
+	// Items are the Inbox items of a mail that awaits approval, so it can
+	// be approved or declined from the list (hivecommons/hive#18744).
+	Items []string `json:"items,omitempty"`
 }
 
 // Why a mail awaits the owner's approval.
@@ -181,7 +186,31 @@ func (ev MailEvent) clean() MailEvent {
 	if len(ev.Skipped) == 0 {
 		ev.Skipped = nil
 	}
+	var items []string
+	for _, id := range ev.Items {
+		if validEmailID(id) && len(items) < maxMailItems {
+			items = append(items, id)
+		}
+	}
+	ev.Items = items
 	return ev
+}
+
+// PendingItems is the subset of ids that are still in the spool and still
+// await approval: what an Approve or Decline next to a recent mail acts on.
+func (e *EmailSource) PendingItems(ids []string) []string {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []string
+	for _, id := range ids {
+		if !validEmailID(id) {
+			continue
+		}
+		if m, err := e.readMeta(id); err == nil && !m.Approved {
+			out = append(out, id)
+		}
+	}
+	return out
 }
 
 func (e *EmailSource) logPath() string { return filepath.Join(e.Dir, emailLogFile) }

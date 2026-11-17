@@ -508,29 +508,161 @@ two conditions for landing directly was not met:
   ([Proving calendar emails](meetings.md#proving-calendar-emails)); the
   proof mail has to pass the same authentication.
 
-| Reason | What happened | What to do |
-|---|---|---|
-| attachment type not accepted | Every attachment was of a type off the list above (for example `.key`, `.zip`, `.pptm`) and the mail had no text | Send an accepted type, or export to PDF |
-| an attachment was damaged, macro-enabled or not what its extension says | The file's content does not match its extension | Re-save the file and send it again |
-| an attachment was over the size limit | Over 25 MB for one file, or 30 MB of attachments in one mail | Send a smaller file |
-| the message was over the size limit | Over 35 MiB as sent (attachments grow by a third in transit) | Send a smaller file |
-| the message had no text, calendar invite or attachment | An empty mail | Add text or a file |
-| mail-in files are turned off on this hive | `meetings.email.files_enabled: false` | Turn it back on |
-| this hive's mail storage is full | The 1 GiB spool is full | Decline or delete items |
-| this hive reached its daily volume of mail | 512 MiB a day by default; the sender's server retries | Wait, or raise `HIVE_MX_HIVE_DAILY_BYTES` |
+Each refused or held mail on the list has, on the line under it
+([#18744](https://github.com/hivecommons/hive/issues/18744)):
+
+- **How to try again:** the fix for that reason, and **What this means**, a
+  link to the reason's entry in
+  [Mailing your hive: what the replies mean](#mailing-your-hive-what-the-replies-mean).
+- **Report a problem:** opens a new issue on the hive repository, prefilled
+  with the reason code, the SMTP reply code, the day and the hive's version.
+  It never holds the sender's address or domain, the subject or a file
+  name, and you submit it as yourself.
+- **✓ Approve** and **✕ Decline** for the owner, when the mail awaits
+  approval: they act on every item the mail brought, the same as the
+  buttons on the items themselves.
 
 A refused mail also bounces: the sender's mail provider returns it with the
-same reason in the error text, for example `550 5.6.0 nothing to deliver: a
-.key attachment is not an accepted type. Accepted types: md, pdf, docx,
-pptx, xlsx, ...`. An attachment left out of a mail that was otherwise
-received (it had text, or another accepted file) does not bounce; it is
-listed on the mail's line as "left out".
+same reason in the error text, followed by how to try again, a link to the
+reason's entry below and where to report a problem. An attachment left out
+of a mail that was otherwise received (it had text, or another accepted
+file) does not bounce; it is listed on the mail's line as "left out".
 
 A mail that is on neither the list nor in the sender's bounces did not reach
 the hive's address: check the address (`hive@` and the hive's dashboard
 host, nothing else) and the sender's outbox. The operator's view is the
 receiver's log: see
 [What hive-mx logs](meetings.md#what-hive-mx-logs).
+
+## Mailing your hive: what the replies mean
+
+A hive never sends mail. What a sender hears back comes from two places:
+
+- **A refusal** is an error the hive's mail receiver gives the sender's mail
+  server while the mail is being handed over. The sender's own provider
+  turns it into a bounce ("Undeliverable", "Delivery Status Notification"),
+  usually within a minute. The bounce quotes the receiver's reply:
+
+  ```
+  550 5.6.0 nothing to deliver: a .key attachment is not an accepted type. Accepted types: md, pdf, docx, pptx, xlsx, ...
+  550 5.6.0 To try again: send the file as an accepted type (export it to PDF, for example).
+  550 5.6.0 What this means: https://github.com/hivecommons/hive/blob/v5/src/docs/inbox-voice-sources.md#unsupported-attachment
+  550 5.6.0 Report a problem: https://github.com/hivecommons/hive/issues/new/choose
+  ```
+
+  To try again, fix what the reply names and send the mail again to the
+  same address. Replying to the bounce does not reach the hive.
+- **No bounce** means the mail was handed over. It is in the hive's Inbox
+  (or on its calendar, for an invite), or it waits there for the owner's
+  approval. Nothing is sent to confirm it: people with access to the hive
+  see it under **✉️ Recent mail** in the Inbox
+  ([When a mail does not show up](#when-a-mail-does-not-show-up)).
+
+Why no confirmation mail: an automatic reply to a `From` address that was
+not authenticated goes to whoever the forger named, which is how a mail
+server ends up on blocklists. A reply only to authenticated senders is
+designed in [#18746](https://github.com/hivecommons/hive/issues/18746) and
+is not built.
+
+The entries below are the reasons, by the code the Recent mail list and a
+problem report use. The limits are the defaults.
+
+### Unsupported attachment
+
+`unsupported_attachment`: every attachment was of a type off the accepted
+list (for example `.key`, `.zip`, `.pptm`) and the mail had no text.
+**To try again:** send the file as an accepted type: Markdown, PDF, Word,
+PowerPoint, Excel, audio, video or an image. Exporting to PDF works for
+most documents.
+
+### Attachment content mismatch
+
+`attachment_content_mismatch`: a file's content is not what its extension
+says, or the file is damaged or macro-enabled. **To try again:** open the
+file, save it again in its own format without macros, and send it again.
+
+### Attachment too large
+
+`attachment_too_large`: a file is over 25 MB, or the attachments of one
+mail are over 30 MB together. **To try again:** send a smaller file, or
+split the files over several mails.
+
+### Too many attachments
+
+`too_many_attachments`: a mail may carry at most 10 files. **To try
+again:** send the files over several mails.
+
+### Message too large
+
+`message_too_large`: the mail is over 35 MiB as sent (attachments grow by a
+third in transit, so this is about 25 MB of files). **To try again:** send
+a smaller file, or split the files over several mails.
+
+### Empty message
+
+`empty_message`: the mail had no text, no calendar invite and no
+attachment. **To try again:** add text or a file.
+
+### Malformed message
+
+`malformed_message`: the mail could not be parsed. **To try again:** send
+it from another mail program. If the same mail is accepted elsewhere,
+report a problem.
+
+### Hive daily volume
+
+`hive_daily_volume`: the hive received its daily volume of mail (512 MiB by
+default). This is a temporary refusal: the sender's mail server retries by
+itself for some days, so there is usually nothing to do. The operator can
+raise `HIVE_MX_HIVE_DAILY_BYTES`.
+
+### Hive refused
+
+`hive_refused`: the hive itself turned the mail down. The Recent mail list
+of the hive says which of the next two it was. **To try again:** ask the
+hive's owner, then send the mail again.
+
+### Mail-in off
+
+`mail_in_off`: mail-in files are turned off on the hive
+(`meetings.email.files_enabled: false`). **To try again:** the owner turns
+it back on, then send the mail again.
+
+### Hive storage full
+
+`hive_storage_full`: the hive's 1 GiB mail spool is full. **To try again:**
+the owner declines or deletes mailed-in items, then send the mail again.
+
+### Unknown mailbox
+
+`unknown_mailbox`: the address is not a hive's address. A hive takes mail
+only at `hive@` followed by its dashboard host. **To try again:** copy the
+address from the top of the hive's Inbox.
+
+### Sender not authenticated
+
+`sender_not_authenticated`: the mail was received and waits for the
+owner's approval, because neither SPF nor DKIM passed for the domain of
+its `From` address. **To try again:** send from the mail provider's own
+app or web mail, or fix the account's outgoing server. The owner can
+approve this one by hand.
+
+### Sender not on allowlist
+
+`sender_not_on_allowlist`: the mail was received and waits for the owner's
+approval, because its sender is not a proven calendar email of a user of
+the hive. **To land directly next time:** add the address under
+**Settings, Meeting attendee, Email** and prove it
+([Proving calendar emails](meetings.md#proving-calendar-emails)). The owner
+can approve this one by hand.
+
+### Reporting a problem
+
+From the hive: **Report a problem** on the mail's line under
+**✉️ Recent mail**. Without access to a hive:
+[open an issue](https://github.com/hivecommons/hive/issues/new/choose) with
+the reply text from the bounce and the day. Leave out addresses, the
+subject and the file.
 
 ## Deleting an item
 
