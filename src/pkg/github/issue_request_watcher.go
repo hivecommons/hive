@@ -148,6 +148,14 @@ type IssueRequest struct {
 	// label and removes `help wanted`. The blocked sweep lifts the label when
 	// the PR merges or closes.
 	BlockedOnPR int `json:"blocked_on_pr,omitempty"` // comment only
+	// NotAgentWork is a scanner triage verdict that the issue is not agent
+	// work (hivecommons/hive#18675): "not-a-defect", "needs-human" or
+	// "needs-environment". On a "comment" request on an issue the watcher
+	// posts the note once with the not-agent-work marker and parks the issue
+	// on `needs-human`, so it leaves stage/010-actionable and the scanner's
+	// work list; the same verdict again with no human comment since is
+	// dropped (already_existed). A marker in the body is read the same way.
+	NotAgentWork string `json:"not_agent_work,omitempty"` // comment only
 	// Claim makes an "issue" request file AND claim the new issue for Agent
 	// in one request (hivecommons/hive#17299): right after the create the
 	// watcher performs the same claim a "claim" request does and takes
@@ -705,6 +713,20 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 				c.logger.Info("issue-request watcher: verification marker already on issue, not re-posting",
 					slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("agent", req.Agent), slog.String("marker", marker))
 				resp.OK, resp.Number, resp.AlreadyExisted = true, req.Number, true
+				break
+			}
+		}
+		// A not-agent-work triage verdict changes the issue's state, not
+		// only its timeline, and is never repeated unchanged
+		// (hivecommons/hive#18675).
+		if verdict, ok := notAgentWorkVerdictFor(req, body); ok && req.BlockedOnPR == 0 {
+			var handled bool
+			handled, err = c.relayNotAgentWorkNote(ctx, req, verdict, body, &resp)
+			if handled {
+				if errors.Is(err, ErrIssueCommentBudget) {
+					c.denyIssueRequest(path, req, "comment refused: "+err.Error()+"; this issue already received its daily quota of hive comments, nothing more is needed on it today", nowFn)
+					return
+				}
 				break
 			}
 		}
