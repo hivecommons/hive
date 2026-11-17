@@ -192,3 +192,24 @@ func TestParseAnswerTopic(t *testing.T) {
 		t.Fatalf("%+v %v", a, err)
 	}
 }
+
+// A late answer must say which question it answers even when the request
+// holds no topic word ("Betty, are you there?").
+func TestReplyTopicFallsBackToTheRequest(t *testing.T) {
+	m := NewMatcher("Betty", nil)
+	l := Line{Who: "Andy", Text: "Betty, are you there?", Spoken: true}
+	p := &pending{line: l, trig: m.Match(l.Text, true), addressed: true}
+	if got := replyTopic(p, ""); got == "" || !strings.Contains(got, "there") {
+		t.Fatalf("replyTopic = %q", got)
+	}
+	if got := replyTopic(p, "board pressure"); got != "board pressure" {
+		t.Fatalf("model topic wins: %q", got)
+	}
+	e := New(testSettings(), Deps{})
+	rep := Reply{Text: "Yes, I can hear you.", VoiceWanted: true}
+	p.overlapped = true
+	e.attributeReply(p, &rep, "", time.Now())
+	if rep.Asker != "Andy" || rep.Topic == "" || !rep.Attributed || !strings.HasPrefix(rep.Text, "Andy, ") {
+		t.Fatalf("attributed reply = %+v", rep)
+	}
+}

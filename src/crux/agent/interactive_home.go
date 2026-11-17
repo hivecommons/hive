@@ -277,6 +277,7 @@ func (m *Manager) setupInteractiveHome(agent *AgentProcess, backend string) {
 	m.setupPerAgentCLIHomes(agent.Name, home, agent.UID)
 	m.seedCopilotMemorySetting(agent, home)
 	m.seedClaudeSessionForAgent(agent, home)
+	m.seedClaudeOnboardingForAgent(agent, backend, home)
 	m.tightenInteractiveHome(agent.Name, home, agent.UID)
 	m.sweepOrphanedClaudeTmp(agent.Name)
 	m.sweepStaleCopilotConfigTmp(agent.Name, home)

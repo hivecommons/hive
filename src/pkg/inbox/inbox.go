@@ -77,6 +77,11 @@ type Item struct {
 	// machine-transcribed right now: one of the TranscribeBlocked* codes.
 	// Empty when transcribable, busy, or not applicable. Never carries a key.
 	TranscribeUnavailable string `json:"transcribe_unavailable,omitempty"`
+	// AutoTranscribe marks a pending item with audio that the hive
+	// transcribes without a click (see AutoTranscribe): its own recordings,
+	// dropped and mailed-in audio, and auto-mode sources. The Inbox shows it
+	// as waiting for transcription rather than asking for 🎧 Transcribe.
+	AutoTranscribe bool `json:"auto_transcribe,omitempty"`
 	// Origin says where an item someone added came from: "upload ·
 	// notes.md" for a dropped file, "link · example.org" for a URL.
 	Origin string `json:"origin,omitempty"`

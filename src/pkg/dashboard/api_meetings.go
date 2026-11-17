@@ -224,7 +224,7 @@ func (s *Server) handleMeetingsList(w http.ResponseWriter, r *http.Request) {
 		s.meetingsError(w, r, err)
 		return
 	}
-	jsonResponse(w, map[string]any{"meetings": list})
+	jsonResponse(w, s.withEmailIn(r, map[string]any{"meetings": list}))
 }
 
 func (s *Server) handleMeetingsGet(w http.ResponseWriter, r *http.Request) {

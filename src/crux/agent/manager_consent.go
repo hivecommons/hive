@@ -248,7 +248,14 @@ func (m *Manager) confirmMenuOption(agent *AgentProcess, title, want, navKey str
 // once the screen was accepted and the pane no longer shows a consent screen;
 // false leaves recovery to the caller's restart. The caller must not hold
 // m.mu: menu navigation pauses between keystrokes.
+//
+// It also answers Claude Code's first-run security notice in place, for the
+// same reason: a restart relaunches into the same un-onboarded HOME and the
+// same notice (see continueFirstRunNoticeForKick).
 func (m *Manager) acceptBypassConsentForKick(agent *AgentProcess, pane string) bool {
+	if panesignal.ShowsClaudeFirstRunNotice(pane) {
+		return m.continueFirstRunNoticeForKick(agent)
+	}
 	if !strings.Contains(pane, bypassConsentTitle) || !strings.Contains(pane, bypassConsentAcceptOption) {
 		return false
 	}

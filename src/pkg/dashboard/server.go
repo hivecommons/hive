@@ -450,8 +450,14 @@ type Server struct {
 	sessionQueues   map[string]*sessionQueue
 	// sessionQueueTiming overrides the workers' pacing (tests); zero = defaults.
 	sessionQueueTiming sessionQueuePacing
-	terminalHandoffMu  sync.Mutex
-	terminalHandoffs   map[string]terminalHandoff
+	// sessionStartups holds the startup auto-answer state of running sessions
+	// (api_sessions_autostart.go); guarded by sessionStartupMu, a leaf lock.
+	sessionStartupMu sync.Mutex
+	sessionStartups  map[string]*sessionStartup
+	// sessionAutostartTiming overrides the auto-answer's pacing (tests).
+	sessionAutostartTiming sessionAutostartPacing
+	terminalHandoffMu      sync.Mutex
+	terminalHandoffs       map[string]terminalHandoff
 
 	claudeOAuthFlow claudeOAuthFlow
 

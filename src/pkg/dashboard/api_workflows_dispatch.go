@@ -43,7 +43,9 @@ var (
 	// that hands the item's current state to a profile.
 	ErrWorkflowDispatchNotOwned = errors.New("the bound workflow model does not hand this item's current state to an agent profile")
 	// ErrWorkflowDispatchNoAgent: no enabled hive agent fills the profile.
-	ErrWorkflowDispatchNoAgent = errors.New("no enabled agent fills the profile (workflow.dispatch.profiles.<profile>.agent)")
+	// cmd/hive wraps it with the reason and the fix
+	// (WorkflowDispatchNoAgentError).
+	ErrWorkflowDispatchNoAgent = errors.New("not sent")
 	// ErrWorkflowDispatchHeld: someone else holds the issue's claim.
 	ErrWorkflowDispatchHeld = errors.New("the issue is claimed by someone else")
 )

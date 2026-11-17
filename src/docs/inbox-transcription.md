@@ -246,6 +246,20 @@ Everything above is editable in the Inbox under **⚙ Auto-routing →
 Transcription** and in **Settings → Inbox** (`POST /api/inbox/settings` with
 a `transcription` object).
 
+The form has two parts, **Routing** (default RFC repository, dibs URL,
+rules) and **Transcription**
+([#18701](https://github.com/hivecommons/hive/issues/18701)). Under
+Transcription: the provider selector with one row per provider (name, what
+it does, a ready or not ready pill, and what is missing on its own line);
+the consent notice with the consent and enable boxes; then the options and
+the limits. The fields of a provider (Whisper model and threads, Gemini
+model, Deepgram key variable and model, speaker labels) show only while
+that provider is selected, or, with `auto`, for every provider auto could
+pick (the ready ones); **Auto-mode sources** shows in auto mode. A field
+that is not shown keeps its value, and saving sends the same settings. Each
+part lists its config keys under **Config keys**. In the dialog, Cancel and
+Save stay in view while the form scrolls.
+
 ## Transcribing an item
 
 Items that are pending (no summary, no transcript) and whose source can mint
@@ -311,6 +325,32 @@ The Inbox polls `GET /api/inbox/transcriptions` every 3 seconds while a job
 is queued or running and redraws only that item's progress; it stops when
 nothing is busy and re-reads the Inbox once when a job finishes.
 
+## Recordings are transcribed automatically
+
+Audio the hive holds itself is transcribed as soon as it lands in the Inbox,
+whatever `mode` says, once transcription is enabled with consent: dashboard
+recordings (when they are finalized), dropped audio and video files, and
+mailed-in audio (at once from a trusted sender, otherwise when the owner
+approves it). Nobody clicks **Transcribe**; the item shows *Transcribing
+soon* until its run is queued, then the progress bar.
+
+- **Idempotent.** An item that is queued, running or done is never started
+  again, whichever hook (creation, sweep, a second click) asks.
+- **Restarts.** At boot, records the previous process left `queued` or
+  `running` become `failed` with an `interrupted: ...` reason, and the boot
+  sweep queues them again at once, together with every recording still
+  pending. A run that had started counts toward the 3-run bound (so a
+  recording that keeps crashing the hive stops being retried); one that was
+  only waiting in the queue does not.
+- **Failures** are kept on the item (`transcription.status: failed` with the
+  `reason`) and logged, and retried as described below; **Retry
+  transcription** stays available for them.
+- **Concurrency.** Runs execute in queue order, one at a time by default;
+  `HIVE_INBOX_TRANSCRIBE_CONCURRENCY` (max 8) allows more.
+
+Meetings the hive attended through Quorum arrive with Quorum's live
+transcript, so there is nothing to transcribe for them.
+
 ## Automatic transcription (auto mode)
 
 With `mode: auto`, the hive also transcribes new pending items by itself,
@@ -322,7 +362,7 @@ connector sync, right after the auto-routing rules:
 - It queues only what today's `daily_max_items` and this month's
   `monthly_budget_minutes` leave room for; items that do not fit stay
   pending, without a skip record, and are picked up once budget frees up.
-- Runs still execute one at a time. An item that is queued, running or done
+- Runs still execute in queue order (one at a time by default). An item that is queued, running or done
   is never queued again, and a recording listed twice is queued once.
 - A **failed** item is retried after 1 hour, then 2 hours, up to 3 runs in
   total. An item **skipped for budget** is retried once the UTC day turns.

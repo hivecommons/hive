@@ -982,7 +982,7 @@
     function markDashboardSessions(key, value) {
       const d = _configState.data.dashboard = _configState.data.dashboard || {};
       const sessions = d.sessions = Object.assign({}, d.sessions || {});
-      sessions[key] = key === 'enabled' ? !!value : Math.max(0, parseInt(value || '0', 10) || 0);
+      sessions[key] = (key === 'enabled' || key === 'autostart') ? !!value : Math.max(0, parseInt(value || '0', 10) || 0);
       markDirty('dashboard', 'sessions', sessions);
     }
 
@@ -1008,7 +1008,8 @@
           limit('max_sessions', 'Max running sessions', 'Live sessions per hive. 0 uses the default (12); HIVE_SESSIONS_MAX overrides.') +
           limit('max_per_user', 'Max per user', 'Live sessions one person may create. 0 uses the default (4); HIVE_SESSIONS_MAX_PER_USER overrides.') +
           limit('idle_ttl_hours', 'Idle close (hours)', 'A session with no input and nobody attached ends after this long. 0 uses the default (72); HIVE_SESSIONS_IDLE_TTL_HOURS overrides.') +
-        '</div>';
+        '</div>' +
+        '<div class="config-toggle"><div class="config-toggle-switch ' + (sessions.autostart !== false ? 'on' : '') + '" data-action="toggleConfigSwitch" data-section="dashboard-sessions" data-key="autostart"></div><span class="config-toggle-label">Answer the CLI startup screens ' + yamlHint('dashboard.sessions.autostart') + ' ' + settingHelpMark('settings', 'dashboard', 'Session startup', 'When a session starts, Hive takes the vendor CLI through its startup screens (first-run notice, trust for the session folder, onboarding) to its input prompt, so the first request runs without a person. It never answers a tool or command permission prompt and never signs in. On by default; the HIVE_SESSIONS_AUTOSTART environment variable, when set, overrides this switch.') + '</span></div>';
     }
 
     function renderGovDashboard(dash) {

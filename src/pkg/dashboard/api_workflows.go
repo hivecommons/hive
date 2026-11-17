@@ -28,6 +28,7 @@ func (s *Server) registerWorkflowRoutes() {
 	s.mux.HandleFunc("PUT /api/workflows/bindings", s.handleWorkflowBindingPut)
 	s.mux.HandleFunc("PUT /api/workflows/enabled", s.handleWorkflowEnabledPut)
 	s.mux.HandleFunc("POST /api/workflows/dispatch", s.handleWorkflowDispatch)
+	s.mux.HandleFunc("PUT /api/workflows/dispatch/profiles", s.handleWorkflowDispatchProfilePut)
 	s.mux.HandleFunc("GET /api/workflows/{name}/{version}", s.handleWorkflowGet)
 	s.mux.HandleFunc("PUT /api/workflows/{name}/{version}", s.handleWorkflowSave)
 	s.mux.HandleFunc("DELETE /api/workflows/{name}/{version}", s.handleWorkflowDelete)
@@ -81,6 +82,10 @@ func (s *Server) handleWorkflowList(w http.ResponseWriter, r *http.Request) {
 		"workflows": entries,
 		"bindings":  s.workflowBindings(),
 		"enabled":   s.deps.Config != nil && s.deps.Config.Workflow.Enabled,
+		// Which agent fills each bound model's profiles, or why none
+		// does, and the agents the owner can pin (hivecommons/hive#18690).
+		"dispatch": workflowDispatchProfiles(s.deps.Config, s.workflowProfileLookup()),
+		"agents":   workflowDispatchAgentChoices(s.deps.Config),
 	})
 }
 
@@ -238,7 +243,11 @@ func (s *Server) handleWorkflowBindingPut(w http.ResponseWriter, r *http.Request
 		}
 		s.auditFromRequest(r, action, fmt.Sprintf("%s -> %s@%s", body.Repo, body.Name, body.Version), "")
 	}
-	resp := map[string]interface{}{"changed": changed, "bindings": s.workflowBindings()}
+	resp := map[string]interface{}{
+		"changed": changed, "bindings": s.workflowBindings(),
+		"dispatch": workflowDispatchProfiles(s.deps.Config, s.workflowProfileLookup()),
+		"agents":   workflowDispatchAgentChoices(s.deps.Config),
+	}
 	if body.Name != "" {
 		s.emitBoundWorkflowChecks(r.Context(), body, resp)
 	}

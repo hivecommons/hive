@@ -19,6 +19,10 @@ type entryState struct {
 	Intents map[string]*ShareIntent `json:"intents,omitempty"`
 	// History is the append-only share history.
 	History []*ShareRecord `json:"history,omitempty"`
+	// DeletedAt is the tombstone of an item someone deleted from the Inbox
+	// (delete.go): its source may still list it, the Inbox never does.
+	DeletedAt *time.Time `json:"deleted_at,omitempty"`
+	DeletedBy string     `json:"deleted_by,omitempty"`
 }
 
 // Store persists route states as one JSON file next to connector state.
