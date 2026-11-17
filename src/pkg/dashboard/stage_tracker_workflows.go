@@ -51,6 +51,12 @@ type StageTrackerWorkflowDispatch struct {
 	Kinds   []string `json:"kinds,omitempty"`
 	// Reply is the reply that starts it automatically ("" = on entry).
 	Reply string `json:"reply,omitempty"`
+	// Agent is the hive agent that fills the profile for this repository;
+	// Problem says why none does (hivecommons/hive#18690). The row wears
+	// Problem so a hand-off that cannot happen is not silent. Both are set
+	// for bound repositories only.
+	Agent   string `json:"agent,omitempty"`
+	Problem string `json:"problem,omitempty"`
 }
 
 // StageTrackerWorkflowColumn is a column with the stage numbers it anchors,
@@ -158,7 +164,9 @@ func stageTrackerWorkflows(cfg *config.Config, lookup workflowProfileLookup, qua
 			out.Repos[repo] = StageTrackerWorkflow{Name: b.Name, Version: b.Version, Error: err.Error()}
 			continue
 		}
-		out.Repos[repo] = stageTrackerWorkflowBlock(p)
+		block := stageTrackerWorkflowBlock(p)
+		annotateWorkflowDispatch(cfg, b.Repo, p, &block)
+		out.Repos[repo] = block
 	}
 	return out
 }

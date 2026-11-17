@@ -95,7 +95,7 @@ func TestWithholdWorkflowOwned(t *testing.T) {
 
 func planDeps(done map[string]bool) WorkflowDispatchPlanDeps {
 	return WorkflowDispatchPlanDeps{
-		Agent: func(profile string) (string, bool) { return "writer", profile != "" },
+		Agent: func(d github.WorkflowDispatch) (string, bool) { return "writer", d.Target.Profile != "" },
 		Done:  func(key string) bool { return done[key] },
 	}
 }
@@ -118,8 +118,8 @@ func TestPlanWorkflowDispatchOnce(t *testing.T) {
 
 func TestPlanWorkflowDispatchGates(t *testing.T) {
 	deps := planDeps(map[string]bool{})
-	deps.Agent = func(string) (string, bool) { return "", false }
-	if cands, skips := PlanWorkflowDispatch([]github.WorkflowDispatch{drafterDispatch()}, deps); len(cands) != 0 || skips[0].Reason != WorkflowSkipNoAgent {
+	deps.Agent = func(github.WorkflowDispatch) (string, bool) { return "", false }
+	if cands, skips := PlanWorkflowDispatch([]github.WorkflowDispatch{drafterDispatch()}, deps); len(cands) != 0 || skips[0].Reason != WorkflowSkipNoAgent || skips[0].Profile != "techdocs-drafter" {
 		t.Fatalf("no agent: %+v %+v", cands, skips)
 	}
 	deps = planDeps(map[string]bool{})
@@ -185,7 +185,7 @@ func TestWorkflowDispatchLogSurvivesRestart(t *testing.T) {
 		t.Fatalf("restart lost the record: %+v", reopened.Entries())
 	}
 	cands, _ := PlanWorkflowDispatch([]github.WorkflowDispatch{drafterDispatch()}, WorkflowDispatchPlanDeps{
-		Agent: func(string) (string, bool) { return "writer", true },
+		Agent: func(github.WorkflowDispatch) (string, bool) { return "writer", true },
 		Done:  reopened.Done,
 	})
 	if len(cands) != 0 {

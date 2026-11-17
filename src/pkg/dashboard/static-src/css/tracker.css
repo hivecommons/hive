@@ -332,6 +332,8 @@
     .ham-badge-sentinel { color: var(--status-error); border-color: color-mix(in srgb, var(--status-error) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-badge-sentinel.ham-sentinel-notice { color: var(--status-info); border-color: color-mix(in srgb, var(--status-info) 55%, transparent); }
     /* 072 adoption chip (maintainer-policy, hive PR 14524): "waiting on @author (maintainer, offline 26h) — adopt?" */
+    /* A model-owned row whose profile no hive agent fills (hivecommons/hive#18690). */
+    .ham-badge-wf-gap { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
     .ham-badge-adoption { color: var(--status-warn); border-color: color-mix(in srgb, var(--status-warn) 55%, transparent); font-weight: var(--fw-medium); }
     /* "supersedes N": the closed original a live PR replaced (hive PR 15135 follow-up). Muted — a trace, not a call to act. */
     .ham-badge-supersedes { color: var(--text-faint); border-color: var(--line-subtle); text-decoration: none; }
