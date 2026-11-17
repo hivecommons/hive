@@ -80,8 +80,9 @@ func bodyJSON(t *testing.T, v any) string {
 
 func TestConfigSurfaceOpsRegisteredOnTheirEndpointsOnly(t *testing.T) {
 	for name, path := range map[string]string{
-		WriteOpProjectIssueFilter: "/api/config/governor/labels",
-		WriteOpSentinelSettings:   "/api/config/governor/security",
+		WriteOpProjectIssueFilter:  "/api/config/governor/labels",
+		WriteOpSentinelSettings:    "/api/config/governor/security",
+		WriteOpGovernorLabelDriven: "/api/config/governor/repos",
 	} {
 		if _, ok := DefaultWriteRegistry().Get(name); !ok {
 			t.Fatalf("%s is not registered", name)

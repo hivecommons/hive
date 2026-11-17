@@ -27,6 +27,9 @@ import (
 // ErrConfirmationStale when it no longer matches, so a confirm never
 // overwrites a change somebody made in between.
 //
+// Label-driven approval (Settings → Repos) has its own operation,
+// governor.label_driven (tools_label_driven_ops.go), on the same pattern.
+//
 // decisions.delegate ("Let hive decide": enabled, per-repo, llm,
 // effect_timeout) is written through PUT /api/config/decisions/delegate by
 // its own operation, decisions.delegate_settings (tools_decisions_ops.go).
@@ -36,7 +39,7 @@ const (
 )
 
 func configSurfaceWriteOps() []WriteOp {
-	return []WriteOp{issueFilterOp{}, sentinelSettingsOp{}}
+	return []WriteOp{issueFilterOp{}, sentinelSettingsOp{}, labelDrivenOp{}}
 }
 
 type issueFilterOp struct{}
