@@ -346,8 +346,13 @@ type ResolvedMeetingsLLM struct {
 	// Reason explains Backend none.
 	Reason string
 	// AgentBackend is the agent backend (claude, ...) on the agent-backend
-	// backend; Model is then that backend's model.
+	// backend; Model is then that backend's model. On the openai backend it
+	// names the model gateway (vllm, llm-d or a named gateway) the
+	// agent-backend mode resolved, and is empty otherwise.
 	AgentBackend string
+	// CABundle is an optional PEM file of private CAs the openai backend's
+	// endpoint is verified against (a named gateway's ca_bundle).
+	CABundle string
 	// CLI is the completion-profile launch settings on the agent-backend
 	// backend.
 	CLI ResolvedMeetingsCLI
@@ -357,6 +362,9 @@ type ResolvedMeetingsLLM struct {
 func (r ResolvedMeetingsLLM) Label() string {
 	switch r.Backend {
 	case MeetingsLLMModeOpenAI:
+		if r.AgentBackend != "" {
+			return r.AgentBackend + " model " + r.Model
+		}
 		return "model " + r.Model
 	case MeetingsLLMModeAnthropic:
 		if r.AnthropicModel != "" {
