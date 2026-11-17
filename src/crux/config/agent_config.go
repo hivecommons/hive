@@ -589,6 +589,13 @@ type GatewayConfig struct {
 	// price the dashboard reports the gateway's spend as "price unknown"
 	// rather than $0. omitempty keeps existing hive.yaml files byte-identical.
 	Prices *GatewayPrices `yaml:"prices,omitempty" json:"prices,omitempty"`
+	// TrainsOnInputs marks a gateway (typically a free tier) whose terms let
+	// the provider train on request content. Callers that send private
+	// repository content skip such a gateway unless the operator opts in
+	// (advisory_engine.allow_training_providers_for_private,
+	// hivecommons/hive#18464). YAML-only; omitempty keeps existing files
+	// byte-identical.
+	TrainsOnInputs bool `yaml:"trains_on_inputs,omitempty" json:"trains_on_inputs,omitempty"`
 }
 
 // GatewayPrices is a gateway's configured price, USD per 1M tokens. The

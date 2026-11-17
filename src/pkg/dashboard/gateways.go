@@ -265,6 +265,9 @@ func (s *Server) handleGovernorGatewaysUpsert(w http.ResponseWriter, r *http.Req
 		gw.KeyName = gws[idx].KeyName
 		// prices: is YAML-only (the form does not edit it); keep it.
 		gw.Prices = gws[idx].Prices
+		// trains_on_inputs: is YAML-only too; dropping it on a form save
+		// would silently make a training gateway eligible for private repos.
+		gw.TrainsOnInputs = gws[idx].TrainsOnInputs
 	}
 	if body.APIKeyEnv != nil {
 		gw.APIKeyEnv = strings.TrimSpace(*body.APIKeyEnv)
