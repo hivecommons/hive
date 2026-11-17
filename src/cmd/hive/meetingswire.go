@@ -174,7 +174,8 @@ func meetingSpekArgs(m meetings.Meeting, contextDir string) []string {
 // in the panel instead of silently. beadStores feeds the persona's work-item
 // retrieval and may be nil.
 func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings.Store, kapi *knowledge.KnowledgeAPI,
-	beadStores func() map[string]*beads.Store, research live.ResearchDispatcher, logger *slog.Logger) *live.Runner {
+	beadStores func() map[string]*beads.Store, research live.ResearchDispatcher, logger *slog.Logger,
+	hiveStatus func(context.Context) (string, error)) *live.Runner {
 	if cfg == nil || mgr == nil || store == nil {
 		return nil
 	}
@@ -227,7 +228,7 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 		},
 		Ledger:      live.NewLedger(m.Budget.MaxTokensPerHourOrDefault(), m.Budget.MaxTokensPerDayOrDefault()),
 		Logger:      logger,
-		Persona:     meetingPersonaFactory(cfg, persona, llm, store, kapi, beadStores, slotsDir, maxTokens, research != nil, logger),
+		Persona:     meetingPersonaFactory(cfg, persona, llm, store, kapi, beadStores, slotsDir, maxTokens, research != nil, logger, hiveStatus),
 		PersonaName: personaName,
 		IsLeave:     meetings.NewLeaveMatcher(persona.LeavePhrases).Match,
 	})
@@ -250,14 +251,22 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 // Anthropic Messages API on a hive with only an Anthropic key, both charged
 // to the meeting's usage file and budget. With no model she still
 // introduces herself but does not answer questions. canResearch lets an
-// addressed question she cannot answer well become a deep dive.
+// addressed question she cannot answer well become a deep dive. hiveStatus,
+// when set, is the dashboard's live hive state (open issues and PRs,
+// actionable, held and blocked counts, agents): questions about the hive
+// itself are answered from it in-process, never sent to research
+// (hivecommons/hive#18590 finding 9).
 func meetingPersonaFactory(cfg *config.Config, persona config.ResolvedMeetingsPersona, llm config.ResolvedMeetingsLLM,
 	store *meetings.Store, kapi *knowledge.KnowledgeAPI, beadStores func() map[string]*beads.Store,
-	slotsDir string, maxTokens int, canResearch bool, logger *slog.Logger) func(meetings.Meeting) *betty.Engine {
+	slotsDir string, maxTokens int, canResearch bool, logger *slog.Logger,
+	hiveStatus func(context.Context) (string, error)) func(meetings.Meeting) *betty.Engine {
 	if !persona.Enabled {
 		return nil
 	}
 	var retrievers []betty.Retriever
+	if hiveStatus != nil {
+		retrievers = append(retrievers, betty.HiveStatusRetriever{Brief: hiveStatus})
+	}
 	if kapi != nil {
 		stores := betty.FileStores(kapi.FileStores)
 		retrievers = append(retrievers, betty.KnowledgeRetriever{Stores: stores})

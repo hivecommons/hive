@@ -3588,7 +3588,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 				rt = b.agentMgr
 			}
 			researchPool := wireMeetingsResearch(b.cfg, rt, b.logger)
-			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger); lr != nil {
+			if lr := wireMeetingsLive(b.cfg, mgr, store, b.knowledgeAPI, func() map[string]*beads.Store { return b.beadStores }, researchPool, b.logger, b.dashSrv.HiveStatusBrief); lr != nil {
 				b.meetingsLive = lr
 				b.cleanup.push(lr.Close)
 				b.cleanup.push(routeResearch(researchPool, lr))
