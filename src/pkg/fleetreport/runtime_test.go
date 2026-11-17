@@ -1410,3 +1410,36 @@ func TestAllowClearedCommentPacesAndRespectsClose(t *testing.T) {
 		t.Fatal("cleared comment refused after the gap")
 	}
 }
+
+// TestSeenLogKeepsOneSectionPerHive (#18608): sightings fold into one
+// comment body, newest first, with each hive's earlier section replaced.
+func TestSeenLogKeepsOneSectionPerHive(t *testing.T) {
+	t0 := time.Date(2026, 11, 1, 0, 0, 0, 0, time.UTC)
+	ev := Evidence{Class: ClassRestartStorm, Count: 2, Diagnostics: "line one\nline two"}
+	first := SeenLog("", SeenComment("fp1", "hive-a", "v5.1.0", "c1", ev, t0))
+	if !strings.HasPrefix(first, SeenLogMarker) || strings.Count(first, SelfReportSeenMarkerPrefix) != 1 {
+		t.Fatalf("first = %q", first)
+	}
+	second := SeenLog(first, SeenComment("fp1", "hive-b", "v5.1.0", "c2", ev, t0.Add(time.Hour)))
+	third := SeenLog(second, SeenComment("fp1", "hive-a", "v5.2.0", "c1", ev, t0.Add(2*time.Hour)))
+	if strings.Count(third, SeenLogMarker) != 1 || strings.Count(third, SelfReportSeenMarkerPrefix) != 2 {
+		t.Fatalf("third = %q, want one header and two hive sections", third)
+	}
+	a, b := strings.Index(third, "hive=hive-a "), strings.Index(third, "hive=hive-b ")
+	if a < 0 || b < 0 || a > b || !strings.Contains(third, "(v5.2.0, c1)") || strings.Contains(third, "(v5.1.0, c1)") {
+		t.Fatalf("third = %q, want hive-a's newer section first and its old one gone", third)
+	}
+	// A previous body without the seen-log header (a legacy per-sighting
+	// comment) is not folded in.
+	if got := SeenLog(SeenComment("fp1", "hive-c", "v5", "c", ev, t0), SeenComment("fp1", "hive-a", "v5", "c", ev, t0)); strings.Contains(got, "hive=hive-c ") {
+		t.Fatalf("legacy body folded in: %q", got)
+	}
+	// The section cap bounds the comment.
+	body := ""
+	for i := 0; i < seenLogMaxHives+5; i++ {
+		body = SeenLog(body, SeenComment("fp1", fmt.Sprintf("hive-%d", i), "v5", "c", Evidence{}, t0))
+	}
+	if n := strings.Count(body, SelfReportSeenMarkerPrefix); n != seenLogMaxHives {
+		t.Fatalf("sections = %d, want cap %d", n, seenLogMaxHives)
+	}
+}

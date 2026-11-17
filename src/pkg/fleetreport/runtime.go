@@ -992,6 +992,81 @@ func SeenComment(fp, hive, version, cluster string, ev Evidence, now time.Time) 
 	return safeText(b.String())
 }
 
+// SeenLogMarker heads the single "also seen" comment a poster keeps per
+// fleet-report issue (hivecommons/hive#18608). Joins edit that comment in
+// place instead of posting a new one per sighting: an edit notifies nobody,
+// and the issue body's Affected-hives block already counts every sighting.
+const SeenLogMarker = "<!-- hive:selfreport-seen-log -->"
+
+// seenLogMaxHives bounds the sections one seen-log comment keeps.
+const seenLogMaxHives = 25
+
+const seenLogHeader = SeenLogMarker + "\n**Also seen on other hives.** One section per hive, newest first; edited in place as sightings arrive. The Affected hives block in the issue body keeps the counts."
+
+// SeenLog folds sighting (a SeenComment, or any body that starts with
+// SeenMarker) into the seen-log comment body previous ("" when none exists
+// yet) and returns the new body. The hive's earlier section is replaced, the
+// new one goes first, and other hives' sections are kept in order.
+func SeenLog(previous, sighting string) string {
+	sighting = strings.TrimSpace(sighting)
+	key := seenSectionHive(sighting)
+	sections := []string{sighting}
+	if strings.Contains(previous, SeenLogMarker) {
+		for _, s := range seenSections(previous) {
+			if key != "" && seenSectionHive(s) == key {
+				continue
+			}
+			if len(sections) >= seenLogMaxHives {
+				break
+			}
+			sections = append(sections, s)
+		}
+	}
+	return safeText(seenLogHeader + "\n\n" + strings.Join(sections, "\n\n"))
+}
+
+// seenSections splits a seen-log body into its per-hive sections, each
+// starting at a SeenMarker.
+func seenSections(body string) []string {
+	var out []string
+	rest := body
+	idx := strings.Index(rest, SelfReportSeenMarkerPrefix)
+	for idx >= 0 {
+		rest = rest[idx:]
+		next := strings.Index(rest[len(SelfReportSeenMarkerPrefix):], SelfReportSeenMarkerPrefix)
+		section := rest
+		if next >= 0 {
+			section = rest[:len(SelfReportSeenMarkerPrefix)+next]
+			rest = rest[len(SelfReportSeenMarkerPrefix)+next:]
+			idx = 0
+		} else {
+			idx = -1
+		}
+		if s := strings.TrimSpace(section); s != "" {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// seenSectionHive returns the hive=<value> a section's leading seen marker
+// names, or "" when it has none.
+func seenSectionHive(section string) string {
+	if !strings.HasPrefix(section, SelfReportSeenMarkerPrefix) {
+		return ""
+	}
+	marker, _, ok := strings.Cut(section[len(SelfReportSeenMarkerPrefix):], "-->")
+	if !ok {
+		return ""
+	}
+	for _, field := range strings.Fields(marker) {
+		if v, found := strings.CutPrefix(field, "hive="); found {
+			return v
+		}
+	}
+	return ""
+}
+
 // ClearedComment renders the one-time "condition cleared" comment.
 func ClearedComment(fp, hive, version string, now time.Time) string {
 	return safeText(fmt.Sprintf("%s\nCleared on **%s** (%s) at %s — the condition is no longer observed there. Leaving the issue open for a human to confirm the fix.", SeenMarker(fp, hive), labelValue(hive), displayVersion(version), now.UTC().Format(time.RFC3339)))
