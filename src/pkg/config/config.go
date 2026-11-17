@@ -310,6 +310,9 @@ type WorkflowConfig struct {
 	// Marketplace configures the spoke's view of the hub workflow catalogue
 	// (hivecommons/hive#17620 phase 7).
 	Marketplace MarketplaceConfig `yaml:"marketplace,omitempty" json:"marketplace,omitempty"`
+	// Dispatch maps a bound model's agent profiles to hive agents
+	// (workflow_dispatch.go).
+	Dispatch WorkflowDispatchConfig `yaml:"dispatch,omitempty" json:"dispatch,omitempty"`
 }
 
 // LabelGCEnabled is the effective workflow.label_gc (default true).

@@ -630,6 +630,10 @@ project.workflow_bindings[].repo # see project.workflow_bindings[].name
 project.workflow_bindings[].version # see project.workflow_bindings[].name
 project.remote_write_identity # Settings control lands in the follow-up PR for #18516
 workflow.label_gc # operator safety knob for model-label garbage collection on rebind; yaml-only, no Settings control planned (RFC #17620)
+workflow.dispatch.enabled # workflow-model agent dispatch kill switch; yaml-only (cncf/techdocs#395)
+workflow.dispatch.profiles.<key>.agent # which hive agent fills a model profile; yaml-only (cncf/techdocs#395)
+workflow.dispatch.profiles.<key>.prompt_template # see workflow.dispatch.profiles.<key>.agent
+workflow.dispatch.profiles.<key>.disabled # see workflow.dispatch.profiles.<key>.agent
 inbox.sources[] # which voice connector types feed the Inbox; defaults to every configured plaud/wisprflow connector, yaml-only (Inbox RFC)
 inbox.rules[].source # auto-routing rules are edited as whole rows in Inbox → Auto-routing via POST /api/inbox/settings, not leaf-path controls (Inbox RFC)
 inbox.rules[].title_prefix # see inbox.rules[].source
