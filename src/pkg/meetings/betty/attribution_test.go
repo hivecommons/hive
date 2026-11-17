@@ -20,6 +20,10 @@ func gatedLLM(gates map[string]chan struct{}, topics map[string]string) *fakeLLM
 	}}
 }
 
+// releaseSource is the citation a chat answer from gatedLLM ends with: its
+// source 1 is the rig's "Release" knowledge fact (cite.go).
+const releaseSource = ` (Source: knowledge "Release")`
+
 // promptQuestion is the "Question from" line of a prompt.
 func promptQuestion(prompt string) string {
 	i := strings.Index(prompt, "Question from")
@@ -45,11 +49,11 @@ func TestConcurrentRequestsAreAttributed(t *testing.T) {
 	}
 	// The second request is ready first.
 	close(gates["deploy"])
-	if a := r.reply(); a.Text != "Bo (re: deploy window): Answer about deploy." {
+	if a := r.reply(); a.Text != "Bo (re: deploy window): Answer about deploy."+releaseSource {
 		t.Fatalf("first answer %q", a.Text)
 	}
 	close(gates["release"])
-	if a := r.reply(); a.Text != "Andy Anderson (re: release date): Answer about release." {
+	if a := r.reply(); a.Text != "Andy Anderson (re: release date): Answer about release."+releaseSource {
 		t.Fatalf("second answer %q", a.Text)
 	}
 	// A third request within the minute gets no second note.
@@ -115,7 +119,7 @@ func TestAnswerAfterOtherLinesIsAttributed(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 	close(gate["release"])
 	// No model topic: the request's own words, in the casing used.
-	if a := r.reply(); a.Text != "Bo (re: PRs touch the release): Answer about release." {
+	if a := r.reply(); a.Text != "Bo (re: PRs touch the release): Answer about release."+releaseSource {
 		t.Fatalf("answer %q", a.Text)
 	}
 }
