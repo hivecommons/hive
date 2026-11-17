@@ -66,6 +66,11 @@ type Deliverable struct {
 	Labels []string `json:"labels,omitempty"`
 }
 
+// ProducesChange reports whether the profile opens a pull request or
+// pushes in this state. A target that does not is a reviewing profile: it
+// reports on the item (TechDocs' techdocs-verifier).
+func (t DispatchTarget) ProducesChange() bool { return producesChange(t.Produces) }
+
 // AppliesTo reports whether the target's state applies to items of kind.
 func (t DispatchTarget) AppliesTo(kind ItemKind) bool {
 	if len(t.Kinds) == 0 {

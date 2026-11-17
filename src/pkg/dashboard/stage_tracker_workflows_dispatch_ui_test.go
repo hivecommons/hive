@@ -44,7 +44,7 @@ const td = { name: 'cncf-techdocs-assessment', version: 'curated-2026.11.2',
 const workflows = { default: { name: 'hive-default', version: '1', columns: [{ id: 'open', label: 'Open', states: ['open'], numbers: [] }] }, repos: { 'cncf/techdocs': td } };
 
 const accepted = { repo: 'cncf/techdocs', kind: 'issue', number: 395, stage: 20 };
-assert.deepStrictEqual(stageTrackerWorkflowDispatchOf(accepted, workflows), { profile: 'techdocs-drafter', state: 'accepted', reply: '' });
+assert.deepStrictEqual(stageTrackerWorkflowDispatchOf(accepted, workflows), { profile: 'techdocs-drafter', state: 'accepted', reply: '', agent: '', problem: '' });
 const owner = stageTrackerWorkflowDispatchAction(accepted, workflows, { owner: true });
 assert.strictEqual(owner.id, 'wf-dispatch');
 assert.strictEqual(owner.label, 'Send to techdocs-drafter');

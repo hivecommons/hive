@@ -39627,6 +39627,87 @@
           }
         }
       },
+      "/api/workflows/dispatch/profiles": {
+        "put": {
+          "tags": [
+            "Workflows"
+          ],
+          "summary": "Pick the hive agent a workflow profile is handed to",
+          "description": "Owner only. The agent picker on a repository's workflow row in Settings -> Repos (hivecommons/hive#18690). Pins workflow.dispatch.profiles.<profile>.agent, or clears the pin when agent is empty so the profile resolves by default again (an agent named after the profile, then a writer, docs or feature agent, then the hive's issue worker or, for a reviewing profile, the reviewer). The profile's prompt_template and disabled settings are kept. The next scheduler pass reads the live config, so no restart is needed. Audited as workflow_dispatch_agent.",
+          "requestBody": {
+            "required": true,
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "required": [
+                    "profile"
+                  ],
+                  "properties": {
+                    "profile": {
+                      "type": "string",
+                      "description": "Model profile name"
+                    },
+                    "agent": {
+                      "type": "string",
+                      "description": "An enabled agent that is not a replica; empty clears the pin"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "responses": {
+            "200": {
+              "description": "Pin saved (or already as requested)",
+              "content": {
+                "application/json": {
+                  "schema": {
+                    "type": "object",
+                    "properties": {
+                      "changed": {
+                        "type": "boolean"
+                      },
+                      "profile": {
+                        "type": "string"
+                      },
+                      "agent": {
+                        "type": "string"
+                      },
+                      "dispatch": {
+                        "type": "array",
+                        "description": "Every bound repository's profiles: repo, profile, agent, source, pinned, disabled, problem (why nothing fills it), states",
+                        "items": {
+                          "type": "object"
+                        }
+                      },
+                      "agents": {
+                        "type": "array",
+                        "description": "Agents that can be picked",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            },
+            "400": {
+              "description": "Body is not {profile, agent}, or agent is not an enabled agent of this hive"
+            },
+            "403": {
+              "description": "Not an owner"
+            },
+            "500": {
+              "description": "The config could not be saved"
+            },
+            "503": {
+              "description": "Config unavailable"
+            }
+          }
+        }
+      },
       "/api/workflows/enabled": {
         "put": {
           "tags": [
