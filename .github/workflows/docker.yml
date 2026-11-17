@@ -311,8 +311,15 @@ jobs:
         with:
           driver-opts: network=host
 
+      # Also logs in on same-repo PR builds so the whisper-builder warm step
+      # can READ the GHCR registry cache below. Fork PRs never reach this job
+      # (see `if:` above), and nothing in a PR build pushes: the image output
+      # has push=false and the registry cache-to is gated on push == 'true'.
       - name: Log in to GHCR
-        if: needs.gate.outputs.push == 'true'
+        if: >-
+          needs.gate.outputs.push == 'true' ||
+          (github.event_name == 'pull_request' &&
+           github.event.pull_request.head.repo.full_name == github.repository)
         uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ghcr.io
@@ -369,7 +376,15 @@ jobs:
       # whisper-builder's inputs are the pinned base image and two pinned,
       # checksummed tarballs (whisper.cpp, FFmpeg), so its layers are safe to
       # serve from cache and it is not in no-cache-filters. Compiling it cold
-      # costs several minutes per arch.
+      # costs several minutes per arch (far more for arm64 under QEMU).
+      #
+      # Its cache lives in a GHCR registry cache, NOT the Actions cache. The
+      # Actions cache sits over its 10 GB cap, so LRU eviction kept dropping
+      # the whisper blobs and every build recompiled whisper.cpp + FFmpeg.
+      # The registry cache is not subject to that cap. It is a dedicated
+      # package (hive-buildcache), never a release image tag, with one tag
+      # per arch so amd64 and arm64 never overwrite each other. Only
+      # push=true builds export it; same-repo PR builds read it only.
       - name: Warm whisper-builder layer cache
         continue-on-error: true
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
@@ -382,8 +397,8 @@ jobs:
             BASE_REGISTRY=${{ env.BASE_REGISTRY }}
           provenance: false
           sbom: false
-          cache-from: type=gha,scope=whisper-${{ steps.slug.outputs.slug }}
-          cache-to: type=gha,scope=whisper-${{ steps.slug.outputs.slug }},mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ github.repository_owner }}/hive-buildcache:whisper-${{ steps.slug.outputs.slug }}
+          cache-to: ${{ needs.gate.outputs.push == 'true' && format('type=registry,ref=ghcr.io/{0}/hive-buildcache:whisper-{1},mode=max,image-manifest=true,oci-mediatypes=true,ignore-error=true', github.repository_owner, steps.slug.outputs.slug) || '' }}
 
       - name: Build and push by digest
         id: build
@@ -764,8 +779,11 @@ jobs:
           sbom: false
           # Owner-derived image name (dual-publish) — see the main build step.
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/hive-contributor,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
+          # Only push=true builds export: a PR-ref Actions cache entry is only
+          # visible to that same PR, yet it counts against the repo's 10 GB
+          # cap and evicts the long-lived branch entries every PR reads.
           cache-from: type=gha,scope=contributor-${{ steps.slug.outputs.slug }}
-          cache-to: type=gha,scope=contributor-${{ steps.slug.outputs.slug }},mode=max
+          cache-to: ${{ needs.gate.outputs.push == 'true' && format('type=gha,scope=contributor-{0},mode=max', steps.slug.outputs.slug) || '' }}
 
       - name: Export digest
         if: needs.gate.outputs.push == 'true'
@@ -987,8 +1005,11 @@ jobs:
           sbom: false
           # Owner-derived image name (dual-publish) — see the main build step.
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/hive-hub,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
-          cache-from: type=gha,scope=hub-${{ steps.slug.outputs.slug }}
-          cache-to: type=gha,scope=hub-${{ steps.slug.outputs.slug }},mode=max
+          # No layer cache. src/Dockerfile.hub has exactly two stages, builder
+          # and runtime, and no-cache-filters above forces both to re-execute,
+          # so a cache could never serve a layer here. The old gha mode=max
+          # export only filled the Actions cache (and evicted entries that are
+          # reused, like whisper's) for zero hits.
 
       - name: Export digest
         if: needs.gate.outputs.push == 'true'
@@ -1215,8 +1236,8 @@ jobs:
           sbom: false
           # Owner-derived image name (dual-publish) — see the main build step.
           outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/hive-mx,push-by-digest=true,name-canonical=true,push=${{ needs.gate.outputs.push }},oci-mediatypes=false
-          cache-from: type=gha,scope=mx-${{ steps.slug.outputs.slug }}
-          cache-to: type=gha,scope=mx-${{ steps.slug.outputs.slug }},mode=max
+          # No layer cache, for the same reason as the hub build: both stages
+          # of src/Dockerfile.mx (builder, runtime) are in no-cache-filters.
 
       - name: Export digest
         if: needs.gate.outputs.push == 'true'
