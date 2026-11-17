@@ -55,6 +55,9 @@ type Reply struct {
 	// query through the meeting's research path and to report back with
 	// FollowUp when it completes.
 	Research string `json:"research,omitempty"`
+	// Timing is the answer's stage timings (timing.go), on answers to a
+	// request.
+	Timing *Timing `json:"timing,omitempty"`
 }
 
 // Line is one final transcript segment or chat line.
@@ -456,10 +459,12 @@ func (e *Engine) run() {
 		case r := <-e.retrieved:
 			if p := e.pending[r.id]; p != nil {
 				p.snips, p.retrieved = r.snips, true
+				p.stages.retrievedAt = e.d.Now()
 				e.proceed(p)
 			}
 		case a := <-e.answers:
 			if p := e.pending[a.id]; p != nil {
+				p.stages.modelDone = a.done
 				e.onAnswer(p, a)
 			}
 		}
