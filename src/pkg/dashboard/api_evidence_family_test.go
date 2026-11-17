@@ -214,17 +214,18 @@ func TestBuildEvidenceSummaryAuthorModelBuckets(t *testing.T) {
 		t.Errorf("model sums n = %d, want %d", byModel.N, got.N)
 	}
 
-	// Existing maps are unchanged by the new grouping. The family map keeps
-	// its own (pre-existing) bucketing: modelfamily.Family does not strip a
-	// provider prefix, so "anthropic/claude-opus-5-5" and
-	// "openai-codex/gpt-6.1-terra:high" land under "other" there while the
-	// model map folds them to their canonical ids. That is the existing
-	// family behaviour, not changed here.
-	if o := got.OutcomesByAuthorFamily["claude"]; o.N != 3 || o.Merged != 2 || o.Unknown != 1 || o.ChangeFailures != 2 {
+	// Existing maps are unchanged by the new grouping. modelfamily.Family
+	// derives the family from the provider-stripped id (#18803), so
+	// "anthropic/claude-opus-5-5" joins the other Claude PRs and
+	// "openai-codex/gpt-6.1-terra:high" is "gpt"; nothing lands in "other".
+	if o := got.OutcomesByAuthorFamily["claude"]; o.N != 4 || o.Merged != 3 || o.Unknown != 1 || o.ChangeFailures != 2 {
 		t.Errorf("claude family = %+v", o)
 	}
-	if o := got.OutcomesByAuthorFamily["other"]; o.N != 2 || o.Merged != 2 || o.ChangeFailures != 0 {
-		t.Errorf("other family = %+v", o)
+	if o := got.OutcomesByAuthorFamily["gpt"]; o.N != 1 || o.Merged != 1 || o.ChangeFailures != 0 {
+		t.Errorf("gpt family = %+v", o)
+	}
+	if o, ok := got.OutcomesByAuthorFamily["other"]; ok && o.N != 0 {
+		t.Errorf("other family = %+v, want empty", o)
 	}
 	if o := got.Outcomes["agent"]; o.N != 6 || o.Merged != 5 || o.ChangeFailures != 2 {
 		t.Errorf("agent kind = %+v", o)
