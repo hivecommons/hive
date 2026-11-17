@@ -198,6 +198,110 @@ func TestBotAuthorsOptionExtendsDetection(t *testing.T) {
 	}
 }
 
+// projectbluefin/website#1023: one dependency bot (renovate running as an
+// App) opens one PR per dependency, and every one edits package.json and its
+// lockfile. Those are separate updates, not a regeneration series and not
+// duplicates of each other, so the sweep must say nothing — not "superseded
+// by construction", and not "Possible duplicate" either.
+func TestDependencyBotBumpsSharingAManifestAreNotClustered(t *testing.T) {
+	manifest := []string{"package.json", "package-lock.json"}
+	prs := []PR{
+		{Repo: "o/website", Number: 1009, Title: "chore(deps): update tailwindcss monorepo to v5 (major)", Author: "mergeraptor[bot]", CreatedAt: at(1), Files: manifest, DiffHash: "tw"},
+		{Repo: "o/website", Number: 1019, Title: "chore(deps): update dependency vue-tsc to v3.3.14", Author: "mergeraptor[bot]", CreatedAt: at(2), Files: manifest, DiffHash: "vt"},
+		{Repo: "o/website", Number: 1023, Title: "chore(deps): update dependency @antfu/eslint-config to v10", Author: "mergeraptor[bot]", CreatedAt: at(3), Files: manifest, DiffHash: "ae"},
+		{Repo: "o/website", Number: 1037, Title: "chore(deps): update dependency js-yaml to v5", Author: "mergeraptor[bot]", CreatedAt: at(4), Files: manifest, DiffHash: "jy"},
+	}
+	if got := Find(prs, Options{}); len(got) != 0 {
+		t.Fatalf("independent dependency bumps clustered: %+v", got)
+	}
+	// Unknown diff hashes do not change that: the titles already show two jobs.
+	for i := range prs {
+		prs[i].DiffHash = ""
+	}
+	if got := Find(prs, Options{}); len(got) != 0 {
+		t.Fatalf("independent bumps with unknown diffs clustered: %+v", got)
+	}
+}
+
+// A regeneration bot dates or numbers each run; that is still the same job,
+// so #7469's newest-survives series behaviour is unchanged.
+func TestRegenerationTitlesDifferingOnlyByDateOrVersionAreASeries(t *testing.T) {
+	const out = "static/data/update-churn.json"
+	prs := []PR{
+		{Repo: "o/docs", Number: 1264, Title: "chore: regenerate churn (2026-11-15)", Author: "churn[bot]", CreatedAt: at(1), Files: []string{out}, DiffHash: "d1"},
+		{Repo: "o/docs", Number: 1272, Title: "chore: regenerate churn (2026-11-16)", Author: "churn[bot]", CreatedAt: at(2), Files: []string{out}, DiffHash: "d2"},
+		{Repo: "o/docs", Number: 1275, Title: "Chore: regenerate  churn (2026-11-17)", Author: "churn[bot]", CreatedAt: at(3), Files: []string{out}, DiffHash: "d3"},
+	}
+	got := Find(prs, Options{})
+	if len(got) != 1 || !got[0].BotSeries {
+		t.Fatalf("dated regenerations are not one series: %+v", got)
+	}
+	if got[0].Survivor.Number != 1275 {
+		t.Errorf("survivor = #%d, want the newest #1275", got[0].Survivor.Number)
+	}
+}
+
+// A byte-identical patch is the same job whatever the titles say, so one bot's
+// identical PRs still cluster as a series; a shared finding identity is
+// evidence beyond the shared file too, so it still clusters (as an ordinary
+// cluster, since the titles name different jobs).
+func TestSameBotWithStrongerEvidenceStillClusters(t *testing.T) {
+	identical := []PR{
+		{Repo: "o/r", Number: 1, Title: "chore: sync labels", Author: "sync[bot]", CreatedAt: at(1), Files: []string{"labels.yml"}, DiffHash: "same"},
+		{Repo: "o/r", Number: 2, Title: "chore: apply label set", Author: "sync[bot]", CreatedAt: at(2), Files: []string{"labels.yml"}, DiffHash: "same"},
+	}
+	got := Find(identical, Options{})
+	if len(got) != 1 || got[0].Confidence != ConfidenceIdenticalDiff || !got[0].BotSeries {
+		t.Fatalf("identical bot patches: %+v, want one identical-diff series", got)
+	}
+
+	finding := []PR{
+		{Repo: "o/r", Number: 3, Title: "fix: pin action in ci.yml", Author: "scanner[bot]", CreatedAt: at(1), Files: []string{".github/workflows/ci.yml"}, FindingKey: "k1"},
+		{Repo: "o/r", Number: 4, Title: "fix: unpinned uses: in workflow", Author: "scanner[bot]", CreatedAt: at(2), Files: []string{".github/workflows/ci.yml"}, FindingKey: "k1"},
+	}
+	got = Find(finding, Options{FindingKey: func(p PR) string { return p.FindingKey }})
+	if len(got) != 1 || got[0].Confidence != ConfidenceFindingIdentity || got[0].BotSeries {
+		t.Fatalf("same-finding bot PRs: %+v, want one ordinary finding-identity cluster", got)
+	}
+}
+
+// Only a cluster made entirely of one bot's different jobs is dropped. A
+// person's PR against the same file as a bot's is still a candidate.
+func TestMixedAuthorClusterIsUnchanged(t *testing.T) {
+	prs := []PR{
+		{Repo: "o/r", Number: 1, Title: "chore(deps): update dependency vite to v8", Author: "renovate[bot]", CreatedAt: at(1), Files: []string{"package.json"}, DiffHash: "a"},
+		{Repo: "o/r", Number: 2, Title: "bump vite", Author: "dave", CreatedAt: at(2), Files: []string{"package.json"}, DiffHash: "b"},
+	}
+	got := Find(prs, Options{})
+	if len(got) != 1 || got[0].BotSeries || got[0].Survivor.Number != 1 {
+		t.Fatalf("mixed-author cluster changed: %+v", got)
+	}
+}
+
+func TestJobTitleSetsAsideVersionsDatesAndHashes(t *testing.T) {
+	same := [][2]string{
+		{"chore: regenerate X (2026-11-16)", "chore: regenerate X (2026-11-17)"},
+		{"update churn data v1.2.3", "Update churn data v1.2.4"},
+		{"chore: update docker digest to 1a2b3c4", "chore: update docker digest to 9f8e7d6c5b"},
+	}
+	for _, p := range same {
+		if jobTitle(p[0]) != jobTitle(p[1]) {
+			t.Errorf("%q and %q should name one job: %q vs %q", p[0], p[1], jobTitle(p[0]), jobTitle(p[1]))
+		}
+	}
+	different := [][2]string{
+		{"update dependency vue-tsc to v3.3.14", "update dependency js-yaml to v5"},
+		{"update ghcr.io/o/foo docker digest to 1a2b3c4", "update ghcr.io/o/bar docker digest to 1a2b3c4"},
+		{"update dependency web3 to v4", "update dependency web2 to v4"},
+		{"Bump actions/checkout from 4.1.0 to 4.2.0", "Bump actions/setup-node from 4.0.0 to 4.1.0"},
+	}
+	for _, p := range different {
+		if jobTitle(p[0]) == jobTitle(p[1]) {
+			t.Errorf("%q and %q name different jobs but both normalise to %q", p[0], p[1], jobTitle(p[0]))
+		}
+	}
+}
+
 // Ordinary clusters must notify the LATER authors, not the first proposer.
 func TestTargetsAreTheLaterPRs(t *testing.T) {
 	c := Find(utahPackages(), Options{})[0]
