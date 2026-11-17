@@ -34,7 +34,8 @@ func (s *Store) AddIdentity(personID string, raw Identity, by string) (Person, *
 			out = clonePerson(p)
 			return nil
 		}
-		if len(p.Identities) >= MaxIdentities {
+		claim := p.identityIndex(id.Key())
+		if claim < 0 && len(p.Identities) >= MaxIdentities {
 			return fmt.Errorf("%w: too many identities", ErrInvalid)
 		}
 		now := s.now().UTC()
@@ -53,6 +54,10 @@ func (s *Store) AddIdentity(personID string, raw Identity, by string) (Person, *
 			s.adoptKeyLocked(id.Key())
 			s.unpinLocked(PinUnlink, id.Key(), personID)
 		}
+		if claim >= 0 {
+			// Confirming a claim replaces it with the real identity.
+			p.dropIdentity(claim)
+		}
 		id.Source, id.Confidence, id.Manual, id.At, id.By = "manual", 1, true, now, by
 		p.Identities = append(p.Identities, id)
 		p.UpdatedAt = now
@@ -61,6 +66,33 @@ func (s *Store) AddIdentity(personID string, raw Identity, by string) (Person, *
 		return nil
 	})
 	return out, hint, err
+}
+
+// AddClaim records an identity a read-only user says is theirs. It is shown
+// on their profile, marked unconfirmed, and nothing else: it is not a key,
+// resolves nobody and produces no edges, whether or not the identity belongs
+// to someone else, so the answer tells the claimant nothing about other
+// profiles. Someone with the full view confirms it with AddIdentity. A
+// hive_user identity cannot be claimed.
+func (s *Store) AddClaim(personID string, raw Identity, by string) (Person, error) {
+	id, err := cleanIdentity(raw)
+	if err != nil {
+		return Person{}, err
+	}
+	if id.Kind == KindHiveUser {
+		return Person{}, fmt.Errorf("%w: a hive user identity cannot be added by hand", ErrInvalid)
+	}
+	return s.changePerson(personID, func(p *Person) error {
+		if p.identityIndex(id.Key()) >= 0 {
+			return nil
+		}
+		if len(p.Identities) >= MaxIdentities {
+			return fmt.Errorf("%w: too many identities", ErrInvalid)
+		}
+		id.Source, id.Manual, id.Claimed, id.At, id.By = "claimed", true, id.Kind != KindName, s.now().UTC(), by
+		p.Identities = append(p.Identities, id)
+		return nil
+	})
 }
 
 // RemoveIdentity unlinks an identity from a customer and pins the decision,
@@ -94,7 +126,7 @@ func (s *Store) RemoveIdentity(personID, key, by string) (Person, Identity, erro
 		p.Identities = kept
 		p.UpdatedAt = now
 		s.people[personID] = p
-		if removed.Kind != KindName {
+		if removed.Kind != KindName && !removed.Claimed {
 			s.pinLocked(Pin{Kind: PinUnlink, Identity: key, Person: personID, At: now, By: by})
 		}
 		out = clonePerson(p)
@@ -127,7 +159,8 @@ func (s *Store) AutoLink(personID string, raw Identity) (bool, error) {
 		if p.HasIdentity(key) || s.pinnedLocked(PinUnlink, key, personID) || s.tombs[s.tombstoneHash(key)] {
 			return nil
 		}
-		if len(p.Identities) >= MaxIdentities {
+		claim := p.identityIndex(key)
+		if claim < 0 && len(p.Identities) >= MaxIdentities {
 			return nil
 		}
 		if other, taken := s.owner[key]; taken {
@@ -135,6 +168,10 @@ func (s *Store) AutoLink(personID string, raw Identity) (bool, error) {
 			return err
 		}
 		delete(s.sugg, key)
+		if claim >= 0 {
+			// A trusted source proved what the person claimed.
+			p.dropIdentity(claim)
+		}
 		now := s.now().UTC()
 		id.Manual, id.At, id.By = false, now, ""
 		if id.Confidence == 0 {
@@ -538,7 +575,7 @@ func (s *Store) Merge(dstID, srcID, by string) (Person, error) {
 		now := s.now().UTC()
 		rec := MergeRecord{Person: clonePerson(src), At: now, By: by}
 		for _, i := range src.Identities {
-			if !dst.HasIdentity(i.Key()) && len(dst.Identities) < MaxIdentities {
+			if dst.identityIndex(i.Key()) < 0 && len(dst.Identities) < MaxIdentities {
 				dst.Identities = append(dst.Identities, i)
 				rec.Identities = append(rec.Identities, i.Key())
 			}
@@ -685,7 +722,7 @@ func (s *Store) Split(personID string, keys []string, name, by string) (Person, 
 		s.people[personID] = p
 		s.people[pid] = np
 		for _, i := range moved {
-			if i.Kind != KindName {
+			if i.Kind != KindName && !i.Claimed {
 				s.pinLocked(Pin{Kind: PinUnlink, Identity: i.Key(), Person: personID, At: now, By: by})
 			}
 		}
