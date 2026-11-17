@@ -408,8 +408,9 @@ fingerprint:
   duplicate. The reaction is how "N hives see this" gets counted.
 - **Not found** → it opens one issue.
 
-- **Found** → the hive adds itself the way a self-report does (#13470): the
-  short `Also seen on …` comment (not a re-post of the whole body), the
+- **Found** → the hive adds itself the way a self-report does (#13470): its
+  `Also seen on …` section in the poster's single seen-log comment (not a
+  re-post of the whole body, and not a new comment per join), the
   `hive/selfreport` label, and its line in the `Affected hives` block below.
 
 For `runtime-error` reports the hive goes further and **joins first**. If no
@@ -423,9 +424,15 @@ the title; with no usable message it does not join by class at all. When
 any of those matches, the hive adds itself to that issue instead of opening
 a new one:
 
-- one comment `Also seen on **<hive>** (v<version>, <cluster>) at <time>`
+- one `Also seen on **<hive>** (v<version>, <cluster>) at <time>` section,
   carrying a `<!-- hive:selfreport-seen hive=<slug> fp=… -->` marker and its
-  diagnostics excerpt — at most once per hive per 24h;
+  diagnostics excerpt, inside a single `<!-- hive:selfreport-seen-log -->`
+  comment per poster (the hub relay, or a spoke filing directly) on that
+  issue. The first join creates the comment; later joins edit it in place
+  (newest section first, one section per hive, capped at 25). Edits do not
+  notify watchers, so a later sighting does not ping the issue; the
+  `Affected hives` block below still counts every sighting. Still at most
+  once per hive per 24h;
 - the `hive/selfreport` and `origin/selfreport` labels (the per-hive `hive/<slug>` label is retired, #12539; `hive/selfreport` is deprecated in favour of the `origin/selfreport` provenance label and is kept only so existing filters and the joiner's `label:hive/selfreport` search keep working);
 - a bump to the `Affected hives (N)` block in the issue body, edited
   idempotently between `<!-- hive:selfreport-affected -->` markers: the
