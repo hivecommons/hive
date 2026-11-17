@@ -82,9 +82,21 @@ type SessionRuntime interface {
 	Vendors() []crux.UserSessionVendor
 	SupportsResume(vendor string) bool
 	WorkDir(id string) string
-	// WorkspaceDir is the path sessions of the "org/repo" workspace open in
-	// ("" for an empty or malformed repo). Start clones it on first use.
+	// WorkspaceDir is the path of the hive's shared clone of the "org/repo"
+	// workspace ("" for an empty or malformed repo). Start clones it on first
+	// use.
 	WorkspaceDir(repo string) string
+	// SessionWorkspaceDir is the path session id opens in for "org/repo": its
+	// own git worktree of the shared clone ("" for an empty or malformed id or
+	// repo). Start adds it; Remove removes it.
+	SessionWorkspaceDir(id, repo string) string
+	// SweepWorktrees removes the worktrees of every session for which live
+	// reports false (no record any more).
+	SweepWorktrees(live func(id string) bool)
+	// SecureWorkspaces locks the git config and hooks of every shared clone
+	// on disk, so no session can plant a command another session's git runs;
+	// called once at boot.
+	SecureWorkspaces()
 	Start(spec crux.UserSessionSpec) error
 	Probe(id string) crux.UserSessionProbe
 	Kill(id string) error
@@ -135,8 +147,8 @@ type sessionView struct {
 	// session and every role may watch it; false means creator + owners only.
 	Shared bool `json:"shared"`
 	// WorkspaceRepo and Workspace (additive) are the "org/repo" and path of the
-	// hive's shared checkout the session runs in; empty when it runs in its
-	// own empty work dir.
+	// session's own worktree of the hive's shared clone it runs in; empty when
+	// it runs in its own empty work dir.
 	WorkspaceRepo string `json:"workspace_repo"`
 	Workspace     string `json:"workspace"`
 	// Message (additive) says what a `preparing` session is waiting on; Error
@@ -186,7 +198,8 @@ func (s *Server) sessionStoreOrNil() *sessionStore {
 			if s.logger != nil {
 				s.logger.Error("sessions store unreadable; starting empty and keeping the old file aside", "error", err)
 			}
-			_ = os.Rename(st.path, fmt.Sprintf("%s.corrupt-%d", st.path, time.Now().Unix()))
+			_ = os.Rename(st.path, fmt.Sprintf("%s%s%d", st.path, sessionsStoreCorruptSuffix, time.Now().Unix()))
+			st.loadErr = err
 		}
 		s.sessionStore = st
 	})
@@ -545,7 +558,7 @@ func (s *Server) handleSessionCreate(w http.ResponseWriter, r *http.Request) {
 	// in the background and moves the record to running or failed.
 	// The creator holds the keyboard from the start (api_sessions_keyboard.go).
 	rec := sessionRecord{ID: id, Name: body.Name, Group: body.Group, Vendor: vendor.ID, Creator: actor.user, CreatedAt: now, LastActivity: now, Status: sessionStatusPreparing, UIDSlot: st.freeSlot(), Shared: body.Shared,
-		WorkspaceRepo: repo, Workspace: rt.WorkspaceDir(repo), Message: s.sessionPreparingMessage(rt, repo, vendor.Label),
+		WorkspaceRepo: repo, Workspace: rt.SessionWorkspaceDir(id, repo), Message: s.sessionPreparingMessage(rt, repo, vendor.Label),
 		KeyboardHolder: actor.user, KeyboardSince: now}
 	s.setSessionStartInFlightLocked(id, true)
 	if err := st.put(rec); err != nil {
@@ -968,10 +981,12 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// A resume reopens the workspace the session was created in (or its own
-	// work dir for a record without one), never a repo configured since. Like
-	// a create it is answered as `preparing` and started in the background
-	// (the workspace may have to be cloned again, spek init may run); a
-	// failure puts the session back to ended with the reason, still resumable.
+	// work dir for a record without one), never a repo configured since, in
+	// the session's own worktree of it (a record from before per-session
+	// worktrees moves into one here). Like a create it is answered as
+	// `preparing` and started in the background (the workspace may have to be
+	// cloned again, spek init may run); a failure puts the session back to
+	// ended with the reason, still resumable.
 	vendorLabel := rec.Vendor
 	for _, v := range rt.Vendors() {
 		if v.ID == rec.Vendor && v.Label != "" {
@@ -985,6 +1000,9 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 	updated, _, err := st.update(rec.ID, func(x *sessionRecord) {
 		x.Status, x.LastActivity, x.Message, x.Error = sessionStatusPreparing, now, message, ""
 		x.KeyboardHolder, x.KeyboardSince = actor.user, now
+		if x.WorkspaceRepo != "" {
+			x.Workspace = rt.SessionWorkspaceDir(x.ID, x.WorkspaceRepo)
+		}
 	})
 	if err != nil {
 		s.setSessionStartInFlightLocked(rec.ID, false)
@@ -1003,6 +1021,11 @@ func (s *Server) handleSessionResume(w http.ResponseWriter, r *http.Request) {
 // ends. It is a no-op loop while the feature is off.
 func (s *Server) StartSessionSweeper(ctx context.Context) {
 	go func() {
+		// A shared clone made by an earlier release has a group-writable git
+		// config and hooks: lock it now rather than on its next session start.
+		if rt, ok := s.sessionsRuntime(); ok {
+			rt.SecureWorkspaces()
+		}
 		s.sweepSessions(time.Now())
 		t := time.NewTicker(sessionsSweepInterval)
 		defer t.Stop()
@@ -1018,7 +1041,8 @@ func (s *Server) StartSessionSweeper(ctx context.Context) {
 }
 
 // sweepSessions marks vanished sessions ended, closes sessions idle past the
-// TTL (no attached client and no activity), and prunes old ended metadata.
+// TTL (no attached client and no activity), prunes old ended metadata and
+// removes worktrees whose session record is gone.
 func (s *Server) sweepSessions(now time.Time) {
 	rt, ok := s.sessionsRuntime()
 	if !ok {
@@ -1063,6 +1087,19 @@ func (s *Server) sweepSessions(now time.Time) {
 			}
 		}
 	}
+	// The worktree sweep removes worktrees whose record is gone, so it runs
+	// only on a store that loaded cleanly: an unreadable store starts empty,
+	// and sweeping against it would remove every session's worktree.
+	if reason := st.untrustedForSweep(); reason != "" {
+		if s.logger != nil {
+			s.logger.Warn("sessions: worktree sweep skipped; no session worktree is removed until the sessions store is trusted again", "reason", reason)
+		}
+		return
+	}
+	rt.SweepWorktrees(func(id string) bool {
+		_, found := st.get(id)
+		return found
+	})
 }
 
 // sessionForWatch loads a running session the actor may at least watch (the
