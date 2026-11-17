@@ -101,6 +101,11 @@ type Settings struct {
 	RestyleTimeout    time.Duration
 	// RecentWindow is how much transcript an addressed request sees.
 	RecentWindow time.Duration
+	// AckDelay is the ack watchdog: a spoken request is acknowledged only
+	// when its answer is not ready this long after the line ended, so a
+	// fast answer comes with no filler and no request is acked twice. Zero
+	// acks at once (and allows early acks from partial lines).
+	AckDelay time.Duration
 }
 
 // Engine timing defaults beyond the persona config.
@@ -138,8 +143,13 @@ func SettingsFrom(p config.ResolvedMeetingsPersona) Settings {
 		AddressedTimeout:  DefaultAddressedTimeout,
 		RestyleTimeout:    DefaultRestyleTimeout,
 		RecentWindow:      DefaultRecentWindow,
+		AckDelay:          DefaultAckDelay,
 	}
 }
+
+// DefaultAckDelay is the ack watchdog: about 0.7 s after a spoken request
+// ends with no answer ready, she says one short ack.
+const DefaultAckDelay = 700 * time.Millisecond
 
 func (s Settings) withDefaults() Settings {
 	d := SettingsFrom(s.Persona)
@@ -200,6 +210,7 @@ type Engine struct {
 	in        chan input
 	out       chan Reply
 	timers    chan int
+	ackTimers chan int
 	retrieved chan retrieval
 	answers   chan answered
 	exhausted atomic.Bool
@@ -248,11 +259,11 @@ func New(s Settings, d Deps) *Engine {
 	}
 	return &Engine{
 		s: s, d: d, log: log,
-		match:     NewMatcher(s.Persona.Name, s.Persona.Aliases),
-		leave:     meetings.NewLeaveMatcher(s.Persona.LeavePhrases),
-		in:        make(chan input, inboxDepth),
-		out:       make(chan Reply, outboxDepth),
-		timers:    make(chan int, inboxDepth),
+		match:  NewMatcher(s.Persona.Name, s.Persona.Aliases),
+		leave:  meetings.NewLeaveMatcher(s.Persona.LeavePhrases),
+		in:     make(chan input, inboxDepth),
+		out:    make(chan Reply, outboxDepth),
+		timers: make(chan int, inboxDepth), ackTimers: make(chan int, inboxDepth),
 		retrieved: make(chan retrieval, inboxDepth),
 		answers:   make(chan answered, inboxDepth),
 		pending:   map[int]*pending{},
@@ -473,6 +484,10 @@ func (e *Engine) run() {
 			if p := e.pending[id]; p != nil {
 				p.waited = true
 				e.proceed(p)
+			}
+		case id := <-e.ackTimers:
+			if p := e.pending[id]; p != nil {
+				e.watchdogAck(p)
 			}
 		case r := <-e.retrieved:
 			if p := e.pending[r.id]; p != nil {

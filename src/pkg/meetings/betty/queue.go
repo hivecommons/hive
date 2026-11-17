@@ -195,18 +195,47 @@ func (e *Engine) addressed(l Line, trig Trigger, now time.Time) {
 		return
 	}
 	early := e.hadEarlyAck(l.Who, now)
-	if trig.VoiceWanted && e.d.LLM != nil && !e.takeEarlyAck(l.Who, now) {
+	immediate := e.s.AckDelay <= 0
+	acked := false
+	if trig.VoiceWanted && e.d.LLM != nil && !e.takeEarlyAck(l.Who, now) && immediate {
 		// Speak at once so the room knows she heard; the answer follows.
 		e.emit(Reply{Kind: KindVoice, Text: e.ackFor(l.Who), Trigger: TriggerAck, Question: l.Text, VoiceWanted: true})
+		acked = true
 	}
 	p := e.add(l, trig, TopicKey(trig.Rest), true, now)
 	p.waited, p.thoughts = true, thoughts
 	e.noteQueue(now)
 	if trig.VoiceWanted && e.d.LLM != nil {
-		// Acknowledged from the partial transcript, or just now.
-		p.stages.ackAt, p.stages.earlyAck = now, early
+		if immediate || early {
+			// Acknowledged from the partial transcript, or just now.
+			p.stages.ackAt, p.stages.earlyAck = now, early
+		} else if !acked {
+			e.armAckWatchdog(p)
+		}
 	}
 	e.retrieve(p, trig.Rest)
+}
+
+// armAckWatchdog acks p after AckDelay unless its answer is out by then
+// (answered requests leave e.pending, so the timer finds nothing).
+func (e *Engine) armAckWatchdog(p *pending) {
+	id := p.id
+	time.AfterFunc(e.s.AckDelay, func() {
+		select {
+		case e.ackTimers <- id:
+		case <-e.ctx.Done():
+		}
+	})
+}
+
+// watchdogAck says the one ack for a request still being answered.
+func (e *Engine) watchdogAck(p *pending) {
+	if !p.stages.ackAt.IsZero() || e.exhausted.Load() {
+		return
+	}
+	if e.emit(Reply{Kind: KindVoice, Text: e.ackFor(p.line.Who), Trigger: TriggerAck, Question: p.line.Text, VoiceWanted: true}) {
+		p.stages.ackAt = e.d.Now()
+	}
 }
 
 // Early acknowledgement from partial transcripts (hivecommons/hive#18590):
@@ -229,7 +258,9 @@ func (e *Engine) onPartial(l Line) {
 	if meetings.IsBotName(l.Who, e.s.Persona.DisplayName) || e.leave.Match(l.Text) {
 		return
 	}
-	if e.d.LLM == nil || e.exhausted.Load() {
+	if e.d.LLM == nil || e.exhausted.Load() || e.s.AckDelay > 0 {
+		// With the ack watchdog on, a partial line never acks: the ack
+		// waits to see whether the answer is quick.
 		return
 	}
 	trig := e.match.MatchWith(l.Text, true, e.participants())

@@ -20,8 +20,11 @@ const DefaultCallTimeout = 30 * time.Second
 // DefaultResearchProgressAfter, and gives up, saying so, past
 // DefaultResearchTimeout. The session checks every DefaultResearchCheckEvery.
 const (
-	DefaultResearchProgressAfter = 30 * time.Second
-	DefaultResearchTimeout       = 5 * time.Minute
+	// A deep dive is a background job with a hard deadline: past it she
+	// says plainly that it took too long rather than leave the room
+	// waiting minutes (live tests; research-meeting-bots report item 10).
+	DefaultResearchProgressAfter = 20 * time.Second
+	DefaultResearchTimeout       = 45 * time.Second
 	DefaultResearchCheckEvery    = 5 * time.Second
 )
 

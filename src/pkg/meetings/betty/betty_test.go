@@ -109,6 +109,7 @@ const testWait = 150 * time.Millisecond
 func testSettings() Settings {
 	s := SettingsFrom(config.MeetingsPersonaConfig{}.Resolve())
 	s.AnswerWait, s.MinGap, s.Stale = testWait, 0, time.Minute
+	s.AckDelay = 0 // immediate acks; the watchdog has its own test
 	return s
 }
 

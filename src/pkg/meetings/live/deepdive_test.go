@@ -39,6 +39,7 @@ func deepDiveHarness(t *testing.T, m meetings.Meeting, progress, timeout time.Du
 	t.Helper()
 	resolved := config.MeetingsPersonaConfig{}.Resolve()
 	s := betty.SettingsFrom(resolved)
+	s.AckDelay = 0
 	s.AnswerWait, s.MinGap = personaWait, 0
 	drops := &dropLog{m: map[string]int{}}
 	h := newHarness(t, Policy{ChatPostsPerMinute: 20, VoiceOnAddress: true}, func(o *Options) {
