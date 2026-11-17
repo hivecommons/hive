@@ -1503,7 +1503,21 @@ jobs:
     needs: required-context-scope
     if: ${{ always() && (needs.required-context-scope.result != 'success' || needs.required-context-scope.outputs.run-ci == 'true') }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # Sized for the COLD-cache path, not the warm one. Measured 2026-11-16/17
+    # on ubuntu-latest: with the whisper-builder layers served from the gha
+    # cache the job takes 6.5-8 min (buildx step 4.3-5.8 min). But the repo's
+    # Actions cache sits at 12-23 GB against a 10 GB cap, so GitHub evicts LRU
+    # entries continuously (oldest surviving entry ~2 days) and the
+    # whisper-linux-amd64 blobs are regularly gone — docker.yml's own v5 warm
+    # step recompiles whisper several times a day. On a miss this 4-vCPU
+    # runner compiles FFmpeg + whisper.cpp from source: a serial ~8.5 min
+    # chain (apt ~35s, FFmpeg 95-150s, whisper.cpp 210-335s), so the build
+    # step alone is ~10.5 min and the job ~13 min. Every overlayfs-exec-guard
+    # cancellation sampled (#18432 x3, #18446, #18500, #18527) was that path:
+    # the build step cancelled at 9.5 min with whisper still compiling, or
+    # finishing at 7.7 min and the containerd run cut off. 20 min covers the
+    # cold path with ~50% headroom; the warm path is unchanged.
+    timeout-minutes: 20
     # No `needs: build-and-test` — see the note above the `docker` job.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1512,6 +1526,10 @@ jobs:
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+        with:
+          # Ephemeral hosted runner: tearing the builder container down in the
+          # post step bought nothing and measured 16-36s on every run.
+          cleanup: false
 
       # Build a single-arch image the SAME way docker.yml builds the shipped
       # image — buildx (BuildKit), attestations OFF (provenance:false/sbom:false
