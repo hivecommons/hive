@@ -1051,8 +1051,10 @@
       ];
       const zoneOptions = zones.filter(z => z !== 'UTC').map(z => `<option value="${esc(z)}"${pref === z ? ' selected' : ''}>${esc(z)}</option>`).join('');
       const options = fixed.map(([value, label]) => `<option value="${esc(value)}"${pref === value ? ' selected' : ''}>${esc(label)}</option>`).join('') + zoneOptions;
+      const clock = dashboardClockPreference();
+      const clockOptions = [['', 'Browser locale (default)'], ['12', '12-hour (4:05 PM)'], ['24', '24-hour (16:05)']].map(([value, label]) => `<option value="${value}"${clock === value ? ' selected' : ''}>${esc(label)}</option>`).join('');
       const preview = formatDashboardDateTime(new Date());
-      const datalist = zones.map(z => `<option value="${esc(z)}"></option>`).join('');
+      const datalist =zones.map(z => `<option value="${esc(z)}"></option>`).join('');
       return '<div class="config-section" id="dashboard-timezone-settings">' +
         '<h3>Display timezone</h3>' +
         '<p class="text-muted fs-base">Choose the timezone used for dashboard timestamps. Relative ages such as “1m ago” are unchanged.</p>' +
@@ -1060,7 +1062,9 @@
         '<select id="dashboard-timezone-select" data-change-action="setDashboardTimeZonePreference" data-arg-types="v">' + options + '</select></div>' +
         '<div class="config-field"><label for="dashboard-timezone-custom">Search IANA timezone</label>' +
         '<input id="dashboard-timezone-custom" list="dashboard-timezone-list" value="' + esc(selectedCustom ? pref : '') + '" placeholder="America/Los_Angeles" data-change-action="setDashboardTimeZonePreference" data-arg-types="v">' +
-        '<datalist id="dashboard-timezone-list">' + datalist + '</datalist></div></div>' +
+        '<datalist id="dashboard-timezone-list">' + datalist + '</datalist></div>' +
+        '<div class="config-field"><label for="dashboard-clock-select">Time format</label>' +
+        '<select id="dashboard-clock-select" data-change-action="setDashboardClockPreference" data-arg-types="v">' + clockOptions + '</select></div></div>' +
         '<div class="text-muted fs-base">Preview: <strong id="dashboard-timezone-preview">' + esc(preview) + '</strong></div>' +
         '</div>';
     }
@@ -1078,6 +1082,16 @@
       const root = document.getElementById('theme-config-root');
       if (root) root.outerHTML = renderGovAppearance();
       showToast('Display timezone saved: ' + dashboardTimeZoneLabel(selectedDashboardTimeZone()), 'success');
+    }
+
+    function setDashboardClockPreference(value) {
+      const pref = value === '12' || value === '24' ? value : '';
+      try { if (pref) localStorage.setItem(DASHBOARD_CLOCK_STORAGE_KEY, pref); else localStorage.removeItem(DASHBOARD_CLOCK_STORAGE_KEY); } catch (e) {}
+      tickNavbarClock();
+      if (window._lastStatus) render(window._lastStatus);
+      const root = document.getElementById('theme-config-root');
+      if (root) root.outerHTML = renderGovAppearance();
+      showToast('Time format saved: ' + (pref ? pref + '-hour' : 'browser locale'), 'success');
     }
 
     function renderGovAppearance() {

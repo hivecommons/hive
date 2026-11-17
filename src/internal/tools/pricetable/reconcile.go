@@ -244,6 +244,13 @@ func implausible(e entry, ch change) []string {
 	if len(ch.Fields) == 0 {
 		return nil
 	}
+	rules := moveRules(ch)
+	return append(rules, shapeRules(proposedFields(e, ch))...)
+}
+
+// moveRules names the fields of ch that move more than maxMoveFactor in
+// either direction, or to or from zero.
+func moveRules(ch change) []string {
 	var rules []string
 	for _, name := range priceFields {
 		fc, ok := ch.Fields[name]
@@ -265,7 +272,14 @@ func implausible(e entry, ch change) []string {
 			rules = append(rules, fmt.Sprintf("%s moves more than %d× (%s → %s)", name, maxMoveFactor, formatPrice(fc.Old), formatPrice(fc.New)))
 		}
 	}
-	p := proposedFields(e, ch)
+	return rules
+}
+
+// shapeRules names the ratio rules a proposed row trips: output far above
+// input, or a cache-read rate close to input. p maps every price field to its
+// current (Old) and proposed (New) value.
+func shapeRules(p map[string]fieldChange) []string {
+	var rules []string
 	in, out, read := p[fieldInput].New, p[fieldOutput].New, p[fieldCacheRead].New
 	// A zero proposed input would skip the ratio checks, so judge against the
 	// current input instead.

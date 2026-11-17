@@ -168,7 +168,10 @@ func (r *UserSessionRuntime) prepareSandbox(id string, uid int) error {
 // refresh token, and a newer login already in the session HOME is adopted
 // into the shared file first (usersession_login.go).
 //
-// For every other vendor the copy is skipped when the session's file was
+// A Codex or OpenCode login the session's CLI refreshed is adopted into the
+// shared file first when it is strictly newer (usersession_login_rotating.go).
+//
+// For every vendor but Claude the copy is skipped when the session's file was
 // written after the shared one. That is the state of an unchanged copy from
 // an earlier start, and also of a login the CLI in the session rewrote itself
 // (a token refresh): re-copying an older shared file over it on a resume
@@ -182,6 +185,12 @@ func (r *UserSessionRuntime) copyLoginFiles(id string, uid int) {
 			// session, which then starts on whatever copy it has.
 			_ = r.syncClaudeLogin(id, sessionLoginTriggerStart, sessionLoginModeStart)
 			continue
+		}
+		if l, ok := rotatingSessionLoginFor(rel); ok {
+			// A login the session's CLI refreshed (Codex, OpenCode) goes into
+			// the shared file first (usersession_login_rotating.go). Reported
+			// inside; a failure must not block the session.
+			_ = r.syncRotatingLogin(id, sessionLoginTriggerStart, l)
 		}
 		src := filepath.Join(sharedAgentHome, rel)
 		dest := filepath.Join(home, rel)

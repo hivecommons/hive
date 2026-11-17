@@ -35,6 +35,9 @@ type literal struct {
 type entry struct {
 	Key    string
 	Fields map[string]literal
+	// End is the byte offset just past the row's ModelPrice literal; --add
+	// inserts new rows after the line it ends on.
+	End int
 }
 
 // table is the parsed price table: the date constant and every row.
@@ -128,7 +131,7 @@ func parseEntries(cl *ast.CompositeLit, offset func(token.Pos) int) ([]entry, er
 		if !ok {
 			return nil, fmt.Errorf("%s: value is not a ModelPrice literal", key)
 		}
-		e := entry{Key: key, Fields: make(map[string]literal, len(priceFields))}
+		e := entry{Key: key, Fields: make(map[string]literal, len(priceFields)), End: offset(kv.End())}
 		for _, f := range val.Elts {
 			fkv, ok := f.(*ast.KeyValueExpr)
 			if !ok {
