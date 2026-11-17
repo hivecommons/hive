@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v6.40.2)
+
+### Fixed
+
+- `pkg/turn/llmrouter` wraps invalid tool-call arguments when resending history (one truncated call no longer makes every later request a 400), fails over when a tool call is cut off at the output limit, and adds a per-provider `MaxTokens`.
+
 ## 2026-11-17 (v6.40.1)
 
 ### Fixed
