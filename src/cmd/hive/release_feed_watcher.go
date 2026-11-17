@@ -135,16 +135,22 @@ func releaseFeedToken(cfg *config.Config, agent, name string) string {
 	return strings.TrimSpace(v)
 }
 
+// releaseFeedConfig is the config the watcher goroutine reads: the immutable
+// snapshot the governor loop publishes after every reload (b.sweepConfig),
+// never b.cfg itself, which a reload overwrites in place under cfgReloadMu.
+// Nil (not yet published) reads as disabled.
+func (b *boot) releaseFeedConfig() *config.Config { return b.sweepConfig.Load() }
+
 // newReleaseFeedWatcher builds the watcher from boot state. Config, governor,
 // scheduler and runtime are resolved per call so a reload or late wiring is
 // picked up without restarting it.
 func (b *boot) newReleaseFeedWatcher() *releasefeed.Watcher {
 	return releasefeed.New(releasefeed.Options{
-		Enabled:       func() bool { return b.cfg.ReleaseFeedsEnabled() },
-		Subscriptions: func() map[string][]releasefeed.Source { return releaseFeedSubscriptions(b.cfg) },
-		Interval:      func() time.Duration { return b.cfg.ReleaseFeedInterval() },
-		Cooldown:      func(agent string) time.Duration { return b.cfg.ReleaseFeedCooldown(agent) },
-		Token:         func(agent, name string) string { return releaseFeedToken(b.cfg, agent, name) },
+		Enabled:       func() bool { return b.releaseFeedConfig().ReleaseFeedsEnabled() },
+		Subscriptions: func() map[string][]releasefeed.Source { return releaseFeedSubscriptions(b.releaseFeedConfig()) },
+		Interval:      func() time.Duration { return b.releaseFeedConfig().ReleaseFeedInterval() },
+		Cooldown:      func(agent string) time.Duration { return b.releaseFeedConfig().ReleaseFeedCooldown(agent) },
+		Token:         func(agent, name string) string { return releaseFeedToken(b.releaseFeedConfig(), agent, name) },
 		Store:         releasefeed.NewFileStore(releaseFeedStatePath),
 		Kicker:        b.newReleaseFeedKicker(),
 		Logger:        b.logger,
@@ -154,7 +160,7 @@ func (b *boot) newReleaseFeedWatcher() *releasefeed.Watcher {
 // newReleaseFeedKicker wires the kicker to boot state.
 func (b *boot) newReleaseFeedKicker() *releaseFeedKicker {
 	return &releaseFeedKicker{
-		cfg:      func() *config.Config { return b.cfg },
+		cfg:      b.releaseFeedConfig,
 		gov:      func() *governor.Governor { return b.gov },
 		isPaused: func(agent string) bool { return b.agentMgr != nil && b.agentMgr.IsPaused(agent) },
 		render: func(agent string) string {

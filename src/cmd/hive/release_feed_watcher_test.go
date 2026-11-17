@@ -205,8 +205,12 @@ func TestNewReleaseFeedKicker_ResolvesBootState(t *testing.T) {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	b := &boot{cfg: cfg, logger: logger}
 	k := b.newReleaseFeedKicker()
+	if k.config() != nil {
+		t.Fatal("kicker must read the published snapshot, not b.cfg")
+	}
+	b.sweepConfig.Store(cfg)
 	if k.config() != cfg || k.governor() != nil {
-		t.Fatal("kicker not bound to boot config/governor")
+		t.Fatal("kicker not bound to the published config/governor")
 	}
 	if k.isPaused("quality") {
 		t.Fatal("no runtime must read as not paused")
