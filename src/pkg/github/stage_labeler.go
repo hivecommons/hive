@@ -53,12 +53,23 @@ func (s *stageLabeler) Labels(ctx context.Context, owner, repo string, number in
 // the hive did not open is a contributor's and needs the opt-in label
 // (hivecommons/hive, torch-spyre 2026-10-28). A PR the labeler never read
 // (no facts) is gated with what it knows: number only.
-func (s *stageLabeler) writeAllowed(owner, repo string, number int, preview string) bool {
+//
+// A PR the backfill guard would hold whose stage labels the hive applied is
+// asked with that fact (withHiveAppliedStage), so the hive moves its own
+// stage label on an old PR instead of leaving a stage it no longer believes.
+// The answer is kept with the item's facts for the writes that follow.
+func (s *stageLabeler) writeAllowed(ctx context.Context, owner, repo string, number int, preview string) bool {
 	s.mu.Lock()
 	item, ok := s.facts[number]
 	s.mu.Unlock()
 	if !ok || !item.IsPR {
 		return true
+	}
+	if stated := s.c.withHiveAppliedStage(ctx, owner+"/"+repo, item); stated.HiveAppliedStage != item.HiveAppliedStage {
+		item = stated
+		s.mu.Lock()
+		s.facts[number] = item
+		s.mu.Unlock()
 	}
 	d := s.c.WritebackAllowed(owner+"/"+repo, item, writeback.KindStageLabel, preview)
 	if !d.Allowed {
@@ -80,14 +91,14 @@ func (s *stageLabeler) observedAt(number int) string {
 }
 
 func (s *stageLabeler) AddLabels(ctx context.Context, owner, repo string, number int, labels []string) error {
-	if !s.writeAllowed(owner, repo, number, "add "+strings.Join(labels, ", ")) {
+	if !s.writeAllowed(ctx, owner, repo, number, "add "+strings.Join(labels, ", ")) {
 		return nil
 	}
 	return s.c.addLabelsObserved(ctx, owner+"/"+repo, number, labels, s.observedAt(number)) // writeback:gated
 }
 
 func (s *stageLabeler) RemoveLabel(ctx context.Context, owner, repo string, number int, label string) error {
-	if !s.writeAllowed(owner, repo, number, "remove "+label) {
+	if !s.writeAllowed(ctx, owner, repo, number, "remove "+label) {
 		return nil
 	}
 	return s.c.removeLabelObserved(ctx, owner+"/"+repo, number, label, s.observedAt(number)) // writeback:gated

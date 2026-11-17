@@ -55,6 +55,14 @@ type Item struct {
 	// label requirement (ReasonHiveAppliedPark). No other kind reads it,
 	// and no other caller of that kind sets it.
 	HiveAppliedPark bool
+	// HiveAppliedStage is true when the caller has established that the
+	// item carries at least one stage/* label and that the newest labeled
+	// event of every stage/* label it carries was made by one of the hive's
+	// own accounts. Set only by the stage labeler; with KindStageLabel it
+	// lifts the backfill guard and nothing else (ReasonHiveAppliedStage):
+	// the opt-in label, the level and every other check still apply. No
+	// other kind reads it.
+	HiveAppliedStage bool
 	// Labels is the item's current label set.
 	Labels []string
 	// CreatedAt is the item's creation time; the backfill guard compares it
@@ -117,6 +125,18 @@ const (
 	// the repo mode, project membership, own_only and the kind's minimum
 	// level still do.
 	ReasonHiveAppliedPark = "hive-applied-park"
+	// ReasonHiveAppliedStage allows a stage-label write (KindStageLabel with
+	// Item.HiveAppliedStage) on an item older than the backfill cutoff whose
+	// stage labels the hive itself applied. The guard keeps the hive from
+	// starting to label items nobody asked about; this item already carries
+	// the hive's stage label, and leaving it at a stage the hive no longer
+	// believes (stage/100-merge-queue on a PR that is not queued) misleads
+	// every maintainer who reads it. Moving or removing its own label is
+	// upkeep of the hive's state, so the backfill guard does not apply. The
+	// opt-in label, a pause, the repo mode, project membership, own_only and
+	// the kind's minimum level still do: the write is allowed exactly when
+	// it would be on an item the guard does not cover.
+	ReasonHiveAppliedStage = "hive-applied-stage"
 )
 
 // RepoPauseInfo is the provenance of an operator pause, as config records
@@ -533,6 +553,28 @@ func (g *Gate) decideLocked(repo string, item Item, kind Kind) Decision {
 	// The park re-check's note on a park the hive applied is the same case:
 	// the hive's label is already on the item.
 	hivePark := kind == KindNeedsDecisionComment && item.HiveAppliedPark
+	// A stage label the hive applied is the hive's state, not a first
+	// write: the backfill guard is the one check the fact lifts. The item
+	// is decided as one the guard does not cover (CreatedAt cleared), so
+	// the opt-in label and the level below answer exactly as they would
+	// for a newer item, and an allow says why the guard did not hold it.
+	if kind == KindStageLabel && item.HiveAppliedStage && !optedIn {
+		if held, cut := g.backfillHoldsLocked(repo, item); held {
+			rest := item
+			rest.HiveAppliedStage = false
+			rest.CreatedAt = time.Time{}
+			d := g.decideLocked(repo, rest, kind)
+			if d.Allowed {
+				why := d.Reason
+				if d.Detail != "" {
+					why += ": " + d.Detail
+				}
+				d.Detail = fmt.Sprintf("the hive applied the stage label on #%d itself, so the backfill guard (cutoff %s) does not apply; then %s", item.Number, cut.Format(time.RFC3339), why)
+				d.Reason = ReasonHiveAppliedStage
+			}
+			return d
+		}
+	}
 	if !optedIn && !hiveBlock && !hivePark {
 		if backfilled, cut := g.backfillBlockedLocked(repo, item); backfilled {
 			return Decision{Reason: ReasonBackfill, Detail: fmt.Sprintf("#%d was created %s, before hive could write to %s (%s); writeback.unsolicited.backfill is off", item.Number, item.CreatedAt.UTC().Format(time.RFC3339), repo, cut.Format(time.RFC3339))}
@@ -649,15 +691,44 @@ func (g *Gate) levelCheckLocked(repo string, _ Item, kind Kind, ok Decision) Dec
 	return ok
 }
 
-func (g *Gate) backfillBlockedLocked(repo string, item Item) (bool, time.Time) {
+// BackfillHolds reports whether the backfill guard would refuse an
+// unsolicited write on item: backfill is off, item carries no opt-in label
+// and predates the repo's cutoff. Unlike a decision it records nothing, so
+// asking does not count item among the pre-existing items left untouched.
+// The stage labeler asks it before reading an item's timeline, so only a
+// PR the guard would hold costs that read.
+func (g *Gate) BackfillHolds(repo string, item Item) bool {
+	if g == nil {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.optedInLocked(repo, item) {
+		return false
+	}
+	held, _ := g.backfillHoldsLocked(repo, item)
+	return held
+}
+
+// backfillHoldsLocked is the backfill guard's test, without recording the
+// item as pre-existing.
+func (g *Gate) backfillHoldsLocked(repo string, item Item) (bool, time.Time) {
 	if g.cfgLocked().BackfillEnabled() || item.CreatedAt.IsZero() {
 		return false, time.Time{}
 	}
-	rec := g.recordLocked(repo)
-	cut := rec.backfillCutoff()
+	cut := g.recordLocked(repo).backfillCutoff()
 	if cut.IsZero() || !item.CreatedAt.Before(cut) {
 		return false, cut
 	}
+	return true, cut
+}
+
+func (g *Gate) backfillBlockedLocked(repo string, item Item) (bool, time.Time) {
+	held, cut := g.backfillHoldsLocked(repo, item)
+	if !held {
+		return false, cut
+	}
+	rec := g.recordLocked(repo)
 	if rec.PreExisting == nil {
 		rec.PreExisting = map[int]bool{}
 	}

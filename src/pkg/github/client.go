@@ -645,6 +645,11 @@ type Client struct {
 	// baseRefresh is the decision carry's memo (pr_decision_base_refresh.go).
 	baseRefreshOnce sync.Once
 	baseRefresh     *BaseRefreshChecker
+	// hiveStage memoises who applied each held PR's stage labels
+	// (stage_label_hive_applied.go), so a PR the backfill guard holds costs
+	// one timeline read per label change, not one per stage sync.
+	hiveStageMu sync.Mutex
+	hiveStage   map[string]hiveStageFact
 }
 
 func (c *Client) SetCanaryScanner(enabled, failClosed bool, reg *ioscan.CanaryRegistry, onLeak func(ioscan.CanaryLeak)) {
