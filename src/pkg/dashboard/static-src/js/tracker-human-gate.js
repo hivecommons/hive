@@ -75,7 +75,12 @@
       const pr = stageTrackerGateIsPR(item);
       const onHead = a => !!a && (!a.head || !item.head || String(a.head) === String(item.head));
       const review = pr && onHead(item.review_activity) ? item.review_activity : null;
-      if (review && review.state === 'human_decision') {
+      // The verdict for a head never changes; the ask is live only while
+      // the hive parks the row on a person — the predicate the verbs act
+      // on (tracker-gate-truth.js, hivecommons/hive#18769).
+      const parked = typeof stageTrackerGateParked === 'function' ? stageTrackerGateParked(item) : true;
+      const asked = !!review && review.state === 'human_decision' && parked;
+      if (asked) {
         out.push({ key: 'review', tip: String(review.blocker || review.detail || review.caption || '').trim() || 'A reviewer asked for a person\'s sign-off.' });
       }
       const stage = Number(item.stage) || 0;
@@ -87,7 +92,10 @@
       // author's move, named by the waiting-on pill; needs_human alone does
       // not make it a decision (hivecommons/hive#17789).
       const authorDCO = /^(dco-missing|hive-signoff-attribution)$/.test(String(item.reason || '').trim());
-      const flagged = decisionStage || mods.indexOf('needs-decision') >= 0 || mods.indexOf('needs-human') >= 0 || (item.needs_human === true && !authorDCO);
+      // needs_human alone (triage needed, a human author's turn) is a
+      // decision only where one can be recorded; elsewhere the row's lead
+      // (Accept triage, Adopt) is the control.
+      const flagged = decisionStage || mods.indexOf('needs-decision') >= 0 || mods.indexOf('needs-human') >= 0 || (item.needs_human === true && !authorDCO && parked);
       // An unauthorized step and a structured blocker name the person owed
       // in their own pills (hive-bot-lacks-permission, Blocked · …); they
       // are not a decision anyone is asked for.
@@ -99,7 +107,7 @@
         const tip = String(d.question || (attention && (attention.question || attention.reason)) || (ask && (ask.question || ask.reason)) || short || '').trim();
         // The review gate already carries the reviewer's question; the same
         // question is not a second reason.
-        if (!(review && review.state === 'human_decision' && out.length && (!tip || out[0].tip === tip))) out.push({ key: 'decision', tip: tip || 'A person\'s decision is owed.' });
+        if (!(asked && out.length && (!tip || out[0].tip === tip))) out.push({ key: 'decision', tip: tip || 'A person\'s decision is owed.' });
       }
       if (item.sentinel_alert && !item.sentinel_notice) {
         out.push({ key: 'sentinel', tip: typeof stageTrackerSentinelTipWithPaths === 'function' ? stageTrackerSentinelTipWithPaths(item) : (typeof stageTrackerSentinelTip === 'function' ? stageTrackerSentinelTip(item) : 'Sentinel alert') });
@@ -203,7 +211,9 @@
       if (Array.isArray(subRows) && subRows.length && item.kind === 'issue' && !item.via_pr && !leads.length && subRows.some(s => stageTrackerHumanGateReasons(s).length)) return '';
       const workflows = opts && opts.workflows !== undefined ? opts.workflows : (typeof _stageTracker !== 'undefined' && _stageTracker ? _stageTracker.workflows : null);
       const modelVerbs = typeof stageTrackerWorkflowReplies === 'function' ? stageTrackerWorkflowReplies(shown, workflows) : [];
-      const verbs = stageTrackerHumanGateVerbs(reasons, shown, modelVerbs);
+      // Only the verbs the action would act on: a verb runRowAction answers
+      // "nothing to act on" is never drawn (hivecommons/hive#18769).
+      const verbs = stageTrackerHumanGateVerbs(reasons, shown, modelVerbs).filter(v => v.model || typeof stageTrackerGateAccepts !== 'function' || stageTrackerGateAccepts(item, v.id));
       const text = stageTrackerHumanGateStatusText(reasons);
       const tip = stageTrackerHumanGateTip(reasons);
       const ico = typeof stageTrackerIcon === 'function' ? stageTrackerIcon('human', 'ham-ico ham-mod-ico') : '';
