@@ -78,6 +78,10 @@ func (c *Client) defaultStageFactSink() stageengine.FactSink {
 		Issue:  IssueDeriver(),
 		PR:     stageengine.PRDeriver(),
 		Logger: c.logger,
+		// Derive through the repository's bound workflow model, as the
+		// sweeps do: a fact derived built-in on a model-bound repository
+		// would write a stage the next sweep reverts (hivecommons/hive#18434).
+		WorkflowFor: c.stageWorkflowFor,
 		// Shares the process counters with the sweeps' reconciler so
 		// /metrics and /api/status count fact-driven writes too.
 		Metrics: stageengine.DefaultCounters(),

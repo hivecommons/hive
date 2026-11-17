@@ -127,12 +127,66 @@ func (s *Server) handleOpenRouterModels(w http.ResponseWriter, r *http.Request) 
 		jsonError(w, "openrouter gateway unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	live, _ := fetchModelsFromEndpoint(or.BaseURL(), "")
+	// The public catalog, not fetchModelsFromEndpoint: BaseURL already ends in
+	// /api/v1, so the generic "+/v1/models" probe asked for /api/v1/v1/models,
+	// got a 404, and the picker silently lost the live list.
+	catalog := or.PublicModels()
+	live := openRouterModelIDs(catalog)
 	jsonResponse(w, map[string]interface{}{
-		"suggested": or.SuggestedModels(),
-		"models":    live,
-		"default":   or.DefaultModel(),
+		"suggested":  availableOpenRouterSuggested(or.SuggestedModels(), live),
+		"models":     live,
+		"model_info": catalog,
+		"default":    availableOpenRouterDefault(or.DefaultModel(), or.SuggestedModels(), live),
 	})
+}
+
+// openRouterModelIDs projects a catalog onto its ids (never nil, so the JSON
+// is always an array).
+func openRouterModelIDs(catalog []OpenRouterModel) []string {
+	ids := make([]string, 0, len(catalog))
+	for _, m := range catalog {
+		ids = append(ids, m.ID)
+	}
+	return ids
+}
+
+// availableOpenRouterSuggested hides curated models the live catalog no
+// longer lists, so a retired id is never offered as a dead default. An empty
+// live list means the catalog was unreadable: nothing can be disproved, so the
+// curated list is served whole. Never nil.
+func availableOpenRouterSuggested(suggested []OpenRouterSuggestedModel, live []string) []OpenRouterSuggestedModel {
+	out := make([]OpenRouterSuggestedModel, 0, len(suggested))
+	if len(live) == 0 {
+		return append(out, suggested...)
+	}
+	present := make(map[string]bool, len(live))
+	for _, id := range live {
+		present[id] = true
+	}
+	for _, m := range suggested {
+		if present[m.ID] {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// availableOpenRouterDefault keeps def while the live catalog lists it (or is
+// unreadable); otherwise it falls to the first surviving suggestion, and only
+// as a last resort keeps def (manual entry still works).
+func availableOpenRouterDefault(def string, suggested []OpenRouterSuggestedModel, live []string) string {
+	if len(live) == 0 {
+		return def
+	}
+	for _, id := range live {
+		if id == def {
+			return def
+		}
+	}
+	if avail := availableOpenRouterSuggested(suggested, live); len(avail) > 0 {
+		return avail[0].ID
+	}
+	return def
 }
 
 // handleOpenRouterCredit proxies GET /api/v1/key using the stored openrouter
@@ -252,6 +306,7 @@ func (s *Server) upsertOpenRouterGateway(key, model string) error {
 		// and default model are (re)written by the funding flow.
 		gw.APIKeyEnv = gws[idx].APIKeyEnv
 		gw.CABundle = gws[idx].CABundle
+		gw.Prices = gws[idx].Prices
 		gws[idx] = gw
 	} else {
 		gws = append(gws, gw)

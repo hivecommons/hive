@@ -77,6 +77,8 @@ func main() {
 		cmdRemember(os.Args[2:])
 	case "kb":
 		cmdKB(os.Args[2:])
+	case "topic":
+		cmdTopic(os.Args[2:])
 	case "dolt":
 		cmdDolt(os.Args[2:])
 	case "init":
@@ -110,6 +112,10 @@ Commands:
   kb       import-file <path> [--name <n>] Import document from file
   kb       list-docs                      List imported documents
   remember "<fact>"                        Quick-add an advisory bead
+  topic  claim <key> --repo o/r --pr N [--branch B]
+                                           Claim a topic for one PR (refused if held by another PR)
+  topic  get <key> [--json] | list [--json] | release <key>
+                                           Read, list or release topic claims
   close  <id>                              Close a bead
   decompose <epic-id> [--plan <file>] [--actor <lane>]
                                            Decompose an epic into a DAG of child task beads

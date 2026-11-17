@@ -11,9 +11,9 @@ import (
 
 // bootDashboardAPIDeps are the long-lived effects bootDashboardAPI performs
 // (#7571, step 2): registering the API surface on the dashboard server,
-// installing the Forge App inventory provider, and starting the three
-// background loops (installation-ID discovery, App-banner self-heal, the
-// brainstorm inception watcher). Everything else the phase does — wiring the
+// installing the Forge App inventory provider, and starting the two
+// background loops (installation-ID discovery and App-banner self-heal).
+// Everything else the phase does — wiring the
 // dashboard.Dependencies closures, applying the classified App state,
 // installing the Re-check callback — is plain assignment against the real
 // *dashboard.Server, which a test constructs cheaply with dashboard.NewServer.
@@ -30,8 +30,7 @@ type bootDashboardAPIDeps struct {
 	startInstallDiscovery func(ctx context.Context, tryDiscover func())
 	// startSelfHeal runs heal every githubAppSelfHealInterval until ctx is
 	// done. It does NOT run immediately: boot has just checked coverage.
-	startSelfHeal         func(ctx context.Context, heal func())
-	startInceptionWatcher func(ctx context.Context, w *dashboard.InceptionWatcher)
+	startSelfHeal func(ctx context.Context, heal func())
 }
 
 // githubAppDiscoveryInterval paces the installation-ID discovery loop. It
@@ -56,7 +55,6 @@ func defaultBootDashboardAPIDeps() bootDashboardAPIDeps {
 		startSelfHeal: func(ctx context.Context, heal func()) {
 			go runTickLoop(ctx, githubAppSelfHealInterval, false, heal)
 		},
-		startInceptionWatcher: func(ctx context.Context, w *dashboard.InceptionWatcher) { go w.Run(ctx) },
 	}
 }
 

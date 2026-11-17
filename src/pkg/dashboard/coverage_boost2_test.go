@@ -17,36 +17,6 @@ import (
 	"github.com/hivecommons/hive/pkg/knowledge"
 )
 
-// --- isTemplatePlaceholder ---
-
-func TestIsTemplatePlaceholder(t *testing.T) {
-	tests := []struct {
-		input string
-		want  bool
-	}{
-		{"<fact title>", true},
-		{"<question title>", true},
-		{"<title>", true},
-		{"<your question>", true},
-		{"<description>", true},
-		{"<bead title>", true},
-		{"fact_title", true},
-		{"question_title", true},
-		{"your question here", true},
-		{"<ANYTHING>", true},
-		{"<AnY UPPER>", true},
-		{"What is the deployment strategy?", false},
-		{"", false},
-		{"normal text", false},
-	}
-	for _, tt := range tests {
-		got := isTemplatePlaceholder(tt.input)
-		if got != tt.want {
-			t.Errorf("isTemplatePlaceholder(%q) = %v, want %v", tt.input, got, tt.want)
-		}
-	}
-}
-
 // --- handleGovernorRepos ---
 
 func TestHandleGovernorRepos_EmptyBody(t *testing.T) {
@@ -227,20 +197,6 @@ func TestHandleAgentPromptSave_BadBody(t *testing.T) {
 
 	if w.Code != http.StatusBadRequest {
 		t.Errorf("code = %d, want 400", w.Code)
-	}
-}
-
-// --- handleInceptionState ---
-
-func TestHandleInceptionState_NoInception(t *testing.T) {
-	srv := newFullServer(t)
-	srv.deps.Inception = nil
-	req := httptest.NewRequest("GET", "/api/inception/state", nil)
-	w := httptest.NewRecorder()
-	srv.handleInceptionState(w, req)
-
-	if w.Code != http.StatusServiceUnavailable {
-		t.Errorf("code = %d, want 503", w.Code)
 	}
 }
 

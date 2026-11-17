@@ -611,7 +611,7 @@ func (m *Manager) restartWithReason(ctx context.Context, name, reason string, ki
 	}
 
 	agent.forceRelaunch = true
-	if output, err := m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).CombinedOutput(); err != nil {
+	if output, err := m.tmuxCmd(agent, "kill-session", "-t", agent.tmuxSession).CombinedOutput(); err != nil && !tmuxKillSessionNothingToKill(string(output)) {
 		m.logger.Warn("tmux kill-session before restart failed",
 			"name", name,
 			"session", agent.tmuxSession,
@@ -732,4 +732,11 @@ func (m *Manager) SeedRestartCount(name string, count int) {
 	if agent, ok := m.agents[name]; ok {
 		agent.RestartCount = count
 	}
+}
+
+// tmuxKillSessionNothingToKill reports whether kill-session stderr only says
+// there was nothing to kill (no server, no such session). That is the desired
+// end state before a restart, so it is not a failure worth a warning.
+func tmuxKillSessionNothingToKill(stderr string) bool {
+	return tmuxStderrMeansNoSession(stderr) || strings.Contains(stderr, "no sessions")
 }

@@ -139,41 +139,6 @@ func TestSetBaseURL_InvalidURL(t *testing.T) {
 // hold / unhold — error paths
 // --------------------------------------------------------------------------
 
-func TestHold_AddLabelError(t *testing.T) {
-	org, repo := "org", "repo"
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/1/labels", org, repo), func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	})
-	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/1/comments", org, repo), func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusCreated)
-		json.NewEncoder(w).Encode(map[string]any{"id": 1})
-	})
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	c := newTestClient(t, server, org, []string{repo})
-	// Should not panic — logs warning
-	c.hold(context.Background(), org, repo, 1)
-}
-
-func TestHold_CommentError(t *testing.T) {
-	org, repo := "org", "repo"
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/1/labels", org, repo), func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode([]map[string]any{{"name": "hold"}})
-	})
-	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/issues/1/comments", org, repo), func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	})
-	server := httptest.NewServer(mux)
-	defer server.Close()
-
-	c := newTestClient(t, server, org, []string{repo})
-	// Should not panic — logs warning
-	c.hold(context.Background(), org, repo, 1)
-}
-
 func TestUnhold_RemoveLabelError(t *testing.T) {
 	org, repo := "org", "repo"
 	mux := http.NewServeMux()

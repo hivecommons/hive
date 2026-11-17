@@ -55,6 +55,14 @@ func (m MeetLLM) Complete(ctx context.Context, system, prompt string) (string, e
 	return meetllm.Complete(ctx, c, hc, prompt)
 }
 
+// Close stops the meeting's warm CLI, if it has one.
+func (m MeetLLM) Close() error {
+	if m.Config.Session != nil {
+		return m.Config.Session.Close()
+	}
+	return nil
+}
+
 // Answer is the model's structured reply.
 type Answer struct {
 	Answer        string   `json:"answer"`

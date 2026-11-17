@@ -1,6 +1,6 @@
 # Inbox and voice sources
 
-The **Inbox** (sidebar → Intelligence → 📥 Inbox) is where recordings and
+The **Inbox** (sidebar → Collaborate → 📥 Inbox) is where recordings and
 dictations from voice sources land so you can turn them into work without
 leaving the dashboard. It is source-agnostic: Plaud is the first source,
 Wispr Flow (`type: wisprflow`) plugs in with the same model, Zoom and
@@ -65,6 +65,25 @@ see the issue linked from the changelog entry.
     as a private draft idea (Bearer token from `inbox.dibs.token_env`).
   - **Knowledge only** (`dismiss`): leaves the fact where it is and drops the
     item from the unprocessed count.
+- **Share history pills.** Every share of an item (🔗 Share → Hive, the bulk
+  Hive menu, an auto-routing rule or a spek session) appends a record to the
+  item's history and shows a pill next to the status pills, in the form
+  `→ RFC #18412 · andy · 2m ago`, `→ spek: nate-v2 · …`, `→ DIBS · …` or
+  `→ Knowledge · …`. A record carries the destination, the acting user
+  (`inbox-auto` for auto-routing), start and finish times, a status (`queued`,
+  `transcribing`, `in_progress`, `done`, `failed`, with the reason in the
+  pill's tooltip) and the target: the RFC issue or PR URL and number once the
+  agent's publish creates it, the dibs item, the Knowledge fact, or the spek
+  session. A pill links to its target for owners and read-write users; read
+  users see the same pills without links. Only the latest record per
+  destination shows; **+N** expands the full history. A delegated RFC stays in progress until the hive finds
+  the issue: after each sync and every 10 minutes it searches the target
+  repository for an issue whose body carries the item's `Reference:` line
+  (the agent prompt asks for it) and then fills the URL and number. If none
+  appears within 6 hours the share fails with that reason and the Share menu
+  offers a retry. The records never hold
+  item text or secrets and are stored with the item state. The list is the
+  `share_history` array of each item in `GET /api/inbox`.
 - **State** per item per destination: `queued → running → filed | failed`
   (`delegated` for → RFC, with a `note` naming the agent), with the RFC/idea
   URL and child issue URLs, and the `error` text on `failed`. Stored in `connector-state/_inbox.json`.
@@ -399,6 +418,41 @@ transcript. ▶ Play asks Otter for the conversation's MP3 download link
 for a conversation Otter has no transcript for
 ([inbox-transcription.md](inbox-transcription.md)). Setup is in
 [knowledge-connectors.md](knowledge-connectors.md#otterai-conversations-type-otter).
+
+## Files mailed to hive@ (email)
+
+Mail sent to `hive@<your hive's dashboard host>` with Markdown (`.md`),
+audio (`.m4a`, `.mp3`, `.wav`, `.ogg`, `.webm`) or image (`.png`, `.jpg`,
+`.gif`, `.webp`) attachments reaches the cluster's receive-only mail
+receiver, hive-mx, which keeps only those attachments (type checked by
+content, at most 10 files and 2 MB per message) and the subject, and the hub
+relays them to the hive ([#18395](https://github.com/hivecommons/hive/issues/18395);
+how mail reaches hive-mx is in [meetings.md](meetings.md#inviting-betty-by-email)).
+Each attachment becomes one `email` item (✉️), titled with the subject (and
+the file name when a mail carries several), spooled on the spoke's data
+volume under `connector-state/email/items` (0700 directories, 0600 files,
+256 MiB in all).
+
+- **Who lands directly:** a sender whose `From` address passed DMARC
+  alignment and is a proven calendar email of a user with owner, read-write
+  or read access (see
+  [Proving calendar emails](meetings.md#proving-calendar-emails)). Their
+  items are like any other Inbox item: routable to spek or dibs, shareable,
+  matched by auto-routing rules (`source: email`).
+- **Everyone else** waits: the item shows **awaiting approval** with
+  **✓ Approve** and **✕ Decline** for the owner. Until approved it cannot be
+  shared, routed or transcribed, and rules skip it; approving lets the rules
+  apply on the next sweep. Declining deletes it; unapproved items are
+  deleted after 14 days.
+- **Markdown** is the item's text, marked as untrusted data written by the
+  sender. **Audio** goes through the same transcription path as voice items
+  ([inbox-transcription.md](inbox-transcription.md)), read from the spool
+  instead of a download link; auto transcription applies when
+  `inbox.transcription.sources` includes `email`. **Images** are stored
+  as attachments of the item and shown as a thumbnail; **📎 Open file**
+  downloads any of them (owner and read-write).
+- Nothing in a mail is executed or followed. Turn mail-in files off with
+  `meetings.email.files_enabled: false`; senders then get a bounce.
 
 ## Configuration
 

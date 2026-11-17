@@ -196,8 +196,14 @@ func (s *Service) transcriber(t config.InboxTranscription) (transcribe.Transcrib
 
 // hasAudio reports whether the item's source can mint audio links.
 func (s *Service) hasAudio(it Item) bool {
-	_, ok := s.source(it.Source).(AudioSource)
-	return ok && !it.AudioExpired
+	src := s.source(it.Source)
+	if _, ok := src.(AudioSource); ok {
+		return !it.AudioExpired
+	}
+	if _, ok := src.(AudioOpener); ok {
+		return it.Pending
+	}
+	return false
 }
 
 // Reason codes for Item.TranscribeUnavailable. no_key means the resolved
@@ -259,7 +265,7 @@ func (s *Service) applyTranscripts(items []Item) {
 			}
 		}
 		busy := ok && (rec.Status == TranscriptionQueued || rec.Status == TranscriptionRunning || rec.Status == TranscriptionDone)
-		it.Transcribable = active && it.Pending && !busy && s.hasAudio(*it)
+		it.Transcribable = active && it.Pending && !busy && !it.AwaitingApproval && s.hasAudio(*it)
 		if it.Pending && !busy && s.hasAudio(*it) {
 			if !blockedKnown {
 				blocked, blockedKnown = s.transcribeBlockedReason(txCfg, store), true
@@ -412,7 +418,7 @@ func (s *Service) runTranscription(it Item, cfg config.InboxTranscription, rec T
 		}
 	case errors.Is(err, transcribe.ErrTooLarge):
 		rec.Status, rec.Reason = TranscriptionSkipped, fmt.Sprintf("%s: the audio is larger than %d MB (inbox.transcription.max_bytes)", SkipTooLarge, cfg.EffectiveMaxBytes()/bytesPerMB)
-	case errors.Is(err, ErrNoAudio), errors.Is(err, connector.ErrPlaudNoAudio):
+	case errors.Is(err, ErrNoAudio), errors.Is(err, connector.ErrPlaudNoAudio), errors.Is(err, ErrRecordingExpired):
 		rec.Status, rec.Reason = TranscriptionSkipped, SkipUnsupported+": "+err.Error()
 	default:
 		rec.Status, rec.Reason = TranscriptionFailed, err.Error()
@@ -461,6 +467,16 @@ func (s *Service) transcribeItem(ctx context.Context, it Item, cfg config.InboxT
 	tr, err := s.transcriber(cfg)
 	if err != nil {
 		return transcribe.Result{}, err
+	}
+	if op, ok := s.source(it.Source).(AudioOpener); ok {
+		// Audio kept on this hive (recordings, uploads) is read from disk:
+		// the spoke never makes an HTTP call to itself.
+		audio, cleanup, err := s.localTranscribeAudio(ctx, it, op, cfg, rec, job)
+		if err != nil {
+			return transcribe.Result{}, err
+		}
+		defer cleanup()
+		return tr.Transcribe(ctx, audio)
 	}
 	link, err := s.AudioLink(ctx, it)
 	if err != nil {

@@ -19,6 +19,7 @@ import (
 	"github.com/hivecommons/hive/pkg/intent"
 	"github.com/hivecommons/hive/pkg/rebasemerge"
 	"github.com/hivecommons/hive/pkg/review"
+	"github.com/hivecommons/hive/pkg/scheduler"
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -280,7 +281,8 @@ func sentinelTrustedAuthorFunc(cfg *config.Config, ghClient *github.Client) func
 var mergeEligiblePath = "/var/run/hive-metrics/merge-eligible.json"
 
 // acmmHoldGatedMinLevel / acmmHoldGatedMaxLevel bracket the ACMM levels whose
-// merge policy is "hold-gated" — every agent-opened PR gets a "hold" label and
+// merge policy is "hold-gated" — every agent-opened PR gets the ready-for-review
+// gate label (the literal "hold" before hivecommons/hive#18468) and
 // no agent merges (see src/pkg/config/packs/level-{3,4,5}.yaml). L1/L2 are
 // "manual" (agents open no PRs) and L6 is "auto-merge on green CI, no hold
 // label", so both fall outside this range. Used by the F6 hold-label decider.
@@ -290,7 +292,7 @@ const (
 )
 
 // shouldHoldAgentPR decides whether a freshly opened agent PR must carry the
-// "hold" label. The general ACMM hold gate applies to every role at L3-L5.
+// ready-for-review gate label. The general ACMM hold gate applies to every role at L3-L5.
 // Outreach adds one level-independent reason: a PR that targets a repository
 // OTHER than the ones the outreach agent is working on behalf of (ownsRepo
 // false) is public speech into somebody else's project and stays
@@ -776,6 +778,11 @@ func automergeBlockLabelReason(labels []string, trusted bool) string {
 			return "label:" + lower
 		case lower == "hold" || strings.Contains(lower, "hold"):
 			return "label:hold"
+		case github.IsHiveGateLabel(trimmed):
+			// The hive's own gate labels (ready-for-review, decision-needed;
+			// hivecommons/hive#18468) block exactly like `hold`, so they
+			// report the same reason the lanes and stage engine key on.
+			return "label:hold"
 		}
 	}
 	return ""
@@ -1121,6 +1128,13 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 		// needs GitHub's own verdict to pick REPAIR vs DE-ESCALATE.
 		Mergeable string `json:"mergeable,omitempty"`
 		CIStatus  string `json:"ci_status,omitempty"`
+		// AppAuthored, HeadPushedAt and Issues are the busy-branch evidence
+		// (hivecommons/hive#18488): a repair queue must not send an agent to
+		// push onto a branch that is not the hive App's own while another
+		// worker is on it. See pkg/scheduler/busy_branch.go.
+		AppAuthored  bool       `json:"app_authored,omitempty"`
+		HeadPushedAt *time.Time `json:"head_pushed_at,omitempty"`
+		Issues       []int      `json:"issues,omitempty"`
 	}
 
 	prAgents := auditPRAgents(org, time.Now().Add(-auditPRAttributionWindow), "")
@@ -1258,6 +1272,9 @@ func writeMergeEligible(actionable *github.ActionableResult, hold github.HoldRes
 			Held:            held,
 			BaseRedChecks:   pr.BaseRedChecks,
 			BaseRed:         pr.AllFailuresBaseRed(),
+			AppAuthored:     scheduler.PRAppAuthored(pr),
+			HeadPushedAt:    scheduler.PRHeadPushedAt(pr),
+			Issues:          scheduler.PRIssueNumbers(pr),
 		}
 		if adopted {
 			row.ReachableAction = github.ReachableActionPush

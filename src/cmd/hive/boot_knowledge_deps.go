@@ -6,8 +6,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/hivecommons/hive/crux"
-
 	"github.com/hivecommons/hive/pkg/campaignexport"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/dashboard"
@@ -23,16 +21,17 @@ const (
 	beadSynthVaultDefaultPath = "/data/vaults/bead-synth-wiki"
 	// knowledgeGraphStorePath is the SQLite-backed knowledge graph on the PVC.
 	knowledgeGraphStorePath = "/data/graph/knowledge.db"
-	// inceptionDataDir roots the inception engine's persisted state.
+	// inceptionDataDir roots what the retired inception engine left on the
+	// PVC: the inception-wiki vault, its state file and campaign archives.
 	inceptionDataDir = "/data"
 )
 
 // bootKnowledgeDeps are bootKnowledge's long-lived effects (#7571, step 2):
 // vault init/seed on disk, the background loops (git sync, bead synth,
 // promotion, graph store open + wiring, workspace cleanup), the nous state
-// read, the inception engine (reads /data), and the brainstorm restart. The
-// knowledge API, vault connects, bead synthesizer, and inception decision
-// run for real; cfg paths point a test at temp dirs.
+// read, the inception-wiki reconnect and the retired-campaigns export (both
+// read /data). The knowledge API, vault connects and bead synthesizer run for
+// real; cfg paths point a test at temp dirs.
 type bootKnowledgeDeps struct {
 	initVaultRepo         func(path string, logger *slog.Logger) error
 	seedVaultContent      func(vaultPath string, logger *slog.Logger) error
@@ -43,11 +42,13 @@ type bootKnowledgeDeps struct {
 	startWorkspaceCleanup func(ctx context.Context, logger *slog.Logger, audit *dashboard.AuditLog)
 	ensureNousDirs        func(logger *slog.Logger)
 	loadNousState         func(logger *slog.Logger) *dashboard.NousState
-	newInceptionEngine    func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine
+	// reconnectInceptionWiki keeps facts from past inception runs (the
+	// inception-wiki vault) served after the inception engine's retirement;
+	// nil skips it.
+	reconnectInceptionWiki func(api *knowledge.KnowledgeAPI, logger *slog.Logger)
 	// exportRetiredCampaigns writes the one-time read-only export of retired
 	// inception campaign archives and campaign Jam data; nil skips it.
 	exportRetiredCampaigns func(cfg *config.Config, logger *slog.Logger)
-	restartBrainstorm      func(ctx context.Context, mgr crux.Runtime, msg string) error
 	// startConnectorSyncer runs the knowledge.connectors syncer (#11069);
 	// nil leaves it built but not started.
 	startConnectorSyncer func(ctx context.Context, s *connector.Syncer)
@@ -80,15 +81,12 @@ func defaultBootKnowledgeDeps() bootKnowledgeDeps {
 			}
 		},
 		loadNousState: loadNousState,
-		newInceptionEngine: func(api *knowledge.KnowledgeAPI, logger *slog.Logger) *knowledge.InceptionEngine {
-			return knowledge.NewInceptionEngine(inceptionDataDir, api, logger)
+		reconnectInceptionWiki: func(api *knowledge.KnowledgeAPI, logger *slog.Logger) {
+			knowledge.ReconnectInceptionWiki(inceptionDataDir, api, logger)
 		},
 		exportRetiredCampaigns: exportRetiredCampaigns,
-		restartBrainstorm: func(ctx context.Context, mgr crux.Runtime, msg string) error {
-			return mgr.RestartWithBootstrap(ctx, "brainstorm", msg)
-		},
-		startConnectorSyncer: func(ctx context.Context, s *connector.Syncer) { go s.Run(ctx) },
-		startPublishMirror:   func(ctx context.Context, m *connector.Mirror) { go m.Start(ctx) },
+		startConnectorSyncer:   func(ctx context.Context, s *connector.Syncer) { go s.Run(ctx) },
+		startPublishMirror:     func(ctx context.Context, m *connector.Mirror) { go m.Start(ctx) },
 	}
 }
 

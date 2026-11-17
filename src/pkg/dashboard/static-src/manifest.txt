@@ -122,6 +122,7 @@ js/label-filter.js
 js/pinned-filters.js
 js/repos-render.js
 js/budget.js
+js/model-picker.js
 js/backends-tokens.js
 js/cost.js
 js/acmm-lifecycle.js
@@ -135,6 +136,7 @@ js/inbox-recorder.js
 js/meetings.js
 js/calendar.js
 js/meeting-attendee.js
+js/meeting-attendee-model.js
 js/vault-audit.js
 js/review-queue.js
 js/contributors.js

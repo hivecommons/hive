@@ -38,7 +38,7 @@ Hive attends meetings as a persona: **Betty** ("Betty Bee from the hive", she/he
 - **Caps.** Unprompted answers are capped at `per_10m` (2 per ten minutes), at least `min_gap_s` (90 seconds) apart and `per_meeting` (12) per meeting, with one reply per question, at most `queue_depth` (3) questions waiting and none older than `stale_s` (60 seconds). Addressed requests skip these caps but still go through the chat rate limit (`meetings.chat_posts_per_minute`) and the meeting budget. Chat answers are at most 3 sentences and 300 characters.
 - **Spek.** With Betty on, Spek's spoken replies are dropped, Spek's chat posts go through Betty (posted unless she already covered the topic, so the meeting never gets two answers), and Spek's clarifying questions are reworded in Betty's voice with one quick model call (800 ms; on failure or timeout the original text is posted). The rewording runs beside the meeting loop, so the transcript, notes and other replies keep flowing; Spek's later questions and chat posts wait their turn so they still appear in Spek's order. Notes and research are unchanged. Lines addressed to Betty and leave phrases never count as answers to Spek's questions.
 - **Manners.** Plain, brief language; at most one light touch of humor, never about a person and none when the conversation sounds tense. Set `meetings.persona.humor: off` to turn humor off. Meeting speech, knowledge and work items reach the model as data, never as instructions. She never claims to have done something she did not do.
-- **Model.** Betty answers with the meetings model through the same path as `hive meeting-llm` (an OpenAI-compatible endpoint, charged to the meeting's usage ledger and budget). On a hive with only an Anthropic key (`HIVE_MEETINGS_ANTHROPIC_API_KEY` or `meetings.llm.anthropic_key_file`) she calls the Anthropic Messages API directly with `meetings.llm.model` (default `claude-haiku-5-5`), with the same timeouts, in-flight limit and usage ledger, so her tokens count toward the meeting's budget. With no model she still introduces herself but says she cannot answer questions.
+- **Model.** Betty answers with the meetings model through the same path as `hive meeting-llm` (an OpenAI-compatible endpoint, charged to the meeting's usage ledger and budget). On a hive with only an Anthropic key (`HIVE_MEETINGS_ANTHROPIC_API_KEY` or `meetings.llm.anthropic_key_file`) she calls the Anthropic Messages API directly with `meetings.llm.model` (default `claude-haiku-5-5`), with the same timeouts, in-flight limit and usage ledger, so her tokens count toward the meeting's budget. With no model she still introduces herself but says she cannot answer questions. With `meetings.llm.mode: agent-backend` (or `claude-cli`) she answers through one of the hive's agent backends instead; see [Agent backends](#agent-backends).
 - **Turning her off.** `meetings.persona.enabled: false` (or `HIVE_MEETINGS_PERSONA_ENABLED=false`) restores the plain `hive (notes)` attendee.
 
 ### Persona settings
@@ -63,7 +63,8 @@ Settings, **Meeting attendee** edits all of this from the dashboard ([#18396](ht
 
 - **Persona.** Preset cards show each persona's flag, language, accent, voice type and voice id. Picking one fills the form; Save stores it. A value equal to the preset's is stored as no override, so the persona keeps following the preset. The voice list shows the Kokoro voices for the chosen language, and changing the language picks a voice of the same type. The intro has a live preview. **Play sample** speaks a short line in the persona's language through the meetings TTS service (the browser plays it from `GET /api/meetings/persona/sample`, using the form's unsaved voice, language and name); until that service is configured (`meetings.tts_url` and its token, phase B) the button is disabled and the API answers "TTS not configured".
 - **Behaviour.** The unprompted caps above (`per_10m`, `min_gap_s`, `per_meeting`, `answer_wait_s`, `min_confidence`, `queue_depth`, `stale_s`; 0 restores a default) and whether hive may speak aloud when addressed (`meetings.voice_on_address`).
-- **Email.** The attendee address, `hive@<dashboard host>`, with a copy button, the people with access to this hive (owner, read-write and read) with their registered calendar emails and proof status, the invites and files waiting for approval, and switches for calendar invites and mailed-in files. Until email-in is enabled ([#18395](https://github.com/hivecommons/hive/issues/18395)) the section is shown with its controls disabled.
+- **Model.** The model Betty and Spek answer with: `meetings.llm.mode`, and on the agent-backend mode the backend and model (`meetings.llm.backend`, `meetings.llm.model`). The backend and model lists are the agents' own (the catalog the agent backend and model pickers use); a backend that cannot answer for meetings is listed but cannot be picked, and the section says why. **Default** means the backend most of the hive's agents run on and that backend's meetings default model. Saved on its own with **Save model** (owner, `PUT /api/meetings/model`); it applies after a restart. See [Agent backends](#agent-backends).
+- **Email.** The attendee address, `hive@<dashboard host>`, with a copy button, the people with access to this hive (owner, read-write and read) with their registered calendar emails and proof status, the mailed-in files waiting for approval (invites waiting for approval are in the **Calendar**), **My calendar emails** where each user adds, proves and removes their own addresses (see [Proving calendar emails](#proving-calendar-emails)), and the owner's switches for calendar invites and mailed-in files (`meetings.email.*`, saved with **Save**; a read-write user sees them read-only). The section is live once the hive's calendar email allowlist is wired ([#18395](https://github.com/hivecommons/hive/issues/18395)); before that its controls are disabled.
 
 The presets use only voices the self-hosted Kokoro TTS ([Kokoro-FastAPI](https://github.com/remsky/Kokoro-FastAPI) v0.10.0) ships. Leave phrases stay in Latin script because the leave matcher uses ASCII word boundaries, and every preset keeps "hive" as an alias and "hive leave" as a leave phrase.
 
@@ -91,7 +92,39 @@ Hive owns the model credential and the budget; Spektacular never receives an Ope
 
 - **OpenAI-compatible endpoint (default).** `meetings.llm.endpoint`, `meetings.llm.model` and the key in `meetings.llm.api_key_file` fall back to `governor.litellm` (its endpoint, key and `default_model`), the same resolution the knowledge advisor uses, but with the meetings timeout (`meetings.llm.timeout_ms`, 2500 ms) and its own in-flight limit (`meetings.llm.max_in_flight`, 4 calls across all meetings). Spek runs with `SPEK_MEETING_LLM=command` and calls `hive meeting-llm` for every prompt. That subcommand reads the endpoint, model and key from the environment hive gives the Spek child (never from argv), makes one chat completion, prints the reply, and appends `{"at": ..., "tokens": N}` to the meeting's usage ledger `/data/meetings/<id>/llm-usage.jsonl`. The live loop charges that ledger to the per-meeting budget and the hive-wide hourly and daily ceilings, and `hive meeting-llm` refuses once the meeting's budget is spent.
 - **Anthropic.** With an Anthropic key (`meetings.llm.anthropic_key_file` or `HIVE_MEETINGS_ANTHROPIC_API_KEY`) and `meetings.llm.mode` `auto` or `anthropic`, Spek calls Anthropic directly (`SPEK_MEETING_LLM=anthropic`). The key is put only into the Spek child's environment. Token use is then counted in intents, not tokens.
+- **Agent backend.** With `meetings.llm.mode: agent-backend` Spek runs `SPEK_MEETING_LLM=command` against `hive meeting-llm` too, which then runs the backend's CLI once per prompt in its completion profile (see [Agent backends](#agent-backends)) with the cold-start timeout, and charges the CLI's reported usage to the same ledger.
 - **No model.** Without an endpoint and model (or with `meetings.llm.mode: none`) Spek runs on its rules only, and the meeting panel shows "rules only, no model configured".
+
+### Agent backends
+
+`meetings.llm.mode: agent-backend` lets Betty and Spek use a backend and model the hive's agents are configured with ([#18517](https://github.com/hivecommons/hive/issues/18517), [#18549](https://github.com/hivecommons/hive/issues/18549)); `claude-cli` is the same mode with the `claude` backend. `meetings.llm.backend` names the backend (empty: the backend most of the hive's agents run on) and `meetings.llm.model` the model (empty: `claude-sonnet-5-5` on `claude`, otherwise the model most of that backend's agents use, then a gateway's `default_model`). The `openai`, `anthropic` and `none` modes are unchanged, and `auto` never picks an agent backend.
+
+A CLI backend runs in a narrow completion profile: one request per call, every tool and MCP server off, no hooks, no settings files, no session written to the shared home, an empty temporary working directory, and a fixed system prompt that treats meeting text as untrusted data. The request's own instructions travel inside the turn, and the prompt goes in on stdin, never in argv. The CLI's environment is an allowlist (path, locale, proxy and CA settings, the CLI's own config directory and sign-in variables), so GitHub and hive tokens never reach it. Usage from the CLI's result is charged to the meeting's usage ledger, the per-meeting budget and the hive-wide ceilings, as with the API modes, and a call is refused once the budget is spent.
+
+The CLI uses the sign-in the agents get, without hive logging it or writing it to disk:
+
+- **claude:** the shared agent home (`/data/home`, override `HIVE_MEETINGS_CLI_HOME`) with its credentials file. On a hive that signs Claude in only with the operator's long-lived token (`HIVE_CLAUDE_OAUTH_TOKEN` or `HIVE_CLAUDE_OAUTH_TOKEN_FILE`), the token reaches the meetings CLI as `CLAUDE_CODE_OAUTH_TOKEN` in its environment, exactly as the agent launcher gives it to claude agents; a `CLAUDE_CODE_OAUTH_TOKEN` in hive's own environment is not passed on.
+- **copilot:** `COPILOT_GITHUB_TOKEN`, else the dashboard Copilot sign-in (`/data/copilot-user-token`, read through the keystore), as the agents get it. Copilot runs with its home (`HOME`, `COPILOT_HOME`) in the call's own temporary directory, so no MCP config, plugin or hook of the agents' home loads and its session log is removed with the call. Without a Copilot token the call fails rather than fall back to the shared home.
+- **omp:** the fleet's auth broker (`OMP_AUTH_BROKER_URL`, `OMP_AUTH_BROKER_TOKEN`), in an empty `hive-meetings` settings profile.
+- **Model gateways** (`litellm`, `vllm`, `llm-d`, named gateways): the gateway's own key, sent as the bearer of the chat completion.
+
+| Backend | How it answers | Latency | Status |
+|---|---|---|---|
+| `claude` (2.1.325) | Betty: one warm `claude -p --input-format stream-json --output-format stream-json` per meeting, started when the meeting starts; each call is one turn. Spek: one `claude -p --output-format json` per prompt. | Warm turn about 1 s with Sonnet 5.5 (measured 0.9 to 1.2 s on Claude Code 2.1.325); a cold `claude -p` adds the CLI start, several seconds. | Supported. |
+| `copilot` (1.0.88) | One `copilot --output-format json --available-tools <none> --disable-builtin-mcps --no-custom-instructions --no-ask-user --no-auto-update --usage-output-file <tmp>` per call for Betty and Spek, the prompt piped on stdin. The reply is the last `assistant.message`; tokens are input plus output per model from the usage report. | No warm mode: about 4.5 s of CLI start and sign-in before the model answers (measured 4.4 to 4.8 s on Copilot CLI 1.0.109 from launch to the model's answer, there a quota refusal), so a reply takes about 5 to 8 s. | Supported. |
+| `omp` (18.20.0) | One `omp -p --mode json --no-tools --no-lsp --no-extensions --no-skills --no-rules --no-session --no-title --no-context-files --profile hive-meetings --system-prompt <fixed>` per call, prompt on stdin. The reply is the last assistant `message_end`; tokens are its `usage.totalTokens`. Needs a model (the isolated profile has no default). | No warm mode: the CLI start plus one model call per reply, a few seconds; not yet measured against a signed-in CLI. | Supported. |
+| `litellm` | The OpenAI-compatible path (`governor.litellm`), as `meetings.llm.mode: openai`. | One chat completion. | Supported. |
+| `vllm`, `llm-d` | The OpenAI-compatible path at the first endpoint the agents use (`HIVE_VLLM_ENDPOINT`, `HIVE_LLMD_ENDPOINT`, default the in-cluster llm-d endpoint picker), no key. Needs a model: `meetings.llm.model` or the model of the hive's agents on that backend. | One chat completion. | Supported. |
+| Named model gateways | Every gateway under Settings, Model Gateways with an endpoint answers through the OpenAI-compatible path with its endpoint, key, `default_model` and `ca_bundle`, and shows in the picker under its name. | One chat completion. | Supported, except watsonx gateways. |
+| `codex` | | | Refused: `codex` has no flag that removes its shell tool. With a read-only sandbox, approval policy never and an empty workspace, `codex exec` still lets the model run read-only commands, which can read the CLI's sign-in and other files on the hive and repeat them into a meeting. |
+| `gemini` | | | Refused: the gemini CLI is not installed in the hive image (no pinned version in `src/Dockerfile`), has no flag that removes every tool (its non-interactive mode still runs read-only shell and file tools), and stopped serving personal and Google AI Pro accounts on 2026-06-18. |
+| `agy`, `bob` | | | Refused: neither has a flag that turns its tools off (the agent launcher cannot pass them tool rules either). |
+| `goose`, `aider`, `cline`, `pi`, `opencode`, `kilo`, `muse`, `openhands`, `omnigent` | | | Refused: hive has no verified launch of the CLI that answers one prompt with every tool, MCP server and file write turned off. |
+| `watsonx` | | | Refused: watsonx needs a short-lived IAM bearer minted from the IBM Cloud key and a project header, which the meetings OpenAI-compatible path does not send. |
+
+A refused backend fails config validation and `PUT /api/meetings/model` with its reason, and the Settings picker lists it disabled, with the reason under "Why some backends are unavailable for meetings". A `meetings.llm.backend` that is neither a known backend nor a configured gateway is refused the same way.
+
+The warm process is replaced after `HIVE_MEETINGS_CLI_RECYCLE_TURNS` turns (default 8, which bounds the history each turn re-reads and pays for), and at once after any error, timeout or crash, so a late reply can never answer the next request and the next call finds a fresh process. Calls from one meeting run one at a time inside the shared in-flight limit. On a CLI backend Betty's timeouts are wider than the API modes' 4 s, 2.5 s and 800 ms: `HIVE_MEETINGS_CLI_ADDRESSED_TIMEOUT_MS`, `HIVE_MEETINGS_CLI_UNPROMPTED_TIMEOUT_MS` and `HIVE_MEETINGS_CLI_RESTYLE_TIMEOUT_MS`, default 8000, 6000 and 3000 on `claude` and 20000, 15000 and 10000 on `copilot` and `omp`, which start the CLI on every call. Spek's per-prompt call uses `HIVE_MEETINGS_CLI_ONESHOT_TIMEOUT_MS` (30000). `HIVE_MEETINGS_CLI_BINARY` overrides the CLI binary. The panel shows the model in use, for example "claude CLI claude-sonnet-5-5" or "vllm model llama-4".
 
 Spektacular must be a version that includes the `meeting` command ([hivecommons/spektacular#126](https://github.com/hivecommons/spektacular/pull/126)). With an older binary the live mode exits at once; hive keeps the meeting going (transcript, consent, `hive leave`, research approvals, the panel) without Spek's questions and notes, and the panel says Spektacular live mode is not running.
 
@@ -122,7 +155,7 @@ The **Calendar** section, right after **Inbox** in the left menu, lists the meet
 
 The schedule lives in `<meetings.data_dir>/schedule.json` (by default `/data/meetings/schedule.json`), rewritten atomically. Each occurrence is recorded before hive joins it, so a restart never joins the same occurrence twice; a join cut off by a restart is shown as failed rather than retried. Finished meetings stay listed for 14 days and are removed after 30.
 
-Entries are keyed by their calendar UID and RECURRENCE-ID, ready for calendar invites (planned: inviting hive by email). An update with a higher SEQUENCE replaces the entry, an equal or lower one is ignored, and a cancellation marks it cancelled. Until invites arrive, everything not added by the owner waits for approval.
+Entries are keyed by their calendar UID and RECURRENCE-ID, as calendar invites carry them (see [Inviting Betty by email](#inviting-betty-by-email)). An update with a higher SEQUENCE replaces the entry, an equal or lower one is ignored, and a cancellation marks it cancelled. Everything not added by the owner or by an allowlisted organizer waits for approval.
 
 While hive is in at least one meeting (joining, in the lobby or live), the top bar shows an indicator such as "🐝 Betty is in a meeting" or "🐝 Betty is in 2 meetings". The name comes from the bot display name (`meetings.bot_name`, "Betty Bee from the hive" shows as "Betty Bee"; the default `hive (notes)` shows as "Hive"). Hover it for each meeting's platform and title; click it to open the live panel, or the Calendar when there are several. The **Calendar** menu badge counts the meetings hive is in plus those awaiting approval. Both follow the dashboard's live event stream, so they update without polling.
 
@@ -141,6 +174,24 @@ What `hive-mx` does with a message:
 - **Proof mails:** a message whose subject carries a proof code (`hive-proof-` and 12 letters or digits) is reported as a proof of the sender address.
 
 The result goes to the hub as JSON with a bearer token from a mounted Secret. If the hub cannot take it, the sender's mail server is told to retry later.
+
+The hub maps the recipient host to the hive, signs the delivery with that hive's own relay key (the key it already uses for relayed GitHub webhooks) and forwards it to the spoke; it stores nothing. The spoke refuses anything without a valid relay signature.
+
+### Who can invite Betty
+
+An invite is scheduled at once only when all of these hold:
+
+- the mail's `From` address passed DMARC alignment,
+- that address is the invite's organizer, and
+- it is a proven calendar email of a user who has owner, read-write or read access to the hive right now.
+
+Everything else, including any invite from someone outside the hive, appears in the **Calendar** as awaiting approval, and the owner approves or declines it there. Attendees never approve anything: being on the invite next to `hive@` does not make a sender trusted. Removing a user's access in **Manage Access** revokes their calendar emails at once.
+
+An update to a meeting already on the calendar (a higher SEQUENCE, or a cancellation) applies only when the mail is authenticated as that meeting's organizer; anything else is ignored, so nobody can move or cancel a meeting by copying its invite. Turn invites off with `meetings.email.invites_enabled: false`; senders then get a bounce.
+
+### Proving calendar emails
+
+Each user registers the addresses their calendar sends invites from, under **Settings, Meeting attendee** (API: `/api/meetings/calendar-emails`). Adding an address shows a proof code such as `hive-proof-k7f3qz2mwx4a` and the instruction: send an email from that address to `hive@<host>` with this code in the subject. When that mail arrives with DMARC alignment for exactly that address, the address is marked proven. A proof mail from another address, or one that fails DMARC, is recorded on the address so the user can see why. Codes are valid for 24 hours and can be reissued; each user can register 10 addresses. Hive never sends mail, so this is how it learns which addresses are yours.
 
 ## Asking Betty to do things
 
@@ -249,14 +300,17 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.retention_days` | `30` | Days a transcript is kept after the meeting ends. |
 | `meetings.consent_text` | see above | Consent notice, at most 2000 characters. |
 | `meetings.data_dir` | `/data/meetings` | Meeting records and transcripts. |
-| `meetings.llm.mode` | `auto` | `auto`, `openai`, `anthropic` or `none`. |
+| `meetings.llm.mode` | `auto` | `auto`, `openai`, `anthropic`, `agent-backend`, `claude-cli` or `none` (`HIVE_MEETINGS_LLM_MODE`). |
+| `meetings.llm.backend` | the agents' most common backend | Agent backend for `agent-backend`: `claude` or `litellm` (`HIVE_MEETINGS_LLM_BACKEND`). |
 | `meetings.llm.endpoint` | `governor.litellm` endpoint | OpenAI-compatible base URL for Spek's model. |
-| `meetings.llm.model` | `governor.litellm.default_model` | Model name. |
+| `meetings.llm.model` | `governor.litellm.default_model`; `claude-sonnet-5-5` on the `claude` backend | Model name. |
 | `meetings.llm.api_key_file` | `/data/secrets/meetings_llm_api_key` | Keystore-sealed key; falls back to the `governor.litellm` key. |
 | `meetings.llm.anthropic_key_file` | `/data/secrets/meetings_anthropic_api_key` | Keystore-sealed Anthropic key. |
 | `meetings.llm.anthropic_model` | Spektacular's default | Anthropic model. |
 | `meetings.llm.timeout_ms` | `2500` | Per-call model timeout. |
 | `meetings.llm.max_in_flight` | `4` | Concurrent model calls across meetings. |
+| `meetings.email.invites_enabled` | `true` | Accept calendar invites sent to `hive@<host>` (`HIVE_MEETINGS_EMAIL_INVITES_ENABLED`). |
+| `meetings.email.files_enabled` | `true` | Accept mail-in files as Inbox items (`HIVE_MEETINGS_EMAIL_FILES_ENABLED`). |
 | `meetings.persona.enabled` | `true` | The meeting attendee persona. |
 | `meetings.persona.preset` | `betty` | Built-in persona the fields below start from. |
 | `meetings.persona.name` | `Betty` | Name she answers to. |

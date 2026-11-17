@@ -1,8 +1,11 @@
 package spoke
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"strconv"
 	"time"
 )
 
@@ -42,26 +45,21 @@ func k8sUpgradePatch(path string, body []byte) error {
 
 // k8sUpgradePatchWithDeployment reuses a Deployment already read by the caller
 // so image switching derives container names and probe settings from one GET.
+//
+// The probe backfill is best-effort: if the hive container's probes cannot be
+// decoded (an unexpected port shape, a malformed document), it logs a warning
+// and the upgrade patch is applied without the backfill. A backfill problem
+// must never abort the image upgrade itself (#18479).
 func k8sUpgradePatchWithDeployment(path string, body, current []byte) error {
 	var err error
-	var dep struct {
-		Spec struct {
-			Template struct {
-				Spec struct {
-					Containers []struct {
-						Name         string `json:"name"`
-						StartupProbe *struct {
-							FailureThreshold int `json:"failureThreshold"`
-						} `json:"startupProbe"`
-						ReadinessProbe *probeHandler `json:"readinessProbe"`
-						LivenessProbe  *probeHandler `json:"livenessProbe"`
-					} `json:"containers"`
-				} `json:"spec"`
-			} `json:"template"`
-		} `json:"spec"`
-	}
-	if err := json.Unmarshal(current, &dep); err != nil {
-		return fmt.Errorf("decoding startup probe before upgrade: %w", err)
+	dep, decodeErr := decodeUpgradeProbes(current)
+	if decodeErr != nil {
+		slog.Warn("self-upgrade: skipping startup probe backfill, cannot decode deployment probes",
+			"path", path, "err", decodeErr)
+		if body == nil {
+			return nil
+		}
+		return k8sAPIPatch(path, body)
 	}
 	probeOnly := body == nil
 	for _, c := range dep.Spec.Template.Spec.Containers {
@@ -114,26 +112,84 @@ func k8sUpgradePatchWithDeployment(path string, body, current []byte) error {
 	return k8sAPIPatch(path, body)
 }
 
+// upgradeProbeDeployment is the slice of a Deployment the probe backfill
+// reads: each container's name, its startupProbe threshold, and the httpGet
+// port of its readiness and liveness probes.
+type upgradeProbeDeployment struct {
+	Spec struct {
+		Template struct {
+			Spec struct {
+				Containers []struct {
+					Name         string `json:"name"`
+					StartupProbe *struct {
+						FailureThreshold int `json:"failureThreshold"`
+					} `json:"startupProbe"`
+					ReadinessProbe *probeHandler `json:"readinessProbe"`
+					LivenessProbe  *probeHandler `json:"livenessProbe"`
+				} `json:"containers"`
+			} `json:"spec"`
+		} `json:"template"`
+	} `json:"spec"`
+}
+
+func decodeUpgradeProbes(current []byte) (upgradeProbeDeployment, error) {
+	var dep upgradeProbeDeployment
+	if err := json.Unmarshal(current, &dep); err != nil {
+		return dep, fmt.Errorf("decoding startup probe before upgrade: %w", err)
+	}
+	return dep, nil
+}
+
 // probeHandler is the slice of a Kubernetes probe the backfill needs: the
 // httpGet port the dashboard already answers on.
 type probeHandler struct {
 	HTTPGet *struct {
-		Port json.Number `json:"port"`
+		Port probePort `json:"port"`
 	} `json:"httpGet"`
+}
+
+// probePort mirrors Kubernetes' IntOrString for httpGet.port: a container
+// port number (3002) or a named container port ("dashboard"). The zero value
+// means the port was absent or null.
+type probePort struct {
+	Num  int64
+	Name string
+}
+
+// UnmarshalJSON accepts a JSON number, a JSON string, or null. Anything else
+// (an object, an array, a boolean, a fractional number) is an error.
+func (p *probePort) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	*p = probePort{}
+	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
+		return nil
+	}
+	if data[0] == '"' {
+		return json.Unmarshal(data, &p.Name)
+	}
+	n, err := strconv.ParseInt(string(data), 10, 64)
+	if err != nil {
+		return fmt.Errorf("probe port %s is neither an integer nor a port name", data)
+	}
+	p.Num = n
+	return nil
 }
 
 // startupProbePort picks the port for a newly installed startupProbe: the
 // port the existing readiness or liveness probe already targets (the dashboard
-// is proven to answer there), else the hosted template default.
+// is proven to answer there), else the hosted template default. A named port
+// stays a name, so the new probe targets the same container port.
 func startupProbePort(probes ...*probeHandler) any {
 	for _, p := range probes {
-		if p == nil || p.HTTPGet == nil || p.HTTPGet.Port == "" {
+		if p == nil || p.HTTPGet == nil {
 			continue
 		}
-		if n, err := p.HTTPGet.Port.Int64(); err == nil && n > 0 {
-			return n
+		if p.HTTPGet.Port.Name != "" {
+			return p.HTTPGet.Port.Name
 		}
-		return p.HTTPGet.Port.String()
+		if p.HTTPGet.Port.Num > 0 {
+			return p.HTTPGet.Port.Num
+		}
 	}
 	return HostedDashboardPort
 }

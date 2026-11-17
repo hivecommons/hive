@@ -513,7 +513,10 @@ importance:
   `geolocation=(), camera=(), microphone=(self)` (`src/deploy/nginx.conf`,
   `map $uri $hive_document_permissions_policy`); the ttyd terminal iframe
   (`/terminal/`) and `/api/` responses keep `microphone=()`, and no other origin
-  is ever granted the microphone.
+  is ever granted the microphone. The same document policy carries
+  `display-capture=(self)` for Inbox ● Record's tab audio
+  ([inbox-recording.md](inbox-recording.md)); `/terminal/` and `/api/` keep
+  `display-capture=()`.
 
 Audit: `session_created`, `session_started` (the outcome of the background
 start), `session_closed`, `session_renamed`, `session_input` and

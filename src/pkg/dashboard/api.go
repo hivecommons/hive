@@ -426,20 +426,22 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("GET /api/hive-id", s.handleHiveIDGet)
 	s.mux.HandleFunc("PUT /api/hive-id", s.handleHiveIDSet)
 
-	s.mux.HandleFunc("POST /api/inception/start", s.handleInceptionStart)
-	s.mux.HandleFunc("POST /api/inception/scan", s.handleInceptionScan)
-	s.mux.HandleFunc("GET /api/inception/state", s.handleInceptionState)
-	s.mux.HandleFunc("POST /api/inception/questions", s.handleInceptionSetQuestions)
-	s.mux.HandleFunc("POST /api/inception/answer", s.handleInceptionAnswer)
-	s.mux.HandleFunc("POST /api/inception/facts", s.handleInceptionRecordFacts)
-	s.mux.HandleFunc("GET /api/inception/scaffold", s.handleInceptionScaffold)
-	s.mux.HandleFunc("POST /api/inception/approve", s.handleInceptionApprove)
-	s.mux.HandleFunc("POST /api/inception/reset", s.handleInceptionReset)
-	s.mux.HandleFunc("GET /api/inception/ideation-facts", s.handleInceptionIdeationFacts)
-	s.mux.HandleFunc("GET /api/inception/download", s.handleInceptionDownload)
-	s.mux.HandleFunc("GET /api/inception/has-files", s.handleInceptionHasFiles)
-	s.mux.HandleFunc("PUT /api/inception/wiki-name", s.handleInceptionRenameWiki)
-	s.mux.HandleFunc("POST /api/inception/import", s.handleInceptionImport)
+	// The inception API was retired in favour of Inception (spek) sessions;
+	// every former route answers 410 Gone for one release (inception_gone.go).
+	s.mux.HandleFunc("POST /api/inception/start", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/scan", s.handleInceptionGone)
+	s.mux.HandleFunc("GET /api/inception/state", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/questions", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/answer", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/facts", s.handleInceptionGone)
+	s.mux.HandleFunc("GET /api/inception/scaffold", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/approve", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/reset", s.handleInceptionGone)
+	s.mux.HandleFunc("GET /api/inception/ideation-facts", s.handleInceptionGone)
+	s.mux.HandleFunc("GET /api/inception/download", s.handleInceptionGone)
+	s.mux.HandleFunc("GET /api/inception/has-files", s.handleInceptionGone)
+	s.mux.HandleFunc("PUT /api/inception/wiki-name", s.handleInceptionGone)
+	s.mux.HandleFunc("POST /api/inception/import", s.handleInceptionGone)
 
 	// Plan-review gate (Phase 2 planning intelligence). Mirrors /api/inception/*.
 	// Phase 4 adds the issue entry point: mint an epic from a GitHub issue and
@@ -539,6 +541,8 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.registerMeetingsRoutes()
 	s.registerMeetingsScheduleRoutes()
 	s.registerMeetingsPersonaRoutes()
+	s.registerMeetingsModelRoutes()
+	s.registerMeetingsEmailRoutes()
 	s.mux.HandleFunc("POST /api/system-alerts/dismiss", s.handleSystemAlertDismiss)
 	// Per-agent Variables tab (#11458, api_variables.go).
 	s.registerAgentVariableRoutes()
@@ -553,6 +557,10 @@ func (s *Server) RegisterAPI(deps *Dependencies) {
 	s.mux.HandleFunc("POST /api/github-owner-identity/start", s.handleOwnerIdentityStart)
 	s.mux.HandleFunc("POST /api/github-owner-identity/poll", s.handleOwnerIdentityPoll)
 	s.mux.HandleFunc("DELETE /api/github-owner-identity", s.handleOwnerIdentityDelete)
+	// Owner-approved prompt/definition source repos (#18490,
+	// api_config_prompt_sources.go).
+	s.mux.HandleFunc("GET /api/config/prompt-sources", s.handlePromptSourcesGet)
+	s.mux.HandleFunc("PUT /api/config/prompt-sources/owner-repos", s.handlePromptSourcesOwnerRepoPut)
 }
 
 var (

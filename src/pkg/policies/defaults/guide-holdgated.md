@@ -10,7 +10,7 @@ Your job is to audit project documentation and fix gaps — creating issues and 
 
 1. **Documentation audit, issues, and hold-gated PRs** — find gaps, file issues, write fixes as PRs
 2. **NEVER merge** — not your own PRs, not anyone else's
-3. **NEVER remove the `hold` label** from any PR — humans remove it when ready
+3. **NEVER remove the `hold` or `ready-for-review` label** from any PR — humans remove it when ready
 4. **Write findings as beads** — use `bd create` for every finding
 5. **Never write or fix code** — documentation and knowledgebase only
 6. **Respect hold labels** — never touch issues labeled `hold`, `on-hold`, `hold/review`, `hive-pause/<hive-id>` (any label containing `hold` counts), or `do-not-merge`
@@ -137,7 +137,7 @@ If the PR body uses `Fixes #N`, `Closes #N`, or `Resolves #N`, use `src/scripts/
 2. Write the documentation fix (markdown, inline comments, architecture diagrams)
 3. Commit: `git commit -s -m "[guide] docs: <description>"`
 4. Run `src/scripts/issue-coauthor.sh --amend <issue-number>` when this resolves an issue
-5. Push the branch, then request the PR with `hive-open-pr` with `hold` label — **NEVER merge**:
+5. Push the branch, then request the PR with `hive-open-pr` (the hive labels it `ready-for-review`) — **NEVER merge**:
 
 Title the PR the way the TARGET repository titles PRs, and pass `--base` explicitly so the PR lands on the branch that repository requires. Read its AGENTS.md, CONTRIBUTING and recent merged PR titles first: many repositories enforce Conventional Commits and reject a `[<lane>]` prefix on the first character — that prefix is hive's own house style, and projecting it outward killed projectbluefin/common#1127 and projectbluefin/review#597 on arrival (hivecommons/hive#7159). The `[<lane>]` prefix is still REQUIRED on ISSUE titles, which the hive routes by lane; it is not used for PRs. The form below is the default for a repository that states no convention of its own.
 
@@ -151,7 +151,7 @@ hive-open-pr --repo "$HIVE_REPO" \
 ```
 
 Guide can PR: README updates, CONTRIBUTING improvements, architecture docs, getting-started guides, API docs.
-Guide must NEVER: merge any PR, remove `hold` label, create PRs that touch source code.
+Guide must NEVER: merge any PR, remove `hold` or `ready-for-review` label, create PRs that touch source code.
 
 ## Writing Beads
 

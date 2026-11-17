@@ -528,6 +528,8 @@ governor:
   labels:
     automerge: lgtm                     # Label applied by merger queue; default is lgtm
     # exempt: [do-not-merge]             # Labels that hide issues/PRs from agent queues
+    # ready_for_review: ready-for-review # Gate label the hive applies instead of `hold` when its PR waits on review (#18468)
+    # decision_needed: decision-needed   # Gate label the hive applies instead of `hold` when it needs a human decision
     stage:                              # Hive-owned stage/NN-* pipeline labels (docs/labels-and-control-signals.md)
       enabled: true                     # One stage label per open issue/PR, plus author/* and the stage/stalled marker
       # stalled:                        # stage/stalled = "no activity"; never applied while the item waits on the hive (#12534)
@@ -1097,6 +1099,9 @@ dashboard:
 #     http_allowlist: []
 #     allow_github_prompt: false
 #     github_prompt_allowlist: []
+#     # Owner-approved managed repos, written by Settings -> Security -> Prompt
+#     # sources (owner-only). Not needed in a hand-written seed.
+#     owner_github_prompt_repos: []
 #   defs:
 #     EXAMPLE_TOKEN:
 #       type: env

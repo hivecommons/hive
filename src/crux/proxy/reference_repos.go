@@ -74,8 +74,12 @@ func (r ReferenceRepoPolicy) target() string {
 // forkSlug is the slug of Login's fork of Repo ("" when either half is
 // unknown). GitHub forks keep the upstream name unless renamed; a renamed
 // fork is not recognised and its pushes are refused like any other repo.
+//
+// An App bot login ("<app>[bot]", project.remote_write_identity bot) owns no
+// repositories, so a bot-identity policy has no fork: its topic branches go
+// to Repo itself, under the same default-branch guard.
 func (r ReferenceRepoPolicy) forkSlug() string {
-	if r.Login == "" {
+	if r.Login == "" || strings.HasSuffix(r.Login, "[bot]") {
 		return ""
 	}
 	_, name, ok := strings.Cut(r.Repo, "/")

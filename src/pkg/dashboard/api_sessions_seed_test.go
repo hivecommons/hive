@@ -282,6 +282,15 @@ func TestSessionSeedAuditAndRoutedMark(t *testing.T) {
 		if r == nil || r.Session != id || r.Status != inbox.StatusDelegated || r.Note != "session/"+id+" (named one)" {
 			t.Errorf("%s route = %+v", it.ID, r)
 		}
+		// The share is in the item's history with the session as its target.
+		if len(it.ShareHistory) != 1 {
+			t.Errorf("%s history = %+v", it.ID, it.ShareHistory)
+			continue
+		}
+		h := it.ShareHistory[0]
+		if h.Destination != inbox.ShareDestSpek || h.Status != inbox.ShareDone || h.Actor != callerOwner.user || h.FinishedAt == nil || h.Ref == nil || h.Ref.ID != id || h.Ref.Name != "named one" {
+			t.Errorf("%s share record = %+v %+v", it.ID, h, h.Ref)
+		}
 	}
 }
 
@@ -367,8 +376,16 @@ func TestSpekIntentRunnerSeedsRunningSession(t *testing.T) {
 	// The transcript arrived: the content now has text.
 	src.contents["rec-3"] = inbox.Content{Title: "audio only", Transcript: "machine words", TranscriptLabel: "Transcript (machine: whisper/base.en)", Provenance: "plaud://recordings/rec-3"}
 	it := inbox.Item{Source: "plaud", ID: "rec-3", Title: "audio only"}
-	if err := e.s.runSpekIntent(context.Background(), it, inbox.ShareIntent{Destination: inboxSpekIntentDest, Actor: callerOwner.user, Params: map[string]string{sessionSeedParamSession: id}}); err != nil {
+	// A transcribe-first share arrives with its history record.
+	recID, err := e.s.deps.Inbox.RecordShare(it.Key(), inbox.ShareRecord{Destination: inbox.ShareDestSpek, Actor: callerOwner.user, Status: inbox.ShareTranscribing})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if err := e.s.runSpekIntent(context.Background(), it, inbox.ShareIntent{Destination: inboxSpekIntentDest, Actor: callerOwner.user, RecordID: recID, Params: map[string]string{sessionSeedParamSession: id}}); err != nil {
+		t.Fatal(err)
+	}
+	if h := e.s.deps.Inbox.Store.History(it.Key()); len(h) != 1 || h[0].ID != recID || h[0].Status != inbox.ShareDone || h[0].Ref == nil || h[0].Ref.ID != id {
+		t.Fatalf("transcribe-first record = %+v", h)
 	}
 	files := e.rt.storedInboxFiles()
 	if len(files) != 1 || files[0].name != "plaud-rec-3.md" || !strings.Contains(string(files[0].data), "machine words") {
