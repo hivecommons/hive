@@ -126,7 +126,7 @@ func TestBuildRequestBodyRejects(t *testing.T) {
 		t.Fatal(err)
 	}
 	// withModel tolerates a body it cannot parse.
-	if got := withModel([]byte("not json"), "m"); string(got) != "not json" {
+	if got := withModel([]byte("not json"), "m", 0); string(got) != "not json" {
 		t.Fatalf("withModel = %q", got)
 	}
 }

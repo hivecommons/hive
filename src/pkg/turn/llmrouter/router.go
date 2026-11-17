@@ -69,6 +69,9 @@ type Provider struct {
 	// Headers are extra non-secret request headers (e.g. OpenRouter's
 	// HTTP-Referer / X-Title attribution).
 	Headers map[string]string
+	// MaxTokens, when positive, is sent as max_tokens. Some free endpoints
+	// default low enough to cut a long tool call mid-argument.
+	MaxTokens int
 }
 
 // FromGateway builds a Provider from a configured Hive Model Gateway. model
@@ -330,7 +333,7 @@ func (r *Router) report(a Attempt) Attempt {
 // and the cooldown to apply on failure.
 func (r *Router) try(ctx context.Context, p Provider, key string, extra map[string]string, body []byte, names toolNames) (turn.LLMResponse, Attempt, time.Duration) {
 	a := Attempt{Provider: p.Name}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cruxconfig.LiteLLMChatCompletionsURL(p.BaseURL), bytes.NewReader(withModel(body, p.Model)))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, cruxconfig.LiteLLMChatCompletionsURL(p.BaseURL), bytes.NewReader(withModel(body, p.Model, p.MaxTokens)))
 	if err != nil {
 		a.Outcome, a.Detail = OutcomeRejected, err.Error()
 		return turn.LLMResponse{}, a, 0
@@ -502,7 +505,7 @@ func buildRequestBody(messages []turn.Message, tools []toolapprove.ToolRequest, 
 		case turn.RoleSystem, turn.RoleUser:
 		case turn.RoleAssistant:
 			for _, c := range m.ToolCalls {
-				wm.ToolCalls = append(wm.ToolCalls, wireToolCall{ID: c.ID, Type: "function", Function: wireFunctionCall{Name: names.wire(c.Name), Arguments: c.Arguments}})
+				wm.ToolCalls = append(wm.ToolCalls, wireToolCall{ID: c.ID, Type: "function", Function: wireFunctionCall{Name: names.wire(c.Name), Arguments: historyArguments(c.Arguments)}})
 			}
 		case turn.RoleTool:
 			wm.ToolCallID = m.ToolCallID
@@ -542,13 +545,16 @@ func buildRequestBody(messages []turn.Message, tools []toolapprove.ToolRequest, 
 	return json.Marshal(req)
 }
 
-func withModel(body []byte, model string) []byte {
+func withModel(body []byte, model string, maxTokens int) []byte {
 	var m map[string]json.RawMessage
 	if err := json.Unmarshal(body, &m); err != nil {
 		return body
 	}
 	mb, _ := json.Marshal(model)
 	m["model"] = mb
+	if maxTokens > 0 {
+		m["max_tokens"] = json.RawMessage(strconv.Itoa(maxTokens))
+	}
 	out, err := json.Marshal(m)
 	if err != nil {
 		return body
@@ -601,7 +607,13 @@ func parseResponse(raw []byte, names toolNames) (turn.LLMResponse, error) {
 			// results by id, so mint a positional one.
 			id = "call_" + strconv.Itoa(i)
 		}
-		out.ToolCalls = append(out.ToolCalls, turn.ToolCall{ID: id, Name: names.hive(tc.Function.Name), Arguments: normalizeArguments(tc.Function.Arguments)})
+		args := normalizeArguments(tc.Function.Arguments)
+		if c.FinishReason == "length" && !json.Valid([]byte(args)) {
+			// Cut off mid-argument by the output limit: the same request
+			// would be cut off again, so fail over instead of executing.
+			return turn.LLMResponse{}, fmt.Errorf("tool call %d arguments truncated at the output limit (finish_reason length)", i)
+		}
+		out.ToolCalls = append(out.ToolCalls, turn.ToolCall{ID: id, Name: names.hive(tc.Function.Name), Arguments: args})
 	}
 	if out.Content == "" && len(out.ToolCalls) == 0 {
 		return turn.LLMResponse{}, errors.New("response has neither content nor tool calls")
@@ -634,6 +646,23 @@ func degenerate(s string) bool {
 		}
 	}
 	return total >= 64 && maxCount*10 >= total*9
+}
+
+// historyArguments makes a past tool call's arguments safe to resend.
+// Observed live 2026-11-16: gpt-oss emitted a task.complete cut off
+// mid-string; the executor refused it, but resending those bytes in history
+// made Workers AI reject every later request (HTTP 400 code 3030,
+// "Unterminated string"). Invalid arguments are wrapped in a valid object
+// so the model still sees what it sent.
+func historyArguments(args string) string {
+	if strings.TrimSpace(args) == "" {
+		return "{}"
+	}
+	if json.Valid([]byte(args)) {
+		return args
+	}
+	b, _ := json.Marshal(map[string]string{"invalid_arguments": args})
+	return string(b)
 }
 
 // normalizeArguments returns the arguments as a JSON string. The OpenAI shape
