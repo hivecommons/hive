@@ -36,6 +36,14 @@ const (
 	spekPausedStatus = "Notes and clarifying questions are paused: Spektacular live mode is not running right now (restarting, or it needs a spektacular with the meeting command, hivecommons/spektacular#126). The transcript, the persona and research still work."
 )
 
+// spekUnsupported reports whether spek says the installed spektacular has no
+// live meeting command (spektacular.Stream.Unsupported). A Spek without that
+// method is never unsupported.
+func spekUnsupported(spek Spek) bool {
+	u, ok := spek.(interface{ Unsupported() bool })
+	return ok && u.Unsupported()
+}
+
 // setSpekStatus updates the panel's Spektacular status when it changes.
 func (s *session) setSpekStatus(status string) {
 	if s.state.SpekStatus == status {
@@ -69,6 +77,11 @@ type session struct {
 	spek  Spek
 	state State
 	rate  rateLimiter
+	// spekGone is set once Spek is down for good for this meeting (its
+	// lines closed, or the installed spektacular has no meeting command):
+	// nothing more is forwarded to it, so a meeting without live mode does
+	// not log a warning per transcript line (hivecommons/hive#18630).
+	spekGone bool
 	// persona is the meeting's attendee persona, nil when it is off. With
 	// it on, it owns the bot's voice in the meeting: Spek's say intents are
 	// dropped, its chat posts are offered to the persona, and its
@@ -159,7 +172,13 @@ func (s *session) save() {
 func (s *session) run(ctx context.Context) {
 	defer close(s.done)
 	lines := s.spek.Lines()
-	ending, spekGone := false, false
+	ending := false
+	if spekUnsupported(s.spek) {
+		// The installed spektacular has no `meeting` command: live mode is
+		// off from the start; the stream already logged it once per binary.
+		s.spekGone, lines = true, nil
+		s.setSpekStatus(spekStoppedStatus)
+	}
 	var replies <-chan betty.Reply
 	var researchTick <-chan time.Time
 	if s.persona != nil {
@@ -191,7 +210,7 @@ func (s *session) run(ctx context.Context) {
 			if u.Meeting.State.Terminal() {
 				ending = true
 				close(s.ended)
-				if spekGone {
+				if s.spekGone {
 					s.save()
 					return
 				}
@@ -211,8 +230,12 @@ func (s *session) run(ctx context.Context) {
 				// while the meeting goes on: keep the session for the panel,
 				// research signals and approvals; only Spek's questions and
 				// notes stop.
-				spekGone, lines = true, nil
-				s.log().Warn("[meetings] spektacular live mode stopped; continuing without it")
+				s.spekGone, lines = true, nil
+				if spekUnsupported(s.spek) {
+					s.log().Info("[meetings] spektacular live mode unavailable; continuing without it")
+				} else {
+					s.log().Warn("[meetings] spektacular live mode stopped; continuing without it")
+				}
 				s.setSpekStatus(spekStoppedStatus)
 				continue
 			}
@@ -263,13 +286,14 @@ func (s *session) onUpdate(u meetings.Update) {
 	default:
 		return
 	}
-	if len(ev.Raw) > 0 {
+	if len(ev.Raw) > 0 && !s.spekGone {
 		if err := s.spek.SendLine(ev.Raw); err != nil {
-			s.log().Warn("[meetings] forwarding to spek", "error", err)
 			// The child is down (between restarts, or a spektacular
 			// without the meeting command): say so on the panel now rather
-			// than only once it gives up.
+			// than only once it gives up. Warn on that transition only, not
+			// on every line while it stays down.
 			if s.state.SpekStatus == "" {
+				s.log().Warn("[meetings] forwarding to spek", "error", err)
 				s.setSpekStatus(spekPausedStatus)
 			}
 		}
@@ -305,6 +329,9 @@ func (s *session) matchAnswer(ev *meetings.Event) {
 		}
 		a.Answer, a.AnsweredBy, a.AnsweredAt = ev.Text, ev.Who(), &now
 		answered, changed = true, true
+		if s.spekGone {
+			continue
+		}
 		if err := s.spek.Send(map[string]string{"type": "answer", "qid": a.QID, "text": ev.Text, "by": ev.Who()}); err != nil {
 			s.log().Warn("[meetings] sending answer to spek", "error", err)
 		}
