@@ -21,6 +21,12 @@ type WorkflowItemSnapshot struct {
 	// PR-only; zero on an issue.
 	HeadSHA string
 	BaseRef string
+	// MergeCommitSHA and DefaultBranch are set on a merged PR: the commit
+	// the merge put on the base branch and the repository's default
+	// branch, which the post-merge run observer attributes runs against
+	// (pipeline.status, hivecommons/hive#18356).
+	MergeCommitSHA string
+	DefaultBranch  string
 	// Conflicting is set when GitHub reports the head as not mergeable
 	// (mergeable_state dirty). ConflictKnown is false while GitHub is still
 	// computing mergeability.
@@ -61,6 +67,10 @@ func (c *Client) WorkflowItemSnapshot(ctx context.Context, repo string, number i
 	snap.Draft = pr.GetDraft()
 	snap.HeadSHA = pr.GetHead().GetSHA()
 	snap.BaseRef = prBaseRef(pr)
+	if snap.Merged {
+		snap.MergeCommitSHA = pr.GetMergeCommitSHA()
+		snap.DefaultBranch = pr.GetBase().GetRepo().GetDefaultBranch()
+	}
 	if ms := pr.GetMergeableState(); ms != "" && ms != "unknown" {
 		snap.ConflictKnown = true
 		snap.Conflicting = ms == "dirty"

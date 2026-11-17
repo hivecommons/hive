@@ -85,6 +85,18 @@ func ObservePostMergeRuns(ctx context.Context, client *gh.Client, req PostMergeR
 	return out, nil
 }
 
+// ObservePostMerge is ObservePostMergeRuns over the client's own forge
+// connection, for repo ("owner/repo" or a bare name in the client's org).
+func (c *Client) ObservePostMerge(ctx context.Context, repo string, m *workflowmodel.Model, defaultBranch string, prs []workflowmodel.MergedPR) (map[int]*stageengine.PostMergeFacts, error) {
+	if c == nil || c.client == nil {
+		return nil, ErrNoGitHubClient
+	}
+	owner, name := c.splitRepo(repo)
+	return ObservePostMergeRuns(WithRESTCaller(ctx, "hive:workflow_postmerge"), c.client, PostMergeRequest{
+		Owner: owner, Repo: name, DefaultBranch: defaultBranch, Model: m, PRs: prs,
+	})
+}
+
 // firstParentHistory lists the default branch and follows first parents
 // from its tip, returning the chain oldest first. Commits reached only
 // through a second parent (a merged branch's own commits) are left out,
