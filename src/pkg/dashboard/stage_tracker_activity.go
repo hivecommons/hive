@@ -197,7 +197,9 @@ func stageTrackerCIActivity(pr github.PullRequest, now time.Time) *StageTrackerA
 		if state != "passing" && state != "failing" && state != "skipped" {
 			settled[name] = false
 		}
-		if (state == "running" || state == "queued") && check.Since != nil {
+		// Check runs only: a pending commit status carries when it was
+		// posted, not when a job started.
+		if (state == "running" || state == "queued") && check.Since != nil && check.Kind != "commit_status" {
 			pendingSince[name] = *check.Since
 		}
 		// A red required check leads, then missing/unknown, then running/queued.
@@ -434,6 +436,7 @@ func pluralVerb(n int, one, many string) string {
 func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivity, now time.Time) {
 	type tally struct {
 		passing, failing bool
+		run              bool
 		since            time.Time
 	}
 	byName := map[string]*tally{}
@@ -458,6 +461,7 @@ func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivi
 		}
 		if !at.Before(t.since) {
 			t.since, t.passing = at, check.State == "completed" && check.Conclusion == "success"
+			t.run = check.Kind != "commit_status"
 		}
 	}
 	out.ChecksTotal = len(order)
@@ -472,7 +476,7 @@ func stageTrackerCountHeadChecks(out *StageTrackerActivity, a *github.PRCIActivi
 			out.ChecksPassed++
 		default:
 			out.ChecksPending = append(out.ChecksPending, name)
-			if !t.since.IsZero() {
+			if t.run && !t.since.IsZero() {
 				pendingSince[name] = t.since
 			}
 		}

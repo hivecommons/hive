@@ -11,7 +11,8 @@ import (
 // check run normally takes is stuck, not running: its reporter died or
 // could not write the result (hivecommons/hive#18764 left `PR Type` and
 // `PR Issue` in progress for hours), and nothing finishes it without a
-// re-run. The CI track names such checks instead of presenting them as
+// re-run. Only check runs are judged (their start time is known; a pending
+// commit status carries when it was posted). The CI track names such checks instead of presenting them as
 // motion (hivecommons/hive#18769).
 
 // trackerCheckStuckAfterEnv overrides trackerCheckStuckAfterDefault with a

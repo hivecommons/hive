@@ -213,7 +213,8 @@
       const modelVerbs = typeof stageTrackerWorkflowReplies === 'function' ? stageTrackerWorkflowReplies(shown, workflows) : [];
       // Only the verbs the action would act on: a verb runRowAction answers
       // "nothing to act on" is never drawn (hivecommons/hive#18769).
-      const verbs = stageTrackerHumanGateVerbs(reasons, shown, modelVerbs).filter(v => v.model || typeof stageTrackerGateAccepts !== 'function' || stageTrackerGateAccepts(item, v.id));
+      const verbs = stageTrackerHumanGateVerbs(reasons, shown, modelVerbs);
+      const offered = verbs.filter(v => v.model || typeof stageTrackerGateAccepts !== 'function' || stageTrackerGateAccepts(item, v.id));
       const text = stageTrackerHumanGateStatusText(reasons);
       const tip = stageTrackerHumanGateTip(reasons);
       const ico = typeof stageTrackerIcon === 'function' ? stageTrackerIcon('human', 'ham-ico ham-mod-ico') : '';
@@ -223,8 +224,8 @@
         ? stageTrackerDecisionTriggerHtml(decision, inner, tip, 'ham-gate-status ham-mod-ask')
         : `<span class="ham-gate-status ham-mod-ask" title="${esc(tip)}" aria-label="${esc(text + ' — ' + tip)}">${inner}</span>`;
       const visibleCount = stageTrackerHumanGateVisible();
-      const shownVerbs = verbs.slice(0, visibleCount);
-      const moreVerbs = verbs.slice(visibleCount);
+      const shownVerbs = offered.slice(0, visibleCount);
+      const moreVerbs = offered.slice(visibleCount);
       const acts = shownVerbs.map(v => stageTrackerHumanGateVerbHtml(item, v, stageTrackerHumanGateVerbState(v.id, shown, ctx, leads), false)).join('');
       // The menu's items wait in a <template> (no hidden buttons in the row;
       // the header-geometry harness hit-tests every button it finds) and are

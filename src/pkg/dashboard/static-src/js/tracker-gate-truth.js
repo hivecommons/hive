@@ -52,6 +52,10 @@
     // park the PR on it (a person approved, or the head is not there yet).
     function stageTrackerGateAnswered(item) {
       if (!item || (item.via_pr ? 'pr' : item.kind) !== 'pr') return false;
+      // A closed, merged, superseded or draft head has no ask to answer.
+      const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
+      if (item.state === 'closed' || item.superseded || item.superseded_by || item.adopted_by || mods.indexOf('merged') >= 0 || mods.indexOf('draft') >= 0) return false;
+      if (Number(item.stage) >= (typeof STAGE_TRACKER_TERMINAL === 'number' ? STAGE_TRACKER_TERMINAL : 110)) return false;
       const a = item.review_activity;
       if (!a || a.state !== 'human_decision' || (a.head && item.head && String(a.head) !== String(item.head))) return false;
       return !stageTrackerGateParked(item);
