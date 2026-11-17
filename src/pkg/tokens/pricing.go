@@ -41,7 +41,7 @@ import (
 //   - DeepSeek:            https://api-docs.deepseek.com/quick_start/pricing
 //   - Kimi:                https://platform.kimi.ai/docs/pricing/chat
 //   - Meta Llama / Gemini: representative OpenRouter/provider list prices
-const priceTableDate = "2026-11-09"
+const priceTableDate = "2026-11-17"
 
 // PriceTableDate returns the date the price table was last reconciled with
 // published list prices, so the UI can show "list prices as of <date>".
@@ -104,6 +104,9 @@ var modelPrices = map[string]ModelPrice{
 	// Fable 5.1 is the same list tier as Fable 5 (#13488); without this entry it
 	// fell to tierBig at roughly half the real rate and was flagged estimated.
 	"claude-fable-5-1": {InputPerMTok: 10.00, OutputPerMTok: 50.00, CacheReadPerMTok: 0.25, CacheWritePerMTok: 12.50},
+	// Fable 5.2: $8 in / $40 out; cache read $0.20 (0.025×), cache write $10
+	// (5-minute TTL) — per Anthropic's pricing page, 2026-11-17 (#18753).
+	"claude-fable-5-2": {InputPerMTok: 8.00, OutputPerMTok: 40.00, CacheReadPerMTok: 0.20, CacheWritePerMTok: 10.00},
 	// Sonnet 5.5: $2 in / $10 out; cache read $0.20, cache write $2.50 (1.25×)
 	// — per the Claude Code 2.1.284 changelog ("$2/$10 per Mtok with
 	// $0.20/Mtok cache reads", #9804).
@@ -114,6 +117,12 @@ var modelPrices = map[string]ModelPrice{
 	"claude-sonnet-4-5": {InputPerMTok: 3.00, OutputPerMTok: 15.00, CacheReadPerMTok: 0.30, CacheWritePerMTok: 3.75},
 	// Haiku tier: $1 in / $5 out; cache read $0.10, cache write $1.25.
 	"claude-haiku-4-5": {InputPerMTok: 1.00, OutputPerMTok: 5.00, CacheReadPerMTok: 0.10, CacheWritePerMTok: 1.25},
+	// Haiku 5.5: base rate for prompts up to 100,000 tokens — $0.10 in /
+	// $0.50 out; cache read $0.01, cache write $0.125 (5-minute TTL) — per
+	// Anthropic's pricing page, 2026-11-17 (#18753). Prompts over 100,000
+	// tokens bill at $0.50 / $2.50 (cache read $0.05, write $0.625); that
+	// tier is not tracked here, so long-prompt Haiku 5.5 spend is undercounted.
+	"claude-haiku-5-5": {InputPerMTok: 0.10, OutputPerMTok: 0.50, CacheReadPerMTok: 0.01, CacheWritePerMTok: 0.125},
 
 	// ---- OpenAI GPT-5.x (Copilot/Codex model ids; representative list prices) ----
 	// GPT-5.x flagship: $1.25 in / $10 out; cached input $0.125.

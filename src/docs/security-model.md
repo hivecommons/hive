@@ -211,10 +211,13 @@ hash, so they are not rebuilt.
 
 Links between identities are made only on exact keys. A display name never links
 anyone. One link rests on an assumption you should know about. When the access
-list holds a name such as `github:alice`, the hive treats `alice` as that
-person's GitHub login. The hub put that entry there after it signed the person
-in with GitHub, so the hive trusts it. If your access list is edited by hand, an
-entry like that gives the named person's profile the matching GitHub activity.
+list holds a name such as `github:alice`, or the bare login `alice` that a
+GitHub device-flow sign-in produces (the access list treats the two as one
+user), the hive treats `alice` as that person's GitHub login. A name with
+another provider prefix, an address, a dot or an underscore is not read as a
+login. The hub put that entry there after it signed the person in with GitHub,
+so the hive trusts it. If your access list is edited by hand, an entry like
+that gives the named person's profile the matching GitHub activity.
 
 A read-only user sees only their own profile. An identity they add is shown as
 unconfirmed. It links nothing until the owner or a read-write user confirms it.

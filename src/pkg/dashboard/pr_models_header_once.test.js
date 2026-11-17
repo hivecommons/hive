@@ -26,8 +26,15 @@ const src = [
   pick(/function governorPRModelHiveCostTip\(b, data\) \{[\s\S]*?\n    \}\n/, 'governorPRModelHiveCostTip'),
   pick(/function governorPRModelsHiveCostNote\(data\) \{[\s\S]*?\n    \}\n/, 'governorPRModelsHiveCostNote'),
   pick(/function governorPRModelUnattributed\(b\) \{[\s\S]*?\n    \}\n/, 'governorPRModelUnattributed'),
+  pick(/function governorPRModelSliceDetail\(b\) \{[\s\S]*?\n    \}\n/, 'governorPRModelSliceDetail'),
   pick(/const GOV_PR_MODEL_COLUMNS = \[[\s\S]*?\n    \];\n/, 'GOV_PR_MODEL_COLUMNS'),
   pick(/function governorPRModelRows\(data\) \{[\s\S]*?\n    \}\n/, 'governorPRModelRows'),
+  // Per-model PR list (#18722): rows render a PRs toggle and, when open, the list.
+  'let govPRModelPRsOpen = ""; const govPRModelPRsCache = {}; const loadGovernorPRModelPRs = () => {};',
+  pick(/function normalizeGovernorPRModelsWindowName\(windowName\) \{[\s\S]*?\n    \}\n/, 'normalizeGovernorPRModelsWindowName'),
+  pick(/function governorPRModelPRsKey\(windowName, model\) \{[\s\S]*?\n    \}\n/, 'governorPRModelPRsKey'),
+  pick(/function governorPRModelPRsToggleHtml\(model\) \{[\s\S]*?\n    \}\n/, 'governorPRModelPRsToggleHtml'),
+  pick(/function governorPRModelPRListHtml\(model\) \{[\s\S]*?\n    \}\n/, 'governorPRModelPRListHtml'),
   pick(/function renderGovernorPRModelsTile\(\) \{[\s\S]*?\n    \}\n\n    function renderGovernor\(/, 'renderGovernorPRModelsTile').replace(/\n\n    function renderGovernor\($/, ''),
 ].join('\n');
 const lifted = new Function(src + '; return { render: data => { govPRModelsData = data; return renderGovernorPRModelsTile(); }, rows: governorPRModelRows, columns: GOV_PR_MODEL_COLUMNS };')();
@@ -97,4 +104,21 @@ test('hive review cost surfaces in the row tooltip and a coverage note (#18717)'
   assert.ok(out.includes('Hive review cost: — est.'), 'null cost renders as a dash');
   assert.ok(out.includes('class="gov-pr-model-sub gov-pr-model-sub-spaced gov-pr-models-hive-cost"'), 'coverage note rendered');
   assert.ok(!lifted.render(data).includes('Hive review cost'), 'nothing without hive_cost_coverage');
+});
+
+test('per-repository and weekly lines surface in the row tooltip when present (#18716)', () => {
+  const withSlices = {
+    ...data,
+    buckets: data.buckets.map(b => b.model === 'claude-opus-5.5' ? {
+      ...b,
+      repos: [{ repo: 'org/alpha', prs: 22, merged: 22, first_pass_merge_rate: 0.95, avg_fix_attempts: 0.1 }],
+      weeks: [{ week_start: '2026-11-09', prs: 22, merged: 22, first_pass_merge_rate: 0.95, avg_fix_attempts: 0.1 }],
+    } : b),
+  };
+  const out = lifted.render(withSlices);
+  assert.ok(out.includes('By repository:'), 'tooltip lists repositories');
+  assert.ok(out.includes('org/alpha: 22 PRs (22 merged, first-pass 95%, avg fix 0.1)'), 'repo line rendered');
+  assert.ok(out.includes('2026-11-09: 22 PRs (22 merged, first-pass 95%, avg fix 0.1)'), 'weekly line rendered');
+  assert.strictEqual((out.match(/By repository:/g) || []).length, 2, 'only the bucket with repos gets the block (title + aria-label)');
+  assert.ok(!lifted.render(data).includes('By repository:'), 'no slice block for buckets without repos/weeks');
 });
