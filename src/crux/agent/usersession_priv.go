@@ -354,11 +354,13 @@ func (r *UserSessionRuntime) openSocketDirToAttacher(uid int) error {
 	return nil
 }
 
-// Remove ends the session and deletes everything it owned: the sandbox (home,
-// work dir, uploads, tmp) and the uid's tmux socket dir, so a later session
-// that is allocated the same uid starts clean. Directories earlier releases
-// created for the id are removed too. A failure is returned and the caller
-// must keep the session record (and its uid slot) so the removal is retried.
+// Remove ends the session and deletes everything it owned: its worktree of the
+// shared workspace clone (uncommitted work is auto-saved onto its branch first,
+// see userSessionWorktreeRemoveScript), the sandbox (home, work dir, uploads,
+// tmp) and the uid's tmux socket dir, so a later session that is allocated the
+// same uid starts clean. Directories earlier releases created for the id are
+// removed too. A failure is returned and the caller must keep the session
+// record (and its uid slot) so the removal is retried.
 func (r *UserSessionRuntime) Remove(id string) error {
 	if err := checkUserSessionID(id); err != nil {
 		return err
@@ -368,6 +370,12 @@ func (r *UserSessionRuntime) Remove(id string) error {
 		if err := r.killAs(uid, id); err != nil {
 			r.logger.Warn("user session kill before removal failed", "id", id, "error", err)
 		}
+	}
+	r.workspaceMu.Lock()
+	err := r.removeWorktrees(id)
+	r.workspaceMu.Unlock()
+	if err != nil {
+		return fmt.Errorf("removing session worktree: %w", err)
 	}
 	dir := userSessionSandboxDir(id)
 	if _, err := os.Lstat(dir); err == nil {

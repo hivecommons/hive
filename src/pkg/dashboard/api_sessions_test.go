@@ -44,6 +44,12 @@ type fakeSessionRuntime struct {
 	detached []string
 	// inboxFiles records each StoreInboxFile call (Inbox seeds).
 	inboxFiles []fakeInboxFile
+	// swept records the ids each SweepWorktrees call found gone, given the
+	// ids in worktreeIDs (sessions with a worktree on disk).
+	worktreeIDs []string
+	swept       [][]string
+	// secured counts SecureWorkspaces calls (the boot lock of shared clones).
+	secured int
 }
 
 // fakeInboxFile is one StoreInboxFile call.
@@ -74,6 +80,31 @@ func (f *fakeSessionRuntime) WorkspaceDir(repo string) string {
 		return ""
 	}
 	return filepath.Join(f.workDir, "workspace", repo)
+}
+func (f *fakeSessionRuntime) SessionWorkspaceDir(id, repo string) string {
+	if id == "" || f.WorkspaceDir(repo) == "" {
+		return ""
+	}
+	return filepath.Join(f.workDir, "workspace", ".sessions", id, repo)
+}
+func (f *fakeSessionRuntime) SweepWorktrees(live func(id string) bool) {
+	f.mu.Lock()
+	ids := append([]string(nil), f.worktreeIDs...)
+	f.mu.Unlock()
+	var gone []string
+	for _, id := range ids {
+		if !live(id) {
+			gone = append(gone, id)
+		}
+	}
+	f.mu.Lock()
+	f.swept = append(f.swept, gone)
+	f.mu.Unlock()
+}
+func (f *fakeSessionRuntime) SecureWorkspaces() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.secured++
 }
 func (f *fakeSessionRuntime) Start(spec crux.UserSessionSpec) error {
 	f.mu.Lock()
@@ -225,7 +256,19 @@ type sessionTestEnv struct {
 
 func newSessionTestEnv(t *testing.T, enabled bool) *sessionTestEnv {
 	t.Helper()
-	t.Setenv(sessionsDirEnv, t.TempDir())
+	return newSessionTestEnvAt(t, enabled, t.TempDir())
+}
+
+// newSessionTestEnvInDir is an enabled test env whose sessions store lives in
+// dir, so a test can open a second "process" on the first one's store.
+func newSessionTestEnvInDir(t *testing.T, dir string) *sessionTestEnv {
+	t.Helper()
+	return newSessionTestEnvAt(t, true, dir)
+}
+
+func newSessionTestEnvAt(t *testing.T, enabled bool, dir string) *sessionTestEnv {
+	t.Helper()
+	t.Setenv(sessionsDirEnv, dir)
 	t.Setenv(config.EnvSessionsEnabled, "")
 	for _, e := range []string{config.EnvSessionsMax, config.EnvSessionsMaxPerUser, config.EnvSessionsIdleTTLHours, config.EnvSessionsWorkspaceRepo,
 		sessionsMaxInputBytesEnv, sessionsMaxUploadBytesEnv, sessionsMaxUploadsEnv} {
