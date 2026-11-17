@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v5.311.0)
+
+### Added
+
+- Spend by model and contributor run stats by model now carry `canonical_model`, the same folded model id the Governor's PRs-by-model card uses, so `claude-opus-5-5`, `anthropic/claude-opus-5-5` and `claude-opus-5.5` can be lined up across all three views. `/api/cost` `estimated.by_model[]` and every `/api/contribute/run-stats` and `/api/contribute/run-stats/models` row gain the field; spend stays one row per raw model, since prices are per raw model. Both run-stats endpoints accept an optional `group=canonical` that merges spellings into one row (runs summed, rates recomputed from the summed counts) with `raw_models[]` keeping each spelling's run count; without it the rows are unchanged. The Cost card's by-model list and the contributor wall's model evidence show the canonical id, with the reported spelling in a tooltip (#18718).
+
 ## 2026-11-17 (v5.310.0)
 
 ### Added
