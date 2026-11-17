@@ -4606,6 +4606,18 @@
     .hive-dialog-check { display: flex; align-items: center; gap: var(--sp-3); font-size: var(--fs-sm); color: var(--muted); margin: calc(-1 * var(--sp-4)) 0 var(--sp-6); cursor: pointer; }
     .hive-dialog-check input { accent-color: var(--accent); margin: 0; }
     .hive-dialog-buttons { display: flex; gap: 10px; justify-content: flex-end; }
+    /* Export / link viewer (hiveExportViewer): the handed-over text sits in
+       the dialog's own type and colour tokens, full width, read-only and
+       selectable, so an OAuth URL reads as part of the dialog rather than a
+       stray form control. A link is one wrapped line; an export is a <pre>. */
+    .hive-export-dialog { width: 560px; }
+    .hive-export-dialog .hive-dialog-title { margin-bottom: var(--sp-3); }
+    .hive-export-dialog .hive-dialog-body { margin-bottom: var(--sp-6); white-space: normal; }
+    .hive-export-note { margin: 0 0 var(--sp-4); }
+    .hive-export-link, .hive-export-text { display: block; width: 100%; box-sizing: border-box; margin: 0; padding: var(--sp-4) var(--sp-5); font: inherit; color: var(--text); background: color-mix(in srgb, var(--text) 5%, transparent); border: 1px solid var(--border); border-radius: var(--r); cursor: text; user-select: all; -webkit-user-select: all; }
+    .hive-export-link { word-break: break-all; overflow-wrap: anywhere; white-space: normal; line-height: 1.5; }
+    .hive-export-text { font-family: var(--font-mono); font-size: var(--fs-sm); line-height: 1.5; white-space: pre; overflow: auto; min-height: 8em; max-height: 50vh; }
+    .hive-export-link:focus-visible, .hive-export-text:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
     .release-notes-dialog { width: 720px; }
     .release-notes-caveat { margin-bottom: var(--sp-4); }
     .release-notes-body { max-height: min(55vh, 520px); margin-bottom: var(--sp-7); } /* scroll via .modal-scroll */
@@ -6126,6 +6138,9 @@
     .inbox-pending { margin-top: var(--sp-2); font-style: italic; }
     .inbox-media:not(:empty) { margin-top: var(--sp-2); }
     .inbox-email-image { display: block; max-width: min(100%, 320px); max-height: 240px; margin-top: var(--sp-2); border-radius: var(--radius-sm, 4px); }
+    .inbox-mail-log { margin-top: var(--sp-4); }
+    .inbox-mail-log > summary { cursor: pointer; }
+    .inbox-mail-log-list { margin: var(--sp-2) 0; padding-left: var(--sp-4); display: grid; gap: var(--sp-1); }
     .inbox-audio { width: 100%; max-width: 520px; display: block; }
     .inbox-transcript { margin-top: var(--sp-2); }
     .inbox-transcript-text { white-space: pre-wrap; font-family: inherit; font-size: var(--fs-sm); max-height: 24em; overflow: auto; margin: var(--sp-1) 0 0; padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
@@ -9479,6 +9494,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
     <div class="section-body">
       <div id="inbox-rec-panel" class="inbox-rec-panel" role="region" aria-label="Recorder" hidden></div>
       <div id="inbox-panel" class="inbox-panel"></div>
+      <div id="inbox-mail-log" role="region" aria-label="Recent mail" hidden></div>
       <div class="inbox-drop-overlay" aria-hidden="true"><span>Drop files to add them to the Inbox</span></div>
       <div id="inbox-upload-status" class="inbox-sr-status" role="status" aria-live="polite"></div>
     </div>
@@ -50647,6 +50663,125 @@ function burnAreaChart() {
       } catch (e) { /* IndexedDB unavailable: nothing to resume */ }
     }
     if (typeof window !== 'undefined') setTimeout(() => { if (inboxRecRoleCanRecord(window._hiveRole) && !_inboxRec) inboxRecResumeOnLoad(); }, INBOX_REC_RESUME_DELAY_MS);
+    // ── Inbox: recent mail (hivecommons/hive#18699) ──
+    // What was mailed to this hive lately, accepted or refused, and why a
+    // refused mail was turned away: GET /api/inbox/email/recent. A mail that
+    // never showed up in the Inbox is explained here. No subject, file name
+    // or full sender address is ever listed, only the sender's domain.
+    // Self-contained: it renders into #inbox-mail-log and nothing else.
+    const INBOX_MAIL_LOG_FIRST_LOAD_MS = 6000;
+    // A reload is never more frequent than this, whatever asks for it.
+    const INBOX_MAIL_LOG_MIN_RELOAD_MS = 30000;
+    const INBOX_MAIL_LOG_BYTES_PER_KB = 1024;
+    const INBOX_MAIL_LOG_BYTES_PER_MB = 1048576;
+    const INBOX_MAIL_LOG_REASONS = {
+      empty_message: 'the message had no text, calendar invite or attachment',
+      unsupported_attachment: 'attachment type not accepted',
+      attachment_content_mismatch: 'an attachment was damaged, macro-enabled or not what its extension says',
+      attachment_too_large: 'an attachment was over the size limit',
+      too_many_attachments: 'too many attachments',
+      message_too_large: 'the message was over the size limit',
+      malformed_message: 'the message could not be parsed',
+      hive_daily_volume: 'this hive reached its daily volume of mail (the sender retries)',
+      hive_refused: 'this hive refused the message',
+      mail_in_off: 'mail-in files are turned off on this hive',
+      hive_storage_full: 'this hive\'s mail storage is full',
+    };
+    const INBOX_MAIL_LOG_SKIPS = { type: 'type not accepted', content: 'content does not match', size: 'too large', count: 'over the attachment count' };
+    let _inboxMailLog = null; // { events, files_enabled }
+    let _inboxMailLogOpen = false;
+    let _inboxMailLogLoadedAt = 0;
+
+    function inboxMailLogCanView() { return window._hiveRole === 'owner' || window._hiveRole === 'read-write'; }
+    function inboxMailLogSize(bytes) {
+      const n = Number(bytes) || 0;
+      if (n <= 0) return '';
+      if (n >= INBOX_MAIL_LOG_BYTES_PER_MB) return (n / INBOX_MAIL_LOG_BYTES_PER_MB).toFixed(1) + ' MB';
+      return Math.max(1, Math.round(n / INBOX_MAIL_LOG_BYTES_PER_KB)) + ' KB';
+    }
+    // Why DMARC came out as it did: the SPF and DKIM results and the server
+    // that handed the mail over.
+    function inboxMailLogAuth(a) {
+      if (!a) return '';
+      const dkim = (a.dkim || []).length ? 'DKIM ' + a.dkim.join(', ') : 'no DKIM signature';
+      const via = a.helo || a.remote_ip ? 'sent through ' + [a.helo, a.remote_ip].filter(Boolean).join(' ') : '';
+      return ['DMARC ' + (a.dmarc || 'none'), 'SPF ' + (a.spf || 'none') + (a.spf_domain ? ' for ' + a.spf_domain : ''), dkim, via].filter(Boolean).join('; ');
+    }
+    function inboxMailLogApproval(ev) {
+      if (ev.outcome !== 'awaiting_approval') return '';
+      if (ev.approval_reason === 'sender_not_authenticated') {
+        return 'the sender could not be authenticated, so the owner must approve it (' + inboxMailLogAuth(ev.auth) + ')';
+      }
+      return 'the sender is authenticated but is not a proven calendar email of a user of this hive (Settings → Meeting attendee → Email)';
+    }
+    function inboxMailLogReason(ev) {
+      const skipped = (ev.skipped || []).map(s => (s.ext ? '.' + s.ext : 'no extension') + ' (' + (INBOX_MAIL_LOG_SKIPS[s.reason] || s.reason || 'left out') + ')');
+      const why = ev.reason ? (INBOX_MAIL_LOG_REASONS[ev.reason] || ev.reason) : '';
+      const left = skipped.length ? (ev.outcome === 'rejected' ? '' : 'left out: ') + skipped.join(', ') : '';
+      return [[why, left].filter(Boolean).join(': '), inboxMailLogApproval(ev)].filter(Boolean).join(' · ');
+    }
+    function inboxMailLogOutcome(ev) {
+      if (ev.outcome === 'rejected') return { status: 'error', label: 'refused' };
+      if (ev.outcome === 'awaiting_approval') return { status: 'warn', label: 'awaiting approval' };
+      return { status: 'ok', label: 'received' };
+    }
+    function inboxMailLogWhen(ev) {
+      return typeof relativeTimeShort === 'function' ? relativeTimeShort(ev.at) : String(ev.at || '');
+    }
+    function inboxMailLogRow(ev) {
+      const o = inboxMailLogOutcome(ev);
+      const files = Number(ev.files) || 0;
+      const parts = [
+        escapeHtml(inboxMailLogWhen(ev)),
+        '<span class="kc-pill" data-status="' + o.status + '">' + o.label + '</span>',
+        ev.sender_domain ? 'from ' + escapeHtml(ev.sender_domain) : '',
+        ev.kind ? escapeHtml(ev.kind) : '',
+        files ? files + (files === 1 ? ' file' : ' files') : '',
+        escapeHtml(inboxMailLogSize(ev.bytes)),
+        escapeHtml(inboxMailLogReason(ev)),
+      ].filter(Boolean);
+      return '<li class="muted-xs">' + parts.join(' · ') + '</li>';
+    }
+    function inboxMailLogHtml(data) {
+      const events = (data && Array.isArray(data.events)) ? data.events : [];
+      if (!events.length) return '';
+      const refused = events.filter(e => e.outcome === 'rejected').length;
+      const received = events.length - refused;
+      const latest = events[0];
+      const latestWhy = inboxMailLogReason(latest);
+      const summary = '✉️ Recent mail: ' + received + ' received, ' + refused + ' refused · latest ' + escapeHtml(inboxMailLogWhen(latest)) + ': ' +
+        inboxMailLogOutcome(latest).label + (latestWhy ? ', ' + escapeHtml(latestWhy) : '');
+      const off = data.files_enabled === false ? '<div class="muted-xs">Mail-in files are turned off on this hive: attachments mailed to it are refused.</div>' : '';
+      return '<details class="inbox-mail-log"' + (_inboxMailLogOpen ? ' open' : '') + '><summary class="muted-xs">' + summary + '</summary>' + off +
+        '<ul class="inbox-mail-log-list">' + events.map(inboxMailLogRow).join('') + '</ul>' +
+        '<div class="muted-xs">Only the sender\'s domain, the size and the reason are kept; a refused mail also bounces to its sender with the reason.</div></details>';
+    }
+    function renderInboxMailLog() {
+      const el = document.getElementById('inbox-mail-log');
+      if (!el) return;
+      const html = inboxMailLogCanView() ? inboxMailLogHtml(_inboxMailLog) : '';
+      el.hidden = !html;
+      el.innerHTML = html;
+      const details = el.querySelector('details');
+      // Opening the list reloads it (no timer of its own: the list also
+      // reloads when the tab comes back to the foreground).
+      if (details) details.addEventListener('toggle', () => { _inboxMailLogOpen = details.open; if (details.open) fetchInboxMailLog(); });
+    }
+    async function fetchInboxMailLog() {
+      if (!inboxMailLogCanView()) return;
+      if (Date.now() - _inboxMailLogLoadedAt < INBOX_MAIL_LOG_MIN_RELOAD_MS) return;
+      _inboxMailLogLoadedAt = Date.now();
+      try {
+        const r = await fetch('/api/inbox/email/recent');
+        if (!r.ok) return;
+        _inboxMailLog = await r.json();
+        renderInboxMailLog();
+      } catch (e) { /* the list is a diagnostic aid: keep the last one */ }
+    }
+    if (typeof window !== 'undefined' && typeof document !== 'undefined') {
+      setTimeout(fetchInboxMailLog, INBOX_MAIL_LOG_FIRST_LOAD_MS);
+      document.addEventListener('visibilitychange', () => { if (!document.hidden) fetchInboxMailLog(); });
+    }
     // ── Meetings: hive as a live meeting participant (Quorum, #18284) ──
     // Owner-only. The list comes from GET /api/meetings; an opened meeting
     // streams its transcript, Spek intents and research over
@@ -57231,45 +57366,92 @@ function burnAreaChart() {
       const m = String(header || '').match(/filename="?([^";]+)"?/i);
       return (m && m[1]) ? m[1] : (fallback || 'hive-export.txt');
     }
+    // Selects the whole content of a read-only text element so a click (or
+    // the Copy fallback) hands the user the exact string without dragging.
+    function hiveSelectAllText(el) {
+      if (!el || !window.getSelection || !document.createRange) return;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      const sel = window.getSelection();
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+    // In-app viewer for text the dashboard hands to the user: a single link
+    // (OAuth authorization URLs, terminal URLs, external links) or a text
+    // export (JSON, YAML, CSV). No textarea: a link is one full-width,
+    // read-only, selectable line in the dialog's own type and colour tokens;
+    // a multi-line export is a read-only <pre> that scrolls with the body.
+    // Open (when a new tab can load the URL) is primary, Copy secondary and
+    // Close a ghost button, so the one action the user came for leads.
     function hiveExportViewer(opts) {
       const cfg = opts || {};
       const title = cfg.title || cfg.filename || 'Export';
       const text = String(cfg.text == null ? '' : cfg.text);
+      const sourceURL = cfg.sourceURL || '';
+      const token = localStorage.getItem('hive-token') || '';
+      const canOpen = !!(sourceURL && (cfg.allowOpen || !token));
+      const isLink = !!sourceURL && text.trim().indexOf('\n') < 0;
       const overlay = document.createElement('div');
       overlay.className = 'hive-dialog-overlay';
       hiveRememberModalOpen(overlay);
       overlay.innerHTML = `<div class="hive-dialog hive-export-dialog" role="dialog" aria-modal="true" aria-labelledby="hive-export-title">
         <div id="hive-export-title" class="hive-dialog-title"></div>
         <div class="hive-dialog-body long modal-scroll hive-export-body">
-          <div class="cmp-note hive-export-note"></div>
-          <textarea class="hive-export-text" readonly spellcheck="false"></textarea>
+          <p class="hive-export-note"></p>
+          ${isLink
+            ? '<code class="hive-export-link" tabindex="0" aria-readonly="true"></code>'
+            : '<pre class="hive-export-text" tabindex="0" aria-readonly="true"></pre>'}
         </div>
         <div class="hive-dialog-buttons">
-          <a class="hv-btn btn-secondary hive-export-open" target="_blank" rel="noopener noreferrer" hidden>Open in new tab</a>
+          <button type="button" class="hv-btn btn-ghost hive-dialog-btn hive-export-close">Close</button>
           <button type="button" class="hv-btn btn-secondary hive-export-copy">Copy to clipboard</button>
-          <button type="button" class="hv-btn btn-primary hive-dialog-btn primary" data-initial-focus>Close</button>
+          <a class="hv-btn btn-primary hive-export-open" target="_blank" rel="noopener noreferrer" hidden>Open in new tab</a>
         </div></div>`;
       overlay.querySelector('#hive-export-title').textContent = title;
       const note = overlay.querySelector('.hive-export-note');
-      const textarea = overlay.querySelector('.hive-export-text');
-      textarea.value = text;
-      const sourceURL = cfg.sourceURL || '';
-      const token = localStorage.getItem('hive-token') || '';
-      const canOpen = !!(sourceURL && (cfg.allowOpen || !token));
-      if (note) note.textContent = sourceURL && token && !cfg.allowOpen ? 'Rendered in-app because this dashboard uses a bearer token that a new tab would not receive.' : 'Rendered in-app so the browser does not prompt for downloads.';
+      const textEl = overlay.querySelector(isLink ? '.hive-export-link' : '.hive-export-text');
+      textEl.textContent = text;
+      textEl.setAttribute('aria-label', title);
+      textEl.addEventListener('click', function() { hiveSelectAllText(textEl); });
+      textEl.addEventListener('focus', function() { hiveSelectAllText(textEl); });
+      let noteText = cfg.note;
+      if (noteText == null) {
+        if (sourceURL && token && !cfg.allowOpen) noteText = 'Shown here because this dashboard signs in with a token that a new tab would not carry. Copy what you need from it.';
+        else if (isLink) noteText = canOpen ? 'Open this link to continue, then come back here when you are done.' : 'Copy this link and open it in a browser, then come back here when you are done.';
+        else noteText = 'Copy the text below to save it.';
+      }
+      if (noteText) note.textContent = noteText; else note.remove();
       const open = overlay.querySelector('.hive-export-open');
-      if (open && canOpen) { open.href = sourceURL; open.hidden = false; }
-      overlay.querySelector('.hive-export-copy').addEventListener('click', function(e) {
+      const copy = overlay.querySelector('.hive-export-copy');
+      copy.setAttribute('aria-label', 'Copy ' + title + ' to clipboard');
+      if (canOpen) {
+        open.href = sourceURL;
+        open.hidden = false;
+        open.setAttribute('aria-label', 'Open ' + title + ' in a new tab');
+        open.setAttribute('data-initial-focus', '');
+      } else {
+        open.remove();
+        copy.classList.remove('btn-secondary');
+        copy.classList.add('btn-primary');
+        copy.setAttribute('data-initial-focus', '');
+      }
+      copy.addEventListener('click', function(e) {
         e.preventDefault();
         if (navigator.clipboard && navigator.clipboard.writeText) {
-          navigator.clipboard.writeText(text).then(function(){ showToast('Copied ' + title + ' to clipboard', 'success'); }, function(){ textarea.focus(); textarea.select(); showToast('Clipboard blocked — selected text for manual copy', 'error'); });
+          navigator.clipboard.writeText(text).then(function(){ showToast('Copied ' + title + ' to clipboard', 'success'); }, function(){ textEl.focus(); hiveSelectAllText(textEl); showToast('Clipboard blocked — selected text for manual copy', 'error'); });
         } else {
-          textarea.focus(); textarea.select();
+          textEl.focus(); hiveSelectAllText(textEl);
           showToast('Selected text for manual copy', 'info');
         }
       });
       document.body.appendChild(overlay);
-      hiveWireDialog(overlay, function(){}, undefined, '.primary', null, close => close());
+      // Enter activates the focused action (Open leads with initial focus);
+      // anywhere else it closes, as the other dialogs do.
+      hiveWireDialog(overlay, function(){}, undefined, '.hive-export-close', null, function(close) {
+        const active = document.activeElement;
+        if (active && (active === copy || active === open) && active.isConnected) { active.click(); return; }
+        close();
+      });
     }
     function hiveBinaryExportNotice(name, detail) {
       hiveAlert((detail || 'This export is binary and cannot be rendered safely in the dashboard.') + '\n\nBrowser downloads are disabled by policy to avoid native permission prompts. Use the API or CLI from a trusted shell if you need to save this file.', name || 'Binary export');

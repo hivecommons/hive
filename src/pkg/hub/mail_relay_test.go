@@ -133,7 +133,8 @@ func TestMailInboundForwardsSigned(t *testing.T) {
 	defer spoke.Close()
 	s := mailTestHub(t, spoke.URL+"/")
 
-	for kind, path := range map[wire.Kind]string{wire.KindInvite: wire.SpokeInvitesPath, wire.KindFiles: wire.SpokeFilesPath, wire.KindProof: wire.SpokeProofPath} {
+	// A refusal report (#18699) is routed like a delivery.
+	for kind, path := range map[wire.Kind]string{wire.KindInvite: wire.SpokeInvitesPath, wire.KindFiles: wire.SpokeFilesPath, wire.KindProof: wire.SpokeProofPath, wire.KindReport: wire.SpokeReportPath} {
 		body := delivery(testDeliveryID, kind, "hive@ACME.hive.hivecommons.dev")
 		rec := httptest.NewRecorder()
 		s.handleMailInbound(rec, mailRequest(http.MethodPost, wire.InboundPath, testMailToken, body))
@@ -250,7 +251,7 @@ func TestMailRelayNeverFollowsRedirects(t *testing.T) {
 }
 
 func TestMailSpokePathsArePublic(t *testing.T) {
-	for _, p := range []string{wire.SpokeInvitesPath, wire.SpokeFilesPath, wire.SpokeProofPath} {
+	for _, p := range []string{wire.SpokeInvitesPath, wire.SpokeFilesPath, wire.SpokeFilesChunkPath, wire.SpokeProofPath, wire.SpokeReportPath} {
 		if !isSaaSPublicPath(p) {
 			t.Errorf("%s must pass the hosted auth-check: the spoke verifies the relay signature itself", p)
 		}
