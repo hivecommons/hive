@@ -44,6 +44,10 @@ type fakeSessionRuntime struct {
 	detached []string
 	// inboxFiles records each StoreInboxFile call (Inbox seeds).
 	inboxFiles []fakeInboxFile
+	// swept records the ids each SweepWorktrees call found gone, given the
+	// ids in worktreeIDs (sessions with a worktree on disk).
+	worktreeIDs []string
+	swept       [][]string
 }
 
 // fakeInboxFile is one StoreInboxFile call.
@@ -74,6 +78,26 @@ func (f *fakeSessionRuntime) WorkspaceDir(repo string) string {
 		return ""
 	}
 	return filepath.Join(f.workDir, "workspace", repo)
+}
+func (f *fakeSessionRuntime) SessionWorkspaceDir(id, repo string) string {
+	if id == "" || f.WorkspaceDir(repo) == "" {
+		return ""
+	}
+	return filepath.Join(f.workDir, "workspace", ".sessions", id, repo)
+}
+func (f *fakeSessionRuntime) SweepWorktrees(live func(id string) bool) {
+	f.mu.Lock()
+	ids := append([]string(nil), f.worktreeIDs...)
+	f.mu.Unlock()
+	var gone []string
+	for _, id := range ids {
+		if !live(id) {
+			gone = append(gone, id)
+		}
+	}
+	f.mu.Lock()
+	f.swept = append(f.swept, gone)
+	f.mu.Unlock()
 }
 func (f *fakeSessionRuntime) Start(spec crux.UserSessionSpec) error {
 	f.mu.Lock()

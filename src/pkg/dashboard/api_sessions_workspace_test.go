@@ -3,19 +3,22 @@ package dashboard
 import (
 	"net/http"
 	"testing"
+	"time"
 )
 
-// Sessions open in the hive's project repo workspace: the runtime is asked to
-// start in it, the record and the API carry it, resume reopens the same one.
+// Sessions open in their own worktree of the hive's project repo workspace:
+// the runtime is asked to start in it, the record and the API carry the
+// session's worktree (the list names the shared clone), resume reopens the
+// same one.
 func TestSessionsOpenInTheProjectWorkspace(t *testing.T) {
 	e := newSessionTestEnv(t, true)
 	e.s.deps.Config.Project.Org, e.s.deps.Config.Project.PrimaryRepo = "acme", "widgets"
 	e.s.deps.Config.Runs.Spektacular.Binary = "/opt/spek/bin/spektacular"
-	wantPath := e.rt.WorkspaceDir("acme/widgets")
+	clonePath := e.rt.WorkspaceDir("acme/widgets")
 
 	list := decodeSessionJSON(t, e.do(t, callerRW, "GET", "/api/sessions", nil))
 	ws, _ := list["workspace"].(map[string]any)
-	if ws["repo"] != "acme/widgets" || ws["path"] != wantPath {
+	if ws["repo"] != "acme/widgets" || ws["path"] != clonePath {
 		t.Errorf("list workspace = %v", list["workspace"])
 	}
 
@@ -26,6 +29,10 @@ func TestSessionsOpenInTheProjectWorkspace(t *testing.T) {
 	spec := e.rt.started[0]
 	if spec.WorkspaceRepo != "acme/widgets" || spec.SpektacularBinary != "/opt/spek/bin/spektacular" {
 		t.Errorf("start spec = %+v", spec)
+	}
+	wantPath := e.rt.SessionWorkspaceDir(id, "acme/widgets")
+	if wantPath == "" || wantPath == clonePath {
+		t.Fatalf("session worktree path = %q, want one of its own (clone %q)", wantPath, clonePath)
 	}
 	rec, _ := e.s.sessionStoreOrNil().get(id)
 	if rec.WorkspaceRepo != "acme/widgets" || rec.Workspace != wantPath {
@@ -60,6 +67,47 @@ func TestSessionsOpenInTheProjectWorkspace(t *testing.T) {
 	}
 	if started := e.rt.startedSpecs(); len(started) != 2 || started[1].WorkspaceRepo != "acme/widgets" {
 		t.Errorf("resume spec = %+v, want the original workspace", started)
+	}
+}
+
+// A record from before per-session worktrees names the shared clone; resuming
+// it moves it into its own worktree, so seeds and the next resume follow the
+// pane.
+func TestSessionsResumeMovesLegacyRecordIntoItsWorktree(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	e.s.deps.Config.Project.Org, e.s.deps.Config.Project.PrimaryRepo = "acme", "widgets"
+	id := e.create(t, callerRW, "legacy")
+	if rec := e.do(t, callerRW, "DELETE", "/api/sessions/"+id, nil); rec.Code != http.StatusOK {
+		t.Fatalf("close = %d: %s", rec.Code, rec.Body.String())
+	}
+	_, _, _ = e.s.sessionStoreOrNil().update(id, func(r *sessionRecord) {
+		r.Workspace = e.rt.WorkspaceDir("acme/widgets")
+		r.ResumeCommand = "claude --resume abcdefgh"
+	})
+	if rec := e.do(t, callerRW, "POST", "/api/sessions/"+id+"/resume", map[string]any{}); rec.Code != http.StatusAccepted {
+		t.Fatalf("resume = %d: %s", rec.Code, rec.Body.String())
+	}
+	got := e.waitSettled(t, id)
+	if want := e.rt.SessionWorkspaceDir(id, "acme/widgets"); got.Workspace != want {
+		t.Errorf("record workspace after resume = %q, want the session's worktree %q", got.Workspace, want)
+	}
+}
+
+// The sweep hands the runtime a liveness check backed by the store: only a
+// worktree whose session record is gone is reported for removal.
+func TestSessionsSweepRemovesOnlyOrphanedWorktrees(t *testing.T) {
+	e := newSessionTestEnv(t, true)
+	e.s.deps.Config.Project.Org, e.s.deps.Config.Project.PrimaryRepo = "acme", "widgets"
+	id := e.create(t, callerRW, "live")
+	const orphan = "deadbeef00000000"
+	e.rt.mu.Lock()
+	e.rt.worktreeIDs = []string{id, orphan}
+	e.rt.mu.Unlock()
+	e.s.sweepSessions(time.Now())
+	e.rt.mu.Lock()
+	defer e.rt.mu.Unlock()
+	if n := len(e.rt.swept); n == 0 || len(e.rt.swept[n-1]) != 1 || e.rt.swept[n-1][0] != orphan {
+		t.Errorf("sweep reported %v gone, want only %s", e.rt.swept, orphan)
 	}
 }
 

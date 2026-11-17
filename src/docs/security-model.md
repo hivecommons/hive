@@ -447,19 +447,32 @@ importance:
   transcripts for resume only through the launcher group. Deleting or pruning a
   session removes the sandbox and the uid's tmux socket directory before the
   slot can be reused; if removal fails the record and slot are kept and retried.
-- **A shared workspace, no shared credential.** Sessions open in one
-  per-repository checkout (`HIVE_SESSIONS_WORKSPACE_DIR`, default
-  `<sandbox root>/workspace/<org>/<repo>`) that the hive clones once as itself,
+- **A shared clone, a worktree per session, no shared credential.** The hive
+  keeps one per-repository clone (`HIVE_SESSIONS_WORKSPACE_DIR`, default
+  `<sandbox root>/workspace/<org>/<repo>`) that it clones once as itself,
   with a short-lived App token in a one-shot `git -c credential.helper` file
   removed right after, so neither the clone's config nor its remote holds a
   credential; root then hands the tree to the sessions-only group
   (`HIVE_SESSIONS_GID`, default 20000) as `root:<gid> 2770`, group read-write,
   nothing for "other". That group is every session's single group (su-exec
   gives a numeric uid exactly one), which is what lets sessions share the
-  checkout; it is refused when it is the hive's own group, the reader group or
-  inside the session uid range, and session sandboxes stay `hive-launch`
-  group-only, so sessions still cannot read each other's homes. `spektacular
-  init` runs in the workspace as the session uid. Pushing from a session uses
+  clone's objects and branches; it is refused when it is the hive's own group,
+  the reader group or inside the session uid range, and session sandboxes stay
+  `hive-launch` group-only, so sessions still cannot read each other's homes.
+  Each session opens in its own git worktree of that clone,
+  `<workspace>/.sessions/<id>/<org>/<repo>` on branch `hive-session/<id>`: the
+  hive makes the directory under hive-owned `0711` parents, root only hands
+  that one empty directory to `<session uid>:<gid> 2770`, and the session uid
+  itself runs `git worktree add` (and, on removal, `git worktree remove`) with
+  `core.hooksPath=/dev/null`; git never runs as root in the group-writable
+  clone, where any session could plant a hook or config. The worktree is a
+  convenience boundary, not an isolation one: it keeps one person's working
+  tree, checked-out branch and spek workflow state (`.spektacular/`) apart
+  from another's, but it is group-writable like the clone, and every session
+  can still read and write the shared refs and objects. `spektacular init`
+  runs in the session's worktree as the session uid. Deleting a session
+  commits its uncommitted work onto its branch before removing the worktree,
+  and keeps any branch the clone's `HEAD` lacks. Pushing from a session uses
   the person's own login; the hive's token never enters a session.
 - **Environment.** Built from an allowlist: no dashboard token, terminal, hub,
   heartbeat, ttyd or attach-key secret and no GitHub token reaches it.
