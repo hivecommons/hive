@@ -716,21 +716,10 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 				break
 			}
 		}
-		// A not-agent-work triage verdict changes the issue's state, not
-		// only its timeline, and is never repeated unchanged
+		// parkLabel is the one label the relay adds after the note: `blocked`
+		// for --blocked-on-pr, `needs-human` for a not-agent-work verdict
 		// (hivecommons/hive#18675).
-		if verdict, ok := notAgentWorkVerdictFor(req, body); ok && req.BlockedOnPR == 0 {
-			var handled bool
-			handled, err = c.relayNotAgentWorkNote(ctx, req, verdict, body, &resp)
-			if handled {
-				if errors.Is(err, ErrIssueCommentBudget) {
-					c.denyIssueRequest(path, req, "comment refused: "+err.Error()+"; this issue already received its daily quota of hive comments, nothing more is needed on it today", nowFn)
-					return
-				}
-				break
-			}
-		}
-		var parkBlocked bool
+		var parkLabel string
 		if req.BlockedOnPR > 0 {
 			settled, merged, pErr := c.pullRequestSettledDetails(ctx, req.Repo, req.BlockedOnPR)
 			if pErr != nil {
@@ -743,10 +732,24 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 				body = blockedTargetSettledNote(req.Repo, req.BlockedOnPR, merged, body)
 			} else {
 				body = blockedNoteBody(req.Repo, req.BlockedOnPR, body)
-				parkBlocked = true
+				parkLabel = BlockedLabel
 			}
 		}
-		if key := relayStatusNoteKey(body); key != "" && (c.notificationsQuiet() || c.attentionPilot()) {
+		// A not-agent-work triage verdict changes the issue's state, not
+		// only its timeline, and is never repeated unchanged
+		// (hivecommons/hive#18675). On a PR it is an ordinary comment.
+		verdict, notAgentWork := notAgentWorkVerdictFor(req, body)
+		notAgentWork = notAgentWork && req.BlockedOnPR == 0 && err == nil
+		if notAgentWork {
+			var park bool
+			notAgentWork, park, err = c.relayNotAgentWorkNote(ctx, req, verdict, body, &resp)
+			if park {
+				parkLabel = issueNeedsHumanLabel
+			}
+		}
+		if notAgentWork {
+			// Posted (or suppressed) above.
+		} else if key := relayStatusNoteKey(body); key != "" && (c.notificationsQuiet() || c.attentionPilot()) {
 			// A one-line state note (awaiting-ci, parking, already fixed)
 			// is a section of the item's status comment in quiet mode or
 			// under the attention pilot.
@@ -776,10 +779,14 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 			c.denyIssueRequest(path, req, "comment refused: "+err.Error()+"; this issue already received its daily quota of hive comments, nothing more is needed on it today", nowFn)
 			return
 		}
-		if err == nil && parkBlocked {
-			err = c.AddLabels(ctx, req.Repo, req.Number, []string{BlockedLabel})
-			if err == nil {
+		if err == nil && parkLabel != "" {
+			err = c.AddLabels(ctx, req.Repo, req.Number, []string{parkLabel})
+			switch {
+			case err != nil:
+			case parkLabel == BlockedLabel:
 				err = stripHelpWanted(ctx, c, req.Repo, req.Number)
+			default:
+				err = c.parkNotAgentWorkStage(ctx, req.Repo, req.Number)
 			}
 		}
 		if err == nil {

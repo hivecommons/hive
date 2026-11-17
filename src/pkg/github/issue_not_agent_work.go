@@ -141,61 +141,50 @@ func (c *Client) isRepeatedNotAgentWorkTriage(comments []*gh.IssueComment, verdi
 
 // relayNotAgentWorkNote handles a comment request carrying a not-agent-work
 // verdict on an issue. handled is false for a pull request (the comment then
-// takes the ordinary path). A repeat is acknowledged as already_existed and
-// only re-asserts the park; otherwise the note is posted with its marker and
-// the issue is parked on `needs-human`.
-func (c *Client) relayNotAgentWorkNote(ctx context.Context, req IssueRequest, verdict, body string, resp *IssueResponse) (handled bool, err error) {
+// takes the ordinary path). A repeat is acknowledged as already_existed;
+// otherwise the note is posted with its marker. park reports that the
+// caller must add `needs-human` (the relay's one label write) and then call
+// parkNotAgentWorkStage.
+func (c *Client) relayNotAgentWorkNote(ctx context.Context, req IssueRequest, verdict, body string, resp *IssueResponse) (handled, park bool, err error) {
 	if c == nil || c.client == nil {
-		return false, ErrNoGitHubClient
+		return false, false, ErrNoGitHubClient
 	}
 	owner, name := c.splitRepo(req.Repo)
 	issue, _, err := c.client.Issues.Get(ctx, owner, name, req.Number)
 	if err != nil {
-		return true, fmt.Errorf("reading %s#%d before not-agent-work note: %w", req.Repo, req.Number, err)
+		return true, false, fmt.Errorf("reading %s#%d before not-agent-work note: %w", req.Repo, req.Number, err)
 	}
 	if issue.IsPullRequest() {
-		return false, nil
+		return false, false, nil
 	}
 	comments, err := c.listIssueComments(ctx, owner, name, req.Number)
 	if err != nil {
-		return true, fmt.Errorf("reading comments on %s#%d before not-agent-work note: %w", req.Repo, req.Number, err)
+		return true, false, fmt.Errorf("reading comments on %s#%d before not-agent-work note: %w", req.Repo, req.Number, err)
 	}
-	labels := issueLabelNames(issue.Labels)
+	park = !strings.EqualFold(issue.GetState(), "closed") && !hasIssueNeedsHumanLabel(issueLabelNames(issue.Labels))
 	if c.isRepeatedNotAgentWorkTriage(comments, verdict) {
 		c.noteCommentSuppressed()
 		if c.logger != nil {
 			c.logger.Info("issue-request watcher: identical not-agent-work triage already on issue, not re-posting",
 				slog.String("repo", req.Repo), slog.Int("number", req.Number), slog.String("agent", req.Agent), slog.String("verdict", verdict))
 		}
-		if !strings.EqualFold(issue.GetState(), "closed") && !hasIssueNeedsHumanLabel(labels) {
-			if err := c.parkNotAgentWork(ctx, req.Repo, req.Number); err != nil {
-				return true, err
-			}
-		}
-		resp.OK, resp.Number, resp.AlreadyExisted = true, req.Number, true
-		return true, nil
+		resp.AlreadyExisted = true
+		return true, park, nil
 	}
 	if err := c.CreateIssueCommentBudgeted(ctx, req.Repo, req.Number, notAgentWorkNoteBody(verdict, body)); err != nil {
-		return true, err
+		return true, false, err
 	}
-	if !strings.EqualFold(issue.GetState(), "closed") && !hasIssueNeedsHumanLabel(labels) {
-		if err := c.parkNotAgentWork(ctx, req.Repo, req.Number); err != nil {
-			return true, err
-		}
+	if park {
+		resp.LabelsAdded = []string{issueNeedsHumanLabel}
 	}
-	resp.OK, resp.Number = true, req.Number
-	resp.LabelsAdded = []string{issueNeedsHumanLabel}
-	return true, nil
+	return true, park, nil
 }
 
-// parkNotAgentWork adds `needs-human` and submits it to the stage engine as
-// a park, as the label relay does for an agent-added `needs-human`, then
-// checks the park landed (a failure retries the request, and the retry is
-// a suppressed repeat that only re-parks).
-func (c *Client) parkNotAgentWork(ctx context.Context, repo string, number int) error {
-	if err := c.AddLabels(ctx, repo, number, []string{issueNeedsHumanLabel}); err != nil {
-		return err
-	}
+// parkNotAgentWorkStage submits the `needs-human` the relay just added to
+// the stage engine as a park, as the label relay does for an agent-added
+// `needs-human`, then checks the park landed (a failure retries the
+// request, and the retry is a suppressed repeat that only re-parks).
+func (c *Client) parkNotAgentWorkStage(ctx context.Context, repo string, number int) error {
 	if err := c.StageFacts().Parked(ctx, c.IssueStageRef(repo, number), issueNeedsHumanLabel); err != nil {
 		return err
 	}
