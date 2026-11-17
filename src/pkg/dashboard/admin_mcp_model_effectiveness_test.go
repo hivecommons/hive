@@ -10,14 +10,16 @@ import (
 	"github.com/hivecommons/hive/pkg/adminmcp"
 )
 
-// pr_models_read and contributor_model_stats_read answer with the JSON the
-// dashboard gets from the same endpoints, for the window asked for, and a bad
-// window is refused before any request reaches the router.
+// pr_models_read, contributor_model_stats_read and effective_models_read
+// answer with the JSON the dashboard gets from the same endpoints, for the
+// window and filter asked for, and a bad window or filter is refused before
+// any request reaches the router.
 func TestDashboardAdminMCPModelEffectivenessReadsTheDashboardEndpoints(t *testing.T) {
 	var seen []string
 	answers := map[string]string{
-		"/api/governor/pr-models?window=30d":      `{"window":"30d","min_merged_prs":3,"total":2,"buckets":[{"model":"gpt-6.1-sol","merged":1,"closed_unmerged":0,"open":1,"effectiveness":{"rank":1,"eligible":false},"agents":[{"agent":"scanner","merged":1}]}],"unknown":0,"fixer_queue":{"fixer":{"depth":0}}}`,
-		"/api/contribute/run-stats/models?days=7": `{"window_days":7,"models":[{"model":"claude-sonnet-5.5","runs":4,"verified_pr_share":0.5,"failure_rate":0.25}]}`,
+		"/api/governor/pr-models?window=30d":                      `{"window":"30d","min_merged_prs":3,"total":2,"buckets":[{"model":"gpt-6.1-sol","merged":1,"closed_unmerged":0,"open":1,"effectiveness":{"rank":1,"eligible":false},"agents":[{"agent":"scanner","merged":1}]}],"unknown":0,"fixer_queue":{"fixer":{"depth":0}}}`,
+		"/api/contribute/run-stats/models?days=7":                 `{"window_days":7,"models":[{"model":"claude-sonnet-5.5","runs":4,"verified_pr_share":0.5,"failure_rate":0.25}]}`,
+		"/api/contribute/effective-models?window=30d&filter=hive": `{"window":"30d","filter":"hive","min_merged_prs":5,"ranked":[{"model":"claude-opus-5.5","effectiveness_rank":1,"score":0.6,"merged_prs":30,"runs":0}],"insufficient":[{"model":"claude-sonnet-5.5","merged_prs":3,"runs":0}],"coverage":{"closed_pr_lookback_days":14,"closed_prs_partial":true,"runs_partial":false}}`,
 	}
 	s := &Server{mux: http.NewServeMux()}
 	serve := func(w http.ResponseWriter, r *http.Request) {
@@ -28,6 +30,7 @@ func TestDashboardAdminMCPModelEffectivenessReadsTheDashboardEndpoints(t *testin
 	}
 	s.mux.HandleFunc("GET /api/governor/pr-models", serve)
 	s.mux.HandleFunc("GET /api/contribute/run-stats/models", serve)
+	s.mux.HandleFunc("GET /api/contribute/effective-models", serve)
 	p := dashboardAdminMCPProvider{server: s, role: "owner", ownerVerified: true}
 
 	for _, tc := range []struct {
@@ -37,6 +40,7 @@ func TestDashboardAdminMCPModelEffectivenessReadsTheDashboardEndpoints(t *testin
 	}{
 		{adminmcp.ToolPRModelsRead, map[string]any{"window": "30d"}, "/api/governor/pr-models?window=30d"},
 		{adminmcp.ToolContributorModelStatsRead, map[string]any{}, "/api/contribute/run-stats/models?days=7"},
+		{adminmcp.ToolEffectiveModelsRead, map[string]any{"window": "30d", "filter": "hive"}, "/api/contribute/effective-models?window=30d&filter=hive"},
 	} {
 		seen = nil
 		got, err := p.Read(context.Background(), tc.tool, tc.args)
@@ -61,6 +65,7 @@ func TestDashboardAdminMCPModelEffectivenessReadsTheDashboardEndpoints(t *testin
 	for tool, args := range map[string]map[string]any{
 		adminmcp.ToolPRModelsRead:              {"window": "90d"},
 		adminmcp.ToolContributorModelStatsRead: {"days": float64(400)},
+		adminmcp.ToolEffectiveModelsRead:       {"filter": "agents"},
 	} {
 		_, err := p.Read(context.Background(), tool, args)
 		if err == nil || !strings.Contains(err.Error(), "must be") {
