@@ -566,10 +566,7 @@ type Manager struct {
 	lastRateLimitRelaunch time.Time
 	cliMemory             cliMemoryState         // shared-store warning and drain hook, see cli_memory_drain.go
 	strayGitIdentity      strayGitIdentityWarned // warn-once state, see git_identity_warn_dedupe.go
-	// firstRunNoticeLogged holds the names of agents whose first-run security
-	// notice has been logged (noteClaudeFirstRunNotice). Its own sync.Map,
-	// NEVER m.mu: the watcher and kick waits that write it run unlocked.
-	firstRunNoticeLogged sync.Map
+	firstRunNoticeLogged  sync.Map               // agents whose first-run notice was logged; never under m.mu (claude_first_run.go)
 
 	// thrashMu guards thrash — its own mutex, NEVER m.mu: the breaker runs on
 	// the output-capture goroutines, and taking m.mu there risks startup
@@ -1321,7 +1318,6 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 				"permission_dialog", dialogTitle,
 				"has_bob_placeholder", strings.Contains(output, bobInputPlaceholder),
 				"has_codex_ready", strings.Contains(output, codexInputPromptMarker),
-				"blocking_screen", blocking.label,
 				"head_500", truncateHead(output, 500), "tail_500", truncateTail(output, 500))
 			if hasDialog {
 				return false, claudePermissionDialogNotReadyReason(dialogTitle)
@@ -1357,9 +1353,7 @@ func (m *Manager) waitForInputPromptForAgentReason(agent *AgentProcess, abort fu
 				m.dismissTUIMenuForKick(agent, footer, menuEscapes)
 				continue
 			}
-			// A known blocking screen (first-run notice, folder trust, codex
-			// update, …) is answered or waited on for a bounded time, then
-			// named in the failure instead of running out inputPromptTimeout.
+			// A known blocking screen is answered, or named in a fast failure (claude_first_run.go).
 			if handled, reason := m.handleBlockingScreenForKick(agent, dialogBackend, visible, &blocking); handled {
 				if reason != "" {
 					return false, reason
