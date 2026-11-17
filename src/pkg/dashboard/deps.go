@@ -54,6 +54,12 @@ type Dependencies struct {
 	// so the operator can simulate a real item. Nil disables the fetch; the
 	// handler then answers 422 and the form still accepts hand-set facts.
 	WorkflowItemSnapshot func(ctx context.Context, repo string, number int) (ghpkg.WorkflowItemSnapshot, error)
+	// WorkflowPostMerge observes the post-merge runs (Main CI, Release,
+	// Deploy) of the model's bound pipelines for merged PRs of repo, so a
+	// simulated merged PR's pipeline.status is the observed one, not
+	// always unknown (hivecommons/hive#18356). Nil leaves pr.pipeline
+	// unknown.
+	WorkflowPostMerge func(ctx context.Context, repo string, m *workflowmodel.Model, defaultBranch string, prs []workflowmodel.MergedPR) (map[int]*stageengine.PostMergeFacts, error)
 	// WorkflowRepoFile fetches one default-branch file (a written process
 	// spec) for POST /api/workflows/ingest/spec {repo, path}. Nil disables
 	// repo-path spec ingest.

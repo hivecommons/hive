@@ -82,6 +82,7 @@ import (
 	"github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/tokens"
 	"github.com/hivecommons/hive/pkg/tracing"
+	"github.com/hivecommons/hive/pkg/workflowmodel"
 	"github.com/hivecommons/hive/pkg/worksource"
 	"github.com/hivecommons/hive/pkg/worksource/wavefront" // registers the additive Wavefront source (#8362)
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -1122,6 +1123,9 @@ func (b *boot) wireBootClosures() {
 			WorkflowRepoFiles: workflowRepoFiles(func() *github.Client { return b.ghClient }),
 			WorkflowItemSnapshot: func(ctx context.Context, repo string, number int) (github.WorkflowItemSnapshot, error) {
 				return b.ghClient.WorkflowItemSnapshot(ctx, repo, number)
+			},
+			WorkflowPostMerge: func(ctx context.Context, repo string, m *workflowmodel.Model, defaultBranch string, prs []workflowmodel.MergedPR) (map[int]*stageengine.PostMergeFacts, error) {
+				return b.ghClient.ObservePostMerge(ctx, repo, m, defaultBranch, prs)
 			},
 			WorkflowRepoFile:        workflowRepoFile(func() *github.Client { return b.ghClient }),
 			WorkflowProvisionLabels: workflowProvisionLabels(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
