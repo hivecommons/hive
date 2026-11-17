@@ -534,6 +534,7 @@ func JobOptionsFromConfig(job config.SandboxJobConfig) kubejob.Options {
 		ServiceAccount:      job.ServiceAccount,
 		SchedulerName:       job.SchedulerName,
 		EnvFromSecrets:      append([]string(nil), job.EnvFromSecrets...),
+		ImagePullSecrets:    append([]string(nil), job.ImagePullSecrets...),
 		TTLSeconds:          job.TTLSeconds,
 		RelayImage:          job.RelayImage,
 		RelayRunAsUser:      job.RelayRunAsUser,

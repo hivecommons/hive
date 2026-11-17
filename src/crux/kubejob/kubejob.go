@@ -132,6 +132,9 @@ type Options struct {
 	// EnvFromSecrets are Secret names whose keys become environment variables
 	// in the Job. This is the ONLY credential path into the Job.
 	EnvFromSecrets []string
+	// ImagePullSecrets are Secret names added to the pod's imagePullSecrets
+	// alongside hive's own and the service account's (#18819). Names only.
+	ImagePullSecrets []string
 	// ExtraVolumes mounts additional claims (a compile cache, a model store).
 	ExtraVolumes []VolumeMount
 	// TTLSeconds is the Job's ttlSecondsAfterFinished (default one hour).
@@ -266,6 +269,9 @@ func (o Options) Validate() error {
 	if o.RelayRunAsUser != nil && *o.RelayRunAsUser <= 0 {
 		return errors.New("kubejob: relay_run_as_user must be a positive (non-root) uid")
 	}
+	if err := validatePullSecretNames(o.ImagePullSecrets); err != nil {
+		return err
+	}
 	switch o.network() {
 	case NetworkDefault, NetworkNone, NetworkHost:
 	default:
@@ -308,6 +314,7 @@ func (l *Launcher) Run(ctx context.Context, spec sandbox.LaunchSpec) (sandbox.Re
 	}
 	name := jobName(spec.Name, l.now())
 	manifest := l.jobManifest(ns, name, subPath, spec, relays)
+	setPullSecrets(manifest, l.resolvePullSecrets(ctx, ns, relays))
 	if jobSpec, ok := manifest["spec"].(map[string]any); ok {
 		jobSpec["activeDeadlineSeconds"] = l.activeDeadline(ctx)
 	}
