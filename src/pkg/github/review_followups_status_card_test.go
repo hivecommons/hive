@@ -92,7 +92,10 @@ func TestReviewFollowUpsQuietFoldIntoExistingStatusCard(t *testing.T) {
 	if !ok {
 		t.Fatalf("no %s section:\n%s", prstatus.KeyReviewFollowUps, card)
 	}
-	for _, want := range []string{"<details>", "Review follow-ups: 2 open of 2", "min_severity: P1", "- [ ] **P3 low**", "stale example (`docs/a.md:3`)", "naming (`pkg/c.go:4`)", "</details>"} {
+	if strings.Contains(card, reviewFollowUpsCommentMarker) {
+		t.Errorf("the card must not carry the legacy comment marker (the marker upsert would overwrite the card):\n%s", card)
+	}
+	for _, want := range []string{reviewFollowUpsCardMarker, "<details>", "Review follow-ups: 2 open of 2", "min_severity: P1", "- [ ] **P3 low**", "stale example (`docs/a.md:3`)", "naming (`pkg/c.go:4`)", "</details>"} {
 		if !strings.Contains(section, want) {
 			t.Errorf("section missing %q:\n%s", want, section)
 		}

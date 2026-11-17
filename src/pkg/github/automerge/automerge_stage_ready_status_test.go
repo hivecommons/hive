@@ -70,7 +70,7 @@ func TestReadyEntryQuietFoldsIntoStatusCard(t *testing.T) {
 		t.Fatalf("existing card section lost:\n%s", card)
 	}
 	section, ok := prstatus.Get(card, prstatus.KeyStageReady)
-	if !ok || !strings.Contains(section, "Ready for a human merge: verdict approved @sha") || !strings.Contains(section, "Blocked only by `role/contributor`") || !strings.Contains(section, "`/lgtm` `/approve`") {
+	if !ok || !strings.Contains(section, "Ready for a human merge: verdict approved `sha`") || !strings.Contains(section, "Blocked only by `role/contributor`") || !strings.Contains(section, "`/lgtm` `/approve`") {
 		t.Fatalf("stage-ready section = %q (found %v)", section, ok)
 	}
 	if strings.Contains(card, stagelabels.ReadyCommentMarker) {

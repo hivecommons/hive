@@ -20,6 +20,12 @@ import (
 // such comment however many reviews it gets.
 const reviewFollowUpsCommentMarker = "<!-- hive:review-followups-comment v1 -->"
 
+// reviewFollowUpsCardMarker stamps the status-card form of the list
+// (hivecommons/hive#18606). It deliberately is not
+// reviewFollowUpsCommentMarker: EditIssueMarkerComment would otherwise find
+// the whole card as "the Follow-ups comment" and overwrite it.
+const reviewFollowUpsCardMarker = "<!-- hive:review-followups-card -->"
+
 // reviewFollowUpsSummaryMaxLen bounds the one-line summary quoted per held
 // finding in the Follow-ups comment.
 const reviewFollowUpsSummaryMaxLen = 200
@@ -292,7 +298,7 @@ func (c *Client) foldReviewFollowUps(ctx context.Context, req ReviewRequest, hel
 		return false, err
 	}
 	for _, cm := range comments {
-		if cm != nil && strings.Contains(cm.GetBody(), reviewFollowUpsCommentMarker) && c.markerAuthorTrusted(cm.GetUser()) {
+		if cm != nil && !prstatus.IsStatusComment(cm.GetBody()) && strings.Contains(cm.GetBody(), reviewFollowUpsCommentMarker) && c.markerAuthorTrusted(cm.GetUser()) {
 			return false, nil
 		}
 	}
@@ -369,8 +375,7 @@ func writeReviewFollowUpEntries(b *strings.Builder, entries []reviewFollowUpEntr
 
 // renderReviewFollowUpsSection is the status-card form of the Follow-ups
 // list: one summary line with the open count, the checklist collapsed
-// under it. It keeps reviewFollowUpsCommentMarker so marker readers still
-// find the list on the card.
+// under it, stamped with reviewFollowUpsCardMarker.
 func renderReviewFollowUpsSection(previous string, held []reviewBacklogHeldFinding, minSeverity string) string {
 	entries := mergeReviewFollowUps(previous, held)
 	if len(entries) == 0 {
@@ -383,7 +388,7 @@ func renderReviewFollowUpsSection(previous string, held []reviewBacklogHeldFindi
 		}
 	}
 	var b strings.Builder
-	b.WriteString(reviewFollowUpsCommentMarker)
+	b.WriteString(reviewFollowUpsCardMarker)
 	fmt.Fprintf(&b, "\n<details><summary>Review follow-ups: %d open of %d (below <code>review.backlog.min_severity: %s</code>)</summary>\n\n", open, len(entries), minSeverity)
 	b.WriteString("Non-blocking findings below the backlog filing line, listed here instead of as issues. Tick them off as they are fixed; set `review.backlog.min_severity: P3` to file every finding.\n\n")
 	writeReviewFollowUpEntries(&b, entries)
