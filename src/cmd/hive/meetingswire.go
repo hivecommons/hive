@@ -160,6 +160,12 @@ func wireMeetingsManager(cfg *config.Config, sup quorumSupervisor, logger *slog.
 	return mgr, store
 }
 
+// meetingSpekProbeArgs checks once per installed binary that spektacular
+// has the live `meeting` command (hivecommons/spektacular#126); a release
+// without it answers "unknown command" and live mode stays off without a
+// child restart loop (hivecommons/hive#18630).
+var meetingSpekProbeArgs = []string{"meeting", "--help"}
+
 // meetingSpekArgs is the contract's live-mode command line
 // (quorum.contract/v1 section 2).
 func meetingSpekArgs(m meetings.Meeting, contextDir string) []string {
@@ -205,7 +211,9 @@ func wireMeetingsLive(cfg *config.Config, mgr *meetings.Manager, store *meetings
 		Store:    store,
 		NewSpek: func(mt meetings.Meeting) live.Spek {
 			env := meetingSpekEnv(os.Getenv, llm, hiveBin, meetingUsageFile(store, mt.ID), slotsDir, maxTokens)
-			return spektacular.StreamExec(binary, meetingSpekArgs(mt, filepath.Join(store.Dir(), mt.ID)), spektacular.StreamOptions{Logger: logger, Env: env})
+			return spektacular.StreamExec(binary, meetingSpekArgs(mt, filepath.Join(store.Dir(), mt.ID)), spektacular.StreamOptions{
+				Logger: logger, Env: env, Probe: meetingSpekProbeArgs,
+			})
 		},
 		SpekMode: llm.Label(),
 		UsageFile: func(id string) string {
