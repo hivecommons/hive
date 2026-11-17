@@ -142,7 +142,7 @@ func (r *reviewerAutoscaleRuntime) Run(ctx context.Context, cfg *config.Config, 
 	for _, name := range names {
 		rv := autoscale.Reviewer{Name: name, Index: cfg.Agents[name].ReplicaIndex}
 		if proc, err := agentMgr.GetStatusFast(name); err == nil && proc != nil {
-			rv.Busy = proc.State == crux.StateRunning && !proc.KickOutcome.Settled(proc.LastKick)
+			rv.Busy = proc.TurnInFlight()
 			rv.Saturated = proc.KicksUndeliverable > 0
 		}
 		for _, p := range plan.State.Pending {
