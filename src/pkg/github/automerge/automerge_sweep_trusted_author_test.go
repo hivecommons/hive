@@ -495,11 +495,11 @@ func TestTrustedAuthorGitHubSignalErrorsAndEdges(t *testing.T) {
 	if p, err := engine.authorRepoPermission(context.Background(), "acme", "widget", "plain"); err != nil || !p.Allowed || p.Level != "admin" {
 		t.Fatalf("plain permission = %+v err=%v, want allowed admin via permission", p, err)
 	}
-	if _, err := engine.hasOutstandingChangesRequested(context.Background(), "acme", "widget", 9); err == nil {
+	if _, err := engine.hasOutstandingChangesRequested(context.Background(), "acme", "widget", 9, "sha"); err == nil {
 		t.Fatal("hasOutstandingChangesRequested should surface API errors")
 	}
-	if blocked, err := engine.hasOutstandingChangesRequested(context.Background(), "acme", "widget", 10); err != nil || blocked {
-		t.Fatalf("PR 10 blocked=%v err=%v, want dismissed on page 2 to clear the block", blocked, err)
+	if standing, err := engine.hasOutstandingChangesRequested(context.Background(), "acme", "widget", 10, "sha"); err != nil || standing.reason("changes-requested") != "" {
+		t.Fatalf("PR 10 standing=%+v err=%v, want dismissed on page 2 to clear the block", standing, err)
 	}
 	if page != 2 {
 		t.Fatalf("review pages fetched = %d, want 2", page)

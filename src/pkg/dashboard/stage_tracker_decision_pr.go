@@ -45,6 +45,10 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	// branch that bot regenerates, so the fix lands on the base branch.
 	botAuthorFinding := lower == stagelabels.LaneReasonBotAuthorFinding
 	hiveSupersederStop := stagelabels.HiveSupersederHardStopReason(base)
+	// Every standing change request is on an older commit the author has
+	// pushed past: the reviewer re-reviews, not the author
+	// (projectbluefin/chairlift#799).
+	reReviewers, reReview := stageengineprstage.ParseReReviewRequested(base)
 
 	// WHAT it is waiting on: the question, most specific source first. A
 	// reviewer's own question is quoted verbatim — it is the text the
@@ -138,6 +142,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Question = "The hive took this PR over but could not move it (" + decisionPlainReason(adoptionLane) + "). Give direction, or close it?"
 	case forkGuarded:
 		d.Question = "CI will not run for this fork PR (" + strings.ReplaceAll(forkGuard, ",", ", ") + "). A maintainer must push the branch to this repo — or close it?"
+	case reReview:
+		d.AskedBy = decisionAskedByReviewer
+		d.Question = decisionReReviewQuestion(reReviewers, it.Author, sha)
 	case changes:
 		d.AskedBy = decisionAskedByReviewer
 		d.Question = "A reviewer requested changes" + at + ". Give direction for a new commit, or close it?"
@@ -158,6 +165,9 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 	switch {
 	case it.UnauthorizedStep != "":
 		// set above
+	case reReview:
+		d.Blocker = "GitHub keeps " + decisionReReviewNames(reReviewers) + "'s change request blocking until it is re-reviewed or dismissed. The author has nothing left to push for it."
+		approveOK, approveWhy = false, "Approving here does not clear "+decisionReReviewNames(reReviewers)+"'s change request on GitHub; they re-review, or a maintainer dismisses the review."
 	case changes:
 		d.Blocker = "A reviewer requested changes" + at + " — needs a new commit. Approving cannot override that."
 		approveOK, approveWhy = false, d.Blocker
@@ -234,6 +244,38 @@ func decisionForPR(it StageTrackerItem, verdict *review.Aggregate, sentinelLabel
 		d.Options = decisionLeadWithCloseSuperseded(d.Options, verdict.RedundantOf)
 	}
 	return d
+}
+
+// decisionReReviewQuestion is the question for a re-review-requested PR:
+// it names the reviewers, the author and the head they pushed, and never
+// calls the author offline (projectbluefin/chairlift#799).
+func decisionReReviewQuestion(reviewers []string, author, sha string) string {
+	who := "the author"
+	if a := strings.TrimSpace(author); a != "" {
+		who = "@" + a
+	}
+	pushed := " pushed new commits"
+	if sha != "" {
+		pushed = " pushed `" + sha + "`"
+	}
+	return decisionReReviewNames(reviewers) + " requested changes on an older commit; " + who + pushed + " since. Re-review it, or dismiss the review?"
+}
+
+// decisionReReviewNames renders the reviewers as "@a", "@a and @b".
+func decisionReReviewNames(reviewers []string) string {
+	var names []string
+	for _, r := range reviewers {
+		if r = strings.TrimSpace(r); r != "" {
+			names = append(names, "@"+r)
+		}
+	}
+	switch len(names) {
+	case 0:
+		return "the reviewer"
+	case 1:
+		return names[0]
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " and " + names[len(names)-1]
 }
 
 // decisionApproveSignOffConsequence is the inline Approve pill's hover on
