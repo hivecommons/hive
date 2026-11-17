@@ -68,10 +68,16 @@ type claudeCredentialVerification struct {
 }
 
 // claudeLoginState is the manager-wide half of the #18732 routing: the
-// per-file verification cache and the operator sign-in signal. Guarded by
-// Manager.mu.
+// per-file verification cache, the provider seam, the once-per-episode WARN
+// gate per agent, and the operator sign-in signal. Guarded by Manager.mu.
 type claudeLoginState struct {
-	verified  map[string]*claudeCredentialVerification
+	verified map[string]*claudeCredentialVerification
+	// verify is the live-check seam; nil uses claude.Verifier{}.
+	verify claudeCredentialVerifyFn
+	// warned gates the "Claude login revoked" WARN to once per agent per
+	// episode; cleared when the provider accepts the credential again or the
+	// operator signs in.
+	warned    map[string]bool
 	signInAt  time.Time
 	signInGen uint64
 }
@@ -160,7 +166,7 @@ func (m *Manager) verifyClaudeCredential(ctx context.Context, agent *AgentProces
 		return claude.CredentialInconclusive, ""
 	}
 	entry.inflight = true
-	verify := m.claudeCredentialVerify
+	verify := m.claudeLogin.verify
 	m.mu.Unlock()
 
 	if verify == nil {
@@ -183,8 +189,11 @@ func (m *Manager) verifyClaudeCredential(ctx context.Context, agent *AgentProces
 func (m *Manager) markClaudeLoginRevoked(agent *AgentProcess, detail string, now time.Time) {
 	m.mu.Lock()
 	agent.markBackendAuthLocked(BackendAuthRevoked, "provider rejected the stored Claude credential ("+detail+")", now)
-	warned := agent.claudeLoginRevokedWarned
-	agent.claudeLoginRevokedWarned = true
+	if m.claudeLogin.warned == nil {
+		m.claudeLogin.warned = map[string]bool{}
+	}
+	warned := m.claudeLogin.warned[agent.Name]
+	m.claudeLogin.warned[agent.Name] = true
 	m.mu.Unlock()
 	agent.LastError = ClaudeLoginRevokedMessage + " — the provider rejected the stored credential (" + detail + "); no restart will be attempted until you sign in from the dashboard"
 	if warned || m.logger == nil {
@@ -203,7 +212,7 @@ func (m *Manager) markClaudeLoginRevoked(agent *AgentProcess, detail string, now
 func (m *Manager) clearClaudeLoginRevoked(agent *AgentProcess, now time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	agent.claudeLoginRevokedWarned = false
+	delete(m.claudeLogin.warned, agent.Name)
 	if agent.BackendAuth.Status == BackendAuthRevoked {
 		agent.clearBackendAuthLocked(now)
 	}
@@ -235,8 +244,8 @@ func (m *Manager) noteClaudeOperatorSignInLocked(now time.Time) {
 	m.claudeLogin.verified = nil
 	m.claudeLogin.signInAt = now
 	m.claudeLogin.signInGen++
+	m.claudeLogin.warned = nil
 	for _, a := range m.agents {
-		a.claudeLoginRevokedWarned = false
 		if a.BackendAuth.Status == BackendAuthRevoked {
 			a.clearBackendAuthLocked(now)
 		}

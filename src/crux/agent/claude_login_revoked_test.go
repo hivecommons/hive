@@ -39,13 +39,13 @@ func revokedTestManager(t *testing.T, verdict claude.CredentialVerdict) (*Manage
 	m := &Manager{
 		agents: map[string]*AgentProcess{agent.Name: agent},
 		logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
-		claudeCredentialVerify: func(_ context.Context, credPath string) (claude.CredentialVerdict, string) {
-			calls++
-			if strings.Contains(credPath, "sk-ant") {
-				t.Fatalf("credential path must never carry token material: %q", credPath)
-			}
-			return verdict, "claude usage HTTP 401"
-		},
+	}
+	m.claudeLogin.verify = func(_ context.Context, credPath string) (claude.CredentialVerdict, string) {
+		calls++
+		if strings.Contains(credPath, "sk-ant") {
+			t.Fatalf("credential path must never carry token material: %q", credPath)
+		}
+		return verdict, "claude usage HTTP 401"
 	}
 	if !m.AgentHasValidCredential(agent.Name) {
 		t.Fatal("precondition: the file-level gate must accept the credential, exactly as in the incident")
