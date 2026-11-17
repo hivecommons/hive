@@ -5,14 +5,16 @@ import "testing"
 func TestWorkflowDispatchAgent(t *testing.T) {
 	off := false
 	base := func() *Config {
-		return &Config{Agents: map[string]AgentConfig{
+		c := &Config{}
+		c.Agents = map[string]AgentConfig{
 			"scanner":   {Enabled: true, Role: "scanner"},
 			"zed":       {Enabled: true, Role: "feature"},
 			"alpha":     {Enabled: true, Role: "feature"},
 			"alpha-2":   {Enabled: true, Role: "feature", ReplicaOf: "alpha"},
 			"scribe":    {Enabled: false, Role: "writer"},
 			"architect": {Enabled: true},
-		}}
+		}
+		return c
 	}
 	cases := []struct {
 		name    string
