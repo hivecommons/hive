@@ -385,10 +385,6 @@ func formatRedPRFixDataWithTopics(data []byte, agent string, signals []github.CI
 		RebaseMax        int        `json:"rebase_attempts_max"`
 		BaseRef          string     `json:"base_ref"`
 		TrustedAuthor    bool       `json:"trusted_author"`
-		RebaseAttempt    int        `json:"rebase_attempt"`
-		RebaseMax        int        `json:"rebase_attempts_max"`
-		BaseRef          string     `json:"base_ref"`
-		TrustedAuthor    bool       `json:"trusted_author"`
 		AppAuthored      bool       `json:"app_authored"`
 		HeadPushedAt     *time.Time `json:"head_pushed_at"`
 		Issues           []int      `json:"issues"`
