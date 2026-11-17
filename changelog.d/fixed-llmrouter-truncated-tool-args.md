@@ -1,1 +1,0 @@
-- `pkg/turn/llmrouter` wraps invalid tool-call arguments when resending history (one truncated call no longer makes every later request a 400), fails over when a tool call is cut off at the output limit, and adds a per-provider `MaxTokens`.
