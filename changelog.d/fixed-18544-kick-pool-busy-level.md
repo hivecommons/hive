@@ -1,1 +1,0 @@
-- The "failed to send kick" log for a busy shared CLI session pool is now INFO instead of WARN, so routine pool contention is no longer fleet-reported as a repeated runtime error (#18544).

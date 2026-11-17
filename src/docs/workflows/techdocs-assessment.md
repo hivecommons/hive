@@ -257,11 +257,21 @@ hand-off, and `workflow.dispatch.enabled: false` stops them all (owned items sta
 from the generic lanes either way). `prompt_template` replaces the built-in prompt; see the
 design doc for its `${VAR}` placeholders.
 
+### Send to drafter (owner)
+
+On the Activity Monitor, the **⋯** menu of a `cncf/techdocs` row in a dispatched state offers
+**Send to techdocs-drafter** (an Accepted issue) or **Send to techdocs-verifier** (a draft PR in
+Drafting). It is owner-only and runs the same hand-off on demand: it reads the item fresh,
+resolves the agent (a profile set `disabled` for automatic dispatch still resolves), takes the
+claim, kicks the agent and records the hand-off (`POST /api/workflows/dispatch`, audited
+`workflow_dispatch`). Use it to restart after a discarded draft (a hand-off happens once per
+issue and state on its own: retries are a person's choice, spec §5) or to run the verifier
+without a `/verify` comment.
+
 ### Starting the drafter by hand (fallback)
 
-When no agent fills the profile, dispatch is off, or a discarded draft should be restarted (a
-hand-off happens once per issue and state: retries are a person's choice, spec §5), a hive
-owner starts the draft by hand:
+When no agent fills the profile or the hive predates automatic dispatch, a hive owner starts the
+draft by hand:
 
 1. Check the request is accepted: `triage/accepted` is on the issue, applied by a maintainer
    with write access to `cncf/techdocs`, and the hive's workflow column shows **Accepted**.

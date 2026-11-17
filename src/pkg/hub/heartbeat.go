@@ -486,6 +486,11 @@ type HeartbeatResponse struct {
 	// hub holds for this hive (#15964); the spoke drops buffered events up
 	// to it. 0/absent = none. Decoded by spoke.HeartbeatResponse.
 	ActivityEventsAck uint64 `json:"activity_events_ack,omitempty"`
+	// HostAliases are the clusters.json host_aliases of the cluster the hub's
+	// SaaS record places this hive on (#18637). Sent on every beat; the spoke
+	// converges its own Deployment, which is the only path on a push-reported
+	// cluster. Decoded by spoke.HeartbeatResponse.HostAliases.
+	HostAliases []ClusterHostAlias `json:"host_aliases,omitempty"`
 }
 
 // HubBanner is a message from the hub admin displayed on spoke dashboards.

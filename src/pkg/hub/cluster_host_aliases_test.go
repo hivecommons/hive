@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"text/template"
@@ -146,5 +148,169 @@ func TestHostAliasesConvergedAndMerge(t *testing.T) {
 	}
 	if len(ops) != 1 || ops[0].Op != "add" || ops[0].Path != podHostAliasesPath || len(ops[0].Value) != 2 {
 		t.Fatalf("unexpected patch: %s", patch)
+	}
+}
+
+// testGHEHostAliases is the a-ks-wec2 / vllm-d clusters.json shape.
+func testGHEHostAliases() []ClusterHostAlias {
+	return []ClusterHostAlias{{IP: "129.34.104.21", Hostnames: []string{"github.ibm.com", "api.github.ibm.com"}}}
+}
+
+func writeFakeHostAliases(t *testing.T, dir, hiveID, body string) {
+	t.Helper()
+	if err := os.WriteFile(filepath.Join(dir, "env-"+hiveID+".json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// One sweep over every posture (#18637): a spoke provisioned before #17805
+// (no hostAliases) and a pool slot are patched; a converged spoke is not; a
+// cluster with no aliases is never touched; a push-reported cluster shaped
+// like a-ks-wec2 is not kubectl'd but is reported, and an unreadable
+// Deployment logs a WARN naming the spoke and cluster.
+func TestReconcileHostAliasesSweep(t *testing.T) {
+	withTempHivesDir(t)
+	fake := installFakeKubectl(t)
+	var logs bytes.Buffer
+	s := &HubServer{
+		logger: slog.New(slog.NewTextHandler(&logs, nil)),
+		clusters: map[string]ClusterConfig{
+			"reach":     {ID: "reach", InCluster: true, HostAliases: testGHEHostAliases()},
+			"plain":     {ID: "plain", InCluster: true},
+			"a-ks-wec2": {ID: "a-ks-wec2", PullOnly: true, KubeconfigPath: "/kc", Context: "a-ks-wec2", HostAliases: testGHEHostAliases()},
+		},
+	}
+	mustSaveHive(t, &SaaSHive{ID: "old", ClusterID: "reach", Status: "assigned"})
+	mustSaveHive(t, &SaaSHive{ID: "slot", ClusterID: "reach", Status: "available"})
+	mustSaveHive(t, &SaaSHive{ID: "conv", ClusterID: "reach", Status: ""})
+	mustSaveHive(t, &SaaSHive{ID: "unread", ClusterID: "reach", Status: "assigned"})
+	mustSaveHive(t, &SaaSHive{ID: "plainhive", ClusterID: "plain", Status: "assigned"})
+	mustSaveHive(t, &SaaSHive{ID: "wec2hive", ClusterID: "a-ks-wec2", Status: "assigned"})
+	writeFakeHostAliases(t, fake, "old", "")
+	writeFakeHostAliases(t, fake, "slot", `[{"ip":"10.0.0.9","hostnames":["other.example"]}]`)
+	writeFakeHostAliases(t, fake, "conv", `[{"ip":"129.34.104.21","hostnames":["api.github.ibm.com","github.ibm.com"]}]`)
+	writeFakeHostAliases(t, fake, "plainhive", "")
+
+	s.reconcileHostAliases()
+
+	inv := fakeKubectlInvocations(t, fake)
+	patchedNS := map[string]string{}
+	for _, line := range inv {
+		if strings.Contains(line, "hive-hosted-plainhive") || strings.Contains(line, "hive-hosted-wec2hive") {
+			t.Errorf("sweep must not kubectl this hive: %s", line)
+		}
+		if strings.Contains(line, " patch deployment hive ") {
+			for _, id := range []string{"old", "slot", "conv", "unread"} {
+				if strings.Contains(line, "hive-hosted-"+id+" ") {
+					patchedNS[id] = line
+				}
+			}
+		}
+	}
+	if _, ok := patchedNS["old"]; !ok {
+		t.Error("spoke provisioned before #17805 must be patched on the next sweep")
+	}
+	if line, ok := patchedNS["slot"]; !ok || !strings.Contains(line, "other.example") || !strings.Contains(line, "github.ibm.com") {
+		t.Errorf("pool slot must be patched and keep its unrelated alias: %q", line)
+	}
+	if _, ok := patchedNS["conv"]; ok {
+		t.Error("converged spoke must not be patched (idempotent)")
+	}
+	out := logs.String()
+	if !strings.Contains(out, "level=WARN") || !strings.Contains(out, "hive_id=unread") || !strings.Contains(out, "cluster=reach") {
+		t.Errorf("unreadable deployment must WARN naming spoke and cluster:\n%s", out)
+	}
+	if !strings.Contains(out, "push-reported cluster") || !strings.Contains(out, "cluster=a-ks-wec2") {
+		t.Errorf("push-reported cluster must be reported, not skipped silently:\n%s", out)
+	}
+}
+
+func TestReconcileHostAliasesSweep_NoClusterAliasesIsNoop(t *testing.T) {
+	withTempHivesDir(t)
+	fake := installFakeKubectl(t)
+	s := &HubServer{logger: appKeyTestLogger(), clusters: map[string]ClusterConfig{"plain": {ID: "plain", InCluster: true}}}
+	mustSaveHive(t, &SaaSHive{ID: "h", ClusterID: "plain", Status: "assigned"})
+	s.reconcileHostAliases()
+	if inv := fakeKubectlInvocations(t, fake); len(inv) != 0 {
+		t.Fatalf("no cluster declares host_aliases: sweep must not run kubectl, got %v", inv)
+	}
+}
+
+func TestReconcileHostAliasesSweep_RecentlyUnreachableWarns(t *testing.T) {
+	withTempHivesDir(t)
+	fake := installFakeKubectl(t)
+	var logs bytes.Buffer
+	s := &HubServer{
+		logger:   slog.New(slog.NewTextHandler(&logs, nil)),
+		clusters: map[string]ClusterConfig{"r": {ID: "r", InCluster: true, HostAliases: testGHEHostAliases()}},
+	}
+	mustSaveHive(t, &SaaSHive{ID: "h", ClusterID: "r", Status: "assigned"})
+	s.markClusterUnreachable("r")
+	s.reconcileHostAliases()
+	if inv := fakeKubectlInvocations(t, fake); len(inv) != 0 {
+		t.Fatalf("recently unreachable cluster must not be dialled, got %v", inv)
+	}
+	if out := logs.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "cluster=r") {
+		t.Fatalf("recently unreachable cluster must WARN:\n%s", out)
+	}
+}
+
+func TestReconcileHostAliasesSweep_PatchFailureWarns(t *testing.T) {
+	withTempHivesDir(t)
+	fake := installFakeKubectl(t)
+	var logs bytes.Buffer
+	s := &HubServer{
+		logger:   slog.New(slog.NewTextHandler(&logs, nil)),
+		clusters: map[string]ClusterConfig{"r": {ID: "r", InCluster: true, HostAliases: testGHEHostAliases()}},
+	}
+	mustSaveHive(t, &SaaSHive{ID: "h", ClusterID: "r", Status: "assigned"})
+	writeFakeHostAliases(t, fake, "h", "")
+	if err := os.WriteFile(filepath.Join(fake, "patch-fail-h"), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.reconcileHostAliases()
+	if out := logs.String(); !strings.Contains(out, "patch failed") || !strings.Contains(out, "hive_id=h") {
+		t.Fatalf("patch failure must WARN naming the spoke:\n%s", out)
+	}
+}
+
+func TestHostAliasesConvergedDriftAndBadJSON(t *testing.T) {
+	want := testGHEHostAliases()
+	if hostAliasesConverged([]byte("not json"), want) {
+		t.Error("unparseable live hostAliases must not be converged")
+	}
+	stale := []byte(`[{"ip":"10.1.1.1","hostnames":["github.ibm.com"]},{"ip":"129.34.104.21","hostnames":["github.ibm.com","api.github.ibm.com"]}]`)
+	if hostAliasesConverged(stale, want) {
+		t.Error("a desired hostname still pinned to another IP is drift")
+	}
+	merged := mergeHostAliases(stale, want)
+	if len(merged) != 1 || merged[0].IP != "129.34.104.21" {
+		t.Fatalf("manual drift must converge to exactly the desired aliases: %+v", merged)
+	}
+}
+
+// The heartbeat carries the aliases of the SaaS record's cluster, so a
+// push-reported cluster like a-ks-wec2 gets them; a cluster without aliases,
+// an unknown cluster and a hive with no record get none.
+func TestHostAliasesForHeartbeat(t *testing.T) {
+	s := &HubServer{clusters: map[string]ClusterConfig{
+		"a-ks-wec2": {ID: "a-ks-wec2", PullOnly: true, HostAliases: testGHEHostAliases()},
+		"plain":     {ID: "plain", InCluster: true},
+	}}
+	if got := s.hostAliasesForHeartbeat(" a-ks-wec2 "); len(got) != 1 || got[0].IP != "129.34.104.21" {
+		t.Fatalf("a-ks-wec2-style cluster must deliver its aliases, got %+v", got)
+	}
+	for _, id := range []string{"plain", "unknown", ""} {
+		if got := s.hostAliasesForHeartbeat(id); got != nil {
+			t.Errorf("cluster %q must deliver no aliases, got %+v", id, got)
+		}
+	}
+}
+
+func TestSelfServiceFenceWithholdsHostAliases(t *testing.T) {
+	resp := &HeartbeatResponse{OK: true, HostAliases: testGHEHostAliases()}
+	withheld := fenceSelfServiceHeartbeatResponse(resp, SelfServiceHiveIDPrefix+"alice-hive")
+	if resp.HostAliases != nil || !strings.Contains(strings.Join(withheld, ","), "HostAliases") {
+		t.Fatalf("self-service hive must not receive host_aliases: withheld=%v resp=%+v", withheld, resp.HostAliases)
 	}
 }

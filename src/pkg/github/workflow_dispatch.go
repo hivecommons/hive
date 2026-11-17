@@ -229,3 +229,35 @@ func IsDispatchReply(body, reply string) bool {
 	}
 	return strings.EqualFold(strings.TrimRight(fields[0], ".:,;!"), strings.TrimSpace(reply))
 }
+
+// WorkflowDispatchForRef reads repo#number fresh from the forge and reports
+// whether its bound model hands the item's current state to a profile. It
+// is the owner's "Send to <profile>" path: one GET, so the decision is made
+// on the item as it is now rather than on the last enumeration. Issue
+// coverage is not known from a single read; the issue's state is derived as
+// if no pull request covered it.
+func (c *Client) WorkflowDispatchForRef(ctx context.Context, repo string, number int) (WorkflowDispatch, bool, error) {
+	if c == nil || c.client == nil || number <= 0 {
+		return WorkflowDispatch{}, false, nil
+	}
+	if !c.WorkflowModelFor(repo).Dispatches() {
+		return WorkflowDispatch{}, false, nil
+	}
+	owner, name := c.splitRepo(repo)
+	it, _, err := c.client.Issues.Get(ctx, owner, name, number)
+	if err != nil {
+		return WorkflowDispatch{}, false, fmt.Errorf("reading %s/%s#%d: %w", owner, name, number, err)
+	}
+	if it.GetState() != "open" {
+		return WorkflowDispatch{}, false, nil
+	}
+	labels := issueLabelNames(it.Labels)
+	if it.IsPullRequest() {
+		d, ok := c.WorkflowDispatchForPR(PullRequest{Repo: repo, Number: number, Title: it.GetTitle(), Labels: labels,
+			Draft: it.GetDraft(), UpdatedAt: it.GetUpdatedAt().Time, URL: it.GetHTMLURL()})
+		return d, ok, nil
+	}
+	d, ok := c.WorkflowDispatchForIssue(Issue{Repo: repo, Number: number, Title: it.GetTitle(), Labels: labels,
+		UpdatedAt: it.GetUpdatedAt().Time, URL: it.GetHTMLURL()})
+	return d, ok, nil
+}

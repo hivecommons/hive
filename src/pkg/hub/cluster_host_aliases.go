@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"sort"
 	"strings"
 	"time"
+
+	"github.com/hivecommons/hive/pkg/hub/spoke"
 )
 
 const (
@@ -38,10 +39,10 @@ const (
 // converges onto existing ones). It exists for GitHub Enterprise hosts that
 // are reachable only through a TLS REVERSE proxy pinned to a fixed IP — not a
 // CONNECT forward proxy, so upstream_proxy cannot express it (#17801).
-type ClusterHostAlias struct {
-	IP        string   `json:"ip" yaml:"ip"`
-	Hostnames []string `json:"hostnames" yaml:"hostnames"`
-}
+//
+// It is spoke.HostAlias so the same value rides the heartbeat to spokes the
+// hub cannot kubectl into, which converge their own Deployment (#18637).
+type ClusterHostAlias = spoke.HostAlias
 
 // normalizeClusterHostAliases validates and canonicalises a cluster's
 // host_aliases: the IP must parse, every entry needs at least one hostname,
@@ -93,58 +94,55 @@ func hostAliasesPatchJSON(want []ClusterHostAlias) (string, error) {
 	return string(patch), nil
 }
 
+// decodeLiveHostAliases parses raw jsonpath output (possibly empty). ok is
+// false when the output is not a hostAliases list.
+func decodeLiveHostAliases(liveRaw []byte) (live []ClusterHostAlias, ok bool) {
+	if len(strings.TrimSpace(string(liveRaw))) == 0 {
+		return nil, true
+	}
+	if err := json.Unmarshal(liveRaw, &live); err != nil {
+		return nil, false
+	}
+	return live, true
+}
+
 // hostAliasesConverged reports whether the live hostAliases (raw jsonpath
-// output, possibly empty) already carry every entry in want. Order and
-// hostname case are ignored; EXTRA live entries are tolerated so an operator's
-// hand-applied alias for an unrelated host is never clobbered by the sweep.
+// output, possibly empty) already equal mergeHostAliases(live, want): every
+// desired IP carries exactly the desired hostnames and no desired hostname
+// points elsewhere. Order and hostname case are ignored; entries for unrelated
+// hosts are tolerated so an operator's hand-applied alias is never clobbered.
 func hostAliasesConverged(liveRaw []byte, want []ClusterHostAlias) bool {
 	if len(want) == 0 {
 		return true
 	}
-	var live []ClusterHostAlias
-	if len(strings.TrimSpace(string(liveRaw))) > 0 {
-		if err := json.Unmarshal(liveRaw, &live); err != nil {
-			return false
-		}
+	live, ok := decodeLiveHostAliases(liveRaw)
+	if !ok {
+		return false
 	}
-	liveSet := map[string]bool{}
-	for _, a := range live {
-		for _, h := range a.Hostnames {
-			liveSet[strings.TrimSpace(a.IP)+"|"+strings.ToLower(strings.TrimSpace(h))] = true
-		}
-	}
-	for _, a := range want {
-		for _, h := range a.Hostnames {
-			if !liveSet[a.IP+"|"+h] {
-				return false
-			}
-		}
-	}
-	return true
+	return spoke.HostAliasesConverged(live, want)
 }
 
-// mergeHostAliases returns want merged over live: live entries for IPs not in
-// want are kept (so unrelated hand-applied aliases survive), entries for IPs
-// in want are replaced by the desired hostnames. Output is sorted by IP so the
-// patch is deterministic.
+// mergeHostAliases returns want merged over live (see spoke.MergeHostAliases):
+// unrelated live entries are kept, desired IPs carry exactly the desired
+// hostnames. Output is sorted by IP so the patch is deterministic.
 func mergeHostAliases(liveRaw []byte, want []ClusterHostAlias) []ClusterHostAlias {
-	var live []ClusterHostAlias
-	if len(strings.TrimSpace(string(liveRaw))) > 0 {
-		_ = json.Unmarshal(liveRaw, &live)
+	live, _ := decodeLiveHostAliases(liveRaw)
+	return spoke.MergeHostAliases(live, want)
+}
+
+// hostAliasesForHeartbeat returns the host_aliases of the cluster the hub's
+// own SaaS record places a hive on (never the spoke's self-report), for
+// delivery on the heartbeat. nil when the cluster is unknown or declares none.
+func (s *HubServer) hostAliasesForHeartbeat(saasClusterID string) []ClusterHostAlias {
+	id := strings.TrimSpace(saasClusterID)
+	if id == "" {
+		return nil
 	}
-	wantIPs := map[string]bool{}
-	for _, a := range want {
-		wantIPs[a.IP] = true
+	c, ok := s.clusters[id]
+	if !ok || len(c.HostAliases) == 0 {
+		return nil
 	}
-	out := make([]ClusterHostAlias, 0, len(live)+len(want))
-	for _, a := range live {
-		if !wantIPs[strings.TrimSpace(a.IP)] {
-			out = append(out, a)
-		}
-	}
-	out = append(out, want...)
-	sort.SliceStable(out, func(i, j int) bool { return out[i].IP < out[j].IP })
-	return out
+	return c.HostAliases
 }
 
 // reconcileHostAliasesIfDue runs the sweep at most once per
@@ -182,6 +180,11 @@ func (s *HubServer) reconcileHostAliases() {
 
 	patched := 0
 	deferred := 0
+	// Hives the hub cannot kubectl into, per cluster. They are converged by
+	// the spoke itself from HeartbeatResponse.HostAliases; the sweep says so
+	// once per cluster instead of skipping them silently (#18637).
+	viaHeartbeat := map[string]int{}
+	unreachable := map[string]int{}
 	for _, h := range listSaaSHives() {
 		if !netAdminSweepEligible(h.Status) {
 			continue
@@ -191,7 +194,15 @@ func (s *HubServer) reconcileHostAliases() {
 			continue
 		}
 		want, ok := wantByCluster[cluster.ID]
-		if !ok || s.clusterRecentlyUnreachable(cluster.ID) {
+		if !ok {
+			continue
+		}
+		if !cluster.KubectlReachable() {
+			viaHeartbeat[cluster.ID]++
+			continue
+		}
+		if s.clusterRecentlyUnreachable(cluster.ID) {
+			unreachable[cluster.ID]++
 			continue
 		}
 		ns := hiveHostedNamespacePrefix + h.ID
@@ -202,7 +213,7 @@ func (s *HubServer) reconcileHostAliases() {
 		out, err := getCmd.Output()
 		cancel()
 		if err != nil {
-			s.logger.Debug("host_aliases reconcile: could not read hive deployment",
+			s.logger.Warn("host_aliases reconcile: could not read hive deployment — aliases not applied, will retry next sweep",
 				"hive_id", h.ID, "cluster", cluster.ID, "error", err)
 			continue
 		}
@@ -237,6 +248,14 @@ func (s *HubServer) reconcileHostAliases() {
 		patched++
 		s.logger.Info("reconciled cluster host_aliases onto hive deployment (rolls the pod once)",
 			"hive_id", h.ID, "cluster", cluster.ID, "patched_this_cycle", patched)
+	}
+	for id, n := range viaHeartbeat {
+		s.logger.Info("host_aliases reconcile: push-reported cluster, hub cannot patch; spokes converge from the heartbeat",
+			"cluster", id, "hives", n)
+	}
+	for id, n := range unreachable {
+		s.logger.Warn("host_aliases reconcile: cluster recently unreachable — aliases not applied by the hub this sweep (spokes still converge from the heartbeat)",
+			"cluster", id, "hives", n)
 	}
 	if deferred > 0 {
 		s.logger.Info("host_aliases reconcile: rate limit reached, remaining hives deferred to next cycle",
