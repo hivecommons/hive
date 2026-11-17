@@ -22,6 +22,9 @@ const src = [
   'const escapeHtml = s => String(s).replace(/[&<>"\']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",\'"\':"&quot;","\'":"&#39;"}[c]));',
   'const dashboardSectionHelpMark = () => "";',
   'const formatFixTime = () => "";',
+  'const fmtUSD = n => n == null ? "—" : "$" + Number(n).toFixed(2);',
+  pick(/function governorPRModelHiveCostTip\(b, data\) \{[\s\S]*?\n    \}\n/, 'governorPRModelHiveCostTip'),
+  pick(/function governorPRModelsHiveCostNote\(data\) \{[\s\S]*?\n    \}\n/, 'governorPRModelsHiveCostNote'),
   pick(/function governorPRModelUnattributed\(b\) \{[\s\S]*?\n    \}\n/, 'governorPRModelUnattributed'),
   pick(/const GOV_PR_MODEL_COLUMNS = \[[\s\S]*?\n    \];\n/, 'GOV_PR_MODEL_COLUMNS'),
   pick(/function governorPRModelRows\(data\) \{[\s\S]*?\n    \}\n/, 'governorPRModelRows'),
@@ -81,4 +84,17 @@ test('raw model ids and backends surface in the row tooltip and chips', () => {
   assert.strictEqual((out.match(/<span class="gov-pr-model-backend">claude<\/span>/g) || []).length, 1);
   assert.ok(out.includes('<span class="gov-pr-model-backend">copilot</span>'), 'each backend a chip');
   assert.ok(out.includes('Wilson lower bound'), 'tooltip states the rank formula');
+});
+
+test('hive review cost surfaces in the row tooltip and a coverage note (#18717)', () => {
+  const withCost = {
+    ...data,
+    hive_cost_coverage: { ready: true, window_hours: 336, unattributed_usd: 4, backend_unsupported_usd: null, disclaimer: 'Not a bill.' },
+    buckets: data.buckets.map((b, i) => ({ ...b, hive_cost: i === 0 ? { usd: null, launches: 0, prs_with_cost: 0, usd_per_merged_pr: null } : { usd: 6, launches: 3, prs_with_cost: 2, usd_per_merged_pr: 1.5 } })),
+  };
+  const out = lifted.render(withCost);
+  assert.ok(out.includes('Hive review cost: $6.00 est. over 2 PRs with launch records, 3 launches · $1.50 per merged PR'), 'cost in the row tooltip');
+  assert.ok(out.includes('Hive review cost: — est.'), 'null cost renders as a dash');
+  assert.ok(out.includes('class="gov-pr-model-sub gov-pr-model-sub-spaced gov-pr-models-hive-cost"'), 'coverage note rendered');
+  assert.ok(!lifted.render(data).includes('Hive review cost'), 'nothing without hive_cost_coverage');
 });
