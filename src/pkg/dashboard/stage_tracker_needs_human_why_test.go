@@ -72,6 +72,8 @@ func TestStageTrackerNeedsHumanWhy(t *testing.T) {
 			wantSource: needsHumanSourceMarker,
 			wantReason: needsHumanReasonMarker,
 		},
+		{name: "blocked on an owner action names its reason", item: StageTrackerItem{Kind: "issue", Number: 16, Stage: 10, Modifiers: []string{modBlocked}, BlockedOwnerReason: "needs an owner action: grant the hub app contents:write"}, wantSource: needsHumanSourceBlockedOnOwner, wantReason: "needs an owner action: grant the hub app contents:write"},
+		{name: "a held owner-action block is a pause, not a wait", item: StageTrackerItem{Kind: "issue", Number: 17, Modifiers: []string{modBlocked, modHold}, BlockedOwnerReason: "needs an owner action", Hold: &StageTrackerHold{By: "alice"}}},
 		{name: "plain open issue stays Open", item: StageTrackerItem{Kind: "issue", Number: 10}},
 		{name: "plain actionable issue", item: StageTrackerItem{Kind: "issue", Number: 11, Stage: 10}},
 		{name: "claimed filed-for-help issue is being worked", item: StageTrackerItem{Kind: "issue", Number: 12, Stage: trackerNumberClaimed, FiledForHelp: "outreach"}},
