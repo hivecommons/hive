@@ -1,0 +1,198 @@
+name: Codex model freshness
+
+# Weekly PR that keeps codexStaticModels and CODEX_CLI_MODELS equal to the
+# model catalogue of the Codex CLI pinned in src/Dockerfile (#19036, part of
+# #19028). Codex has no per-account catalogue: the list is built into the
+# binary, so hosted hives without it served a hand-edited snapshot that fell
+# behind the pin (0.166.0 against 0.170.0).
+#
+# .github/scripts/codex-model-freshness.py installs @openai/codex at the pin
+# (npm --ignore-scripts, as the image does) and runs the same `codex app-server`
+# initialize + model/list exchange as discoverCodexModels, with an empty
+# CODEX_HOME. It answers without a ChatGPT login. Gate: `codex --version` equals
+# the pin and the catalogue is non-empty, unique and not all hidden; otherwise
+# nothing is written. Edits: the Go list, the JS list and its static/index.html
+# mirror, in orderCodexServedModels order, plus the "matches codex X" stamp the
+# model-list drift check reads (src/scripts/check-cli-model-lists.sh).
+#
+# One PR on bot/codex-model-freshness, force-pushed and edited in place by
+# later runs until merged; an unchanged catalogue means no branch and no PR.
+# Never auto-merged: it carries needs-human. Credentials as in
+# claude-model-freshness.yml: TOPUP_PUSH_TOKEN when set, else GITHUB_TOKEN.
+# Write permissions stay on the job that opens the PR.
+#
+# On a pull_request touching this machinery the selftest job runs the hermetic
+# tests and a DRY RUN against the real pin; it has read-only permissions.
+
+on:
+  schedule:
+    - cron: '53 7 * * 1'
+  workflow_dispatch:
+    inputs:
+      base:
+        description: 'Branch whose lists to update and to open the PR against'
+        type: string
+        default: v5
+      dry_run:
+        description: 'Print every edit; do not push a branch or open a PR'
+        type: boolean
+        default: false
+  pull_request:
+    paths:
+      - '.github/workflows/codex-model-freshness.yml'
+      - '.github/scripts/codex-model-freshness.py'
+      - '.github/scripts/test-codex-model-freshness.py'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codex-model-freshness-${{ github.event_name == 'pull_request' && github.event.pull_request.number || inputs.base || 'v5' }}
+  cancel-in-progress: false
+
+env:
+  BASE_BRANCH: ${{ inputs.base || 'v5' }}
+  HEAD_BRANCH: bot/codex-model-freshness
+
+jobs:
+  selftest:
+    name: self-test and dry run
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Hermetic tests (no network)
+        run: python3 .github/scripts/test-codex-model-freshness.py
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Dry run against the pinned CLI
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^ARG CODEX_VERSION=\([^ ]*\).*/\1/p' src/Dockerfile | head -1)"
+          npm install --prefix "$RUNNER_TEMP/codex" --ignore-scripts --no-fund --no-audit "@openai/codex@${pin}"
+          python3 -I .github/scripts/codex-model-freshness.py --dry-run \
+            --codex-bin "$RUNNER_TEMP/codex/node_modules/.bin/codex" | tee -a "$GITHUB_STEP_SUMMARY"
+          test -z "$(git status --porcelain)" || { echo "::error::the dry run changed the working tree"; git status --short; exit 1; }
+
+  refresh:
+    name: refresh the Codex model list
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ env.BASE_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+
+      - name: Probe the pinned Codex and rewrite the lists
+        id: apply
+        env:
+          DRY_RUN: ${{ inputs.dry_run == true && '1' || '' }}
+        run: |
+          set -euo pipefail
+          pin="$(sed -n 's/^ARG CODEX_VERSION=\([^ ]*\).*/\1/p' src/Dockerfile | head -1)"
+          [ -n "$pin" ] || { echo "no ARG CODEX_VERSION in src/Dockerfile" >&2; exit 1; }
+          npm install --prefix "$RUNNER_TEMP/codex" --ignore-scripts --no-fund --no-audit "@openai/codex@${pin}"
+          dry=()
+          [ "$DRY_RUN" = "1" ] && dry=(--dry-run)
+          python3 -I .github/scripts/codex-model-freshness.py \
+            --codex-bin "$RUNNER_TEMP/codex/node_modules/.bin/codex" \
+            --report-out "$RUNNER_TEMP/report.md" "${dry[@]}"
+          cat "$RUNNER_TEMP/report.md" >> "$GITHUB_STEP_SUMMARY"
+          if [ -n "$(git status --porcelain)" ]; then
+            test -z "$(gofmt -l src/pkg/dashboard/cli_models.go)" || { echo "::error::cli_models.go is not gofmt-clean"; exit 1; }
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          fi
+          echo "pin=${pin}" >> "$GITHUB_OUTPUT"
+
+      - name: Find the open PR
+        if: steps.apply.outputs.changed == 'true'
+        id: existing
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          number="$(gh pr list --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$HEAD_BRANCH" \
+            --state open --json number --jq '.[0].number // empty')"
+          echo "number=${number}" >> "$GITHUB_OUTPUT"
+
+      - name: Commit the refresh
+        if: steps.apply.outputs.changed == 'true'
+        env:
+          PIN: ${{ steps.apply.outputs.pin }}
+          PR_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$HEAD_BRANCH"
+          # One fragment per run; drop any earlier unmerged one on this branch.
+          while IFS= read -r -d '' fragment; do
+            if ! git cat-file -e "origin/${BASE_BRANCH}:${fragment}" 2>/dev/null; then
+              git rm -q -- "$fragment"
+            fi
+          done < <(git ls-files -z -- 'changelog.d/changed-codex-models-*.md')
+          printf -- '- The Codex model dropdown fallback now matches the models of the pinned Codex CLI %s.\n' "$PIN" \
+            > "changelog.d/changed-codex-models-$(date -u +%Y-%m-%d).md"
+          git add src/pkg/dashboard/cli_models.go src/pkg/dashboard/static-src/js/backends-tokens.js \
+            src/pkg/dashboard/static/index.html changelog.d
+          {
+            echo "✨ dashboard: refresh the Codex model list for codex ${PIN}"
+            echo
+            echo "Automated by codex-model-freshness.yml from the pinned binary's"
+            echo "app-server model/list."
+          } > "$RUNNER_TEMP/commit-msg.txt"
+          git commit -s -F "$RUNNER_TEMP/commit-msg.txt"
+          # A PAT-opened PR squashes under the PAT owner, so add their sign-off
+          # too (same reasoning as claude-model-freshness.yml).
+          if [ -n "$PR_TOKEN" ]; then
+            owner="$(GH_TOKEN="$PR_TOKEN" gh api user --jq '"\(.login) \(.id)"')"
+            login="${owner% *}"
+            id="${owner##* }"
+            if [ -z "$login" ] || [ -z "$id" ] || [ "$login" = "$id" ]; then
+              echo "::error::Could not resolve the TOPUP_PUSH_TOKEN owner."
+              exit 1
+            fi
+            git commit --amend --no-edit \
+              --trailer "Signed-off-by: ${login} <${id}+${login}@users.noreply.github.com>"
+          fi
+          git push --force origin "$HEAD_BRANCH"
+
+      - name: Open or refresh the PR
+        if: steps.apply.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.TOPUP_PUSH_TOKEN != '' && secrets.TOPUP_PUSH_TOKEN || github.token }}
+          PIN: ${{ steps.apply.outputs.pin }}
+          EXISTING: ${{ steps.existing.outputs.number }}
+        run: |
+          set -euo pipefail
+          title="✨ dashboard: refresh the Codex model list for codex ${PIN}"
+          {
+            cat "$RUNNER_TEMP/report.md"
+            echo
+            echo "Generated by [codex-model-freshness](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}) with \`.github/scripts/codex-model-freshness.py\`; the branch is force-pushed by later runs until merged. Not auto-merged: a human reviews model list changes."
+          } > "$RUNNER_TEMP/pr-body.md"
+          if [ -n "$EXISTING" ]; then
+            gh pr edit "$EXISTING" --repo "$GITHUB_REPOSITORY" --title "$title" --body-file "$RUNNER_TEMP/pr-body.md" --add-label needs-human
+          else
+            gh pr create --repo "$GITHUB_REPOSITORY" --base "$BASE_BRANCH" --head "$HEAD_BRANCH" \
+              --title "$title" --body-file "$RUNNER_TEMP/pr-body.md" --label needs-human
+          fi

@@ -1,0 +1,1 @@
+- The Codex model dropdown fallback now matches the models of the pinned Codex CLI 0.170.0, and a weekly job keeps it current.

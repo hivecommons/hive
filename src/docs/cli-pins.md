@@ -168,15 +168,26 @@ patch-only bump PR.
 3. Add the name to the workflow's matrix and dispatch `options`, and to the
    `CLIS` list in the script.
 
+## Codex static model list
+
+`codex app-server` `model/list` answers without a ChatGPT login, so
+`.github/workflows/codex-model-freshness.yml` installs `@openai/codex` at the
+`CODEX_VERSION` pin weekly, runs the exchange `discoverCodexModels` speaks, and
+opens one `needs-human` PR on `bot/codex-model-freshness` that rewrites
+`codexStaticModels` and `CODEX_CLI_MODELS` in `orderCodexServedModels` order
+and the "matches codex X" stamp the model-list check reads. Nothing is written
+unless `codex --version` equals the pin. It is never auto-merged
+([#19036](https://github.com/hivecommons/hive/issues/19036)).
+
 ## Not covered (yet)
 
 - The workflow does not diff each CLI's full model catalog before and after a
   bump (catalogs baked into binaries cannot be read at build time; see Model
   lists above). The dashboard's live probes (`codex app-server` model/list,
   `agy models`, `omp models --json`) remain the source of truth on a running
-  hive; a static-catalog refresh, when one is needed, is a hand edit to
-  `codexStaticModels` in `src/pkg/dashboard/cli_models.go` and its
-  `static/index.html` mirror.
+  hive. `codexStaticModels` (and its JS and `static/index.html` mirrors) is
+  refreshed weekly from the pinned binary by `codex-model-freshness.yml`; see
+  the Codex section above.
 - No fast lane from a "this model needs version X" runtime error
   ([#8418](https://github.com/hivecommons/hive/issues/8418)) to a dispatch of
   this workflow. Dispatching by hand with `cli=<name>` is the interim path.
