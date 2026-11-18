@@ -758,6 +758,7 @@
   "swarm": {},
   "autonomy": {},
   "review": {
+    "analysis_factcheck": {},
     "contributor_prs": {},
     "recommendations": {},
     "plan_match": {},
