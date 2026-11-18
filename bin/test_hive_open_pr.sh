@@ -405,6 +405,33 @@ reset_reqs
 
 # --- Summary ---
 echo ""
+echo "--- detached HEAD ---"
+
+reset_reqs
+# Detach the throwaway repo's checkout: the one branch still points here.
+git -C "$GIT_REPO" checkout --quiet --detach
+check_exit "detached HEAD with one local branch at it exits 0" 0 \
+  run_script d1 --repo o/r --title T --body B
+check "detached HEAD resolves to the real branch, not HEAD" "feature/from-branch" "$(json_field "$(find_req d1)" head)"
+check_exit "explicit --head HEAD while detached exits 0 via the same recovery" 0 \
+  run_script d2 --repo o/r --title T --body B --head HEAD
+check "explicit --head HEAD resolves to the real branch" "feature/from-branch" "$(json_field "$(find_req d2)" head)"
+
+# Two branches at the commit: ambiguous, so refuse instead of guessing.
+git -C "$GIT_REPO" branch other-branch
+check_exit "detached HEAD with two candidate branches exits 2" 2 \
+  run_script d3 --repo o/r --title T --body B
+check_exit "ambiguous detached HEAD writes no request" 0 \
+  test -z "$(find_req d3)"
+
+# No branch at the commit at all.
+git -C "$GIT_REPO" branch -D other-branch feature/from-branch >/dev/null 2>&1
+check_exit "detached HEAD with no branch exits 2" 2 \
+  run_script d4 --repo o/r --title T --body B
+check_exit "detached HEAD with no branch writes no request" 0 \
+  test -z "$(find_req d4)"
+
+echo ""
 echo "=== Results: $PASS passed, $FAIL failed ==="
 [ "$FAIL" -eq 0 ] || exit 1
 exit 0
