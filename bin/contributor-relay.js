@@ -66,6 +66,7 @@ const {
   BLOCKED_REASON_MENU,
   BLOCKED_REASON_HUMAN_REQUIRED,
   blockingPromptKey: classifyBlockingPromptKey,
+  claudeBypassConsent,
   classifyReadiness,
   recentPaneLines,
   classifyBlockedOnHumanReason,
@@ -530,6 +531,134 @@ const NETWORK_ERROR_RETRY_DELAY_MS = 5000;
 // kubestellar/hive#2436), wait before re-asking so we neither hang forever
 // (the old silent-nil behaviour) nor busy-loop the hub.
 const TASK_UNAVAILABLE_RETRY_MS = 30000;
+// ── What the relay says when the hive has no work for it (hivecommons/hive#19049) ──
+//
+// The wire reason no_matching_work covers BOTH an empty queue and a queue whose
+// every item was dropped by a filter the hive does not name on the wire
+// (cooldown, disabled or denied repository, an open or recently merged PR
+// already claiming it, own work); the hive logs which filter dropped each issue
+// on its own side. Capability, repository-scope, tier (level) and rate (quota)
+// refusals do have their own reasons, so those are named. A raw reason code
+// every 30s read as a fault to contributors new to ClankeR, so the relay says
+// the state once, in a sentence naming the hive, repeats only a short line at a
+// slow cadence, announces when work appears, and checks less often while the
+// answer stays the same.
+const NO_MATCHING_WORK_REASON = 'no_matching_work';
+const NO_WORK_BACKOFF_MAX_MS = 5 * 60 * 1000;
+const NO_WORK_BACKOFF_FACTOR = 2;
+const NO_WORK_STILL_LOG_INTERVAL_MS = 10 * 60 * 1000;
+const MS_PER_SECOND = 1000;
+const SECONDS_PER_MINUTE = 60;
+// queue_state values written to the relay status file and the tmux status line.
+const QUEUE_STATE_EMPTY = 'queue-empty';
+const QUEUE_STATE_FILTERED = 'filtered';
+const QUEUE_STATE_WORKING = 'working';
+const QUEUE_STATE_WAITING_ON_CLI = 'waiting-on-cli';
+
+// reason -> the filter it names and the sentence tail. `filter` is null for the
+// empty-queue answer.
+const NO_WORK_REASONS = {
+  [NO_MATCHING_WORK_REASON]: { filter: null },
+  capability_mismatch: { filter: 'capability', why: 'but none of it fits what this relay declares it can do' },
+  no_selected_work: { filter: 'repo', why: 'but none of it is in the repositories you selected' },
+  tier_disabled: { filter: 'level', why: 'but your contributor level is switched off on this hive' },
+  hourly_limit: { filter: 'quota', why: 'but you have reached this hive\'s hourly task limit for your level' },
+  daily_limit: { filter: 'quota', why: 'but you have reached this hive\'s daily task limit for your level' },
+  concurrency_limit: { filter: 'quota', why: 'but you are already at this hive\'s concurrent task limit for your level' },
+};
+
+// noWorkRetryDelayMs: 30s, 60s, 120s, 240s, then 300s while the answer stays
+// the same. With several hives the poll rotates on each answer, so the caller
+// keeps the base delay to not slow the others down.
+function noWorkRetryDelayMs(streak) {
+  return Math.min(NO_WORK_BACKOFF_MAX_MS, TASK_UNAVAILABLE_RETRY_MS * Math.pow(NO_WORK_BACKOFF_FACTOR, Math.max(0, streak - 1)));
+}
+
+function formatRetryInterval(ms) {
+  const seconds = Math.round(ms / MS_PER_SECOND);
+  if (seconds < SECONDS_PER_MINUTE) return `${seconds} seconds`;
+  const minutes = Math.round(seconds / SECONDS_PER_MINUTE);
+  return minutes === 1 ? '1 minute' : `${minutes} minutes`;
+}
+
+// hiveDisplayName is the public host of the hive the relay is connected to.
+function hiveDisplayName(hub) {
+  try { return new URL(hub.sourceURL || hub.url).host || 'this hive'; } catch (_) { return 'this hive'; }
+}
+
+// describeNoWork returns the state and the sentence for a no-work reason, or
+// null when the reason is not one this table knows (the caller then prints the
+// raw reason as before). `first` selects the full sentence over the short
+// "still" line.
+function describeNoWork(reason, target, delayMs, first) {
+  const entry = NO_WORK_REASONS[reason];
+  if (!entry) return null;
+  const every = formatRetryInterval(delayMs);
+  if (!entry.filter) {
+    return {
+      state: QUEUE_STATE_EMPTY,
+      line: first
+        ? `The queue for ${target} is empty. There is nothing for you to work on right now. Your ClankeR relay stays connected and checks again on its own, every ${formatRetryInterval(TASK_UNAVAILABLE_RETRY_MS)} at first, then every ${formatRetryInterval(NO_WORK_BACKOFF_MAX_MS)}; work arrives when the owner queues issues for contributors. ` +
+          'Issues that are queued but already claimed by an open or recently merged PR, or cooling down after an attempt, are not offered either; the hive does not say which applies.'
+        : `The queue for ${target} is still empty; checking again in ${every}.`,
+    };
+  }
+  return {
+    state: `${QUEUE_STATE_FILTERED}:${entry.filter}`,
+    line: first
+      ? `Work is queued on ${target}, ${entry.why} (filter: ${entry.filter}). Your ClankeR relay stays connected and checks again every ${every}.`
+      : `Still nothing open to you on ${target} (filter: ${entry.filter}); checking again in ${every}.`,
+  };
+}
+
+// noWorkLogLine decides what to print for this answer, keeping per-hive state:
+// the full sentence on a state change, a short line at a slow cadence after.
+// Returns { state, line } where line is null when this answer should be quiet.
+function noWorkLogLine(hub, reason, delayMs, now = Date.now()) {
+  const target = hiveDisplayName(hub);
+  const probe = describeNoWork(reason, target, delayMs, true);
+  if (!probe) return null;
+  const changed = hub.noWorkState !== probe.state;
+  if (changed) {
+    hub.noWorkState = probe.state;
+    hub.noWorkLoggedAt = now;
+    return probe;
+  }
+  if (now - (hub.noWorkLoggedAt || 0) >= NO_WORK_STILL_LOG_INTERVAL_MS) {
+    hub.noWorkLoggedAt = now;
+    return describeNoWork(reason, target, delayMs, false);
+  }
+  return { state: probe.state, line: null };
+}
+
+// The queue state shown on the status file and the tmux status line.
+let lastQueueState = null;
+
+function relayQueueState() {
+  if (currentTask) return QUEUE_STATE_WORKING;
+  if (CONTRIBUTOR_MODE !== MODE_HEADLESS && !cliReady) return QUEUE_STATE_WAITING_ON_CLI;
+  return lastQueueState;
+}
+
+const QUEUE_STATE_STATUS_LINE = {
+  [QUEUE_STATE_EMPTY]: 'ClankeR: queue empty, checking again soon',
+  [QUEUE_STATE_WORKING]: 'ClankeR: working',
+  [QUEUE_STATE_WAITING_ON_CLI]: 'ClankeR: waiting on the CLI',
+};
+
+function setQueueState(state) {
+  if (lastQueueState === state) return;
+  lastQueueState = state;
+  writeRelayStatus();
+  if (CONTRIBUTOR_MODE === MODE_HEADLESS) return;
+  // Best effort: what someone sees the moment they attach to the pane.
+  const text = state && state.startsWith(QUEUE_STATE_FILTERED)
+    ? `ClankeR: work queued, filtered for you (${state.split(':')[1]})`
+    : (QUEUE_STATE_STATUS_LINE[state] || 'ClankeR: connected');
+  try {
+    execSync(`tmux set-option -t ${TMUX_SESSION} status-right ${shellQuote(text)}`, { timeout: TMUX_COMMAND_TIMEOUT_MS, stdio: 'ignore' });
+  } catch (_) {}
+}
 
 // ── Contributor quota guard (hivecommons/hive#6833) ────────────────────────
 //
@@ -990,9 +1119,8 @@ function warnQuotaGuardUnprovisionedOnce() {
       'see src/docs/contributor-relay.md. Work may consume paid credits.');
     return;
   }
-  console.warn(`Contributor quota guard is ${QUOTA_GUARD_MODE} but no reading source is configured ` +
-    '(HIVE_CONTRIBUTOR_QUOTA_READING_FILE / HIVE_CONTRIBUTOR_QUOTA_READING_JSON are unset), ' +
-    'so it cannot see quota and is not guarding anything this session.');
+  console.warn('Contributor quota guard: no usage reading source is set, so quota is not being checked and tasks are not held back. ' +
+    'You can ignore this. To turn the guard on, set HIVE_CONTRIBUTOR_QUOTA_READING_FILE or HIVE_CONTRIBUTOR_QUOTA_READING_JSON (see src/docs/contributor-relay.md).');
 }
 
 let warnedQuotaGuardAwaitingPublisher = false;
@@ -1760,6 +1888,11 @@ function relayReadiness(hub) {
   return 'connected';
 }
 
+// A short operator-facing reason the CLI is not ready, or null. Surfaced on the
+// relay status file (cli_reason) and appended to the "CLI is not ready yet" log
+// lines so a contributor never sees the bare, reasonless wait.
+let cliNotReadyReason = null;
+
 function writeRelayStatus() {
   let temporary;
   try {
@@ -1795,6 +1928,8 @@ function writeRelayStatus() {
         started_at: currentTaskStartedAt || now, draining,
       } : null,
       idle_reason: relayIdleReason(),
+      cli_reason: cliNotReadyReason,
+      queue_state: relayQueueState(),
     };
     fs.mkdirSync(path.dirname(RELAY_STATUS_FILE), { recursive: true, mode: 0o700 });
     temporary = `${RELAY_STATUS_FILE}.${process.pid}.${randomUUID()}.tmp`;
@@ -2356,7 +2491,7 @@ function requestWork(hub, trigger, expectedConnectGeneration = null) {
   return hub.readyOutstanding;
 }
 
-function scheduleReadyRetry(hub, trigger) {
+function scheduleReadyRetry(hub, trigger, delayMs = TASK_UNAVAILABLE_RETRY_MS) {
   if (!hub) return;
   invalidateReadyRetry(hub, `superseded by ${trigger}`);
   const retryGeneration = hub.readyRetryGeneration;
@@ -2379,7 +2514,7 @@ function scheduleReadyRetry(hub, trigger) {
     if (hubs.length > 1 && hub === hubs[activeHubIndex]) chooseHubForNextTask('unavailable');
     const next = hubs[activeHubIndex];
     requestWork(next, `${trigger}_retry`, next ? next.connectGeneration : null);
-  }, TASK_UNAVAILABLE_RETRY_MS);
+  }, delayMs);
 }
 
 function sendTo(hub, msg) {
@@ -2694,7 +2829,7 @@ function maybeAskActiveHubForWork() {
   if (CONTRIBUTOR_MODE === MODE_HEADLESS || cliReady) {
     requestWork(hub, 'active_hub_switch');
   } else {
-    console.log('Active hive switched, but CLI is not ready yet — withholding ready until the CLI reaches its prompt');
+    console.log(`Active hive switched, but CLI is not ready yet — withholding ready until the CLI reaches its prompt${cliNotReadySuffix()}`);
   }
 }
 
@@ -4937,6 +5072,98 @@ function typeLaunchCommand() {
   return launchCmd;
 }
 
+// ── Claude Code's Bypass Permissions consent (hivecommons/hive#19049) ──────
+//
+// The contributor container launches claude with --dangerously-skip-permissions
+// / --permission-mode bypassPermissions, so a first start with no
+// skipDangerousModePermissionPrompt in the user settings draws a consent
+// dialog whose DEFAULT selection is "No, exit". contributor-agent.sh seeds the
+// setting so it normally never appears; this is the fallback for when it does.
+//
+// Down and Enter are separate tmux sends with a pause between them: Claude's
+// TUI redraws the selection between keystrokes, and Enter arriving in the same
+// burst as Down can land before the cursor has moved. Enter is only sent once
+// the pane confirms the cursor is on "Yes, I accept"; a selection that did not
+// move is left alone for the next poll, because Enter on "No, exit" is exactly
+// the bug (Claude exits to the shell).
+const CLAUDE_CONSENT_KEY_DELAY_MS = 800;
+// How many times the relay relaunches claude after it exited at the consent
+// prompt before it stops and leaves the reason on the status for the operator.
+const CLAUDE_CONSENT_EXIT_RELAUNCH_MAX = 3;
+const CLAUDE_EXITED_AT_PERMISSIONS_REASON = 'Claude exited at the permissions prompt';
+let claudeConsentShellReadings = 0;
+let claudeConsentGaveUp = false;
+let claudeConsentRelaunches = 0;
+function cliNotReadySuffix() {
+  return cliNotReadyReason ? ` [${cliNotReadyReason}]` : '';
+}
+
+function setCLINotReadyReason(reason) {
+  if (cliNotReadyReason === reason) return;
+  cliNotReadyReason = reason;
+  writeRelayStatus();
+}
+
+// answerClaudeBypassConsent answers the consent dialog if it is on screen.
+// Returns true when the dialog was present (whatever came of the answer), so
+// the caller skips the rest of this poll.
+function answerClaudeBypassConsent() {
+  if (BACKEND !== 'claude') return false;
+  // A shell pane can still show the dialog's last frame above the prompt;
+  // keys sent to the shell would recall and run history.
+  if (paneIsRunningShell()) return false;
+  const consent = claudeBypassConsent(capturePaneText());
+  if (!consent.present) return false;
+  try {
+    if (!consent.acceptSelected) {
+      console.log('Claude is asking to confirm Bypass Permissions mode ("No, exit" is the default); selecting "Yes, I accept"...');
+      execSync(`tmux send-keys -t ${TMUX_SESSION} Down`, { timeout: TMUX_COMMAND_TIMEOUT_MS });
+      sleepMs(CLAUDE_CONSENT_KEY_DELAY_MS);
+      if (!claudeBypassConsent(capturePaneText()).acceptSelected) {
+        console.log('The selection did not move to "Yes, I accept"; not pressing Enter (it would exit Claude). Retrying on the next poll.');
+        return true;
+      }
+    }
+    execSync(`tmux send-keys -t ${TMUX_SESSION} Enter`, { timeout: TMUX_COMMAND_TIMEOUT_MS });
+  } catch (_) {}
+  return true;
+}
+
+// handleClaudeExitedAtConsent notices that claude answered the consent dialog
+// and then left the pane (declined, or crashed), and relaunches it a bounded
+// number of times. Returns 'relaunched', 'gave-up', or null when it does not
+// apply. Typing the launch line directly (not relaunchCLI) mirrors the
+// #7863 recreate path: this runs inside the readiness wait that is armed.
+function handleClaudeExitedAtConsent() {
+  if (BACKEND !== 'claude' || claudeConsentGaveUp) return null;
+  // The pane is a shell that still shows the dialog's last frame: claude left
+  // at the prompt. It does not matter whether this poll ever saw the dialog
+  // live (the container's own startup loop may have answered it first).
+  const atConsentFrame = paneIsRunningShell() && claudeBypassConsent(capturePaneText()).present;
+  claudeConsentShellReadings = atConsentFrame ? claudeConsentShellReadings + 1 : 0;
+  if (claudeConsentShellReadings < CLI_GONE_CONFIRMATIONS) return null;
+  claudeConsentShellReadings = 0;
+  if (claudeConsentRelaunches >= CLAUDE_CONSENT_EXIT_RELAUNCH_MAX) {
+    setCLINotReadyReason(`${CLAUDE_EXITED_AT_PERMISSIONS_REASON}; gave up after ${CLAUDE_CONSENT_EXIT_RELAUNCH_MAX} relaunches. Attach and accept the prompt, or add "skipDangerousModePermissionPrompt": true to ~/.claude/settings.json`);
+    console.error(`${CLAUDE_EXITED_AT_PERMISSIONS_REASON} ${CLAUDE_CONSENT_EXIT_RELAUNCH_MAX + 1} times; not relaunching again.${cliNotReadySuffix()}`);
+    claudeConsentGaveUp = true;
+    return 'gave-up';
+  }
+  claudeConsentRelaunches++;
+  setCLINotReadyReason(`${CLAUDE_EXITED_AT_PERMISSIONS_REASON}; relaunching (${claudeConsentRelaunches}/${CLAUDE_CONSENT_EXIT_RELAUNCH_MAX})`);
+  console.error(`${CLAUDE_EXITED_AT_PERMISSIONS_REASON}; relaunching (${claudeConsentRelaunches}/${CLAUDE_CONSENT_EXIT_RELAUNCH_MAX}).`);
+  try {
+    // Wipe the dialog's last frame first, so the fresh claude's pane is not
+    // mistaken for the dialog still being on screen.
+    execSync(`tmux send-keys -t ${TMUX_SESSION} C-l`, { timeout: TMUX_COMMAND_TIMEOUT_MS });
+    execSync(`tmux clear-history -t ${TMUX_SESSION}`, { timeout: TMUX_COMMAND_TIMEOUT_MS });
+    typeLaunchCommand();
+  } catch (e) {
+    console.error(`Could not relaunch claude: ${e && e.message ? e.message : e}`);
+  }
+  return 'relaunched';
+}
+
 function waitForCLI() {
   let loginMessageShown = false;
   let needsLoginTicks = 0;
@@ -4966,8 +5193,25 @@ function waitForCLI() {
         setTimeout(check, CLI_READY_POLL_MS);
         return;
       }
+      if (answerClaudeBypassConsent()) {
+        needsLoginTicks = 0;
+        setTimeout(check, CLI_READY_POLL_MS);
+        return;
+      }
+      const consentExit = handleClaudeExitedAtConsent();
+      if (consentExit === 'relaunched') {
+        setTimeout(check, CLI_READY_POLL_MS);
+        return;
+      }
+      if (consentExit === 'gave-up') {
+        reject(new Error(cliNotReadyReason));
+        return;
+      }
       const state = getCLIState();
       if (state === 'ready') {
+        claudeConsentRelaunches = 0;
+        claudeConsentGaveUp = false;
+        setCLINotReadyReason(null);
         if (loginMessageShown) {
           console.log('CLI authentication prompt cleared; continuing.');
         }
@@ -9052,9 +9296,9 @@ function handleMessage(data, hub) {
         } else if (CONTRIBUTOR_MODE === MODE_HEADLESS || cliReady) {
           requestWork(hub, 'auth_ok');
         } else if (cliReadyFailed) {
-          console.log('Authenticated, but CLI readiness previously failed — withholding ready until the CLI recovers');
+          console.log(`Authenticated, but CLI readiness previously failed — withholding ready until the CLI recovers${cliNotReadySuffix()}`);
         } else {
-          console.log('Authenticated, but CLI is not ready yet — withholding ready until the CLI reaches its prompt');
+          console.log(`Authenticated, but CLI is not ready yet — withholding ready until the CLI reaches its prompt${cliNotReadySuffix()}`);
         }
       }
       if (!currentTask && !hubHasSelectedWork(hub)) maybeAskActiveHubForWork();
@@ -9106,6 +9350,13 @@ function handleMessage(data, hub) {
       break;
 
     case 'task_assign':
+      hub.noWorkStreak = 0;
+      hub.noWorkReason = null;
+      if (hub.noWorkState) {
+        console.log(`Work available on ${hiveDisplayName(hub)}, claiming ${msg.repo || 'a task'}${msg.number ? `#${msg.number}` : ''}.`);
+      }
+      hub.noWorkState = null;
+      setQueueState(null);
       // #7732: an assignment answers the `ready` it was sent for, whatever
       // this relay does with it below.
       hub.readyOutstanding = false;
@@ -9398,6 +9649,26 @@ function handleMessage(data, hub) {
       // which could just mean network lag), so rotating on it — rather than
       // on a guessed timeout — means we never sit idle on a hub with no work
       // while a different configured hub has some.
+      {
+        const sameAnswer = hub.noWorkReason === msg.reason;
+        hub.noWorkStreak = sameAnswer ? (hub.noWorkStreak || 0) + 1 : 1;
+        hub.noWorkReason = msg.reason;
+        const backoff = msg.reason === NO_MATCHING_WORK_REASON && hubs.length === 1;
+        const delayMs = backoff ? noWorkRetryDelayMs(hub.noWorkStreak) : TASK_UNAVAILABLE_RETRY_MS;
+        const said = noWorkLogLine(hub, msg.reason, delayMs);
+        if (said) {
+          if (said.line) {
+            console.log(said.line);
+            if (msg.message) console.log(sanitizeHubText(msg.message));
+          }
+          setQueueState(said.state);
+          scheduleReadyRetry(hub, 'task_unavailable', delayMs);
+          break;
+        }
+      }
+      hub.noWorkStreak = 0;
+      hub.noWorkReason = null;
+      hub.noWorkState = null;
       console.log(`No task assigned on ${hub.url} — reason: ${sanitizeHubText(msg.reason) || 'unspecified'}; retrying in ${TASK_UNAVAILABLE_RETRY_MS / 1000}s`);
       // #14002: some refusals carry a plain-language explanation (for example
       // app_not_installed names the org and the install link the operator must
@@ -9679,6 +9950,18 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     paneTail,
     paneLooksBlockedOnHuman,
     blockingPromptKey,
+    claudeBypassConsent,
+    answerClaudeBypassConsent,
+    handleClaudeExitedAtConsent,
+    getCLINotReadyReason: () => cliNotReadyReason,
+    noWorkRetryDelayMs,
+    describeNoWork,
+    noWorkLogLine,
+    relayQueueState,
+    formatRetryInterval,
+    NO_WORK_STILL_LOG_INTERVAL_MS,
+    resetClaudeConsentState: () => { claudeConsentGaveUp = false; claudeConsentShellReadings = 0; claudeConsentRelaunches = 0; cliNotReadyReason = null; },
+    CLAUDE_CONSENT_EXIT_RELAUNCH_MAX,
     PANE_STATE_WORKING,
     PANE_STATE_BLOCKED_ON_HUMAN,
     PANE_STATE_IDLE_COMPLETE,

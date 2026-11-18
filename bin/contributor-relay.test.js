@@ -15922,3 +15922,166 @@ test('tls-mismatch: an ordinary error still reconnects with backoff — only the
     teardown(relay);
   }
 });
+
+// ---------------------------------------------------------------------------
+// hivecommons/hive#19049 — Claude Code's Bypass Permissions consent, and what
+// the relay says when the hive has no work.
+// ---------------------------------------------------------------------------
+
+// The real dialog, as `tmux capture-pane -p` renders it. The default selection
+// is "No, exit".
+const CLAUDE_CONSENT_PANE_NO_SELECTED = `WARNING: Claude Code running in Bypass Permissions mode
+
+In Bypass Permissions mode, Claude Code will not ask for your approval before running potentially dangerous commands.
+
+ ❯ 1. No, exit
+   2. Yes, I accept
+
+Enter to confirm · Esc to exit
+`;
+const CLAUDE_CONSENT_PANE_YES_SELECTED = CLAUDE_CONSENT_PANE_NO_SELECTED
+  .replace('❯ 1. No, exit', '  1. No, exit').replace('  2. Yes, I accept', '❯ 2. Yes, I accept');
+
+test('#19049 claudeBypassConsent reads the real dialog text (table)', () => {
+  const cases = [
+    { name: 'default selection is No, exit', pane: CLAUDE_CONSENT_PANE_NO_SELECTED, present: true, acceptSelected: false },
+    { name: 'cursor already on Yes, I accept', pane: CLAUDE_CONSENT_PANE_YES_SELECTED, present: true, acceptSelected: true },
+    { name: 'a shell prompt', pane: 'dev@host:~$ \n', present: false, acceptSelected: false },
+    { name: 'a transcript quoting only the title', pane: 'we discussed Bypass Permissions mode earlier\n> \n', present: false, acceptSelected: false },
+    { name: 'the footer of a healthy session', pane: '  ⏵⏵ bypass permissions on (shift+tab to cycle)\n', present: false, acceptSelected: false },
+  ];
+  for (const c of cases) {
+    const got = paneClassifier.claudeBypassConsent(c.pane);
+    assert.strictEqual(got.present, c.present, c.name);
+    assert.strictEqual(got.acceptSelected, c.acceptSelected, c.name);
+  }
+});
+
+test('#19049 the consent dialog classifies as onboarding for claude only, and never answers with a bare Enter', () => {
+  assert.strictEqual(paneClassifier.classifyReadiness(CLAUDE_CONSENT_PANE_NO_SELECTED, 'claude'), 'onboarding');
+  assert.strictEqual(paneClassifier.blockingPromptKey(CLAUDE_CONSENT_PANE_NO_SELECTED, 'claude'), 'Down',
+    'with "No, exit" selected the key must move off it, not press Enter');
+  assert.strictEqual(paneClassifier.blockingPromptKey(CLAUDE_CONSENT_PANE_YES_SELECTED, 'claude'), null,
+    'with "Yes, I accept" selected a bare Enter is the right answer');
+  assert.strictEqual(paneClassifier.blockingPromptKey(CLAUDE_CONSENT_PANE_NO_SELECTED, 'copilot'), null);
+});
+
+function sendsAfter(relay, before) {
+  return relay.__tmuxSends().slice(before).map(c => c.replace(/^.*send-keys -t \S+ /, ''));
+}
+
+test('#19049 answerClaudeBypassConsent never presses Enter while "No, exit" is still selected', () => {
+  // The pane never reflects the Down (a TUI that ignored it): Enter would exit Claude.
+  const relay = loadRelay({ backend: 'claude', procAlive: true, paneText: CLAUDE_CONSENT_PANE_NO_SELECTED });
+  const log = console.log; console.log = () => {};
+  try {
+    const before = relay.__tmuxSends().length;
+    assert.strictEqual(relay.answerClaudeBypassConsent(), true);
+    const sent = sendsAfter(relay, before);
+    assert.ok(sent.some(c => /^Down$/.test(c)), `Down was not sent: ${JSON.stringify(sent)}`);
+    assert.ok(!sent.some(c => /^Enter$/.test(c)), `Enter sent while "No, exit" selected: ${JSON.stringify(sent)}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#19049 answerClaudeBypassConsent presses Enter once the pane shows Yes selected', () => {
+  let captures = 0;
+  const relay = loadRelay({ backend: 'claude', procAlive: true,
+    // 1st capture (consent present, No selected) -> Down -> 2nd capture shows Yes selected.
+    paneText: () => (captures++ === 0 ? CLAUDE_CONSENT_PANE_NO_SELECTED : CLAUDE_CONSENT_PANE_YES_SELECTED) });
+  const log = console.log; console.log = () => {};
+  try {
+    const before = relay.__tmuxSends().length;
+    assert.strictEqual(relay.answerClaudeBypassConsent(), true);
+    const sent = sendsAfter(relay, before);
+    const down = sent.findIndex(c => /^Down$/.test(c));
+    const enter = sent.findIndex(c => /^Enter$/.test(c));
+    assert.ok(down >= 0 && enter > down, `want Down then Enter, got ${JSON.stringify(sent)}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#19049 a pane that is a shell showing the dialog frame gets no keys', () => {
+  const relay = loadRelay({ backend: 'claude', procAlive: false, paneText: CLAUDE_CONSENT_PANE_NO_SELECTED });
+  try {
+    const before = relay.__tmuxSends().length;
+    assert.strictEqual(relay.answerClaudeBypassConsent(), false);
+    assert.deepStrictEqual(sendsAfter(relay, before), []);
+  } finally { teardown(relay); }
+});
+
+test('#19049 claude exited at the consent prompt: bounded relaunch, then a visible reason', () => {
+  const relay = loadRelay({ backend: 'claude', procAlive: false, paneText: CLAUDE_CONSENT_PANE_NO_SELECTED });
+  const log = console.log; const error = console.error; console.log = () => {}; console.error = () => {};
+  try {
+    relay.resetClaudeConsentState();
+    const max = relay.CLAUDE_CONSENT_EXIT_RELAUNCH_MAX;
+    // Two shell readings are needed before the CLI is declared gone.
+    assert.strictEqual(relay.handleClaudeExitedAtConsent(), null);
+    for (let i = 1; i <= max; i++) {
+      assert.strictEqual(relay.handleClaudeExitedAtConsent(), 'relaunched', `relaunch ${i}`);
+      assert.match(relay.getCLINotReadyReason(), /Claude exited at the permissions prompt; relaunching/);
+      assert.strictEqual(relay.handleClaudeExitedAtConsent(), null);
+    }
+    assert.strictEqual(relay.handleClaudeExitedAtConsent(), 'gave-up');
+    assert.match(relay.getCLINotReadyReason(), /Claude exited at the permissions prompt; gave up after \d+ relaunches/);
+    assert.match(relay.getCLINotReadyReason(), /skipDangerousModePermissionPrompt/);
+    // Once given up it stays quiet instead of looping.
+    assert.strictEqual(relay.handleClaudeExitedAtConsent(), null);
+    assert.strictEqual(relay.handleClaudeExitedAtConsent(), null);
+    const status = JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8'));
+    assert.match(status.cli_reason, /Claude exited at the permissions prompt/);
+    assert.strictEqual(status.queue_state, 'waiting-on-cli');
+  } finally { console.log = log; console.error = error; teardown(relay); }
+});
+
+test('#19049 no-work wording selection (table)', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    const target = 'bluefin.example.org';
+    const cases = [
+      { reason: 'no_matching_work', first: true, state: 'queue-empty',
+        has: [/The queue for bluefin\.example\.org is empty\./, /nothing for you to work on right now/, /ClankeR relay/, /30 seconds at first, then every 5 minutes/, /owner queues issues for contributors/], not: [/no_matching_work/] },
+      { reason: 'no_matching_work', first: false, state: 'queue-empty',
+        has: [/still empty; checking again in 5 minutes/], not: [/no_matching_work/] },
+      { reason: 'capability_mismatch', first: true, state: 'filtered:capability', has: [/Work is queued on bluefin\.example\.org/, /\(filter: capability\)/], not: [/is empty/] },
+      { reason: 'no_selected_work', first: true, state: 'filtered:repo', has: [/\(filter: repo\)/], not: [/is empty/] },
+      { reason: 'tier_disabled', first: true, state: 'filtered:level', has: [/\(filter: level\)/], not: [/is empty/] },
+      { reason: 'daily_limit', first: true, state: 'filtered:quota', has: [/daily task limit/, /\(filter: quota\)/], not: [/is empty/] },
+    ];
+    for (const c of cases) {
+      const got = relay.describeNoWork(c.reason, target, 300000, c.first);
+      assert.strictEqual(got.state, c.state, `${c.reason} state`);
+      for (const re of c.has) assert.match(got.line, re, `${c.reason}/${c.first}`);
+      for (const re of c.not) assert.doesNotMatch(got.line, re, `${c.reason}/${c.first}`);
+    }
+    assert.strictEqual(relay.describeNoWork('something_new', target, 30000, true), null,
+      'an unknown reason keeps the raw-reason line');
+    assert.deepStrictEqual([1, 2, 3, 4, 5, 9].map(relay.noWorkRetryDelayMs), [30000, 60000, 120000, 240000, 300000, 300000]);
+  } finally { teardown(relay); }
+});
+
+test('#19049 no-work is said once on a state change, then slowly; work arriving is announced', () => {
+  const relay = loadRelay({ backend: 'claude', procAlive: true });
+  const lines = []; const log = console.log; console.log = (...a) => lines.push(a.join(' '));
+  const origSetTimeout = global.setTimeout; global.setTimeout = () => 0;
+  try {
+    relay.setCliReady(true);
+    const hub = relay.getHubs()[0];
+    const empty = () => relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_matching_work' }), hub);
+    empty();
+    assert.strictEqual(lines.filter(l => /is empty\./.test(l)).length, 1);
+    lines.length = 0;
+    empty(); empty(); empty();
+    assert.deepStrictEqual(lines.filter(l => /queue for/.test(l)), [], 'repeats inside the slow window are quiet');
+    assert.strictEqual(JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8')).queue_state, 'queue-empty');
+    // After the slow interval a short "still empty" line is allowed.
+    const later = Date.now() + relay.NO_WORK_STILL_LOG_INTERVAL_MS + 1;
+    assert.match(relay.noWorkLogLine(hub, 'no_matching_work', 300000, later).line, /still empty/);
+    // A different answer is a state change and says so in full.
+    relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'capability_mismatch' }), hub);
+    assert.ok(lines.some(l => /\(filter: capability\)/.test(l)));
+    lines.length = 0;
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 't1', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 7, title: 'x' }), hub);
+    assert.ok(lines.some(l => /Work available on .*claiming foo\/bar#7/.test(l)), lines.join('\n'));
+    assert.notStrictEqual(relay.relayQueueState(), 'queue-empty', 'work arriving clears the empty state');
+  } finally { global.setTimeout = origSetTimeout; console.log = log; teardown(relay); }
+});

@@ -1398,6 +1398,61 @@ if [[ "$(seed_key hasCompletedOnboarding)" != "True" ]]; then
   exit 1
 fi
 
+# 4b. hivecommons/hive#19049: Claude Code's "Bypass Permissions mode" consent
+#     (default selection "No, exit") is pre-accepted through the documented
+#     user-scope setting skipDangerousModePermissionPrompt in
+#     ~/.claude/settings.json, but ONLY when this launch really runs claude in
+#     bypass mode, and merged into the contributor's own staged settings.
+agent_src_for_consent="$(dirname "$0")/contributor-agent.sh"
+settings_file="${seed_home}/.claude/settings.json"
+settings_key() {
+  python3 -c "import json,sys; print(json.load(open(sys.argv[1])).get(sys.argv[2]))" "$settings_file" "$1" 2>/dev/null
+}
+rm -rf "${seed_home}/.claude" "${seed_home}/.claude.json"
+run_seed claude >/dev/null 2>&1 || true
+if [[ -e "$settings_file" ]]; then
+  echo "#19049: settings.json must not be written when the launch is not bypass mode" >&2
+  exit 1
+fi
+mkdir -p "${seed_home}/.claude"
+printf '%s' '{"model":"claude-opus-4","env":{"HTTPS_PROXY":"http://p.invalid:3128"},"permissions":{"deny":["Bash(sudo:*)"]}}' >"$settings_file"
+run_seed claude SEED_CLAUDE_BYPASS_CONSENT=1 >/dev/null 2>&1 || true
+if [[ "$(settings_key skipDangerousModePermissionPrompt)" != "True" ]]; then
+  echo "#19049: skipDangerousModePermissionPrompt must be seeded in ~/.claude/settings.json; got:" >&2
+  cat "$settings_file" >&2
+  exit 1
+fi
+if [[ "$(settings_key model)" != "claude-opus-4" ]] || ! grep -q "HTTPS_PROXY" "$settings_file" || ! grep -q 'Bash(sudo:\*)' "$settings_file"; then
+  echo "#19049: the seed must MERGE into the contributor's staged settings.json, not replace it; got:" >&2
+  cat "$settings_file" >&2
+  exit 1
+fi
+if [[ "$(settings_key defaultMode)" != "None" ]] || grep -q "bypassPermissions" "$settings_file"; then
+  echo "#19049: the seed must not widen permissions (no defaultMode / bypassPermissions key)" >&2
+  cat "$settings_file" >&2
+  exit 1
+fi
+# An unreadable settings.json is left alone rather than overwritten.
+printf '%s' '{not json' >"$settings_file"
+run_seed claude SEED_CLAUDE_BYPASS_CONSENT=1 >/dev/null 2>&1 || true
+if [[ "$(cat "$settings_file")" != '{not json' ]]; then
+  echo "#19049: an unparsable settings.json must be left untouched" >&2
+  exit 1
+fi
+# The main launch path derives the flag from PERM_FLAG, and the startup dismiss
+# loop answers the dialog before its generic "Enter to confirm" branch.
+if ! grep -qF 'export SEED_CLAUDE_BYPASS_CONSENT=1' "$agent_src_for_consent" || ! grep -qF '*bypassPermissions*|*--dangerously-skip-permissions*)' "$agent_src_for_consent"; then
+  echo "#19049: SEED_CLAUDE_BYPASS_CONSENT must be exported only for a bypass-mode PERM_FLAG" >&2
+  exit 1
+fi
+consent_line="$(grep -n 'grep -q "Bypass Permissions mode"' "$agent_src_for_consent" | cut -d: -f1 | head -1)"
+generic_line="$(grep -n 'grep -q "trust this folder' "$agent_src_for_consent" | cut -d: -f1 | head -1)"
+if [[ -z "$consent_line" || -z "$generic_line" || "$consent_line" -ge "$generic_line" ]]; then
+  echo "#19049: the Bypass Permissions branch must come BEFORE the generic Enter-to-confirm branch (consent=${consent_line:-none} generic=${generic_line:-none})" >&2
+  exit 1
+fi
+rm -rf "${seed_home}/.claude"
+
 # 5. hivecommons/hive#7866: the interactive tmux pane must advertise true colour.
 #    The test hook exits before the tmux session is created, so pin the contract
 #    at the source: COLORTERM is exported (operator value honoured) before
