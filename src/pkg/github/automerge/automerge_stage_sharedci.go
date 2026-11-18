@@ -67,6 +67,15 @@ func stageForkGuard(policy StageLabelPolicy, owner, repo string, number int, hea
 	return policy.ForkGuard(owner+"/"+repo, number, head)
 }
 
+// stageHeldWorkflowRuns asks the policy which workflow runs on the PR's head
+// GitHub holds for approval that the hive did not approve.
+func stageHeldWorkflowRuns(policy StageLabelPolicy, owner, repo string, number int, head string) []int64 {
+	if policy.HeldWorkflowRuns == nil || number <= 0 {
+		return nil
+	}
+	return policy.HeldWorkflowRuns(owner+"/"+repo, number, head)
+}
+
 // foldForkGuard keeps a fork PR's fork-guard evidence across heads and
 // sweeps. The policy answers only for the head the last CI-enriched
 // enumeration saw, so every new head (and every snapshot that dropped the

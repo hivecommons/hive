@@ -36,7 +36,10 @@ type workflowApprovalAttempt struct {
 	attempted        bool
 	deniedCounted    bool
 	permissionDenied bool
-	seen             time.Time
+	// policyDenied: the last pass found no run on the head the hive will
+	// approve (untrusted head, or auto-approval off), so a person must.
+	policyDenied bool
+	seen         time.Time
 }
 
 // workflowApprovalLedger is the process-local record of approval passes,
@@ -121,6 +124,19 @@ func (l *workflowApprovalLedger) markDeniedCounted(key workflowApprovalKey) {
 	l.attempts[key] = attempt
 }
 
+// setPolicyDenied records whether the head's last pass left every gated run
+// to a person.
+func (l *workflowApprovalLedger) setPolicyDenied(key workflowApprovalKey, denied bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	attempt, ok := l.attempts[key]
+	if !ok {
+		return
+	}
+	attempt.policyDenied = denied
+	l.attempts[key] = attempt
+}
+
 // claim takes the head's one approval pass. It returns false when another
 // pass (a concurrent cycle, or an earlier one on the same head) already
 // has it; the once-per-head invariant lives here, not with callers.
@@ -172,24 +188,39 @@ func (c *Client) workflowApprovalKey(repo string, number int, head string) workf
 	return workflowApprovalKey{repo: owner + "/" + name, number: number, head: head}
 }
 
-// workflowApprovalWithLedger carries a recorded permission refusal onto the
-// head's probe, so the "needs workflow approval" caption holds on every
-// cycle, including the ones that skip the sweep. The cached probe is shared
-// and never mutated.
+// workflowApprovalWithLedger carries a recorded permission refusal and a
+// recorded policy denial onto the head's probe, so the "needs workflow
+// approval" caption and the held-runs park hold on every cycle, including
+// the ones that skip the sweep. The cached probe is shared and never
+// mutated.
 func (c *Client) workflowApprovalWithLedger(repo string, number int, head string, wa *PRWorkflowApproval) *PRWorkflowApproval {
-	if c == nil || wa == nil || wa.PermissionDenied {
+	if c == nil || wa == nil {
 		return wa
 	}
 	key := c.workflowApprovalKey(repo, number, head)
 	c.workflowApprovals.mu.Lock()
-	denied := c.workflowApprovals.attempts[key].permissionDenied
+	attempt := c.workflowApprovals.attempts[key]
 	c.workflowApprovals.mu.Unlock()
-	if !denied {
+	if (!attempt.permissionDenied || wa.PermissionDenied) && (!attempt.policyDenied || wa.Denied) {
 		return wa
 	}
 	out := *wa
-	out.PermissionDenied = true
+	out.PermissionDenied = out.PermissionDenied || attempt.permissionDenied
+	out.Denied = out.Denied || attempt.policyDenied
 	return &out
+}
+
+// markWorkflowApprovalDenied records on the ledger and on pr's activity
+// that the hive will not approve the head's gated runs, so this cycle's
+// stage pass and later ones park the PR for a person (HeldWorkflowRunIDs).
+func (c *Client) markWorkflowApprovalDenied(pr *PullRequest, key workflowApprovalKey) {
+	c.workflowApprovals.setPolicyDenied(key, true)
+	if pr.CIActivity == nil || pr.CIActivity.WorkflowApproval == nil || pr.CIActivity.WorkflowApproval.Denied {
+		return
+	}
+	activity := cloneCIActivity(pr.CIActivity)
+	activity.WorkflowApproval.Denied = true
+	pr.CIActivity = activity
 }
 
 // workflowApprovalTrusted is the trust policy: a person admitted this very
@@ -305,11 +336,14 @@ func (c *Client) splitTrustedWorkflowRuns(runs []*gh.WorkflowRun, number int, he
 // head. Call it right after EnrichCIStatus on the same slice. A 403/404 is
 // recorded once and surfaces as PermissionDenied instead of being retried;
 // any other failure (5xx, network, rate limit, cancellation) gives the pass
-// back so the next sweep retries the head.
+// back so the next sweep retries the head. A head the hive will not approve
+// (no trusted run, or auto-approval off) is marked Denied, so the stage pass
+// parks it for a person instead of naming whatever the lane said next.
 func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, policy config.GovernorCIConfig) {
-	if c == nil || c.client == nil || !policy.AutoApproveWorkflowsEnabled() {
+	if c == nil || c.client == nil {
 		return
 	}
+	enabled := policy.AutoApproveWorkflowsEnabled()
 	actors := policy.WorkflowApprovalActors()
 	for i := range prs {
 		pr := &prs[i]
@@ -326,6 +360,11 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 		}
 		wa := a.WorkflowApproval
 		previous := c.workflowApprovals.touch(key, time.Now())
+		if !enabled {
+			// Auto-approval is off: every gated run is a person's.
+			c.markWorkflowApprovalDenied(pr, key)
+			continue
+		}
 		if previous.attempted {
 			continue
 		}
@@ -340,8 +379,10 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 			}
 		}
 		if len(trusted) == 0 {
+			c.markWorkflowApprovalDenied(pr, key)
 			continue
 		}
+		c.workflowApprovals.setPolicyDenied(key, false)
 		owner, name := c.splitRepo(pr.Repo)
 		// The listing may be a cycle old. Re-read head, author and labels
 		// before letting the head run with the repository's CI rights.
@@ -356,6 +397,9 @@ func (c *Client) SweepWorkflowApprovals(ctx context.Context, prs []PullRequest, 
 		}
 		trusted, _ = c.splitTrustedWorkflowRuns(wa.runs, pr.Number, pr.HeadSHA, headRepo, key.repo, fresh.GetUser().GetLogin(), admitted, actors)
 		if len(trusted) == 0 {
+			// The fresh read showed a fork head or another author: no run
+			// the listing trusted is trusted after all.
+			c.markWorkflowApprovalDenied(pr, key)
 			continue
 		}
 		item := c.WritebackItemForPR(*pr)

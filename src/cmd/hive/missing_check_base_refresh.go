@@ -26,8 +26,9 @@ type missingCheckRefresher interface {
 // already updated a branch for. The second one is the loop guard: a check
 // that a fresh head still does not run (a path filter, a GITHUB_TOKEN-made
 // PR, see #11877) is not chased with another update every time the base
-// moves. After a restart both are empty, which costs at most one more
-// update per PR and check.
+// moves. One update marks every check missing at the time, so a PR missing
+// many checks is updated once, not once per check. After a restart both are
+// empty, which costs at most one more update per PR.
 type missingCheckRefreshState struct {
 	mu        sync.Mutex
 	lastRun   time.Time
@@ -53,11 +54,12 @@ var missingCheckRefresh = &missingCheckRefreshState{}
 // the base tip.
 //
 // It leaves alone a PR that is a draft, held, exempt or parked on a human
-// decision, red, conflicting, waiting on workflow approval, a fork with
-// "allow edits by maintainers" off, a dependency bot's branch, returned to
-// its contributor (072) or adopted by the hive (074). It shares the stale-red
-// refresh's interval and caps, and updates a PR at most once per (head, base
-// tip) and once per missing check.
+// decision, red, conflicting, waiting on workflow approval (GitHub holds its
+// runs, and an update would only make a new head whose runs are held again),
+// a fork with "allow edits by maintainers" off, a dependency bot's branch,
+// returned to its contributor (072) or adopted by the hive (074). It shares
+// the stale-red refresh's interval and caps, and updates a PR at most once
+// per (head, base tip) and once per set of missing checks.
 //
 // It returns the escalation keys of the PRs it updated.
 func refreshMissingCheckBehindPRs(
@@ -182,7 +184,18 @@ func refreshMissingCheckBehindPRs(
 			}
 			continue
 		}
-		st.refreshed[memoKey+"|"+check] = true
+		// One update answers every missing check that already runs today (a
+		// run on the base tip or another open PR): a fresh head that still
+		// lacks them will not grow them on the next base move either, so
+		// none of them earns another update (projectbluefin/server#686 has
+		// 12 missing checks). A missing check with no such evidence yet did
+		// not justify this update; it keeps its own once the workflow that
+		// reports it lands on the base (#18945 review).
+		for _, name := range pending {
+			if base.state.Reported[name] || seenOnPRs[bk][name] {
+				st.refreshed[memoKey+"|"+name] = true
+			}
+		}
 		perRepo[repo]++
 		total++
 		if logger != nil {

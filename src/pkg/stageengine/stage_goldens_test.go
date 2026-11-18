@@ -1111,6 +1111,9 @@ func decisionCause(reason string) string {
 		return prstage.CauseWorkflowApprovalUntrusted()
 	case strings.HasPrefix(reason, workflowApprovalWorkflowMissingPrefix):
 		return prstage.CauseWorkflowApprovalWorkflowMissing()
+	case strings.HasPrefix(reason, prstage.WorkflowRunsHeldPrefix):
+		ids, _ := prstage.ParseWorkflowRunsHeld(reason)
+		return prstage.CauseWorkflowRunsHeld(ids)
 	case strings.HasPrefix(reason, workflowApprovalRequiredPrefix):
 		return prstage.CauseWorkflowApprovalRequired()
 	case reason == "approval-desk-withheld":

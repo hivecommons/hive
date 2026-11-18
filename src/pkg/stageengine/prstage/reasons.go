@@ -94,6 +94,13 @@ const (
 	TrustedAuthorReasonAppAuthored    = "trusted-author:app-authored"
 	TrustedBotLaneSkipReason          = "trusted-bot-lane"
 	WorkflowApprovalRequiredPrefix    = "workflow-approval-required:"
+	// WorkflowRunsHeldPrefix: GitHub holds workflow runs on the head behind
+	// its approve-workflows gate and the hive did not approve them (its
+	// policy does not trust the head, auto-approval is off, or GitHub
+	// refused); the rest is the run ids. Only a person's "Approve and run"
+	// (or a new head) moves the PR, so it parks at 085 over whatever the
+	// lane said next.
+	WorkflowRunsHeldPrefix = WorkflowApprovalRequiredPrefix + "held-runs:"
 	// RequiredCheckNeverReportedPrefix: auto_merge.required_checks names a
 	// check that has never reported on this repo, so the trusted-bot lane
 	// cannot gate on it and no other check vouches for the head. A person
@@ -322,4 +329,28 @@ var humanMergeReasonWords = map[string][2]string{
 func HumanMergeReasonWords(code string) (word, sentence string, ok bool) {
 	w, ok := humanMergeReasonWords[code]
 	return w[0], w[1], ok
+}
+
+// WorkflowRunsHeldReason formats the WorkflowRunsHeldPrefix reason for ids.
+func WorkflowRunsHeldReason(ids []int64) string {
+	parts := make([]string, 0, len(ids))
+	for _, id := range ids {
+		parts = append(parts, strconv.FormatInt(id, 10))
+	}
+	return WorkflowRunsHeldPrefix + strings.Join(parts, ",")
+}
+
+// ParseWorkflowRunsHeld returns the run ids a WorkflowRunsHeldPrefix reason
+// names; ok is false for any other reason.
+func ParseWorkflowRunsHeld(reason string) (ids []string, ok bool) {
+	rest, ok := strings.CutPrefix(reason, WorkflowRunsHeldPrefix)
+	if !ok {
+		return nil, false
+	}
+	for _, id := range strings.Split(rest, ",") {
+		if id = strings.TrimSpace(id); id != "" {
+			ids = append(ids, id)
+		}
+	}
+	return ids, true
 }

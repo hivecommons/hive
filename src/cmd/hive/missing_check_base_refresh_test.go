@@ -248,3 +248,80 @@ func TestMissingCheckRefreshSkip(t *testing.T) {
 		})
 	}
 }
+
+// projectbluefin/server#686: a fork PR whose pull_request_target check (Prow)
+// passed while GitHub holds every pull_request run for approval. The probe
+// now runs on such a green head, and a held head is never base-refreshed:
+// the update would only make a new head whose runs are held again.
+func TestRefreshMissingCheckBehindPRs_HeldForkHeadLeftAlone(t *testing.T) {
+	resetMissingCheckRefresh(t)
+	pr := missingCheckPR(686, "h1")
+	pr.CIActivity.Checks = []github.PRActivityCheck{{Name: "prow / prow", State: "completed", Conclusion: "success", Head: "h1"}}
+	pr.CIActivity.WorkflowApproval = &github.PRWorkflowApproval{Pending: 4, RunIDs: []int64{1, 2, 3, 4}}
+	f := &fakeMissingCheckRefresher{bases: baseRunning("base1", "dashboard-build"), out: github.StaleRedRefreshOutcome{Updated: true, Settled: true}}
+	refreshMissingCheckBehindPRs(context.Background(), escalationTestConfig(), f, actionableWith(pr), nil, discardLogger(), time.Now())
+	if len(f.calls) != 0 || len(f.baseReads) != 0 {
+		t.Fatalf("calls %d, base reads %v; want a head with held runs left alone with no API call", len(f.calls), f.baseReads)
+	}
+}
+
+// A PR missing many required checks is updated once, not once per check:
+// the one update answers every check missing at the time, so a later base
+// tip does not buy another update for the next check on the list.
+func TestRefreshMissingCheckBehindPRs_OncePerSetOfMissingChecks(t *testing.T) {
+	resetMissingCheckRefresh(t)
+	cfg := escalationTestConfig()
+	missing := []string{"build", "docs", "lint", "unit"}
+	pr := func(head string) github.PullRequest {
+		p := missingCheckPR(686, head)
+		p.Protection.MissingRequiredChecks = append([]string(nil), missing...)
+		return p
+	}
+	f := &fakeMissingCheckRefresher{bases: baseRunning("base1", missing...), out: github.StaleRedRefreshOutcome{Updated: true, Settled: true}}
+	now := time.Date(2026, 11, 18, 2, 9, 0, 0, time.UTC)
+	for i, tip := range []string{"base1", "base2", "base3", "base4"} {
+		f.bases = baseRunning(tip, missing...)
+		refreshMissingCheckBehindPRs(context.Background(), cfg, f, actionableWith(pr("head"+tip)), nil, discardLogger(), now.Add(time.Duration(i)*staleRedRefreshInterval))
+	}
+	if len(f.calls) != 1 {
+		t.Fatalf("refresh calls = %d over four base tips with %d missing checks, want 1", len(f.calls), len(missing))
+	}
+	// A check that becomes required later still gets its one update.
+	f.bases = baseRunning("base5", append(missing, "e2e")...)
+	next := pr("headbase5")
+	next.Protection.MissingRequiredChecks = append(next.Protection.MissingRequiredChecks, "e2e")
+	refreshMissingCheckBehindPRs(context.Background(), cfg, f, actionableWith(next), nil, discardLogger(), now.Add(5*staleRedRefreshInterval))
+	if len(f.calls) != 2 || f.checks[1] != "e2e" {
+		t.Fatalf("refresh calls = %d (checks %v), want a second update for the newly required e2e", len(f.calls), f.checks)
+	}
+}
+
+// A missing check with no evidence that it runs anywhere did not justify the
+// update, so it is not memoised with the ones that did: once its workflow
+// lands on the base, the PR earns one update for it (#18945 review).
+func TestRefreshMissingCheckBehindPRs_UnevidencedCheckKeepsItsUpdate(t *testing.T) {
+	resetMissingCheckRefresh(t)
+	cfg := escalationTestConfig()
+	pr := func(head string) github.PullRequest {
+		p := missingCheckPR(686, head)
+		p.Protection.MissingRequiredChecks = []string{"build", "e2e"}
+		return p
+	}
+	f := &fakeMissingCheckRefresher{bases: baseRunning("base1", "build"), out: github.StaleRedRefreshOutcome{Updated: true, Settled: true}}
+	now := time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)
+	refreshMissingCheckBehindPRs(context.Background(), cfg, f, actionableWith(pr("h1")), nil, discardLogger(), now)
+	if len(f.calls) != 1 || f.checks[0] != "build" {
+		t.Fatalf("first pass: calls=%d checks=%v, want one update for build", len(f.calls), f.checks)
+	}
+	// e2e's workflow now runs on the base; build still has its update spent.
+	f.bases = baseRunning("base2", "build", "e2e")
+	refreshMissingCheckBehindPRs(context.Background(), cfg, f, actionableWith(pr("h2")), nil, discardLogger(), now.Add(staleRedRefreshInterval))
+	if len(f.calls) != 2 || f.checks[1] != "e2e" {
+		t.Fatalf("second pass: calls=%d checks=%v, want one more update for e2e", len(f.calls), f.checks)
+	}
+	f.bases = baseRunning("base3", "build", "e2e")
+	refreshMissingCheckBehindPRs(context.Background(), cfg, f, actionableWith(pr("h3")), nil, discardLogger(), now.Add(2*staleRedRefreshInterval))
+	if len(f.calls) != 2 {
+		t.Fatalf("third pass: calls=%d, want no more updates", len(f.calls))
+	}
+}

@@ -158,6 +158,7 @@ func TestHumanizeStageReason(t *testing.T) {
 		"base-branch-red:docker (hive),docker (hub)":                 "waiting for the base branch's CI to recover (docker (hive), docker (hub)) — not this PR's fault",
 		"shared-ci-incident:13208":                                   "deferred to shared-CI incident #13208 — not this PR's fault",
 		"fork-guard:Canary":                                          "check Canary refuses fork PRs — a maintainer must push this branch to the repository",
+		"workflow-approval-required:held-runs:11,12":                 "workflow runs 11, 12 held for a maintainer's approval on GitHub — no required check can report until someone clicks Approve and run",
 		"contributor-lane:workflow-path":                             "workflow path",
 		"contributor-lane:tests-removed":                             "tests removed",
 		"human-merge-path":                                           "human-merge path",

@@ -25,6 +25,12 @@ type PRWorkflowApproval struct {
 	Actor            string     `json:"actor,omitempty"`
 	ObservedAt       *time.Time `json:"observed_at,omitempty"`
 	PermissionDenied bool       `json:"permission_denied,omitempty"`
+	// Denied is set once the approval sweep decided the hive will not
+	// approve this head's runs: its trust policy does not cover the head, or
+	// governor.ci.auto_approve_workflows is off. Like PermissionDenied it is
+	// kept per head in the sweep's ledger, so it holds on the cycles that
+	// skip the sweep.
+	Denied bool `json:"denied,omitempty"`
 	// runs are the gated runs themselves, read-only, for the auto-approval
 	// decision (triggering actor, event, head repository).
 	runs []*gh.WorkflowRun
@@ -129,6 +135,46 @@ func workflowApprovalFromRuns(runs []*gh.WorkflowRun, now time.Time) *PRWorkflow
 		}
 	}
 	return out
+}
+
+// workflowApprovalProbeWanted reports whether pr's head may have workflow
+// runs GitHub holds for approval, so that it is worth the listing: CI still
+// pending, or green on what did run while a required check never reported
+// at all. The second is a fork head whose `pull_request_target` workflows
+// ran (Prow) while its `pull_request` runs are held: CIStatus reads success,
+// and a pending-only probe never saw the held runs (projectbluefin/server#686).
+// A red head is not probed; its failure is the blocker.
+func workflowApprovalProbeWanted(pr PullRequest) bool {
+	if pr.CIActivity == nil {
+		return false
+	}
+	switch pr.CIStatus {
+	case "pending":
+		return true
+	case "success":
+		return pr.Protection != nil && len(pr.Protection.MissingRequiredChecks) > 0
+	}
+	return false
+}
+
+// HeldWorkflowRunIDs names the workflow runs on pr's current head that
+// GitHub holds behind its approve-workflows gate and that the hive decided
+// it will not approve (Denied) or was refused permission to approve
+// (PermissionDenied): a person's click is what moves the PR. Nil when there
+// are none, when the evidence is for another head, or while the sweep has
+// not decided — a trusted head waits for the sweep, not for a person.
+func (p PullRequest) HeldWorkflowRunIDs() []int64 {
+	a := p.CIActivity
+	if a == nil || a.WorkflowApproval == nil || a.WorkflowApproval.Pending <= 0 || len(a.WorkflowApproval.RunIDs) == 0 {
+		return nil
+	}
+	if !a.WorkflowApproval.Denied && !a.WorkflowApproval.PermissionDenied {
+		return nil
+	}
+	if a.Head != "" && p.HeadSHA != "" && !strings.EqualFold(a.Head, p.HeadSHA) {
+		return nil
+	}
+	return append([]int64(nil), a.WorkflowApproval.RunIDs...)
 }
 
 // forgetWorkflowApproval drops the cached probe for a head so the next

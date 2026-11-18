@@ -427,6 +427,9 @@ func humanizeStageReason(reason string) string {
 	if rest, ok := strings.CutPrefix(r, stageengineprstage.RequiredCheckNeverReportedPrefix); ok {
 		return "required check " + rest + " has never reported on this repository — fix auto_merge.required_checks (or the repo's required_checks override) or merge by hand"
 	}
+	if ids, ok := stageengineprstage.ParseWorkflowRunsHeld(r); ok {
+		return decisionHeldRunsWords(ids) + " held for a maintainer's approval on GitHub — no required check can report until someone clicks Approve and run"
+	}
 	if rest, ok := strings.CutPrefix(r, "fork-guard:"); ok {
 		return "check " + strings.ReplaceAll(rest, ",", ", ") + " refuses fork PRs — a maintainer must push this branch to the repository"
 	}

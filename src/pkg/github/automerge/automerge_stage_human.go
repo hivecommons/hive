@@ -801,6 +801,9 @@ func decisionCauseFor(reason string, workflowManual bool) string {
 		return prstage.CauseWorkflowApprovalWorkflowMissing()
 	case strings.HasPrefix(reason, unauthorizedReasonPrefix):
 		return "the hive's GitHub App is not permitted to " + strings.ReplaceAll(strings.TrimPrefix(reason, unauthorizedReasonPrefix), "-", " ") + " (GitHub answered 403 Resource not accessible by integration); the `" + unauthorizedLabel + "` note above names the permission and the step a maintainer must take"
+	case strings.HasPrefix(reason, prstage.WorkflowRunsHeldPrefix):
+		ids, _ := prstage.ParseWorkflowRunsHeld(reason)
+		return prstage.CauseWorkflowRunsHeld(ids)
 	case strings.HasPrefix(reason, workflowApprovalRequiredPrefix):
 		return prstage.CauseWorkflowApprovalRequired()
 	case reason == "approval-desk-withheld":

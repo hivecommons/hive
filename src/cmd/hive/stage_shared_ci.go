@@ -20,6 +20,9 @@ type stageSharedCIEntry struct {
 	// is from a fork; set only when every failing check does
 	// (PullRequest.ForkGuardChecks).
 	forkGuard []string
+	// heldRuns names the workflow runs GitHub holds for approval on the head
+	// that the hive did not approve (PullRequest.HeldWorkflowRunIDs).
+	heldRuns []int64
 }
 
 // stageSharedCIIndex holds, per "repo#number", the open [shared-ci] incident
@@ -46,7 +49,8 @@ func publishStageSharedCIIncidents(actionable *github.ActionableResult) {
 					e.baseRed = append([]string(nil), pr.BaseRedChecks...)
 				}
 				e.forkGuard = pr.ForkGuardChecks()
-				if e.incident > 0 || len(e.baseRed) > 0 || len(e.forkGuard) > 0 {
+				e.heldRuns = pr.HeldWorkflowRunIDs()
+				if e.incident > 0 || len(e.baseRed) > 0 || len(e.forkGuard) > 0 || len(e.heldRuns) > 0 {
 					idx[stageSharedCIKey(pr.Repo, pr.Number)] = e
 				}
 			}
@@ -114,6 +118,18 @@ func stageForkGuard(repo string, number int, head string) []string {
 		return nil
 	}
 	return append([]string(nil), e.forkGuard...)
+}
+
+// stageHeldWorkflowRuns answers StageLabelPolicy.HeldWorkflowRuns with the
+// same repo/head matching as stageSharedCIIncident: the workflow runs GitHub
+// holds for approval on the head that the hive did not approve. A new head
+// is not covered until the next enumeration probes it.
+func stageHeldWorkflowRuns(repo string, number int, head string) []int64 {
+	e, ok := stageSharedCILookup(repo, number, head)
+	if !ok || len(e.heldRuns) == 0 {
+		return nil
+	}
+	return append([]int64(nil), e.heldRuns...)
 }
 
 func stageSharedCILookup(repo string, number int, head string) (stageSharedCIEntry, bool) {

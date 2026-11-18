@@ -188,6 +188,13 @@ type StageLabelPolicy struct {
 	// nor an adoption can turn the check green (hivecommons/hive#14273).
 	// nil = unknown (no park).
 	ForkGuard func(repo string, number int, head string) []string
+	// HeldWorkflowRuns returns the workflow runs on the PR head (repo
+	// "owner/name", number, head SHA) that GitHub holds behind its
+	// approve-workflows gate and the hive did not approve —
+	// hgithub.PullRequest.HeldWorkflowRunIDs. Such a PR is parked for a
+	// maintainer at 085 with reason `workflow-approval-required:held-runs:<ids>`.
+	// nil = unknown (no park).
+	HeldWorkflowRuns func(repo string, number int, head string) []int64
 	// QuietNotifications is github.notifications.mode != normal (default
 	// quiet): the stall note, the regression note and the trusted-human
 	// 071 note are folded into the PR's one hive status comment and edited
@@ -624,6 +631,7 @@ func (c *Engine) recordStage(lane, displayRepo, owner, repo string, pr *gh.PullR
 	obs.SharedCIIncident = stageSharedCIIncident(policy, owner, repo, obs.Number, obs.HeadSHA)
 	obs.BaseRedChecks = stageBaseBranchRed(policy, owner, repo, obs.Number, obs.HeadSHA)
 	obs.ForkGuardChecks = stageForkGuard(policy, owner, repo, obs.Number, obs.HeadSHA)
+	obs.HeldWorkflowRuns = stageHeldWorkflowRuns(policy, owner, repo, obs.Number, obs.HeadSHA)
 	if len(obs.ForkGuardChecks) == 0 {
 		rec, ok := c.stageStoreOrShared().Get(stageKey(owner, repo, obs.Number))
 		obs.ForkGuardChecks = carriedForkGuard(rec, ok, obs)
