@@ -1005,6 +1005,7 @@ type HubServer struct {
 	webhookNoSecretOnce  sync.Once
 	selfExperimentFlags  sync.Map // hive ID -> nous.SelfFlagAssignment; restart fails closed
 	mux                  *http.ServeMux
+	mailReply            *mailReplier // nil unless the reply DKIM key is configured (#18746)
 	registry             Registry
 	mu                   sync.RWMutex
 	logger               *slog.Logger

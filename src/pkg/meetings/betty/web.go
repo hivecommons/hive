@@ -117,6 +117,15 @@ func (w WebRetriever) Retrieve(ctx context.Context, query string, _ []string, li
 	} else {
 		direct <- nil
 	}
+	if _, isWeather := weatherPlace(c.Query); isWeather && w.Direct != nil {
+		// A weather answer is live data or nothing: search pages are
+		// cached forecasts of other days and contradict each other, so
+		// they are never offered as current conditions.
+		if got := <-direct; len(got) > 0 {
+			return got
+		}
+		return []Snippet{unavailableSnippet()}
+	}
 	hits, note := w.search(ctx, c.Query, limit)
 	out := append(<-direct, hits...)
 	if len(out) == 0 {
@@ -154,6 +163,7 @@ func (w WebRetriever) search(ctx context.Context, query string, limit int) ([]Sn
 			Source: webSource + " " + sanitize(link.Host),
 			Title:  clip(title, maxSnippetRunes),
 			Text:   clip(text, maxSnippetRunes) + " (" + clip(sanitize(link.String()), maxSnippetRunes) + ")",
+			URL:    link.String(),
 		})
 	}
 	for _, b := range sr.Infoboxes {

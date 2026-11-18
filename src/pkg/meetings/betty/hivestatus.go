@@ -117,6 +117,22 @@ var (
 	hiveNames = []string{"hive", "the repo", "this repo", "our repo"}
 )
 
+// attentionPhrases ask what is waiting on the speaker; attentionSubjects
+// say it is about work items. Both are needed, so "pay attention to the
+// demo" and "any issues with the audio" are not hive questions.
+var (
+	attentionPhrases = []string{
+		"need my attention", "needs my attention", "needing my attention", "need attention", "needs attention",
+		"waiting on me", "waiting for me", "awaiting me", "awaiting my review", "need me", "needs me",
+		"need my review", "needs my review", "need my decision", "needs my decision", "need a decision", "needs a decision",
+		"needs a human", "need a human", "needs human", "for me to review", "for me to look at",
+	}
+	attentionSubjects = []string{
+		"issue", "issues", "pr", "prs", "pull request", "pull requests", "item", "items", "anything", "something",
+		"things", "work", "review", "reviews", "decision", "decisions",
+	}
+)
+
 // IsHiveStatusQuestion reports whether text asks about the hive's own
 // state.
 func IsHiveStatusQuestion(text string) bool {
@@ -135,6 +151,11 @@ func IsHiveStatusQuestion(text string) bool {
 		return false
 	}
 	if has(hiveStrongWords) {
+		return true
+	}
+	// "are there any issues that need my attention": about the hive's own
+	// work waiting on the asker, never a web search or a research kick.
+	if has(attentionPhrases) && has(attentionSubjects) {
 		return true
 	}
 	return has(hiveNames) && has(hiveStateWords)

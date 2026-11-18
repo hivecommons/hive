@@ -155,6 +155,10 @@ func TestSMTPInviteDelivered(t *testing.T) {
 	if !d.Auth.Aligned || d.Auth.SPF != "pass" || d.Auth.From != "ada@example.com" || d.Auth.RemoteIP != "127.0.0.1" || d.Auth.HELO != "client.example.com" {
 		t.Fatalf("auth %+v", d.Auth)
 	}
+	// The header facts the hub's reply decision reads (#18746).
+	if d.Facts == nil || d.Facts.SenderLocal != "ada" || d.Facts.EnvelopeLocal != "bounce" || d.Facts.NullReturnPath || d.Facts.AutoSubmitted != "" {
+		t.Fatalf("facts %+v", d.Facts)
+	}
 }
 
 func TestSMTPRcptRules(t *testing.T) {

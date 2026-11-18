@@ -302,6 +302,15 @@ metadata, not a fabricated last-member PR event.
   a `dco` status from any other creator is ignored. Any unmet condition falls
   back to requiring probot `DCO`. The check output names the DCO path taken
   and, on fallback, why.
+- A forward-merge PR (head `sync/vN-to-vM*` or `topup/*`) must land by merge
+  commit. On a group, every member head must already be an ancestor of the
+  synthetic head; a squash or rebase queue never contains the PR's own head, so
+  for these heads the failure names the merge-method violation (#18931) rather
+  than the generic "not contained" error. The narrow DCO exception above does
+  not cover a top-up that carries a history-restoring ours-merge (that commit is
+  not on `v5`); such a PR needs probot `DCO`, so its flagged inherited commits
+  are remediated by their own authors (see
+  [v5-sync-policy.md](v5-sync-policy.md#dco-on-top-up-prs)).
 - Draft/held PRs, changes requested, dismissed approvals and approvals on an
   old head fail closed. A `pull_request_target` run on an already closed or
   merged PR (re-fired by a post-merge label or comment edit) passes as a

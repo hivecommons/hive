@@ -35,7 +35,7 @@ Hive attends meetings as a persona: **Betty** ("Betty Bee from the hive") by def
 - **Addressing her.** Start or end a line with one of her names (`meetings.persona.aliases`: "betty", "betty bee", "hive"), for example "Betty, when does the release ship?", "hey betty, any blockers on the deploy?" or "what do you think, Betty?". Common speech-to-text spellings ("Bettie", "Betty Bea") count. A sentence that merely mentions the name ("push it to the hive", "hive is slow today") does not. An alias that shares no word with her name, such as "hive", is an everyday word and is stricter: it addresses her only at the start of a line followed by a comma or colon ("hive, what's the status?", "Hive: any blockers?"), after "hey" or "ok" ("hey hive what's up"), or closing a question after a comma ("what do you think, hive?").
 - **Intro.** "Betty, introduce yourself", "who are you, Betty?" or "who's the bot?" gets the intro (`meetings.persona.intro_template`), which says what she does and how to send her home. Asked in chat, the intro is posted in chat. Asked by voice in a meeting that can hear her, she says a short spoken intro (one or two sentences, at most 120 characters, so it starts quickly and fits the speech cache) and posts the full intro once in chat; it is never delivered in full twice.
 - **What she answers.** When addressed she answers briefly from the hive's knowledge vaults, its beads (work items), its code maps (when `knowledge.code_maps.enabled` is on) and the web (when `meetings.persona.searxng_url` is set, see [Web answers](#web-answers)), plus the last three minutes of the meeting. If she does not know, she says so. A request that is not a question gets one clarifying question or one or two sentences on the recent discussion.
-- **Voice.** She speaks only when the request was spoken (addressed in the meeting's audio) or asks for it ("say it", "out loud"). She answers directly, at most 2 sentences and 200 characters with no links or Markdown. A short acknowledgement ("Let me check on that.", rotating, in the persona's language, never with the speaker's name) is said only when the answer is still not ready 3 seconds after the request (6 seconds for a question about the hive's own state, which is normally answered well inside that), and one still waiting to be spoken when the answer arrives is skipped, so an acknowledgement never delays the answer behind it. The answer goes through the meeting's voice rules: it is spoken only when the meeting's voice is on and `meetings.voice_on_address` is true, and falls back to chat otherwise or when speaking fails; the acknowledgement is never posted to chat and is not charged to the budget. That gate is hive's, for every platform: Quorum v0.2.0 ignores `voice: false` on Discord, so hive never calls `say` for a meeting whose voice is off. A spoken "Betty?" with no question gets one clarifying question or one or two sentences on the last three minutes.
+- **Voice.** She speaks only when the request was spoken (addressed in the meeting's audio) or asks for it ("say it", "out loud"). She answers directly, at most 2 sentences and 200 characters with no links or Markdown. A short acknowledgement ("Let me check on that.", rotating, in the persona's language, never with the speaker's name) is said only when the answer is still not ready 3 seconds after the request (6 seconds for a question about the hive's own state, which is normally answered well inside that), and one still waiting to be spoken when the answer arrives is skipped, so an acknowledgement never delays the answer behind it. The answer goes through the meeting's voice rules: it is spoken only when the meeting's voice is on and `meetings.voice_on_address` is true, and falls back to chat otherwise or when speaking fails; the acknowledgement is never posted to chat and is not charged to the budget. That gate is hive's, for every platform: Quorum v0.2.0 ignores `voice: false` on Discord, so hive never calls `say` for a meeting whose voice is off. A spoken "Betty?" with no question gets one clarifying question or one or two sentences on the last three minutes. When she heard her name in a spoken request and is about to answer, she first plays a short, soft chime (`meetings.listening_tone`, on by default; see Configuration).
 - **Several requests at once.** Each request is worked on as soon as it is heard and answered as soon as its answer is ready, so answers can arrive out of order. Whenever that could confuse the room (another request is in flight, someone else spoke since, or the answer took more than 8 s) the answer opens with a short topic phrase: "On open PRs: ...". The topic is the model's 2 to 5 word label for the question, else the request's own words. She does not use the speaker's name in acknowledgements or answers; a name is added only when two people asked about the same topic within a minute ("Andy (re: open PRs): ..." in chat, "Andy, about open PRs: ..." spoken, first name only), written plain, never as `@name`, so nobody is pinged. A single quick answer has no prefix. With two or more requests in hand she posts one short chat note ("I have 3 questions; answering each as it's ready."), at most once a minute, through the chat rate limit and never charged;
 - **Questions about the hive itself.** "How many open issues are there?", "what PRs are open in the hive repo?", "which agents are working?" are answered from the hive's live dashboard state (the same open, actionable, held and blocked counts, agents and open PRs the Overview and the dashboard chat use), read in-process, so the answer comes in seconds and never goes to research. Such a question names the hive (or "the repo") or asks for open issues, open PRs, actionable items or recent merges. The numbers are the dashboard's own: every count states its scope the same way ("across 13 repos", or the one repo asked about); a count taken while some repos are still being read after a restart is worded "at least N, counted in 5 of 13 repos so far" and never given as a total; a snapshot older than three minutes says how old it is. Agents are counted as the sidebar counts them (each replica is one agent), the ones working are named (up to five, then "and N more") and a paused agent is never named as running. Asked about one issue or PR she gives a short summary of its description, its state (open, draft, merged, closed), the review and CI status the hive holds and what is blocking it, in at most three short sentences, with no extra GitHub call.
 - **About hive itself.** "What is hive?", "which voice memo providers does hive support?", "tell me all you know about hive" are answered from a short product brief built from the project's own docs (what hive is and who it is for, the Inbox voice sources, the meeting platforms, and how the docs position it beside adjacent tools), plus the knowledge base, which for her now includes the ready git sources as well as the vaults. A broad question gets a three sentence overview and an offer to go deeper. These questions are never sent to the public web or to research.
@@ -300,6 +300,78 @@ keeps the last 50 in the Inbox's **Recent mail** list
 Reports are best effort: a hub or hive that does not take them yet changes
 nothing for the sender.
 
+### Replies to the sender (off by default)
+
+[#18746](https://github.com/hivecommons/hive/issues/18746) designs a short
+reply from the hive to whoever mailed it ("received", or "waiting for the
+owner's approval"). Hive has never sent mail, and `hive-mx` still does not:
+the reply is composed and decided by the hub (option A of the design: a
+hub-side sender with DKIM, one fixed `From`, the hive's own address as
+`Reply-To`). This release ships the decision, the ledger and the two
+templates; the SMTP and DKIM sender is a later step. With no sender built
+in, a hub sends nothing whatever it is configured with.
+
+It is off unless `HIVE_HUB_MAIL_REPLY_DKIM_KEY_FILE` names a file that
+exists and is not empty (the variables are in
+[env-vars.md](env-vars.md)). Removing the file stops replies at once.
+
+What decides a reply, all of it enforced in the hub:
+
+- **Only authenticated senders.** The mail must have passed DMARC alignment
+  (`wire.Auth.Aligned`). A mail whose `From` is not aligned gets what it gets
+  today (the SMTP refusal, or nothing) and no reply, so a forged `From` never
+  receives backscatter.
+- **Only a person's mail.** No reply to `Auto-Submitted` other than `no`,
+  `Precedence: bulk`, `list`, `junk` or `auto_reply`, any `List-*` header,
+  `X-Auto-Response-Suppress`, a null return path (`MAIL FROM:<>`), a delivery
+  status report, the local parts `mailer-daemon`, `postmaster`, `no-reply`,
+  `noreply` and `hive`, any `hive@<known hive host>`, or the configured `From`
+  address and domain. `hive-mx` passes these as `wire.Delivery.Facts`; a
+  delivery without them (an older `hive-mx`) is never answered. Every reply
+  carries `Auto-Submitted: auto-replied`, `X-Auto-Response-Suppress: All`,
+  `Precedence: auto_reply` and a null envelope sender, so a reply is never
+  answered, by a hive or anyone else.
+- **Only after the hive took the mail.** The hub reads the spoke's answer
+  (`items`, `awaiting_approval`): stored and allowlisted is "received", stored
+  and awaiting approval is "held". Refusals keep their SMTP reply; no mail is
+  sent for them. Only mail-in files are answered, never invites or proof
+  mails.
+- **At most one reply per `Message-ID` and hive**, remembered 8 days in the
+  ledger, across retries and restarts. A message without a `Message-ID` gets
+  none.
+- **Limits** per sender address (10 an hour, 30 a day), per sender domain
+  (100 a day) and per hive (200 a day). Past a limit the reply is dropped and
+  counted; the mail is unaffected.
+- **No content.** The reply is plain text. It repeats nothing of the mail but a
+  sanitized subject (control and invisible characters removed, 120
+  characters) in its `Subject`, and the `Message-ID` in `In-Reply-To` and
+  `References`. The held text does not say why the sender is not trusted.
+
+The ledger (`HIVE_HUB_MAIL_REPLY_LEDGER_FILE`) holds the delivery id, the
+outcome and salted hashes of the message id, sender, sender domain and hive:
+no address, subject or body. The hub logs a sent reply with the delivery id,
+the hive id and the outcome only, never a key or any part of a mail.
+
+#### DNS records and network the hosted hub needs
+
+For option A with one fixed `From` (shape 1), `<project domain>` being the
+project's organizational domain and `<selector>` the DKIM selector:
+
+| Record | Type | Value |
+|---|---|---|
+| `<selector>._domainkey.hive.<project domain>` | TXT | `v=DKIM1; k=rsa; p=<base64 public key>` (2048-bit; the private key stays in the hub's Secret) |
+| `hive.<project domain>` | TXT | `v=spf1 ip4:<sending IP> -all` (recommended: DKIM alone satisfies DMARC, since the envelope sender is null) |
+| `<sending host name>` | TXT | `v=spf1 a -all` (recommended: covers the HELO identity used with a null envelope sender) |
+| reverse DNS of `<sending IP>` | PTR | `<sending host name>`, set at the cloud provider, not in the zone |
+
+No existing record changes: the organizational DMARC policy (`p=reject`,
+strict alignment) already covers `hive.<project domain>`, and the DKIM
+signing domain equals the `From` domain, so it aligns. The hub's network
+also needs outbound TCP 25 (many clouds block it by default); if it cannot
+be opened the fallback is a transactional mail provider (option C of the
+design). Before turning replies on for everyone, send to a test mailbox at
+two large providers and check `Authentication-Results` shows `dmarc=pass`.
+
 ### Who can invite Betty
 
 An invite is scheduled at once only when all of these hold:
@@ -422,6 +494,7 @@ Every key has an environment override that wins over `hive.yaml`. The full list 
 | `meetings.tts_token_file` | `/data/secrets/meetings_tts_token` | Keystore-sealed TTS service token file. |
 | `meetings.delivery` | `chat` | Where meeting output goes. |
 | `meetings.voice_on_address` | `true` | Allow speaking when addressed in a voice-enabled meeting. |
+| `meetings.listening_tone` | `true` | Betty plays a short, soft two-note chime when she heard her name in a spoken request and is about to answer, so the room knows she is listening (`HIVE_MEETINGS_LISTENING_TONE`). The only setting: no volume or sound options. It plays only when voice is on, never over speech, and is dropped silently if the audio path is busy. |
 | `meetings.bot_name` | the persona's display name | Bot display name; `hive (notes)` with the persona off. |
 | `meetings.invite_policy` | `owner` | Who may send hive to a meeting. |
 | `meetings.research_pool_size` | `2` | Research agents (`research-1..N`). |

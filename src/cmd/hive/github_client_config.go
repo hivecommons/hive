@@ -462,6 +462,8 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 			sessions = b.agentMgr
 		}
 		recordPRFollowUpPointer(b.cfg, sessions, d, time.Now(), b.logger)
+		// The kick this PR came from is told (hivecommons/hive#18916).
+		kickOutcomesFor(b.cfg, b.logger).PROpened(d.Agent, d.URL, d.Number, time.Now())
 		// The issues the PR fixes get their own pr_opened stage: the
 		// start→PR SLA boundary, and the link a later merge folds back on.
 		recordPROpenedForIssues(b.dashSrv, b.cfg.Project.Org, d.Agent, d.Repo, d.Number, d.URL, d.Issues)
@@ -470,6 +472,7 @@ func (b *boot) applyGitHubClientDashboardHooks(client *github.Client) {
 		// PR already covers in the gap between (hivecommons/hive#14472).
 		client.RecordOpenedPRClaims(getClaimLedger(b.logger), d, hiveIdentity(b.cfg), time.Now())
 	})
+	client.SetAgentActionHook(func(a github.AgentAction) { kickOutcomeAgentAction(kickOutcomesFor(b.cfg, b.logger), a) })
 	client.SetCanaryScanner(b.cfg.Ioscan.IsEnabled() && b.cfg.Ioscan.CanariesEnabled(), b.cfg.Ioscan.FailClosedAtLevel(b.cfg.ACMMLevelOrZero()), ioscan.DefaultCanaries, b.handleCanaryLeak)
 }
 

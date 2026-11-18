@@ -104,8 +104,11 @@ type Dependencies struct {
 	// test without a runtime) leaves the field out of the body.
 	CruxRuntimeHealth func() CruxRuntimeHealth
 	Governor          *governor.Governor
-	GHClient          *ghpkg.Client
-	GHAppAuth         *ghpkg.AppAuth
+	// KickOutcomes is the durable per-kick outcome record behind
+	// GET /api/kick-outcomes (hivecommons/hive#18916). Nil answers 503.
+	KickOutcomes KickOutcomeSource
+	GHClient     *ghpkg.Client
+	GHAppAuth    *ghpkg.AppAuth
 	// GHTokenScopes is the boot-time PAT scope probe result (see
 	// ghpkg.CheckTokenScopes). It is set only on the token-auth path; the App
 	// path leaves it at ScopeStatusSkipped because Apps carry permissions, not

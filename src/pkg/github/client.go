@@ -374,7 +374,10 @@ type Client struct {
 	prOpenedHook atomic.Pointer[PROpenedHook]
 	// prOpenedDetailHook is the richer sibling of prOpenedHook (body and
 	// handoff summary included), used by PR follow-up resume (#9583).
-	prOpenedDetailHook     atomic.Pointer[PROpenedDetailHook]
+	prOpenedDetailHook atomic.Pointer[PROpenedDetailHook]
+	// agentActionHook is told of each push and comment the relay made for an
+	// agent (agent_action_hook.go).
+	agentActionHook        atomic.Pointer[AgentActionHook]
 	prTerminalObservedHook atomic.Pointer[PRTerminalObservedHook]
 	// prReviewObservedHook and prTerminalReviews: other people's reviews on
 	// terminal PRs, read once per PR by the settle scan (#16116). See

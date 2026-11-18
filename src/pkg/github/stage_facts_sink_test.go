@@ -271,7 +271,7 @@ func TestEnrichStageFacts(t *testing.T) {
 	// human's CHANGES_REQUESTED on a contributor's clanker PR derives 072
 	// returned-to-contributor, not 071 needs-author.
 	srv.isPR = true
-	srv.body = "Fixes it.\n\n— hive: thatguywob-hive"
+	srv.body = "Fixes it.\n\n-- hive: thatguywob-hive"
 	pf, err := c.enrichStageFacts(context.Background(), stageengine.Facts{Ref: c.PRStageRef("o/r", 7), PR: &stageengine.PRFacts{}})
 	if err != nil {
 		t.Fatal(err)

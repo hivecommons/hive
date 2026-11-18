@@ -30,7 +30,7 @@ func meetingsDashboardError(err error) error {
 		return nil
 	case errors.Is(err, meetings.ErrNotFound), errors.Is(err, live.ErrUnknownResearch):
 		return fmt.Errorf("%w: %v", dashboard.ErrMeetingNotFound, err)
-	case errors.Is(err, meetings.ErrInvalidRequest), meetings.IsCode(err, meetings.CodeInvalidArgument):
+	case errors.Is(err, meetings.ErrInvalidRequest), errors.Is(err, meetings.ErrTrustInvalid), errors.Is(err, meetings.ErrTrustLimit), meetings.IsCode(err, meetings.CodeInvalidArgument):
 		return fmt.Errorf("%w: %v", dashboard.ErrMeetingInvalid, err)
 	case errors.Is(err, live.ErrNotPending), errors.Is(err, live.ErrSessionEnded), errors.Is(err, meetings.ErrNotLive), errors.Is(err, meetings.ErrNotRequested),
 		errors.Is(err, meetings.ErrStillRunning):
@@ -96,6 +96,28 @@ func (d *meetingsDashboard) ApproveRequest(ctx context.Context, id string, voice
 		return nil, meetingsDashboardError(err)
 	}
 	return m, nil
+}
+
+// ApproveAndTrust, TrustedRequesters and Untrust implement
+// dashboard.MeetingsTrustService.
+func (d *meetingsDashboard) ApproveAndTrust(ctx context.Context, id string, voice bool, by string) (any, string, error) {
+	m, t, err := d.mgr.ApproveAndTrust(ctx, id, voice, by)
+	if err != nil {
+		return nil, "", meetingsDashboardError(err)
+	}
+	return m, t.ID, nil
+}
+
+func (d *meetingsDashboard) TrustedRequesters() (any, error) {
+	list, err := d.mgr.TrustedRequesters()
+	if list == nil {
+		list = []meetings.Trusted{}
+	}
+	return list, err
+}
+
+func (d *meetingsDashboard) Untrust(platform, id string) (bool, error) {
+	return d.mgr.Untrust(platform, id)
 }
 
 func (d *meetingsDashboard) DeclineRequest(ctx context.Context, id string) (any, error) {

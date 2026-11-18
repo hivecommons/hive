@@ -25,7 +25,7 @@ func levelHoldNotice(agent string) string {
 > [!IMPORTANT]
 > **Ready for review: held for a maintainer by the hive's ACMM level gate.**
 >
-> This PR was opened by the %q agent while Hive policy required a human checkpoint for that agent. Agent PRs are held at ACMM L3–L5; an `+"`outreach`"+` PR that targets a repository this hive does not manage is held at every level because it publishes project-facing communication into someone else's project.
+> This PR was opened by the %q agent while Hive policy required a human checkpoint for that agent. Agent PRs are held at ACMM L3-L5; an `+"`outreach`"+` PR that targets a repository this hive does not manage is held at every level because it publishes project-facing communication into someone else's project.
 >
 > The hive's work on this PR is done. Hive will keep the `+"`%s`"+` label until a maintainer reviews the PR and removes it; it blocks merging the same way `+"`hold`"+` does. Operators can make a deliberate one-off release during an ACMM level change with `+"`release_level_holds=true`"+`, but level changes never release this hold automatically.`,
 		levelHoldMarker(agent), agent, ReadyForReviewLabelName())
