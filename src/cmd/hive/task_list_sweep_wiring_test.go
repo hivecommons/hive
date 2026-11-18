@@ -27,7 +27,7 @@ const hiveFiledTickedIssueJSON = `[{
 	"number": 7,
 	"state": "open",
 	"user": {"login": "hive-bot", "type": "Bot"},
-	"body": "- [x] one\n- [x] two\n\n— hive: scanner via test"
+	"body": "- [x] one\n- [x] two\n\n-- hive: scanner via test"
 }]`
 
 // newTaskListSweepAPI serves the three endpoints a successful sweep of repo

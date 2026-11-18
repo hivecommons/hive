@@ -198,7 +198,7 @@ Initial badges:
 ## Local-model achievement track
 
 Local-model achievements use existing Hive attribution where possible. PR
-footers already use the shape `— hive: agent=… backend=… model=…`; backends and
+footers already use the shape `-- hive: agent=… backend=… model=…`; backends and
 models known to be local runners count as local. Examples include Ollama,
 llama.cpp-compatible runners, local OpenAI-compatible endpoints configured as
 local, and other provider keys Hive classifies as local. Ambiguous provider data
@@ -280,7 +280,7 @@ The shipped implementation uses existing data only:
 - GitHub PR, review, author, merge, and issue linkage data already collected for
   dashboard contribution views;
 - PR attribution trailers parsed by `src/pkg/github/attribution.go`, especially
-  `agent`, `backend`, and `model` from `— hive: agent=… backend=… model=…`;
+  `agent`, `backend`, and `model` from `-- hive: agent=… backend=… model=…`;
 - existing dashboard achievement/dossier/leaderboard records;
 - swarm player and achievement data from the existing swarm dashboard;
 - Spektacular run data already projected under `/api/runs`.

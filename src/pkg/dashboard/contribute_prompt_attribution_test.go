@@ -20,10 +20,10 @@ func TestAttributionPromptInstruction_FullMeta(t *testing.T) {
 		Effort:  "high",
 	}
 	got := attributionPromptInstruction(meta)
-	if !strings.Contains(got, "At the bottom of your PR body — and of any issue comment you leave — include exactly this line:") {
+	if !strings.Contains(got, "At the bottom of your PR body, and of any issue comment you leave, include exactly this line:") {
 		t.Fatalf("instruction missing the directive sentence: %q", got)
 	}
-	want := "— hive: agent=quality backend=claude model=claude-opus-4 effort=high"
+	want := "-- hive: agent=quality backend=claude model=claude-opus-4 effort=high"
 	if !strings.Contains(got, want) {
 		t.Fatalf("instruction missing the literal trailer %q: %q", want, got)
 	}
@@ -91,10 +91,10 @@ func TestSelectTask_PromptCarriesAttributionInstruction(t *testing.T) {
 	if msg == nil || msg.Type != "task_assign" {
 		t.Fatalf("expected task_assign, got %+v", msg)
 	}
-	if !strings.Contains(msg.Prompt, "At the bottom of your PR body — and of any issue comment you leave — include exactly this line:") {
+	if !strings.Contains(msg.Prompt, "At the bottom of your PR body, and of any issue comment you leave, include exactly this line:") {
 		t.Fatalf("assignment prompt missing footer directive: %q", msg.Prompt)
 	}
-	if !strings.Contains(msg.Prompt, "— hive: backend=claude model=claude-opus-4 effort=high") {
+	if !strings.Contains(msg.Prompt, "-- hive: backend=claude model=claude-opus-4 effort=high") {
 		t.Fatalf("assignment prompt missing real model/effort trailer: %q", msg.Prompt)
 	}
 }

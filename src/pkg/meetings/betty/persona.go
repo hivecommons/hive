@@ -88,7 +88,7 @@ func answerPrompt(mode, who, question string, snips []Snippet, recent []recentLi
 		b.WriteString("Someone in the meeting asked a question nobody has answered yet. Answer it only from the context below. If the context does not answer it, set confidence below 0.5.\n")
 	}
 	if spoken {
-		b.WriteString("Your answer will be spoken aloud in the meeting: at most 2 sentences and 200 characters, no links, no lists, no Markdown.\n")
+		b.WriteString("Your answer will be spoken aloud in the meeting: at most 2 sentences and 200 characters, no links, no lists, no Markdown. Still list the context numbers you used in sources: their links are posted in chat for the room, never spoken.\n")
 	} else {
 		b.WriteString("Name where facts come from: give issue and PR numbers (#123) and work item ids as the context has them, and list the context numbers you used in sources.\n")
 	}
@@ -96,7 +96,7 @@ func answerPrompt(mode, who, question string, snips []Snippet, recent []recentLi
 	b.WriteString("Only state what the context or the transcript supports. If they do not answer it, say you are not sure and set confidence below 0.5; never guess numbers, names, dates or links.\n")
 	if hasHiveStatus(snips) {
 		b.WriteString("Context marked \"" + HiveStatusSource + "\" is the hive's own state read just now: answer questions about the hive's issues, PRs, agents and work from it directly, with its numbers, and set needs_research to false.\n")
-		b.WriteString("State every count with its scope exactly as the context words it (\"across 13 repos\", or the one repo asked about). A count the context calls \"at least\" or partial is never a total: say \"at least\" and how many repos are counted. If the context says how old the counts are, say so in one short clause. For one issue or PR say what it is about, its state, and what is blocking it, in at most three short sentences.\n")
+		b.WriteString("State every count with its scope exactly as the context words it (\"across 13 repos\", or the one repo asked about). A count the context calls \"at least\" or partial is never a total: say \"at least\" and how many repos are counted. If the context says how old the counts are, say so in one short clause. Asked what needs the speaker's attention, answer from the awaiting-a-decision, actionable, blocked and held counts and the open PRs listed; if none of them is above zero, say in one short sentence that nothing needs attention right now. For one issue or PR say what it is about, its state, and what is blocking it, in at most three short sentences.\n")
 	}
 	b.WriteString(LocalAnswerNotes(snips))
 	var heard Normalised
@@ -146,6 +146,6 @@ func restylePrompt(text string) string {
 
 // followUpPrompt asks for a deep dive's result as a short chat answer.
 func followUpPrompt(question, summary string) string {
-	return "Earlier in the meeting you said you would dig into a question. The research is done. Tell the meeting the answer in your own voice: at most 3 sentences and 300 characters, plain text, starting with what was asked. Do not address anyone by name. If the research found nothing useful, say so.\n\n" +
+	return "Earlier in the meeting you said you would dig into a question. The research is done. Tell the meeting the answer in your own voice: at most 3 sentences and 300 characters, plain text, starting with what was asked. Do not address anyone by name. Name the source the research gives (its site or organisation) in the answer. If the summary names no source for a figure, say you are not sure and give no figure. If the research found nothing useful, say so.\n\n" +
 		dataOpen + "\nQuestion: " + sanitize(question) + "\nResearch summary: " + sanitize(summary) + "\n" + dataClose
 }
