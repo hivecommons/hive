@@ -338,7 +338,9 @@ func TestShadowConcurrentObserve(t *testing.T) {
 }
 
 func TestDefaultShadowIsStable(t *testing.T) {
-	if DefaultShadow() != DefaultShadow() {
+	first := DefaultShadow()
+	second := DefaultShadow()
+	if first != second {
 		t.Fatal("DefaultShadow must return the same instance for the life of the process")
 	}
 }
