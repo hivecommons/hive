@@ -193,9 +193,30 @@ compression ratio) and an XML decoder that refuses DTDs and unknown entities
 (no XXE). Links dropped onto the Inbox are
 fetched by the hive under an SSRF guard: http/https only, no credentials in
 the URL, the hive's own DNS lookup with the connection pinned to the checked
-address (any private, loopback, link-local, CGNAT, multicast, ULA or metadata
-answer refuses the link), every redirect re-checked (at most 3), the body
-size- and time-capped, and the environment proxy never used.
+address (any answer in a refused range, listed below, refuses the link), every
+redirect re-checked (at most 3), the body size- and time-capped, and the
+environment proxy never used.
+
+The same address classifier, `pkg/netguard`, is the single source of truth for
+every server-side fetch of a URL a user or remote party supplies: the dashboard
+and hub `isPrivateURL` guards and the Inbox link fetcher. An address is judged
+by what it is, not how it is written. Decimal, octal, hex and short IPv4
+spellings are parsed by value, and IPv4-mapped, NAT64 (`64:ff9b::/96`) and 6to4
+(`2002::/16`) addresses are judged by the IPv4 address they carry. A host made
+only of dot-separated numbers that is not a valid IPv4 literal, such as
+`1.2.3.4.5`, is refused before any DNS lookup. A name that resolves to even one
+refused address is refused, and a missing or failing resolver fails closed. The
+refused ranges are:
+
+| Family | Ranges |
+|---|---|
+| IPv4 | `0.0.0.0/8`, `10.0.0.0/8`, `100.64.0.0/10` (carrier-grade NAT, which includes the `100.100.100.200` metadata address), `127.0.0.0/8`, `169.254.0.0/16` (link-local, cloud metadata), `172.16.0.0/12`, `192.0.0.0/24`, `192.0.2.0/24`, `192.88.99.0/24`, `192.168.0.0/16`, `198.18.0.0/15`, `198.51.100.0/24`, `203.0.113.0/24`, `224.0.0.0/4` (multicast), `240.0.0.0/4` (reserved, includes broadcast) |
+| IPv6 | `::/128`, `::1/128`, `100::/64` (discard-only), `2001::/32` (Teredo), `2001:db8::/32` (documentation), `fc00::/7` (unique local), `fe80::/10` (link-local), `fec0::/10` (site-local), `ff00::/8` (multicast) |
+
+Names ending in `localhost` are refused as well. There is no opt-in to allow
+`100.64.0.0/10`: no registered hive or hub URL uses that range. The
+authoritative list is the switch and the `specialPurposePrefixes` table in
+`src/pkg/netguard/netguard.go`.
 
 ### Customers: people the hive has seen
 

@@ -21,7 +21,7 @@ func TestIsPrivateURLSharedClassifier(t *testing.T) {
 		"nat64.example":   {"64:ff9b::a9fe:a9fe"},
 		"6to4.example":    {"2002:a00:1::"},
 		"mcast.example":   {"ff05::2"},
-		"mixed.example":   {"203.0.113.10", "fd12::1"},
+		"mixed.example":   {"93.184.216.34", "fd12::1"},
 	}
 	orig := privateURLResolver
 	t.Cleanup(func() { privateURLResolver = orig })
@@ -29,7 +29,7 @@ func TestIsPrivateURLSharedClassifier(t *testing.T) {
 		if a, ok := answers[host]; ok {
 			return a, nil
 		}
-		return []string{"203.0.113.10"}, nil
+		return []string{"93.184.216.34"}, nil
 	}
 
 	ctx := context.Background()
