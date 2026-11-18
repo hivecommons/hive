@@ -11,6 +11,14 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.329.1)
+
+### Fixed
+
+- The SHA-hold gate no longer holds issues it was not meant for, and a hold is now visible and overrideable (#18866). The sweep skips issues filed by the hive's own accounts or by owners and maintainers (`project.issue_filter.reporter_trust.trusted_associations`) and issues whose body names a concrete repo file path such as `src/pkg/github/client.go` (self-attested: the path is never checked to exist, so a reporter can write one to skip the gate), and lifts a `needs-sha` already on an issue that qualifies, so an owner-filed, detailed bug like #18740 is released on the next sweep; outside reporters with no SHA and no path are still held. A maintainer can waive the requirement per issue with the persistent `sha-waived` label (row menu *Waive SHA requirement* / *Restore SHA requirement*, gated like releasing a `hold`); the sweep never re-adds `needs-sha` while it is on. Held issues show the pill *Held: needs commit SHA* and a note on the Open chevron saying how to lift it, and the waived state reads *SHA waived by <login>*; `GET /api/stage-tracker` rows carry the new `sha_hold` field. Recording the default-branch head at filing time was left out: it would be a guess about the reporter's build, not evidence of it.
+- Reviewer-stated rule capture now reads every human comment on the hive's open PRs (inline, review body and plain conversation comments), including ones already handled, in resolved threads or not addressed to the hive, and the rule index tracks which comments it has evaluated so the first pass after upgrade backfills once and later passes classify only new comments ([#19136](https://github.com/hivecommons/hive/issues/19136)).
+- The review-rule classifier now ignores quoted lines, fenced code and questions, falls back to the whole comment when the rule sentence is too short to stand alone, and also recognises "for the future", "moving forward" and "for future reviews" as going-forward phrases ([#19137](https://github.com/hivecommons/hive/issues/19137)).
+
 ## 2026-11-18 (v5.329.0)
 
 ### Added
