@@ -161,9 +161,9 @@ func TestPRPushTarget(t *testing.T) {
 			"base":{"ref":"main","repo":{"full_name":"o/r"}},"head":{"ref":"hive/dep-bump/20261116120000","sha":"abc","repo":{"full_name":"o/r"}}}`,
 		"8": `{"number":8,"state":"open","user":{"login":"forker"},"body":"x",
 			"base":{"ref":"main","repo":{"full_name":"o/r"}},"head":{"ref":"feature","sha":"def","repo":{"full_name":"forker/r"}}}`,
-		"9": `{"number":9,"state":"open","user":{"login":"hive-app[bot]"},"body":"Old PR.\n\n— hive: agent=dep-bump backend=claude",
+		"9": `{"number":9,"state":"open","user":{"login":"hive-app[bot]"},"body":"Old PR.\n\n-- hive: agent=dep-bump backend=claude",
 			"base":{"ref":"main","repo":{"full_name":"o/r"}},"head":{"ref":"dep-bump/x","sha":"ghi","repo":{"full_name":"o/r"}}}`,
-		"10": `{"number":10,"state":"open","user":{"login":"mallory"},"body":"— hive: agent=dep-bump",
+		"10": `{"number":10,"state":"open","user":{"login":"mallory"},"body":"-- hive: agent=dep-bump",
 			"base":{"ref":"main"},"head":{"ref":"x","sha":"jkl"}}`,
 	}
 	mux := http.NewServeMux()

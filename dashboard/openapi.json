@@ -13952,7 +13952,7 @@
           "Governor"
         ],
         "summary": "Update the attribution-trailer toggle",
-        "description": "Sets the hive-wide toggle for appending a visible \"— hive: …\" trailer to hive-created PRs and issues. Does not affect the audit log, which always records the invocation. Requires owner role.",
+        "description": "Sets the hive-wide toggle for appending a visible \"-- hive: …\" trailer to hive-created PRs and issues. Does not affect the audit log, which always records the invocation. Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {

@@ -18,7 +18,7 @@ import (
 func TestIssueCreateClaim_KeysOnCanonicalSubjectAndFileSet(t *testing.T) {
 	now := time.Date(2026, 10, 12, 12, 0, 0, 0, time.UTC)
 	a := issueCreateClaim("o/r",
-		"[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) — extract cache helpers",
+		"[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) - extract cache helpers",
 		"web/e2e/card-cache.spec.ts:1 is too long; see web/e2e/helpers.ts", now)
 	b := issueCreateClaim("o/r",
 		"[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) -- pull out snapshot helpers",
@@ -51,7 +51,7 @@ func TestIssueCreateClaim_KeysOnCanonicalSubjectAndFileSet(t *testing.T) {
 		t.Error("a different canonical subject over the same files must not share the target")
 	}
 	later := issueCreateClaim("o/r",
-		"[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) — extract cache helpers",
+		"[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) - extract cache helpers",
 		"web/e2e/card-cache.spec.ts:1 is too long; see web/e2e/helpers.ts", now.Add(issueCreateIdempotencyWindow+time.Hour))
 	if later.Target != a.Target {
 		t.Error("the ledger target must not depend on time: concurrent creators always serialise")
@@ -214,7 +214,7 @@ func TestCreateIssue_SameFindingRewordedReplaysJournaledIssue(t *testing.T) {
 	c := issueTestClient(t, srv.URL)
 	c.SetMutationBoundary(replayTestBoundary(t))
 
-	first, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) — extract cache helpers", Body: "web/e2e/card-cache.spec.ts:1 is too long; see web/e2e/helpers.ts", Labels: []string{"agent/scanner"}, Origin: "governor"})
+	first, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) - extract cache helpers", Body: "web/e2e/card-cache.spec.ts:1 is too long; see web/e2e/helpers.ts", Labels: []string{"agent/scanner"}, Origin: "governor"})
 	if err != nil {
 		t.Fatalf("first CreateIssue: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestCreateIssue_SameFindingRewordedReplaysJournaledIssue(t *testing.T) {
 		t.Fatalf("second CreateIssue = %+v, want #99 reported as AlreadyExisted", second)
 	}
 
-	third, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) — and web/e2e/fixtures.ts too", Body: "web/e2e/card-cache.spec.ts, web/e2e/helpers.ts and web/e2e/fixtures.ts", Labels: []string{"agent/scanner"}, Origin: "governor"})
+	third, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) - and web/e2e/fixtures.ts too", Body: "web/e2e/card-cache.spec.ts, web/e2e/helpers.ts and web/e2e/fixtures.ts", Labels: []string{"agent/scanner"}, Origin: "governor"})
 	if err != nil {
 		t.Fatalf("third CreateIssue: %v", err)
 	}
@@ -274,7 +274,7 @@ func TestCreateIssue_SameFindingStraddlingBucketBoundaryReplays(t *testing.T) {
 	issueCreateNow = func() time.Time { return clock }
 	t.Cleanup(func() { issueCreateNow = prev })
 
-	title := "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) — extract cache helpers"
+	title := "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines) - extract cache helpers"
 	body := "web/e2e/card-cache.spec.ts:1 is too long; see web/e2e/helpers.ts"
 	first, err := c.CreateIssue(context.Background(), CreateIssueRequest{Repo: "o/r", Title: title, Body: body, Labels: []string{"agent/scanner"}, Origin: "governor"})
 	if err != nil {

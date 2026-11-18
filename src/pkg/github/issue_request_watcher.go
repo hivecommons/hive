@@ -21,6 +21,7 @@ import (
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/issueshape"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
@@ -1572,7 +1573,8 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	if err := validateRepoRef(owner, repoName); err != nil {
 		return CreateIssueResult{}, fmt.Errorf("CreateIssue: %w", err)
 	}
-	title = strings.TrimSpace(title)
+	title = prosefilter.SanitizeTitle(strings.TrimSpace(title))
+	body = prosefilter.Sanitize(body)
 	if title == "" {
 		return CreateIssueResult{}, fmt.Errorf("CreateIssue: title is required")
 	}

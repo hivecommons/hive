@@ -61,13 +61,13 @@ func nudgePR(number int, head string, labels ...string) *gh.PullRequest {
 	pr.User = &gh.User{Login: gh.Ptr("mallory")}
 	// mallory's PR was opened by her own hive: the relay trailer makes it
 	// author/clanker, the only kind the nudge and adoption apply to.
-	pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+	pr.Body = gh.Ptr("Fixes the widget.\n\n-- hive: backend=pi model=gpt-6\n")
 	pr.Title = gh.Ptr("fix: widget")
 	pr.HTMLURL = gh.Ptr("https://github.com/acme/widget/pull/7")
 	pr.CreatedAt = &gh.Timestamp{Time: time.Date(2026, 10, 15, 9, 0, 0, 0, time.UTC)}
 	// A contributor's hive posted it (author/clanker): the 072 interrupt
 	// machinery applies even when the sink has no presence to consult.
-	pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: mallory-hive\n")
+	pr.Body = gh.Ptr("Fixes the widget.\n\n-- hive: mallory-hive\n")
 	return pr
 }
 

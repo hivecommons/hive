@@ -26,6 +26,7 @@ import (
 	"github.com/hivecommons/hive/pkg/forgestate"
 	"github.com/hivecommons/hive/pkg/ioscan"
 	"github.com/hivecommons/hive/pkg/issueclaim"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 	"github.com/hivecommons/hive/pkg/review"
 	"github.com/hivecommons/hive/pkg/spekmarker"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -3074,7 +3075,7 @@ func (c *Client) CreateIssueComment(ctx context.Context, repo string, number int
 			return fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
 		}
 	}
-	body = logscrub.ScrubString(body)
+	body = prosefilter.Sanitize(logscrub.ScrubString(body))
 	owner, repoName := c.splitRepo(repo)
 	// ExecuteReconciling, not Execute: an ambiguous POST failure journals the
 	// op Unknown, and without an observation every later post of the same

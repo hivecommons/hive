@@ -19,7 +19,7 @@ func attributedClosedPR(number int, updatedAt time.Time) map[string]any {
 		"number":     number,
 		"title":      fmt.Sprintf("attributed %d", number),
 		"state":      "closed",
-		"body":       "done\n\n— hive: agent=scanner backend=bob model=auto",
+		"body":       "done\n\n-- hive: agent=scanner backend=bob model=auto",
 		"user":       map[string]any{"login": "hive-bot[bot]"},
 		"html_url":   fmt.Sprintf("https://github.com/o/r/pull/%d", number),
 		"updated_at": updatedAt.Format(time.RFC3339),
