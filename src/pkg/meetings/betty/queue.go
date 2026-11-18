@@ -637,6 +637,9 @@ func (e *Engine) onAddressedAnswer(p *pending, a answered) {
 	}
 	if a.err == nil && rep.Research == "" && text != "" {
 		rep.Text = e.vouch(p, a.ans, rep.Text, live)
+		if p.trig.VoiceWanted {
+			rep.Links = buildLinks(a.ans.Answer, a.ans.Sources, p.snips)
+		}
 	}
 	e.attributeReply(p, &rep, a.ans.Topic, e.d.Now())
 	rep.Timing = e.timing(p, a.err != nil || a.ans.Answer == "", e.d.Now())
