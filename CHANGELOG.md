@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.320.2)
+
+### Fixed
+
+- The sandbox GitHub read relay now stops serving a connection once its per-kick key is released: an intercepted GitHub tunnel refuses the next request with a 403, and an opaque tunnel to any other host is closed, instead of both working until the client hung up or an idle timeout fired ([#18895](https://github.com/hivecommons/hive/issues/18895)).
+- **The hive no longer adopts a contributor PR when a person's or the hive's own open PR already covers the issue.** On #18866 the hive adopted contributor PR #18870 as #18879 while the owner's #18873 for the same issue was open, and the dashboard then offered "Let hive decide" over two mid-CI PRs. Before adopting, the engine (the `AutoAdoption` executor) and the "Let hive decide" ladder (new rung `covered-by-other-pr`, just before the adopt rung) now look for another open PR on the same base branch that closes the same issue and is an owner's, an `author/human`'s, a collaborator's (not driving a clanker) or the hive's. If there is one the contributor PR is closed as a duplicate of it with a thank-you note that credits the contributor, the head records `covered-by-open-pr`, and the tracker row says why; a write-back gate refusal or failed close leaves it open with adoption still off. The hive's own copy of the PR, another contributor's PR, a PR on another release line and a duplicate the merge queue holds behind this one do not count, so "green first, then earlier-opened" only breaks ties between equal-trust PRs. With only a person's or hive agent's live claim on the issue (no PR yet) the ladder recommends leaving the PR open and names the holder. ([#18900](https://github.com/hivecommons/hive/issues/18900), part of [#18890](https://github.com/hivecommons/hive/issues/18890)).
+
 ## 2026-11-18 (v5.320.1)
 
 ### Changed
