@@ -61,7 +61,6 @@ type depResult struct {
 	advisories []Advisory
 	accepted   []string
 	published  time.Time
-	ageNote    string
 }
 
 func dependencySection(ctx context.Context, c *Client, set config.ReviewPreflightResolved, in Input) string {
