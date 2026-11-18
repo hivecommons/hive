@@ -47,6 +47,12 @@ func runContainerExitReport(t *testing.T, backend, containerLogs string) string 
 	// reads, so check for stray interpolations before, not after.
 	block = strings.ReplaceAll(block, "{{hive_image}}", "ghcr.io/example/hive-contributor:test")
 	block = strings.ReplaceAll(block, "{{backend}}", backend)
+	// The runtime-fallback re-exec (#19076) interpolates these; they are inert
+	// here because the fake runtime's log never says "Permission denied".
+	block = strings.ReplaceAll(block, "{{container_runtime}}", "")
+	block = strings.ReplaceAll(block, "{{mode}}", "docker")
+	block = strings.ReplaceAll(block, "{{just_executable()}}", "just")
+	block = strings.ReplaceAll(block, "{{justfile()}}", "Justfile")
 	if leftover := strings.ReplaceAll(strings.ReplaceAll(block, `{{ "{{" }}`, ""), `{{ "}}" }}`, ""); strings.Contains(leftover, "{{") {
 		t.Fatalf("unhandled just interpolation in the container-exit block: %s", block)
 	}
