@@ -384,7 +384,8 @@ func TestProxyHTTP_ReviewThreadGate(t *testing.T) {
 				fmt.Fprintf(clientConn, "POST /repos/cncf/techdocs/pulls/424/comments HTTP/1.1\r\nHost: api.github.com\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n%s", len(body), body)
 			}()
 			if tc.wantCode == http.StatusCreated {
-				go answerOnce(upstreamConn, http.StatusCreated)
+				go answerDrained(upstreamConn, http.StatusCreated)
+				_ = clientConn.SetReadDeadline(time.Now().Add(10 * time.Second))
 				resp, err := http.ReadResponse(bufio.NewReader(clientConn), nil)
 				if err != nil {
 					t.Fatalf("read response: %v", err)
@@ -406,4 +407,21 @@ func TestProxyHTTP_ReviewThreadGate(t *testing.T) {
 			}
 		})
 	}
+}
+
+// answerDrained is answerOnce for a request with a body: over net.Pipe the
+// proxy's body write blocks until it is read, so the body is drained before
+// the response is written.
+func answerDrained(upstream net.Conn, status int) {
+	req, err := http.ReadRequest(bufio.NewReader(upstream))
+	if err != nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, req.Body)
+	resp := &http.Response{
+		StatusCode: status, Proto: "HTTP/1.1", ProtoMajor: 1, ProtoMinor: 1,
+		Header: make(http.Header), Body: http.NoBody, Request: req,
+	}
+	_ = resp.Write(upstream)
+	_ = upstream.Close()
 }
