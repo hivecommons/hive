@@ -99,6 +99,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"main.maintainHeldPRMergeability":                     {Class: NotificationClassAttention},
 	"main.rfcCoverageForge.CreateComment":                 {Class: NotificationClassAttention},
 	"main.runEscalationSweep":                             {Class: NotificationClassAttention},
+	"main.reviewFeedbackSweep.needsHuman":                 {Class: NotificationClassAttention},
 	"prfollowup.postStaleHeadPushNotes":                   {Class: NotificationClassAttention},
 	"scheduler.(*Scheduler).judgePriorArt":                {Class: NotificationClassAttention},
 	"scheduler.(*Scheduler).parkUnclearIssue":             {Class: NotificationClassAttention},

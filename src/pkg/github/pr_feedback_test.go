@@ -138,7 +138,7 @@ func feedbackServer(t *testing.T, graphQLStatus int) *httptest.Server {
 			_, _ = w.Write([]byte(`{"data":{"repository":{"pullRequest":{"state":"OPEN","isDraft":true,"merged":false,"headRefName":"quality/x",
 			"comments":{"nodes":[]},"reviews":{"nodes":[]},
 			"reviewThreads":{"nodes":[{"id":"T9","isResolved":false,"isOutdated":false,"path":"a.md","line":3,"comments":{"nodes":[
-			{"databaseId":21,"url":"u","body":"too high","createdAt":"2026-11-18T15:12:00Z","authorAssociation":"MEMBER","author":{"__typename":"User","login":"nate"}}]}}]}}}}`))
+			{"databaseId":21,"url":"u","body":"too high","createdAt":"2026-11-18T15:12:00Z","authorAssociation":"MEMBER","author":{"__typename":"User","login":"nate"}}]}}]}}}}}`))
 		case strings.HasSuffix(r.URL.Path, "/pulls/424"):
 			_, _ = w.Write([]byte(`{"number":424,"state":"open","draft":true,"head":{"ref":"quality/x"}}`))
 		case strings.HasSuffix(r.URL.Path, "/pulls/424/comments"):
