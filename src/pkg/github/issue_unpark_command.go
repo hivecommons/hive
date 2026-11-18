@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 
@@ -510,7 +511,7 @@ func (c *Client) tryUnparkIssue(ctx context.Context, displayRepo, owner, repo st
 			return acted, err
 		}
 	}
-	candidate, command, err := c.eligibleUnparkCommand(ctx, owner, repo, comments, answered, cutoff, labelDriven && la.enabled, verbs)
+	candidate, command, err := c.eligibleUnparkCommand(ctx, owner, repo, comments, answered, cutoff, labelDriven && la.enabled, verbs, true)
 	if err != nil {
 		return false, err
 	}
@@ -988,7 +989,11 @@ const unparkCandidateLimit = 5
 //
 // verbs are the bound workflow model's replies for the item's current state
 // (hivecommons/hive#17620); nil admits the built-in commands only.
-func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, comments []*gh.IssueComment, answered map[int64]bool, cutoff time.Time, allowTriage bool, verbs []string) (*gh.IssueComment, unparkCommand, error) {
+//
+// proseDecision admits a first line of `Decision: <text>` (or `Decision
+// (owner): <text>`) as `/hive decision <text>` (hivecommons/hive#19155). Only
+// the issue sweep sets it; PRs keep the strict `/hive` command shape.
+func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, comments []*gh.IssueComment, answered map[int64]bool, cutoff time.Time, allowTriage bool, verbs []string, proseDecision bool) (*gh.IssueComment, unparkCommand, error) {
 	checked := 0
 	for i := len(comments) - 1; i >= 0 && checked < unparkCandidateLimit; i-- {
 		cm := comments[i]
@@ -996,7 +1001,7 @@ func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, 
 			continue
 		}
 		if answered[cm.GetID()] {
-			if isUnparkWatermarkCommandFor(cm.GetBody(), verbs) {
+			if isUnparkWatermarkCommandFor(cm.GetBody(), verbs) || (proseDecision && isUnparkProseDecision(cm.GetBody())) {
 				break
 			}
 			continue
@@ -1010,6 +1015,9 @@ func (c *Client) eligibleUnparkCommand(ctx context.Context, owner, repo string, 
 			continue
 		}
 		cmd, isCommand := parseUnparkCommandFor(cm.GetBody(), verbs)
+		if !isCommand && proseDecision {
+			cmd, isCommand = parseUnparkProseDecision(cm.GetBody())
+		}
 		if !isCommand && !isUnparkProseAssent(cm.GetBody()) {
 			continue
 		}
@@ -1085,6 +1093,36 @@ func parseUnparkCommand(body string) (unparkCommand, bool) {
 	return unparkCommand{}, false
 }
 
+// unparkProseDecisionPrefix matches a first line that records a decision the
+// way maintainers habitually write it: `Decision: option 1 ...` or
+// `Decision (owner): option 1 ...`.
+var unparkProseDecisionPrefix = regexp.MustCompile(`(?i)^decision(?:\s*\([^)\n]*\))?\s*:\s*`)
+
+// parseUnparkProseDecision reads a first line of `Decision: <text>` as
+// `/hive decision <text>`. It is held to the same rules as the command: first
+// line only, never inside a quote or fence, and the text must be non-empty. The
+// caller still applies the permission, freshness and unedited checks.
+func parseUnparkProseDecision(body string) (unparkCommand, bool) {
+	line := firstNonEmptyLine(body)
+	if strings.HasPrefix(line, ">") || strings.HasPrefix(line, "```") || strings.HasPrefix(line, "~~~") {
+		return unparkCommand{}, false
+	}
+	loc := unparkProseDecisionPrefix.FindStringIndex(line)
+	if loc == nil {
+		return unparkCommand{}, false
+	}
+	decision := strings.TrimSpace(line[loc[1]:])
+	if decision == "" {
+		return unparkCommand{}, false
+	}
+	return unparkCommand{Kind: unparkCommandDecision, Decision: decision, Text: decisionText(body, decision)}, true
+}
+
+func isUnparkProseDecision(body string) bool {
+	_, ok := parseUnparkProseDecision(body)
+	return ok
+}
+
 // decisionText joins the first-line decision with every line that follows
 // the command line, so numbered instructions under `/hive decision approve`
 // reach the author agent instead of being dropped (hivecommons/hive#14679).
@@ -1141,10 +1179,17 @@ func isUnparkProseAssent(body string) bool {
 			return true
 		}
 	}
-	return false
+	return unparkProseDecisionHint.MatchString(firstNonEmptyLine(body))
 }
 
-const unparkProseHintReply = "To start work, reply `/hive approve` (or `/hive decision A`). A plain reply acknowledges the issue but leaves it parked."
+// unparkProseDecisionHint matches a first line that names a decision without
+// the command: `Decision ...` / `Decide ...` (a `Decision:` with text is acted
+// on, so only the empty and malformed forms land here), `option 1` / `Option B`
+// and a bare option letter. The reply tells the commenter to use
+// `/hive decision <text>` (hivecommons/hive#19155).
+var unparkProseDecisionHint = regexp.MustCompile(`^(?i:decision\b|decide\b|options?\s+[a-z0-9]\b)|^[A-Z][.!]?$`)
+
+const unparkProseHintReply = "To start work, reply `/hive approve` (or `/hive decision A`, or `/hive decision <your instructions>` to record a decision). A plain reply acknowledges the issue but leaves it parked."
 
 // unparkLabelDrivenReply answers `/hive approve`, `/hive decision` and
 // `/hive help` on a repo with project.repo_policies[].label_driven set.
