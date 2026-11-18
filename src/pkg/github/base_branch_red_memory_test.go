@@ -134,3 +134,60 @@ func TestBaseCheckStatesForRefPrecedence(t *testing.T) {
 		t.Fatalf("states = %v, want %v (red > running > green across apps)", got, want)
 	}
 }
+
+// The green record behind the shared-CI rerun sweep's recovery test: the
+// newest green completion per base and check, case-insensitive, scoped to
+// the base when one is named, and dropped past its TTL.
+func TestBaseRedMemoryGreen(t *testing.T) {
+	now := time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC)
+	m := &baseRedMemory{now: func() time.Time { return now }}
+	main := baseRedMemoryKey("Acme", "Widget", "main")
+	opened := now.Add(-6 * time.Hour)
+	if m.anyGreen("acme", "widget") || m.greenAfter("acme", "widget", "", "contract", opened) {
+		t.Fatal("nothing recorded yet")
+	}
+	m.noteGreen(main, map[string]time.Time{"Contract": now.Add(-8 * time.Hour)})
+	if !m.anyGreen("acme", "widget") || m.greenAfter("acme", "widget", "main", "contract", opened) {
+		t.Fatal("a green run from before the incident does not show recovery")
+	}
+	m.noteGreen(main, map[string]time.Time{"contract": now.Add(-time.Hour)})
+	m.noteGreen(main, map[string]time.Time{"contract": now.Add(-7 * time.Hour)})
+	if !m.greenAfter("acme", "widget", "main", "CONTRACT", opened) || !m.greenAfter("acme", "widget", "", "contract", opened) {
+		t.Fatal("the newest green completion must be kept, matched case-insensitively")
+	}
+	if m.greenAfter("acme", "widget", "v5", "contract", opened) || m.greenAfter("acme", "other", "", "contract", opened) {
+		t.Fatal("green on main must not show recovery on another base or repo")
+	}
+	now = now.Add(baseGreenMemoryTTL)
+	m.noteGreen(main, nil)
+	if m.anyGreen("acme", "widget") {
+		t.Fatal("green record kept past its TTL")
+	}
+}
+
+// The base-red gate's own base-tip read records when each check last went
+// green there; a name another app still runs is not green.
+func TestBaseCheckStatesForRefRecordsGreen(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/acme/widget/commits/main/check-runs", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"total_count": 3, "check_runs": []map[string]any{
+			{"id": 1, "name": "contract", "status": "completed", "conclusion": "success", "completed_at": "2026-11-18T11:00:00Z", "app": map[string]any{"id": 1}},
+			{"id": 2, "name": "build", "status": "completed", "conclusion": "success", "completed_at": "2026-11-18T11:00:00Z", "app": map[string]any{"id": 1}},
+			{"id": 3, "name": "build", "status": "in_progress", "app": map[string]any{"id": 2}},
+		}})
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+	c := newTestClient(t, srv, "acme", []string{"widget"})
+	c.baseRed.now = func() time.Time { return time.Date(2026, 11, 18, 12, 0, 0, 0, time.UTC) }
+	if _, err := c.baseCheckStatesForRef(context.Background(), "acme", "widget", "main"); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	opened := time.Date(2026, 11, 18, 5, 44, 0, 0, time.UTC)
+	if !c.baseRed.greenAfter("acme", "widget", "main", "contract", opened) {
+		t.Fatal("contract's green run on the tip was not recorded")
+	}
+	if c.baseRed.greenAfter("acme", "widget", "main", "build", opened) {
+		t.Fatal("build still runs under another app; it is not green")
+	}
+}
