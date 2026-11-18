@@ -11,6 +11,12 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.320.3)
+
+### Fixed
+
+- Switching the model or method of a configured agent that is stopped, paused or not in the runtime no longer fails with "Model switch failed: agent <name> not found": the choice is saved to both config layers without restarting the agent and the dashboard says "saved; applies when <agent> starts", while a genuinely unknown agent still fails and lists the valid names; and switching an agent's method, model or reasoning effort no longer scrolls the dashboard away from that agent, drops focus from the dropdown used, or re-sorts the cards. (#18905, #18906).
+
 ## 2026-11-18 (v5.320.2)
 
 ### Fixed
