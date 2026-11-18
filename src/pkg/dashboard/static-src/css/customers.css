@@ -7,19 +7,36 @@
     .customers-hint { max-width: 80ch; line-height: 1.5; }
     .customers-group { display: flex; flex-direction: column; gap: var(--sp-3); margin-top: var(--sp-4); min-width: 0; }
     .customers-group-title { font-size: var(--fs-sm); font-weight: var(--fw-semibold); color: var(--text); }
-    /* Person and suggestion card: avatar, content, actions. */
-    .customers-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; column-gap: var(--sp-4); row-gap: var(--sp-3); padding: var(--sp-4) var(--sp-5); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); min-width: 0; max-width: 100%; }
+    /* Person and suggestion card: one line at desktop width. Avatar, a flowing line of name and pills, the date, the actions. On a narrow screen the pills wrap under the name and the actions take their own line. */
+    .customers-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; column-gap: var(--sp-3); row-gap: var(--sp-2); padding: var(--sp-1) var(--sp-3); min-height: calc(var(--tap-target) - var(--sp-1)); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); min-width: 0; max-width: 100%; }
     .customers-card[data-me="true"] { border-color: var(--accent); }
-    .customers-avatar { display: inline-grid; place-items: center; width: 2.25rem; height: 2.25rem; border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--text); font-size: var(--fs-md); font-weight: var(--fw-semibold); flex: none; }
+    .customers-avatar { position: relative; display: inline-grid; place-items: center; width: 1.75rem; height: 1.75rem; border-radius: var(--r-pill); overflow: hidden; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--text); font-size: var(--fs-sm); font-weight: var(--fw-semibold); flex: none; }
     .customers-card[data-kind="suggestion"] .customers-avatar { background: color-mix(in srgb, var(--border) 30%, var(--surface)); }
+    .customers-avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: var(--r-pill); background: var(--surface); }
     .customers-row-main { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; flex: 1 1 16em; }
-    .customers-card .customers-row-main { flex: none; }
+    .customers-card .customers-row-main { flex: none; flex-direction: row; flex-wrap: wrap; align-items: center; gap: var(--sp-1) var(--sp-2); }
+    .customers-name { min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .customers-card .customers-name { font-size: var(--fs-base); font-weight: var(--fw-semibold); }
+    .customers-me { flex: none; padding: 0 var(--sp-3); border: 1px solid var(--accent); border-radius: var(--r-pill); color: var(--accent); font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.6; }
+    .customers-updated { white-space: nowrap; text-align: right; }
+    /* Pills share the status pill's shape and type size (kc-pill); these are quieter: outlined, a lighter weight. */
+    .kc-pill.customers-pill { display: inline-flex; align-items: center; gap: var(--sp-2); max-width: 100%; padding: 0 var(--sp-3); line-height: 1.6; white-space: nowrap; font-weight: var(--fw-semibold); color: var(--muted); background: transparent; border: 1px solid var(--border); }
+    .kc-pill.customers-source { max-width: 14rem; overflow: hidden; text-overflow: ellipsis; display: inline-block; font-family: var(--font-mono); font-weight: 400; color: var(--text); }
+    .kc-pill.customers-source[data-claimed="true"] { border-style: dashed; }
+    .kc-pill.customers-more { cursor: help; }
+    .kc-pill.customers-tag { color: var(--text); border-color: color-mix(in srgb, var(--customers-tone, var(--muted)) 55%, var(--border)); background: color-mix(in srgb, var(--customers-tone, var(--muted)) 16%, var(--surface)); }
+    .kc-pill.customers-tag[data-tag="maintainer"] { --customers-tone: var(--accent); }
+    .kc-pill.customers-tag[data-tag="contributor"] { --customers-tone: var(--cyan); }
+    .kc-pill.customers-tag[data-tag="end-user"] { --customers-tone: var(--green); }
+    .kc-pill.customers-tag[data-tag="stakeholder"] { --customers-tone: var(--yellow); }
+    .customers-tag-dot { width: var(--sp-3); height: var(--sp-3); border-radius: var(--r-pill); background: var(--customers-tone, var(--muted)); flex: none; }
+    .customers-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
     .customers-row-title { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; font-size: var(--fs-base); font-weight: var(--fw-semibold); }
-    .customers-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    .customers-me { flex: none; }
-    .customers-row-meta { overflow-wrap: anywhere; line-height: 1.5; }
     .customers-row-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
     .customers-card[data-kind="suggestion"] .customers-row-actions { width: var(--customers-actions-w); }
+    /* The disclosure sits in the pill line; opened, its body takes the full width under it. */
+    .customers-why { flex: 0 1 auto; min-width: 0; }
+    .customers-why[open] { flex-basis: 100%; }
     .customers-why summary { cursor: pointer; width: fit-content; }
     .customers-why-body { margin-top: var(--sp-1); overflow-wrap: anywhere; line-height: 1.5; }
     .customers-picker { grid-column: 1 / -1; display: flex; flex-direction: column; gap: var(--sp-3); padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: var(--r); background: var(--bg); min-width: 0; }
@@ -48,6 +65,7 @@
     .customers-notes { width: 100%; min-height: 6em; }
     @media (max-width: 720px) {
       .customers-form { grid-template-columns: 1fr; }
-      .customers-card { grid-template-columns: auto minmax(0, 1fr); padding: var(--sp-3) var(--sp-4); }
+      .customers-card { grid-template-columns: auto minmax(0, 1fr); padding: var(--sp-2) var(--sp-3); align-items: start; }
+      .customers-updated { display: none; }
       .customers-card .customers-row-actions, .customers-card[data-kind="suggestion"] .customers-row-actions { grid-column: 1 / -1; width: auto; justify-content: flex-start; }
     }

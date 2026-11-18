@@ -292,7 +292,28 @@ func (s *Server) handleCustomersList(w http.ResponseWriter, r *http.Request) {
 		s.customersError(w, r, err)
 		return
 	}
-	jsonResponse(w, out)
+	jsonResponse(w, s.withCustomersAvatars(out))
+}
+
+// withCustomersAvatars adds the live avatars switch to the list answer, so
+// the page knows whether it may ask github.com for profile pictures. It is
+// read per request, so turning it off in Settings takes effect on the next
+// refresh, and the answer is unchanged if the list cannot be re-encoded.
+func (s *Server) withCustomersAvatars(out any) any {
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return out
+	}
+	var m map[string]any
+	if json.Unmarshal(raw, &m) != nil || m == nil {
+		return out
+	}
+	on := true
+	if s.deps != nil && s.deps.Config != nil {
+		on = s.deps.Config.CustomersAvatarsEnabled()
+	}
+	m["avatars"] = on
+	return m
 }
 
 func (s *Server) handleCustomersGet(w http.ResponseWriter, r *http.Request) {

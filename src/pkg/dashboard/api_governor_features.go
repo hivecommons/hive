@@ -142,6 +142,9 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		// #18742: customers.inference.enabled, goal and satisfaction
 		// suggestions made with a model. Default off.
 		CustomersInferenceEnabled *bool `json:"customersInferenceEnabled"`
+		// customers.avatars.enabled: GitHub profile pictures on the
+		// Customers list. Default on.
+		CustomersAvatarsEnabled *bool `json:"customersAvatarsEnabled"`
 
 		AutonomyAutoPromote  *bool   `json:"autonomyAutoPromote"`
 		AutonomyAutoDemote   *bool   `json:"autonomyAutoDemote"`
@@ -371,6 +374,10 @@ func (s *Server) handleGovernorFeatures(w http.ResponseWriter, r *http.Request) 
 		on := *body.CustomersInferenceEnabled
 		cfg.Customers.Inference.Enabled = &on
 	}
+	if body.CustomersAvatarsEnabled != nil {
+		on := *body.CustomersAvatarsEnabled
+		cfg.Customers.Avatars.Enabled = &on
+	}
 	if claimsTTLsChanged {
 		applyClaimsTTLs(&cfg.Governor.Claims, body.ClaimsTTLS, body.ClaimsHumanTTLS, body.ClaimsAgentTTLS, body.ClaimsContributorTTLS, body.ClaimsMaxTTLS)
 		// Live claims keep their expiry; claims made or renewed from now on
@@ -577,6 +584,8 @@ func featuresSectionResponse(cfg *config.Config) map[string]interface{} {
 		"customersEffective":          cfg.CustomersEnabled(),
 		"customersInference":          cfg.Customers.Inference.IsEnabled(),
 		"customersInferenceEffective": cfg.CustomersInferenceEnabled(),
+		"customersAvatars":            cfg.Customers.Avatars.IsEnabled(),
+		"customersAvatarsEffective":   cfg.CustomersAvatarsEnabled(),
 		"publicationEnabled":          cfg.Publication.Enabled,
 		"publicationPrivateChannel":   cfg.Publication.PrivateChannel,
 		"publicationOwner":            cfg.Publication.Owner,
