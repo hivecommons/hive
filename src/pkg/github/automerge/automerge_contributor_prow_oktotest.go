@@ -52,8 +52,18 @@ var prowTrustedAssociations = map[string]bool{
 // remembered per repository (automerge_prow_refusal_memory.go), so a later
 // fork PR there gets the needs-human note without the command being posted. The caller
 // must already have admitted the PR to the contributor lane.
+//
+// An observe-only pass (a repo whose auto-merge is off) and the read-only
+// eligibility probe post nothing here. Their mutation boundary refuses the
+// comment by design, and each pass runs on a fresh engine whose per-head
+// mark is empty, so the attempt was refused and logged at WARN on every
+// re-evaluation of the head (projectbluefin/server#690, about every three
+// minutes), as the workflow-fence audit comment once was (#17668).
 func (c *Engine) requestProwPresubmitsForFork(ctx context.Context, displayRepo, owner, repo string, pr *gh.PullRequest, number int, headSHA string) {
 	if c == nil || c.gh == nil || pr == nil || strings.TrimSpace(headSHA) == "" || !c.isForkPR(pr) {
+		return
+	}
+	if c.observeOnly || integrationEligibilityProbe(ctx) {
 		return
 	}
 	if prowTrustedAssociations[strings.ToUpper(strings.TrimSpace(pr.GetAuthorAssociation()))] {

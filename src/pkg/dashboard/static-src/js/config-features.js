@@ -1428,6 +1428,14 @@
           </div>
           <div class="config-help">Applies on the next posture pass.</div>
         </div>
+
+        <div class="settings-subsection">
+          <div class="settings-subsection-title">Shared-CI recovery ${settingHelpMark('settings', 'features', 'Shared-CI recovery', `When one check fails across many PRs at once, the hive files a [shared-ci] tracking issue. Once that incident is over (the issue is closed, or its check has passed on the PR's base branch again) the rerun sweep re-runs the failed jobs of each PR the incident held red, once per PR per incident, and leaves a short note on the PR.`)}</div>
+          <div class="config-toggle" data-setting-key="shared_ci_rerun.enabled">
+            <div class="config-toggle-switch ${f.sharedCiRerunEnabled !== false ? 'on' : ''}" data-action="toggleConfigSwitch" data-section="features" data-key="sharedCiRerunEnabled"></div>
+            <span class="config-toggle-label">Re-run PRs after a shared-CI incident ${yamlHint('shared_ci_rerun.enabled')} ${settingHelpMark('settings', 'features', 'Re-run PRs after a shared-CI incident', `On by default. Re-running failed jobs needs Actions: Read and write on the App, which is optional. Without it GitHub refuses each re-run (403) and the PR gets a note asking a maintainer to re-run it; turn this off to stop those attempts and notes. Applies from the next sweep.`)}</span>
+          </div>
+        </div>
         `)}
 
         ${featuresSectionHtml('integrations', `

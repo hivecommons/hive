@@ -973,3 +973,34 @@ func HeldWorkflowRunsStage(o stageObservation) (stageVerdict, bool) {
 	}
 	return stageVerdict{Stage: stagelabels.NeedsDecision, Rank: stageRankOwned, Human: true, Reason: prstage.WorkflowRunsHeldReason(o.HeldWorkflowRuns)}, true
 }
+
+// RecoveryUnauthorizedOwnsStage reports whether an exact-head CI recovery
+// permission refusal (PRPassFacts.RecoveryUnauthorized; today the shared-CI
+// rerun 403, hivecommons/hive#16277) becomes the PR's stage and reason. It
+// does only when CI is what holds the PR (a red or pending check, a shared-CI
+// or base-branch-red deferral, a red optional check) and no review gate
+// stands: then re-running the jobs is the person's one step, and the PR is
+// not sent to source fixing for an infrastructure failure. When the reviewer
+// requested changes or asked for a decision, or the PR is already parked at
+// 085 for something else, that is the blocker; showing "re-run CI" over it
+// hid it (projectbluefin/utah#1313 read as re-run-blocked over a changes
+// request, utah-packages#1013 over a withheld security approval). The
+// refusal still posts its hive:unauthorized label and comment either way.
+func RecoveryUnauthorizedOwnsStage(verdict stageVerdict, reason string, d stageDetail) bool {
+	if verdict.Terminal || verdict.Stage == stagelabels.None || verdict.Stage == stagelabels.NeedsDecision {
+		return false
+	}
+	d = NormalizeStageDetail(d)
+	if VerdictBlocks(d) || VerdictNeedsHuman(d) {
+		return false
+	}
+	if ClassifyCIReason(reason) != CIReasonNone {
+		return true
+	}
+	for _, prefix := range []string{stageReasonSharedCIIncident, stageReasonBaseBranchRed, stageReasonOptionalCheckFailing} {
+		if strings.HasPrefix(reason, prefix) {
+			return true
+		}
+	}
+	return false
+}

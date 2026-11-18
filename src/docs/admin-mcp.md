@@ -1140,6 +1140,11 @@ refuses any other role.
   `writebackBackfill` (`writeback.unsolicited.backfill`). Its preview names
   each one that lets the hive write to more items: backfill on, the opt-in
   label requirement off, or any level change.
+- `governor.feature_settings` also takes `sharedCiRerunEnabled`
+  (`shared_ci_rerun.enabled`, Settings → Features → Quality loops & release
+  health → Shared-CI recovery). Turning it off stops the shared-CI rerun
+  attempts and their notes, for example on a hive whose App has no Actions
+  write; turning it on is named in the preview's widening disclosure.
 - `writeback.kind_policy` changes the write-back gate's per-kind overrides
   (`writeback.kinds.<kind>`: `min_level`, `require_label`,
   `unlabeled_min_level` and `own_only`), through

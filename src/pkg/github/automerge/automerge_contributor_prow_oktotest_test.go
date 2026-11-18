@@ -299,3 +299,32 @@ func TestContributorLaneProwRejectionAlreadyNotedLogsBelowWarn(t *testing.T) {
 		t.Fatalf("WARN lines = %d in %q, want 1 (only the run that left the note)", got, logs.String())
 	}
 }
+
+// An observe-only pass (a repo whose auto-merge is off) posts no /ok-to-test
+// and logs nothing at WARN: its mutation boundary refuses the comment by
+// design, and each pass runs on a fresh engine, so the refused attempt was
+// logged on every re-evaluation of the head (projectbluefin/server#690). The
+// live sweep on the same fixture posts once (TestContributorLanePostsProwOkToTestForNonMemberFork).
+func TestContributorLaneObserveOnlyPassDoesNotPostProwOkToTest(t *testing.T) {
+	fx := prowOkToTestFixture()
+	api := newContributorLaneAPI(t, &fx)
+	defer api.Close()
+	policy := defaultContributorLanePolicy()
+	clock := &contributorLaneClock{at: time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)}
+	engine := newContributorLaneEngine(api.URL, policy, clock, Options{ContributorSoak: soakedTracker(clock)})
+	var logs bytes.Buffer
+	for pass := 0; pass < 3; pass++ {
+		oc := engine.observeOnlyEngine()
+		oc.logger = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelWarn}))
+		if _, _, err := oc.trySweepContributorLanePR(context.Background(), "widget", "acme", "widget", 7, policy); err != nil {
+			t.Fatalf("pass %d err = %v", pass, err)
+		}
+		clock.advance(workflowApprovalRecheck + time.Minute)
+	}
+	if fx.comments != 0 {
+		t.Fatalf("comments = %d %q, want none from an observe-only pass", fx.comments, fx.allComments)
+	}
+	if strings.Contains(logs.String(), "failed to post ok-to-test") {
+		t.Fatalf("observe-only pass logged the refused /ok-to-test at WARN: %s", logs.String())
+	}
+}
