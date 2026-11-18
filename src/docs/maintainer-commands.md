@@ -429,7 +429,14 @@ Plain approvals such as "approved", "go ahead", "sounds good", or "ship it" do
 not un-park an issue. When an eligible maintainer writes prose that looks like
 assent, Hive posts a hint asking for `/hive approve` or `/hive decision <text>`
 and leaves all labels unchanged. This avoids turning casual agreement into a
-state-changing instruction.
+state-changing instruction. A first line starting `decision`, `decide` or
+`option <N>` that is not a command gets the same hint.
+
+The one exception is a first line that starts `Decision:` or
+`Decision (owner):`. From an eligible maintainer it is read as
+`/hive decision <rest of comment>`, with the same permission, freshness and
+unedited rules, so a decision recorded in the usual way takes effect
+([#19155](https://github.com/hivecommons/hive/issues/19155)).
 
 ## Model-defined replies
 

@@ -1,0 +1,1 @@
+- The un-park sweep now treats an eligible maintainer's comment starting `Decision:` or `Decision (owner):` as `/hive decision <text>`, and the prose hint also fires for first lines starting `decision`, `decide` or `option <N>`, so a plain decision on a parked issue is no longer silently ignored ([#19155](https://github.com/hivecommons/hive/issues/19155)).

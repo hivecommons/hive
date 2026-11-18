@@ -832,6 +832,13 @@ func TestParseUnparkCommand(t *testing.T) {
 		{"/hive", unparkCommandNone, "", false},
 		{"", unparkCommandNone, "", false},
 		{"please /hive approve", unparkCommandNone, "", false},
+		{"Decision: option 1. Keep the tags.", unparkCommandDecision, "option 1. Keep the tags.", true},
+		{"Decision (owner): option 1. Keep the tags.", unparkCommandDecision, "option 1. Keep the tags.", true},
+		{"decision: B", unparkCommandDecision, "B", true},
+		{"Decision:", unparkCommandNone, "", false},
+		{"Decision taken by hive: A", unparkCommandNone, "", false},
+		{"> Decision: option 1", unparkCommandNone, "", false},
+		{"thanks\nDecision: option 1", unparkCommandNone, "", false},
 	}
 	for _, tc := range cases {
 		cmd, ok := parseUnparkCommand(tc.body)
@@ -855,7 +862,7 @@ func TestUnparkNoticeBodyListsIssueOptions(t *testing.T) {
 }
 
 func TestIsUnparkProseAssent(t *testing.T) {
-	for _, body := range []string{"approved", "Go ahead", "LGTM", "sounds good to me"} {
+	for _, body := range []string{"approved", "Go ahead", "LGTM", "sounds good to me", "Option 2 looks right", "Decide: B", "decision time"} {
 		if !isUnparkProseAssent(body) {
 			t.Errorf("isUnparkProseAssent(%q) = false, want true", body)
 		}

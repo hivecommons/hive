@@ -1403,6 +1403,17 @@ func isUnparkWatermarkCommandFor(body string, verbs []string) bool {
 	return false
 }
 
+// unparkPlainDecisionRe matches a first line of `Decision: <text>` or
+// `Decision (owner): <text>`, the way maintainers habitually record a choice.
+// It is read as `/hive decision <text>` and goes through the same permission,
+// freshness and unedited checks (hivecommons/hive#19155).
+var unparkPlainDecisionRe = regexp.MustCompile(`(?i)^decision(?:\s*\([^)]*\))?\s*:\s*(\S.*)$`)
+
+// unparkProseDecisionRe matches a first line that names a decision, an option
+// or a decide verb without being a command, so the hint can point at
+// `/hive decision <text>`.
+var unparkProseDecisionRe = regexp.MustCompile(`(?i)^(?:decision\b|decide\b|option\s+\w)`)
+
 // parseUnparkCommand reads a `/hive …` command — or `/fixed` / `/close`
 // (unparkCommandFixed) — off the first line of a comment. The first line
 // only, and never inside a quote or a fence, so quoting someone else's
@@ -1420,6 +1431,10 @@ func parseUnparkCommand(body string) (unparkCommand, bool) {
 		if strings.EqualFold(fields[0], token) {
 			return unparkCommand{Kind: unparkCommandFixed, Decision: strings.TrimSpace(strings.Join(fields[1:], " "))}, true
 		}
+	}
+	if m := unparkPlainDecisionRe.FindStringSubmatch(line); m != nil {
+		decision := strings.TrimSpace(m[1])
+		return unparkCommand{Kind: unparkCommandDecision, Decision: decision, Text: decisionText(body, decision)}, true
 	}
 	if len(fields) < 2 || !strings.EqualFold(fields[0], unparkCommandPrefix) {
 		return unparkCommand{}, false
@@ -1497,10 +1512,10 @@ func isUnparkProseAssent(body string) bool {
 			return true
 		}
 	}
-	return false
+	return unparkProseDecisionRe.MatchString(line)
 }
 
-const unparkProseHintReply = "To start work, reply `/hive approve` (or `/hive decision A`). A plain reply acknowledges the issue but leaves it parked."
+const unparkProseHintReply = "To start work, reply `/hive approve` (or `/hive decision <your choice>`, for example `/hive decision A`). A plain reply acknowledges the issue but leaves it parked."
 
 // renderUnparkLabelDrivenReply answers `/hive approve`, `/hive decision`,
 // `/hive done` and `/hive help` on a repo with
