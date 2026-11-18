@@ -204,6 +204,7 @@ a key hash, the master secret or the user's GitHub token.
 | Action | Written when | Keys |
 | --- | --- | --- |
 | `selfservice_hive_registered` | A registration passed every check and the key was minted | `user`, `hive`, `repos` (count), `org` |
+| `selfservice_hive_updated` | The owner changed a registration in place through `PATCH /api/hub/v1/registrations/{id}` | `user`, `hive`, `repos` (count after), `repos_added`, `repos_removed`, `dashboard_url_changed` |
 | `selfservice_hive_rotated` | The owner rotated the heartbeat key | `user`, `hive`, `overlap` (how long the previous key keeps authenticating) |
 | `selfservice_hive_revoked` | The owner or a hub admin revoked the hive; the registry entry is removed in the same request and `registry entry removed` follows | `user`, `hive`, `owner`, `by_admin` |
 | `selfservice_hive_expired` | The expiry sweep (`pkg/hub/selfservice_expiry.go`, every `HIVE_HUB_SELFSERVICE_SWEEP_INTERVAL`) removed a hive that went longer than `HIVE_HUB_SELFSERVICE_EXPIRY` without an accepted heartbeat; the key is revoked and `registry entry removed` (with `by=selfservice-expiry-sweep`) follows | `id`, `owner`, `last_heartbeat` (RFC 3339, or `never` when no heartbeat was ever accepted), `expiry` |

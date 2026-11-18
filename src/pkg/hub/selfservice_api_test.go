@@ -39,6 +39,19 @@ type selfServiceTestEnv struct {
 	// repoCheckGate, when set, runs inside the GitHub stub before it answers,
 	// so a test can hold concurrent registrations inside the ownership proof.
 	repoCheckGate func()
+	// repoChecks records every repo the GitHub stub was asked about, so a
+	// test can assert which repos an edit re-proved (#18642).
+	repoChecksMu sync.Mutex
+	repoChecks   []string
+}
+
+// checkedRepos returns and clears the repos the GitHub stub was asked about.
+func (env *selfServiceTestEnv) checkedRepos() []string {
+	env.repoChecksMu.Lock()
+	defer env.repoChecksMu.Unlock()
+	out := env.repoChecks
+	env.repoChecks = nil
+	return out
 }
 
 type lockedBuffer struct {
@@ -76,7 +89,9 @@ func newSelfServiceTestEnv(t *testing.T) *selfServiceTestEnv {
 	}
 	t.Cleanup(func() { privateURLResolver = origResolver })
 
-	env := &selfServiceTestEnv{logs: &lockedBuffer{}, adminRepos: map[string]bool{"alice/lab": true, "alice/tools": true, "alice/readonly": false}}
+	env := &selfServiceTestEnv{logs: &lockedBuffer{}, adminRepos: map[string]bool{"alice/lab": true, "alice/tools": true, "alice/readonly": false,
+		"alice/docs": true, "alice/site": true,
+	}}
 	env.github = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Header.Get("Authorization") != "Bearer "+selfServiceTestToken {
 			w.WriteHeader(http.StatusUnauthorized)
@@ -86,6 +101,9 @@ func newSelfServiceTestEnv(t *testing.T) *selfServiceTestEnv {
 			env.repoCheckGate()
 		}
 		repo := strings.TrimPrefix(r.URL.Path, "/repos/")
+		env.repoChecksMu.Lock()
+		env.repoChecks = append(env.repoChecks, repo)
+		env.repoChecksMu.Unlock()
 		admin, known := env.adminRepos[repo]
 		// alice/bulk-* are admin repos for the repo-cap tests, which need more
 		// of them than are worth listing.

@@ -4,17 +4,26 @@ package hub
 //
 // /api/hub/v1 is a versioned resource view of the self-service (byo-)
 // registry that selfservice_api.go already serves under /api/hub/selfservice.
-// It adds discovery (GET /api/hub/v1) and the registry as resources: create,
-// list, get, delete and key rotation, with an ETag on every record and an
-// optional If-Match on every write. In-place edits (PATCH) are a later PR of
-// the same rollout. The legacy routes keep their bodies and status codes.
+// Step 1 adds two things the v6 routes cannot do:
+//
+//   - GET /api/hub/v1 discovery, so a client learns the operations, limits and
+//     proof methods before it hits a 4xx.
+//   - PATCH /api/hub/v1/registrations/{id}, which edits repos and
+//     dashboard_url IN PLACE. The heartbeat key is not touched, so adding a
+//     repo no longer means delete, re-register, re-key and restart the spoke.
+//
+// Create, list, delete and rotate are the v6 handlers' logic under resource
+// paths, plus an ETag on every record and If-Match on every write. The v6
+// routes keep their bodies and status codes unchanged.
 //
 // Invariants (in addition to selfservice_api.go's):
 //   - Nothing here writes to GitHub. The only GitHub call is the read-only
-//     ownership check (GET /repos/{owner}/{repo}) at create, shared with the
-//     legacy route.
+//     ownership check (GET /repos/{owner}/{repo}) and it runs only for repos a
+//     PATCH ADDS; repos already on the record keep their earlier proof.
+//   - A PATCH can change Repos and DashboardURL only; selfServiceStore.update
+//     restores the key hashes, owner, ID and timestamps after the edit.
 //   - Every write carries an ETag precondition check inside the store lock, so
-//     two operators acting at once get 412, never a silent overwrite.
+//     two operators editing at once get 412, never a silent overwrite.
 
 import (
 	"bytes"
@@ -56,13 +65,13 @@ var hubV1Operations = []hubV1Operation{
 	{Name: "create", Method: http.MethodPost, Path: hubV1BasePath + "/registrations"},
 	{Name: "list", Method: http.MethodGet, Path: hubV1BasePath + "/registrations"},
 	{Name: "get", Method: http.MethodGet, Path: hubV1BasePath + "/registrations/{id}"},
+	{Name: "update", Method: http.MethodPatch, Path: hubV1BasePath + "/registrations/{id}", IfMatch: "required"},
 	{Name: "rotate_key", Method: http.MethodPost, Path: hubV1BasePath + "/registrations/{id}/keys", IfMatch: "optional"},
 	{Name: "delete", Method: http.MethodDelete, Path: hubV1BasePath + "/registrations/{id}", IfMatch: "optional"},
 }
 
-// hubV1PatchFields are the registration fields an update may change. Empty
-// until the update operation exists.
-var hubV1PatchFields = []string{}
+// hubV1PatchFields are the registration fields PATCH may change.
+var hubV1PatchFields = []string{"repos", "dashboard_url"}
 
 // registerHubV1Routes wires the v1 routes onto the hub mux. Discovery is
 // public (a spoke reads it before it has a session); every other route is
@@ -73,6 +82,7 @@ func (s *HubServer) registerHubV1Routes() {
 	s.mux.HandleFunc("POST "+hubV1BasePath+"/registrations", s.requireAuth(s.handleHubV1Create))
 	s.mux.HandleFunc("GET "+hubV1BasePath+"/registrations", s.requireAuth(s.handleHubV1List))
 	s.mux.HandleFunc("GET "+hubV1BasePath+"/registrations/{id}", s.requireAuth(s.handleHubV1Get))
+	s.mux.HandleFunc("PATCH "+hubV1BasePath+"/registrations/{id}", s.requireAuth(s.handleHubV1Patch))
 	s.mux.HandleFunc("DELETE "+hubV1BasePath+"/registrations/{id}", s.requireAuth(s.handleHubV1Delete))
 	s.mux.HandleFunc("POST "+hubV1BasePath+"/registrations/{id}/keys", s.requireAuth(s.handleHubV1RotateKey))
 }
@@ -111,7 +121,7 @@ func (s *HubServer) hubV1View(h SelfServiceHive) hubV1RegistrationView {
 	}
 }
 
-// writeHubV1RepoCapError is the v1 over-cap answer for create (and, later, PATCH): 413
+// writeHubV1RepoCapError is the v1 over-cap answer for create and PATCH: 413
 // naming the limit, so a client can read it without parsing the message.
 func writeHubV1RepoCapError(w http.ResponseWriter, err error, maxRepos int) {
 	writeHubV1JSON(w, http.StatusRequestEntityTooLarge, "", hubV1RepoCapBody(err, maxRepos))
@@ -205,6 +215,29 @@ func (s *HubServer) handleHubV1Get(w http.ResponseWriter, r *http.Request) {
 	writeHubV1JSON(w, http.StatusOK, etag, map[string]any{"registration": s.hubV1View(h)})
 }
 
+// hubV1PatchRequest is the PATCH body. Repos is either a JSON array (a full
+// replacement) or an object with add and remove lists. DashboardURL is a
+// pointer so "absent" (no change) differs from "" (clear it).
+type hubV1PatchRequest struct {
+	Repos        json.RawMessage `json:"repos"`
+	DashboardURL *string         `json:"dashboard_url"`
+}
+
+type hubV1RepoDelta struct {
+	Add    []string `json:"add"`
+	Remove []string `json:"remove"`
+}
+
+// hubV1PatchError is a refusal decided while working out a PATCH.
+type hubV1PatchError struct {
+	code int
+	body map[string]any
+}
+
+func hubV1Refuse(code int, msg string) *hubV1PatchError {
+	return &hubV1PatchError{code: code, body: map[string]any{"error": msg}}
+}
+
 func decodeStrict(data []byte, v any) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	dec.DisallowUnknownFields()
@@ -215,6 +248,182 @@ func decodeStrict(data []byte, v any) error {
 		return errors.New("trailing data after JSON value")
 	}
 	return nil
+}
+
+// hubV1PlanRepos works out the repo list a PATCH asks for and which of its
+// repos are new to the record. changed is false when the list is the same set.
+func hubV1PlanRepos(current []string, raw json.RawMessage) (next, added []string, changed bool, perr *hubV1PatchError) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return current, nil, false, nil
+	}
+	have := make(map[string]struct{}, len(current))
+	for _, repo := range current {
+		have[strings.ToLower(repo)] = struct{}{}
+	}
+	var proposed []string
+	switch trimmed[0] {
+	case '[':
+		var repos []string
+		if err := json.Unmarshal(trimmed, &repos); err != nil {
+			return nil, nil, false, hubV1Refuse(http.StatusBadRequest, "repos must be a list of owner/name strings or an {add, remove} object")
+		}
+		proposed = repos
+	case '{':
+		var delta hubV1RepoDelta
+		if err := decodeStrict(trimmed, &delta); err != nil {
+			return nil, nil, false, hubV1Refuse(http.StatusBadRequest, "repos object takes only add and remove lists")
+		}
+		if len(delta.Add) == 0 && len(delta.Remove) == 0 {
+			return nil, nil, false, hubV1Refuse(http.StatusBadRequest, "repos object needs a non-empty add or remove list")
+		}
+		removing := make(map[string]struct{}, len(delta.Remove))
+		for _, repo := range delta.Remove {
+			removing[strings.ToLower(strings.TrimSpace(repo))] = struct{}{}
+		}
+		for _, repo := range delta.Add {
+			if _, both := removing[strings.ToLower(strings.TrimSpace(repo))]; both {
+				return nil, nil, false, hubV1Refuse(http.StatusBadRequest, fmt.Sprintf("repo %q is in both add and remove", strings.TrimSpace(repo)))
+			}
+		}
+		for _, repo := range current {
+			if _, drop := removing[strings.ToLower(repo)]; !drop {
+				proposed = append(proposed, repo)
+			}
+		}
+		proposed = append(proposed, delta.Add...)
+	default:
+		return nil, nil, false, hubV1Refuse(http.StatusBadRequest, "repos must be a list of owner/name strings or an {add, remove} object")
+	}
+
+	if len(proposed) == 0 {
+		return nil, nil, false, hubV1Refuse(http.StatusBadRequest, "a registration must keep at least one repo")
+	}
+	next, err := selfServiceValidateRepos(proposed)
+	if err != nil {
+		if maxRepos := selfServiceMaxRepos(); len(proposed) > maxRepos {
+			return nil, nil, false, &hubV1PatchError{code: http.StatusRequestEntityTooLarge, body: hubV1RepoCapBody(err, maxRepos)}
+		}
+		return nil, nil, false, hubV1Refuse(http.StatusBadRequest, err.Error())
+	}
+	for _, repo := range next {
+		if _, ok := have[strings.ToLower(repo)]; !ok {
+			added = append(added, repo)
+		}
+	}
+	changed = len(added) > 0 || len(next) != len(current)
+	return next, added, changed, nil
+}
+
+// handleHubV1Patch is PATCH /api/hub/v1/registrations/{id}: change repos
+// and/or dashboard_url without touching the key. If-Match is required.
+func (s *HubServer) handleHubV1Patch(w http.ResponseWriter, r *http.Request) {
+	if !s.requireSelfServiceEnabled(w) {
+		return
+	}
+	login := s.getAuthUser(r)
+	user := loadSaaSUser(login)
+	if user == nil {
+		writeJSONError(w, http.StatusUnauthorized, "not authenticated")
+		return
+	}
+	h, ok := s.selfServiceOwnedHive(w, r, login, false)
+	if !ok {
+		return
+	}
+	ifMatch := strings.TrimSpace(r.Header.Get("If-Match"))
+	if ifMatch == "" {
+		writeHubV1JSON(w, http.StatusPreconditionRequired, selfServiceETag(h), map[string]any{
+			"error": "PATCH needs an If-Match header with the registration's ETag",
+		})
+		return
+	}
+	// Fast refusal before any GitHub call; the store re-checks under its lock.
+	if !selfServiceETagMatches(h, ifMatch) {
+		writeHubV1JSON(w, http.StatusPreconditionFailed, selfServiceETag(h), map[string]any{
+			"error": "the registration changed since you read it; GET it again and retry",
+		})
+		return
+	}
+
+	data, err := io.ReadAll(io.LimitReader(r.Body, selfServiceRequestBodyLimit()))
+	if err != nil {
+		writeJSONError(w, http.StatusBadRequest, "could not read the request body")
+		return
+	}
+	// org changes who the record speaks for, so it is not an edit: refuse it
+	// by name rather than as an unknown field.
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(data, &fields) == nil {
+		if _, ok := fields["org"]; ok {
+			writeJSONError(w, http.StatusBadRequest, "org is not editable; delete and re-register")
+			return
+		}
+	}
+	var body hubV1PatchRequest
+	if err := decodeStrict(data, &body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid JSON body; only repos and dashboard_url can be changed")
+		return
+	}
+
+	nextRepos, added, reposChanged, perr := hubV1PlanRepos(h.Repos, body.Repos)
+	if perr != nil {
+		s.auditSelfServiceRefused(login, h.ID, selfServiceRefusedInvalidRepos)
+		writeHubV1JSON(w, perr.code, "", perr.body)
+		return
+	}
+	nextURL := h.DashboardURL
+	if body.DashboardURL != nil {
+		nextURL, err = selfServiceValidateDashboardURL(r.Context(), *body.DashboardURL)
+		if err != nil {
+			s.auditSelfServiceRefused(login, h.ID, selfServiceRefusedInvalidURL)
+			writeJSONError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	urlChanged := nextURL != h.DashboardURL
+	if len(body.Repos) == 0 && body.DashboardURL == nil {
+		writeJSONError(w, http.StatusBadRequest, "nothing to change; send repos and/or dashboard_url")
+		return
+	}
+	if !reposChanged && !urlChanged {
+		writeHubV1JSON(w, http.StatusOK, selfServiceETag(h), map[string]any{"registration": s.hubV1View(h)})
+		return
+	}
+
+	// Only repos new to the record need a proof; the rest were proven when
+	// they were added. A read-only GitHub call per added repo, nothing more.
+	if len(added) > 0 && !s.selfServiceProveOwnership(w, r, login, h.ID, user, added) {
+		return
+	}
+
+	stored, err := s.selfService.update(h.ID, ifMatch, func(rec *SelfServiceHive) error {
+		rec.Repos = nextRepos
+		rec.DashboardURL = nextURL
+		// Added repos are stamped now; kept repos keep their proof time; a
+		// removed repo's entry goes, so re-adding it needs a new proof.
+		rec.RepoProofs = selfServiceProofTimes(rec.RepoProofs, nextRepos, rec.OwnershipCheckedAt, time.Now(), added)
+		return nil
+	})
+	if err != nil {
+		switch {
+		case errors.Is(err, errSelfServiceNotFound):
+			writeJSONError(w, http.StatusNotFound, "self-hosted hive not found")
+		case errors.Is(err, errSelfServiceStale):
+			current, _ := s.selfService.get(h.ID)
+			writeHubV1JSON(w, http.StatusPreconditionFailed, selfServiceETag(current), map[string]any{
+				"error": "the registration changed since you read it; GET it again and retry",
+			})
+		default:
+			s.logger.Error("self-service update: store write failed", "user", login, "hive", h.ID, "error", err)
+			writeJSONError(w, http.StatusInternalServerError, "could not persist the update")
+		}
+		return
+	}
+	s.logger.Info("audit: selfservice_hive_updated", "user", login, "hive", h.ID,
+		"repos", len(stored.Repos), "repos_added", len(added), "repos_removed", len(h.Repos)+len(added)-len(stored.Repos),
+		"dashboard_url_changed", urlChanged)
+	writeHubV1JSON(w, http.StatusOK, selfServiceETag(stored), map[string]any{"registration": s.hubV1View(stored)})
 }
 
 // handleHubV1RotateKey is POST /api/hub/v1/registrations/{id}/keys: the v6
