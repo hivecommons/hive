@@ -101,6 +101,7 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"main.maintainHeldPRMergeability":                     {Class: NotificationClassAttention},
 	"main.rfcCoverageForge.CreateComment":                 {Class: NotificationClassAttention},
 	"main.runEscalationSweep":                             {Class: NotificationClassAttention},
+	"main.reviewFeedbackSweep.checkRuleReply":             {Class: NotificationClassAttention},
 	"main.reviewFeedbackSweep.needsHuman":                 {Class: NotificationClassAttention},
 	"main.reviewFeedbackSweep.proposeRuleHome":            {Class: NotificationClassAttention},
 	"prfollowup.postStaleHeadPushNotes":                   {Class: NotificationClassAttention},

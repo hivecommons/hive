@@ -82,6 +82,7 @@ type reviewFeedbackSweep struct {
 type reviewFeedbackResult struct {
 	Checked, Kicked, Debounced, CapReached, NeedsHuman, Errors int
 	RulesCaptured, RulesQueued, RulesMerged                    int
+	ReplyMissingRules                                          int
 	NextCursor                                                 int
 }
 
@@ -122,6 +123,7 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 		if s.Rules != nil && fb.Open() {
 			s.applyRuleReplies(repo, number, fb.HiveReplies)
 			s.postRuleNotices(ctx, repo, number)
+			s.checkRuleReply(ctx, key, repo, number, fb.AgentReplies, &res)
 		}
 		if !fb.Open() || len(fb.Items) == 0 {
 			continue
@@ -152,6 +154,15 @@ func (s reviewFeedbackSweep) run(ctx context.Context, parse func(key string) (re
 			}
 			if err := s.Store.RecordKick(key, d.Items, s.Now); err != nil {
 				s.Logger.Warn("review feedback: could not persist handled ids; a later pass may re-kick", "repo", repo, "pr", number, "error", err)
+			}
+			if len(recorded) > 0 {
+				ids := make([]string, 0, len(recorded))
+				for _, r := range recorded {
+					ids = append(ids, r.ID)
+				}
+				if err := s.Store.RecordPendingReply(key, ids, s.Now); err != nil {
+					s.Logger.Warn("review feedback: could not persist the pending reply check", "repo", repo, "pr", number, "error", err)
+				}
 			}
 			res.Kicked++
 			for _, it := range d.Items {
@@ -226,6 +237,31 @@ func (s reviewFeedbackSweep) captureRules(ctx context.Context, repo string, numb
 	}
 	s.postRuleNotices(ctx, repo, number)
 	return recorded
+}
+
+// checkRuleReply verifies the agent's reply after a kick that carried captured
+// rules names each of them. When it does not, the miss is logged and one
+// needs-human note is posted; the check is then cleared.
+func (s reviewFeedbackSweep) checkRuleReply(ctx context.Context, key, repo string, number int, replies []github.FeedbackMessage, res *reviewFeedbackResult) {
+	p, ok := s.Store.PendingReplyFor(key)
+	if !ok {
+		return
+	}
+	verdict, missing := reviewfeedback.CheckReply(p, replies, s.Now)
+	if verdict == reviewfeedback.ReplyWaiting {
+		return
+	}
+	if verdict == reviewfeedback.ReplyMissing {
+		s.Logger.Warn("review feedback: agent reply does not name the captured rules, asking a person", "repo", repo, "pr", number, "rules", missing)
+		if err := s.Source.CreateIssueComment(ctx, repo, number, reviewfeedback.ReplyCheckNote(missing)); err != nil { // writeback:solicited a person's review feedback on this hive-authored PR
+			s.Logger.Warn("review feedback: reply-check note not posted, retrying next pass", "repo", repo, "pr", number, "error", err)
+			return
+		}
+		res.ReplyMissingRules++
+	}
+	if err := s.Store.ClearPendingReply(key, s.Now); err != nil {
+		s.Logger.Warn("review feedback: could not clear the pending reply check", "repo", repo, "pr", number, "error", err)
+	}
 }
 
 // applyRuleReplies reads the structured block in the agent's own replies on the

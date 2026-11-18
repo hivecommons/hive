@@ -352,3 +352,37 @@ func TestRecordedRulesBriefShape(t *testing.T) {
 		t.Fatalf("brief:\n%s", brief)
 	}
 }
+
+// After the kick, the agent's reply must name the captured rule. A reply that
+// does not raises one needs-human note; one that does raises nothing.
+func TestReviewFeedbackSweep_ReplyMustNameCapturedRule(t *testing.T) {
+	run := func(t *testing.T, replyBody string) (reviewFeedbackResult, []string) {
+		h := newRuleHarness(t, reviewrules.Config{})
+		h.feedback(ruleItem("inline:1001", "OWNER", maintainersFixture))
+		s := h.sweep(t)
+		s.run(context.Background(), parseReviewFeedbackKey)
+		before := len(h.src.comments)
+		fb := openDraftFeedback()
+		fb.Items = nil
+		fb.AgentReplies = []github.FeedbackMessage{{ID: "conversation:9", Hive: true, CreatedAt: h.now.Add(time.Minute),
+			Body: replyBody + "\n" + github.FeedbackHandledMarker([]string{"inline:1001"})}}
+		h.src.byKey[feedbackTestKey] = fb
+		s.Now = h.now.Add(time.Hour)
+		var res reviewFeedbackResult
+		for i := 0; i < 2; i++ {
+			res = s.run(context.Background(), parseReviewFeedbackKey)
+		}
+		return res, h.src.comments[before:]
+	}
+	t.Run("names it", func(t *testing.T) {
+		if _, notes := run(t, "Recorded as R-1, applied here."); len(notes) != 0 {
+			t.Fatalf("notes = %q, want none", notes)
+		}
+	})
+	t.Run("does not name it", func(t *testing.T) {
+		_, notes := run(t, "Fixed the file.")
+		if len(notes) != 1 || !strings.Contains(notes[0], github.FeedbackNeedsHumanMarker) || !strings.Contains(notes[0], "R-1") {
+			t.Fatalf("notes = %q, want exactly one needs-human note naming R-1", notes)
+		}
+	})
+}
