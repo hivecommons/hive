@@ -1845,6 +1845,14 @@ const AdoptBlockedAuthorMaintainer = "author-is-maintainer"
 // re-home, so the request is consumed with one note instead of looping.
 const AdoptBlockedSelfAuthored = "self-authored"
 
+// AdoptBlockedHumanClaim is the AdoptBlockedBy reason for a due adoption
+// held because an owner or maintainer holds a claim on an issue the PR
+// closes (assignee, `/claim` comment, hand-applied hive/claimed-by-human;
+// hivecommons/hive#18899). The PR stays the contributor's until the person
+// releases the claim, so the hive never opens a copy beside the owner's
+// work.
+const AdoptBlockedHumanClaim = "human-claim"
+
 // AdoptBlockedSupersedeConflict is the AdoptBlockedBy reason (and the 07x
 // lane reason) for a supersession whose head could not be replayed onto a
 // fresh base: the hive copy would open conflicting, so the attempt is
