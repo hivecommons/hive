@@ -123,8 +123,15 @@ var spokeWebhookRelayGuard = isPrivateURL
 // answers 30x to an internal host would otherwise re-open the SSRF the guard
 // above closes. The spoke receiver is a fixed path, so a redirect is never
 // legitimate here.
+//
+// Its transport dials only an address spokeWebhookRelayGuard passed, so a
+// DashboardURL whose name rebinds between the guard and the dial is refused
+// instead of reached (#18992).
 var spokeWebhookRelayClient = &http.Client{
 	CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+	Transport: pinnedFetchTransport(func(ctx context.Context, rawURL string) bool {
+		return spokeWebhookRelayGuard(ctx, rawURL)
+	}),
 }
 
 // relayWebhookToSpoke forwards a verified PR-shaped delivery, byte for byte

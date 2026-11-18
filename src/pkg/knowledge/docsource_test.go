@@ -147,6 +147,7 @@ func TestDocumentSource_ImportURL(t *testing.T) {
 </article><footer>Copyright</footer></body></html>`)
 	}))
 	defer server.Close()
+	allowDocFetchTo(t, server)
 
 	tmpDir := t.TempDir()
 	vaultDir := filepath.Join(tmpDir, "vault")
