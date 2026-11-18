@@ -97,11 +97,10 @@ func (a *AgentConfig) SandboxRuntime(global AgentSandboxConfig) string {
 
 // SandboxJob returns the effective Job runtime settings. A per-agent job
 // block replaces the global one wholesale for the pod-template fields (node
-// selector, affinity, tolerations, resources, secrets, volumes, service account) — an
-// agent that needs an accelerator names its own scheduling. The claim
-// fields and the TTL are cluster facts rather than per-agent choices, so
-// they fall back to the global block when the per-agent one leaves them
-// empty.
+// selector, affinity, tolerations, resources, secrets, volumes, service
+// account) — an agent that needs an accelerator names its own scheduling. The
+// claim fields and the TTL are cluster facts, not per-agent choices, so they
+// fall back to the global block when the per-agent one leaves them empty.
 func (a *AgentConfig) SandboxJob(global AgentSandboxConfig) SandboxJobConfig {
 	var g SandboxJobConfig
 	if global.Job != nil {
