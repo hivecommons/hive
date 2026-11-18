@@ -32,30 +32,35 @@ func TestPolicyCallbackFailureDenies(t *testing.T) {
 
 	gates := []struct {
 		name  string
+		gate  string // policy name in policyCallbackFailedReason; "" = bool-only check, no reason
 		check func(p *GitHubProxy, hit func()) (string, bool)
 	}{
-		{"repo pause", func(p *GitHubProxy, hit func()) (string, bool) {
+		{"repo pause", "repo pause", func(p *GitHubProxy, hit func()) (string, bool) {
 			p.SetRepoPausedFunc(func(string) bool { hit(); return false })
 			return p.repoPauseRefusal("POST", "/repos/acme/app/issues")
 		}},
-		{"agent repo scope", func(p *GitHubProxy, hit func()) (string, bool) {
+		{"agent repo scope", "agent repo scope", func(p *GitHubProxy, hit func()) (string, bool) {
 			p.SetAgentRepoScopeFunc(func(string, string) bool { hit(); return true })
 			return p.agentRepoScopeRefusal("scanner", "POST", "/repos/acme/app/issues")
 		}},
-		{"repo auto-merge REST", func(p *GitHubProxy, hit func()) (string, bool) {
+		{"repo auto-merge REST", "repo auto-merge", func(p *GitHubProxy, hit func()) (string, bool) {
 			p.SetRepoAutoMergeEnabledFunc(func(string) bool { hit(); return true })
 			return p.autoMergeRefusal("PUT", "/repos/acme/app/pulls/7/merge")
 		}},
-		{"repo auto-merge GraphQL", func(p *GitHubProxy, hit func()) (string, bool) {
+		{"repo auto-merge GraphQL", "repo auto-merge", func(p *GitHubProxy, hit func()) (string, bool) {
 			p.SetRepoAutoMergeEnabledFunc(func(string) bool { hit(); return true })
 			return p.graphQLAutoMergeRefusal([]byte(mergeGraphQL))
 		}},
-		{"write_surface.enforce", func(p *GitHubProxy, hit func()) (string, bool) {
+		{"write_surface.enforce", "write_surface.enforce", func(p *GitHubProxy, hit func()) (string, bool) {
 			p.SetWriteSurfaceEnforceFunc(func(string) bool { hit(); return false })
-			reason, _, refused := WriteSurfaceEnforceRefusal(p.writeSurfaceEnforcedFunc(), "scanner", "POST", "/repos/acme/app/issues", "")
+			reason, _, refused := p.writeSurfaceEnforceRefusal("scanner", "POST", "/repos/acme/app/issues", "")
 			return reason, refused
 		}},
-		{"write_surface.enforce MITM", func(p *GitHubProxy, hit func()) (string, bool) {
+		{"write_surface.enforce GraphQL", "write_surface.enforce", func(p *GitHubProxy, hit func()) (string, bool) {
+			p.SetWriteSurfaceEnforceFunc(func(string) bool { hit(); return false })
+			return p.writeSurfaceGraphQLRefusal("scanner", []byte(mergeGraphQL))
+		}},
+		{"write_surface.enforce MITM", "", func(p *GitHubProxy, hit func()) (string, bool) {
 			p.SetWriteSurfaceEnforceFunc(func(string) bool { hit(); return false })
 			return "", p.laneWriteSurfaceEnforced("scanner")
 		}},
@@ -68,6 +73,9 @@ func TestPolicyCallbackFailureDenies(t *testing.T) {
 				reason, denied := g.check(p, f.hit)
 				if !denied {
 					t.Fatalf("%s callback %s: gate allowed the request; want deny", g.name, f.name)
+				}
+				if g.gate != "" && reason != policyCallbackFailedReason(g.gate) {
+					t.Fatalf("%s callback %s: reason = %q; want policyCallbackFailedReason(%q)", g.name, f.name, reason, g.gate)
 				}
 				if strings.Contains(reason, "PAUSED by the operator") || strings.Contains(reason, "is NOT scoped") {
 					t.Fatalf("failure reason asserts an operator decision nobody made: %q", reason)

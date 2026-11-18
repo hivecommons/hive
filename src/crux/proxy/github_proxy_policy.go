@@ -139,8 +139,10 @@ func (p *GitHubProxy) agentRepoScopeRefusal(agentName, method, path string) (str
 // writeSurfaceEnforcedFunc returns the live write_surface.enforce predicate
 // wrapped so a call that panics or times out reports the lane as enforced:
 // its direct writes are refused and its GitHub hosts are intercepted, the
-// deny direction for both callers.
-func (p *GitHubProxy) writeSurfaceEnforcedFunc() func(agent string) bool {
+// deny direction for both callers. failed, when non-nil, is set on a failed
+// call so the caller can answer with policyCallbackFailedReason instead of
+// the normal write_surface.enforce directive.
+func (p *GitHubProxy) writeSurfaceEnforcedFunc(failed *bool) func(agent string) bool {
 	p.writeSurfaceMu.RLock()
 	enforced := p.writeSurfaceEnforced
 	p.writeSurfaceMu.RUnlock()
@@ -150,10 +152,37 @@ func (p *GitHubProxy) writeSurfaceEnforcedFunc() func(agent string) bool {
 	return func(agent string) bool {
 		v, ok := p.callPolicyPredicate("write_surface.enforce", func() bool { return enforced(agent) })
 		if !ok {
+			if failed != nil {
+				*failed = true
+			}
 			return true
 		}
 		return v
 	}
+}
+
+// writeSurfaceEnforceRefusal is WriteSurfaceEnforceRefusal against the current
+// predicate. A failed predicate refuses with policyCallbackFailedReason, not
+// the write_surface.enforce directive, which would assert a lane setting the
+// proxy could not read.
+func (p *GitHubProxy) writeSurfaceEnforceRefusal(agent, method, path, rawQuery string) (reason, kind string, refused bool) {
+	failed := false
+	reason, kind, refused = WriteSurfaceEnforceRefusal(p.writeSurfaceEnforcedFunc(&failed), agent, method, path, rawQuery)
+	if failed {
+		return policyCallbackFailedReason("write_surface.enforce"), kind, true
+	}
+	return reason, kind, refused
+}
+
+// writeSurfaceGraphQLRefusal is WriteSurfaceGraphQLRefusal against the current
+// predicate, with the same failure reason as writeSurfaceEnforceRefusal.
+func (p *GitHubProxy) writeSurfaceGraphQLRefusal(agent string, body []byte) (string, bool) {
+	failed := false
+	reason, refused := WriteSurfaceGraphQLRefusal(p.writeSurfaceEnforcedFunc(&failed), agent, body)
+	if failed {
+		return policyCallbackFailedReason("write_surface.enforce"), true
+	}
+	return reason, refused
 }
 
 // laneWriteSurfaceEnforced reports whether agentName's lane is enforced.
@@ -161,7 +190,7 @@ func (p *GitHubProxy) laneWriteSurfaceEnforced(agentName string) bool {
 	if agentName == "" || agentName == internalCallerName {
 		return false
 	}
-	enforced := p.writeSurfaceEnforcedFunc()
+	enforced := p.writeSurfaceEnforcedFunc(nil)
 	return enforced != nil && enforced(agentName)
 }
 
