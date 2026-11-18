@@ -51,7 +51,11 @@ const (
 	// sandboxReadTokenTTL is how long a fetched read token is reused. GitHub
 	// installation tokens live an hour; refreshing at 45 minutes keeps a
 	// margin for a request already in flight.
-	sandboxReadTokenTTL         = 45 * time.Minute
+	sandboxReadTokenTTL = 45 * time.Minute
+	// sandboxReadTokenRetryAfter is how long a failed mint is remembered, so a
+	// token-endpoint outage costs one attempt per interval rather than one
+	// (up to 20s, serialized) attempt per request.
+	sandboxReadTokenRetryAfter  = 30 * time.Second
 	sandboxReadHTTPSPort        = "443"
 	sandboxReadRefsSuffix       = "/info/refs"
 	sandboxReadUploadPackSuffix = "/git-upload-pack"
@@ -150,6 +154,7 @@ type SandboxReadRelay struct {
 	tokMu      sync.Mutex
 	tok        string
 	tokFetched time.Time
+	tokFailed  time.Time // last failed mint; zero when the last mint succeeded
 	now        func() time.Time
 	// dial overrides the upstream TLS dial (tests).
 	dial func(host string) (net.Conn, error)
@@ -226,6 +231,9 @@ func (r *SandboxReadRelay) readToken() string {
 	if r.tok != "" && r.now().Sub(r.tokFetched) < sandboxReadTokenTTL {
 		return r.tok
 	}
+	if r.tok == "" && !r.tokFailed.IsZero() && r.now().Sub(r.tokFailed) < sandboxReadTokenRetryAfter {
+		return ""
+	}
 	tok, err := r.opts.Token()
 	if err != nil || tok == "" {
 		reason := "empty token"
@@ -233,10 +241,10 @@ func (r *SandboxReadRelay) readToken() string {
 			reason = err.Error()
 		}
 		r.p.logger.Warn("sandbox read relay: no read credential available; forwarding reads unauthenticated", "reason", reason)
-		r.tok = ""
+		r.tok, r.tokFailed = "", r.now()
 		return ""
 	}
-	r.tok, r.tokFetched = tok, r.now()
+	r.tok, r.tokFetched, r.tokFailed = tok, r.now(), time.Time{}
 	return tok
 }
 

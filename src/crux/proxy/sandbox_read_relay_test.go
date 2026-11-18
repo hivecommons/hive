@@ -494,3 +494,33 @@ func TestSandboxReadRelayKeysArePerKick(t *testing.T) {
 		t.Fatalf("other kick key: status = %d, want 200", status)
 	}
 }
+
+// A failing token endpoint is not hammered: one mint attempt per retry
+// interval, requests in between go out anonymously, and recovery is picked up.
+func TestSandboxReadRelayFailedMintIsNotRetriedPerRequest(t *testing.T) {
+	var calls atomic.Int32
+	var fail atomic.Bool
+	fail.Store(true)
+	h := newRelayHarness(t, func() (string, error) {
+		calls.Add(1)
+		if fail.Load() {
+			return "", fmt.Errorf("mint failed")
+		}
+		return testReadToken, nil
+	})
+	now := time.Now()
+	h.relay.now = func() time.Time { return now }
+	for i := 0; i < 5; i++ {
+		if tok := h.relay.readToken(); tok != "" {
+			t.Fatalf("token = %q during an outage", tok)
+		}
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("mint attempted %d times for 5 requests during an outage, want 1", calls.Load())
+	}
+	fail.Store(false)
+	now = now.Add(sandboxReadTokenRetryAfter + time.Second)
+	if h.relay.readToken() != testReadToken {
+		t.Fatal("relay did not recover after the retry interval")
+	}
+}
