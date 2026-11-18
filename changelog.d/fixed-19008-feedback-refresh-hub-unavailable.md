@@ -1,1 +1,0 @@
-- A hub restart (502/503/504) during the feedback issue refresh is now logged at INFO and retried by the existing backoff instead of filing a `feedback_issue_refresh_failed` self-report ([#19008](https://github.com/hivecommons/hive/issues/19008)).
