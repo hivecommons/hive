@@ -1068,6 +1068,28 @@ func mustJSON(t *testing.T, v any) string {
 	return string(b)
 }
 
+// governor.ci's workflow-approval keys are writable through
+// governor.feature_settings, and the preview discloses turning approval on
+// and changing who is trusted.
+func TestFeatureSettingsWorkflowApproval(t *testing.T) {
+	preview, err := featureSettingsOp{}.Preview(context.Background(), map[string]any{"ciAutoApproveWorkflows": true, "ciAutoApproveWorkflowActors": "dependabot[bot], github-actions[bot]"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := preview.Request.Body.(map[string]any)
+	if body["ciAutoApproveWorkflows"] != true || body["ciAutoApproveWorkflowActors"] != "dependabot[bot], github-actions[bot]" {
+		t.Fatalf("body = %#v", body)
+	}
+	for _, want := range []string{"ciAutoApproveWorkflows", "ciAutoApproveWorkflowActors"} {
+		if !strings.Contains(preview.WideningDisclosure, want) {
+			t.Fatalf("disclosure %q does not name %s", preview.WideningDisclosure, want)
+		}
+	}
+	if p, err := (featureSettingsOp{}).Preview(context.Background(), map[string]any{"ciAutoApproveWorkflows": false, "ciAutoApproveWorkflowActors": "none"}); err != nil || strings.Contains(p.WideningDisclosure, "ciAutoApprove") {
+		t.Fatalf("turning approval off and trusting no one is no widening: %q, %v", p.WideningDisclosure, err)
+	}
+}
+
 // Write-back containment's unsolicited knobs (Settings → Features →
 // Write-back containment) are writable here too, and the preview names
 // each change that lets the hive write to more items (#18846 follow-up).

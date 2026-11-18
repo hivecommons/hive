@@ -16,8 +16,9 @@ import (
 
 // featuresOpsBody is the part of the Features PUT that covers the operational
 // hive.yaml blocks issues.*, jev.*, duplicate_sweep.*, policies.*, the
-// turn.pr_follow_up / turn.reentrant knobs, good_first_issue.*, and the
-// governor claim-mirroring and rotation headroom-source keys. Every field is a pointer so an
+// turn.pr_follow_up / turn.reentrant knobs, good_first_issue.*, the
+// governor claim-mirroring and rotation headroom-source keys, and
+// governor.ci's workflow-approval keys. Every field is a pointer so an
 // absent key leaves the config untouched. Durations travel as Go duration
 // strings ("10m", "24h"); an empty string means the built-in default.
 type featuresOpsBody struct {
@@ -77,6 +78,14 @@ type featuresOpsBody struct {
 	// governor.rotation.headroom_source: builtin (default) or ccleft. The
 	// rotation manager builds its probers at boot, so this needs a restart.
 	RotationHeadroomSource *string `json:"rotationHeadroomSource"`
+	// governor.ci (hivecommons/hive#16603): whether the hive approves the
+	// workflow runs GitHub holds behind "Approve and run" on trusted PR
+	// heads, and which authors / triggering actors it trusts besides its
+	// App and owner admissions, as a comma-separated list. Blank restores
+	// the default (dependabot[bot], renovate[bot]); "none" stores an
+	// explicit empty list. The approval sweep reads both every cycle.
+	CIAutoApproveWorkflows      *bool   `json:"ciAutoApproveWorkflows"`
+	CIAutoApproveWorkflowActors *string `json:"ciAutoApproveWorkflowActors"`
 }
 
 // envVarNamePattern is the shape of a POSIX environment variable name.
@@ -361,6 +370,25 @@ func (b featuresOpsBody) prepare(cur *config.Config) (func(*config.Config), erro
 		}
 		steps = append(steps, func(c *config.Config) { c.Governor.Rotation.HeadroomSource = v })
 	}
+	if b.CIAutoApproveWorkflows != nil {
+		v := *b.CIAutoApproveWorkflows
+		steps = append(steps, func(c *config.Config) { c.Governor.CI.AutoApproveWorkflows = &v })
+	}
+	if b.CIAutoApproveWorkflowActors != nil {
+		v := parseNeverClaimLabelsInput(*b.CIAutoApproveWorkflowActors)
+		for _, actor := range v {
+			if strings.ContainsAny(actor, " \t") {
+				return nil, fmt.Errorf("governor ci auto_approve_workflow_actors: %q is not a GitHub login", actor)
+			}
+		}
+		steps = append(steps, func(c *config.Config) {
+			if v == nil {
+				c.Governor.CI.AutoApproveWorkflowActors = nil
+				return
+			}
+			c.Governor.CI.AutoApproveWorkflowActors = &v
+		})
+	}
 
 	return func(c *config.Config) {
 		for _, step := range steps {
@@ -394,6 +422,9 @@ func featuresOpsResponse(cfg *config.Config) map[string]interface{} {
 		"claimsNeverClaimDefault":      strings.Join(claims.DefaultNeverClaimLabels, ", "),
 		"rotationHeadroomSource":       cfg.Governor.Rotation.EffectiveHeadroomSource(),
 		"rotationHeadroomSourceValues": []string{config.RotationHeadroomSourceBuiltin, config.RotationHeadroomSourceCCLeft},
+		"ciAutoApproveWorkflows":       cfg.Governor.CI.AutoApproveWorkflowsEnabled(),
+		"ciAutoApproveWorkflowActors":  ciAutoApproveActorsResponse(cfg.Governor.CI),
+		"ciAutoApproveActorsDefault":   strings.Join(config.DefaultAutoApproveWorkflowActors, ", "),
 
 		"issuesCloseOnMerge":                 cfg.Issues.CloseOnMergeEnabled(),
 		"issuesCloseOnMergeInterval":         settingsDurationString(cfg.Issues.CloseOnMergeInterval),
@@ -494,4 +525,17 @@ func parseNeverClaimLabelsInput(raw string) []string {
 		}
 	}
 	return out
+}
+
+// ciAutoApproveActorsResponse is governor.ci.auto_approve_workflow_actors in
+// the Settings dialog's spelling: blank when unset (the default applies),
+// "none" for an explicit empty list, otherwise the comma-separated logins.
+func ciAutoApproveActorsResponse(ci config.GovernorCIConfig) string {
+	if ci.AutoApproveWorkflowActors == nil {
+		return ""
+	}
+	if len(*ci.AutoApproveWorkflowActors) == 0 {
+		return neverClaimLabelsOff
+	}
+	return strings.Join(*ci.AutoApproveWorkflowActors, ", ")
 }
