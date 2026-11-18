@@ -109,6 +109,7 @@ var selfreportOpsRemedies = map[string]string{
 	"proxy_tls_handshake_failed":             "fix the spoke's proxy TLS trust (certificate or CA bundle)",
 	"crux_runtime_unavailable":               "restart or re-deploy the crux runtime sidecar on the spoke",
 	"model_discovery_degraded":               "check the model endpoint and credentials the spoke's provider is configured with",
+	"proxy_upstream_degraded":                "restore the spoke's egress path to the GitHub host named in the log (cluster network, DNS, firewall or outbound proxy); the failures have persisted for over an hour",
 	"proxy_writer_unidentified":              "give the spoke per-agent UID isolation (grant the NET_ADMIN SCC per docs/net-admin-requirement.md) or accept that its agents run read-only through the proxy; set github.shared_uid_read_token for read access on a shared-UID platform",
 	"inference_upstream_error":               "check the inference endpoint the spoke's provider points at",
 	"inference_caller_unidentified":          "set the inference caller identity in the spoke's configuration",

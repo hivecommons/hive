@@ -15,7 +15,7 @@ import (
 // unidentifiedWriterKeyword is the fleetreport.ClassProxyWriterUnidentified
 // log-fed keyword. The proxy cannot import pkg/fleetreport (import cycle), so
 // the message prefix is pinned here and the class mapping is pinned on the
-// fleetreport side (TestLogFedClassification); drifting either breaks one.
+// fleetreport side (TestRecurringRuntimeMessagesAreClassified); drifting either breaks one.
 const unidentifiedWriterKeyword = "proxy: agent could not be identified"
 
 type lockedBuffer struct {

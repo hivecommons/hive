@@ -88,6 +88,12 @@ const (
 	ClassInferenceCallerUnknown      = "inference_caller_unidentified"
 	ClassInferenceNoRoute            = "inference_no_route"
 	ClassProxyWriterUnidentified     = "proxy_writer_unidentified"
+	// ClassProxyUpstreamDegraded: the MITM/transparent proxy's TLS dial to a
+	// GitHub-family host keeps failing (hivecommons/hive#18867). A burst is
+	// environment degradation (a flaky egress path), kept in the hive's logs
+	// and not filed; only a failure that persists past proxyUpstreamSustained
+	// is reportable, and then as an operator action on that spoke.
+	ClassProxyUpstreamDegraded       = "proxy_upstream_degraded"
 	ClassInferenceBackendAuthFailure = "inference_backend_auth_failure"
 	ClassSHAPollCommitMsgUnavail     = "sha_poll_commit_message_unavailable"
 	ClassKickFreshnessWithheld       = "kick_freshness_withheld"
@@ -124,6 +130,14 @@ const (
 	// this long (2× its window) is cleared, so a "cleared" comment follows
 	// once the symptom stops instead of the condition idling until the TTL.
 	unclassifiedIdleClear = 2 * unclassifiedRepeatWindow
+	// proxyUpstreamSustained is how long upstream dial failures must persist
+	// (no quiet gap of proxyUpstreamIdleClear) before they stop being treated
+	// as a transient egress blip and become reportable.
+	proxyUpstreamSustained = time.Hour
+	// proxyUpstreamIdleClear: a quiet gap this long ends the episode and
+	// restarts the persistence clock, so repeated short bursts never add up
+	// to "sustained".
+	proxyUpstreamIdleClear = 30 * time.Minute
 	// kickFailureStreak is the consecutive-failure count that makes repeated
 	// kick failures reportable.
 	kickFailureStreak = 3
@@ -215,7 +229,8 @@ var Classes = map[string]ClassSpec{
 	ClassGitHubAppRepoNotCovered:     {Component: "github-client", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"installation does not cover every configured repo", "state=repo-not-covered"}},
 	ClassGitHubAppAlertsPermission:   {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"scoped token mint with vulnerability_alerts:read failed; retrying without it"}},
 	ClassGitHubAppStatusesPermission: {Component: "github-client", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"could not set the prow/lgtm commit status: the github app lacks the statuses: write permission"}},
-	ClassProxyConnectDialFailed:      {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed", "copilot sniff: upstream dial failed", "proxy upstream dial failed"}},
+	ClassProxyConnectDialFailed:      {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: connect dial failed", "copilot sniff: upstream dial failed"}},
+	ClassProxyUpstreamDegraded:       {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, MinDuration: proxyUpstreamSustained, IdleClear: proxyUpstreamIdleClear, LogFed: true, Keywords: []string{"proxy upstream dial failed"}},
 	ClassProxyPlainForwardFailed:     {Component: "github-proxy", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward failed"}},
 	ClassProxyPlainForwardRefused:    {Component: "github-proxy", Severity: "low", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"proxy: plain http forward refused"}},
 	ClassInferenceCallerUnknown:      {Component: "inference-gateway", Severity: "medium", MinCount: unclassifiedRepeatCount, Window: unclassifiedRepeatWindow, IdleClear: unclassifiedIdleClear, LogFed: true, Keywords: []string{"inference request from unidentified caller refused"}},
