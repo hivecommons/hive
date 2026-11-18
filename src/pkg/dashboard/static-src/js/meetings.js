@@ -17,6 +17,8 @@
     // Levels the meter badges (the server's budget steps).
     const MEETINGS_BUDGET_BADGES = { warning: 'budget 80%', degraded: 'budget 90%: shorter answers', exhausted: 'budget exhausted' };
     let _meetingsOpen = null; // { id, ws, meeting, lines, partial, intents, live }
+    // The row whose chevron has the focus after a toggle re-draws the list.
+    let _meetingsFocusRow = '';
     // Ended meetings are inbox items too (source "meeting").
     if (typeof INBOX_SOURCE_ICONS === 'object' && !INBOX_SOURCE_ICONS.meeting) INBOX_SOURCE_ICONS.meeting = '🎙';
 
@@ -95,9 +97,10 @@
       const detail = (b.tokens_used || 0) + ' of ' + b.token_budget + ' tokens · ' + (b.intents_answered || 0) + ' answered' +
         (b.skipped ? ' · ' + b.skipped + ' question' + (b.skipped === 1 ? '' : 's') + ' not answered' : '');
       return '<div class="meetings-budget" data-level="' + escapeHtml(b.level || 'ok') + '">' +
+        '<div class="meetings-budget-line"><span class="meetings-budget-text">' + escapeHtml(text) + '</span>' +
+        '<span class="meetings-budget-num">' + escapeHtml(detail) + '</span>' +
+        (badge ? '<span class="kc-pill" data-status="' + (b.level === 'warning' ? 'syncing' : 'error') + '">' + escapeHtml(badge) + '</span>' : '') + '</div>' +
         '<meter class="meetings-meter" min="0" max="100" low="79" high="89" optimum="0" value="' + Number(b.percent || 0) + '" aria-label="' + escapeHtml(text) + '" title="' + escapeHtml(text) + '">' + escapeHtml(text) + '</meter>' +
-        '<span class="muted-xs">' + escapeHtml(text) + ' · ' + escapeHtml(detail) + '</span>' +
-        (badge ? '<span class="kc-pill" data-status="' + (b.level === 'warning' ? 'syncing' : 'error') + '">' + escapeHtml(badge) + '</span>' : '') +
         '</div>';
     }
 
@@ -108,12 +111,26 @@
       return [part('hour', l.hourly_used || 0, l.hourly_ceiling), part('day', l.daily_used || 0, l.daily_ceiling)].filter(Boolean).join(' · ');
     }
 
+    // meetingsSpekNoticeHtml shows the server's Spektacular status as one calm
+    // notice: the text before the first colon is the headline, the rest is the
+    // explanation, and a repo reference (hivecommons/name#123) is a link to
+    // that issue.
+    function meetingsSpekNoticeHtml(text) {
+      const raw = String(text || '');
+      const cut = raw.indexOf(': ');
+      const title = cut > 0 ? raw.slice(0, cut) : '';
+      const body = cut > 0 ? raw.slice(cut + 2) : raw;
+      const link = t => escapeHtml(t).replace(/hivecommons\/([A-Za-z0-9._-]+)#(\d+)/g, '<a href="https://github.com/hivecommons/$1/issues/$2" target="_blank" rel="noopener noreferrer">$&</a>');
+      return '<div class="meetings-notice" role="status">' + (title ? '<div class="meetings-notice-title">' + escapeHtml(title) + '</div>' : '') +
+        '<p class="meetings-notice-body">' + link(body) + '</p></div>';
+    }
+
     // The questions skipped for budget, with their text (owner view only).
     function meetingsSkippedHtml(live) {
       const list = (live && live.skipped) || [];
       if (!list.length) return '';
-      return '<div><div class="section-label m-0">Not answered: budget</div><ul class="meetings-skipped">' +
-        list.map(q => '<li>' + escapeHtml((q.who ? q.who + ': ' : '') + (q.text || '')) + '</li>').join('') + '</ul></div>';
+      return '<section class="meetings-section"><h4 class="section-label meetings-section-label">Not answered: budget</h4><ul class="meetings-skipped">' +
+        list.map(q => '<li>' + escapeHtml((q.who ? q.who + ': ' : '') + (q.text || '')) + '</li>').join('') + '</ul></section>';
     }
     dashboardScheduleWork('meetings', fetchMeetings).catch(console.error);
     dashboardSetInterval('meetings', fetchMeetings, MEETINGS_POLL_MS);
@@ -190,8 +207,11 @@
       const state = m.state || '';
       const when = meetingsFormatTime(m.live_at || m.created_at);
       const meta = [MEETINGS_PLATFORM_LABELS[m.platform] || m.platform || '', when].filter(Boolean).join(' · ');
-      return '<div class="meetings-row' + (open ? ' is-open' : '') + '" data-state="' + escapeHtml(state) + '">' +
-        '<div class="meetings-row-main"><div class="meetings-row-head">' +
+      const pid = 'meetings-details-' + String(m.id).replace(/[^A-Za-z0-9_-]/g, '_');
+      return '<div class="meetings-item" data-meeting-item="' + escapeHtml(m.id) + '">' +
+        '<div class="meetings-row' + (open ? ' is-open' : '') + '" data-state="' + escapeHtml(state) + '">' +
+        rowChevronHtml('meetingsToggle', m.id, open, 'details of ' + meetingsLabel(m), pid) +
+        '<div class="meetings-row-main"><div class="meetings-row-head" data-action="meetingsToggle" data-arg0="' + escapeHtml(m.id) + '">' +
         '<span class="meetings-row-title" title="' + escapeHtml(m.url || '') + '">' + escapeHtml(meetingsLabel(m)) + '</span>' +
         '<span class="kc-pill" data-status="' + escapeHtml(MEETINGS_PILL_STATUS[state] || '') + '">' + escapeHtml(state) + '</span></div>' +
         (meta ? '<div class="muted-xs">' + escapeHtml(meta) + '</div>' : '') +
@@ -201,10 +221,10 @@
         (m.consent_via === 'voice' ? '<div class="muted-xs">consent notice spoken: the meeting chat could not deliver it</div>' : '') +
         (m.voice_enabled && !m.voice_capable ? '<div class="muted-xs">joined without voice; replies go to chat</div>' : '') +
         '</div><div class="meetings-row-actions">' +
-        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +
         (active ? meetingsVoiceToggleHtml(m) +
           '<button type="button" class="hv-btn btn-danger btn-sm" data-action="meetingsLeave" data-arg0="' + escapeHtml(m.id) + '">Leave</button>' : '') +
-        meetingsDeleteButtonHtml(m) + '</div></div>';
+        meetingsDeleteButtonHtml(m) + '</div></div>' +
+        (open ? '<div class="meetings-details" id="' + pid + '" role="region" aria-label="Details of ' + escapeHtml(meetingsLabel(m)) + '"><div id="meetings-live-panel"></div></div>' : '') + '</div>';
     }
 
     // meetingsVoiceToggleHtml: the card's voice control names the action it
@@ -321,12 +341,17 @@
       }
       html += meetingsTrustedHtml();
       html += '<div class="meetings-list">' + (list.length ? list.map(meetingsRowHtml).join('') : (_meetingsError ? '' : '<p class="empty-dashed">No meetings yet.</p>')) + '</div>';
-      html += '<div id="meetings-live-panel"></div>';
       host.innerHTML = html;
       const liveCount = list.filter(m => MEETINGS_LIVE_STATES[m.state]).length;
       if (typeof refreshSectionCardShell === 'function') refreshSectionCardShell('meetings-section');
       if (typeof setSectionSummary === 'function') setSectionSummary('meetings-section', liveCount ? liveCount + ' live' : 'no live meetings');
       renderMeetingsLive();
+      if (_meetingsFocusRow) {
+        const want = _meetingsFocusRow;
+        _meetingsFocusRow = '';
+        const chev = Array.prototype.find.call(host.querySelectorAll('.row-chevron'), c => c.getAttribute('data-arg0') === want);
+        if (chev) chev.focus();
+      }
     }
 
     function meetingsField(name) { return document.querySelector('[data-meetings-field="' + name + '"]'); }
@@ -411,6 +436,13 @@
       _meetingsOpen = null;
     }
 
+    // meetingsToggle opens the details under the meeting's row, or folds them
+    // when they are already open. The chevron and the row title both call it.
+    function meetingsToggle(id) {
+      _meetingsFocusRow = id;
+      meetingsOpenPanel(id);
+    }
+
     function meetingsOpenPanel(id) {
       const wasOpen = _meetingsOpen && _meetingsOpen.id === id;
       meetingsClosePanel();
@@ -492,25 +524,27 @@
       const notes = live.notes || {};
       const sections = ['summary', 'decisions', 'actions', 'questions', 'notes'];
       const notesHtml = sections.filter(s => (notes[s] || []).length).map(s =>
-        '<div><div class="section-label m-0">' + escapeHtml(s) + '</div><ul>' + notes[s].map(n => '<li>' + escapeHtml(n) + '</li>').join('') + '</ul></div>').join('') || '<p class="muted-xs">No notes yet.</p>';
+        '<div class="meetings-notes-group"><div class="meetings-notes-label">' + escapeHtml(s) + '</div><ul>' + notes[s].map(n => '<li>' + escapeHtml(n) + '</li>').join('') + '</ul></div>').join('') || '<p class="meetings-empty">No notes yet.</p>';
       const research = (live.research || []).map(it =>
         '<div class="meetings-research-item"><div><span class="badge">' + escapeHtml(it.status) + '</span> ' + escapeHtml(it.query) + '</div>' +
         (it.summary ? '<div class="muted-xs">' + escapeHtml(it.summary) + '</div>' : '') +
         (it.status === 'failed' && it.error ? '<div class="meetings-row-error">' + escapeHtml(it.error) + '</div>' : '') +
         (it.waiting && it.status === 'queued' ? '<div class="muted-xs">waiting behind another question</div>' : '') +
         (it.status === 'pending_approval' ? '<button type="button" class="hv-btn btn-primary btn-sm mt-2" data-action="meetingsApprove" data-arg0="' + escapeHtml(o.id) + '" data-arg1="' + escapeHtml(it.rid) + '">Approve research</button>' : '') +
-        '</div>').join('') || '<p class="muted-xs">No research yet.</p>';
+        '</div>').join('') || '<p class="meetings-empty">No research yet.</p>';
       const lines = o.lines.map(ev => meetingsLineHtml(ev, false)).join('') + (o.partial ? meetingsLineHtml(o.partial, true) : '');
       const intents = o.intents.map(i => '<div>' + escapeHtml(typeof i === 'string' ? i : JSON.stringify(i)) + '</div>').join('');
-      const spek = live.spek_status ? '<p class="kc-error muted-xs">' + escapeHtml(live.spek_status) + '</p>' :
-        (live.spek_mode ? '<p class="muted-xs">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
+      const spek = live.spek_status ? meetingsSpekNoticeHtml(live.spek_status) :
+        (live.spek_mode ? '<p class="meetings-notice-line">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
       const ledger = meetingsLedgerText(_meetingsLedger);
-      host.innerHTML = spek + meetingsBudgetHtml(_meetingsBudget[o.id]) + (ledger ? '<p class="muted-xs">Hive-wide: ' + escapeHtml(ledger) + '</p>' : '') + meetingsReachHtml(live) + '<div class="meetings-live">' +
-        '<div><div class="section-label m-0">Transcript' + (o.ws ? '' : ' (disconnected)') + '</div><div class="meetings-transcript">' + (lines || '<p class="muted-xs">Waiting for the first words…</p>') + '</div></div>' +
-        '<div class="meetings-side"><div><div class="section-label m-0">Notes</div>' + notesHtml + '</div>' +
+      const sect = (label, body) => '<section class="meetings-section"><h4 class="section-label meetings-section-label">' + label + '</h4>' + body + '</section>';
+      const head = spek + meetingsBudgetHtml(_meetingsBudget[o.id]) + (ledger ? '<p class="meetings-hivewide">Hive-wide: ' + escapeHtml(ledger) + '</p>' : '') + meetingsReachHtml(live);
+      host.innerHTML = (head ? '<div class="meetings-details-head">' + head + '</div>' : '') + '<div class="meetings-live">' +
+        sect('Transcript' + (o.ws ? '' : ' (disconnected)'), '<div class="meetings-transcript">' + (lines || '<p class="meetings-empty">Waiting for the first words…</p>') + '</div>') +
+        '<div class="meetings-side">' + sect('Notes', notesHtml) +
         meetingsSkippedHtml(live) +
-        '<div><div class="section-label m-0">Research</div><div class="meetings-research">' + research + '</div></div>' +
-        '<div><div class="section-label m-0">Spek intents</div><div class="meetings-intents">' + (intents || '<p class="muted-xs">None yet.</p>') + '</div></div></div></div>';
+        sect('Research', '<div class="meetings-research">' + research + '</div>') +
+        sect('Spek intents', '<div class="meetings-intents">' + (intents || '<p class="meetings-empty">None yet.</p>') + '</div>') + '</div></div>';
       const tr = host.querySelector('.meetings-transcript');
       if (tr) tr.scrollTop = tr.scrollHeight;
     }
