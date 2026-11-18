@@ -125,6 +125,8 @@
     html { overflow-x: hidden; max-width: 100%; }
     body {
       font-family: var(--font-ui);
+      /* The page had no base size, so text a rule did not size (a badge, a bare div, a goal line) rendered at the 16px browser default, larger than the small section headings above it. Base content is the --fs-sm step, the size of a card title, so unsized text is never larger than the heading it sits under; components size themselves. */
+      font-size: var(--fs-sm);
       background: var(--bg); color: var(--text);
       /* Bottom clearance keeps the last rows scrollable clear of the fixed
          chat FAB (48px + 24px offset + breathing room — #7160); the phone
@@ -2837,7 +2839,7 @@
     .gov-pr-models-toggle { display:flex; gap:var(--sp-2); }
     .gov-pr-models-toggle button { border:1px solid var(--border); border-radius:var(--r-pill); background:var(--bg); color:var(--muted); padding:3px 8px; font-size:var(--fs-xs); cursor:pointer; }
     .gov-pr-models-toggle button.active { color:var(--text); border-color:var(--amber); background:color-mix(in srgb, var(--amber) 14%, transparent); }
-    .gov-pr-models-empty { color:var(--muted); font-size:var(--fs-base); padding:var(--sp-4) var(--sp-0); }
+    .gov-pr-models-empty { color:var(--muted); font-size:var(--fs-sm); padding:var(--sp-4) var(--sp-0); }
     .gov-pr-model-row { display:grid; grid-template-columns:minmax(120px, 1.2fr) minmax(140px, 2fr) minmax(240px, 2fr) 92px; gap:10px; align-items:center; margin:7px 0; font-size:0.78rem; }
     .gov-pr-model-row > * { min-width: 0; }
     .gov-pr-model-name { overflow-wrap:anywhere; color:var(--text); font-weight:600; }
@@ -6413,7 +6415,9 @@
     .ma-add-email { display: flex; gap: var(--sp-2); align-items: center; margin: var(--sp-1) 0 var(--sp-2); }
     .ma-add-email .kb-search-box { flex: 1; min-width: 0; }
     /* Customers: a profile per person (hivecommons/hive issue 18742). Same rhythm as the Inbox and Calendar: a card per row, a title, a muted line, grouped actions that wrap under the content on narrow screens. */
-    .customers-panel { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; max-width: 100%; --customers-actions-w: 17rem; }
+    .customers-panel { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; max-width: 100%; --customers-actions-w: 17rem; font-size: var(--fs-xs); }
+    /* Type scale for the panel: content sits at the section heading size, never above it. The page body had no size of its own, so anything a rule here did not size (a badge, an evidence line, a goal) fell back to the 16px browser default and out-grew the small uppercase headings. Names stay one step up as row titles. */
+    .customers-panel .muted-xs, .customers-panel .empty-dashed, .customers-panel .kb-search-box, .customers-panel .hv-btn, .customers-panel .badge, .customers-panel label { font-size: var(--fs-xs); }
     .customers-panel > * { min-width: 0; max-width: 100%; }
     .customers-block { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
     .customers-list { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
@@ -6424,6 +6428,20 @@
     /* Person and suggestion card: one line at desktop width. Avatar, a flowing line of name and pills, the date, the actions. On a narrow screen the pills wrap under the name and the actions take their own line. */
     .customers-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; column-gap: var(--sp-3); row-gap: var(--sp-2); padding: var(--sp-1) var(--sp-3); min-height: calc(var(--tap-target) - var(--sp-1)); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); min-width: 0; max-width: 100%; }
     .customers-card[data-me="true"] { border-color: var(--accent); }
+    /* A person row: chevron, avatar, name and pills, date. The row is the click target too; the chevron is the real control. */
+    .customers-item { display: flex; flex-direction: column; min-width: 0; max-width: 100%; }
+    .customers-card[data-action="customersToggle"] { grid-template-columns: auto auto minmax(0, 1fr) auto; cursor: pointer; }
+    .customers-card[data-open="true"] { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+    .customers-chevron { position: relative; display: inline-grid; place-items: center; width: 1.25rem; height: 1.25rem; padding: var(--sp-0); border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-md); line-height: 1; cursor: pointer; flex: none; }
+    .customers-chevron::before { content: ""; position: absolute; inset: calc((100% - var(--tap-target)) / 2); }
+    .customers-chevron:hover { color: var(--text); }
+    .customers-chevron:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .customers-chevron > span { display: inline-block; transition: transform var(--duration-fast) ease; }
+    .customers-chevron[aria-expanded="true"] > span { transform: rotate(90deg); }
+    @media (prefers-reduced-motion: reduce) { .customers-chevron > span { transition: none; } }
+    /* The profile opens under its row, joined to it. */
+    .customers-profile .hive-dialog-error:empty { display: none; }
+    .customers-profile { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; padding: var(--sp-4) var(--sp-4) var(--sp-5); border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); border-top: 0; border-radius: 0 0 var(--r) var(--r); background: var(--bg); }
     .customers-avatar { position: relative; display: inline-grid; place-items: center; width: 1.75rem; height: 1.75rem; border-radius: var(--r-pill); overflow: hidden; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--text); font-size: var(--fs-sm); font-weight: var(--fw-semibold); flex: none; }
     .customers-card[data-kind="suggestion"] .customers-avatar { background: color-mix(in srgb, var(--border) 30%, var(--surface)); }
     .customers-avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: var(--r-pill); background: var(--surface); }
@@ -6445,7 +6463,7 @@
     .kc-pill.customers-tag[data-tag="stakeholder"] { --customers-tone: var(--yellow); }
     .customers-tag-dot { width: var(--sp-3); height: var(--sp-3); border-radius: var(--r-pill); background: var(--customers-tone, var(--muted)); flex: none; }
     .customers-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-    .customers-row-title { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; font-size: var(--fs-base); font-weight: var(--fw-semibold); }
+    .customers-row-title { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
     .customers-row-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
     .customers-card[data-kind="suggestion"] .customers-row-actions { width: var(--customers-actions-w); }
     /* The disclosure sits in the pill line; opened, its body takes the full width under it. */
@@ -6464,22 +6482,26 @@
     .customers-row[data-me="true"] { border-color: var(--accent); }
     .customers-row .customers-row-title { overflow-wrap: anywhere; }
     .customers-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); min-width: 0; }
-    /* The tag chip: the entity-chip pill recipe (design-system.css), tokens only. The old .badge class has no rule, which left tags as bare text. */
-    .customers-chip { display: inline-flex; align-items: center; gap: var(--sp-2); padding: 1px var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.5; white-space: nowrap; }
-    button.customers-chip { cursor: pointer; min-height: var(--tap-target); }
-    .customers-chip[data-state="off"] { opacity: 0.55; }
-    .customers-chip[data-source="manual"] { border-color: var(--accent); }
+    /* The tag toggle in a profile is the row's tag pill as a button: one pill recipe in both places. Off is dimmed and neutral; the auto marker is small. */
+    button.kc-pill.customers-tag-toggle { position: relative; font-family: inherit; cursor: pointer; }
+    button.kc-pill.customers-tag-toggle::before { content: ""; position: absolute; inset: min(0px, calc((100% - var(--tap-target)) / 2)); }
+    .kc-pill.customers-tag[data-state="off"] { --customers-tone: var(--muted); color: var(--muted); opacity: var(--opacity-disabled, 0.6); }
+    .kc-pill.customers-tag-toggle:hover { border-color: var(--customers-tone, var(--muted)); }
+    .kc-pill.customers-tag-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .customers-tag-auto { font-size: var(--fs-2xs); font-weight: 400; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
     .customers-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr) auto; gap: var(--sp-2); align-items: end; }
-    .customers-form label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
+    .customers-form label { display: flex; flex-direction: column; gap: var(--sp-1); }
     .customers-inline { display: flex; flex-wrap: wrap; align-items: end; gap: var(--sp-2); }
-    .customers-inline label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); flex: 1 1 12em; }
+    .customers-inline label { display: flex; flex-direction: column; gap: var(--sp-1); flex: 1 1 12em; }
     .customers-profile-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
-    .customers-profile-name { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-md); font-weight: var(--fw-semibold); flex: 1 1 12em; min-width: 0; }
-    .customers-evidence { overflow-wrap: anywhere; line-height: 1.5; }
+    .customers-evidence { overflow-wrap: anywhere; line-height: 1.5; font-size: var(--fs-xs); }
     .customers-notes { width: 100%; min-height: 6em; }
     @media (max-width: 720px) {
       .customers-form { grid-template-columns: 1fr; }
       .customers-card { grid-template-columns: auto minmax(0, 1fr); padding: var(--sp-2) var(--sp-3); align-items: start; }
+      .customers-card[data-action="customersToggle"] { grid-template-columns: auto auto minmax(0, 1fr); }
+      /* The phone rule gives every button 44px; a pill and a chevron keep their own height and the hit area from ::before. */
+      .customers-panel button.customers-pill, .customers-panel .customers-chevron { min-height: 0; }
       .customers-updated { display: none; }
       .customers-card .customers-row-actions, .customers-card[data-kind="suggestion"] .customers-row-actions { grid-column: 1 / -1; width: auto; justify-content: flex-start; }
     }
@@ -8130,7 +8152,7 @@
     .review-queue-superseded-badge { font-weight: 700; color: var(--text); }
     .review-queue-superseded-actions { display: inline-flex; gap: var(--sp-2); margin-left: var(--sp-3); }
     .review-queue-noreasons { color: var(--muted); font-size: var(--fs-xs); margin-top: var(--sp-2); }
-    .review-queue-empty { color: var(--terminal-muted); font-size: var(--fs-base); padding: var(--sp-4); }
+    .review-queue-empty { color: var(--terminal-muted); font-size: var(--fs-sm); padding: var(--sp-4); }
     .review-queue-collapsed { width: min(460px, 44vw); max-width: 460px; gap: var(--sp-3); }
     .review-queue-collapsed-main { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; }
     .review-queue-collapsed-total { color: var(--text); font-weight: 900; font-variant-numeric: tabular-nums; }
@@ -8172,7 +8194,7 @@
     .review-evidence-grid dt { color: var(--muted); }
     .review-evidence-grid dd { margin: 0; color: var(--text); font-family: var(--font-mono); overflow-wrap: anywhere; }
     .review-evidence-status { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-7); }
-    .review-pipeline-empty { color: var(--terminal-muted); font-size: var(--fs-base); padding: var(--sp-4); }
+    .review-pipeline-empty { color: var(--terminal-muted); font-size: var(--fs-sm); padding: var(--sp-4); }
     .review-pipeline-colempty { color: var(--muted); font-size: var(--fs-xs); }
     .review-priority { display: inline-block; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); font-size: var(--fs-2xs); color: var(--muted); border: 1px solid var(--blue); }
     .review-priority-high { border-color: var(--red); }
@@ -53861,7 +53883,8 @@ function burnAreaChart() {
     const CUSTOMERS_EVIDENCE_SHOWN = 5;
     let _customersData = null;
     let _customersError = '';
-    // The open profile; null shows the list.
+    // The profile open under its row, or null when every row is collapsed. It
+    // survives a refresh: the list is drawn again around it.
     let _customersOpen = null;
     // The open profile's timeline, read from the customer graph
     // (POST /api/graph) a page at a time.
@@ -53975,7 +53998,7 @@ function burnAreaChart() {
     // What the panel remembers across a refresh: which disclosures are open
     // (the Suggested group and each "Why is this suggested?"), which groups
     // are expanded, and which picker is showing.
-    let _customersUi = { open: {}, expanded: {}, picker: '', profilePicker: false };
+    let _customersUi = { open: {}, expanded: {}, picker: '', profilePicker: false, focusRow: '' };
 
     function customersInitial(name) {
       const m = /[A-Za-z0-9]/.exec(String(name || ''));
@@ -54084,9 +54107,11 @@ function burnAreaChart() {
     }
 
     // ── List ──
-    // One line per customer: picture, name, then pills (identities, origin,
-    // tags, goals to review, satisfaction), the date, the actions. On a narrow
-    // screen the pills wrap under the name.
+    // One slim line per customer: chevron, picture, name, then pills
+    // (identities, origin, tags, goals to review, satisfaction) and the date.
+    // The chevron and the row both open the profile in place, under the row;
+    // the open row stays open across a refresh. On a narrow screen the pills
+    // wrap under the name.
     function customersRowHtml(p, isMe) {
       const goals = customersGoalsSplit(p);
       const pill = customersLevelPill(p.satisfaction && p.satisfaction.level);
@@ -54097,12 +54122,17 @@ function burnAreaChart() {
       if (pending) extra.push('<span class="kc-pill customers-pill" title="' + pending + ' suggestion' + (pending === 1 ? '' : 's') + ' to review">' + pending + ' to review</span>');
       const updated = customersFormatTime(p.updated_at);
       const name = p.name || p.id || '';
-      return '<div class="customers-card" data-customer="' + escapeHtml(p.id) + '" data-me="' + (isMe ? 'true' : 'false') + '">' +
+      const rid = escapeHtml(isMe ? 'me' : p.id);
+      const open = !!(_customersOpen && (isMe ? _customersOpen.me : (!_customersOpen.me && _customersOpen.id === p.id)));
+      const pid = 'customers-profile-' + String(isMe ? 'me' : p.id).replace(/[^A-Za-z0-9_-]/g, '_');
+      return '<div class="customers-item" data-customer-item="' + rid + '">' +
+        '<div class="customers-card" data-customer="' + escapeHtml(p.id) + '" data-me="' + (isMe ? 'true' : 'false') + '" data-open="' + open + '" data-action="customersToggle" data-arg0="' + rid + '">' +
+        '<button type="button" class="customers-chevron" data-action="customersToggle" data-arg0="' + rid + '" aria-expanded="' + open + '"' + (open ? ' aria-controls="' + pid + '"' : '') + ' aria-label="' + (open ? 'Collapse' : 'Expand') + ' profile of ' + escapeHtml(name) + '"><span aria-hidden="true">\u25B8</span></button>' +
         customersAvatarHtml(name, customersGithubLogin(p), '', '') +
         '<div class="customers-row-main"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') +
         customersSourcePills(p) + customersOriginPill(p, updated) + customersTagPills(p) + extra.join('') + pill + '</div>' +
-        (updated ? '<span class="muted-xs customers-updated" title="Last updated">' + escapeHtml(updated) + '</span>' : '') +
-        '<div class="customers-row-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersOpen" data-arg0="' + (isMe ? 'me' : escapeHtml(p.id)) + '">' + (isMe ? 'My profile' : 'Open') + '</button></div></div>';
+        (updated ? '<span class="muted-xs customers-updated" title="Last updated">' + escapeHtml(updated) + '</span>' : '') + '</div>' +
+        (open ? '<div class="customers-profile" id="' + pid + '" role="region" aria-label="Profile of ' + escapeHtml(name) + '">' + customersProfileHtml(_customersOpen) + '</div>' : '') + '</div>';
     }
 
     // customersPickerHtml lists the current customers, Me first, for a
@@ -54225,14 +54255,21 @@ function burnAreaChart() {
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityAdd">Add identity</button></div></div>';
     }
 
+    // customersTagChipHtml is the toggle form of the row's tag pill: the same
+    // pill classes and tones, as a button. Off is dimmed; a tag hive set carries
+    // a small "auto" marker, a tag a person set carries the dot the row shows.
     function customersTagChipHtml(name, tag) {
       const state = tag ? tag.state : 'off';
       const source = tag ? tag.source : 'auto';
       const on = state === 'on';
-      const why = !tag ? 'Not set' : (source === 'manual' ? 'Set by ' + (tag.by || 'a person') : (tag.rule ? 'Automatic: ' + tag.rule : 'Automatic'));
-      let out = '<button type="button" class="badge customers-chip" data-state="' + state + '" data-source="' + escapeHtml(source) + '" aria-pressed="' + on + '" title="' + escapeHtml(why) + '"' +
-        ' data-action="customersTagSet" data-arg0="' + escapeHtml(name) + '" data-arg1="' + (on ? 'off' : 'on') + '">' + escapeHtml(name) + (tag ? ' · ' + (source === 'manual' ? 'manual' : 'auto') : '') + '</button>';
-      if (tag && source === 'manual') {
+      const manual = !!tag && source === 'manual';
+      const isDefault = ((_customersData && _customersData.default_tags) || []).indexOf(name) >= 0;
+      const why = !tag ? 'Not set' : (manual ? 'Set by ' + (tag.by || 'a person') : (tag.rule ? 'Automatic: ' + tag.rule : 'Automatic'));
+      let out = '<button type="button" class="kc-pill customers-pill customers-tag customers-tag-toggle"' + (isDefault ? ' data-tag="' + escapeHtml(name) + '"' : '') + ' data-state="' + state + '" data-source="' + escapeHtml(source) + '" aria-pressed="' + on + '" title="' + escapeHtml(why) + '"' +
+        ' data-action="customersTagSet" data-arg0="' + escapeHtml(name) + '" data-arg1="' + (on ? 'off' : 'on') + '">' +
+        (manual ? '<span class="customers-tag-dot" aria-hidden="true"></span>' : '') + escapeHtml(name) +
+        (tag && !manual ? '<span class="customers-tag-auto">auto</span>' : '') + (manual ? '<span class="customers-sr"> (set by hand)</span>' : '') + '</button>';
+      if (manual) {
         out += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersTagSet" data-arg0="' + escapeHtml(name) + '" data-arg1="auto" title="Hand this tag back to the automatic rules">Reset to automatic</button>';
       }
       return out;
@@ -54414,13 +54451,10 @@ function burnAreaChart() {
         '<div class="customers-inline"><button type="button" class="hv-btn btn-danger btn-sm" data-action="customersForget">Forget this person</button></div></div>';
     }
 
+    // The profile opens under its row, so the row already shows the picture,
+    // the name and the pills; the profile adds only Rename and its sections.
     function customersProfileHtml(p) {
-      const name = p.name || p.id || '';
-      return '<div class="customers-profile-head"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersClose">← Customers</button>' +
-        customersAvatarHtml(name, customersGithubLogin(p), '', '') +
-        '<div class="customers-profile-name"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (p.me ? '<span class="badge customers-me">me</span>' : '') + '</div>' +
-        '<div class="customers-chips">' + customersSourcePills(p) + customersOriginPill(p, '') + customersTagPills(p) + customersLevelPill(p.satisfaction && p.satisfaction.level) + '</div>' +
-        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRename">Rename</button></div>' +
+      return '<div class="customers-profile-head"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRename">Rename</button></div>' +
         '<div class="hive-dialog-error" role="alert" data-customers-field="profile-error"></div>' +
         customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) + customersAttachHtml(p) +
         customersActivityHtml(p) + customersGraphHtml(p) + customersMergeHtml(p) + customersNotesHtml(p) + customersForgetHtml(p);
@@ -54443,10 +54477,17 @@ function burnAreaChart() {
       if (active && host.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
       // A refresh keeps the page where the person was reading.
       const y = window.scrollY;
-      host.innerHTML = _customersOpen ? customersProfileHtml(_customersOpen) : customersListHtml(data);
+      host.innerHTML = customersListHtml(data);
       if (Math.abs(window.scrollY - y) > 1) window.scrollTo(window.scrollX, y);
       const pick = host.querySelector('[data-customers-picker] [data-customers-field="picker-filter"]');
       if (pick && _customersUi.focusPicker) { _customersUi.focusPicker = false; pick.focus(); }
+      // A toggle re-draws the list; the focus goes back to the chevron it came from.
+      if (_customersUi.focusRow) {
+        const want = _customersUi.focusRow;
+        _customersUi.focusRow = '';
+        const chev = Array.prototype.find.call(host.querySelectorAll('.customers-chevron'), c => c.getAttribute('data-arg0') === want);
+        if (chev) chev.focus();
+      }
     }
 
     // The open state of each disclosure is kept, so a refresh or an action
@@ -54499,7 +54540,7 @@ function burnAreaChart() {
       if (gone && _customersData && _customersData.suggestions) _customersData.suggestions = _customersData.suggestions.filter(x => x && x.id !== gone);
       customersShow();
       await fetchCustomers();
-      if (!_customersOpen) customersFocusSuggestion(next);
+      customersFocusSuggestion(next);
     }
 
     // customersShow replaces the panel after an action, even when a field in
@@ -54585,7 +54626,17 @@ function burnAreaChart() {
         _customersOpen = await customersRequest('GET', '/api/customers/' + encodeURIComponent(id));
         customersShow();
         customersTimelineLoad(true);
-      } catch (e) { showToast('Could not open the profile: ' + e.message, 'error'); }
+        const item = document.querySelector('#customers-panel [data-customer-item="' + (_customersOpen && _customersOpen.me ? 'me' : id) + '"]');
+        if (item && typeof item.scrollIntoView === 'function') item.scrollIntoView({ block: 'nearest' });
+      } catch (e) { _customersUi.focusRow = ''; showToast('Could not open the profile: ' + e.message, 'error'); }
+    }
+
+    // customersToggle opens the profile under its row, or folds it when it is
+    // already open. The chevron and the row both call it.
+    function customersToggle(id) {
+      const open = !!(_customersOpen && (id === 'me' ? _customersOpen.me : (!_customersOpen.me && _customersOpen.id === id)));
+      _customersUi.focusRow = id;
+      if (open) customersClose(); else customersOpen(id);
     }
 
     function customersClose() {
@@ -54674,18 +54725,25 @@ function burnAreaChart() {
     // customer (an id, or "me") instead of accepting them as a new one. The
     // server folds it in with the merge, so Undo merge on that customer's
     // profile takes it back.
+    // customersIsOpenTarget: is this customer (an id, or "me") the profile
+    // that is open? A suggestion's picker can name any customer now that the
+    // list and an open profile are on the page together.
+    function customersIsOpenTarget(into) {
+      return !!(_customersOpen && (into === 'me' ? _customersOpen.me : (!_customersOpen.me && _customersOpen.id === into)));
+    }
+
     async function customersAttach(sid, into) {
       const next = customersNeighbour(sid);
       try {
         const p = await customersRequest('POST', '/api/customers/suggestions/' + encodeURIComponent(sid) + '/accept', { into: into });
         showToast('Added to ' + (p.name || 'the customer') + '. Undo it from their profile, under Merge.', 'success');
-        if (_customersOpen) {
+        if (customersIsOpenTarget(into)) {
           _customersOpen = p;
           _customersTimeline = { id: '', nodes: [], next: '', error: '', loading: false };
           customersTimelineLoad(true);
         }
       } catch (e) {
-        if (_customersOpen) customersProfileError(e.message); else showToast('Could not add: ' + e.message, 'error');
+        if (customersIsOpenTarget(into)) customersProfileError(e.message); else showToast('Could not add: ' + e.message, 'error');
       }
       _customersUi.picker = '';
       _customersUi.profilePicker = false;
@@ -54759,7 +54817,7 @@ function burnAreaChart() {
         await fetchCustomers();
         // The focus moves on to the next question, else back to the profile.
         const host = document.getElementById('customers-panel');
-        const target = host && ((nextHint && host.querySelector('[data-hint="' + nextHint + '"] button')) || host.querySelector('[data-action="customersClose"]'));
+        const target = host && ((nextHint && host.querySelector('[data-hint="' + nextHint + '"] button')) || host.querySelector('.customers-chevron[aria-expanded="true"]'));
         if (target) target.focus();
       } catch (e) { customersProfileError(e.message); }
     }

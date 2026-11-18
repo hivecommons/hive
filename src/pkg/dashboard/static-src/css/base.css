@@ -109,6 +109,8 @@
     html { overflow-x: hidden; max-width: 100%; }
     body {
       font-family: var(--font-ui);
+      /* The page had no base size, so text a rule did not size (a badge, a bare div, a goal line) rendered at the 16px browser default, larger than the small section headings above it. Base content is the --fs-sm step, the size of a card title, so unsized text is never larger than the heading it sits under; components size themselves. */
+      font-size: var(--fs-sm);
       background: var(--bg); color: var(--text);
       /* Bottom clearance keeps the last rows scrollable clear of the fixed
          chat FAB (48px + 24px offset + breathing room — #7160); the phone
