@@ -125,9 +125,13 @@ func (f *fakeMX) snapshot() (sessions int, from, rcpts []string, msgs [][]byte, 
 type fakeMXBackend struct{ f *fakeMX }
 
 func (b *fakeMXBackend) NewSession(c *smtp.Conn) (smtp.Session, error) {
-	b.f.mu.Lock()
-	b.f.sessions++
-	b.f.mu.Unlock()
+	// go-smtp makes a second session once STARTTLS has run, so only the
+	// plain-text one counts: that is one per connection.
+	if _, on := c.TLSConnectionState(); !on {
+		b.f.mu.Lock()
+		b.f.sessions++
+		b.f.mu.Unlock()
+	}
 	return &fakeMXSession{f: b.f, conn: c}, nil
 }
 
