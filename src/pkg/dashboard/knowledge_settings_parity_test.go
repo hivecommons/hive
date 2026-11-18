@@ -361,7 +361,7 @@ func TestKnowledgeSidecarAdviseControl(t *testing.T) {
 		t.Error("the sidecar advisor toggle is not the first control in the pipeline section")
 	}
 	if !strings.Contains(body, "The mid-task advisor is off in hive.yaml") {
-		t.Error("the control does not say it needs knowledge.advisor")
+		t.Error("the control does not say it needs the mid-task advisor")
 	}
 	save := extractJSFunction(t, html, "saveKnowledgePipeline")
 	if !strings.Contains(save, "['top', 'sidecar_advise', 'sa-enabled', 'bool']") || !strings.Contains(save, "body[key] = v") {

@@ -276,8 +276,8 @@ func knowledgePipelineResponse(cfg *config.Config) map[string]interface{} {
 	return map[string]interface{}{
 		// Display-only: the engine picks the knowledge backend at boot.
 		"engine": k.Engine,
-		// knowledge.sidecar_advise is editable; knowledge.advisor, which it
-		// needs, stays yaml-only and is shown so the control can say so.
+		// sidecar_advise is editable; the mid-task advisor switch it needs
+		// stays yaml-only and is shown so the control can say so.
 		"sidecar_advise": k.SidecarAdvise,
 		"advisor":        k.Advisor,
 		"bead_synthesizer": map[string]interface{}{
