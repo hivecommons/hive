@@ -493,7 +493,7 @@ func workflowApprovalComment(headSHA string, approval workflowApproval, verdictS
 	marker := workflowApprovalMarker(headSHA) + " by=" + strings.ToLower(approver)
 	merges, offNote := "the hive merges this PR itself", ""
 	if autoMergeOff {
-		merges, offNote = "a person merges it", " (auto-merge is off for this repository, so the hive never merges it)"
+		merges, offNote = "a person merges it", " (hive auto-merge does not run for this repository, so the hive never merges it)"
 	}
 	gates := merges + " once the usual gates (CI, soak, holds, review verdict) are clear" + offNote + "."
 	switch verdictState {

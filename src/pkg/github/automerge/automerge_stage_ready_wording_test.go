@@ -73,7 +73,7 @@ func TestWorkflowApprovalCommentAutoMergeOff(t *testing.T) {
 		for _, approval := range []workflowApproval{{Login: "Danathar"}, {Login: "Danathar", CarriedFrom: "1234567890ab"}} {
 			off := workflowApprovalComment("9fd007702e97", approval, state, true)
 			if strings.Contains(off, "the hive merges this PR itself") || !strings.Contains(off, "a person merges it once the usual gates") ||
-				!strings.Contains(off, "auto-merge is off for this repository, so the hive never merges it") {
+				!strings.Contains(off, "hive auto-merge does not run for this repository, so the hive never merges it") {
 				t.Fatalf("state %d, carried %q: auto-merge-off comment:\n%s", state, approval.CarriedFrom, off)
 			}
 			on := workflowApprovalComment("9fd007702e97", approval, state, false)
