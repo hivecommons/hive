@@ -51,3 +51,18 @@ func TestReporterTrustReasonPatternAcceptsBothDashes(t *testing.T) {
 		}
 	}
 }
+
+// A title an agent wrote with an em-dash qualifier is rewritten to a spaced
+// hyphen before filing; it must still fold into the same canonical subject.
+func TestCanonicalIssueSubjectTreatsSpacedHyphenAsQualifier(t *testing.T) {
+	const stem = "[scanner] Split web/e2e/card-cache.spec.ts (1237 lines)"
+	want := canonicalIssueSubject(stem)
+	if want == "" {
+		t.Fatal("test stem must be specific enough to key on")
+	}
+	for _, qualifier := range []string{" — extract cache helpers", " - extract cache helpers", " -- extract cache helpers"} {
+		if got := canonicalIssueSubject(stem + qualifier); got != want {
+			t.Fatalf("canonicalIssueSubject(%q) = %q, want %q", stem+qualifier, got, want)
+		}
+	}
+}

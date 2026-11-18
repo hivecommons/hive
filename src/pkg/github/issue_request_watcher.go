@@ -631,6 +631,8 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 
 	meta := c.attributionMeta(req.Agent)
 	body := c.relayBody(req.Agent, req.Body)
+	// The agent's title is agent-authored text like the body: no em-dashes.
+	req.Title = prosefilter.SanitizeTitle(req.Title)
 	if kind == "issue" && req.Parent > 0 {
 		// Machine-readable child → parent marker (hivecommons/hive#12857):
 		// the sub-issue link below is best-effort and the ledger is
@@ -1573,8 +1575,7 @@ func (c *Client) createIssue(ctx context.Context, req CreateIssueRequest) (Creat
 	if err := validateRepoRef(owner, repoName); err != nil {
 		return CreateIssueResult{}, fmt.Errorf("CreateIssue: %w", err)
 	}
-	title = prosefilter.SanitizeTitle(strings.TrimSpace(title))
-	body = prosefilter.Sanitize(body)
+	title = strings.TrimSpace(title)
 	if title == "" {
 		return CreateIssueResult{}, fmt.Errorf("CreateIssue: title is required")
 	}
