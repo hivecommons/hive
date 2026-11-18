@@ -77,6 +77,8 @@ type session struct {
 	// nothing more is forwarded to it, so a meeting without live mode does
 	// not log a warning per transcript line (hivecommons/hive#18630).
 	spekGone bool
+	// lastPartial is the last partial spoken line from anyone (tone.go).
+	lastPartial partialHeard
 	// burst is the extra chat room for answers to addressed requests;
 	// voice is the estimate of queued speech (voicequeue.go).
 	burst rateLimiter
@@ -336,6 +338,7 @@ func (s *session) onUpdate(u meetings.Update) {
 		// A partial transcript only lets the persona acknowledge a
 		// request early; Spek and open asks wait for the final line.
 		if s.persona != nil {
+			s.notePartial(ev.Who())
 			s.persona.ObservePartial(betty.Line{Who: ev.Who(), Text: ev.Text, Spoken: true})
 		}
 		return
@@ -828,6 +831,10 @@ func renderResearch(it *ResearchItem) string {
 // waits for the meeting: every line goes out through the outbound queues
 // and is recorded when its call returns (outbound.go, timing.go).
 func (s *session) onPersonaReply(ctx context.Context, rep betty.Reply) {
+	if rep.Trigger == betty.TriggerTone {
+		s.playTone(rep)
+		return
+	}
 	text := strings.TrimSpace(rep.Text)
 	if text == "" {
 		return

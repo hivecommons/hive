@@ -206,7 +206,8 @@ const (
 	productBriefNote = "Context marked \"" + ProductBriefSource + "\" is this project's own documentation: answer questions about Hive from it directly, in its framing, and set needs_research to false. " +
 		"For a broad question (\"what do you know about hive\") give its short overview and offer to go deeper. " +
 		"Name only the tools it names; if it does not answer the question, say in one sentence what you do know and offer to look it up.\n"
-	needsPlaceNote = "Context marked \"" + WeatherNeedsPlaceSource + "\" means the question named no place and you cannot know where the speaker is: ask which city or town they mean, name no place yourself, and set needs_research to false.\n"
+	unavailableNote = "Context marked \"" + WeatherUnavailableSource + "\" means live weather could not be read: say in one short sentence that you cannot get current conditions right now, state no temperature or conditions, and set needs_research to false.\n"
+	needsPlaceNote  = "Context marked \"" + WeatherNeedsPlaceSource + "\" means the question named no place and you cannot know where the speaker is: ask which city or town they mean, name no place yourself, and set needs_research to false.\n"
 )
 
 // LocalAnswerNotes are the answer prompt's lines for context that settles
@@ -221,6 +222,9 @@ func LocalAnswerNotes(snips []Snippet) string {
 	if hasSource(snips, WeatherNeedsPlaceSource) {
 		b.WriteString(needsPlaceNote)
 	}
+	if hasSource(snips, WeatherUnavailableSource) {
+		b.WriteString(unavailableNote)
+	}
 	return b.String()
 }
 
@@ -229,5 +233,5 @@ func LocalAnswerNotes(snips []Snippet) string {
 // answers product questions, and a weather question with no place needs a
 // place from the speaker, not research.
 func AnsweredLocally(snips []Snippet) bool {
-	return hasSource(snips, ProductBriefSource) || hasSource(snips, WeatherNeedsPlaceSource)
+	return hasSource(snips, ProductBriefSource) || hasSource(snips, WeatherNeedsPlaceSource) || hasSource(snips, WeatherUnavailableSource)
 }

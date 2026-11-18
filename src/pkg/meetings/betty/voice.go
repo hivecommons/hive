@@ -30,16 +30,28 @@ type phrases struct {
 	// the reason); still is the progress note while it runs long.
 	failed string
 	still  string
+	// unsourced is said instead of a research figure that names no source;
+	// empty falls back to English.
+	unsourced string
+}
+
+// unsourcedText is the not-sure line for an unsourced research figure.
+func (p phrases) unsourcedText() string {
+	if p.unsourced != "" {
+		return p.unsourced
+	}
+	return localized["en"].unsourced
 }
 
 // localized phrases by primary language subtag; English is the fallback.
 var localized = map[string]phrases{
 	"en": {
-		acks:   []string{"Let me check on that.", "One moment.", "Good question, let me look.", "Let me see."},
-		digIn:  "I'll dig into that and report back.",
-		digged: "I dug into %q: %s",
-		failed: "I couldn't look that up: %s.",
-		still:  "Still looking into that; I'll report back as soon as I have it.",
+		acks:      []string{"Let me check on that.", "One moment.", "Good question, let me look.", "Let me see."},
+		digIn:     "I'll dig into that and report back.",
+		digged:    "I dug into %q: %s",
+		failed:    "I couldn't look that up: %s.",
+		still:     "Still looking into that; I'll report back as soon as I have it.",
+		unsourced: "I'm not sure: what I found gave a number but no source for it, so I won't state it.",
 	},
 	"es": {
 		acks:   []string{"Déjame revisarlo.", "Un segundo.", "Buena pregunta, lo miro.", "A ver."},

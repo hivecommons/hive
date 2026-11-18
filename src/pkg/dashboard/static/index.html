@@ -51953,6 +51953,7 @@ function burnAreaChart() {
     const MEETINGS_LIVE_STATES = { requested: 1, joining: 1, lobby: 1, live: 1 };
     let _meetingsList = null;
     let _meetingsError = '';
+    let _meetingsTrusted = [];
     // Budget meters by meeting id and the hive-wide ceilings, from GET /api/meetings/budget.
     let _meetingsBudget = {};
     let _meetingsLedger = null;
@@ -52004,7 +52005,7 @@ function burnAreaChart() {
         const r = await fetch('/api/meetings');
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { _meetingsList = []; _meetingsError = data.error || ('HTTP ' + r.status); }
-        else { _meetingsList = data.meetings || []; _meetingsError = ''; _meetingsEmailIn = data.email_in || null; }
+        else { _meetingsList = data.meetings || []; _meetingsError = ''; _meetingsEmailIn = data.email_in || null; _meetingsTrusted = data.trusted_requesters || []; }
       } catch (e) {
         // Keep the last list; say the hive is unreachable instead of leaving "Loading meetings…".
         if (_meetingsList === null) _meetingsList = [];
@@ -52140,6 +52141,9 @@ function burnAreaChart() {
           '<span class="kc-pill" data-status="syncing">join request</span></div>' + meetingsReasonHtml(m) + '</div>' +
           '<div class="meetings-row-actions">' +
           '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsApproveRequest" data-arg0="' + escapeHtml(m.id) + '">Approve</button>' +
+          (m.platform === 'discord' && /^[0-9]{5,25}$/.test(m.requested_by.id || '') ?
+            '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsApproveAlways" data-arg0="' + escapeHtml(m.id) + '"' +
+            ' title="Approve now, and approve this person\'s future Discord requests automatically. Matched by their Discord user id, not their name.">Always approve this person</button>' : '') +
           '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button>' +
           meetingsDeleteButtonHtml(m) + '</div></div>';
       }
@@ -52278,6 +52282,7 @@ function burnAreaChart() {
         html += '<div class="meetings-row-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsClearFinished"' +
           ' title="Delete every finished meeting after one confirm">🗑 Clear finished (' + finished.length + ')</button></div>';
       }
+      html += meetingsTrustedHtml();
       html += '<div class="meetings-list">' + (list.length ? list.map(meetingsRowHtml).join('') : (_meetingsError ? '' : '<p class="empty-dashed">No meetings yet.</p>')) + '</div>';
       host.innerHTML = html;
       const liveCount = list.filter(m => MEETINGS_LIVE_STATES[m.state]).length;
@@ -52332,6 +52337,30 @@ function burnAreaChart() {
       try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/approve'); showToast('Hive is joining', 'success'); }
       catch (e) { showToast('Approve failed: ' + e.message, 'error'); }
       fetchMeetings();
+    }
+
+    async function meetingsApproveAlways(id) {
+      try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/approve', { always: true }); showToast('Hive is joining, and will join this person\'s future requests', 'success'); }
+      catch (e) { showToast('Approve failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    async function meetingsUntrust(platform, uid) {
+      try {
+        const r = await fetch('/api/meetings/trusted/' + encodeURIComponent(platform) + '/' + encodeURIComponent(uid), { method: 'DELETE' });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || ('HTTP ' + r.status)); }
+        showToast('Removed. Their requests wait for approval again', 'success');
+      } catch (e) { showToast('Remove failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    // meetingsTrustedHtml lists the people whose Discord requests join at once.
+    function meetingsTrustedHtml() {
+      const list = _meetingsTrusted || [];
+      if (!list.length) return '';
+      return '<div class="meetings-trusted"><div class="section-label m-0">Always approved on Discord</div>' + list.map(t =>
+        '<div class="meetings-row-actions"><span class="muted-xs">' + escapeHtml((t.name || 'unnamed') + ' (Discord id ' + t.id + ')') + '</span>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsUntrust" data-arg0="' + escapeHtml(t.platform) + '" data-arg1="' + escapeHtml(t.id) + '">Remove</button></div>').join('') + '</div>';
     }
 
     async function meetingsDeclineRequest(id) {

@@ -46,6 +46,9 @@ const (
 	// TriggerChatCopy is the full text of a line posted in chat after its
 	// short form was spoken (the intro).
 	TriggerChatCopy = "chat_copy"
+	// TriggerLinks is the chat line of links posted after a spoken answer
+	// (their URLs are never spoken).
+	TriggerLinks = "links"
 )
 
 // SourceSpek is the source of a line Spektacular wrote.
