@@ -185,3 +185,20 @@ func TestTrySpeakReasons(t *testing.T) {
 		t.Fatalf("policy off = %q", reason)
 	}
 }
+
+// A long spoken answer is said as its first sentence and the whole answer
+// goes to chat once (first audio and the say deadline, live Meet test).
+func TestLongAnswerSaidInBriefWithFullTextInChat(t *testing.T) {
+	h, s, _ := voiceSession(t, Policy{ChatPostsPerMinute: 6, VoiceOnAddress: true})
+	first := "Board pressure is twenty open issues and fifteen open PRs across fourteen repos."
+	full := first + " Of those, eighteen are actionable right now and two are blocked."
+	s.queueVoice(betty.Reply{}, full)
+	s.flushVoice(context.Background())
+	posts, says := h.mt.got()
+	if len(says) != 1 || says[0] != first+" "+voiceRestInChat {
+		t.Fatalf("says %q", says)
+	}
+	if len(posts) != 1 || posts[0] != full {
+		t.Fatalf("posts %q, want the full answer once", posts)
+	}
+}
