@@ -24,17 +24,12 @@ const (
 	// search qualifiers the call accepts.
 	MentionSearchKindMentions  = "mentions"
 	MentionSearchKindCommenter = "commenter"
-	// searchQueryMaxLen is GitHub's limit on a search q parameter.
-	searchQueryMaxLen = 256
 	// mentionSearchMaxPerPage is GitHub's page size limit.
 	mentionSearchMaxPerPage = 100
 	// mentionSearchLowRemaining is the search-bucket remaining at or below
 	// which optional searches stand down. GitHub allows 30 search requests a
 	// minute, so a reading this low means other callers are using it.
 	mentionSearchLowRemaining = 5
-	// mentionSearchCoreFloor is the core-bucket remaining at or below which
-	// optional searches stand down, matching the low-value REST floor.
-	mentionSearchCoreFloor = lowValueRESTBudgetFloor
 )
 
 // MentionHit is one issue or pull request found by SearchMentions.
@@ -44,12 +39,6 @@ type MentionHit struct {
 	Number    int
 	IsPR      bool
 	UpdatedAt time.Time
-}
-
-// RateLimitCautionEngaged reports whether the secondary-limit slow-start
-// caution window is engaged on the shared transport.
-func RateLimitCautionEngaged() bool {
-	return sharedSlowStartState.cautious(time.Now())
 }
 
 // OptionalSearchStandDown returns a short reason when optional work should
