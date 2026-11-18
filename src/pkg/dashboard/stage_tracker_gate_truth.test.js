@@ -125,3 +125,41 @@ test('a verb clicked in a stale view says what the item is waiting on and refres
   api.nothing('decide:delegate', [{ repo: 'acme/api', number: 9, kind: 'issue', stage: 15 }]);
   assert.deepStrictEqual(api.toasts, ['warning:Let hive decide: nothing to act on — acme/api#9 is not waiting on that decision']);
 });
+
+// hivecommons/hive#18889: the pill still names what parked the row, but the
+// verbs that decide on the head are disabled, with the reason, while the
+// CURRENT head's CI or review is still running — and the pill says so in
+// words ("waiting on CI running 2/5"), not only in a hover.
+test('hive#18889: mid-flight head — decision verbs disabled with the reason, release stays live', () => {
+  const parked = { repo: 'acme/api', number: 5, kind: 'pr', stage: 85, head: 'aaa1111', author_kind: 'hive', modifiers: ['needs-decision'], needs_human: true,
+    reason: 'contributor-lane:no-linked-issue' };
+  const disabledOf = h => Array.from(h.matchAll(/data-ham-act="([^"]*)"([^>]*)>/g)).filter(m => /aria-disabled="true"/.test(m[2])).map(m => m[1]);
+
+  // Settled head: nothing disabled, no wait chip.
+  const settled = api.gateHtml(parked, parked, Date.now());
+  assert.deepStrictEqual(disabledOf(settled), []);
+  assert.ok(!settled.includes('ham-gate-wait'), settled);
+
+  // CI running on the current head.
+  const ci = Object.assign({}, parked, { mid_flight: { kind: 'ci-running', text: 'CI running 2/5', head: 'aaa1111', park: 'it links no issue' } });
+  const row = api.gateHtml(ci, ci, Date.now());
+  assert.deepStrictEqual(reasonsOf(row), ['decision'], 'the pill still says what parked it');
+  assert.deepStrictEqual(verbsOf(row), ['gate:decide', 'decide:approve', 'decide:delegate']);
+  assert.deepStrictEqual(disabledOf(row), ['gate:decide', 'decide:approve', 'decide:delegate'], 'Decide…, Approve as-is and Let hive decide are all disabled');
+  assert.ok(row.includes('class="ham-gate-wait"') && row.includes('>waiting on CI running 2/5<'), 'the reason is visible on the pill: ' + row);
+  assert.ok(row.includes('parked because it links no issue'), 'the real park reason rides the hover: ' + row);
+  assert.ok(row.includes('title="Waiting on CI running 2/5: the decision opens when CI and review finish on the current head'), row);
+
+  // Review queued on the current head, and a push that left the old park behind.
+  for (const text of ['review queued on aaa1111 (0/5)', 'CI and review not yet run on aaa1111']) {
+    const it = Object.assign({}, parked, { mid_flight: { kind: 'x', text, head: 'aaa1111' } });
+    const h = api.gateHtml(it, it, Date.now());
+    assert.deepStrictEqual(disabledOf(h), ['gate:decide', 'decide:approve', 'decide:delegate'], text);
+    assert.ok(h.includes('>waiting on ' + text + '<'), h);
+  }
+
+  // A hold is a person's to release whatever the head is doing.
+  const held = Object.assign({}, ci, { modifiers: ['needs-decision', 'hold'], hold: { by: 'octocat' } });
+  const heldRow = api.gateHtml(held, held, Date.now());
+  assert.ok(verbsOf(heldRow).includes('release') && !disabledOf(heldRow).includes('release'), heldRow);
+});

@@ -2369,6 +2369,7 @@
     .ham-human-gate .ham-gate-more[aria-expanded="true"] { background: color-mix(in srgb, var(--amber) 22%, transparent); }
     .ham-human-gate.ham-gate-settling { opacity: 0.75; border-style: dashed; }
     .ham-human-gate.ham-gate-settling > .ham-gate-status { color: var(--cue-work); }
+    .ham-human-gate > .ham-gate-wait { display: inline-flex; align-items: center; min-width: 0; padding: 0 var(--sp-2); color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ham-gate-menu[hidden] { display: none; }
     /* The passive "decision pending on #N" chip is a link to the primary row. */
     .ham-decision-pending[data-ham-scroll-to] { text-decoration: underline dotted; text-underline-offset: var(--sp-1); }
@@ -21516,7 +21517,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '',
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
-        decided: lp.decided || null, human_gate: lp.human_gate || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
+        decided: lp.decided || null, human_gate: lp.human_gate || null, mid_flight: lp.mid_flight || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0 };
     }
     // Pure: whether a linked PR is still open (not merged / closed /
     // superseded). With `issue`, an adopted original whose hive copy is
@@ -22013,7 +22014,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
             terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '', hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null, human_gate: lp.human_gate || null });
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '', hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null, human_gate: lp.human_gate || null, mid_flight: lp.mid_flight || null });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
           // and nothing lit; one sub-row per PR carries the live chevron.
@@ -25359,7 +25360,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
         out.push({ id: 'decide:close-wontfix', label: "Won't fix…", enabled, why, danger: true });
         out.push({ id: 'decide:direction', label: 'Give direction…', enabled, why });
-        return out;
+        // A head whose CI or review is still running is not decided on yet.
+        return typeof stageTrackerMidFlightApply === 'function' ? stageTrackerMidFlightApply(out, item) : out;
       }
       out.push({ id: 'decide:approve', label: 'Approve direction', enabled, why });
       out.push({ id: 'decide:direction', label: 'Send back to the hive…', enabled, why });
@@ -25523,7 +25525,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const nested = stageTrackerNestedOpenPRs(item);
       if (nested.length >= STAGE_TRACKER_DELEGATE_ALL_MIN) {
         const can = write && !!ctx.user;
-        out.push({ id: 'decide:delegate-all', label: 'Let hive decide — all ' + nested.length + ' PRs', hint: 'per PR', enabled: can, why: can ? '' : STAGE_TRACKER_WHY_WRITE, prs: nested.map(p => p.number) });
+        // PRs whose CI or review is still running on the current head are
+        // skipped by the fan-out (the server answers each one no-effect);
+        // when every PR is mid-flight the action is disabled with the reason
+        // (hivecommons/hive#18889).
+        const flying = typeof stageTrackerMidFlightOf === 'function' ? nested.filter(stageTrackerMidFlightOf) : [];
+        const allFlying = flying.length === nested.length;
+        const flightWhy = allFlying ? 'Every PR is still waiting: ' + flying.map(p => '#' + p.number + ' ' + stageTrackerMidFlightOf(p).text).join('; ') : '';
+        out.push({ id: 'decide:delegate-all', label: 'Let hive decide — all ' + nested.length + ' PRs', hint: flying.length && !allFlying ? 'per PR · skips ' + flying.length + ' still running' : 'per PR', enabled: can && !allFlying, why: !can ? STAGE_TRACKER_WHY_WRITE : flightWhy, prs: nested.map(p => p.number) });
       }
       // The row asks the human for something (decision_needed on the item
       // or its one asking nested PR): the server's answers lead the menu,
@@ -27776,6 +27785,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       } else if (id === 'decide:delegate-all') {
         // The issue row itself is the request; the server fans out per PR.
         items = items.filter(it => stageTrackerNestedOpenPRs(it).length >= STAGE_TRACKER_DELEGATE_ALL_MIN);
+        // Every PR still mid-flight: nothing to send (the menu disables it).
+        if (typeof stageTrackerMidFlightOf === 'function' && items.length && items.every(it => stageTrackerNestedOpenPRs(it).every(stageTrackerMidFlightOf))) {
+          showToast('Let hive decide — all PRs: not yet, CI or review is still running on each', 'info');
+          return { toasts: [], pending: [] };
+        }
       } else if (id === 'decide:adopt-now' || stageTrackerActionBase(id) === 'decide:reroute') {
         // Adopt now / Reroute act on the PR waiting on its contributor (072 / 071).
         items = items.map(stageTrackerTakeoverTarget).filter(Boolean);
@@ -27823,6 +27837,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         items = [].concat(...items.map(it => stageTrackerGateTargets(it, id)))
           .filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
+        // A decision on a head whose CI or review is still running is not
+        // sent (hivecommons/hive#18889): the menu draws it disabled, and a
+        // click that beat the repaint is answered with the reason.
+        if (typeof stageTrackerMidFlightApply === 'function' && STAGE_TRACKER_MIDFLIGHT_VERBS.indexOf(id) >= 0) {
+          const ready = items.filter(t => !stageTrackerMidFlightOf(t));
+          if (ready.length < items.length) {
+            const held = items.filter(t => stageTrackerMidFlightOf(t));
+            showToast(stageTrackerActionLabel(id) + ': not yet — ' + held.map(t => stageTrackerRefOf(t) + ' ' + stageTrackerMidFlightWhy(t)).join('; '), 'info');
+            if (!ready.length) return { toasts: [], pending: [] };
+            items = ready;
+          }
+        }
       }
       const payload = await stageTrackerActionPayload(items, id, rows);
       if (payload == null) return { toasts: [], pending: [], cancelled: true };
@@ -28125,6 +28151,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // row's own lead actions (server-judged delegate, approve) are trusted
     // first; the rest follow the hold permission the endpoints share.
     function stageTrackerHumanGateVerbState(id, item, ctx, leads) {
+      // A head whose CI or review is still running is not decided on yet
+      // (hivecommons/hive#18889): the verb stays, disabled, with the reason.
+      const flight = typeof stageTrackerMidFlightOf === 'function' && STAGE_TRACKER_MIDFLIGHT_VERBS.indexOf(id) >= 0 && stageTrackerMidFlightOf(item) ? stageTrackerMidFlightWhy(item) : '';
+      if (flight) return { enabled: false, why: flight };
       const lead = (leads || []).find(a => a && a.id === id);
       if (lead) return { enabled: lead.enabled !== false, why: lead.enabled === false ? String(lead.why || '') : '' };
       return typeof stageTrackerActionAllowed === 'function' ? stageTrackerActionAllowed(id, ctx) : { enabled: true, why: '' };
@@ -28199,7 +28229,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // stamped into the wrap the first time the … opens.
       const more = moreVerbs.length ? `<span class="ham-gate-more-wrap"><button type="button" class="ham-lead-act ham-gate-act ham-gate-more" data-ham-gate-more aria-haspopup="menu" aria-expanded="false" aria-label="More ways to settle this gate" title="${esc(moreVerbs.map(v => v.label).join(' · '))}">…</button><template class="ham-gate-menu-tpl"><div class="ham-menu ham-gate-menu" role="menu" aria-label="More ways to settle this gate" hidden>${moreVerbs.map(v => stageTrackerHumanGateVerbHtml(item, v, stageTrackerHumanGateVerbState(v.id, shown, ctx, leads), true)).join('')}</div></template></span>` : '';
       const key = typeof stageTrackerItemKey === 'function' ? stageTrackerItemKey(item) : '';
-      return `<span class="ham-human-gate" data-ham-gate="${esc(key)}" data-ham-gate-reasons="${esc(reasons.map(r => r.key).join(' '))}" role="group" aria-label="${esc(text)}">${status}${acts}${more}</span>`;
+      // The real reason the verbs are not live yet: the head's CI or review
+      // is still running (hivecommons/hive#18889). The pill still names what
+      // parked the row; this says why nothing can be decided on it now.
+      const flightWhy = typeof stageTrackerMidFlightWhy === 'function' ? stageTrackerMidFlightWhy(shown) : '';
+      const flightWord = flightWhy ? String(stageTrackerMidFlightOf(shown).text).trim() : '';
+      const wait = flightWhy ? `<span class="ham-gate-wait" data-ham-gate-wait="${esc(String(stageTrackerMidFlightOf(shown).kind || ''))}" title="${esc(flightWhy)}" role="status">waiting on ${esc(flightWord)}</span>` : '';
+      return `<span class="ham-human-gate" data-ham-gate="${esc(key)}" data-ham-gate-reasons="${esc(reasons.map(r => r.key).join(' '))}" role="group" aria-label="${esc(text + (flightWord ? ' — waiting on ' + flightWord : ''))}">${status}${wait}${acts}${more}</span>`;
     }
     // The pill's optimistic state after one of its verbs ran: the status
     // reads "settling…" until the next snapshot re-renders the row.
@@ -28253,6 +28289,36 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_GATE_NO_DECISION = 'No decision pending';
     const STAGE_TRACKER_GATE_APPROVED_BY = 'Approved by @';
     const STAGE_TRACKER_GATE_STALE = ' is not waiting on that decision';
+    /* ---- Mid-flight PRs (hivecommons/hive#18889) --------------------------
+       A decision is a call on the head as it stands. While the CURRENT
+       head's CI is running, its review is queued or unfinished, or the CI /
+       review on file belong to an earlier head (a push restarted both), the
+       call is premature. The server states it per row as `mid_flight`
+       ({kind, text, head, park}); the verbs that rest on the head being
+       checked are drawn disabled with the reason instead of offered. A park
+       recorded for an earlier head does not count. */
+    const STAGE_TRACKER_MIDFLIGHT_VERBS = ['decide:delegate', 'decide:approve', 'decide:direction', 'gate:decide'];
+    // Pure: the server's mid_flight on the row, null when the head is settled.
+    function stageTrackerMidFlightOf(item) {
+      const m = item && item.mid_flight;
+      return m && typeof m === 'object' && String(m.text || '').trim() ? m : null;
+    }
+    // Pure: the reason a decision on the row is not offered yet, '' when it is.
+    function stageTrackerMidFlightWhy(item) {
+      const m = stageTrackerMidFlightOf(item);
+      if (!m) return '';
+      const park = String(m.park || '').trim();
+      return 'Waiting on ' + String(m.text).trim() + ': the decision opens when CI and review finish on the current head' + (park ? ' (parked because ' + park + ')' : '');
+    }
+    // Pure: disables, in place, the options that rest on the head being
+    // checked while the row is mid-flight; the options come back unchanged
+    // otherwise.
+    function stageTrackerMidFlightApply(options, item) {
+      const why = stageTrackerMidFlightWhy(item);
+      if (!why) return options;
+      (options || []).forEach(o => { if (o && STAGE_TRACKER_MIDFLIGHT_VERBS.indexOf(o.id) >= 0) { o.enabled = false; o.why = why; } });
+      return options;
+    }
     // Pure: the server's gate for the row (`human_gate`), null when absent.
     function stageTrackerServerGate(item) {
       const g = item && item.human_gate;

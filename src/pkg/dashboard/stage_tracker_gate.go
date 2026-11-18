@@ -340,6 +340,7 @@ func stageTrackerHumanGateSpan(d time.Duration) string {
 // gate onto the links that draw it. It runs after the decision, actor and
 // human-attention projections so it reads the finished row.
 func stageTrackerResolveHumanGates(items []StageTrackerItem, now time.Time) {
+	stageTrackerResolveMidFlight(items)
 	prs := map[string]*StageTrackerItem{}
 	for i := range items {
 		it := &items[i]

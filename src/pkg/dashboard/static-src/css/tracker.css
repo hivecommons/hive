@@ -1014,6 +1014,7 @@
     .ham-human-gate .ham-gate-more[aria-expanded="true"] { background: color-mix(in srgb, var(--amber) 22%, transparent); }
     .ham-human-gate.ham-gate-settling { opacity: 0.75; border-style: dashed; }
     .ham-human-gate.ham-gate-settling > .ham-gate-status { color: var(--cue-work); }
+    .ham-human-gate > .ham-gate-wait { display: inline-flex; align-items: center; min-width: 0; padding: 0 var(--sp-2); color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ham-gate-menu[hidden] { display: none; }
     /* The passive "decision pending on #N" chip is a link to the primary row. */
     .ham-decision-pending[data-ham-scroll-to] { text-decoration: underline dotted; text-underline-offset: var(--sp-1); }
