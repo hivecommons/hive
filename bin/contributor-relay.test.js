@@ -16172,6 +16172,7 @@ test('#19049 hiveShortName derives a short public name from the hostname (table)
       ['not a url', 'this hive'],
     ];
     for (const [url, want] of cases) assert.strictEqual(relay.hiveShortName({ sourceURL: url }), want, url);
+    assert.strictEqual(relay.hiveShortName({ hiveName: 'stated-name', sourceURL: cases[0][0] }), 'stated-name', 'the name the hive states on auth_ok wins');
   } finally { teardown(relay); }
 });
 
