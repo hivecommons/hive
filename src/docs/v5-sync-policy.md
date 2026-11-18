@@ -265,6 +265,14 @@ or merge commit.
    [#6329](https://github.com/hivecommons/hive/issues/6329). If a maintainer
    performs a DCO override for the sync PR, record it as a PR comment listing
    every affected SHA and the reason the override is acceptable.
+   For the v5 to v6 top-up PR (`sync/v5-to-v6`), the PR must carry the
+   `tide/merge-method-merge` label (`v6-topup.yml` applies it) so Tide makes a
+   merge commit instead of its default squash. A squashed top-up loses v5
+   ancestry (single-parent commit on v6) and must be repaired with a
+   `git merge -s ours` merge PR merged with `gh pr merge --merge`, because Tide
+   cannot merge a PR with nothing to commit ([#19140](https://github.com/hivecommons/hive/issues/19140)).
+   After every top-up merges, verify its ancestry with
+   `git merge-base --is-ancestor <v5 head> origin/v6`.
 
 Contributors can avoid the author/trailer mismatch class by configuring
 `git user.email` to match the email they put in their `Signed-off-by:` trailer
