@@ -8320,7 +8320,7 @@
           "System"
         ],
         "summary": "Parent auto-close policy per repo",
-        "description": "Returns repos.<repo>.parent_autoclose for every monitored repo (effective value and whether the repo carries its own), the default, and the three options the Settings editor offers. Owner only.",
+        "description": "Returns repos.<repo>.parent_autoclose for every monitored repo (effective value and whether the repo carries its own), the default, and the four options the Settings editor offers. Owner only.",
         "responses": {
           "200": {
             "description": "Current policy per monitored repo",
