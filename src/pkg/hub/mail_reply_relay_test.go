@@ -248,7 +248,7 @@ func TestParseMailReplyRelay(t *testing.T) {
 			t.Errorf("%q: %q %q %v", tc.in, h, p, err)
 		}
 	}
-	for _, bad := range []string{"not a host", "smtp.relay.example:", "smtp.relay.example:0", "smtp.relay.example:65536",
+	for _, bad := range []string{"bad_host!", "smtp.relay.example:", "smtp.relay.example:0", "smtp.relay.example:65536",
 		"smtp.relay.example:25x", "smtp.relay.example:+25", "[::1]:25", "a:b:c", ":25", "smtp.relay.example/path"} {
 		_, _, err := parseMailReplyRelay(bad)
 		if err == nil {
@@ -476,7 +476,7 @@ func TestRelayEnvironment(t *testing.T) {
 
 	// Unusable: no sender, and the log does not hold the value or the path.
 	logs.Reset()
-	t.Setenv(envMailReplyRelay, "not a host:99999")
+	t.Setenv(envMailReplyRelay, "bad_host!:99999")
 	if newMailReplierFromEnv(logger, nil) != nil {
 		t.Fatal("a replier with an unusable relay setting")
 	}
@@ -484,7 +484,7 @@ func TestRelayEnvironment(t *testing.T) {
 	if newMailReplierFromEnv(logger, nil) != nil {
 		t.Fatal("a replier with credentials but no relay")
 	}
-	for _, leak := range []string{"not a host", "99999", auth, testRelayPass, testRelayUser} {
+	for _, leak := range []string{"bad_host!", "99999", auth, testRelayPass, testRelayUser} {
 		if strings.Contains(logs.String(), leak) {
 			t.Fatalf("the log contains %q: %s", leak, logs.String())
 		}
