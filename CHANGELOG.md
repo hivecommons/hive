@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.313.0)
+
+### Added
+
+- The Activity monitor's merge banner now shows the date and time it merged ("11/17 4:12 PM EST") on its head line, in the Display timezone. The time used to sit at the end of the title line, where a long title's ellipsis hid it, and it was the moment the tab noticed the merge rather than the ledger's `merged_at`. Settings → Appearance gains a **Time format** choice (browser locale, 12-hour or 24-hour) that applies to every dashboard time.
+
+### Fixed
+
+- **Sessions: a Codex or OpenCode login refreshed inside a session is adopted back into the shared login, so the agents are no longer left on a dead one** ([#18740](https://github.com/hivecommons/hive/issues/18740)). A session gets a full copy of `.codex/auth.json` and `.local/share/opencode/auth.json`. Codex's ChatGPT login and an OpenCode OAuth provider entry rotate their refresh token on refresh, so a session that refreshed its copy held the only valid login: the agents, which link to the shared file, failed their next refresh and fell to a login prompt, and deleting the session deleted the login. The hive now adopts a strictly newer login from a session HOME into the shared file, the same safety net #18728 added for Claude: at boot, on every credential-bridge poll, at a session's start or resume, and before a session is deleted (a newer login that cannot be adopted keeps the session). Newer means the session's file was written after the shared one and, for Codex, records a later `last_refresh` with a different refresh token; for OpenCode, per provider entry, a later `expires` with a different refresh token. Only the refreshed OpenCode entries are replaced; other entries, API-key logins and providers the shared file does not hold are left alone. The replaced file is kept as `auth.json.stale-<UTC time>`, and `user_session_login_adopted` records the session, trigger, vendor and file, never token material. A session still holds a copy that can refresh (whether each CLI accepts a login without its refresh token is unverified), so a session and an agent refreshing in the same few seconds converge on the newer login at the next poll rather than being prevented.
+
 ## 2026-11-17 (v5.312.0)
 
 ### Added
