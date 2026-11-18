@@ -722,6 +722,39 @@ The agent inference proxy (`127.0.0.1:18444`) no longer keeps the key it resolve
 
 When the gateway answers `401`, the proxy re-resolves the key once. If that yields a different key, it retries the request once with it, and counts an auth failure only when the retry is also rejected. An unchanged key is not retried. The `inference backend auth failure` WARN carries `key_source` (`file:<path>`, `env:<NAME>`, `static` for a route with a fixed credential such as a minted watsonx IAM token, or `none`) and `key_changed_since_start` (whether the key differs from the first key this process resolved for that backend). It never logs the key.
 
+#### Translator timeouts and bounded retry
+
+The inference translator that carries every agent's model calls to a gateway has no timeout and no retry for a rate limit or server error unless you opt in ([#19057](https://github.com/hivecommons/hive/issues/19057)). Everything below is **off by default**: with the block absent, or every value at its default, the translator behaves exactly as before. Settings are read once at start, so a change needs a restart.
+
+```yaml
+governor:
+  inference_resilience:
+    connect_timeout_s: 0           # TCP connect to the gateway; 0 = off
+    response_header_timeout_s: 0   # wait for the upstream to start answering; 0 = off
+    idle_stream_timeout_s: 0       # cut a response that sends no bytes for this long; 0 = off
+    retry_enabled: false           # bounded retry for 429 and 5xx
+    retry_max_retries: 2           # retries after the first attempt (at most 5)
+    retry_base_delay_ms: 500       # first backoff step; doubles each retry
+    retry_max_delay_s: 20          # cap on one wait and on an honored Retry-After
+```
+
+| Key | Environment variable | Default |
+| --- | --- | --- |
+| `connect_timeout_s` | `HIVE_INFERENCE_CONNECT_TIMEOUT_S` | `0` (off) |
+| `response_header_timeout_s` | `HIVE_INFERENCE_RESPONSE_HEADER_TIMEOUT_S` | `0` (off) |
+| `idle_stream_timeout_s` | `HIVE_INFERENCE_IDLE_STREAM_TIMEOUT_S` | `0` (off) |
+| `retry_enabled` | `HIVE_INFERENCE_RETRY_ENABLED` | `false` |
+| `retry_max_retries` | `HIVE_INFERENCE_RETRY_MAX_RETRIES` | `2` (maximum `5`) |
+| `retry_base_delay_ms` | `HIVE_INFERENCE_RETRY_BASE_DELAY_MS` | `500` |
+| `retry_max_delay_s` | `HIVE_INFERENCE_RETRY_MAX_DELAY_S` | `20` |
+
+A valid environment variable wins over the yaml key; an invalid one is ignored and named in a start-up warning. Values are whole numbers, and seconds are capped at 3600.
+
+- **Timeouts.** The connect and response-header timeouts apply to the request to the gateway. A non-streaming call only gets headers once the model has finished, so keep `response_header_timeout_s` above your longest healthy generation. The idle-stream timeout counts only time spent waiting for the upstream, from one byte to the next, so a stream that is slow but keeps producing bytes is never cut. A timeout is not retried: the agent gets the same `502` (before any byte) or the same stopped stream (after) that a dead upstream always gave.
+- **Retry.** With `retry_enabled`, a `429` or a `5xx` other than `501` is resent up to `retry_max_retries` times, with exponential backoff (`base * 2^(n-1)`, capped at `retry_max_delay_s`) and jitter in the upper half of each step. A `Retry-After` (seconds or an HTTP date) is honored, plus jitter of up to one base step; one longer than `retry_max_delay_s` is not waited for, and the response is passed to the agent instead. A retry happens only while no response byte has reached the agent, so a stream that has started is never replayed. The retry resends the translated request that is already held in memory with the same headers and the route's current key, so there is no buffer to size and no body-size cap. The existing single resend after a `401` is separate and unchanged, and key resolution is untouched.
+- **Mid-stream death.** A stream that dies after its first byte is logged (`inference SSE translation failed`) and stopped, as before.
+- **Observability.** Each retry logs `inference upstream retrying` and each timeout logs `inference upstream timeout`, with `backend`, `status` and `agent` (and `attempt`, `delay_ms` or `kind`), never a request or response body and never a header value. Counters `crux.proxy.inference.retries` (attributes `route`, `status`) and `crux.proxy.inference.timeouts` (attributes `route`, `kind` of `connect`, `response_header` or `idle`) are exported through the OpenTelemetry meter.
+
 ### Claude Managed Agents hosted execution
 
 Claude Managed Agents is an external hosted engine, not a `backend:` value.

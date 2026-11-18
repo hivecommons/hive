@@ -4253,6 +4253,18 @@ func (b *boot) bootProxyWith(deps bootProxyDeps) {
 	// leak handler.
 	canaryLeakHandler := b.handleCanaryLeak
 
+	// Opt-in translator timeouts and bounded 429/5xx retry (#19057). The
+	// all-off default leaves the translator unchanged; settings are read once
+	// here, so a change needs a restart.
+	inferenceResilience, ignoredResilienceEnv := b.cfg.Governor.InferenceResilience.Resolve(os.Getenv)
+	proxy.SetInferenceResilience(inferenceResilience)
+	if len(ignoredResilienceEnv) > 0 {
+		b.logger.Warn("inference resilience env ignored (invalid value)", "vars", ignoredResilienceEnv)
+	}
+	if inferenceResilience.Enabled() {
+		b.logger.Info("inference resilience enabled", "settings", inferenceResilience.Summary())
+	}
+
 	b.githubProxy, err = deps.newGitHubProxy(b.logger, b.cfg.Project.Org, b.cfg.Project.Repos)
 	if err != nil {
 		b.logger.Error("failed to create github proxy", "error", err)

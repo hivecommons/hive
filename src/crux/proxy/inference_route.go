@@ -303,10 +303,21 @@ func inferenceTransport(caBundle string) (http.RoundTripper, error) {
 // inferenceHTTPClient returns the client for forwarding translated requests
 // to the route's endpoint. Like http.DefaultClient it has no overall
 // timeout — streaming completions can legitimately run for minutes.
+// The connect and response-header timeouts are opt-in
+// (governor.inference_resilience) and the idle-stream timeout wraps the
+// response body, not the client.
 func inferenceHTTPClient(route *InferenceRoute) (*http.Client, error) {
 	rt, err := inferenceTransport(route.CABundle)
 	if err != nil {
 		return nil, err
+	}
+	// Opt-in connect and response-header timeouts (hivecommons/hive#19057).
+	// Off by default: the branch below is skipped and the client is exactly
+	// the one returned before.
+	if res := currentInferenceResilience(); res.ConnectTimeout > 0 || res.ResponseHeaderTimeout > 0 {
+		if tuned := tunedInferenceTransport(route.CABundle, rt, res); tuned != nil {
+			return &http.Client{Transport: tuned}, nil
+		}
 	}
 	if rt == http.DefaultTransport {
 		return http.DefaultClient, nil

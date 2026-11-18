@@ -502,6 +502,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 		}
 		resp, err := client.Do(upstreamReq)
 		if err == nil {
+			resp = retryInferenceOnOverload(r.Context(), p.logger, client, route, agentName, upstreamURL, openaiBody, resp)
 			resp, route = p.retryInferenceOnAuthFailure(r.Context(), client, route, agentName, upstreamURL, openaiBody, resp)
 		}
 		if err != nil {
@@ -509,6 +510,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 				p.logger.Debug("inference request canceled", "agent", agentName)
 				return
 			}
+			noteInferenceSendError(p.logger, agentName, route, err)
 			p.logger.Error("inference upstream failed", "agent", agentName, "url", upstreamURL, "error", err)
 			if p.gatewayHealth != nil {
 				p.gatewayHealth.RecordEndpointError(route.Backend, route.Endpoint, err, time.Now())
@@ -518,6 +520,7 @@ func (p *GitHubProxy) inferenceTranslatorHandler() http.Handler {
 			http.Error(w, fmt.Sprintf(`{"type":"error","error":{"type":"api_error","message":"%s"}}`, jsonEscape(unreachableMsg)), http.StatusBadGateway)
 			return
 		}
+		applyInferenceIdleTimeout(p.logger, resp, agentName, route)
 		defer func() { _ = resp.Body.Close() }()
 
 		p.logger.Info("inference upstream response",
@@ -716,9 +719,11 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 	}
 	resp, err := client.Do(upstreamReq)
 	if err == nil {
+		resp = retryInferenceOnOverload(req.Context(), p.logger, client, route, agentName, upstreamURL, openaiBody, resp)
 		resp, route = p.retryInferenceOnAuthFailure(req.Context(), client, route, agentName, upstreamURL, openaiBody, resp)
 	}
 	if err != nil {
+		noteInferenceSendError(p.logger, agentName, route, err)
 		p.logger.Error("inference upstream failed", "agent", agentName, "url", upstreamURL, "error", err)
 		if p.gatewayHealth != nil {
 			p.gatewayHealth.RecordEndpointError(route.Backend, route.Endpoint, err, time.Now())
@@ -728,6 +733,7 @@ func (p *GitHubProxy) handleInferenceRequest(conn net.Conn, req *http.Request, a
 		p.writeHTTPError(conn, http.StatusBadGateway, unreachableMsg)
 		return
 	}
+	applyInferenceIdleTimeout(p.logger, resp, agentName, route)
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
