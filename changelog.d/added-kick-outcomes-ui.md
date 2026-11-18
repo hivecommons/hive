@@ -1,0 +1,1 @@
+- The dashboard agent detail panel now shows recent kick outcomes, with trigger, timing, PR, commit and refusal evidence for read-write users and owners, and only the latest one-line summary for read-only users ([#19032](https://github.com/hivecommons/hive/issues/19032)).

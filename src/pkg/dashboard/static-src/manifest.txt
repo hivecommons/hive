@@ -81,6 +81,7 @@ js/progressive.js
 js/feedback.js
 js/sections.js
 js/layout.js
+js/kick-outcomes.js
 js/agent-detail.js
 js/sidebar.js
 js/history-sparklines.js

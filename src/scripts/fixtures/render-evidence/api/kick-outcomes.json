@@ -1,0 +1,75 @@
+{
+  "detail": true,
+  "agent": "fixture-agent",
+  "kicks": [
+    {
+      "kind": "opened_pr",
+      "summary": "opened pr",
+      "at": "2026-11-18T12:04:00Z",
+      "started_at": "2026-11-18T12:00:00Z",
+      "trigger_kind": "dashboard",
+      "trigger_actor": "fixture-operator",
+      "ended_at": "2026-11-18T12:04:00Z",
+      "pr_url": "https://example.invalid/fixture/pull/42",
+      "pr_number": 42
+    },
+    {
+      "kind": "pushed_commit",
+      "summary": "pushed commit",
+      "at": "2026-11-18T12:04:00Z",
+      "started_at": "2026-11-18T12:00:00Z",
+      "trigger_kind": "dashboard",
+      "trigger_actor": "fixture-operator",
+      "ended_at": "2026-11-18T12:04:00Z",
+      "branch": "fix/synthetic-example-with-a-long-branch-name",
+      "sha": "0123456789abcdef0123456789abcdef01234567"
+    },
+    {
+      "kind": "commented",
+      "summary": "commented",
+      "at": "2026-11-18T12:04:00Z",
+      "started_at": "2026-11-18T12:00:00Z",
+      "trigger_kind": "dashboard",
+      "trigger_actor": "fixture-operator",
+      "ended_at": "2026-11-18T12:04:00Z"
+    },
+    {
+      "kind": "stood_down",
+      "summary": "stood down",
+      "at": "2026-11-18T12:04:00Z",
+      "started_at": "2026-11-18T12:00:00Z",
+      "trigger_kind": "dashboard",
+      "trigger_actor": "fixture-operator",
+      "ended_at": "2026-11-18T12:04:00Z",
+      "quote": "No eligible work. <This is untrusted agent text.>"
+    },
+    {
+      "kind": "refused",
+      "summary": "refused",
+      "at": "2026-11-18T12:04:00Z",
+      "started_at": "2026-11-18T12:00:00Z",
+      "trigger_kind": "dashboard",
+      "trigger_actor": "fixture-operator",
+      "ended_at": "2026-11-18T12:04:00Z",
+      "refusal_code": "paused",
+      "quote": "Agent is paused by the operator."
+    },
+    {
+      "kind": "still_running",
+      "summary": "still running",
+      "at": "2026-11-18T12:04:00Z",
+      "started_at": "2026-11-18T12:00:00Z",
+      "trigger_kind": "dashboard",
+      "trigger_actor": "fixture-operator"
+    },
+    {
+      "kind": "ended_no_visible_action",
+      "summary": "ended no visible action",
+      "at": "2026-11-18T12:04:00Z",
+      "started_at": "2026-11-18T12:00:00Z",
+      "trigger_kind": "dashboard",
+      "trigger_actor": "fixture-operator",
+      "ended_at": "2026-11-18T12:04:00Z"
+    }
+  ]
+}
