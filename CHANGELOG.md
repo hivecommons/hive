@@ -11,6 +11,27 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.328.0)
+
+### Added
+
+- Hub registration protocol v1: a registration can now be edited in place with `PATCH /api/hub/v1/registrations/{id}`, so adding a repo or moving the dashboard URL no longer means deleting the registration (which revoked its key and took the spoke offline) and registering again. The heartbeat key is never touched. The body changes `repos` (a full list, or `{add, remove}`) and/or `dashboard_url`; `If-Match` with the record's `ETag` is required (`428` when missing, `412` when stale), only the repos an edit adds are checked against GitHub with the owner's own stored token (read only), and a repo list over `HIVE_HUB_SELFSERVICE_MAX_REPOS` answers `413` naming the limit. `org`, the owner and the keys are not editable. It is owner-only by hub session, writes nothing to GitHub, is gated by `HIVE_HUB_SELFSERVICE_REGISTRATION` like the rest of v1, and is listed in `GET /api/hub/v1` discovery (`operations` and `patch_fields`); the v6 `/api/hub/selfservice/*` routes are unchanged. Each edit writes a `selfservice_hive_updated` audit line with counts and no key ([#19056](https://github.com/hivecommons/hive/issues/19056)).
+- Betty's listening chime now plays in companion meetings: the companion replies route carries `tone` (true once, from Quorum's `say.tone` outbox signal), and the live session no longer refuses the tone because a companion meeting has no voice in the call, since the desktop companion plays it on the host's own computer ([quorum-companion#12](https://github.com/hivecommons/quorum-companion/issues/12)). `meetings.listening_tone` and `meetings.voice_on_address` still apply.
+
+### Changed
+
+- Reviewer preflight rework (refs #19106, follow-up to #19069). (1) **Rule documents are found by following the repository's own references** instead of guessing names like DESIGN*.md: discovery starts from the standard entry files the repo has (AGENTS.md, CLAUDE.md, copilot instructions, CONTRIBUTING, README, docs index pages, CODEOWNERS for context), follows the repository-relative links and file mentions in them breadth first to depth 2 within the byte budget, and tells the reviewer how each document was found ("linked from CONTRIBUTING.md"). `rule_doc_paths` is now an explicit override that replaces discovery (a repo's list replaces the hive-wide one). (2) **Release age is reported as a fact with no verdict** unless a policy is declared: `min_release_age_days` no longer defaults to 14; unset means no policy, and the reviewer applies a release-age policy only when the hive config or the repository's own documents state one. (3) **The correctness guidance asks for understanding instead of naming failure modes**: the outdated-message and sentinel-aggregate checks are replaced by a short method (state the intended change, trace paths and callers, check invariants and contracts, check that descriptions still match, report only evidence-backed findings). Thanks to Mike Spreitzer for the critique.
+- Customers: a profile shows its identities as a compact table (Type, Identity, Source, with the row actions in the last column) instead of one bordered box per identity. At phone width the table scrolls inside its own frame, not the page. Same data, actions and empty state.
+
+### Fixed
+
+- Codex model dropdown fallback now matches the pinned Codex 0.170.0 catalog, so hosted hives without the binary offer GPT-6.2 Sol (the new default) and GPT-6.2 Astra ([#19036](https://github.com/hivecommons/hive/issues/19036)).
+
+### Security
+
+- **Sessions: Codex and OpenCode logins are copied without a refresh token.** A session's copy of `.codex/auth.json` and `opencode/auth.json` now keeps the refresh key (both CLIs require it) but empties its value, like the Claude login since #18724, so the CLI in a session can no longer rotate the fleet's Codex or OpenCode login and race an agent's refresh into two diverged logins. The shared file the agents link to is the only refreshable holder; the hive replaces each session's copy when that file changes, adopts a complete newer login found in a session (a copy from an earlier release, or a sign-in inside the session) and then puts the session back on a refresh-less copy. A session now depends on an agent or a sign-in refreshing that login before its access token expires ([#18740](https://github.com/hivecommons/hive/issues/18740)).
+- Apply per-agent repository scope to attributable GitHub GraphQL mutations, including node-ID writes resolved from earlier GitHub responses, with the same denial as REST. Queries stay unrestricted; unresolved mutations retain existing gates for compatibility with normal `gh` flows ([#19058](https://github.com/hivecommons/hive/issues/19058)).
+
 ## 2026-11-18 (v5.327.0)
 
 ### Added
