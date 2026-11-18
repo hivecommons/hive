@@ -534,22 +534,6 @@ func stageTrackerManualMergeReason(reason string) bool {
 	return false
 }
 
-// Gate-cell words and tooltips per prstage.HumanMergeReason* code: why a
-// person, not the hive, merges a PR parked at 090 (hivecommons/hive#14658).
-// Plain words, one short sentence each, no config keys (hivecommons/hive#15394).
-var stageTrackerHumanMergeReasonWords = map[string][2]string{
-	stageengineprstage.HumanMergeReasonWorkflowFiles:     {"workflow files", "It changes GitHub workflow files, which hive never merges on its own"},
-	stageengineprstage.HumanMergeReasonTestsRemoved:      {"tests removed", "It removes tests, which hive never merges on its own"},
-	stageengineprstage.HumanMergeReasonManualMergePolicy: {"manual-merge policy", "It touches files this repo reserves for a person to merge"},
-	stageengineprstage.HumanMergeReasonBranchProtection:  {"branch protection", "Branch protection wants a review hive cannot give; approve on GitHub or merge it"},
-	stageengineprstage.HumanMergeReasonMergeMethod:       {"merge method", "The repo does not allow the merge method this PR needs"},
-	stageengineprstage.HumanMergeReasonAutoMergeOff:      {"auto-merge off", "Auto-merge is off for this repo, so a person merges"},
-	stageengineprstage.HumanMergeReasonUntrustedAuthor:   {"untrusted author", "Hive won't merge it alone — the author isn't a trusted author yet"},
-	stageengineprstage.HumanMergeReasonUnauthorized:      {"hive bot lacks permission", "The hive bot's GitHub App is missing the permission to merge here; a person merges"},
-	stageengineprstage.HumanMergeReasonReviewerDeferred:  {"reviewer deferred", "A reviewer asked for a person to merge this one"},
-	stageengineprstage.HumanMergeReasonBreakingChange:    {"human merge", "Breaking change — owner merges; hive never merges a ⚠️-titled or needs-owner-merge PR"},
-}
-
 // stageTrackerHumanMergeReason derives, from a 090 stage reason, the
 // compact code, the gate-cell word and the tooltip saying why a person
 // must merge. An unrecognised lane reason falls back to the "policy" code
@@ -559,8 +543,9 @@ func stageTrackerHumanMergeReason(reason string) (code, word, tip string) {
 	if code == "" {
 		return "", "", ""
 	}
-	if w, ok := stageTrackerHumanMergeReasonWords[code]; ok {
-		return code, w[0], w[1]
+	// The words live in prstage so the 090 entry comment says the same.
+	if w, why, ok := stageengineprstage.HumanMergeReasonWords(code); ok {
+		return code, w, why
 	}
 	base, _ := stagelabels.HumanApprovedReason(reason)
 	return stageengineprstage.HumanMergeReasonPolicy, "policy", "Hive's merge rules leave this one to a person (`" + strings.TrimSpace(base) + "`)"

@@ -477,10 +477,16 @@ conflict reason and the contributor lane's soak — and
 | everything above clean but a sentinel alert or hold-class label on the PR | `090-ready-for-human-merge`, held ([#17327](https://github.com/hivecommons/hive/issues/17327)): the entry comment carries the evidence and adds "Held: a sentinel alert is open on this PR. The hive never merges this head while the gate stands." The gate never changes the stage; it only stops the merge |
 | checks still running / unreadable, a required check (branch protection or ruleset) with nothing reported on the head (a PR opened with `GITHUB_TOKEN` triggers no workflow; projectbluefin/utah#1074), or the lane's soak not yet elapsed | `060-reviewed` (not 095: that stage means the lane has *admitted* the head, which a trust-blocked PR never is) |
 | everything above clean and only trust in the way | `090-ready-for-human-merge` + one entry comment: "Ready for a human merge: verdict approved @abc1234, 55/55 checks green, DCO yes, soak 1h0m0s elapsed. Blocked only by `role/newcomer` (below require_tiers)." When GitHub reports the head behind a base that requires up-to-date branches, the stage is still 090, but the comment adds "behind `main`" to the digest, says "Blocked by" instead of "Blocked only by", and says GitHub will not merge the head until `main` is merged into it ([projectbluefin/common#1619](https://github.com/projectbluefin/common/issues/1619)) |
+| everything above clean and a person merges for another reason: the repo's hive auto-merge is off, the repo refuses the merge method, branch protection wants a review the hive cannot give, the App lacks the merge permission, a reviewer deferred | `090-ready-for-human-merge` + one entry comment that states that reason in the same words the dashboard's gate cell uses (`prstage.HumanMergeReasonWords`), e.g. "Auto-merge is off for this repo, so a person merges.", instead of "Blocked only by `role/…`" ([projectbluefin/website#1036](https://github.com/projectbluefin/website/pull/1036)) |
 
 The entry comments are posted once per stage visit (a flip 085 ↔ 090 is a
 new visit) and never as a GitHub review: the hive does not approve on a
-maintainer's behalf, so prow/tide see nothing until a person acts. The
+maintainer's behalf, so prow/tide see nothing until a person acts. The 090
+comment's closing line asks for `/lgtm` `/approve` only when the PR wears
+one of Prow's plugin labels (`approved`, `size/*`, `do-not-merge/*`,
+`ok-to-test`, `needs-ok-to-test`, `tide/*`); otherwise it asks the person to
+approve and merge it on GitHub, since nothing in that repository answers
+`/lgtm` ([projectbluefin/actions#757](https://github.com/projectbluefin/actions/pull/757)). The
 check digest costs two REST calls per head and is cached 10 minutes; it is
 read only for human-routed PRs.
 

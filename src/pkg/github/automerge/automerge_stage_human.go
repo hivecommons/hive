@@ -726,6 +726,27 @@ func trustCause(reason string, role stagelabels.Role) string {
 	return tier
 }
 
+// readyCommentRoute adds to route the two facts only the 090 comment's
+// wording needs. A 090 a person merges for a reason other than the
+// author's trust (auto-merge off for the repo, a refused merge method, …)
+// states that reason in the dashboard's words instead of "Blocked only by
+// `role/trusted`", which named the wrong blocker
+// (projectbluefin/website#1036). A repo with none of Prow's plugin labels
+// on the PR is asked for a GitHub approve and merge instead of `/lgtm`
+// `/approve` (projectbluefin/actions#757). Trust reasons, and reasons with
+// no words of their own, keep trustCause.
+func readyCommentRoute(route stagelabels.Route, obs stageObservation) stagelabels.Route {
+	switch code := prstage.HumanMergeReason(obs.Reason); code {
+	case "", prstage.HumanMergeReasonUntrustedAuthor, prstage.HumanMergeReasonPolicy:
+	default:
+		if _, why, ok := prstage.HumanMergeReasonWords(code); ok {
+			route.HumanMergeWhy = why
+		}
+	}
+	route.NoProw = !hgithub.ProwManagedLabels(obs.Labels)
+	return route
+}
+
 // decisionCause renders a non-trust human-only lane reason as prose for the
 // 085 comment ("" for reasons the labels already explain). The workflow-path
 // fence reads as a manual-merge rule; decisionCauseFor refines it.
@@ -1021,7 +1042,7 @@ func (c *Engine) postHumanEntry(ctx context.Context, store *stagelabels.Store, k
 	var body string
 	switch route.Stage {
 	case stagelabels.ReadyForHumanMerge:
-		body = stagelabels.ReadyComment(route, trustCause(obs.Reason, role))
+		body = stagelabels.ReadyComment(readyCommentRoute(route, obs), trustCause(obs.Reason, role))
 	case stagelabels.NeedsDecision:
 		if len(route.Reasons) == 0 {
 			// The comment falls back to DecisionReasonUnnamed; name the

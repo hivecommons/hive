@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	stageengineprstage "github.com/hivecommons/hive/pkg/stageengine/prstage"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
@@ -256,8 +257,8 @@ func stageTrackerHumanReason(it StageTrackerItem, a *StageTrackerActor) string {
 			return stageTrackerClipReason(clause)
 		}
 	case stagelabels.ReadyForHumanMerge:
-		if w, ok := stageTrackerHumanMergeReasonWords[it.HumanMergeReason]; ok {
-			return w[0]
+		if w, _, ok := stageengineprstage.HumanMergeReasonWords(it.HumanMergeReason); ok {
+			return w
 		}
 	case stagelabels.Fixing, stagelabels.NeedsAuthor, stagelabels.ReturnedToContributor:
 		if a != nil && a.Login != "" {

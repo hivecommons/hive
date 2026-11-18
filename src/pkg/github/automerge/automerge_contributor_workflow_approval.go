@@ -154,7 +154,10 @@ func (c *Engine) workflowFenceReleased(ctx context.Context, displayRepo, owner, 
 		} else {
 			c.info("workflow-path fence released by owner approval", "repo", displayRepo, "pr", number, "login", approver, "head", headSHA)
 		}
-		if err := c.commentWorkflowApproval(ctx, owner, repo, number, headSHA, approval, verdictState); err != nil {
+		// The merge relay's lane gate evaluates on the live engine even for
+		// an auto-merge-off repo, so the comment must not promise a hive
+		// merge there (projectbluefin/actions#752).
+		if err := c.commentWorkflowApproval(ctx, owner, repo, number, headSHA, approval, verdictState, !c.repoAutoMergeAllowed(displayRepo)); err != nil {
 			c.warn("workflow-path fence: could not post audit comment", "repo", displayRepo, "pr", number, "head", headSHA, "error", err)
 		}
 	}
@@ -481,16 +484,23 @@ func workflowApprovalMarker(headSHA string) string {
 // owner told only "merges once the gates clear" while the verdict still
 // held the PR waited hours for a merge that never came
 // (Danathar/zfs-aurora-complex#254). A carried approval names the head it
-// was given on (from=) and says why it still stands.
-func workflowApprovalComment(headSHA string, approval workflowApproval, verdictState int) string {
+// was given on (from=) and says why it still stands. On a repo whose hive
+// auto-merge is off (autoMergeOff) the hive never merges, so the comment
+// says a person does (projectbluefin/actions#752 was told "the hive merges
+// this PR itself" and sat open).
+func workflowApprovalComment(headSHA string, approval workflowApproval, verdictState int, autoMergeOff bool) string {
 	approver := approval.Login
 	marker := workflowApprovalMarker(headSHA) + " by=" + strings.ToLower(approver)
-	gates := "the hive merges this PR itself once the usual gates (CI, soak, holds, review verdict) are clear."
+	merges, offNote := "the hive merges this PR itself", ""
+	if autoMergeOff {
+		merges, offNote = "a person merges it", " (auto-merge is off for this repository, so the hive never merges it)"
+	}
+	gates := merges + " once the usual gates (CI, soak, holds, review verdict) are clear" + offNote + "."
 	switch verdictState {
 	case workflowApprovalVerdictAnswered:
-		gates = "the same approval answers the review swarm's `requires_human` question on this head, and the hive merges this PR itself once the usual gates (CI, soak, holds) are clear."
+		gates = "the same approval answers the review swarm's `requires_human` question on this head, and " + merges + " once the usual gates (CI, soak, holds) are clear" + offNote + "."
 	case workflowApprovalVerdictOpen:
-		gates = "the review swarm's `requires_human` verdict on this head still holds the PR. A trusted merger's `/hive decision approve` reply (or the dashboard's approval) answers it, as does a `/hive approve` reply posted after the verdict; then the hive merges this PR itself once the usual gates (CI, soak, holds) are clear."
+		gates = "the review swarm's `requires_human` verdict on this head still holds the PR. A trusted merger's `/hive decision approve` reply (or the dashboard's approval) answers it, as does a `/hive approve` reply posted after the verdict; then " + merges + " once the usual gates (CI, soak, holds) are clear" + offNote + "."
 	}
 	if approval.CarriedFrom != "" {
 		// The approval was on an earlier head; head only merges the base in
@@ -504,9 +514,9 @@ func workflowApprovalComment(headSHA string, approval workflowApproval, verdictS
 
 // commentWorkflowApproval posts the audit comment once per head: an existing
 // marker on the PR, or a prior effects claim, suppresses it.
-func (c *Engine) commentWorkflowApproval(ctx context.Context, owner, repo string, number int, headSHA string, approval workflowApproval, verdictState int) error {
+func (c *Engine) commentWorkflowApproval(ctx context.Context, owner, repo string, number int, headSHA string, approval workflowApproval, verdictState int, autoMergeOff bool) error {
 	marker := workflowApprovalMarker(headSHA)
-	body := workflowApprovalComment(headSHA, approval, verdictState)
+	body := workflowApprovalComment(headSHA, approval, verdictState, autoMergeOff)
 	_, err := effects.Execute(hgithub.WithRESTCaller(ctx, workflowApprovalRESTCaller), c.mutation, effects.Claim{
 		Repo:   owner + "/" + repo,
 		Kind:   effects.KindIssueComment,

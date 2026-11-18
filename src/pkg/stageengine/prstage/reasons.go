@@ -297,3 +297,29 @@ func HumanMergeReason(reason string) string {
 	}
 	return HumanMergeReasonPolicy
 }
+
+// humanMergeReasonWords are the short word and the one-sentence why for
+// each HumanMergeReason* code: why a person, not the hive, merges a PR
+// parked at 090 (hivecommons/hive#14658). The dashboard's gate cell and the
+// 090 entry comment both read them, so the two never disagree. Plain words,
+// one short sentence each, no config keys (hivecommons/hive#15394).
+var humanMergeReasonWords = map[string][2]string{
+	HumanMergeReasonWorkflowFiles:     {"workflow files", "It changes GitHub workflow files, which hive never merges on its own"},
+	HumanMergeReasonTestsRemoved:      {"tests removed", "It removes tests, which hive never merges on its own"},
+	HumanMergeReasonManualMergePolicy: {"manual-merge policy", "It touches files this repo reserves for a person to merge"},
+	HumanMergeReasonBranchProtection:  {"branch protection", "Branch protection wants a review hive cannot give; approve on GitHub or merge it"},
+	HumanMergeReasonMergeMethod:       {"merge method", "The repo does not allow the merge method this PR needs"},
+	HumanMergeReasonAutoMergeOff:      {"auto-merge off", "Auto-merge is off for this repo, so a person merges"},
+	HumanMergeReasonUntrustedAuthor:   {"untrusted author", "Hive won't merge it alone — the author isn't a trusted author yet"},
+	HumanMergeReasonUnauthorized:      {"hive bot lacks permission", "The hive bot's GitHub App is missing the permission to merge here; a person merges"},
+	HumanMergeReasonReviewerDeferred:  {"reviewer deferred", "A reviewer asked for a person to merge this one"},
+	HumanMergeReasonBreakingChange:    {"human merge", "Breaking change — owner merges; hive never merges a ⚠️-titled or needs-owner-merge PR"},
+}
+
+// HumanMergeReasonWords returns code's gate-cell word and its one-sentence
+// why. ok is false for a code with no words of its own
+// (HumanMergeReasonPolicy, "").
+func HumanMergeReasonWords(code string) (word, sentence string, ok bool) {
+	w, ok := humanMergeReasonWords[code]
+	return w[0], w[1], ok
+}

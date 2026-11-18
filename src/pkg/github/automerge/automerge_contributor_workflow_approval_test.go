@@ -293,7 +293,7 @@ func TestContributorLaneWorkflowFenceMarkerOncePerHead(t *testing.T) {
 	fx := validContributorFixture()
 	fx.files = workflowPathFiles()
 	fx.reviews = []map[string]any{ownerApprovedReview("clubanderson", "sha7")}
-	fx.prComments = []map[string]any{{"id": 5, "user": map[string]string{"login": testHiveAppBotLogin}, "body": workflowApprovalComment("sha7", workflowApproval{Login: "clubanderson"}, workflowApprovalVerdictNone)}}
+	fx.prComments = []map[string]any{{"id": 5, "user": map[string]string{"login": testHiveAppBotLogin}, "body": workflowApprovalComment("sha7", workflowApproval{Login: "clubanderson"}, workflowApprovalVerdictNone, false)}}
 	api := newContributorLaneAPI(t, &fx)
 	defer api.Close()
 	policy := defaultContributorLanePolicy()
@@ -389,7 +389,7 @@ func TestContributorLaneWorkflowFenceApprovalCarriesOverHiveBaseRefresh(t *testi
 		},
 		{
 			name:        "the hive's audit marker for the approved head carries over the base merge",
-			comments:    []map[string]any{{"id": 5, "user": map[string]string{"login": testHiveAppBotLogin}, "body": workflowApprovalComment(approvedHead, workflowApproval{Login: "clubanderson"}, workflowApprovalVerdictNone)}},
+			comments:    []map[string]any{{"id": 5, "user": map[string]string{"login": testHiveAppBotLogin}, "body": workflowApprovalComment(approvedHead, workflowApproval{Login: "clubanderson"}, workflowApprovalVerdictNone, false)}},
 			headCommit:  hiveBaseMerge,
 			currentDiff: workflowDiff("blobA"),
 			wantMarker:  "<!-- hive:workflow-approval head=sha7 by=clubanderson from=sha6 -->",
@@ -436,7 +436,7 @@ func TestContributorLaneWorkflowFenceApprovalCarriesOverHiveBaseRefresh(t *testi
 		},
 		{
 			name:        "an audit marker forged by someone other than the App carries nothing",
-			comments:    []map[string]any{{"id": 5, "user": map[string]string{"login": contributorLaneTestAuthor}, "body": workflowApprovalComment(approvedHead, workflowApproval{Login: "clubanderson"}, workflowApprovalVerdictNone)}},
+			comments:    []map[string]any{{"id": 5, "user": map[string]string{"login": contributorLaneTestAuthor}, "body": workflowApprovalComment(approvedHead, workflowApproval{Login: "clubanderson"}, workflowApprovalVerdictNone, false)}},
 			headCommit:  hiveBaseMerge,
 			currentDiff: workflowDiff("blobA"),
 			wantReason:  contributorLaneReasonWorkflowPath,
@@ -506,11 +506,11 @@ func TestParseWorkflowApprovalMarker(t *testing.T) {
 		head, by   string
 		wantParsed bool
 	}{
-		{body: workflowApprovalComment("ABC123", workflowApproval{Login: "ClubAnderson"}, workflowApprovalVerdictNone), head: "abc123", by: "clubanderson", wantParsed: true},
-		{body: workflowApprovalComment("def456", workflowApproval{Login: "clubanderson", CarriedFrom: "abc123"}, workflowApprovalVerdictNone), head: "def456", by: "clubanderson", wantParsed: true},
+		{body: workflowApprovalComment("ABC123", workflowApproval{Login: "ClubAnderson"}, workflowApprovalVerdictNone, false), head: "abc123", by: "clubanderson", wantParsed: true},
+		{body: workflowApprovalComment("def456", workflowApproval{Login: "clubanderson", CarriedFrom: "abc123"}, workflowApprovalVerdictNone, false), head: "def456", by: "clubanderson", wantParsed: true},
 		{body: "<!-- hive:workflow-approval head=abc123 -->"},
 		{body: "<!-- hive:workflow-approvals head=abc123 by=x -->"},
-		{body: "> " + workflowApprovalComment("abc123", workflowApproval{Login: "clubanderson"}, workflowApprovalVerdictNone)},
+		{body: "> " + workflowApprovalComment("abc123", workflowApproval{Login: "clubanderson"}, workflowApprovalVerdictNone, false)},
 	} {
 		head, by, ok := parseWorkflowApprovalMarker(tc.body)
 		if ok != tc.wantParsed || head != tc.head || by != tc.by {

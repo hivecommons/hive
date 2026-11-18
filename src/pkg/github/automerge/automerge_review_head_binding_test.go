@@ -164,11 +164,11 @@ func TestApprovalBindingIsMemoised(t *testing.T) {
 }
 
 func TestWorkflowApprovalCommentSaysCarried(t *testing.T) {
-	carried := workflowApprovalComment("9d8ceabe7d2a", workflowApproval{Login: "Danathar", CarriedFrom: "1234567890ab"}, workflowApprovalVerdictNone)
+	carried := workflowApprovalComment("9d8ceabe7d2a", workflowApproval{Login: "Danathar", CarriedFrom: "1234567890ab"}, workflowApprovalVerdictNone, false)
 	if !strings.Contains(carried, "from=1234567890ab -->") || !strings.Contains(carried, "approved head `1234567890ab`") || !strings.Contains(carried, "diff is unchanged") || strings.Contains(carried, "approved head `9d8ceabe7d2a`") {
 		t.Fatalf("carried comment:\n%s", carried)
 	}
-	if plain := workflowApprovalComment("9d8ceabe7d2a", workflowApproval{Login: "Danathar"}, workflowApprovalVerdictNone); !strings.Contains(plain, "approved head `9d8ceabe7d2a`") || strings.Contains(plain, "from=") {
+	if plain := workflowApprovalComment("9d8ceabe7d2a", workflowApproval{Login: "Danathar"}, workflowApprovalVerdictNone, false); !strings.Contains(plain, "approved head `9d8ceabe7d2a`") || strings.Contains(plain, "from=") {
 		t.Fatalf("plain comment:\n%s", plain)
 	}
 }
