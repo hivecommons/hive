@@ -1,1 +1,0 @@
-- Sessions: document why a session keeps a refreshable Codex or OpenCode login copy (the CLIs require the refresh token), pin by test that adoption never writes the session copy or displaces a newer agent refresh, and add the live-install check as a manual checklist (Refs #18740).
