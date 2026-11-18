@@ -298,6 +298,91 @@ func TestBackfillGuardAndPersistence(t *testing.T) {
 	g4.ObserveRepo("a/b")
 }
 
+// A 2xx with no 403/404 before it is not the App gaining write: the repo
+// was writable all along, so first_seen stays the cut-off. Only a few
+// writers report outcomes, so the first one to succeed can come days after
+// the hive started labelling the repo; stamping it froze every older item
+// (projectbluefin/utah-packages#1148 kept a stale stage/100-merge-queue).
+func TestBackfillCutoffMovesOnlyAfterARefusal(t *testing.T) {
+	now := t0
+	deps := Deps{LevelFor: func(string) int { return 6 }, Now: func() time.Time { return now }, Logger: slog.New(slog.NewTextHandler(&bytes.Buffer{}, nil))}
+	labelled := Item{Number: 1148, IsPR: true, Author: "renovate[bot]", CreatedAt: t0.Add(time.Hour)}
+
+	// 2xx only: the cut-off stays first_seen.
+	g := New(Config{}, deps, "")
+	g.ObserveRepo("org/repo")
+	now = t0.Add(5 * time.Hour)
+	g.NoteWriteOutcome("org/repo", 201)
+	if d := g.Allowed("org/repo", labelled, KindSentinel); !d.Allowed {
+		t.Fatalf("2xx with no refusal moved the cut-off: %+v", d)
+	}
+	if rs := g.Snapshot().Repos["org/repo"]; !rs.Writable || !rs.WritableAt.IsZero() || rs.PreExisting != 0 {
+		t.Fatalf("2xx only: %+v", rs)
+	}
+
+	// 2xx, then a 403, then a 2xx: the cut-off moves to the 2xx after the refusal.
+	now = t0.Add(6 * time.Hour)
+	g.NoteWriteOutcome("org/repo", 403)
+	if rs := g.Snapshot().Repos["org/repo"]; rs.Writable {
+		t.Fatalf("an unanswered 403 still reads writable: %+v", rs)
+	}
+	now = t0.Add(7 * time.Hour)
+	g.NoteWriteOutcome("org/repo", 200)
+	if d := g.Allowed("org/repo", labelled, KindSentinel); d.Allowed || d.Reason != ReasonBackfill {
+		t.Fatalf("2xx after a refusal must move the cut-off: %+v", d)
+	}
+	if rs := g.Snapshot().Repos["org/repo"]; !rs.Writable || !rs.WritableAt.Equal(t0.Add(7*time.Hour)) {
+		t.Fatalf("after the refusal: %+v", rs)
+	}
+}
+
+// A writable_at stamped by the old rule (no last_forbidden) is cleared on
+// load, with the items it refused, so the repo's older items flow again;
+// a record with a refusal before its writable_at is left alone.
+func TestBackfillCutoffRepairOnLoad(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "writeback.json")
+	state := `{"repos":{` +
+		`"org/stamped":{"first_seen":"2026-10-28T12:00:00Z","writable_at":"2026-10-30T08:00:00Z","pre_existing":{"1148":true,"1162":true}},` +
+		`"org/gained":{"first_seen":"2026-10-28T12:00:00Z","writable_at":"2026-10-30T08:00:00Z","last_forbidden":"2026-10-29T08:00:00Z","pre_existing":{"7":true}}}}`
+	if err := os.WriteFile(path, []byte(state), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	deps := Deps{LevelFor: func(string) int { return 6 }, Now: func() time.Time { return t0.Add(72 * time.Hour) }, Logger: slog.New(slog.NewTextHandler(&buf, nil))}
+	g := New(Config{}, deps, path)
+	between := Item{Number: 1162, IsPR: true, Author: "h", CreatedAt: t0.Add(24 * time.Hour)} // after first_seen, before the stamped writable_at
+	if d := g.Allowed("org/stamped", between, KindSentinel); !d.Allowed {
+		t.Fatalf("repaired repo still refuses an item after first_seen: %+v", d)
+	}
+	if d := g.Allowed("org/gained", between, KindSentinel); d.Allowed || d.Reason != ReasonBackfill {
+		t.Fatalf("a real gain of write must keep its cut-off: %+v", d)
+	}
+	st := g.Snapshot()
+	if rs := st.Repos["org/stamped"]; !rs.Writable || !rs.WritableAt.IsZero() || rs.PreExisting != 0 {
+		t.Fatalf("stamped repo after repair: %+v", rs)
+	}
+	if rs := st.Repos["org/gained"]; !rs.Writable || rs.WritableAt.IsZero() || rs.PreExisting != 2 {
+		t.Fatalf("gained repo: %+v", rs)
+	}
+	for _, b := range st.Banners {
+		if b.Repo == "org/stamped" {
+			t.Fatalf("repaired repo still shows the backfill banner: %+v", b)
+		}
+	}
+	if !strings.Contains(buf.String(), "writeback: cleared writable_at 2026-10-30T08:00:00Z on org/stamped") || strings.Contains(buf.String(), "on org/gained") {
+		t.Fatalf("repair log:\n%s", buf.String())
+	}
+	// The repair is persisted: a second load has nothing to repair.
+	buf.Reset()
+	g2 := New(Config{}, deps, path)
+	if rs := g2.Snapshot().Repos["org/stamped"]; !rs.WritableAt.IsZero() {
+		t.Fatalf("repair not persisted: %+v", rs)
+	}
+	if strings.Contains(buf.String(), "cleared writable_at") {
+		t.Fatalf("second load repaired again:\n%s", buf.String())
+	}
+}
+
 func TestRecentAndSnapshot(t *testing.T) {
 	now := t0
 	g := New(Config{}, Deps{LevelFor: func(string) int { return 4 }, OptInLabels: func(string) []string { return []string{"needs-hive"} }, Now: func() time.Time { return now }}, "")

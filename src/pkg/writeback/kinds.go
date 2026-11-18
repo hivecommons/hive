@@ -38,7 +38,10 @@ const (
 	// merge-from-base push that keeps a held PR mergeable.
 	KindHoldGateNotice Kind = "hold_gate_notice"
 	// KindStageLabel is every stage/*, role/* and hive-owned ownership label
-	// the stage engine writes on an item.
+	// the stage engine writes on an item. The stage labeler states when the
+	// item's stage labels are the hive's own (Item.HiveAppliedStage); the
+	// gate then skips the backfill guard for that item and nothing else
+	// (ReasonHiveAppliedStage). Every other caller is gated as before.
 	KindStageLabel Kind = "stage_label"
 	// KindNeedsDecisionComment is the `hive:stage-needs-decision` / 085
 	// park comment and label on an item a person must decide on. The park

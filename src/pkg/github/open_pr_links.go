@@ -28,8 +28,10 @@ import (
 const (
 	// HasOpenPRLabel marks an issue the guard refused to dispatch because an
 	// open pull request already links it with a closing keyword. It is a
-	// signal for the tracker, not a park: the label comes off with nothing
-	// — the stage engine re-derives the issue's stage from the PR itself.
+	// signal for the tracker, not a park: nothing has to remove it for the
+	// issue to move on — the stage engine re-derives the issue's stage from
+	// the PR itself — and the issue stage-label sweep takes it off once no
+	// open PR links the issue any more (settleOpenPRLabelClear).
 	HasOpenPRLabel            = "has-open-pr"
 	hasOpenPRLabelColor       = "0e8a16"
 	hasOpenPRLabelDescription = "An open PR already links this issue with Fixes/Closes/Resolves; the hive will not dispatch it again"

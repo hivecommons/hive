@@ -168,6 +168,97 @@ func TestContributorLaneStopsProwOkToTestAfterRejection(t *testing.T) {
 	}
 }
 
+// cncf/prow-github-actions answers in its own words and names the App with no
+// @ (projectbluefin/chairlift#802: five posts, five refusals, no note). That
+// reply stops the lane exactly like Prow's, and the note quotes it.
+func TestContributorLaneStopsProwOkToTestAfterProwActionsRefusal(t *testing.T) {
+	fx := prowOkToTestFixture()
+	fx.prComments = []map[string]any{
+		appComment(2, workflowApprovalCommandBody("oldhead")),
+		prowComment(3, "Cannot /ok-to-test because Error: "+testHiveAppBotLogin+" is not a reviewer or approver for any changed file"),
+	}
+	runProwOkToTestTicks(t, &fx, 3)
+	runProwOkToTestTicks(t, &fx, 2)
+	if fx.comments != 1 {
+		t.Fatalf("comments = %d %q, want only the one needs-human note", fx.comments, fx.allComments)
+	}
+	note := fx.allComments[0]
+	if !strings.HasPrefix(note, workflowApprovalRejectedMarker) || !strings.Contains(note, prowActionsOkToTestRefusal) || strings.Contains(note, prowOkToTestRejection) {
+		t.Fatalf("note = %q, want the rejected marker quoting the action's wording, not Prow's", note)
+	}
+}
+
+// commentAt stamps a fixture comment with its created_at.
+func commentAt(comment map[string]any, at time.Time) map[string]any {
+	comment["created_at"] = at.Format(time.RFC3339)
+	return comment
+}
+
+// Whatever a merge bot replies (or if it says nothing), a command posted for
+// an earlier head that is past the grace, left no ok-to-test label and drew
+// no Prow presubmit on that head did nothing: the lane does not post again
+// on a new head and leaves the one note. A command that did start
+// presubmits, or one still inside the grace, is not treated as refused.
+func TestContributorLaneTreatsUnansweredProwOkToTestAsRefused(t *testing.T) {
+	clockStart := time.Date(2026, 11, 9, 12, 0, 0, 0, time.UTC)
+	command := workflowApprovalCommandBody("sha7")
+	for _, tc := range []struct {
+		name     string
+		postedAt time.Time
+		mutate   func(fx *contributorLaneFixture)
+		ticks    int
+		wantPost bool
+		wantNote bool
+	}{
+		{name: "earlier post past the grace with no effect", postedAt: clockStart.Add(-30 * time.Minute), ticks: 3, wantNote: true},
+		{name: "earlier post still inside the grace", postedAt: clockStart.Add(-2 * time.Minute), ticks: 1, wantPost: true},
+		{
+			name:     "earlier post that drew a Prow presubmit on its head",
+			postedAt: clockStart.Add(-30 * time.Minute),
+			mutate: func(fx *contributorLaneFixture) {
+				fx.earlierStatuses = map[string][]map[string]any{"oldhead": {
+					prowStatus(prowTideContext, prowOkToTestTestBot),
+					prowStatus("pull-widget-unit", prowOkToTestTestBot),
+				}}
+			},
+			ticks:    3,
+			wantPost: true,
+		},
+		{
+			// The trigger plugin's label persists across pushes: a command
+			// that took effect is never mistaken for a refusal.
+			name:     "ok-to-test label present",
+			postedAt: clockStart.Add(-30 * time.Minute),
+			mutate:   func(fx *contributorLaneFixture) { fx.labels = []string{"size/S", "ok-to-test"} },
+			ticks:    3,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := prowOkToTestFixture()
+			fx.prComments = []map[string]any{commentAt(appComment(2, workflowApprovalCommandBody("oldhead")), tc.postedAt)}
+			if tc.mutate != nil {
+				tc.mutate(&fx)
+			}
+			runProwOkToTestTicks(t, &fx, tc.ticks)
+			posted, notes := 0, 0
+			for _, body := range fx.allComments {
+				switch {
+				case body == command:
+					posted++
+				case strings.HasPrefix(body, workflowApprovalRejectedMarker):
+					notes++
+					if strings.Contains(body, prowOkToTestRejection) || !strings.Contains(body, "earlier head") {
+						t.Fatalf("note = %q, want the no-effect wording, not a quoted refusal", body)
+					}
+				}
+			}
+			if (posted == 1) != tc.wantPost || posted > 1 || (notes == 1) != tc.wantNote || notes > 1 {
+				t.Fatalf("posts=%d notes=%d (comments %q), want post=%v note=%v", posted, notes, fx.allComments, tc.wantPost, tc.wantNote)
+			}
+		})
+	}
+}
+
 // The merge-request relay evaluates the lane read-only and posts nothing.
 func TestContributorLaneRelayEvaluationDoesNotPostProwOkToTest(t *testing.T) {
 	fx := prowOkToTestFixture()

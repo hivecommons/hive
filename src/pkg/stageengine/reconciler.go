@@ -213,6 +213,7 @@ func (r *reconciler) Reconcile(ctx context.Context, f Facts) (Transition, error)
 		}
 	}
 	noteTriageCleared(r.opts.Store, key, f, out.Removed)
+	noteOpenPRLabelCleared(r.opts.Store, key, f, out.Removed)
 	if err == nil {
 		// The gate's refusal is a fact about the record: readers that
 		// compare the record with the item's labels must know the labels
@@ -246,6 +247,22 @@ func noteTriageCleared(store *stagelabels.Store, key string, f Facts, removed []
 	}
 	if slices.ContainsFunc(removed, func(l string) bool { return strings.EqualFold(l, label) }) {
 		store.NoteTriageCleared(key, f.ObservedAt)
+	}
+}
+
+// noteOpenPRLabelCleared records on the issue's record that this write
+// took a stale `has-open-pr` off, so a later read that finds it back with
+// still no linking PR makes the hive yield it on that issue.
+func noteOpenPRLabelCleared(store *stagelabels.Store, key string, f Facts, removed []string) {
+	if store == nil || f.Issue == nil || f.Ref.Kind != stagelabels.IssueItem {
+		return
+	}
+	label := strings.TrimSpace(f.Issue.StaleOpenPRLabel)
+	if label == "" {
+		return
+	}
+	if slices.ContainsFunc(removed, func(l string) bool { return strings.EqualFold(l, label) }) {
+		store.NoteOpenPRLabelCleared(key, f.ObservedAt)
 	}
 }
 

@@ -11,6 +11,20 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-17 (v6.44.6)
+
+### Fixed
+
+- The 085 "Needs a decision" note no longer asks for an owner approval the head already has when the lane stopped at an earlier gate. A fork PR parked on a fork-guard check (a `Canary` that refuses forks) never reached the review gate or the workflow fence, so nothing noted the trusted maintainer's Approve review: the note kept listing the reviewer's `requires_human` question and the workflow fence "awaiting owner approval" and asked a trusted merger to approve the head again. The stage pass now reads the head's trusted approval itself in that case (cached per head for ten minutes), drops the fence the approval released, and the same-head 085 re-park no longer re-asks the answered question; the note names only what is left (projectbluefin/utah-packages#1181, #1013).
+- The good-first-issue welcome comment and its paste-to-agent prompt no longer promise that the hive merges green contributor PRs automatically in a repository whose auto-merge is off (below L6, or `project.repo_policies[].auto_merge: false`); there they say the hive reviews the PR and a maintainer merges it. Repositories the hive does merge keep the same text. Custom `good_first_issue.comment_template` overrides can branch on the new `{{ .AutoMerge }}` variable.
+- Write-back backfill guard: a successful write with no 403/404 before it no longer moves a repository's backfill cut-off (`writable_at`). Only a few writers report outcomes, so the first one to succeed could come days after onboarding, and the guard then froze the stage labels of every older PR and issue the hive had been labelling all along. A `writable_at` stamped that way is cleared at startup (logged as `writeback: cleared writable_at …`) with the items it refused, and `/api/status` `writeback.repos[].writable` now reads true for a repository that never refused a write.
+
+## 2026-11-17 (v6.44.5)
+
+### Fixed
+
+- The duplicate-PR sweep no longer calls one dependency bot's separate bumps a "Superseded regeneration series". Renovate or Dependabot PRs for different dependencies all edit `package.json`, and the sweep used to call the older ones "superseded by construction" because they shared an author and a file. A bot series now needs the same job: titles that match once versions, dates and hashes are set aside, or byte-identical patches. One bot's different jobs form no cluster and get no comment. Real regeneration series, human and mixed-author clusters, and identical-diff and finding-identity clusters are unchanged.
+
 ## 2026-11-17 (v6.44.4)
 
 ### Fixed

@@ -74,14 +74,14 @@ func (h *ContributeWSHub) settleIssueFromVerdictWithEvidence(repo string, number
 	}
 	if len(refs) == 0 {
 		if alreadyDone {
-			h.markAlreadyDoneUnverified(repo, number, reporter, reason, evidence)
+			h.markAlreadyDoneUnverified(repo, number, reporter, reason, evidence, dispatchedAt)
 			return verdictDispositionAlreadyDoneUnverified
 		}
 		return ""
 	}
 	if h.server == nil || h.server.deps == nil || h.server.deps.RecordIssueClaim == nil {
 		if alreadyDone {
-			h.markAlreadyDoneUnverified(repo, number, reporter, reason, evidence)
+			h.markAlreadyDoneUnverified(repo, number, reporter, reason, evidence, dispatchedAt)
 			return verdictDispositionAlreadyDoneUnverified
 		}
 		return ""
@@ -90,7 +90,7 @@ func (h *ContributeWSHub) settleIssueFromVerdictWithEvidence(repo string, number
 	if verify == nil {
 		if h.server.deps.GHClient == nil {
 			if alreadyDone {
-				h.markAlreadyDoneUnverified(repo, number, reporter, reason, evidence)
+				h.markAlreadyDoneUnverified(repo, number, reporter, reason, evidence, dispatchedAt)
 				return verdictDispositionAlreadyDoneUnverified
 			}
 			return ""
@@ -110,7 +110,7 @@ func (h *ContributeWSHub) settleIssueFromVerdictWithEvidence(repo string, number
 				"repo", repo, "number", number, "ref", ref.String(), "reason", res.Reason, "error", err.Error())
 			if ctx.Err() != nil {
 				if alreadyDone {
-					h.markAlreadyDoneUnverified(repo, number, reporter, reason, evidence)
+					h.markAlreadyDoneUnverified(repo, number, reporter, reason, evidence, dispatchedAt)
 					return verdictDispositionAlreadyDoneUnverified
 				}
 				return ""
@@ -181,7 +181,7 @@ func (h *ContributeWSHub) settleIssueFromVerdictWithEvidence(repo string, number
 		return ""
 	}
 	if alreadyDone {
-		h.markAlreadyDoneUnverified(repo, number, reporter, reason, evidence)
+		h.markAlreadyDoneUnverified(repo, number, reporter, reason, evidence, dispatchedAt)
 		return verdictDispositionAlreadyDoneUnverified
 	}
 	return ""
@@ -237,6 +237,39 @@ func (h *ContributeWSHub) markIssuePRClaim(ctx context.Context, repo string, num
 		return err
 	}
 	return h.server.deps.GHClient.AddLabels(ctx, repo, number, []string{label})
+}
+
+// removeUnverifiedAlreadyDoneLabel takes the already-done label off an issue
+// whose verdict did not verify, when the hive itself added it after the task
+// was dispatched (a relay labelling on the task credential). Best-effort: a
+// failure is logged and the comment and hold still go out.
+func (h *ContributeWSHub) removeUnverifiedAlreadyDoneLabel(repo string, number int, dispatchedAt time.Time) {
+	if h == nil || h.server == nil || h.server.deps == nil || h.server.deps.GHClient == nil {
+		return
+	}
+	label := config.HubConfig{}.ContributeAlreadyDoneLabelOrDefault()
+	if h.server.deps.Config != nil {
+		label = h.server.deps.Config.Hub.ContributeAlreadyDoneLabelOrDefault()
+	}
+	ctx := h.server.deps.Ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(ctx, verdictSettleTimeout)
+	defer cancel()
+	removed, err := h.server.deps.GHClient.RemoveHiveLabelAddedSince(ctx, repo, number, label, dispatchedAt)
+	if h.logger == nil {
+		return
+	}
+	if err != nil {
+		h.logger.Warn("[contribute-ws] removing the relay's unverified already-done label failed",
+			"repo", repo, "number", number, "label", label, "error", err.Error())
+		return
+	}
+	if removed {
+		h.logger.Info("[contribute-ws] removed the already-done label the relay applied to an unverified verdict",
+			"repo", repo, "number", number, "label", label)
+	}
 }
 
 // noteAlreadyDoneUnverified posts the claim-worded comment for an already-done
