@@ -179,6 +179,12 @@ selected window (outcome, review rounds, fix attempts, first pass, author agent
 and backend, each linked to GitHub). The list is fetched on demand with
 `GET /api/governor/pr-models?window=…&model=<model>` and cached per window and
 model.
+Each model row's tooltip also shows **Hive review cost**: what the hive's own
+agents (reviewers, adjudicator, fixers) are estimated to have spent on that
+model's PRs, joined from the cached launch-cost snapshot (see
+[Launch attribution](token-tracking.md#launch-attribution)). A note under the
+header names the launch-cost window and the spend that could not be tied to any
+PR. "—" means no attributed usage, not $0.
 
 The Governor **actionable issues** and **actionable PRs** tiles use the shared
 server-side actionable partition described in [Repository card legend, issue
