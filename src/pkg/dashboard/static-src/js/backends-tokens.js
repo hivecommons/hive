@@ -316,19 +316,30 @@
       if (optTail === curTail) return true;
       return _modelsEqual(optTail, curTail);
     }
-    // Backends whose CLI accepts exactly one spelling of a model id. The
-    // Claude CLI takes claude-sonnet-5-5 and rejects the Copilot spelling
-    // claude-sonnet-5.5, so for these the dropdown must NOT treat the two as
-    // the same model: the tolerant match preselected the dashed option for a
-    // stored dotted id, and the agent failed every kick while its dropdown
-    // looked correct.
-    const STRICT_MODEL_ID_BACKENDS = ['claude'];
+    // Backends whose CLI accepts exactly one spelling of a model id. Claude
+    // and Copilot serve the SAME Anthropic models under different naming
+    // conventions: the Claude CLI takes claude-sonnet-5-5 and rejects
+    // claude-sonnet-5.5, the Copilot CLI takes claude-sonnet-5.5 and rejects
+    // claude-sonnet-5-5. For these the dropdown must NOT treat the two as the
+    // same model: the tolerant match preselected the valid option for a
+    // stored wrong-convention id, and the agent failed every kick while its
+    // dropdown looked correct. The server rewrites such ids to the backend's
+    // spelling (config.CanonicalizeModelForBackend); the dropdown shows what
+    // is stored and flags it.
+    const STRICT_MODEL_ID_BACKENDS = ['claude', 'copilot'];
     // _modelIdMatchesForBackend is _modelIdMatches, minus the dotted/dashed
     // version folding on STRICT_MODEL_ID_BACKENDS.
     function _modelIdMatchesForBackend(backend, optionValue, current) {
       if (!STRICT_MODEL_ID_BACKENDS.includes(backend)) return _modelIdMatches(optionValue, current);
       if (!current) return false;
       return optionValue === current || optionValue.split('/').pop() === current.split('/').pop();
+    }
+    // modelIdMatchesStored is the Settings dialog's "is this option the stored
+    // model" test: strict on STRICT_MODEL_ID_BACKENDS, the separator-tolerant
+    // _modelsEqual elsewhere.
+    function modelIdMatchesStored(backend, optionValue, current) {
+      if (STRICT_MODEL_ID_BACKENDS.includes(backend)) return _modelIdMatchesForBackend(backend, optionValue, current);
+      return _modelsEqual(current, optionValue);
     }
     // invalidModelSpellingFor returns the valid option a stored model is only
     // a different spelling of on a strict backend ('' when there is none), so

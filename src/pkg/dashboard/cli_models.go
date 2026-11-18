@@ -1009,10 +1009,10 @@ func (s *Server) queryCLIModels(backend string) cliModelResult {
 	// paths: a live sample that omits a rollout-gated id and the static
 	// fallback list (see copilotAlwaysIncludeModels / claudeAlwaysIncludeModels).
 	if backend == "copilot" {
-		r.models = dedupeModels(append(r.models, copilotAlwaysIncludeModels...))
+		r.models = canonicalModelList(backend, append(r.models, copilotAlwaysIncludeModels...))
 	}
 	if backend == "claude" {
-		r.models = canonicalClaudeModelList(append(r.models, claudeAlwaysIncludeModels...))
+		r.models = canonicalModelList(backend, append(r.models, claudeAlwaysIncludeModels...))
 	}
 	if s.cliModels != nil {
 		s.cliModels.set(backend, r)
@@ -1060,10 +1060,10 @@ func (s *Server) staticCLIModelResult(backend string) cliModelResult {
 	default:
 		models := filterPinnedCLIModels(backend, dedupeModels(cliStaticFallback(backend)))
 		if backend == "copilot" {
-			models = dedupeModels(append(models, copilotAlwaysIncludeModels...))
+			models = canonicalModelList(backend, append(models, copilotAlwaysIncludeModels...))
 		}
 		if backend == "claude" {
-			models = canonicalClaudeModelList(append(models, claudeAlwaysIncludeModels...))
+			models = canonicalModelList(backend, append(models, claudeAlwaysIncludeModels...))
 		}
 		return cliModelResult{models: models, fallback: true, discoveryErr: "discovery refresh running in background"}
 	}

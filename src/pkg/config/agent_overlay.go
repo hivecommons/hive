@@ -147,9 +147,8 @@ func (c *Config) DegradeContradictingLaunchCmds() []LaunchCmdDegradation {
 	return degraded
 }
 
-// ModelIDNormalization records one claude-backend agent whose stored model
-// id the loader rewrote from the Copilot (dotted) spelling to the Claude CLI
-// (dashed) spelling.
+// ModelIDNormalization records one agent whose stored model id the loader
+// rewrote to its backend's naming convention for the same Claude model.
 type ModelIDNormalization struct {
 	Agent   string
 	Backend string
@@ -157,33 +156,34 @@ type ModelIDNormalization struct {
 	To      string
 }
 
-// NormalizeClaudeModelIDs rewrites, for every claude-backend agent, a stored
-// Copilot-style dotted Claude id (claude-sonnet-5.5) to the dashed id the
-// Claude CLI accepts (claude-sonnet-5-5), and records each rewrite in
-// c.ModelIDNormalizations so the dashboard can warn about it.
+// NormalizeModelIDConventions rewrites, for every claude- and copilot-backend
+// agent, a Claude model id stored in the OTHER CLI's naming convention to the
+// one its own CLI accepts (CanonicalizeModelForBackend): claude-sonnet-5.5 on
+// claude becomes claude-sonnet-5-5, claude-sonnet-5-5 on copilot becomes
+// claude-sonnet-5.5. Each rewrite is recorded in c.ModelIDNormalizations so
+// the dashboard can warn about it.
 //
-// The dotted id is valid on the copilot backend and is carried over verbatim
-// when an agent is switched from copilot to claude. The Claude CLI rejects it,
-// so every kick fails with "There's an issue with the selected model" while
-// the dashboard's model dropdown (which matches dotted and dashed spellings
-// as the same model) shows a correct-looking selection. Normalizing at load
-// repairs agents already in that state on the next boot; the dashboard write
-// paths normalize at set time so new ones are not created.
-func (c *Config) NormalizeClaudeModelIDs() []ModelIDNormalization {
+// The wrong spelling is carried over when an agent is switched between the
+// two backends and keeps its model. The Claude CLI rejects the dotted id on
+// every kick ("There's an issue with the selected model"); the Copilot CLI
+// rejects the dashed one and silently falls back to another model. The
+// dashboard's model dropdown used to match the two spellings as the same
+// model, so the stored value looked correct. Normalizing at load repairs
+// agents already in that state on the next boot; the dashboard write paths
+// normalize at set time so new ones are not created.
+func (c *Config) NormalizeModelIDConventions() []ModelIDNormalization {
 	var fixed []ModelIDNormalization
 	for name, agent := range c.Agents {
-		if agent.Backend != ClaudeBackend {
-			continue
-		}
-		to, changed := CanonicalizeClaudeModel(agent.Model)
+		to, changed := CanonicalizeModelForBackend(agent.Backend, agent.Model)
 		if !changed {
 			continue
 		}
 		fixed = append(fixed, ModelIDNormalization{Agent: name, Backend: agent.Backend, From: agent.Model, To: to})
-		slog.Default().Warn("config: rewrote a Copilot-style dotted Claude model id to the Claude CLI spelling",
+		slog.Default().Warn("config: rewrote a Claude model id to the naming convention of the agent's backend",
 			"hive_id", c.HiveID,
 			"agent", name,
 			"file", agent.SourceFile(),
+			"backend", agent.Backend,
 			"from", agent.Model,
 			"to", to,
 		)

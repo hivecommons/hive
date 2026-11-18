@@ -431,7 +431,7 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		s.claimAgentFieldOwnership(name, "", backend)
-		modelWarning := s.healCarriedClaudeModel(name, backend)
+		modelWarning := s.healCarriedModel(name, backend)
 		s.noteModelIDNormalization(name, modelWarning)
 		s.deps.Logger.Info("audit: backend saved for agent not running", "agent", name, "backend", backend, "trigger", "dashboard-api")
 		s.auditFromRequest(r, "switch_backend", auditDetail("backend", backend), name)
@@ -448,10 +448,10 @@ func (s *Server) handleSwitch(w http.ResponseWriter, r *http.Request) {
 	// Persist to hive.yaml and mark the field operator-owned so the next pack
 	// apply (which runs on every restart) does not reconcile it away.
 	s.claimAgentFieldOwnership(name, "", backend)
-	// The switch changes only the backend: an agent coming from copilot
-	// carries the copilot (dotted) spelling of its Claude model, which the
-	// Claude CLI rejects. Rewrite it before the restart below.
-	modelWarning := s.healCarriedClaudeModel(name, backend)
+	// The switch changes only the backend: an agent moving between copilot
+	// and claude carries the other CLI's spelling of its Claude model, which
+	// the new CLI rejects. Rewrite it before the restart below.
+	modelWarning := s.healCarriedModel(name, backend)
 	s.noteModelIDNormalization(name, modelWarning)
 
 	s.deps.Logger.Info("audit: backend switched", "agent", name, "backend", backend, "trigger", "dashboard-api")
@@ -490,9 +490,9 @@ func (s *Server) handleModelSet(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// A Copilot-style dotted Claude id is stored in the Claude CLI's dashed
-	// spelling on the claude backend, with a warning, instead of being saved
-	// as an id every kick would fail on.
+	// A Claude id in the other CLI's convention is stored in this backend's
+	// spelling (claude-sonnet-5-5 on claude, claude-sonnet-5.5 on copilot),
+	// with a warning, instead of being saved as an id the CLI rejects.
 	backend, _ := s.agentEffectiveBackendAndModel(name)
 	model, modelWarning := canonicalizeModelForBackend(name, backend, model)
 

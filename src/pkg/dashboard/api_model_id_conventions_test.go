@@ -1,7 +1,9 @@
 package dashboard
 
 import (
+	"encoding/json"
 	"net/http"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -25,15 +27,25 @@ func findSystemAlert(s *Server, id string) (SystemAlert, bool) {
 }
 
 func TestCanonicalizeModelForBackend(t *testing.T) {
-	got, warning := canonicalizeModelForBackend("architect", config.ClaudeBackend, dottedClaudeModel)
-	if got != dashedClaudeModel || !strings.Contains(warning, dottedClaudeModel) || !strings.Contains(warning, dashedClaudeModel) {
-		t.Fatalf("claude: got (%q, %q)", got, warning)
+	for _, tc := range []struct{ backend, from, to string }{
+		{config.ClaudeBackend, dottedClaudeModel, dashedClaudeModel},
+		{"copilot", dashedClaudeModel, dottedClaudeModel},
+		{"copilot", "claude-haiku-4-5", "claude-haiku-4.5"},
+	} {
+		got, warning := canonicalizeModelForBackend("architect", tc.backend, tc.from)
+		if got != tc.to || !strings.Contains(warning, tc.from) || !strings.Contains(warning, tc.to) || !strings.Contains(warning, tc.backend) {
+			t.Errorf("%s/%s: got (%q, %q), want %q with a warning", tc.backend, tc.from, got, warning, tc.to)
+		}
 	}
 	for _, tc := range []struct{ backend, model string }{
 		{config.ClaudeBackend, dashedClaudeModel},
 		{config.ClaudeBackend, "sonnet"},
 		{"copilot", dottedClaudeModel},
+		{"copilot", "claude-sonnet-5"},
+		{"copilot", "gpt-5-mini"},
+		{"copilot", "auto"},
 		{"openrouter", "anthropic/claude-sonnet-5.5"},
+		{"gemini", dashedClaudeModel},
 	} {
 		if got, warning := canonicalizeModelForBackend("a", tc.backend, tc.model); got != tc.model || warning != "" {
 			t.Errorf("%s/%s: got (%q, %q), want unchanged", tc.backend, tc.model, got, warning)
@@ -96,23 +108,59 @@ func TestHandleSwitch_StoppedAgentToClaudeRewritesDottedModel(t *testing.T) {
 	}
 }
 
-// Switching to a backend other than claude keeps the model verbatim: the
-// dotted id is the valid copilot spelling.
-func TestHandleSwitch_ToCopilotKeepsDottedModel(t *testing.T) {
-	s, _ := notRunningServer(t)
+// The other direction: an agent on the Claude CLI spelling switched to
+// copilot gets the Copilot spelling, with a warning.
+func TestHandleSwitch_ToCopilotRewritesDashedModel(t *testing.T) {
+	s, dir := notRunningServer(t)
 	ac := s.deps.Config.Agents[notRunningTestAgent]
-	ac.Model = dottedClaudeModel
+	ac.Model = dashedClaudeModel
 	s.deps.Config.Agents[notRunningTestAgent] = ac
 
 	rec := doPost(s, "/api/switch/"+notRunningTestAgent+"/copilot", nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200 (%s)", rec.Code, rec.Body.String())
 	}
-	if got := s.deps.Config.Agents[notRunningTestAgent].Model; got != dottedClaudeModel {
-		t.Fatalf("model = %q, want unchanged %q", got, dottedClaudeModel)
+	body := decodeBody18905(t, rec)
+	if w, _ := body["warning"].(string); !strings.Contains(w, dottedClaudeModel) {
+		t.Fatalf("response must carry the rewrite warning, got %v", body)
 	}
-	if _, ok := findSystemAlert(s, modelIDNormalizedAlertPrefix+notRunningTestAgent); ok {
-		t.Fatalf("no warning expected for the copilot backend")
+	if got := s.deps.Config.Agents[notRunningTestAgent]; got.Backend != "copilot" || got.Model != dottedClaudeModel {
+		t.Fatalf("config = backend %q model %q, want copilot/%s", got.Backend, got.Model, dottedClaudeModel)
+	}
+	if !strings.Contains(overlayText(t, dir), dottedClaudeModel) {
+		t.Fatalf("overlay must carry the dotted id")
+	}
+	if _, ok := findSystemAlert(s, modelIDNormalizedAlertPrefix+notRunningTestAgent); !ok {
+		t.Fatalf("expected a dashboard warning for the rewrite")
+	}
+}
+
+// Ids already valid for the target backend, and non-Claude ids, are kept
+// verbatim on a switch, with no warning.
+func TestHandleSwitch_KeepsValidAndNonClaudeModels(t *testing.T) {
+	for _, tc := range []struct{ backend, model string }{
+		{"copilot", dottedClaudeModel},
+		{"copilot", "gpt-5-mini"},
+		{"copilot", "claude-sonnet-5"},
+		{config.ClaudeBackend, dashedClaudeModel},
+	} {
+		t.Run(tc.backend+"/"+tc.model, func(t *testing.T) {
+			s, _ := notRunningServer(t)
+			ac := s.deps.Config.Agents[notRunningTestAgent]
+			ac.Model = tc.model
+			s.deps.Config.Agents[notRunningTestAgent] = ac
+
+			rec := doPost(s, "/api/switch/"+notRunningTestAgent+"/"+tc.backend, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d (%s)", rec.Code, rec.Body.String())
+			}
+			if got := s.deps.Config.Agents[notRunningTestAgent].Model; got != tc.model {
+				t.Errorf("model = %q, want unchanged %q", got, tc.model)
+			}
+			if _, ok := findSystemAlert(s, modelIDNormalizedAlertPrefix+notRunningTestAgent); ok {
+				t.Errorf("no warning expected")
+			}
+		})
 	}
 }
 
@@ -170,11 +218,61 @@ func TestSurfaceModelIDNormalizations(t *testing.T) {
 	}
 }
 
-// The claude picker list never offers the copilot (dotted) spelling.
-func TestCanonicalClaudeModelList(t *testing.T) {
-	got := canonicalClaudeModelList([]string{dottedClaudeModel, dashedClaudeModel, "sonnet", "claude-opus-4.6"})
-	want := []string{dashedClaudeModel, "sonnet", "claude-opus-4-6"}
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("canonicalClaudeModelList = %v, want %v", got, want)
+// Each backend's picker list only offers its own spelling of a Claude model;
+// non-Claude ids are untouched.
+func TestCanonicalModelList(t *testing.T) {
+	got := canonicalModelList(config.ClaudeBackend, []string{dottedClaudeModel, dashedClaudeModel, "sonnet", "claude-opus-4.6"})
+	if want := []string{dashedClaudeModel, "sonnet", "claude-opus-4-6"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("claude list = %v, want %v", got, want)
+	}
+	got = canonicalModelList("copilot", []string{dashedClaudeModel, dottedClaudeModel, "claude-sonnet-5", "gpt-5-mini", "auto"})
+	if want := []string{dottedClaudeModel, "claude-sonnet-5", "gpt-5-mini", "auto"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("copilot list = %v, want %v", got, want)
+	}
+}
+
+// The Settings dialog's model picker (modelSelectOptionsHtml) shows a stored
+// wrong-convention id as stored and flags it, in both directions, instead of
+// preselecting the other spelling.
+func TestSettingsModelPickerFlagsWrongConvention(t *testing.T) {
+	html := indexHTML(t)
+	if _, err := exec.LookPath("node"); err != nil {
+		t.Skip("node not installed")
+	}
+	script := extractJSFunction(t, html, "esc") + "\n    }\n" +
+		extractJSOneLiner(t, html, "_normalizeModel") + "\n" +
+		extractJSOneLiner(t, html, "_modelsEqual") + "\n" +
+		modelSelectHelpersJS(t, html) +
+		`const claude = [{ value: 'claude-sonnet-5-5', label: 'claude-sonnet-5-5' }];
+		const copilot = [{ value: 'claude-sonnet-5.5', label: 'claude-sonnet-5.5' }, { value: 'gpt-5-mini', label: 'gpt-5-mini' }];
+		console.log(JSON.stringify({
+			claudeDotted: modelSelectOptionsHtml('claude', 'claude-sonnet-5.5', claude),
+			claudeValid: modelSelectOptionsHtml('claude', 'claude-sonnet-5-5', claude),
+			copilotDashed: modelSelectOptionsHtml('copilot', 'claude-sonnet-5-5', copilot),
+			copilotGpt: modelSelectOptionsHtml('copilot', 'gpt-5-mini', copilot),
+		}));`
+	raw, err := exec.Command("node", "-e", script).CombinedOutput()
+	if err != nil {
+		t.Fatalf("node failed: %v\n%s", err, raw)
+	}
+	var got map[string]string
+	if err := json.Unmarshal([]byte(strings.TrimSpace(string(raw))), &got); err != nil {
+		t.Fatalf("decode %q: %v", raw, err)
+	}
+	for key, want := range map[string]string{
+		"claudeDotted":  `<option value="claude-sonnet-5.5" selected>claude-sonnet-5.5 (current, ⚠ not valid for claude; pick claude-sonnet-5-5)</option>`,
+		"claudeValid":   `<option value="claude-sonnet-5-5" selected>`,
+		"copilotDashed": `<option value="claude-sonnet-5-5" selected>claude-sonnet-5-5 (current, ⚠ not valid for copilot; pick claude-sonnet-5.5)</option>`,
+		"copilotGpt":    `<option value="gpt-5-mini" selected>`,
+	} {
+		if !strings.Contains(got[key], want) {
+			t.Errorf("%s: missing %q in\n%s", key, want, got[key])
+		}
+	}
+	if strings.Contains(got["claudeDotted"], `<option value="claude-sonnet-5-5" selected>`) {
+		t.Errorf("claude: the dashed option must not be preselected for a stored dotted id")
+	}
+	if strings.Contains(got["copilotDashed"], `<option value="claude-sonnet-5.5" selected>`) {
+		t.Errorf("copilot: the dotted option must not be preselected for a stored dashed id")
 	}
 }

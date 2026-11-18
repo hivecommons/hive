@@ -243,3 +243,7 @@ var (
 	OriginLabelDescription  = cruxconfig.OriginLabelDescription
 	KnownOriginSources      = cruxconfig.KnownOriginSources
 )
+
+// CanonicalizeModelForBackend is the one mapping between the Claude CLI and
+// Copilot CLI spellings of the same Claude model (see crux/config).
+var CanonicalizeModelForBackend = cruxconfig.CanonicalizeModelForBackend

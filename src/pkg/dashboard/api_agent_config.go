@@ -1074,10 +1074,10 @@ func (s *Server) handleAgentConfigModels(w http.ResponseWriter, r *http.Request)
 		agentCfg.ModelOwner = config.FieldOwnerOperator
 		effectiveModel = agentCfg.Model
 	}
-	// A Copilot-style dotted Claude id (claude-sonnet-5.5), whether sent in
-	// this request or carried over from a copilot backend, is stored in the
-	// Claude CLI's dashed spelling on the claude backend, with a warning.
-	// The CLI rejects the dotted id on every kick.
+	// A Claude id in the other CLI's convention, whether sent in this request
+	// or carried over by a backend change, is stored in this backend's
+	// spelling (claude-sonnet-5-5 on claude, claude-sonnet-5.5 on copilot),
+	// with a warning. Each CLI rejects the other's spelling.
 	normalizedModel, modelWarning := canonicalizeModelForBackend(name, effectiveBackend, effectiveModel)
 	if modelWarning != "" {
 		agentCfg.Model = normalizedModel
