@@ -483,6 +483,7 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 			"meetings.tts_url":                           m.TTSURLOrEmpty(),
 			"meetings.delivery":                          m.DeliveryOrDefault(),
 			"meetings.voice_on_address":                  boolString(m.VoiceOnAddressEnabled()),
+			"meetings.listening_tone":                    boolString(m.ListeningToneEnabled()),
 			"meetings.bot_name":                          m.BotNameOrDefault(),
 			"meetings.invite_policy":                     m.InvitePolicyOrDefault(),
 			"meetings.research_pool_size":                strconv.Itoa(m.ResearchPoolSizeOrDefault()),
