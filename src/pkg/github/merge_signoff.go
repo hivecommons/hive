@@ -3,6 +3,7 @@ package github
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"regexp"
 	"strings"
@@ -19,10 +20,19 @@ import (
 // place the trailer can be lost after the PR-time DCO check passed, so the
 // hive no longer leaves the body to GitHub: it rebuilds it from the branch
 // commits, makes sure every branch sign-off is in it, and refuses to squash
-// when the branch carries none at all. It never signs off on anyone's behalf.
+// when the branch carries none at all in a repo that requires DCO. It never
+// signs off on anyone's behalf.
+//
+// A repo requires DCO by the same rule the stage router routes a missing
+// sign-off on (dcoRequired in pkg/github/automerge): the per-repo
+// governor.labels.stage.dco.required override, else a detected `dco`/`DCO`
+// gate. Refusing everywhere stalled every unsigned PR in repos with no DCO
+// gate at all, Renovate and Dependabot PRs included, at 080 with nothing a
+// person could do (projectbluefin/bluefin-report#91).
 
 // ErrSquashUnsigned is returned when a squash merge would land a commit with
-// no Signed-off-by: none of the branch commits carries one.
+// no Signed-off-by in a repo that requires DCO: none of the branch commits
+// carries one.
 var ErrSquashUnsigned = errors.New("squash refused: no branch commit carries a Signed-off-by trailer, the landing commit would fail DCO")
 
 // signedOffByRE matches one Signed-off-by trailer line anywhere in a body
@@ -38,9 +48,11 @@ var signedOffByRE = regexp.MustCompile(`(?mi)^Signed-off-by:\s*(\S.*?)\s*$`)
 //
 // It applies whether or not issue-author credit is on for the repo. If the
 // branch commits cannot be read the message is returned unchanged (the
-// PR-time DCO gate already ran); a branch read with no sign-off at all
-// returns ErrSquashUnsigned and the caller must not merge.
-func (m *MergeCreditor) SquashSignoff(ctx context.Context, owner, repo string, number int, method, message string) (string, error) {
+// PR-time DCO gate already ran). A branch read with no sign-off at all
+// returns ErrSquashUnsigned, and the caller must not merge, only when the
+// repo requires DCO (requiresDCO, for base and head); elsewhere the message
+// goes out as built, as it did before #18203.
+func (m *MergeCreditor) SquashSignoff(ctx context.Context, owner, repo string, number int, base, head, method, message string) (string, error) {
 	if m == nil || m.gh == nil || number <= 0 {
 		return message, nil
 	}
@@ -57,7 +69,105 @@ func (m *MergeCreditor) SquashSignoff(ctx context.Context, owner, repo string, n
 			slog.String("repo", owner+"/"+repo), slog.Int("number", number), slog.String("error", err.Error()))
 		return message, nil
 	}
-	return squashSignoffMessage(commits, message)
+	out, err := squashSignoffMessage(commits, message)
+	if !errors.Is(err, ErrSquashUnsigned) {
+		return out, err
+	}
+	if m.requiresDCO(ctx, owner, repo, base, head) {
+		return "", err
+	}
+	m.logger.Info("squash sign-off: no branch sign-off and the repo does not require DCO, merging as built",
+		slog.String("repo", owner+"/"+repo), slog.Int("number", number))
+	return message, nil
+}
+
+// dcoEvidenceMaxPages bounds the head's status and check-run reads.
+const dcoEvidenceMaxPages = 3
+
+// requiresDCO reports whether owner/repo requires a sign-off on a squash of
+// head onto base: the dco.required override when one is set for the repo,
+// else a `dco`/`DCO` context in base's required checks or reported on head
+// (the DCO App, Prow's dco plugin). A head it cannot read counts as
+// required, so a failed read keeps the refusal.
+func (m *MergeCreditor) requiresDCO(ctx context.Context, owner, repo, base, head string) bool {
+	if m.dcoRequired != nil {
+		if required, ok := m.dcoRequired(owner + "/" + repo); ok {
+			return required
+		}
+	}
+	ctx = WithRESTCaller(ctx, mergeCreditCaller)
+	if base != "" {
+		if required, known := RequiredStatusCheckContexts(ctx, m.gh, owner, repo, base, nil, false); known {
+			for name := range required {
+				if IsDCOContext(name) {
+					return true
+				}
+			}
+		}
+	}
+	if head == "" {
+		return true
+	}
+	reported, err := headContextNames(ctx, m.gh, owner, repo, head)
+	if err != nil {
+		m.logger.Warn("squash sign-off: could not read the head's checks, treating the repo as requiring DCO",
+			slog.String("repo", owner+"/"+repo), slog.String("head", head), slog.String("error", err.Error()))
+		return true
+	}
+	for _, name := range reported {
+		if IsDCOContext(name) {
+			return true
+		}
+	}
+	return false
+}
+
+// headContextNames lists the commit-status contexts and check-run names
+// reported on ref. More than dcoEvidenceMaxPages pages of either is an
+// error: the list would be incomplete.
+func headContextNames(ctx context.Context, client *gh.Client, owner, repo, ref string) ([]string, error) {
+	var names []string
+	statusOpts := &gh.ListOptions{PerPage: 100}
+	for page := 0; ; page++ {
+		status, resp, err := client.Repositories.GetCombinedStatus(ctx, owner, repo, ref, statusOpts)
+		if err != nil {
+			return nil, err
+		}
+		if status == nil {
+			return nil, fmt.Errorf("no combined status for %s", ref)
+		}
+		for _, s := range status.Statuses {
+			names = append(names, s.GetContext())
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		if page+1 >= dcoEvidenceMaxPages {
+			return nil, fmt.Errorf("more than %d pages of statuses on %s", dcoEvidenceMaxPages, ref)
+		}
+		statusOpts.Page = resp.NextPage
+	}
+	checkOpts := &gh.ListCheckRunsOptions{ListOptions: gh.ListOptions{PerPage: 100}}
+	for page := 0; ; page++ {
+		runs, resp, err := client.Checks.ListCheckRunsForRef(ctx, owner, repo, ref, checkOpts)
+		if err != nil {
+			return nil, err
+		}
+		if runs == nil {
+			return nil, fmt.Errorf("no check runs answer for %s", ref)
+		}
+		for _, run := range runs.CheckRuns {
+			names = append(names, run.GetName())
+		}
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
+		if page+1 >= dcoEvidenceMaxPages {
+			return nil, fmt.Errorf("more than %d pages of check runs on %s", dcoEvidenceMaxPages, ref)
+		}
+		checkOpts.Page = resp.NextPage
+	}
+	return names, nil
 }
 
 // squashSignoffMessage is SquashSignoff's decision over commits already read:

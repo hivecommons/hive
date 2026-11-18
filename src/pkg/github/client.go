@@ -250,9 +250,12 @@ type Client struct {
 	// (merge_credit.go, hivecommons/hive#14581); creditIssueAuthors is the
 	// live auto_merge.credit_issue_authors switch and mergeCredits holds the
 	// credit decided for a PR until its pr_merged audit consumes it.
+	// dcoRequired is the live governor.labels.stage.dco.required override
+	// the squash sign-off refusal consults (merge_signoff.go).
 	mergeCreditMu      sync.Mutex
 	mergeCredit        *MergeCreditor
 	creditIssueAuthors func(repo string) bool
+	dcoRequired        func(repo string) (required, ok bool)
 	mergeCredits       map[string]MergeCredit
 	// issueClaims reports whether issue claims are recognised at enumeration
 	// time and the TTL an assignee-inferred claim runs for (#8380). Nil or
