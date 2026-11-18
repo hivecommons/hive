@@ -129,6 +129,77 @@ func ParseBlockedOnMarker(text string) (repo string, pr int, ok bool) {
 	return m[1], n, true
 }
 
+// BlockedKindOwnerAction is the kind of a blocked-on marker whose blocker is
+// a person's action outside this issue's own work (a permission to grant, an
+// account to configure, a decision in another repository). No PR or issue
+// closes it, so the sweep keeps the label until a human lifts it.
+const BlockedKindOwnerAction = "owner-action"
+
+// blockedOwnerReasonMaxRunes bounds the reason a marker carries; the reason
+// is shown on the row and must stay one short line.
+const blockedOwnerReasonMaxRunes = 200
+
+// blockedOwnerReasonPrefix opens the enumeration's filtered reason for a
+// block that waits on a person: "blocked owner-action: <reason>". It starts
+// with the blocked prefix (IsBlockedIssueReason) but never with "blocked on
+// ", so parseBlockedOnReason does not read it as a PR or issue.
+const blockedOwnerReasonPrefix = blockedFilterReasonPrefix + " " + BlockedKindOwnerAction + ": "
+
+// blockedOwnerMarkerRE matches `<!-- hive:blocked-on kind=owner-action
+// reason="..." -->`; the reason attribute is optional.
+var blockedOwnerMarkerRE = regexp.MustCompile(`<!--\s*hive:blocked-on\s+kind=` + BlockedKindOwnerAction + `(?:\s+reason="([^"]*)")?\s*-->`)
+
+// blockedOwnerReasonStripRE removes what could close the marker or break its
+// quoting from a reason.
+var blockedOwnerReasonStripRE = regexp.MustCompile(`-->|[<>"\x00-\x1f]`)
+
+// cleanBlockedOwnerReason folds a free-text reason into one short line that
+// is safe inside the marker's quoted attribute.
+func cleanBlockedOwnerReason(reason string) string {
+	r := strings.Join(strings.Fields(blockedOwnerReasonStripRE.ReplaceAllString(reason, " ")), " ")
+	if rs := []rune(r); len(rs) > blockedOwnerReasonMaxRunes {
+		r = strings.TrimSpace(string(rs[:blockedOwnerReasonMaxRunes]))
+	}
+	return r
+}
+
+// BlockedOwnerMarker renders the marker that says a `blocked` issue waits on
+// a person's action, with the reason in one line.
+func BlockedOwnerMarker(reason string) string {
+	m := "<!-- hive:blocked-on kind=" + BlockedKindOwnerAction
+	if r := cleanBlockedOwnerReason(reason); r != "" {
+		m += ` reason="` + r + `"`
+	}
+	return m + " -->"
+}
+
+// ParseBlockedOwnerMarker returns the first owner-action marker in text and
+// its reason (empty when the marker carries none).
+func ParseBlockedOwnerMarker(text string) (reason string, ok bool) {
+	m := blockedOwnerMarkerRE.FindStringSubmatch(text)
+	if m == nil {
+		return "", false
+	}
+	return cleanBlockedOwnerReason(m[1]), true
+}
+
+// ParseBlockedOwnerReason reads a filtered reason written for an
+// owner-action block ("blocked owner-action: <reason>") back into the
+// reason. A bare "blocked owner-action" has an empty reason.
+func ParseBlockedOwnerReason(reason string) (string, bool) {
+	r := strings.TrimSpace(reason)
+	if r == strings.TrimSpace(blockedOwnerReasonPrefix[:len(blockedOwnerReasonPrefix)-1]) {
+		return "", true
+	}
+	rest, ok := strings.CutPrefix(r, blockedOwnerReasonPrefix)
+	return strings.TrimSpace(rest), ok
+}
+
+// blockedOwnerFilterReason is the filtered reason for an owner-action block.
+func blockedOwnerFilterReason(reason string) string {
+	return strings.TrimSpace(blockedOwnerReasonPrefix + cleanBlockedOwnerReason(reason))
+}
+
 // ParseBlockedOnReason returns the PR a blockedFilterReason names ("blocked
 // on owner/repo#N"); false for every other reason.
 func ParseBlockedOnReason(reason string) (repo string, pr int, ok bool) {
@@ -192,6 +263,9 @@ func blockedFilterReason(body string) string {
 	}
 	if repo, issue, ok := parseBlockedOnIssueMarker(body); ok {
 		return blockedFilterReasonPrefix + " on " + blockedOnIssueReasonWord + repo + "#" + strconv.Itoa(issue)
+	}
+	if reason, ok := ParseBlockedOwnerMarker(body); ok {
+		return blockedOwnerFilterReason(reason)
 	}
 	if at, ok := gfi.ParseRecheckAfter(body); ok {
 		return blockedFilterReasonPrefix + " until " + at.Format(time.RFC3339)
@@ -459,14 +533,21 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 		// scanned: the comments were read without error and hold no marker,
 		// so a marker-less lift may trust that nothing names a blocker.
 		scanned := false
+		// owner: the block waits on a person's action (kind=owner-action),
+		// from the body's reason or the newest comment marker.
+		ownerReason, owner := ParseBlockedOwnerReason(t.reason)
 		if lookups < blockedSweepCommentLookups {
 			lookups++
 			scan, err := c.blockedSweepComments(ctx, t.repo, t.number, t.recheckAfter)
 			scanned = err == nil
 			if scan.ok {
 				prRepo, prNumber, onIssue, ok = scan.prRepo, scan.pr, scan.issue, scan.ok
+				owner = false
 			}
-			if !ok && !t.recheckAfter.IsZero() && !now.Before(t.recheckAfter) {
+			if scan.owner {
+				ownerReason, owner = scan.ownerReason, true
+			}
+			if !ok && !owner && !t.recheckAfter.IsZero() && !now.Before(t.recheckAfter) {
 				if t.opsTracking && isRecheckSoakRepo(t.repo) {
 					// hivecommons/hive#13311: a maintainer's soak checklist
 					// on the hive's own project gets evidence, not a lift.
@@ -477,6 +558,15 @@ func (c *Client) reconcileBlockedTargets(ctx context.Context, targets []blockedI
 				}
 			}
 		}
+		if !ok && owner {
+			// A person's action holds this block: no PR or issue closing
+			// lifts it, and the marker (not the label's actor, which is the
+			// hive bot for a relay too) says it was applied on purpose.
+			c.rememberBlockedOwner(t.repo, t.number, ownerReason)
+			stripBlockedHelpWanted(ctx, c, t, &res, logger)
+			continue
+		}
+		c.forgetBlockedOwner(t.repo, t.number)
 		if !ok {
 			// No tracked PR, no deadline, no ops-tracking: a block the hive
 			// applied itself with no marker is always a bug (a blocked
@@ -598,6 +688,39 @@ func stripBlockedHelpWanted(ctx context.Context, client *Client, t blockedIssueT
 // removal so the writeback ratchet sees a single call site.
 func stripHelpWanted(ctx context.Context, client *Client, repo string, number int) error {
 	return client.RemoveLabel(ctx, repo, number, helpWantedLabel)
+}
+
+// blockedOwnerKey keys the owner-action reason cache.
+func blockedOwnerKey(repo string, number int) string {
+	return strings.ToLower(repo) + "#" + strconv.Itoa(number)
+}
+
+// rememberBlockedOwner records, for the next enumeration, the owner-action
+// reason the sweep read from a comment marker: the enumeration reads only
+// issue bodies, and the relay's marker is a comment.
+func (c *Client) rememberBlockedOwner(repo string, number int, reason string) {
+	c.blockedOwnerReasons.Store(blockedOwnerKey(repo, number), cleanBlockedOwnerReason(reason))
+}
+
+// forgetBlockedOwner drops a remembered reason once the sweep no longer finds
+// an owner-action marker.
+func (c *Client) forgetBlockedOwner(repo string, number int) {
+	c.blockedOwnerReasons.Delete(blockedOwnerKey(repo, number))
+}
+
+// blockedReasonFor is blockedFilterReason plus the sweep's remembered
+// owner-action reason for a block whose marker is in a comment.
+func (c *Client) blockedReasonFor(repo string, number int, body string) string {
+	reason := blockedFilterReason(body)
+	if reason != blockedFilterReasonPrefix {
+		return reason
+	}
+	if v, ok := c.blockedOwnerReasons.Load(blockedOwnerKey(repo, number)); ok {
+		if r, isStr := v.(string); isStr {
+			return blockedOwnerFilterReason(r)
+		}
+	}
+	return reason
 }
 
 // liftBlockedMarkerless lifts `blocked` from an issue with no blocked-on
@@ -799,10 +922,14 @@ func blockedDeadlineNote(deadline string) string {
 // issue is set when the newest blocked-on marker is the issue form, so
 // prRepo and pr then name an issue.
 type blockedSweepScan struct {
-	prRepo        string
-	pr            int
-	issue         bool
-	ok            bool
+	prRepo string
+	pr     int
+	issue  bool
+	ok     bool
+	// owner is set when the newest marker is an owner-action one; ok stays
+	// false then, so no PR or issue path runs, and ownerReason carries why.
+	owner         bool
+	ownerReason   string
 	deadlineNoted bool
 	evidenceNoted bool
 }
@@ -824,11 +951,14 @@ func (c *Client) blockedSweepComments(ctx context.Context, repo string, number i
 	}
 	for i := len(comments) - 1; i >= 0; i-- {
 		body := comments[i].GetBody()
-		if !scan.ok {
+		if !scan.ok && !scan.owner {
 			scan.prRepo, scan.pr, scan.ok = ParseBlockedOnMarker(body)
 			if !scan.ok {
 				scan.prRepo, scan.pr, scan.ok = parseBlockedOnIssueMarker(body)
 				scan.issue = scan.ok
+			}
+			if !scan.ok {
+				scan.ownerReason, scan.owner = ParseBlockedOwnerMarker(body)
 			}
 		}
 		if passed != "" && strings.Contains(body, blockedUnblockedMarker) && strings.Contains(body, passed) {

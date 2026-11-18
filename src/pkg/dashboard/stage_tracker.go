@@ -618,9 +618,14 @@ type StageTrackerItem struct {
 	// the block. State comes from the hive's caches only, never a fresh
 	// GitHub call (hivecommons/hive#14952; #14863 wore a bare grey `blocked`).
 	BlockedOnPR *StageTrackerBlockedOnPR `json:"blocked_on_pr,omitempty"`
-	NudgeCount  int                      `json:"nudge_count,omitempty"`
-	LastNudgeAt *time.Time               `json:"last_nudge_at,omitempty"`
-	AdoptedBy   int                      `json:"adopted_by,omitempty"`
+	// BlockedOwnerReason is set on a `blocked` issue whose blocker is a
+	// person's action (`<!-- hive:blocked-on kind=owner-action reason="..." -->`):
+	// the reason line ("needs an owner action: ..."). The row is Needs human
+	// with that line (stage_tracker_blocked_owner.go).
+	BlockedOwnerReason string     `json:"blocked_owner_reason,omitempty"`
+	NudgeCount         int        `json:"nudge_count,omitempty"`
+	LastNudgeAt        *time.Time `json:"last_nudge_at,omitempty"`
+	AdoptedBy          int        `json:"adopted_by,omitempty"`
 	// AdoptedByState qualifies AdoptedBy when the hive's copy is not simply
 	// open (hivecommons/hive#15052): "closed" — the copy was closed without
 	// merging and the hive is re-adopting; "closed-twice" — two copies were
