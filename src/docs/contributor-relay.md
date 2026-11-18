@@ -63,6 +63,8 @@ just contribute-hive claude local  # host mode — relay + CLI directly on your 
 ```
 
 Containerized mode auto-detects the runtime — docker first, then podman — and can be forced with `export HIVE_CONTAINER_RUNTIME=podman`.
+
+**Rootless Docker.** `just contribute-hive` detects rootless Docker (`docker info` lists `name=rootless` under security options). In that mode the host user is container root and the image's `dev` user is an unmapped sub-uid, so the 0600 `contributor.env` bind mount would be unreadable (`contributor.env: Permission denied`). The recipe instead copies `~/.config/hive` and `~/.config/gh` into 0700 staging directories, chowns them to uid 1000 through the user namespace (file modes are unchanged, so `contributor.env` stays 0600), mounts the copies, and removes them on exit. Files the relay writes in the container (`relay-status.json`, `hubs-seen.json`, the pid file) therefore land in the staged copy, not in `~/.config/hive`. If an auto-detected docker still fails at startup with `Permission denied` and podman is installed, the recipe retries once with podman and prints a one-line reason. An explicit `HIVE_CONTAINER_RUNTIME` is never overridden. Rootful Docker and Podman launch exactly as before.
 The resolved runtime is passed into the container, so the "attach to the CLI" hints printed from inside it (the status line, and the banner shown when the CLI needs a login) name the engine that actually launched it ([#5145](https://github.com/hivecommons/hive/issues/5145)). In host mode there is no container, and those hints are a plain `tmux attach -t <session>`.
 
 The `just contribute-hive` container defaults to the same workload ceiling as
