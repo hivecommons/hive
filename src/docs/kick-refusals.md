@@ -207,6 +207,34 @@ agent, often after a rename or a config reload.
 
 - **What to do:** check the agent list in the dashboard or `hive.yaml`.
 
+## What a kick came to
+
+A delivered kick is not a finished piece of work. The hive keeps a durable,
+bounded record of the last ten kicks of each agent (`GET /api/kick-outcomes`):
+who or what triggered each one (a dashboard user's login, the governor, a
+workflow hand-off), when it started and ended, and what it came to:
+
+| Outcome | Derived from |
+|---|---|
+| `opened_pr` | the relay opened a pull request for the agent during the kick (or within 15 minutes after its turn ended); the record keeps the PR number and URL |
+| `pushed_commit` | the relay pushed a branch for the agent; the record keeps the branch and sha |
+| `commented` | the relay posted a comment for the agent |
+| `stood_down` | the agent ended its turn on a stand-down line; the record quotes that line |
+| `refused` | the hive refused to deliver the kick (including a governor kick withheld during `provider_backoff`, recorded without the provider's error line), or the agent's model declined it; the record keeps the reason code from this page and the quoted text |
+| `still_running` | the kick's turn has not ended and no signal has arrived yet |
+| `ended_no_visible_action` | the turn ended, or can no longer be told apart from one that ended, and no signal above speaks for it |
+
+The outcome is derived only from those signals when it is read, so a pull
+request the relay opens a few minutes after the turn ends upgrades the outcome.
+Where the hive cannot tell, it says `ended_no_visible_action`; it never
+guesses. Refusals are recorded only for the reasons on this page.
+
+The quoted text is what an agent (or the hive) wrote, so it is untrusted: the
+hive redacts token-shaped strings, caps it at 200 characters and escapes it
+when shown, and never puts it into an agent prompt. Agents cannot query the
+record. Owner and read-write sessions see the detail; a read-only session sees
+only the one-line summary. Log lines about the record hold ids and kinds only.
+
 ## Where to see refusals
 
 - **Toast.** Clicking **kick** on an agent card shows "Kick failed: ..." with a

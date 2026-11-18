@@ -2,6 +2,7 @@ package betty
 
 import (
 	"context"
+	"net/url"
 	"regexp"
 	"strings"
 )
@@ -95,5 +96,10 @@ func (d DirectRetriever) release(ctx context.Context, repo string) []Snippet {
 		text += ", published " + stripHTML(r.PublishedAt[:dateLen])
 	}
 	text += ". According to the " + SourceGitHubReleases + " API (github.com/" + repo + "/releases)."
-	return []Snippet{{Source: SourceGitHubReleases, Title: "Latest release of " + repo, Text: text}}
+	// The page of the release when GitHub gave one, else the repo's list.
+	link := "https://github.com/" + repo + "/releases"
+	if u, err := url.Parse(strings.TrimSpace(r.HTMLURL)); err == nil && u.Scheme == "https" && u.Host == "github.com" {
+		link = u.String()
+	}
+	return []Snippet{{Source: SourceGitHubReleases, Title: "Latest release of " + repo, Text: text, URL: link}}
 }

@@ -1136,6 +1136,7 @@ func (b *boot) wireBootClosures() {
 			WorkflowProvisionLabels:  workflowProvisionLabels(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
 			WorkflowDispatchPrepare:  workflowDispatchPrepare(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
 			WorkflowDispatchHandoffs: workflowDispatchHandoffs(b.cfg, b.logger),
+			KickOutcomes:             kickOutcomeSource{kickOutcomesFor(b.cfg, b.logger)},
 			WorkflowEmitChecks:       workflowEmitChecks(b.cfg, func() *github.Client { return b.ghClient }),
 			WorkflowClusterRunner:    workflowClusterRunner(),
 			WorkflowSpecLLM:          newWorkflowSpecRunner(func() *config.Config { return b.cfg }),
@@ -1228,6 +1229,17 @@ func (b *boot) wireBootClosures() {
 			// eval-cycle guard.
 			IssueClaimed: func(repo string, number int) (github.IssueClaim, bool) {
 				return getClaimLedger(b.logger).Lookup(repo, number)
+			},
+			// hivecommons/hive#18898: an issue an owner, maintainer or this hive
+			// filed inside the contributor grace window is not offered yet.
+			ContributorHold: func(repo string, number int, createdAt time.Time) string {
+				client := b.currentGitHubClient()
+				if client == nil {
+					return ""
+				}
+				ctx, cancel := context.WithTimeout(context.Background(), openPRLinkGuardTimeout)
+				defer cancel()
+				return client.ContributorGraceGuard(ctx, repo, number, createdAt)
 			},
 			// hivecommons/hive#14799: the ledger above is one eval cycle old;
 			// ask the forge directly whether an open PR already links the
@@ -2146,9 +2158,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// tells it afterwards how the turn ENDED, so a kick that produced a
 	// clarifying question or a policy stand-down is not counted like one that
 	// produced work (and a question earns an early re-kick).
+	koStore := kickOutcomesFor(b.cfg, b.logger)
 	b.agentMgr.SetKickOutcomeObserver(func(agentName string, outcome crux.KickOutcome) {
 		b.gov.RecordKickOutcome(agentName, outcome.Kind, outcome.Reason, outcome.KickAt, outcome.At)
+		kickOutcomeTurnEnded(koStore, b.agentMgr.GetStatus, agentName, outcome)
 	})
+	// #18916: a delivered kick opens its outcome record; the relay's push and
+	// comment events (and the PR-opened hook) close it.
+	if reg, ok := b.agentMgr.(crux.KickObserverRegistry); ok {
+		b.cleanup.push(reg.AddKickObserver(func(ev crux.KickEvent) { kickOutcomeDelivered(koStore, ev) }))
+	}
 
 	// Say out loud when the sandbox opt-in is configured but inert. The gate is
 	// two-part (global agent_sandbox.enabled AND a per-agent sandbox.enabled),
@@ -2709,6 +2728,7 @@ func (b *boot) bootStateWith(deps bootStateDeps) {
 			b.observeWritebackRepos()
 			b.ghClient.SetHoldLabels(b.githubHoldLabels())
 			b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+			b.ghClient.SetContributorGrace(b.cfg.Governor.Claims.EffectiveContributorGrace())
 			b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
 			b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 			if len(b.cfg.Governor.Labels.Exempt) > 0 {
@@ -3821,7 +3841,7 @@ func (b *boot) bootDashboardAPIWith(deps bootDashboardAPIDeps) {
 	if sup := wireMeetings(b.ctx, b.cfg, b.logger); sup != nil {
 		b.meetingsQuorum = sup
 		b.cleanup.push(sup.Stop)
-		if mgr, store := wireMeetingsManager(b.cfg, sup, b.logger); mgr != nil {
+		if mgr, store := wireMeetingsManager(b.cfg, sup, b.dashSrv.AuditLog, b.logger); mgr != nil {
 			b.meetingsMgr = mgr
 			b.cleanup.push(mgr.Close)
 			// Research intents go to the research agent pool (#18294).
@@ -5103,7 +5123,13 @@ func (b *boot) bootLaunchWith(deps bootLaunchDeps) {
 			}
 			b.logger.Info("audit: starting agent", "name", name, "trigger", "startup")
 			if err := deps.startAgent(b.ctx, b.agentMgr, name); err != nil {
-				b.logger.Warn("failed to start agent", "name", name, "error", err)
+				if stoppedAgentStartErrorIsBenign(err) {
+					// Already running (adopted/raced) or launching: the desired
+					// end state holds, so this is not a start failure (#18936).
+					b.logger.Info("agent already started; skipping startup launch", "name", name, "reason", err.Error())
+				} else {
+					b.logger.Warn("failed to start agent", "name", name, "error", err)
+				}
 			} else {
 				// Surface whether a persisted operator pause was honored on this
 				// restart, so the audit log shows pause state survived (or didn't).
@@ -6341,6 +6367,7 @@ func (b *boot) bootHeartbeatWith(deps bootHeartbeatDeps) {
 				}
 				b.ghClient.SetHoldLabels(b.githubHoldLabels())
 				b.ghClient.SetNeverClaimLabels(b.cfg.Governor.Claims.EffectiveNeverClaimLabels())
+				b.ghClient.SetContributorGrace(b.cfg.Governor.Claims.EffectiveContributorGrace())
 				b.ghClient.SetSkipIssuesWithOpenPR(b.cfg.Scanner.IsSkipIssuesWithOpenPR())
 				b.ghClient.SetSentinelAlertLabel(b.cfg.Sentinel.LabelOrDefault())
 				b.ghClient.SetIssueFilter(b.cfg.Project.IssueFilter)

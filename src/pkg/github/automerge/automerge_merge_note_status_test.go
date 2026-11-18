@@ -128,7 +128,7 @@ func TestNeedsHumanEntryStillCommentsInQuietMode(t *testing.T) {
 	e.stageLabelPolicy = func() StageLabelPolicy { return StageLabelPolicy{Enabled: true, QuietNotifications: true} }
 	api.reset()
 	pr := stagePR(13, "role/contributor", "author/clanker", "stage/050-review-pending")
-	pr.Body = strPtr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+	pr.Body = strPtr("Fixes the widget.\n\n-- hive: backend=pi model=gpt-6\n")
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageVerdict("acme", "widget", 13, *verdict)
 	e.noteStageRole("acme", "widget", 13, stagelabels.RoleContributor)

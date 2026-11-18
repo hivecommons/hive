@@ -166,3 +166,34 @@ func classifyMentionSearchError(ctx context.Context, err error) error {
 	}
 	return errors.New("mention search failed")
 }
+
+// profileLookupCaller labels the request in /api/gh-rate-limits.
+const profileLookupCaller = "customers_profile_lookup"
+
+// PublicProfile is the part of a person's public GitHub profile a Customers
+// profile keeps: the name, company and location they chose to publish. The
+// bio, email and everything else are dropped.
+type PublicProfile struct {
+	Name     string
+	Company  string
+	Location string
+}
+
+// GetPublicProfile makes ONE request for the public profile of a login. Like
+// SearchMentions it goes through the shared transport at low priority, and
+// it never returns the original error text, which echoes the login.
+func (c *Client) GetPublicProfile(ctx context.Context, login string) (PublicProfile, error) {
+	if c == nil || c.client == nil {
+		return PublicProfile{}, ErrNoGitHubClient
+	}
+	login = strings.TrimPrefix(strings.TrimSpace(login), "@")
+	if login == "" || strings.ContainsAny(login, " \t\r\n:/") {
+		return PublicProfile{}, fmt.Errorf("profile lookup: invalid login")
+	}
+	ctx = WithPacingClass(WithRESTCaller(ctx, profileLookupCaller), PacingLow)
+	u, _, err := c.client.Users.Get(ctx, login)
+	if err != nil {
+		return PublicProfile{}, classifyMentionSearchError(ctx, err)
+	}
+	return PublicProfile{Name: u.GetName(), Company: u.GetCompany(), Location: u.GetLocation()}, nil
+}

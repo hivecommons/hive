@@ -40,6 +40,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Release channels](release-channels.md) — `stable`/`candidate`/`edge` moving image tags, per-line channel ownership (`v5` → `candidate`/`latest`, `v6` → `edge`, `v4` → none), switching a hive to a channel, the version pill, and the timeline for when a hive follows `stable` after the tag moves.
 - [Digest-verifiable rollback](release-rollback.md) — **Operator:** pin all three images to prior builds, stop conflicting automation, and verify running digests.
 - [Outcome benchmarks](benchmarks/README.md) — compare change quality, review, timing, and cost from stored evidence; includes monthly reports and generated README cards.
+- [Quality report and README badges](quality-report.md) — how the generated report behind the README badges is built, where each badge value comes from, how often it refreshes, and when it reads `unknown` or `stale`.
 - [v5 GA readiness bar](v5-ga.md) — measurable release-train, migration, safety, and governance criteria that must be evidenced before v5 can be promoted beyond the active-development `edge` channel.
 - [v5 GA candidate week sequencing](v5-candidate-week.md) — dependency-ordered plan for the remaining human-gated GA-bar steps: candidate-SHA designation, candidate-pinned measurements, the two bound exercises, and the v4 freeze evaluation.
 - [Stable soak and promotion policy (v5 line)](stable-soak-policy.md) — **Release maintainer:** normal promotion gates, emergency checklist, closure evidence, and per-image rollback ledger.
@@ -66,6 +67,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Dashboard settings explained](settings.md) — one entry per Settings tab: what it controls and which guide explains it. The **?** mark next to each setting opens its guide or this page.
 - [Dashboard feedback](feedback.md) — reporting bugs and requesting features from the spoke dashboard, including diagnostics, screenshot handling, hub relay, user-auth, and fallback issue paths.
 - [Dashboard source layout](dashboard-source-layout.md) — `static/index.html` is generated from per-area CSS/JS/HTML sources in `static-src/` via `make dashboard-gen`; how to edit, add an area, and resolve merge conflicts.
+- [UI render evidence](ui-render-evidence.md) — the screenshots a UI pull request carries (desktop and phone, light and dark, fixture data), the one sticky comment that indexes them, how to read them, and what they do not prove.
 - [Dashboard design system](dashboard-design-system.md) — shared token catalogue, component variants, migration rules, ratchet plan, and #8536 theme override contract for spoke, contributor, and hub dashboard surfaces.
 - [Dashboard glossary and sidebar IA](dashboard-glossary.md) — the operator-facing names used by the dashboard and the ADR-0018 sidebar information architecture.
 - [The `auto-update` Compose profile](auto-update-profile.md) — what unattended Watchtower updates cost you, what the Docker socket proxy does and does **not** fix, and why Kubernetes should not use this profile at all.
@@ -148,6 +150,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 ## Contributors and access
 
 - [Getting started as a first-time contributor](../../docs/getting-started-contributing.md) — the end-to-end path for a first code or documentation contribution, tying the reference docs together and answering the Hive-specific questions they don't.
+- [RFC and proposal process](rfc-process.md) — when a change needs an RFC, how to file a `📝 RFC:` issue, who decides, what accepted means, how RFCs are tracked and closed, and where to see open ones.
 - [Local development](../../docs/development.md) — the local workflow for contributing to the Go codebase on `v4`: prerequisites, build, and test loop.
 - [ClankeR contributor relay](contributor-relay.md) — local contributor setup, multi-hub subscriptions, moving a relay to another machine, and role requests.
 - [Hive-curated good first issues](good-first-issue.md) — find or configure contributor-friendly work, welcome comments, relay links, and qualification rules.
@@ -232,6 +235,7 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [Gap analysis: OpenAI Agents API](backend-gap-openai-agents-api.md) — **Design/evaluation:** assess hosted tools, metering, and write paths outside Hive's proxy.
 - [Omnigent CLI contract and policy composition](backend-omnigent-cli-contract.md) — **Experimental/unconfined backend reference:** launch contract, credentials, safety flags, refusal gate, and policy composition.
 - [Inference backends](../../docs/inference-backends.md) — vLLM, llm-d, LiteLLM, and Model Gateway troubleshooting.
+- [Evaluation: generic AI gateway in front of the model backend](ai-gateway-evaluation.md) — **Design/evaluation, not a commitment:** how model traffic flows today, a vendor-neutral recipe using existing gateway configuration, what that configuration cannot express, and a spike plan with named pass/fail thresholds. LiteLLM stays the supported default (#18989).
 - [apiproxy](apiproxy.md) — Anthropic-compatible proxy logging and deployment notes.
 - [Outreach anti-spam ruleset](../../docs/outreach-antispam.md) — the deduplication and anti-spam rules the outreach agent operates under across awesome lists, project issues, directories, and community threads.
 - [v1 to v2 migration](../../docs/migration-v1-v2.md) — **historical.** Both ends of this migration are retired; v2 was retired in August 2026. Kept for operators still on v1, who should read it alongside [v2 → v4 migration](migration-v2-v4.md) above. New deployments do not need it.
@@ -249,8 +253,10 @@ Documentation for the current Hive line (branch `v5`; the code and docs live und
 - [CNCF reference architecture](cncf-reference-architecture.md) — CNCF submission/reference template.
 - [Podman CI runner map](podman-ci-runner-map.md) — measured hosted-runner capabilities and which Podman lane goes where; SELinux is the only lane needing non-hosted infrastructure.
 - [CI runner labels](ci-runner-labels.md) — how `runs-on:` picks the self-hosted fleet, why a fork must degrade to a GitHub-hosted runner, and the one variable `hivecommons` sets.
+- [Session taint design](design/session-taint.md) - **design/proposal:** a session-level record of what an agent has read and the rules that would hold or deny later pushes, comments and PRs against it, off by default with an observe-only first phase (RFC #18987).
 - [Gate-integrity invariants for agent lanes](design/gate-integrity-invariants.md) — proposed write-gate rules for agent lanes: no history rewrites on branches a lane did not create, no sign-off on other authors' commits, and hold-gated demotion for gate manipulation.
 - [Crux: the agent runtime boundary](design/crux.md) — **Design record:** runtime separation, module boundary, staged rollout, and naming decision.
+- [One authorization point for writes](design/authorization-decision-point.md) - proposed design for a single decision seam, decision events and per-decision scoped credentials across the proxy, relays and push broker (RFC #18988).
 - [Customers: a profile per person and a customer graph](design/customers.md) — proposed design for the Customers section, the people store, the read-only graph endpoint, and inferred goals and satisfaction (RFC #18742).
 - [Design documents](design/README.md) — browse records labelled shipped, partly shipped, design-only, or historical; proposals are not current behavior.
 - [Discord reaction-consensus issue promotion](design/discord-issue-promotion.md) — proposed design for turning Discord reaction consensus into an audited Hive label write that composes with `project.issue_filter.require_labels` (RFC #6239).

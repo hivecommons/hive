@@ -344,7 +344,7 @@ func TestRequiresHumanLandsAt085WithEntryComment(t *testing.T) {
 		// A clanker PR (attribution trailer): a person's requires_human
 		// routes to 071 instead (hivecommons/hive#15202).
 		pr := stagePR(13, labels...)
-		pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+		pr.Body = gh.Ptr("Fixes the widget.\n\n-- hive: backend=pi model=gpt-6\n")
 		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 		e.noteStageVerdict("acme", "widget", 13, *verdict)
 		e.noteStageRole("acme", "widget", 13, stagelabels.RoleContributor)
@@ -404,7 +404,7 @@ func TestEntryCommentOncePerStageAndHead(t *testing.T) {
 		api.reset()
 		pr := stagePR(13, labels...)
 		pr.Head.SHA = gh.Ptr(head)
-		pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+		pr.Body = gh.Ptr("Fixes the widget.\n\n-- hive: backend=pi model=gpt-6\n")
 		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 		e.noteStageVerdict("acme", "widget", 13, *verdict)
 		e.noteStageRole("acme", "widget", 13, stagelabels.RoleContributor)
@@ -451,7 +451,7 @@ func TestDecisionRequestedLandsAt085WithQuestion(t *testing.T) {
 	ctx := context.Background()
 
 	pr := stagePR(17, "role/contributor", "author/human", "stage/050-review-pending")
-	pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+	pr.Body = gh.Ptr("Fixes the widget.\n\n-- hive: backend=pi model=gpt-6\n")
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageVerdict("acme", "widget", 17, *verdict)
 	e.noteStageRole("acme", "widget", 17, stagelabels.RoleContributor)
@@ -483,7 +483,7 @@ func TestRequiresHumanLandsAt085WithSummary(t *testing.T) {
 	ctx := context.Background()
 
 	pr := stagePR(17, "author/contributor", "stage/050-review-pending")
-	pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+	pr.Body = gh.Ptr("Fixes the widget.\n\n-- hive: backend=pi model=gpt-6\n")
 	e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 	e.noteStageVerdict("acme", "widget", 17, *verdict)
 	if _, err := e.ApplyStageLabels(ctx); err != nil {
@@ -728,7 +728,7 @@ func TestDecisionEntryNotRepostedWhenObservingLaneFlaps(t *testing.T) {
 	sweep := func(lane, reason string, labels ...string) {
 		t.Helper()
 		pr := stagePR(9, labels...)
-		pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+		pr.Body = gh.Ptr("Fixes the widget.\n\n-- hive: backend=pi model=gpt-6\n")
 		e.recordStage(lane, "acme/widget", "acme", "widget", pr, reason, false, nil)
 		if lane == stageLaneContributor {
 			e.noteStageVerdict("acme", "widget", 9, *verdict)
@@ -955,7 +955,7 @@ func TestEntryCommentUpsertsExistingComment(t *testing.T) {
 		api.reset()
 		pr := stagePR(14, labels...)
 		pr.Head.SHA = gh.Ptr(head)
-		pr.Body = gh.Ptr("Fixes the widget.\n\n— hive: backend=pi model=gpt-6\n")
+		pr.Body = gh.Ptr("Fixes the widget.\n\n-- hive: backend=pi model=gpt-6\n")
 		e.recordStage(stageLaneContributor, "acme/widget", "acme", "widget", pr, contributorLaneReasonNoVerdict, false, nil)
 		e.noteStageVerdict("acme", "widget", 14, *verdict)
 		e.noteStageRole("acme", "widget", 14, stagelabels.RoleContributor)

@@ -102,7 +102,7 @@ func TestWorkflowDispatchHandoffUI(t *testing.T) {
 	script := `const assert = require('assert');
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;');
 ` + jsConstLine(t, html, "WORKFLOW_DISPATCH_SOURCE_WORD") + "\n" +
-		jsFunc(t, html, "workflowDispatchProfileView") + jsFunc(t, html, "renderRepoWorkflowProfileRows") +
+		jsFunc(t, html, "workflowHandoffNote") + jsFunc(t, html, "workflowDispatchProfileView") + jsFunc(t, html, "renderRepoWorkflowProfileRows") +
 		jsFunc(t, html, "stageTrackerWorkflowOf") + jsFunc(t, html, "stageTrackerWorkflowDispatchOf") +
 		jsFunc(t, html, "stageTrackerWorkflowGapOf") + jsFunc(t, html, "stageTrackerWorkflowGapHtml") + `
 const agents = ['quality', 'scanner'];
@@ -122,7 +122,7 @@ assert.strictEqual(v.options[2].label, 'scanner (ADVISORY, cannot do this)');
 assert.strictEqual(v.options[2].disabled, true);
 assert.ok(v.options[2].title.indexOf('scanner may not open pull requests in cncf/techdocs') === 0, v.options[2].title);
 assert.strictEqual(v.warning, '');
-assert.deepStrictEqual(v.stalled, ['Hand-off of cncf/techdocs#395 not started: scanner declined the hand-off: my session is advisory. The hive hands it to another agent that may do the work, if there is one.']);
+assert.deepStrictEqual(v.stalled, ['Hand-off of cncf/techdocs#395 not started: scanner declined the hand-off: my session is advisory. Decided at an unknown time in session unknown (before provenance was recorded). The hive hands it to another agent that may do the work, if there is one.']);
 
 // A pin to an agent that may not do the work stays selectable (it is the
 // current value) and the row warns.

@@ -550,7 +550,7 @@
         const gateHere = sg.state === 'active' && !sg.cap && !(ctx && ctx.gateElsewhere) && typeof stageTrackerHumanGateReasons === 'function' && stageTrackerHumanGateReasons(item).length > 0;
         const fixPushed = sg.number === 30 && sg.state === 'done' && remediation === 'fix_pushed';
         const blockerNote = sg.state === 'done' && sg.blockerNote ? String(sg.blockerNote) : '';
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', blockerNote ? 'ham-blocker-note' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', gateHere ? 'ham-human-gated' : ''].filter(Boolean).join(' ');
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', blockerNote ? 'ham-blocker-note' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.needsHuman ? 'ham-open-needs-human' : '', sg.na ? 'ham-na' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', gateHere ? 'ham-human-gated' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         let gateCaption = '';
@@ -559,6 +559,7 @@
           if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
           if (sg.draft) tip += ' — ' + STAGE_TRACKER_DRAFT_TIP;
           if (sg.isNew && typeof stageTrackerNewLines === 'function') tip = (typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item) ? 'Triage needed — ' : 'New — ') + stageTrackerNewLines(item, nowMs).join(' — ');
+          if (sg.needsHuman) tip = STAGE_TRACKER_NEEDS_HUMAN_WORD + ': ' + String((item.needs_human_why && item.needs_human_why.reason) || '').trim() + '. Later stages are not applicable until a person acts.';
           if (sg.advisory) tip = (item.advisory && item.advisory.caption) || 'Advisory for maintainers · read, then close';
           if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
@@ -597,6 +598,7 @@
           if (waitingOnTracks && !sg.cap) tip = (tracksRunning === 2 ? 'Waiting on CI and review, both running' : 'Waiting on ' + (stageTrackerTrackRunning(item, 'ci') ? 'CI' : 'review') + ', running') + ' — ' + tip;
         }
         let inner;
+        const naTip = sg.na && !sg.cap ? 'Not applicable: waiting on a person (' + String((item.needs_human_why && item.needs_human_why.reason) || STAGE_TRACKER_NEEDS_HUMAN_WORD).trim() + ')' : '';
         // A lit chevron on a row parked on a person ("Needs human decision",
         // "Triage needed") is the trigger of the decision popover: the word
         // becomes a button and the chevron drops its native title so the
@@ -661,7 +663,8 @@
           const noteTip = [blockerNote, b.detail, item.human_attention && item.human_attention.reason].filter(Boolean).join(' — ');
           const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
           inner = `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(noteTip)}" aria-describedby="${esc(tipID)}">${stageTrackerIcon(sg.number, 'ham-ico')}<span class="ham-chevron-copy"><span class="ham-seg-t">${esc(blockerNote)}</span></span>${stageTrackerIcon('human', 'ham-ico ham-actor-ico', 'Next move: human')}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(noteTip)}</span></span>`;
-        } else inner = stageTrackerIcon(sg.number, 'ham-ico');
+        } else if (naTip) inner = `<span class="ham-chevron-info" title="${esc(naTip)}" aria-label="${esc(naTip)}">${stageTrackerIcon(sg.number, 'ham-ico')}</span>`;
+        else inner = stageTrackerIcon(sg.number, 'ham-ico');
         return `<li class="${cls}"${remediation && sg.number === 30 && (active || fixPushed) ? ` data-remediation="${esc(remediation)}"` : ''}${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}>${inner}</li>`;
       }).join('');
     }

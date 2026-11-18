@@ -137,7 +137,9 @@ func (s *Server) registerMeetingsRoutes() {
 	s.mux.HandleFunc("POST /api/meetings/{id}/approve", s.handleMeetingsRequestApprove)
 	s.mux.HandleFunc("POST /api/meetings/{id}/decline", s.handleMeetingsRequestDecline)
 	s.mux.HandleFunc("GET /api/meetings/{id}/ws", s.handleMeetingsWS)
+	s.mux.HandleFunc("GET /api/meetings/budget", s.handleMeetingsBudget)
 	s.registerMeetingsDeleteRoutes()
+	s.mux.HandleFunc("DELETE /api/meetings/trusted/{platform}/{uid}", s.handleMeetingsUntrust)
 }
 
 // meetingsErrorStatus maps a MeetingsService error to its HTTP status: the
@@ -224,7 +226,13 @@ func (s *Server) handleMeetingsList(w http.ResponseWriter, r *http.Request) {
 		s.meetingsError(w, r, err)
 		return
 	}
-	jsonResponse(w, s.withEmailIn(r, map[string]any{"meetings": list}))
+	out := map[string]any{"meetings": list}
+	if ts, ok := svc.(MeetingsTrustService); ok {
+		if trusted, err := ts.TrustedRequesters(); err == nil {
+			out["trusted_requesters"] = trusted
+		}
+	}
+	jsonResponse(w, s.withEmailIn(r, out))
 }
 
 func (s *Server) handleMeetingsGet(w http.ResponseWriter, r *http.Request) {
@@ -307,6 +315,20 @@ func (s *Server) handleMeetingsApprove(w http.ResponseWriter, r *http.Request) {
 
 type meetingRequestApproveBody struct {
 	Voice bool `json:"voice,omitempty"`
+	// Always also trusts the requester (by the platform user id on the
+	// request) so their later requests are approved automatically.
+	Always bool `json:"always,omitempty"`
+}
+
+// MeetingsTrustService is the optional part of MeetingsService that keeps
+// the trusted requesters: platform users whose join requests are approved
+// without the owner, matched by user id only.
+type MeetingsTrustService interface {
+	// ApproveAndTrust approves the pending request and trusts its requester;
+	// the user id comes from the request and is returned for the audit log.
+	ApproveAndTrust(ctx context.Context, id string, voice bool, by string) (meeting any, trustedID string, err error)
+	TrustedRequesters() (any, error)
+	Untrust(platform, id string) (bool, error)
 }
 
 // handleMeetingsRequestApprove lets hive into a meeting someone asked for
@@ -329,7 +351,22 @@ func (s *Server) handleMeetingsRequestApprove(w http.ResponseWriter, r *http.Req
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), meetingsCallTimeout)
 	defer cancel()
-	m, err := svc.ApproveRequest(ctx, r.PathValue("id"), body.Voice)
+	var m any
+	var err error
+	if body.Always {
+		ts, ok := svc.(MeetingsTrustService)
+		if !ok {
+			jsonError(w, "trusted requesters are not available", http.StatusServiceUnavailable)
+			return
+		}
+		var trustedID string
+		m, trustedID, err = ts.ApproveAndTrust(ctx, r.PathValue("id"), body.Voice, requestUser(r))
+		if err == nil {
+			s.auditFromRequest(r, "meeting_requester_trust", auditDetail("meeting", r.PathValue("id"), "trusted_id", trustedID), "")
+		}
+	} else {
+		m, err = svc.ApproveRequest(ctx, r.PathValue("id"), body.Voice)
+	}
 	if err != nil {
 		s.meetingsError(w, r, err)
 		return
@@ -482,6 +519,7 @@ func (s *Server) meetingsSettings(ctx context.Context, m config.MeetingsConfig) 
 			"meetings.tts_url":                           m.TTSURLOrEmpty(),
 			"meetings.delivery":                          m.DeliveryOrDefault(),
 			"meetings.voice_on_address":                  boolString(m.VoiceOnAddressEnabled()),
+			"meetings.listening_tone":                    boolString(m.ListeningToneEnabled()),
 			"meetings.bot_name":                          m.BotNameOrDefault(),
 			"meetings.invite_policy":                     m.InvitePolicyOrDefault(),
 			"meetings.research_pool_size":                strconv.Itoa(m.ResearchPoolSizeOrDefault()),
@@ -642,4 +680,32 @@ func meetingsPerMeetingInFlight(l config.MeetingsLLMConfig) int {
 		ceiling = config.DefaultMeetingsLLMMaxInFlight
 	}
 	return min(n, ceiling)
+}
+
+// handleMeetingsUntrust stops auto-approving a trusted requester. Owner only.
+func (s *Server) handleMeetingsUntrust(w http.ResponseWriter, r *http.Request) {
+	if !requireOwnerRole(w, r) {
+		return
+	}
+	svc, ok := s.meetingsService(w)
+	if !ok {
+		return
+	}
+	ts, ok := svc.(MeetingsTrustService)
+	if !ok {
+		jsonError(w, "trusted requesters are not available", http.StatusServiceUnavailable)
+		return
+	}
+	platform, uid := r.PathValue("platform"), r.PathValue("uid")
+	found, err := ts.Untrust(platform, uid)
+	if err != nil {
+		s.meetingsError(w, r, err)
+		return
+	}
+	if !found {
+		jsonError(w, "not a trusted requester", http.StatusNotFound)
+		return
+	}
+	s.auditFromRequest(r, "meeting_requester_untrust", auditDetail("platform", platform, "id", uid), "")
+	jsonResponse(w, map[string]any{"removed": true})
 }

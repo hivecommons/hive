@@ -236,6 +236,8 @@ auto_merge.native_merge_queue.enabled # native merge queue hand-off opt-in (#151
 auto_merge.native_merge_queue.probe_ttl # merge-queue probe cache TTL (#15198); yaml-only
 auto_merge.native_merge_queue.repos[] # native merge queue per-repo allow-list (#15198); yaml-only
 auto_merge.native_merge_queue.skip_current_base_gate # explicit current-base bypass on queue bases (#15198); yaml-only
+auto_merge.pr_gate.mode # PR-contents gate posted by the hive, default off (#19038); yaml-only
+auto_merge.pr_gate.repos[] # PR-contents gate repo scope (#19038); yaml-only
 auto_merge.hive_superseding.auto_merge # hive-authored superseding PRs auto-merge without an operator decision; yaml-only
 auto_merge.queue_on_approve_and_unhold[] # per-repo L5 opt-in; yaml-only (#13629)
 auto_merge.repos.<key>.required_checks[] # TODO #11854
@@ -563,6 +565,17 @@ repos.<key>.agents_md_max_bytes # TODO #18495 (per-repo AGENTS.md cap; Settings 
 repos.<key>.parent_autoclose # TODO #18869 (per-repo decomposed-parent auto-close policy; Settings control pending)
 retro.lesson_confidence_cap # TODO #11854
 retro.lesson_confidence_step # TODO #11854
+review.analysis_factcheck.author_agents[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.authoritative_files[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.enabled # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.independence # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.labels[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.max_rounds # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.ready_policy # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.reviewer_agents[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.reviewer_model # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.revision_wait # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.rubric # TODO #19074 (yaml-only at first; Settings control pending)
 review.backlog.labels[] # TODO #11854
 review.bot_author_full_review_paths[] # TODO #14625
 review.bot_author_model # TODO #14625

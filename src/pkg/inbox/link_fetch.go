@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/crux/upstreamproxy"
+	"github.com/hivecommons/hive/pkg/netguard"
 )
 
 // Link fetch limits. A link dropped onto the Inbox is fetched by the hive
@@ -46,38 +47,6 @@ func linkRefused(format string, args ...any) error {
 	return fmt.Errorf("%w: %s", ErrLinkRefused, fmt.Sprintf(format, args...))
 }
 
-// linkBlockedPrefixes are the address ranges a link may never reach:
-// loopback, private, link-local, CGNAT, multicast, reserved and
-// documentation ranges, IPv6 ULA and link-local, and the cloud metadata
-// addresses (169.254.169.254 and fd00:ec2::254 fall inside link-local and
-// ULA; 100.100.100.200 inside CGNAT; 192.0.0.192 inside 192.0.0.0/24).
-var linkBlockedPrefixes = mustPrefixes(
-	"0.0.0.0/8",       // "this network"
-	"10.0.0.0/8",      // RFC 1918
-	"100.64.0.0/10",   // CGNAT (RFC 6598)
-	"127.0.0.0/8",     // loopback
-	"169.254.0.0/16",  // link-local, cloud metadata
-	"172.16.0.0/12",   // RFC 1918
-	"192.0.0.0/24",    // IETF protocol assignments
-	"192.0.2.0/24",    // TEST-NET-1
-	"192.88.99.0/24",  // 6to4 relay anycast
-	"192.168.0.0/16",  // RFC 1918
-	"198.18.0.0/15",   // benchmarking
-	"198.51.100.0/24", // TEST-NET-2
-	"203.0.113.0/24",  // TEST-NET-3
-	"224.0.0.0/4",     // multicast
-	"240.0.0.0/4",     // reserved, broadcast
-	"::/128",          // unspecified
-	"::1/128",         // loopback
-	"100::/64",        // discard-only
-	"2001::/32",       // Teredo
-	"2001:db8::/32",   // documentation
-	"fc00::/7",        // unique local, fd00:ec2::254 metadata
-	"fe80::/10",       // link-local
-	"fec0::/10",       // site-local (deprecated)
-	"ff00::/8",        // multicast
-)
-
 // linkBlockedHosts are names refused before any lookup.
 var linkBlockedHosts = map[string]bool{
 	"localhost":                true,
@@ -86,49 +55,14 @@ var linkBlockedHosts = map[string]bool{
 	"instance-data":            true,
 }
 
-func mustPrefixes(list ...string) []netip.Prefix {
-	out := make([]netip.Prefix, len(list))
-	for i, s := range list {
-		out[i] = netip.MustParsePrefix(s)
-	}
-	return out
-}
-
-// nat64Prefix and sixToFour embed an IPv4 address that is checked too.
-var (
-	nat64Prefix = netip.MustParsePrefix("64:ff9b::/96")
-	sixToFour   = netip.MustParsePrefix("2002::/16")
-)
-
-// LinkAddrAllowed reports whether a link may connect to addr. IPv4-mapped,
-// NAT64 and 6to4 addresses are judged by the IPv4 address they carry.
+// LinkAddrAllowed reports whether a link may connect to addr. The address
+// classes come from the shared classifier (pkg/netguard), the one source of
+// truth for which ranges are refused: loopback, private, link-local, CGNAT,
+// multicast, reserved and documentation ranges, IPv6 unique-local and
+// site-local, and the cloud metadata addresses. IPv4-mapped, NAT64 and 6to4
+// addresses are judged by the IPv4 address they carry.
 func LinkAddrAllowed(addr netip.Addr) bool {
-	if !addr.IsValid() {
-		return false
-	}
-	addr = addr.Unmap()
-	if addr.Is6() {
-		b := addr.As16()
-		switch {
-		case nat64Prefix.Contains(addr):
-			if !LinkAddrAllowed(netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})) {
-				return false
-			}
-		case sixToFour.Contains(addr):
-			if !LinkAddrAllowed(netip.AddrFrom4([4]byte{b[2], b[3], b[4], b[5]})) {
-				return false
-			}
-		}
-	}
-	if addr.IsLoopback() || addr.IsPrivate() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() || addr.IsMulticast() || addr.IsUnspecified() || addr.IsInterfaceLocalMulticast() {
-		return false
-	}
-	for _, p := range linkBlockedPrefixes {
-		if p.Contains(addr) {
-			return false
-		}
-	}
-	return true
+	return !netguard.Denied(addr)
 }
 
 // ValidateLinkURL parses a submitted link and applies the rules that need no
@@ -165,8 +99,11 @@ func checkLinkURL(u *url.URL) error {
 	if linkBlockedHosts[host] || strings.HasSuffix(host, ".localhost") || strings.HasSuffix(host, ".internal") || strings.HasSuffix(host, ".local") {
 		return linkRefused("%s is a local or internal host name", host)
 	}
-	if addr, err := netip.ParseAddr(strings.Trim(host, "[]")); err == nil && !LinkAddrAllowed(addr) {
-		return linkRefused("%s is a private, loopback, link-local or metadata address", host)
+	// The shared classifier judges every literal spelling (decimal, octal,
+	// hex, short forms, bracketed IPv6) and refuses an all-numeric host that is
+	// not a valid IPv4 literal before any lookup.
+	if reason, _ := netguard.HostDenyReason(host); reason != "" {
+		return linkRefused("%s is a refused address or host name (%s)", host, reason)
 	}
 	return nil
 }

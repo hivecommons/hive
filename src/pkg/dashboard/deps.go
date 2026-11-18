@@ -130,6 +130,9 @@ type Dependencies struct {
 	// /api/health (hivecommons/hive#14138 stage 4). nil (in-process, or a
 	// test without a runtime) leaves the field out of the body.
 	CruxRuntimeHealth func() CruxRuntimeHealth
+	// KickOutcomes is the durable per-kick outcome record behind
+	// GET /api/kick-outcomes (hivecommons/hive#18916). Nil answers 503.
+	KickOutcomes KickOutcomeSource
 	// GHTokenScopes is the boot-time PAT scope probe result (see
 	// ghpkg.CheckTokenScopes). It is set only on the token-auth path; the App
 	// path leaves it at ScopeStatusSkipped because Apps carry permissions, not
@@ -338,6 +341,15 @@ type Dependencies struct {
 	// so the label write is idempotent. Nil disables the live check; the
 	// client honours the scanner open-PR switch itself.
 	OpenPRLinkingIssue func(repo string, number int, labels []string) (ghpkg.OpenPRLink, bool)
+	// ContributorHold asks the forge whether the contributor lane must hold
+	// off an issue for a reason that lives on GitHub rather than in the
+	// enumerated envelope: today the owner grace window
+	// (governor.claims.contributor_grace_s, hivecommons/hive#18898), an issue
+	// an owner, maintainer or this hive filed moments ago. createdAt is the
+	// enumerated issue's creation time so the hook can answer "" for an old
+	// issue without a forge read. A non-empty return is the refusal reason.
+	// Nil disables the check.
+	ContributorHold func(repo string, number int, createdAt time.Time) string
 
 	// Watsonx / OpenRouter are the LLM-provider gateway views (#5565 slice 3):
 	// narrow consumer-defined interfaces over pkg/watsonx and pkg/openrouter,

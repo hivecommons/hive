@@ -821,7 +821,7 @@ func attributionPromptInstruction(meta ghpkg.InvocationMeta) string {
 	}
 	// #7924: the same trailer signs an issue comment the agent leaves at a
 	// no_work_needed/blocked verdict, so a reader can tell which hive said it.
-	return " At the bottom of your PR body — and of any issue comment you leave — include exactly this line: '" + trailer + "'."
+	return " At the bottom of your PR body, and of any issue comment you leave, include exactly this line: '" + trailer + "'."
 }
 
 // promptInvocationMeta snapshots the hub's own handshake-recorded invocation

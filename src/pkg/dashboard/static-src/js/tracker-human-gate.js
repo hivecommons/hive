@@ -158,6 +158,10 @@
     // row's own lead actions (server-judged delegate, approve) are trusted
     // first; the rest follow the hold permission the endpoints share.
     function stageTrackerHumanGateVerbState(id, item, ctx, leads) {
+      // A head whose CI or review is still running is not decided on yet
+      // (hivecommons/hive#18889): the verb stays, disabled, with the reason.
+      const flight = typeof stageTrackerMidFlightOf === 'function' && STAGE_TRACKER_MIDFLIGHT_VERBS.indexOf(id) >= 0 && stageTrackerMidFlightOf(item) ? stageTrackerMidFlightWhy(item) : '';
+      if (flight) return { enabled: false, why: flight };
       const lead = (leads || []).find(a => a && a.id === id);
       if (lead) return { enabled: lead.enabled !== false, why: lead.enabled === false ? String(lead.why || '') : '' };
       return typeof stageTrackerActionAllowed === 'function' ? stageTrackerActionAllowed(id, ctx) : { enabled: true, why: '' };
@@ -232,7 +236,13 @@
       // stamped into the wrap the first time the … opens.
       const more = moreVerbs.length ? `<span class="ham-gate-more-wrap"><button type="button" class="ham-lead-act ham-gate-act ham-gate-more" data-ham-gate-more aria-haspopup="menu" aria-expanded="false" aria-label="More ways to settle this gate" title="${esc(moreVerbs.map(v => v.label).join(' · '))}">…</button><template class="ham-gate-menu-tpl"><div class="ham-menu ham-gate-menu" role="menu" aria-label="More ways to settle this gate" hidden>${moreVerbs.map(v => stageTrackerHumanGateVerbHtml(item, v, stageTrackerHumanGateVerbState(v.id, shown, ctx, leads), true)).join('')}</div></template></span>` : '';
       const key = typeof stageTrackerItemKey === 'function' ? stageTrackerItemKey(item) : '';
-      return `<span class="ham-human-gate" data-ham-gate="${esc(key)}" data-ham-gate-reasons="${esc(reasons.map(r => r.key).join(' '))}" role="group" aria-label="${esc(text)}">${status}${acts}${more}</span>`;
+      // The real reason the verbs are not live yet: the head's CI or review
+      // is still running (hivecommons/hive#18889). The pill still names what
+      // parked the row; this says why nothing can be decided on it now.
+      const flightWhy = typeof stageTrackerMidFlightWhy === 'function' ? stageTrackerMidFlightWhy(shown) : '';
+      const flightWord = flightWhy ? String(stageTrackerMidFlightOf(shown).text).trim() : '';
+      const wait = flightWhy ? `<span class="ham-gate-wait" data-ham-gate-wait="${esc(String(stageTrackerMidFlightOf(shown).kind || ''))}" title="${esc(flightWhy)}" role="status">waiting on ${esc(flightWord)}</span>` : '';
+      return `<span class="ham-human-gate" data-ham-gate="${esc(key)}" data-ham-gate-reasons="${esc(reasons.map(r => r.key).join(' '))}" role="group" aria-label="${esc(text + (flightWord ? ' — waiting on ' + flightWord : ''))}">${status}${wait}${acts}${more}</span>`;
     }
     // The pill's optimistic state after one of its verbs ran: the status
     // reads "settling…" until the next snapshot re-renders the row.

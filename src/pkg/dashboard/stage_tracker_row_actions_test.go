@@ -65,6 +65,10 @@ func stageTrackerRowActionsPreamble(t *testing.T, html string) string {
 		jsFunc(t, html, "stageTrackerDelegateTargets"),
 		jsFunc(t, html, "stageTrackerGateTargets"),
 		jsFunc(t, html, "stageTrackerServerDelegate"),
+		jsConstLine(t, html, "STAGE_TRACKER_MIDFLIGHT_VERBS"),
+		jsFunc(t, html, "stageTrackerMidFlightOf"),
+		jsFunc(t, html, "stageTrackerMidFlightWhy"),
+		jsFunc(t, html, "stageTrackerMidFlightApply"),
 		jsFunc(t, html, "stageTrackerDecideOptions"),
 		jsFunc(t, html, "stageTrackerSupersederOptions"),
 		jsFunc(t, html, "stageTrackerSupersederDefault"),
@@ -2121,6 +2125,87 @@ _stageTracker = { items: [issue, ownHold, twoPRs] };
   calls.length = 0;
   await runRowAction('release', twoPRs);
   assert.deepStrictEqual(calls.map(c => c.url), ['/api/repos/o/r/items/17601/hold'], 'several covering PRs: no single PR to retarget to');
+})().catch(e => { console.error(e); process.exit(1); });
+`)
+}
+
+// TestStageTrackerMidFlightGuardsDecisions: Decide / Approve / Let hive decide
+// are not offered while the CURRENT head's CI is running or its review is
+// queued or unfinished (hivecommons/hive#18889). They stay on the menu,
+// disabled, with the reason; a park from an earlier head does not count; and
+// "Let hive decide — all N PRs" skips (or, when every PR is in flight,
+// disables for) the PRs still running.
+func TestStageTrackerMidFlightGuardsDecisions(t *testing.T) {
+	html := indexHTML(t)
+	runStageTrackerRowActionsScript(t, stageTrackerRowActionsPreamble(t, html)+`
+const ctx = { user: true, canHold: true, canHuman: true };
+const byId = (opts, id) => opts.find(o => o.id === id);
+const GUARDED = ['decide:delegate', 'decide:approve', 'decide:direction'];
+const parked = extra => Object.assign({ repo: 'o/r', kind: 'pr', number: 4, url: 'u', stage: 85, head: 'abc1234def', modifiers: ['needs-decision'], reason: 'contributor-lane:no-linked-issue' }, extra || {});
+
+// Settled head: every option is live.
+for (const o of stageTrackerDecideOptions(parked(), ctx)) assert.strictEqual(o.enabled, true, o.id + ' is offered on a settled head');
+
+// Pending CI on the current head.
+const ci = parked({ mid_flight: { kind: 'ci-running', text: 'CI running 2/5', head: 'abc1234def', park: 'it links no issue' } });
+const ciOpts = stageTrackerDecideOptions(ci, ctx);
+for (const id of GUARDED) {
+  const o = byId(ciOpts, id);
+  assert.strictEqual(o.enabled, false, id + ' is disabled while CI runs');
+  assert.ok(o.why.includes('CI running 2/5'), id + ' says why: ' + o.why);
+  assert.ok(o.why.includes('it links no issue'), id + ' names what parked the PR: ' + o.why);
+}
+// What a person may still do: close it.
+assert.strictEqual(byId(ciOpts, 'decide:close-wontfix').enabled, true);
+assert.strictEqual(byId(ciOpts, 'decide:close-superseded').enabled, true);
+
+// Review queued on the current head (hivecommons/hive#18868: "Review 0/5 · queued").
+const rv = parked({ mid_flight: { kind: 'review-in-progress', text: 'review queued on abc1234 (0/5)', head: 'abc1234def' } });
+assert.ok(byId(stageTrackerDecideOptions(rv, ctx), 'decide:delegate').why.includes('review queued on abc1234 (0/5)'));
+assert.strictEqual(byId(stageTrackerDecideOptions(rv, ctx), 'decide:approve').enabled, false);
+
+// A park recorded for an earlier head: the push restarted both tracks, so
+// the old park (its needs-decision pill and 085 stage) does not enable anything.
+const stale = parked({ stage: 85, modifiers: ['needs-decision'], mid_flight: { kind: 'head-moved', text: 'CI and review not yet run on abc1234', head: 'abc1234def' } });
+for (const id of GUARDED) assert.strictEqual(byId(stageTrackerDecideOptions(stale, ctx), id).enabled, false, id + ' on a stale park');
+
+// A server option that was already disabled keeps its own reason when the
+// head is settled (no mid_flight), and an unset mid_flight changes nothing.
+assert.strictEqual(stageTrackerMidFlightOf({ mid_flight: { text: '' } }), null);
+assert.strictEqual(stageTrackerMidFlightWhy(parked()), '');
+
+// Issue row: its one parked nested PR is decided through that PR, so the
+// nested PR's mid_flight disables the issue row's options too.
+const issue = { repo: 'o/r', kind: 'issue', number: 5, url: 'u', stage: 50, modifiers: [], linked_prs: [Object.assign({ number: 4, state: 'open', stage: 85, head: 'abc1234def', modifiers: ['needs-decision'] }, { mid_flight: ci.mid_flight })] };
+const target = stageTrackerDecisionTarget(issue);
+assert.strictEqual(target.number, 4);
+assert.strictEqual(byId(stageTrackerDecideOptions(target, ctx), 'decide:delegate').enabled, false);
+
+// Delegate-all: skip what is in flight, disable when everything is.
+const fly = n => ({ number: n, state: 'open', stage: 60, head: 'h' + n, modifiers: [], mid_flight: { kind: 'ci-running', text: 'CI running 1/4', head: 'h' + n } });
+const calm = n => ({ number: n, state: 'open', stage: 85, head: 'h' + n, modifiers: ['needs-decision'] });
+const rowOf = linked => ({ repo: 'o/r', kind: 'issue', number: 5, url: 'u', stage: 50, modifiers: [], linked_prs: linked });
+const allOf = row => stageTrackerRowActions(row, ctx).find(a => a.id === 'decide:delegate-all');
+const none = allOf(rowOf([calm(11), calm(12)]));
+assert.strictEqual(none.enabled, true); assert.strictEqual(none.hint, 'per PR');
+const some = allOf(rowOf([calm(11), fly(12)]));
+assert.strictEqual(some.enabled, true, 'one settled PR is still decided');
+assert.ok(some.hint.includes('skips 1 still running'), some.hint);
+assert.deepStrictEqual(some.prs, [11, 12], 'the request names every PR; the server skips the one in flight');
+const every = allOf(rowOf([fly(11), fly(12)]));
+assert.strictEqual(every.enabled, false);
+assert.ok(every.why.includes('#11 CI running 1/4') && every.why.includes('#12 CI running 1/4'), every.why);
+
+// The click that beat the repaint is answered, not sent.
+const calls = []; const toasts = [];
+global.fetch = async (url, init) => { calls.push(url); return { ok: true, status: 200, json: async () => ({}) }; };
+global.showToast = (msg, type) => { toasts.push(type + ':' + msg); return null; };
+(async () => {
+  await runRowAction('decide:delegate', [ci]);
+  await runRowAction('decide:approve', [ci]);
+  await runRowAction('decide:delegate-all', [rowOf([fly(11), fly(12)])]);
+  assert.deepStrictEqual(calls, [], 'nothing is sent for a PR whose CI is running');
+  assert.ok(toasts.length === 3 && toasts[0].includes('not yet') && toasts[0].includes('CI running 2/5'), toasts.join(' | '));
 })().catch(e => { console.error(e); process.exit(1); });
 `)
 }

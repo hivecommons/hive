@@ -311,7 +311,7 @@ func (s *Server) loadWorkflowSpecText(ctx context.Context, req workflowIngestSpe
 }
 
 // workflowSpecHTTP is the client for URL specs; a seam for tests.
-var workflowSpecHTTP = &http.Client{Timeout: workflowSpecURLTimeout, CheckRedirect: noRedirectToPrivate}
+var workflowSpecHTTP = &http.Client{Timeout: workflowSpecURLTimeout, CheckRedirect: noRedirectToPrivate, Transport: ssrfPinnedTransport}
 
 func fetchWorkflowSpecURL(ctx context.Context, rawURL string) (string, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)

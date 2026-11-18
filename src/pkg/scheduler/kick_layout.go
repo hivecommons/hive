@@ -91,6 +91,7 @@ func (s *Scheduler) assembleKick(a kickAssembly, message string) string {
 	staticSeams := []func(string) string{
 		func(m string) string { return s.addHouseStyle(a.agent, m) },
 		addGovernorWorkSourceRule,
+		addPlainDashRule,
 		func(m string) string { return s.addIndependentReviewSection(a.agent, m) },
 		func(m string) string { return s.addWorkflowPushCeiling(a.agent, m) },
 		func(m string) string { return s.addFormalQualityCapability(a.agent, m) },

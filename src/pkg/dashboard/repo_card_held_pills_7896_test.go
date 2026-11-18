@@ -388,7 +388,7 @@ const holdguard = { labels: ['hold'], hive_attributed: true, hold_sources: ['hol
 check('holdguard does not claim the level gate', !heldReason(holdguard).includes('ACMM level gate'));
 check('a recorded level gate keeps the sentence', heldReason({ labels: ['hold'], hive_attributed: true, hold_sources: ['level_gate'] }).includes('ACMM level gate'));
 
-const reporterHeld = { labels: ['hold', 'needs-human'], hive_attributed: true, reporter_trust_reason: 'reporter-trust hold — issue #42 filed by @outsider' };
+const reporterHeld = { labels: ['hold', 'needs-human'], hive_attributed: true, reporter_trust_reason: 'reporter-trust hold - issue #42 filed by @outsider' };
 check('reporter hold names the request reporter', heldReason(reporterHeld).includes(reporterHeld.reporter_trust_reason));
 check('reporter hold does not claim exhausted fixes', !heldReason(reporterHeld).includes('automated fix attempts exhausted'));
 check('reporter hold does not claim level gate', !heldReason(reporterHeld).includes('ACMM level gate'));

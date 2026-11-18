@@ -112,7 +112,7 @@
       const warning = d.problem ? 'Not handed off: ' + d.problem + '. Items in this profile\'s states wait until an agent that may do the work is picked.' : '';
       const how = pinned ? 'pinned' : (WORKFLOW_DISPATCH_SOURCE_WORD[String(d.source || '')] || '');
       const note = warning ? '' : (agent ? 'handed to ' + agent + (how ? ' (' + how + ')' : '') : '') + (d.disabled ? ' · automatic hand-off off, manual send only' : '');
-      const stalled = (Array.isArray(d.not_started) ? d.not_started : []).map(h => 'Hand-off of ' + String(h.ref || '') + ' not started: ' + String(h.reason || 'the agent did not act') + '. ' + (h.retrying ? 'The hive hands it to another agent that may do the work, if there is one.' : 'It waits for an owner: use Send to ' + String(d.profile) + ' on the item\'s row in the Activity Monitor.'));
+      const stalled = (Array.isArray(d.not_started) ? d.not_started : []).map(h => workflowHandoffNote(h, d.profile));
       return { profile: String(d.profile), options, warning, note, stalled };
     }
 

@@ -12,7 +12,7 @@ import (
 	"testing"
 )
 
-const testScannerFooter = "\n\n---\n🐝 **Hive Agent**: `scanner` | **Instance:** `test-hive` | **SHA:** `unknown`\n<!-- hive:origin hive=test-hive at=2026-11-15T03:14:00Z -->\n\n— hive: agent=scanner backend=claude"
+const testScannerFooter = "\n\n---\n🐝 **Hive Agent**: `scanner` | **Instance:** `test-hive` | **SHA:** `unknown`\n<!-- hive:origin hive=test-hive at=2026-11-15T03:14:00Z -->\n\n-- hive: agent=scanner backend=claude"
 
 // scannerNoteServer fakes the GitHub surface the scanner note reads and
 // writes: one PR (head, author, mergeable state), its checks, and its

@@ -241,8 +241,8 @@ func TestSpeechIsPrewarmedWhenAVoiceMeetingGoesLive(t *testing.T) {
 	q.tmu.Lock()
 	got := q.prewarmed[0]
 	q.tmu.Unlock()
-	if len(got) != 2 || got[0] != "Hi, I'm Betty." || got[1] != LeavingText {
-		t.Fatalf("prewarmed %q: want the lines as they are spoken, blanks dropped", got)
+	if len(got) != 3 || got[0] != SpeechText(testConsent) || got[1] != "Hi, I'm Betty." || got[2] != LeavingText {
+		t.Fatalf("prewarmed %q: want the consent notice first, then the lines as they are spoken, blanks dropped", got)
 	}
 }
 

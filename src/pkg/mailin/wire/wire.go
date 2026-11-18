@@ -127,6 +127,9 @@ type Delivery struct {
 	MessageID  string    `json:"message_id,omitempty"`
 	ReceivedAt time.Time `json:"received_at"`
 	Auth       Auth      `json:"auth"`
+	// Facts are the header facts the hub's reply decision needs
+	// (#18746); nil from a hive-mx that predates them.
+	Facts *Facts `json:"facts,omitempty"`
 
 	Invites []Invite `json:"invites,omitempty"`
 	Files   *Files   `json:"files,omitempty"`

@@ -84,6 +84,7 @@ var clientResyncSetters = map[string]bool{
 	"SetRepos":                true,
 	"SetHoldLabels":           true,
 	"SetNeverClaimLabels":     true,
+	"SetContributorGrace":     true,
 	"SetSkipIssuesWithOpenPR": true,
 	"SetSentinelAlertLabel":   true,
 	"SetExemptLabels":         true,

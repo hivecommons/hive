@@ -35,3 +35,13 @@ test('third-party audio keeps the streaming note', () => {
     assert.strictEqual(inboxAudioNoteText(it, fmt), 'Streaming through this hive; the recording is not stored. Click Play again to restart.');
   }
 });
+
+test('live meetings keep no audio: no player, no play button, a quiet note', () => {
+  const has = new Function(fnSrc('inboxItemHasAudio') + '\nreturn inboxItemHasAudio;')();
+  assert.strictEqual(has({ source: 'meeting' }), false);
+  assert.strictEqual(has({ source: 'plaud' }), true);
+  assert.strictEqual(has({ source: 'upload', upload_kind: 'audio' }), true);
+  const src = fs.readFileSync(path.join(__dirname, 'static-src', 'js', 'inbox.js'), 'utf8');
+  assert.match(src, /Audio is not kept for live meetings/);
+  assert.match(src, /if \(src === 'meeting'\) return;/);
+});

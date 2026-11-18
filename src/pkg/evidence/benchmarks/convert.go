@@ -12,7 +12,11 @@ import (
 
 // Options parameterise one export.
 type Options struct {
-	HiveID      string
+	HiveID string
+	// HiveHash, when set, is used as source.hive_id as given and HiveID is
+	// ignored. Offline exports use it for owners who know their hash (shown in
+	// Settings > Benchmarks) but do not want the hive id on a command line.
+	HiveHash    string
 	HiveVersion string
 	Cluster     string
 	// Since drops PRs whose newest record is not strictly newer than it (the
@@ -75,7 +79,10 @@ func Convert(bundles []*evidence.Bundle, opts Options) []Record {
 		now = time.Now()
 	}
 	now = now.UTC()
-	hash := HiveHash(opts.HiveID)
+	hash := opts.HiveHash
+	if hash == "" {
+		hash = HiveHash(opts.HiveID)
+	}
 	version := strings.TrimSpace(opts.HiveVersion)
 	if version == "" {
 		version = kindUnknown

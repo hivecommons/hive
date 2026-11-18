@@ -22,6 +22,7 @@ parentheses, contains/fromJSON/format/startsWith/endsWith). An unsupported
 construct fails loudly rather than passing.
 """
 import json
+import os
 import pathlib
 import re
 import unittest
@@ -348,6 +349,50 @@ def audit(path):
         problems += [f"job {job_name!r}: {p}"
                      for p in collisions(name, job.get("concurrency"), runs)]
     return [n for n, _ in jobs], problems
+
+
+# Migration flag. GitHub blocks `pull_request_target` workflows by default on
+# public repositories from 2026-12-02, so once the hive posts `verify PR
+# contents` as a commit status no workflow may provide a required context from
+# that event. Until then pr-verifier.yml legitimately does, so the check below
+# is only enforced when this is set to "1" (flip it in the same change that
+# retires the legacy verifier trigger).
+PR_TARGET_MIGRATION_DONE = os.environ.get("HIVE_PR_GATE_MIGRATION_DONE") == "1"
+
+
+def pull_request_target_providers(data, events):
+    """Required contexts a workflow provides while triggered by pull_request_target."""
+    if "pull_request_target" not in events:
+        return []
+    return [name for name, _ in required_jobs(data)]
+
+
+class PullRequestTargetMigration(unittest.TestCase):
+    def test_detector_flags_a_required_context_on_pull_request_target(self):
+        data = {"jobs": {"verify": {"name": "verify PR contents"}, "other": {"name": "lint-x"}}}
+        self.assertEqual(
+            pull_request_target_providers(data, {"pull_request_target": None}),
+            ["verify PR contents"])
+        self.assertEqual(pull_request_target_providers(data, {"pull_request": None}), [])
+        self.assertEqual(
+            pull_request_target_providers({"jobs": {"o": {"name": "lint-x"}}},
+                                          {"pull_request_target": None}), [])
+
+    def test_no_required_context_comes_from_pull_request_target(self):
+        offenders, audited = {}, set()
+        for path in sorted(WORKFLOWS.glob("*.yml")):
+            data, events = load(path)
+            if "pull_request_target" in events:
+                audited.add(path.name)
+            found = pull_request_target_providers(data, events)
+            if found:
+                offenders[path.name] = found
+        # Positive control: the scan really sees pull_request_target workflows
+        # and the legacy verifier, so an empty result is not a vacuous pass.
+        self.assertIn("pr-verifier.yml", audited)
+        self.assertIn("verify PR contents", offenders.get("pr-verifier.yml", []))
+        if PR_TARGET_MIGRATION_DONE:
+            self.assertEqual(offenders, {})
 
 
 class RequiredCheckConcurrency(unittest.TestCase):

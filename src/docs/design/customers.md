@@ -92,6 +92,7 @@ contributor is one of several sources of identity for a person.
 | `goals` | See section 8. |
 | `satisfaction` | See section 8. |
 | `notes` | Free text, written by people only. |
+| `profile` | Optional `real_name`, `organization` and `location`, each `{value, source, rule, at, by}`. `source` is `auto` (the person's own public GitHub profile name, company and location, fetched once on accept) or `manual` (a person typed it or cleared it; the fetch never changes it; `auto` hands it back). Nothing here comes from the hub. |
 | `merged_from` | Merge history, so a merge can be undone. |
 
 **Identity** `{kind, value, source, confidence, manual, at, by}`. Kinds:
@@ -317,6 +318,15 @@ answering yes makes the suggested identity the customer's own (recorded as
 manual, by whom), answering no pins the pair so it is not asked again. A hint
 between two customers is answered by merging them, which is the merge and split
 UI of a later PR.
+
+Step E also makes ONE request for the accepted login's public profile, before the
+search, and keeps only the name, company and location the person published
+(`profile` in section 4). It shares step E's switch, hourly budget and quota
+stand-down, spends one request of that budget, and is never run by the sweep. A
+suggested person has no profile fields until accepted. Forget deletes the fields
+with the person and export includes them. The hub's own records of the same people
+(name, company, country, notes, inferred affiliation) are not read or copied: that
+is the open question in section 15 and needs a consent decision first.
 
 Step E, the budgeted GitHub search on accept, is built and opt-in.
 `customers.mention_search.enabled` defaults to **off** (env

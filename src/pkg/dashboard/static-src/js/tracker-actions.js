@@ -289,7 +289,8 @@
         out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
         out.push({ id: 'decide:close-wontfix', label: "Won't fix…", enabled, why, danger: true });
         out.push({ id: 'decide:direction', label: 'Give direction…', enabled, why });
-        return out;
+        // A head whose CI or review is still running is not decided on yet.
+        return typeof stageTrackerMidFlightApply === 'function' ? stageTrackerMidFlightApply(out, item) : out;
       }
       out.push({ id: 'decide:approve', label: 'Approve direction', enabled, why });
       out.push({ id: 'decide:direction', label: 'Send back to the hive…', enabled, why });
@@ -461,7 +462,14 @@
       const nested = stageTrackerNestedOpenPRs(item);
       if (nested.length >= STAGE_TRACKER_DELEGATE_ALL_MIN) {
         const can = write && !!ctx.user;
-        out.push({ id: 'decide:delegate-all', label: 'Let hive decide — all ' + nested.length + ' PRs', hint: 'per PR', enabled: can, why: can ? '' : STAGE_TRACKER_WHY_WRITE, prs: nested.map(p => p.number) });
+        // PRs whose CI or review is still running on the current head are
+        // skipped by the fan-out (the server answers each one no-effect);
+        // when every PR is mid-flight the action is disabled with the reason
+        // (hivecommons/hive#18889).
+        const flying = typeof stageTrackerMidFlightOf === 'function' ? nested.filter(stageTrackerMidFlightOf) : [];
+        const allFlying = flying.length === nested.length;
+        const flightWhy = allFlying ? 'Every PR is still waiting: ' + flying.map(p => '#' + p.number + ' ' + stageTrackerMidFlightOf(p).text).join('; ') : '';
+        out.push({ id: 'decide:delegate-all', label: 'Let hive decide — all ' + nested.length + ' PRs', hint: flying.length && !allFlying ? 'per PR · skips ' + flying.length + ' still running' : 'per PR', enabled: can && !allFlying, why: !can ? STAGE_TRACKER_WHY_WRITE : flightWhy, prs: nested.map(p => p.number) });
       }
       // The row asks the human for something (decision_needed on the item
       // or its one asking nested PR): the server's answers lead the menu,
@@ -2762,6 +2770,11 @@
       } else if (id === 'decide:delegate-all') {
         // The issue row itself is the request; the server fans out per PR.
         items = items.filter(it => stageTrackerNestedOpenPRs(it).length >= STAGE_TRACKER_DELEGATE_ALL_MIN);
+        // Every PR still mid-flight: nothing to send (the menu disables it).
+        if (typeof stageTrackerMidFlightOf === 'function' && items.length && items.every(it => stageTrackerNestedOpenPRs(it).every(stageTrackerMidFlightOf))) {
+          showToast('Let hive decide — all PRs: not yet, CI or review is still running on each', 'info');
+          return { toasts: [], pending: [] };
+        }
       } else if (id === 'decide:adopt-now' || stageTrackerActionBase(id) === 'decide:reroute') {
         // Adopt now / Reroute act on the PR waiting on its contributor (072 / 071).
         items = items.map(stageTrackerTakeoverTarget).filter(Boolean);
@@ -2809,6 +2822,18 @@
         items = [].concat(...items.map(it => stageTrackerGateTargets(it, id)))
           .filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
+        // A decision on a head whose CI or review is still running is not
+        // sent (hivecommons/hive#18889): the menu draws it disabled, and a
+        // click that beat the repaint is answered with the reason.
+        if (typeof stageTrackerMidFlightApply === 'function' && STAGE_TRACKER_MIDFLIGHT_VERBS.indexOf(id) >= 0) {
+          const ready = items.filter(t => !stageTrackerMidFlightOf(t));
+          if (ready.length < items.length) {
+            const held = items.filter(t => stageTrackerMidFlightOf(t));
+            showToast(stageTrackerActionLabel(id) + ': not yet — ' + held.map(t => stageTrackerRefOf(t) + ' ' + stageTrackerMidFlightWhy(t)).join('; '), 'info');
+            if (!ready.length) return { toasts: [], pending: [] };
+            items = ready;
+          }
+        }
       }
       const payload = await stageTrackerActionPayload(items, id, rows);
       if (payload == null) return { toasts: [], pending: [], cancelled: true };

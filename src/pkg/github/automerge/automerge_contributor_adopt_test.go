@@ -24,10 +24,13 @@ import (
 // adoptAPI layers the git-ref / pull-request routes the adoption needs on
 // top of stageAPI and records what the hive did.
 type adoptAPI struct {
-	mu          sync.Mutex
-	refs        map[string]string // refs/heads/x → sha
-	refUpdates  []string
-	pulls       []map[string]any
+	mu         sync.Mutex
+	refs       map[string]string // refs/heads/x → sha
+	refUpdates []string
+	pulls      []map[string]any
+	// openPRs is what GET pulls (the open-PR listing the covering-PR check
+	// reads, hivecommons/hive#18900) serves; none by default.
+	openPRs     []map[string]any
 	nextPR      int
 	superseders map[int]map[string]any // number → GET payload
 	prEdits     []string
@@ -112,6 +115,13 @@ func (a *adoptAPI) handle(w http.ResponseWriter, r *http.Request) bool {
 	defer a.mu.Unlock()
 	path := r.URL.Path
 	switch {
+	case r.Method == http.MethodGet && path == "/repos/acme/widget/pulls":
+		out := a.openPRs
+		if out == nil {
+			out = []map[string]any{}
+		}
+		_ = json.NewEncoder(w).Encode(out)
+		return true
 	case r.Method == http.MethodGet && strings.Contains(path, "/collaborators/") && strings.HasSuffix(path, "/permission"):
 		a.permissionReads++
 		if a.onPermission != nil {
@@ -427,7 +437,7 @@ func adoptPR(number int, head string, labels ...string) *gh.PullRequest {
 	pr := nudgePR(number, head, labels...)
 	pr.Base = &gh.PullRequestBranch{Ref: gh.Ptr("v5")}
 	pr.Head.Repo = &gh.Repository{FullName: gh.Ptr("acme/widget")}
-	pr.Body = gh.Ptr("Fixes the widget.\n\nCloses #12\nfixes #13\n\n— hive: backend=pi model=gpt-6\n")
+	pr.Body = gh.Ptr("Fixes the widget.\n\nCloses #12\nfixes #13\n\n-- hive: backend=pi model=gpt-6\n")
 	return pr
 }
 
@@ -785,7 +795,7 @@ func TestAdoptionOnlineGraceThenAdopt(t *testing.T) {
 // superseding PR. Once the superseder merges the original is closed.
 func TestAdoptionOfflineGraceThenSupersederMergedClosesOriginal(t *testing.T) {
 	// A sink without Presence: the nudge-time graces apply (the author's
-	// `— hive:` trailer still makes the PR a clanker's).
+	// `-- hive:` trailer still makes the PR a clanker's).
 	fake := &fakeNudgeSink{outcome: ContributorNudgeOutcome{Mode: "comment"}}
 	h, done := newAdoptHarnessWith(t, fake, nudgeOnlySink{fake}, adoptPolicy())
 	defer done()

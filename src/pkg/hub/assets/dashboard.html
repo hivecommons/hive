@@ -210,6 +210,21 @@
     #hive-search { flex: 1; min-width: 0; padding: 8px 14px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); font-size: 0.85rem; font-family: inherit; }
     #hive-search:focus { outline: none; border-color: var(--hub-dashboard-accent); }
     #hive-search-clear { flex: none; }
+    /* "Does this build contain PR #N?" (#18915). Tokens only. */
+    #hive-contains-row { display: flex; align-items: center; gap: 10px; margin-bottom: var(--sp-3); }
+    #hive-contains-q { flex: 1; min-width: 0; padding: var(--sp-4) var(--sp-6); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); color: var(--text); font-size: var(--fs-sm); font-family: inherit; }
+    #hive-contains-q:focus { outline: none; border-color: var(--hub-dashboard-accent); }
+    .hive-contains-label { flex: none; color: var(--muted); font-size: var(--fs-sm); }
+    #hive-contains-row[hidden], #hive-contains-result[hidden], #hive-contains-clear[hidden] { display: none; }
+    .hive-contains-result { margin-bottom: var(--sp-5); padding: var(--sp-3) var(--sp-4); background: var(--surface); border: 1px solid var(--border); border-radius: var(--r); font-size: var(--fs-sm); }
+    .hive-contains-head { color: var(--muted); margin-bottom: var(--sp-2); }
+    .hive-contains-item { display: flex; align-items: baseline; flex-wrap: wrap; gap: var(--sp-2) var(--sp-3); padding: var(--sp-1) 0; }
+    .hive-contains-sha { font-family: monospace; color: var(--muted); }
+    .hive-contains-note { color: var(--muted); font-size: var(--fs-2xs); }
+    .hive-contains-chip { display: inline-block; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-pill); font-size: var(--fs-2xs); border: 1px solid var(--border); white-space: nowrap; }
+    .hive-contains-chip.yes { color: var(--green); border-color: var(--green); }
+    .hive-contains-chip.no { color: var(--red); border-color: var(--red); }
+    .hive-contains-chip.unknown { color: var(--yellow); border-color: var(--yellow); }
     /* Collapsed rail width and expanded tray width. The layout grid reserves
        only the rail; the tray overhangs it. */
     :root { --facet-rail-w: 34px; --facet-tray-w: 240px; }
@@ -914,6 +929,13 @@
           <input type="text" id="hive-search" placeholder="Search hives — org, repo, cluster, branch, user… (space = OR)" oninput="onHiveSearchInput()" autocomplete="off">
           <button type="button" id="hive-search-clear" class="filter-chip filter-chip-clear" onclick="clearHiveSearch()">Clear</button>
         </div>
+        <div id="hive-contains-row" hidden>
+          <label class="hive-contains-label" for="hive-contains-q">Contains</label>
+          <input type="text" id="hive-contains-q" placeholder="Does each running build contain PR # or commit SHA?" onkeydown="if(event.key==='Enter'){event.preventDefault();runBuildContains()}" autocomplete="off">
+          <button type="button" id="hive-contains-go" class="filter-chip" onclick="runBuildContains()">Check</button>
+          <button type="button" id="hive-contains-clear" class="filter-chip filter-chip-clear" hidden onclick="clearBuildContains()">Clear</button>
+        </div>
+        <div id="hive-contains-result" class="hive-contains-result" role="status" aria-live="polite" hidden></div>
         <div id="hives-container"><div class="loading">Loading your hives...</div></div>
       </div>
     </div>
@@ -6331,6 +6353,90 @@
       return false;
     }
 
+    /* "Does this build contain PR #N?" (#18915). The hub answers from git
+       ancestry of the commit each hive already reports: yes, no, or unknown.
+       Unknown is never a guess: the commit may be unresolvable, the PR missing,
+       or the lookup may have failed, and the reason says which. */
+    var _buildContainsSeq = 0;
+
+    /* One line per hive on top of the answer: how far behind its channel the
+       hive is, and the newest image commit next to the newest merged commit,
+       so "merged, not yet built" reads as such and not as a lost change. */
+    function buildContainsNote(row) {
+      if (!row) return '';
+      var parts = [];
+      if (row.commitsBehindTarget !== undefined && row.commitsBehindTarget !== null) {
+        parts.push(row.commitsBehindTarget + ' behind ' + (row.behindTargetRef || 'its channel'));
+      }
+      if (row.behindTargetSHA) parts.push('newest image ' + row.behindTargetSHA);
+      if (row.branchTipSHA) parts.push('newest merged ' + row.branchTipSHA);
+      return parts.join(' · ');
+    }
+
+    function renderBuildContains(resp, err, rowsById) {
+      if (err || !resp) return '<div class="hive-contains-head">' + esc(err || 'Lookup failed; try again.') + '</div>';
+      var q = resp.query || {};
+      var head = q.kind === 'pr' ? 'PR #' + q.pr : 'commit ' + (q.commit || '');
+      if (resp.commit) head += ' (tested as ' + resp.commit.slice(0, 7) + ')';
+      if (resp.reason) head += ': ' + resp.reason;
+      var html = '<div class="hive-contains-head">' + esc(head) + '</div>';
+      var hives = resp.hives || [];
+      if (!hives.length) return html + '<div class="hive-contains-note">No hives to check.</div>';
+      hives.forEach(function(h) {
+        var verdict = h.contains === 'yes' || h.contains === 'no' ? h.contains : 'unknown';
+        var note = buildContainsNote(rowsById && rowsById[h.id]);
+        var reason = h.reason || '';
+        html += '<div class="hive-contains-item">' +
+          '<span>' + esc(h.name || h.id) + '</span>' +
+          '<span class="hive-contains-sha">' + esc((h.commit || '').slice(0, 7) || 'no commit') + '</span>' +
+          (h.channel ? '<span class="hive-contains-note">' + esc(h.channel) + '</span>' : '') +
+          '<span class="hive-contains-chip ' + verdict + '" title="' + escAttr(reason) + '">' + esc(verdict) + '</span>' +
+          (reason ? '<span class="hive-contains-note">' + esc(reason) + '</span>' : '') +
+          (note ? '<span class="hive-contains-note">' + esc(note) + '</span>' : '') +
+          '</div>';
+      });
+      return html;
+    }
+
+    function clearBuildContains() {
+      _buildContainsSeq++;
+      var input = document.getElementById('hive-contains-q');
+      var out = document.getElementById('hive-contains-result');
+      var clearBtn = document.getElementById('hive-contains-clear');
+      if (input) input.value = '';
+      if (out) { out.hidden = true; out.innerHTML = ''; }
+      if (clearBtn) clearBtn.hidden = true;
+    }
+
+    function runBuildContains() {
+      var input = document.getElementById('hive-contains-q');
+      var out = document.getElementById('hive-contains-result');
+      var clearBtn = document.getElementById('hive-contains-clear');
+      if (!input || !out) return;
+      var q = (input.value || '').trim();
+      if (!q) { clearBuildContains(); return; }
+      var seq = ++_buildContainsSeq;
+      out.hidden = false;
+      out.textContent = 'Checking…';
+      if (clearBtn) clearBtn.hidden = false;
+      var rowsById = {};
+      (_allDashHives || []).forEach(function(h) { if (h && h.id) rowsById[h.id] = h; });
+      fetch('/api/saas/build-contains?q=' + encodeURIComponent(q), { credentials: 'same-origin' })
+        .then(function(resp) {
+          if (resp.status === 401) { window.location.href = '/login'; return null; }
+          return resp.json().then(function(body) { return { ok: resp.ok, body: body }; });
+        })
+        .then(function(r) {
+          if (!r || seq !== _buildContainsSeq) return;
+          out.innerHTML = r.ok
+            ? renderBuildContains(r.body, '', rowsById)
+            : renderBuildContains(null, (r.body && r.body.error) || 'Lookup failed; try again.');
+        })
+        .catch(function() {
+          if (seq === _buildContainsSeq) out.innerHTML = renderBuildContains(null, 'Lookup failed; try again.');
+        });
+    }
+
     /* onHiveSearchInput debounces then re-renders from the unfiltered cache so
        search composes with the chips, the facets and the current sort. */
     function onHiveSearchInput() {
@@ -8920,6 +9026,8 @@
       if (filterBar) filterBar.style.display = allHives.length ? '' : 'none';
       var searchRow = document.getElementById('hive-search-row');
       if (searchRow) searchRow.style.display = allHives.length ? '' : 'none';
+      var containsRow = document.getElementById('hive-contains-row');
+      if (containsRow) containsRow.hidden = !allHives.length;
       /* Nothing renderable below means no rows to act on — drop the selection
          so the bulk bar can't linger over an empty or fully-filtered table. */
       if (!allHives.length || !hives.length) {

@@ -37,7 +37,7 @@ function extractConst(name) {
 const GH_AUTH = ['hiveRoleSettled'];
 const MEETINGS = ['meetingsIsOwner', 'meetingsRoleKnown', 'meetingsOnRoleReady', 'fetchMeetings', 'renderMeetings', 'meetingsJoinFormHtml',
   'meetingsRowHtml', 'meetingsFormatTime', 'meetingsFriendlyReason', 'meetingsReasonHtml', 'meetingsLabel',
-  'meetingsFinished', 'meetingsCanDelete', 'meetingsDeleteButtonHtml'];
+  'meetingsFinished', 'meetingsCanDelete', 'meetingsDeleteButtonHtml', 'fetchMeetingsBudget', 'meetingsBudgetHtml', 'meetingsBudgetText', 'meetingsTrustedHtml', 'rowChevronHtml'];
 const CALENDAR = ['calendarRoleKnown', 'calendarOnRoleReady', 'calendarCanView', 'calendarIsOwner', 'fetchCalendar', 'calendarRefreshMeetings',
   'fetchMeetingDrafts', 'renderCalendar', 'renderMeetingDrafts', 'meetingDraftsSplit', 'calendarFormHtml', 'calendarViewerTimeZone',
   'calendarRowHtml', 'calendarFormatTime', 'calendarPlatformLabel', 'calendarMeetingLink', 'calendarActionButtons', 'renderCalendarIndicator',
@@ -67,13 +67,13 @@ function makeSandbox(opts) {
       if (url === '/api/meetings/actions') return { ok: true, status: 200, json: async () => ({ drafts: [] }) };
       return { ok: true, status: 200, json: async () => ({}) };
     },
-    _meetingsList: null, _meetingsError: '', _meetingsOpen: null,
+    _meetingsList: null, _meetingsError: '', _meetingsOpen: null, _meetingsFocusRow: '', _meetingsBudget: {}, _meetingsLedger: null, _meetingsTrusted: [],
     _calendarData: null, _calendarError: '', _calendarMeetings: {},
     _meetingDrafts: null, _meetingDraftsError: '', _meetingDraftRepos: ['o/r'],
     console, Math, Number, Array, Error, Promise, String, Object, Date, Intl, isNaN,
   };
   vm.createContext(sb);
-  const consts = ['MEETINGS_ERROR_INLINE_CHARS', 'MEETINGS_PLATFORM_LABELS', 'MEETINGS_PILL_STATUS', 'MEETINGS_LIVE_STATES',
+  const consts = ['MEETINGS_ERROR_INLINE_CHARS', 'MEETINGS_PLATFORM_LABELS', 'MEETINGS_PILL_STATUS', 'MEETINGS_LIVE_STATES', 'MEETINGS_BUDGET_BADGES',
     'CALENDAR_ACTIVE_STATES', 'CALENDAR_DEFAULT_NAME', 'CALENDAR_PLATFORM_LABELS', 'CALENDAR_PLATFORM_ICONS', 'CALENDAR_SOURCE_LABELS',
     'CALENDAR_STATUS_LABELS', 'CALENDAR_PILL_STATUS', 'CALENDAR_FWD_PREFIX', 'MEETINGS_FINAL_STATES', 'CALENDAR_FINISHED_STATUSES'].map(extractConst);
   // const declarations stay script-scoped in a vm context; re-declare the
@@ -172,4 +172,18 @@ test('calendar row: forwarded prefix stripped for display, series leads with nex
   assert.match(html, /DMARC aligned/);
   assert.match(html, /calendar-row-actions/);
   assert.equal(sb.calendarApprovalWhy({ status: 'scheduled', source: 'email' }), '');
+});
+
+test('the meeting row shows the budget meter with a text alternative and a badge, never question text', async () => {
+  const sb = makeSandbox({});
+  const b = { meeting_id: 'm1', tokens_used: 124000, token_budget: 200000, percent: 62, intents_answered: 15, level: 'ok', skipped: 0 };
+  const ok = sb.meetingsBudgetHtml(b);
+  assert.match(ok, /aria-label="62% of the meeting budget used"/);
+  assert.match(ok, /<meter /);
+  assert.doesNotMatch(ok, /kc-pill/);
+  const warn = sb.meetingsBudgetHtml({ ...b, percent: 85, level: 'warning', skipped: 2 });
+  assert.match(warn, /budget 80%/);
+  assert.match(warn, /2 questions not answered/);
+  assert.match(sb.meetingsBudgetHtml({ ...b, percent: 100, level: 'exhausted' }), /budget exhausted/);
+  assert.equal(sb.meetingsBudgetHtml(null), '');
 });

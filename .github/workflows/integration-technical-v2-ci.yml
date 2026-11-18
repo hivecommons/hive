@@ -483,6 +483,11 @@ jobs:
       env:
         HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
       run: bash src/deploy/test_contributor_container_resources.sh
+    - name: Contributor runtime selection and rootless Docker (#19076)
+      working-directory: .
+      env:
+        HIVE_TEST_REQUIRE_BEHAVIOURAL: '1'
+      run: bash src/deploy/test_contributor_runtime_selection.sh
     - name: Contributor containers stage only the Claude credential and settings (#7836)
       working-directory: .
       env:

@@ -569,6 +569,7 @@ func TestWithheld_EveryReasonHasALabel(t *testing.T) {
 		contributorAdmissionReasonIssueChurn,
 		contributorAdmissionReasonMergedClaimStale,
 		contributorAdmissionReasonIssueClaim,
+		contributorAdmissionReasonOwnerGrace,
 	}
 	for _, reason := range reasons {
 		if label, ok := withheldReasonLabels[reason]; !ok || label == "" {

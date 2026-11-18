@@ -220,13 +220,35 @@ func installClaimAdmissionCheck(ctx context.Context, ledger *claims.Ledger, clie
 		// claims do not — the holder's own PR is the open PR. A hive
 		// agent's own dispatch (Holder is the agent name) also refuses an
 		// issue that agent filed for outside help (hivecommons/hive#17299).
-		if _, held := ledger.Lookup(req.Repo, req.Issue); !held && !req.PRStarted {
-			if req.Kind == claims.KindAgent {
-				return gh.IssueStartBlockReason(ctx, req.Repo, req.Issue, req.Holder)
-			}
-			return gh.IssueDispatchBlockReason(ctx, req.Repo, req.Issue)
+		_, held := ledger.Lookup(req.Repo, req.Issue)
+		var reason string
+		var err error
+		switch {
+		case !held && !req.PRStarted && req.Kind == claims.KindAgent:
+			reason, err = gh.IssueStartBlockReason(ctx, req.Repo, req.Issue, req.Holder)
+		case !held && !req.PRStarted && req.Kind == claims.KindContributor:
+			// A contributor's fresh claim also waits out the owner grace on
+			// an issue an owner, maintainer or this hive filed moments ago
+			// (hivecommons/hive#18898).
+			reason, err = gh.IssueContributorDispatchBlockReason(ctx, req.Repo, req.Issue)
+		case !held && !req.PRStarted:
+			reason, err = gh.IssueDispatchBlockReason(ctx, req.Repo, req.Issue)
+		default:
+			reason, err = gh.IssueClaimBlockReason(ctx, req.Repo, req.Issue)
 		}
-		return gh.IssueClaimBlockReason(ctx, req.Repo, req.Issue)
+		if err != nil || reason != "" || req.Kind != claims.KindContributor {
+			return reason, err
+		}
+		// A person's claim outside the ledger (assignee, `/claim` comment,
+		// hand-applied hive/claimed-by-human) outranks a contributor: it
+		// refuses a fresh claim and a renewal, and the release tick then
+		// drops the live lease and yanks the task (hivecommons/hive#18899).
+		// A lookup failure keeps the claim held: unknown is not a verdict.
+		human, herr := gh.IssueHumanClaimReason(ctx, req.Repo, req.Issue, req.Holder)
+		if herr != nil {
+			return "", nil
+		}
+		return human, nil
 	})
 }
 

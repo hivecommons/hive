@@ -4,6 +4,8 @@ Hive can route agents through OpenAI-compatible model gateways instead of a subs
 
 See [Gateway-path tier](../src/docs/backend-support-tiers.md#gateway-path-tier) for which dashboard/agent features (terminal access, model discovery, token metering, login) are guaranteed, best-effort, or not applicable on this path, and what a gateway smoke check must prove.
 
+Operators who already run a generic AI gateway can read the [evaluation and spike plan](../src/docs/ai-gateway-evaluation.md) for how to place one in front of the model backend with today's configuration. It is an evaluation, not a commitment: the bundled LiteLLM proxy and every default are unchanged.
+
 ## Apple MLX: local contributor inference, not a hosted gateway
 
 ClankeR offers **Apple MLX** on `/contribute`, using the actual Pi coding

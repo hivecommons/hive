@@ -353,6 +353,7 @@ func (s *Server) buildStageTracker(status *StatusPayload, store *stagelabels.Sto
 		}
 		finish(&it, issue.Labels, stage, rec, ok, false)
 		stageTrackerSetFinisher(&it, decisions, false)
+		it.FiledForHelp = github.ParseFiledForHelpMarker(issue.Body)
 		stageTrackerBlockedBy(&it, issue.OpenBlockers())
 		stageTrackerBlockedOnPR(&it, issue.Body, bucketReason, status.GitHubBaseURL, prState)
 		stageTrackerSinceUnblock(&it, rec, ok)
@@ -712,6 +713,9 @@ func stageTrackerNeedsHuman(it StageTrackerItem) bool {
 	if stageTrackerOnHold(it) || it.Advisory != nil {
 		return false
 	}
+	if it.BlockedOwnerReason != "" {
+		return true
+	}
 	if slices.ContainsFunc(it.Modifiers, func(m string) bool { return slices.Contains(stageTrackerNeedsHumanMods, m) }) {
 		return true
 	}
@@ -732,7 +736,8 @@ func stageTrackerOnHold(it StageTrackerItem) bool {
 // returns the two totals for the payload header.
 func stageTrackerHumanCounts(items []StageTrackerItem) (needsHuman, onHold int) {
 	for i := range items {
-		items[i].NeedsHuman = stageTrackerNeedsHuman(items[i])
+		items[i].NeedsHumanWhy = stageTrackerNeedsHumanWhyFor(items[i])
+		items[i].NeedsHuman = stageTrackerNeedsHuman(items[i]) || items[i].NeedsHumanWhy != nil
 		items[i].OnHold = stageTrackerOnHold(items[i])
 		if items[i].NeedsHuman {
 			needsHuman++

@@ -430,3 +430,23 @@ func TestMeetingsLLMValidate(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// The listening tone is on by default, the yaml key turns it off, and the
+// environment wins over the yaml.
+func TestListeningToneEnabled(t *testing.T) {
+	off := false
+	if !(MeetingsConfig{}).ListeningToneEnabled() {
+		t.Fatal("default on")
+	}
+	if (MeetingsConfig{ListeningTone: &off}).ListeningToneEnabled() {
+		t.Fatal("meetings.listening_tone false turns it off")
+	}
+	t.Setenv(MeetingsListeningToneEnv, "false")
+	if (MeetingsConfig{}).ListeningToneEnabled() {
+		t.Fatal("env false turns it off")
+	}
+	t.Setenv(MeetingsListeningToneEnv, "true")
+	if !(MeetingsConfig{ListeningTone: &off}).ListeningToneEnabled() {
+		t.Fatal("env true wins over yaml")
+	}
+}

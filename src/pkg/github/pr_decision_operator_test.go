@@ -110,7 +110,7 @@ func TestRecordOperatorPullRequestDecisionRecordsChangeRequestAndReplies(t *test
 func TestRecordOperatorPullRequestDecisionRefusesBodyOnlyClankerEvidence(t *testing.T) {
 	for _, marker := range []struct{ name, body string }{
 		{"origin", "<!-- hive:origin hive=contributors-hive -->"},
-		{"attribution", "— hive: backend=codex"},
+		{"attribution", "-- hive: backend=codex"},
 		{"identity", "🐝 **Hive Agent**"},
 	} {
 		for _, humanLabel := range []bool{false, true} {
@@ -163,7 +163,7 @@ func TestRecordOperatorPullRequestDecisionConfiguredAuthorLabels(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			pr := parkedPR(78, "contributor", []string{PRNeedsDecisionStageLabel, tc.label})
-			pr.Body += "\n\n— hive: backend=codex"
+			pr.Body += "\n\n-- hive: backend=codex"
 			c, rec := newUnparkPRClient(t, []unparkWireIssue{pr}, nil)
 			// Install before changing names, as a live config reload would.
 			names := authorkind.Names{}

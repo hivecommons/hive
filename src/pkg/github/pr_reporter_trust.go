@@ -309,7 +309,7 @@ func (r ReporterTrust) NeedsHumanReason() string {
 	if !r.Held {
 		return ""
 	}
-	return fmt.Sprintf("reporter-trust hold — issue #%d filed by @%s", r.Issue, r.Reporter)
+	return fmt.Sprintf("reporter-trust hold - issue #%d filed by @%s", r.Issue, r.Reporter)
 }
 
 // reporterTrustHoldLabels is the label set a reporter-trust hold applies.
@@ -374,7 +374,7 @@ func reporterTrustFinding(body string) (ReporterTrust, bool) {
 var legacyReporterTrustFinding = regexp.MustCompile(`traces to ([^\s]+)#([0-9]+), filed by @([^\s]+) \(GitHub association: ([^)]+)\)`)
 
 func (f ReporterTrust) escalationReason() string {
-	return fmt.Sprintf("reporter-trust hold — issue #%d filed by @%s (%s)", f.Issue, f.Reporter, f.Repo)
+	return fmt.Sprintf("reporter-trust hold - issue #%d filed by @%s (%s)", f.Issue, f.Reporter, f.Repo)
 }
 
 // SetReporterTrustEscalation installs the durable policy-reason ledger. Its
@@ -520,7 +520,7 @@ func (r ReporterTrust) HoldProvenance(since time.Time) *stagelabels.HoldProvenan
 // Both notice generations carry the original finding. Read that evidence rather
 // than re-evaluating today's trust settings: a historical hold requires a human
 // even if the reporter has since become trusted or the gate has been disabled.
-var reporterTrustReasonPattern = regexp.MustCompile(`reporter-trust hold — issue #([0-9]+) filed by @([A-Za-z0-9-]+)`)
+var reporterTrustReasonPattern = regexp.MustCompile(`reporter-trust hold (?:\x{2014}|-) issue #([0-9]+) filed by @([A-Za-z0-9-]+)`)
 var legacyReporterTrustReasonPattern = regexp.MustCompile(`rationale traces to [^\s]+#([0-9]+), filed by @([A-Za-z0-9-]+)`)
 
 func reporterTrustReasonFromComments(comments []*gh.IssueComment, appBotLogin string) string {
@@ -540,7 +540,7 @@ func reporterTrustReasonFromComments(comments []*gh.IssueComment, appBotLogin st
 				}
 			}
 		}
-		return "reporter-trust hold — maintainer sign-off required"
+		return "reporter-trust hold - maintainer sign-off required"
 	}
 	return ""
 }

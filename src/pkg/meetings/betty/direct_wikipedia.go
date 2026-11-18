@@ -120,10 +120,12 @@ func (d DirectRetriever) wikipedia(ctx context.Context, topic string) []Snippet 
 			name += ": " + desc
 		}
 		text := clip(extract, maxDirectTextRunes) + " According to " + SourceWikipedia
+		pageURL := ""
 		if link, err := url.Parse(s.ContentURLs.Desktop.Page); err == nil && link.Scheme == "https" && link.Host != "" {
 			text += " (" + clip(sanitize(link.String()), maxSnippetRunes) + ")"
+			pageURL = link.String()
 		}
-		return []Snippet{{Source: SourceWikipedia, Title: clip(name, maxSnippetRunes), Text: text + "."}}
+		return []Snippet{{Source: SourceWikipedia, Title: clip(name, maxSnippetRunes), Text: text + ".", URL: pageURL}}
 	}
 	return nil
 }

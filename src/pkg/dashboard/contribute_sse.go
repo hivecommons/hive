@@ -466,6 +466,7 @@ func (h *ContributeWSHub) admissionQueueSnapshot(limit int, scope withheldScope)
 				dependsOn:  dependenciesFromIssueMap(issue),
 				issueClaim: issueClaim,
 				claimed:    claimed,
+				createdAt:  issueCreatedAtFromMap(issue),
 			})
 			if !decision.admitted {
 				// #4246 retained the convergence Decision behind this refusal

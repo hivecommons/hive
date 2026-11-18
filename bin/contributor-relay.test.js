@@ -16537,7 +16537,13 @@ test('#7924 end to end: blocked reaches the hub as its own verdict and the relay
     assert.ok(edits[0].includes("'https://github.com/foo/bar/issues/100'") && edits[0].includes(`--add-label '${relay.BLOCKED_WORKFLOW_LABEL}'`), edits[0]);
     assert.strictEqual(relay.BLOCKED_WORKFLOW_LABEL, 'blocked', 'must match blockedWorkflowLabel in contribute_admission.go');
     assert.strictEqual(relay.__commands.filter(c => /gh label create/.test(c)).length, 0, 'the label existed; nothing to create');
-    assert.strictEqual(relay.__commands.filter(c => /gh issue comment/.test(c)).length, 0, 'the reason comment is the agent\'s (prompt contract), not the relay\'s');
+    // The reason names no PR or issue, so the relay leaves the owner-action
+    // marker that keeps the blocked sweep from lifting the label as
+    // marker-less, and it lands before the label.
+    const comments = relay.__commands.filter(c => /gh issue comment/.test(c));
+    assert.strictEqual(comments.length, 1, `one owner-action marker comment: ${JSON.stringify(comments)}`);
+    assert.ok(comments[0].includes('<!-- hive:blocked-on kind=owner-action reason='), comments[0]);
+    assert.ok(relay.__commands.indexOf(comments[0]) < relay.__commands.indexOf(edits[0]), 'marker before label');
     // The label is never lifted by the relay.
     assert.ok(!relay.__commands.some(c => /--remove-label/.test(c)));
   } finally { console.log = log; teardown(relay); }
@@ -16637,6 +16643,24 @@ test('#11775 end to end: a tooling-failure blocked verdict applies no label and 
     assert.strictEqual(relay.__commands.filter(c => /gh (issue edit|label create)/.test(c)).length, 0,
       `no blocked label for a tooling failure: ${JSON.stringify(relay.__commands.filter(c => /gh /.test(c)))}`);
     assert.ok(logged.some(l => /own tooling/.test(l) && /not applying the 'blocked' label/.test(l)), `expected the demotion to be logged, got ${JSON.stringify(logged)}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('owner-action marker: written for a reason naming no target, skipped when it names one, one safe line', () => {
+  const relay = loadRelay({});
+  const log = console.log; console.log = () => {};
+  try {
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c1', trust_tier: 'contributor', permissions: ['issues:write'] }));
+    assert.strictEqual(relay.ownerActionMarker('grant the app contents:write on foo/bar'),
+      '<!-- hive:blocked-on kind=owner-action reason="grant the app contents:write on foo/bar" -->');
+    assert.strictEqual(relay.ownerActionMarker('a "quoted" --> reason\nwith <b>breaks</b>'),
+      '<!-- hive:blocked-on kind=owner-action reason="a quoted reason with b breaks /b" -->');
+    assert.ok(relay.ownerActionMarker('x'.repeat(500)).length < 300);
+    const before = relay.__commands.length;
+    relay.markIssueBlocked({ task_id: 't', kind: 'issue', repo: 'foo/bar', number: 7 }, 'waits on foo/baz#12 landing');
+    const named = relay.__commands.slice(before);
+    assert.strictEqual(named.filter(c => /gh issue comment/.test(c)).length, 0, 'a named target keeps the agent\'s own pr=/issue= marker');
+    assert.strictEqual(named.filter(c => /gh issue edit/.test(c)).length, 1);
   } finally { console.log = log; teardown(relay); }
 });
 
@@ -17059,6 +17083,48 @@ test('sanitizeHubText strips ANSI/OSC escapes, C1 controls, and bounds length', 
     assert.strictEqual(relay.sanitizeHubText(42), '');
     assert.strictEqual(Array.from(relay.sanitizeHubText('x'.repeat(5000))).length, 2000);
   } finally { teardown(relay); }
+});
+
+test('#19059 hiveNameSlug turns the hive-stated display name into the short public form', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  try {
+    const cases = [
+      ['hivecommons hive', 'hivecommons-hive'],
+      ['  Acme   Platform ', 'acme-platform'],
+      ['already-slugged', 'already-slugged'],
+      ['evil\x1b[2Jname', 'evil-[2jname'],
+      ['', null],
+      [null, null],
+      [undefined, null],
+      [42, null],
+      ['---', null],
+    ];
+    for (const [raw, want] of cases) assert.strictEqual(relay.hiveNameSlug(raw), want, JSON.stringify(raw));
+    assert.ok(!relay.hiveNameSlug('evil\x1b[2Jname').includes('\x1b'), 'escape sequences never survive');
+    assert.strictEqual(Array.from(relay.hiveNameSlug('x'.repeat(500))).length, 64);
+  } finally { teardown(relay); }
+});
+
+test('#19059 auth_ok stores the hive-stated name and hiveDisplayName prefers it, null when absent', () => {
+  const relay = loadRelay({ backend: 'agy' });
+  const hub = relay.getHubs()[0];
+  const oldLog = console.log;
+  const logged = [];
+  console.log = (...a) => logged.push(a.join(' '));
+  try {
+    assert.strictEqual(relay.hiveDisplayName(hub), null, 'nothing before auth_ok');
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c-1', trust_tier: 'contributor', hive_name: 'hivecommons hive' }), hub);
+    assert.strictEqual(relay.hiveDisplayName(hub), 'hivecommons-hive');
+    assert.ok(logged.some(l => l.includes('Authenticated with') && l.includes('[hive: hivecommons-hive]')), logged.join('\n'));
+    logged.length = 0;
+    relay.handleMessage(JSON.stringify({ type: 'auth_ok', contributor_id: 'c-1', trust_tier: 'contributor' }), hub);
+    assert.strictEqual(relay.hiveDisplayName(hub), null, 'an older hub that sends no name leaves the hostname fallback in charge');
+    assert.ok(logged.some(l => l.includes('Authenticated with') && !l.includes('[hive:')), logged.join('\n'));
+    assert.strictEqual(relay.hiveDisplayName(null), null);
+  } finally {
+    console.log = oldLog;
+    teardown(relay);
+  }
 });
 
 test('hub announcement text is sanitized before printing', () => {
@@ -18033,4 +18099,297 @@ test('idle reason: a no_work_needed verdict is sent exactly as before, and a com
     assert.strictEqual(completed[0].pr_url, 'https://github.com/foo/bar/pull/778');
     assert.strictEqual(completed[0].verdict_reason, undefined, 'a completion with a PR sends no idle reason');
   } finally { teardown(shipped); }
+});
+
+// ---------------------------------------------------------------------------
+// hivecommons/hive#19049 — Claude Code's Bypass Permissions consent, and what
+// the relay says when the hive has no work.
+// ---------------------------------------------------------------------------
+
+// The real dialog, as `tmux capture-pane -p` renders it. The default selection
+// is "No, exit".
+const CLAUDE_CONSENT_PANE_NO_SELECTED = `WARNING: Claude Code running in Bypass Permissions mode
+
+In Bypass Permissions mode, Claude Code will not ask for your approval before running potentially dangerous commands.
+
+ ❯ 1. No, exit
+   2. Yes, I accept
+
+Enter to confirm · Esc to exit
+`;
+const CLAUDE_CONSENT_PANE_YES_SELECTED = CLAUDE_CONSENT_PANE_NO_SELECTED
+  .replace('❯ 1. No, exit', '  1. No, exit').replace('  2. Yes, I accept', '❯ 2. Yes, I accept');
+
+test('#19049 claudeBypassConsent reads the real dialog text (table)', () => {
+  const cases = [
+    { name: 'default selection is No, exit', pane: CLAUDE_CONSENT_PANE_NO_SELECTED, present: true, acceptSelected: false },
+    { name: 'cursor already on Yes, I accept', pane: CLAUDE_CONSENT_PANE_YES_SELECTED, present: true, acceptSelected: true },
+    { name: 'a shell prompt', pane: 'dev@host:~$ \n', present: false, acceptSelected: false },
+    { name: 'a transcript quoting only the title', pane: 'we discussed Bypass Permissions mode earlier\n> \n', present: false, acceptSelected: false },
+    { name: 'the footer of a healthy session', pane: '  ⏵⏵ bypass permissions on (shift+tab to cycle)\n', present: false, acceptSelected: false },
+  ];
+  for (const c of cases) {
+    const got = paneClassifier.claudeBypassConsent(c.pane);
+    assert.strictEqual(got.present, c.present, c.name);
+    assert.strictEqual(got.acceptSelected, c.acceptSelected, c.name);
+  }
+});
+
+test('#19049 the consent dialog classifies as onboarding for claude only, and never answers with a bare Enter', () => {
+  assert.strictEqual(paneClassifier.classifyReadiness(CLAUDE_CONSENT_PANE_NO_SELECTED, 'claude'), 'onboarding');
+  assert.strictEqual(paneClassifier.blockingPromptKey(CLAUDE_CONSENT_PANE_NO_SELECTED, 'claude'), 'Down',
+    'with "No, exit" selected the key must move off it, not press Enter');
+  assert.strictEqual(paneClassifier.blockingPromptKey(CLAUDE_CONSENT_PANE_YES_SELECTED, 'claude'), null,
+    'with "Yes, I accept" selected a bare Enter is the right answer');
+  assert.strictEqual(paneClassifier.blockingPromptKey(CLAUDE_CONSENT_PANE_NO_SELECTED, 'copilot'), null);
+});
+
+function sendsAfter(relay, before) {
+  return relay.__tmuxSends().slice(before).map(c => c.replace(/^.*send-keys -t \S+ /, ''));
+}
+
+test('#19049 answerClaudeBypassConsent never presses Enter while "No, exit" is still selected', () => {
+  // The pane never reflects the Down (a TUI that ignored it): Enter would exit Claude.
+  const relay = loadRelay({ backend: 'claude', procAlive: true, paneText: CLAUDE_CONSENT_PANE_NO_SELECTED });
+  const log = console.log; console.log = () => {};
+  try {
+    const before = relay.__tmuxSends().length;
+    assert.strictEqual(relay.answerClaudeBypassConsent(), true);
+    const sent = sendsAfter(relay, before);
+    assert.ok(sent.some(c => /^Down$/.test(c)), `Down was not sent: ${JSON.stringify(sent)}`);
+    assert.ok(!sent.some(c => /^Enter$/.test(c)), `Enter sent while "No, exit" selected: ${JSON.stringify(sent)}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#19049 answerClaudeBypassConsent presses Enter once the pane shows Yes selected', () => {
+  let captures = 0;
+  const relay = loadRelay({ backend: 'claude', procAlive: true,
+    // 1st capture (consent present, No selected) -> Down -> 2nd capture shows Yes selected.
+    paneText: () => (captures++ === 0 ? CLAUDE_CONSENT_PANE_NO_SELECTED : CLAUDE_CONSENT_PANE_YES_SELECTED) });
+  const log = console.log; console.log = () => {};
+  try {
+    captures = 0; // the relay's own startup poll already consumed captures
+    const before = relay.__tmuxSends().length;
+    assert.strictEqual(relay.answerClaudeBypassConsent(), true);
+    const sent = sendsAfter(relay, before);
+    const down = sent.findIndex(c => /^Down$/.test(c));
+    const enter = sent.findIndex(c => /^Enter$/.test(c));
+    assert.ok(down >= 0 && enter > down, `want Down then Enter, got ${JSON.stringify(sent)}`);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#19049 a pane that is a shell showing the dialog frame gets no keys', () => {
+  const relay = loadRelay({ backend: 'claude', procAlive: false, paneText: CLAUDE_CONSENT_PANE_NO_SELECTED });
+  try {
+    const before = relay.__tmuxSends().length;
+    assert.strictEqual(relay.answerClaudeBypassConsent(), false);
+    assert.deepStrictEqual(sendsAfter(relay, before), []);
+  } finally { teardown(relay); }
+});
+
+test('#19049 claude exited at the consent prompt: bounded relaunch, then a visible reason', () => {
+  const relay = loadRelay({ backend: 'claude', procAlive: false, paneText: CLAUDE_CONSENT_PANE_NO_SELECTED });
+  const log = console.log; const error = console.error; console.log = () => {}; console.error = () => {};
+  try {
+    relay.resetClaudeConsentState();
+    const max = relay.CLAUDE_CONSENT_EXIT_RELAUNCH_MAX;
+    // Two shell readings are needed before the CLI is declared gone.
+    assert.strictEqual(relay.handleClaudeExitedAtConsent(), null);
+    for (let i = 1; i <= max; i++) {
+      assert.strictEqual(relay.handleClaudeExitedAtConsent(), 'relaunched', `relaunch ${i}`);
+      assert.match(relay.getCLINotReadyReason(), /Claude exited at the permissions prompt; relaunching/);
+      assert.strictEqual(relay.handleClaudeExitedAtConsent(), null);
+    }
+    assert.strictEqual(relay.handleClaudeExitedAtConsent(), 'gave-up');
+    assert.match(relay.getCLINotReadyReason(), /Claude exited at the permissions prompt; gave up after \d+ relaunches/);
+    assert.match(relay.getCLINotReadyReason(), /skipDangerousModePermissionPrompt/);
+    // Once given up it stays quiet instead of looping.
+    assert.strictEqual(relay.handleClaudeExitedAtConsent(), null);
+    assert.strictEqual(relay.handleClaudeExitedAtConsent(), null);
+    const status = JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8'));
+    assert.match(status.cli_reason, /Claude exited at the permissions prompt/);
+    assert.strictEqual(status.queue_state, 'waiting-on-cli');
+  } finally { console.log = log; console.error = error; teardown(relay); }
+});
+
+test('#19049 no-work wording selection (table)', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    const target = 'bluefin-knuckle';
+    const cases = [
+      // no_matching_work must NEVER claim the queue is empty: the hive sends it
+      // for an empty queue and for work that was filtered out for this contributor.
+      { reason: 'no_matching_work', first: true, state: 'no-match',
+        has: [/No work was assigned to you on bluefin-knuckle right now\./, /may have nothing queued, or nothing that matches your setup \(CLI, trust tier, repo, quota\)/, /ClankeR relay/, /checking again in 5 minutes|checks again in 5 minutes/],
+        not: [/is empty/, /nothing for you to work on/, /no_matching_work/] },
+      { reason: 'no_matching_work', first: false, state: 'no-match',
+        has: [/Still no work assigned to you on bluefin-knuckle; checking again in 5 minutes/], not: [/is empty/, /no_matching_work/] },
+      // Only an explicit queue_empty says the queue is empty.
+      { reason: 'queue_empty', first: true, state: 'queue-empty',
+        has: [/The queue for bluefin-knuckle is empty\./, /nothing for you to work on right now/, /owner queues issues for contributors/], not: [/queue_empty/] },
+      { reason: 'queue_empty', first: false, state: 'queue-empty', has: [/still empty; checking again in 5 minutes/], not: [] },
+      { reason: 'capability_mismatch', first: true, state: 'filtered:capability', has: [/Work is queued on bluefin-knuckle/, /\(filter: capability\)/], not: [/is empty/] },
+      { reason: 'no_selected_work', first: true, state: 'filtered:repo', has: [/\(filter: repo\)/], not: [/is empty/] },
+      { reason: 'tier_disabled', first: true, state: 'filtered:level', has: [/\(filter: level\)/], not: [/is empty/] },
+      { reason: 'daily_limit', first: true, state: 'filtered:quota', has: [/daily task limit/, /\(filter: quota\)/], not: [/is empty/] },
+    ];
+    for (const c of cases) {
+      const got = relay.describeNoWork(c.reason, target, 300000, c.first);
+      assert.strictEqual(got.state, c.state, `${c.reason} state`);
+      for (const re of c.has) assert.match(got.line, re, `${c.reason}/${c.first}`);
+      for (const re of c.not) assert.doesNotMatch(got.line, re, `${c.reason}/${c.first}`);
+    }
+    assert.strictEqual(relay.describeNoWork('something_new', target, 30000, true), null,
+      'an unknown reason keeps the raw-reason line');
+    assert.deepStrictEqual([1, 2, 3, 4, 5, 9].map(relay.noWorkRetryDelayMs), [30000, 60000, 120000, 240000, 300000, 300000]);
+  } finally { teardown(relay); }
+});
+
+test('#19049 hive counts decide what the relay can say about a no-match (table)', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    const now = Date.now();
+    const mk = (items, ageMs, state = 'no-match') => ({ sourceURL: 'wss://hosted-alpha-hive-ab12.hive.example.org/api/contribute/ws',
+      noWorkState: state, lastActionableItems: items, lastStatusAt: items === undefined ? 0 : now - ageMs });
+    const six = relay.describeHubCounts(mk(6, 1000));
+    assert.match(six, /alpha-hive has 6 actionable items, but none was assigned to you/);
+    assert.doesNotMatch(six, /empty/);
+    assert.match(relay.describeHubCounts(mk(1, 1000)), /has 1 actionable item, but/);
+    assert.match(relay.describeHubCounts(mk(0, 1000)), /alpha-hive reports 0 actionable items, so nothing is queued there right now\./);
+    assert.strictEqual(relay.describeHubCounts(mk(undefined, 0)), null, 'unknown counts say nothing');
+    assert.strictEqual(relay.describeHubCounts(mk(6, 11 * 60 * 1000)), null, 'stale counts say nothing');
+    assert.strictEqual(relay.describeHubCounts(mk(6, 1000, 'queue-empty')), null, 'only a no-match needs the count');
+  } finally { teardown(relay); }
+});
+
+test('#19049 no-work is said once on a state change, then slowly; work arriving is announced', () => {
+  const relay = loadRelay({ backend: 'claude', procAlive: true });
+  const lines = []; const log = console.log; console.log = (...a) => lines.push(a.join(' '));
+  const origSetTimeout = global.setTimeout; global.setTimeout = () => 0;
+  try {
+    relay.setCliReady(true);
+    const hub = relay.getHubs()[0];
+    const empty = () => relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'no_matching_work' }), hub);
+    empty();
+    assert.strictEqual(lines.filter(l => /No work was assigned to you on .* right now\./.test(l)).length, 1);
+    assert.strictEqual(lines.filter(l => /is empty/.test(l)).length, 0, 'no_matching_work never claims an empty queue');
+    lines.length = 0;
+    empty(); empty(); empty();
+    assert.deepStrictEqual(lines.filter(l => /No work was assigned|Still no work/.test(l)), [], 'repeats inside the slow window are quiet');
+    assert.strictEqual(JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8')).queue_state, 'no-match');
+    // After the slow interval a short "still empty" line is allowed.
+    const later = Date.now() + relay.NO_WORK_STILL_LOG_INTERVAL_MS + 1;
+    assert.match(relay.noWorkLogLine(hub, 'no_matching_work', 300000, later).line, /Still no work assigned to you/);
+    // A different answer is a state change and says so in full.
+    relay.handleMessage(JSON.stringify({ type: 'task_unavailable', reason: 'capability_mismatch' }), hub);
+    assert.ok(lines.some(l => /\(filter: capability\)/.test(l)));
+    lines.length = 0;
+    relay.handleMessage(JSON.stringify({ type: 'task_assign', task_id: 't1', task_gen: 1, kind: 'issue', repo: 'foo/bar', number: 7, title: 'x' }), hub);
+    assert.ok(lines.some(l => /Work available on .*claiming foo\/bar#7/.test(l)), lines.join('\n'));
+    assert.notStrictEqual(relay.relayQueueState(), 'queue-empty', 'work arriving clears the empty state');
+  } finally { global.setTimeout = origSetTimeout; console.log = log; teardown(relay); }
+});
+
+// One relay, several hives: every line names its hive, the status row has one
+// entry per hive, and "everything is empty" is said once.
+const MULTI_HIVE_ENV = {
+  HIVE_HUB: 'wss://hosted-alpha-hive-ab12.hive.example.org/api/contribute/ws,wss://hosted-beta-console-cd34.hive.example.org/api/contribute/ws,wss://hosted-gamma-knuckle-ef56.hive.example.org/api/contribute/ws',
+  HIVE_REGISTRATION_TOKEN: 'tok-a,tok-b,tok-c',
+};
+
+test('#19049 hiveShortName derives a short public name from the hostname (table)', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    const cases = [
+      ['wss://hosted-alpha-hive-ab12.hive.example.org/api/contribute/ws', 'alpha-hive'],
+      ['wss://hosted-gamma-knuckle-ef56.hive.example.org/api/contribute/ws', 'gamma-knuckle'],
+      ['wss://hive.example.org/api/contribute/ws', 'hive.example.org'],
+      ['wss://hosted-x.hive.example.org/api/contribute/ws', 'x'],
+      ['not a url', 'this hive'],
+    ];
+    for (const [url, want] of cases) assert.strictEqual(relay.hiveShortName({ sourceURL: url }), want, url);
+    assert.strictEqual(relay.hiveShortName({ hiveName: 'stated-name', sourceURL: cases[0][0] }), 'stated-name', 'the name the hive states on auth_ok wins');
+  } finally { teardown(relay); }
+});
+
+test('#19049 multi-hive: one status row, per-hive states, summaries only when they are true', () => {
+  const relay = loadRelay({ backend: 'claude', procAlive: true, env: MULTI_HIVE_ENV });
+  const lines = []; const log = console.log; console.log = (...a) => lines.push(a.join(' '));
+  try {
+    relay.setCliReady(true);
+    const hubs = relay.getHubs();
+    assert.strictEqual(hubs.length, 3);
+    // no_matching_work: each hive gets its own sentence, naming itself, once, and
+    // none of them claims an empty queue.
+    for (const hub of hubs) {
+      const said = relay.noWorkLogLine(hub, 'no_matching_work', 30000);
+      assert.match(said.line, new RegExp(`No work was assigned to you on ${relay.hiveShortName(hub)} right now\\.`));
+      assert.ok(!/ab12|cd34|ef56/.test(said.line), 'the instance suffix is not part of the short name');
+      assert.strictEqual(relay.noWorkLogLine(hub, 'no_matching_work', 30000).line, null, 'a repeat is quiet');
+    }
+    assert.strictEqual(relay.queueStatusRow(), 'alpha-hive: idle: no match | beta-console: idle: no match | gamma-knuckle: idle: no match');
+    relay.maybeAnnounceAllEmpty();
+    relay.maybeAnnounceAllEmpty();
+    assert.deepStrictEqual(lines.filter(l => /^No work was assigned to you on any of/.test(l)),
+      ['No work was assigned to you on any of the 3 hives right now; checking again soon.']);
+    assert.deepStrictEqual(lines.filter(l => /queues are empty/.test(l)), [], 'no-match is not "empty"');
+    // The hive's own counts: alpha holds 6 actionable items, beta holds 0.
+    const now = Date.now();
+    Object.assign(hubs[0], { lastActionableItems: 6, lastStatusAt: now });
+    Object.assign(hubs[1], { lastActionableItems: 0, lastStatusAt: now });
+    assert.strictEqual(relay.queueStatusRow(), 'alpha-hive: idle: no match | beta-console: empty | gamma-knuckle: idle: no match');
+    // Every hive reporting zero items (or an explicit queue_empty) makes the summary true.
+    Object.assign(hubs[0], { lastActionableItems: 0, lastStatusAt: now });
+    hubs[2].noWorkState = 'queue-empty';
+    lines.length = 0;
+    relay.maybeAnnounceAllEmpty();
+    assert.deepStrictEqual(lines, ['All 3 queues are empty, nothing to do right now.']);
+    // One hive filtered, one not heard from: no summary, and the row says each.
+    hubs[1].noWorkState = 'filtered:capability';
+    hubs[2].noWorkState = null;
+    assert.strictEqual(relay.queueStatusRow(), 'alpha-hive: empty | beta-console: filtered (capability) | gamma-knuckle: asking');
+    lines.length = 0;
+    relay.maybeAnnounceAllEmpty();
+    assert.deepStrictEqual(lines, []);
+    const status = () => JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8'));
+    relay.writeRelayStatus();
+    assert.deepStrictEqual(status().subscriptions.map(x => x.queue_state), ['no-match', 'filtered:capability', null]);
+    assert.deepStrictEqual(status().subscriptions.map(x => x.actionable_items), [0, 0, null]);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#19049 retry bookkeeping is silent by default and visible with HIVE_RELAY_DEBUG', () => {
+  const relay = loadRelay({ backend: 'claude', procAlive: true, env: MULTI_HIVE_ENV });
+  const lines = []; const log = console.log; const dbg = console.debug;
+  console.log = (...a) => lines.push(a.join(' ')); console.debug = (...a) => lines.push(a.join(' '));
+  const origSetTimeout = global.setTimeout; global.setTimeout = () => 0;
+  try {
+    const hubs = relay.getHubs();
+    relay.scheduleReadyRetry(hubs[0], 'task_unavailable');
+    relay.scheduleReadyRetry(hubs[0], 'task_unavailable_retry');
+    assert.deepStrictEqual(lines.filter(l => /Cancelled ready retry|Skipping work request/.test(l)), []);
+  } finally { global.setTimeout = origSetTimeout; console.log = log; console.debug = dbg; teardown(relay); }
+});
+
+test('headless failure: a CLI that rejects the launch flags is classed as an environment failure', () => {
+  const relay = loadRelay({ backend: 'opencode' });
+  const re = relay.CLI_USAGE_ERROR_RE;
+  assert.ok(re.test('Unrecognized flag: --auto in command opencode run'));
+  assert.ok(re.test('error: unknown option --yolo'));
+  assert.ok(!re.test('TypeError: cannot read properties of undefined'));
+  assert.ok(!re.test('2 tests failed'));
+});
+
+test('failCurrentTask prints the CLI output tail to the local log, not only the reason', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  const err = console.error; const lines = [];
+  console.error = (...a) => { lines.push(a.join(' ')); };
+  try {
+    relay.setCliReady(true);
+    assignTask(relay, 't-opencode-tail');
+    relay.failCurrentTask('headless CLI exited with error: code 1', { outputTail: ['Unrecognized flag: --auto in command opencode run'], permanent: false });
+  } finally {
+    console.error = err;
+  }
+  assert.ok(lines.some(l => l.includes('CLI output tail') && l.includes('Unrecognized flag: --auto')), lines.join('\n'));
 });

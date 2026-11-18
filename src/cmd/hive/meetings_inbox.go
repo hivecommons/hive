@@ -56,6 +56,12 @@ func (mi *meetingsInbox) build(m meetings.Meeting) (inbox.LiveMeeting, error) {
 		out.Notes = live.RenderNotesWithReplies(mi.attendee(), m, st.Notes, tr)
 		out.Summary = strings.Join(st.Notes[live.SectionSummary], "\n")
 	}
+	// Questions nobody answered because the budget ran out stay in the
+	// record, so nothing asked is lost.
+	if skipped := live.RenderSkippedNote(st); skipped != "" {
+		out.Notes = strings.TrimRight(out.Notes, "\n") + "\n\n" + skipped
+		out.Notes = strings.TrimLeft(out.Notes, "\n")
+	}
 	return out, nil
 }
 

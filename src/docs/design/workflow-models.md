@@ -804,6 +804,18 @@ profile (`dispatch[].not_started`), and the tracker payload carries them per rep
 and the item's Activity Monitor row (`not started: <profile>` badge) both show them
 (`Dependencies.WorkflowDispatchHandoffs`).
 
+**A replayed reason is labelled with where it came from** (hivecommons/hive#18916). The ledger
+keeps the last reason an agent gave, and the planner prints it on every pass while the item
+waits, so the text can outlive the session that wrote it. Each record therefore stores
+`reason_at` (when the reason was decided) and `reason_session` (the hand-off that decided it:
+the agent and the delivery time, ids only). The `workflow dispatch: item not handed off` line
+and the `not_started` entries carry `reason_at`, `reason_age` and `reason_session`, and a reason
+is marked **stale** (`reason_stale` in the log, `stale` in the API) once a newer hand-off of the
+same item exists under any key. A stale decline is history: the dashboard shows it as an earlier
+hand-off's decline, the log line says `stale (not current)`, and it never counts as the item's
+state now. A record written before provenance was kept shows its session as `unknown (before
+provenance was recorded)` and takes its age from the time it was last reviewed.
+
 **Which agent fills a profile.** `Config.ResolveWorkflowDispatch(profile, need, manual)` is the
 one resolver (hivecommons/hive#18690). Every step accepts only an enabled agent that may do
 what the profile needs in the item's repository (hivecommons/hive#18749,

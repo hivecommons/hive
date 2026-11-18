@@ -785,6 +785,43 @@ const ReasonExpired = "expired"
 // until= may still be in the future, so the hooks post a release marker.
 const ReasonLeaseExpired = "lease expired"
 
+// ReasonHumanClaim is the release-reason prefix for a contributor claim that
+// ended because an owner or maintainer claimed the issue outside the ledger:
+// the human assignee, a `/claim` comment, or a hand-applied
+// `hive/claimed-by-human` label (hivecommons/hive#18899). The full reason is
+// HumanClaimReason: "human claim: assigned by andy".
+const ReasonHumanClaim = "human claim"
+
+// ReasonHiveClaim prefixes the reason for a live ledger claim by one of the
+// hive's own agents: "hive claim: scanner". Adoption does not open a copy
+// beside work the hive already holds (hivecommons/hive#18900). It is not a
+// HumanClaimReason, so it never triggers the contributor yank.
+const ReasonHiveClaim = "hive claim"
+
+const humanClaimBy = " by "
+
+// HumanClaimReason renders the admission/release reason for a person's claim
+// found on the forge: via says how ("assigned", "/claim comment",
+// "hive/claimed-by-human label"), login who.
+func HumanClaimReason(via, login string) string {
+	return ReasonHumanClaim + ": " + strings.TrimSpace(via) + humanClaimBy + strings.TrimSpace(login)
+}
+
+// ParseHumanClaimReason reports whether reason is a HumanClaimReason and
+// returns the person's login.
+func ParseHumanClaimReason(reason string) (login string, ok bool) {
+	rest, found := strings.CutPrefix(strings.TrimSpace(reason), ReasonHumanClaim+": ")
+	if !found {
+		return "", false
+	}
+	i := strings.LastIndex(rest, humanClaimBy)
+	if i < 0 {
+		return "", false
+	}
+	login = strings.TrimSpace(rest[i+len(humanClaimBy):])
+	return login, login != ""
+}
+
 // ReleaseAgentClaims drops every live KindAgent claim held by agent and fires
 // OnReleased for each. Unlike ReleaseByHolderID it never touches a human or
 // contributor claim whose login happens to spell the agent's name.

@@ -125,6 +125,8 @@
     html { overflow-x: hidden; max-width: 100%; }
     body {
       font-family: var(--font-ui);
+      /* The page had no base size, so text a rule did not size (a badge, a bare div, a goal line) rendered at the 16px browser default, larger than the small section headings above it. Base content is the --fs-sm step, the size of a card title, so unsized text is never larger than the heading it sits under; components size themselves. */
+      font-size: var(--fs-sm);
       background: var(--bg); color: var(--text);
       /* Bottom clearance keeps the last rows scrollable clear of the fixed
          chat FAB (48px + 24px offset + breathing room — #7160); the phone
@@ -197,7 +199,14 @@
       background: var(--bg); color: var(--text);
     }
     body.light-mode .connection { display: none; }
-
+    /* Row chevron: the shared expand/collapse control of a list row that opens its details in place under the row (Customers, Meetings). A real button left of the row; the hit area grows to the tap target without growing the row. */
+    .row-chevron { position: relative; display: inline-grid; place-items: center; width: 1.25rem; height: 1.25rem; padding: var(--sp-0); border: 0; border-radius: var(--r-sm); background: transparent; color: var(--muted); font: inherit; font-size: var(--fs-md); line-height: 1; cursor: pointer; flex: none; }
+    .row-chevron::before { content: ""; position: absolute; inset: calc((100% - var(--tap-target)) / 2); }
+    .row-chevron:hover { color: var(--text); }
+    .row-chevron:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .row-chevron > span { display: inline-block; transition: transform var(--duration-fast) ease; }
+    .row-chevron[aria-expanded="true"] > span { transform: rotate(90deg); }
+    @media (prefers-reduced-motion: reduce) { .row-chevron > span { transition: none; } }
     /* Sidebar — --bg-soft surface (hub identity), amber chrome accents */
     .oc-sidebar {
       position: fixed; top: 0; left: 0; bottom: 0; width: var(--sidebar-w);
@@ -430,6 +439,14 @@
     .oc-version-row strong a { display: block; min-width: 0; overflow-wrap: anywhere; }
     .oc-version-skew { margin-left: var(--sp-2, 8px); }
     .oc-version-stdio-time { font-weight: normal; margin-left: var(--sp-2, 8px); }
+    .oc-version-contains { display: grid; gap: var(--sp-2); padding: var(--sp-2) var(--sp-5); min-width: 0; }
+    .oc-version-contains-form { display: flex; align-items: center; gap: var(--sp-3); min-width: 0; }
+    .oc-version-contains-form input { flex: 1; min-width: 0; padding: var(--sp-2) var(--sp-3); background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-sm); color: var(--text); font-size: var(--fs-sm); font-family: inherit; }
+    .oc-version-contains-result { color: var(--muted); font-size: var(--fs-sm); overflow-wrap: anywhere; }
+    .oc-version-contains-chip { display: inline-block; padding: var(--sp-0) var(--sp-3); border-radius: var(--r-pill); border: 1px solid var(--border); font-size: var(--fs-xs); }
+    .oc-version-contains-chip.is-yes { color: var(--status-ok); border-color: var(--status-ok); }
+    .oc-version-contains-chip.is-no { color: var(--danger); border-color: var(--danger); }
+    .oc-version-contains-chip.is-unknown { color: var(--status-warn); border-color: var(--status-warn); }
     .oc-version-actions { display: flex; flex-direction: column; gap: var(--sp-2); padding: var(--sp-3) var(--sp-5); min-width: 0; }
     .oc-version-menu #spoke-upgrade-btn.oc-version-upgrade-available { border-color: var(--accent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent); }
     .oc-version-menu #spoke-upgrade-btn.oc-version-upgrade-available::before { content: '●'; color: var(--amber); font-size: 0.7em; line-height: 1; }
@@ -1868,6 +1885,12 @@
        work — muted, never stale-tinted, read then close. */
     .ham-seg.active.ham-open-advisory { background: var(--surface-2); color: var(--muted); }
     .ham-seg.active.ham-open-advisory .ham-seg-t::before { content: 'ⓘ'; margin-right: var(--sp-1); }
+    /* Needs human (an Open issue only a person can move, such as one an agent
+       filed for outside help): calm attention tint, not red, and the later
+       stages are not applicable rather than a stalled strip. */
+    .ham-seg.active.ham-open-needs-human { background: color-mix(in srgb, var(--status-attention) 22%, var(--surface-2)); color: var(--text); }
+    .ham-seg.active.ham-open-needs-human .ham-seg-t::before { content: '\1F64B'; margin-right: var(--sp-1); }
+    .ham-seg.ham-na { background: transparent; color: var(--text-faint); box-shadow: inset 0 0 0 var(--line-width) var(--line-subtle); opacity: 0.35; }
     .ham-seg.active.ham-open-stale { background: color-mix(in srgb, var(--amber) 65%, var(--red)); }
     /* While a CI / Review track runs, the stage chevron is settled-current:
        the neutral still location, icon only (rule 2, hivecommons/hive#16643).
@@ -2383,6 +2406,7 @@
     .ham-human-gate .ham-gate-more[aria-expanded="true"] { background: color-mix(in srgb, var(--amber) 22%, transparent); }
     .ham-human-gate.ham-gate-settling { opacity: 0.75; border-style: dashed; }
     .ham-human-gate.ham-gate-settling > .ham-gate-status { color: var(--cue-work); }
+    .ham-human-gate > .ham-gate-wait { display: inline-flex; align-items: center; min-width: 0; padding: 0 var(--sp-2); color: var(--muted); font-size: var(--fs-xs); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .ham-gate-menu[hidden] { display: none; }
     /* The passive "decision pending on #N" chip is a link to the primary row. */
     .ham-decision-pending[data-ham-scroll-to] { text-decoration: underline dotted; text-underline-offset: var(--sp-1); }
@@ -2846,7 +2870,7 @@
     .gov-pr-models-toggle { display:flex; gap:var(--sp-2); }
     .gov-pr-models-toggle button { border:1px solid var(--border); border-radius:var(--r-pill); background:var(--bg); color:var(--muted); padding:3px 8px; font-size:var(--fs-xs); cursor:pointer; }
     .gov-pr-models-toggle button.active { color:var(--text); border-color:var(--amber); background:color-mix(in srgb, var(--amber) 14%, transparent); }
-    .gov-pr-models-empty { color:var(--muted); font-size:var(--fs-base); padding:var(--sp-4) var(--sp-0); }
+    .gov-pr-models-empty { color:var(--muted); font-size:var(--fs-sm); padding:var(--sp-4) var(--sp-0); }
     .gov-pr-model-row { display:grid; grid-template-columns:minmax(120px, 1.2fr) minmax(140px, 2fr) minmax(240px, 2fr) 92px; gap:10px; align-items:center; margin:7px 0; font-size:0.78rem; }
     .gov-pr-model-row > * { min-width: 0; }
     .gov-pr-model-name { overflow-wrap:anywhere; color:var(--text); font-weight:600; }
@@ -6568,15 +6592,42 @@
     .meetings-voice-toggle { display: inline-flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-sm); cursor: pointer; }
     .meetings-list { display: flex; flex-direction: column; gap: var(--sp-2); }
     .meetings-row { display: flex; flex-wrap: wrap; align-items: flex-start; gap: var(--sp-3); padding: var(--sp-3); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); }
-    .meetings-row.is-open { border-color: var(--accent); }
+    .meetings-item { display: flex; flex-direction: column; min-width: 0; }
+    .meetings-row.is-open { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+    .meetings-row > .row-chevron { margin-top: var(--sp-1); }
+    .meetings-row-head[data-action] { cursor: pointer; }
+    /* The details open under their row, joined to it, with room between the notice, the meter, the hive-wide line and the blocks. */
+    .meetings-details { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; padding: var(--sp-5) var(--sp-5) var(--sp-6); border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); border-top: 0; border-radius: 0 0 var(--r) var(--r); background: var(--bg); font-size: var(--fs-xs); }
+    .meetings-details > div { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; }
+    .meetings-details-head { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; }
+    .meetings-details p { margin: 0; }
+    .meetings-notice { display: flex; flex-direction: column; gap: var(--sp-1); padding: var(--sp-3) var(--sp-4); border-left: 2px solid var(--yellow); border-radius: var(--r); background: color-mix(in srgb, var(--yellow) 8%, transparent); max-width: 80ch; }
+    .meetings-notice-title { font-weight: 600; }
+    .meetings-notice-body, .meetings-notice-line { color: var(--muted); line-height: 1.5; overflow-wrap: anywhere; }
+    .meetings-notice a { color: var(--accent); }
+    .meetings-hivewide, .meetings-empty { color: var(--muted); }
+    .meetings-section { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
+    .meetings-section-label { margin: 0; }
+    .meetings-notes-group { margin-bottom: var(--sp-3); }
+    .meetings-notes-label { font-weight: 600; text-transform: capitalize; color: var(--muted); margin-bottom: var(--sp-1); }
     .meetings-row-main { flex: 1 1 16em; min-width: 0; display: flex; flex-direction: column; gap: var(--sp-1); }
     .meetings-row-head { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; }
     .meetings-row-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--fs-sm); font-weight: 600; }
     .meetings-row-error { font-size: var(--fs-xs); color: var(--red); overflow-wrap: anywhere; }
     .meetings-row-raw { margin-top: var(--sp-1); font-family: var(--font-mono); font-size: var(--fs-xs); color: var(--muted); white-space: pre-wrap; overflow-wrap: anywhere; }
     .meetings-row-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
-    .meetings-live { display: grid; grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); gap: var(--sp-4); }
-    .meetings-transcript { max-height: 28em; overflow: auto; font-size: var(--fs-sm); padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
+    /* The meter is a slim bar under one line: the label on the left, the token numbers on the right. */
+    .meetings-budget { display: flex; flex-direction: column; gap: var(--sp-2); max-width: 36rem; min-width: 0; font-size: var(--fs-xs); }
+    .meetings-budget-line { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--sp-1) var(--sp-4); color: var(--muted); }
+    .meetings-budget-num { margin-left: auto; text-align: right; font-variant-numeric: tabular-nums; }
+    .meetings-meter { display: block; width: 100%; height: var(--sp-3); }
+    .meetings-budget[data-level="warning"] .meetings-budget-line { color: var(--yellow); }
+    .meetings-budget[data-level="degraded"] .meetings-budget-line { color: var(--yellow); }
+    .meetings-budget[data-level="exhausted"] .meetings-budget-line { color: var(--red); }
+    .meetings-skipped { margin: 0; padding-left: var(--sp-4); font-size: var(--fs-xs); overflow-wrap: anywhere; }
+    .meetings-live { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--sp-6); }
+    @media (min-width: 960px) { .meetings-live { grid-template-columns: minmax(0, 3fr) minmax(0, 2fr); } }
+    .meetings-transcript { max-height: 28em; overflow: auto; font-size: var(--fs-xs); line-height: 1.5; padding: var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); background: var(--bg); }
     .meetings-line { margin: 0 0 var(--sp-1); white-space: pre-wrap; }
     .meetings-line.is-partial { opacity: 0.6; font-style: italic; }
     .meetings-who { font-weight: 600; margin-right: var(--sp-1); }
@@ -6586,16 +6637,18 @@
     .meetings-reach.is-unreachable { margin: 0 0 var(--sp-2); padding: var(--sp-2); border: 1px solid var(--red); border-radius: var(--r); font-size: var(--fs-sm); color: var(--red); }
     .inbox-assistant-line { display: block; padding-left: var(--sp-2); border-left: 2px solid var(--accent); color: var(--accent); }
     .inbox-assistant-line.is-undelivered { border-left-color: var(--red); color: var(--red); }
-    .meetings-side { display: flex; flex-direction: column; gap: var(--sp-3); }
-    .meetings-side ul { margin: 0; padding-left: var(--sp-4); font-size: var(--fs-sm); }
-    .meetings-research { display: flex; flex-direction: column; gap: var(--sp-2); font-size: var(--fs-sm); }
-    .meetings-research-item { padding: var(--sp-2); border: 1px solid var(--border); border-radius: var(--r); }
+    .meetings-side { display: flex; flex-direction: column; gap: var(--sp-6); min-width: 0; }
+    .meetings-side ul { margin: 0; padding-left: var(--sp-5); font-size: var(--fs-xs); line-height: 1.5; }
+    .meetings-research { display: flex; flex-direction: column; gap: var(--sp-3); font-size: var(--fs-xs); }
+    .meetings-research-item { padding: var(--sp-3) var(--sp-4); border: 1px solid var(--border); border-radius: var(--r); }
     .meetings-intents { max-height: 12em; overflow: auto; font-family: var(--font-mono); font-size: var(--fs-xs); }
     .meetings-settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: var(--sp-4); }
     .meetings-effective { font-size: var(--fs-xs); }
     .meetings-effective td { padding: 0 var(--sp-2) 0 0; vertical-align: top; }
     @media (max-width: 720px) {
       .meetings-join-fields, .meetings-live, .meetings-settings-grid { grid-template-columns: 1fr; }
+      .meetings-panel .row-chevron { min-height: 0; }
+      .meetings-budget-num { margin-left: 0; text-align: left; }
     }
     /* Calendar: scheduled meetings hive joins (#18394) */
     .calendar-panel { display: flex; flex-direction: column; gap: var(--sp-5); }
@@ -6655,7 +6708,9 @@
     .ma-add-email { display: flex; gap: var(--sp-2); align-items: center; margin: var(--sp-1) 0 var(--sp-2); }
     .ma-add-email .kb-search-box { flex: 1; min-width: 0; }
     /* Customers: a profile per person (hivecommons/hive issue 18742). Same rhythm as the Inbox and Calendar: a card per row, a title, a muted line, grouped actions that wrap under the content on narrow screens. */
-    .customers-panel { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; max-width: 100%; --customers-actions-w: 17rem; }
+    .customers-panel { display: flex; flex-direction: column; gap: var(--sp-5); min-width: 0; max-width: 100%; --customers-actions-w: 17rem; font-size: var(--fs-xs); }
+    /* Type scale for the panel: content sits at the section heading size, never above it. The page body had no size of its own, so anything a rule here did not size (a badge, an evidence line, a goal) fell back to the 16px browser default and out-grew the small uppercase headings. Names stay one step up as row titles. */
+    .customers-panel .muted-xs, .customers-panel .empty-dashed, .customers-panel .kb-search-box, .customers-panel .hv-btn, .customers-panel .badge, .customers-panel label { font-size: var(--fs-xs); }
     .customers-panel > * { min-width: 0; max-width: 100%; }
     .customers-block { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
     .customers-list { display: flex; flex-direction: column; gap: var(--sp-3); min-width: 0; }
@@ -6666,6 +6721,13 @@
     /* Person and suggestion card: one line at desktop width. Avatar, a flowing line of name and pills, the date, the actions. On a narrow screen the pills wrap under the name and the actions take their own line. */
     .customers-card { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; align-items: center; column-gap: var(--sp-3); row-gap: var(--sp-2); padding: var(--sp-1) var(--sp-3); min-height: calc(var(--tap-target) - var(--sp-1)); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); min-width: 0; max-width: 100%; }
     .customers-card[data-me="true"] { border-color: var(--accent); }
+    /* A person row: chevron, avatar, name and pills, date. The row is the click target too; the chevron is the real control. */
+    .customers-item { display: flex; flex-direction: column; min-width: 0; max-width: 100%; }
+    .customers-card[data-action="customersToggle"] { grid-template-columns: auto auto minmax(0, 1fr) auto; cursor: pointer; }
+    .customers-card[data-open="true"] { border-color: color-mix(in srgb, var(--accent) 55%, var(--border)); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+    /* The profile opens under its row, joined to it. */
+    .customers-profile .hive-dialog-error:empty { display: none; }
+    .customers-profile { display: flex; flex-direction: column; gap: var(--sp-4); min-width: 0; padding: var(--sp-4) var(--sp-4) var(--sp-5); border: 1px solid color-mix(in srgb, var(--accent) 55%, var(--border)); border-top: 0; border-radius: 0 0 var(--r) var(--r); background: var(--bg); }
     .customers-avatar { position: relative; display: inline-grid; place-items: center; width: 1.75rem; height: 1.75rem; border-radius: var(--r-pill); overflow: hidden; background: color-mix(in srgb, var(--accent) 14%, var(--surface)); color: var(--text); font-size: var(--fs-sm); font-weight: var(--fw-semibold); flex: none; }
     .customers-card[data-kind="suggestion"] .customers-avatar { background: color-mix(in srgb, var(--border) 30%, var(--surface)); }
     .customers-avatar-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; border-radius: var(--r-pill); background: var(--surface); }
@@ -6687,7 +6749,7 @@
     .kc-pill.customers-tag[data-tag="stakeholder"] { --customers-tone: var(--yellow); }
     .customers-tag-dot { width: var(--sp-3); height: var(--sp-3); border-radius: var(--r-pill); background: var(--customers-tone, var(--muted)); flex: none; }
     .customers-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-    .customers-row-title { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; font-size: var(--fs-base); font-weight: var(--fw-semibold); }
+    .customers-row-title { display: flex; align-items: center; gap: var(--sp-2); min-width: 0; font-size: var(--fs-xs); font-weight: var(--fw-semibold); }
     .customers-row-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--sp-2); }
     .customers-card[data-kind="suggestion"] .customers-row-actions { width: var(--customers-actions-w); }
     /* The disclosure sits in the pill line; opened, its body takes the full width under it. */
@@ -6706,22 +6768,26 @@
     .customers-row[data-me="true"] { border-color: var(--accent); }
     .customers-row .customers-row-title { overflow-wrap: anywhere; }
     .customers-chips { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-1); min-width: 0; }
-    /* The tag chip: the entity-chip pill recipe (design-system.css), tokens only. The old .badge class has no rule, which left tags as bare text. */
-    .customers-chip { display: inline-flex; align-items: center; gap: var(--sp-2); padding: 1px var(--sp-3); border: 1px solid var(--border); border-radius: var(--r-pill); background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--text); font: inherit; font-size: var(--fs-xs); font-weight: var(--fw-semibold); line-height: 1.5; white-space: nowrap; }
-    button.customers-chip { cursor: pointer; min-height: var(--tap-target); }
-    .customers-chip[data-state="off"] { opacity: 0.55; }
-    .customers-chip[data-source="manual"] { border-color: var(--accent); }
+    /* The tag toggle in a profile is the row's tag pill as a button: one pill recipe in both places. Off is dimmed and neutral; the auto marker is small. */
+    button.kc-pill.customers-tag-toggle { position: relative; font-family: inherit; cursor: pointer; }
+    button.kc-pill.customers-tag-toggle::before { content: ""; position: absolute; inset: min(0px, calc((100% - var(--tap-target)) / 2)); }
+    .kc-pill.customers-tag[data-state="off"] { --customers-tone: var(--muted); color: var(--muted); opacity: var(--opacity-disabled, 0.6); }
+    .kc-pill.customers-tag-toggle:hover { border-color: var(--customers-tone, var(--muted)); }
+    .kc-pill.customers-tag-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .customers-tag-auto { font-size: var(--fs-2xs); font-weight: 400; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
     .customers-form { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 2fr) auto; gap: var(--sp-2); align-items: end; }
-    .customers-form label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); }
+    .customers-form label { display: flex; flex-direction: column; gap: var(--sp-1); }
     .customers-inline { display: flex; flex-wrap: wrap; align-items: end; gap: var(--sp-2); }
-    .customers-inline label { display: flex; flex-direction: column; gap: var(--sp-1); font-size: var(--fs-xs); flex: 1 1 12em; }
+    .customers-inline label { display: flex; flex-direction: column; gap: var(--sp-1); flex: 1 1 12em; }
     .customers-profile-head { display: flex; flex-wrap: wrap; align-items: center; gap: var(--sp-2); }
-    .customers-profile-name { display: flex; align-items: center; gap: var(--sp-2); font-size: var(--fs-md); font-weight: var(--fw-semibold); flex: 1 1 12em; min-width: 0; }
-    .customers-evidence { overflow-wrap: anywhere; line-height: 1.5; }
+    .customers-evidence { overflow-wrap: anywhere; line-height: 1.5; font-size: var(--fs-xs); }
     .customers-notes { width: 100%; min-height: 6em; }
     @media (max-width: 720px) {
       .customers-form { grid-template-columns: 1fr; }
       .customers-card { grid-template-columns: auto minmax(0, 1fr); padding: var(--sp-2) var(--sp-3); align-items: start; }
+      .customers-card[data-action="customersToggle"] { grid-template-columns: auto auto minmax(0, 1fr); }
+      /* The phone rule gives every button 44px; a pill and a chevron keep their own height and the hit area from ::before. */
+      .customers-panel button.customers-pill, .customers-panel .row-chevron { min-height: 0; }
       .customers-updated { display: none; }
       .customers-card .customers-row-actions, .customers-card[data-kind="suggestion"] .customers-row-actions { grid-column: 1 / -1; width: auto; justify-content: flex-start; }
     }
@@ -8464,7 +8530,7 @@
     .review-queue-superseded-badge { font-weight: 700; color: var(--text); }
     .review-queue-superseded-actions { display: inline-flex; gap: var(--sp-2); margin-left: var(--sp-3); }
     .review-queue-noreasons { color: var(--muted); font-size: var(--fs-xs); margin-top: var(--sp-2); }
-    .review-queue-empty { color: var(--terminal-muted); font-size: var(--fs-base); padding: var(--sp-4); }
+    .review-queue-empty { color: var(--terminal-muted); font-size: var(--fs-sm); padding: var(--sp-4); }
     .review-queue-collapsed { width: min(460px, 44vw); max-width: 460px; gap: var(--sp-3); }
     .review-queue-collapsed-main { display: inline-flex; align-items: center; gap: var(--sp-2); min-width: 0; }
     .review-queue-collapsed-total { color: var(--text); font-weight: 900; font-variant-numeric: tabular-nums; }
@@ -8506,7 +8572,7 @@
     .review-evidence-grid dt { color: var(--muted); }
     .review-evidence-grid dd { margin: 0; color: var(--text); font-family: var(--font-mono); overflow-wrap: anywhere; }
     .review-evidence-status { font-size: var(--fs-sm); color: var(--muted); margin-bottom: var(--sp-7); }
-    .review-pipeline-empty { color: var(--terminal-muted); font-size: var(--fs-base); padding: var(--sp-4); }
+    .review-pipeline-empty { color: var(--terminal-muted); font-size: var(--fs-sm); padding: var(--sp-4); }
     .review-pipeline-colempty { color: var(--muted); font-size: var(--fs-xs); }
     .review-priority { display: inline-block; padding: var(--sp-1) var(--sp-4); border-radius: var(--r-sm); font-size: var(--fs-2xs); color: var(--muted); border: 1px solid var(--blue); }
     .review-priority-high { border-color: var(--red); }
@@ -10382,7 +10448,7 @@ body.reader-mode #kiosk-cta { position: fixed; right: var(--sp-6); bottom: var(-
 
         <details class="faq-q" id="faq-attribution">
           <summary>What does the attribution trailer do?</summary>
-          <p>Every PR the hive opens ends with a <code>— hive:</code> line naming the agent and, when known, its backend, model, effort, tool versions, session and who requested the work, so a reader can tell at a glance which agent and model produced it. The trailer is controlled by <code>governor.attribution_trailer</code> (default on); turning it off hides the visible line but the matching <code>agent_pr_created</code> audit entry is written regardless, so attribution is never lost. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md#the-opened-pr-carries-an-attribution-trailer" target="_blank" rel="noopener noreferrer">the attribution trailer</a>.</p>
+          <p>Every PR the hive opens ends with a <code>-- hive:</code> line naming the agent and, when known, its backend, model, effort, tool versions, session and who requested the work, so a reader can tell at a glance which agent and model produced it. The trailer is controlled by <code>governor.attribution_trailer</code> (default on); turning it off hides the visible line but the matching <code>agent_pr_created</code> audit entry is written regardless, so attribution is never lost. See <a href="https://github.com/hivecommons/hive/blob/v5/src/docs/hive-open-pr.md#the-opened-pr-carries-an-attribution-trailer" target="_blank" rel="noopener noreferrer">the attribution trailer</a>.</p>
         </details>
 
         <details class="faq-q" id="faq-audit">
@@ -18488,7 +18554,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_NEEDS_HUMAN_STAGES = [15, 45, 85, 90];
     const STAGE_TRACKER_NEEDS_HUMAN_AUTHOR_STAGES = [71, 72];
     const STAGE_TRACKER_NEEDS_HUMAN_MODS = ['needs-human', 'needs-decision', 'unauthorized'];
-    const STAGE_TRACKER_NEEDS_HUMAN_TIP = 'Only a person can move these: triage needed, needs decision, human author must act, human merge, or a needs-human / hive-bot-lacks-permission pill';
+    const STAGE_TRACKER_NEEDS_HUMAN_TIP = 'Only a person can move these: triage needed, needs decision, human author must act, human merge, a needs-human / hive-bot-lacks-permission pill, an issue filed for outside help, or a PR held for a maintainer by a hive gate';
     const STAGE_TRACKER_ON_HOLD_TIP = 'Paused on purpose with a hold label — waiting on nobody; remove the hold to resume';
     // Label families a chip row is built from, in display order; other
     // labels follow when at least two items carry them.
@@ -18545,6 +18611,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (mods.indexOf('regressed') >= 0 && !stageTrackerRegressionHandled(item)) return 'Sent back';
       // Advisory (hivecommons/hive#15381): the chip is the headline.
       if (n === 0 && item.kind !== 'pr' && item.advisory && typeof item.advisory === 'object') return item.advisory.chip || 'Advisory · read & close';
+      // One state for a row a person must move (filed for help, gated by the hive).
+      if (typeof stageTrackerOpenNeedsHuman === 'function' && stageTrackerOpenNeedsHuman(item)) return STAGE_TRACKER_NEEDS_HUMAN_WORD + ' · ' + String(item.needs_human_why.reason || '').trim();
       if (n === 0 && mods.indexOf('hold') >= 0) return 'Open · on hold' + (holdLabels.length ? ' (' + holdLabels.join(', ') + ')' : '');
       if (n === 0 && mods.indexOf('blocked') >= 0) return 'Open · blocked';
       if (n === 0 && mods.indexOf('draft') >= 0) return 'Open · draft';
@@ -19848,20 +19916,25 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         if (state === 'active' && !detour && n > 0 && n < 80 && item.rebase && item.rebase.text && !(typeof stageTrackerTrain === 'function' && stageTrackerTrain(item))) word = String(item.rebase.text);
         if (state === 'active' && n === 30 && code && code.state === 'fixing') word = codeCaption;
         const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-        const openHold = n === 0 && state === 'active' && mods.indexOf('hold') >= 0;
+        // An issue a person must move (filed for help, held by a hive gate)
+        // reads "Needs human" in the Open column and shows the later stages
+        // as not applicable, never as a stalled strip.
+        const openNeedsHuman = n === 0 && state === 'active' && !detour && typeof stageTrackerOpenNeedsHuman === 'function' && stageTrackerOpenNeedsHuman(item);
+        const openHold = n === 0 && state === 'active' && !openNeedsHuman && mods.indexOf('hold') >= 0;
         // hold is a human instruction, so it wins over blocked when both are present.
-        const openBlocked = n === 0 && state === 'active' && !openHold && mods.indexOf('blocked') >= 0;
+        const openBlocked = n === 0 && state === 'active' && !openNeedsHuman && !openHold && mods.indexOf('blocked') >= 0;
         // A draft PR with no stage is the author's, not the hive's: the
         // Open word says so, muted, and it never tints stale (#14572).
-        const openDraft = n === 0 && state === 'active' && !openHold && !openBlocked && mods.indexOf('draft') >= 0;
+        const openDraft = n === 0 && state === 'active' && !openNeedsHuman && !openHold && !openBlocked && mods.indexOf('draft') >= 0;
         // 000-new: the payload says nothing has placed the item yet and
         // names who moves it next (hivecommons/hive#15094).
-        const openNew = n === 0 && state === 'active' && !openHold && !openBlocked && !openDraft && typeof stageTrackerNewState === 'function' && !!stageTrackerNewState(item);
-        const advisory = n === 0 && state === 'active' && !openHold && !openBlocked && typeof stageTrackerAdvisoryOf === 'function' ? stageTrackerAdvisoryOf(item) : null;
+        const openNew = n === 0 && state === 'active' && !openNeedsHuman && !openHold && !openBlocked && !openDraft && typeof stageTrackerNewState === 'function' && !!stageTrackerNewState(item);
+        const advisory = n === 0 && state === 'active' && !openNeedsHuman && !openHold && !openBlocked && typeof stageTrackerAdvisoryOf === 'function' ? stageTrackerAdvisoryOf(item) : null;
         // An issue waiting on a maintainer's triage says so in the column
         // (hivecommons/hive#15437 read "New" while the caption held the ask).
-        const openTriage = n === 0 && state === 'active' && !openHold && !openBlocked && !openDraft && !advisory && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item);
-        if (openHold) word = 'Open · hold';
+        const openTriage = n === 0 && state === 'active' && !openNeedsHuman && !openHold && !openBlocked && !openDraft && !advisory && typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item);
+        if (openNeedsHuman) word = STAGE_TRACKER_NEEDS_HUMAN_WORD;
+        else if (openHold) word = 'Open · hold';
         else if (openBlocked) word = 'Open · blocked';
         else if (advisory) word = advisory.chip || 'Advisory · read & close';
         else if (openDraft) word = 'Draft';
@@ -19874,14 +19947,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         let openSince = null;
         if (n === 0 && state === 'active' && !openHold && !advisory && !detour && nowMs) {
           const os = stageTrackerOpenSince(item);
-          if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: !openDraft && nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
+          if (os.ms) { word += ' · since ' + stageTrackerShortAgo(nowMs - os.ms); openSince = Object.assign({ stale: !openDraft && !openNeedsHuman && nowMs - os.ms > STAGE_TRACKER_OPEN_STALE_DAYS * 86400000 }, os); }
         }
         // An issue parked on a blocker whose strip a human's covering PR
         // drives (via_pr): the issue's own column keeps the blocker in
         // view — "Blocked · App lacks workflows permission 👤" — rather
         // than reading as a passed step (hivecommons/docs#612 under #620).
         const blockerNote = state === 'done' && n === STAGE_TRACKER_ISSUE_DECISION_COLUMN && item.via_pr && item.kind === 'issue' && item.blocker && typeof stageTrackerBlockerWord === 'function' && (item.needs_human === true || (typeof stageTrackerItemNeedsHuman === 'function' && stageTrackerItemNeedsHuman(item))) ? stageTrackerBlockerWord(item) : '';
-        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, blockerNote, label: (typeof stageTrackerStageName === 'function' && (stageTrackerStageName(tipStage) || stageTrackerStageName(st))) || tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, blocked: openBlocked, draft: openDraft, isNew: openNew && !advisory, advisory: !!advisory, openSince };
+        return { number: n, code: n ? String(n).padStart(3, '0') : '', short: word, blockerNote, label: (typeof stageTrackerStageName === 'function' && (stageTrackerStageName(tipStage) || stageTrackerStageName(st))) || tipStage.label || st.label || String(n), description: tipStage.description || st.description || '', state, terminal: false, detour: n === anchor ? detour : null, hold: openHold, needsHuman: openNeedsHuman, na: n > 0 && anchor === 0 && !terminal && typeof stageTrackerOpenNeedsHuman === 'function' && stageTrackerOpenNeedsHuman(item), blocked: openBlocked, draft: openDraft, isNew: openNew && !advisory, advisory: !!advisory, openSince };
       });
       segs.push({ number: STAGE_TRACKER_TERMINAL, code: '', short: 'Merged', label: 'Merged', description: 'Merged — the pipeline is complete', state: terminal ? 'active' : 'todo', terminal, cap: true, detour: null });
       return segs;
@@ -20116,6 +20189,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // the issue is a note for maintainers, not work — the chevron word is
     // its chip, it never reads stale or "since Nh", and the row action is
     // Close (read). Pure so the fixture tests can lift it by name.
+    // Needs human (one state for "blocked on a person, not on an agent"):
+    // the payload's needs_human_why block names the kind of wait and its
+    // one-line reason. An Open issue with one reads "Needs human" in the
+    // Open column; its later stages are not applicable until a person acts.
+    function stageTrackerNeedsHumanWhyOf(item) {
+      if (!item || item.advisory || !item.needs_human_why || typeof item.needs_human_why !== 'object') return null;
+      return item.needs_human_why;
+    }
+    function stageTrackerOpenNeedsHuman(item) {
+      if (!item || item.kind === 'pr' || (Number(item.stage) || 0) !== 0) return false;
+      return !!stageTrackerNeedsHumanWhyOf(item);
+    }
     function stageTrackerAdvisoryOf(item) {
       if (!item || item.kind === 'pr' || !item.advisory || typeof item.advisory !== 'object') return null;
       return item.advisory;
@@ -20895,7 +20980,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const gateHere = sg.state === 'active' && !sg.cap && !(ctx && ctx.gateElsewhere) && typeof stageTrackerHumanGateReasons === 'function' && stageTrackerHumanGateReasons(item).length > 0;
         const fixPushed = sg.number === 30 && sg.state === 'done' && remediation === 'fix_pushed';
         const blockerNote = sg.state === 'done' && sg.blockerNote ? String(sg.blockerNote) : '';
-        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', blockerNote ? 'ham-blocker-note' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', gateHere ? 'ham-human-gated' : ''].filter(Boolean).join(' ');
+        const cls = ['ham-seg', sg.state, sg.cap ? 'cap' : '', sg.state === 'active' && !sg.cap && waitingOnTracks ? 'ham-settled-current' : '', fixPushed ? 'ham-fix-pushed' : '', blockerNote ? 'ham-blocker-note' : '', sg.state === 'active' && sg.number === 30 && remediation ? 'ham-remediation-' + remediation : '', sg.cap && sg.terminal ? 'merged' : '', sg.detour ? 'detoured' : '', sg.hold ? 'ham-open-hold' : '', sg.blocked ? 'ham-open-blocked' : '', sg.draft ? 'ham-open-draft' : '', sg.isNew ? 'ham-open-new' : '', sg.advisory ? 'ham-open-advisory' : '', sg.needsHuman ? 'ham-open-needs-human' : '', sg.na ? 'ham-na' : '', sg.openSince && sg.openSince.stale ? 'ham-open-stale' : '', gateHere ? 'ham-human-gated' : ''].filter(Boolean).join(' ');
         const active = sg.state === 'active';
         let tip = '';
         let gateCaption = '';
@@ -20904,6 +20989,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
           if (sg.draft) tip += ' — ' + STAGE_TRACKER_DRAFT_TIP;
           if (sg.isNew && typeof stageTrackerNewLines === 'function') tip = (typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item) ? 'Triage needed — ' : 'New — ') + stageTrackerNewLines(item, nowMs).join(' — ');
+          if (sg.needsHuman) tip = STAGE_TRACKER_NEEDS_HUMAN_WORD + ': ' + String((item.needs_human_why && item.needs_human_why.reason) || '').trim() + '. Later stages are not applicable until a person acts.';
           if (sg.advisory) tip = (item.advisory && item.advisory.caption) || 'Advisory for maintainers · read, then close';
           if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
@@ -20942,6 +21028,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (waitingOnTracks && !sg.cap) tip = (tracksRunning === 2 ? 'Waiting on CI and review, both running' : 'Waiting on ' + (stageTrackerTrackRunning(item, 'ci') ? 'CI' : 'review') + ', running') + ' — ' + tip;
         }
         let inner;
+        const naTip = sg.na && !sg.cap ? 'Not applicable: waiting on a person (' + String((item.needs_human_why && item.needs_human_why.reason) || STAGE_TRACKER_NEEDS_HUMAN_WORD).trim() + ')' : '';
         // A lit chevron on a row parked on a person ("Needs human decision",
         // "Triage needed") is the trigger of the decision popover: the word
         // becomes a button and the chevron drops its native title so the
@@ -21006,7 +21093,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const noteTip = [blockerNote, b.detail, item.human_attention && item.human_attention.reason].filter(Boolean).join(' — ');
           const tipID = 'ham-chevron-tip-' + [item.repo || '', item.kind || '', item.number || 0, sg.number].map(x => encodeURIComponent(String(x))).join('-');
           inner = `<span class="ham-chevron-info config-info" tabindex="0" title="" aria-label="${esc(noteTip)}" aria-describedby="${esc(tipID)}">${stageTrackerIcon(sg.number, 'ham-ico')}<span class="ham-chevron-copy"><span class="ham-seg-t">${esc(blockerNote)}</span></span>${stageTrackerIcon('human', 'ham-ico ham-actor-ico', 'Next move: human')}<span id="${esc(tipID)}" class="config-tooltip ham-chevron-tip" role="tooltip">${esc(noteTip)}</span></span>`;
-        } else inner = stageTrackerIcon(sg.number, 'ham-ico');
+        } else if (naTip) inner = `<span class="ham-chevron-info" title="${esc(naTip)}" aria-label="${esc(naTip)}">${stageTrackerIcon(sg.number, 'ham-ico')}</span>`;
+        else inner = stageTrackerIcon(sg.number, 'ham-ico');
         return `<li class="${cls}"${remediation && sg.number === 30 && (active || fixPushed) ? ` data-remediation="${esc(remediation)}"` : ''}${active ? `${sg.cap ? '' : motionAttr}${decision ? '' : ` title="${esc(tip)}"`} aria-current="step"` : ''}>${inner}</li>`;
       }).join('');
     }
@@ -21863,10 +21951,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Only the finished server snapshot supplies human_attention; its identity
     // must still match the PR this row actually represents.
     function stageTrackerHumanAttentionOf(item) {
-      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
+      if (!item || item.advisory || (item.hold && !item.needs_human_why) || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
         || item.superseded_by || item.adopted_by) return null;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged')) return null;
+      if (mods.some(m => m === 'draft' || (m === 'hold' && !item.needs_human_why) || m === 'merged')) return null;
       const a = item.human_attention;
       if (!a || a.kind !== item.kind || Number(a.number) !== Number(item.number)) return null;
       if (a.kind === 'pr' && String(a.head || '') !== String(item.head || '')) return null;
@@ -21879,10 +21967,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // so the note line reads the same either way. null when the row is not
     // parked on a person, or when human_attention already says it.
     function stageTrackerNeedsHumanAsk(item) {
-      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
+      if (!item || item.advisory || (item.hold && !item.needs_human_why) || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL
         || item.superseded_by || item.adopted_by) return null;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged')) return null;
+      if (mods.some(m => m === 'draft' || (m === 'hold' && !item.needs_human_why) || m === 'merged')) return null;
       if (stageTrackerHumanAttentionOf(item)) return null;
       const n = Number(item.stage) || 0;
       const flagged = item.needs_human === true || mods.indexOf('needs-human') >= 0 || mods.indexOf('needs-decision') >= 0
@@ -21950,8 +22038,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       return parts.join(' · ');
     }
     function stageTrackerHumanRequirementText(item, subRows) {
-      if (!item || item.advisory || item.hold || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL || item.superseded_by || item.adopted_by ||
-        (item.modifiers || []).some(m => m === 'draft' || m === 'hold' || m === 'merged')) return '';
+      if (!item || item.advisory || (item.hold && !item.needs_human_why) || item.state === 'closed' || Number(item.stage) >= STAGE_TRACKER_TERMINAL || item.superseded_by || item.adopted_by ||
+        (item.modifiers || []).some(m => m === 'draft' || (m === 'hold' && !item.needs_human_why) || m === 'merged')) return '';
       const human = stageTrackerHumanAttentionLine(item, subRows);
       const d = item && item.decided;
       const review = d && d.current_blocker && String(d.head || '') === String(item.head || '')
@@ -22026,7 +22114,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         const view = href ? 'View ' + (it.kind === 'pr' ? 'PR' : 'issue') + ' #' + Number(it.number) : '';
         return entry(esc(e.text) + (view ? ` <a href="${esc(href)}" target="_blank" rel="noopener">${view}</a>` : ''), e.text + (view ? ' · ' + view : ''));
       });
-      if (lines.length || !item || item.advisory || item.hold || item.state === 'closed') return lines;
+      if (lines.length || !item || item.advisory || (item.hold && !item.needs_human_why) || item.state === 'closed') return lines;
       const stale = item.human_attention && !stageTrackerHumanAttentionOf(item);
       const staleLinks = item.kind === 'issue' ? (item.linked_prs || []).filter(lp =>
         stageTrackerLinkedPROpen(lp, item) && lp.human_attention && !stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp))) : [];
@@ -22039,7 +22127,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (linked.length > 1 || item.kind === 'issue' && (item.linked_prs || []).some(lp =>
         stageTrackerLinkedPROpen(lp, item) && stageTrackerHumanAttentionOf(stageTrackerLinkedPRItem(item, lp)))) return [];
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
-      if (mods.some(m => m === 'draft' || m === 'hold' || m === 'merged') || item.superseded_by) return [];
+      if (mods.some(m => m === 'draft' || (m === 'hold' && !item.needs_human_why) || m === 'merged') || item.superseded_by) return [];
       const actor = item.stage_actor;
       const actorHuman = actor && (actor.kind === 'human' || actor.kind === 'maintainer');
       const claimant = item.claimant;
@@ -22198,7 +22286,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', base_ref: lp.base_ref || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '',
         adoption: lp.adoption || null, takeover: lp.takeover || null, superseded: !!lp.superseded, supersedes: lp.supersedes || null, parent: Number(issue.number) || 0, siblings: open.map(x => Number(x.number) || 0),
         last_operator_action: lp.last_operator_action || null, operator_action_count: lp.operator_action_count || 0, hold: lp.hold || null, stage_actor: lp.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null,
-        decided: lp.decided || null, human_gate: lp.human_gate || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0,
+        decided: lp.decided || null, human_gate: lp.human_gate || null, mid_flight: lp.mid_flight || null, adopted_by: Number(lp.adopted_by) || 0, adopted_by_state: lp.adopted_by_state || '', adopted_from: lp.adopted_from || null, lineage: lp.lineage || null, state: lp.state || '', superseded_by: Number(lp.superseded_by) || 0,
         finisher: lp.finisher || '', finisher_verb: lp.finisher_verb || '', finisher_reason: lp.finisher_reason || '' };
     }
     // Pure: whether a linked PR is still open (not merged / closed /
@@ -22697,7 +22785,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           shown = Object.assign({}, item, { via_pr: true, stage: stageTrackerLeadStage(lp), stage_since: lp.stage_since || item.stage_since, modifiers: lp.modifiers || item.modifiers, deferred_modifiers: lp.deferred_modifiers || item.deferred_modifiers || [], caption: lp.caption || item.caption, reason: lp.reason || item.reason, preparation: lp.preparation || null,
             ci_activity: lp.ci_activity || null, review_activity: lp.review_activity || null, code_activity: lp.code_activity || null, display_column: lp.display_column || 0,
             terminal_merge: !!lp.terminal_merge, merged_by: lp.merged_by || '',
-            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '', hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null, human_gate: lp.human_gate || null,
+            human_approver: lp.human_approver || '', manual_merge: !!lp.manual_merge, human_merge_reason: lp.human_merge_reason || '', human_merge_reason_text: lp.human_merge_reason_text || '', sentinel_alert: !!lp.sentinel_alert, sentinel_reason: lp.sentinel_reason || '', sentinel_details: lp.sentinel_details || [], sentinel_notice: !!lp.sentinel_notice, head: lp.head || '', decision_needed: lp.decision_needed || null, unauthorized_step: lp.unauthorized_step || '', hold: lp.hold || null, adoption: lp.adoption || null, stage_actor: lp.stage_actor || item.stage_actor || null, claimant: lp.claimant || null, presence: lp.presence || null, rework: lp.rework || null, push: lp.push || null, merge_gate: lp.merge_gate || null, merge_train: lp.merge_train || null, left_train: lp.left_train || null, overlap: lp.overlap || null, decided: lp.decided || item.decided || null, human_gate: lp.human_gate || null, mid_flight: lp.mid_flight || null,
             finisher: fin.finisher || '', finisher_verb: fin.finisher_verb || '', finisher_reason: fin.finisher_reason || '' });
         } else if (linked.length) {
           // Several covering PRs: the issue strip ends at Claimed, all passed
@@ -23747,7 +23835,15 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // cannot disagree. Stage/modifier based: labels alone (needs-signal,
     // hold, …) never qualify a row. A held row is paused, not waiting.
     function stageTrackerItemNeedsHuman(item) {
-      if (!item || item.advisory || stageTrackerItemOnHold(item)) return false;
+      if (!item || item.advisory) return false;
+      // The server names every wait on a person (filed for help, a hive
+      // gate, a decision, an approval) in needs_human_why; it outranks a
+      // hold the hive itself placed.
+      if (item.needs_human_why && typeof item.needs_human_why === 'object') return true;
+      if (stageTrackerItemOnHold(item)) return false;
+      // A blocked issue whose blocker is a person's action (owner-action
+      // marker); the server also names it in needs_human_why.
+      if (item.blocked_owner_reason) return true;
       const mods = Array.isArray(item.modifiers) ? item.modifiers : [];
       if (mods.some(m => STAGE_TRACKER_NEEDS_HUMAN_MODS.indexOf(m) >= 0)) return true;
       const n = Number(item.stage) || 0;
@@ -25695,6 +25791,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "adoption-undone": {"kind": "reason", "plain": "the hive's copy was closed without merging and the adoption was undone", "detail": "The hive opened its copy, but the copy was closed without merging and a fresh one could not be opened, so the adoption was undone and the PR is back in its normal flow. Re-run the decision to adopt it again, or act on GitHub."},
       "adoption/supersede": {"kind": "action", "plain": "close this PR and open a fresh hive-authored PR with the same commits", "detail": "Supersede means the hive closes this PR and opens a fresh hive-authored PR carrying the same commits and sign-off, then finishes it itself."},
       "advisory-in-progress": {"kind": "rule", "plain": "a hive advisory the hive is still working; nothing to decide", "detail": "The issue is a hive advisory whose items are still being worked: the sweep ticks each as it closes or merges and closes the advisory when all are resolved. Nothing is written and nobody is parked on it."},
+      "ci-pending": {"kind": "rule", "plain": "CI is still running on this branch; nothing to decide yet", "detail": "The pull request's checks have not finished and none has failed, so there is no fix to ask for and no green head to approve. The hive writes nothing and leaves it parked; decide again once the checks finish."},
+      "mid-flight": {"kind": "rule", "plain": "checks or review are still running on this branch's current head; nothing decided", "detail": "CI is running, or the review of the current head is queued or unfinished, so a decision now would rest on a head nobody has finished checking. The hive writes nothing; decide once CI and review finish on that head."},
       "advisory-resolved": {"kind": "rule", "plain": "a hive advisory whose items are all resolved; closed as completed", "detail": "The issue is a hive advisory (a dedupe checklist or triage note) and every item it lists is closed or merged, so nothing is left to read; the hive closes it as completed."},
       "already-fixed": {"kind": "rule", "plain": "the issue was already fixed by a merged PR; closed as superseded", "detail": "The issue this PR fixes is already closed and a merged PR closed it (or a merged PR declares it supersedes this one), so nothing is left to deliver. The hive closes the PR as superseded with a note naming the merging PR; it never adopts it."},
       "approve": {"kind": "action", "plain": "approved for merge", "detail": "The hive approved it; the merge queue merges it once every check passes.", "issue_plain": "approved to proceed — an agent may claim it", "issue_detail": "The hive approved the direction; the issue leaves Needs decision and an agent may claim it. Nothing is merged."},
@@ -25729,6 +25827,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       "contributor-lane:sentinel-blocked": {"kind": "reason", "plain": "security-sensitive files changed; a maintainer must approve", "detail": "Security-sensitive files changed. The hive never merges until a maintainer reviews and removes the sentinel label."},
       "contributor-lane:workflow-path": {"kind": "reason", "plain": "the PR edits .github/workflows; the hive's App lacks the `workflows` permission, so it cannot adopt it", "detail": "The PR changes files under .github/workflows. The hive's GitHub App has no `workflows` permission, so the adoption fence refuses to publish those edits from the hive. Grant the App the `workflows` permission and re-run the decision, or have a person rebase and merge it on GitHub, or close it as superseded."},
       "contributor-offline": {"kind": "rule", "plain": "the author hasn't been reachable since the nudge", "detail": "The PR's author (or their clanker or hive) has been offline since the hive nudged them, so the hive takes the work over instead of waiting. The decision itself names which: the author's clanker, a connected hive, or the author."},
+      "covered-by-other-pr": {"kind": "rule", "plain": "a person's or the hive's PR already covers the issue; closed as a duplicate, not adopted", "detail": "Another open PR from a person or from the hive covers the same issue (or a person or the hive holds a live claim on it). Adoption takes over work a contributor abandoned, and this work is not abandoned, so the hive closes the contributor PR as a duplicate with a thank-you note and credit instead of opening a copy beside it. Green first, then earlier-opened only breaks ties between PRs of equal trust."},
       "dco": {"kind": "reason", "plain": "a commit is missing its sign-off", "detail": "A commit on the branch is missing its Developer Certificate of Origin sign-off; the author must sign it off."},
       "dco-missing": {"kind": "reason", "plain": "a commit is missing its sign-off", "detail": "A commit on the branch is missing its Developer Certificate of Origin sign-off; the author must sign it off."},
       "dedupe": {"kind": "rule", "plain": "an older issue already tracks this", "detail": "An older issue already tracks the same work; one thread keeps it moving."},
@@ -26089,7 +26188,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         out.push({ id: 'decide:close-superseded', label: 'Close as superseded by…', enabled, why, danger: true });
         out.push({ id: 'decide:close-wontfix', label: "Won't fix…", enabled, why, danger: true });
         out.push({ id: 'decide:direction', label: 'Give direction…', enabled, why });
-        return out;
+        // A head whose CI or review is still running is not decided on yet.
+        return typeof stageTrackerMidFlightApply === 'function' ? stageTrackerMidFlightApply(out, item) : out;
       }
       out.push({ id: 'decide:approve', label: 'Approve direction', enabled, why });
       out.push({ id: 'decide:direction', label: 'Send back to the hive…', enabled, why });
@@ -26261,7 +26361,14 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const nested = stageTrackerNestedOpenPRs(item);
       if (nested.length >= STAGE_TRACKER_DELEGATE_ALL_MIN) {
         const can = write && !!ctx.user;
-        out.push({ id: 'decide:delegate-all', label: 'Let hive decide — all ' + nested.length + ' PRs', hint: 'per PR', enabled: can, why: can ? '' : STAGE_TRACKER_WHY_WRITE, prs: nested.map(p => p.number) });
+        // PRs whose CI or review is still running on the current head are
+        // skipped by the fan-out (the server answers each one no-effect);
+        // when every PR is mid-flight the action is disabled with the reason
+        // (hivecommons/hive#18889).
+        const flying = typeof stageTrackerMidFlightOf === 'function' ? nested.filter(stageTrackerMidFlightOf) : [];
+        const allFlying = flying.length === nested.length;
+        const flightWhy = allFlying ? 'Every PR is still waiting: ' + flying.map(p => '#' + p.number + ' ' + stageTrackerMidFlightOf(p).text).join('; ') : '';
+        out.push({ id: 'decide:delegate-all', label: 'Let hive decide — all ' + nested.length + ' PRs', hint: flying.length && !allFlying ? 'per PR · skips ' + flying.length + ' still running' : 'per PR', enabled: can && !allFlying, why: !can ? STAGE_TRACKER_WHY_WRITE : flightWhy, prs: nested.map(p => p.number) });
       }
       // The row asks the human for something (decision_needed on the item
       // or its one asking nested PR): the server's answers lead the menu,
@@ -28562,6 +28669,11 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       } else if (id === 'decide:delegate-all') {
         // The issue row itself is the request; the server fans out per PR.
         items = items.filter(it => stageTrackerNestedOpenPRs(it).length >= STAGE_TRACKER_DELEGATE_ALL_MIN);
+        // Every PR still mid-flight: nothing to send (the menu disables it).
+        if (typeof stageTrackerMidFlightOf === 'function' && items.length && items.every(it => stageTrackerNestedOpenPRs(it).every(stageTrackerMidFlightOf))) {
+          showToast('Let hive decide — all PRs: not yet, CI or review is still running on each', 'info');
+          return { toasts: [], pending: [] };
+        }
       } else if (id === 'decide:adopt-now' || stageTrackerActionBase(id) === 'decide:reroute') {
         // Adopt now / Reroute act on the PR waiting on its contributor (072 / 071).
         items = items.map(stageTrackerTakeoverTarget).filter(Boolean);
@@ -28609,6 +28721,18 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
         items = [].concat(...items.map(it => stageTrackerGateTargets(it, id)))
           .filter(t => t && !seen[stageTrackerItemKey(t)] && (seen[stageTrackerItemKey(t)] = true));
         if (!items.length) { stageTrackerNothingToActOn(id, rows); return { toasts: [], pending: [] }; }
+        // A decision on a head whose CI or review is still running is not
+        // sent (hivecommons/hive#18889): the menu draws it disabled, and a
+        // click that beat the repaint is answered with the reason.
+        if (typeof stageTrackerMidFlightApply === 'function' && STAGE_TRACKER_MIDFLIGHT_VERBS.indexOf(id) >= 0) {
+          const ready = items.filter(t => !stageTrackerMidFlightOf(t));
+          if (ready.length < items.length) {
+            const held = items.filter(t => stageTrackerMidFlightOf(t));
+            showToast(stageTrackerActionLabel(id) + ': not yet — ' + held.map(t => stageTrackerRefOf(t) + ' ' + stageTrackerMidFlightWhy(t)).join('; '), 'info');
+            if (!ready.length) return { toasts: [], pending: [] };
+            items = ready;
+          }
+        }
       }
       const payload = await stageTrackerActionPayload(items, id, rows);
       if (payload == null) return { toasts: [], pending: [], cancelled: true };
@@ -28911,6 +29035,10 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // row's own lead actions (server-judged delegate, approve) are trusted
     // first; the rest follow the hold permission the endpoints share.
     function stageTrackerHumanGateVerbState(id, item, ctx, leads) {
+      // A head whose CI or review is still running is not decided on yet
+      // (hivecommons/hive#18889): the verb stays, disabled, with the reason.
+      const flight = typeof stageTrackerMidFlightOf === 'function' && STAGE_TRACKER_MIDFLIGHT_VERBS.indexOf(id) >= 0 && stageTrackerMidFlightOf(item) ? stageTrackerMidFlightWhy(item) : '';
+      if (flight) return { enabled: false, why: flight };
       const lead = (leads || []).find(a => a && a.id === id);
       if (lead) return { enabled: lead.enabled !== false, why: lead.enabled === false ? String(lead.why || '') : '' };
       return typeof stageTrackerActionAllowed === 'function' ? stageTrackerActionAllowed(id, ctx) : { enabled: true, why: '' };
@@ -28985,7 +29113,13 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // stamped into the wrap the first time the … opens.
       const more = moreVerbs.length ? `<span class="ham-gate-more-wrap"><button type="button" class="ham-lead-act ham-gate-act ham-gate-more" data-ham-gate-more aria-haspopup="menu" aria-expanded="false" aria-label="More ways to settle this gate" title="${esc(moreVerbs.map(v => v.label).join(' · '))}">…</button><template class="ham-gate-menu-tpl"><div class="ham-menu ham-gate-menu" role="menu" aria-label="More ways to settle this gate" hidden>${moreVerbs.map(v => stageTrackerHumanGateVerbHtml(item, v, stageTrackerHumanGateVerbState(v.id, shown, ctx, leads), true)).join('')}</div></template></span>` : '';
       const key = typeof stageTrackerItemKey === 'function' ? stageTrackerItemKey(item) : '';
-      return `<span class="ham-human-gate" data-ham-gate="${esc(key)}" data-ham-gate-reasons="${esc(reasons.map(r => r.key).join(' '))}" role="group" aria-label="${esc(text)}">${status}${acts}${more}</span>`;
+      // The real reason the verbs are not live yet: the head's CI or review
+      // is still running (hivecommons/hive#18889). The pill still names what
+      // parked the row; this says why nothing can be decided on it now.
+      const flightWhy = typeof stageTrackerMidFlightWhy === 'function' ? stageTrackerMidFlightWhy(shown) : '';
+      const flightWord = flightWhy ? String(stageTrackerMidFlightOf(shown).text).trim() : '';
+      const wait = flightWhy ? `<span class="ham-gate-wait" data-ham-gate-wait="${esc(String(stageTrackerMidFlightOf(shown).kind || ''))}" title="${esc(flightWhy)}" role="status">waiting on ${esc(flightWord)}</span>` : '';
+      return `<span class="ham-human-gate" data-ham-gate="${esc(key)}" data-ham-gate-reasons="${esc(reasons.map(r => r.key).join(' '))}" role="group" aria-label="${esc(text + (flightWord ? ' — waiting on ' + flightWord : ''))}">${status}${wait}${acts}${more}</span>`;
     }
     // The pill's optimistic state after one of its verbs ran: the status
     // reads "settling…" until the next snapshot re-renders the row.
@@ -29039,6 +29173,36 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     const STAGE_TRACKER_GATE_NO_DECISION = 'No decision pending';
     const STAGE_TRACKER_GATE_APPROVED_BY = 'Approved by @';
     const STAGE_TRACKER_GATE_STALE = ' is not waiting on that decision';
+    /* ---- Mid-flight PRs (hivecommons/hive#18889) --------------------------
+       A decision is a call on the head as it stands. While the CURRENT
+       head's CI is running, its review is queued or unfinished, or the CI /
+       review on file belong to an earlier head (a push restarted both), the
+       call is premature. The server states it per row as `mid_flight`
+       ({kind, text, head, park}); the verbs that rest on the head being
+       checked are drawn disabled with the reason instead of offered. A park
+       recorded for an earlier head does not count. */
+    const STAGE_TRACKER_MIDFLIGHT_VERBS = ['decide:delegate', 'decide:approve', 'decide:direction', 'gate:decide'];
+    // Pure: the server's mid_flight on the row, null when the head is settled.
+    function stageTrackerMidFlightOf(item) {
+      const m = item && item.mid_flight;
+      return m && typeof m === 'object' && String(m.text || '').trim() ? m : null;
+    }
+    // Pure: the reason a decision on the row is not offered yet, '' when it is.
+    function stageTrackerMidFlightWhy(item) {
+      const m = stageTrackerMidFlightOf(item);
+      if (!m) return '';
+      const park = String(m.park || '').trim();
+      return 'Waiting on ' + String(m.text).trim() + ': the decision opens when CI and review finish on the current head' + (park ? ' (parked because ' + park + ')' : '');
+    }
+    // Pure: disables, in place, the options that rest on the head being
+    // checked while the row is mid-flight; the options come back unchanged
+    // otherwise.
+    function stageTrackerMidFlightApply(options, item) {
+      const why = stageTrackerMidFlightWhy(item);
+      if (!why) return options;
+      (options || []).forEach(o => { if (o && STAGE_TRACKER_MIDFLIGHT_VERBS.indexOf(o.id) >= 0) { o.enabled = false; o.why = why; } });
+      return options;
+    }
     // Pure: the server's gate for the row (`human_gate`), null when absent.
     function stageTrackerServerGate(item) {
       const g = item && item.human_gate;
@@ -33426,6 +33590,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       // Preserve custom prompt input values across re-renders
       const savedInputs = {};
       const focusedId = document.activeElement?.id;
+      const focusSnap = agentFocusSnapshot(document.activeElement);
       el.querySelectorAll('.kick-prompt').forEach(inp => {
         if (inp.value) savedInputs[inp.id] = inp.value;
       });
@@ -33639,6 +33804,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           const prev = document.getElementById(focusedId);
           if (prev) { try { prev.focus({ preventScroll: true }); } catch (e) { prev.focus(); } }
         }
+        // Controls without an id (the method/model/effort selects) are matched
+        // by agent + action so a replaced <select> keeps focus (#18906).
+        agentFocusRestore(focusSnap);
         // Element-local scrollTop only, so the window never moves. Keep
         // following the tail only when the reader was already at the bottom
         // (or the pane is new); otherwise hold their place in the log.
@@ -33648,6 +33816,77 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (!(key in tailFollow) || tailFollow[key]) d.scrollTop = d.scrollHeight;
         });
         el.querySelectorAll('[data-agent-resize-y][data-agent-height]').forEach(d => { d.style.height = `${d.dataset.agentHeight}px`; });
+      }
+    }
+
+    // #18906: switching an agent's method/model/effort re-renders its card (and
+    // the detail panel, governor matrix and the model dropdown) while the
+    // operator is looking at that card. The card patches in place, but the
+    // <select> that was just used is replaced (its options changed), which
+    // drops focus, and the rows above/below resize, which moved the page away
+    // from the agent. These helpers hold the reader's place across such a
+    // synchronous re-render: the window scroll is re-pinned to the same card by
+    // key (delta based, so it composes with the scroll stabilizer), and focus
+    // returns to the same control by id or by (agent, action). Card ORDER is
+    // never touched here: a setting change must not re-sort the list.
+    const AGENT_VIEWPORT_MIN_DELTA_PX = 1;
+    function agentCssEscape(v) {
+      return (window.CSS && CSS.escape) ? CSS.escape(String(v)) : String(v).replace(/["\\]/g, '\\$&');
+    }
+    function agentFocusSnapshot(el) {
+      if (!el || el === document.body || typeof el.getAttribute !== 'function') return null;
+      if (el.id) return { id: el.id };
+      const agent = el.getAttribute('data-agent');
+      const action = el.getAttribute('data-change-action') || el.getAttribute('data-action');
+      return (agent && action) ? { agent, action, change: !!el.getAttribute('data-change-action') } : null;
+    }
+    function agentFocusRestore(snap) {
+      if (!snap) return;
+      let el = null;
+      if (snap.id) {
+        el = document.getElementById(snap.id);
+      } else {
+        const attr = snap.change ? 'data-change-action' : 'data-action';
+        el = document.querySelector(`#agents [data-agent="${agentCssEscape(snap.agent)}"][${attr}="${agentCssEscape(snap.action)}"]`);
+      }
+      if (!el || el.disabled || document.activeElement === el) return;
+      try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+    }
+    function agentViewportCapture(agentName, fallbackFocus) {
+      // fallbackFocus: the control focused when the switch began, used only when
+      // focus has since dropped to the document body (a disabled <select> blurs itself).
+      const snap = { scrollX: window.scrollX, scrollY: window.scrollY, key: '', top: 0, focus: agentFocusSnapshot(document.activeElement) || fallbackFocus || null };
+      const grid = document.getElementById('agents');
+      if (!grid) return snap;
+      const viewH = window.innerHeight || 0;
+      const visible = card => { const r = card.getBoundingClientRect(); return r.height > 0 && r.bottom > 0 && (!viewH || r.top < viewH); };
+      const cards = Array.from(grid.querySelectorAll('.agent-card[data-agent]'));
+      const own = cards.find(c => c.getAttribute('data-agent') === agentName);
+      const anchor = (own && visible(own)) ? own : cards.find(visible);
+      if (anchor) { snap.key = anchor.getAttribute('data-agent'); snap.top = anchor.getBoundingClientRect().top; }
+      return snap;
+    }
+    function agentViewportRestore(snap) {
+      if (!snap) return;
+      const grid = document.getElementById('agents');
+      const card = (snap.key && grid) ? grid.querySelector(`.agent-card[data-agent="${agentCssEscape(snap.key)}"]`) : null;
+      if (card && card.getClientRects().length) {
+        const delta = card.getBoundingClientRect().top - snap.top;
+        if (Math.abs(delta) >= AGENT_VIEWPORT_MIN_DELTA_PX) window.scrollBy(0, delta);
+      } else if (window.scrollY !== snap.scrollY) {
+        window.scrollTo(snap.scrollX, snap.scrollY);
+      }
+      agentFocusRestore(snap.focus);
+    }
+    // Run a synchronous re-render fn() so the reader keeps their place. A
+    // second pass on the next frame absorbs layout that settles after paint.
+    function withAgentViewportPreserved(agentName, fn, fallbackFocus) {
+      const snap = agentViewportCapture(agentName, fallbackFocus);
+      try {
+        return fn();
+      } finally {
+        agentViewportRestore(snap);
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(() => agentViewportRestore(snap));
       }
     }
 
@@ -51808,7 +52047,10 @@ function burnAreaChart() {
     }
     // Uploaded documents have no audio; uploaded audio/video does. Mailed-in
     // audio (source email) is opened as a file, not streamed.
-    function inboxItemHasAudio(it) { return !it || (it.source !== 'upload' && it.source !== 'email') || (it.source === 'upload' && (it.upload_kind === 'audio' || it.upload_kind === 'video')); }
+    // Meetings hive attended (source meeting) never keep audio: the bot only
+    // transcribes (docs/meetings.md, "No audio is stored"), so there is nothing
+    // to play and no player, play button or error toast is offered.
+    function inboxItemHasAudio(it) { return !it || (it.source !== 'upload' && it.source !== 'email' && it.source !== 'meeting') || (it.source === 'upload' && (it.upload_kind === 'audio' || it.upload_kind === 'video')); }
     // Mailed-in files (source email) are opened from the hive itself: GET /api/inbox/email/{id}/file.
     function inboxEmailFileUrl(it) { return '/api/inbox/email/' + encodeURIComponent(it.id) + '/file'; }
     // The role is known once /api/role settled (answered, or retries gave up:
@@ -52238,6 +52480,7 @@ function burnAreaChart() {
         '<div class="muted-xs inbox-meta">' + meta + '</div>' +
         inboxSummaryHtml(it, key) +
         '<div class="inbox-media" data-inbox-media="' + escapeHtml(key) + '"></div>' +
+        (it.source === 'meeting' ? '<div class="muted-xs inbox-audio-none">Audio is not kept for live meetings</div>' : '') +
         (it.source === 'email' && it.upload_kind === 'image' && inboxViewerCanPlay() ? '<img class="inbox-email-image" loading="lazy" src="' + escapeHtml(inboxEmailFileUrl(it)) + '" alt="' + escapeHtml(it.title || 'mailed-in image') + '">' : '') +
         (pills ? '<div class="inbox-pills">' + pills + '</div>' : '') +
         inboxTranscriptionHtml(it, key) +
@@ -52308,6 +52551,7 @@ function burnAreaChart() {
       return 'Streaming through this hive; the recording is not stored.' + restart;
     }
     function inboxPlay(src, id) {
+      if (src === 'meeting') return;
       const key = src + '/' + id;
       const target = document.querySelector('[data-inbox-media="' + CSS.escape(key) + '"]');
       if (!target) return;
@@ -54646,6 +54890,17 @@ function burnAreaChart() {
       if (chip) inboxInputExplain(chip.getAttribute('data-input-id'));
     }
     document.addEventListener('focusin', inboxInputOnFocus);
+    // rowChevronHtml is the shared expand/collapse button of a list row that
+    // opens its details in place under the row (Customers, Meetings). It sits
+    // left of the row, carries aria-expanded, and is a real button so Enter and
+    // Space work. The caller draws the details region with the id it passes as
+    // controlsId, and marks its own list row with the same action.
+    function rowChevronHtml(action, arg, open, label, controlsId) {
+      return '<button type="button" class="row-chevron" data-action="' + escapeHtml(action) + '" data-arg0="' + escapeHtml(arg) + '" aria-expanded="' + (open ? 'true' : 'false') + '"' +
+        (open && controlsId ? ' aria-controls="' + escapeHtml(controlsId) + '"' : '') +
+        ' aria-label="' + (open ? 'Collapse' : 'Expand') + ' ' + escapeHtml(label) + '"><span aria-hidden="true">▸</span></button>';
+    }
+
     // ── Meetings: hive as a live meeting participant (Quorum, #18284) ──
     // Owner-only. The list comes from GET /api/meetings; an opened meeting
     // streams its transcript, Spek intents and research over
@@ -54658,7 +54913,15 @@ function burnAreaChart() {
     const MEETINGS_LIVE_STATES = { requested: 1, joining: 1, lobby: 1, live: 1 };
     let _meetingsList = null;
     let _meetingsError = '';
+    let _meetingsTrusted = [];
+    // Budget meters by meeting id and the hive-wide ceilings, from GET /api/meetings/budget.
+    let _meetingsBudget = {};
+    let _meetingsLedger = null;
+    // Levels the meter badges (the server's budget steps).
+    const MEETINGS_BUDGET_BADGES = { warning: 'budget 80%', degraded: 'budget 90%: shorter answers', exhausted: 'budget exhausted' };
     let _meetingsOpen = null; // { id, ws, meeting, lines, partial, intents, live }
+    // The row whose chevron has the focus after a toggle re-draws the list.
+    let _meetingsFocusRow = '';
     // Ended meetings are inbox items too (source "meeting").
     if (typeof INBOX_SOURCE_ICONS === 'object' && !INBOX_SOURCE_ICONS.meeting) INBOX_SOURCE_ICONS.meeting = '🎙';
 
@@ -54702,13 +54965,75 @@ function burnAreaChart() {
         const r = await fetch('/api/meetings');
         const data = await r.json().catch(() => ({}));
         if (!r.ok) { _meetingsList = []; _meetingsError = data.error || ('HTTP ' + r.status); }
-        else { _meetingsList = data.meetings || []; _meetingsError = ''; _meetingsEmailIn = data.email_in || null; }
+        else { _meetingsList = data.meetings || []; _meetingsError = ''; _meetingsEmailIn = data.email_in || null; _meetingsTrusted = data.trusted_requesters || []; }
       } catch (e) {
         // Keep the last list; say the hive is unreachable instead of leaving "Loading meetings…".
         if (_meetingsList === null) _meetingsList = [];
         _meetingsError = 'Meetings are unreachable right now; retrying.';
       }
+      await fetchMeetingsBudget();
       renderMeetings();
+    }
+
+    // The meter is numbers only; a failure leaves the last one.
+    async function fetchMeetingsBudget() {
+      try {
+        const r = await fetch('/api/meetings/budget');
+        if (!r.ok) return;
+        const data = await r.json();
+        const byId = {};
+        (data.meetings || []).forEach(b => { byId[b.meeting_id] = b; });
+        _meetingsBudget = byId;
+        _meetingsLedger = data.ledger || null;
+      } catch (e) { /* transient */ }
+    }
+
+    // meetingsBudgetText is the meter's text alternative.
+    function meetingsBudgetText(b) {
+      return (b.percent || 0) + '% of the meeting budget used';
+    }
+
+    function meetingsBudgetHtml(b) {
+      if (!b || !b.token_budget) return '';
+      const text = meetingsBudgetText(b);
+      const badge = MEETINGS_BUDGET_BADGES[b.level];
+      const detail = (b.tokens_used || 0) + ' of ' + b.token_budget + ' tokens · ' + (b.intents_answered || 0) + ' answered' +
+        (b.skipped ? ' · ' + b.skipped + ' question' + (b.skipped === 1 ? '' : 's') + ' not answered' : '');
+      return '<div class="meetings-budget" data-level="' + escapeHtml(b.level || 'ok') + '">' +
+        '<div class="meetings-budget-line"><span class="meetings-budget-text">' + escapeHtml(text) + '</span>' +
+        '<span class="meetings-budget-num">' + escapeHtml(detail) + '</span>' +
+        (badge ? '<span class="kc-pill" data-status="' + (b.level === 'warning' ? 'syncing' : 'error') + '">' + escapeHtml(badge) + '</span>' : '') + '</div>' +
+        '<meter class="meetings-meter" min="0" max="100" low="79" high="89" optimum="0" value="' + Number(b.percent || 0) + '" aria-label="' + escapeHtml(text) + '" title="' + escapeHtml(text) + '">' + escapeHtml(text) + '</meter>' +
+        '</div>';
+    }
+
+    // The ceilings hive-wide, for the live view.
+    function meetingsLedgerText(l) {
+      if (!l) return '';
+      const part = (name, used, ceil) => ceil ? name + ' ' + used + ' of ' + ceil + ' tokens' : '';
+      return [part('hour', l.hourly_used || 0, l.hourly_ceiling), part('day', l.daily_used || 0, l.daily_ceiling)].filter(Boolean).join(' · ');
+    }
+
+    // meetingsSpekNoticeHtml shows the server's Spektacular status as one calm
+    // notice: the text before the first colon is the headline, the rest is the
+    // explanation, and a repo reference (hivecommons/name#123) is a link to
+    // that issue.
+    function meetingsSpekNoticeHtml(text) {
+      const raw = String(text || '');
+      const cut = raw.indexOf(': ');
+      const title = cut > 0 ? raw.slice(0, cut) : '';
+      const body = cut > 0 ? raw.slice(cut + 2) : raw;
+      const link = t => escapeHtml(t).replace(/hivecommons\/([A-Za-z0-9._-]+)#(\d+)/g, '<a href="https://github.com/hivecommons/$1/issues/$2" target="_blank" rel="noopener noreferrer">$&</a>');
+      return '<div class="meetings-notice" role="status">' + (title ? '<div class="meetings-notice-title">' + escapeHtml(title) + '</div>' : '') +
+        '<p class="meetings-notice-body">' + link(body) + '</p></div>';
+    }
+
+    // The questions skipped for budget, with their text (owner view only).
+    function meetingsSkippedHtml(live) {
+      const list = (live && live.skipped) || [];
+      if (!list.length) return '';
+      return '<section class="meetings-section"><h4 class="section-label meetings-section-label">Not answered: budget</h4><ul class="meetings-skipped">' +
+        list.map(q => '<li>' + escapeHtml((q.who ? q.who + ': ' : '') + (q.text || '')) + '</li>').join('') + '</ul></section>';
     }
     dashboardScheduleWork('meetings', fetchMeetings).catch(console.error);
     dashboardSetInterval('meetings', fetchMeetings, MEETINGS_POLL_MS);
@@ -54776,26 +55101,33 @@ function burnAreaChart() {
           '<span class="kc-pill" data-status="syncing">join request</span></div>' + meetingsReasonHtml(m) + '</div>' +
           '<div class="meetings-row-actions">' +
           '<button type="button" class="hv-btn btn-primary btn-sm" data-action="meetingsApproveRequest" data-arg0="' + escapeHtml(m.id) + '">Approve</button>' +
+          (m.platform === 'discord' && /^[0-9]{5,25}$/.test(m.requested_by.id || '') ?
+            '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsApproveAlways" data-arg0="' + escapeHtml(m.id) + '"' +
+            ' title="Approve now, and approve this person\'s future Discord requests automatically. Matched by their Discord user id, not their name.">Always approve this person</button>' : '') +
           '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsDeclineRequest" data-arg0="' + escapeHtml(m.id) + '">Decline</button>' +
           meetingsDeleteButtonHtml(m) + '</div></div>';
       }
       const state = m.state || '';
       const when = meetingsFormatTime(m.live_at || m.created_at);
       const meta = [MEETINGS_PLATFORM_LABELS[m.platform] || m.platform || '', when].filter(Boolean).join(' · ');
-      return '<div class="meetings-row' + (open ? ' is-open' : '') + '" data-state="' + escapeHtml(state) + '">' +
-        '<div class="meetings-row-main"><div class="meetings-row-head">' +
+      const pid = 'meetings-details-' + String(m.id).replace(/[^A-Za-z0-9_-]/g, '_');
+      return '<div class="meetings-item" data-meeting-item="' + escapeHtml(m.id) + '">' +
+        '<div class="meetings-row' + (open ? ' is-open' : '') + '" data-state="' + escapeHtml(state) + '">' +
+        rowChevronHtml('meetingsToggle', m.id, open, 'details of ' + meetingsLabel(m), pid) +
+        '<div class="meetings-row-main"><div class="meetings-row-head" data-action="meetingsToggle" data-arg0="' + escapeHtml(m.id) + '">' +
         '<span class="meetings-row-title" title="' + escapeHtml(m.url || '') + '">' + escapeHtml(meetingsLabel(m)) + '</span>' +
         '<span class="kc-pill" data-status="' + escapeHtml(MEETINGS_PILL_STATUS[state] || '') + '">' + escapeHtml(state) + '</span></div>' +
         (meta ? '<div class="muted-xs">' + escapeHtml(meta) + '</div>' : '') +
+        meetingsBudgetHtml(_meetingsBudget[m.id]) +
         meetingsReasonHtml(m) +
         (active && m.consent_error && !m.consent_posted_at ? '<div class="muted-xs" title="' + escapeHtml(m.consent_error) + '">chat unavailable: consent notice not posted yet</div>' : '') +
         (m.consent_via === 'voice' ? '<div class="muted-xs">consent notice spoken: the meeting chat could not deliver it</div>' : '') +
         (m.voice_enabled && !m.voice_capable ? '<div class="muted-xs">joined without voice; replies go to chat</div>' : '') +
         '</div><div class="meetings-row-actions">' +
-        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsOpenPanel" data-arg0="' + escapeHtml(m.id) + '">' + (open ? 'Close' : 'Open') + '</button>' +
         (active ? meetingsVoiceToggleHtml(m) +
           '<button type="button" class="hv-btn btn-danger btn-sm" data-action="meetingsLeave" data-arg0="' + escapeHtml(m.id) + '">Leave</button>' : '') +
-        meetingsDeleteButtonHtml(m) + '</div></div>';
+        meetingsDeleteButtonHtml(m) + '</div></div>' +
+        (open ? '<div class="meetings-details" id="' + pid + '" role="region" aria-label="Details of ' + escapeHtml(meetingsLabel(m)) + '"><div id="meetings-live-panel"></div></div>' : '') + '</div>';
     }
 
     // meetingsVoiceToggleHtml: the card's voice control names the action it
@@ -54910,13 +55242,19 @@ function burnAreaChart() {
         html += '<div class="meetings-row-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsClearFinished"' +
           ' title="Delete every finished meeting after one confirm">🗑 Clear finished (' + finished.length + ')</button></div>';
       }
+      html += meetingsTrustedHtml();
       html += '<div class="meetings-list">' + (list.length ? list.map(meetingsRowHtml).join('') : (_meetingsError ? '' : '<p class="empty-dashed">No meetings yet.</p>')) + '</div>';
-      html += '<div id="meetings-live-panel"></div>';
       host.innerHTML = html;
       const liveCount = list.filter(m => MEETINGS_LIVE_STATES[m.state]).length;
       if (typeof refreshSectionCardShell === 'function') refreshSectionCardShell('meetings-section');
       if (typeof setSectionSummary === 'function') setSectionSummary('meetings-section', liveCount ? liveCount + ' live' : 'no live meetings');
       renderMeetingsLive();
+      if (_meetingsFocusRow) {
+        const want = _meetingsFocusRow;
+        _meetingsFocusRow = '';
+        const chev = Array.prototype.find.call(host.querySelectorAll('.row-chevron'), c => c.getAttribute('data-arg0') === want);
+        if (chev) chev.focus();
+      }
     }
 
     function meetingsField(name) { return document.querySelector('[data-meetings-field="' + name + '"]'); }
@@ -54961,6 +55299,30 @@ function burnAreaChart() {
       fetchMeetings();
     }
 
+    async function meetingsApproveAlways(id) {
+      try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/approve', { always: true }); showToast('Hive is joining, and will join this person\'s future requests', 'success'); }
+      catch (e) { showToast('Approve failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    async function meetingsUntrust(platform, uid) {
+      try {
+        const r = await fetch('/api/meetings/trusted/' + encodeURIComponent(platform) + '/' + encodeURIComponent(uid), { method: 'DELETE' });
+        if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || ('HTTP ' + r.status)); }
+        showToast('Removed. Their requests wait for approval again', 'success');
+      } catch (e) { showToast('Remove failed: ' + e.message, 'error'); }
+      fetchMeetings();
+    }
+
+    // meetingsTrustedHtml lists the people whose Discord requests join at once.
+    function meetingsTrustedHtml() {
+      const list = _meetingsTrusted || [];
+      if (!list.length) return '';
+      return '<div class="meetings-trusted"><div class="section-label m-0">Always approved on Discord</div>' + list.map(t =>
+        '<div class="meetings-row-actions"><span class="muted-xs">' + escapeHtml((t.name || 'unnamed') + ' (Discord id ' + t.id + ')') + '</span>' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="meetingsUntrust" data-arg0="' + escapeHtml(t.platform) + '" data-arg1="' + escapeHtml(t.id) + '">Remove</button></div>').join('') + '</div>';
+    }
+
     async function meetingsDeclineRequest(id) {
       try { await meetingsPost('/api/meetings/' + encodeURIComponent(id) + '/decline'); }
       catch (e) { showToast('Decline failed: ' + e.message, 'error'); }
@@ -54975,6 +55337,13 @@ function burnAreaChart() {
     function meetingsClosePanel() {
       if (_meetingsOpen && _meetingsOpen.ws) { try { _meetingsOpen.ws.close(); } catch (e) { /* already closed */ } }
       _meetingsOpen = null;
+    }
+
+    // meetingsToggle opens the details under the meeting's row, or folds them
+    // when they are already open. The chevron and the row title both call it.
+    function meetingsToggle(id) {
+      _meetingsFocusRow = id;
+      meetingsOpenPanel(id);
     }
 
     function meetingsOpenPanel(id) {
@@ -55021,6 +55390,8 @@ function burnAreaChart() {
           break;
         }
         case 'notes': meetingsRefreshLive(o.id); break;
+        case 'budget': meetingsRefreshLive(o.id); break;
+        case 'dropped': meetingsRefreshLive(o.id); break;
         case 'reach': meetingsRefreshLive(o.id); break;
         case 'spek': meetingsRefreshLive(o.id); break;
         default: break;
@@ -55033,7 +55404,11 @@ function burnAreaChart() {
         const r = await fetch('/api/meetings/' + encodeURIComponent(id));
         if (!r.ok) return;
         const data = await r.json();
-        if (_meetingsOpen && _meetingsOpen.id === id) { _meetingsOpen.live = data.live || null; renderMeetingsLive(); }
+        if (_meetingsOpen && _meetingsOpen.id === id) {
+          _meetingsOpen.live = data.live || null;
+          if (data.budget) _meetingsBudget[id] = data.budget;
+          renderMeetingsLive();
+        }
       } catch (e) { /* transient */ }
     }
 
@@ -55052,23 +55427,27 @@ function burnAreaChart() {
       const notes = live.notes || {};
       const sections = ['summary', 'decisions', 'actions', 'questions', 'notes'];
       const notesHtml = sections.filter(s => (notes[s] || []).length).map(s =>
-        '<div><div class="section-label m-0">' + escapeHtml(s) + '</div><ul>' + notes[s].map(n => '<li>' + escapeHtml(n) + '</li>').join('') + '</ul></div>').join('') || '<p class="muted-xs">No notes yet.</p>';
+        '<div class="meetings-notes-group"><div class="meetings-notes-label">' + escapeHtml(s) + '</div><ul>' + notes[s].map(n => '<li>' + escapeHtml(n) + '</li>').join('') + '</ul></div>').join('') || '<p class="meetings-empty">No notes yet.</p>';
       const research = (live.research || []).map(it =>
         '<div class="meetings-research-item"><div><span class="badge">' + escapeHtml(it.status) + '</span> ' + escapeHtml(it.query) + '</div>' +
         (it.summary ? '<div class="muted-xs">' + escapeHtml(it.summary) + '</div>' : '') +
         (it.status === 'failed' && it.error ? '<div class="meetings-row-error">' + escapeHtml(it.error) + '</div>' : '') +
         (it.waiting && it.status === 'queued' ? '<div class="muted-xs">waiting behind another question</div>' : '') +
         (it.status === 'pending_approval' ? '<button type="button" class="hv-btn btn-primary btn-sm mt-2" data-action="meetingsApprove" data-arg0="' + escapeHtml(o.id) + '" data-arg1="' + escapeHtml(it.rid) + '">Approve research</button>' : '') +
-        '</div>').join('') || '<p class="muted-xs">No research yet.</p>';
+        '</div>').join('') || '<p class="meetings-empty">No research yet.</p>';
       const lines = o.lines.map(ev => meetingsLineHtml(ev, false)).join('') + (o.partial ? meetingsLineHtml(o.partial, true) : '');
       const intents = o.intents.map(i => '<div>' + escapeHtml(typeof i === 'string' ? i : JSON.stringify(i)) + '</div>').join('');
-      const spek = live.spek_status ? '<p class="kc-error muted-xs">' + escapeHtml(live.spek_status) + '</p>' :
-        (live.spek_mode ? '<p class="muted-xs">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
-      host.innerHTML = spek + meetingsReachHtml(live) + '<div class="meetings-live">' +
-        '<div><div class="section-label m-0">Transcript' + (o.ws ? '' : ' (disconnected)') + '</div><div class="meetings-transcript">' + (lines || '<p class="muted-xs">Waiting for the first words…</p>') + '</div></div>' +
-        '<div class="meetings-side"><div><div class="section-label m-0">Notes</div>' + notesHtml + '</div>' +
-        '<div><div class="section-label m-0">Research</div><div class="meetings-research">' + research + '</div></div>' +
-        '<div><div class="section-label m-0">Spek intents</div><div class="meetings-intents">' + (intents || '<p class="muted-xs">None yet.</p>') + '</div></div></div></div>';
+      const spek = live.spek_status ? meetingsSpekNoticeHtml(live.spek_status) :
+        (live.spek_mode ? '<p class="meetings-notice-line">Spektacular: ' + escapeHtml(live.spek_mode) + '</p>' : '');
+      const ledger = meetingsLedgerText(_meetingsLedger);
+      const sect = (label, body) => '<section class="meetings-section"><h4 class="section-label meetings-section-label">' + label + '</h4>' + body + '</section>';
+      const head = spek + meetingsBudgetHtml(_meetingsBudget[o.id]) + (ledger ? '<p class="meetings-hivewide">Hive-wide: ' + escapeHtml(ledger) + '</p>' : '') + meetingsReachHtml(live);
+      host.innerHTML = (head ? '<div class="meetings-details-head">' + head + '</div>' : '') + '<div class="meetings-live">' +
+        sect('Transcript' + (o.ws ? '' : ' (disconnected)'), '<div class="meetings-transcript">' + (lines || '<p class="meetings-empty">Waiting for the first words…</p>') + '</div>') +
+        '<div class="meetings-side">' + sect('Notes', notesHtml) +
+        meetingsSkippedHtml(live) +
+        sect('Research', '<div class="meetings-research">' + research + '</div>') +
+        sect('Spek intents', '<div class="meetings-intents">' + (intents || '<p class="meetings-empty">None yet.</p>') + '</div>') + '</div></div>';
       const tr = host.querySelector('.meetings-transcript');
       if (tr) tr.scrollTop = tr.scrollHeight;
     }
@@ -56562,7 +56941,8 @@ function burnAreaChart() {
     const CUSTOMERS_EVIDENCE_SHOWN = 5;
     let _customersData = null;
     let _customersError = '';
-    // The open profile; null shows the list.
+    // The profile open under its row, or null when every row is collapsed. It
+    // survives a refresh: the list is drawn again around it.
     let _customersOpen = null;
     // The open profile's timeline, read from the customer graph
     // (POST /api/graph) a page at a time.
@@ -56676,7 +57056,7 @@ function burnAreaChart() {
     // What the panel remembers across a refresh: which disclosures are open
     // (the Suggested group and each "Why is this suggested?"), which groups
     // are expanded, and which picker is showing.
-    let _customersUi = { open: {}, expanded: {}, picker: '', profilePicker: false };
+    let _customersUi = { open: {}, expanded: {}, picker: '', profilePicker: false, focusRow: '' };
 
     function customersInitial(name) {
       const m = /[A-Za-z0-9]/.exec(String(name || ''));
@@ -56728,6 +57108,28 @@ function burnAreaChart() {
       return ids.slice(0, CUSTOMERS_SOURCE_PILLS_SHOWN).map(i =>
         '<span class="kc-pill customers-pill customers-source" data-kind="' + escapeHtml(i.kind) + '" data-claimed="' + (i.claimed ? 'true' : 'false') + '" title="' + escapeHtml(label(i)) + '">' + escapeHtml(i.value) + '</span>').join('') +
         customersMorePill(ids.slice(CUSTOMERS_SOURCE_PILLS_SHOWN).map(label));
+    }
+
+    // The optional descriptive fields of a profile, in display order.
+    const CUSTOMERS_PROFILE_FIELDS = [
+      { key: 'real_name', label: 'Real name', max: 120 },
+      { key: 'organization', label: 'Organization', max: 120 },
+      { key: 'location', label: 'Location or country', max: 120 }
+    ];
+
+    function customersProfileValue(p, key) {
+      const f = (p && p.profile && p.profile[key]) || {};
+      return typeof f.value === 'string' ? f.value : '';
+    }
+
+    // customersOrgPill: the organization as one small pill, with where it came
+    // from in its tooltip. Nothing is shown when there is none.
+    function customersOrgPill(p) {
+      const v = customersProfileValue(p, 'organization');
+      if (!v) return '';
+      const f = p.profile.organization;
+      const why = f.source === 'manual' ? 'Set by ' + (f.by || 'a person') : 'From the public GitHub profile';
+      return '<span class="kc-pill customers-pill customers-org" data-source="' + (f.source === 'manual' ? 'manual' : 'auto') + '" title="' + escapeHtml('Organization - ' + why) + '">' + escapeHtml(v) + '</span>';
     }
 
     // customersOriginPill: where the person came from, in one short word.
@@ -56785,9 +57187,11 @@ function burnAreaChart() {
     }
 
     // ── List ──
-    // One line per customer: picture, name, then pills (identities, origin,
-    // tags, goals to review, satisfaction), the date, the actions. On a narrow
-    // screen the pills wrap under the name.
+    // One slim line per customer: chevron, picture, name, then pills
+    // (identities, origin, tags, goals to review, satisfaction) and the date.
+    // The chevron and the row both open the profile in place, under the row;
+    // the open row stays open across a refresh. On a narrow screen the pills
+    // wrap under the name.
     function customersRowHtml(p, isMe) {
       const goals = customersGoalsSplit(p);
       const pill = customersLevelPill(p.satisfaction && p.satisfaction.level);
@@ -56798,12 +57202,17 @@ function burnAreaChart() {
       if (pending) extra.push('<span class="kc-pill customers-pill" title="' + pending + ' suggestion' + (pending === 1 ? '' : 's') + ' to review">' + pending + ' to review</span>');
       const updated = customersFormatTime(p.updated_at);
       const name = p.name || p.id || '';
-      return '<div class="customers-card" data-customer="' + escapeHtml(p.id) + '" data-me="' + (isMe ? 'true' : 'false') + '">' +
+      const rid = escapeHtml(isMe ? 'me' : p.id);
+      const open = !!(_customersOpen && (isMe ? _customersOpen.me : (!_customersOpen.me && _customersOpen.id === p.id)));
+      const pid = 'customers-profile-' + String(isMe ? 'me' : p.id).replace(/[^A-Za-z0-9_-]/g, '_');
+      return '<div class="customers-item" data-customer-item="' + rid + '">' +
+        '<div class="customers-card" data-customer="' + escapeHtml(p.id) + '" data-me="' + (isMe ? 'true' : 'false') + '" data-open="' + open + '" data-action="customersToggle" data-arg0="' + rid + '">' +
+        rowChevronHtml('customersToggle', isMe ? 'me' : p.id, open, 'profile of ' + name, pid) +
         customersAvatarHtml(name, customersGithubLogin(p), '', '') +
         '<div class="customers-row-main"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (isMe ? '<span class="badge customers-me">me</span>' : '') +
-        customersSourcePills(p) + customersOriginPill(p, updated) + customersTagPills(p) + extra.join('') + pill + '</div>' +
-        (updated ? '<span class="muted-xs customers-updated" title="Last updated">' + escapeHtml(updated) + '</span>' : '') +
-        '<div class="customers-row-actions"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersOpen" data-arg0="' + (isMe ? 'me' : escapeHtml(p.id)) + '">' + (isMe ? 'My profile' : 'Open') + '</button></div></div>';
+        customersSourcePills(p) + customersOriginPill(p, updated) + customersOrgPill(p) + customersTagPills(p) + extra.join('') + pill + '</div>' +
+        (updated ? '<span class="muted-xs customers-updated" title="Last updated">' + escapeHtml(updated) + '</span>' : '') + '</div>' +
+        (open ? '<div class="customers-profile" id="' + pid + '" role="region" aria-label="Profile of ' + escapeHtml(name) + '">' + customersProfileHtml(_customersOpen) + '</div>' : '') + '</div>';
     }
 
     // customersPickerHtml lists the current customers, Me first, for a
@@ -56926,14 +57335,21 @@ function burnAreaChart() {
         '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersIdentityAdd">Add identity</button></div></div>';
     }
 
+    // customersTagChipHtml is the toggle form of the row's tag pill: the same
+    // pill classes and tones, as a button. Off is dimmed; a tag hive set carries
+    // a small "auto" marker, a tag a person set carries the dot the row shows.
     function customersTagChipHtml(name, tag) {
       const state = tag ? tag.state : 'off';
       const source = tag ? tag.source : 'auto';
       const on = state === 'on';
-      const why = !tag ? 'Not set' : (source === 'manual' ? 'Set by ' + (tag.by || 'a person') : (tag.rule ? 'Automatic: ' + tag.rule : 'Automatic'));
-      let out = '<button type="button" class="badge customers-chip" data-state="' + state + '" data-source="' + escapeHtml(source) + '" aria-pressed="' + on + '" title="' + escapeHtml(why) + '"' +
-        ' data-action="customersTagSet" data-arg0="' + escapeHtml(name) + '" data-arg1="' + (on ? 'off' : 'on') + '">' + escapeHtml(name) + (tag ? ' · ' + (source === 'manual' ? 'manual' : 'auto') : '') + '</button>';
-      if (tag && source === 'manual') {
+      const manual = !!tag && source === 'manual';
+      const isDefault = ((_customersData && _customersData.default_tags) || []).indexOf(name) >= 0;
+      const why = !tag ? 'Not set' : (manual ? 'Set by ' + (tag.by || 'a person') : (tag.rule ? 'Automatic: ' + tag.rule : 'Automatic'));
+      let out = '<button type="button" class="kc-pill customers-pill customers-tag customers-tag-toggle"' + (isDefault ? ' data-tag="' + escapeHtml(name) + '"' : '') + ' data-state="' + state + '" data-source="' + escapeHtml(source) + '" aria-pressed="' + on + '" title="' + escapeHtml(why) + '"' +
+        ' data-action="customersTagSet" data-arg0="' + escapeHtml(name) + '" data-arg1="' + (on ? 'off' : 'on') + '">' +
+        (manual ? '<span class="customers-tag-dot" aria-hidden="true"></span>' : '') + escapeHtml(name) +
+        (tag && !manual ? '<span class="customers-tag-auto">auto</span>' : '') + (manual ? '<span class="customers-sr"> (set by hand)</span>' : '') + '</button>';
+      if (manual) {
         out += '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersTagSet" data-arg0="' + escapeHtml(name) + '" data-arg1="auto" title="Hand this tag back to the automatic rules">Reset to automatic</button>';
       }
       return out;
@@ -56987,6 +57403,24 @@ function burnAreaChart() {
         (sg ? '<div class="customers-row" data-satisfaction-suggestion="true"><div class="customers-row-main"><div>Hive suggests ' + customersLevelPill(sg.level) + '</div>' + customersEvidenceHtml(sg.evidence) + '</div>' +
           '<button type="button" class="hv-btn btn-primary btn-sm" data-action="customersSatisfactionConfirm">Confirm</button>' +
           '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersSatisfactionReject">Reject</button></div>' : '') + '</div>';
+    }
+
+    // customersDetailsHtml: real name, organization and location, compact.
+    // Each says whether GitHub or a person set it; a field set by hand has a
+    // button that hands it back to the automatic source. Everyone who can
+    // open the profile may edit these, a read-only user on their own.
+    function customersDetailsHtml(p) {
+      const rows = CUSTOMERS_PROFILE_FIELDS.map(function (f) {
+        const cur = (p.profile && p.profile[f.key]) || {};
+        const manual = cur.source === 'manual';
+        const mark = cur.value ? (manual ? 'set by hand' : 'from GitHub') : (manual ? 'cleared by hand' : 'not known');
+        return '<label>' + escapeHtml(f.label) + ' <span class="muted-xs">(' + mark + ')</span>' +
+          '<input class="kb-search-box" type="text" maxlength="' + f.max + '" data-customers-field="profile-' + f.key + '" value="' + escapeHtml(cur.value || '') + '"></label>' +
+          (manual ? '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileReset" data-arg0="' + f.key + '" title="Let GitHub fill this in again">Auto</button>' : '');
+      }).join('');
+      return '<div class="customers-block"><div class="section-label m-0">Details</div>' +
+        '<div class="customers-inline">' + rows + '</div>' +
+        '<div class="customers-inline"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersProfileSave">Save details</button></div></div>';
     }
 
     function customersNotesHtml(p) {
@@ -57115,15 +57549,12 @@ function burnAreaChart() {
         '<div class="customers-inline"><button type="button" class="hv-btn btn-danger btn-sm" data-action="customersForget">Forget this person</button></div></div>';
     }
 
+    // The profile opens under its row, so the row already shows the picture,
+    // the name and the pills; the profile adds only Rename and its sections.
     function customersProfileHtml(p) {
-      const name = p.name || p.id || '';
-      return '<div class="customers-profile-head"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersClose">← Customers</button>' +
-        customersAvatarHtml(name, customersGithubLogin(p), '', '') +
-        '<div class="customers-profile-name"><span class="customers-name" title="' + escapeHtml(name) + '">' + escapeHtml(name) + '</span>' + (p.me ? '<span class="badge customers-me">me</span>' : '') + '</div>' +
-        '<div class="customers-chips">' + customersSourcePills(p) + customersOriginPill(p, '') + customersTagPills(p) + customersLevelPill(p.satisfaction && p.satisfaction.level) + '</div>' +
-        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRename">Rename</button></div>' +
+      return '<div class="customers-profile-head"><button type="button" class="hv-btn btn-secondary btn-sm" data-action="customersRename">Rename</button></div>' +
         '<div class="hive-dialog-error" role="alert" data-customers-field="profile-error"></div>' +
-        customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) + customersAttachHtml(p) +
+        customersDetailsHtml(p) + customersGoalsHtml(p) + customersSatisfactionHtml(p) + customersTagsHtml(p) + customersIdentitiesHtml(p) + customersAttachHtml(p) +
         customersActivityHtml(p) + customersGraphHtml(p) + customersMergeHtml(p) + customersNotesHtml(p) + customersForgetHtml(p);
     }
 
@@ -57144,10 +57575,17 @@ function burnAreaChart() {
       if (active && host.contains(active) && (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.tagName === 'SELECT')) return;
       // A refresh keeps the page where the person was reading.
       const y = window.scrollY;
-      host.innerHTML = _customersOpen ? customersProfileHtml(_customersOpen) : customersListHtml(data);
+      host.innerHTML = customersListHtml(data);
       if (Math.abs(window.scrollY - y) > 1) window.scrollTo(window.scrollX, y);
       const pick = host.querySelector('[data-customers-picker] [data-customers-field="picker-filter"]');
       if (pick && _customersUi.focusPicker) { _customersUi.focusPicker = false; pick.focus(); }
+      // A toggle re-draws the list; the focus goes back to the chevron it came from.
+      if (_customersUi.focusRow) {
+        const want = _customersUi.focusRow;
+        _customersUi.focusRow = '';
+        const chev = Array.prototype.find.call(host.querySelectorAll('.row-chevron'), c => c.getAttribute('data-arg0') === want);
+        if (chev) chev.focus();
+      }
     }
 
     // The open state of each disclosure is kept, so a refresh or an action
@@ -57200,7 +57638,7 @@ function burnAreaChart() {
       if (gone && _customersData && _customersData.suggestions) _customersData.suggestions = _customersData.suggestions.filter(x => x && x.id !== gone);
       customersShow();
       await fetchCustomers();
-      if (!_customersOpen) customersFocusSuggestion(next);
+      customersFocusSuggestion(next);
     }
 
     // customersShow replaces the panel after an action, even when a field in
@@ -57286,7 +57724,17 @@ function burnAreaChart() {
         _customersOpen = await customersRequest('GET', '/api/customers/' + encodeURIComponent(id));
         customersShow();
         customersTimelineLoad(true);
-      } catch (e) { showToast('Could not open the profile: ' + e.message, 'error'); }
+        const item = document.querySelector('#customers-panel [data-customer-item="' + (_customersOpen && _customersOpen.me ? 'me' : id) + '"]');
+        if (item && typeof item.scrollIntoView === 'function') item.scrollIntoView({ block: 'nearest' });
+      } catch (e) { _customersUi.focusRow = ''; showToast('Could not open the profile: ' + e.message, 'error'); }
+    }
+
+    // customersToggle opens the profile under its row, or folds it when it is
+    // already open. The chevron and the row both call it.
+    function customersToggle(id) {
+      const open = !!(_customersOpen && (id === 'me' ? _customersOpen.me : (!_customersOpen.me && _customersOpen.id === id)));
+      _customersUi.focusRow = id;
+      if (open) customersClose(); else customersOpen(id);
     }
 
     function customersClose() {
@@ -57308,7 +57756,8 @@ function burnAreaChart() {
         customersShow();
         if (p.hinted) showToast('That identity already belongs to another customer. Nothing was linked; it is now a "Same person?" question on both profiles.', 'warning');
         else if (done) showToast(done, 'success');
-      } catch (e) { customersProfileError(e.message); }
+        return true;
+      } catch (e) { customersProfileError(e.message); return false; }
     }
 
     async function customersAdd() {
@@ -57375,18 +57824,25 @@ function burnAreaChart() {
     // customer (an id, or "me") instead of accepting them as a new one. The
     // server folds it in with the merge, so Undo merge on that customer's
     // profile takes it back.
+    // customersIsOpenTarget: is this customer (an id, or "me") the profile
+    // that is open? A suggestion's picker can name any customer now that the
+    // list and an open profile are on the page together.
+    function customersIsOpenTarget(into) {
+      return !!(_customersOpen && (into === 'me' ? _customersOpen.me : (!_customersOpen.me && _customersOpen.id === into)));
+    }
+
     async function customersAttach(sid, into) {
       const next = customersNeighbour(sid);
       try {
         const p = await customersRequest('POST', '/api/customers/suggestions/' + encodeURIComponent(sid) + '/accept', { into: into });
         showToast('Added to ' + (p.name || 'the customer') + '. Undo it from their profile, under Merge.', 'success');
-        if (_customersOpen) {
+        if (customersIsOpenTarget(into)) {
           _customersOpen = p;
           _customersTimeline = { id: '', nodes: [], next: '', error: '', loading: false };
           customersTimelineLoad(true);
         }
       } catch (e) {
-        if (_customersOpen) customersProfileError(e.message); else showToast('Could not add: ' + e.message, 'error');
+        if (customersIsOpenTarget(into)) customersProfileError(e.message); else showToast('Could not add: ' + e.message, 'error');
       }
       _customersUi.picker = '';
       _customersUi.profilePicker = false;
@@ -57444,6 +57900,22 @@ function burnAreaChart() {
 
     function customersSatisfactionReject() { customersEdit({ op: 'satisfaction_reject' }); }
 
+    // customersProfileSave saves the details that changed, one edit each.
+    async function customersProfileSave() {
+      if (!_customersOpen) return;
+      let saved = 0;
+      for (const f of CUSTOMERS_PROFILE_FIELDS) {
+        if (!_customersOpen) return;
+        const next = customersFieldValue('profile-' + f.key);
+        if (next === customersProfileValue(_customersOpen, f.key)) continue;
+        if (!(await customersEdit({ op: 'profile', field: f.key, value: next }))) return;
+        saved++;
+      }
+      if (saved) showToast('Details saved', 'success');
+    }
+
+    function customersProfileReset(key) { customersEdit({ op: 'profile', field: key, state: 'auto' }, 'Handed back to GitHub'); }
+
     function customersNotesSave() { customersEdit({ op: 'notes', notes: (customersField('notes') || {}).value || '' }, 'Notes saved'); }
 
     // customersHintAnswer answers a "Same person?" question about the open
@@ -57460,7 +57932,7 @@ function burnAreaChart() {
         await fetchCustomers();
         // The focus moves on to the next question, else back to the profile.
         const host = document.getElementById('customers-panel');
-        const target = host && ((nextHint && host.querySelector('[data-hint="' + nextHint + '"] button')) || host.querySelector('[data-action="customersClose"]'));
+        const target = host && ((nextHint && host.querySelector('[data-hint="' + nextHint + '"] button')) || host.querySelector('.row-chevron[aria-expanded="true"]'));
         if (target) target.focus();
       } catch (e) { customersProfileError(e.message); }
     }
@@ -63901,6 +64373,7 @@ function burnAreaChart() {
     async function switchCli(agent, backend) {
       if (!backend) return;
       const label = isInferenceBackendName(backend) ? 'method' : 'CLI';
+      const focusSnap = agentFocusSnapshot(document.activeElement);
       const toast = showToast(`Switching ${agent} ${label} → ${backend} (restarting session)...`, 'info', true);
       const res = await fetch(`/api/switch/${agent}/${backend}`, { method: 'POST' });
       const data = await res.json();
@@ -63921,44 +64394,50 @@ function burnAreaChart() {
         dismissToast(toast, `Switch failed: ${data.error || 'unknown'}`, 'error');
         return;
       }
-      dismissToast(toast, `${agent} ${label} → ${backend} (session restarted)`, 'success');
+      dismissToast(toast, data.applied === false && data.message ? `${agent} ${label} → ${backend}: ${data.message}` : `${agent} ${label} → ${backend} (session restarted)`, 'success');
       // The selection is saved; if its backing config is missing, land the
       // user on the Settings tab that fixes it (never blocks).
       maybeOpenMethodConfig(backend);
-      await updateModelDropdown(agent, backend);
-      if (window._lastAgents) {
-        const a = window._lastAgents.find(x => x.name === agent);
-        if (a) { a.cli = backend; renderAgents(window._lastAgents); }
-      }
-      // Reflect the switch everywhere it is shown (focused detail panel,
-      // cadence-matrix method column), then confirm against the server.
-      ocRenderAgentDetail();
-      const lastData = window._lastStatus || {};
-      renderGovernor(lastData.governor || {}, lastData.cadenceMatrix || [], lastData);
+      await updateModelDropdown(agent, backend, focusSnap);
+      // #18906: hold the operator's scroll position, focus and the agent's place
+      // in the list across the re-render; a setting change never re-sorts.
+      withAgentViewportPreserved(agent, () => {
+        if (window._lastAgents) {
+          const a = window._lastAgents.find(x => x.name === agent);
+          if (a) { a.cli = backend; renderAgents(window._lastAgents); }
+        }
+        // Reflect the switch everywhere it is shown (focused detail panel,
+        // cadence-matrix method column), then confirm against the server.
+        ocRenderAgentDetail();
+        const lastData = window._lastStatus || {};
+        renderGovernor(lastData.governor || {}, lastData.cadenceMatrix || [], lastData);
+      }, focusSnap);
       fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
     }
 
-    async function updateModelDropdown(agent, backend) {
+    async function updateModelDropdown(agent, backend, focusSnap) {
       const modelSelects = document.querySelectorAll(`select[data-change-action="switchModel"][data-agent="${agent}"]`);
       const isInference = isInferenceBackendName(backend);
       const isCli = CLI_BACKENDS.includes(backend);
       if (isInference || isCli) {
-        modelSelects.forEach(sel => {
+        // Disabling a focused <select> drops focus to the document body, and the option
+        // swap resizes it; both are re-pinned so the page does not move (#18906).
+        withAgentViewportPreserved(agent, () => modelSelects.forEach(sel => {
           sel.innerHTML = '<option value="">loading models…</option>';
           sel.disabled = true;
-        });
+        }), focusSnap);
         const models = isInference ? await fetchInferenceModels(canonicalInferenceBackendName(backend)) : (await fetchBackendsConfig(), modelsForBackend(backend));
-        modelSelects.forEach(sel => {
+        withAgentViewportPreserved(agent, () => modelSelects.forEach(sel => {
           sel.innerHTML = '<option value="">model ▾</option>' +
             models.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
           sel.disabled = false;
           applyModelNoticeTitle(sel, backend);
-        });
+        }), focusSnap);
       } else {
-        modelSelects.forEach(sel => {
+        withAgentViewportPreserved(agent, () => modelSelects.forEach(sel => {
           sel.innerHTML = '<option value="">model ▾</option>' +
             KNOWN_MODELS.map(m => `<option value="${m.value}">${m.label}</option>`).join('');
-        });
+        }), focusSnap);
       }
     }
 
@@ -63990,20 +64469,26 @@ function burnAreaChart() {
 
     async function switchModel(agent, model) {
       if (!model) return;
+      const focusSnap = agentFocusSnapshot(document.activeElement);
       const toast = showToast(`Switching ${agent} model → ${model} (restarting session)...`, 'info', true);
       const res = await fetch(`/api/model/${agent}/${encodeURIComponent(model)}`, { method: 'POST' });
       const data = await res.json();
       if (!data.ok) { dismissToast(toast, `Model switch failed: ${data.error || 'unknown'}`, 'error'); return; }
-      dismissToast(toast, `${agent} model → ${model} (session restarted)`, 'success');
-      if (window._lastAgents) {
-        const a = window._lastAgents.find(x => x.name === agent);
-        if (a) { a.model = model; renderAgents(window._lastAgents); }
-      }
-      // Reflect the switch everywhere it is shown (focused detail panel,
-      // cadence-matrix model column), then confirm against the server.
-      ocRenderAgentDetail();
-      const lastData = window._lastStatus || {};
-      renderGovernor(lastData.governor || {}, lastData.cadenceMatrix || [], lastData);
+      // A change saved for an agent that is not running restarts nothing: show
+      // the server's "saved; applies when <agent> starts" instead (#18905).
+      dismissToast(toast, data.applied === false && data.message ? `${agent} model → ${model}: ${data.message}` : `${agent} model → ${model} (session restarted)`, 'success');
+      // #18906: hold scroll position, focus and list order across the re-render.
+      withAgentViewportPreserved(agent, () => {
+        if (window._lastAgents) {
+          const a = window._lastAgents.find(x => x.name === agent);
+          if (a) { a.model = model; renderAgents(window._lastAgents); }
+        }
+        // Reflect the switch everywhere it is shown (focused detail panel,
+        // cadence-matrix model column), then confirm against the server.
+        ocRenderAgentDetail();
+        const lastData = window._lastStatus || {};
+        renderGovernor(lastData.governor || {}, lastData.cadenceMatrix || [], lastData);
+      }, focusSnap);
       fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
     }
 
@@ -64013,16 +64498,19 @@ function burnAreaChart() {
     // confirm against the server. "default" clears the stored effort.
     async function switchEffort(agent, effort) {
       if (!effort) return;
+      const focusSnap = agentFocusSnapshot(document.activeElement);
       const toast = showToast(`Switching ${agent} reasoning effort → ${effort} (restarting session)...`, 'info', true);
       const res = await fetch(`/api/effort/${agent}/${encodeURIComponent(effort)}`, { method: 'POST' });
       const data = await res.json();
       if (!data.ok) { dismissToast(toast, `Effort switch failed: ${data.error || 'unknown'}`, 'error'); return; }
       dismissToast(toast, `${agent} reasoning effort → ${effort} (session restarted)`, 'success');
-      if (window._lastAgents) {
-        const a = window._lastAgents.find(x => x.name === agent);
-        if (a) { a.reasoningEffort = effort === 'default' ? '' : effort; renderAgents(window._lastAgents); }
-      }
-      ocRenderAgentDetail();
+      withAgentViewportPreserved(agent, () => {
+        if (window._lastAgents) {
+          const a = window._lastAgents.find(x => x.name === agent);
+          if (a) { a.reasoningEffort = effort === 'default' ? '' : effort; renderAgents(window._lastAgents); }
+        }
+        ocRenderAgentDetail();
+      }, focusSnap);
       fetch('/api/status').then(r => r.json()).then(render).catch(() => {});
     }
 
@@ -65926,6 +66414,75 @@ function burnAreaChart() {
       return stdioShort.slice(0, n).toLowerCase() !== hub.slice(0, n).toLowerCase();
     }
 
+    /* "Does this build contain PR #N?" (#18915). The lookup is answered by
+       GET /api/version/contains from git ancestry of the running commit: yes,
+       no, or unknown. Unknown is never a guess (commit not resolvable, PR not
+       found, lookup failed, or no GitHub access) and the reason says which.
+       The query and last answer live in window._versionContains so the menu,
+       which re-renders on every version poll, does not lose them. */
+    function versionContainsResultHTML(r) {
+      if (!r) return '';
+      if (r.error) return '<span class="text-muted">' + escapeHtml(String(r.error)) + '</span>';
+      const verdict = r.contains === 'yes' || r.contains === 'no' ? r.contains : 'unknown';
+      const q = r.query || {};
+      const what = q.kind === 'pr' ? 'PR #' + q.pr : 'commit ' + String(q.commit || '').slice(0, 7);
+      const tested = r.commit ? ' (' + String(r.commit).slice(0, 7) + ')' : '';
+      return '<span class="oc-version-contains-chip is-' + verdict + '">' + verdict + '</span> ' +
+        escapeHtml(what + tested) + (r.reason ? ': ' + escapeHtml(String(r.reason)) : '');
+    }
+
+    /* The newest image commit and the newest merged commit are shown
+       separately: a channel image can sit on an older commit than the newest
+       merge (merged, not yet built), and one number would hide that. */
+    function versionBuildBlockHTML(v) {
+      const newestImage = String((v && v.target && v.target.short) || (v && v.stableV4Short) || '');
+      const newestMerged = String((v && v.latestShort) || '');
+      const cell = function(label, text, title) {
+        return '<div class="oc-version-row" title="' + escapeHtml(title) + '"><span>' + escapeHtml(label) + '</span><strong>' + escapeHtml(text) + '</strong></div>';
+      };
+      let html = '';
+      if (newestImage) html += cell('Newest image', newestImage, 'The newest commit whose image is published for the channel this hive follows');
+      if (newestMerged) {
+        const unbuilt = newestImage && !versionSameCommit(newestImage, newestMerged);
+        html += cell('Newest merged', newestMerged + (unbuilt ? ' (not in the newest image)' : ''), 'The newest commit merged on this hive\'s branch');
+      }
+      const st = window._versionContains || {};
+      html += '<div class="oc-version-contains">' +
+        '<div class="oc-version-contains-form">' +
+        '<input type="text" id="oc-version-contains-q" placeholder="Contains PR # or commit SHA?" autocomplete="off" aria-label="Does this build contain a PR number or commit SHA" value="' + escapeHtml(st.q || '') + '" data-input-action="versionContainsDraft" data-arg-types="w" data-keydown-action="runVersionContains" data-keys="Enter">' +
+        '<button type="button" class="hv-btn btn-secondary btn-sm" data-action="runVersionContains">Check</button>' +
+        '</div>' +
+        '<div id="oc-version-contains-result" class="oc-version-contains-result" role="status" aria-live="polite">' + (st.html || '') + '</div>' +
+        '</div>';
+      return html;
+    }
+
+    function versionContainsDraft(value) {
+      window._versionContains = Object.assign({}, window._versionContains, { q: String(value || '') });
+    }
+
+    async function runVersionContains() {
+      const input = document.getElementById('oc-version-contains-q');
+      const out = document.getElementById('oc-version-contains-result');
+      const q = String((input && input.value) || (window._versionContains && window._versionContains.q) || '').trim();
+      if (!out || !q) return;
+      const seq = (window._versionContainsSeq = (window._versionContainsSeq || 0) + 1);
+      window._versionContains = { q: q, html: 'Checking…' };
+      out.textContent = 'Checking…';
+      let html;
+      try {
+        const res = await fetch('/api/version/contains?q=' + encodeURIComponent(q));
+        const body = await res.json();
+        html = versionContainsResultHTML(res.ok ? body : { error: body && body.error || 'Lookup failed; try again.' });
+      } catch (_) {
+        html = versionContainsResultHTML({ error: 'Lookup failed; try again.' });
+      }
+      if (seq !== window._versionContainsSeq) return;
+      window._versionContains = { q: q, html: html };
+      const live = document.getElementById('oc-version-contains-result');
+      if (live) live.innerHTML = html;
+    }
+
     function renderVersionDetails(v, ctx) {
       ctx = ctx || {};
       const fullHash = String(v && v.hash || 'unknown');
@@ -65996,6 +66553,7 @@ function burnAreaChart() {
       if (lastUpgrade) html += row('History', value(lastUpgrade.text, lastUpgrade.title || lastUpgrade.text), lastUpgrade.title || lastUpgrade.text);
       const historyHTML = versionUpgradeHistoryHTML(v);
       if (historyHTML) html += '<div class="oc-version-row" title="Recent scheduled and manual upgrade attempts, as recorded by the hub"><span>Upgrade history</span></div>' + historyHTML;
+      html += versionBuildBlockHTML(v);
       if (compareURL && (v && (v.behind || (v.commitsBehind != null && v.commitsBehind > 0)))) {
         html += '<a class="avatar-menu-item" href="' + escapeHtml(compareURL) + '" target="_blank" rel="noopener noreferrer">Compare with target ↗</a>';
       }
@@ -76837,7 +77395,7 @@ function burnAreaChart() {
       const warning = d.problem ? 'Not handed off: ' + d.problem + '. Items in this profile\'s states wait until an agent that may do the work is picked.' : '';
       const how = pinned ? 'pinned' : (WORKFLOW_DISPATCH_SOURCE_WORD[String(d.source || '')] || '');
       const note = warning ? '' : (agent ? 'handed to ' + agent + (how ? ' (' + how + ')' : '') : '') + (d.disabled ? ' · automatic hand-off off, manual send only' : '');
-      const stalled = (Array.isArray(d.not_started) ? d.not_started : []).map(h => 'Hand-off of ' + String(h.ref || '') + ' not started: ' + String(h.reason || 'the agent did not act') + '. ' + (h.retrying ? 'The hive hands it to another agent that may do the work, if there is one.' : 'It waits for an owner: use Send to ' + String(d.profile) + ' on the item\'s row in the Activity Monitor.'));
+      const stalled = (Array.isArray(d.not_started) ? d.not_started : []).map(h => workflowHandoffNote(h, d.profile));
       return { profile: String(d.profile), options, warning, note, stalled };
     }
 
@@ -76907,6 +77465,24 @@ function burnAreaChart() {
         showToast('Failed to bind workflow: ' + err.message, 'error');
       }
       renderConfigTab('Repos');
+    }
+    // The Settings → Repos line for a hand-off an agent did not start
+    // (hivecommons/hive#18749), with where its reason came from
+    // (hivecommons/hive#18916). The reason is text an agent wrote in a session
+    // that may be over: it carries its age and session, and once a newer
+    // hand-off of the item exists (`stale`) it is shown as an earlier
+    // decline, never as the item's current state. Pure: the caller escapes
+    // the result when it puts it in markup.
+    function workflowHandoffNote(h, profile) {
+      const ref = String(h && h.ref || '');
+      const reason = String(h && h.reason || 'the agent did not act');
+      const age = h && h.reason_age ? String(h.reason_age) + ' ago' : 'at an unknown time';
+      const session = h && h.reason_session ? String(h.reason_session) : 'unknown (before provenance was recorded)';
+      const origin = 'Decided ' + age + ' in session ' + session + '.';
+      if (h && h.stale) {
+        return 'Earlier hand-off of ' + ref + ' (stale): ' + reason + '. ' + origin + ' A newer hand-off of this item exists, so this is history, not its state now.';
+      }
+      return 'Hand-off of ' + ref + ' not started: ' + reason + '. ' + origin + ' ' + (h && h.retrying ? 'The hive hands it to another agent that may do the work, if there is one.' : 'It waits for an owner: use Send to ' + String(profile) + ' on the item\'s row in the Activity Monitor.');
     }
 // Settings → Workflows (hivecommons/hive#17620, RFC phase 3).
     //

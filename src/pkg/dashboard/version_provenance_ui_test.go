@@ -21,7 +21,7 @@ func TestVersionProvenanceRendering(t *testing.T) {
 		"versionStateLabels", "versionStateLabel", "versionFormatDuration", "versionAgentsInTurnText", "versionUpgradeStateText", "versionUpgradeStatePillHTML", "versionUpgradeHistoryHTML",
 		"versionNowMs", "versionReadUpgradeProgress", "versionWriteUpgradeProgress", "versionClearUpgradeProgress", "versionMarkUpgradeComplete", "versionReconcileUpgradeProgress", "versionHubUpgradeAttemptKey", "versionAdoptHubUpgradeProgress", "versionElapsedText", "versionScheduleUpgradePoll",
 		"versionShortSHA", "versionSameCommit", "versionDashHTML", "versionPolicy", "versionManagedSuffix", "versionTrackingSummary", "versionCadenceLabel", "versionStatusSummary",
-		"versionUpgradeProgressStatus", "versionUpgradeKey", "versionBeeGlyphHTML", "versionUpgradeHiveHTML", "versionBeeProgressHTML", "versionSetHTMLPreservingUpgradeBee", "versionButtonHTML", "renderVersionUpgradeAction", "renderVersionDetails", "versionManualUpgradeActive",
+		"versionUpgradeProgressStatus", "versionUpgradeKey", "versionBeeGlyphHTML", "versionUpgradeHiveHTML", "versionBeeProgressHTML", "versionSetHTMLPreservingUpgradeBee", "versionButtonHTML", "renderVersionUpgradeAction", "versionBuildBlockHTML", "renderVersionDetails", "versionManualUpgradeActive",
 		"versionNavbarUpgradeHTML", "ensureVersionMenuPortal", "renderVersionMenu", "renderVersionChip", "renderNavbarUpgradeIndicator", "renderVersionSurfaces", "fetchGitVersion",
 	} {
 		source.WriteString(jsFunc(t, html, name))

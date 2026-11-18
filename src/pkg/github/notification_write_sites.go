@@ -116,6 +116,8 @@ var notificationWriteSites = map[string]NotificationWriteSite{
 	"github.(*Client).relayScannerNote":                      {Class: NotificationClassAttention},
 	"github.(*Client).upsertScannerNote":                     {Class: NotificationClassAttention},
 	"github.(*Client).remindAttention":                       {Class: NotificationClassAttention},
+	"main.factCheckSweep.needsHuman":                         {Class: NotificationClassAttention},
+	"main.reviewFeedbackSweep.needsHuman":                    {Class: NotificationClassAttention},
 
 	// required_review: a review submission or request a merge depends on.
 	"github.(*Client).QueuePRAutoMergeWithNoteResultAtHead": {Class: NotificationClassRequiredReview},

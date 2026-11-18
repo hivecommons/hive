@@ -13,7 +13,7 @@ import (
 
 func TestAttributionTrailer_RequestedBy(t *testing.T) {
 	m := InvocationMeta{Agent: "quality", Backend: "codex", RequestedBy: "hanthor"}
-	want := "— hive: agent=quality backend=codex requested_by=@hanthor"
+	want := "-- hive: agent=quality backend=codex requested_by=@hanthor"
 	if got := m.Trailer(); got != want {
 		t.Errorf("Trailer() = %q, want %q", got, want)
 	}

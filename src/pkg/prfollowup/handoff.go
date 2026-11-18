@@ -166,7 +166,7 @@ func extractHandoff(body string) github.PRHandoff {
 	current := fieldNone
 	sawHeading := false
 	for _, line := range strings.Split(strings.ReplaceAll(body, "\r\n", "\n"), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), github.AttributionTrailerPrefix) {
+		if _, ok := github.HasAttributionTrailerPrefix(strings.TrimSpace(line)); ok {
 			break
 		}
 		if text, ok := headingText(line); ok {

@@ -38,6 +38,14 @@ type WorkflowDispatchHandoff struct {
 	Retrying bool `json:"retrying"`
 	// Next says, in a few words, what happens now.
 	Next string `json:"next"`
+	// ReasonAt, ReasonAge and ReasonSession say when and in which hand-off
+	// session Reason was decided (session is ids only); Stale is true once a
+	// newer hand-off of the item exists, so Reason is history rather than
+	// the item's state now (hivecommons/hive#18916).
+	ReasonAt      *time.Time `json:"reason_at,omitempty"`
+	ReasonAge     string     `json:"reason_age,omitempty"`
+	ReasonSession string     `json:"reason_session,omitempty"`
+	Stale         bool       `json:"stale"`
 }
 
 // StageTrackerWorkflowHandoff is a not-started hand-off on a tracker row.
@@ -48,6 +56,11 @@ type StageTrackerWorkflowHandoff struct {
 	Reason   string `json:"reason"`
 	Retrying bool   `json:"retrying"`
 	Next     string `json:"next,omitempty"`
+	// ReasonAt, ReasonAge, ReasonSession and Stale: see WorkflowDispatchHandoff.
+	ReasonAt      *time.Time `json:"reason_at,omitempty"`
+	ReasonAge     string     `json:"reason_age,omitempty"`
+	ReasonSession string     `json:"reason_session,omitempty"`
+	Stale         bool       `json:"stale"`
 }
 
 // workflowDispatchHandoffs is the live not-started list, never nil.
@@ -99,7 +112,8 @@ func attachWorkflowHandoffsToTracker(w *StageTrackerWorkflows, handoffs []Workfl
 			if block.Handoffs == nil {
 				block.Handoffs = map[string]StageTrackerWorkflowHandoff{}
 			}
-			block.Handoffs[strconv.Itoa(h.Number)] = StageTrackerWorkflowHandoff{Profile: h.Profile, State: h.State, Agent: h.Agent, Reason: h.Reason, Retrying: h.Retrying, Next: h.Next}
+			block.Handoffs[strconv.Itoa(h.Number)] = StageTrackerWorkflowHandoff{Profile: h.Profile, State: h.State, Agent: h.Agent, Reason: h.Reason, Retrying: h.Retrying, Next: h.Next,
+				ReasonAt: h.ReasonAt, ReasonAge: h.ReasonAge, ReasonSession: h.ReasonSession, Stale: h.Stale}
 			w.Repos[repo] = block
 		}
 	}

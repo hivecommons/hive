@@ -16,6 +16,7 @@ import (
 	"github.com/hivecommons/hive/crux/logscrub"
 	"github.com/hivecommons/hive/pkg/effects"
 	"github.com/hivecommons/hive/pkg/forgestate"
+	"github.com/hivecommons/hive/pkg/prosefilter"
 )
 
 // forwardMergeHeadRe matches the branches the v5-topup / v6-topup workflows
@@ -267,8 +268,8 @@ func (c *Client) CreatePR(ctx context.Context, repo, head, base, title, body str
 			return CreatePRResult{}, fmt.Errorf("ioscan canary leak detected: agent=%s source=%s", leak.Agent, leak.Source)
 		}
 	}
-	title = logscrub.ScrubString(title)
-	body = logscrub.ScrubString(body)
+	title = prosefilter.SanitizeTitle(logscrub.ScrubString(title))
+	body = prosefilter.Sanitize(logscrub.ScrubString(body))
 
 	// Idempotency: don't open a second PR for a branch that already has an open
 	// one. GitHub itself 422s on a duplicate, but checking first lets us return

@@ -666,7 +666,7 @@
           "Meetings"
         ],
         "summary": "Approve a platform join request",
-        "description": "Lets hive into a meeting someone asked for from the platform (Discord /hive join): calls meeting.join for that channel. Optional body {voice}. Owner only.",
+        "description": "Lets hive into a meeting someone asked for from the platform (Discord /hive join): calls meeting.join for that channel. Optional body {voice, always}. With always, the requester's Discord user id (taken from the request, never from the caller) is also trusted, so their later requests are approved automatically; audited as meeting_requester_trust. Owner only.",
         "parameters": [
           {
             "name": "id",
@@ -686,6 +686,10 @@
                 "properties": {
                   "voice": {
                     "type": "boolean"
+                  },
+                  "always": {
+                    "type": "boolean",
+                    "description": "Also trust this requester by Discord user id"
                   }
                 }
               }
@@ -902,6 +906,47 @@
           },
           "409": {
             "description": "Not a pending join request"
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
+    "/api/meetings/trusted/{platform}/{uid}": {
+      "delete": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Stop auto-approving a trusted requester",
+        "description": "Removes a person from the list whose Discord join requests are approved automatically; their next request waits for the owner again. Audited as meeting_requester_untrust. Owner only.",
+        "parameters": [
+          {
+            "name": "platform",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "uid",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Removed"
+          },
+          "403": {
+            "description": "Owner access required"
+          },
+          "404": {
+            "description": "Not a trusted requester"
           },
           "503": {
             "description": "Meetings are not enabled on this hive"
@@ -1157,6 +1202,51 @@
         }
       }
     },
+    "/api/meetings/budget": {
+      "get": {
+        "tags": [
+          "Meetings"
+        ],
+        "summary": "Meetings budget meter",
+        "description": "Any authenticated role, read-only included. The per-meeting token and intent budgets, the hive-wide hourly and daily token ceilings with what is used in the rolling hour and day, and one meter per meeting: tokens used, budget, percent, intents answered, level (ok, warning at 80 percent, degraded at 90 percent, exhausted), and the number of questions skipped because the budget ran out. Numbers only: no question or transcript text (the skipped questions' text is on the owner-only GET /api/meetings/{id}).",
+        "responses": {
+          "200": {
+            "description": "Budget overview",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token_budget": {
+                      "type": "integer",
+                      "description": "meetings.budget.max_tokens_per_meeting in effect"
+                    },
+                    "intent_budget": {
+                      "type": "integer",
+                      "description": "meetings.budget.max_intents_per_meeting in effect"
+                    },
+                    "ledger": {
+                      "type": "object",
+                      "description": "Hive-wide spend: hourly_used, hourly_ceiling, daily_used, daily_ceiling (a zero ceiling means none)"
+                    },
+                    "meetings": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "description": "meeting_id, tokens_used, token_budget, percent, intents_answered, intent_budget, level, warned, degraded, exhausted, exhausted_by, skipped, dropped"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Meetings are not enabled on this hive"
+          }
+        }
+      }
+    },
     "/api/meetings/{id}": {
       "delete": {
         "tags": [
@@ -1251,7 +1341,12 @@
                       }
                     },
                     "live": {
-                      "type": "object"
+                      "type": "object",
+                      "description": "Live-loop state. Includes skipped (the questions dropped because the budget ran out, with their text, first 200) and skipped_count."
+                    },
+                    "budget": {
+                      "type": "object",
+                      "description": "The meeting's budget meter, as in GET /api/meetings/budget."
                     }
                   }
                 }
@@ -5865,6 +5960,85 @@
                 }
               }
             }
+          }
+        }
+      }
+    },
+    "/api/version/contains": {
+      "get": {
+        "tags": [
+          "System"
+        ],
+        "summary": "Does the running build contain a PR or commit",
+        "description": "Answers from git ancestry, computed from the commit this hive reports running (the same value as `hash` on `/api/version`) and the repository history. `contains` is `yes` when the PR's merge commit (or the commit itself) is the running commit or one of its ancestors, `no` when ancestry was resolved and it is not (including a PR that was never merged), and `unknown` when it cannot be established: the commit is not resolvable in the repository history, the lookup failed, or this hive has no GitHub access. `unknown` is never a guess. Reads the public repository through the hive's existing GitHub client; sends only commit SHAs and a PR number.",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": true,
+            "description": "A PR number (`123`, `#123`, `PR 123`; up to six digits) or a commit SHA (7 to 40 hex characters)",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Containment answer",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "query": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "pr",
+                            "commit"
+                          ]
+                        },
+                        "pr": {
+                          "type": "integer"
+                        },
+                        "commit": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "commit": {
+                      "type": "string",
+                      "description": "The commit whose presence was tested: the PR's merge commit, or the SHA asked about"
+                    },
+                    "running": {
+                      "type": "string",
+                      "description": "The commit this hive reports running"
+                    },
+                    "channel": {
+                      "type": "string",
+                      "description": "The release channel the hive's image follows, when known"
+                    },
+                    "contains": {
+                      "type": "string",
+                      "enum": [
+                        "yes",
+                        "no",
+                        "unknown"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string",
+                      "description": "Why the answer is unknown, or why a PR is not contained"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "The query is neither a PR number nor a commit SHA"
           }
         }
       }
@@ -13160,7 +13334,7 @@
           "Governor"
         ],
         "summary": "Update the attribution-trailer toggle",
-        "description": "Sets the hive-wide toggle for appending a visible \"— hive: …\" trailer to hive-created PRs and issues. Does not affect the audit log, which always records the invocation. Requires owner role.",
+        "description": "Sets the hive-wide toggle for appending a visible \"-- hive: …\" trailer to hive-created PRs and issues. Does not affect the audit log, which always records the invocation. Requires owner role.",
         "requestBody": {
           "content": {
             "application/json": {
@@ -38495,6 +38669,185 @@
         }
       }
     },
+    "/api/kick-outcomes": {
+      "get": {
+        "tags": [
+          "Agents"
+        ],
+        "summary": "What each kick of an agent came to",
+        "description": "Any authenticated role. Without `agent`, lists every agent's latest kick as a one-line summary (`agents`). With `agent`, lists that agent's last ten kicks, newest first (`kicks`). Owner and read-write sessions also receive the detail of each kick: trigger_kind (dashboard, governor, workflow_dispatch, other), trigger_actor (the dashboard user's login), started_at, ended_at, pr_url, pr_number, branch, sha, refusal_code (a reason code from the kick-refusals page) and `quote`, the agent's own stand-down line or the text behind a refusal. A read-only session receives only the latest kick's one-line summary. The outcome is derived from real signals only (hivecommons/hive#18916): a kick no signal speaks for is ended_no_visible_action, never a guess. `quote` is untrusted agent text: tokens are redacted and it is length-capped, and a client must escape it. Not reachable by agents.",
+        "parameters": [
+          {
+            "name": "agent",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "description": "Agent name; omit for every agent's latest kick."
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Kick outcomes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "detail": {
+                      "type": "boolean",
+                      "description": "True when this session may see kick detail."
+                    },
+                    "agent": {
+                      "type": "string"
+                    },
+                    "agents": {
+                      "type": "object",
+                      "description": "Latest kick per agent, keyed by agent name.",
+                      "additionalProperties": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "agent": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "opened_pr",
+                              "pushed_commit",
+                              "commented",
+                              "stood_down",
+                              "refused",
+                              "still_running",
+                              "ended_no_visible_action"
+                            ]
+                          },
+                          "summary": {
+                            "type": "string",
+                            "description": "One line, e.g. \"opened PR #12\". The age is rendered from `at`."
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          }
+                        }
+                      }
+                    },
+                    "latest": {
+                      "type": "object",
+                      "description": "Read-only sessions: the agent's latest kick summary.",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "agent": {
+                          "type": "string"
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "opened_pr",
+                            "pushed_commit",
+                            "commented",
+                            "stood_down",
+                            "refused",
+                            "still_running",
+                            "ended_no_visible_action"
+                          ]
+                        },
+                        "summary": {
+                          "type": "string",
+                          "description": "One line, e.g. \"opened PR #12\". The age is rendered from `at`."
+                        },
+                        "at": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    },
+                    "kicks": {
+                      "type": "array",
+                      "description": "Owner and read-write sessions: the agent's last kicks.",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "id": {
+                            "type": "string"
+                          },
+                          "agent": {
+                            "type": "string"
+                          },
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "opened_pr",
+                              "pushed_commit",
+                              "commented",
+                              "stood_down",
+                              "refused",
+                              "still_running",
+                              "ended_no_visible_action"
+                            ]
+                          },
+                          "summary": {
+                            "type": "string",
+                            "description": "One line, e.g. \"opened PR #12\". The age is rendered from `at`."
+                          },
+                          "at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "trigger_kind": {
+                            "type": "string"
+                          },
+                          "trigger_actor": {
+                            "type": "string"
+                          },
+                          "started_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "ended_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "pr_url": {
+                            "type": "string"
+                          },
+                          "pr_number": {
+                            "type": "integer"
+                          },
+                          "branch": {
+                            "type": "string"
+                          },
+                          "sha": {
+                            "type": "string"
+                          },
+                          "refusal_code": {
+                            "type": "string"
+                          },
+                          "quote": {
+                            "type": "string",
+                            "description": "Untrusted agent text, redacted and capped."
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Kick outcomes are not available on this hive"
+          }
+        }
+      }
+    },
     "/api/hive-advice": {
       "get": {
         "tags": [
@@ -43446,7 +43799,7 @@
                     },
                     "dispatch": {
                       "type": "array",
-                      "description": "Every bound repository's profiles: repo, profile, agent, source, mode, needs, pinned, disabled, problem (why nothing fills it), states, candidates (each pinnable agent with its mode and whether it may do what the profile needs), not_started (hand-offs an agent declined or did not act on)",
+                      "description": "Every bound repository's profiles: repo, profile, agent, source, mode, needs, pinned, disabled, problem (why nothing fills it), states, candidates (each pinnable agent with its mode and whether it may do what the profile needs), not_started (hand-offs an agent declined or did not act on, each with reason_at, reason_age, reason_session and stale: true once a newer hand-off of the item exists, so the reason is history and not the current state)",
                       "items": {
                         "type": "object"
                       }
@@ -49303,7 +49656,7 @@
           "Customers"
         ],
         "summary": "Edit a customer profile",
-        "description": "Applies one change, named by op: name, notes, identity_add, identity_remove, tag (state on, off or auto), goal_add, goal_edit, goal_confirm, goal_reject, satisfaction_set, satisfaction_confirm, satisfaction_reject. Owner and read-write users may edit anyone. A read-only user may post only to /api/customers/me/edit, and only name, identity, tag and goal changes; an identity they add is an unconfirmed claim that resolves nobody until someone with the full view confirms it. Audited as customer_edit with the person and the op, never the value.",
+        "description": "Applies one change, named by op: name, notes, profile (field real_name, organization or location, with value; state auto hands it back to GitHub), identity_add, identity_remove, tag (state on, off or auto), goal_add, goal_edit, goal_confirm, goal_reject, satisfaction_set, satisfaction_confirm, satisfaction_reject. Owner and read-write users may edit anyone. A read-only user may post only to /api/customers/me/edit, and only name, profile, identity, tag and goal changes; an identity they add is an unconfirmed claim that resolves nobody until someone with the full view confirms it. Audited as customer_edit with the person and the op, never the value.",
         "parameters": [
           {
             "name": "id",
@@ -49330,6 +49683,7 @@
                     "enum": [
                       "name",
                       "notes",
+                      "profile",
                       "identity_add",
                       "identity_remove",
                       "tag",
@@ -49367,6 +49721,14 @@
                       "on",
                       "off",
                       "auto"
+                    ]
+                  },
+                  "field": {
+                    "type": "string",
+                    "enum": [
+                      "real_name",
+                      "organization",
+                      "location"
                     ]
                   },
                   "goal_id": {

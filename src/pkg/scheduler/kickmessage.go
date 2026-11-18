@@ -672,6 +672,20 @@ func renderTemplatedKick(agentName, template string, render func(string) (string
 
 const governorWorkSourceRule = "The PRs/issues for this kick are listed in this prompt by the governor. Do not run `gh pr list`, `gh issue list`, or `gh search` to discover work. Use `gh pr view <n>` on supplied PR numbers and `gh issue view <n> --comments` only on supplied GitHub issue numbers, so you read each issue with its comments. For merged PR history only, `gh pr list --state merged` (no `--search` or `-S`) may be used only when the wrapper permits it for your tier; this does not authorize open-work discovery. If refused, do not retry or bypass the restriction. Prefer the compact form `hive-gh pr view <n>` / `hive-gh pr checks <n>` / `hive-gh issue view <n>` (fixed --json projection that keeps labels, author, head SHA, merge state, review decision and check conclusions; issue comments still come from `gh issue view <n> --comments`); add `--full` only when you need the complete record."
 
+// plainDashRule is the one-sentence house rule every agent kick carries: the
+// owner does not accept em-dashes in anything hive or its agents write. The
+// outbound relays also rewrite them (pkg/prosefilter), but telling the agent
+// keeps them out of files, commits and local notes the relays never see.
+const plainDashRule = "Never use em-dashes (or en-dashes as dashes) in anything you write; use a hyphen or rewrite the sentence."
+
+// addPlainDashRule splices plainDashRule in under the kick header once.
+func addPlainDashRule(message string) string {
+	if message == "" || strings.Contains(message, plainDashRule) {
+		return message
+	}
+	return insertAfterKickHeader(message, plainDashRule)
+}
+
 func addGovernorWorkSourceRule(message string) string {
 	if message == "" || strings.Contains(message, governorWorkSourceRule) {
 		return message

@@ -152,6 +152,18 @@ const (
 	RuleAdvisoryInProgress = "advisory-in-progress"
 )
 
+// Mid-flight rule names (hivecommons/hive#18889): a head whose checks have
+// not finished is not a head the delegate may release.
+const (
+	// RuleCIPending: the PR's checks are still running with none failed, so
+	// no fix is owed and no approval is earned; the delegate writes nothing.
+	RuleCIPending = "ci-pending"
+	// RuleMidFlight: the dashboard's server-side guard — CI is running or
+	// the review is incomplete on the current head — answered before any
+	// decider ran.
+	RuleMidFlight = "mid-flight"
+)
+
 // AdvisoryChecklist is the progress of a hive advisory's checklist: how
 // many of its items are resolved. Total 0 is an advisory without items.
 type AdvisoryChecklist struct {
@@ -193,6 +205,11 @@ type CompetingPR struct {
 	// train as a duplicate of the item (same `Fixes #N`,
 	// hivecommons/hive#15395); the item is the PR the queue kept.
 	HeldDuplicate bool
+	// PersonAuthored: a person pushed it (author/human, or one of this
+	// hive's owners). With HiveAuthored it is the trust that lets the
+	// competitor cover a contributor PR's issue (RuleCoveredByOtherPR,
+	// hivecommons/hive#18900): a contributor copy never beats either.
+	PersonAuthored bool
 }
 
 // Input is everything the delegate reads about one parked item.
@@ -255,6 +272,12 @@ type Input struct {
 	Overlaps []int
 	// Competing lists the other open PRs for the same work.
 	Competing []CompetingPR
+	// IssueClaimHolder names a person or hive agent holding a live claim on
+	// an issue this PR closes ("" = none), IssueClaimIssue is that issue:
+	// work a person or the hive already holds is not adopted from a
+	// contributor (hivecommons/hive#18900).
+	IssueClaimHolder string
+	IssueClaimIssue  int
 	// TrainDuplicateOf is the open PR the merge queue kept for the same
 	// issue when it held this one as a duplicate (0 = not held);
 	// TrainDuplicateIssue is that issue (hivecommons/hive#15395).
@@ -666,6 +689,17 @@ func operatorActionDecision(sr SelfReport, remedy string) Decision {
 	}
 }
 
+// ciPendingDecision declines to release a PR whose checks are still
+// running: nothing is written and the PR stays parked until they finish.
+func ciPendingDecision(ref string) Decision {
+	return Decision{
+		Verdict: VerdictRefused, Rule: RuleCIPending,
+		Text:      "wait on " + ref + ": CI is still running on the current head",
+		Rationale: "CI is still running on the current head, so there is nothing yet to approve; decide again once the checks finish",
+		KeepsPark: true,
+	}
+}
+
 // notNowDecision declines a hive-filed proposal that shows neither an
 // incident nor a recurrence: the reason is posted and the issue is closed
 // as not planned, the way a declined proposal leaves the tracker.
@@ -812,6 +846,13 @@ func decidePR(in Input) Decision {
 	}
 	if fix := fixList(in); len(fix) > 0 {
 		return fixThenMerge(fix)
+	}
+	// CIRed is false while checks are merely pending, so fixList above names
+	// nothing for a head still running its checks; without this the two
+	// approvals below ("green head") fired on a head that was not green
+	// (hivecommons/hive#18889).
+	if in.CIPending {
+		return ciPendingDecision(ref)
 	}
 	if in.IsSmall() || in.LowRiskPaths {
 		return releasePR("small-low-risk", "approve "+ref+": small, necessary, low-risk change on a green head", "small low-risk changes (CI pins, read-only RBAC, warning text, workflow hygiene) are approved once checked")

@@ -1,7 +1,12 @@
 name: Native queue policy
 
 on:
-  pull_request_target:
+  # Plain pull_request, not pull_request_target: GitHub blocks the latter by
+  # default on public repositories from 2026-12-02. This workflow only reads,
+  # and it always checks out the trusted base ref below, never PR code. The
+  # accepted events are listed in native-queue-policy.cjs (PR_EVENTS), which
+  # still accepts earlier pull_request_target runs on the same head.
+  pull_request:
     branches: [v5, v6]
     types: [opened, synchronize, reopened, ready_for_review, edited, labeled, unlabeled]
   merge_group:
@@ -14,7 +19,7 @@ permissions:
   actions: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request_target' && github.event.pull_request.number || github.run_id }}
+  group: ${{ github.workflow }}-${{ github.event_name == 'pull_request' && github.event.pull_request.number || github.run_id }}
   # Serialise per PR but never cancel: the evidence wait below runs up to
   # 22.5 min, and every stage-label flip re-fires this workflow. With
   # cancel-in-progress the check could never reach a verdict on a PR the
@@ -25,6 +30,11 @@ concurrency:
 jobs:
   policy:
     name: native-queue-policy
+    env:
+      # App bot login whose `verify PR contents` commit status counts as
+      # evidence beside the legacy workflow run. Unset means the hive status
+      # provider is not configured, never "accept any creator".
+      HIVE_PR_GATE_CREATOR_LOGIN: ${{ vars.HIVE_PR_GATE_CREATOR_LOGIN }}
     # Read-only, GitHub-hosted: do not run candidate code with write credentials
     # or put fork/group policy scripts on a privileged self-hosted runner.
     runs-on: ubuntu-latest
@@ -33,7 +43,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # A group's candidates must not supply their own evidence validator.
-          # PR-target checks out the base branch head (trusted base code, never candidate
+          # PR runs check out the base branch head (trusted base code, never candidate
           # code); the PR's recorded base.sha lags the branch and can predate these scripts.
           ref: ${{ github.event.merge_group.base_sha || format('refs/heads/{0}', github.event.pull_request.base.ref) }}
           persist-credentials: false

@@ -253,7 +253,7 @@ which feeds the author/reviewer model-pair metrics.
 The same pool drives the **review swarm** ([#13243](https://github.com/hivecommons/hive/issues/13243)).
 Each `[review-perspective:…]` kick (and the combined kick on non-fan-out hives)
 is planned against the PR's author model — taken from `pr.HiveModel`, i.e. the
-`— hive:` trailer / `agent_pr_created` audit record — and the perspective prompt
+`-- hive:` trailer / `agent_pr_created` audit record — and the perspective prompt
 carries the same `## Independent review — run this review with <backend>/<model>`
 section the queue kick's PR lines do. Pool selection, `exclude_author_model`,
 `exclude_author_family` and `fallback` behave exactly as above; in the swarm
@@ -927,6 +927,17 @@ The "known list" for the warning is the backend's last model discovery result, o
 
 If the CLI refuses a model anyway, the agent shows the error and backs off instead of restart-looping. See [An agent shows "model … rejected by the CLI"](troubleshooting.md#an-agent-shows-model--rejected-by-the-cli).
 
+### Switching the method or model of an agent that is not running
+
+`POST /api/switch/{agent}/{backend}` and `POST /api/model/{agent}/{model}` accept a change for any **configured** agent, not only a live one ([#18905](https://github.com/hivecommons/hive/issues/18905)). An agent can be configured but absent from the runtime (stopped, held back by the ACMM level gate) or present but paused:
+
+- **Not in the runtime (stopped or gated):** the choice is persisted to both config layers (`hive.yaml` and the per-agent overlay, see [config-layering](config-layering.md)), marked operator-owned, and nothing is restarted. The model is validated against the agent's saved backend and a backend against the supported list or a configured gateway name, exactly as for a running agent.
+- **Paused or stopped in the runtime:** the override is set and persisted as usual, but the agent is **not** restarted, so a model change does not wake a paused agent.
+
+In both cases the response is `{"ok": true, "applied": false, "message": "saved; applies when <agent> starts", ...}` and the dashboard shows that message instead of "session restarted". A live switch is unchanged and carries no `applied` field. A name that is neither running nor configured still fails with `400` and `agent <name> not found (valid agents: ...)`.
+
+On the dashboard, switching an agent's method, model or reasoning effort keeps the page where it was: the re-render re-pins the window to the same agent card, returns focus to the dropdown you used (including after the model list reloads), and never re-sorts the cards ([#18906](https://github.com/hivecommons/hive/issues/18906)).
+
 ### `launch_cmd` and `backend`
 
 `backend` is the operator-owned field; `launch_cmd` is derived from it. The two must agree: a `launch_cmd` whose executable is a different agentic CLI than `backend` names (say `backend: codex` next to `launch_cmd: /usr/bin/bob …`) is rejected by config validation, because the agent would be launched as one CLI and health-checked as another. Hive enforces this on every path that can move the two apart:
@@ -1402,7 +1413,7 @@ The own-item follow-up below follows the items opened under either identity, eac
 
 **Fork-and-PR.** The owner's account cannot push to a repository it does not own, so a PR against a remote repo goes through the owner's fork: `gh repo fork <owner>/<name> --clone=false`, push the topic branch to `https://<host>/<login>/<name>`, then `gh pr create --repo <owner>/<name> --head <login>:<branch>`. The proxy allows exactly that (fork creation, pushes to the fork with its default branch protected, the PR against the remote) and refuses everything else on the fork. The kick spells the commands out, so `git push` and `gh pr create` need no agent-side special casing.
 
-**Own-item follow-up.** Remote repos send no webhooks and are not enumerated, so the hive polls them: it lists the open issues and PRs created by the login each repo writes as (the owner's, or the App bot's on a repo that writes as the bot, [#18516](https://github.com/hivecommons/hive/issues/18516)), reading each repo under its own reference-repo credential, keeps the ones whose body carries a hive marker (the `— hive:` attribution trailer or the `🐝 **Hive Agent**` footer), fetches new comments, review comments and reviews, and delivers them to the agent the marker names, into its live session or as a `🌐 REMOTE ITEM FOLLOW-UP` section on its next kick. State is in `/data/turn/remote-items.json` (`HIVE_REMOTE_ITEMS_FILE` overrides). Nothing else happens on the remote: no backlog scan, no queue, no stage engine ([#18199](https://github.com/hivecommons/hive/issues/18199)).
+**Own-item follow-up.** Remote repos send no webhooks and are not enumerated, so the hive polls them: it lists the open issues and PRs created by the login each repo writes as (the owner's, or the App bot's on a repo that writes as the bot, [#18516](https://github.com/hivecommons/hive/issues/18516)), reading each repo under its own reference-repo credential, keeps the ones whose body carries a hive marker (the `-- hive:` attribution trailer or the `🐝 **Hive Agent**` footer), fetches new comments, review comments and reviews, and delivers them to the agent the marker names, into its live session or as a `🌐 REMOTE ITEM FOLLOW-UP` section on its next kick. State is in `/data/turn/remote-items.json` (`HIVE_REMOTE_ITEMS_FILE` overrides). Nothing else happens on the remote: no backlog scan, no queue, no stage engine ([#18199](https://github.com/hivecommons/hive/issues/18199)).
 
 What agents see: the `📚 REFERENCE REPOS` block appends `(from owner/repo#N)` to each derived line, `(from owner/repo#N; read-only: <reason>)` when the credential fell back, and `(read-only this pass: <reason>)` while an App lookup is unresolved. The proxy rules are the ones in the table above: a derived entry unlocks opening issues and PRs on that repo and nothing else, and the read-only fallback unlocks nothing. On the dashboard, Settings shows derived entries read-only with a link to the request issue and the credential state, and the API answers an edit of one with `409`.
 

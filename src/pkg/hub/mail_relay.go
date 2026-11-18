@@ -68,8 +68,9 @@ const (
 	// mailInboundDeadline is this route's read and write deadline, past
 	// the server-wide ones, so a large delivery can be read and relayed.
 	mailInboundDeadline = 2 * time.Minute
-	// mailSpokeErrBody bounds what is read of a spoke's answer.
-	mailSpokeErrBody = 4096
+	// mailSpokeErrBody bounds what is read of a spoke's answer. The reply
+	// decision (mail_reply.go) parses it, so it holds a stored mail's ids.
+	mailSpokeErrBody = 16 << 10
 )
 
 // mailEnvInt64 reads a positive integer, def when unset or invalid.
@@ -96,6 +97,8 @@ var mailRelayClient = &http.Client{
 }
 
 func (s *HubServer) registerMailRoutes() {
+	// The confirmation reply (#18746) is off unless its DKIM key is mounted.
+	s.mailReply = newMailReplierFromEnv(s.logger, s.mailHostMap)
 	s.mux.HandleFunc("GET "+wire.HostsPath, s.handleMailHosts)
 	s.mux.HandleFunc("POST "+wire.InboundPath, s.handleMailInbound)
 }
@@ -342,6 +345,7 @@ func (s *HubServer) handleMailInbound(w http.ResponseWriter, r *http.Request) {
 	base := strings.TrimRight(dashboardURL, "/")
 	chunk := mailChunkBytes()
 	var code int
+	var answer []byte
 	if env.Kind == wire.KindFiles && (!isJSON || size > chunk) {
 		if ct == "" {
 			ct = wire.ContentTypeJSON
@@ -351,12 +355,12 @@ func (s *HubServer) handleMailInbound(w http.ResponseWriter, r *http.Request) {
 			mailError(w, http.StatusRequestEntityTooLarge, "delivery too large")
 			return
 		}
-		code, err = relayMailChunks(ctx, base+wire.SpokeFilesChunkPath, h.WebhookRelayKey, env.ID, ct, spool, size, chunk)
+		code, answer, err = relayMailChunks(ctx, base+wire.SpokeFilesChunkPath, h.WebhookRelayKey, env.ID, ct, spool, size, chunk)
 	} else {
 		var body []byte
 		body, err = io.ReadAll(io.NewSectionReader(spool, 0, size))
 		if err == nil {
-			code, err = relayMailOnce(ctx, base+path, h.WebhookRelayKey, env.ID, wire.ContentTypeJSON, nil, body)
+			code, answer, err = relayMailOnce(ctx, base+path, h.WebhookRelayKey, env.ID, wire.ContentTypeJSON, nil, body)
 		}
 	}
 	if err != nil {
@@ -368,6 +372,9 @@ func (s *HubServer) handleMailInbound(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case code >= 200 && code < 300:
 		w.WriteHeader(http.StatusAccepted)
+		if env.Kind == wire.KindFiles {
+			s.mailReply.dispatch(mailReplyJob{HiveID: hiveID, Host: host, Spool: spool, Size: size, MediaType: mediaType, Boundary: params["boundary"], Answer: answer})
+		}
 	case code == http.StatusUnauthorized, code == http.StatusNotFound, code == http.StatusMethodNotAllowed:
 		// A relay key the spoke does not hold yet, or a spoke that predates
 		// the endpoint: temporary from the sender's point of view.
@@ -382,11 +389,12 @@ func (s *HubServer) handleMailInbound(w http.ResponseWriter, r *http.Request) {
 }
 
 // relayMailOnce posts one signed request to the spoke and returns its
-// status. delivery is the relay delivery id the signature binds.
-func relayMailOnce(ctx context.Context, target, key, delivery, contentType string, extra http.Header, body []byte) (int, error) {
+// status and the start of its answer (read by the reply decision only).
+// delivery is the relay delivery id the signature binds.
+func relayMailOnce(ctx context.Context, target, key, delivery, contentType string, extra http.Header, body []byte) (int, []byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
 	for k, v := range extra {
 		req.Header[k] = v
@@ -396,11 +404,11 @@ func relayMailOnce(ctx context.Context, target, key, delivery, contentType strin
 	signWebhookRelayHeaders(req.Header, key, time.Now(), delivery, body)
 	resp, err := mailRelayClient.Do(req)
 	if err != nil {
-		return 0, err
+		return 0, nil, err
 	}
-	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, mailSpokeErrBody))
+	answer, _ := io.ReadAll(io.LimitReader(resp.Body, mailSpokeErrBody))
 	_ = resp.Body.Close()
-	return resp.StatusCode, nil
+	return resp.StatusCode, answer, nil
 }
 
 // relayMailChunks sends a spooled files delivery to the spoke in pieces of
@@ -408,7 +416,7 @@ func relayMailOnce(ctx context.Context, target, key, delivery, contentType strin
 // id (wire.ChunkDelivery). The spoke stores the pieces and processes the
 // whole body when the last one arrives; a piece it refuses stops the
 // relay, and its status is the answer.
-func relayMailChunks(ctx context.Context, target, key, id, bodyType string, spool io.ReaderAt, size, chunk int64) (int, error) {
+func relayMailChunks(ctx context.Context, target, key, id, bodyType string, spool io.ReaderAt, size, chunk int64) (int, []byte, error) {
 	pieces := int((size + chunk - 1) / chunk)
 	if pieces == 0 {
 		pieces = 1
@@ -417,19 +425,20 @@ func relayMailChunks(ctx context.Context, target, key, id, bodyType string, spoo
 	extra.Set(wire.HeaderBodyType, bodyType)
 	buf := make([]byte, chunk)
 	code := 0
+	var answer []byte
 	for i := 0; i < pieces; i++ {
 		off := int64(i) * chunk
 		n, err := spool.ReadAt(buf[:min(chunk, size-off)], off)
 		if err != nil && !errors.Is(err, io.EOF) {
-			return 0, err
+			return 0, nil, err
 		}
-		code, err = relayMailOnce(ctx, target, key, wire.ChunkDelivery(id, i, pieces), "application/octet-stream", extra, buf[:n])
+		code, answer, err = relayMailOnce(ctx, target, key, wire.ChunkDelivery(id, i, pieces), "application/octet-stream", extra, buf[:n])
 		if err != nil {
-			return 0, err
+			return 0, nil, err
 		}
 		if code < 200 || code >= 300 {
-			return code, nil
+			return code, answer, nil
 		}
 	}
-	return code, nil
+	return code, answer, nil
 }

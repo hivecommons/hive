@@ -88,6 +88,79 @@ encoded in the workflow rather than left to the operator:
   release line must provision this secret or accept that those top-ups need
   a hand-carried sync.
 
+### Top-up PRs land with a merge commit, never a squash or rebase
+
+A squash or rebase keeps v5's *content* on v6 but not v5's *history*, so
+`git merge-base origin/v5 origin/v6` stays at the previous top-up and every
+later forward-merge replays the whole range against v6's already-adapted copies
+of the same files. That is what happened after #18689 was squash-merged: every
+`v6-topup.yml` run then hit 109 conflicted files (17 of them `add/add`) that no
+resolver pattern covers
+([#18931](https://github.com/hivecommons/hive/issues/18931)). Three layers
+keep it from recurring:
+
+- **Merge method.** Heads matching `sync/vN-to-vM*` or `topup/*` must be merged
+  with the merge-commit method. The hive's own merge paths already upgrade a
+  squash or rebase of such a PR to a merge commit
+  (`ResolveForwardMergeMethod`). In the native merge queue, a group that does
+  not contain a forward-merge PR's own head commit (what a squash or rebase
+  queue produces) fails `native-queue-policy` with a message naming the
+  violation instead of the generic "not contained" one. A human merging in the
+  GitHub UI must choose **Create a merge commit**.
+- **Ancestry check.** Every PR the workflow opens ends with a marker line,
+  `<!-- hive:topup carried=<sha> -->`, naming the v5 head it carries (refreshed
+  on every push to the PR branch). On each run the workflow finds the newest
+  merged PR on `sync/v5-to-v6`, checks that the marker is genuine (the PR was
+  opened by the workflow identity, and the sha is the second parent of that
+  PR's own head commit) and that the sha is an ancestor of `origin/v6`
+  (`.github/scripts/v6-topup-ancestry.sh`). If it is not, the previous top-up
+  was squashed or rebased and the run says so in a warning and the job
+  summary.
+- **Self-healing.** When the ancestry was lost and the carried head is still
+  v5 history, the run starts the top-up branch with
+  `git merge -s ours --no-ff --signoff <carried head>` (history only, no file
+  changes, signed off by the bot as the author of that merge commit), then
+  merges `origin/v5` as usual with the autoresolver unchanged. If the carried
+  head is no longer on v5 (v5 history was rewritten) the job fails fast and
+  nothing is pushed. If no verified marker exists (PRs from before #18931 and
+  hand-carried top-ups carry none), nothing can be checked and the merge runs
+  as before; the conflict report then prints the merge base and the manual
+  recipe, whose first step is the ancestry check:
+
+  ```
+  git merge-base --is-ancestor <v5 head the last top-up carried> origin/v6 || echo LOST
+  git checkout -B sync/v5-to-v6 origin/v6
+  git merge -s ours --no-ff --signoff <that v5 head>   # only when LOST
+  git merge --no-ff --signoff origin/v5
+  ```
+
+#### DCO on top-up PRs
+
+The inherited v5 commits keep the author and sign-off they had on v5. A squash
+that GitHub authors as `Andy Anderson <andy@clubanderson.com>` while the
+trailer says `Andrew Anderson <andy@clubanderson.com>` (or an image-bump
+squash signed by `hive-release[bot]` and the noreply identity) fails the
+probot `DCO` check, and nothing pushed to the top-up branch can change a v5
+commit. Nobody signs off on another author's behalf, and the gate is not
+loosened:
+
+- **Plain automated top-up** (`sync/v5-to-v6`, opened by the workflow, every
+  commit v5-reachable except the bot's own merge of v5 onto v6): the narrow
+  prow-DCO path of the native queue applies
+  ([#17030](https://github.com/hivecommons/hive/issues/17030) decision B, see
+  [native-merge-queue.md](native-merge-queue.md)). The bot signs off only its
+  own merge commit.
+- **Healed top-up** (it carries the ours-merge above) and **hand-carried
+  top-ups**: decision B does not cover them. The ours-merge is a commit that is
+  not on v5, and B requires every commit but the head to be reachable from v5;
+  the policy then falls back to requiring probot `DCO`. The owner of each
+  flagged commit remediates it with a `DCO Remediation Commit` under
+  `.github/dco.yml` (`allowRemediationCommits.individual: true`,
+  `thirdParty: false`), as #18929 did with two remediation commits by the
+  author covering 15 inherited commits. Widening B to accept the bot's
+  ancestry-only merge commit (its tree equals its first parent's) is a policy
+  decision for the owner and is not made here.
+
 The automation covers only the mechanical open. Ownership, the verification
 checklist, the PR body contract, and the review contract below apply to an
 automatically opened sync PR exactly as they do to a hand-opened one.

@@ -23,7 +23,7 @@ func TestHiveMarkerAgent(t *testing.T) {
 		{"governor trailer names no agent", AppendTrailer("x", hiveWriteMeta()), "", true},
 		{"footer with display name", footer("Docs Assessor"), "Docs Assessor", true},
 		{"footer without name", footer(""), "", true},
-		{"trailer wins over footer", "x\n\n— hive: agent=scanner backend=bob\n\n---\n🐝 **Hive Agent**: `Other` | **SHA:** `a`", "scanner", true},
+		{"trailer wins over footer", "x\n\n-- hive: agent=scanner backend=bob\n\n---\n🐝 **Hive Agent**: `Other` | **SHA:** `a`", "scanner", true},
 		{"footer not at the end is not the footer", "---\n🐝 **Hive Agent**: `x` | **SHA:** `a`\nmore prose after", "", false},
 		{"crlf footer", "Body\r\n\r\n---\r\n🐝 **Hive Agent**: `Docs Assessor` | **SHA:** `abc`", "Docs Assessor", true},
 	}
