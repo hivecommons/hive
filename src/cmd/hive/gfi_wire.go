@@ -107,6 +107,10 @@ func gfiSweepOptions(cfg *config.Config, dashSrv *dashboard.Server, logger *slog
 		Template: gc.CommentTemplate,
 		Logger:   logger,
 	}
+	// hivecommons/hive#19078: umbrella and owner-only issues are never
+	// advertised and lose `help wanted` / `good first issue`, per the hive's
+	// hub.contribute_umbrella block and its per-repo overrides.
+	opts.Policy.UmbrellaFor = func(repo string) gfi.UmbrellaPolicy { return cfg.Hub.UmbrellaPolicyFor(repo) }
 	if dashSrv != nil {
 		opts.Audit = func(e gfi.Event) {
 			detail := fmt.Sprintf("repo=%s, issue=%d", e.Repo, e.Number)
@@ -142,6 +146,9 @@ func gfiCandidates(org string, result *github.ActionableResult, allowed func(str
 		c := gfi.Candidate{
 			Repo: repo, Number: is.Number, Title: is.Title, Body: is.Body, URL: is.URL,
 			Labels: is.Labels, Assignees: is.Assignees, CreatedAt: is.CreatedAt,
+		}
+		if is.Children != nil {
+			c.Children = is.Children.Total
 		}
 		if is.State != "" && !strings.EqualFold(is.State, "open") {
 			continue

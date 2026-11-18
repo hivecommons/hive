@@ -991,9 +991,15 @@ func (h *ContributeWSHub) selectTaskPass(c *ContributorConnection, skippedUnmint
 			//
 			// Logged rather than skipped silently: an issue that is never offered
 			// should not be a mystery to the operator watching the queue.
-			if isTracker, _ := issue["is_tracker"].(bool); isTracker {
-				h.logger.Info("[contribute-ws] skipping tracker/umbrella issue",
-					"repo", repo.Full, "number", number, "title", title)
+			//
+			// hivecommons/hive#19078 widens the gate beyond the enumerator flag:
+			// an umbrella by the hub.contribute_umbrella rules (label, body
+			// marker, title prefix, task list, sub-issues) and an owner-only issue
+			// are refused the same way. They stay actionable for the owner and the
+			// hive; only this offer is withheld.
+			if reason, why := h.contributorExclusion(repo.Full, issue); reason != "" {
+				h.logger.Info("[contribute-ws] skipping umbrella/tracker or owner-only issue",
+					"repo", repo.Full, "number", number, "title", title, "reason", reason, "rule", why)
 				return
 			}
 			if requestedRole != "" && !h.issueMatchesAgentRole(requestedRole, title, labels, lane) {

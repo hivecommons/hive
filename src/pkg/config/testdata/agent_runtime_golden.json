@@ -639,6 +639,7 @@
     "ContributeQueueHoldReasons": null,
     "ContributeRequireExplicitAccept": null,
     "ContributeDelegatableRoles": null,
+    "contribute_umbrella": {},
     "contribute_announcement": {},
     "DisabledRepos": null,
     "DisabledTiers": null,
@@ -763,7 +764,8 @@
     "recommendations": {},
     "plan_match": {},
     "severity": {},
-    "backlog": {}
+    "backlog": {},
+    "preflight": {}
   },
   "auto_merge": {
     "bot_takeover": {},

@@ -19,6 +19,9 @@ type RepoSettings struct {
 	// hive auto-close is never re-closed under any value. YAML booleans
 	// true/false are accepted and read as the strings.
 	ParentAutoClose string `yaml:"parent_autoclose,omitempty" json:"parent_autoclose,omitempty"`
+	// ReviewPreflight overrides review.preflight for this repo
+	// (hivecommons/hive#19069). Unset fields inherit the hive-wide value.
+	ReviewPreflight ReviewPreflightConfig `yaml:"review_preflight,omitempty" json:"review_preflight,omitempty"`
 }
 
 // Parent auto-close policy values for RepoSettings.ParentAutoClose.

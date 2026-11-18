@@ -927,6 +927,17 @@ governor:
 #                         # File: "kind: ReviewPerspectives" + "perspectives: [{name, focus}]". Names and
 #                         # focus only; combined_perspectives, plan_match and max_perspectives_per_pr stay
 #                         # here. Format: src/docs/review-swarm.md, "Live-linked perspectives".
+#   preflight:           # facts gathered for the reviewer before it starts (#19069); per-repo
+#                       # overrides under repos.<repo>.review_preflight. src/docs/review-swarm.md,
+#                       # "Review preflight", lists every key and exactly what leaves the hive.
+#     rule_docs: true   # default on: point the reviewer at the repo's own rule documents
+#     rules: []         # named operator rules: [{id, text, severity}]
+#     dependencies: false # default OFF: advisory and release-age lookups send package names
+#                       # and versions to OSV and the package registries
+#     offline: false    # or HIVE_REVIEW_PREFLIGHT_OFFLINE=true: no lookups, "could not check: offline"
+#     min_release_age_days: 14
+#     block_severity: high
+#     ignore: []        # accepted risks: [{id, package, reason, expires}]
 #   fixer_agent: ""     # optional override; defaults to the PR lane, then scanner
 #   fixer_fallback_agents: [] # opt-in ordered repair lanes, e.g. [fixer, scanner-2]
 #   fixer_fallback_after_undeliverable: 3 # consecutive refusals before rerouting;
@@ -1107,6 +1118,20 @@ dashboard:
 #       deny_titles: ["WIP*"]
 #       authors_mode: deny
 #       deny_authors: [dependabot[bot]]
+#   # Umbrella / tracker / owner-only issues are never handed to a contributor relay
+#   # (they stay actionable for the owner and the hive, and stay closable). All keys
+#   # are optional; per_repo fields left out inherit the hive-wide value.
+#   contribute_umbrella:
+#     enabled: true
+#     labels: [umbrella, tracker, epic, meta-tracker]
+#     title_prefixes: ["[Tracking]", "[Epic]", "[Umbrella]", "[Tracker]"]
+#     task_list_min: 2                  # issue or PR references in a checklist
+#     human_only_labels: [needs-human, human-only]
+#     withdraw_advertisement: true      # drop help wanted / good first issue from an umbrella on the next sweep
+#     per_repo:
+#       owner/repo:
+#         labels: [umbrella, program]
+#         withdraw_advertisement: false
 #   contribute_needs_decision_label: needs-decision  # label relays apply for no_work_needed — decision: ...; empty disables
 #   # Relay audit level this hive ASKS contributors to share (lifecycle |
 #   # commands | reasoning), shown on auth_ok and /contribute. A request only:

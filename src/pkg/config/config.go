@@ -5045,6 +5045,10 @@ type HubConfig struct {
 	// ContributeRepoFilters are optional, full owner/name keyed admission
 	// filters layered on top of the hive-wide title/author/label filters.
 	ContributeRepoFilters map[string]ContributeRepoFilter `yaml:"contribute_repo_filters,omitempty" json:"contribute_repo_filters,omitempty"`
+	// ContributeUmbrella decides which issues are umbrella, tracker or
+	// owner-only work that a contributor relay is never handed, with a
+	// per-repo override map (hivecommons/hive#19078). See ContributeUmbrella.
+	ContributeUmbrella ContributeUmbrella `yaml:"contribute_umbrella,omitempty" json:"contribute_umbrella,omitempty"`
 	// ContributeSkipAssignedToOthers, when true, makes the /contribute queue
 	// skip any issue that is already assigned to someone OTHER than the
 	// contributor requesting work. An issue assigned to the contributor
@@ -8805,6 +8809,11 @@ type ReviewConfig struct {
 	// reviewer's memory of it have both moved on. Empty means
 	// DefaultReviewDeltaMaxAge.
 	DeltaMaxAge string `yaml:"delta_max_age,omitempty" json:"delta_max_age,omitempty"`
+	// Evidence configures the facts the hive gathers before a review: the
+	// repository's own rule documents, named operator rules, and dependency
+	// vulnerability and release-age data (hivecommons/hive#19069). Per-repo
+	// overrides live at repos.<repo>.review_preflight.
+	Preflight ReviewPreflightConfig `yaml:"preflight,omitempty" json:"preflight,omitempty"`
 	// HumanDecisionLabel names an EXISTING repo label to apply when the review
 	// swarm holds a PR for a human. The review comment's in-body marker is
 	// always the primary signal and never depends on this: a label makes the
