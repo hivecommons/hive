@@ -1067,3 +1067,25 @@ func mustJSON(t *testing.T, v any) string {
 	}
 	return string(b)
 }
+
+// Write-back containment's unsolicited knobs (Settings → Features →
+// Write-back containment) are writable here too, and the preview names
+// each change that lets the hive write to more items (#18846 follow-up).
+func TestFeatureSettingsWritebackUnsolicited(t *testing.T) {
+	preview, err := featureSettingsOp{}.Preview(context.Background(), map[string]any{"writebackBackfill": true, "writebackRequireLabels": false, "writebackMinLevel": 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := preview.Request.Body.(map[string]any)
+	if body["writebackBackfill"] != true || body["writebackRequireLabels"] != false || body["writebackMinLevel"] != 3 {
+		t.Fatalf("body = %#v", body)
+	}
+	for _, want := range []string{"writebackBackfill", "writebackRequireLabels", "writebackMinLevel"} {
+		if !strings.Contains(preview.WideningDisclosure, want) {
+			t.Fatalf("disclosure %q does not name %s", preview.WideningDisclosure, want)
+		}
+	}
+	if p, err := (featureSettingsOp{}).Preview(context.Background(), map[string]any{"writebackBackfill": false}); err != nil || strings.Contains(p.WideningDisclosure, "writebackBackfill") {
+		t.Fatalf("turning backfill off is no widening: %q, %v", p.WideningDisclosure, err)
+	}
+}
