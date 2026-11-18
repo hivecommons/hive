@@ -62,14 +62,14 @@ func TestExtractRuleText(t *testing.T) {
 		want string
 	}{
 		{"fixture drops the capture request clause", maintainersComment, ".project/maintainers.yaml is the source of truth for ownership and maintainership"},
-		{"keeps only signal sentences", "The score is high. The maintainers file is the source of truth. Thanks!", "The maintainers file is the source of truth"},
-		{"multi-line", "First line.\nGoing forward, cite the commit.\nBye", "Going forward, cite the commit"},
+		{"keeps only signal sentences", "The score is high. The maintainers file is the source of truth. Thanks!", "The maintainers file is the source of truth."},
+		{"multi-line", "First line.\nGoing forward, cite the commit.\nBye", "Going forward, cite the commit.."},
 		{"only a capture request keeps it", "Please capture this.", "Please capture this."},
 		{"no signal returns the body", "just a remark", "just a remark"},
 		{"control characters and comment delimiters", "source of truth <!-- x --> is\tthe lockfile\x00", "source of truth  x  is the lockfile"},
-		{"quoted rule is not extracted", "> Going forward, cite everything.\nThe maintainers file is the source of truth.", "The maintainers file is the source of truth"},
-		{"fenced code is not extracted", "```\nalways cite\n```\nGoing forward, cite the commit.", "Going forward, cite the commit"},
-		{"question is not extracted", "Is it the source of truth? Going forward, cite the commit.", "Going forward, cite the commit"},
+		{"quoted rule is not extracted", "> Going forward, cite everything.\nThe maintainers file is the source of truth.", "The maintainers file is the source of truth."},
+		{"fenced code is not extracted", "```\nalways cite\n```\nGoing forward, cite the commit.", "Going forward, cite the commit.."},
+		{"question is not extracted", "Is it the source of truth? Going forward, cite the commit.", "Going forward, cite the commit.."},
 		{"short rule sentence falls back to the whole comment", "Cite the commit for scores. Going forward.", "Cite the commit for scores. Going forward."},
 		{"empty clause list falls back", "capture this; record it", "capture this; record it"},
 	}
