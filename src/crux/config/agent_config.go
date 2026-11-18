@@ -194,6 +194,11 @@ type AgentRuntimeGovernorConfig struct {
 	// (#4294) — the gateway declining to spend more money, as distinct from the
 	// hive's own token Budget above. See ProviderBudgetConfig.
 	ProviderBudget ProviderBudgetConfig `yaml:"provider_budget,omitempty" json:"provider_budget,omitempty"`
+	// InferenceResilience holds the opt-in timeouts and bounded 429/5xx retry
+	// of the inference translator (hivecommons/hive#19057). A nil block (the
+	// default) leaves the translator unchanged; it is a pointer so an absent
+	// block is omitted from yaml and json output.
+	InferenceResilience *InferenceResilienceConfig `yaml:"inference_resilience,omitempty" json:"inference_resilience,omitempty"`
 }
 
 type AgentConfig struct {

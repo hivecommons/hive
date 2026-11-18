@@ -157,6 +157,10 @@ type Config struct {
 	// escalation or codebase damage, from any author. Default on; see
 	// SentinelConfig.
 	Sentinel SentinelConfig `yaml:"sentinel,omitempty" json:"sentinel,omitempty"`
+
+	// SessionTaint is the observe-only session taint recorder (#18987). Off by
+	// default; see SessionTaintConfig.
+	SessionTaint SessionTaintConfig `yaml:"session_taint,omitempty" json:"session_taint,omitempty"`
 	// Security holds the hive-wide security knobs that are not one agent's
 	// or one sweep's; see SecurityConfig.
 	Security SecurityConfig `yaml:"security,omitempty" json:"security,omitempty"`
