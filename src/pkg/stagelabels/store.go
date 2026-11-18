@@ -92,6 +92,12 @@ type Record struct {
 	NudgeReason      string    `json:"nudge_reason,omitempty"`
 	NudgeReasonCount int       `json:"nudge_reason_count,omitempty"`
 	NudgeReasonAt    time.Time `json:"nudge_reason_at,omitempty"`
+	// NudgeWithheldHead is the head whose nudge comment was withheld
+	// because the hive is going to adopt it anyway (hivecommons/hive#18872):
+	// the nudge is recorded (the adoption clock runs) but the author hears
+	// only the adoption note. When adoption turns out blocked or the author
+	// reappears the withheld nudge is posted.
+	NudgeWithheldHead string `json:"nudge_withheld_head,omitempty"`
 	// NudgeCIChecks, NudgeCIHead, NudgeCIAt, NudgeCIAttempts and NudgeMode
 	// are the CI-failure nudge ledger (hivecommons/hive#17328): the sorted
 	// failing check names the one nudge comment currently lists, the head
@@ -1489,6 +1495,20 @@ func (s *Store) MarkNudged(key, head string, n int, online bool, now time.Time) 
 		r.NudgeCount++
 	}
 	r.LastNudgeAt = now
+	s.items[key] = r
+	s.dirty = true
+}
+
+// NoteNudgeWithheld records that the nudge comment for head was withheld
+// (head "" clears the mark).
+func (s *Store) NoteNudgeWithheld(key, head string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	r, ok := s.items[key]
+	if !ok || r.NudgeWithheldHead == head {
+		return
+	}
+	r.NudgeWithheldHead = head
 	s.items[key] = r
 	s.dirty = true
 }
