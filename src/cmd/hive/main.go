@@ -2017,7 +2017,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	})
 	// #18916: a delivered kick opens its outcome record; the relay's push and
 	// comment events (and the PR-opened hook) close it.
-	b.cleanup.push(b.agentMgr.AddKickObserver(func(ev crux.KickEvent) { kickOutcomeDelivered(koStore, ev) }))
+	if reg, ok := b.agentMgr.(crux.KickObserverRegistry); ok {
+		b.cleanup.push(reg.AddKickObserver(func(ev crux.KickEvent) { kickOutcomeDelivered(koStore, ev) }))
+	}
 
 	// Say out loud when the sandbox opt-in is configured but inert. The gate is
 	// two-part (global agent_sandbox.enabled AND a per-agent sandbox.enabled),
