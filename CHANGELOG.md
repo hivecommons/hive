@@ -11,6 +11,13 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v6.44.8)
+
+### Fixed
+
+- The duplicate-PR claim ledger now keys every claim by the configured repo spelling. A verdict claim (stored under the hub task repo, `owner/repo`) or a cross-repo `Part of owner/repo#N` reference was invisible to the enumeration's lookups by the bare name, while the ledger backfill still found it, so the issue flipped between `stage/010-actionable` and `stage/040-covered-by-pr` every pass (projectbluefin/actions#748) and `hive/likely-done` was stripped minutes after it was added. Claims stored under another spelling are re-keyed on the next guard pass, keeping the stronger claim; another org's repo of the same bare name is never folded onto the hive's.
+- A contributor task in a repository with no `vN` release branches (one on `main` / `testing` / `stable`) is no longer offered the `wrong_base` verdict, which could only ever park the issue at `stage/045-needs-decision`; the agent asks in the decision form instead. A `wrong_base` verdict that does park now keeps the agent's own reason: its one park note quotes it (sanitized and capped, never used as a branch), the generic needs-decision question is no longer posted beside it, and the log and verdict record carry it. The hub still re-dispatches only to a validated `vN` branch.
+
 ## 2026-11-18 (v6.44.7)
 
 ### Fixed
