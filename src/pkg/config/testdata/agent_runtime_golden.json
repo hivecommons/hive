@@ -764,7 +764,8 @@
     "recommendations": {},
     "plan_match": {},
     "severity": {},
-    "backlog": {}
+    "backlog": {},
+    "preflight": {}
   },
   "auto_merge": {
     "bot_takeover": {},

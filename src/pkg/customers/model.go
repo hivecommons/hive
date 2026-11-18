@@ -86,6 +86,10 @@ const (
 // location).
 const MaxProfileFieldLen = 120
 
+// MaxDismissedAffiliations bounds how many refused affiliation suggestions a
+// profile remembers.
+const MaxDismissedAffiliations = 20
+
 // Sentinel errors. The dashboard maps them to status codes.
 var (
 	ErrNotFound  = errors.New("customers: not found")
@@ -270,10 +274,11 @@ const (
 	FieldRealName     = "real_name"
 	FieldOrganization = "organization"
 	FieldLocation     = "location"
+	FieldCountry      = "country"
 )
 
 // ProfileFields is every profile field, in display order.
-var ProfileFields = []string{FieldRealName, FieldOrganization, FieldLocation}
+var ProfileFields = []string{FieldRealName, FieldOrganization, FieldLocation, FieldCountry}
 
 // ProfileSourceGitHub names the automatic source of a profile field: the
 // person's own public GitHub profile.
@@ -298,6 +303,12 @@ type Profile struct {
 	RealName     ProfileField `json:"real_name,omitempty"`
 	Organization ProfileField `json:"organization,omitempty"`
 	Location     ProfileField `json:"location,omitempty"`
+	// Country is an ISO 3166 alpha-2 code. Automatic, it is derived offline
+	// from Location (rule "location"); manual, a person chose or cleared it.
+	Country ProfileField `json:"country,omitempty"`
+	// DismissedAffiliations are the suggested organizations a person turned
+	// down, lower case, so the same one is not offered again.
+	DismissedAffiliations []string `json:"dismissed_affiliations,omitempty"`
 }
 
 // Field returns a pointer to the named field, or nil for an unknown name.
@@ -309,6 +320,8 @@ func (pr *Profile) Field(name string) *ProfileField {
 		return &pr.Organization
 	case FieldLocation:
 		return &pr.Location
+	case FieldCountry:
+		return &pr.Country
 	}
 	return nil
 }

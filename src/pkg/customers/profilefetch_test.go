@@ -44,7 +44,11 @@ func TestFetchProfileFillsAutoFieldsWithProvenance(t *testing.T) {
 	}
 	for _, name := range ProfileFields {
 		f := p.Profile.Field(name)
-		if f.Source != SourceAuto || f.Rule != ProfileSourceGitHub {
+		want := ProfileSourceGitHub
+		if name == FieldCountry {
+			want = CountryRuleLocation
+		}
+		if f.Source != SourceAuto || f.Rule != want {
 			t.Fatalf("%s provenance = %+v", name, f)
 		}
 	}
