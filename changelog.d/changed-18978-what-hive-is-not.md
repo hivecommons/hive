@@ -1,0 +1,1 @@
+- Docs now state plainly that Hive is the work-governance plane for AI coding agents (claims, stage labels, ACMM levels, DCO and the merge path) and not a model gateway or inference server, in the README, `what-is-hive.md` and `architecture.md` ([#18978](https://github.com/hivecommons/hive/issues/18978)).
