@@ -26,9 +26,15 @@ func TestOpencodeAutoFlagOmittedWhenUnsupported(t *testing.T) {
 	if code != 0 || strings.Contains(out, "--auto") {
 		t.Fatalf("unsupported opencode got --auto: code=%d out=%q", code, out)
 	}
+	// v6 splits local mode: the deny-list rides in the environment
+	// (opencode_local_perm_env_shell), the flags in opencode_local_perm_flag_shell.
 	out, code = runBackendsConfFunc(t, "opencode_local_perm_flag_shell", nil, env)
-	if code != 0 || strings.Contains(out, "--auto") || !strings.Contains(out, "OPENCODE_PERMISSION=") {
-		t.Fatalf("local mode must keep the deny-list but drop --auto: code=%d out=%q", code, out)
+	if code != 0 || strings.Contains(out, "--auto") {
+		t.Fatalf("local mode must drop --auto: code=%d out=%q", code, out)
+	}
+	out, code = runBackendsConfFunc(t, "opencode_local_perm_env_shell", nil, env)
+	if code != 0 || !strings.Contains(out, "OPENCODE_PERMISSION=") {
+		t.Fatalf("local mode must keep the deny-list: code=%d out=%q", code, out)
 	}
 }
 
