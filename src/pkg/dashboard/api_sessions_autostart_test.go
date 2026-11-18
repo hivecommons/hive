@@ -332,7 +332,7 @@ func TestSessionAutostartGivesUpOnAScreenThatDoesNotClose(t *testing.T) {
 // hold a Send forever).
 func TestSessionAutostartWindowEndsAsUnknownAndReleasesTheQueue(t *testing.T) {
 	e := newAutostartEnv(t, startupLoading)
-	e.s.sessionAutostartTiming.window = 20 * time.Millisecond
+	e.s.sessionAutostartTiming.window = time.Nanosecond // already spent at the first read: no wall-clock race
 	fastSessionQueue(t, e)
 	e.rt.setCapture(claudeIdlePane)
 	id := e.create(t, callerRW, "slow")
@@ -343,6 +343,9 @@ func TestSessionAutostartWindowEndsAsUnknownAndReleasesTheQueue(t *testing.T) {
 	if _, answerCalls, _ := e.rt.startupCounts(); answerCalls != 0 {
 		t.Errorf("an unrecognised screen was offered an answer %d times", answerCalls)
 	}
+	// The outcome is audited right after the state is set; wait for it so the
+	// start loop has finished writing before the test ends.
+	e.autostartAudit(t, "outcome="+sessionStartupUnknown)
 	if got := e.statusOf(t, callerRW, "POST", "/api/sessions/"+id+"/input", map[string]any{"text": "hello"}); got != http.StatusAccepted {
 		t.Fatalf("input = %d", got)
 	}
