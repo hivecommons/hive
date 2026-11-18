@@ -78,7 +78,7 @@ func stageTrackerReadSchema() map[string]any {
 		"on_hold":        map[string]any{"type": "boolean"},
 		"waiting_on_you": map[string]any{"type": "boolean", "description": "Items parked on the operator or maintainers (a decision, a human merge, an approval), as the monitor's \"waiting on you\" view; wait_kind says which."},
 		"view":           map[string]any{"type": "string", "enum": []string{stageTrackerViewSummary, stageTrackerViewFull}, "description": "summary (default) keeps the row's fields; full keeps every field, history and activity included."},
-		"recent":         map[string]any{"type": "boolean", "description": "Also return recently_merged and recently_closed, capped by limit."},
+		"recent":         map[string]any{"type": "boolean", "description": "Also return recently_merged and recently_closed: the PRs merged or closed in the last 30 minutes, capped by limit. For merges over a longer window use merged_prs_read."},
 	}
 }
 

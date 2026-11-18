@@ -4570,6 +4570,202 @@
         }
       }
     },
+    "/api/merged-prs": {
+      "get": {
+        "tags": [
+          "Status"
+        ],
+        "summary": "Merged pull requests over a window",
+        "description": "Reads the merged ledger (90 days) over a window, newest first, with filters. Backs the Activity monitor's Merged list filters and the admin MCP's merged_prs_read. No GitHub call is made. approved_by lists only the human approvals the hive recorded on the merged head (approvals_known says whether it read them); approved=none means no human approval the hive saw.",
+        "parameters": [
+          {
+            "name": "since",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "RFC3339 time or a duration such as 24h or 7d; default 24h, at most 90 days."
+          },
+          {
+            "name": "repo",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "owner/name."
+          },
+          {
+            "name": "merged_by",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "hive, human (any other login) or a login."
+          },
+          {
+            "name": "lane",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "author",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "exclude_author",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Comma-separated logins."
+          },
+          {
+            "name": "approved",
+            "in": "query",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "human",
+                "none"
+              ]
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 500,
+              "default": 50
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "schema": {
+              "type": "integer",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Merged entries and counts",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "since": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "until": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "counts": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "integer"
+                        },
+                        "by_hive": {
+                          "type": "integer"
+                        },
+                        "by_human": {
+                          "type": "integer"
+                        },
+                        "unknown": {
+                          "type": "integer"
+                        }
+                      }
+                    },
+                    "matched": {
+                      "type": "integer"
+                    },
+                    "entries": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "repo": {
+                            "type": "string"
+                          },
+                          "number": {
+                            "type": "integer"
+                          },
+                          "title": {
+                            "type": "string"
+                          },
+                          "url": {
+                            "type": "string"
+                          },
+                          "merged_at": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "merged_by": {
+                            "type": "string"
+                          },
+                          "lane": {
+                            "type": "string"
+                          },
+                          "issue": {
+                            "type": "integer"
+                          },
+                          "author": {
+                            "type": "string"
+                          },
+                          "author_kind": {
+                            "type": "string",
+                            "enum": [
+                              "agent",
+                              "bot",
+                              "human"
+                            ]
+                          },
+                          "approved_by": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "approvals_known": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "next_offset": {
+                      "type": "integer"
+                    },
+                    "author_unknown": {
+                      "type": "integer"
+                    },
+                    "approvals_unknown": {
+                      "type": "integer"
+                    },
+                    "retention_days": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "A malformed or out-of-range parameter"
+          }
+        }
+      }
+    },
     "/api/overview/issues.csv": {
       "get": {
         "tags": [

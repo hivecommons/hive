@@ -162,6 +162,15 @@ func (p dashboardAdminMCPProvider) Read(_ context.Context, tool string, args map
 		}
 		return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
 	}
+	if tool == adminmcp.ToolMergedPRsRead {
+		// The Activity monitor's Merged list endpoint, as the caller. The
+		// arguments are checked first; the endpoint filters and pages.
+		path, err := adminmcp.MergedPRsReadPath(args)
+		if err != nil {
+			return nil, err
+		}
+		return p.get(tool, path)
+	}
 	if tool == adminmcp.ToolGitHubAPIUsage {
 		// The GitHub API card's own endpoint, as the caller, with the
 		// per-caller view. It makes one free GET /rate_limit and no other

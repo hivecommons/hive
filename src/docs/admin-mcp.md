@@ -366,14 +366,15 @@ capped at 256 KiB.
 
 **Issues, pull requests and the Activity monitor**
 
-| Tool                        | Returns                                                                                                                                                                    |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `issues_by_band`            | Issues grouped by band; optional `repo`, `band`, `stale`, `held`, `offset`                                                                                                 |
-| `prs_by_band`               | Pull requests grouped by band; optional `repo`, `band`, `stale`, `held`, `offset`                                                                                          |
-| `stage_tracker_read`        | The Activity monitor (see note 3)                                                                                                                                          |
-| `delegated_decision_status` | Status and outcome of the latest "Let hive decide" on one item; needs `owner`, `repo`, `number`                                                                            |
-| `review_queue`              | The your-turn items (the dashboard inbox's N plus M), parked issues included, in `inbox_rank` order, each with its verb, reason code and reason; optional `repo`, `offset` |
-| `contributor_queue`         | The contributor ready-work queue as the Operations card shows it (see note 6); optional `withheld`, `offset`                                                               |
+| Tool                        | Returns                                                                                                                                                                        |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `issues_by_band`            | Issues grouped by band; optional `repo`, `band`, `stale`, `held`, `offset`                                                                                                     |
+| `prs_by_band`               | Pull requests grouped by band; optional `repo`, `band`, `stale`, `held`, `offset`                                                                                              |
+| `merged_prs_read`           | PRs this hive saw merge over a window, from the merged ledger (see [Merged pull requests](#merged-pull-requests)); optional `since`, `repo`, `merged_by`, `approved`, `offset` |
+| `stage_tracker_read`        | The Activity monitor (see note 3)                                                                                                                                              |
+| `delegated_decision_status` | Status and outcome of the latest "Let hive decide" on one item; needs `owner`, `repo`, `number`                                                                                |
+| `review_queue`              | The your-turn items (the dashboard inbox's N plus M), parked issues included, in `inbox_rank` order, each with its verb, reason code and reason; optional `repo`, `offset`     |
+| `contributor_queue`         | The contributor ready-work queue as the Operations card shows it (see note 6); optional `withheld`, `offset`                                                                   |
 
 **Settings, knowledge and advice**
 
@@ -416,8 +417,9 @@ capped at 256 KiB.
    tooltip shows.
    - Filters (all optional): `repo`, `kind`, `number`, `q` (the monitor's search
      box), `stage`, `needs_human`, `on_hold`, `waiting_on_you`.
-   - `view` is `summary` or `full`; `recent` adds recently merged and closed
-     items; `offset` pages.
+   - `view` is `summary` or `full`; `recent` adds the items merged or closed in
+     the last 30 minutes (for a longer window, `merged_prs_read`); `offset`
+     pages.
    - Before the monitor has built its first snapshot, it answers with a
      `board_unavailable` refusal rather than an empty board. Retry shortly.
 4. **`log_sources`:** `hive` is the default. The others are `proxy`,
@@ -677,6 +679,45 @@ table shows for the same range (#18968):
   `data_since`, not zeros. An agent's token fields are `null` where its
   snapshots predate per-agent token recording.
 - Everything is an estimate (token counts × list price), not billed spend.
+
+### Merged pull requests
+
+`merged_prs_read` reads `GET /api/merged-prs`, the merged ledger behind the
+Activity monitor's Merged chip and list: every pull request the hive tracked
+that reached merged, by the hive, a person or another bot. The ledger keeps 90
+days. Before this tool, the MCP saw merges only through `stage_tracker_read`
+with `recent`, which covers 30 minutes.
+
+- **Window:** `since` is an RFC3339 time or a duration back from now (`24h`,
+  `90m`, `7d`). The default is 24 hours, the most 90 days. A bad window is
+  refused before any request is made.
+- **Filters:**
+  - `repo` (owner/name or the bare name) and `lane`;
+  - `merged_by`: `hive`, `human` (any login other than the hive) or one login;
+  - `author` and `exclude_author` (comma-separated logins);
+  - `approved`: `human` or `none`.
+- **Answer:** `entries`, newest first, each with `repo`, `number`, `title`,
+  `url`, `merged_at`, `merged_by`, `lane`, `issue`, `author`, `author_kind`
+  (`agent`, `bot` or `human`), `approved_by` and `approvals_known`. `counts`
+  (`total`, `by_hive`, `by_human`, `unknown`) cover the window after `repo` and
+  `lane`, before the other filters. `matched` counts what all the filters let
+  through; `limit` (1-500, default 50) and `offset` page it, with
+  `next_offset`.
+- **What `approved_by` means:** the people whose approval the hive recorded on
+  the merged head: a trusted merger whose Approve released a human gate, and an
+  operator whose Approve admitted the head. Other Approve reviews are not
+  recorded, because no merge path reads a PR's reviews. `approvals_known` is
+  true when the hive read the Activity monitor's row for the PR at merge time.
+  That row is the monitor's cached copy, so an approval given after its last
+  refresh and before the merge is missed: treat `approved=none` as "no human
+  approval the hive saw", not proof that nobody approved.
+- **Older entries:** an entry recorded before `author` and `approved_by` existed
+  has neither. An `author`, `exclude_author` or `approved` filter leaves it out
+  and counts it in `author_unknown` or `approvals_unknown`, so nothing is
+  guessed.
+
+For example, `merged_by=hive`, `approved=none` and `exclude_author=<you>` list
+what the hive merged on its own in the last day.
 
 ### Audit filters and item history
 

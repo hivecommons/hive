@@ -520,11 +520,18 @@
       const fact = typeof _stageTrackerTerminalFacts !== 'undefined' && _stageTrackerTerminalFacts ? _stageTrackerTerminalFacts[key] : null;
       return fact && fact.merged_by ? String(fact.merged_by).trim() : '';
     }
-    // Pure: the popover's inner HTML.
-    function stageTrackerMergedPopHtml(txt, nowMs) {
+    // Pure: the popover's inner HTML. filter (default: the tab's
+    // _stageTrackerMergedFilter, when the page has one) narrows the list to
+    // GET /api/merged-prs's answer for its since / merged-by / repo.
+    function stageTrackerMergedPopHtml(txt, nowMs, filter) {
       const fmtAt = at => { if (!at) return ''; const d = new Date(at); const sameDay = stageTrackerLocalMidnight(at) === stageTrackerLocalMidnight(nowMs); const hm = `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`; return sameDay ? hm : `${typeof formatDashboardDate === 'function' ? formatDashboardDate(d, { month: 'short', day: 'numeric' }) : d.toISOString().slice(5, 10)} ${hm}`; };
-      const rows = (txt.recent || []).map(e => {
-        const meta = [esc(stageTrackerMergedByText(e.merged_by)), e.lane ? esc(e.lane) : '', e.at ? fmtAt(e.at) : ''].filter(Boolean).join(' · ');
+      const f = filter || (typeof _stageTrackerMergedFilter !== 'undefined' ? _stageTrackerMergedFilter : null);
+      const active = !!(f && typeof stageTrackerMergedFilterQuery === 'function' && stageTrackerMergedFilterQuery(f));
+      const list = active
+        ? ((f.result && Array.isArray(f.result.entries)) ? f.result.entries : []).map(e => ({ repo: String(e.repo || ''), number: Number(e.number) || 0, title: String(e.title || ''), url: String(e.url || ''), merged_by: String(e.merged_by || ''), lane: String(e.lane || ''), author: String(e.author || ''), at: Date.parse(e.merged_at || '') || 0 }))
+        : (txt.recent || []);
+      const rows = list.map(e => {
+        const meta = [esc(stageTrackerMergedByText(e.merged_by)), e.lane ? esc(e.lane) : '', active && e.author ? esc('PR by @' + e.author) : '', e.at ? fmtAt(e.at) : ''].filter(Boolean).join(' · ');
         // Numbers and counts go through String(): esc() drops non-strings.
         const n = esc(String(e.number || ''));
         const num = e.url ? `<a href="${esc(e.url)}" target="_blank" rel="noopener">#${n}</a>` : `#${n}`;
@@ -533,11 +540,81 @@
         const hist = e.repo && Number(e.number) > 0 ? `<button type="button" class="ham-merged-hist" data-action="openAuditItemHistory" data-arg0="${esc(String(e.repo))}" data-arg1="${n}" data-arg-types="s,j" data-stop="1" title="Everything the hive recorded about this PR">history</button>` : '';
         return `<li><span class="ham-merged-num" title="${esc(String(e.repo || ''))}#${n}">${num}</span><span class="ham-merged-title" title="${esc(e.title || '')}">${esc(e.title || e.repo)}</span><span class="ham-merged-repo">${esc(String(e.repo || ''))}</span><span class="ham-merged-meta">${meta}${hist}</span></li>`;
       }).join('');
-      const head = `<div class="ham-merged-pop-head"><span>Recent merges</span><span class="ham-merged-pop-sum">${esc(String(txt.today))} today · ${esc(String(txt.week))} this week · ${esc(String(txt.total30d))} in 30 days</span></div>`;
-      const body = rows ? `<ol class="ham-merged-list">${rows}</ol>` : `<div class="ham-empty">No merges recorded yet.</div>`;
+      let head = `<div class="ham-merged-pop-head"><span>Recent merges</span><span class="ham-merged-pop-sum">${esc(String(txt.today))} today · ${esc(String(txt.week))} this week · ${esc(String(txt.total30d))} in 30 days</span></div>`;
+      let body = rows ? `<ol class="ham-merged-list">${rows}</ol>` : `<div class="ham-empty">No merges recorded yet.</div>`;
+      if (active) {
+        const c = (f.result && f.result.counts) || {};
+        const sum = f.result ? `${esc(String(f.result.matched || 0))} shown · ${esc(String(c.by_hive || 0))} by the hive · ${esc(String(c.by_human || 0))} by people in the window` : '';
+        head = `<div class="ham-merged-pop-head"><span>Merges</span><span class="ham-merged-pop-sum">${sum}</span></div>`;
+        if (f.loading) body = `<div class="ham-empty">Loading…</div>`;
+        else if (f.error) body = `<div class="ham-empty">Could not load the merges: ${esc(String(f.error))}</div>`;
+        else if (!rows) body = `<div class="ham-empty">No merges match these filters.</div>`;
+      }
+      if (f && typeof stageTrackerMergedFilterHtml === 'function') {
+        const repos = {};
+        for (const e of (txt.recent || []).concat(list)) if (e && e.repo) repos[String(e.repo)] = true;
+        if (typeof _stageTrackerPRTitle !== 'undefined' && _stageTrackerPRTitle) for (const k of Object.keys(_stageTrackerPRTitle)) { const i = k.lastIndexOf('/pr#'); if (i > 0) repos[k.slice(0, i)] = true; }
+        if (f.repo) repos[f.repo] = true;
+        head += stageTrackerMergedFilterHtml(f, Object.keys(repos).sort());
+      }
       const foot = `<div class="ham-merged-pop-foot">${esc(String(txt.count))} all time${txt.tz ? ' · days roll at midnight ' + esc(txt.tz) : ''}. Every pull request the hive tracked that reached merged — by the hive, a person or another bot.</div>`;
       return head + body + foot;
     }
+    // The Merged list's filters (since / merged by / repo) and the last
+    // GET /api/merged-prs answer for them. All defaults: the recent list.
+    var _stageTrackerMergedFilter = { since: '', merged_by: '', repo: '', result: null, loading: false, error: '', seq: 0 };
+    // Pure: the /api/merged-prs query for a filter, '' when it is the
+    // default view. A merged-by or repo filter on "Recent" reads 7 days.
+    function stageTrackerMergedFilterQuery(f) {
+      if (!f || (!f.since && !f.merged_by && !f.repo)) return '';
+      const p = new URLSearchParams();
+      p.set('since', f.since || '7d');
+      if (f.merged_by) p.set('merged_by', f.merged_by);
+      if (f.repo) p.set('repo', f.repo);
+      p.set('limit', '200');
+      return p.toString();
+    }
+    // Pure: the filter bar under the popover's head.
+    function stageTrackerMergedFilterHtml(f, repos) {
+      const opts = (pairs, cur) => pairs.map(p => `<option value="${esc(p[0])}"${p[0] === cur ? ' selected' : ''}>${esc(p[1])}</option>`).join('');
+      const since = [['', 'Recent'], ['24h', 'Last 24 hours'], ['7d', 'Last 7 days'], ['30d', 'Last 30 days'], ['90d', 'Last 90 days']];
+      const by = [['', 'Merged by anyone'], ['hive', 'Merged by the hive'], ['human', 'Merged by people']];
+      const repo = [['', 'All repos']].concat((repos || []).map(r => [String(r), String(r)]));
+      return `<div class="ham-merged-filter" role="group" aria-label="Filter the merges">` +
+        `<select data-ham-merged-filter="since" aria-label="Merged since" title="How far back to list merges. Recent is the newest 20; the ledger keeps 90 days.">${opts(since, f.since || '')}</select>` +
+        `<select data-ham-merged-filter="merged_by" aria-label="Merged by" title="Who pressed merge: the hive itself, or any person or other bot.">${opts(by, f.merged_by || '')}</select>` +
+        `<select data-ham-merged-filter="repo" aria-label="Repository" title="Only merges in this repository.">${opts(repo, f.repo || '')}</select>` +
+        `</div>`;
+    }
+    // Stateful: read GET /api/merged-prs for the current filter and redraw.
+    // A newer change wins over an answer still in flight.
+    async function stageTrackerMergedFilterFetch() {
+      const f = _stageTrackerMergedFilter;
+      const q = stageTrackerMergedFilterQuery(f);
+      const seq = ++f.seq;
+      if (!q) { f.result = null; f.loading = false; f.error = ''; stageTrackerMergedPopDraw(null, Date.now()); return; }
+      f.loading = true; f.error = '';
+      stageTrackerMergedPopDraw(null, Date.now());
+      try {
+        const r = await fetch('/api/merged-prs?' + q);
+        const body = await r.json().catch(() => ({}));
+        if (seq !== f.seq) return;
+        if (!r.ok) throw new Error(body && body.error ? body.error : 'HTTP ' + r.status);
+        f.result = body;
+      } catch (e) {
+        if (seq !== f.seq) return;
+        f.result = null;
+        f.error = String((e && e.message) || e);
+      }
+      f.loading = false;
+      stageTrackerMergedPopDraw(null, Date.now());
+    }
+    document.addEventListener('change', function(e) {
+      const sel = e.target && typeof e.target.closest === 'function' ? e.target.closest('[data-ham-merged-filter]') : null;
+      if (!sel) return;
+      _stageTrackerMergedFilter[sel.getAttribute('data-ham-merged-filter')] = String(sel.value || '');
+      stageTrackerMergedFilterFetch();
+    });
     var _stageTrackerMerged = { server: null, local: {} };
     var _stageTrackerMergedShown = 0;
     // Merges whose glyph is still on its way: the count holds them back
@@ -832,6 +909,8 @@
       pop.hidden = !want;
       if (chip) chip.setAttribute('aria-expanded', want ? 'true' : 'false');
       if (want) stageTrackerMergedPopDraw(null, Date.now());
+      // A filtered list is re-read on open, so it shows merges since.
+      if (want && typeof stageTrackerMergedFilterQuery === 'function' && stageTrackerMergedFilterQuery(_stageTrackerMergedFilter)) stageTrackerMergedFilterFetch();
       return want;
     }
     function hamMergedOpen() {
@@ -842,7 +921,7 @@
     document.addEventListener('click', function(e) {
       const pop = document.getElementById('activity-monitor-merged-pop');
       if (!pop || pop.hidden) return;
-      if (e.target && typeof e.target.closest === 'function' && e.target.closest('.merge-banner')) return;
+      if (e.target && typeof e.target.closest === 'function' && (e.target.closest('.merge-banner') || e.target.closest('#activity-monitor-merged-pop'))) return;
       const bar = document.getElementById('activity-monitor-sticky');
       if (bar && e.target && typeof e.target.closest === 'function' && e.target.closest('#activity-monitor-sticky')) return;
       hamMergedToggle(false);

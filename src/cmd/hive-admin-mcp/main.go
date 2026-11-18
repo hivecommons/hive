@@ -426,6 +426,18 @@ func (p readProvider) Read(ctx context.Context, tool string, args map[string]any
 		}
 		return adminmcp.CapResult(data, adminmcp.LimitFromArgs(args)), nil
 	}
+	if tool == adminmcp.ToolMergedPRsRead {
+		// The arguments are checked before the call; see the dashboard provider.
+		path, err := adminmcp.MergedPRsReadPath(args)
+		if err != nil {
+			return nil, err
+		}
+		client, _, err := p.roster.activeClient()
+		if err != nil {
+			return nil, err
+		}
+		return getPath(ctx, client, path)
+	}
 	if tool == adminmcp.ToolGitHubAPIUsage {
 		client, _, err := p.roster.activeClient()
 		if err != nil {
