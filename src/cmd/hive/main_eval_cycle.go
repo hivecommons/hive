@@ -1218,7 +1218,10 @@ func runEvalCycle(
 		ctx := kickCtx
 		dispatchAgentKicks(messages, releaseProviderBudgetProbe, kickDispatchDeps{
 			backoffRemaining: agentMgr.ProviderErrorBackoffRemaining,
-			sendKick:         agentMgr.SendKick,
+			sendKick: kickOutcomeSender(kickOutcomesFor(cfg, logger), agentMgr.SendKick, func(agent, message string) bool {
+				_, ok := workflowKickByMessage[workflowDispatchKickKey(scheduler.KickMessage{Agent: agent, Message: message})]
+				return ok
+			}),
 			startStoppedAgent: func(agentName string) error {
 				if !agentMgr.GovernorMayStart(agentName) {
 					return nil

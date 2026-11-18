@@ -31,6 +31,11 @@ const FORWARD_MERGE = {
   author: { login: 'github-actions[bot]', id: 41898282, type: 'Bot' },
 };
 const PROW = { login: 'kubestellar-prow[bot]', id: 208851060, context: 'dco' };
+// Line-to-line forward-merge heads (v6-topup.yml's `sync/v5-to-v6`, a hand-carried
+// `sync/v5-to-v6-<date>`, `sync/v4-to-v5`, `topup/...`). They must land by merge
+// commit: a squash or rebase keeps the content but drops the source line's
+// history, and every later top-up then re-conflicts on all of it (#18931).
+const FORWARD_MERGE_HEAD = /^(?:sync\/v\d+-to-v\d+|topup\/)/;
 // REST pull-request commit listing stops at 250; a longer list is unverifiable.
 const MAX_PR_COMMITS = 250;
 const PROBOT_DCO_PATH = 'DCO path: probot DCO (App 1861)';
@@ -417,7 +422,14 @@ async function evaluateOnce({ github, context }) {
       ...repo, basehead: `${head}...${group.head_sha}`,
     });
     if (!['ahead', 'identical'].includes(comparison.status) || comparison.merge_base_commit?.sha !== head) {
-      throw new Error(`#${number}: current PR head is not contained in the tested group`);
+      // A queue configured to squash or rebase never contains the PR's own head
+      // commit, so the containment test above is also the merge-method guard
+      // for top-ups; name it, because "not contained" reads like a CI fault.
+      throw new Error(FORWARD_MERGE_HEAD.test(pr.head?.ref ?? '')
+        ? `#${number}: forward-merge PR ${pr.head.ref} must land with a merge commit, never a squash or rebase ` +
+          `(the tested group does not contain its head ${head}, so v5's ancestry would be lost; #18931). ` +
+          'Remove it from the queue and merge it with the merge-commit method'
+        : `#${number}: current PR head is not contained in the tested group`);
     }
     await assertReviews(github, repo, number, head);
     paths.push(`#${number} ${await assertEvidence(github, repo, number, head, { ...POLICY_CHECKS, ...BUILD_CHECKS }, pr)}`);
@@ -444,7 +456,7 @@ module.exports = {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict, BLOCKED_LABEL,
-  ProviderUnavailable, ProviderVerdict, PROVIDER_VERDICT_NOTE, FORWARD_MERGE, PROW,
+  ProviderUnavailable, ProviderVerdict, PROVIDER_VERDICT_NOTE, FORWARD_MERGE, FORWARD_MERGE_HEAD, PROW,
   DCO_ENUMERATION_SUMMARY_PREFIX, DCO_ENUMERATION_SUMMARY_FALLBACK,
   DCO_PROVIDER_UNAVAILABLE_TEXT, DCO_PROVIDER_RUNBOOK,
 };
