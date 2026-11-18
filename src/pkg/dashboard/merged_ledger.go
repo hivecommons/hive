@@ -436,6 +436,20 @@ func (l *MergedLedger) Has(repo string, number int) bool {
 	return ok
 }
 
+// Entry returns the listed entry for repo#number, if any.
+func (l *MergedLedger) Entry(repo string, number int) (MergedLedgerEntry, bool) {
+	if l == nil || number <= 0 {
+		return MergedLedgerEntry{}, false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	i, ok := l.index[mergedLedgerKey(repo, number)]
+	if !ok || i < 0 || i >= len(l.entries) {
+		return MergedLedgerEntry{}, false
+	}
+	return l.entries[i], true
+}
+
 // Len is the number of listed (unpruned) entries.
 func (l *MergedLedger) Len() int {
 	l.mu.Lock()

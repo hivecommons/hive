@@ -384,7 +384,8 @@ capped at 256 KiB.
 | `hive_advisor`            | Hive advice                                                                                                                                                                                                             |
 | `advisor_records`         | Advisor records                                                                                                                                                                                                         |
 | `governor_setup_proposal` | Proposed governor setup: each setting with a reason, and the write operation and args that apply it                                                                                                                     |
-| `audit_log`               | Audit entries                                                                                                                                                                                                           |
+| `audit_log`               | Audit entries; optional `repo`, `number`, `action`, `since`, `contributor`, `sensitive`, which search every retained audit file before the cap (see [Audit filters and item history](#audit-filters-and-item-history))  |
+| `item_history_read`       | Everything the hive recorded about one issue or PR, open or closed; needs `repo`, `number` (see [Item history](#item-history))                                                                                          |
 
 **Logs**
 
@@ -676,6 +677,67 @@ table shows for the same range (#18968):
   `data_since`, not zeros. An agent's token fields are `null` where its
   snapshots predate per-agent token recording.
 - Everything is an estimate (token counts × list price), not billed spend.
+
+### Audit filters and item history
+
+`audit_log` with no arguments reads the newest page of the in-memory audit
+log, as before. With any of these arguments it asks `GET /api/audit` to search
+every retained audit file (the current log and its rotated, compressed
+backups) and filter **before** its 200-row cap. The tool's own `limit` then
+applies to what comes back.
+
+| Argument      | Matches                                                                               |
+| ------------- | ------------------------------------------------------------------------------------- |
+| `repo`        | `owner/name` or the bare name; the entry's typed repo or a `repo=` pair in its detail |
+| `number`      | An issue or PR number; the entry's typed target or a `number=` pair in its detail     |
+| `action`      | Action names, comma-separated; a trailing `*` matches a prefix (`pr_*`, `relay_*`)    |
+| `since`       | RFC3339, or a duration back from now (`24h`, `7d`); at most 90 days                   |
+| `contributor` | The entry's user (a login, case-insensitive)                                          |
+| `sensitive`   | `true`: sensitive actions only; without `since`, the last 24 hours                    |
+
+A filtered answer adds:
+- `matched`: how many entries matched;
+- `truncated`;
+- `scanned`: `files`, or `ring` on a hive without audit files.
+
+The Audit Log section's filter row on the dashboard sends the same parameters.
+
+### Item history
+
+`item_history_read` takes `repo` (`owner/name`) and `number` and reads
+`GET /api/audit/item`. It answers for any issue or PR, including one that has
+left the Activity monitor:
+
+- **`state`:** `open`, `merged`, `closed` or `unknown`.
+- **`entries`:** every retained audit row naming the item, newest first. For a
+  PR nested under an issue (`linked_issue`), the issue's rows are included too.
+- **`merged`:** the merged-ledger entry: `merged_at`, `merged_by` (`hive` or a
+  login), `lane` and `issue`.
+- **`tracker`:** its Activity monitor row, while it is open.
+- **`closed`:** the monitor's record, for 30 minutes after it closed.
+
+The dashboard's item history dialog shows the same answer. It opens from an
+audit row that names an item, from the filter row, and from the Merged list.
+
+What the audit log records about a PR's life:
+
+| Event                      | Recorded as                                                                                                                                       |
+| -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An agent claims an issue   | `agent_issue_claimed`, on the issue (included through `linked_issue`)                                                                             |
+| A contributor takes a task | `relay_task_assigned`, `relay_task_accepted`, then `relay_task_completed` (with the verified `pr_url`), on the task's issue or PR                 |
+| A PR is opened             | `agent_pr_created` when the hive opened it for an agent; a contributor's PR shows as the `pr_url` of `relay_task_completed`                       |
+| A review                   | `agent_pr_reviewed` (the hive's own review, with `state=`); `pr_review_observed` (a person or another bot), recorded once the PR merges or closes |
+| A merge                    | `pr_merged` when the hive merged it; who merged it, the hive or a person, is in `merged`                                                          |
+| A close by the hive        | `pr_closed` or `agent_issue_closed`                                                                                                               |
+
+Not recorded today:
+- **Fixes after a red check.** The fix queue sends a contributor's `fix-pr`
+  task without a `relay_task_assigned` row, `agent_branch_pushed` has no issue
+  or PR number, and a contributor's own pushes aren't audited.
+- **A person's merge.** It has no audit row; it appears only in `merged`.
+- **A PR's link to its issue,** when the merged ledger and the monitor row both
+  lack it. Then the issue's rows (an agent's claim) are not included; ask for
+  the issue's history separately.
 
 ### What a read masks
 

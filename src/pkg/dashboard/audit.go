@@ -667,6 +667,32 @@ func (s *Server) handleAuditLog(w http.ResponseWriter, r *http.Request) {
 	now := time.Now()
 	summary := auditLogSummary(summaryEntries, now)
 	contributor := auditRequestContributor(r)
+	query, err := parseAuditQuery(r, now)
+	if err != nil {
+		jsonError(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if query.active() {
+		// repo, number, action or since: scan every retained audit file and
+		// filter before the cap (audit_query.go). contributor and sensitive
+		// apply on the same pass.
+		filtered, matched, scanned := s.filteredAuditEntries(query, contributor, auditRequestSensitiveOnly(r), now)
+		if summary.Last != nil {
+			summary.Last.Sensitive = auditEntryIsSensitive(*summary.Last)
+		}
+		jsonResponse(w, map[string]any{
+			"entries":                filtered,
+			"matched":                matched,
+			"truncated":              matched > len(filtered),
+			"scanned":                scanned,
+			"histogram":              summary.Histogram,
+			"sensitive_24h":          summary.Sensitive24h,
+			"sensitive_window_hours": auditSummaryHours,
+			"today":                  summary.Today,
+			"last":                   summary.Last,
+		})
+		return
+	}
 	switch {
 	case auditRequestSensitiveOnly(r):
 		entries = auditSensitiveWindowEntries(summaryEntries, now)

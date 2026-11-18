@@ -828,6 +828,7 @@
     .ham-merged-list .ham-merged-num { color: var(--amber); font-variant-numeric: tabular-nums; font-weight: var(--fw-medium); white-space: nowrap; }
     .ham-merged-list .ham-merged-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .ham-merged-list .ham-merged-meta { color: var(--text-faint); white-space: nowrap; font-size: var(--fs-xs); }
+    .ham-merged-list .ham-merged-hist { margin-left: var(--sp-2); padding: 0; border: 0; background: none; color: var(--accent); font-size: var(--fs-xs); cursor: pointer; text-decoration: underline; }
     .ham-merged-pop .ham-empty { padding: var(--sp-2) 0; }
     .ham-queue-pop { width: auto; min-width: 22rem; max-width: 34rem; }
     .ham-merged-pop-foot { margin-top: var(--sp-3); color: var(--text-faint); font-size: var(--fs-xs); }
