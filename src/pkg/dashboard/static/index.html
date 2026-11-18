@@ -20285,7 +20285,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
           if (sg.blocked) tip += ' — ' + stageTrackerBlockedTip(item);
           if (sg.draft) tip += ' — ' + STAGE_TRACKER_DRAFT_TIP;
           if (sg.isNew && typeof stageTrackerNewLines === 'function') tip = (typeof stageTrackerOpenTriageNeeded === 'function' && stageTrackerOpenTriageNeeded(item) ? 'Triage needed — ' : 'New — ') + stageTrackerNewLines(item, nowMs).join(' — ');
-          if (sg.needsHuman) tip = STAGE_TRACKER_NEEDS_HUMAN_WORD + ' — ' + String((item.needs_human_why && item.needs_human_why.reason) || '').trim() + ' — later stages are not applicable until a person acts';
+          if (sg.needsHuman) tip = STAGE_TRACKER_NEEDS_HUMAN_WORD + ': ' + String((item.needs_human_why && item.needs_human_why.reason) || '').trim() + '. Later stages are not applicable until a person acts.';
           if (sg.advisory) tip = (item.advisory && item.advisory.caption) || 'Advisory for maintainers · read, then close';
           if (sg.openSince) tip += ' — open since ' + new Date(sg.openSince.ms).toISOString() + (sg.openSince.fromCreated ? ' (opened)' : '');
           // The shared Merge gate word hides 080 vs 095 vs 100; the chevron tooltip carries it.
