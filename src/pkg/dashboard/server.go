@@ -36,6 +36,7 @@ import (
 	spoke "github.com/hivecommons/hive/pkg/hub/spoke"
 	"github.com/hivecommons/hive/pkg/mailallow"
 	"github.com/hivecommons/hive/pkg/maintainernotes"
+	"github.com/hivecommons/hive/pkg/pauseprov"
 	"github.com/hivecommons/hive/pkg/planning"
 	"github.com/hivecommons/hive/pkg/review/autoscale"
 	"github.com/hivecommons/hive/pkg/runtimeobs"
@@ -965,6 +966,9 @@ type FrontendAgent struct {
 	PausedReason  string         `json:"pausedReason,omitempty"`
 	PausedTrigger string         `json:"pausedTrigger,omitempty"`
 	PausedBy      string         `json:"pausedBy,omitempty"`
+	// PauseProvenance says who or what paused the agent, when and why, and who
+	// or what last resumed it (hivecommons/hive#18916).
+	PauseProvenance *pauseprov.Provenance `json:"pauseProvenance,omitempty"`
 	// OperatorStopped is true when the agent was stopped explicitly (not by a
 	// crash), so the governor will not revive it.
 	OperatorStopped bool   `json:"operatorStopped,omitempty"`

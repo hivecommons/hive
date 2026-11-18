@@ -769,7 +769,7 @@
          restart that has nothing to restart (#18813); plain resume is the
          whole action. */
       if (a.state === 'running' || a.sandboxed === true) {
-        return `<button class="hv-btn btn-danger btn-sm btn-toggle paused" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="true" title="${esc(agentToggleTitle(a, true, false))}">\u25b6 resume</button>`;
+        return `<button class="hv-btn btn-danger btn-sm btn-toggle paused" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="true" title="${esc(pauseProvenanceTip(a) + agentToggleTitle(a, true, false))}">\u25b6 resume</button>`;
       }
       const rest = [];
       if (a.offByCadence === true) rest.push('its cadence for the current governor mode is off (\u2699\ufe0f \u2192 Cadences)');
@@ -777,6 +777,7 @@
       if (a.noCadence === true) rest.push('no governor mode gives it a cadence (\u2699\ufe0f \u2192 Cadences)');
       let title = 'This agent is paused AND its session is down \u2014 one click resumes it and asks the supervisor to start the session. No second Resume step.';
       if (rest.length > 0) title += ` Still not enough on its own: ${rest.join('; ')}.`;
+      title = pauseProvenanceTip(a) + title;
       return `<button class="hv-btn btn-danger btn-sm btn-toggle paused" data-action="startResumeAgent" data-agent="${esc(a.name)}" data-paused="true" title="${esc(title)}">\u25b6 start &amp; resume</button>`;
     }
     /* Owner-gated pause/resume slot (#18813). Never an empty slot: a viewer
@@ -1065,6 +1066,7 @@
             if (isStale) return statusBadgeHTML('degraded', 'stale', '', 'needs-context');
             return '';
           })()}${kickOutcomeBadgeHtml(a)}${agentSpendChip(a.name)}</div>
+          ${pauseCardLineHtml(a)}
           ${agentNowHtml(a)}
           ${agentRunLineHtml(a)}
           ${agentBlockerLineHtml(a)}

@@ -2766,6 +2766,8 @@
     /* .btn-toggle — ghost button with status states (system recipe at end of style block) */
     .agent-card.paused { border-left-color: var(--red); opacity: 0.7; }
     .agent-card.paused .agent-state { color: var(--red); }
+    /* Who or what paused the agent, when and why, and who or what last resumed it. */
+    .agent-card .agent-pause-line { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; margin-top: 2px; }
     .agent-card.on-demand { border-left-color: var(--indigo); opacity: 0.85; }
     .agent-card.on-demand .agent-state { color: var(--indigo); }
     .agent-card.off { border-left-color: color-mix(in srgb, var(--muted) 60%, var(--bg)); opacity: 0.6; }
@@ -13567,7 +13569,9 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const trigger = a.pausedTrigger || '';
       const ago = a.pausedAt ? pillAge(a.pausedAt) : '';
       let line;
-      if (trigger === 'dashboard-api') {
+      if (typeof pauseProvenanceSentence === 'function' && pauseProvenanceSentence(a)) {
+        line = pauseProvenanceSentence(a);
+      } else if (trigger === 'dashboard-api') {
         line = 'paused by ' + (a.pausedBy || 'an operator') + ' via dashboard';
       } else if (trigger) {
         line = trigger + ': ' + (a.pausedReason || 'paused');
@@ -13588,7 +13592,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       const by = a.pausedBy || '';
       const at = a.pausedAt ? formatDashboardDateTime(a.pausedAt) : 'unknown';
       const ago = a.pausedAt ? pillAge(a.pausedAt) : '';
-      return `<span class="config-info pause-info" tabindex="0" data-stop="1" aria-label="Pause details">ℹ️<span class="config-tooltip pause-tooltip" role="tooltip">${esc(pauseProvenanceLine(a))}<br>Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}${by ? '<br>By: ' + esc(by) : ''}<br>Since: ${esc(at)}${ago ? ' (' + esc(ago) + ')' : ''}<br><br>To lift the pause, an owner can select ▶ resume or ▶ start &amp; resume on the agent card. If the agent is disabled, enable it first.</span></span>`;
+      return `<span class="config-info pause-info" tabindex="0" data-stop="1" aria-label="Pause details">ℹ️<span class="config-tooltip pause-tooltip" role="tooltip">${esc(pauseProvenanceLine(a))}<br>Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}${by ? '<br>By: ' + esc(by) : ''}<br>Since: ${esc(at)}${ago ? ' (' + esc(ago) + ')' : ''}${typeof pauseResumeSentence === 'function' && pauseResumeSentence(a) ? '<br>' + esc(pauseResumeSentence(a)) : ''}<br><br>To lift the pause, an owner can select ▶ resume or ▶ start &amp; resume on the agent card. If the agent is disabled, enable it first.</span></span>`;
     }
 
     function subAgentModelsHtml(a) {
@@ -13975,6 +13979,72 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
     // Agent descriptions now come from the JSON status payload (agent.description field).
     // This empty map serves as a fallback for agents without a description in config.
     const AGENT_DESCRIPTIONS = {};
+    // Pause provenance on the agent card (hivecommons/hive#18916).
+    //
+    // A paused agent used to show only "Paused". GET /api/status now carries
+    // `pauseProvenance` per agent: `pause` (kind, label, at, reason, line) says
+    // who or what paused it, when and why, and `lastResume` says who or what
+    // last resumed it. These helpers only turn that into text; the callers put
+    // it through esc(). The reason is operator- or hive-written text, already
+    // redacted and capped server-side, and is still escaped where it is shown.
+    const PAUSE_UNKNOWN_LABEL = 'unknown (before provenance was recorded)';
+
+    function pauseProvenancePause(a) {
+      const p = a && a.pauseProvenance;
+      return p && p.pause ? p.pause : null;
+    }
+
+    function pauseProvenanceResume(a) {
+      const p = a && a.pauseProvenance;
+      return p && p.lastResume ? p.lastResume : null;
+    }
+
+    function pauseProvenanceWhen(at) {
+      if (!at) return '';
+      return typeof formatDashboardDateTime === 'function' ? formatDashboardDateTime(at) : String(at);
+    }
+
+    // "paused by dashboard user alice at <time>: <reason>". An agent whose
+    // pause predates provenance reads "paused: unknown (before provenance was
+    // recorded)": never a guess at who did it.
+    function pauseProvenanceSentence(a) {
+      const p = pauseProvenancePause(a);
+      if (!p) return '';
+      const label = String(p.label || PAUSE_UNKNOWN_LABEL);
+      let s = p.kind === 'unknown' ? 'paused: ' + label : 'paused by ' + label;
+      const when = pauseProvenanceWhen(p.at);
+      if (when) s += ' at ' + when;
+      if (p.reason) s += ': ' + String(p.reason);
+      return s;
+    }
+
+    // "last resumed by <actor> at <time>".
+    function pauseResumeSentence(a) {
+      const r = pauseProvenanceResume(a);
+      if (!r) return '';
+      const label = String(r.label || PAUSE_UNKNOWN_LABEL);
+      let s = r.kind === 'unknown' ? 'last resumed: ' + label : 'last resumed by ' + label;
+      const when = pauseProvenanceWhen(r.at);
+      if (when) s += ' at ' + when;
+      return s;
+    }
+
+    // The text a resume control's tooltip leads with, ending in a space, or ''
+    // when nothing is known.
+    function pauseProvenanceTip(a) {
+      const parts = [pauseProvenanceSentence(a), pauseResumeSentence(a)].filter(Boolean);
+      return parts.length ? parts.join('. ') + '. ' : '';
+    }
+
+    // The visible line on a paused agent's card: who or what paused it, when
+    // and why, then who or what last resumed it. Empty for an agent that is
+    // not paused.
+    function pauseCardLineHtml(a) {
+      if (!a || !a.paused) return '';
+      const text = pauseProvenanceSentence(a) || 'paused: ' + PAUSE_UNKNOWN_LABEL;
+      const resumed = pauseResumeSentence(a);
+      return '<div class="agent-pause-line" data-status="warn">' + esc(text) + (resumed ? '<span class="agent-pause-resumed"> · ' + esc(resumed) + '</span>' : '') + '</div>';
+    }
     // ── Config-driven agent color/sort helpers ──────────────────────────────
     const _DEFAULT_AGENT_COLOR = 'var(--muted)';
     function _getAgentColor(name) {
@@ -32363,7 +32433,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
          restart that has nothing to restart (#18813); plain resume is the
          whole action. */
       if (a.state === 'running' || a.sandboxed === true) {
-        return `<button class="hv-btn btn-danger btn-sm btn-toggle paused" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="true" title="${esc(agentToggleTitle(a, true, false))}">\u25b6 resume</button>`;
+        return `<button class="hv-btn btn-danger btn-sm btn-toggle paused" data-action="toggleAgent" data-agent="${esc(a.name)}" data-paused="true" title="${esc(pauseProvenanceTip(a) + agentToggleTitle(a, true, false))}">\u25b6 resume</button>`;
       }
       const rest = [];
       if (a.offByCadence === true) rest.push('its cadence for the current governor mode is off (\u2699\ufe0f \u2192 Cadences)');
@@ -32371,6 +32441,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
       if (a.noCadence === true) rest.push('no governor mode gives it a cadence (\u2699\ufe0f \u2192 Cadences)');
       let title = 'This agent is paused AND its session is down \u2014 one click resumes it and asks the supervisor to start the session. No second Resume step.';
       if (rest.length > 0) title += ` Still not enough on its own: ${rest.join('; ')}.`;
+      title = pauseProvenanceTip(a) + title;
       return `<button class="hv-btn btn-danger btn-sm btn-toggle paused" data-action="startResumeAgent" data-agent="${esc(a.name)}" data-paused="true" title="${esc(title)}">\u25b6 start &amp; resume</button>`;
     }
     /* Owner-gated pause/resume slot (#18813). Never an empty slot: a viewer
@@ -32659,6 +32730,7 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             if (isStale) return statusBadgeHTML('degraded', 'stale', '', 'needs-context');
             return '';
           })()}${kickOutcomeBadgeHtml(a)}${agentSpendChip(a.name)}</div>
+          ${pauseCardLineHtml(a)}
           ${agentNowHtml(a)}
           ${agentRunLineHtml(a)}
           ${agentBlockerLineHtml(a)}

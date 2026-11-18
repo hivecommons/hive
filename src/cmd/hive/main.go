@@ -1996,6 +1996,9 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// component attribute and count toward reach (#3973); the runtime itself
 	// only knows the OpenTelemetry API (#13536).
 	b.agentMgr.SetSpanStarter(tracing.StartSpan)
+	// #18916: the last resume of each agent (who or what, when), beside the
+	// pause provenance the runtime keeps with the persisted pause state.
+	installPauseProvenance(b.cfg, b.logger)
 	// The runtime's self-reported error conditions (stalls, restart storms,
 	// token-mint failures…) feed the fleet-report tracker through the
 	// types.ConditionReporter seam; the runtime does not import pkg/fleetreport.

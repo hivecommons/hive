@@ -65,6 +65,8 @@
     /* .btn-toggle — ghost button with status states (system recipe at end of style block) */
     .agent-card.paused { border-left-color: var(--red); opacity: 0.7; }
     .agent-card.paused .agent-state { color: var(--red); }
+    /* Who or what paused the agent, when and why, and who or what last resumed it. */
+    .agent-card .agent-pause-line { font-size: 0.78rem; color: var(--muted); overflow-wrap: anywhere; margin-top: 2px; }
     .agent-card.on-demand { border-left-color: var(--indigo); opacity: 0.85; }
     .agent-card.on-demand .agent-state { color: var(--indigo); }
     .agent-card.off { border-left-color: color-mix(in srgb, var(--muted) 60%, var(--bg)); opacity: 0.6; }

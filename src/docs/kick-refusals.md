@@ -101,12 +101,19 @@ the kick into the fresh pane as soon as the CLI is ready.
 
 ### paused
 
-Error text: `agent <name> cannot be kicked: it is paused`, followed by the
-trigger in parentheses and the reason when there is one (for example
-`(by budget)`). A paused agent is never kicked, by the governor or by hand.
+Error text (from the dashboard): `agent <name> cannot be kicked: it is paused
+by <actor> at <time>: <reason>; resume here`. The actor is a dashboard user's
+login, an automatic pause (for a provider rate limit or backoff, a login
+prompt, a crash loop, ...), a hook, startup, or configuration; a pause recorded
+before provenance existed reads `unknown (before provenance was recorded)`.
+The agent card and the `start & resume` tooltip show the same line, and the
+card also says who or what last resumed the agent. The runtime's own text, in
+logs and for non-dashboard callers, is `it is paused`, followed by the trigger
+in parentheses and the reason when there is one (for example `(by budget)`). A
+paused agent is never kicked, by the governor or by hand.
 
 - **Normal:** you paused it on purpose.
-- **Problem:** you did not. The trigger names what paused it. Fix that cause
+- **Problem:** you did not. The actor names what paused it. Fix that cause
   (for example the spend guard or repeated crashes) before resuming, or it will
   pause again.
 

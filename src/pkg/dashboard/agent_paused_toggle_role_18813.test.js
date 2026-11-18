@@ -38,7 +38,7 @@ const body = [
   fn(cards, 'agentCadenceModesLabel' in {} ? '' : 'pausedAgentActionHtml'),
   'return { agentToggleGateReason, agentGatedToggleHtml, pausedAgentActionHtml };',
 ].join('\n');
-const api = new Function('window', 'esc', 'agentCadenceOffLabel', 'agentCadenceModesLabel', body)(win, esc, () => 'no cadence', () => 'busy');
+const api = new Function('window', 'esc', 'agentCadenceOffLabel', 'agentCadenceModesLabel', 'pauseProvenanceTip', body)(win, esc, () => 'no cadence', () => 'busy', () => '');
 
 function setRole(role, settled) {
   win._hiveRole = role;

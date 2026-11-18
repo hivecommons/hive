@@ -349,6 +349,7 @@ func BuildAgentOnlyStatus(
 ) *AgentStatusPayload {
 	agents, hidden := buildAgentsWithHidden(agentStatuses, cfg, govState)
 	applyRunMeter(defaultRunMeter, agents, agentStatuses, nil, time.Now())
+	applyPauseProvenance(agents, agentStatuses)
 	return &AgentStatusPayload{
 		Timestamp:        time.Now().UTC().Format(time.RFC3339),
 		Agents:           agents,
@@ -380,6 +381,7 @@ func BuildFrontendStatus(
 
 	agents, hiddenAgents := buildAgentsWithHidden(agentStatuses, cfg, govState)
 	fleetRun := applyRunMeter(defaultRunMeter, agents, agentStatuses, tokenCollector, time.Now())
+	applyPauseProvenance(agents, agentStatuses)
 	health := buildHealth(ghClient, ctx)
 	mergeAgentAuthHealth(health, agents)
 

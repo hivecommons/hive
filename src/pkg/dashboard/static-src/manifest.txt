@@ -82,6 +82,7 @@ js/feedback.js
 js/sections.js
 js/layout.js
 js/agent-detail.js
+js/agent-pause-provenance.js
 js/sidebar.js
 js/history-sparklines.js
 js/cost-trend.js

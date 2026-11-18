@@ -532,7 +532,9 @@
       const trigger = a.pausedTrigger || '';
       const ago = a.pausedAt ? pillAge(a.pausedAt) : '';
       let line;
-      if (trigger === 'dashboard-api') {
+      if (typeof pauseProvenanceSentence === 'function' && pauseProvenanceSentence(a)) {
+        line = pauseProvenanceSentence(a);
+      } else if (trigger === 'dashboard-api') {
         line = 'paused by ' + (a.pausedBy || 'an operator') + ' via dashboard';
       } else if (trigger) {
         line = trigger + ': ' + (a.pausedReason || 'paused');
@@ -553,7 +555,7 @@
       const by = a.pausedBy || '';
       const at = a.pausedAt ? formatDashboardDateTime(a.pausedAt) : 'unknown';
       const ago = a.pausedAt ? pillAge(a.pausedAt) : '';
-      return `<span class="config-info pause-info" tabindex="0" data-stop="1" aria-label="Pause details">ℹ️<span class="config-tooltip pause-tooltip" role="tooltip">${esc(pauseProvenanceLine(a))}<br>Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}${by ? '<br>By: ' + esc(by) : ''}<br>Since: ${esc(at)}${ago ? ' (' + esc(ago) + ')' : ''}<br><br>To lift the pause, an owner can select ▶ resume or ▶ start &amp; resume on the agent card. If the agent is disabled, enable it first.</span></span>`;
+      return `<span class="config-info pause-info" tabindex="0" data-stop="1" aria-label="Pause details">ℹ️<span class="config-tooltip pause-tooltip" role="tooltip">${esc(pauseProvenanceLine(a))}<br>Reason: ${esc(reason)}<br>Trigger: ${esc(trigger)}${by ? '<br>By: ' + esc(by) : ''}<br>Since: ${esc(at)}${ago ? ' (' + esc(ago) + ')' : ''}${typeof pauseResumeSentence === 'function' && pauseResumeSentence(a) ? '<br>' + esc(pauseResumeSentence(a)) : ''}<br><br>To lift the pause, an owner can select ▶ resume or ▶ start &amp; resume on the agent card. If the agent is disabled, enable it first.</span></span>`;
     }
 
     function subAgentModelsHtml(a) {

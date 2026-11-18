@@ -8,6 +8,7 @@ import (
 
 	"github.com/hivecommons/hive/crux"
 	"github.com/hivecommons/hive/pkg/config"
+	"github.com/hivecommons/hive/pkg/pauseprov"
 )
 
 func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
@@ -45,7 +46,7 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 	if msg == "" && s.deps.Scheduler != nil {
 		if !s.deps.Scheduler.FirstScanDone() {
 			if err := s.deps.AgentMgr.ValidateKick(name); err != nil {
-				jsonKickError(w, err.Error(), http.StatusBadRequest)
+				jsonKickError(w, s.pausedKickMessage(name, err.Error()), http.StatusBadRequest)
 				return
 			}
 			s.deps.Scheduler.DeferKickUntilFirstScan(name, func(kickMsg string) {
@@ -89,7 +90,7 @@ func (s *Server) handleKick(w http.ResponseWriter, r *http.Request) {
 	// is reported by GET /api/kick/{agent}/status, off the request path.
 	started, err := deliverKick(msg)
 	if err != nil {
-		jsonKickError(w, err.Error(), http.StatusBadRequest)
+		jsonKickError(w, s.pausedKickMessage(name, err.Error()), http.StatusBadRequest)
 		return
 	}
 	if !started {
@@ -157,7 +158,7 @@ func (s *Server) handleKickStatus(w http.ResponseWriter, r *http.Request) {
 		"queuedAt": d.QueuedAt.UTC().Format(time.RFC3339),
 	}
 	if d.Error != "" {
-		resp["error"] = d.Error
+		resp["error"] = s.pausedKickMessage(name, d.Error)
 		if u := kickErrorDocsURL(d.Error); u != "" {
 			resp["docs_url"] = u
 		}
@@ -585,6 +586,8 @@ func (s *Server) handleResume(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The runtime's resume event carries no acting user: say who is resuming.
+	pauseprov.Default().IntendResume(name, requestUser(r))
 	if err := s.deps.AgentMgr.Resume(s.deps.Ctx, name, "dashboard-api", "manual resume"); err != nil {
 		jsonError(w, err.Error(), http.StatusBadRequest)
 		return

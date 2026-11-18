@@ -190,6 +190,7 @@ func installAgentPauseEmitter(mgr crux.Host) {
 		return
 	}
 	mgr.SetPauseTransitionObserver(func(event crux.PauseTransitionEvent) {
+		observePauseTransition(event)
 		transition := hooks.TransitionAgentResumed
 		if event.Paused {
 			transition = hooks.TransitionAgentPaused
