@@ -716,6 +716,7 @@
   "quality": {},
   "intent": {},
   "sentinel": {},
+  "session_taint": {},
   "security": {},
   "evidence": {
     "complexity": {}

@@ -17,6 +17,7 @@ import (
 
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/crux/logscrub"
+	"github.com/hivecommons/hive/crux/sessiontaint"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/decisionpolicy"
 	"github.com/hivecommons/hive/pkg/effects"
@@ -1026,6 +1027,20 @@ func (c *Client) handleOneIssueRequestFrom(ctx context.Context, path string, src
 
 	if startSignal != "" {
 		c.notifyAgentStart(req.Agent, req.Repo, req.Number, startSignal)
+	}
+
+	// Session taint (#18987), observe only. Recorded once per relay write
+	// that completed, after every refusal, retry and dedupe gate, so the
+	// would-act data never describes an action the hive then refused or
+	// retried. A reused issue or comment published nothing new and is
+	// skipped. The enforcement phases move this check before the write.
+	if !resp.AlreadyExisted {
+		switch kind {
+		case "issue":
+			c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayIssue, req.Repo)
+		case "comment":
+			c.observeSessionTaint(ctx, req.Agent, sessiontaint.SinkRelayComment, req.Repo)
+		}
 	}
 
 	action := AuditActionAgentIssueCreated
