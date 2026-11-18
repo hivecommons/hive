@@ -284,9 +284,13 @@ func TestEnumerateActionable_SubIssueSummaryBecomesChildren(t *testing.T) {
 
 func resetParentReopenCacheForTest(t *testing.T) {
 	t.Helper()
-	parentReopenMu.Lock()
-	parentReopenCache = map[string]parentReopenVerdict{}
-	parentReopenMu.Unlock()
+	clear := func() {
+		parentReopenMu.Lock()
+		parentReopenCache = map[string]parentReopenVerdict{}
+		parentReopenMu.Unlock()
+	}
+	clear()
+	t.Cleanup(clear)
 }
 
 func timelineEvent(event, actor, actorType, body, at string) map[string]any {
