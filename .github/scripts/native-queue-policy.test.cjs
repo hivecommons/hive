@@ -5,7 +5,7 @@ const {
   ACTIONS_APP_ID, DCO_APP_ID, POLICY_CHECKS, BUILD_CHECKS,
   PendingEvidence, membersForGroup, assertEligible, evidenceForHead, closedNoop, evaluate,
   isTransientAPIError, isCosmeticLabelFlip, replayLastVerdict,
-  ProviderUnavailable, ProviderVerdict, PROVIDER_VERDICT_NOTE, FORWARD_MERGE, PROW,
+  ProviderUnavailable, ProviderVerdict, PROVIDER_VERDICT_NOTE, FORWARD_MERGE, FORWARD_MERGE_HEAD, PROW,
   DCO_ENUMERATION_SUMMARY_PREFIX,
   DCO_ENUMERATION_SUMMARY_FALLBACK,
   DCO_PROVIDER_UNAVAILABLE_TEXT,
@@ -288,6 +288,32 @@ test('one commit unreachable from v5 keeps the forward-merge on probot DCO', asy
   // Probot DCO succeeding still admits through the unchanged path.
   unreachable.state.runs.get(sha(11)).find(r => r.name === 'DCO').conclusion = 'success';
   assert.match(await evaluate(unreachable), /DCO path: probot DCO \(App 1861\); sync\/v5-to-v6 fallback/);
+});
+
+// #18931: a squash or rebase queue never contains the PR's own head commit, so
+// a forward-merge PR in such a group is refused by name.
+test('a forward-merge PR whose head is not in the tested group is refused as a merge-method violation', async () => {
+  for (const ref of ['sync/v5-to-v6', 'sync/v5-to-v6-2026-11-18', 'sync/v4-to-v5', 'topup/v5-to-v6-202611171235']) {
+    const f = fixture('merge_group');
+    f.state.prs[0].head = { ...f.state.prs[0].head, ref };
+    f.state.ancestry = 'diverged';
+    await assert.rejects(evaluate(f), error => {
+      assert.match(error.message, /must land with a merge commit, never a squash or rebase/);
+      assert.ok(error.message.includes(ref), error.message);
+      return true;
+    });
+    // Contained head (the merge-commit method): the guard stays out of the way.
+    const ok = fixture('merge_group');
+    ok.state.prs[0].head = { ...ok.state.prs[0].head, ref };
+    await evaluate(ok);
+  }
+  // Any other branch keeps the generic message: the guard is scoped to forward-merges.
+  const other = fixture('merge_group');
+  other.state.prs[0].head = { ...other.state.prs[0].head, ref: 'feature/sync-things' };
+  other.state.ancestry = 'diverged';
+  await assert.rejects(evaluate(other), /current PR head is not contained in the tested group/);
+  for (const ref of ['sync/v5-to-v6', 'topup/x', 'sync/v4-to-v5-3']) assert.ok(FORWARD_MERGE_HEAD.test(ref), ref);
+  for (const ref of ['feature/topup/x', 'fix/sync/v5-to-v6', 'sync-v5-to-v6', 'topup']) assert.ok(!FORWARD_MERGE_HEAD.test(ref), ref);
 });
 
 test('another head branch, base, fork or author keeps requiring probot DCO', async () => {
