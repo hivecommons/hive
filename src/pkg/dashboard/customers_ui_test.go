@@ -97,7 +97,7 @@ func TestCustomersViewGates(t *testing.T) {
 		"customersFocusSuggestion", "customersAfterSuggestion", "customersAccept", "customersDismiss", "customersShowMore",
 		"customersPickerOpen", "customersProfilePickerOpen", "customersPickerClose", "customersAttach", "customersHintAnswer",
 		"customersAvatarsOn", "customersGithubLogin", "customersAvatarHtml", "customersMorePill", "customersSourcePills",
-		"rowChevronHtml", "customersOriginPill", "customersTagPill", "customersTagPills", "customersIsOpenTarget",
+		"rowChevronHtml", "customersOriginPill", "customersTagPill", "customersTagPills", "customersIsOpenTarget", "customersOrgPill", "customersProfileValue", "customersDetailsHtml",
 		"graphcanvasRound", "graphcanvasLabel", "graphcanvasLayout", "graphcanvasSvg",
 	} {
 		fns = append(fns, jsFunc(t, html, name))
@@ -105,7 +105,7 @@ func TestCustomersViewGates(t *testing.T) {
 	consts := ""
 	for _, name := range []string{"CUSTOMERS_KIND_LABELS", "CUSTOMERS_ADDABLE_KINDS", "CUSTOMERS_LEVEL_LABELS", "CUSTOMERS_LEVEL_PILL", "CUSTOMERS_ORIGIN_LABELS", "CUSTOMERS_REF_KIND_LABELS",
 		"CUSTOMERS_REF_GH", "CUSTOMERS_REF_WORDS", "CUSTOMERS_GROUP_SHOWN", "CUSTOMERS_SUGGESTED_GROUPS", "CUSTOMERS_OTHER_GROUP", "CUSTOMERS_KIND_ICONS",
-		"CUSTOMERS_ORIGIN_SHORT", "CUSTOMERS_SOURCE_PILLS_SHOWN", "CUSTOMERS_TAG_PILLS_SHOWN", "CUSTOMERS_GITHUB_LOGIN", "CUSTOMERS_AVATAR_PX", "CUSTOMERS_AVATAR_FETCH_PX",
+		"CUSTOMERS_ORIGIN_SHORT", "CUSTOMERS_PROFILE_FIELDS", "CUSTOMERS_SOURCE_PILLS_SHOWN", "CUSTOMERS_TAG_PILLS_SHOWN", "CUSTOMERS_GITHUB_LOGIN", "CUSTOMERS_AVATAR_PX", "CUSTOMERS_AVATAR_FETCH_PX",
 		"GRAPHCANVAS_W", "GRAPHCANVAS_H", "GRAPHCANVAS_RING_ARTEFACT", "GRAPHCANVAS_RING_PEOPLE", "GRAPHCANVAS_MAX_ARTEFACTS", "GRAPHCANVAS_LABEL_MAX"} {
 		consts += jsConstBlock(t, html, name) + "\n"
 	}
