@@ -52,6 +52,24 @@ func TestHumanMergeApproveCommandActor(t *testing.T) {
 	}
 }
 
+func TestHumanMergeSelfApproval(t *testing.T) {
+	for _, tc := range []struct {
+		approver, author string
+		want             bool
+	}{
+		{"owner", "owner", true},
+		{"Owner", " owner ", true},
+		{"owner", "contributor", false},
+		{"owner", testHiveAppBotLogin, false},
+		{"", "", false},
+		{"owner", "", false},
+	} {
+		if got := humanMergeSelfApproval(tc.approver, tc.author); got != tc.want {
+			t.Errorf("humanMergeSelfApproval(%q, %q) = %v, want %v", tc.approver, tc.author, got, tc.want)
+		}
+	}
+}
+
 func TestHumanMergeApprovalCommentNamesApproverAndHead(t *testing.T) {
 	body := humanMergeApprovalComment(ownerApprovalHead, workflowApproval{Login: "owner"})
 	for _, want := range []string{
@@ -188,6 +206,7 @@ func TestPRApproveReplyHumanMergeOwnerApproval(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		unlisted bool
+		author   string
 		reviews  []*gh.PullRequestReview
 		comments []*gh.IssueComment
 		want     string
@@ -197,6 +216,7 @@ func TestPRApproveReplyHumanMergeOwnerApproval(t *testing.T) {
 		{name: "Approve review on the head", reviews: []*gh.PullRequestReview{{ID: gh.Ptr(int64(1)), State: gh.Ptr("APPROVED"), CommitID: gh.Ptr("sha7"), User: &gh.User{Login: gh.Ptr("owner"), Type: gh.Ptr("User")}}}, want: "released for `sha7`. "},
 		{name: "this /hive approve after the head", comments: []*gh.IssueComment{{ID: gh.Ptr(int64(5)), Body: gh.Ptr("/hive approve"), User: &gh.User{Login: gh.Ptr("owner"), Type: gh.Ptr("User")}, CreatedAt: &gh.Timestamp{Time: time.Date(2026, 11, 18, 11, 0, 0, 0, time.UTC)}}}, want: "released for `sha7`. "},
 		{name: "/hive approve before the head", comments: []*gh.IssueComment{{ID: gh.Ptr(int64(5)), Body: gh.Ptr("/hive approve"), User: &gh.User{Login: gh.Ptr("owner"), Type: gh.Ptr("User")}, CreatedAt: &gh.Timestamp{Time: time.Date(2026, 11, 18, 9, 0, 0, 0, time.UTC)}}}, want: "no approval of the current head (`sha7`) is recorded yet"},
+		{name: "the PR author's own /hive approve does not count", author: "owner", comments: []*gh.IssueComment{{ID: gh.Ptr(int64(5)), Body: gh.Ptr("/hive approve"), User: &gh.User{Login: gh.Ptr("owner"), Type: gh.Ptr("User")}, CreatedAt: &gh.Timestamp{Time: time.Date(2026, 11, 18, 11, 0, 0, 0, time.UTC)}}}, want: "cannot enable an automerge lane"},
 		{name: "approval by someone who is not a trusted merger", reviews: []*gh.PullRequestReview{{ID: gh.Ptr(int64(1)), State: gh.Ptr("APPROVED"), CommitID: gh.Ptr("sha7"), User: &gh.User{Login: gh.Ptr("passerby"), Type: gh.Ptr("User")}}}, want: "no approval of the current head"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -208,7 +228,11 @@ func TestPRApproveReplyHumanMergeOwnerApproval(t *testing.T) {
 				}
 				switch r.URL.Path {
 				case "/repos/acme/widget/pulls/7":
-					_ = json.NewEncoder(w).Encode(&gh.PullRequest{Number: gh.Ptr(7), State: gh.Ptr("open"), User: &gh.User{Login: gh.Ptr(testHiveAppBotLogin)}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("sha7")}, UpdatedAt: &gh.Timestamp{Time: time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)}})
+					author := tc.author
+					if author == "" {
+						author = testHiveAppBotLogin
+					}
+					_ = json.NewEncoder(w).Encode(&gh.PullRequest{Number: gh.Ptr(7), State: gh.Ptr("open"), User: &gh.User{Login: gh.Ptr(author)}, Head: &gh.PullRequestBranch{SHA: gh.Ptr("sha7")}, UpdatedAt: &gh.Timestamp{Time: time.Date(2026, 11, 18, 10, 0, 0, 0, time.UTC)}})
 				case "/repos/acme/widget/pulls/7/files":
 					_ = json.NewEncoder(w).Encode([]*gh.CommitFile{{Filename: gh.Ptr("sensitive/config.yaml"), Status: gh.Ptr("modified")}})
 				case "/repos/acme/widget/pulls/7/reviews":

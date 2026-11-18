@@ -18,7 +18,8 @@ package automerge
 // `/hive decision approve`), plus a trusted merger's `/hive approve` reply
 // posted after the head was first seen, bound to the head the same way a
 // typed decision is (humanMergeApproveCommandActor). A new push needs a new
-// approval. A repository not listed keeps the rule absolute.
+// approval. The PR author's own approval never counts
+// (humanMergeSelfApproval). A repository not listed keeps the rule absolute.
 //
 // The release reuses the human-merge-path hold's provenance check
 // (hgithub.ReleaseApprovedHumanMergePathHold): only a `hold` the App put on
@@ -74,14 +75,15 @@ func (c *Engine) humanMergeOwnerApprovalFor(ctx context.Context, owner, repo str
 		return workflowApproval{}, false
 	}
 	number := pr.GetNumber()
-	if approval, ok := c.workflowFenceApproval(ctx, owner, repo, pr, number, head, comments); ok {
+	author := strings.TrimSpace(hgithub.SafeGetLogin(pr.GetUser()))
+	if approval, ok := c.workflowFenceApproval(ctx, owner, repo, pr, number, head, comments); ok && !humanMergeSelfApproval(approval.Login, author) {
 		return approval, true
 	}
 	headPushedAt := c.headObservedAt(owner, repo, number, head, pr)
 	appLogin := strings.TrimSpace(c.transport.AppBotLogin())
 	for i := len(comments) - 1; i >= 0; i-- {
 		login, ok := humanMergeApproveCommandActor(comments[i], headPushedAt, appLogin)
-		if !ok {
+		if !ok || humanMergeSelfApproval(login, author) {
 			continue
 		}
 		if trusted, configured := c.isTrustedMerger(login); !configured || !trusted {
@@ -91,6 +93,17 @@ func (c *Engine) humanMergeOwnerApprovalFor(ctx context.Context, owner, repo str
 		return workflowApproval{Login: login}, true
 	}
 	return workflowApproval{}, false
+}
+
+// humanMergeSelfApproval reports whether approver is the PR's own author. The
+// author's approval never releases the human-merge-path refusal: the hold
+// exists so a second person looks at the change, and a trusted merger who
+// opened the PR cannot be that person (GitHub already refuses an author's
+// Approve review; a typed `/hive approve` or `/hive decision approve` would
+// otherwise let one account stand in for two).
+func humanMergeSelfApproval(approver, author string) bool {
+	approver, author = strings.TrimSpace(approver), strings.TrimSpace(author)
+	return approver != "" && author != "" && strings.EqualFold(approver, author)
 }
 
 // humanMergeApproveCommandActor reads one comment as a person's

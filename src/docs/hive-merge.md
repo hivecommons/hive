@@ -411,6 +411,9 @@ apply: the approval is not a merge override.
   first saw the head. These are the workflow-path fence's approvals plus
   `/hive approve`; an edited comment never counts, and someone who is not a
   trusted merger cannot approve.
+- **Not the author.** The pull request author's own approval never counts,
+  whatever form it takes, so one account cannot stand in for the second
+  person the hold exists to bring in.
 - **Bound to the head.** A new push needs a new approval. The one exception
   is the fence's: an Approve review or dashboard approval carries over the
   hive's own update from the base branch when the PR's diff is unchanged.
