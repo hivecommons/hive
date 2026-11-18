@@ -455,7 +455,7 @@ func delegatedItemWord(it delegatedDecisionItem) string {
 	case it.Result != nil && it.Result.Action == rowActionNoop:
 		return "no change (already decided)"
 	case it.Result != nil && it.Result.Action == rowActionNoEffect && it.Result.Rule == delegatedecision.RuleMidFlight:
-		return "skipped (" + strings.TrimPrefix(it.Result.Outcome, "Not decided: ") + ")"
+		return "skipped (" + strings.TrimSuffix(strings.TrimPrefix(it.Result.Outcome, "Not decided: "), ".") + ")"
 	case it.Result != nil:
 		word := it.Result.Action
 		if it.Result.Rule != "" {
