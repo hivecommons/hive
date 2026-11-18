@@ -11,6 +11,16 @@ Hive did not historically maintain a complete changelog. This file starts a prag
 
 ## Unreleased
 
+## 2026-11-18 (v5.328.1)
+
+### Changed
+
+- Meetings: the bundled Quorum is now v0.6.0, which adds the listening chime on Discord and hands it to the desktop companion ([quorum#51](https://github.com/hivecommons/quorum/pull/51), [quorum#52](https://github.com/hivecommons/quorum/pull/52), [#19116](https://github.com/hivecommons/hive/pull/19116)).
+
+### Security
+
+- Security: the command-safety scanner now flags `dd` writing to a raw block device from any source (`dd if=image.iso of=/dev/sda`), and credential reads that use quoting, `$HOME`/`${HOME}`/`/root`, or readers such as `less`, `head` and `base64` (#19089)
+
 ## 2026-11-18 (v5.328.0)
 
 ### Added

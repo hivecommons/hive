@@ -1,1 +1,0 @@
-- Security: the command-safety scanner now flags `dd` writing to a raw block device from any source (`dd if=image.iso of=/dev/sda`), and credential reads that use quoting, `$HOME`/`${HOME}`/`/root`, or readers such as `less`, `head` and `base64` (#19089)
