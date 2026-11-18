@@ -9491,7 +9491,7 @@
           "Contributors"
         ],
         "summary": "Contributor hub status",
-        "description": "Returns contributor hub registration state and work counts. actionable_items is the uncapped number of issues currently offerable after contributor admission; candidate_items is the raw pre-admission scanner population.",
+        "description": "Returns contributor hub registration state and work counts. actionable_items is the uncapped number of issues currently offerable after contributor admission; candidate_items is the contributor-workable scanner population (the raw population minus umbrella and owner-only issues); candidate_items_raw is the raw pre-admission scanner population; umbrella_items and human_only_items count the umbrella/tracker and owner-only issues that are never offered to a contributor.",
         "responses": {
           "200": {
             "description": "Hub status",
@@ -9515,7 +9515,19 @@
                     },
                     "candidate_items": {
                       "type": "integer",
-                      "description": "Raw scanner candidate count before contributor admission"
+                      "description": "Scanner candidate count before contributor admission, excluding umbrella and owner-only issues (contributor-workable candidates)"
+                    },
+                    "candidate_items_raw": {
+                      "type": "integer",
+                      "description": "Raw scanner candidate count before contributor admission and before the umbrella and owner-only exclusion (the previous meaning of candidate_items)"
+                    },
+                    "umbrella_items": {
+                      "type": "integer",
+                      "description": "Umbrella, epic, tracker and decomposed-parent issues. They stay actionable for the owner and the hive and are never offered to a contributor"
+                    },
+                    "human_only_items": {
+                      "type": "integer",
+                      "description": "Owner-only issues (needs-human, human-only, human-only marker). They are never offered to a contributor"
                     },
                     "surface": {
                       "type": "string"

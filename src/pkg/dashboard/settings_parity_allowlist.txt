@@ -428,6 +428,18 @@ hub.contribute_repo_filters.<key>.deny_titles[] # TODO #11854
 hub.contribute_repo_filters.<key>.labels_mode # TODO #11854
 hub.contribute_repo_filters.<key>.titles_mode # TODO #11854
 hub.contribute_skip_labels[] # TODO #11854
+hub.contribute_umbrella.enabled # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.human_only_labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.task_list_min # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.title_prefixes[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.withdraw_advertisement # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.enabled # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.human_only_labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.labels[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.task_list_min # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.title_prefixes[] # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
+hub.contribute_umbrella.per_repo.<key>.withdraw_advertisement # TODO #19078 (umbrella/owner-only exclusion; Settings control pending)
 hub.disabled_repos[] # TODO #11854
 hub.disabled_tiers[] # TODO #11854
 hub.heartbeat_omit[] # TODO #11854
@@ -567,6 +579,17 @@ project.repos[] # TODO #11854
 providers.status.enabled # TODO #11854
 removed_agents[] # TODO #11854
 repos.<key>.agents_md_max_bytes # TODO #18495 (per-repo AGENTS.md cap; Settings control pending)
+review.analysis_factcheck.author_agents[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.authoritative_files[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.enabled # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.independence # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.labels[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.max_rounds # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.ready_policy # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.reviewer_agents[] # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.reviewer_model # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.revision_wait # TODO #19074 (yaml-only at first; Settings control pending)
+review.analysis_factcheck.rubric # TODO #19074 (yaml-only at first; Settings control pending)
 review.backlog.labels[] # TODO #11854
 review.bot_author_full_review_paths[] # TODO #14625
 review.bot_author_model # TODO #14625

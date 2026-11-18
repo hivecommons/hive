@@ -639,6 +639,7 @@
     "ContributeQueueHoldReasons": null,
     "ContributeRequireExplicitAccept": null,
     "ContributeDelegatableRoles": null,
+    "contribute_umbrella": {},
     "contribute_announcement": {},
     "DisabledRepos": null,
     "DisabledTiers": null,
@@ -758,6 +759,7 @@
   "swarm": {},
   "autonomy": {},
   "review": {
+    "analysis_factcheck": {},
     "contributor_prs": {},
     "recommendations": {},
     "plan_match": {},

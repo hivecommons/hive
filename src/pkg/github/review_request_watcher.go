@@ -15,6 +15,7 @@ import (
 	gh "github.com/google/go-github/v72/github"
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/effects"
+	"github.com/hivecommons/hive/pkg/factcheck"
 	"github.com/hivecommons/hive/pkg/prstatus"
 	"github.com/hivecommons/hive/pkg/review"
 )
@@ -490,7 +491,10 @@ func (c *Client) handleOneReviewRequest(ctx context.Context, path string, src re
 	// pending entries); dropping it with the comment would leave the PR
 	// pending forever with nothing left to post. The result is ok:true with
 	// state record_verdict and a note, so the agent's own loop is done.
-	if !recordOnly && !req.Revise && apiEvent != "APPROVE" {
+	// An analysis fact-check round (review.analysis_factcheck) is exempt: it
+	// is the one review that pass is asked to post, often on a head the swarm
+	// already covered, and the pass bounds its own rounds per PR.
+	if !recordOnly && !req.Revise && apiEvent != "APPROVE" && !factcheck.IsMarkedReview(req.Body) {
 		if reason := c.perHeadReviewRefusal(ctx, req); reason != "" {
 			if c.notificationsQuiet() && strings.TrimSpace(req.Body) != "" {
 				// The head already carries its one hive review. The

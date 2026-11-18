@@ -22135,7 +22135,8 @@ next kick: ${agentCollapsedTimestampDetail(nextMs, a && (a.nextKickAt || a.nextK
             ${stageTrackerTitleHtml(title)}
             ${item.claim_reference ? `<span class="ham-badge ham-issue-refs-chip" title="${esc(STAGE_TRACKER_SOFT_LINK_TIP)}">refs</span>` : ''}
             ${typeof stageTrackerLinkedElsewhereHtml === 'function' ? stageTrackerLinkedElsewhereHtml(item) : ''}
-            ${item.is_tracker ? `<span class="ham-badge">tracker${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : ''}
+            ${item.umbrella ? `<span class="ham-badge" title="${esc('Umbrella (' + String(item.umbrella) + '): the owner and the hive coordinate it; it is not offered to contributors and can still be closed')}">Umbrella · owner${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : item.is_tracker ? `<span class="ham-badge">tracker${item.children && item.children.total ? ' ' + Number(item.children.completed) + '/' + Number(item.children.total) : ''}</span>` : ''}
+            ${item.owner_only ? `<span class="ham-badge" title="${esc('Owner only (' + String(item.owner_only) + '): waits on a person; it is not offered to contributors')}">Owner only</span>` : ''}
           </div>`;
       } else {
         const li = stageTrackerPRIssueSlot(item);
