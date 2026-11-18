@@ -27,8 +27,8 @@ func (q *companionStubQuorum) CompanionAudio(_ context.Context, _, _ string, seq
 	return meetings.CompanionChunk{Seq: seq}, nil
 }
 
-func (q *companionStubQuorum) CompanionOutbox(context.Context, string, int64) ([]meetings.CompanionLine, int64, error) {
-	return []meetings.CompanionLine{{Seq: 1, Text: "consent"}}, 1, nil
+func (q *companionStubQuorum) CompanionOutbox(context.Context, string, int64) (meetings.CompanionPage, error) {
+	return meetings.CompanionPage{Lines: []meetings.CompanionLine{{Seq: 1, Text: "consent"}}, NextSeq: 1}, nil
 }
 
 func TestMeetingsDashboardCompanion(t *testing.T) {

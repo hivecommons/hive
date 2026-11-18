@@ -23,6 +23,13 @@ type reviewPreflightSource interface {
 	ReviewPreflightFiles(ctx context.Context, repo string, number int) ([]reviewpreflight.ChangedFile, bool)
 }
 
+// reviewPreflightReader is the optional capability to read one file at a ref,
+// so rule-document discovery can follow the references in a repository's
+// entry files. Without it the entry files are listed and not followed.
+type reviewPreflightReader interface {
+	ReviewPreflightFile(ctx context.Context, repo, ref, path string) ([]byte, bool)
+}
+
 var (
 	reviewPreflightClient     = reviewpreflight.NewClient()
 	reviewPreflightMemoMu     sync.Mutex
@@ -64,6 +71,11 @@ func reviewPreflightFor(ctx context.Context, cfg *config.Config, ghr reviewPlann
 		}
 		in.Ref = ref
 		in.Tree, in.TreeKnown = src.ReviewPreflightTree(ctx, repo, ref)
+		if rd, ok := ghr.(reviewPreflightReader); ok && rd != nil && len(set.RuleDocOverride) == 0 {
+			in.Read = func(ctx context.Context, path string) ([]byte, bool) {
+				return rd.ReviewPreflightFile(ctx, repo, ref, path)
+			}
+		}
 	}
 	if set.Dependencies {
 		in.Files, in.FilesKnown = src.ReviewPreflightFiles(ctx, repo, pr.Number)

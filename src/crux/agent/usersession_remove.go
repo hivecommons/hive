@@ -82,7 +82,7 @@ func (r *UserSessionRuntime) Remove(id string) error {
 	// The same for a Codex or OpenCode login the session's CLI refreshed
 	// (usersession_login_rotating.go).
 	for _, l := range rotatingSessionLogins {
-		if err := keepSessionForLogin(r.syncRotatingLogin(id, sessionLoginTriggerRemove, l)); err != nil {
+		if err := keepSessionForLogin(r.syncRotatingLogin(id, sessionLoginTriggerRemove, l, sessionLoginModeRemove)); err != nil {
 			return err
 		}
 	}
