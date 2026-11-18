@@ -16086,3 +16086,68 @@ test('#19049 no-work is said once on a state change, then slowly; work arriving 
     assert.notStrictEqual(relay.relayQueueState(), 'queue-empty', 'work arriving clears the empty state');
   } finally { global.setTimeout = origSetTimeout; console.log = log; teardown(relay); }
 });
+
+// One relay, several hives: every line names its hive, the status row has one
+// entry per hive, and "everything is empty" is said once.
+const MULTI_HIVE_ENV = {
+  HIVE_HUB: 'wss://hosted-alpha-hive-ab12.hive.example.org/api/contribute/ws,wss://hosted-beta-console-cd34.hive.example.org/api/contribute/ws,wss://hosted-gamma-knuckle-ef56.hive.example.org/api/contribute/ws',
+  HIVE_REGISTRATION_TOKEN: 'tok-a,tok-b,tok-c',
+};
+
+test('#19049 hiveShortName derives a short public name from the hostname (table)', () => {
+  const relay = loadRelay({ backend: 'claude' });
+  try {
+    const cases = [
+      ['wss://hosted-alpha-hive-ab12.hive.example.org/api/contribute/ws', 'alpha-hive'],
+      ['wss://hosted-gamma-knuckle-ef56.hive.example.org/api/contribute/ws', 'gamma-knuckle'],
+      ['wss://hive.example.org/api/contribute/ws', 'hive.example.org'],
+      ['wss://hosted-x.hive.example.org/api/contribute/ws', 'hosted-x.hive.example.org'],
+      ['not a url', 'this hive'],
+    ];
+    for (const [url, want] of cases) assert.strictEqual(relay.hiveShortName({ sourceURL: url }), want, url);
+  } finally { teardown(relay); }
+});
+
+test('#19049 multi-hive: one status row, per-hive states, one all-empty summary', () => {
+  const relay = loadRelay({ backend: 'claude', procAlive: true, env: MULTI_HIVE_ENV });
+  const lines = []; const log = console.log; console.log = (...a) => lines.push(a.join(' '));
+  try {
+    relay.setCliReady(true);
+    const hubs = relay.getHubs();
+    assert.strictEqual(hubs.length, 3);
+    // Each hive gets its own full sentence, naming itself, exactly once.
+    for (const hub of hubs) {
+      const said = relay.noWorkLogLine(hub, 'no_matching_work', 30000);
+      assert.match(said.line, new RegExp(`The queue for ${relay.hiveShortName(hub)} is empty\\.`));
+      assert.ok(!/ab12|cd34|ef56/.test(said.line), 'the instance suffix is not part of the short name');
+      assert.strictEqual(relay.noWorkLogLine(hub, 'no_matching_work', 30000).line, null, 'a repeat is quiet');
+    }
+    assert.strictEqual(relay.queueStatusRow(), 'alpha-hive: empty | beta-console: empty | gamma-knuckle: empty');
+    relay.maybeAnnounceAllEmpty();
+    relay.maybeAnnounceAllEmpty();
+    assert.deepStrictEqual(lines.filter(l => /^All \d+ queues are empty/.test(l)), ['All 3 queues are empty, nothing to do right now.']);
+    // One hive filtered, one empty, one not heard from: the row says each.
+    hubs[1].noWorkState = 'filtered:capability';
+    hubs[2].noWorkState = null;
+    assert.strictEqual(relay.queueStatusRow(), 'alpha-hive: empty | beta-console: filtered (capability) | gamma-knuckle: asking');
+    lines.length = 0;
+    relay.maybeAnnounceAllEmpty();
+    assert.deepStrictEqual(lines, [], 'no summary unless every queue is empty');
+    const status = () => JSON.parse(fs.readFileSync(relay.RELAY_STATUS_FILE, 'utf8'));
+    relay.writeRelayStatus();
+    assert.deepStrictEqual(status().subscriptions.map(x => x.queue_state), ['queue-empty', 'filtered:capability', null]);
+  } finally { console.log = log; teardown(relay); }
+});
+
+test('#19049 retry bookkeeping is silent by default and visible with HIVE_RELAY_DEBUG', () => {
+  const relay = loadRelay({ backend: 'claude', procAlive: true, env: MULTI_HIVE_ENV });
+  const lines = []; const log = console.log; const dbg = console.debug;
+  console.log = (...a) => lines.push(a.join(' ')); console.debug = (...a) => lines.push(a.join(' '));
+  const origSetTimeout = global.setTimeout; global.setTimeout = () => 0;
+  try {
+    const hubs = relay.getHubs();
+    relay.scheduleReadyRetry(hubs[0], 'task_unavailable');
+    relay.scheduleReadyRetry(hubs[0], 'task_unavailable_retry');
+    assert.deepStrictEqual(lines.filter(l => /Cancelled ready retry|Skipping work request/.test(l)), []);
+  } finally { global.setTimeout = origSetTimeout; console.log = log; console.debug = dbg; teardown(relay); }
+});

@@ -581,9 +581,21 @@ function formatRetryInterval(ms) {
   return minutes === 1 ? '1 minute' : `${minutes} minutes`;
 }
 
-// hiveDisplayName is the public host of the hive the relay is connected to.
-function hiveDisplayName(hub) {
-  try { return new URL(hub.sourceURL || hub.url).host || 'this hive'; } catch (_) { return 'this hive'; }
+// hiveShortName is the short, public name of a hive for contributor-facing
+// lines: the first label of its hostname, minus the hosted- prefix and the
+// 4-character instance suffix a hosted hive carries
+// (hosted-<name>-ab12.example.org becomes <name>). Anything else keeps its
+// full host, so a self-hosted hive is still recognisable.
+const HOSTED_HIVE_PREFIX_RE = /^hosted-/;
+const HOSTED_HIVE_SUFFIX_RE = /-[a-z0-9]{4}$/;
+function hiveShortName(hub) {
+  let host = '';
+  try { host = new URL(hub.sourceURL || hub.url).host; } catch (_) { return 'this hive'; }
+  if (!host) return 'this hive';
+  const label = host.split('.')[0];
+  if (!HOSTED_HIVE_PREFIX_RE.test(label)) return host;
+  const short = label.replace(HOSTED_HIVE_PREFIX_RE, '').replace(HOSTED_HIVE_SUFFIX_RE, '');
+  return short || host;
 }
 
 // describeNoWork returns the state and the sentence for a no-work reason, or
@@ -615,7 +627,7 @@ function describeNoWork(reason, target, delayMs, first) {
 // the full sentence on a state change, a short line at a slow cadence after.
 // Returns { state, line } where line is null when this answer should be quiet.
 function noWorkLogLine(hub, reason, delayMs, now = Date.now()) {
-  const target = hiveDisplayName(hub);
+  const target = hiveShortName(hub);
   const probe = describeNoWork(reason, target, delayMs, true);
   if (!probe) return null;
   const changed = hub.noWorkState !== probe.state;
@@ -640,24 +652,65 @@ function relayQueueState() {
   return lastQueueState;
 }
 
-const QUEUE_STATE_STATUS_LINE = {
-  [QUEUE_STATE_EMPTY]: 'ClankeR: queue empty, checking again soon',
-  [QUEUE_STATE_WORKING]: 'ClankeR: working',
-  [QUEUE_STATE_WAITING_ON_CLI]: 'ClankeR: waiting on the CLI',
-};
+// hubQueueState is one hive's own state: working (this hive leased the current
+// task), the state its last no-work answer left, or null when it has not said.
+function hubQueueState(hub) {
+  if (currentTask && currentTask._hub === hub) return QUEUE_STATE_WORKING;
+  return hub.noWorkState || null;
+}
+
+// queueRowLabel is the compact word for one hive in the status row.
+function queueRowLabel(hub) {
+  const state = hubQueueState(hub);
+  if (state === QUEUE_STATE_WORKING) {
+    return currentTask && Number.isSafeInteger(currentTask.number) ? `working #${currentTask.number}` : 'working';
+  }
+  if (state === QUEUE_STATE_EMPTY) return 'empty';
+  if (state && state.startsWith(QUEUE_STATE_FILTERED)) return `filtered (${state.split(':')[1]})`;
+  return 'asking';
+}
+
+// queueStatusRow is one compact row, one entry per hive, for the tmux status
+// line: "kubestellar-hive: empty | projectbluefin: working #123".
+function queueStatusRow() {
+  if (CONTRIBUTOR_MODE !== MODE_HEADLESS && !cliReady) return 'ClankeR: waiting on the CLI';
+  const active = hubs.filter(hub => !hub.disabled);
+  if (active.length === 0) return 'ClankeR: no hives enabled';
+  return active.map(hub => `${hiveShortName(hub)}: ${queueRowLabel(hub)}`).join(' | ');
+}
+
+let lastQueueStatusRow = null;
+
+// publishQueueRow puts the row on the tmux status line when it changed. Best
+// effort: it is what someone sees the moment they attach to the pane. Called
+// from writeRelayStatus, which already runs on every task and queue transition.
+function publishQueueRow() {
+  if (CONTRIBUTOR_MODE === MODE_HEADLESS) return;
+  const row = queueStatusRow();
+  if (row === lastQueueStatusRow) return;
+  lastQueueStatusRow = row;
+  try {
+    execSync(`tmux set-option -t ${TMUX_SESSION} status-right-length 200`, { timeout: TMUX_COMMAND_TIMEOUT_MS, stdio: 'ignore' });
+    execSync(`tmux set-option -t ${TMUX_SESSION} status-right ${shellQuote(row)}`, { timeout: TMUX_COMMAND_TIMEOUT_MS, stdio: 'ignore' });
+  } catch (_) {}
+}
 
 function setQueueState(state) {
-  if (lastQueueState === state) return;
   lastQueueState = state;
   writeRelayStatus();
-  if (CONTRIBUTOR_MODE === MODE_HEADLESS) return;
-  // Best effort: what someone sees the moment they attach to the pane.
-  const text = state && state.startsWith(QUEUE_STATE_FILTERED)
-    ? `ClankeR: work queued, filtered for you (${state.split(':')[1]})`
-    : (QUEUE_STATE_STATUS_LINE[state] || 'ClankeR: connected');
-  try {
-    execSync(`tmux set-option -t ${TMUX_SESSION} status-right ${shellQuote(text)}`, { timeout: TMUX_COMMAND_TIMEOUT_MS, stdio: 'ignore' });
-  } catch (_) {}
+}
+
+// allQueuesEmptySummary is the one line for "every enabled hive said empty".
+// It is announced once per such episode, and only with more than one hive (a
+// single hive already got its own sentence).
+let allEmptyAnnounced = false;
+function maybeAnnounceAllEmpty() {
+  const active = hubs.filter(hub => !hub.disabled);
+  const allEmpty = active.length > 1 && active.every(hub => hub.noWorkState === QUEUE_STATE_EMPTY);
+  if (!allEmpty) { allEmptyAnnounced = false; return; }
+  if (allEmptyAnnounced) return;
+  allEmptyAnnounced = true;
+  console.log(`All ${active.length} queues are empty, nothing to do right now.`);
 }
 
 // ── Contributor quota guard (hivecommons/hive#6833) ────────────────────────
@@ -1918,6 +1971,7 @@ function writeRelayStatus() {
           hive: canonicalHiveID(hub.sourceURL), readiness,
           acknowledged_scope_version: hub.scopeAckVersion,
           observed_at: hub.statusObservedAt,
+          queue_state: hubQueueState(hub),
         };
       }),
       current_task: currentTask && !currentTask.synthetic ? {
@@ -1939,6 +1993,7 @@ function writeRelayStatus() {
     if (temporary) { try { fs.unlinkSync(temporary); } catch (_) {} }
     console.error(`WARNING: could not write relay status file ${RELAY_STATUS_FILE}: ${e.message}`);
   }
+  publishQueueRow();
 }
 
 let progressInterval = null;
@@ -2439,12 +2494,20 @@ function clampFrame(msg, maxFrameBytes) {
 }
 
 
+// Internal ready/retry bookkeeping is noise to a contributor (one relay can hold
+// several hive connections, and each prints this per retry). It is kept behind
+// HIVE_RELAY_DEBUG=1 for whoever is debugging the relay itself.
+const RELAY_DEBUG = process.env.HIVE_RELAY_DEBUG === '1';
+function debugLog(message) {
+  if (RELAY_DEBUG) console.log(message);
+}
+
 function readyConnLabel(hub) {
   return hub ? (hub.connectionId || hub.connectGeneration || 0) : 0;
 }
 
 function logSkippedWorkRequest(hub, trigger, reason) {
-  console.debug(`Skipping work request (trigger=${trigger}, conn=${readyConnLabel(hub)}) — ${reason}`);
+  debugLog(`Skipping work request (trigger=${trigger}, conn=${readyConnLabel(hub)}) — ${reason}`);
 }
 
 function invalidateReadyRetry(hub, reason) {
@@ -2454,7 +2517,7 @@ function invalidateReadyRetry(hub, reason) {
     hub.readyRetryTimer = null;
   }
   hub.readyRetryGeneration++;
-  if (reason) console.debug(`Cancelled ready retry for ${hub.url} (${reason}, conn=${readyConnLabel(hub)})`);
+  if (reason) debugLog(`Cancelled ready retry for ${hub.url} (${reason}, conn=${readyConnLabel(hub)})`);
 }
 
 function invalidateAllReadyRetries(reason) {
@@ -2486,7 +2549,9 @@ function requestWork(hub, trigger, expectedConnectGeneration = null) {
   }
   invalidateReadyRetry(hub, `superseded by ${trigger}`);
   const request = ++hub.readyRequestSeq;
-  console.log(`Requesting work (trigger=${trigger}, conn=${conn}, request=${request})`);
+  // A retry is the same question asked again; only the first ask per trigger is
+  // worth a line, and it names the hive so several connections can be told apart.
+  (/_retry$/.test(trigger) ? debugLog : console.log)(`Requesting work from ${hiveShortName(hub)} (trigger=${trigger}, conn=${conn}, request=${request})`);
   sendTo(hub, { type: 'ready', seq: nextSeq() });
   return hub.readyOutstanding;
 }
@@ -9353,9 +9418,10 @@ function handleMessage(data, hub) {
       hub.noWorkStreak = 0;
       hub.noWorkReason = null;
       if (hub.noWorkState) {
-        console.log(`Work available on ${hiveDisplayName(hub)}, claiming ${msg.repo || 'a task'}${msg.number ? `#${msg.number}` : ''}.`);
+        console.log(`Work available on ${hiveShortName(hub)}, claiming ${msg.repo || 'a task'}${msg.number ? `#${msg.number}` : ''}.`);
       }
       hub.noWorkState = null;
+      allEmptyAnnounced = false;
       setQueueState(null);
       // #7732: an assignment answers the `ready` it was sent for, whatever
       // this relay does with it below.
@@ -9662,6 +9728,7 @@ function handleMessage(data, hub) {
             if (msg.message) console.log(sanitizeHubText(msg.message));
           }
           setQueueState(said.state);
+          maybeAnnounceAllEmpty();
           scheduleReadyRetry(hub, 'task_unavailable', delayMs);
           break;
         }
@@ -9956,6 +10023,9 @@ if (process.env.HIVE_RELAY_TEST_MODE === '1') {
     getCLINotReadyReason: () => cliNotReadyReason,
     noWorkRetryDelayMs,
     describeNoWork,
+    hiveShortName,
+    queueStatusRow,
+    maybeAnnounceAllEmpty,
     noWorkLogLine,
     relayQueueState,
     formatRetryInterval,
