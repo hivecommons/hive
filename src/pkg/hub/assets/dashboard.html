@@ -187,6 +187,10 @@
     .cluster-health-message.info { color: var(--muted); background: var(--surface); border: 1px solid var(--border); }
     .cluster-health-message.warn { color: var(--amber); background: var(--surface); border: 1px solid var(--amber); }
 
+    .customers-share-setting { padding: var(--sp-5); margin-bottom: var(--sp-6); border: 1px solid var(--border); border-radius: var(--r); background: var(--surface); font-size: var(--fs-base); }
+    .customers-share-setting h3 { font-size: var(--fs-base); margin-bottom: var(--sp-2); }
+    .customers-share-setting p:last-child { font-size: var(--fs-sm); color: var(--muted); margin-top: var(--sp-2); }
+
     /* ── Hive search + facets ──
        The facet panel is a CLICK-TOGGLED left tray, collapsed by default so the
        dashboard is uncluttered until the operator asks for filters. Collapsed it
@@ -1087,10 +1091,10 @@
           (worker-count reductions apply on the next hub restart).
         </div>
         <div id="scale-globals" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:var(--sp-5);margin-bottom:var(--sp-6)"></div>
-        <div style="padding:var(--sp-5);margin-bottom:var(--sp-6);border:1px solid var(--border);border-radius:8px;background:var(--surface)">
-          <h3 style="font-size:0.9rem;margin-bottom:var(--sp-2)">Customers profile sharing</h3>
-          <p style="font-size:0.8rem">In force: <strong id="customers-share-effective">Unknown</strong> · Default: Off</p>
-          <p style="font-size:0.75rem;color:var(--muted);margin-top:var(--sp-2)">Set <code>HIVE_HUB_CUSTOMERS_SHARE_ENABLED</code> on the hub to enable the personal profile and consent page. The environment is authoritative; this setting cannot be changed here. No profile details are sent to hives in this release.</p>
+        <div class="customers-share-setting">
+          <h3>Customers profile sharing</h3>
+          <p>In force: <strong id="customers-share-effective">Unknown</strong> · Default: Off</p>
+          <p>Set <code>HIVE_HUB_CUSTOMERS_SHARE_ENABLED</code> on the hub to enable the personal profile and consent page. The environment is authoritative; this setting cannot be changed here. No profile details are sent to hives in this release.</p>
         </div>
         <div style="font-size:0.85rem;color:var(--text);margin:var(--sp-5) var(--sp-0) var(--sp-4);font-weight:600">Per-cluster limits</div>
         <div class="table-wrap"><table style="width:100%;font-size:0.85rem"><thead><tr>
