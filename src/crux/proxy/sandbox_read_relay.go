@@ -149,7 +149,7 @@ type SandboxReadRelay struct {
 	endpoint *url.URL
 
 	keysMu sync.RWMutex
-	keys   map[[sha256.Size]byte]string // sha256(key) -> agent
+	keys   map[[sha256.Size]byte]*sandboxReadKick // sha256(key) -> kick
 
 	tokMu      sync.Mutex
 	tok        string
@@ -158,6 +158,26 @@ type SandboxReadRelay struct {
 	now        func() time.Time
 	// dial overrides the upstream TLS dial (tests).
 	dial func(host string) (net.Conn, error)
+}
+
+// sandboxReadKick is one enrolled kick. released is closed when its key is
+// revoked, so connections authenticated at CONNECT stop serving (#18895).
+type sandboxReadKick struct {
+	agent    string
+	released chan struct{}
+	once     sync.Once
+}
+
+func (k *sandboxReadKick) release() { k.once.Do(func() { close(k.released) }) }
+
+// live reports whether the kick's key has not been released.
+func (k *sandboxReadKick) live() bool {
+	select {
+	case <-k.released:
+		return false
+	default:
+		return true
+	}
 }
 
 // NewSandboxReadRelay builds the relay on p (which supplies the CA, the
@@ -170,7 +190,7 @@ func NewSandboxReadRelay(p *GitHubProxy, opts SandboxReadRelayOptions) (*Sandbox
 	if err != nil || u.Hostname() == "" || u.Scheme != "https" || u.User != nil {
 		return nil, errors.New("sandbox read relay: endpoint must be an https://host:port URL without credentials")
 	}
-	return &SandboxReadRelay{p: p, opts: opts, endpoint: u, keys: map[[sha256.Size]byte]string{}, now: time.Now}, nil
+	return &SandboxReadRelay{p: p, opts: opts, endpoint: u, keys: map[[sha256.Size]byte]*sandboxReadKick{}, now: time.Now}, nil
 }
 
 // TLSConfig is the server configuration for the relay's listener. The relay
@@ -203,8 +223,9 @@ func (r *SandboxReadRelay) Enroll(agentName string) (proxyURL string, caBundlePE
 	}
 	key := hex.EncodeToString(raw)
 	digest := sha256.Sum256([]byte(key))
+	kick := &sandboxReadKick{agent: agentName, released: make(chan struct{})}
 	r.keysMu.Lock()
-	r.keys[digest] = agentName
+	r.keys[digest] = kick
 	r.keysMu.Unlock()
 
 	u := *r.endpoint
@@ -215,28 +236,29 @@ func (r *SandboxReadRelay) Enroll(agentName string) (proxyURL string, caBundlePE
 		r.keysMu.Lock()
 		delete(r.keys, digest)
 		r.keysMu.Unlock()
+		kick.release()
 	}, nil
 }
 
-// authenticate returns the agent a Proxy-Authorization header belongs to.
-func (r *SandboxReadRelay) authenticate(req *http.Request) (string, bool) {
+// authenticate returns the kick a Proxy-Authorization header belongs to.
+func (r *SandboxReadRelay) authenticate(req *http.Request) (*sandboxReadKick, bool) {
 	auth := req.Header.Get("Proxy-Authorization")
 	if !strings.HasPrefix(auth, "Basic ") {
-		return "", false
+		return nil, false
 	}
 	decoded, err := base64.StdEncoding.DecodeString(strings.TrimPrefix(auth, "Basic "))
 	if err != nil {
-		return "", false
+		return nil, false
 	}
 	user, key, ok := strings.Cut(string(decoded), ":")
 	if !ok || subtle.ConstantTimeCompare([]byte(user), []byte(SandboxReadProxyUser)) != 1 {
-		return "", false
+		return nil, false
 	}
 	digest := sha256.Sum256([]byte(key))
 	r.keysMu.RLock()
-	agentName, found := r.keys[digest]
+	kick, found := r.keys[digest]
 	r.keysMu.RUnlock()
-	return agentName, found
+	return kick, found
 }
 
 // readToken returns the cached read credential, fetching a fresh one when it
@@ -305,7 +327,7 @@ func (r *SandboxReadRelay) handleConn(conn net.Conn) {
 	if err != nil {
 		return
 	}
-	agentName, ok := r.authenticate(req)
+	kick, ok := r.authenticate(req)
 	if !ok {
 		writeRelayStatus(conn, http.StatusProxyAuthRequired, "proxy authentication required", "Proxy-Authenticate: Basic realm=\"hive-sandbox\"\r\n")
 		return
@@ -324,16 +346,18 @@ func (r *SandboxReadRelay) handleConn(conn net.Conn) {
 		return
 	}
 	if !SandboxReadHost(host) {
-		r.tunnel(conn, host, agentName)
+		r.tunnel(conn, host, kick)
 		return
 	}
-	r.intercept(conn, host, agentName)
+	r.intercept(conn, host, kick)
 }
 
 // tunnel is the opaque path for every non-GitHub host: no interception, no
 // header touched, no credential. The destination guard keeps it from reaching
 // loopback, link-local metadata or the private estate.
-func (r *SandboxReadRelay) tunnel(conn net.Conn, host, agentName string) {
+// The tunnel is torn down when the kick's key is released.
+func (r *SandboxReadRelay) tunnel(conn net.Conn, host string, kick *sandboxReadKick) {
+	agentName := kick.agent
 	const dialTimeout = 10 * time.Second
 	upstream, err := r.p.dialUpstreamRaw(net.JoinHostPort(host, sandboxReadHTTPSPort), dialTimeout)
 	if err != nil {
@@ -342,13 +366,27 @@ func (r *SandboxReadRelay) tunnel(conn net.Conn, host, agentName string) {
 		return
 	}
 	defer func() { _ = upstream.Close() }()
+	finished := make(chan struct{})
+	defer close(finished)
+	go func() {
+		select {
+		case <-kick.released:
+			r.p.logger.Info("sandbox read relay: closing tunnel, key released", "agent", agentName, "host", host)
+			_ = conn.Close()
+			_ = upstream.Close()
+		case <-finished:
+		}
+	}()
 	_, _ = fmt.Fprint(conn, "HTTP/1.1 200 Connection established\r\n\r\n")
 	relayTunnel(conn, upstream)
 }
 
 // intercept terminates TLS for a GitHub read host and relays each request
-// through SandboxReadPolicy.
-func (r *SandboxReadRelay) intercept(conn net.Conn, host, agentName string) {
+// through SandboxReadPolicy. The kick's key is re-checked before each
+// request, so a tunnel opened while the key was live stops serving once the
+// key is released.
+func (r *SandboxReadRelay) intercept(conn net.Conn, host string, kick *sandboxReadKick) {
+	agentName := kick.agent
 	cert, err := r.p.forgeCert(host)
 	if err != nil {
 		r.p.logger.Error("sandbox read relay: forge cert failed", "host", host, "error", err)
@@ -382,6 +420,11 @@ func (r *SandboxReadRelay) intercept(conn net.Conn, host, agentName string) {
 		_ = client.SetReadDeadline(time.Now().Add(httpReadTimeout))
 		req, err := http.ReadRequest(clientBuf)
 		if err != nil {
+			return
+		}
+		if !kick.live() {
+			r.p.logger.Info("sandbox read relay: request refused, key released", "agent", agentName, "host", host, "method", req.Method)
+			writeRelayRefusal(client, "the per-kick relay key has been released")
 			return
 		}
 		d := SandboxReadPolicy(host, req.Method, req.URL.Path, req.URL.RawQuery)

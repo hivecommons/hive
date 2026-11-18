@@ -7,8 +7,10 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	"github.com/hivecommons/hive/pkg/issueclaim"
 )
 
 // humanClaimIssue describes the forge state behind IssueHumanClaimReason.
@@ -196,5 +198,38 @@ func TestIssueHumanClaim_VerdictIsCached(t *testing.T) {
 	}
 	if reads != 1 {
 		t.Fatalf("forge reads = %d, want 1 (cached for %s)", reads, humanClaimCacheTTL)
+	}
+}
+
+// A live ledger claim by a person or by one of the hive's own agents is read
+// without a forge round trip (hivecommons/hive#18900): adoption does not open
+// a copy beside work either already holds. A hive agent's claim is not a
+// human-claim reason, so it never triggers the contributor yank.
+func TestIssueHumanClaim_LedgerClaimsByPersonAndHiveAgent(t *testing.T) {
+	srv := humanClaimServer(t, humanClaimIssue{})
+	defer srv.Close()
+	for kind, want := range map[string]string{
+		"human": claims.HumanClaimReason("claimed in the ledger", "andy"),
+		"agent": claims.ReasonHiveClaim + ": scanner",
+	} {
+		t.Run(kind, func(t *testing.T) {
+			c := issueTestClient(t, srv.URL)
+			identity := "andy"
+			if kind == "agent" {
+				identity = "scanner"
+			}
+			c.SetIssueClaimLedger(func(repo string, number int) (issueclaim.Claim, bool) {
+				return issueclaim.Claim{Identity: identity, Kind: kind, ExpiresAt: time.Now().Add(time.Hour), Source: issueclaim.SourceLease}, true
+			})
+			got, err := c.IssueHumanClaimReason(context.Background(), "o/r", 42, "karibhou")
+			if err != nil || got != want {
+				t.Fatalf("reason = %q, %v; want %q", got, err, want)
+			}
+			if kind == "agent" {
+				if _, human := claims.ParseHumanClaimReason(got); human {
+					t.Fatalf("a hive agent's claim %q must not parse as a human claim", got)
+				}
+			}
+		})
 	}
 }

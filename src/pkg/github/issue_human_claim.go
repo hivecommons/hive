@@ -117,11 +117,16 @@ const humanClaimCacheMax = 512
 
 func (c *Client) readHumanClaim(ctx context.Context, repo string, number int, holder string) (string, error) {
 	owner, name := c.splitRepo(repo)
-	// A person's claim the ledger already holds (dashboard, hivectl) counts
-	// for the readers that do not consult the ledger themselves (adoption).
-	if claim, ok := c.ledgerClaimFor(owner, name, number, time.Now()); ok && strings.EqualFold(claim.Kind, string(claims.KindHuman)) &&
-		!strings.EqualFold(claim.Identity, strings.TrimSpace(holder)) {
-		return claims.HumanClaimReason(humanClaimViaLedger, claim.Identity), nil
+	// A claim the ledger already holds by a person (dashboard, hivectl) or by
+	// one of the hive's own agents counts for the readers that do not consult
+	// the ledger themselves (adoption).
+	if claim, ok := c.ledgerClaimFor(owner, name, number, time.Now()); ok && !strings.EqualFold(claim.Identity, strings.TrimSpace(holder)) {
+		switch strings.ToLower(claim.Kind) {
+		case string(claims.KindHuman):
+			return claims.HumanClaimReason(humanClaimViaLedger, claim.Identity), nil
+		case string(claims.KindAgent):
+			return claims.ReasonHiveClaim + ": " + claim.Identity, nil
+		}
 	}
 	issue, _, err := c.client.Issues.Get(ctx, owner, name, number)
 	if err != nil {
