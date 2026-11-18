@@ -7,12 +7,15 @@ import (
 	"time"
 
 	"github.com/hivecommons/hive/pkg/claims"
+	hgithub "github.com/hivecommons/hive/pkg/github"
 	"github.com/hivecommons/hive/pkg/stagelabels"
 )
 
-// humanClaimStub answers Engine.adoptionHumanClaim in place of the forge.
+// humanClaimStub answers Engine.adoptionHumanClaim in place of the forge. It
+// embeds the concrete client so every optional transport hook the engine type
+// asserts for (the stage writer, the write-back gate) is still provided.
 type humanClaimStub struct {
-	Transport
+	*hgithub.Client
 	mu     sync.Mutex
 	reason string
 	asked  []string
@@ -38,7 +41,7 @@ func (s *humanClaimStub) set(reason string) {
 func TestAdoptionRefusedWhileAPersonHoldsAClaimOnTheIssue(t *testing.T) {
 	h, done := newAdoptHarness(t, ContributorNudgeOutcome{Mode: "queued"}, adoptPolicy())
 	defer done()
-	stub := &humanClaimStub{Transport: h.e.transport}
+	stub := &humanClaimStub{Client: h.e.transport.(*hgithub.Client)}
 	h.e.transport = stub
 	start := h.clock.at
 	h.sink.presence = &ContributorPresence{Registered: true, Online: false}
