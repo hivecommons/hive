@@ -38,6 +38,11 @@ test('sections follow css/js stems and html partials', () => {
   assert.deepEqual(sectionsForFile('src/pkg/dashboard/static-src/html/inbox.html', IDS, read), ['inbox-section']);
 });
 
+test('agent detail changes capture the kick outcomes component', () => {
+  assert.deepEqual(planSections(['src/pkg/dashboard/static-src/js/kick-outcomes.js'], IDS), ['kick-outcomes']);
+  assert.deepEqual(planSections(['src/pkg/dashboard/static-src/css/agent-detail.css'], IDS), ['kick-outcomes']);
+});
+
 test('section count is capped', () => {
   const many = IDS.concat(['a-section', 'b-section', 'c-section']);
   const files = many.map((id) => 'src/pkg/dashboard/static-src/css/' + id.replace('-section', '') + '.css');

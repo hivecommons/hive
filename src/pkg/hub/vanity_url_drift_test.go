@@ -3,6 +3,7 @@ package hub
 import (
 	"io"
 	"log/slog"
+	"reflect"
 	"testing"
 )
 
@@ -127,6 +128,59 @@ func TestVanityURLReconcileNoOpWhenLiveHostMatches(t *testing.T) {
 	}
 	if got := loadSaaSHive(id).VanityURL; got != "https://"+driftStaleHost {
 		t.Errorf("stored vanity URL = %q, want it left untouched", got)
+	}
+}
+
+// TestVanityURLReconcileIngressAliases preserves a stored host wherever it
+// appears in the ingress rules, but still adopts a live host when it is absent.
+func TestVanityURLReconcileIngressAliases(t *testing.T) {
+	const id = "hosted-available-nginx-01"
+	placeholder := id + "." + driftDomain
+	for _, tt := range []struct {
+		name    string
+		hosts   string
+		want    string
+		changed bool
+	}{
+		{"stored before alias", placeholder + " " + driftStaleHost + " " + driftLiveHost, driftStaleHost, false},
+		{"stored after alias", placeholder + " " + driftLiveHost + " " + driftStaleHost, driftStaleHost, false},
+		{"placeholder between aliases", driftLiveHost + " " + placeholder + " " + driftStaleHost, driftStaleHost, false},
+		{"stored absent", placeholder + " " + driftLiveHost + " alias." + driftDomain, driftLiveHost, true},
+		{"placeholder only", placeholder, driftStaleHost, false},
+		{"no rules", "", driftStaleHost, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			useTempHiveDir(t)
+			s := newVanityDriftTestHub()
+			cluster := s.clusters[defaultClusterID]
+			cluster.IngressType = "nginx"
+			s.clusters[defaultClusterID] = cluster
+			installKubectlScript(t, `#!/bin/sh
+case "$*" in
+  *"get ingress hive"*) printf '%s' '`+tt.hosts+`' ;;
+  *) exit 1 ;;
+esac
+`)
+			saveDriftHive(t, id)
+			before := loadSaaSHive(id)
+			if changed := s.repairVanityURLForHive(id); changed != tt.changed {
+				t.Fatalf("repair changed = %v, want %v", changed, tt.changed)
+			}
+			after := loadSaaSHive(id)
+			if got := after.VanityURL; got != "https://"+tt.want {
+				t.Fatalf("stored vanity URL = %q, want %q", got, "https://"+tt.want)
+			}
+			// A matching alias must not rewrite the record or stamp a repair.
+			if !tt.changed && tt.hosts != "" && tt.hosts != placeholder && !reflect.DeepEqual(before, after) {
+				t.Error("matching live alias changed the hive record")
+			}
+			if tt.changed && after.LastVanityRepairAt.IsZero() {
+				t.Error("adopting a live host did not record a successful repair")
+			}
+			if s.repairVanityURLForHive(id) {
+				t.Error("repeated reconciliation was not idempotent")
+			}
+		})
 	}
 }
 
