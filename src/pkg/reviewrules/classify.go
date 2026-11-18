@@ -21,6 +21,8 @@
 package reviewrules
 
 import (
+	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"unicode/utf8"
@@ -52,6 +54,16 @@ const (
 	SignalCaptureRequest = "capture-request"
 	SignalCriteria       = "assessment-criteria"
 	SignalKnowledgeBase  = "knowledge-base"
+	// SignalExtraPhrase marks a match on a phrase the operator added under
+	// review_feedback.rules.extra_phrases in hive.yaml (#19138).
+	SignalExtraPhrase = "extra-phrase"
+)
+
+const (
+	// MaxExtraPhrases bounds the operator's extra phrases.
+	MaxExtraPhrases = 50
+	// MaxExtraPhraseRunes bounds one extra phrase.
+	MaxExtraPhraseRunes = 100
 )
 
 type signal struct {
@@ -92,13 +104,118 @@ type Classification struct {
 	Signals []string
 }
 
+// SignalNames lists every built-in signal name, in table order. They are the
+// values review_feedback.rules.disabled_signals accepts.
+func SignalNames() []string {
+	out := make([]string, 0, len(ruleSignals))
+	for _, s := range ruleSignals {
+		out = append(out, s.name)
+	}
+	return out
+}
+
+// IsSignal reports whether name is a built-in signal.
+func IsSignal(name string) bool {
+	for _, s := range ruleSignals {
+		if s.name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// Classifier is Classify with the operator's preferences applied: built-in
+// signals it skips and extra phrases that also mark a rule. The zero value is
+// the built-in table.
+type Classifier struct {
+	disabled map[string]bool
+	extra    []*regexp.Regexp
+}
+
+// NewClassifier builds a Classifier. Phrases are matched literally, case
+// insensitively, with any run of whitespace matching any other and on word
+// boundaries where the phrase starts or ends with a word character. Empty,
+// over-long and surplus phrases are dropped, as are unknown signal names.
+func NewClassifier(extraPhrases, disabledSignals []string) Classifier {
+	var c Classifier
+	for _, name := range disabledSignals {
+		if name = strings.ToLower(strings.TrimSpace(name)); IsSignal(name) {
+			if c.disabled == nil {
+				c.disabled = map[string]bool{}
+			}
+			c.disabled[name] = true
+		}
+	}
+	for _, p := range extraPhrases {
+		if re := phraseRegexp(p); re != nil && len(c.extra) < MaxExtraPhrases {
+			c.extra = append(c.extra, re)
+		}
+	}
+	return c
+}
+
+// ValidExtraPhrase reports why p cannot be an extra phrase, or nil.
+func ValidExtraPhrase(p string) error {
+	p = strings.TrimSpace(p)
+	switch {
+	case p == "":
+		return errors.New("is empty")
+	case utf8.RuneCountInString(p) > MaxExtraPhraseRunes:
+		return fmt.Errorf("is longer than %d characters", MaxExtraPhraseRunes)
+	}
+	return nil
+}
+
+func phraseRegexp(p string) *regexp.Regexp {
+	if ValidExtraPhrase(p) != nil {
+		return nil
+	}
+	words := strings.Fields(p)
+	for i, w := range words {
+		words[i] = regexp.QuoteMeta(w)
+	}
+	pat := strings.Join(words, `\s+`)
+	joined := strings.Join(strings.Fields(p), " ")
+	if isWordRune(firstRune(joined)) {
+		pat = `\b` + pat
+	}
+	if isWordRune(lastRune(joined)) {
+		pat += `\b`
+	}
+	return regexp.MustCompile(`(?i)` + pat)
+}
+
+func firstRune(s string) rune {
+	r, _ := utf8.DecodeRuneInString(s)
+	return r
+}
+
+func lastRune(s string) rune {
+	r, _ := utf8.DecodeLastRuneInString(s)
+	return r
+}
+
+func isWordRune(r rune) bool {
+	return r == '_' || (r >= '0' && r <= '9') || (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+}
+
 // Classify says whether body states a rule for future work. It is a pure
 // function of the text: every signal is an explicit phrase from ruleSignals.
-func Classify(body string) Classification {
+func Classify(body string) Classification { return Classifier{}.Classify(body) }
+
+// Classify is the package Classify with c's preferences applied. An extra
+// phrase match is reported once, as SignalExtraPhrase, after the built-ins.
+func (c Classifier) Classify(body string) Classification {
 	var hit []string
 	for _, s := range ruleSignals {
-		if s.re.MatchString(body) {
+		if !c.disabled[s.name] && s.re.MatchString(body) {
 			hit = append(hit, s.name)
+		}
+	}
+	for _, re := range c.extra {
+		if re.MatchString(body) {
+			hit = append(hit, SignalExtraPhrase)
+			break
 		}
 	}
 	if len(hit) == 0 {
@@ -114,13 +231,17 @@ func ForeignHomeHint(body string) bool { return foreignHomeHint.MatchString(body
 // ExtractRuleText returns the rule a comment states: the sentences that carry a
 // signal, without the clauses that only ask for the capture, normalised and
 // bounded. A comment with no signal yields its whole body, bounded.
-func ExtractRuleText(body string) string {
+func ExtractRuleText(body string) string { return Classifier{}.ExtractRuleText(body) }
+
+// ExtractRuleText is the package ExtractRuleText with c's preferences
+// deciding which sentences carry a signal.
+func (c Classifier) ExtractRuleText(body string) string {
 	var kept []string
 	for _, sent := range sentenceSplit.Split(body, -1) {
 		if strings.TrimSpace(sent) == "" {
 			continue
 		}
-		if Classify(sent).Kind == KindRule {
+		if c.Classify(sent).Kind == KindRule {
 			kept = append(kept, sent)
 		}
 	}

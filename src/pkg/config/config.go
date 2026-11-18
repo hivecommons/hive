@@ -220,6 +220,10 @@ type Config struct {
 	// UpstreamWatch declares per-repo upstreams and filters for the fork
 	// upstream watch (hivecommons/hive#9966). Default off.
 	UpstreamWatch UpstreamWatchConfig `yaml:"upstream_watch,omitempty" json:"upstream_watch,omitempty"`
+	// ReviewFeedback holds the preferences of the review-feedback sweep's
+	// rule capture (hivecommons/hive#19138). Default empty: env vars and
+	// built-in defaults apply.
+	ReviewFeedback ReviewFeedbackConfig `yaml:"review_feedback,omitempty" json:"review_feedback,omitempty"`
 	// Repos holds per-repository overrides keyed by the bare name from
 	// project.repos or "owner/repo" (hivecommons/hive#18495). Absent means
 	// every repo inherits the hive-wide values. See RepoSettings.

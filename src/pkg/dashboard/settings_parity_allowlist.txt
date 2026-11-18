@@ -663,6 +663,10 @@ review.verdict_labels.approve # TODO #13833
 review.verdict_labels.changes_requested # TODO #13833
 review.verdict_labels.requires_human # TODO #13833
 review.verdict_labels.reviewing # TODO #13833
+review_feedback.rules.disabled_signals[] # TODO #19148 (yaml-only at first; Settings card pending)
+review_feedback.rules.enabled # TODO #19148 (yaml-only at first; Settings card pending)
+review_feedback.rules.extra_phrases[] # TODO #19148 (yaml-only at first; Settings card pending)
+review_feedback.rules.trusted_associations[] # TODO #19148 (yaml-only at first; Settings card pending)
 runs.external.claude_managed_agents.agent_id # prototype hosted backend; yaml-only (#14214)
 runs.external.claude_managed_agents.agent_version # prototype hosted backend; yaml-only (#14214)
 runs.external.claude_managed_agents.api_key_env # prototype hosted backend; yaml-only (#14214)

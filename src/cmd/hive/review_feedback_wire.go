@@ -361,12 +361,22 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 		}
 		reviewFeedbackStore = st
 	}
-	if reviewRuleStore == nil && reviewrules.Enabled() {
-		rs, err := reviewrules.Open(reviewrules.Dir(), reviewrules.VaultDir(), reviewrules.ConfigFromEnv())
+	// review_feedback.rules.* is read on every pass, so an edit to hive.yaml
+	// applies without a restart; the env vars still win (#19138).
+	ruleSettings := cfg.ReviewFeedback.Rules.Settings()
+	rulesOn := reviewrules.EnabledWith(ruleSettings.Enabled)
+	if reviewRuleStore == nil && rulesOn {
+		rs, err := reviewrules.Open(reviewrules.Dir(), reviewrules.VaultDir(), reviewrules.ConfigWith(ruleSettings))
 		if err != nil {
 			logger.Warn("review feedback: rule index unreadable or not writable; rules kept in memory only", "dir", reviewrules.Dir(), "error", err)
 		}
 		reviewRuleStore = rs
+	} else if reviewRuleStore != nil {
+		reviewRuleStore.SetConfig(reviewrules.ConfigWith(ruleSettings))
+	}
+	var rules *reviewrules.Store
+	if rulesOn {
+		rules = reviewRuleStore
 	}
 	if reviewRuleStore != nil {
 		for _, line := range reviewRuleStore.Reconcile(now) {
@@ -385,7 +395,7 @@ func sweepReviewFeedback(ctx context.Context, cfg *config.Config, client *github
 		Cursor:       reviewFeedbackCursor,
 		Now:          now,
 		Logger:       logger,
-		Rules:        reviewRuleStore,
+		Rules:        rules,
 		Lane:         cfg.BaseAgentName,
 		Managed:      cfg.IsManagedRepo,
 		Route: func(owner string) reviewFeedbackRoute {

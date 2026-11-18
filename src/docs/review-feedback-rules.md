@@ -73,6 +73,30 @@ neither kicks nor the dashboard wait for a restart. After a change, the primer r
 
 ## Settings
 
+The preferences live under `review_feedback.rules` in `hive.yaml` ([#19138](https://github.com/hivecommons/hive/issues/19138)). Every key
+is optional. The sweep reads them on every pass, so an edit applies on the next pass without a restart; rules already recorded are not
+revisited.
+
+```yaml
+review_feedback:
+  rules:
+    enabled: true                  # unset means on
+    trusted_associations: [OWNER, MEMBER, COLLABORATOR]
+    extra_phrases: ["house style", "for every assessment"]
+    disabled_signals: [authoritative]
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `enabled` | on | `false` stops rule capture. The sweep keeps running, and the `review-rules` channel stays loaded so turning capture back on needs no restart. |
+| `trusted_associations` | `OWNER, MEMBER, COLLABORATOR` | Associations whose rules are recorded at once; others are queued. Accepts GitHub's `OWNER`, `MEMBER`, `COLLABORATOR`, `CONTRIBUTOR`, `FIRST_TIME_CONTRIBUTOR`, `FIRST_TIMER`, `MANNEQUIN` and `NONE`. |
+| `extra_phrases` | none | Literal phrases that also mark a comment as a rule, matched case-insensitively on word boundaries, with any run of spaces matching any other. A match is reported as the `extra-phrase` signal. At most 50 phrases of at most 100 characters. |
+| `disabled_signals` | none | Built-in signals the classifier skips: any of the signal names listed under [What happens](#what-happens). |
+
+The env vars below still work. `HIVE_REVIEW_FEEDBACK_RULES` and `HIVE_REVIEW_FEEDBACK_RULE_TRUSTED_ASSOCIATIONS` win over `enabled` and
+`trusted_associations` when set, so a deployment that already uses them keeps its behavior. Turning capture off with the env var also
+skips loading the channel at boot.
+
 | Variable | Default | Meaning |
 |---|---|---|
 | `HIVE_REVIEW_FEEDBACK_RULES` | on | Set to `0`, `false`, `off` or `no` to stop rule capture. The sweep keeps running. |
