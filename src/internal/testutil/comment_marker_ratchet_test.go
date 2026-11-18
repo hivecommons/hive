@@ -22,7 +22,7 @@ import (
 // findOwnEntryComment, or to a prstatus section — but it must never go UP.
 // Every unmarked emitter is a comment the hive can post again on the next
 // sweep; the 2026-11-07 spam audit traced 30–46 such comments a day to them.
-const commentMarkerBaseline = 45
+const commentMarkerBaseline = 44
 
 // commentEmitterCalls are the raw comment-create calls the ratchet looks
 // for. Marker-aware helpers (EditIssueMarkerComment, UpsertPRStatusSection,
