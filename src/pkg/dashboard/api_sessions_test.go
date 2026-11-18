@@ -549,9 +549,8 @@ func TestSessionsListShapeVendorsAndLimits(t *testing.T) {
 }
 
 func TestSessionsRoleMatrix(t *testing.T) {
-	// This test exercises authorization, not CLI onboarding. Keep the fake pane
-	// idle so accepted inputs drain promptly, then join both kinds of workers
-	// before TempDir removes the session store.
+	// Authorization, not CLI onboarding, is under test. An idle pane lets
+	// accepted inputs drain; cleanup joins the workers before TempDir removal.
 	t.Setenv(config.EnvSessionsAutostart, "false")
 	e := newSessionTestEnv(t, true)
 	fastSessionQueue(t, e)
