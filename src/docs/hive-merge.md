@@ -864,7 +864,17 @@ mutation-boundary dedupe as the trusted-lane command. If Prow replies
 `skipped=prow-rejects-bot-commands`, leaves one
 `<!-- hive-ok-to-test-rejected -->` needs-human note and never posts the
 command on that PR again; making the App a Prow trusted user is the
-repository's Prow configuration. The merge-request relay's read-only
+repository's Prow configuration. Prow's answer is the repository's, so it is
+also remembered per repository (hivecommons/hive#18608): once Prow has refused
+the App anywhere in the repository, the lane skips the first command on every
+later fork PR there and leaves the `<!-- hive-ok-to-test-rejected -->` note
+directly. The memory is not stored: after a restart it is re-derived from one
+bounded read of the repository's comments of the last 30 days (Prow's refusal
+addressed to the App, or the hive's own note quoting it), kept for an hour, and
+cleared while the repository carries `.github/workflows/hive-ok-to-test.yml`.
+A repository with no refusal on record behaves as before. The note in that case
+does not quote Prow's wording, so only a real refusal renews the memory and it
+ages out if Prow later trusts the App. The merge-request relay's read-only
 evaluation posts nothing.
 
 A PR merges through this tier only when all of the following hold:
