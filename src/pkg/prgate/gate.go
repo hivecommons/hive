@@ -211,8 +211,8 @@ func (g *Gate) mode(repo string) Mode {
 func (g *Gate) Active(repo string) bool { return g.mode(repo) != ModeOff }
 
 // TryAcquire reserves one of a bounded number of concurrent event slots; the
-// caller releases it with Release. A burst beyond the bound is dropped (the
-// backstop sweep covers any head left without a status).
+// caller releases it with Release. A burst beyond the bound is dropped and
+// logged; the next event for the head covers it.
 func (g *Gate) TryAcquire() bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()

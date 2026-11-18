@@ -3,14 +3,11 @@ package dashboard
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/hivecommons/hive/pkg/config"
 	"github.com/hivecommons/hive/pkg/github"
-	"github.com/hivecommons/hive/pkg/prgate"
 )
 
 // prGateEventTimeout bounds one gate pass (a PR re-read plus at most three
@@ -25,45 +22,20 @@ var prGatePRActions = map[string]bool{
 	"ready_for_review": true, "labeled": true, "unlabeled": true,
 }
 
-// prGateCheckNames are the workflow-recorded checks the shadow comparison reads.
-var prGateCheckNames = map[string]bool{
-	prgate.ContextVerify: true, prgate.ContextPRType: true, prgate.ContextPRIssue: true,
-}
-
-// prGateAPI adapts the GitHub client to prgate.API.
-type prGateAPI struct{ c *github.Client }
-
-func (a prGateAPI) ReadSubject(ctx context.Context, repo string, number int) (prgate.Subject, error) {
-	s, err := a.c.ReadPRGateSubject(ctx, repo, number)
-	if err != nil {
-		return prgate.Subject{}, err
-	}
-	return prgate.Subject{HeadSHA: s.HeadSHA, Title: s.Title, State: s.State, Draft: s.Draft}, nil
-}
-
-func (a prGateAPI) PostStatus(ctx context.Context, repo string, number int, sha, statusContext, state, description string) error {
-	err := a.c.PostPRGateStatus(ctx, repo, number, sha, statusContext, state, description)
-	if errors.Is(err, github.ErrPRGateStatusForbidden) {
-		return fmt.Errorf("%w: %v", prgate.ErrForbidden, err)
-	}
-	return err
-}
-
 // prGateModeOf reads auto_merge.pr_gate for one repository, live.
-func (s *Server) prGateModeOf(repo string) prgate.Mode {
+func (s *Server) prGateModeOf(repo string) string {
 	if s == nil || s.deps == nil || s.deps.Config == nil {
-		return prgate.ModeOff
+		return config.PRGateModeOff
 	}
-	mode, _ := prgate.ParseMode(s.deps.Config.AutoMerge.PRGate.ModeFor(repo))
-	return mode
+	return s.deps.Config.AutoMerge.PRGate.ModeFor(repo)
 }
 
-func (s *Server) prGateInstance() *prgate.Gate {
+func (s *Server) prGateInstance() *github.PRGate {
 	s.prGateOnce.Do(func() {
 		if s.deps == nil || s.deps.GHClient == nil {
 			return
 		}
-		s.prGate = prgate.New(prGateAPI{c: s.deps.GHClient}, s.prGateModeOf, s.webhookLogger())
+		s.prGate = github.NewPRGate(s.deps.GHClient, s.prGateModeOf, s.webhookLogger())
 	})
 	return s.prGate
 }
@@ -73,7 +45,7 @@ func (s *Server) prGateInstance() *prgate.Gate {
 // `pull_request` deliveries post the gate on the event's head; `check_run`
 // deliveries of the workflow's own checks are compared with the hive's verdict
 // for that head. The work runs off the request goroutine and is bounded; a
-// dropped burst is picked up by the backstop sweep.
+// dropped burst is logged.
 func (s *Server) observePRGateEvent(event string, body []byte) string {
 	if s == nil || s.deps == nil || s.deps.Config == nil {
 		return ""
@@ -112,7 +84,7 @@ func (s *Server) observePRGateEvent(event string, body []byte) string {
 		return ""
 	}
 	if event == "check_run" {
-		if p.Action == "completed" && p.CheckRun != nil && prGateCheckNames[p.CheckRun.Name] {
+		if p.Action == "completed" && p.CheckRun != nil && github.IsPRGateCheckName(p.CheckRun.Name) {
 			g.CompareWorkflow(repo, p.CheckRun.HeadSHA, p.CheckRun.Name, p.CheckRun.Conclusion)
 			return "compared"
 		}
@@ -127,7 +99,7 @@ func (s *Server) observePRGateEvent(event string, body []byte) string {
 	}
 	head := p.PullRequest.Head.SHA
 	if number <= 0 || !g.TryAcquire() {
-		s.webhookLogger().Warn("pr-gate: event dropped, too many in flight; the backstop covers it", "repo", repo, "number", number)
+		s.webhookLogger().Warn("pr-gate: event dropped, too many in flight; a later event or sweep covers it", "repo", repo, "number", number)
 		return "dropped"
 	}
 	go func() {
