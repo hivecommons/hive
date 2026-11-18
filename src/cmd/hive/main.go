@@ -1131,6 +1131,7 @@ func (b *boot) wireBootClosures() {
 			WorkflowProvisionLabels:  workflowProvisionLabels(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
 			WorkflowDispatchPrepare:  workflowDispatchPrepare(b.cfg, func() *github.Client { return b.ghClient }, b.logger),
 			WorkflowDispatchHandoffs: workflowDispatchHandoffs(b.cfg, b.logger),
+			KickOutcomes:             kickOutcomeSource{kickOutcomesFor(b.cfg, b.logger)},
 			WorkflowEmitChecks:       workflowEmitChecks(b.cfg, func() *github.Client { return b.ghClient }),
 			WorkflowClusterRunner:    workflowClusterRunner(),
 			WorkflowSpecLLM:          newWorkflowSpecRunner(func() *config.Config { return b.cfg }),
@@ -2009,9 +2010,16 @@ func (b *boot) bootAgentsWith(deps bootAgentsDeps) {
 	// tells it afterwards how the turn ENDED, so a kick that produced a
 	// clarifying question or a policy stand-down is not counted like one that
 	// produced work (and a question earns an early re-kick).
+	koStore := kickOutcomesFor(b.cfg, b.logger)
 	b.agentMgr.SetKickOutcomeObserver(func(agentName string, outcome crux.KickOutcome) {
 		b.gov.RecordKickOutcome(agentName, outcome.Kind, outcome.Reason, outcome.KickAt, outcome.At)
+		kickOutcomeTurnEnded(koStore, b.agentMgr.GetStatus, agentName, outcome)
 	})
+	// #18916: a delivered kick opens its outcome record; the relay's push and
+	// comment events (and the PR-opened hook) close it.
+	if reg, ok := b.agentMgr.(crux.KickObserverRegistry); ok {
+		b.cleanup.push(reg.AddKickObserver(func(ev crux.KickEvent) { kickOutcomeDelivered(koStore, ev) }))
+	}
 
 	// Say out loud when the sandbox opt-in is configured but inert. The gate is
 	// two-part (global agent_sandbox.enabled AND a per-agent sandbox.enabled),
