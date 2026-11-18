@@ -118,10 +118,8 @@ The rule tables:
 - **Hard denies:** PR or MR create and merge for every mode, checked first
   inside the mode function (`src/crux/proxy/rules_deny.go:43-93`,
   `DeniedMessage` at `src/crux/proxy/rules_deny.go:96-103`).
-- **GraphQL:** substring and regexp classification of mutation names, with a
-  permissive default bucket at `ModeIssuesOnly`
-  (`src/crux/proxy/rules.go:584-600`, branches at
-  `src/crux/proxy/rules.go:810-828`).
+- **GraphQL:** a separate classifier keyed on mutation names
+  (`src/crux/proxy/rules.go:584-600`, `src/crux/proxy/rules.go:794-828`).
 - **Linear:** a separate table keyed on the GraphQL operation, deny on
   unknown, unparseable or truncated (`src/crux/proxy/linear_rules.go:212-283`).
 
@@ -214,15 +212,11 @@ refusals as well as its successes is **unverified**.
   `contributor` tier carries issues, contents and pull-requests write
   (`src/pkg/github/app.go:331-337`). The broker uses `DefaultTier = "contributor"`
   (`src/crux/pushbroker/pushbroker.go:25`), so a push token also carries issue
-  and PR write that a push does not need. When the repo string has no `/`,
-  `MintPushToken` passes no repo list, which is an installation-wide token
-  (`src/crux/pushbroker/pushbroker.go:106-118`).
-- **Callback mint.** `MintToken` returns a response whose `ExpiresAt` is
-  `now + min(requested TTL, 1h)` (`src/pkg/cruxhost/cruxhost.go:220-241`), but the
-  underlying token's real life is the forge's one hour
-  (`InstallationTokenTTL`, `:50`). The code comment says the response states
-  that; the code appears to let a shorter requested TTL produce a shorter
-  `ExpiresAt` than the token actually has. **(read from code, not run.)**
+  and PR write that a push does not need.
+- **Callback mint.** `MintToken` returns a response with an `ExpiresAt` for
+  the minted token (`src/pkg/cruxhost/cruxhost.go:220-241`). The relation
+  between that value and the forge's fixed one hour token life is a
+  question for phase 5, not a finding here.
 - **Mint JWT.** `pkg/mint` signs a scoped JWT for downstream verifiers:
   `tierScopes` (`src/pkg/mint/agent.go:43-55`), unknown tier gets read-only
   (`:60-66`), empty agent name is an error (`:96-104`). TTL is clamped to a
@@ -267,46 +261,34 @@ Each item is a reading of the code above, not a bug report. Items marked
 2. **PR create and merge are denied in three copies.** REST `denyRules`,
    the tool-name guardrails in `src/crux/toolapprove/decide.go:14-40`, and
    the relay authorizers. The wording is duplicated, not shared.
-3. **REST and GraphQL disagree on merge.** The comments above `denyRules`
-   say the GraphQL merge path matches the hard deny
-   (`src/crux/proxy/rules_deny.go:36-38`). `GraphQLAllowedCaps` instead permits
-   a merge mutation at `ModeIssuesPRsMerge`
-   (`src/crux/proxy/rules.go:810-813`), and a document with only unclassified
-   mutations is permitted at `ModeIssuesOnly` (`:825-827`). A repo's auto-merge-off
-   gate narrows the merge case when it can attribute a repo
-   (`src/crux/proxy/rules.go:836-855`). This is the same finding
-   [crux-tool-policy.md](crux-tool-policy.md#the-problem-three-classifiers-and-an-implicit-order)
-   records for the proxy alone.
+3. **Decision parity across wire shapes.** The same operation can reach the
+   proxy as REST or as GraphQL, through different classifiers. Verifying
+   decision parity between the two paths is tracked separately and is not
+   argued in this record.
 4. **Hard deny is not a first stage.** It runs inside the REST mode check,
    after pause, scope, auto-merge and write-surface, so a paused repo returns
    `repo_paused` for a PR create. Reason codes are machine readable, so the
    order is observable behaviour (see crux-tool-policy.md).
-5. **The repo allowlist is on the REST branch only.** `RepoFilterAllowed` is in
-   the `else if` chain after the REST mode check
-   (`src/crux/proxy/github_proxy_mitm.go:215-219`), while the GraphQL branch is
-   an earlier arm of the same chain (`:149-185`). Read from structure, so a
-   GraphQL mutation is not filtered by the allowlist. **(unverified by test;
-   the seam's parity corpus should settle it.)**
-6. **Pause and agent scope exist twice** (proxy gates 2 and 3, and the PR relay
+5. **Pause and agent scope exist twice** (proxy gates 2 and 3, and the PR relay
    at `src/pkg/github/pr_request_watcher.go:411-427`), so a change to either
    has to be made in two places.
-7. **Two ladders.** AgentMode (4 rungs, proxy and tokens) and ACMM level (7
+6. **Two ladders.** AgentMode (4 rungs, proxy and tokens) and ACMM level (7
    levels, tool approval) are related by `DefaultAgentMode` and not by one
    function either side calls.
-8. **Allow is recorded in some paths and not others.** Relay successes and tool
+7. **Allow is recorded in some paths and not others.** Relay successes and tool
    approvals are audited. Proxy allows, broker pushes and relay refusals have
    no decision record. A broker success shows up only as the downstream PR
    audit, not as a record of which checks passed.
-9. **Error posture differs by layer.** Tool approval: error is no-match, which
+8. **Error posture differs by layer.** Tool approval: error is no-match, which
    is safe for rules that grant. Proxy classifiers: unparseable bodies are
    denied (`src/crux/proxy/linear_rules.go:212-235`,
    `src/crux/proxy/rules.go:804-808`); issue-shape treats an unreadable body
    as a refusal to continue (`src/crux/proxy/github_proxy_mitm.go:227-236`).
    Audit failure is logged and dropped. There is no single stated rule.
-10. **Credentials are tier-shaped, not action-shaped.** A push token carries
-    more than a push needs, can be installation-wide on a malformed repo
-    string, and the decision does not record what was granted.
-11. **Operator rules cannot be added for the write path at all.** The only
+9. **Credentials are tier-shaped, not action-shaped.** A push token carries
+    more than a push needs, and the decision does not record what was
+    granted.
+10. **Operator rules cannot be added for the write path at all.** The only
     operator-authored rule layer is the approval desk, and it cannot deny.
 
 ## Proposed design
@@ -501,15 +483,14 @@ operation. So per-decision here means three concrete things and no more:
    (`src/pkg/github/app.go:331-337`). Whether contents write alone is enough
    for every push path, including branches with workflow files, needs a live
    check **(unverified)**.
-3. **No installation-wide fallback.** A missing or malformed repo is
-   `missing_attribute`, not an unscoped token
-   (`src/crux/pushbroker/pushbroker.go:106-118`).
+3. **Require a complete scope.** A missing repo attribute is
+   `missing_attribute`, not a request for a broader token.
 
 Beyond that it is **record-keeping**: the decision event says what was
 requested and when it expires. It does not make the token narrower than the
-forge allows, and the design does not claim it does. The apparent
-`ExpiresAt` mismatch in `MintToken` should be settled first
-(`src/pkg/cruxhost/cruxhost.go:220-241`), since the event would repeat it.
+forge allows, and the design does not claim it does. The expiry the
+callback mint reports should be reconciled with the forge's token life
+before the event repeats it (`src/pkg/cruxhost/cruxhost.go:220-241`).
 
 **Mint JWTs (what downstream verifiers use).** Here Hive controls the claims,
 so per-decision is real. Phase 5 extends `MintAgentToken`
@@ -551,13 +532,12 @@ logs it, the legacy gate still decides, and nothing is enforced by the seam.
 | 2. Decision events from existing gates, behind a flag | Each gate emits a `Decision` event when the flag is on (allow and deny), including relay refusals and broker results. Legacy code decides | none when off; one extra write per decision when on | measured volume and size on a maintainer hive; aggregation rule confirmed |
 | 3. Seam in shadow | Gates are moved behind `authz.Decide` for evaluation; the legacy result is still enforced; a mismatch between legacy and seam is logged as `parity_mismatch` and counted | none | zero mismatches on the corpus and a soak period with no unexplained live mismatch |
 | 4. Enforce through the seam, per gate group | Flip one group at a time (see order below); legacy code is kept for one release as the comparison oracle | none by construction, since parity held | parity mismatch counter flat through a release |
-| 5. Operator narrowing rules, then credentials | Policy file and CEL layer in report-only (`shadow: true`) then enforce; then action-shaped tiers, no unscoped fallback, mint JWT per decision | operators can add deny and hold rules; tokens narrow | operator rules shown in shadow for a release before enforce |
+| 5. Operator narrowing rules, then credentials | Policy file and CEL layer in report-only (`shadow: true`) then enforce; then action-shaped tiers, complete-scope requirement, mint JWT per decision | operators can add deny and hold rules; tokens narrow | operator rules shown in shadow for a release before enforce |
 
 Flip order for phase 4, lowest risk first: broker checks (small, one caller,
 pure functions of the workspace), then proxy hard denies and write-surface,
-then proxy REST mode table, then relays, then GraphQL (where the known
-disagreement lives and where a deliberate behaviour decision is needed, see
-open questions).
+then proxy REST mode table, then relays, then GraphQL (decision parity with
+the REST path is verified first, see open questions).
 
 Proposed task-sized issues (not filed; for the RFC's acceptance criteria):
 
@@ -568,7 +548,7 @@ Proposed task-sized issues (not filed; for the RFC's acceptance criteria):
 - `authz`: enforce the broker group through the seam (phase 4)
 - `authz`: enforce proxy groups through the seam, one group per issue (phase 4)
 - `authz`: operator rule file, CEL environment helper, report-only mode (phase 5)
-- `authz`: action-shaped token tiers and removal of the unscoped fallback (phase 5)
+- `authz`: action-shaped token tiers and complete-scope requirement (phase 5)
 
 ### Parity tests, by name
 
@@ -585,9 +565,9 @@ decisions, not rewritten.
   `src/crux/proxy/denial_message_test.go`.
 - `TestParityGraphQL`: the mutation corpus in
   `src/crux/proxy/graphql_mutation_prefix_test.go` and
-  `src/crux/proxy/graphql_repo_policy_test.go`, including the cases in item 3
-  of the disagreements. Any case where REST and GraphQL differ is recorded as
-  an explicit expected divergence, not smoothed over.
+  `src/crux/proxy/graphql_repo_policy_test.go`, and any case where the REST
+  and GraphQL paths differ is recorded as an explicit expected divergence,
+  not smoothed over.
 - `TestParityLinear`: `src/crux/proxy/linear_rules_test.go` and the parser edge
   tests.
 - `TestParityPushBroker`: protected paths, empty commits, non-fast-forward,
@@ -619,7 +599,7 @@ decisions, not rewritten.
 - **Volume test.** A synthetic request rate through the emitter with the sink
   slowed down, asserting that the bounded buffer drops are counted and that
   enforcement latency does not grow.
-- **Credential tests.** No installation-wide token on a malformed repo; action
+- **Credential tests.** A missing repo attribute is refused; action
   tier permission sets are exactly the expected names; a mint JWT carries the
   decision id as `jti` and the clamped TTL.
 - No test in this plan needs a live GitHub. Live verification of the push-only
@@ -646,10 +626,9 @@ decisions, not rewritten.
 
 ## Open questions
 
-1. **GraphQL merge.** Phase 4 for the GraphQL group needs a decision: align
-   GraphQL merge with the REST hard deny (a behaviour change, so a flagged
-   one), or record the divergence as intended and fix the comments. The seam
-   makes the choice visible; it should not make it silently.
+1. **Decision parity.** Verify decision parity between the REST and GraphQL
+   proxy paths (tracked separately). Phase 4 for the GraphQL group is gated on
+   that result.
 2. **Hold on the proxy path.** A request cannot wait for a human. The proposal
    is deny with `hold_required` plus an inbox item the agent's next kick can
    retry. Is hold in scope for the proxy at all, or only for the broker and
@@ -676,7 +655,7 @@ decisions, not rewritten.
 9. **Shared CEL environment.** Is one helper for approvals, triggers and authz
    worth the coupling, or should each keep its own environment?
 10. **Credential reality.** Given the forge limits, is the action-shaped tier
-    set worth its complexity, or is the honest minimum "no unscoped fallback
+    set worth its complexity, or is the honest minimum "a complete-scope requirement
     plus a decision record"? The `MintToken` expiry reading should be
     resolved first.
 11. **Per-agent mode file as an input.** The mode and capability files are
@@ -686,9 +665,8 @@ decisions, not rewritten.
 
 ## Risks
 
-- **Parity gaps hide behaviour.** The proxy order is implicit in code, and the
-  GraphQL and allowlist findings above show it already differs from its own
-  comments. Mitigation: shadow mode and the named corpus, with divergences
+- **Parity gaps hide behaviour.** The proxy order is implicit in code and
+  may differ from what its comments say. Mitigation: shadow mode and the named corpus, with divergences
   recorded rather than normalised.
 - **Hot path cost.** CEL evaluation on every proxy request. Mitigation: the
   floor is plain Go and CEL runs only when operator rules exist; the existing
