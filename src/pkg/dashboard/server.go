@@ -37,6 +37,7 @@ import (
 	"github.com/hivecommons/hive/pkg/mailallow"
 	"github.com/hivecommons/hive/pkg/maintainernotes"
 	"github.com/hivecommons/hive/pkg/planning"
+	"github.com/hivecommons/hive/pkg/prgate"
 	"github.com/hivecommons/hive/pkg/review/autoscale"
 	"github.com/hivecommons/hive/pkg/runtimeobs"
 	"github.com/hivecommons/hive/pkg/stageengine"
@@ -112,6 +113,8 @@ type Server struct {
 	nativeQueueTracker  nativeQueueTrackerRuntime
 	integration         integrationRuntime
 	webhookNoSecretOnce sync.Once               // warn once per process about a missing webhook secret (#13666)
+	prGateOnce          sync.Once               // builds the PR gate on first use (#19038)
+	prGate              *prgate.Gate            // nil until built, and when no GitHub client is configured
 	webhookRelaySeen    webhookRelayReplayCache // hub-relayed delivery IDs already accepted (#17911)
 
 	feedbackRefreshBackoff feedbackBackoff
