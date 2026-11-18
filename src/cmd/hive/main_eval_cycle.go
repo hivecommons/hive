@@ -1101,6 +1101,7 @@ func runEvalCycle(
 					"class", class,
 					"retry_in", remaining.Round(time.Second),
 					"error", line)
+				kickOutcomeBackoffWithheld(kickOutcomesFor(cfg, logger), msg.Agent, class, remaining, time.Now())
 				gov.RecordKickFailure(msg.Agent, fmt.Errorf("provider inference backoff (%s): %s", class, line), time.Now())
 				continue
 			}
