@@ -58,8 +58,10 @@ var staleRedRefresh = &staleRedRefreshState{}
 // It leaves alone a PR that is a draft, held or exempt, still running CI,
 // deferred to an open shared-CI incident, red on the base as well, a fork
 // with "allow edits by maintainers" off, a dependency bot's branch (the bot
-// rebases it), returned to its contributor (072, whose hive pushes there)
-// or adopted by the hive (074, whose recovery owns it). Each update goes
+// rebases it) or adopted by the hive (074, whose recovery owns it). A PR
+// returned to its contributor (072) is a candidate: the red is the base's,
+// not the contributor's, and nobody tells the contributor to merge the base
+// (see staleRedRefreshSkip). Each update goes
 // through the write-back gate (base_refresh). It runs at most every
 // staleRedRefreshInterval and makes at most staleRedRefreshMaxPerRepo
 // updates per repository and staleRedRefreshMaxPerPass in all.
@@ -172,6 +174,16 @@ func refreshStaleRedBehindPRs(
 // "" when it is: an open, non-draft PR whose settled CI is red on named
 // checks that are not red on the base, with nothing that owns its branch
 // sync elsewhere.
+//
+// Unlike the missing-check refresh it does not skip a PR at 072. The pass
+// only updates a PR whose every failing check is green on the base tip, so
+// the red it clears is the base's: the 072 nudge asked the contributor to
+// fix a check the base has since fixed, and a person, or a relay hive that
+// is offline, never merges the base for that. projectbluefin/actions#765
+// and #766 sat at 072 for ten hours after main fixed `Audit GitHub Actions`
+// and `pytest` in #768, both green on the base tip all night, until a person
+// pressed "Update branch". The update is pinned to the evaluated head, so a
+// push from the contributor wins (head-moved) and is never merged over.
 func staleRedRefreshSkip(pr github.PullRequest) string {
 	switch {
 	case pr.Draft:
@@ -187,7 +199,10 @@ func staleRedRefreshSkip(pr github.PullRequest) string {
 	case len(pr.BaseRedChecks) > 0:
 		return "base-red"
 	}
-	return baseRefreshBranchOwnerSkip(pr)
+	if skip := baseRefreshBranchOwnerSkip(pr); skip != "returned-to-contributor" {
+		return skip
+	}
+	return ""
 }
 
 // baseRefreshBranchOwnerSkip names why the hive must not update pr's branch
@@ -195,7 +210,8 @@ func staleRedRefreshSkip(pr github.PullRequest) string {
 // fork's with "allow edits by maintainers" off, or something else owns the
 // branch sync (a dependency bot rebases its own branch, 072's contributor
 // hive pushes there, 074's adoption recovery owns it). The stale-red and the
-// missing-check base refresh share it.
+// missing-check base refresh share it; the stale-red refresh lets 072
+// through (staleRedRefreshSkip).
 func baseRefreshBranchOwnerSkip(pr github.PullRequest) string {
 	switch {
 	case strings.TrimSpace(pr.HeadSHA) == "" || strings.TrimSpace(pr.BaseRef) == "":
